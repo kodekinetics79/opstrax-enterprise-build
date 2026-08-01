@@ -1,8 +1,14 @@
 import { apiClient, unwrap } from "./apiClient";
+import { apiPaged } from "./fleetDomainApi";
 import type { AnyRecord } from "@/types";
 
 export const routesApi = {
   list: () => unwrap<AnyRecord[]>(apiClient.get("/api/routes")),
+  listPaged: (opts: { limit?: number; offset?: number; search?: string; status?: string } = {}) => {
+    const query = new URLSearchParams();
+    if (opts.status && opts.status !== "All") query.set("status", opts.status);
+    return apiPaged(`/api/routes${query.size ? `?${query}` : ""}`, opts);
+  },
   summary: () => unwrap<AnyRecord>(apiClient.get("/api/routes/summary")),
   detail: (id: string | number) => unwrap<AnyRecord>(apiClient.get(`/api/routes/${id}`)),
   create: (payload: AnyRecord) => unwrap<AnyRecord>(apiClient.post("/api/routes", payload)),

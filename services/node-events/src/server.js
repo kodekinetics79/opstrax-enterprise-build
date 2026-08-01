@@ -3,6 +3,11 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 
+if (process.env.DEMO_EVENTS_ENABLED !== "true") {
+  console.error("Demo events simulator is disabled. Set DEMO_EVENTS_ENABLED=true only in an isolated development environment.");
+  process.exit(1);
+}
+
 const app = express();
 const port = Number(process.env.PORT || 8090);
 const corsOrigin = process.env.CORS_ORIGIN || "http://localhost:10000";
@@ -95,7 +100,7 @@ function createEvent(index = Date.now()) {
 }
 
 app.get("/health", (_req, res) => {
-  res.json({ status: "healthy", service: "opstrax-node-events", utc: new Date().toISOString() });
+  res.json({ status: "demo-only", service: "opstrax-demo-node-events", utc: new Date().toISOString() });
 });
 
 app.get("/events/stream", (req, res) => {
@@ -134,5 +139,5 @@ app.post("/ai/generate-brief", (_req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(`OpsTrax Node Events listening on ${port}`);
+  console.log(`OpsTrax DEMO Node Events listening on ${port}`);
 });

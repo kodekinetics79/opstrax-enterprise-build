@@ -13,7 +13,7 @@ public class MarketPackExpiryTests
 {
     private static readonly DateTime Today = new(2026, 06, 26);
 
-    [Fact] public void NullExpiry_Is_Valid() => Assert.Equal("valid", MarketPackEndpoints.ExpiryStatus(null, Today));
+    [Fact] public void NullExpiry_NeedsReview() => Assert.Equal("unknown", MarketPackEndpoints.ExpiryStatus(null, Today));
     [Fact] public void FarFuture_Is_Valid() => Assert.Equal("valid", MarketPackEndpoints.ExpiryStatus(Today.AddDays(31), Today));
     [Fact] public void Within30Days_Is_Expiring() => Assert.Equal("expiring", MarketPackEndpoints.ExpiryStatus(Today.AddDays(30), Today));
     [Fact] public void Today_Is_Expiring() => Assert.Equal("expiring", MarketPackEndpoints.ExpiryStatus(Today, Today));
@@ -41,6 +41,63 @@ public class MarketPackMappingTests
         Assert.Equal("compliance.documents", MarketPackSchemaService.Features.Documents);
         Assert.Equal("compliance.inspections", MarketPackSchemaService.Features.Inspections);
         Assert.Equal("compliance.tax_readiness", MarketPackSchemaService.Features.TaxReadiness);
+    }
+}
+
+public class MarketPackInputValidationTests
+{
+    [Fact]
+    public void Inspection_RequiresARealVehicleAndInspector()
+    {
+        Assert.NotNull(MarketPackEndpoints.ValidateVehicleInspectionInput(new()));
+        Assert.NotNull(MarketPackEndpoints.ValidateVehicleInspectionInput(new()
+        {
+            ["vehicleLabel"] = "TRK-101",
+        }));
+        Assert.Null(MarketPackEndpoints.ValidateVehicleInspectionInput(new()
+        {
+            ["vehicleLabel"] = "TRK-101",
+            ["inspectorName"] = "Alex Morgan",
+        }));
+    }
+
+    [Theory]
+    [InlineData("", "1200", "2026-Q2")]
+    [InlineData("QC", "0", "2026-Q2")]
+    [InlineData("QC", "1200", "2026")]
+    [InlineData("QC", "1200", "2026-Q5")]
+    public void Mileage_RejectsIncompleteOrInvalidRegulatoryFacts(string region, string distance, string period)
+        => Assert.NotNull(MarketPackEndpoints.ValidateJurisdictionMileageInput(new()
+        {
+            ["provinceState"] = region,
+            ["distance"] = distance,
+            ["taxPeriod"] = period,
+        }));
+
+    [Fact]
+    public void Mileage_AcceptsPositiveDistanceAndQuarter()
+        => Assert.Null(MarketPackEndpoints.ValidateJurisdictionMileageInput(new()
+        {
+            ["provinceState"] = "QC",
+            ["distance"] = "1200.5",
+            ["taxPeriod"] = "2026-Q2",
+        }));
+
+    [Fact]
+    public void Fuel_RequiresPositiveVolumeAndQuarter()
+    {
+        Assert.NotNull(MarketPackEndpoints.ValidateJurisdictionFuelInput(new()
+        {
+            ["provinceState"] = "ON", ["fuelVolume"] = "0", ["taxPeriod"] = "2026-Q2",
+        }));
+        Assert.NotNull(MarketPackEndpoints.ValidateJurisdictionFuelInput(new()
+        {
+            ["provinceState"] = "ON", ["fuelVolume"] = "100", ["taxPeriod"] = "2026",
+        }));
+        Assert.Null(MarketPackEndpoints.ValidateJurisdictionFuelInput(new()
+        {
+            ["provinceState"] = "ON", ["fuelVolume"] = "100", ["taxPeriod"] = "2026-Q2",
+        }));
     }
 }
 

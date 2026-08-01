@@ -16,18 +16,29 @@ public static class MfaChallengeService
     private const int DefaultTtlSeconds = 300; // 5 minutes to fetch a code from the authenticator
 
     // token = base64url(payload) + "." + base64url(HMAC-SHA256(key, payload))
-    // payload = "{userId}:{companyId}:{expiresAtUnixSeconds}"
+    // payload = "v2:{userId}:{companyId}:{expiresAtUnixSeconds}:{randomJti}"
+    // The random JTI makes every login attempt distinct even when two challenges
+    // are issued for the same user in the same second. Durable one-time consumption
+    // is enforced by MfaChallengeConsumptionService using a hash of the whole token.
     public static string Issue(string key, long userId, long companyId, DateTimeOffset now, int ttlSeconds = DefaultTtlSeconds)
     {
         var exp = now.ToUnixTimeSeconds() + ttlSeconds;
-        var payload = $"{userId}:{companyId}:{exp}";
+        var jti = B64(RandomNumberGenerator.GetBytes(16));
+        var payload = $"v2:{userId}:{companyId}:{exp}:{jti}";
         return B64(Encoding.UTF8.GetBytes(payload)) + "." + B64(Sign(key, payload));
     }
 
     public static bool TryValidate(string key, string? token, DateTimeOffset now, out long userId, out long companyId)
     {
-        userId = 0;
-        companyId = 0;
+        var valid = TryValidate(key, token, now, out var claims);
+        userId = claims.UserId;
+        companyId = claims.CompanyId;
+        return valid;
+    }
+
+    public static bool TryValidate(string key, string? token, DateTimeOffset now, out MfaChallengeClaims claims)
+    {
+        claims = new(0, 0, DateTimeOffset.MinValue, string.Empty);
         if (string.IsNullOrWhiteSpace(token)) return false;
 
         var dot = token.IndexOf('.');
@@ -46,13 +57,13 @@ public static class MfaChallengeService
         if (!CryptographicOperations.FixedTimeEquals(sigBytes, Sign(key, payload))) return false;
 
         var parts = payload.Split(':');
-        if (parts.Length != 3) return false;
-        if (!long.TryParse(parts[0], out var uid) || !long.TryParse(parts[1], out var cid) || !long.TryParse(parts[2], out var exp))
+        if (parts.Length != 5 || !string.Equals(parts[0], "v2", StringComparison.Ordinal)) return false;
+        if (!long.TryParse(parts[1], out var uid) || !long.TryParse(parts[2], out var cid) || !long.TryParse(parts[3], out var exp))
             return false;
+        if (uid <= 0 || cid <= 0 || string.IsNullOrWhiteSpace(parts[4])) return false;
         if (now.ToUnixTimeSeconds() > exp) return false; // expired
 
-        userId = uid;
-        companyId = cid;
+        claims = new(uid, cid, DateTimeOffset.FromUnixTimeSeconds(exp), parts[4]);
         return true;
     }
 
@@ -72,3 +83,5 @@ public static class MfaChallengeService
         return Convert.FromBase64String(b);
     }
 }
+
+public sealed record MfaChallengeClaims(long UserId, long CompanyId, DateTimeOffset ExpiresAt, string Jti);

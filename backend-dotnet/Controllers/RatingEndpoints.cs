@@ -1,5 +1,6 @@
 using Opstrax.Api.Services;
 using Opstrax.Api.DTOs;
+using Opstrax.Api.Data;
 
 namespace Opstrax.Api.Controllers;
 
@@ -13,10 +14,12 @@ public static class RatingEndpoints
     }
 
     private static async Task<IResult> RateJob(
-        HttpContext http, long id, System.Text.Json.JsonElement body, RatingService rating, CancellationToken ct)
+        HttpContext http, long id, System.Text.Json.JsonElement body, RatingService rating, Database db, CancellationToken ct)
     {
         if (EndpointMappings.RequirePermission(http, "charge.create") is { } denied) return denied;
         var companyId = EndpointMappings.GetCompanyId(http);
+        if (!await EndpointMappings.JobInAuthorizedScope(http, id, db, ct))
+            return Results.NotFound(ApiResponse<object>.Fail("Job not found"));
 
         var mode = RateMode.Commit;
         if (body.ValueKind == System.Text.Json.JsonValueKind.Object &&

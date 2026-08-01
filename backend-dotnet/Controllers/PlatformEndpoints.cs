@@ -1991,14 +1991,20 @@ public static class PlatformEndpoints
 
     internal static bool VerifyPassword(string password, string? storedHash)
     {
+        const int requiredIterations = 100_000;
+        const int requiredSaltLength = 16;
+        const int requiredSubkeyLength = 32;
         if (string.IsNullOrWhiteSpace(storedHash)) return false;
         var parts = storedHash.Split('$');
         if (parts.Length != 4 || !string.Equals(parts[0], "PBKDF2", StringComparison.OrdinalIgnoreCase)) return false;
-        if (!int.TryParse(parts[1], out var iterations)) return false;
+        if (!int.TryParse(parts[1], out var iterations) ||
+            iterations < requiredIterations || iterations > 2_000_000) return false;
         try
         {
             var salt = Convert.FromBase64String(parts[2]);
             var expected = Convert.FromBase64String(parts[3]);
+            if (salt.Length != requiredSaltLength || expected.Length != requiredSubkeyLength)
+                return false;
             var actual = Rfc2898DeriveBytes.Pbkdf2(password, salt, iterations, HashAlgorithmName.SHA256, expected.Length);
             return CryptographicOperations.FixedTimeEquals(actual, expected);
         }

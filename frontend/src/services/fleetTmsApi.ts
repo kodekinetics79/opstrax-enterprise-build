@@ -60,6 +60,11 @@ export interface FleetShipment {
   volumeCbm: number;
   declaredValue: number;
   carrierName: string;
+  carrierId?: string | null;
+  carrierQuotedAmount?: number;
+  carrierAgreedAmount?: number;
+  carrierAssignmentNotes?: string;
+  carrierAssignedAtUtc?: string | null;
   customerVATNumber: string;
   customerCommercialRegistrationNo: string;
   customerNationalAddressBuildingNo: string;
@@ -120,6 +125,11 @@ export interface FleetTrackingPoint {
   recordedAtUtc: string;
   estimatedArrivalUtc?: string;
   notes: string;
+  sourceType?: string;
+  isLive?: boolean;
+  source?: string;
+  freshnessSeconds?: number;
+  freshnessStatus?: 'Live' | 'Delayed' | 'Stale' | 'NonLive' | string;
 }
 
 export interface FleetMaintenanceTicket {
@@ -220,7 +230,8 @@ export interface ShipmentEvent {
 export interface CustomerTrackingLink {
   id: string;
   shipmentId: string;
-  token: string;
+  /** One-time bearer secret, present only in the create response. */
+  token?: string;
   expiresAtUtc: string;
   isRevoked: boolean;
   sharedBy: string;
@@ -369,11 +380,8 @@ export const fleetLifecycleApi = {
   invoiceReady: () => unwrap<{ items: FleetShipment[] }>(apiClient.get("/api/fleet-tms/shipments/invoice-ready")),
 };
 
-// ── Commercial slice (carriers / bookings / quotes) — DEFERRED ─────────────────
-// The commercial carrier surface overlaps the existing OpsTrax `carriers` table and
-// is intentionally NOT part of PR1. These types + stub keep the ported Fleet TMS
-// pages/drawer compiling and rendering an honest empty state; reads resolve empty and
-// writes reject with a clear message. No /api/fleet-tms/carriers* backend exists yet.
+// Carrier master data is managed by the existing Carrier Management module. Fleet
+// Workspace consumes the same tenant-owned records for real shipment assignment.
 export interface Carrier {
   id: string;
   name: string;
@@ -906,16 +914,15 @@ export const fleetReadinessApi = {
   invoiceReady: () => unwrap<FleetInvoiceReadySummary>(apiClient.get("/api/fleet-tms/vat/invoice-ready")),
 };
 
-const DEFERRED = "Carrier & booking management ships in a later Fleet TMS release.";
+const OUTSIDE_WORKSPACE = "Booking and quote authoring are outside the Fleet Workspace contract.";
 
 export const fleetCommercialApi = {
-  carriers: () => Promise.resolve({ items: [] as Carrier[] }),
-  carrier: (_id: string): Promise<Carrier> => Promise.reject(new Error(DEFERRED)),
-  createCarrier: (_body: Partial<Carrier> & { name: string; code: string }): Promise<Carrier> => Promise.reject(new Error(DEFERRED)),
-  updateCarrier: (_id: string, _body: Partial<Carrier>): Promise<Carrier> => Promise.reject(new Error(DEFERRED)),
-  assignShipmentCarrier: (_shipmentId: string, _body: { carrierId: string; quotedAmount?: number; agreedAmount?: number; notes?: string }): Promise<ShipmentCarrierAssignment> => Promise.reject(new Error(DEFERRED)),
+  carriers: () => unwrap<{ items: Carrier[] }>(apiClient.get("/api/fleet-tms/carriers")),
+  assignShipmentCarrier: (shipmentId: string, body: { carrierId: number; quotedAmount?: number; agreedAmount?: number; notes?: string }) =>
+    unwrap<ShipmentCarrierAssignment>(apiClient.post(`/api/fleet-tms/shipments/${shipmentId}/carrier`, body)),
+  unassignShipmentCarrier: (shipmentId: string) => apiClient.delete(`/api/fleet-tms/shipments/${shipmentId}/carrier`),
   bookingRequests: () => Promise.resolve({ items: [] as BookingRequest[] }),
-  createBookingRequest: (_body: Partial<BookingRequest> & { requestNumber: string; customerName: string; origin: string; destination: string }): Promise<BookingRequest> => Promise.reject(new Error(DEFERRED)),
+  createBookingRequest: (_body: Partial<BookingRequest> & { requestNumber: string; customerName: string; origin: string; destination: string }): Promise<BookingRequest> => Promise.reject(new Error(OUTSIDE_WORKSPACE)),
   quoteRequests: () => Promise.resolve({ items: [] as QuoteRequest[] }),
-  createQuoteRequest: (_body: Partial<QuoteRequest> & { quoteNumber: string; customerName: string; origin: string; destination: string }): Promise<QuoteRequest> => Promise.reject(new Error(DEFERRED)),
+  createQuoteRequest: (_body: Partial<QuoteRequest> & { quoteNumber: string; customerName: string; origin: string; destination: string }): Promise<QuoteRequest> => Promise.reject(new Error(OUTSIDE_WORKSPACE)),
 };

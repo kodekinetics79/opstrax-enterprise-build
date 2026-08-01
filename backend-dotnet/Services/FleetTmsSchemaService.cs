@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using Npgsql;
 using Opstrax.Api.Data;
 
 namespace Opstrax.Api.Services;
@@ -15,6 +16,9 @@ public sealed class FleetTmsSchemaService(Database db, ILogger<FleetTmsSchemaSer
     public async Task EnsureAsync()
     {
         await CreateTables();
+        await MigrateTrackingTokens();
+        await MigrateBranchOwnership();
+        await EnsureWorkspaceIntegrity();
         await CreateIndexes();
     }
 
@@ -24,6 +28,7 @@ public sealed class FleetTmsSchemaService(Database db, ILogger<FleetTmsSchemaSer
 CREATE TABLE IF NOT EXISTS fleet_tms_shipments (
     id                                       BIGINT NOT NULL GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     company_id                               BIGINT NOT NULL,
+    branch_id                                BIGINT NULL,
     shipment_number                          VARCHAR(60)  NOT NULL,
     customer_name                            VARCHAR(255) NOT NULL DEFAULT '',
     customer_segment                         VARCHAR(80)  NOT NULL DEFAULT '',
@@ -38,6 +43,11 @@ CREATE TABLE IF NOT EXISTS fleet_tms_shipments (
     volume_cbm                               NUMERIC(14,2) NOT NULL DEFAULT 0,
     declared_value                           NUMERIC(14,2) NOT NULL DEFAULT 0,
     carrier_name                             VARCHAR(255) NOT NULL DEFAULT '',
+    carrier_id                               BIGINT NULL,
+    carrier_quoted_amount                    NUMERIC(14,2) NOT NULL DEFAULT 0,
+    carrier_agreed_amount                    NUMERIC(14,2) NOT NULL DEFAULT 0,
+    carrier_assignment_notes                 TEXT NOT NULL DEFAULT '',
+    carrier_assigned_at_utc                  TIMESTAMPTZ NULL,
     customer_vat_number                      VARCHAR(60)  NOT NULL DEFAULT '',
     customer_commercial_registration_no      VARCHAR(60)  NOT NULL DEFAULT '',
     customer_national_address_building_no     VARCHAR(40)  NOT NULL DEFAULT '',
@@ -67,6 +77,7 @@ CREATE TABLE IF NOT EXISTS fleet_tms_shipments (
 CREATE TABLE IF NOT EXISTS fleet_tms_shipment_stops (
     id                                    BIGINT NOT NULL GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     company_id                            BIGINT NOT NULL,
+    branch_id                             BIGINT NULL,
     shipment_id                           BIGINT NOT NULL,
     stop_type                             VARCHAR(30)  NOT NULL DEFAULT 'Pickup',
     sequence_no                           INT          NOT NULL DEFAULT 1,
@@ -97,6 +108,7 @@ CREATE TABLE IF NOT EXISTS fleet_tms_shipment_stops (
 CREATE TABLE IF NOT EXISTS fleet_tms_pods (
     id                     BIGINT NOT NULL GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     company_id             BIGINT NOT NULL,
+    branch_id              BIGINT NULL,
     shipment_id            BIGINT NOT NULL,
     stop_id                BIGINT NOT NULL,
     captured_by_user_id    BIGINT NULL,
@@ -123,8 +135,10 @@ CREATE TABLE IF NOT EXISTS fleet_tms_pods (
 CREATE TABLE IF NOT EXISTS fleet_tms_tracking_links (
     id              BIGINT NOT NULL GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     company_id      BIGINT NOT NULL,
+    branch_id       BIGINT NULL,
     shipment_id     BIGINT NOT NULL,
-    token           VARCHAR(120) NOT NULL,
+    token           VARCHAR(120) NULL,
+    token_hash      VARCHAR(64)  NOT NULL,
     expires_at_utc  TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '7 days'),
     is_revoked      BOOLEAN      NOT NULL DEFAULT false,
     shared_by       VARCHAR(255) NOT NULL DEFAULT '',
@@ -137,6 +151,7 @@ CREATE TABLE IF NOT EXISTS fleet_tms_tracking_links (
 CREATE TABLE IF NOT EXISTS fleet_tms_shipment_events (
     id              BIGINT NOT NULL GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     company_id      BIGINT NOT NULL,
+    branch_id       BIGINT NULL,
     shipment_id     BIGINT NOT NULL,
     event_type      VARCHAR(60)  NOT NULL DEFAULT '',
     message         TEXT         NOT NULL DEFAULT '',
@@ -151,8 +166,11 @@ CREATE TABLE IF NOT EXISTS fleet_tms_shipment_events (
 CREATE TABLE IF NOT EXISTS fleet_tms_driver_tasks (
     id               BIGINT NOT NULL GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     company_id       BIGINT NOT NULL,
+    branch_id        BIGINT NULL,
     shipment_id      BIGINT NOT NULL,
     stop_id          BIGINT NULL,
+    driver_id        BIGINT NULL,
+    vehicle_id       BIGINT NULL,
     task_type        VARCHAR(30)  NOT NULL DEFAULT 'Pickup',
     title            VARCHAR(255) NOT NULL DEFAULT '',
     description      TEXT         NOT NULL DEFAULT '',
@@ -170,6 +188,7 @@ CREATE TABLE IF NOT EXISTS fleet_tms_driver_tasks (
 CREATE TABLE IF NOT EXISTS fleet_tms_vehicles (
     id                  BIGINT NOT NULL GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     company_id          BIGINT NOT NULL,
+    branch_id           BIGINT NULL,
     vehicle_number      VARCHAR(60)  NOT NULL DEFAULT '',
     plate_number        VARCHAR(60)  NOT NULL DEFAULT '',
     type                VARCHAR(60)  NOT NULL DEFAULT '',
@@ -196,6 +215,7 @@ CREATE TABLE IF NOT EXISTS fleet_tms_vehicles (
 CREATE TABLE IF NOT EXISTS fleet_tms_tracking_points (
     id                   BIGINT NOT NULL GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     company_id           BIGINT NOT NULL,
+    branch_id            BIGINT NULL,
     shipment_number      VARCHAR(60)  NOT NULL DEFAULT '',
     vehicle_number       VARCHAR(60)  NOT NULL DEFAULT '',
     location_label       VARCHAR(255) NOT NULL DEFAULT '',
@@ -214,6 +234,7 @@ CREATE TABLE IF NOT EXISTS fleet_tms_tracking_points (
 CREATE TABLE IF NOT EXISTS fleet_tms_maintenance_tickets (
     id                BIGINT NOT NULL GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     company_id        BIGINT NOT NULL,
+    branch_id         BIGINT NULL,
     work_order_number VARCHAR(60)  NOT NULL DEFAULT '',
     vehicle_number    VARCHAR(60)  NOT NULL DEFAULT '',
     type              VARCHAR(60)  NOT NULL DEFAULT '',
@@ -235,6 +256,7 @@ CREATE TABLE IF NOT EXISTS fleet_tms_maintenance_tickets (
 CREATE TABLE IF NOT EXISTS fleet_tms_fuel_events (
     id               BIGINT NOT NULL GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     company_id       BIGINT NOT NULL,
+    branch_id        BIGINT NULL,
     vehicle_number   VARCHAR(60)  NOT NULL DEFAULT '',
     fuel_card_number VARCHAR(60)  NOT NULL DEFAULT '',
     station_name     VARCHAR(255) NOT NULL DEFAULT '',
@@ -255,18 +277,22 @@ CREATE TABLE IF NOT EXISTS fleet_tms_fuel_events (
         var indexes = new[]
         {
             ("fleet_tms_shipments",            "idx_ftms_ship_company_status", "company_id, status"),
+            ("fleet_tms_shipments",            "idx_ftms_ship_company_branch", "company_id, branch_id, status"),
             ("fleet_tms_shipments",            "idx_ftms_ship_company_number", "company_id, shipment_number"),
             ("fleet_tms_shipment_stops",       "idx_ftms_stops_company_ship",  "company_id, shipment_id"),
+            ("fleet_tms_shipment_stops",       "idx_ftms_stops_branch_ship",   "company_id, branch_id, shipment_id"),
             ("fleet_tms_pods",                 "idx_ftms_pods_company_ship",   "company_id, shipment_id"),
             ("fleet_tms_pods",                 "idx_ftms_pods_status",         "company_id, status"),
-            ("fleet_tms_tracking_links",       "idx_ftms_links_token",         "token"),
+            ("fleet_tms_tracking_links",       "idx_ftms_links_token_hash",    "token_hash"),
             ("fleet_tms_tracking_links",       "idx_ftms_links_company_ship",  "company_id, shipment_id"),
             ("fleet_tms_shipment_events",      "idx_ftms_events_company_ship", "company_id, shipment_id"),
             ("fleet_tms_driver_tasks",         "idx_ftms_tasks_company",       "company_id, status"),
+            ("fleet_tms_driver_tasks",         "idx_ftms_tasks_branch",        "company_id, branch_id, status"),
             ("fleet_tms_vehicles",             "idx_ftms_vehicles_company",    "company_id, status"),
             ("fleet_tms_tracking_points",      "idx_ftms_track_company",       "company_id, recorded_at_utc"),
             ("fleet_tms_maintenance_tickets",  "idx_ftms_maint_company",       "company_id, status"),
             ("fleet_tms_fuel_events",          "idx_ftms_fuel_company",        "company_id, anomaly_flag"),
+            ("fleet_tms_fuel_events",          "idx_ftms_fuel_branch",         "company_id, branch_id, anomaly_flag"),
         };
 
         foreach (var (table, name, cols) in indexes)
@@ -276,6 +302,138 @@ CREATE TABLE IF NOT EXISTS fleet_tms_fuel_events (
                 await db.ExecuteAsync($"CREATE INDEX IF NOT EXISTS \"{name}\" ON \"{table}\" ({cols})");
             }
             catch (Exception ex) { log.LogWarning(ex, "[FleetTmsSchema] Index {Name} failed", name); }
+        }
+    }
+
+    // Staged, atomic migration for legacy public links. Existing raw bearer tokens
+    // remain usable because their hashes are backfilled before plaintext is erased.
+    // Any unhashable legacy row causes startup to fail and the transaction to roll
+    // back, rather than silently exposing or invalidating customer links.
+    private async Task MigrateTrackingTokens()
+    {
+        await db.WithTransactionAsync<object?>(async (conn, tx) =>
+        {
+            const string sql = @"
+ALTER TABLE fleet_tms_tracking_links
+    ADD COLUMN IF NOT EXISTS token_hash VARCHAR(64) NULL;
+
+UPDATE fleet_tms_tracking_links
+SET token_hash = encode(sha256(convert_to(token, 'UTF8')), 'hex')
+WHERE token_hash IS NULL AND token IS NOT NULL;
+
+ALTER TABLE fleet_tms_tracking_links
+    ALTER COLUMN token_hash SET NOT NULL,
+    ALTER COLUMN token DROP NOT NULL;
+
+UPDATE fleet_tms_tracking_links
+SET token = NULL
+WHERE token IS NOT NULL;
+
+DROP INDEX IF EXISTS idx_ftms_links_token;";
+
+            await using var command = new NpgsqlCommand(sql, conn, tx);
+            await command.ExecuteNonQueryAsync();
+            return null;
+        });
+    }
+
+    // Adds branch ownership without guessing across multi-branch tenants. Child rows
+    // inherit their shipment branch. Legacy top-level rows are assigned only when a
+    // relationship identifies the branch or the tenant has exactly one live branch.
+    private async Task MigrateBranchOwnership()
+    {
+        const string sql = @"
+ALTER TABLE fleet_tms_shipments ADD COLUMN IF NOT EXISTS branch_id BIGINT NULL;
+ALTER TABLE fleet_tms_shipments ADD COLUMN IF NOT EXISTS carrier_id BIGINT NULL;
+ALTER TABLE fleet_tms_shipments ADD COLUMN IF NOT EXISTS carrier_quoted_amount NUMERIC(14,2) NOT NULL DEFAULT 0;
+ALTER TABLE fleet_tms_shipments ADD COLUMN IF NOT EXISTS carrier_agreed_amount NUMERIC(14,2) NOT NULL DEFAULT 0;
+ALTER TABLE fleet_tms_shipments ADD COLUMN IF NOT EXISTS carrier_assignment_notes TEXT NOT NULL DEFAULT '';
+ALTER TABLE fleet_tms_shipments ADD COLUMN IF NOT EXISTS carrier_assigned_at_utc TIMESTAMPTZ NULL;
+ALTER TABLE fleet_tms_shipment_stops ADD COLUMN IF NOT EXISTS branch_id BIGINT NULL;
+ALTER TABLE fleet_tms_pods ADD COLUMN IF NOT EXISTS branch_id BIGINT NULL;
+ALTER TABLE fleet_tms_tracking_links ADD COLUMN IF NOT EXISTS branch_id BIGINT NULL;
+ALTER TABLE fleet_tms_shipment_events ADD COLUMN IF NOT EXISTS branch_id BIGINT NULL;
+ALTER TABLE fleet_tms_driver_tasks ADD COLUMN IF NOT EXISTS branch_id BIGINT NULL;
+ALTER TABLE fleet_tms_vehicles ADD COLUMN IF NOT EXISTS branch_id BIGINT NULL;
+ALTER TABLE fleet_tms_tracking_points ADD COLUMN IF NOT EXISTS branch_id BIGINT NULL;
+ALTER TABLE fleet_tms_maintenance_tickets ADD COLUMN IF NOT EXISTS branch_id BIGINT NULL;
+ALTER TABLE fleet_tms_fuel_events ADD COLUMN IF NOT EXISTS branch_id BIGINT NULL;
+
+DO $branch_backfill$
+BEGIN
+  IF to_regclass('public.branches') IS NOT NULL THEN
+    EXECUTE 'WITH sole_branch AS (
+      SELECT company_id, MIN(id) branch_id FROM branches
+      WHERE deleted_at IS NULL AND status=''Active''
+      GROUP BY company_id HAVING COUNT(*)=1
+    ) UPDATE fleet_tms_shipments s SET branch_id=b.branch_id
+      FROM sole_branch b WHERE s.company_id=b.company_id AND s.branch_id IS NULL';
+  END IF;
+END $branch_backfill$;
+
+UPDATE fleet_tms_shipment_stops x SET branch_id=s.branch_id FROM fleet_tms_shipments s
+WHERE x.company_id=s.company_id AND x.shipment_id=s.id AND x.branch_id IS NULL;
+UPDATE fleet_tms_pods x SET branch_id=s.branch_id FROM fleet_tms_shipments s
+WHERE x.company_id=s.company_id AND x.shipment_id=s.id AND x.branch_id IS NULL;
+UPDATE fleet_tms_tracking_links x SET branch_id=s.branch_id FROM fleet_tms_shipments s
+WHERE x.company_id=s.company_id AND x.shipment_id=s.id AND x.branch_id IS NULL;
+UPDATE fleet_tms_shipment_events x SET branch_id=s.branch_id FROM fleet_tms_shipments s
+WHERE x.company_id=s.company_id AND x.shipment_id=s.id AND x.branch_id IS NULL;
+UPDATE fleet_tms_driver_tasks x SET branch_id=s.branch_id FROM fleet_tms_shipments s
+WHERE x.company_id=s.company_id AND x.shipment_id=s.id AND x.branch_id IS NULL;
+UPDATE fleet_tms_tracking_points x SET branch_id=s.branch_id FROM fleet_tms_shipments s
+WHERE x.company_id=s.company_id AND x.shipment_number=s.shipment_number AND x.branch_id IS NULL;
+
+DO $vehicle_branch_backfill$
+BEGIN
+  IF to_regclass('public.branches') IS NOT NULL THEN
+    EXECUTE 'WITH sole_branch AS (
+      SELECT company_id, MIN(id) branch_id FROM branches
+      WHERE deleted_at IS NULL AND status=''Active''
+      GROUP BY company_id HAVING COUNT(*)=1
+    ) UPDATE fleet_tms_vehicles x SET branch_id=b.branch_id FROM sole_branch b
+      WHERE x.company_id=b.company_id AND x.branch_id IS NULL';
+  END IF;
+END $vehicle_branch_backfill$;
+UPDATE fleet_tms_maintenance_tickets x SET branch_id=v.branch_id FROM fleet_tms_vehicles v
+WHERE x.company_id=v.company_id AND x.vehicle_number=v.vehicle_number AND x.branch_id IS NULL;
+UPDATE fleet_tms_fuel_events x SET branch_id=v.branch_id FROM fleet_tms_vehicles v
+WHERE x.company_id=v.company_id AND x.vehicle_number=v.vehicle_number AND x.branch_id IS NULL;";
+
+        try { await db.ExecuteAsync(sql); }
+        catch (Exception ex) { log.LogError(ex, "[FleetTmsSchema] Branch ownership migration failed"); throw; }
+    }
+
+    // Operational identities must be enforced by PostgreSQL, not by a vulnerable
+    // check-then-insert sequence in an HTTP handler.  These indexes also turn two
+    // concurrent dispatch/POD/stop requests into one success plus one deterministic
+    // conflict instead of silently creating duplicate work.
+    private async Task EnsureWorkspaceIntegrity()
+    {
+        const string sql = @"
+ALTER TABLE fleet_tms_driver_tasks ADD COLUMN IF NOT EXISTS driver_id BIGINT NULL;
+ALTER TABLE fleet_tms_driver_tasks ADD COLUMN IF NOT EXISTS vehicle_id BIGINT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ftms_shipment_identity
+  ON fleet_tms_shipments (company_id, COALESCE(branch_id,0), LOWER(shipment_number));
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ftms_vehicle_identity
+  ON fleet_tms_vehicles (company_id, COALESCE(branch_id,0), LOWER(vehicle_number));
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ftms_stop_sequence
+  ON fleet_tms_shipment_stops (company_id, shipment_id, sequence_no);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ftms_active_pod_per_stop
+  ON fleet_tms_pods (company_id, shipment_id, stop_id)
+  WHERE status <> 'Rejected';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ftms_active_task_per_stop
+  ON fleet_tms_driver_tasks (company_id, shipment_id, stop_id)
+  WHERE stop_id IS NOT NULL AND status <> 'Cancelled';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ftms_tracking_hash
+  ON fleet_tms_tracking_links (token_hash);
+";
+        try { await db.ExecuteAsync(sql); }
+        catch (Exception ex)
+        {
+            log.LogError(ex, "[FleetTmsSchema] Workspace integrity constraints failed; refusing an unsafe bootstrap");
+            throw;
         }
     }
 

@@ -16,6 +16,34 @@ public sealed class Batch2SchemaService(Database db, IConfiguration? configurati
             await EnsureColumnAsync(column.Table, column.Name, column.Definition, ct);
         }
 
+        await db.ExecuteAsync(
+            @"UPDATE routes r SET branch_id=COALESCE(
+                  (SELECT v.branch_id FROM vehicles v WHERE v.id=r.assigned_vehicle_id AND v.company_id=r.company_id LIMIT 1),
+                  (SELECT d.branch_id FROM drivers d WHERE d.id=r.assigned_driver_id AND d.company_id=r.company_id LIMIT 1),
+                  (SELECT j.branch_id FROM route_stops rs JOIN jobs j ON j.id=rs.job_id AND j.company_id=r.company_id
+                   WHERE rs.route_id=r.id AND rs.company_id=r.company_id AND j.branch_id IS NOT NULL
+                   ORDER BY rs.stop_sequence,rs.id LIMIT 1))
+              WHERE r.branch_id IS NULL", ct: ct);
+
+        await db.ExecuteAsync(
+            "CREATE INDEX IF NOT EXISTS ix_customer_feedback_company_customer ON customer_feedback (company_id, customer_id) WHERE customer_id IS NOT NULL",
+            ct: ct);
+        // Tracking references are tenant-owned; the bootstrap's legacy global UNIQUE
+        // blocked two companies from using the same human-readable reference. Public
+        // access uses the independently random secure token, which must be globally unique.
+        await db.ExecuteAsync("ALTER TABLE customer_eta_links DROP CONSTRAINT IF EXISTS customer_eta_links_tracking_code_key", ct: ct);
+        await db.ExecuteAsync("CREATE UNIQUE INDEX IF NOT EXISTS uq_jobs_company_tracking_code ON jobs (company_id, tracking_code) WHERE tracking_code IS NOT NULL", ct: ct);
+        await db.ExecuteAsync("CREATE UNIQUE INDEX IF NOT EXISTS uq_customer_eta_company_tracking ON customer_eta_links (company_id, tracking_code)", ct: ct);
+        await db.ExecuteAsync("CREATE UNIQUE INDEX IF NOT EXISTS uq_customer_eta_secure_token ON customer_eta_links (secure_token) WHERE secure_token IS NOT NULL", ct: ct);
+        // Route planning is branch-owned even before resources/stops are assigned. These
+        // indexes are also the final concurrency guard against duplicate codes/sequences
+        // and two active routes claiming the same driver or vehicle.
+        await db.ExecuteAsync("CREATE UNIQUE INDEX IF NOT EXISTS uq_routes_company_code_active ON routes (company_id, route_code) WHERE deleted_at IS NULL", ct: ct);
+        await db.ExecuteAsync("CREATE UNIQUE INDEX IF NOT EXISTS uq_route_stops_company_route_sequence ON route_stops (company_id, route_id, stop_sequence)", ct: ct);
+        await db.ExecuteAsync("CREATE UNIQUE INDEX IF NOT EXISTS uq_routes_active_driver ON routes (company_id, assigned_driver_id) WHERE deleted_at IS NULL AND assigned_driver_id IS NOT NULL AND status IN ('Active','Delayed','At Risk')", ct: ct);
+        await db.ExecuteAsync("CREATE UNIQUE INDEX IF NOT EXISTS uq_routes_active_vehicle ON routes (company_id, assigned_vehicle_id) WHERE deleted_at IS NULL AND assigned_vehicle_id IS NOT NULL AND status IN ('Active','Delayed','At Risk')", ct: ct);
+        await db.ExecuteAsync("CREATE INDEX IF NOT EXISTS idx_routes_company_branch ON routes (company_id, branch_id, status) WHERE deleted_at IS NULL", ct: ct);
+
         // Demo/synthetic data only on explicit opt-in — these statements mutate
         // existing tenant rows cross-tenant (see DemoSeedGate).
         if (DemoSeedGate.IsExplicitlyEnabled(configuration))
@@ -71,7 +99,19 @@ public sealed class Batch2SchemaService(Database db, IConfiguration? configurati
         new("jobs", "notes", "TEXT NULL"),
         new("jobs", "updated_at", "TIMESTAMPTZ NULL"),
         new("jobs", "deleted_at", "TIMESTAMPTZ NULL"),
+        // CustomerPortalService uses the canonical feedback contract from 001_schema.sql.
+        // Older databases can still carry Batch 2's original analytics-only shape
+        // (tracking_code/sentiment/comments), so CREATE TABLE IF NOT EXISTS alone is not
+        // an upgrade. Keep these additive columns here because Batch2 runs on every
+        // owner-capable bootstrap, including installations that do not replay SQL files.
+        new("customer_feedback", "customer_id", "BIGINT NULL"),
+        new("customer_feedback", "comment", "TEXT NULL"),
+        new("customer_feedback", "feedback_type", "VARCHAR(80) NOT NULL DEFAULT 'general'"),
+        new("customer_feedback", "subject", "VARCHAR(200) NULL"),
+        new("customer_feedback", "status", "VARCHAR(30) NOT NULL DEFAULT 'open'"),
+        new("customer_feedback", "updated_at", "TIMESTAMPTZ NULL"),
         new("routes", "route_name", "VARCHAR(180) NULL"),
+        new("routes", "branch_id", "BIGINT NULL"),
         new("routes", "region", "VARCHAR(120) NULL"),
         new("routes", "route_type", "VARCHAR(80) NOT NULL DEFAULT 'Delivery'"),
         new("routes", "planned_start", "TIMESTAMPTZ NULL"),
@@ -98,6 +138,8 @@ public sealed class Batch2SchemaService(Database db, IConfiguration? configurati
         new("route_stops", "created_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()"),
         new("route_stops", "updated_at", "TIMESTAMPTZ NULL"),
         new("customer_eta_links", "public_status", "VARCHAR(80) NOT NULL DEFAULT 'Active'"),
+        new("customer_eta_links", "secure_token", "VARCHAR(80) NULL"),
+        new("customer_eta_links", "last_viewed_at", "TIMESTAMPTZ NULL"),
         new("dispatch_assignments", "assigned_by_user_id", "BIGINT NULL"),
         new("dispatch_assignments", "assignment_status", "VARCHAR(60) NULL"),
         new("dispatch_assignments", "match_reasons_json", "JSONB NULL"),

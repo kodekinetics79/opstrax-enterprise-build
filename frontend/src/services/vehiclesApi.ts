@@ -5,13 +5,11 @@ import type { AnyRecord } from "@/types";
 export const vehiclesApi = {
   list: () => getVehicles(),
   listPaged: (opts?: { limit?: number; offset?: number; search?: string }) => apiPaged("/api/vehicles", opts),
-  summary: () => getVehicles().then((rows) => ({
-    fleetReadinessScore: Math.round(rows.reduce((sum, row) => sum + Number(row.fleetReadinessScore ?? 0), 0) / Math.max(rows.length, 1)),
-    dataCompletenessScore: Math.round(rows.reduce((sum, row) => sum + Number(row.dataCompletenessScore ?? 0), 0) / Math.max(rows.length, 1)),
-    atRisk: rows.filter((row) => Number(row.riskHeatScore ?? 0) >= 40 || /critical|review/i.test(String(row.status))).length,
-    deviceExceptions: rows.filter((row) => !/online|recording/i.test(String(row.deviceStatus ?? row.status))).length,
-    total: rows.length,
-  })),
+  // Use the tenant-wide aggregate endpoint. The list endpoint is paged (500 rows by
+  // default), so deriving these KPIs from getVehicles() under-counted larger fleets.
+  // DataReaderExtensions camel-cases the SQL aliases, preserving the shape consumed
+  // by VehiclesPage and VehiclesModulePage.
+  summary: () => unwrap<AnyRecord>(apiClient.get("/api/vehicles/summary")),
   // Real capital-planning intelligence — computed server-side from live vehicle,
   // customer, route and document data. No client-side fabrication.
   planningInsights: () => unwrap<AnyRecord>(apiClient.get("/api/vehicles/planning-insights")),

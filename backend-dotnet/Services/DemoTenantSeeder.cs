@@ -36,6 +36,9 @@ public sealed class DemoTenantSeeder(Database db, IConfiguration? config = null)
     public const string DemoCompanyCode = "MERIDIAN-DEMO";
     public const string DemoCompanyName = "Meridian Logistics — Demo";
     private readonly string demoPassword = ResolveDemoPassword(config);
+    // Deterministic late-failure injection for transaction regression tests. Production
+    // DI never sets this; keeping the hook internal prevents it becoming an app feature.
+    internal Func<string, CancellationToken, Task>? TestCheckpointAsync { get; init; }
 
     // companyCode/companyName are overridable so integration TESTS can seed an ISOLATED
     // throwaway tenant (e.g. "MERIDIAN-DEMO-TEST") without touching the real runtime demo
@@ -43,8 +46,14 @@ public sealed class DemoTenantSeeder(Database db, IConfiguration? config = null)
     public async Task<DemoSeedResult> SeedAsync(CancellationToken ct = default)
         => await SeedAsync(DemoCompanyCode, DemoCompanyName, ct);
 
-    public async Task<DemoSeedResult> SeedAsync(string companyCode, string companyName, CancellationToken ct = default)
+    public Task<DemoSeedResult> SeedAsync(string companyCode, string companyName, CancellationToken ct = default)
+        => db.RunInSystemTransactionAsync(async () =>
     {
+        // Serialize by stable company code before checking existence. This closes the
+        // concurrent first-run race while preserving the existing no-op result for a
+        // completed tenant. The lock is transaction-scoped and released on commit/rollback.
+        await db.ExecuteAsync("SELECT pg_advisory_xact_lock(hashtextextended(@code, 0))",
+            c => c.Parameters.AddWithValue("@code", companyCode), ct);
         var existing = await db.ScalarLongAsync(
             "SELECT COALESCE((SELECT id FROM companies WHERE company_code=@code LIMIT 1), 0)",
             c => c.Parameters.AddWithValue("@code", companyCode), ct);
@@ -134,15 +143,19 @@ public sealed class DemoTenantSeeder(Database db, IConfiguration? config = null)
 
         // ── Dispatch assignments — accept / reject / complete lifecycle ──
         var dispatch = 0;
-        foreach (var (jobId, aStatus) in new[] { (jobs[2], "accepted"), (jobs[3], "in_transit"), (jobs[5], "rejected"), (completedJobs[0], "delivered") })
+        var demoAssignments = new[] { (jobs[2], "accepted"), (jobs[3], "in_transit"), (jobs[5], "rejected"), (completedJobs[0], "delivered") };
+        for (var assignmentIndex = 0; assignmentIndex < demoAssignments.Length; assignmentIndex++)
         {
+            var (jobId, aStatus) = demoAssignments[assignmentIndex];
             // Set BOTH status (legacy display) and assignment_status (the canonical lowercase
             // P4 token the dispatch state machine reads) — otherwise assignment_status is empty
-            // and every status transition is rejected as "from '' to ...".
+            // and every status transition is rejected as "from '' to ...". Each demo lifecycle
+            // gets its own driver/vehicle pair so active accepted/in-transit rows preserve the
+            // same unique-allocation invariant enforced in production.
             await db.ExecuteAsync(
                 @"INSERT INTO dispatch_assignments (company_id, job_id, vehicle_id, driver_id, status, assignment_status, assigned_at)
                   VALUES (@companyId, @jobId, @vehicleId, @driverId, @status, @status, NOW() - INTERVAL '4 hours')",
-                c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@jobId", jobId); c.Parameters.AddWithValue("@vehicleId", vehicles[0]); c.Parameters.AddWithValue("@driverId", drivers[0]); c.Parameters.AddWithValue("@status", aStatus); }, ct);
+                c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@jobId", jobId); c.Parameters.AddWithValue("@vehicleId", vehicles[assignmentIndex]); c.Parameters.AddWithValue("@driverId", drivers[assignmentIndex]); c.Parameters.AddWithValue("@status", aStatus); }, ct);
             dispatch++;
         }
 
@@ -180,6 +193,9 @@ public sealed class DemoTenantSeeder(Database db, IConfiguration? config = null)
         await AgeInvoiceAsync(invoiceIds[1], issuedDaysAgo: 5, dueInDays: 20, ct);   // current
         await AgeInvoiceAsync(invoiceIds[2], issuedDaysAgo: 75, dueInDays: -45, ct); // 30-60 overdue
         await AgeInvoiceAsync(invoiceIds[3], issuedDaysAgo: 150, dueInDays: -120, ct); // 90+ overdue
+
+        if (TestCheckpointAsync is not null)
+            await TestCheckpointAsync("after-finance-before-feedback", ct);
 
         // ── Customer feedback (real service — validates job ownership) ──
         // Feedback must target a job that BELONGS to the customer; the real service
@@ -254,7 +270,7 @@ public sealed class DemoTenantSeeder(Database db, IConfiguration? config = null)
             vehicles.Count, drivers.Count, customers.Count, jobs.Count, trips, dispatch, proofs,
             invoiceIds.Count, payments, feedback, 2, 1, 1,
             "Demo tenant seeded via real service layer (finance chain + feedback) and base-entity creation. Credentials are configured through DemoSeed:Password.");
-    }
+    }, ct);
 
     // ── Backdated time-series enrichment (idempotent) ──────────────────────────────
     // Generates realistic ~90-day history for the tables that drive trend charts but

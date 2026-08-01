@@ -12,8 +12,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-      - run: npm install
+          node-version: '22.23.2'
+      - run: npm ci --no-audit --no-fund
+        working-directory: frontend
+      - run: npm audit --omit=dev --audit-level=low
+        working-directory: frontend
+      - run: npm run lint -- --max-warnings=0
         working-directory: frontend
       - run: npm run build
         working-directory: frontend
@@ -24,21 +28,27 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-      - run: npm install
+          node-version: '22.23.2'
+      - run: npm ci --no-audit --no-fund
+        working-directory: backend
+      - run: npm audit --omit=dev --audit-level=low
         working-directory: backend
       - run: npm run build
         working-directory: backend
 
-  node-events-install:
+  demo-node-events-check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-      - run: npm install
-        working-directory: node-services/events
+          node-version: '22.23.2'
+      - run: npm ci --no-audit --no-fund
+        working-directory: services/node-events
+      - run: npm audit --omit=dev --audit-level=low
+        working-directory: services/node-events
+      - run: npm run check
+        working-directory: services/node-events
 
   dotnet-build-test:
     runs-on: ubuntu-latest
@@ -78,6 +88,8 @@ jobs:
           --health-interval 5s --health-timeout 5s --health-retries 20
     env:
       OPSTRAX_TEST_DB: "Host=127.0.0.1;Port=5433;Database=opstrax_local;Username=zayra;Password=zayra"
+      OPSTRAX_TEST_DB_APP: "Host=127.0.0.1;Port=5433;Database=opstrax_local;Username=opstrax_app;Password=opstrax_app_local"
+      OPSTRAX_TEST_DB_SYSTEM: "Host=127.0.0.1;Port=5433;Database=opstrax_local;Username=opstrax_system;Password=opstrax_system_local"
       PGPASSWORD: zayra
     steps:
       - uses: actions/checkout@v4
@@ -86,18 +98,25 @@ jobs:
           dotnet-version: '8.0.x'
       - name: Install psql client
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
-      - name: Create restricted opstrax_app role
+      - name: Create independent restricted runtime roles
         run: |
-          psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -v ON_ERROR_STOP=0 -c \
-            "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_app') THEN CREATE ROLE opstrax_app LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD 'opstrax_app_local'; END IF; END \$\$;"
-      - name: Apply base schema + seeds + owner migrations
+          psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -v ON_ERROR_STOP=1 -c \
+            "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_app') THEN CREATE ROLE opstrax_app LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD 'opstrax_app_local'; END IF; IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_system') THEN CREATE ROLE opstrax_system LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD 'opstrax_system_local'; END IF; END \$\$;"
+      - name: Apply base schema + production owner migrations (fail closed)
         run: |
           for f in database/init/001_schema.sql database/init/002_seed.sql database/init/004_jobs_execution.sql; do
-            psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -v ON_ERROR_STOP=0 -q -f "$f" || true
+            echo "Applying $f"
+            psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -v ON_ERROR_STOP=1 -q -f "$f"
           done
-          for f in $(ls database/migrations/*.sql | sort); do
-            psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -v ON_ERROR_STOP=0 -q -f "$f" || true
+          for f in \
+            database/migrations/2026_06_30_stage19_row_level_security.sql \
+            database/migrations/2026_06_30_stage20_rls_force_and_app_role.sql \
+            database/migrations/2026_07_01_stage22_rls_reconcile_coverage.sql; do
+            echo "Applying $f"
+            psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -v ON_ERROR_STOP=1 -q -f "$f"
           done
+          NEON_PG_URI='postgresql://zayra:zayra@127.0.0.1:5433/opstrax_local?sslmode=disable' \
+            ./tools/apply-neon-predeploy-migrations.sh
       - name: Build API + tests
         run: |
           dotnet build backend-dotnet/Opstrax.Api.csproj
@@ -125,6 +144,126 @@ jobs:
           kill "$(cat /tmp/api.pid)" 2>/dev/null || true; sleep 2; kill -9 "$(cat /tmp/api.pid)" 2>/dev/null || true
           [ "$ok" = 1 ] || { echo "app never reported listening — boot log tail:"; tail -40 /tmp/api_boot.log; exit 1; }
           echo "tables after init: $(psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';")"
-          psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -c "GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO opstrax_app; GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO opstrax_app;" || true
+      - name: Reapply mandatory terminal tenant boundary after schema materialization
+        run: |
+          psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -v ON_ERROR_STOP=1 -q \
+            -f database/migrations/2026_07_31_stage58_nonforgeable_tenant_ticket.sql
+          psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -v ON_ERROR_STOP=1 -q \
+            -f database/migrations/2026_07_31_stage59_data_protection_key_ring.sql
+          test "$(psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -tAc "SELECT count(*) FROM pg_policies WHERE schemaname='public' AND roles='{public}'::name[]")" = "0"
       - name: Run DB-backed integration suites
         run: dotnet test backend-dotnet.Tests/Opstrax.Tests.csproj --no-build --filter "FullyQualifiedName~Postgres|Category=Integration"
+
+  release-container-builds:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.2'
+      - name: Verify launch-critical source and migrations are packaged
+        run: |
+          test -f .dockerignore
+          test -f backend-dotnet/Middleware/PrincipalRateLimitingMiddleware.cs
+          test -f backend-dotnet/Services/FleetProductionReadinessService.cs
+          test -f backend-dotnet/Services/MfaChallengeConsumptionService.cs
+          test -f frontend/src/auth/csrfTokenStore.ts
+          test -f database/migrations/2026_07_30_customer_feedback_contract.sql
+          test -f database/migrations/2026_07_30_stage49_mfa_challenge_one_time.sql
+          test -f database/migrations/2026_07_30_stage50_fleet_production_contract.sql
+          test -f database/migrations/2026_07_30_stage51_production_runtime_support.sql
+          test -f database/migrations/2026_07_30_stage52_fleet_identity_uniqueness.sql
+          test -f database/migrations/2026_07_30_stage53_tenant_rls_reconciliation.sql
+          test -f database/migrations/2026_07_30_stage54_cold_chain_device_integrity.sql
+          test -f database/migrations/2026_07_30_stage55_fleet_runtime_route_contract.sql
+          test -f database/migrations/2026_07_30_stage56_asset_type_integrity.sql
+          test -f database/migrations/2026_07_30_stage57_workforce_schedule_tenant_integrity.sql
+          test -f database/migrations/2026_07_31_stage58_nonforgeable_tenant_ticket.sql
+          test -f database/migrations/2026_07_31_stage59_data_protection_key_ring.sql
+          test -f database/migrations/2026_08_01_stage60_dispatch_trip_pilot.sql
+          test -f database/migrations/2026_08_01_stage61_operations_proof_center.sql
+          test -f database/migrations/2026_08_01_stage62_last_mile_pilot.sql
+          test -f database/migrations/2026_08_01_stage63_route_plans_pilot.sql
+          test -f tools/generate-fleet-production-migration.mjs
+          test -f backend-dotnet.Tests/CoreFleetAssignmentsRegressionTests.cs
+          test -f backend-dotnet.Tests/CoreFleetDriversRegressionTests.cs
+          test -f backend-dotnet.Tests/CoreFleetUtilizationRegressionTests.cs
+          test -f backend-dotnet.Tests/CoreFleetVehiclesRegressionTests.cs
+          test -f backend-dotnet.Tests/CoreFleetIdentityConflictPostgresTests.cs
+          test -f backend-dotnet.Tests/FleetIdentityReadinessRegressionTests.cs
+          test -f backend-dotnet.Tests/CoreJobsBranchHosApiTests.cs
+          test -f backend-dotnet.Tests/FleetIdentityReadinessRegressionTests.cs
+          test -f backend-dotnet.Tests/FleetPilotSafetyUiTests.cs
+          test -f backend-dotnet.Tests/FleetSpecializedBranchTests.cs
+          test -f backend-dotnet.Tests/FleetSummaryApiRegressionTests.cs
+          test -f backend-dotnet.Tests/FleetTmsAuthorizationTests.cs
+          test -f backend-dotnet.Tests/FleetTmsSecurityHardeningTests.cs
+          test -f backend-dotnet.Tests/FleetTmsWorkspaceConcurrencyTests.cs
+          test -f backend-dotnet.Tests/WorkforceScheduleTenantIntegrityTests.cs
+          test -f backend-dotnet.Tests/FleetTmsWorkspaceWave1Tests.cs
+          test -f backend-dotnet.Tests/TenantRlsCoverageReadinessRegressionTests.cs
+          test -f backend-dotnet.Tests/FleetRuntimeRouteContractRegressionTests.cs
+          bash -n tools/apply-neon-predeploy-migrations.sh
+      - name: Verify generated Fleet production migration is current
+        run: |
+          cp database/migrations/2026_07_30_stage50_fleet_production_contract.sql "$RUNNER_TEMP/stage50.sql"
+          node tools/generate-fleet-production-migration.mjs
+          cmp "$RUNNER_TEMP/stage50.sql" database/migrations/2026_07_30_stage50_fleet_production_contract.sql
+      - name: Validate Compose model
+        env:
+          JWT_KEY: ci-only-jwt-signing-key-at-least-32-chars-long-000
+          PLATFORM_SUPERADMIN_PASSWORD: ci-only-platform-password
+          PG_CONNECTION: postgresql://ci:ci@postgres/ci
+          PG_CONNECTION_APP: postgresql://opstrax_app:app-ci-only@postgres/ci
+          PG_CONNECTION_SYSTEM: postgresql://opstrax_system:system-ci-only@postgres/ci
+          DATA_PROTECTION_CERTIFICATE_BASE64: Y2ktY29tcG9zZS1vbmx5
+          DATA_PROTECTION_CERTIFICATE_PASSWORD: ci-compose-only
+        run: docker compose config --quiet
+      - name: Prove production artifacts cannot enable the demo event simulator
+        run: |
+          if grep -R -E 'node-events|VITE_NODE_EVENTS_URL|NODE_EVENTS_URL|useEventStream' \
+            frontend/Dockerfile frontend/nginx.conf frontend/src docker-compose.yml render.yaml; then
+            echo "Demo event simulator reference found in a production artifact" >&2
+            exit 1
+          fi
+      - name: Build production API container
+        run: docker build --file backend-dotnet/Dockerfile --tag opstrax-api:ci .
+      - name: Build production frontend container
+        run: docker build --file frontend/Dockerfile --tag opstrax-frontend:ci frontend
+      - name: Smoke-test unprivileged frontend, SPA deep links, and API proxy
+        run: |
+          cleanup() {
+            docker rm -f opstrax-ci-frontend opstrax-ci-api >/dev/null 2>&1 || true
+            docker network rm opstrax-ci-network >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          cleanup
+          docker network create opstrax-ci-network >/dev/null
+          docker run -d --name opstrax-ci-api --network opstrax-ci-network --network-alias api-dotnet \
+            node:22.23.2-alpine3.24@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 \
+            node -e "require('http').createServer((req,res)=>{res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({source:'api-dotnet',path:req.url}))}).listen(8080,'0.0.0.0')" \
+            >/dev/null
+          docker run -d --name opstrax-ci-frontend --network opstrax-ci-network -p 18080:8080 opstrax-frontend:ci >/dev/null
+          for attempt in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:18080/health >/dev/null && break
+            sleep 1
+          done
+          test "$(docker inspect --format '{{.Config.User}}' opstrax-frontend:ci)" = "101"
+          test "$(docker exec opstrax-ci-frontend id -u)" = "101"
+          for path in / /login /fleet-overview /vehicles/overview /drivers/overview \
+            /fleet-utilization/overview /assignments/overview /track/ci-token \
+            /eta/ci-code /reset-password?token=ci /unknown-route; do
+            curl -fsS "http://127.0.0.1:18080$path" | grep -q '<div id="root"></div>'
+          done
+          curl -fsS http://127.0.0.1:18080/api/probe | grep -q '"source":"api-dotnet"'
+          if grep -R -E 'react-router-dom|node-events|VITE_NODE_EVENTS_URL|NODE_EVENTS_URL' frontend/src; then
+            echo "Retired production dependency or demo event reference found" >&2
+            exit 1
+          fi
+      - name: Block fixed high and critical container vulnerabilities
+        run: |
+          for image in opstrax-api:ci opstrax-frontend:ci; do
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v opstrax-trivy-cache:/root/.cache/trivy \
+              aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e \
+              image --ignore-unfixed --severity HIGH,CRITICAL --exit-code 1 --no-progress "$image"
+          done

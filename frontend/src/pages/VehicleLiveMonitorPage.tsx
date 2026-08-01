@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { useParams } from "react-router-dom";
+import { useParams } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { Activity, Gauge, MapPin, Navigation, User, AlertTriangle, Fuel, Power, RefreshCw } from "lucide-react";
 import { telemetryApi } from "@/services/telemetryApi";

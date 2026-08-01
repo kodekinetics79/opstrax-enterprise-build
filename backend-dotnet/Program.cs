@@ -8,6 +8,8 @@ using Opstrax.Api.Observability;
 using Opstrax.Api.Services;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.DataProtection.KeyManagement;
 using System.Net;
 using System.Text.Json;
 using System.Threading.RateLimiting;
@@ -72,77 +74,19 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
         AddNetwork(options, "192.168.0.0/16");
     }
 });
+var apiRateLimitSettings = ApiRateLimitSettings.FromConfiguration(builder.Configuration);
+builder.Services.AddSingleton(apiRateLimitSettings);
+builder.Services.AddSingleton<PrincipalApiRateLimiter>();
 builder.Services.AddRateLimiter(options =>
 {
-    const int apiPermitLimit = 240;
-    const int loginPermitLimit = 10;
-    var window = TimeSpan.FromMinutes(1);
+    var generalApiLimiter = ApiRateLimiterFactory.CreatePreAuthGeneral(apiRateLimitSettings);
+    var abuseLimiter = ApiRateLimiterFactory.CreateAbuse(apiRateLimitSettings);
 
-    static string ClientKey(HttpContext context) =>
-        context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-
-    static bool IsHealthProbe(PathString path) =>
-        path.Equals("/api/health", StringComparison.OrdinalIgnoreCase) ||
-        path.Equals("/api/ready", StringComparison.OrdinalIgnoreCase) ||
-        path.StartsWithSegments("/health", StringComparison.OrdinalIgnoreCase);
-
-    static bool IsLogin(PathString path) =>
-        path.Equals("/api/auth/login", StringComparison.OrdinalIgnoreCase) ||
-        // Second-factor completion shares the strict login bucket — a leaked challenge token
-        // is code-guessable, so it must be rate-limited like a password attempt.
-        path.Equals("/api/auth/mfa/login-verify", StringComparison.OrdinalIgnoreCase) ||
-        // Identifier-first SSO discovery is the entry point to every login, so it
-        // shares the strict login rate-limit bucket (domain-harvesting burns the
-        // same budget as password guessing).
-        path.Equals("/api/auth/sso/discover", StringComparison.OrdinalIgnoreCase) ||
-        // OIDC login start/callback also mint or lead to sessions — same bucket.
-        path.StartsWithSegments("/api/auth/sso/start", StringComparison.OrdinalIgnoreCase) ||
-        path.Equals("/api/auth/sso/callback", StringComparison.OrdinalIgnoreCase) ||
-        path.Equals("/api/auth/forgot-password", StringComparison.OrdinalIgnoreCase) ||
-        path.Equals("/api/auth/reset-password", StringComparison.OrdinalIgnoreCase) ||
-        path.Equals("/api/platform/auth/login", StringComparison.OrdinalIgnoreCase);
-
-    var generalApiLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
-    {
-        if (HttpMethods.IsOptions(context.Request.Method) ||
-            !context.Request.Path.StartsWithSegments("/api", StringComparison.OrdinalIgnoreCase) ||
-            IsHealthProbe(context.Request.Path))
-        {
-            return RateLimitPartition.GetNoLimiter("unlimited");
-        }
-
-        return RateLimitPartition.GetFixedWindowLimiter(
-            $"api:{ClientKey(context)}",
-            _ => new FixedWindowRateLimiterOptions
-            {
-                AutoReplenishment = true,
-                PermitLimit = apiPermitLimit,
-                QueueLimit = 0,
-                Window = window
-            });
-    });
-
-    var loginLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
-    {
-        if (HttpMethods.IsOptions(context.Request.Method) || !IsLogin(context.Request.Path))
-            return RateLimitPartition.GetNoLimiter("not-login");
-
-        return RateLimitPartition.GetFixedWindowLimiter(
-            $"login:{ClientKey(context)}",
-            _ => new FixedWindowRateLimiterOptions
-            {
-                AutoReplenishment = true,
-                PermitLimit = loginPermitLimit,
-                QueueLimit = 0,
-                Window = window
-            });
-    });
-
-    options.GlobalLimiter = PartitionedRateLimiter.CreateChained(generalApiLimiter, loginLimiter);
+    options.GlobalLimiter = PartitionedRateLimiter.CreateChained(generalApiLimiter, abuseLimiter);
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
     options.OnRejected = async (context, cancellationToken) =>
     {
-        var retryAfter = window;
+        var retryAfter = apiRateLimitSettings.Window;
         if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var leaseRetryAfter))
             retryAfter = leaseRetryAfter;
 
@@ -170,7 +114,21 @@ builder.Services.AddScoped<Opstrax.Api.Storage.FileStorageService>();
 builder.Services.AddSingleton<TenantScopeAccessor>();
 builder.Services.AddSingleton<Database>();
 builder.Services.AddHttpClient(); // POD asset proxy (token-scoped public POD delivery)
-builder.Services.AddDataProtection(); // protects the short-lived SSO OIDC flow-state cookie
+builder.Services.AddSingleton<PostgresDataProtectionXmlRepository>();
+builder.Services.AddSingleton<DataProtectionReadinessService>();
+var dataProtection = builder.Services.AddDataProtection()
+    .SetApplicationName("opstrax-api-v1");
+if (builder.Environment.IsProduction())
+{
+    var certificates = Opstrax.Api.Security.DataProtectionCertificateLoader
+        .LoadProductionCertificates(builder.Configuration);
+    dataProtection.ProtectKeysWithCertificate(certificates.Current);
+    if (certificates.Previous is not null)
+        dataProtection.UnprotectKeysWithAnyCertificate(certificates.Current, certificates.Previous);
+    builder.Services.AddOptions<KeyManagementOptions>()
+        .Configure<PostgresDataProtectionXmlRepository>(
+            (options, repository) => options.XmlRepository = repository);
+}
 builder.Services.AddSingleton<OidcLoginService>(); // OIDC SSO login (discovery + JWKS + code exchange)
 builder.Services.AddScoped<AuditService>();
 
@@ -211,6 +169,7 @@ builder.Services.AddSingleton<ReportingSchemaService>();
 builder.Services.AddSingleton<ObservabilitySchemaService>();
 builder.Services.AddSingleton<ServiceRunTracker>();
 builder.Services.AddSingleton<ConfigValidationService>();
+builder.Services.AddSingleton<FleetProductionReadinessService>();
 builder.Services.AddSingleton<TelemetryLiveStateService>();
 // Agentic Brain — the model behind the AI foundation's empty reasoning slot.
 builder.Services.AddSingleton<AgenticBrainService>();
@@ -318,6 +277,7 @@ builder.Services.AddSingleton<FeatureFlagSchemaService>();
 builder.Services.AddSingleton<RlsReconciliationSchemaService>();
 builder.Services.AddSingleton<Opstrax.Api.Seed.FleetTmsSeeder>();
 builder.Services.AddScoped<SecuritySettingsService>();
+builder.Services.AddScoped<MfaChallengeConsumptionService>();
 builder.Services.AddScoped<SecurityEventService>();
 builder.Services.AddScoped<SsoConnectionService>();
 builder.Services.AddScoped<AccessReviewService>();
@@ -379,6 +339,23 @@ var app = builder.Build();
     app.Logger.LogInformation(new EventId(0, "startup_config_ok"),
         "Config validation: {Status} ({Fail} failures, {Warn} warnings) · version {Version} · env {Env}",
         result.Status, result.FailCount, result.WarnCount, Opstrax.Api.Observability.BuildInfo.Version, app.Environment.EnvironmentName);
+}
+
+// A connection string that merely claims a restricted username is not evidence.
+// Production opens both pools and validates the server-reported roles before schema
+// checks, background services, or request middleware can touch customer data.
+if (app.Environment.IsProduction() && app.Configuration.GetValue<bool>("Rls:EnforceTenantContext"))
+{
+    try
+    {
+        await app.Services.GetRequiredService<Database>().ValidateProductionIdentitiesAsync();
+        app.Logger.LogInformation("Database identity separation verified (opstrax_app + opstrax_system).");
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogCritical(ex, "Production startup refused: dual database identities could not be proven.");
+        throw new InvalidOperationException("Production requires exact isolated opstrax_app and opstrax_system database identities.", ex);
+    }
 }
 
 // Route every DB query's latency + success/failure into the metrics collector so
@@ -517,7 +494,9 @@ using (var scope = app.Services.CreateScope())
 // was fatal. Additive and idempotent; see RolePermissionReconciler for the full rationale.
 using (var scope = app.Services.CreateScope())
 {
-    await scope.ServiceProvider.GetRequiredService<RolePermissionReconciler>().ReconcileAsync();
+    var reconciliationDb = scope.ServiceProvider.GetRequiredService<Database>();
+    var reconciler = scope.ServiceProvider.GetRequiredService<RolePermissionReconciler>();
+    await reconciliationDb.RunInSystemScopeAsync(() => reconciler.ReconcileAsync());
 }
 
 // Request telemetry runs FIRST: it establishes the trace_id / correlation_id for
@@ -544,11 +523,11 @@ app.UseSwagger();
 
 // RLS enforcement (Option A1). Production startup requires this to be explicitly
 // true. Non-production may leave it off for local/test compatibility. Enable it
-// only when PG_CONNECTION uses the restricted `opstrax_app` role
+// only when PG_CONNECTION_APP uses the restricted `opstrax_app` role
 // (see 2026_06_30_stage20_rls_force_and_app_role.sql). When true, each authenticated
-// request runs inside a tenant-scoped transaction (set_config('app.current_tenant_id',
-// …, true)); the pre-tenant auth bootstrap and public/platform paths run under the
-// separate platform_admin_bypass GUC so they are never silently blocked by RLS.
+// request runs inside an app transaction carrying a DB-signed ticket bound to that
+// backend PID + transaction id. Pre-tenant auth, public/platform and background paths
+// use the separately authenticated opstrax_system pool; no client-set bypass GUC exists.
 var rlsEnforceTenantContext = app.Configuration.GetValue<bool>("Rls:EnforceTenantContext");
 
 app.UseWhen(
@@ -563,9 +542,9 @@ app.UseWhen(
             var scopes = context.RequestServices.GetRequiredService<TenantScopeAccessor>();
             var scopedDb = context.RequestServices.GetRequiredService<Database>();
 
-            // Wraps next() under a bypass scope for no-tenant-context paths (public /
-            // platform / device-auth), so their handlers can reach RLS tables.
-            async Task InvokeUnderBypassAsync()
+            // Wraps next() under the isolated system identity for no-tenant-context
+            // paths (public / platform / device-auth).
+            async Task InvokeUnderSystemAsync()
             {
                 if (!rlsEnforceTenantContext) { await next(); return; }
                 await using var sys = await scopedDb.BeginSystemScopeAsync(context.RequestAborted);
@@ -579,11 +558,11 @@ app.UseWhen(
                 string.Equals(path, "/api/auth/mfa/login-verify", StringComparison.OrdinalIgnoreCase) ||
                 // Pre-login SSO discovery: no tenant context exists at email-entry
                 // time, so it reads the RLS-forced sso_connections table under the
-                // platform-admin bypass scope, exactly like /api/auth/login.
+                // isolated system scope, exactly like /api/auth/login.
                 string.Equals(path, "/api/auth/sso/discover", StringComparison.OrdinalIgnoreCase) ||
                 // OIDC login start + callback are pre-session too: they read the
                 // sso_connections + users tables and mint a session with no prior
-                // tenant context, so they run under the same bypass scope as login.
+                // tenant context, so they run under the same system scope as login.
                 path.StartsWith("/api/auth/sso/start", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(path, "/api/auth/sso/callback", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(path, "/api/auth/forgot-password", StringComparison.OrdinalIgnoreCase) ||
@@ -615,7 +594,7 @@ app.UseWhen(
                 (context.Request.Method.Equals("GET", StringComparison.OrdinalIgnoreCase) &&
                  path.StartsWith("/api/public/detention/evidence/", StringComparison.OrdinalIgnoreCase)))
             {
-                await InvokeUnderBypassAsync();
+                await InvokeUnderSystemAsync();
                 return;
             }
 
@@ -666,7 +645,7 @@ app.UseWhen(
 
             var db = context.RequestServices.GetRequiredService<Database>();
             // Pre-tenant bootstrap read of RLS-protected auth tables — runs under the
-            // platform bypass so it succeeds under the restricted role (no tenant yet).
+            // system identity so it succeeds before a tenant ticket exists.
             var sessionSql =
                 @"SELECT s.user_id, s.company_id, u.role_name, u.role_id, u.customer_id, u.branch_id, u.permissions_json, r.permissions_json role_permissions_json
                   FROM user_sessions s
@@ -702,13 +681,14 @@ app.UseWhen(
             // from users.permissions_json, this answered from the role — so the SPA could be
             // told it had permissions the API would then deny (and vice versa). One resolver,
             // one answer. Do not re-inline this.
-            var permissionSet = await EndpointMappings.ResolveEffectivePermissionsAsync(
-                roleId,
-                roleName,
+            Task<string[]> ResolvePermissions() => EndpointMappings.ResolveEffectivePermissionsAsync(
+                roleId, roleName,
                 session.GetValueOrDefault("rolePermissionsJson"),
                 session.GetValueOrDefault("permissionsJson"),
-                db,
-                context.RequestAborted);
+                db, context.RequestAborted);
+            var permissionSet = rlsEnforceTenantContext
+                ? await db.RunInSystemScopeAsync(ResolvePermissions, context.RequestAborted)
+                : await ResolvePermissions();
             var permissions = permissionSet.ToHashSet(StringComparer.OrdinalIgnoreCase);
 
             context.Items[EndpointMappings.AuthUserIdItemKey] = userId;
@@ -781,8 +761,8 @@ app.UseWhen(
                 }
             }
 
-            // Authenticated handler runs inside a tenant-scoped transaction so every
-            // query is filtered by RLS on app.current_tenant_id (no-op when RLS is off).
+            // Authenticated handlers share one app transaction. RLS derives the tenant
+            // only from its DB-signed, PID+txid-bound ticket.
             if (rlsEnforceTenantContext)
             {
                 await using var reqScope = await scopedDb.BeginTenantScopeAsync(companyId, context.RequestAborted);
@@ -799,6 +779,11 @@ app.UseWhen(
                 await next();
             }
         });
+        // The authoritative company/user identifiers now exist. Apply the regular
+        // API quota here, not at the public edge, so users sharing a corporate NAT
+        // cannot exhaust one another's allowance. Sensitive anonymous/device/public
+        // paths were already handled by the early IP-based abuse limiter.
+        branch.UseMiddleware<PrincipalRateLimitingMiddleware>();
     });
 app.MapGet("/swagger", () => Results.Content(SwaggerHtml(), "text/html"));
 app.MapGet("/swagger/index.html", () => Results.Content(SwaggerHtml(), "text/html"));
@@ -831,7 +816,13 @@ app.MapGet("/health/live",  () => Results.Ok(HealthEnvelope("alive")));
 // Readiness — validates the app can actually serve traffic: DB connectivity +
 // critical config (env vars, JWT key, etc.). A failing readiness pulls the
 // instance out of the load balancer without killing the process (unlike liveness).
-static async Task<IResult> ReadinessAsync(Database db, ConfigValidationService cfg, CancellationToken ct)
+static async Task<IResult> ReadinessAsync(
+    Database db,
+    ConfigValidationService cfg,
+    FleetProductionReadinessService fleetContract,
+    DataProtectionReadinessService dataProtectionReadiness,
+    IWebHostEnvironment environment,
+    CancellationToken ct)
 {
     var checks = new Dictionary<string, object>();
     var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -857,20 +848,81 @@ static async Task<IResult> ReadinessAsync(Database db, ConfigValidationService c
     checks["config"] = new { status = cfgResult.Status, failures = cfgResult.FailCount, warnings = cfgResult.WarnCount };
     if (cfgResult.FailCount > 0) failure ??= "critical_config_invalid";
 
-    var ready = dbOk && cfgResult.FailCount == 0;
+    DataProtectionReadinessResult? dataProtectionResult = null;
+    if (environment.IsProduction() && dbOk && cfgResult.FailCount == 0)
+    {
+        dataProtectionResult = await dataProtectionReadiness.CheckAsync(ct);
+        checks["data_protection_key_ring"] = new
+        {
+            status = dataProtectionResult.Ready ? "ready" : "unavailable",
+            key_count = dataProtectionResult.KeyCount,
+            failure_code = dataProtectionResult.FailureCode,
+        };
+        if (!dataProtectionResult.Ready) failure ??= "data_protection_key_ring_unavailable";
+    }
+
+    // Production Fleet readiness is a real database-contract proof, not SELECT 1.
+    // It verifies the restricted runtime identity, the complete Stage-50 schema,
+    // FORCE RLS/policies/grants, market reference data and correctness indexes.
+    // Details remain in structured logs; the public envelope exposes counts/booleans
+    // only and never SQL, role credentials, table data or connection values.
+    FleetProductionContractResult? fleetResult = null;
+    if (environment.IsProduction() && dbOk && cfgResult.FailCount == 0)
+    {
+        fleetResult = await fleetContract.CheckAsync(ct);
+        checks["fleet_production_contract"] = new
+        {
+            status = fleetResult.Ready ? "ready" : "invalid",
+            role_restricted = fleetResult.RoleRestricted,
+            missing_tables = fleetResult.MissingTables,
+            rls_violations = fleetResult.RlsViolations,
+            grant_violations = fleetResult.GrantViolations,
+            tenant_coverage_violations = fleetResult.TenantCoverageViolations,
+            tenant_grant_violations = fleetResult.TenantGrantViolations,
+            default_privilege_violations = fleetResult.DefaultPrivilegeViolations,
+            runtime_route_column_violations = fleetResult.RuntimeRouteColumnViolations,
+            runtime_route_object_violations = fleetResult.RuntimeRouteObjectViolations,
+            fleet_integrity_object_violations = fleetResult.FleetIntegrityObjectViolations,
+            workforce_contract_violations = fleetResult.WorkforceContractViolations,
+            migration_applied = fleetResult.MigrationApplied,
+            runtime_support_migration_applied = fleetResult.RuntimeSupportMigrationApplied,
+            tenant_coverage_migration_applied = fleetResult.TenantCoverageMigrationApplied,
+            cold_chain_integrity_migration_applied = fleetResult.ColdChainIntegrityMigrationApplied,
+            runtime_route_migration_applied = fleetResult.RuntimeRouteMigrationApplied,
+            asset_type_integrity_migration_applied = fleetResult.AssetTypeIntegrityMigrationApplied,
+            workforce_schedule_integrity_migration_applied = fleetResult.WorkforceScheduleIntegrityMigrationApplied,
+            tenant_ticket_migration_applied = fleetResult.TenantTicketMigrationApplied,
+            data_protection_key_ring_migration_applied = fleetResult.DataProtectionKeyRingMigrationApplied,
+            market_catalog_ready = fleetResult.MarketCatalogReady,
+            indexes_ready = fleetResult.IndexesReady,
+            critical_worker_violations = fleetResult.CriticalWorkerViolations,
+            failure_code = fleetResult.FailureCode
+        };
+        if (!fleetResult.Ready) failure ??= "fleet_production_contract_invalid";
+    }
+
+    var ready = dbOk && cfgResult.FailCount == 0 &&
+                (dataProtectionResult?.Ready ?? !environment.IsProduction()) &&
+                (fleetResult?.Ready ?? !environment.IsProduction());
     var envelope = HealthEnvelope(ready ? "ready" : "not_ready", checks, ready ? null : failure);
     return Results.Json(envelope, statusCode: ready ? StatusCodes.Status200OK : StatusCodes.Status503ServiceUnavailable);
 }
 
-app.MapGet("/ready",        (Database db, ConfigValidationService cfg, CancellationToken ct) => ReadinessAsync(db, cfg, ct));
-app.MapGet("/health/ready", (Database db, ConfigValidationService cfg, CancellationToken ct) => ReadinessAsync(db, cfg, ct));
+app.MapGet("/ready",        (Database db, ConfigValidationService cfg, FleetProductionReadinessService fleet, DataProtectionReadinessService dp, IWebHostEnvironment env, CancellationToken ct) => ReadinessAsync(db, cfg, fleet, dp, env, ct));
+app.MapGet("/health/ready", (Database db, ConfigValidationService cfg, FleetProductionReadinessService fleet, DataProtectionReadinessService dp, IWebHostEnvironment env, CancellationToken ct) => ReadinessAsync(db, cfg, fleet, dp, env, ct));
 
 // Prometheus scrape target — any external monitor (Grafana Agent, Datadog,
 // UptimeRobot-with-metrics) can alert on 5xx rate / p95 / DB failures within 60s.
 app.MapGet("/metrics", (Opstrax.Api.Observability.ApiMetricsService m) =>
     Results.Text(m.ToPrometheus(), "text/plain; version=0.0.4"));
 
-app.MapGet("/health/deep", async (Database db, ConfigValidationService configValidator, CancellationToken ct) =>
+app.MapGet("/health/deep", async (
+    Database db,
+    ConfigValidationService configValidator,
+    FleetProductionReadinessService fleetContract,
+    DataProtectionReadinessService dataProtectionReadiness,
+    IWebHostEnvironment environment,
+    CancellationToken ct) =>
 {
     var checks   = new Dictionary<string, object>();
     var dbOk     = false;
@@ -900,9 +952,12 @@ app.MapGet("/health/deep", async (Database db, ConfigValidationService configVal
     {
         try
         {
-            var heartbeatRows = await db.QueryAsync(
+            // Health probes are outside the /api middleware branch, so no ambient
+            // tenant/system scope exists here. Read the cross-tenant worker ledger
+            // explicitly through the restricted control-plane identity.
+            var heartbeatRows = await db.RunInSystemScopeAsync(() => db.QueryAsync(
                 @"SELECT service_name, last_heartbeat_at, last_run_status, consecutive_failures
-                  FROM service_heartbeats ORDER BY service_name", ct: ct);
+                  FROM service_heartbeats ORDER BY service_name", ct: ct), ct);
 
             foreach (var row in heartbeatRows)
             {
@@ -935,9 +990,57 @@ app.MapGet("/health/deep", async (Database db, ConfigValidationService configVal
         issues   = cfgResult.Issues.Select(i => new { i.Check, i.Level, i.Message }).ToList()
     };
 
+    DataProtectionReadinessResult? dataProtectionResult = null;
+    if (environment.IsProduction() && dbOk && cfgResult.FailCount == 0)
+    {
+        dataProtectionResult = await dataProtectionReadiness.CheckAsync(ct);
+        checks["data_protection_key_ring"] = new
+        {
+            status = dataProtectionResult.Ready ? "ready" : "unavailable",
+            key_count = dataProtectionResult.KeyCount,
+            failure_code = dataProtectionResult.FailureCode,
+        };
+    }
+
+    FleetProductionContractResult? fleetResult = null;
+    if (environment.IsProduction() && dbOk && cfgResult.FailCount == 0)
+    {
+        fleetResult = await fleetContract.CheckAsync(ct);
+        checks["fleet_production_contract"] = new
+        {
+            status = fleetResult.Ready ? "ready" : "invalid",
+            role_restricted = fleetResult.RoleRestricted,
+            missing_tables = fleetResult.MissingTables,
+            rls_violations = fleetResult.RlsViolations,
+            grant_violations = fleetResult.GrantViolations,
+            tenant_coverage_violations = fleetResult.TenantCoverageViolations,
+            tenant_grant_violations = fleetResult.TenantGrantViolations,
+            default_privilege_violations = fleetResult.DefaultPrivilegeViolations,
+            runtime_route_column_violations = fleetResult.RuntimeRouteColumnViolations,
+            runtime_route_object_violations = fleetResult.RuntimeRouteObjectViolations,
+            fleet_integrity_object_violations = fleetResult.FleetIntegrityObjectViolations,
+            workforce_contract_violations = fleetResult.WorkforceContractViolations,
+            migration_applied = fleetResult.MigrationApplied,
+            runtime_support_migration_applied = fleetResult.RuntimeSupportMigrationApplied,
+            tenant_coverage_migration_applied = fleetResult.TenantCoverageMigrationApplied,
+            cold_chain_integrity_migration_applied = fleetResult.ColdChainIntegrityMigrationApplied,
+            runtime_route_migration_applied = fleetResult.RuntimeRouteMigrationApplied,
+            asset_type_integrity_migration_applied = fleetResult.AssetTypeIntegrityMigrationApplied,
+            workforce_schedule_integrity_migration_applied = fleetResult.WorkforceScheduleIntegrityMigrationApplied,
+            tenant_ticket_migration_applied = fleetResult.TenantTicketMigrationApplied,
+            data_protection_key_ring_migration_applied = fleetResult.DataProtectionKeyRingMigrationApplied,
+            market_catalog_ready = fleetResult.MarketCatalogReady,
+            indexes_ready = fleetResult.IndexesReady,
+            critical_worker_violations = fleetResult.CriticalWorkerViolations,
+            failure_code = fleetResult.FailureCode
+        };
+    }
+
     // Determine overall status
     var overallStatus =
         !dbOk                                          ? "unhealthy" :
+        dataProtectionResult is { Ready: false }       ? "unhealthy" :
+        fleetResult is { Ready: false }                ? "unhealthy" :
         serviceStatuses.Any(s => s.GetType().GetProperty("status")?.GetValue(s)?.ToString() == "degraded")
                                                        ? "degraded" :
         cfgResult.FailCount > 0                       ? "degraded" :
@@ -947,6 +1050,8 @@ app.MapGet("/health/deep", async (Database db, ConfigValidationService configVal
 
     var failureReason =
         !dbOk                    ? "database_unavailable" :
+        dataProtectionResult is { Ready: false } ? "data_protection_key_ring_unavailable" :
+        fleetResult is { Ready: false } ? "fleet_production_contract_invalid" :
         cfgResult.FailCount > 0  ? "critical_config_invalid" :
         serviceStatuses.Any(s => s.GetType().GetProperty("status")?.GetValue(s)?.ToString() == "degraded")
                                  ? "background_service_degraded" :
@@ -1109,15 +1214,56 @@ static async Task<bool> ShouldRunSchemaInitAsync(WebApplication app, Database db
     {
         var row = await db.QuerySingleAsync(
             @"SELECT current_user AS role_name,
-                     (SELECT rolsuper     FROM pg_roles WHERE rolname = current_user) AS is_super,
-                     (SELECT rolbypassrls FROM pg_roles WHERE rolname = current_user) AS bypass_rls");
+                     role.rolcanlogin AS can_login,
+                     role.rolsuper AS is_super,
+                     role.rolbypassrls AS bypass_rls,
+                     role.rolcreatedb AS can_create_db,
+                     role.rolcreaterole AS can_create_role,
+                     role.rolinherit AS inherits_roles,
+                     role.rolreplication AS can_replicate,
+                     (SELECT COUNT(*) FROM pg_auth_members membership
+                      WHERE membership.member=role.oid)::int AS membership_count,
+                     has_database_privilege(current_user,current_database(),'CONNECT') AS db_connect,
+                     has_database_privilege(current_user,current_database(),'CREATE') AS db_create,
+                     has_database_privilege(current_user,current_database(),'TEMPORARY') AS db_temporary,
+                     has_schema_privilege(current_user,'public','USAGE') AS schema_usage,
+                     has_schema_privilege(current_user,'public','CREATE') AS schema_create
+              FROM pg_roles role WHERE role.rolname=current_user");
         var roleName = row?["roleName"]?.ToString() ?? "unknown";
+        var canLogin = row?["canLogin"] is bool l && l;
         var isSuper = row?["isSuper"] is bool s && s;
         var bypassRls = row?["bypassRls"] is bool b && b;
+        var canCreateDb = row?["canCreateDb"] is bool d && d;
+        var canCreateRole = row?["canCreateRole"] is bool c && c;
+        var inheritsRoles = row?["inheritsRoles"] is bool i && i;
+        var canReplicate = row?["canReplicate"] is bool r && r;
+        var membershipCount = Convert.ToInt32(row?.GetValueOrDefault("membershipCount") ?? -1);
+        var dbConnect = row?["dbConnect"] is bool dbc && dbc;
+        var dbCreate = row?["dbCreate"] is bool dbcr && dbcr;
+        var dbTemporary = row?["dbTemporary"] is bool dbt && dbt;
+        var schemaUsage = row?["schemaUsage"] is bool su && su;
+        var schemaCreate = row?["schemaCreate"] is bool sc && sc;
+        var roleRestricted = canLogin && !isSuper && !bypassRls && !canCreateDb && !canCreateRole
+                             && !inheritsRoles && !canReplicate && membershipCount == 0
+                             && dbConnect && !dbCreate && !dbTemporary && schemaUsage && !schemaCreate;
 
         // The owner is either a superuser or has BYPASSRLS (the app role has neither).
         var looksLikeOwner = isSuper || bypassRls;
         var rlsEnforced = app.Configuration.GetValue<bool>("Rls:EnforceTenantContext");
+
+        if (app.Environment.IsProduction() && rlsEnforced &&
+            (!string.Equals(roleName, "opstrax_app", StringComparison.Ordinal) || !roleRestricted))
+        {
+            app.Logger.LogCritical(
+                "Production startup refused: database role '{Role}' is not the required restricted opstrax_app identity " +
+                "(login={Login}, super={Super}, bypassrls={Bypass}, createdb={CreateDb}, createrole={CreateRole}, inherit={Inherit}, replication={Replication}, memberships={Memberships}, " +
+                "db_connect={DbConnect}, db_create={DbCreate}, db_temp={DbTemp}, schema_usage={SchemaUsage}, schema_create={SchemaCreate}). " +
+                "Run owner migrations out-of-band, then connect the API as opstrax_app.",
+                roleName, canLogin, isSuper, bypassRls, canCreateDb, canCreateRole, inheritsRoles, canReplicate, membershipCount,
+                dbConnect, dbCreate, dbTemporary, schemaUsage, schemaCreate);
+            throw new InvalidOperationException(
+                "Production runtime database role must be exact restricted opstrax_app with no role memberships.");
+        }
 
         if (looksLikeOwner)
         {
@@ -1134,11 +1280,18 @@ static async Task<bool> ShouldRunSchemaInitAsync(WebApplication app, Database db
         }
 
         app.Logger.LogWarning("Connected as restricted role '{Role}' but RLS is OFF — attempting schema init anyway; " +
-            "DDL may fail. Point PG_CONNECTION at the owner for migrations/init.", roleName);
+            "DDL may fail. Apply owner migrations out-of-band before runtime boot.", roleName);
         return true;
     }
     catch (Exception ex)
     {
+        if (app.Environment.IsProduction() && app.Configuration.GetValue<bool>("Rls:EnforceTenantContext"))
+        {
+            app.Logger.LogCritical(ex,
+                "Production startup refused: the restricted runtime database identity could not be proven.");
+            throw new InvalidOperationException(
+                "Production runtime database role must be provably restricted opstrax_app.", ex);
+        }
         // Never block startup on the check itself failing (e.g. restricted pg_roles view).
         app.Logger.LogWarning(ex, "Schema init role check could not be evaluated; proceeding with schema init.");
         return true;

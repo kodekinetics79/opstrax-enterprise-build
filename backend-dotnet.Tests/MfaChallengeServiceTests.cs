@@ -16,6 +16,41 @@ public class MfaChallengeServiceTests
         Assert.True(MfaChallengeService.TryValidate(Key, token, T0, out var uid, out var cid));
         Assert.Equal(42, uid);
         Assert.Equal(7, cid);
+
+        Assert.True(MfaChallengeService.TryValidate(Key, token, T0, out MfaChallengeClaims claims));
+        Assert.Equal(42, claims.UserId);
+        Assert.Equal(7, claims.CompanyId);
+        Assert.Equal(T0.AddMinutes(5), claims.ExpiresAt);
+        Assert.False(string.IsNullOrWhiteSpace(claims.Jti));
+    }
+
+    [Fact]
+    public void Challenges_Issued_In_The_Same_Second_Have_Distinct_Jtis()
+    {
+        var first = MfaChallengeService.Issue(Key, 42, 7, T0);
+        var second = MfaChallengeService.Issue(Key, 42, 7, T0);
+
+        Assert.NotEqual(first, second);
+        Assert.True(MfaChallengeService.TryValidate(Key, first, T0, out MfaChallengeClaims firstClaims));
+        Assert.True(MfaChallengeService.TryValidate(Key, second, T0, out MfaChallengeClaims secondClaims));
+        Assert.NotEqual(firstClaims.Jti, secondClaims.Jti);
+    }
+
+    [Theory]
+    [InlineData(42, 8)]
+    [InlineData(43, 7)]
+    public void Signed_User_Or_Company_Tampering_Is_Rejected(long replacementUser, long replacementCompany)
+    {
+        var token = MfaChallengeService.Issue(Key, 42, 7, T0);
+        var dot = token.IndexOf('.');
+        var payload = System.Text.Encoding.UTF8.GetString(Decode(token[..dot]));
+        var parts = payload.Split(':');
+        parts[1] = replacementUser.ToString();
+        parts[2] = replacementCompany.ToString();
+        var tamperedPayload = Encode(System.Text.Encoding.UTF8.GetBytes(string.Join(':', parts)));
+        var tampered = tamperedPayload + token[dot..];
+
+        Assert.False(MfaChallengeService.TryValidate(Key, tampered, T0, out _, out _));
     }
 
     [Fact]
@@ -59,5 +94,15 @@ public class MfaChallengeServiceTests
     public void Malformed_Tokens_Are_Rejected(string? token)
     {
         Assert.False(MfaChallengeService.TryValidate(Key, token, T0, out _, out _));
+    }
+
+    private static string Encode(byte[] bytes) =>
+        Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+
+    private static byte[] Decode(string value)
+    {
+        var b64 = value.Replace('-', '+').Replace('_', '/');
+        b64 += (b64.Length % 4) switch { 2 => "==", 3 => "=", _ => "" };
+        return Convert.FromBase64String(b64);
     }
 }

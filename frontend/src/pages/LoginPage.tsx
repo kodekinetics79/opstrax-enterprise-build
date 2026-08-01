@@ -3,7 +3,7 @@ import { useMutation } from "@tanstack/react-query";
 import axios from "axios";
 import { AlertCircle, ArrowRight, Building2, ClipboardCheck, Lock, Route, ShieldCheck, Wrench } from "lucide-react";
 import { flushSync } from "react-dom";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router";
 import { getLandingRouteForSession } from "@/auth/sessionRouting";
 import { useAuth } from "@/hooks/useAuth";
 import { authApi, type SsoConnection } from "@/services/authApi";

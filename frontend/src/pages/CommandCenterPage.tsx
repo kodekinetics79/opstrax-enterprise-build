@@ -5,7 +5,7 @@ import {
   CheckCircle2, Clock, Download, Gauge, Package, RadioTower,
   RefreshCw, ShieldCheck, Sparkles, Truck, Wrench, Zap, type LucideIcon,
 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import {
   Area, AreaChart, Bar, BarChart, Cell, Pie, PieChart,
   ResponsiveContainer, Tooltip,

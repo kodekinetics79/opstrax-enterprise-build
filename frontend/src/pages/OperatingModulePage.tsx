@@ -39,7 +39,7 @@ import { alertsApi } from "@/services/alertsApi";
 import { useHasPermission } from "@/hooks/usePermission";
 import type { AnyRecord } from "@/types";
 import { calculateCustomerHealth, calculateProfitability, calculateShipmentDelay, formatCurrency, formatDate } from "@/utils/formatters";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 
 // developmentFleetSeedData is LOCAL-DEV-ONLY scaffolding. The `import.meta.env.DEV`
 // flag is statically inlined by Vite (true in `vite dev`, false in `vite build`),

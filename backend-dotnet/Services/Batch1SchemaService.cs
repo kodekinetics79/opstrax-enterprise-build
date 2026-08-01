@@ -60,6 +60,9 @@ public sealed class Batch1SchemaService(Database db, IConfiguration? configurati
         // Blind index (HMAC) for license_number — lets the uniqueness check match on
         // encrypted values without decrypting. See PiiProtectionService.BlindIndex.
         new("drivers", "license_number_bidx", "VARCHAR(64) NULL"),
+        new("vehicle_assignments", "branch_id", "BIGINT NULL"),
+        new("vehicle_assignments", "released_at", "TIMESTAMPTZ NULL"),
+        new("jobs", "branch_id", "BIGINT NULL"),
         new("customers", "phone", "VARCHAR(50) NULL"),
         new("customers", "billing_address", "VARCHAR(300) NULL"),
         new("customers", "shipping_address", "VARCHAR(300) NULL"),
@@ -247,6 +250,53 @@ public sealed class Batch1SchemaService(Database db, IConfiguration? configurati
         "ALTER TABLE customers ALTER COLUMN risk_score DROP NOT NULL",
         "ALTER TABLE customers ALTER COLUMN risk_score DROP DEFAULT",
         "CREATE INDEX IF NOT EXISTS idx_customers_health_computed ON customers (company_id, health_computed_at)"
+        ,@"UPDATE jobs j SET branch_id=v.branch_id FROM vehicles v
+            WHERE j.branch_id IS NULL AND j.assigned_vehicle_id=v.id AND j.company_id=v.company_id
+              AND v.branch_id IS NOT NULL"
+        ,@"UPDATE jobs j SET branch_id=d.branch_id FROM drivers d
+            WHERE j.branch_id IS NULL AND j.assigned_driver_id=d.id AND j.company_id=d.company_id
+              AND d.branch_id IS NOT NULL"
+        ,"CREATE INDEX IF NOT EXISTS idx_jobs_branch ON jobs (company_id, branch_id)"
+        ,@"WITH ranked AS (
+              SELECT id, ROW_NUMBER() OVER (PARTITION BY company_id, assigned_driver_id ORDER BY id) rn
+              FROM vehicles WHERE deleted_at IS NULL AND assigned_driver_id IS NOT NULL)
+            UPDATE vehicles SET assigned_driver_id=NULL WHERE id IN (SELECT id FROM ranked WHERE rn>1)"
+        ,@"WITH ranked AS (
+              SELECT id, ROW_NUMBER() OVER (PARTITION BY company_id, assigned_vehicle_id ORDER BY id) rn
+              FROM drivers WHERE deleted_at IS NULL AND assigned_vehicle_id IS NOT NULL)
+            UPDATE drivers SET assigned_vehicle_id=NULL WHERE id IN (SELECT id FROM ranked WHERE rn>1)"
+        ,@"UPDATE vehicles v SET assigned_driver_id=NULL
+            WHERE assigned_driver_id IS NOT NULL AND NOT EXISTS (
+              SELECT 1 FROM drivers d WHERE d.id=v.assigned_driver_id AND d.company_id=v.company_id
+                AND d.deleted_at IS NULL AND d.assigned_vehicle_id=v.id)"
+        ,@"UPDATE drivers d SET assigned_vehicle_id=NULL
+            WHERE assigned_vehicle_id IS NOT NULL AND NOT EXISTS (
+              SELECT 1 FROM vehicles v WHERE v.id=d.assigned_vehicle_id AND v.company_id=d.company_id
+                AND v.deleted_at IS NULL AND v.assigned_driver_id=d.id)"
+        ,@"WITH ranked AS (
+              SELECT id, ROW_NUMBER() OVER (PARTITION BY company_id, vehicle_id ORDER BY assigned_at DESC, id DESC) rn
+              FROM vehicle_assignments WHERE status='Active')
+            UPDATE vehicle_assignments SET status='Released', released_at=COALESCE(released_at,NOW())
+            WHERE id IN (SELECT id FROM ranked WHERE rn>1)"
+        ,@"WITH ranked AS (
+              SELECT id, ROW_NUMBER() OVER (PARTITION BY company_id, driver_id ORDER BY assigned_at DESC, id DESC) rn
+              FROM vehicle_assignments WHERE status='Active' AND driver_id IS NOT NULL)
+            UPDATE vehicle_assignments SET status='Released', released_at=COALESCE(released_at,NOW())
+            WHERE id IN (SELECT id FROM ranked WHERE rn>1)"
+        ,"CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicles_active_driver ON vehicles (company_id, assigned_driver_id) WHERE deleted_at IS NULL AND assigned_driver_id IS NOT NULL"
+        ,"CREATE UNIQUE INDEX IF NOT EXISTS uq_drivers_active_vehicle ON drivers (company_id, assigned_vehicle_id) WHERE deleted_at IS NULL AND assigned_vehicle_id IS NOT NULL"
+        // Fleet master identities must be enforced in PostgreSQL, not only by
+        // raceable endpoint prechecks. Codes stay reserved after archival to match
+        // the legacy table constraints; VIN/licence identities are reusable once
+        // the old master row is soft-deleted.
+        ,"CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicles_identity_code_normalized ON vehicles (company_id, LOWER(BTRIM(vehicle_code)))"
+        ,"CREATE UNIQUE INDEX IF NOT EXISTS uq_drivers_identity_code_normalized ON drivers (company_id, LOWER(BTRIM(driver_code)))"
+        ,"CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicles_active_vin_normalized ON vehicles (company_id, LOWER(BTRIM(vin))) WHERE deleted_at IS NULL AND NULLIF(BTRIM(vin),'') IS NOT NULL"
+        ,"CREATE UNIQUE INDEX IF NOT EXISTS uq_drivers_active_license_plaintext_normalized ON drivers (company_id, LOWER(BTRIM(license_number))) WHERE deleted_at IS NULL AND NULLIF(BTRIM(license_number),'') IS NOT NULL AND NULLIF(BTRIM(license_number_bidx),'') IS NULL"
+        ,"CREATE UNIQUE INDEX IF NOT EXISTS uq_drivers_active_license_bidx ON drivers (company_id, license_number_bidx) WHERE deleted_at IS NULL AND NULLIF(BTRIM(license_number_bidx),'') IS NOT NULL"
+        ,"CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_assignments_active_vehicle ON vehicle_assignments (company_id, vehicle_id) WHERE status='Active'"
+        ,"CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_assignments_active_driver ON vehicle_assignments (company_id, driver_id) WHERE status='Active' AND driver_id IS NOT NULL"
+        ,"CREATE INDEX IF NOT EXISTS idx_vehicle_assignments_branch ON vehicle_assignments (company_id, branch_id, assigned_at DESC)"
     ];
 
     private static readonly string[] SeedStatements =

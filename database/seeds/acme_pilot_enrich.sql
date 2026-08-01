@@ -96,8 +96,8 @@ BEGIN
 
     -- ── Branches (12) + depots/yards (20), fleet distribution, branch manager ──
     -- Requires Stage 25 (branches table + branch_id columns).
-    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='branches')
-       AND (SELECT count(*) FROM branches WHERE company_id=cid)=0 THEN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='branches') THEN
+      IF (SELECT count(*) FROM branches WHERE company_id=cid)=0 THEN
         INSERT INTO branches (company_id, branch_code, name, branch_type, region, city, status)
         SELECT cid, 'ACME-BR-'||LPAD(g::text,2,'0'),
                (ARRAY['Midwest','South','Northeast','West','Southeast','Mountain'])[(g%6)+1]||' Branch '||g,
@@ -115,8 +115,9 @@ BEGIN
                 'branchmgr@acme-transport.com', 'Acme Branch Manager', 'Fleet Manager', 3, 'Active',
                 '["dashboard:view","vehicles:view","drivers:view","shipments:view","dispatch:view"]'::jsonb, NULL)
         ON CONFLICT (email) DO NOTHING;
+      END IF;
     END IF;
 
-    RAISE NOTICE 'ACME enrichment: 50 routes, 600 dispatch, 400 trips, 30 geofences, 120 WOs, 80 alerts, 40 notifications, 12 branches + 20 depots.';
+    RAISE NOTICE 'ACME enrichment complete; branch/depot seed is conditional on the optional branches schema.';
 END
 $enrich$;

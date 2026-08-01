@@ -1,4 +1,21 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "installCommand": "npm ci --no-audit --no-fund",
+  "buildCommand": "node -e \"if (!process.env.VITE_API_BASE_URL && !process.env.VITE_DOTNET_API_URL) { console.error('VITE_API_BASE_URL is required for the Vercel production build'); process.exit(1) }\" && npm run build",
+  "outputDirectory": "dist",
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "Content-Security-Policy", "value": "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https://*.onrender.com wss://*.onrender.com; worker-src 'self' blob:; manifest-src 'self'; upgrade-insecure-requests" },
+        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
+        { "key": "Permissions-Policy", "value": "camera=(), microphone=(), geolocation=()" },
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "X-Frame-Options", "value": "DENY" },
+        { "key": "Strict-Transport-Security", "value": "max-age=63072000; includeSubDomains; preload" }
+      ]
+    }
+  ],
   "rewrites": [
     {
       "source": "/(.*)",

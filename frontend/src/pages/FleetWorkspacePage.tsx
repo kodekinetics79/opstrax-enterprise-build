@@ -3,7 +3,7 @@ import {
   AlertTriangle, ArrowRight, CheckCircle2, ChevronRight, ClipboardList, Fuel,
   Gauge, MapPinned, Package, RefreshCw, Truck, Wrench,
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { notifyApiError } from '@/services/fleetTmsApi';
 import {
   fleetApi,
@@ -16,6 +16,7 @@ import {
 } from '@/services/fleetTmsApi';
 import { carriersApi } from '@/services/carriersApi';
 import { useAuth } from '@/hooks/useAuth';
+import { useHasPermission } from '@/hooks/usePermission';
 import { ShipmentLifecycleDrawer } from '../components/fleet/ShipmentLifecycleDrawer';
 import type { AnyRecord } from '@/types';
 
@@ -51,6 +52,13 @@ const num = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 const fmt0 = (v: unknown) => num(v).toFixed(0);
 const fmt1 = (v: unknown) => num(v).toFixed(1);
 
+function trackingProvenance(point: FleetTrackingPoint): string {
+  if (!point.isLive) return 'Non-live workspace projection';
+  const age = num(point.freshnessSeconds);
+  const ageLabel = age < 60 ? `${fmt0(age)}s old` : age < 3600 ? `${fmt0(age / 60)}m old` : `${fmt1(age / 3600)}h old`;
+  return `${point.freshnessStatus || 'Live'} · ${point.source || 'canonical telemetry'} · ${ageLabel}`;
+}
+
 function toCarrierRow(raw: AnyRecord): CarrierRow {
   return {
     id: String(raw.id),
@@ -75,6 +83,8 @@ function fmtTime(iso?: string): string | null {
 export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: FleetMode }) {
   const navigate = useNavigate();
   const { session } = useAuth();
+  const hasPermission = useHasPermission();
+  const canManageFleet = hasPermission('fleet:manage');
   const [mode, setMode] = useState<FleetMode>(initialMode);
   const config = MODULES[mode];
   const [overview, setOverview] = useState<FleetOverview | null>(null);
@@ -244,6 +254,7 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
   }, [carriers, summary]);
 
   const handleDispatch = async (shipment: FleetShipment) => {
+    if (!canManageFleet) return;
     setSavingId(shipment.id);
     try {
       await fleetApi.dispatchShipment(shipment.id, {
@@ -261,6 +272,7 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
   };
 
   const handleService = async (vehicle: FleetVehicle) => {
+    if (!canManageFleet) return;
     setSavingId(vehicle.id);
     try {
       await fleetApi.serviceVehicle(vehicle.id, {
@@ -278,11 +290,19 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
   };
 
   const handleCloseMaintenance = async (ticket: FleetMaintenanceTicket) => {
+    if (!canManageFleet) return;
+    const entered = window.prompt('Enter the actual maintenance cost before closing this work order:', String(ticket.actualCost || ticket.estimatedCost || 0));
+    if (entered === null) return;
+    const actualCost = Number(entered);
+    if (!Number.isFinite(actualCost) || actualCost < 0) {
+      notifyApiError(new Error('Actual cost must be a non-negative number.'), 'Invalid actual cost.');
+      return;
+    }
     setSavingId(ticket.id);
     try {
       await fleetApi.closeMaintenance(ticket.id, {
         status: 'Closed',
-        actualCost: ticket.estimatedCost,
+        actualCost,
         notes: 'Closed after review from fleet operations.',
       });
       await refreshAll();
@@ -294,6 +314,7 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
   };
 
   const handleFlagFuel = async (eventRow: FleetFuelEvent) => {
+    if (!canManageFleet) return;
     setSavingId(eventRow.id);
     try {
       await fleetApi.flagFuelEvent(eventRow.id, {
@@ -383,6 +404,13 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
         </div>
       </header>
 
+      {!canManageFleet && (
+        <div className="shrink-0 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900" role="status">
+          <p className="font-semibold">Read-only Fleet Workspace</p>
+          <p className="mt-0.5 text-xs text-sky-800">Fleet manage permission is required to dispatch shipments, change service state, close work orders, flag fuel events, or update shipment lifecycle records.</p>
+        </div>
+      )}
+
       {loadWarnings.length > 0 && (
         <div className="shrink-0 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           <p className="font-semibold">Some workspace data could not be loaded.</p>
@@ -428,25 +456,25 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
               ) : (
                 <div className="grid auto-rows-fr gap-2.5 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                   {mode === 'vehicles' && vehicles.map((vehicle) => (
-                    <VehicleCard key={vehicle.id} vehicle={vehicle} saving={savingId === vehicle.id} onService={() => handleService(vehicle)} />
+                    <VehicleCard key={vehicle.id} vehicle={vehicle} saving={savingId === vehicle.id} canManage={canManageFleet} onService={() => handleService(vehicle)} />
                   ))}
                   {mode === 'tracking' && tracking.map((point) => (
-                    <TrackingCard key={point.id} point={point} onOpen={() => {
+                    <TrackingCard key={`${point.sourceType ?? 'workspace'}:${point.id}`} point={point} onOpen={() => {
                       const match = shipments.find((s) => s.shipmentNumber === point.shipmentNumber);
                       if (match) setSelectedShipment(match);
                     }} canOpen={shipments.some((s) => s.shipmentNumber === point.shipmentNumber)} />
                   ))}
                   {mode === 'maintenance' && maintenance.map((ticket) => (
-                    <MaintenanceCard key={ticket.id} ticket={ticket} saving={savingId === ticket.id} onClose={() => handleCloseMaintenance(ticket)} />
+                    <MaintenanceCard key={ticket.id} ticket={ticket} saving={savingId === ticket.id} canManage={canManageFleet} onClose={() => handleCloseMaintenance(ticket)} />
                   ))}
                   {mode === 'fuel' && fuel.map((eventRow) => (
-                    <FuelCard key={eventRow.id} eventRow={eventRow} saving={savingId === eventRow.id} onFlag={() => handleFlagFuel(eventRow)} />
+                    <FuelCard key={eventRow.id} eventRow={eventRow} saving={savingId === eventRow.id} canManage={canManageFleet} onFlag={() => handleFlagFuel(eventRow)} />
                   ))}
                   {mode === 'carriers' && carriers.map((carrier) => (
                     <CarrierCard key={carrier.id} carrier={carrier} onManage={() => navigate('/carrier-management')} />
                   ))}
                   {(mode === 'command' || mode === 'shipments') && shipments.map((shipment) => (
-                    <ShipmentCard key={shipment.id} shipment={shipment} saving={savingId === shipment.id}
+                    <ShipmentCard key={shipment.id} shipment={shipment} saving={savingId === shipment.id} canManage={canManageFleet}
                       onDispatch={() => handleDispatch(shipment)} onOpenLifecycle={() => setSelectedShipment(shipment)} />
                   ))}
                 </div>
@@ -579,7 +607,7 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
       </div>
 
       {selectedShipment && (
-        <ShipmentLifecycleDrawer shipment={selectedShipment} onClose={() => setSelectedShipment(null)} />
+        <ShipmentLifecycleDrawer shipment={selectedShipment} canManage={canManageFleet} onClose={() => setSelectedShipment(null)} />
       )}
     </div>
   );
@@ -665,14 +693,14 @@ function statusTone(status: string): 'slate' | 'emerald' | 'amber' | 'rose' {
 
 /* ── mode cards ─────────────────────────────────────────────────────────── */
 
-function ShipmentCard({ shipment, onDispatch, onOpenLifecycle, saving }: { shipment: FleetShipment; onDispatch: () => void; onOpenLifecycle: () => void; saving: boolean }) {
+function ShipmentCard({ shipment, onDispatch, onOpenLifecycle, saving, canManage }: { shipment: FleetShipment; onDispatch: () => void; onOpenLifecycle: () => void; saving: boolean; canManage: boolean }) {
   return (
     <BoardCard>
       <CardHead title={shipment.shipmentNumber} subtitle={`${shipment.customerName} · ${shipment.destination}`}
         chip={<CardChip text={shipment.status} tone={statusTone(shipment.status)} />} />
       <CardMeta items={[shipment.vehicleNumber || 'Unassigned', shipment.priority, shipment.mode]} />
       <div className="mt-auto grid grid-cols-2 gap-2">
-        <button type="button" onClick={onDispatch} disabled={saving || shipment.status === 'Delivered'} className="btn-primary h-9 justify-center px-3 text-xs">
+        <button type="button" onClick={onDispatch} disabled={!canManage || saving || shipment.status === 'Delivered'} title={canManage ? undefined : 'Requires fleet manage permission'} className="btn-primary h-9 justify-center px-3 text-xs">
           {saving ? 'Dispatching…' : 'Dispatch'}
         </button>
         <button type="button" onClick={onOpenLifecycle} className="btn-ghost h-9 justify-center px-3 text-xs">
@@ -683,7 +711,7 @@ function ShipmentCard({ shipment, onDispatch, onOpenLifecycle, saving }: { shipm
   );
 }
 
-function VehicleCard({ vehicle, onService, saving }: { vehicle: FleetVehicle; onService: () => void; saving: boolean }) {
+function VehicleCard({ vehicle, onService, saving, canManage }: { vehicle: FleetVehicle; onService: () => void; saving: boolean; canManage: boolean }) {
   return (
     <BoardCard>
       <CardHead title={vehicle.vehicleNumber} subtitle={`${vehicle.type} · ${vehicle.driverName || 'Unassigned'}`}
@@ -692,7 +720,7 @@ function VehicleCard({ vehicle, onService, saving }: { vehicle: FleetVehicle; on
       <div className="deck-track">
         <div className={`deck-fill ${num(vehicle.fuelLevelPercent) >= 50 ? 'deck-fill-emerald' : num(vehicle.fuelLevelPercent) >= 25 ? 'deck-fill-amber' : 'deck-fill-red'}`} style={{ width: `${Math.min(100, num(vehicle.fuelLevelPercent))}%` }} />
       </div>
-      <button type="button" onClick={onService} disabled={saving} className="btn-ghost mt-auto h-9 justify-center px-3 text-xs">
+      <button type="button" onClick={onService} disabled={!canManage || saving} title={canManage ? undefined : 'Requires fleet manage permission'} className="btn-ghost mt-auto h-9 justify-center px-3 text-xs">
         {saving ? 'Updating…' : 'Send to service'} <Wrench className="h-3.5 w-3.5" />
       </button>
     </BoardCard>
@@ -705,6 +733,9 @@ function TrackingCard({ point, onOpen, canOpen }: { point: FleetTrackingPoint; o
       <CardHead title={point.shipmentNumber} subtitle={`${point.locationLabel} · ${point.geofenceName}`}
         chip={<CardChip text={point.status} tone={statusTone(point.status)} />} />
       <CardMeta items={[point.vehicleNumber, `${fmt0(point.speedKph)} km/h`, point.alertType || 'No alert']} />
+      <p className={`text-[11px] font-semibold ${point.isLive ? 'text-emerald-700' : 'text-slate-500'}`}>
+        {trackingProvenance(point)}
+      </p>
       {point.alertType && (
         <p className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-700">
           <AlertTriangle className="h-3 w-3 shrink-0" /> {point.alertType}
@@ -719,26 +750,26 @@ function TrackingCard({ point, onOpen, canOpen }: { point: FleetTrackingPoint; o
   );
 }
 
-function MaintenanceCard({ ticket, onClose, saving }: { ticket: FleetMaintenanceTicket; onClose: () => void; saving: boolean }) {
+function MaintenanceCard({ ticket, onClose, saving, canManage }: { ticket: FleetMaintenanceTicket; onClose: () => void; saving: boolean; canManage: boolean }) {
   return (
     <BoardCard>
       <CardHead title={ticket.workOrderNumber} subtitle={`${ticket.vehicleNumber} · ${ticket.vendorName}`}
         chip={<CardChip text={ticket.status} tone={statusTone(ticket.status)} />} />
       <CardMeta items={[ticket.priority, `${fmt1(ticket.downtimeHours)} hrs down`, `est ${fmt0(ticket.estimatedCost)}`]} />
-      <button type="button" onClick={onClose} disabled={saving || ticket.status === 'Closed'} className="btn-ghost mt-auto h-9 justify-center px-3 text-xs">
+      <button type="button" onClick={onClose} disabled={!canManage || saving || ticket.status === 'Closed'} title={canManage ? undefined : 'Requires fleet manage permission'} className="btn-ghost mt-auto h-9 justify-center px-3 text-xs">
         {saving ? 'Closing…' : ticket.status === 'Closed' ? 'Closed' : 'Close work order'} <CheckCircle2 className="h-3.5 w-3.5" />
       </button>
     </BoardCard>
   );
 }
 
-function FuelCard({ eventRow, onFlag, saving }: { eventRow: FleetFuelEvent; onFlag: () => void; saving: boolean }) {
+function FuelCard({ eventRow, onFlag, saving, canManage }: { eventRow: FleetFuelEvent; onFlag: () => void; saving: boolean; canManage: boolean }) {
   return (
     <BoardCard>
       <CardHead title={eventRow.vehicleNumber} subtitle={`${eventRow.stationName} · ${eventRow.city}`}
         chip={<CardChip text={eventRow.anomalyFlag ? 'Review' : eventRow.eventType} tone={eventRow.anomalyFlag ? 'amber' : 'slate'} />} />
       <CardMeta items={[`${fmt0(eventRow.liters)} L`, `cost ${fmt0(eventRow.cost)}`, eventRow.fuelCardNumber]} />
-      <button type="button" onClick={onFlag} disabled={saving || eventRow.anomalyFlag} className="btn-ghost mt-auto h-9 justify-center px-3 text-xs">
+      <button type="button" onClick={onFlag} disabled={!canManage || saving || eventRow.anomalyFlag} title={canManage ? undefined : 'Requires fleet manage permission'} className="btn-ghost mt-auto h-9 justify-center px-3 text-xs">
         {saving ? 'Flagging…' : eventRow.anomalyFlag ? 'Flagged for review' : 'Flag anomaly'} <Fuel className="h-3.5 w-3.5" />
       </button>
     </BoardCard>

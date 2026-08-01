@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useLocation } from "react-router-dom";
+import { useLocation } from "react-router";
 import { customersApi } from "@/services/customersApi";
 import { contractsApi } from "@/services/contractsApi";
 import { customerEtaApi } from "@/services/customerEtaApi";

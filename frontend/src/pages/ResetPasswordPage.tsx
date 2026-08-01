@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router";
 import { AlertCircle, CheckCircle2, ShieldCheck } from "lucide-react";
 import { authApi } from "@/services/authApi";
 import { OpsTraxLogo } from "@/components/OpsTraxLogo";

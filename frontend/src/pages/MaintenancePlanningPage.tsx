@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useLocation } from "react-router-dom";
+import { useLocation } from "react-router";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { withFallback } from "@/services/fleetDomainApi";
 import {

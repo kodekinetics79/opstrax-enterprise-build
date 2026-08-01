@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { tokens } from "@/styles/tokens";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { exportCsv, LoadingState, ErrorState, EmptyState, StatusBadge, KpiCard, ProgressBar } from "@/components/ui";
 import { useHasPermission } from "@/hooks/usePermission";

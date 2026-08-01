@@ -1,6 +1,9 @@
 // Fleet TMS (PR3) logistics service — ported from Zayra src/api/logistics.ts onto
 // the OpsTrax apiClient/unwrap pattern. Endpoints re-namespaced to /api/fleet-tms/logistics/*.
 import { apiClient, unwrap } from "@/services/apiClient";
+import { downloadServerExport } from "@/services/fleetDomainApi";
+
+const actionKey = () => globalThis.crypto?.randomUUID?.() ?? `lm-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 export interface LogisticsSummary {
   activeOrders: number;
@@ -8,6 +11,12 @@ export interface LogisticsSummary {
   deliveredToday: number;
   exceptionOrders: number;
   activeRoutes: number;
+  plannedRoutes: number;
+  delayedRoutes: number;
+  completedRoutes: number;
+  averageStopsPerRoute: number;
+  routeEfficiencyScore: number;
+  highRiskRoutes: number;
   onTimeRate: number;
 }
 
@@ -117,21 +126,26 @@ export const logisticsApi = {
   routeStops: (id: string) =>
     unwrap<{ items: LogisticsStop[] }>(apiClient.get(`/api/fleet-tms/logistics/routes/${id}/stops`)),
 
-  lastMile: (params: { status?: string; page?: number; pageSize?: number } = {}) =>
+  lastMile: (params: { status?: string; routeCode?: string; search?: string; page?: number; pageSize?: number } = {}) =>
     unwrap<{ total: number; page: number; pageSize: number; items: LogisticsStop[] }>(apiClient.get('/api/fleet-tms/logistics/last-mile', { params })),
+
+  exportLastMile: (params: { status?: string; routeCode?: string; search?: string } = {}) => {
+    const query = new URLSearchParams(Object.entries(params).filter(([, value]) => Boolean(value)) as string[][]).toString();
+    return downloadServerExport(`/api/fleet-tms/logistics/last-mile/export${query ? `?${query}` : ''}`, `last-mile-${new Date().toISOString().slice(0, 10)}.csv`);
+  },
 
   dispatchOrder: (id: string, body: { routeCode?: string; driverName?: string; vehicleNumber?: string; notes?: string }) =>
     unwrap<LogisticsOrder>(apiClient.post(`/api/fleet-tms/logistics/orders/${id}/dispatch`, body)),
 
-  progressRoute: (id: string, body: { completedStopsDelta?: number; currentStop?: string; nextStop?: string; etaCompleteUtc?: string; notes?: string }) =>
-    unwrap<LogisticsRoute>(apiClient.post(`/api/fleet-tms/logistics/routes/${id}/progress`, body)),
+  progressRoute: (id: string, body: { completedStopsDelta?: number; currentStop?: string; nextStop?: string; etaCompleteUtc?: string; notes?: string; idempotencyKey?: string }) =>
+    unwrap<LogisticsRoute>(apiClient.post(`/api/fleet-tms/logistics/routes/${id}/progress`, { ...body, idempotencyKey: body.idempotencyKey ?? actionKey() })),
 
-  confirmDelivery: (id: string, body: { recipientName?: string; proofStatus?: string; exceptionReason?: string }) =>
-    unwrap<LogisticsStop>(apiClient.post(`/api/fleet-tms/logistics/stops/${id}/deliver`, body)),
+  confirmDelivery: (id: string, body: { recipientName?: string; proofStatus?: string; exceptionReason?: string; idempotencyKey?: string }) =>
+    unwrap<LogisticsStop>(apiClient.post(`/api/fleet-tms/logistics/stops/${id}/deliver`, { ...body, idempotencyKey: body.idempotencyKey ?? actionKey() })),
 
-  recordAttempt: (id: string, body: { status?: string; proofStatus?: string; exceptionReason?: string; nextEtaUtc?: string; nextStop?: string }) =>
-    unwrap<LogisticsStop>(apiClient.post(`/api/fleet-tms/logistics/stops/${id}/attempt`, body)),
+  recordAttempt: (id: string, body: { status?: string; proofStatus?: string; exceptionReason?: string; nextEtaUtc?: string; nextStop?: string; idempotencyKey?: string }) =>
+    unwrap<LogisticsStop>(apiClient.post(`/api/fleet-tms/logistics/stops/${id}/attempt`, { ...body, idempotencyKey: body.idempotencyKey ?? actionKey() })),
 
-  rescheduleStop: (id: string, body: { nextEtaUtc?: string; timeWindow?: string; reason?: string }) =>
-    unwrap<LogisticsStop>(apiClient.post(`/api/fleet-tms/logistics/stops/${id}/reschedule`, body)),
+  rescheduleStop: (id: string, body: { nextEtaUtc?: string; timeWindow?: string; reason?: string; idempotencyKey?: string }) =>
+    unwrap<LogisticsStop>(apiClient.post(`/api/fleet-tms/logistics/stops/${id}/reschedule`, { ...body, idempotencyKey: body.idempotencyKey ?? actionKey() })),
 };

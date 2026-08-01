@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams } from 'react-router';
 import { AlertTriangle, CheckCircle2, MapPinned, Package, ShieldCheck, Sparkles, Truck } from 'lucide-react';
 import { publicTrackingApi, type PublicTrackingSummary } from '@/services/fleetTmsApi';
 function formatDate(value?: string | null) {

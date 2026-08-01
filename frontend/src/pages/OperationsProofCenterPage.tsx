@@ -10,7 +10,7 @@ import {
   Truck,
 } from "lucide-react";
 import { KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, labelize } from "@/components/ui";
-import { useHasPermission } from "@/hooks/usePermission";
+import { PermissionDenied, usePermissions } from "@/hooks/usePermission";
 import { operationsProofApi } from "@/services/operationsProofApi";
 import type { AnyRecord } from "@/types";
 
@@ -100,18 +100,20 @@ function JSONSummary({ value }: { value: unknown }) {
 }
 
 export function OperationsProofCenterPage() {
-  const hasPermission = useHasPermission();
+  const permissions = usePermissions();
+  const directPermissions = new Set(permissions.map((permission) => permission.trim().toLowerCase().replaceAll(".", ":")));
+  const hasPermission = (permission: string) => directPermissions.has("*") || directPermissions.has(permission.toLowerCase().replaceAll(".", ":"));
   const qc = useQueryClient();
   const [jobInput, setJobInput] = useState("");
   const [jobId, setJobId] = useState<number | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [forms, setForms] = useState<Record<string, FormState>>({
     siteAccess: { requirementType: "gate_pass", instructions: "" },
     accessDocument: { documentType: "noc", documentNo: "" },
     pickupAuthorization: { authorizationNo: "", thirdPartyName: "" },
     warehouseHandover: { handoverType: "warehouse_handover", warehouseName: "" },
     proofPackage: { proofType: "proof_of_delivery", receiverName: "", receiverPhone: "" },
-    proofArtifact: { artifactType: "photo", notes: "" },
-    smartAssignment: { recommendedDriverId: "", recommendedVehicleId: "", score: "", confidenceScore: "", riskLevel: "medium" },
+    proofArtifact: { artifactType: "photo", fileId: "", notes: "" },
   });
 
   const summaryQuery = useQuery({
@@ -136,8 +138,16 @@ export function OperationsProofCenterPage() {
   const mobileReadyActions = summary?.mobile_ready_actions as AnyRecord[] | undefined;
   const latestRecommendation = (assignment?.latest as AnyRecord | undefined) ?? (assignment?.latest_recommendation as AnyRecord | undefined);
   const latestRecommendationId = Number(latestRecommendation?.id ?? 0);
+  const latestRecommendationStatus = String(latestRecommendation?.status ?? "").toLowerCase();
+  const latestSiteAccess = siteAccess?.latest_requirement as AnyRecord | undefined;
+  const latestAccessDocument = (accessDocument?.latest as AnyRecord | undefined) ?? (siteAccess?.latest_document as AnyRecord | undefined);
+  const latestPickupAuthorization = pickupAuthorization?.latest as AnyRecord | undefined;
+  const latestWarehouseHandover = warehouseHandover?.latest as AnyRecord | undefined;
   const latestProofPackage = (proofPackage?.latest as AnyRecord | undefined) ?? undefined;
   const latestProofPackageId = Number(latestProofPackage?.id ?? 0);
+  const latestProofStatus = String(latestProofPackage?.status ?? "").toLowerCase();
+  const proofEditable = latestProofStatus === "draft" || latestProofStatus === "rejected";
+  const mutationError = (error: unknown) => setActionError(error instanceof Error ? error.message : "The operation was rejected.");
 
   const refresh = () => {
     if (jobId !== null) {
@@ -152,7 +162,8 @@ export function OperationsProofCenterPage() {
         ? operationsProofApi.acceptSmartAssignment(latestRecommendationId, {})
         : operationsProofApi.rejectSmartAssignment(latestRecommendationId, {});
     },
-    onSuccess: refresh,
+    onSuccess: () => { setActionError(null); refresh(); },
+    onError: mutationError,
   });
 
   const createSiteAccessMutation = useMutation({
@@ -160,7 +171,8 @@ export function OperationsProofCenterPage() {
       if (jobId === null) throw new Error("Enter a job id first.");
       return operationsProofApi.createSiteAccess(jobId, forms.siteAccess);
     },
-    onSuccess: refresh,
+    onSuccess: () => { setActionError(null); refresh(); },
+    onError: mutationError,
   });
 
   const createAccessDocumentMutation = useMutation({
@@ -168,7 +180,8 @@ export function OperationsProofCenterPage() {
       if (jobId === null) throw new Error("Enter a job id first.");
       return operationsProofApi.createAccessDocument(jobId, forms.accessDocument);
     },
-    onSuccess: refresh,
+    onSuccess: () => { setActionError(null); refresh(); },
+    onError: mutationError,
   });
 
   const createPickupAuthorizationMutation = useMutation({
@@ -176,7 +189,8 @@ export function OperationsProofCenterPage() {
       if (jobId === null) throw new Error("Enter a job id first.");
       return operationsProofApi.createPickupAuthorization(jobId, forms.pickupAuthorization);
     },
-    onSuccess: refresh,
+    onSuccess: () => { setActionError(null); refresh(); },
+    onError: mutationError,
   });
 
   const createWarehouseHandoverMutation = useMutation({
@@ -184,7 +198,20 @@ export function OperationsProofCenterPage() {
       if (jobId === null) throw new Error("Enter a job id first.");
       return operationsProofApi.createWarehouseHandover(jobId, forms.warehouseHandover);
     },
-    onSuccess: refresh,
+    onSuccess: () => { setActionError(null); refresh(); },
+    onError: mutationError,
+  });
+
+  const completeRequirementMutation = useMutation({
+    mutationFn: async (kind: "site" | "document" | "pickup" | "warehouse") => {
+      if (kind === "site" && latestSiteAccess?.id) return operationsProofApi.updateSiteAccess(Number(latestSiteAccess.id), { status: "verified" });
+      if (kind === "document" && latestAccessDocument?.id) return operationsProofApi.updateAccessDocumentStatus(Number(latestAccessDocument.id), { status: "verified" });
+      if (kind === "pickup" && latestPickupAuthorization?.id) return operationsProofApi.updatePickupAuthorization(Number(latestPickupAuthorization.id), { status: "verified" });
+      if (kind === "warehouse" && latestWarehouseHandover?.id) return operationsProofApi.updateWarehouseHandover(Number(latestWarehouseHandover.id), { status: "completed" });
+      throw new Error("Create the record before completing it.");
+    },
+    onSuccess: () => { setActionError(null); refresh(); },
+    onError: mutationError,
   });
 
   const createProofPackageMutation = useMutation({
@@ -192,7 +219,8 @@ export function OperationsProofCenterPage() {
       if (jobId === null) throw new Error("Enter a job id first.");
       return operationsProofApi.createProofPackage(jobId, forms.proofPackage);
     },
-    onSuccess: refresh,
+    onSuccess: () => { setActionError(null); refresh(); },
+    onError: mutationError,
   });
 
   const submitProofPackageMutation = useMutation({
@@ -200,7 +228,8 @@ export function OperationsProofCenterPage() {
       if (!latestProofPackageId) throw new Error("Create a proof package first.");
       return operationsProofApi.submitProofPackage(latestProofPackageId, {});
     },
-    onSuccess: refresh,
+    onSuccess: () => { setActionError(null); refresh(); },
+    onError: mutationError,
   });
 
   const validateProofPackageMutation = useMutation({
@@ -208,7 +237,8 @@ export function OperationsProofCenterPage() {
       if (!latestProofPackageId) throw new Error("Create a proof package first.");
       return operationsProofApi.validateProofPackage(latestProofPackageId, {});
     },
-    onSuccess: refresh,
+    onSuccess: () => { setActionError(null); refresh(); },
+    onError: mutationError,
   });
 
   const createProofArtifactMutation = useMutation({
@@ -216,7 +246,8 @@ export function OperationsProofCenterPage() {
       if (!latestProofPackageId) throw new Error("Create a proof package first.");
       return operationsProofApi.createProofArtifact(latestProofPackageId, forms.proofArtifact);
     },
-    onSuccess: refresh,
+    onSuccess: () => { setActionError(null); refresh(); },
+    onError: mutationError,
   });
 
   const summaryStatus = empty(riskSummary?.status ?? validationSummary?.status ?? "No data yet");
@@ -237,6 +268,10 @@ export function OperationsProofCenterPage() {
       },
     }));
   };
+
+  if (!hasPermission("operations.execution_summary.read")) {
+    return <PermissionDenied permission="operations.execution_summary.read" />;
+  }
 
   return (
     <div className="fleet-console flex h-full flex-col gap-3 overflow-y-auto">
@@ -275,6 +310,7 @@ export function OperationsProofCenterPage() {
         </section>
       ) : (
         <>
+          {actionError ? <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{actionError}</div> : null}
           <div className="grid gap-4 lg:grid-cols-4">
             <KpiCard label="Risk Status" value={summaryStatus} icon={<TriangleAlert />} status={summaryStatus} />
             <KpiCard label="Next Best Actions" value={String(nextBestActions?.length ?? 0)} icon={<Sparkles />} status="Active" />
@@ -296,25 +332,19 @@ export function OperationsProofCenterPage() {
             title="Dispatcher / Supervisor assignment decision"
             status={assignment?.status as string | undefined}
             risk={assignment?.risk_level as string | undefined}
-            actions={latestRecommendationId && hasPermission("dispatch.smart_assign.accept") ? (
+            actions={latestRecommendationId && latestRecommendationStatus === "draft" ? (
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  className="btn-ghost"
-                  onClick={() => smartAssignMutation.mutate("reject")}
-                  disabled={smartAssignMutation.isPending}
-                >
-                  Reject
-                </button>
-                <button
-                  type="button"
-                  className="btn-primary"
-                  onClick={() => smartAssignMutation.mutate("accept")}
-                  disabled={smartAssignMutation.isPending}
-                >
-                  Accept
-                  <ArrowRight className="h-4 w-4" />
-                </button>
+                {hasPermission("dispatch.smart_assign.reject") ? (
+                  <button type="button" className="btn-ghost" onClick={() => smartAssignMutation.mutate("reject")} disabled={smartAssignMutation.isPending}>
+                    Reject
+                  </button>
+                ) : null}
+                {hasPermission("dispatch.smart_assign.accept") ? (
+                  <button type="button" className="btn-primary" onClick={() => smartAssignMutation.mutate("accept")} disabled={smartAssignMutation.isPending}>
+                    Accept
+                    <ArrowRight className="h-4 w-4" />
+                  </button>
+                ) : null}
               </div>
             ) : null}
           >
@@ -334,7 +364,7 @@ export function OperationsProofCenterPage() {
               <div>
                 <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-400">Mobile-safe action posture</p>
                 <div className="mt-2 rounded-2xl border border-slate-200 bg-slate-50/60 p-3 text-sm text-slate-600">
-                  Recommendations require an authorized acceptance before anything changes.
+                  Recommendations require an authorized acceptance before a confirmation is recorded.
                 </div>
               </div>
             </div>
@@ -359,6 +389,11 @@ export function OperationsProofCenterPage() {
                   Create Requirement
                 </button>
               ) : null}
+              {latestSiteAccess?.id && String(latestSiteAccess.status).toLowerCase() === "required" && hasPermission("operations.site_access.update") ? (
+                <button type="button" className="btn-ghost" onClick={() => completeRequirementMutation.mutate("site")} disabled={completeRequirementMutation.isPending}>
+                  Mark Access Verified
+                </button>
+              ) : null}
             </div>
           </SectionCard>
 
@@ -372,13 +407,18 @@ export function OperationsProofCenterPage() {
             <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
               <input className="field" value={forms.accessDocument.documentType ?? ""} onChange={(event) => updateForm("accessDocument", "documentType", event.target.value)} placeholder="Document type" />
               <input className="field" value={forms.accessDocument.documentNo ?? ""} onChange={(event) => updateForm("accessDocument", "documentNo", event.target.value)} placeholder="Document no" />
-              <input className="field" value={forms.accessDocument.status ?? "required"} onChange={(event) => updateForm("accessDocument", "status", event.target.value)} placeholder="Status" />
+              <input className="field" value="Starts as required" readOnly aria-label="Initial access document status" />
               <input className="field" value={forms.accessDocument.notes ?? ""} onChange={(event) => updateForm("accessDocument", "notes", event.target.value)} placeholder="Notes" />
             </div>
             <div className="mt-4 flex flex-wrap gap-2">
               {hasPermission("operations.access_document.create") ? (
                 <button type="button" className="btn-primary" onClick={() => createAccessDocumentMutation.mutate()} disabled={createAccessDocumentMutation.isPending}>
                   Create Document
+                </button>
+              ) : null}
+              {latestAccessDocument?.id && !["verified", "waived_with_approval", "expired"].includes(String(latestAccessDocument.status).toLowerCase()) && hasPermission("operations.access_document.update") ? (
+                <button type="button" className="btn-ghost" onClick={() => completeRequirementMutation.mutate("document")} disabled={completeRequirementMutation.isPending}>
+                  Verify Document
                 </button>
               ) : null}
             </div>
@@ -395,12 +435,17 @@ export function OperationsProofCenterPage() {
               <input className="field" value={forms.pickupAuthorization.authorizationNo ?? ""} onChange={(event) => updateForm("pickupAuthorization", "authorizationNo", event.target.value)} placeholder="Authorization no" />
               <input className="field" value={forms.pickupAuthorization.thirdPartyName ?? ""} onChange={(event) => updateForm("pickupAuthorization", "thirdPartyName", event.target.value)} placeholder="Third-party name" />
               <input className="field" value={forms.pickupAuthorization.authorizedPersonName ?? ""} onChange={(event) => updateForm("pickupAuthorization", "authorizedPersonName", event.target.value)} placeholder="Authorized person" />
-              <input className="field" value={forms.pickupAuthorization.status ?? "required"} onChange={(event) => updateForm("pickupAuthorization", "status", event.target.value)} placeholder="Status" />
+              <input className="field" value="Starts as required" readOnly aria-label="Initial pickup authorization status" />
             </div>
             <div className="mt-4 flex flex-wrap gap-2">
               {hasPermission("operations.pickup_authorization.create") ? (
                 <button type="button" className="btn-primary" onClick={() => createPickupAuthorizationMutation.mutate()} disabled={createPickupAuthorizationMutation.isPending}>
                   Create Authorization
+                </button>
+              ) : null}
+              {latestPickupAuthorization?.id && !["verified", "expired", "revoked"].includes(String(latestPickupAuthorization.status).toLowerCase()) && hasPermission("operations.pickup_authorization.update") ? (
+                <button type="button" className="btn-ghost" onClick={() => completeRequirementMutation.mutate("pickup")} disabled={completeRequirementMutation.isPending}>
+                  Verify Authorization
                 </button>
               ) : null}
             </div>
@@ -417,12 +462,17 @@ export function OperationsProofCenterPage() {
               <input className="field" value={forms.warehouseHandover.warehouseName ?? ""} onChange={(event) => updateForm("warehouseHandover", "warehouseName", event.target.value)} placeholder="Warehouse name" />
               <input className="field" value={forms.warehouseHandover.warehouseReferenceNo ?? ""} onChange={(event) => updateForm("warehouseHandover", "warehouseReferenceNo", event.target.value)} placeholder="Reference no" />
               <input className="field" value={forms.warehouseHandover.handoverType ?? "warehouse_handover"} onChange={(event) => updateForm("warehouseHandover", "handoverType", event.target.value)} placeholder="Handover type" />
-              <input className="field" value={forms.warehouseHandover.status ?? "scheduled"} onChange={(event) => updateForm("warehouseHandover", "status", event.target.value)} placeholder="Status" />
+              <input className="field" value="Starts as scheduled" readOnly aria-label="Initial warehouse handover status" />
             </div>
             <div className="mt-4 flex flex-wrap gap-2">
               {hasPermission("operations.warehouse_handover.create") ? (
                 <button type="button" className="btn-primary" onClick={() => createWarehouseHandoverMutation.mutate()} disabled={createWarehouseHandoverMutation.isPending}>
                   Record Handover
+                </button>
+              ) : null}
+              {latestWarehouseHandover?.id && !["completed", "cancelled"].includes(String(latestWarehouseHandover.status).toLowerCase()) && hasPermission("operations.warehouse_handover.update") ? (
+                <button type="button" className="btn-ghost" onClick={() => completeRequirementMutation.mutate("warehouse")} disabled={completeRequirementMutation.isPending}>
+                  Complete Handover
                 </button>
               ) : null}
             </div>
@@ -435,12 +485,12 @@ export function OperationsProofCenterPage() {
             risk={proofPackage?.validation_status as string | undefined}
             actions={latestProofPackageId && (
               <div className="flex items-center gap-2">
-                {hasPermission("operations.proof.submit") ? (
+                {hasPermission("operations.proof.submit") && proofEditable ? (
                   <button type="button" className="btn-ghost" onClick={() => submitProofPackageMutation.mutate()} disabled={submitProofPackageMutation.isPending}>
                     Submit
                   </button>
                 ) : null}
-                {hasPermission("operations.proof.validate") ? (
+                {hasPermission("operations.proof.validate") && latestProofStatus === "submitted" ? (
                   <button type="button" className="btn-primary" onClick={() => validateProofPackageMutation.mutate()} disabled={validateProofPackageMutation.isPending}>
                     Validate
                   </button>
@@ -458,7 +508,7 @@ export function OperationsProofCenterPage() {
               <input className="field" value={forms.proofPackage.proofType ?? ""} onChange={(event) => updateForm("proofPackage", "proofType", event.target.value)} placeholder="Proof type" />
               <input className="field" value={forms.proofPackage.receiverName ?? ""} onChange={(event) => updateForm("proofPackage", "receiverName", event.target.value)} placeholder="Receiver name" />
               <input className="field" value={forms.proofPackage.receiverPhone ?? ""} onChange={(event) => updateForm("proofPackage", "receiverPhone", event.target.value)} placeholder="Receiver phone" />
-              <input className="field" value={forms.proofPackage.status ?? "draft"} onChange={(event) => updateForm("proofPackage", "status", event.target.value)} placeholder="Status" />
+              <input className="field" value={forms.proofPackage.notes ?? ""} onChange={(event) => updateForm("proofPackage", "notes", event.target.value)} placeholder="Proof notes" />
             </div>
             <div className="mt-4 flex flex-wrap gap-2">
               {hasPermission("operations.proof.create") ? (
@@ -479,13 +529,13 @@ export function OperationsProofCenterPage() {
             <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
               <input className="field" value={forms.proofArtifact.artifactType ?? ""} onChange={(event) => updateForm("proofArtifact", "artifactType", event.target.value)} placeholder="Artifact type" />
               <input className="field" value={forms.proofArtifact.deviceId ?? ""} onChange={(event) => updateForm("proofArtifact", "deviceId", event.target.value)} placeholder="Device ID" />
-              <input className="field" value={forms.proofArtifact.capturedByUserId ?? ""} onChange={(event) => updateForm("proofArtifact", "capturedByUserId", event.target.value)} placeholder="Captured by user" />
+              <input className="field" type="number" min="1" value={forms.proofArtifact.fileId ?? ""} onChange={(event) => updateForm("proofArtifact", "fileId", event.target.value)} placeholder="Uploaded file ID" />
               <textarea className="field min-h-24 md:col-span-2 xl:col-span-4" value={forms.proofArtifact.notes ?? ""} onChange={(event) => updateForm("proofArtifact", "notes", event.target.value)} placeholder="Artifact notes" />
             </div>
             <div className="mt-4 flex flex-wrap gap-2">
-              {hasPermission("operations.proof_artifact.create") ? (
-                <button type="button" className="btn-primary" onClick={() => createProofArtifactMutation.mutate()} disabled={createProofArtifactMutation.isPending}>
-                  Add Artifact Metadata
+              {hasPermission("operations.proof_artifact.create") && proofEditable ? (
+                <button type="button" className="btn-primary" onClick={() => createProofArtifactMutation.mutate()} disabled={createProofArtifactMutation.isPending || Number(forms.proofArtifact.fileId) <= 0}>
+                  Attach Evidence Record
                 </button>
               ) : null}
             </div>

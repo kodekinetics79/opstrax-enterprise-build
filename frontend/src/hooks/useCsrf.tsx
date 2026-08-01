@@ -1,21 +1,11 @@
 import { useContext, useCallback, useRef } from "react";
 import { useAuth } from "@/hooks/useAuth";
+import { setGlobalCsrfToken } from "@/auth/csrfTokenStore";
 
 export type CsrfContextValue = {
   csrfToken: string | null;
   setCsrfToken: (token: string) => void;
 };
-
-// Global CSRF token store for API client
-let globalCsrfToken: string | null = null;
-
-export function setGlobalCsrfToken(token: string) {
-  globalCsrfToken = token;
-}
-
-export function getGlobalCsrfToken(): string | null {
-  return globalCsrfToken;
-}
 
 export function useCsrfToken() {
   const { session } = useAuth();

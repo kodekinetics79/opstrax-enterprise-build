@@ -12,6 +12,29 @@ public sealed class ErrorHandlingMiddleware(RequestDelegate next, ILogger<ErrorH
         {
             await next(context);
         }
+        catch (BadHttpRequestException)
+        {
+            // Minimal-API JSON binding raises BadHttpRequestException before the
+            // endpoint delegate runs. It is a safe client error, not a server fault.
+            // Do not log or return the parser exception because it can contain body
+            // fragments, CLR type names, or implementation details.
+            logger.LogWarning(new EventId(400, "invalid_request_body"),
+                "Invalid API request body on {Method} {Path}",
+                context.Request.Method, context.Request.Path.Value);
+
+            if (context.Response.HasStarted) return;
+
+            var traceHeader = context.Response.Headers[RequestTelemetryMiddleware.TraceIdHeader].ToString();
+            var correlationHeader = context.Response.Headers[RequestTelemetryMiddleware.CorrelationHeader].ToString();
+            var telemetry = TelemetryContext.Current;
+            context.Response.Clear();
+            context.Response.StatusCode = StatusCodes.Status400BadRequest;
+            RestoreTelemetryHeader(context, RequestTelemetryMiddleware.TraceIdHeader,
+                traceHeader, telemetry?.TraceId);
+            RestoreTelemetryHeader(context, RequestTelemetryMiddleware.CorrelationHeader,
+                correlationHeader, telemetry?.CorrelationId);
+            await context.Response.WriteAsJsonAsync(ApiResponse<object>.Fail("Invalid request body"));
+        }
         catch (Exception ex)
         {
             var ctx = TelemetryContext.Current;
@@ -39,5 +62,11 @@ public sealed class ErrorHandlingMiddleware(RequestDelegate next, ILogger<ErrorH
                 "Internal server error",
                 $"An unexpected error occurred. Reference: {correlationId} (trace {traceId})."));
         }
+    }
+
+    private static void RestoreTelemetryHeader(HttpContext context, string name, string existing, string? ambient)
+    {
+        var value = string.IsNullOrWhiteSpace(existing) ? ambient : existing;
+        if (!string.IsNullOrWhiteSpace(value)) context.Response.Headers[name] = value;
     }
 }

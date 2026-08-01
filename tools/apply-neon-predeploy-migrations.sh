@@ -10,19 +10,37 @@
 #   exist would 500 every tenant API call. Run this against Neon FIRST, then
 #   merge/deploy.
 #
-# WHAT IT APPLIES (all additive + idempotent; zero destructive statements):
+# WHAT IT APPLIES
+#   Idempotent schema migrations followed by a terminal security cutover. Stage58
+#   intentionally revokes stale privileges and replaces RLS policies atomically;
+#   its ownership/provenance preflights fail and roll back the whole migration.
 #   stage21  customer portal      (users.customer_id, portal tables)
 #   stage23  schema_migrations ledger
 #   stage24  compliance tenant scope (company_id columns + backfill)
 #   stage25  branches org hierarchy  (branches table, users.branch_id, …)
 #   stage26  platform control plane  (platform tables as migration)
+#   2026-07-30 customer feedback contract (portal service columns + index)
+#   stage49  durable one-time MFA challenge consumption
+#   stage50  complete Fleet/market-pack production schema + RLS contract
+#   stage51  production runtime support for observability/escalation/report workers
+#   stage52  Fleet vehicle/driver identity uniqueness under concurrent writes
+#   stage53  production-wide tenant RLS/policy/grant reconciliation
+#   stage54  cold-chain device normalized identity/idempotency integrity
+#   stage55  restricted-runtime Fleet route schema contract
+#   stage56  returnable-asset type normalized identity integrity
+#   stage57  workforce schedule tenant/driver ownership + RLS integrity
+#   stage58  terminal non-forgeable tenant ticket + dual runtime identities
+#   stage59  final system-only shared Data Protection key repository
+#   stage60  Dispatch + Trips customer-pilot integrity contract
+#   stage61  Operations Proof Center production contract
+#   stage62  Last Mile pilot integrity contract
+#   stage63  Route Plans pilot integrity contract
 #
 # WHAT IT DELIBERATELY SKIPS
-#   stage19/20/22 (Row-Level Security FORCE + restricted role). Applying RLS to
-#   the deployed DB is a separate, planned cutover: it requires the opstrax_app
-#   role, PG_CONNECTION_APP on Render, and Rls__EnforceTenantContext=true to be
-#   flipped together. Forcing RLS while the API still connects as the owner
-#   role WITHOUT tenant GUCs would blank out every query.
+#   stage19/20/22 (the broad Row-Level Security cutover). Stage49 itself is
+#   FORCE-RLS because the restricted production runtime requires its replay
+#   ledger. This runner therefore fails closed unless stage20 has already
+#   provisioned opstrax_app; it does not create or password that role here.
 #
 # USAGE (run from repo root; credentials never leave your shell):
 #   export NEON_PG_URI='postgresql://USER:PASSWORD@HOST/DB?sslmode=require'
@@ -45,37 +63,801 @@ MIGRATIONS=(
   2026_07_02_stage24_compliance_tenant_scope
   2026_07_02_stage25_branches_org_hierarchy
   2026_07_02_stage26_platform_control_plane
+  2026_07_30_customer_feedback_contract
+  2026_07_30_stage49_mfa_challenge_one_time
+  2026_07_30_stage50_fleet_production_contract
+  2026_07_30_stage51_production_runtime_support
+  2026_07_30_stage52_fleet_identity_uniqueness
+  2026_07_30_stage53_tenant_rls_reconciliation
+  2026_07_30_stage54_cold_chain_device_integrity
+  2026_07_30_stage55_fleet_runtime_route_contract
+  2026_07_30_stage56_asset_type_integrity
+  2026_07_30_stage57_workforce_schedule_tenant_integrity
+  2026_08_01_stage60_dispatch_trip_pilot
+  2026_08_01_stage61_operations_proof_center
+  2026_08_01_stage62_last_mile_pilot
+  2026_08_01_stage63_route_plans_pilot
 )
 
 echo "Target host: $(printf '%s' "$NEON_PG_URI" | sed -E 's|.*@([^/:?]+).*|\1|')"
 echo "Pre-check: read-only connectivity…"
 psql "$NEON_PG_URI" -tA -c "SELECT current_database(), version()" | head -1
+stage58_already_applied=$(psql "$NEON_PG_URI" -tA -c "SELECT CASE WHEN to_regclass('public.schema_migrations') IS NOT NULL THEN (SELECT COUNT(*) FROM schema_migrations WHERE version='2026_07_31_stage58_nonforgeable_tenant_ticket') ELSE 0 END" 2>/dev/null || echo 0)
 
 for m in "${MIGRATIONS[@]}"; do
   f="database/migrations/$m.sql"
   [ -f "$f" ] || { echo "ERROR: missing $f (run from repo root)" >&2; exit 1; }
+  # Once Stage58 is live, never replay a historical migration that recreates
+  # forgeable GUC policies. Stage58 supersedes and repairs their security surface.
+  if [ "$stage58_already_applied" = "1" ] && [[ "$m" =~ ^2026_07_30_stage53_ ]]; then
+    echo "── $m: security policy superseded by Stage58 — skipping legacy replay"
+    continue
+  fi
   # Skip if already registered in the ledger (ledger may not exist before stage23 — treat as not applied).
   applied=$(psql "$NEON_PG_URI" -tA -c "SELECT COUNT(*) FROM schema_migrations WHERE version='$m'" 2>/dev/null || echo 0)
-  if [ "$applied" = "1" ]; then
+  repair_migration=false
+  case "$m" in
+    2026_07_30_stage53_tenant_rls_reconciliation|\
+    2026_07_30_stage54_cold_chain_device_integrity|\
+    2026_07_30_stage55_fleet_runtime_route_contract|\
+    2026_07_30_stage56_asset_type_integrity|\
+    2026_07_30_stage57_workforce_schedule_tenant_integrity) repair_migration=true ;;
+  esac
+  if [ "$applied" = "1" ] && [ "$repair_migration" = false ]; then
     echo "── $m: already applied (ledger) — skipping"
     continue
   fi
-  echo "── applying $m"
+  if [ "$applied" = "1" ]; then
+    echo "── $m: ledgered reconciliation — reapplying to repair drift"
+  else
+    echo "── applying $m"
+  fi
   psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f "$f"
-  # stage21/24/25 don't self-register; record them so reruns are no-ops.
-  psql "$NEON_PG_URI" -q -c "INSERT INTO schema_migrations (version, description) VALUES ('$m', 'applied by apply-neon-predeploy-migrations.sh') ON CONFLICT (version) DO NOTHING" 2>/dev/null || true
+  # stage21 precedes the ledger; later migrations must register successfully so a
+  # failed bookkeeping write cannot masquerade as a complete deploy on the next run.
+  if [ "$(psql "$NEON_PG_URI" -tA -c "SELECT to_regclass('public.schema_migrations') IS NOT NULL")" = "t" ]; then
+    psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -c "INSERT INTO schema_migrations (version, description) VALUES ('$m', 'applied by apply-neon-predeploy-migrations.sh') ON CONFLICT (version) DO NOTHING"
+  fi
 done
+
+# Pilot-wave migrations are release gates, not optional seed packs. Verify their
+# ledgers and critical integrity objects before the terminal Stage58 reconciliation.
+psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 <<'SQL'
+DO $verify_pilot_wave$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM (VALUES
+      ('2026_08_01_stage60_dispatch_trip_pilot'),
+      ('2026_08_01_stage61_operations_proof_center'),
+      ('2026_08_01_stage62_last_mile_pilot'),
+      ('2026_08_01_stage63_route_plans_pilot')) required(version)
+    WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
+  ) THEN RAISE EXCEPTION 'Pilot-wave migration ledger missing or duplicated'; END IF;
+  IF to_regclass('public.uq_ftms_dorders_company_number') IS NULL
+     OR to_regclass('public.uq_ftms_route_progress_key') IS NULL
+     OR to_regclass('public.uq_route_stops_company_route_sequence') IS NULL
+     OR to_regclass('public.uq_routes_active_driver') IS NULL
+     OR to_regclass('public.uq_routes_active_vehicle') IS NULL THEN
+    RAISE EXCEPTION 'Pilot-wave concurrency/index contract is incomplete';
+  END IF;
+END
+$verify_pilot_wave$;
+SQL
+echo "Pilot integrity: Stage60/61/62/63 ledgers and critical concurrency indexes verified"
+
+if [ "$stage58_already_applied" = "1" ]; then
+  echo "Reapplying terminal Stage58 without a legacy-policy window…"
+  psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_07_31_stage58_nonforgeable_tenant_ticket.sql
+  psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_07_31_stage59_data_protection_key_ring.sql
+  psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 <<'SQL'
+DO $stage58_rerun$
+BEGIN
+  IF (SELECT count(*) FROM pg_policies WHERE schemaname='public' AND roles='{public}'::name[])<>0
+     OR (SELECT count(*) FROM schema_migrations WHERE version='2026_07_31_stage58_nonforgeable_tenant_ticket')<>1
+     OR NOT has_function_privilege('opstrax_system','opstrax_security.issue_tenant_ticket(bigint,integer,bigint,integer)','EXECUTE')
+     OR has_function_privilege('opstrax_app','opstrax_security.issue_tenant_ticket(bigint,integer,bigint,integer)','EXECUTE') THEN
+    RAISE EXCEPTION 'Stage58 rerun verification failed';
+  END IF;
+END
+$stage58_rerun$;
+SQL
+  echo "✅ Existing Stage58/59 deployment reconciled without restoring legacy GUC policies."
+  exit 0
+fi
 
 echo
 echo "Post-check: auth-critical columns…"
-psql "$NEON_PG_URI" -tA -c "
+psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -tA -c "
   SELECT
     'users.customer_id: ' || COUNT(*) FILTER (WHERE column_name='customer_id') ||
     ' | users.branch_id: ' || COUNT(*) FILTER (WHERE column_name='branch_id')
   FROM information_schema.columns WHERE table_name='users' AND column_name IN ('customer_id','branch_id')"
-psql "$NEON_PG_URI" -tA -c "SELECT 'branches table: ' || COUNT(*) FROM information_schema.tables WHERE table_name='branches'"
+psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -tA -c "SELECT 'branches table: ' || COUNT(*) FROM information_schema.tables WHERE table_name='branches'"
+echo "Post-check: customer feedback service contract…"
+psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 <<'SQL'
+DO $verify$
+DECLARE
+  missing_columns TEXT[];
+BEGIN
+  SELECT ARRAY_AGG(expected.column_name ORDER BY expected.column_name)
+    INTO missing_columns
+  FROM (VALUES
+      ('customer_id'), ('comment'), ('feedback_type'),
+      ('subject'), ('status'), ('updated_at')
+    ) AS expected(column_name)
+  LEFT JOIN information_schema.columns actual
+    ON actual.table_schema='public'
+   AND actual.table_name='customer_feedback'
+   AND actual.column_name=expected.column_name
+  WHERE actual.column_name IS NULL;
+
+  IF COALESCE(cardinality(missing_columns), 0) > 0 THEN
+    RAISE EXCEPTION 'customer_feedback contract missing columns: %', missing_columns;
+  END IF;
+  IF to_regclass('public.ix_customer_feedback_company_customer') IS NULL THEN
+    RAISE EXCEPTION 'customer_feedback contract missing index ix_customer_feedback_company_customer';
+  END IF;
+END
+$verify$;
+SQL
+echo "customer_feedback: 6/6 columns + ix_customer_feedback_company_customer"
+echo "Post-check: durable one-time MFA challenge ledger…"
+psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 <<'SQL'
+DO $verify$
+DECLARE
+  table_oid OID := to_regclass('public.mfa_login_challenge_consumptions');
+BEGIN
+  IF table_oid IS NULL THEN
+    RAISE EXCEPTION 'MFA replay protection missing table mfa_login_challenge_consumptions';
+  END IF;
+
+  IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conrelid=table_oid AND conname='ck_mfa_challenge_hash_sha256'
+        AND convalidated
+        AND pg_get_constraintdef(oid) LIKE '%[0-9a-f]{64}%'
+  ) THEN
+    RAISE EXCEPTION 'MFA replay protection missing/invalid SHA-256 digest constraint';
+  END IF;
+
+  IF NOT EXISTS (
+      SELECT 1 FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid
+      WHERE i.indrelid=table_oid AND c.relname='ux_mfa_challenge_consumptions_hash' AND i.indisunique
+  ) OR to_regclass('public.idx_mfa_challenge_consumptions_expiry') IS NULL
+     OR to_regclass('public.idx_mfa_challenge_consumptions_tenant_user') IS NULL THEN
+    RAISE EXCEPTION 'MFA replay protection missing digest/expiry/tenant-user indexes';
+  END IF;
+
+  IF NOT EXISTS (
+      SELECT 1 FROM pg_class
+      WHERE oid=table_oid AND relrowsecurity AND relforcerowsecurity
+  ) THEN
+    RAISE EXCEPTION 'MFA replay protection must have ENABLE + FORCE RLS';
+  END IF;
+
+  IF NOT EXISTS (
+      SELECT 1 FROM pg_policies
+      WHERE schemaname='public' AND tablename='mfa_login_challenge_consumptions'
+        AND policyname='tenant_isolation' AND cmd='ALL'
+        AND qual LIKE '%app.current_tenant_id%' AND with_check LIKE '%app.current_tenant_id%'
+  ) OR NOT EXISTS (
+      SELECT 1 FROM pg_policies
+      WHERE schemaname='public' AND tablename='mfa_login_challenge_consumptions'
+        AND policyname='platform_admin_bypass' AND cmd='ALL'
+        AND qual LIKE '%app.platform_admin%' AND with_check LIKE '%app.platform_admin%'
+  ) THEN
+    RAISE EXCEPTION 'MFA replay protection missing tenant/platform RLS policies';
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_app') THEN
+    RAISE EXCEPTION 'MFA replay protection requires pre-provisioned opstrax_app role (apply stage20 first)';
+  END IF;
+  IF NOT has_table_privilege('opstrax_app', table_oid, 'SELECT')
+     OR NOT has_table_privilege('opstrax_app', table_oid, 'INSERT')
+     OR NOT has_table_privilege('opstrax_app', table_oid, 'DELETE')
+     OR has_table_privilege('opstrax_app', table_oid, 'UPDATE') THEN
+    RAISE EXCEPTION 'MFA replay ledger opstrax_app table privileges are not least-privilege SELECT/INSERT/DELETE';
+  END IF;
+  IF NOT has_sequence_privilege('opstrax_app', 'public.mfa_login_challenge_consumptions_id_seq', 'USAGE')
+     OR NOT has_sequence_privilege('opstrax_app', 'public.mfa_login_challenge_consumptions_id_seq', 'SELECT') THEN
+    RAISE EXCEPTION 'MFA replay ledger opstrax_app sequence privileges missing';
+  END IF;
+
+  IF (SELECT COUNT(*) FROM schema_migrations WHERE version='2026_07_30_stage49_mfa_challenge_one_time') <> 1 THEN
+    RAISE EXCEPTION 'MFA replay migration ledger registration missing or duplicated';
+  END IF;
+END
+$verify$;
+SQL
+echo "mfa_login_challenge_consumptions: digest + indexes + FORCE RLS + policies + runtime grants verified"
+echo "Post-check: complete Fleet production schema/RLS contract…"
+psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 <<'SQL'
+DO $verify$
+DECLARE
+  required_tables TEXT[] := ARRAY[
+    'vehicles','drivers','vehicle_assignments','dispatch_assignments',
+    'fleet_tms_shipments','fleet_tms_shipment_stops','fleet_tms_pods','fleet_tms_tracking_links',
+    'fleet_tms_shipment_events','fleet_tms_driver_tasks','fleet_tms_vehicles','fleet_tms_tracking_points',
+    'fleet_tms_maintenance_tickets','fleet_tms_fuel_events','fleet_tms_temperature_zones',
+    'fleet_tms_temperature_devices','fleet_tms_temperature_readings','fleet_tms_temperature_alerts',
+    'fleet_tms_cold_chain_reports','fleet_tms_refrigeration_unit_health','fleet_tms_asset_types',
+    'fleet_tms_assets','fleet_tms_asset_assignments','fleet_tms_asset_events',
+    'fleet_tms_barcode_scan_events','fleet_tms_rfid_events','fleet_tms_saudi_regions',
+    'fleet_tms_readiness_documents','fleet_tms_cold_chain_policies','fleet_tms_cold_chain_event_log',
+    'fleet_tms_dispatch_orders','fleet_tms_delivery_routes','fleet_tms_last_mile_stops',
+    'market_packs','market_pack_features','tenant_market_packs','market_address_schemas',
+    'market_document_types','market_driver_requirements','market_vehicle_requirements',
+    'market_inspection_templates','inspection_items','market_tax_reporting_rules','market_unit_settings',
+    'market_currency_settings','market_language_settings','compliance_records','compliance_record_documents',
+    'compliance_expiry_events','vehicle_inspection_records','inspection_defects',
+    'jurisdiction_mileage_records','jurisdiction_fuel_records','driver_duty_status_records',
+    'eld_device_registry','market_addresses','business_tax_readiness'
+  ];
+  missing TEXT[];
+  bad_rls TEXT[];
+  bad_grants TEXT[];
+  bad_reference_grants TEXT[];
+  reference_tables TEXT[] := ARRAY[
+    'fleet_tms_saudi_regions','market_packs','market_pack_features','market_address_schemas',
+    'market_document_types','market_driver_requirements','market_vehicle_requirements',
+    'market_inspection_templates','inspection_items','market_tax_reporting_rules',
+    'market_unit_settings','market_currency_settings','market_language_settings'
+  ];
+  app_super BOOLEAN;
+  app_bypass BOOLEAN;
+BEGIN
+  SELECT ARRAY_AGG(name ORDER BY name) INTO missing
+  FROM unnest(required_tables) name WHERE to_regclass('public.' || name) IS NULL;
+  IF COALESCE(cardinality(missing),0)>0 THEN
+    RAISE EXCEPTION 'Fleet production contract missing tables: %',missing;
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_roles role
+    WHERE role.rolname='opstrax_app' AND role.rolcanlogin
+      AND NOT role.rolsuper AND NOT role.rolbypassrls
+      AND NOT role.rolcreatedb AND NOT role.rolcreaterole
+      AND NOT role.rolinherit AND NOT role.rolreplication
+      AND NOT EXISTS (SELECT 1 FROM pg_auth_members membership WHERE membership.member=role.oid)
+      AND has_database_privilege('opstrax_app',current_database(),'CONNECT')
+      AND NOT has_database_privilege('opstrax_app',current_database(),'CREATE')
+      AND NOT has_database_privilege('opstrax_app',current_database(),'TEMPORARY')
+      AND has_schema_privilege('opstrax_app','public','USAGE')
+      AND NOT has_schema_privilege('opstrax_app','public','CREATE')) THEN
+    RAISE EXCEPTION 'opstrax_app role capabilities or memberships are unsafe';
+  END IF;
+
+  SELECT ARRAY_AGG(c.relname ORDER BY c.relname) INTO bad_rls
+  FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+  CROSS JOIN LATERAL (SELECT CASE
+    WHEN EXISTS (SELECT 1 FROM information_schema.columns x WHERE x.table_schema='public' AND x.table_name=c.relname AND x.column_name='company_id' AND x.data_type='bigint') THEN 'company_id'
+    WHEN EXISTS (SELECT 1 FROM information_schema.columns x WHERE x.table_schema='public' AND x.table_name=c.relname AND x.column_name='tenant_id' AND x.data_type='bigint') THEN 'tenant_id'
+  END AS tenant_col) scope
+  WHERE n.nspname='public' AND c.relkind IN ('r','p')
+    AND c.relname=ANY(required_tables) AND scope.tenant_col IS NOT NULL
+    AND (NOT c.relrowsecurity OR NOT c.relforcerowsecurity
+      OR (SELECT COUNT(*) FROM pg_policies p WHERE p.schemaname='public' AND p.tablename=c.relname)<>2
+      OR NOT EXISTS (SELECT 1 FROM pg_policies p WHERE p.schemaname='public' AND p.tablename=c.relname
+        AND p.policyname='tenant_isolation' AND p.permissive='PERMISSIVE' AND p.roles='{public}'::name[] AND p.cmd='ALL'
+        AND p.qual=format('(%s = (NULLIF(current_setting(''app.current_tenant_id''::text, true), ''''::text))::bigint)',scope.tenant_col)
+        AND p.with_check=p.qual)
+      OR NOT EXISTS (SELECT 1 FROM pg_policies p WHERE p.schemaname='public' AND p.tablename=c.relname
+        AND p.policyname='platform_admin_bypass' AND p.permissive='PERMISSIVE' AND p.roles='{public}'::name[] AND p.cmd='ALL'
+        AND p.qual='(NULLIF(current_setting(''app.platform_admin''::text, true), ''''::text) = ''on''::text)'
+        AND p.with_check=p.qual));
+  IF COALESCE(cardinality(bad_rls),0)>0 THEN
+    RAISE EXCEPTION 'Fleet tenant tables missing ENABLE/FORCE RLS or canonical policies: %',bad_rls;
+  END IF;
+
+  WITH fleet_privileges(name,allow_insert,allow_update,allow_delete) AS (VALUES
+    ('fleet_tms_shipment_events',true,false,false),
+    ('fleet_tms_cold_chain_event_log',true,false,false),
+    ('fleet_tms_asset_events',true,false,false),
+    ('fleet_tms_barcode_scan_events',true,false,false),
+    ('fleet_tms_rfid_events',true,false,false),
+    ('compliance_expiry_events',true,true,false)
+  )
+  SELECT ARRAY_AGG(name ORDER BY name) INTO bad_grants
+  FROM unnest(required_tables) name
+  JOIN information_schema.columns col ON col.table_schema='public' AND col.table_name=name AND col.column_name='company_id'
+  LEFT JOIN fleet_privileges expected USING(name)
+  WHERE NOT has_table_privilege('opstrax_app','public.' || name,'SELECT')
+     OR has_table_privilege('opstrax_app','public.' || name,'TRUNCATE')
+     OR has_table_privilege('opstrax_app','public.' || name,'REFERENCES')
+     OR has_table_privilege('opstrax_app','public.' || name,'TRIGGER')
+     OR has_table_privilege('opstrax_app','public.' || name,'INSERT')<>COALESCE(expected.allow_insert,true)
+     OR has_table_privilege('opstrax_app','public.' || name,'UPDATE')<>COALESCE(expected.allow_update,true)
+     OR has_table_privilege('opstrax_app','public.' || name,'DELETE')<>COALESCE(expected.allow_delete,true);
+  IF COALESCE(cardinality(bad_grants),0)>0 THEN
+    RAISE EXCEPTION 'Fleet tenant tables missing runtime DML grants: %',bad_grants;
+  END IF;
+
+  SELECT ARRAY_AGG(name ORDER BY name) INTO bad_reference_grants
+  FROM unnest(reference_tables) name
+  WHERE NOT has_table_privilege('opstrax_app','public.'||name,'SELECT')
+     OR has_table_privilege('opstrax_app','public.'||name,'INSERT')
+     OR has_table_privilege('opstrax_app','public.'||name,'UPDATE')
+     OR has_table_privilege('opstrax_app','public.'||name,'DELETE')
+     OR has_table_privilege('opstrax_app','public.'||name,'TRUNCATE')
+     OR has_table_privilege('opstrax_app','public.'||name,'REFERENCES')
+     OR has_table_privilege('opstrax_app','public.'||name,'TRIGGER');
+  IF COALESCE(cardinality(bad_reference_grants),0)>0 THEN
+    RAISE EXCEPTION 'Fleet reference tables are not SELECT-only for opstrax_app: %',bad_reference_grants;
+  END IF;
+
+  IF (SELECT COUNT(*) FROM market_packs WHERE code IN ('canada_na','saudi_gcc') AND status='active')<>2 THEN
+    RAISE EXCEPTION 'Fleet market reference catalog is incomplete';
+  END IF;
+  IF to_regclass('public.uq_ftms_shipment_identity') IS NULL
+     OR to_regclass('public.uq_ftms_vehicle_identity') IS NULL
+     OR to_regclass('public.ux_ftms_assets_branch_tag_normalized') IS NULL
+     OR to_regclass('public.uq_ftms_ccpolicy_branch_idem') IS NULL THEN
+    RAISE EXCEPTION 'Fleet correctness/idempotency indexes are incomplete';
+  END IF;
+  IF (SELECT COUNT(*) FROM schema_migrations WHERE version='2026_07_30_stage50_fleet_production_contract')<>1 THEN
+    RAISE EXCEPTION 'Fleet Stage-50 migration ledger registration missing or duplicated';
+  END IF;
+
+  -- Stage 50 must never regress Stage 49's append/delete-only replay ledger.
+  IF has_table_privilege('opstrax_app','public.mfa_login_challenge_consumptions','UPDATE') THEN
+    RAISE EXCEPTION 'Stage 50 regressed MFA replay-ledger least privilege';
+  END IF;
+END
+$verify$;
+SQL
+echo "Fleet: 58 route-contract tables + market catalog + RLS/FORCE/policies/grants/indexes verified"
+echo "Post-check: production runtime worker support…"
+psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 <<'SQL'
+DO $verify$
+DECLARE
+  required TEXT[] := ARRAY[
+    'service_run_history','service_heartbeats','platform_incidents','notifications',
+    'notification_recipients','escalation_rules','saved_reports','report_execution_log',
+    'scheduled_report_deliveries','scheduled_reports','routes','route_stops','trips','trip_stops',
+    'location_events','latest_vehicle_positions','telemetry_alerts','telemetry_rules','telemetry_nonces',
+    'gps_gateway_replay','safety_events','driver_safety_scores','telemetry_live_asset_states',
+    'fleet_health_snapshots','evidence_package_items','vehicle_safety_scorecards','ai_recommendations',
+    'maintenance_pm_rules','vehicles','maintenance_items','integrations','geofences',
+    'dispatch_assignments','dispatch_exceptions'
+  ];
+  tenant_tables TEXT[] := ARRAY[
+    'platform_incidents','notifications','notification_recipients','escalation_rules',
+    'saved_reports','report_execution_log','scheduled_report_deliveries','scheduled_reports',
+    'routes','route_stops','trips','trip_stops','location_events','latest_vehicle_positions',
+    'telemetry_alerts','telemetry_rules','safety_events','driver_safety_scores',
+    'telemetry_live_asset_states','fleet_health_snapshots','evidence_package_items',
+    'vehicle_safety_scorecards','ai_recommendations','maintenance_pm_rules','vehicles',
+    'maintenance_items','integrations','geofences','dispatch_assignments','dispatch_exceptions'
+  ];
+  missing TEXT[];
+  bad TEXT[];
+BEGIN
+  SELECT ARRAY_AGG(name ORDER BY name) INTO missing FROM unnest(required) name
+  WHERE to_regclass('public.'||name) IS NULL;
+  IF COALESCE(cardinality(missing),0)>0 THEN
+    RAISE EXCEPTION 'Production worker support missing tables: %',missing;
+  END IF;
+  SELECT ARRAY_AGG(name ORDER BY name) INTO bad FROM unnest(tenant_tables) name
+  JOIN pg_class c ON c.oid=to_regclass('public.'||name)
+  WHERE NOT c.relrowsecurity OR NOT c.relforcerowsecurity
+    OR NOT EXISTS (SELECT 1 FROM pg_policies p WHERE p.schemaname='public' AND p.tablename=name
+      AND p.policyname='tenant_isolation' AND p.permissive='PERMISSIVE' AND p.roles='{public}'::name[] AND p.cmd='ALL'
+      AND p.qual=format('(%s = (NULLIF(current_setting(''app.current_tenant_id''::text, true), ''''::text))::bigint)',
+        CASE WHEN name='scheduled_reports' THEN 'tenant_id' ELSE 'company_id' END)
+      AND p.with_check=p.qual)
+    OR NOT EXISTS (SELECT 1 FROM pg_policies p WHERE p.schemaname='public' AND p.tablename=name
+      AND p.policyname='platform_admin_bypass' AND p.permissive='PERMISSIVE' AND p.roles='{public}'::name[] AND p.cmd='ALL'
+      AND p.qual='(NULLIF(current_setting(''app.platform_admin''::text, true), ''''::text) = ''on''::text)'
+      AND p.with_check=p.qual)
+    OR NOT has_table_privilege('opstrax_app','public.'||name,'SELECT')
+    OR NOT has_table_privilege('opstrax_app','public.'||name,'INSERT')
+    OR NOT has_table_privilege('opstrax_app','public.'||name,'UPDATE')
+    OR NOT has_table_privilege('opstrax_app','public.'||name,'DELETE');
+  IF COALESCE(cardinality(bad),0)>0 THEN
+    RAISE EXCEPTION 'Production worker support RLS/policy/grant violations: %',bad;
+  END IF;
+  IF NOT has_table_privilege('opstrax_app','public.service_run_history','SELECT')
+     OR NOT has_table_privilege('opstrax_app','public.service_run_history','INSERT')
+     OR NOT has_table_privilege('opstrax_app','public.service_run_history','UPDATE')
+     OR NOT has_table_privilege('opstrax_app','public.service_run_history','DELETE')
+     OR NOT has_table_privilege('opstrax_app','public.service_heartbeats','SELECT')
+     OR NOT has_table_privilege('opstrax_app','public.service_heartbeats','INSERT')
+     OR NOT has_table_privilege('opstrax_app','public.service_heartbeats','UPDATE')
+     OR NOT has_table_privilege('opstrax_app','public.service_heartbeats','DELETE') THEN
+    RAISE EXCEPTION 'Production worker telemetry grants missing';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='scheduled_reports' AND column_name='saved_report_id')
+     OR NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='notifications' AND column_name='escalated_from') THEN
+    RAISE EXCEPTION 'Production worker support column contract incomplete';
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='route_stops'
+             AND column_name='company_id' AND column_default IS NOT NULL)
+     OR EXISTS (SELECT 1 FROM route_stops rs LEFT JOIN routes r ON r.id=rs.route_id
+                WHERE rs.company_id IS NULL OR r.id IS NULL OR rs.company_id<>r.company_id) THEN
+    RAISE EXCEPTION 'route_stops tenant scope is unresolved, mismatched, or retains an unsafe default';
+  END IF;
+  IF (SELECT COUNT(*) FROM schema_migrations WHERE version='2026_07_30_stage51_production_runtime_support')<>1 THEN
+    RAISE EXCEPTION 'Stage-51 runtime support ledger registration missing or duplicated';
+  END IF;
+  IF has_table_privilege('opstrax_app','public.mfa_login_challenge_consumptions','UPDATE') THEN
+    RAISE EXCEPTION 'Stage 51 regressed MFA replay-ledger least privilege';
+  END IF;
+END
+$verify$;
+SQL
+echo "Runtime support: worker tables + RLS/FORCE/policies/grants/columns verified"
+echo "Post-check: Fleet master identity uniqueness…"
+psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 <<'SQL'
+DO $verify$
+DECLARE
+  invalid TEXT[];
+BEGIN
+  SELECT ARRAY_AGG(expected.name ORDER BY expected.name) INTO invalid
+  FROM (VALUES
+    ('uq_vehicles_identity_code_normalized','vehicles','company_id','lower(btrim(vehicle_code::text))',''),
+    ('uq_drivers_identity_code_normalized','drivers','company_id','lower(btrim(driver_code::text))',''),
+    ('uq_vehicles_active_vin_normalized','vehicles','company_id','lower(btrim(vin::text))','deleted_at IS NULL AND NULLIF(btrim(vin::text), ''''::text) IS NOT NULL'),
+    ('uq_drivers_active_license_plaintext_normalized','drivers','company_id','lower(btrim(license_number::text))','deleted_at IS NULL AND NULLIF(btrim(license_number::text), ''''::text) IS NOT NULL AND NULLIF(btrim(license_number_bidx::text), ''''::text) IS NULL'),
+    ('uq_drivers_active_license_bidx','drivers','company_id','license_number_bidx','deleted_at IS NULL AND NULLIF(btrim(license_number_bidx::text), ''''::text) IS NOT NULL')
+  ) expected(name,table_name,key1,key2,predicate)
+  LEFT JOIN pg_class idx ON idx.oid=to_regclass('public.'||expected.name)
+  LEFT JOIN pg_index i ON i.indexrelid=idx.oid
+  WHERE NOT COALESCE(
+    i.indisunique AND i.indisvalid AND i.indisready
+    AND i.indnkeyatts=2 AND i.indnatts=2
+    AND i.indrelid=to_regclass('public.'||expected.table_name)
+    AND pg_get_indexdef(i.indexrelid,1,true)=expected.key1
+    AND pg_get_indexdef(i.indexrelid,2,true)=expected.key2
+    AND COALESCE(pg_get_expr(i.indpred,i.indrelid,true),'')=expected.predicate,
+    false);
+  IF COALESCE(cardinality(invalid),0)>0 THEN
+    RAISE EXCEPTION 'Fleet identity uniqueness indexes missing, invalid, or drifted: %',invalid;
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM drivers
+    WHERE deleted_at IS NULL
+      AND license_number LIKE 'enc:%'
+      AND NULLIF(BTRIM(license_number_bidx),'') IS NULL
+  ) THEN
+    RAISE EXCEPTION 'Fleet identity transition unsafe: active encrypted driver licence rows lack license_number_bidx; run a key-aware blind-index backfill';
+  END IF;
+  IF (SELECT COUNT(*) FROM schema_migrations WHERE version='2026_07_30_stage52_fleet_identity_uniqueness')<>1 THEN
+    RAISE EXCEPTION 'Stage-52 Fleet identity migration ledger registration missing or duplicated';
+  END IF;
+END
+$verify$;
+SQL
+echo "Fleet identity: normalized code + active VIN/licence indexes verified"
+echo "Applying terminal Stage58/59 security reconciliation before production-wide coverage…"
+terminal_migration=2026_07_31_stage58_nonforgeable_tenant_ticket
+terminal_file="database/migrations/${terminal_migration}.sql"
+[ -f "$terminal_file" ] || { echo "ERROR: missing $terminal_file (run from repo root)" >&2; exit 1; }
+# Historical Stage49-52 checks above intentionally validate their pre-cutover
+# contracts. Every tenant table now exists, including Stage60-63 additions, so
+# Stage58 can atomically replace all legacy/public GUC policies before the first
+# production-wide policy scan. There is no post-scan legacy-policy window.
+psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f "$terminal_file"
+psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_07_31_stage59_data_protection_key_ring.sql
+
+echo "Post-check: production-wide tenant RLS coverage…"
+psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 <<'SQL'
+DO $verify$
+DECLARE
+  violations TEXT[];
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM pg_default_acl d
+    JOIN pg_namespace ns ON ns.oid=d.defaclnamespace AND ns.nspname='public'
+    CROSS JOIN LATERAL aclexplode(d.defaclacl) acl
+    JOIN pg_roles grantee ON grantee.oid=acl.grantee
+    WHERE grantee.rolname='opstrax_app'
+      AND d.defaclobjtype IN ('r','S')
+  ) THEN
+    RAISE EXCEPTION 'Broad opstrax_app default privileges remain';
+  END IF;
+  WITH tenant_scope AS (
+    SELECT cls.oid,cls.relname AS table_name,cls.relrowsecurity,cls.relforcerowsecurity,
+      CASE
+        WHEN cls.relname='companies' THEN 'id'
+        WHEN EXISTS (SELECT 1 FROM information_schema.columns x WHERE x.table_schema='public' AND x.table_name=cls.relname AND x.column_name='company_id' AND x.data_type='bigint') THEN 'company_id'
+        ELSE 'tenant_id'
+      END AS tenant_col
+    FROM pg_class cls JOIN pg_namespace ns ON ns.oid=cls.relnamespace
+    WHERE ns.nspname='public' AND cls.relkind IN ('r','p')
+      AND cls.relname NOT IN ('platform_invoices','gps_gateway_replay','platform_impersonation_sessions','roles','report_catalog')
+      AND (cls.relname='companies' OR EXISTS (SELECT 1 FROM information_schema.columns x
+        WHERE x.table_schema='public' AND x.table_name=cls.relname
+          AND x.column_name IN ('company_id','tenant_id') AND x.data_type='bigint'))
+  ), privilege_matrix(table_name,allow_insert,allow_update,allow_delete) AS (VALUES
+    ('authorization_decision_logs',true,false,false),
+    ('companies',false,true,false),
+    ('audit_logs',true,false,false),
+    ('compliance_evidence',true,false,false),
+    ('fleet_tms_shipment_events',true,false,false),
+    ('fleet_tms_cold_chain_event_log',true,false,false),
+    ('fleet_tms_asset_events',true,false,false),
+    ('fleet_tms_barcode_scan_events',true,false,false),
+    ('fleet_tms_rfid_events',true,false,false),
+    ('compliance_expiry_events',true,true,false),
+    ('market_pack_branch_migration_audit',false,false,false),
+    ('access_review_items',true,true,false),('access_reviews',true,true,false),
+    ('backup_verifications',true,false,false),('company_security_settings',true,true,false),
+    ('compliance_audit_packages',true,true,false),('compliance_violations',false,true,false),
+    ('data_retention_policies',true,true,false),('driver_compliance_status',false,false,false),
+    ('export_requests',true,true,false),('fleet_tms_branch_migration_audit',false,false,false),
+    ('hos_clocks',false,false,false),('platform_impersonation_sessions',true,true,false),
+    ('security_events',true,false,false),('sso_connections',true,true,false),
+    ('tenant_market_packs',false,false,false),
+    ('tenant_entitlements',false,false,false),('tenant_subscriptions',false,false,false),
+    ('vehicle_compliance_status',false,false,false),('workforce_schedules',true,true,false),
+    ('mfa_login_challenge_consumptions',true,false,true)
+  )
+  SELECT array_agg(s.table_name ORDER BY s.table_name) INTO violations
+  FROM tenant_scope s LEFT JOIN privilege_matrix expected ON expected.table_name=s.table_name
+  WHERE NOT s.relrowsecurity OR NOT s.relforcerowsecurity
+    OR (SELECT COUNT(*) FROM pg_policies p WHERE p.schemaname='public' AND p.tablename=s.table_name)<>2
+    OR NOT EXISTS (SELECT 1 FROM pg_policies p
+      WHERE p.schemaname='public' AND p.tablename=s.table_name
+        AND p.policyname='tenant_ticket_app' AND p.permissive='PERMISSIVE'
+        AND p.roles='{opstrax_app}'::name[] AND p.cmd='ALL'
+        AND p.qual LIKE '%opstrax_security.current_tenant_id()%'
+        AND p.qual LIKE '%SELECT%'
+        AND p.with_check=p.qual)
+    OR NOT EXISTS (SELECT 1 FROM pg_policies p
+      WHERE p.schemaname='public' AND p.tablename=s.table_name
+        AND p.policyname='system_control_plane' AND p.permissive='PERMISSIVE'
+        AND p.roles='{opstrax_system}'::name[] AND p.cmd='ALL'
+        AND p.qual='true'
+        AND p.with_check=p.qual)
+    OR NOT has_table_privilege('opstrax_app',s.oid,'SELECT')
+    OR has_table_privilege('opstrax_app',s.oid,'TRUNCATE')
+    OR has_table_privilege('opstrax_app',s.oid,'REFERENCES')
+    OR has_table_privilege('opstrax_app',s.oid,'TRIGGER')
+    OR (expected.table_name IS NULL AND (
+      NOT has_table_privilege('opstrax_app',s.oid,'INSERT')
+      OR NOT has_table_privilege('opstrax_app',s.oid,'UPDATE')
+      OR NOT has_table_privilege('opstrax_app',s.oid,'DELETE')))
+    OR (expected.table_name IS NOT NULL AND (
+      has_table_privilege('opstrax_app',s.oid,'INSERT')<>expected.allow_insert
+      OR has_table_privilege('opstrax_app',s.oid,'UPDATE')<>expected.allow_update
+      OR has_table_privilege('opstrax_app',s.oid,'DELETE')<>expected.allow_delete));
+  IF COALESCE(cardinality(violations),0)>0 THEN
+    RAISE EXCEPTION 'Tenant RLS coverage/policy/grant violations: %',violations;
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM pg_class tbl
+    JOIN pg_namespace ns ON ns.oid=tbl.relnamespace AND ns.nspname='public'
+    JOIN pg_depend dep ON dep.refobjid=tbl.oid AND dep.refobjsubid>0 AND dep.deptype IN ('a','i')
+    JOIN pg_class seq ON seq.oid=dep.objid AND seq.relkind='S'
+    WHERE tbl.relkind IN ('r','p')
+      AND tbl.relname NOT IN ('platform_invoices','gps_gateway_replay','platform_impersonation_sessions','roles','report_catalog')
+      AND (tbl.relname='companies' OR EXISTS (SELECT 1 FROM information_schema.columns x
+        WHERE x.table_schema='public' AND x.table_name=tbl.relname
+          AND x.column_name IN ('company_id','tenant_id') AND x.data_type='bigint'))
+      AND (has_sequence_privilege('opstrax_app',seq.oid,'USAGE')<>
+             has_table_privilege('opstrax_app',tbl.oid,'INSERT')
+        OR has_sequence_privilege('opstrax_app',seq.oid,'SELECT')<>
+             has_table_privilege('opstrax_app',tbl.oid,'INSERT')
+        OR has_sequence_privilege('opstrax_app',seq.oid,'UPDATE'))
+  ) THEN
+    RAISE EXCEPTION 'Tenant sequence privileges do not match insert capability';
+  END IF;
+  IF (SELECT COUNT(*) FROM schema_migrations WHERE version='2026_07_30_stage53_tenant_rls_reconciliation')<>1 THEN
+    RAISE EXCEPTION 'Stage-53 tenant RLS reconciliation ledger missing or duplicated';
+  END IF;
+  IF has_table_privilege('opstrax_app','public.mfa_login_challenge_consumptions','UPDATE') THEN
+    RAISE EXCEPTION 'Stage 53 regressed MFA replay-ledger least privilege';
+  END IF;
+END
+$verify$;
+SQL
+tenant_rls_count=$(psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -tA -c "
+  SELECT COUNT(*) FROM pg_class cls JOIN pg_namespace ns ON ns.oid=cls.relnamespace
+  WHERE ns.nspname='public' AND cls.relkind IN ('r','p')
+    AND cls.relname NOT IN ('platform_invoices','gps_gateway_replay','platform_impersonation_sessions','roles','report_catalog')
+    AND (cls.relname='companies' OR EXISTS (
+      SELECT 1 FROM information_schema.columns c
+      WHERE c.table_schema='public' AND c.table_name=cls.relname
+        AND c.column_name IN ('company_id','tenant_id') AND c.data_type='bigint'))")
+echo "Tenant RLS coverage: ${tenant_rls_count} in-scope tables verified"
+echo "Post-check: Fleet cold-chain/runtime-route/asset/workforce integrity contracts…"
+psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 <<'SQL'
+DO $verify$
+DECLARE invalid TEXT[];
+BEGIN
+  SELECT array_agg(expected.name ORDER BY expected.name) INTO invalid
+  FROM (VALUES
+    ('uq_ftms_tdev_tenant_code_norm','fleet_tms_temperature_devices',2,'company_id','lower(btrim(device_code::text))','',''),
+    ('uq_ftms_tdev_branch_idem','fleet_tms_temperature_devices',3,'company_id','COALESCE(branch_id, 0::bigint)','idempotency_key','(NULLIF(btrim((idempotency_key)::text), ''''::text) IS NOT NULL)'),
+    ('uq_ftms_atype_tenant_code_norm','fleet_tms_asset_types',2,'company_id','lower(btrim(code::text))','','')
+  ) expected(name,table_name,key_count,key1,key2,key3,predicate)
+  LEFT JOIN pg_class idx ON idx.oid=to_regclass('public.'||expected.name)
+  LEFT JOIN pg_index i ON i.indexrelid=idx.oid
+  WHERE idx.oid IS NULL OR NOT i.indisunique OR NOT i.indisvalid OR NOT i.indisready
+    OR i.indrelid<>to_regclass('public.'||expected.table_name)
+    OR i.indnkeyatts<>expected.key_count OR i.indnatts<>expected.key_count
+    OR pg_get_indexdef(i.indexrelid,1,true)<>expected.key1
+    OR pg_get_indexdef(i.indexrelid,2,true)<>expected.key2
+    OR (expected.key_count=3 AND pg_get_indexdef(i.indexrelid,3,true)<>expected.key3)
+    OR COALESCE(pg_get_expr(i.indpred,i.indrelid),'')<>expected.predicate;
+  IF COALESCE(cardinality(invalid),0)>0 THEN
+    RAISE EXCEPTION 'Fleet Stage54/56 integrity indexes missing, invalid, or drifted: %',invalid;
+  END IF;
+
+  IF (SELECT COUNT(*) FROM schema_migrations WHERE version='2026_07_30_stage54_cold_chain_device_integrity')<>1
+     OR (SELECT COUNT(*) FROM schema_migrations WHERE version='2026_07_30_stage55_fleet_runtime_route_contract')<>1
+     OR (SELECT COUNT(*) FROM schema_migrations WHERE version='2026_07_30_stage56_asset_type_integrity')<>1
+     OR (SELECT COUNT(*) FROM schema_migrations WHERE version='2026_07_30_stage57_workforce_schedule_tenant_integrity')<>1 THEN
+    RAISE EXCEPTION 'Fleet Stage54/55/56/57 migration ledger missing or duplicated';
+  END IF;
+  IF (SELECT COUNT(*) FROM pg_policies
+      WHERE schemaname='public' AND tablename='authorization_decision_logs')<>2
+     OR NOT has_table_privilege('opstrax_app','public.authorization_decision_logs','SELECT')
+     OR NOT has_table_privilege('opstrax_app','public.authorization_decision_logs','INSERT')
+     OR has_table_privilege('opstrax_app','public.authorization_decision_logs','UPDATE')
+     OR has_table_privilege('opstrax_app','public.authorization_decision_logs','DELETE')
+     OR NOT has_sequence_privilege('opstrax_app','public.authorization_decision_logs_id_seq','USAGE')
+     OR NOT has_sequence_privilege('opstrax_app','public.authorization_decision_logs_id_seq','SELECT')
+     OR has_sequence_privilege('opstrax_app','public.authorization_decision_logs_id_seq','UPDATE') THEN
+    RAISE EXCEPTION 'Fleet Stage55 authorization evidence contract drifted';
+  END IF;
+  IF to_regclass('public.workforce_schedules') IS NULL
+     OR NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public'
+                    AND table_name='workforce_schedules' AND column_name='company_id'
+                    AND data_type='bigint' AND is_nullable='NO')
+     OR NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public'
+                    AND table_name='workforce_schedules' AND column_name='branch_id'
+                    AND data_type='bigint' AND is_nullable='YES')
+     OR NOT EXISTS (SELECT 1 FROM pg_class WHERE oid='public.workforce_schedules'::regclass
+                    AND relrowsecurity AND relforcerowsecurity)
+     OR (SELECT COUNT(*) FROM pg_policies WHERE schemaname='public' AND tablename='workforce_schedules')<>2
+     OR NOT has_table_privilege('opstrax_app','public.workforce_schedules','SELECT')
+     OR NOT has_table_privilege('opstrax_app','public.workforce_schedules','INSERT')
+     OR NOT has_table_privilege('opstrax_app','public.workforce_schedules','UPDATE')
+     OR has_table_privilege('opstrax_app','public.workforce_schedules','DELETE')
+     OR has_table_privilege('opstrax_app','public.workforce_schedules','TRUNCATE')
+     OR has_table_privilege('opstrax_app','public.workforce_schedules','REFERENCES')
+     OR has_table_privilege('opstrax_app','public.workforce_schedules','TRIGGER')
+     OR NOT has_sequence_privilege('opstrax_app','public.workforce_schedules_id_seq','USAGE')
+     OR NOT has_sequence_privilege('opstrax_app','public.workforce_schedules_id_seq','SELECT')
+     OR has_sequence_privilege('opstrax_app','public.workforce_schedules_id_seq','UPDATE') THEN
+    RAISE EXCEPTION 'Fleet Stage57 workforce schema/RLS/grant contract drifted';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+      WHERE conrelid='public.workforce_schedules'::regclass
+        AND conname='fk_workforce_schedules_tenant_driver' AND convalidated
+        AND pg_get_constraintdef(oid)='FOREIGN KEY (company_id, driver_id) REFERENCES drivers(company_id, id)')
+     OR EXISTS (SELECT 1 FROM workforce_schedules ws LEFT JOIN drivers d ON d.id=ws.driver_id
+                WHERE d.id IS NULL OR ws.company_id IS DISTINCT FROM d.company_id
+                  OR ws.branch_id IS DISTINCT FROM d.branch_id) THEN
+    RAISE EXCEPTION 'Fleet Stage57 workforce tenant/driver ownership contract drifted';
+  END IF;
+  SELECT array_agg(expected.name ORDER BY expected.name) INTO invalid
+  FROM (VALUES
+    ('uq_drivers_company_id_id','drivers',true,2,'company_id','id',''),
+    ('uq_workforce_schedules_tenant_driver_week','workforce_schedules',true,3,'company_id','driver_id','week_start'),
+    ('idx_workforce_schedules_tenant_week','workforce_schedules',false,2,'company_id','week_start','')
+  ) expected(name,table_name,is_unique,key_count,key1,key2,key3)
+  LEFT JOIN pg_class idx ON idx.oid=to_regclass('public.'||expected.name)
+  LEFT JOIN pg_index i ON i.indexrelid=idx.oid
+  WHERE idx.oid IS NULL OR i.indisunique<>expected.is_unique OR NOT i.indisvalid OR NOT i.indisready
+    OR i.indrelid<>to_regclass('public.'||expected.table_name)
+    OR i.indnkeyatts<>expected.key_count OR i.indnatts<>expected.key_count
+    OR pg_get_indexdef(i.indexrelid,1,true)<>expected.key1
+    OR pg_get_indexdef(i.indexrelid,2,true)<>expected.key2
+    OR (expected.key_count=3 AND pg_get_indexdef(i.indexrelid,3,true)<>expected.key3)
+    OR i.indpred IS NOT NULL;
+  IF COALESCE(cardinality(invalid),0)>0 THEN
+    RAISE EXCEPTION 'Fleet Stage57 workforce ownership indexes missing, invalid, or drifted: %',invalid;
+  END IF;
+END
+$verify$;
+SQL
+echo "Fleet integrity: Stage54/55/56/57 exact indexes, authorization/workforce evidence, and ledgers verified"
+echo "Verifying terminal Stage58/59 non-forgeable tenant boundary…"
+psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 <<'SQL'
+DO $verify_stage58$
+BEGIN
+  IF (SELECT count(*) FROM schema_migrations WHERE version='2026_07_31_stage58_nonforgeable_tenant_ticket')<>1 THEN
+    RAISE EXCEPTION 'Stage58 migration ledger missing or duplicated';
+  END IF;
+  IF to_regclass('public.platform_data_protection_keys') IS NULL THEN
+    RAISE EXCEPTION 'Stage59 Data Protection key-ring table missing';
+  END IF;
+  IF (SELECT count(*) FROM pg_attribute a
+        WHERE a.attrelid=to_regclass('public.platform_data_protection_keys')
+          AND a.attnum>0 AND NOT a.attisdropped)<>4
+     OR EXISTS (SELECT 1 FROM (VALUES
+          ('id','bigint',true,'a',''),
+          ('friendly_name','character varying(256)',true,'',''),
+          ('xml_payload','text',true,'',''),
+          ('created_at','timestamp with time zone',true,'','clock_timestamp()')
+        ) expected(column_name,data_type,not_null,identity_kind,column_default)
+        LEFT JOIN pg_attribute actual
+          ON actual.attrelid=to_regclass('public.platform_data_protection_keys')
+         AND actual.attname=expected.column_name AND actual.attnum>0 AND NOT actual.attisdropped
+        LEFT JOIN pg_attrdef actual_default
+          ON actual_default.adrelid=actual.attrelid AND actual_default.adnum=actual.attnum
+        WHERE actual.attname IS NULL
+          OR format_type(actual.atttypid,actual.atttypmod)<>expected.data_type
+          OR actual.attnotnull<>expected.not_null
+          OR actual.attidentity::text<>expected.identity_kind
+          OR COALESCE(pg_get_expr(actual_default.adbin,actual_default.adrelid),'')<>expected.column_default)
+     OR pg_get_serial_sequence('public.platform_data_protection_keys','id')<>'public.platform_data_protection_keys_id_seq'
+     OR (SELECT count(*) FROM pg_constraint c
+          WHERE c.conrelid=to_regclass('public.platform_data_protection_keys'))<>3
+     OR NOT EXISTS (SELECT 1 FROM pg_constraint c
+          WHERE c.conrelid=to_regclass('public.platform_data_protection_keys') AND c.contype='p'
+            AND c.convalidated AND c.conkey=ARRAY[(SELECT attnum FROM pg_attribute
+              WHERE attrelid=to_regclass('public.platform_data_protection_keys') AND attname='id')]::smallint[])
+     OR NOT EXISTS (SELECT 1 FROM pg_constraint c
+          WHERE c.conrelid=to_regclass('public.platform_data_protection_keys') AND c.contype='u'
+            AND c.convalidated AND c.conkey=ARRAY[(SELECT attnum FROM pg_attribute
+              WHERE attrelid=to_regclass('public.platform_data_protection_keys') AND attname='friendly_name')]::smallint[])
+     OR NOT EXISTS (SELECT 1 FROM pg_constraint c
+          WHERE c.conrelid=to_regclass('public.platform_data_protection_keys') AND c.contype='c'
+            AND c.convalidated
+            AND regexp_replace(pg_get_constraintdef(c.oid,true),'\s+','','g')='CHECK(octet_length(xml_payload)<=1048576)') THEN
+    RAISE EXCEPTION 'Stage59 Data Protection key-ring exact schema contract unsafe';
+  END IF;
+  IF (SELECT count(*) FROM schema_migrations WHERE version='2026_07_31_stage59_data_protection_key_ring')<>1
+     OR (SELECT count(*) FROM pg_policies WHERE schemaname='public' AND tablename='platform_data_protection_keys')<>1
+     OR NOT has_table_privilege('opstrax_system','platform_data_protection_keys','SELECT')
+     OR NOT has_table_privilege('opstrax_system','platform_data_protection_keys','INSERT')
+     OR has_table_privilege('opstrax_system','platform_data_protection_keys','UPDATE')
+     OR has_table_privilege('opstrax_system','platform_data_protection_keys','DELETE')
+     OR has_table_privilege('opstrax_app','platform_data_protection_keys','SELECT')
+     OR has_table_privilege('opstrax_app','platform_data_protection_keys','INSERT')
+     OR has_table_privilege('opstrax_app','platform_data_protection_keys','UPDATE')
+     OR has_table_privilege('opstrax_app','platform_data_protection_keys','DELETE')
+     OR has_sequence_privilege('opstrax_app','platform_data_protection_keys_id_seq','USAGE')
+     OR has_sequence_privilege('opstrax_app','platform_data_protection_keys_id_seq','SELECT')
+     OR has_sequence_privilege('opstrax_app','platform_data_protection_keys_id_seq','UPDATE')
+     OR NOT has_sequence_privilege('opstrax_system','platform_data_protection_keys_id_seq','USAGE')
+     OR NOT has_sequence_privilege('opstrax_system','platform_data_protection_keys_id_seq','SELECT')
+     OR has_sequence_privilege('opstrax_system','platform_data_protection_keys_id_seq','UPDATE') THEN
+    RAISE EXCEPTION 'Stage59 Data Protection key-ring contract unsafe';
+  END IF;
+  IF EXISTS(SELECT 1 FROM pg_policies WHERE schemaname='public' AND roles='{public}'::name[]) THEN
+    RAISE EXCEPTION 'Stage58 left PUBLIC RLS policies';
+  END IF;
+  IF has_function_privilege('opstrax_app','opstrax_security.issue_tenant_ticket(bigint,integer,bigint,integer)','EXECUTE')
+     OR NOT has_function_privilege('opstrax_system','opstrax_security.issue_tenant_ticket(bigint,integer,bigint,integer)','EXECUTE')
+     OR NOT has_function_privilege('opstrax_app','opstrax_security.current_tenant_id()','EXECUTE') THEN
+    RAISE EXCEPTION 'Stage58 ticket function grants unsafe';
+  END IF;
+  IF EXISTS(SELECT 1 FROM pg_auth_members m JOIN pg_roles r ON r.oid=m.member OR r.oid=m.roleid
+            WHERE r.rolname IN ('opstrax_app','opstrax_system')) THEN
+    RAISE EXCEPTION 'Stage58 runtime role membership graph unsafe';
+  END IF;
+  IF NOT EXISTS(SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='vehicles'
+      AND policyname='tenant_ticket_app' AND roles='{opstrax_app}'::name[])
+     OR NOT EXISTS(SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='vehicles'
+      AND policyname='system_control_plane' AND roles='{opstrax_system}'::name[]) THEN
+    RAISE EXCEPTION 'Stage58 canonical role-targeted policies missing';
+  END IF;
+  IF has_table_privilege('opstrax_app','platform_admins','SELECT')
+     OR has_any_column_privilege('opstrax_app','platform_admins','SELECT,INSERT,UPDATE,REFERENCES')
+     OR has_table_privilege('opstrax_app','service_heartbeats','SELECT')
+     OR has_table_privilege('opstrax_app','telemetry_nonces','SELECT') THEN
+    RAISE EXCEPTION 'Stage58 app retains control-plane/system-ledger access';
+  END IF;
+  IF NOT has_table_privilege('opstrax_system','platform_invoices','SELECT')
+     OR NOT has_table_privilege('opstrax_system','platform_invoices','INSERT')
+     OR NOT has_table_privilege('opstrax_system','platform_invoices','UPDATE')
+     OR NOT has_table_privilege('opstrax_system','platform_invoices','DELETE')
+     OR NOT has_table_privilege('opstrax_system','gps_gateway_replay','SELECT')
+     OR NOT has_table_privilege('opstrax_system','gps_gateway_replay','INSERT')
+     OR NOT has_table_privilege('opstrax_system','gps_gateway_replay','UPDATE')
+     OR NOT has_table_privilege('opstrax_system','gps_gateway_replay','DELETE') THEN
+    RAISE EXCEPTION 'Stage58 system excluded-table grants missing';
+  END IF;
+END
+$verify_stage58$;
+SQL
+echo "Stage58: signed transaction tickets, exact roles/policies/grants, and control-plane separation verified"
 echo
 echo "Ledger:"
-psql "$NEON_PG_URI" -tA -c "SELECT version FROM schema_migrations ORDER BY version"
+psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -tA -c "SELECT version FROM schema_migrations ORDER BY version"
 echo
 echo "✅ Neon is ready for the new backend. Safe to merge to main / deploy."

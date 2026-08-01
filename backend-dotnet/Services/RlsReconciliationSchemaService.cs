@@ -19,9 +19,15 @@ namespace Opstrax.Api.Services;
 // FORCE'd + granted to opstrax_app. It is the permanent fix for the coverage gap
 // the Stage-22 migration could only close for tables that existed at migration time.
 //
-// Idempotent and additive: enables RLS, creates the tenant_isolation +
-// platform_admin_bypass policies only if absent, re-applies FORCE, drops nothing.
-// Skips the same control-plane / intentionally cross-tenant tables as Stage 19/22.
+// Idempotent and fail-closed: after Stage 58 is present it enables RLS, removes every
+// existing policy, recreates the signed-ticket app policy + explicit system policy,
+// and re-applies FORCE. It never recreates the forgeable legacy GUC policies. PostgreSQL
+// OR-combines permissive policies, so leaving even one rogue USING(true) policy is
+// an isolation bypass.
+// Privileges are intentionally migration-owned: a boot-time blanket GRANT would
+// undo the least-privilege contracts for reference, evidence, and audit tables.
+// The companies control-plane table is special-cased as tenant-scoped on its id;
+// reviewed bootstrap/platform flows use the canonical system bypass.
 // ─────────────────────────────────────────────────────────────────────────────
 public sealed class RlsReconciliationSchemaService(Database db)
 {
@@ -34,12 +40,26 @@ public sealed class RlsReconciliationSchemaService(Database db)
         DO $rls$
         DECLARE
             rec        RECORD;
+            policy_rec RECORD;
             tenant_col text;
             skip_tables text[] := ARRAY[
                 'platform_admin_users', 'platform_sessions', 'platform_audit_log',
-                'platform_packages', 'platform_invoices', 'companies', 'schema_migrations'
+                'platform_packages', 'platform_invoices', 'platform_impersonation_sessions', 'schema_migrations',
+                -- Pre-tenant infrastructure replay ledger. Its nullable company_id is
+                -- audit metadata; gateway signature is the authorization boundary.
+                'gps_gateway_replay',
+                -- Nullable global templates/catalog rows require Stage-58's split
+                -- SELECT versus mutation policies and must not be generically replaced.
+                'roles', 'report_catalog'
             ];
         BEGIN
+            -- Owner-capable development boot may precede the mandatory terminal
+            -- migration. In that state do not recreate legacy GUC-trusting policy;
+            -- Stage 58/readiness owns the fail-closed cutover.
+            IF to_regprocedure('opstrax_security.current_tenant_id()') IS NULL
+               OR NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_system') THEN
+                RETURN;
+            END IF;
             FOR rec IN
                 SELECT c.table_name,
                        bool_or(c.column_name = 'company_id') AS has_company,
@@ -49,41 +69,39 @@ public sealed class RlsReconciliationSchemaService(Database db)
                   ON t.table_schema = c.table_schema AND t.table_name = c.table_name
                 WHERE c.table_schema = 'public'
                   AND t.table_type = 'BASE TABLE'
-                  AND c.column_name IN ('company_id', 'tenant_id')
-                  AND c.data_type = 'bigint'
+                  AND ((c.column_name IN ('company_id', 'tenant_id') AND c.data_type = 'bigint')
+                    OR (c.table_name = 'companies' AND c.column_name = 'id' AND c.data_type = 'bigint'))
                 GROUP BY c.table_name
             LOOP
                 CONTINUE WHEN rec.table_name = ANY(skip_tables);
 
-                tenant_col := CASE WHEN rec.has_company THEN 'company_id' ELSE 'tenant_id' END;
+                tenant_col := CASE WHEN rec.table_name = 'companies' THEN 'id'
+                                   WHEN rec.has_company THEN 'company_id' ELSE 'tenant_id' END;
 
                 EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', rec.table_name);
 
-                IF NOT EXISTS (
-                    SELECT 1 FROM pg_policies
+                FOR policy_rec IN
+                    SELECT policyname FROM pg_policies
                     WHERE schemaname = 'public' AND tablename = rec.table_name
-                      AND policyname = 'tenant_isolation'
-                ) THEN
-                    EXECUTE format($p$
-                        CREATE POLICY tenant_isolation ON public.%I
-                        FOR ALL
-                        USING (%I = NULLIF(current_setting('app.current_tenant_id', true), '')::bigint)
-                        WITH CHECK (%I = NULLIF(current_setting('app.current_tenant_id', true), '')::bigint)
-                    $p$, rec.table_name, tenant_col, tenant_col);
-                END IF;
+                LOOP
+                    EXECUTE format('DROP POLICY %I ON public.%I', policy_rec.policyname, rec.table_name);
+                END LOOP;
 
-                IF NOT EXISTS (
-                    SELECT 1 FROM pg_policies
-                    WHERE schemaname = 'public' AND tablename = rec.table_name
-                      AND policyname = 'platform_admin_bypass'
-                ) THEN
-                    EXECUTE format($p$
-                        CREATE POLICY platform_admin_bypass ON public.%I
-                        FOR ALL
-                        USING (NULLIF(current_setting('app.platform_admin', true), '') = 'on')
-                        WITH CHECK (NULLIF(current_setting('app.platform_admin', true), '') = 'on')
-                    $p$, rec.table_name);
-                END IF;
+                EXECUTE format($p$
+                    CREATE POLICY tenant_ticket_app ON public.%I
+                    FOR ALL
+                    TO opstrax_app
+                    USING (%I = (SELECT opstrax_security.current_tenant_id()))
+                    WITH CHECK (%I = (SELECT opstrax_security.current_tenant_id()))
+                $p$, rec.table_name, tenant_col, tenant_col);
+
+                EXECUTE format($p$
+                    CREATE POLICY system_control_plane ON public.%I
+                    FOR ALL
+                    TO opstrax_system
+                    USING (true)
+                    WITH CHECK (true)
+                $p$, rec.table_name);
             END LOOP;
         END
         $rls$;
@@ -100,22 +118,5 @@ public sealed class RlsReconciliationSchemaService(Database db)
         END
         $force$;
 
-        DO $grant$
-        BEGIN
-            IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'opstrax_app') THEN
-                GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO opstrax_app;
-                GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO opstrax_app;
-
-                -- Append-only platform audit trail: the app role may INSERT/SELECT but never UPDATE/DELETE,
-                -- so a compromised app connection cannot rewrite or erase the control-plane audit history.
-                -- Runs AFTER the blanket grant above (this reconciler is the last boot step), so it wins.
-                -- The app only ever INSERTs platform_audit_log rows; sequence repair uses setval (no DML).
-                -- (Scoped to platform_audit_log; tenant audit_logs is left alone since retention purges it.)
-                IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='platform_audit_log') THEN
-                    REVOKE UPDATE, DELETE ON platform_audit_log FROM opstrax_app;
-                END IF;
-            END IF;
-        END
-        $grant$;
         """;
 }

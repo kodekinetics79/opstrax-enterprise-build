@@ -237,6 +237,8 @@ public sealed class Batch7SchemaService(Database db, IConfiguration? configurati
         // Workforce shift scheduling — one row per driver per week
         @"CREATE TABLE IF NOT EXISTS workforce_schedules (
             id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL REFERENCES companies(id),
+            branch_id BIGINT NULL,
             driver_id BIGINT NOT NULL,
             week_start DATE NOT NULL,
             monday VARCHAR(40) NOT NULL DEFAULT 'Off',
@@ -248,7 +250,7 @@ public sealed class Batch7SchemaService(Database db, IConfiguration? configurati
             sunday VARCHAR(40) NOT NULL DEFAULT 'Off',
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMPTZ NULL,
-            UNIQUE (driver_id, week_start)
+            UNIQUE (company_id, driver_id, week_start)
         )",
     ];
 
@@ -271,6 +273,7 @@ public sealed class Batch7SchemaService(Database db, IConfiguration? configurati
         "CREATE INDEX IF NOT EXISTS idx_audit_logs_module ON audit_logs(module_key)",
         "CREATE INDEX IF NOT EXISTS idx_audit_logs_severity ON audit_logs(severity)",
         "CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action_name)",
+        "CREATE INDEX IF NOT EXISTS idx_workforce_schedules_tenant_week ON workforce_schedules(company_id, week_start)",
     ];
 
     private static readonly string[] ReferenceSeeds =

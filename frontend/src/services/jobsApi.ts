@@ -8,7 +8,13 @@ function asRows(value: unknown): AnyRecord[] {
 
 export const jobsApi = {
   list: () => unwrap<AnyRecord[]>(apiClient.get("/api/jobs")),
-  listPaged: (opts?: { limit?: number; offset?: number; search?: string }) => apiPaged("/api/jobs", opts),
+  listPaged: (opts?: { limit?: number; offset?: number; search?: string; status?: string; priority?: string }) => {
+    const filters = new URLSearchParams();
+    if (opts?.status && opts.status !== "All") filters.set("status", opts.status);
+    if (opts?.priority && opts.priority !== "All") filters.set("priority", opts.priority);
+    const query = filters.toString();
+    return apiPaged(`/api/jobs${query ? `?${query}` : ""}`, opts);
+  },
   summary: () => unwrap<AnyRecord>(apiClient.get("/api/jobs/summary")),
   detail: (id: string | number) =>
     unwrap<AnyRecord>(apiClient.get(`/api/jobs/${id}`)).then((detail) => ({

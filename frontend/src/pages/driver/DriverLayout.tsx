@@ -1,4 +1,4 @@
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet } from "react-router";
 import { AlertTriangle, Bell, BookOpen, ClipboardList, Clock, DollarSign, LogOut, MessageSquare, Package, Truck } from "lucide-react";
 import { useOfflineQueue } from "@/hooks/useOfflineQueue";
 import { useQuery } from "@tanstack/react-query";

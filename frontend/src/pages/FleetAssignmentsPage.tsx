@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -163,6 +163,9 @@ export function FleetAssignmentsPage() {
     return <ErrorState message={assignmentsQ.error instanceof Error ? assignmentsQ.error.message : "Unable to load assignments."} />;
   }
 
+  const supportingError = [recommendationsQ, exceptionsQ, availableDriversQ, availableVehiclesQ, ownersQ]
+    .find((query) => query.isError)?.error;
+
   const activeAssignments = assignments.filter((row) => !/deliver|cancel/.test(assignmentStatus(row))).length;
   const inTransit = assignments.filter((row) => /pickup|transit|delivery/.test(assignmentStatus(row))).length;
   const exceptionCount = exceptions.filter((row) => String(g(row, "status") ?? "open").toLowerCase() !== "resolved").length;
@@ -178,6 +181,11 @@ export function FleetAssignmentsPage() {
 
   return (
     <div className="fleet-console flex h-full flex-col gap-3 overflow-y-auto pb-6">
+      {supportingError ? (
+        <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          Some assignment supporting data could not be loaded: {supportingError instanceof Error ? supportingError.message : "Please retry."}
+        </div>
+      ) : null}
       <ConsoleRail
         eyebrow="Dispatch · Pairing"
         icon={<Link2 className="h-3.5 w-3.5 text-teal-700" />}

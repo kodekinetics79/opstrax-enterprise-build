@@ -3,6 +3,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using Opstrax.Api.Data;
+using Opstrax.Api.Controllers;
 
 namespace Opstrax.Api.Seed;
 
@@ -254,6 +255,7 @@ VALUES (@companyId, @kind, @subjType, '', @subjName, @docType, @docNo, 'SA', 'Ac
 
     private async Task SeedCompany(long companyId, CancellationToken ct)
     {
+        var branchId = await ResolveSeedBranch(companyId, ct);
         var rng = new Random((int)(companyId * 7919));
         string[] customers = { "Najd Foods", "Tamimi Markets", "SACO Hardware", "AlSafi Danone", "Mahmoud Saeed Group" };
         string[] cities = { "Riyadh", "Jeddah", "Dammam", "Mecca", "Medina" };
@@ -267,14 +269,15 @@ VALUES (@companyId, @kind, @subjType, '', @subjName, @docType, @docNo, 'SA', 'Ac
         foreach (var (vn, idx) in vehicleNumbers.Select((v, i) => (v, i)))
         {
             await db.ExecuteAsync(@"
-INSERT INTO fleet_tms_vehicles (company_id, vehicle_number, plate_number, type, status, driver_name,
+INSERT INTO fleet_tms_vehicles (company_id, branch_id, vehicle_number, plate_number, type, status, driver_name,
     capacity_kg, capacity_cbm, current_load_kg, fuel_level_percent, odometer_km, health_status,
     is_refrigerated, temperature_celsius, last_known_location, last_ping_at_utc, last_service_at_utc, next_service_at_utc, notes)
-VALUES (@companyId, @vn, @plate, @type, @status, @driver, @capKg, @capCbm, @loadKg, @fuel, @odo, @health,
+VALUES (@companyId, @branchId, @vn, @plate, @type, @status, @driver, @capKg, @capCbm, @loadKg, @fuel, @odo, @health,
     @refrigerated, @temp, @loc, NOW() - (@idx || ' hours')::interval, NOW() - INTERVAL '20 days', NOW() + INTERVAL '40 days', '')",
                 c =>
                 {
                     c.Parameters.AddWithValue("@companyId", companyId);
+                    c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
                     c.Parameters.AddWithValue("@vn", vn);
                     c.Parameters.AddWithValue("@plate", $"{rng.Next(1000, 9999)} ASD");
                     c.Parameters.AddWithValue("@type", vn.StartsWith("REF") ? "Reefer" : vn.StartsWith("VAN") ? "Van" : "Truck");
@@ -295,13 +298,13 @@ VALUES (@companyId, @vn, @plate, @type, @status, @driver, @capKg, @capCbm, @load
 
         // Maintenance + fuel
         await db.ExecuteAsync(@"
-INSERT INTO fleet_tms_maintenance_tickets (company_id, work_order_number, vehicle_number, type, status, priority, vendor_name, description, estimated_cost, downtime_hours, opened_at_utc, due_at_utc)
-VALUES (@companyId, 'WO-2041', 'REF-412', 'Refrigeration', 'Open', 'High', 'CoolTech KSA', 'Reefer unit losing temperature on long hauls.', 3200, 8, NOW() - INTERVAL '2 days', NOW() + INTERVAL '1 day')",
-            c => c.Parameters.AddWithValue("@companyId", companyId), ct);
+INSERT INTO fleet_tms_maintenance_tickets (company_id, branch_id, work_order_number, vehicle_number, type, status, priority, vendor_name, description, estimated_cost, downtime_hours, opened_at_utc, due_at_utc)
+VALUES (@companyId, @branchId, 'WO-2041', 'REF-412', 'Refrigeration', 'Open', 'High', 'CoolTech KSA', 'Reefer unit losing temperature on long hauls.', 3200, 8, NOW() - INTERVAL '2 days', NOW() + INTERVAL '1 day')",
+            c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
         await db.ExecuteAsync(@"
-INSERT INTO fleet_tms_fuel_events (company_id, vehicle_number, fuel_card_number, station_name, city, event_type, anomaly_flag, liters, cost, odometer_km, recorded_at_utc)
-VALUES (@companyId, 'TRK-204', 'FC-8841', 'Aldrees Station', 'Riyadh', 'Fuel', true, 410, 738, 118420, NOW() - INTERVAL '6 hours')",
-            c => c.Parameters.AddWithValue("@companyId", companyId), ct);
+INSERT INTO fleet_tms_fuel_events (company_id, branch_id, vehicle_number, fuel_card_number, station_name, city, event_type, anomaly_flag, liters, cost, odometer_km, recorded_at_utc)
+VALUES (@companyId, @branchId, 'TRK-204', 'FC-8841', 'Aldrees Station', 'Riyadh', 'Fuel', true, 410, 738, 118420, NOW() - INTERVAL '6 hours')",
+            c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
 
         // Shipments + stops + events + tracking points
         for (var i = 0; i < 5; i++)
@@ -315,15 +318,16 @@ VALUES (@companyId, 'TRK-204', 'FC-8841', 'Aldrees Station', 'Riyadh', 'Fuel', t
             var delivered = status == "Delivered";
 
             var shipmentId = await db.InsertAsync(@"
-INSERT INTO fleet_tms_shipments (company_id, shipment_number, customer_name, customer_segment, origin, destination, city,
+INSERT INTO fleet_tms_shipments (company_id, branch_id, shipment_number, customer_name, customer_segment, origin, destination, city,
     status, priority, mode, piece_count, weight_kg, volume_cbm, declared_value, carrier_name, driver_name, vehicle_number,
     route_code, pod_status, temperature_range, pickup_scheduled_at_utc, picked_up_at_utc, delivered_at_utc, created_at_utc)
-VALUES (@companyId, @num, @customer, @segment, @origin, @destination, @city, @status, @priority, 'Road', @pieces,
+VALUES (@companyId, @branchId, @num, @customer, @segment, @origin, @destination, @city, @status, @priority, 'Road', @pieces,
     @weight, @volume, @value, @carrier, @driver, @vehicle, @route, @podStatus, @tempRange,
     NOW() - (@iOffset || ' days')::interval, @pickedUp, @deliveredAt, NOW() - (@iOffset || ' days')::interval)",
                 c =>
                 {
                     c.Parameters.AddWithValue("@companyId", companyId);
+                    c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
                     c.Parameters.AddWithValue("@num", shipmentNumber);
                     c.Parameters.AddWithValue("@customer", customers[i % customers.Length]);
                     c.Parameters.AddWithValue("@segment", i % 2 == 0 ? "Retail" : "Wholesale");
@@ -349,11 +353,12 @@ VALUES (@companyId, @num, @customer, @segment, @origin, @destination, @city, @st
 
             // Two stops per shipment
             var pickupStopId = await db.InsertAsync(@"
-INSERT INTO fleet_tms_shipment_stops (company_id, shipment_id, stop_type, sequence_no, location_name, contact_name, contact_phone, city, region, country, status, planned_arrival_at, actual_arrival_at, completed_at)
-VALUES (@companyId, @sid, 'Pickup', 1, @loc, 'Warehouse Lead', '+96650' || @phone, @city, @region, 'Saudi Arabia', @stopStatus, NOW() - INTERVAL '1 day', @arrived, @completed)",
+INSERT INTO fleet_tms_shipment_stops (company_id, branch_id, shipment_id, stop_type, sequence_no, location_name, contact_name, contact_phone, city, region, country, status, planned_arrival_at, actual_arrival_at, completed_at)
+VALUES (@companyId, @branchId, @sid, 'Pickup', 1, @loc, 'Warehouse Lead', '+96650' || @phone, @city, @region, 'Saudi Arabia', @stopStatus, NOW() - INTERVAL '1 day', @arrived, @completed)",
                 c =>
                 {
                     c.Parameters.AddWithValue("@companyId", companyId);
+                    c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
                     c.Parameters.AddWithValue("@sid", shipmentId);
                     c.Parameters.AddWithValue("@loc", $"{origin} Distribution Center");
                     c.Parameters.AddWithValue("@phone", rng.Next(1000000, 9999999));
@@ -365,11 +370,12 @@ VALUES (@companyId, @sid, 'Pickup', 1, @loc, 'Warehouse Lead', '+96650' || @phon
                 }, ct);
 
             var deliveryStopId = await db.InsertAsync(@"
-INSERT INTO fleet_tms_shipment_stops (company_id, shipment_id, stop_type, sequence_no, location_name, contact_name, contact_phone, city, region, country, status, planned_arrival_at, actual_arrival_at, completed_at)
-VALUES (@companyId, @sid, 'Delivery', 2, @loc, 'Receiving Manager', '+96655' || @phone, @city, @region, 'Saudi Arabia', @stopStatus, NOW() + INTERVAL '4 hours', @arrived, @completed)",
+INSERT INTO fleet_tms_shipment_stops (company_id, branch_id, shipment_id, stop_type, sequence_no, location_name, contact_name, contact_phone, city, region, country, status, planned_arrival_at, actual_arrival_at, completed_at)
+VALUES (@companyId, @branchId, @sid, 'Delivery', 2, @loc, 'Receiving Manager', '+96655' || @phone, @city, @region, 'Saudi Arabia', @stopStatus, NOW() + INTERVAL '4 hours', @arrived, @completed)",
                 c =>
                 {
                     c.Parameters.AddWithValue("@companyId", companyId);
+                    c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
                     c.Parameters.AddWithValue("@sid", shipmentId);
                     c.Parameters.AddWithValue("@loc", $"{destination} Customer Hub");
                     c.Parameters.AddWithValue("@phone", rng.Next(1000000, 9999999));
@@ -381,18 +387,19 @@ VALUES (@companyId, @sid, 'Delivery', 2, @loc, 'Receiving Manager', '+96655' || 
                 }, ct);
 
             await db.ExecuteAsync(@"
-INSERT INTO fleet_tms_shipment_events (company_id, shipment_id, event_type, message, actor_name, visibility, occurred_at_utc)
-VALUES (@companyId, @sid, 'ShipmentBooked', @msg, 'system', 'Public', NOW() - (@iOffset || ' days')::interval)",
-                c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@sid", shipmentId); c.Parameters.AddWithValue("@msg", $"Shipment {shipmentNumber} booked from {origin} to {destination}."); c.Parameters.AddWithValue("@iOffset", i + 1); }, ct);
+INSERT INTO fleet_tms_shipment_events (company_id, branch_id, shipment_id, event_type, message, actor_name, visibility, occurred_at_utc)
+VALUES (@companyId, @branchId, @sid, 'ShipmentBooked', @msg, 'system', 'Public', NOW() - (@iOffset || ' days')::interval)",
+                c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); c.Parameters.AddWithValue("@sid", shipmentId); c.Parameters.AddWithValue("@msg", $"Shipment {shipmentNumber} booked from {origin} to {destination}."); c.Parameters.AddWithValue("@iOffset", i + 1); }, ct);
 
             if (status != "Booked")
             {
                 await db.ExecuteAsync(@"
-INSERT INTO fleet_tms_tracking_points (company_id, shipment_number, vehicle_number, location_label, status, geofence_name, latitude, longitude, speed_kph, recorded_at_utc, estimated_arrival_utc)
-VALUES (@companyId, @num, @vehicle, @loc, @status, 'Highway 40', @lat, @lng, @speed, NOW() - INTERVAL '30 minutes', NOW() + INTERVAL '3 hours')",
+INSERT INTO fleet_tms_tracking_points (company_id, branch_id, shipment_number, vehicle_number, location_label, status, geofence_name, latitude, longitude, speed_kph, recorded_at_utc, estimated_arrival_utc)
+VALUES (@companyId, @branchId, @num, @vehicle, @loc, @status, 'Highway 40', @lat, @lng, @speed, NOW() - INTERVAL '30 minutes', NOW() + INTERVAL '3 hours')",
                     c =>
                     {
                         c.Parameters.AddWithValue("@companyId", companyId);
+                        c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
                         c.Parameters.AddWithValue("@num", shipmentNumber);
                         c.Parameters.AddWithValue("@vehicle", vehicle);
                         c.Parameters.AddWithValue("@loc", $"En route to {destination}");
@@ -407,26 +414,42 @@ VALUES (@companyId, @num, @vehicle, @loc, @status, 'Highway 40', @lat, @lng, @sp
             if (status is "InTransit" or "Loaded")
             {
                 await db.ExecuteAsync(@"
-INSERT INTO fleet_tms_driver_tasks (company_id, shipment_id, stop_id, task_type, title, description, status, driver_name, vehicle_number, due_at_utc)
-VALUES (@companyId, @sid, @stopId, 'Delivery', @title, 'Deliver shipment and capture POD.', 'Open', @driver, @vehicle, NOW() + INTERVAL '3 hours')",
-                    c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@sid", shipmentId); c.Parameters.AddWithValue("@stopId", deliveryStopId); c.Parameters.AddWithValue("@title", $"Deliver {shipmentNumber}"); c.Parameters.AddWithValue("@driver", driver); c.Parameters.AddWithValue("@vehicle", vehicle); }, ct);
+INSERT INTO fleet_tms_driver_tasks (company_id, branch_id, shipment_id, stop_id, task_type, title, description, status, driver_name, vehicle_number, due_at_utc)
+VALUES (@companyId, @branchId, @sid, @stopId, 'Delivery', @title, 'Deliver shipment and capture POD.', 'Open', @driver, @vehicle, NOW() + INTERVAL '3 hours')",
+                    c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); c.Parameters.AddWithValue("@sid", shipmentId); c.Parameters.AddWithValue("@stopId", deliveryStopId); c.Parameters.AddWithValue("@title", $"Deliver {shipmentNumber}"); c.Parameters.AddWithValue("@driver", driver); c.Parameters.AddWithValue("@vehicle", vehicle); }, ct);
             }
 
             // Delivered shipment: verified POD + a public tracking link
             if (delivered)
             {
                 await db.ExecuteAsync(@"
-INSERT INTO fleet_tms_pods (company_id, shipment_id, stop_id, recipient_name, recipient_phone, delivery_condition, status, captured_at, verified_at)
-VALUES (@companyId, @sid, @stopId, 'Receiving Manager', '+966551234567', 'Good', 'Verified', NOW() - INTERVAL '6 hours', NOW() - INTERVAL '5 hours')",
-                    c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@sid", shipmentId); c.Parameters.AddWithValue("@stopId", deliveryStopId); }, ct);
+INSERT INTO fleet_tms_pods (company_id, branch_id, shipment_id, stop_id, recipient_name, recipient_phone, delivery_condition, status, captured_at, verified_at)
+VALUES (@companyId, @branchId, @sid, @stopId, 'Receiving Manager', '+966551234567', 'Good', 'Verified', NOW() - INTERVAL '6 hours', NOW() - INTERVAL '5 hours')",
+                    c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); c.Parameters.AddWithValue("@sid", shipmentId); c.Parameters.AddWithValue("@stopId", deliveryStopId); }, ct);
                 await db.ExecuteAsync(@"
-INSERT INTO fleet_tms_tracking_links (company_id, shipment_id, token, shared_by)
-VALUES (@companyId, @sid, @token, 'system')",
-                    c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@sid", shipmentId); c.Parameters.AddWithValue("@token", $"demo-{companyId}-{shipmentId}"); }, ct);
+INSERT INTO fleet_tms_tracking_links (company_id, branch_id, shipment_id, token_hash, shared_by)
+VALUES (@companyId, @branchId, @sid, @tokenHash, 'system')",
+                    c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); c.Parameters.AddWithValue("@sid", shipmentId); c.Parameters.AddWithValue("@tokenHash", FleetTmsEndpoints.HashTrackingToken(Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)).ToLowerInvariant())); }, ct);
             }
         }
 
         log.LogInformation("[FleetTmsSeeder] seeded Fleet TMS demo data for company {CompanyId}", companyId);
+    }
+
+    private async Task<long?> ResolveSeedBranch(long companyId, CancellationToken ct)
+    {
+        try
+        {
+            var row = await db.QuerySingleAsync(
+                "SELECT id FROM branches WHERE company_id=@companyId AND deleted_at IS NULL AND status='Active' ORDER BY id LIMIT 1",
+                c => c.Parameters.AddWithValue("@companyId", companyId), ct);
+            return row is null ? null : Convert.ToInt64(row["id"]);
+        }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedTable)
+        {
+            log.LogWarning("[FleetTmsSeeder] branches table unavailable; demo Workspace records remain tenant-wide.");
+            return null;
+        }
     }
 
     private async Task SeedLogistics(long companyId, CancellationToken ct)
@@ -472,7 +495,9 @@ VALUES (@companyId, @code, @hub, @territory, @driver, @vehicle, @status, @planne
             var routeCode = routeCodes[i % routeCodes.Count];
             var orderNumber = $"ORD-{companyId:D2}{2000 + i}";
             var city = cities[i % cities.Length];
-            var statusPool = new[] { "Queued", "Picking", "Dispatched", "InTransit", "Delivered", "Exception" };
+            // Stage62 intentionally has no implicit pre-dispatch transition. Intake work stays
+            // Queued until the explicit dispatch action moves it to Dispatched.
+            var statusPool = new[] { "Queued", "Queued", "Dispatched", "InTransit", "Delivered", "Exception" };
             var status = statusPool[i % statusPool.Length];
             var driver = drivers[i % drivers.Length];
             var delivered = status == "Delivered";
@@ -493,10 +518,10 @@ VALUES (@companyId, @num, @customer, @segment, @channel, @city, @area, @status, 
                     c.Parameters.AddWithValue("@items", rng.Next(1, 24));
                     c.Parameters.AddWithValue("@value", (decimal)rng.Next(150, 5200));
                     c.Parameters.AddWithValue("@route", routeCode);
-                    c.Parameters.AddWithValue("@driver", status is "Queued" or "Picking" ? "" : driver);
-                    c.Parameters.AddWithValue("@vehicle", status is "Queued" or "Picking" ? "" : $"VAN-{300 + (i % 3)}");
+                    c.Parameters.AddWithValue("@driver", status == "Queued" ? "" : driver);
+                    c.Parameters.AddWithValue("@vehicle", status == "Queued" ? "" : $"VAN-{300 + (i % 3)}");
                     c.Parameters.AddWithValue("@i", i + 1);
-                    c.Parameters.AddWithValue("@dispatched", status is "Queued" or "Picking" ? DBNull.Value : DateTime.UtcNow.AddHours(-(i + 1)));
+                    c.Parameters.AddWithValue("@dispatched", status == "Queued" ? DBNull.Value : DateTime.UtcNow.AddHours(-(i + 1)));
                     c.Parameters.AddWithValue("@deliveredAt", delivered ? DateTime.UtcNow.AddHours(-2) : (object)DBNull.Value);
                 }, ct);
 
@@ -517,7 +542,7 @@ VALUES (@companyId, @num, @route, @customer, @addr, @city, @region, 'Saudi Arabi
                     c.Parameters.AddWithValue("@proof", delivered ? "POD" : "None");
                     c.Parameters.AddWithValue("@recipient", delivered ? "Store Receiver" : "");
                     c.Parameters.AddWithValue("@attempts", status == "Exception" ? 2 : delivered ? 1 : 0);
-                    c.Parameters.AddWithValue("@rider", status is "Queued" or "Picking" ? "" : riders[i % riders.Length]);
+                    c.Parameters.AddWithValue("@rider", status == "Queued" ? "" : riders[i % riders.Length]);
                     c.Parameters.AddWithValue("@window", i % 2 == 0 ? "09:00-12:00" : "14:00-18:00");
                     c.Parameters.AddWithValue("@etaHrs", (i % 6) + 1);
                     c.Parameters.AddWithValue("@deliveredAt", delivered ? DateTime.UtcNow.AddHours(-2) : (object)DBNull.Value);

@@ -1,4 +1,4 @@
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useNavigate } from "react-router";
 import {
   LayoutDashboard, Building2, Package, Receipt, HeartPulse, ScrollText, LogOut, Gauge, BriefcaseBusiness, Activity, UserCog, KeyRound,
 } from "lucide-react";

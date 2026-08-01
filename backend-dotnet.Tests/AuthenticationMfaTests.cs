@@ -1,4 +1,6 @@
 using Opstrax.Api.Services;
+using Opstrax.Api.Controllers;
+using System.Reflection;
 
 namespace Opstrax.Tests;
 
@@ -75,6 +77,59 @@ public sealed class AuthenticationMfaTests
     }
 
     [Fact]
+    public void MfaCompletion_Consumes_Durable_Challenge_Before_Session_Issuance()
+    {
+        var source = ReadSource("backend-dotnet", "Controllers", "EndpointMappings.cs");
+        var start = source.IndexOf("private static async Task<IResult> MfaLoginVerify(", StringComparison.Ordinal);
+        var end = source.IndexOf("private static async Task<IResult> SsoDiscover(", start, StringComparison.Ordinal);
+        var completion = source[start..end];
+
+        var totp = completion.IndexOf("TotpService.VerifyCode", StringComparison.Ordinal);
+        var consume = completion.IndexOf("challengeConsumptions.TryConsumeAsync", StringComparison.Ordinal);
+        var token = completion.IndexOf("var token =", StringComparison.Ordinal);
+        var session = completion.IndexOf("INSERT INTO user_sessions", StringComparison.Ordinal);
+
+        Assert.True(totp >= 0 && totp < consume, "challenge must only be consumed after a valid TOTP");
+        Assert.True(consume < token, "challenge must be consumed before creating a session token");
+        Assert.True(consume < session, "challenge must be consumed before persisting a session");
+        Assert.Contains("mfa_challenge_consumed", completion, StringComparison.Ordinal);
+        Assert.Contains("mfa_challenge_rejected", completion, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MfaCompletion_FailsClosedOnLifecycleBeforeFactorOrChallengeConsumption()
+    {
+        var source = ReadSource("backend-dotnet", "Controllers", "EndpointMappings.cs");
+        var start = source.IndexOf("private static async Task<IResult> MfaLoginVerify(", StringComparison.Ordinal);
+        var end = source.IndexOf("private static async Task<IResult> SsoDiscover(", start, StringComparison.Ordinal);
+        var completion = source[start..end];
+
+        var lifecycle = completion.IndexOf("var userActive = IsActiveLifecycleStatus", StringComparison.Ordinal);
+        var totp = completion.IndexOf("TotpService.VerifyCode", StringComparison.Ordinal);
+        var consume = completion.IndexOf("challengeConsumptions.TryConsumeAsync", StringComparison.Ordinal);
+        var session = completion.IndexOf("INSERT INTO user_sessions", StringComparison.Ordinal);
+
+        Assert.True(lifecycle >= 0 && lifecycle < totp, "lifecycle must be checked before the factor");
+        Assert.True(lifecycle < consume, "inactive identities must not consume the challenge");
+        Assert.True(lifecycle < session, "inactive identities must not persist sessions");
+        Assert.Contains("FOR SHARE OF u, c", completion, StringComparison.Ordinal);
+        Assert.Contains("user.login.mfa_lifecycle_rejected", completion, StringComparison.Ordinal);
+        Assert.Contains("Invalid or expired challenge", completion, StringComparison.Ordinal);
+        Assert.DoesNotContain("challengeToken =", completion[(lifecycle + 1)..], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void LoginAndMfaCompletion_AreExplicitSystemTransactions()
+    {
+        var source = ReadSource("backend-dotnet", "Controllers", "EndpointMappings.cs");
+        var mappings = source[..source.IndexOf("// General Ledger", StringComparison.Ordinal)];
+
+        Assert.Equal(2, Count(mappings, "db.RunInSystemTransactionAsync("));
+        Assert.Contains("() => Login(", mappings, StringComparison.Ordinal);
+        Assert.Contains("() => MfaLoginVerify(", mappings, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ChangePasswordSource_DoesNotAcceptLegacyPlaintextCredential()
     {
         var source = ReadSource("backend-dotnet", "Controllers", "EndpointMappings.cs");
@@ -97,6 +152,70 @@ public sealed class AuthenticationMfaTests
         Assert.DoesNotContain("u.demo_password", source, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [MemberData(nameof(MalformedPasswordHashes))]
+    public void PasswordVerification_FailsClosedOnMalformedOrWeakHashStructure(string storedHash)
+    {
+        var verify = typeof(EndpointMappings).GetMethod(
+            "VerifyPasswordHash", BindingFlags.NonPublic | BindingFlags.Static);
+
+        Assert.NotNull(verify);
+        Assert.False((bool)verify!.Invoke(null, ["any-password", storedHash])!);
+    }
+
+    [Fact]
+    public void PasswordVerification_AcceptsOnlyThePasswordForAValidAppHash()
+    {
+        var hash = typeof(EndpointMappings).GetMethod(
+            "HashPassword", BindingFlags.NonPublic | BindingFlags.Static);
+        var verify = typeof(EndpointMappings).GetMethod(
+            "VerifyPasswordHash", BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(hash);
+        Assert.NotNull(verify);
+
+        var stored = Assert.IsType<string>(hash!.Invoke(null, ["Correct-Rehearsal-Password!2026"]));
+        Assert.True((bool)verify!.Invoke(null, ["Correct-Rehearsal-Password!2026", stored])!);
+        Assert.False((bool)verify.Invoke(null, ["wrong-password", stored])!);
+    }
+
+    [Theory]
+    [MemberData(nameof(MalformedPasswordHashes))]
+    public void PlatformPasswordVerification_FailsClosedOnMalformedOrWeakHashStructure(string storedHash)
+        => Assert.False(PlatformEndpoints.VerifyPassword("any-password", storedHash));
+
+    [Fact]
+    public void PlatformPasswordVerification_AcceptsOnlyThePasswordForAValidAppHash()
+    {
+        var stored = PlatformSchemaService.HashPassword("Correct-Platform-Password!2026");
+
+        Assert.True(PlatformEndpoints.VerifyPassword("Correct-Platform-Password!2026", stored));
+        Assert.False(PlatformEndpoints.VerifyPassword("wrong-password", stored));
+    }
+
+    public static IEnumerable<object[]> MalformedPasswordHashes()
+    {
+        var validSalt = Convert.ToBase64String(new byte[16]);
+        var validSubkey = Convert.ToBase64String(new byte[32]);
+        foreach (var value in new[]
+        {
+            $"PBKDF2$100000${validSalt}$",                       // empty subkey (historic fail-open)
+            $"PBKDF2$100000$${validSubkey}",                    // empty salt
+            $"PBKDF2$1${validSalt}${validSubkey}",              // CPU-cheap weak hash
+            $"PBKDF2$2000001${validSalt}${validSubkey}",        // CPU-exhaustion iteration count
+            $"PBKDF2$-1${validSalt}${validSubkey}",
+            $"PBKDF2$not-a-number${validSalt}${validSubkey}",
+            $"ARGON2$100000${validSalt}${validSubkey}",
+            $"PBKDF2$100000$%%%${validSubkey}",
+            $"PBKDF2$100000${validSalt}$%%%",
+            $"PBKDF2$100000${Convert.ToBase64String(new byte[15])}${validSubkey}",
+            $"PBKDF2$100000${Convert.ToBase64String(new byte[17])}${validSubkey}",
+            $"PBKDF2$100000${validSalt}${Convert.ToBase64String(new byte[31])}",
+            $"PBKDF2$100000${validSalt}${Convert.ToBase64String(new byte[33])}",
+            $"PBKDF2$100000${validSalt}${validSubkey}$extra",
+        })
+            yield return [value];
+    }
+
     private static SecuritySettings Settings(bool required, params string[] roles) => new()
     {
         CompanyId = 7,
@@ -112,5 +231,13 @@ public sealed class AuthenticationMfaTests
 
         Assert.NotNull(dir);
         return File.ReadAllText(Path.Combine([dir!.FullName, .. parts]));
+    }
+
+    private static int Count(string source, string value)
+    {
+        var count = 0;
+        for (var offset = 0; (offset = source.IndexOf(value, offset, StringComparison.Ordinal)) >= 0; offset += value.Length)
+            count++;
+        return count;
     }
 }

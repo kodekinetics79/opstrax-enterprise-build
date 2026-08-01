@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import { useQueries } from "@tanstack/react-query";
 import {
   Activity, AlertTriangle, ArrowUpRight, Camera, Cpu, Gauge,

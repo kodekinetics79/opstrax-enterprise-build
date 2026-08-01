@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams } from "react-router";
 import { detentionApi } from "@/services/detentionApi";
 import type { AnyRecord } from "@/types";
 

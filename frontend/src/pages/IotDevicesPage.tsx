@@ -27,7 +27,7 @@ import {
   Wrench,
   X,
 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { EmptyState, ErrorState, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge } from "@/components/ui";
 import { PERMISSIONS } from "@/auth/rbacConfig";
 import { useHasPermission } from "@/hooks/usePermission";

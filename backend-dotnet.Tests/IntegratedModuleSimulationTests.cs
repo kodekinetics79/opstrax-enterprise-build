@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Opstrax.Api.Data;
+using Opstrax.Api.Controllers;
 using Opstrax.Api.Foundation;
 using Opstrax.Api.Services;
 
@@ -47,6 +48,9 @@ public class IntegratedModuleSimulationTests
             await batch3Schema.EnsureAsync();
             await batch4Schema.EnsureAsync();
             await smfSchema.EnsureAsync();
+            await db.ExecuteAsync(
+                "INSERT INTO companies(id,company_code,name,industry) OVERRIDING SYSTEM VALUE VALUES (@id,@code,'Integrated Simulation','Transportation')",
+                c => { c.Parameters.AddWithValue("@id", companyId); c.Parameters.AddWithValue("@code", $"SIM-{companyId}"); });
 
             var seeded = await SeedSimulationTenantAsync(db, companyId, stage9, telemetry);
 
@@ -244,8 +248,8 @@ public class IntegratedModuleSimulationTests
 
         await db.ExecuteAsync(
             @"INSERT INTO fleet_tms_tracking_links
-                (company_id, shipment_id, token, expires_at_utc, is_revoked, shared_by, created_at_utc, updated_at_utc)
-              SELECT @companyId, s.id, @token, NOW() + INTERVAL '7 days', false, 'simulation.seed', NOW(), NOW()
+                (company_id, shipment_id, token_hash, expires_at_utc, is_revoked, shared_by, created_at_utc, updated_at_utc)
+              SELECT @companyId, s.id, @tokenHash, NOW() + INTERVAL '7 days', false, 'simulation.seed', NOW(), NOW()
               FROM fleet_tms_shipments s
               WHERE s.company_id=@companyId AND s.shipment_number=@shipmentNumber
               ON CONFLICT DO NOTHING",
@@ -253,7 +257,7 @@ public class IntegratedModuleSimulationTests
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
                 c.Parameters.AddWithValue("@shipmentNumber", shipmentNumber);
-                c.Parameters.AddWithValue("@token", $"sim-track-{companyId}");
+                c.Parameters.AddWithValue("@tokenHash", FleetTmsEndpoints.HashTrackingToken($"sim-track-{companyId}"));
             });
 
         await db.ExecuteAsync(
@@ -528,9 +532,19 @@ public class IntegratedModuleSimulationTests
             ["status"] = "draft",
         }, $"sim-proof-{companyId}");
 
+        var proofDocumentId = await db.InsertAsync(
+            @"INSERT INTO documents (company_id,title,document_type,status,file_url)
+              VALUES (@companyId,'Simulation Handoff Photo','Proof','Active',@fileUrl)",
+            c =>
+            {
+                c.Parameters.AddWithValue("@companyId", companyId);
+                c.Parameters.AddWithValue("@fileUrl", $"objkey:tenant/{companyId}/proof/simulation/handoff-photo.jpg");
+            });
+
         var artifact = await stage9.CreateProofArtifactAsync(companyId, Convert.ToInt64(proof!["id"]), new Dictionary<string, object?>
         {
             ["artifactType"] = "photo",
+            ["fileId"] = proofDocumentId,
             ["capturedByUserId"] = 42,
             ["notes"] = "Simulation handoff photo",
             ["deviceId"] = "sim-device-1",
@@ -703,10 +717,12 @@ public class IntegratedModuleSimulationTests
         await db.ExecuteAsync("DELETE FROM pickup_authorizations WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
         await db.ExecuteAsync("DELETE FROM warehouse_handovers WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
         await db.ExecuteAsync("DELETE FROM proof_artifacts WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
+        await db.ExecuteAsync("DELETE FROM documents WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
         await db.ExecuteAsync("DELETE FROM proof_packages WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
         await db.ExecuteAsync("DELETE FROM billing_confidence_records WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
         await db.ExecuteAsync("DELETE FROM smart_assignment_recommendations WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
         await db.ExecuteAsync("DELETE FROM assignment_confirmations WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
+        await db.ExecuteAsync("DELETE FROM companies WHERE id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
     }
 
     private sealed record SeededSimulationContext(

@@ -20,6 +20,7 @@ export const marketPackApi = {
   updateDriverDocument: (id: number, body: AnyRecord) => unwrap<AnyRecord>(apiClient.put(`/api/fleet-compliance/driver-documents/${id}`, body)),
   vehicleInspections: () => unwrap<AnyRecord>(apiClient.get("/api/fleet-compliance/vehicle-inspections")),
   createVehicleInspection: (body: AnyRecord) => unwrap<AnyRecord>(apiClient.post("/api/fleet-compliance/vehicle-inspections", body)),
+  updateVehicleInspection: (id: number, body: AnyRecord) => unwrap<AnyRecord>(apiClient.put(`/api/fleet-compliance/vehicle-inspections/${id}`, body)),
   expiries: () => unwrap<AnyRecord>(apiClient.get("/api/fleet-compliance/expiries")),
   iftaReadiness: () => unwrap<AnyRecord>(apiClient.get("/api/fleet-compliance/ifta-readiness")),
   createJurisdictionMileage: (body: AnyRecord) => unwrap<AnyRecord>(apiClient.post("/api/fleet-compliance/jurisdiction-mileage", body)),

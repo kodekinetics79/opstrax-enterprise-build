@@ -15,7 +15,119 @@ public sealed class FleetTmsColdChainSchemaService(Database db, ILogger<FleetTms
         await CreateColdChain();
         await CreateAssets();
         await CreateReadiness();
+        await EnsureBranchOwnership();
+        await ClassifyLegacyBranchRows();
+        await EnsureAssetIntegrity();
         await CreateIndexes();
+    }
+
+    // Operational Fleet records are branch-owned when created by a branch-scoped
+    // account. Legacy NULL rows remain tenant-level and are intentionally invisible
+    // to branch accounts; tenant-wide operators retain full visibility.
+    private async Task EnsureBranchOwnership()
+    {
+        string[] tables =
+        [
+            "fleet_tms_temperature_zones", "fleet_tms_temperature_devices",
+            "fleet_tms_temperature_readings", "fleet_tms_temperature_alerts",
+            "fleet_tms_cold_chain_reports", "fleet_tms_refrigeration_unit_health",
+            "fleet_tms_asset_types", "fleet_tms_assets", "fleet_tms_asset_assignments",
+            "fleet_tms_asset_events", "fleet_tms_barcode_scan_events", "fleet_tms_rfid_events",
+            "fleet_tms_readiness_documents"
+        ];
+
+        foreach (var table in tables)
+        {
+            await db.ExecuteAsync($"ALTER TABLE \"{table}\" ADD COLUMN IF NOT EXISTS branch_id BIGINT NULL");
+            await db.ExecuteAsync($"CREATE INDEX IF NOT EXISTS \"idx_{table}_branch\" ON \"{table}\" (company_id, branch_id)");
+        }
+    }
+
+    private async Task EnsureAssetIntegrity()
+    {
+        const string sql = @"
+DO $asset_quantity_constraints$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='ck_ftms_assets_quantity_positive') THEN
+    ALTER TABLE fleet_tms_assets ADD CONSTRAINT ck_ftms_assets_quantity_positive CHECK (quantity > 0);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='ck_ftms_asset_assignments_quantity_positive') THEN
+    ALTER TABLE fleet_tms_asset_assignments ADD CONSTRAINT ck_ftms_asset_assignments_quantity_positive CHECK (quantity > 0);
+  END IF;
+END $asset_quantity_constraints$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_ftms_assets_branch_tag_normalized
+  ON fleet_tms_assets (company_id, COALESCE(branch_id, 0), lower(btrim(asset_tag)));
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_ftms_asset_active_custody
+  ON fleet_tms_asset_assignments (company_id, COALESCE(branch_id, 0), asset_id)
+  WHERE released_at_utc IS NULL AND status IN ('Assigned','CheckedOut','InUse');";
+        await db.ExecuteAsync(sql);
+    }
+
+    private async Task ClassifyLegacyBranchRows()
+    {
+        const string sql = @"
+CREATE TABLE IF NOT EXISTS fleet_tms_branch_migration_audit (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  company_id BIGINT NOT NULL,
+  source_table VARCHAR(120) NOT NULL,
+  source_id BIGINT NOT NULL,
+  classification VARCHAR(60) NOT NULL,
+  reason TEXT NOT NULL DEFAULT '',
+  classified_at_utc TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_ftms_branch_migration_source
+  ON fleet_tms_branch_migration_audit(company_id, source_table, source_id);
+
+UPDATE fleet_tms_temperature_readings x SET branch_id=d.branch_id FROM fleet_tms_temperature_devices d
+ WHERE x.company_id=d.company_id AND x.device_id=d.id AND x.branch_id IS NULL AND d.branch_id IS NOT NULL;
+UPDATE fleet_tms_temperature_alerts x SET branch_id=d.branch_id FROM fleet_tms_temperature_devices d
+ WHERE x.company_id=d.company_id AND x.device_id=d.id AND x.branch_id IS NULL AND d.branch_id IS NOT NULL;
+UPDATE fleet_tms_asset_assignments x SET branch_id=a.branch_id FROM fleet_tms_assets a
+ WHERE x.company_id=a.company_id AND x.asset_id=a.id AND x.branch_id IS NULL AND a.branch_id IS NOT NULL;
+UPDATE fleet_tms_asset_events x SET branch_id=a.branch_id FROM fleet_tms_assets a
+ WHERE x.company_id=a.company_id AND x.asset_id=a.id AND x.branch_id IS NULL AND a.branch_id IS NOT NULL;
+UPDATE fleet_tms_barcode_scan_events x SET branch_id=a.branch_id FROM fleet_tms_assets a
+ WHERE x.company_id=a.company_id AND x.asset_id=a.id AND x.branch_id IS NULL AND a.branch_id IS NOT NULL;
+UPDATE fleet_tms_rfid_events x SET branch_id=a.branch_id FROM fleet_tms_assets a
+ WHERE x.company_id=a.company_id AND x.asset_id=a.id AND x.branch_id IS NULL AND a.branch_id IS NOT NULL;
+
+DO $specialized_sole_branch$
+BEGIN
+ IF to_regclass('public.branches') IS NOT NULL THEN
+   CREATE TEMP TABLE ftms_sole_branch ON COMMIT DROP AS
+     SELECT company_id, MIN(id) branch_id FROM branches
+     WHERE deleted_at IS NULL AND status='Active' GROUP BY company_id HAVING COUNT(*)=1;
+   UPDATE fleet_tms_temperature_devices x SET branch_id=b.branch_id FROM ftms_sole_branch b WHERE x.company_id=b.company_id AND x.branch_id IS NULL;
+   UPDATE fleet_tms_assets x SET branch_id=b.branch_id FROM ftms_sole_branch b WHERE x.company_id=b.company_id AND x.branch_id IS NULL;
+   UPDATE fleet_tms_readiness_documents x SET branch_id=b.branch_id FROM ftms_sole_branch b WHERE x.company_id=b.company_id AND x.branch_id IS NULL;
+ END IF;
+END $specialized_sole_branch$;
+
+UPDATE fleet_tms_temperature_readings x SET branch_id=d.branch_id FROM fleet_tms_temperature_devices d
+ WHERE x.company_id=d.company_id AND x.device_id=d.id AND x.branch_id IS NULL AND d.branch_id IS NOT NULL;
+UPDATE fleet_tms_temperature_alerts x SET branch_id=d.branch_id FROM fleet_tms_temperature_devices d
+ WHERE x.company_id=d.company_id AND x.device_id=d.id AND x.branch_id IS NULL AND d.branch_id IS NOT NULL;
+UPDATE fleet_tms_asset_assignments x SET branch_id=a.branch_id FROM fleet_tms_assets a
+ WHERE x.company_id=a.company_id AND x.asset_id=a.id AND x.branch_id IS NULL AND a.branch_id IS NOT NULL;
+UPDATE fleet_tms_asset_events x SET branch_id=a.branch_id FROM fleet_tms_assets a
+ WHERE x.company_id=a.company_id AND x.asset_id=a.id AND x.branch_id IS NULL AND a.branch_id IS NOT NULL;
+UPDATE fleet_tms_barcode_scan_events x SET branch_id=a.branch_id FROM fleet_tms_assets a
+ WHERE x.company_id=a.company_id AND x.asset_id=a.id AND x.branch_id IS NULL AND a.branch_id IS NOT NULL;
+UPDATE fleet_tms_rfid_events x SET branch_id=a.branch_id FROM fleet_tms_assets a
+ WHERE x.company_id=a.company_id AND x.asset_id=a.id AND x.branch_id IS NULL AND a.branch_id IS NOT NULL;
+
+INSERT INTO fleet_tms_branch_migration_audit(company_id,source_table,source_id,classification,reason)
+ SELECT company_id,'fleet_tms_temperature_devices',id,'tenant_unassigned','Multiple/no active branches; requires operator mapping.'
+ FROM fleet_tms_temperature_devices WHERE branch_id IS NULL ON CONFLICT DO NOTHING;
+INSERT INTO fleet_tms_branch_migration_audit(company_id,source_table,source_id,classification,reason)
+ SELECT company_id,'fleet_tms_assets',id,'tenant_unassigned','Multiple/no active branches; requires operator mapping.'
+ FROM fleet_tms_assets WHERE branch_id IS NULL ON CONFLICT DO NOTHING;
+INSERT INTO fleet_tms_branch_migration_audit(company_id,source_table,source_id,classification,reason)
+ SELECT company_id,'fleet_tms_readiness_documents',id,'tenant_unassigned','Multiple/no active branches; requires operator mapping.'
+ FROM fleet_tms_readiness_documents WHERE branch_id IS NULL ON CONFLICT DO NOTHING;";
+        await db.ExecuteAsync(sql);
     }
 
     private async Task CreateColdChain()

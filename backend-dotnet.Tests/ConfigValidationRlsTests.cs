@@ -27,25 +27,66 @@ public sealed class ConfigValidationRlsTests
     }
 
     [Fact]
-    public void Validate_RenderPgConnection_PassesDatabaseCheck()
+    public void Validate_RenderDualConnections_PassDatabaseChecks()
     {
         var values = new Dictionary<string, string?>
         {
             ["ASPNETCORE_ENVIRONMENT"] = "Production",
             ["Jwt:Key"] = new string('j', 64),
-            ["PG_CONNECTION"] = "postgresql://app:secret@db.example.test/opstrax?sslmode=require",
+            ["PG_CONNECTION_APP"] = "Host=db.example.test;Database=opstrax;Username=opstrax_app;Password=secret",
+            ["PG_CONNECTION_SYSTEM"] = "Host=db.example.test;Database=opstrax;Username=opstrax_system;Password=secret2",
             ["Platform:SuperAdminPassword"] = "LocalTestPassword!123",
             ["Cors:AllowedOrigins"] = "https://app.example.test",
             ["Rls:EnforceTenantContext"] = "true",
             ["Telemetry:GatewaySecret"] = new string('g', 48),
+            ["DATA_PROTECTION_CERTIFICATE_BASE64"] = "test-certificate-payload",
+            ["DATA_PROTECTION_CERTIFICATE_PASSWORD"] = "test-password-strong-123",
         };
         var config = new ConfigurationBuilder().AddInMemoryCollection(values).Build();
 
         var result = new ConfigValidationService(config).Validate();
 
-        var issue = Assert.Single(result.Issues, i => i.Check == "database_connection");
-        Assert.Equal("pass", issue.Level);
+        Assert.All(result.Issues.Where(i => i.Check.StartsWith("database_", StringComparison.Ordinal)),
+            issue => Assert.Equal("pass", issue.Level));
         Assert.Equal(0, result.FailCount);
+    }
+
+    [Fact]
+    public void Validate_ProductionRlsWithoutSystemConnection_FailsClosed()
+    {
+        var result = Validate("Production", "true", includeSystem: false);
+        Assert.Equal("fail", Assert.Single(result.Issues,
+            i => i.Check == "database_system_connection").Level);
+    }
+
+    [Fact]
+    public void Validate_ProductionRlsWithAliasedIdentities_FailsClosed()
+    {
+        var result = Validate("Production", "true", aliasSystem: true);
+        Assert.Equal("fail", Assert.Single(result.Issues,
+            i => i.Check == "database_identity_separation").Level);
+    }
+
+    [Fact]
+    public void Validate_ProductionRlsWithSharedPassword_FailsClosed()
+    {
+        var values = BaseValues("Production", "true");
+        values["ConnectionStrings:SystemConnection"] =
+            "Host=localhost;Database=opstrax;Username=opstrax_system;Password=app-test";
+        var result = new ConfigValidationService(
+            new ConfigurationBuilder().AddInMemoryCollection(values).Build()).Validate();
+        Assert.Equal("fail", Assert.Single(result.Issues,
+            i => i.Check == "database_identity_separation").Level);
+    }
+
+    [Theory]
+    [InlineData("4")]
+    [InlineData("301")]
+    public void Validate_ProductionRlsWithOutOfRangeTicketTtl_Fails(string ttl)
+    {
+        var result = Validate("Production", "true", ticketTtl: ttl);
+        Assert.Equal("fail", Assert.Single(result.Issues,
+            i => i.Check == "tenant_ticket_ttl").Level);
     }
 
     [Fact]
@@ -103,22 +144,52 @@ public sealed class ConfigValidationRlsTests
         ConfigValidationService.EnsureStartupAllowed(result, isProduction: false);
     }
 
-    private static ConfigCheckResult Validate(string environment, string? rlsValue)
+    private static ConfigCheckResult Validate(
+        string environment,
+        string? rlsValue,
+        bool includeSystem = true,
+        bool aliasSystem = false,
+        string? ticketTtl = null)
     {
-        var values = new Dictionary<string, string?>
-        {
-            ["ASPNETCORE_ENVIRONMENT"] = environment,
-            ["Jwt:Key"] = new string('j', 64),
-            ["ConnectionStrings:DefaultConnection"] = "Host=localhost;Database=opstrax",
-            ["Platform:SuperAdminPassword"] = "LocalTestPassword!123",
-            ["Cors:AllowedOrigins"] = "https://app.example.test",
-            ["Rls:EnforceTenantContext"] = rlsValue,
-            ["Telemetry:GatewaySecret"] = new string('g', 48),
-        };
+        var values = BaseValues(environment, rlsValue);
+        values["ConnectionStrings:SystemConnection"] = includeSystem
+                ? aliasSystem
+                    ? "Host=localhost;Database=opstrax;Username=opstrax_app;Password=app-test"
+                    : "Host=localhost;Database=opstrax;Username=opstrax_system;Password=system-test"
+                : null;
+        values["Rls:TenantTicketTtlSeconds"] = ticketTtl;
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(values)
             .Build();
 
         return new ConfigValidationService(config).Validate();
+    }
+
+    private static Dictionary<string, string?> BaseValues(string environment, string? rlsValue) => new()
+        {
+            ["ASPNETCORE_ENVIRONMENT"] = environment,
+            ["Jwt:Key"] = new string('j', 64),
+            ["ConnectionStrings:DefaultConnection"] =
+                "Host=localhost;Database=opstrax;Username=opstrax_app;Password=app-test",
+            ["ConnectionStrings:SystemConnection"] =
+                "Host=localhost;Database=opstrax;Username=opstrax_system;Password=system-test",
+            ["Platform:SuperAdminPassword"] = "LocalTestPassword!123",
+            ["Cors:AllowedOrigins"] = "https://app.example.test",
+            ["Rls:EnforceTenantContext"] = rlsValue,
+            ["Telemetry:GatewaySecret"] = new string('g', 48),
+            ["DATA_PROTECTION_CERTIFICATE_BASE64"] = "test-certificate-payload",
+            ["DATA_PROTECTION_CERTIFICATE_PASSWORD"] = "test-password-strong-123",
+        };
+
+    [Fact]
+    public void Validate_ProductionWithoutPersistentDataProtection_FailsClosed()
+    {
+        var values = BaseValues("Production", "true");
+        values["DATA_PROTECTION_CERTIFICATE_BASE64"] = null;
+        values["DATA_PROTECTION_CERTIFICATE_PASSWORD"] = null;
+        var result = new ConfigValidationService(
+            new ConfigurationBuilder().AddInMemoryCollection(values).Build()).Validate();
+        Assert.Equal("fail", Assert.Single(result.Issues,
+            i => i.Check == "data_protection_key_ring").Level);
     }
 }

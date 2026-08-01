@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes } from "react-router";
 import { PlatformAuthProvider, usePlatformAuth } from "@/hooks/usePlatformAuth";
 import { PlatformShell } from "@/layouts/PlatformShell";
 import { PlatformLoginPage } from "./PlatformLoginPage";

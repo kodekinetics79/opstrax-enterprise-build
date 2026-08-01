@@ -8,8 +8,9 @@ namespace Opstrax.Api.Middleware;
 /// </summary>
 public class CsrfMiddleware
 {
-    private const string CSRF_TOKEN_HEADER = "X-CSRF-Token";
-    private const string CSRF_COOKIE_NAME = "__CSRF_Token__";
+    public const string TokenItemKey = "opstrax.csrf.token";
+    public const string TokenHeaderName = "X-CSRF-Token";
+    public const string TokenCookieName = "__CSRF_Token__";
     private static readonly string[] SAFE_METHODS = { "GET", "HEAD", "OPTIONS" };
 
     private readonly RequestDelegate _next;
@@ -30,7 +31,7 @@ public class CsrfMiddleware
     public async Task InvokeAsync(HttpContext context)
     {
         var path = context.Request.Path.Value ?? string.Empty;
-        var cookieToken = context.Request.Cookies[CSRF_COOKIE_NAME];
+        var cookieToken = context.Request.Cookies[TokenCookieName];
         var bearerOnly = string.IsNullOrEmpty(cookieToken) && HasBearerToken(context.Request);
         var responseToken = cookieToken;
 
@@ -49,7 +50,7 @@ public class CsrfMiddleware
         {
             responseToken = GenerateToken();
             var isHttps = context.Request.IsHttps;
-            context.Response.Cookies.Append(CSRF_COOKIE_NAME, responseToken, new CookieOptions
+            context.Response.Cookies.Append(TokenCookieName, responseToken, new CookieOptions
             {
                 HttpOnly = false,
                 Secure = isHttps,
@@ -57,6 +58,12 @@ public class CsrfMiddleware
                 MaxAge = TimeSpan.FromHours(8)
             });
         }
+
+        // A handler cannot read a cookie being created on this response. Publish the
+        // authoritative response token in request-local state so authentication
+        // payloads serialize the exact cookie/header value.
+        if (!string.IsNullOrEmpty(responseToken))
+            context.Items[TokenItemKey] = responseToken;
 
         // Validate cookie-authenticated state-changing requests. Bearer-only clients
         // are intentionally exempt because browsers do not attach Authorization
@@ -87,7 +94,7 @@ public class CsrfMiddleware
             !string.Equals(path, "/api/telemetry/gps-ingest", StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(path, "/api/maintenance/fault-codes/ingest", StringComparison.OrdinalIgnoreCase))
         {
-            var headerToken = context.Request.Headers[CSRF_TOKEN_HEADER].ToString();
+            var headerToken = context.Request.Headers[TokenHeaderName].ToString();
 
             if (!IsAllowedOrigin(context.Request) || !TokensMatch(cookieToken, headerToken))
             {
@@ -100,7 +107,7 @@ public class CsrfMiddleware
         // Expose CSRF token as response header
         if (!string.IsNullOrEmpty(responseToken))
         {
-            context.Response.Headers[CSRF_TOKEN_HEADER] = responseToken;
+            context.Response.Headers[TokenHeaderName] = responseToken;
         }
 
         await _next(context);

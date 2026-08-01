@@ -28,9 +28,11 @@ public sealed class TripSchemaService(Database db)
         new("trips", "job_id",                     "BIGINT NULL"),
         new("trips", "trip_ref",                   "VARCHAR(60) NULL"),
         new("trips", "planned_start_time",          "TIMESTAMPTZ NULL"),
+        new("trips", "started_at",                 "TIMESTAMPTZ NULL"),
         new("trips", "actual_start_time",           "TIMESTAMPTZ NULL"),
         new("trips", "planned_end_time",            "TIMESTAMPTZ NULL"),
         new("trips", "actual_end_time",             "TIMESTAMPTZ NULL"),
+        new("trips", "completed_at",               "TIMESTAMPTZ NULL"),
         new("trips", "origin",                     "TEXT NULL"),
         new("trips", "destination",                "TEXT NULL"),
         new("trips", "planned_distance_miles",      "DECIMAL(10,2) NULL"),
@@ -70,14 +72,17 @@ public sealed class TripSchemaService(Database db)
             status VARCHAR(40) NOT NULL DEFAULT 'planned',
             planned_start_time TIMESTAMPTZ NULL,
             actual_start_time TIMESTAMPTZ NULL,
+            started_at TIMESTAMPTZ NULL,
             planned_end_time TIMESTAMPTZ NULL,
             actual_end_time TIMESTAMPTZ NULL,
+            completed_at TIMESTAMPTZ NULL,
             origin VARCHAR(200) NULL,
             destination VARCHAR(200) NULL,
             planned_distance_miles DECIMAL(10,2) NULL,
             actual_distance_miles DECIMAL(10,2) NULL,
             planned_duration_minutes INT NULL,
             actual_duration_minutes INT NULL,
+            compliance_score DECIMAL(5,2) NULL,
             route_compliance_score DECIMAL(5,2) NULL DEFAULT 100,
             total_planned_stops INT NOT NULL DEFAULT 0,
             stops_completed INT NOT NULL DEFAULT 0,
@@ -89,6 +94,10 @@ public sealed class TripSchemaService(Database db)
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMPTZ NULL
         )",
+
+        @"ALTER TABLE trips ALTER COLUMN status SET DEFAULT 'planned'",
+        @"UPDATE trips SET status='active',updated_at=COALESCE(updated_at,NOW())
+          WHERE LOWER(status) IN ('in progress','in_progress')",
 
         // Planned stop tracking for compliance — links to route_stops.
         // stop_arrival_time / stop_departure_time set when telemetry shows vehicle near stop.
@@ -123,6 +132,10 @@ public sealed class TripSchemaService(Database db)
         "CREATE INDEX IF NOT EXISTS idx_trips_vehicle ON trips(vehicle_id, company_id, actual_start_time)",
         "CREATE INDEX IF NOT EXISTS idx_trips_driver ON trips(driver_id, company_id)",
         "CREATE INDEX IF NOT EXISTS idx_trips_route ON trips(route_id, company_id)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_trips_route ON trips(company_id, route_id) WHERE route_id IS NOT NULL",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_trips_active_vehicle ON trips(company_id, vehicle_id) WHERE vehicle_id IS NOT NULL AND LOWER(status)='active'",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_trips_active_driver ON trips(company_id, driver_id) WHERE driver_id IS NOT NULL AND LOWER(status)='active'",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_safety_open_route_deviation ON safety_events(company_id, (meta_json->>'tripId'), (meta_json->>'stopId')) WHERE event_type='route_deviation' AND status NOT IN ('resolved','dismissed') AND meta_json IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS idx_trip_stops_trip ON trip_stops(trip_id, stop_sequence)",
         "CREATE INDEX IF NOT EXISTS idx_le_trip ON location_events(trip_id, trip_sequence)",
         "CREATE INDEX IF NOT EXISTS idx_le_vehicle_time ON location_events(vehicle_id, event_time)",

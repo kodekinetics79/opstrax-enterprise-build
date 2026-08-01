@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router";
 import { AlertCircle } from "lucide-react";
 import { getLandingRouteForSession } from "@/auth/sessionRouting";
 import { useAuth } from "@/hooks/useAuth";
 import { authApi } from "@/services/authApi";
-import { setGlobalCsrfToken } from "@/hooks/useCsrf";
+import { setGlobalCsrfToken } from "@/auth/csrfTokenStore";
 import { OpsTraxLogo } from "@/components/OpsTraxLogo";
 
 import { SESSION_STORAGE_KEY as SESSION_KEY } from "@/auth/sessionStorage";

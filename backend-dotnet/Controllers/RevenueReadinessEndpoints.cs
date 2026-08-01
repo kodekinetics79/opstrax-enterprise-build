@@ -164,10 +164,12 @@ public static class RevenueReadinessEndpoints
             : v;
     }
 
-    private static async Task<IResult> MarkReadyToBill(HttpContext http, long jobId, RevenueReadinessService svc, CancellationToken ct)
+    private static async Task<IResult> MarkReadyToBill(HttpContext http, long jobId, RevenueReadinessService svc, Database db, CancellationToken ct)
     {
         var denied = EndpointMappings.RequirePermission(http, "finance.job.ready_to_bill");
         if (denied is not null) return denied;
+        if (!await EndpointMappings.JobInAuthorizedScope(http, jobId, db, ct))
+            return Results.NotFound(ApiResponse<object>.Fail("Job not found"));
 
         var outcome = await svc.MarkJobReadyToBillAsync(EndpointMappings.GetCompanyId(http), jobId, ct);
         return outcome.Success
@@ -195,10 +197,12 @@ public static class RevenueReadinessEndpoints
             : Results.Ok(ApiResponse<object>.Ok(draft));
     }
 
-    private static async Task<IResult> CreateInvoiceDraft(HttpContext http, long jobId, RevenueReadinessService svc, CancellationToken ct)
+    private static async Task<IResult> CreateInvoiceDraft(HttpContext http, long jobId, RevenueReadinessService svc, Database db, CancellationToken ct)
     {
         var denied = EndpointMappings.RequirePermission(http, "finance.invoice_draft.create");
         if (denied is not null) return denied;
+        if (!await EndpointMappings.JobInAuthorizedScope(http, jobId, db, ct))
+            return Results.NotFound(ApiResponse<object>.Fail("Job not found"));
 
         var idempotencyKey = http.Request.Headers.TryGetValue("Idempotency-Key", out var headerValue) ? headerValue.FirstOrDefault() : null;
         var outcome = await svc.CreateInvoiceDraftFromJobAsync(EndpointMappings.GetCompanyId(http), jobId, idempotencyKey, ct);

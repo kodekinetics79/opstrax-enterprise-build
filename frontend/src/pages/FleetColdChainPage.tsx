@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { BellRing, BatteryCharging, FlaskConical, Gauge, Layers3, Thermometer, Truck } from 'lucide-react';
 import { ClayStat, ConsoleRail } from '@/components/console';
 import { notifyApiError } from '@/services/fleetTmsApi';
 import { fleetApi, fleetColdChainApi, type ColdChainReport, type TemperatureAlert, type TemperatureDevice, type TemperatureZone } from '@/services/fleetTmsApi';
+import { useHasPermission } from '@/hooks/usePermission';
 
 type SummaryState = {
   generatedAtUtc: string;
@@ -55,6 +56,8 @@ type EventLogState = Array<{
 }>;
 
 export function FleetColdChainPage() {
+  const hasPermission = useHasPermission();
+  const canManageFleet = hasPermission('fleet:manage');
   const [summary, setSummary] = useState<SummaryState | null>(null);
   const [devices, setDevices] = useState<TemperatureDevice[]>([]);
   const [alerts, setAlerts] = useState<TemperatureAlert[]>([]);
@@ -76,12 +79,22 @@ export function FleetColdChainPage() {
     alertNotes: '',
   });
 
+  // Core shipment workspace is tenant-wide. A branch-scoped operator can still
+  // run standalone cold-chain devices safely when that endpoint returns 403.
+  const loadShipmentOptions = async () => {
+    try {
+      return await fleetApi.shipments({ pageSize: 8 });
+    } catch {
+      return { items: [] };
+    }
+  };
+
   const refresh = async () => {
     const [summaryRes, devicesRes, alertsRes, shipmentsRes] = await Promise.all([
       fleetColdChainApi.summary(),
       fleetColdChainApi.devices(),
       fleetColdChainApi.alerts(),
-      fleetApi.shipments({ pageSize: 8 }),
+      loadShipmentOptions(),
     ]);
     setSummary(summaryRes);
     setDevices(devicesRes.items);
@@ -105,7 +118,7 @@ export function FleetColdChainPage() {
           fleetColdChainApi.summary(),
           fleetColdChainApi.devices(),
           fleetColdChainApi.alerts(),
-          fleetApi.shipments({ pageSize: 8 }),
+          loadShipmentOptions(),
         ]);
         if (cancelled) return;
         setSummary(summaryRes);
@@ -142,7 +155,7 @@ export function FleetColdChainPage() {
   }, [summary]);
 
   const createDevice = async () => {
-    if (!selectedZoneId) return;
+    if (!canManageFleet || !selectedZoneId) return;
     setSaving(true);
     try {
       await fleetColdChainApi.createDevice({
@@ -166,6 +179,7 @@ export function FleetColdChainPage() {
   };
 
   const logReading = async (deviceId: string) => {
+    if (!canManageFleet) return;
     const device = devices.find((item) => item.id === deviceId);
     if (!device) return;
     try {
@@ -186,6 +200,7 @@ export function FleetColdChainPage() {
   };
 
   const resolveAlert = async (alertId: string) => {
+    if (!canManageFleet) return;
     try {
       await fleetColdChainApi.resolveAlert(alertId, { resolutionNotes: form.alertNotes || 'Reviewed by operations.' });
       await refresh();
@@ -263,6 +278,13 @@ export function FleetColdChainPage() {
             </Link>
           }
         />
+
+        {!canManageFleet && (
+          <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900" role="status">
+            <p className="font-semibold">Read-only Cold Chain Monitor</p>
+            <p className="mt-0.5 text-xs text-sky-800">Fleet manage permission is required to add sensors, record readings, resolve alerts, or generate compliance reports.</p>
+          </div>
+        )}
 
         <div className="grid gap-3 lg:grid-cols-[1.15fr_0.85fr]">
           <div className="space-y-3">
@@ -348,7 +370,7 @@ export function FleetColdChainPage() {
                           <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Battery</p>
                           <p className="font-bold text-slate-900">{device.batteryPercent.toFixed(0)}%</p>
                         </div>
-                        <button onClick={() => logReading(device.id)} className="rounded-full bg-slate-950 px-3 py-2 text-xs font-bold text-white transition hover:bg-slate-800">
+                        <button onClick={() => logReading(device.id)} disabled={!canManageFleet} title={canManageFleet ? undefined : 'Requires fleet manage permission'} className="rounded-full bg-slate-950 px-3 py-2 text-xs font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
                           Log reading
                         </button>
                       </div>
@@ -373,7 +395,7 @@ export function FleetColdChainPage() {
                   </div>
                   <textarea value={form.notes} onChange={(e) => setForm((current) => ({ ...current, notes: e.target.value }))} rows={3} placeholder="Device notes" className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-cyan-400" />
                   <textarea value={form.readingNotes} onChange={(e) => setForm((current) => ({ ...current, readingNotes: e.target.value }))} rows={3} placeholder="Reading notes" className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-cyan-400" />
-                  <button disabled={saving} onClick={createDevice} className="inline-flex w-full items-center justify-center rounded-2xl bg-gradient-to-r from-cyan-600 to-blue-600 px-4 py-3 font-bold text-white shadow-lg transition hover:from-cyan-500 hover:to-blue-500 disabled:opacity-60">
+                  <button disabled={!canManageFleet || saving} onClick={createDevice} title={canManageFleet ? undefined : 'Requires fleet manage permission'} className="inline-flex w-full items-center justify-center rounded-2xl bg-gradient-to-r from-cyan-600 to-blue-600 px-4 py-3 font-bold text-white shadow-lg transition hover:from-cyan-500 hover:to-blue-500 disabled:opacity-60">
                     {saving ? 'Saving...' : 'Create device'}
                   </button>
                 </div>
@@ -427,7 +449,7 @@ export function FleetColdChainPage() {
                     <p className="mt-2 text-sm text-slate-600">Measured {alert.measuredTemperature.toFixed(1)}°C against {alert.thresholdMin.toFixed(1)}°C to {alert.thresholdMax.toFixed(1)}°C.</p>
                     <div className="mt-3 flex items-center justify-between gap-3">
                       <input value={form.alertNotes} onChange={(e) => setForm((current) => ({ ...current, alertNotes: e.target.value }))} placeholder="Resolution notes" className="min-w-0 flex-1 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm outline-none" />
-                      <button onClick={() => resolveAlert(alert.id)} className="rounded-full bg-slate-950 px-3 py-2 text-xs font-bold text-white transition hover:bg-slate-800">
+                      <button onClick={() => resolveAlert(alert.id)} disabled={!canManageFleet} title={canManageFleet ? undefined : 'Requires fleet manage permission'} className="rounded-full bg-slate-950 px-3 py-2 text-xs font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
                         Resolve
                       </button>
                     </div>
@@ -478,7 +500,7 @@ export function FleetColdChainPage() {
               </div>
               <div className="mt-5 space-y-3">
                 {shipments.slice(0, 4).map((shipment) => (
-                  <button key={shipment.id} onClick={() => generateReport(shipment.id)} className="w-full rounded-2xl border border-slate-200 bg-gradient-to-r from-white to-slate-50 p-4 text-left transition hover:border-cyan-300 hover:shadow-md">
+                  <button key={shipment.id} onClick={() => generateReport(shipment.id)} disabled={!canManageFleet} title={canManageFleet ? undefined : 'Requires fleet manage permission'} className="w-full rounded-2xl border border-slate-200 bg-gradient-to-r from-white to-slate-50 p-4 text-left transition hover:border-cyan-300 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60">
                     <div className="flex items-center justify-between">
                       <p className="font-bold text-slate-950">{shipment.shipmentNumber}</p>
                       <span className="text-xs font-bold text-cyan-700">{shipment.mode}</span>

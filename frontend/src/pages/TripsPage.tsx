@@ -1,16 +1,16 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowRight, CheckCircle2, Clock, Clock3, Download, RefreshCw, Route, ShieldAlert, Truck } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { DataTable, EmptyState, ErrorState, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, exportCsv, labelize } from "@/components/ui";
 import { ClayStat } from "@/components/console";
-import { useHasPermission } from "@/hooks/usePermission";
+import { usePermissions } from "@/hooks/usePermission";
 import { tripApi } from "@/services/tripApi";
 import type { AnyRecord } from "@/types";
 
 type Toast = { kind: "success" | "error" | "info"; message: string };
 
-const FILTERS = ["All", "planned", "active", "completed", "exception"] as const;
+const FILTERS = ["All", "planned", "active", "completed", "exception", "cancelled"] as const;
 
 function value(row: AnyRecord, ...keys: string[]) {
   for (const key of keys) {
@@ -20,7 +20,11 @@ function value(row: AnyRecord, ...keys: string[]) {
 }
 
 function num(v: unknown) {
-  return Number.isFinite(Number(v)) ? Number(v) : 0;
+  return v != null && v !== "" && Number.isFinite(Number(v)) ? Number(v) : null;
+}
+
+function errorMessage(error: unknown, fallback: string) {
+  return error instanceof Error && error.message ? error.message : fallback;
 }
 
 function tripId(row: AnyRecord | null | undefined): string | number | null {
@@ -28,13 +32,19 @@ function tripId(row: AnyRecord | null | undefined): string | number | null {
   return typeof id === "string" || typeof id === "number" ? id : null;
 }
 
+function hasExplicitDispatchPermission(permissions: string[], required: "dispatch:update" | "dispatch:cancel") {
+  const normalized = permissions.map((permission) => permission.trim().toLowerCase().replace(".", ":"));
+  return normalized.some((permission) => permission === "*" || permission === required || permission === "dispatch:manage");
+}
+
 export function TripsPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const hasPermission = useHasPermission();
+  const permissions = usePermissions();
   const [selectedTrip, setSelectedTrip] = useState<AnyRecord | null>(null);
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("All");
   const [toast, setToast] = useState<Toast | null>(null);
+  const [actionReason, setActionReason] = useState("");
 
   const tripsQ = useQuery({
     queryKey: ["trips", filter],
@@ -44,7 +54,7 @@ export function TripsPage() {
   const trips = (tripsQ.data ?? []) as AnyRecord[];
 
   useEffect(() => {
-    if (selectedTrip != null && trips.length > 0 && !trips.some((row) => String(row.id) === String(selectedTrip.id))) {
+    if (selectedTrip != null && !trips.some((row) => String(row.id) === String(selectedTrip.id))) {
       setSelectedTrip(trips[0] ?? null);
     }
     if (selectedTrip == null && trips.length > 0) {
@@ -68,13 +78,15 @@ export function TripsPage() {
     enabled: tripId(selectedTrip) != null,
   });
 
+  useEffect(() => setActionReason(""), [selectedTrip?.id]);
+
   const startMutation = useMutation({
     mutationFn: (id: string | number) => tripApi.start(id),
     onSuccess: async () => {
       setToast({ kind: "success", message: "Trip started." });
       await queryClient.invalidateQueries({ queryKey: ["trips"] });
     },
-    onError: () => setToast({ kind: "error", message: "Trip start failed." }),
+    onError: (error) => setToast({ kind: "error", message: errorMessage(error, "Trip start failed.") }),
   });
   const completeMutation = useMutation({
     mutationFn: (id: string | number) => tripApi.complete(id),
@@ -82,15 +94,25 @@ export function TripsPage() {
       setToast({ kind: "success", message: "Trip marked complete." });
       await queryClient.invalidateQueries({ queryKey: ["trips"] });
     },
-    onError: () => setToast({ kind: "error", message: "Trip completion failed." }),
+    onError: (error) => setToast({ kind: "error", message: errorMessage(error, "Trip completion failed.") }),
   });
   const exceptionMutation = useMutation({
     mutationFn: (payload: { id: string | number; notes?: string }) => tripApi.exception(payload.id, payload.notes),
     onSuccess: async () => {
       setToast({ kind: "success", message: "Trip flagged as exception." });
+      setActionReason("");
       await queryClient.invalidateQueries({ queryKey: ["trips"] });
     },
-    onError: () => setToast({ kind: "error", message: "Trip exception update failed." }),
+    onError: (error) => setToast({ kind: "error", message: errorMessage(error, "Trip exception update failed.") }),
+  });
+  const cancelMutation = useMutation({
+    mutationFn: (payload: { id: string | number; reason: string }) => tripApi.cancel(payload.id, payload.reason),
+    onSuccess: async () => {
+      setToast({ kind: "success", message: "Trip cancelled." });
+      setActionReason("");
+      await queryClient.invalidateQueries({ queryKey: ["trips"] });
+    },
+    onError: (error) => setToast({ kind: "error", message: errorMessage(error, "Trip cancellation failed.") }),
   });
 
   useEffect(() => {
@@ -108,7 +130,15 @@ export function TripsPage() {
   const stops = (((detailQ.data ?? {}) as AnyRecord).stops ?? []) as AnyRecord[];
   const breadcrumbs = (breadcrumbsQ.data ?? []) as AnyRecord[];
   const compliance = (complianceQ.data ?? {}) as AnyRecord;
-  const complianceScore = num(compliance.complianceScore ?? detail.compliance_score ?? selectedTrip?.compliance_score);
+  const complianceScore = num(compliance.complianceScore ?? detail.compliance_score ?? detail.route_compliance_score ?? selectedTrip?.compliance_score ?? selectedTrip?.route_compliance_score);
+  const breakdownItems: AnyRecord[] = Array.isArray(compliance.breakdown)
+    ? compliance.breakdown
+    : compliance.breakdown && typeof compliance.breakdown === "object"
+      ? Object.entries(compliance.breakdown as AnyRecord).map(([key, raw]) => ({
+          key,
+          ...(raw && typeof raw === "object" ? raw as AnyRecord : { value: raw }),
+        }))
+      : [];
   const tableRows: AnyRecord[] = trips.map((row) => ({
     ...row,
     trip_ref: String(value(row, "trip_ref", "tripRef", "trip_number", "tripNumber") ?? row.id),
@@ -116,7 +146,8 @@ export function TripsPage() {
     driver_name: String(value(row, "driver_name", "driverName") ?? "Unassigned"),
     vehicle_code: String(value(row, "vehicle_code", "vehicleCode") ?? "Unassigned"),
     route_name: String(value(row, "route_name", "routeName") ?? "Not configured"),
-    compliance_score: value(row, "compliance_score") != null ? `${value(row, "compliance_score")}%` : "—",
+    compliance_score: value(row, "compliance_score", "complianceScore", "route_compliance_score", "routeComplianceScore") != null
+      ? `${value(row, "compliance_score", "complianceScore", "route_compliance_score", "routeComplianceScore")}%` : "—",
   }));
   const planned = trips.filter((row) => /planned/i.test(String(value(row, "status")))).length;
   const active = trips.filter((row) => /active|in transit/i.test(String(value(row, "status")))).length;
@@ -124,7 +155,9 @@ export function TripsPage() {
   const exceptionCount = trips.filter((row) => /exception|failed/i.test(String(value(row, "status")))).length;
 
   const selectedStatus = String(value(detail, "status", "tripStatus") ?? "unknown");
-  const canUpdate = hasPermission("dispatch:update");
+  const canUpdate = hasExplicitDispatchPermission(permissions, "dispatch:update");
+  const canCancel = hasExplicitDispatchPermission(permissions, "dispatch:cancel");
+  const actionable = /planned|active|exception/i.test(selectedStatus);
 
   return (
     <div className="fleet-console space-y-3">
@@ -215,7 +248,7 @@ export function TripsPage() {
                 </div>
                 <div className="flex flex-col items-end gap-2">
                   <StatusBadge status={selectedStatus} />
-                  <RiskBadge risk={String(complianceScore >= 85 ? "Low" : complianceScore >= 70 ? "Medium" : "High")} />
+                  <RiskBadge risk={String(complianceScore == null ? "Unknown" : complianceScore >= 85 ? "Low" : complianceScore >= 70 ? "Medium" : "High")} />
                 </div>
               </div>
 
@@ -234,17 +267,32 @@ export function TripsPage() {
                     <p className="text-sm font-bold text-slate-900">Actions</p>
                     <p className="text-xs text-slate-500">Actions require dispatch permission and update the live record.</p>
                   </div>
-                  <p className="text-xs font-semibold text-slate-500">Compliance {Number.isFinite(complianceScore) ? `${Math.round(complianceScore)}%` : "—"}</p>
+                  <p className="text-xs font-semibold text-slate-500">Compliance {complianceScore == null ? "—" : `${Math.round(complianceScore)}%`}</p>
                 </div>
-                {canUpdate ? (
-                  <div className="mt-3 flex flex-wrap gap-2">
+                {(canUpdate || canCancel) ? (
+                  <div className="mt-3 space-y-3">
+                    {actionable && (
+                      <label className="block text-xs font-semibold text-slate-600">
+                        Exception or cancellation reason
+                        <textarea
+                          value={actionReason}
+                          onChange={(event) => setActionReason(event.target.value)}
+                          maxLength={2000}
+                          rows={2}
+                          className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-normal text-slate-900"
+                          placeholder="Enter an operational reason (required for exception/cancellation)"
+                        />
+                      </label>
+                    )}
+                    <div className="flex flex-wrap gap-2">
+                    {canUpdate && <>
                     <button
                       type="button"
-                      disabled={startMutation.isPending || !/planned/i.test(selectedStatus)}
+                      disabled={startMutation.isPending || !/planned|exception/i.test(selectedStatus)}
                       className="btn-primary h-9"
                       onClick={() => startMutation.mutate(tripId(selectedTrip) as string | number)}
                     >
-                      <Clock3 className="h-4 w-4" /> Start Trip
+                      <Clock3 className="h-4 w-4" /> {/exception/i.test(selectedStatus) ? "Resume Trip" : "Start Trip"}
                     </button>
                     <button
                       type="button"
@@ -256,15 +304,30 @@ export function TripsPage() {
                     </button>
                     <button
                       type="button"
-                      disabled={exceptionMutation.isPending || !/active/i.test(selectedStatus)}
+                      disabled={exceptionMutation.isPending || !/active/i.test(selectedStatus) || actionReason.trim().length < 3}
                       className="btn-ghost h-9"
-                      onClick={() => exceptionMutation.mutate({ id: tripId(selectedTrip) as string | number, notes: "Marked from Trips page" })}
+                      onClick={() => exceptionMutation.mutate({ id: tripId(selectedTrip) as string | number, notes: actionReason.trim() })}
                     >
                       <ShieldAlert className="h-4 w-4" /> Flag Exception
                     </button>
+                    </>}
+                    {canCancel && (
+                      <button
+                        type="button"
+                        disabled={cancelMutation.isPending || !actionable || actionReason.trim().length < 3}
+                        className="btn-ghost h-9 text-rose-700"
+                        onClick={() => {
+                          if (window.confirm("Cancel this trip? This operation cannot be resumed."))
+                            cancelMutation.mutate({ id: tripId(selectedTrip) as string | number, reason: actionReason.trim() });
+                        }}
+                      >
+                        <AlertTriangle className="h-4 w-4" /> Cancel Trip
+                      </button>
+                    )}
+                    </div>
                   </div>
                 ) : (
-                  <p className="mt-3 text-sm text-slate-500">Read-only access: dispatch update permission is not available in this session.</p>
+                  <p className="mt-3 text-sm text-slate-500">Read-only access: dispatch action permission is not available in this session.</p>
                 )}
               </div>
 
@@ -309,14 +372,14 @@ export function TripsPage() {
                 <section className="rounded-2xl border border-slate-200 bg-white p-4">
                   <h3 className="text-sm font-bold text-slate-900">Compliance breakdown</h3>
                   <div className="mt-3 space-y-2">
-                    {Array.isArray(compliance.breakdown) && compliance.breakdown.length > 0 ? (
-                      compliance.breakdown.map((item: AnyRecord, index: number) => (
+                    {breakdownItems.length > 0 ? (
+                      breakdownItems.map((item: AnyRecord, index: number) => (
                         <div key={String(item.key ?? index)} className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
                           <div>
                             <p className="text-sm font-semibold text-slate-900">{String(labelize(String(item.key ?? item.label ?? "factor")))}</p>
                             <p className="text-xs text-slate-500">{String(item.note ?? item.description ?? "Trip compliance signal")}</p>
                           </div>
-                          <p className="text-sm font-bold text-slate-700">{String(item.value ?? item.count ?? item.score ?? "—")}</p>
+                          <p className="text-sm font-bold text-slate-700">{String(item.deduction != null ? `-${item.deduction}` : item.value ?? item.count ?? item.score ?? "—")}</p>
                         </div>
                       ))
                     ) : (

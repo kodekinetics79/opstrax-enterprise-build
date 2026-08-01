@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState, type R
 import type { UserSession } from "@/types";
 import { authApi } from "@/services/authApi";
 import { SESSION_STORAGE_KEY as STORAGE_KEY, RETIRED_SESSION_KEYS } from "@/auth/sessionStorage";
+import { clearGlobalCsrfToken, setGlobalCsrfToken } from "@/auth/csrfTokenStore";
 
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000; // 8 hours
 
@@ -51,9 +52,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const setSession = (next: UserSession | null) => {
     setSessionState(next);
     if (next) {
+      if (next.csrfToken) setGlobalCsrfToken(next.csrfToken);
       const stored: StoredSession = { session: next, expiresAt: Date.now() + SESSION_TTL_MS };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
     } else {
+      clearGlobalCsrfToken();
       localStorage.removeItem(STORAGE_KEY);
     }
   };

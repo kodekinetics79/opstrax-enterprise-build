@@ -1,7 +1,13 @@
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
+using Npgsql;
 using Opstrax.Api.Data;
 using Opstrax.Api.Foundation;
 using Opstrax.Api.Services;
+using System.Diagnostics;
+using System.Net;
+using System.Net.Sockets;
+using System.Text.Json;
 using Xunit;
 
 namespace Opstrax.Tests;
@@ -43,6 +49,17 @@ public class DemoTenantSeederPostgresTests
         Assert.True(result.ProofPackages >= 3);
 
         var companyId = result.CompanyId;
+
+        // Demo data must obey the same allocation invariant as live dispatch: no two
+        // concurrently active assignments may share a vehicle or driver.
+        Assert.Equal(0, await db.ScalarLongAsync(@"SELECT COUNT(*) FROM (
+            SELECT vehicle_id FROM dispatch_assignments WHERE company_id=@c
+              AND assignment_status NOT IN ('delivered','cancelled','rejected')
+            GROUP BY vehicle_id HAVING COUNT(*) > 1) duplicates", c => c.Parameters.AddWithValue("@c", companyId)));
+        Assert.Equal(0, await db.ScalarLongAsync(@"SELECT COUNT(*) FROM (
+            SELECT driver_id FROM dispatch_assignments WHERE company_id=@c
+              AND assignment_status NOT IN ('delivered','cancelled','rejected')
+            GROUP BY driver_id HAVING COUNT(*) > 1) duplicates", c => c.Parameters.AddWithValue("@c", companyId)));
 
         // KPI spot-check #1 — jobs span every status (12 rows).
         Assert.Equal(12, await db.ScalarLongAsync("SELECT COUNT(*) FROM jobs WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", companyId)));
@@ -93,32 +110,277 @@ public class DemoTenantSeederPostgresTests
         // live demo. The seeder is idempotent, so a subsequent suite run re-seeds cleanly.
     }
 
+    [Fact]
+    public async Task CleanDatabase_BootstrapRollsBackMidSeedFailure_ThenCompletesAndRepeatsAsNoOp()
+    {
+        // This is a real empty database booted by the actual application process. It does
+        // not replay a hand-selected/reduced set of schema services and therefore catches
+        // any drift between the app's authoritative startup path and DemoTenantSeeder.
+        var databaseName = $"opstrax_seed_clean_{Guid.NewGuid():N}";
+        var adminBuilder = new NpgsqlConnectionStringBuilder(LocalConnectionString)
+        {
+            Database = "postgres",
+            Pooling = false,
+        };
+        var admin = CreateDatabase(adminBuilder.ConnectionString);
+        await admin.ExecuteAsync($"CREATE DATABASE \"{databaseName}\"");
+
+        var cleanBuilder = new NpgsqlConnectionStringBuilder(LocalConnectionString)
+        {
+            Database = databaseName,
+            Pooling = false,
+        };
+        Process? app = null;
+        try
+        {
+            var clean = CreateDatabase(cleanBuilder.ConnectionString);
+            var port = FreeTcpPort();
+            app = await StartCleanAppAsync(cleanBuilder.ConnectionString, port);
+
+            foreach (var column in new[] { "customer_id", "comment", "feedback_type", "subject", "status", "updated_at" })
+                Assert.Equal(1, await clean.ScalarLongAsync(
+                    "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='customer_feedback' AND column_name=@column",
+                    c => c.Parameters.AddWithValue("@column", column)));
+
+            // Exercise the real HTTP endpoint once and prove its repeat is a no-op.
+            await clean.ExecuteAsync(
+                @"INSERT INTO companies(id,company_code,name,industry) OVERRIDING SYSTEM VALUE
+                    VALUES (900001,'CLEAN-SEED-AUTH','Clean Seed Auth','Transportation');
+                  INSERT INTO users(id,company_id,full_name,email,role_name,permissions_json,status) OVERRIDING SYSTEM VALUE
+                    VALUES (900002,900001,'Clean Seed Operator','clean-seed-operator@example.invalid','Fleet Manager','[""fleet:view""]'::jsonb,'Active');
+                  INSERT INTO user_sessions(id,user_id,company_id,session_token,expires_at) OVERRIDING SYSTEM VALUE
+                    VALUES (900003,900002,900001,'clean-seed-endpoint-token',NOW()+INTERVAL '1 hour');");
+            using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
+            client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "clean-seed-endpoint-token");
+            var endpointFirst = await client.PostAsync("/api/dev/seed-demo-tenant", new StringContent("{}", System.Text.Encoding.UTF8, "application/json"));
+            Assert.Equal(HttpStatusCode.OK, endpointFirst.StatusCode);
+            using var firstJson = JsonDocument.Parse(await endpointFirst.Content.ReadAsStringAsync());
+            Assert.False(firstJson.RootElement.GetProperty("data").GetProperty("alreadySeeded").GetBoolean());
+            Assert.Equal(12, firstJson.RootElement.GetProperty("data").GetProperty("jobs").GetInt32());
+            Assert.Equal(1, firstJson.RootElement.GetProperty("data").GetProperty("feedback").GetInt32());
+            var endpointSecond = await client.PostAsync("/api/dev/seed-demo-tenant", new StringContent("{}", System.Text.Encoding.UTF8, "application/json"));
+            Assert.Equal(HttpStatusCode.OK, endpointSecond.StatusCode);
+            using var secondJson = JsonDocument.Parse(await endpointSecond.Content.ReadAsStringAsync());
+            Assert.True(secondJson.RootElement.GetProperty("data").GetProperty("alreadySeeded").GetBoolean());
+
+            var companyCode = $"ROLLBACK-{Guid.NewGuid():N}"[..36];
+            var failingSeeder = new DemoTenantSeeder(clean)
+            {
+                TestCheckpointAsync = (checkpoint, _) => checkpoint == "after-finance-before-feedback"
+                    ? Task.FromException(new InvalidOperationException("forced late demo-seed failure"))
+                    : Task.CompletedTask,
+            };
+
+            // Fail deliberately late, after base entities and finance rows. The transaction must
+            // roll back, including the company marker used by the idempotency check.
+            await Assert.ThrowsAsync<InvalidOperationException>(() => failingSeeder.SeedAsync(companyCode, "Clean Seed Transaction Test"));
+            Assert.Equal(0, await clean.ScalarLongAsync(
+                "SELECT COUNT(*) FROM companies WHERE company_code=@code",
+                c => c.Parameters.AddWithValue("@code", companyCode)));
+
+            var seeder = new DemoTenantSeeder(clean);
+            var first = await seeder.SeedAsync(companyCode, "Clean Seed Transaction Test");
+            Assert.False(first.AlreadySeeded);
+            Assert.Equal(5, first.Vehicles);
+            Assert.Equal(5, first.Drivers);
+            Assert.Equal(3, first.Customers);
+            Assert.Equal(12, first.Jobs);
+            Assert.Equal(4, first.IssuedInvoices);
+            Assert.Equal(1, first.Payments);
+            Assert.Equal(1, first.Feedback);
+            Assert.Equal(1, await clean.ScalarLongAsync(
+                "SELECT COUNT(*) FROM customer_feedback WHERE company_id=@companyId AND subject='Great delivery' AND status='open'",
+                c => c.Parameters.AddWithValue("@companyId", first.CompanyId)));
+
+            var second = await seeder.SeedAsync(companyCode, "Clean Seed Transaction Test");
+            Assert.True(second.AlreadySeeded);
+            Assert.Equal(first.CompanyId, second.CompanyId);
+            Assert.Equal(12, await clean.ScalarLongAsync(
+                "SELECT COUNT(*) FROM jobs WHERE company_id=@companyId",
+                c => c.Parameters.AddWithValue("@companyId", first.CompanyId)));
+
+            // Two simultaneous first runs serialize on the transaction advisory lock:
+            // exactly one creates the tenant and the waiter observes the committed row.
+            var concurrentCode = $"CONCURRENT-{Guid.NewGuid():N}"[..36];
+            var concurrent = await Task.WhenAll(
+                new DemoTenantSeeder(CreateDatabase(cleanBuilder.ConnectionString)).SeedAsync(concurrentCode, "Concurrent Seed Test"),
+                new DemoTenantSeeder(CreateDatabase(cleanBuilder.ConnectionString)).SeedAsync(concurrentCode, "Concurrent Seed Test"));
+            Assert.Single(concurrent, x => !x.AlreadySeeded);
+            Assert.Single(concurrent, x => x.AlreadySeeded);
+            var concurrentCompanyId = concurrent[0].CompanyId;
+            Assert.All(concurrent, x => Assert.Equal(concurrentCompanyId, x.CompanyId));
+            Assert.Equal(1, await clean.ScalarLongAsync("SELECT COUNT(*) FROM companies WHERE company_code=@code", c => c.Parameters.AddWithValue("@code", concurrentCode)));
+            Assert.Equal(12, await clean.ScalarLongAsync("SELECT COUNT(*) FROM jobs WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", concurrentCompanyId)));
+            Assert.Equal(1, await clean.ScalarLongAsync("SELECT COUNT(*) FROM customer_feedback WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", concurrentCompanyId)));
+        }
+        finally
+        {
+            if (app is { HasExited: false })
+            {
+                app.Kill(entireProcessTree: true);
+                await app.WaitForExitAsync();
+            }
+            NpgsqlConnection.ClearAllPools();
+            await admin.ExecuteAsync($"DROP DATABASE IF EXISTS \"{databaseName}\" WITH (FORCE)");
+        }
+    }
+
+    [Fact]
+    public async Task CustomerFeedbackMigration_UpgradesLegacyShape_PreservesRows_AndReruns()
+    {
+        var schema = $"feedback_legacy_{Guid.NewGuid():N}";
+        var owner = CreateDatabase();
+        await owner.ExecuteAsync($"CREATE SCHEMA \"{schema}\"");
+        var scopedBuilder = new NpgsqlConnectionStringBuilder(LocalConnectionString)
+        {
+            SearchPath = schema,
+            Pooling = false,
+        };
+        try
+        {
+            var scoped = CreateDatabase(scopedBuilder.ConnectionString);
+            await scoped.ExecuteAsync(
+                @"CREATE TABLE jobs(id BIGINT PRIMARY KEY, company_id BIGINT NOT NULL, customer_id BIGINT NULL);
+                  CREATE TABLE customer_feedback(
+                    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                    company_id BIGINT NOT NULL,
+                    job_id BIGINT NOT NULL,
+                    tracking_code VARCHAR(80) NULL,
+                    rating INT NULL,
+                    sentiment VARCHAR(80) NULL,
+                    comments TEXT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+                  INSERT INTO jobs(id,company_id,customer_id) VALUES (1,11,22);
+                  INSERT INTO customer_feedback(company_id,job_id,rating,sentiment,comments)
+                    VALUES (11,1,4,'positive','legacy feedback survives');");
+
+            var migrationPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,
+                "../../../../database/migrations/2026_07_30_customer_feedback_contract.sql"));
+            Assert.True(File.Exists(migrationPath), $"Packaged feedback migration not found: {migrationPath}");
+            var migration = await File.ReadAllTextAsync(migrationPath);
+            await scoped.ExecuteAsync(migration);
+            await scoped.ExecuteAsync(migration); // additive/idempotent rerun
+
+            foreach (var column in new[] { "customer_id", "comment", "feedback_type", "subject", "status", "updated_at" })
+                Assert.Equal(1, await scoped.ScalarLongAsync(
+                    "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='customer_feedback' AND column_name=@column",
+                    c => c.Parameters.AddWithValue("@column", column)));
+            Assert.Equal(1, await scoped.ScalarLongAsync(
+                "SELECT COUNT(*) FROM pg_indexes WHERE schemaname=current_schema() AND tablename='customer_feedback' AND indexname='ix_customer_feedback_company_customer'"));
+            Assert.Equal(1, await scoped.ScalarLongAsync("SELECT COUNT(*) FROM customer_feedback WHERE comments='legacy feedback survives'"));
+
+            var submitted = await new CustomerPortalService(scoped).SubmitFeedbackAsync(
+                11, 22, 1, 5, "canonical feedback", "praise", "Migration works");
+            Assert.NotNull(submitted);
+            Assert.Equal(1, await scoped.ScalarLongAsync(
+                "SELECT COUNT(*) FROM customer_feedback WHERE customer_id=22 AND comment='canonical feedback' AND subject='Migration works' AND status='open'"));
+        }
+        finally
+        {
+            NpgsqlConnection.ClearAllPools();
+            await owner.ExecuteAsync($"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE");
+        }
+    }
+
+    private static int FreeTcpPort()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+        return port;
+    }
+
+    private static async Task<Process> StartCleanAppAsync(string connectionString, int port)
+    {
+        var appDll = Path.Combine(AppContext.BaseDirectory, "Opstrax.Api.dll");
+        Assert.True(File.Exists(appDll), $"API assembly not found: {appDll}");
+        var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../.."));
+        var start = new ProcessStartInfo("dotnet", appDll)
+        {
+            WorkingDirectory = root,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        start.Environment["ASPNETCORE_ENVIRONMENT"] = "Development";
+        start.Environment["ASPNETCORE_URLS"] = $"http://127.0.0.1:{port}";
+        start.Environment["ConnectionStrings__DefaultConnection"] = connectionString;
+        start.Environment["PG_CONNECTION"] = connectionString;
+        start.Environment["Jwt__Key"] = "clean-database-demo-seed-test-key-material-at-least-64-characters-long";
+        start.Environment["Rls__EnforceTenantContext"] = "false";
+        start.Environment["DemoSeed__Enabled"] = "true";
+        start.Environment["DemoSeed__Password"] = "CleanDemoSeed-Test-Only-2026!";
+        var process = Process.Start(start)!;
+        var output = new List<string>();
+        process.OutputDataReceived += (_, e) => { if (e.Data is not null) lock (output) output.Add(e.Data); };
+        process.ErrorDataReceived += (_, e) => { if (e.Data is not null) lock (output) output.Add(e.Data); };
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+
+        using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
+        var deadline = DateTime.UtcNow.AddSeconds(60);
+        while (DateTime.UtcNow < deadline && !process.HasExited)
+        {
+            try
+            {
+                if ((await client.GetAsync("/health")).IsSuccessStatusCode) return process;
+            }
+            catch (HttpRequestException) { }
+            await Task.Delay(200);
+        }
+        var log = string.Join(Environment.NewLine, output.TakeLast(80));
+        if (!process.HasExited) process.Kill(entireProcessTree: true);
+        throw new Xunit.Sdk.XunitException($"Clean app did not become healthy. Exit={process.ExitCode}; log:{Environment.NewLine}{log}");
+    }
+
     private static RevenueReadinessService CreateRevenueService(Database db, long companyId)
     {
         var correlation = new InMemoryCorrelationContext("corr-demo", "cause-demo", "req-demo", companyId.ToString(), ActorTypes.TenantUser, "1");
         return new RevenueReadinessService(db, new PostgresAiFoundationService(db, correlation), new PostgresApprovalWorkflowService(db, correlation), new PostgresIdempotencyService(db), new PostgresDomainEventPublisher(db, correlation), correlation, new TaxService(db));
     }
 
-    private static Database CreateDatabase()
+    private static Database CreateDatabase() => CreateDatabase(LocalConnectionString);
+
+    private static Database CreateDatabase(string connectionString)
     {
         var config = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?> { ["ConnectionStrings:DefaultConnection"] = LocalConnectionString })
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["ConnectionStrings:DefaultConnection"] = connectionString })
             .Build();
         return new Database(config);
     }
 
     private static async Task EnsureSchemasAsync(Database db)
     {
+        // Match the production bootstrap order for every table/column DemoTenantSeeder
+        // writes. Do not manually ALTER individual columns here: doing so previously
+        // masked clean-install drift in both customer_feedback and documents.
+        await new Batch1SchemaService(db).EnsureAsync();
+        await new Batch2SchemaService(db).EnsureAsync();
+        await new Batch3SchemaService(db).EnsureAsync();
+        await new Batch4SchemaService(db).EnsureAsync();
+        await new Batch5SchemaService(db).EnsureAsync();
+        await new Batch6SchemaService(db).EnsureAsync();
+        await new Batch7SchemaService(db).EnsureAsync();
+        await new TelemetrySchemaService(db).EnsureAsync();
+        await new SafetySchemaService(db).EnsureAsync();
+        await new TripSchemaService(db).EnsureAsync();
+        await new MaintenanceSchemaService(db).EnsureAsync();
+        await new DispatchSchemaService(db, NullLogger<DispatchSchemaService>.Instance).EnsureAsync();
+        await new CustomerVisibilitySchemaService(db, NullLogger<CustomerVisibilitySchemaService>.Instance).EnsureAsync();
+        await new DriverSchemaService(db, NullLogger<DriverSchemaService>.Instance).EnsureAsync();
+        await new NotificationSchemaService(db).EnsureAsync();
+        await new AlertWorkflowSchemaService(db).EnsureAsync();
         await new FoundationSchemaService(db).EnsureAsync();
         await new BusinessSpineSchemaService(db).EnsureAsync();
         await new RevenueReadinessSchemaService(db).EnsureAsync();
         await new FinanceActivationSchemaService(db).EnsureAsync();
+        await new TaxSchemaService(db).EnsureAsync();
+        await new Stage9SchemaService(db).EnsureAsync();
         await db.ExecuteAsync("ALTER TABLE ai_recommendations ADD COLUMN IF NOT EXISTS company_id BIGINT NOT NULL DEFAULT 1");
         await db.ExecuteAsync("ALTER TABLE ai_recommendations ADD COLUMN IF NOT EXISTS module_key VARCHAR(100) NULL");
         await db.ExecuteAsync("ALTER TABLE ai_recommendations ADD COLUMN IF NOT EXISTS body TEXT NULL");
         await db.ExecuteAsync("ALTER TABLE ai_recommendations ADD COLUMN IF NOT EXISTS score DECIMAL(6,2) NOT NULL DEFAULT 80");
-        await db.ExecuteAsync("ALTER TABLE customer_feedback ADD COLUMN IF NOT EXISTS status VARCHAR(30) NOT NULL DEFAULT 'open'");
-        await db.ExecuteAsync("ALTER TABLE customer_feedback ADD COLUMN IF NOT EXISTS subject VARCHAR(200) NULL");
     }
 
     // Schema-driven cleanup (mirrors TenantOffboardingService) — discovers EVERY table

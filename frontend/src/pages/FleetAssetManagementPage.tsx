@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { Archive, Barcode, Boxes, CheckCheck, Layers3, SquareStack, Truck } from 'lucide-react';
 import { ClayStat, ConsoleRail } from '@/components/console';
 import { notifyApiError } from '@/services/fleetTmsApi';
 import { fleetApi, fleetAssetApi, type Asset, type AssetAssignment, type AssetEvent, type AssetType } from '@/services/fleetTmsApi';
+import { LoadingState } from '@/components/ui';
+import { useHasPermission } from '@/hooks/usePermission';
 
 type AssetDetail = {
   asset: Asset;
@@ -12,6 +14,8 @@ type AssetDetail = {
 };
 
 export function FleetAssetManagementPage() {
+  const hasPermission = useHasPermission();
+  const canManageFleet = hasPermission('fleet:manage');
   const [assetTypes, setAssetTypes] = useState<AssetType[]>([]);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [shipments, setShipments] = useState<Array<{ id: string; shipmentNumber: string; customerName: string; status: string }>>([]);
@@ -22,6 +26,7 @@ export function FleetAssetManagementPage() {
   const [loading, setLoading] = useState(true);
   const [loadWarnings, setLoadWarnings] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
+  const [actionMessage, setActionMessage] = useState('');
   const [forms, setForms] = useState({
     typeCode: '',
     typeName: '',
@@ -134,6 +139,7 @@ export function FleetAssetManagementPage() {
   }, [assetTypes, assets]);
 
   const createAssetType = async () => {
+    if (!canManageFleet) return;
     setSaving(true);
     try {
       await fleetAssetApi.createAssetType({
@@ -152,7 +158,7 @@ export function FleetAssetManagementPage() {
   };
 
   const createAsset = async () => {
-    if (!selectedTypeId) return;
+    if (!canManageFleet || !selectedTypeId) return;
     setSaving(true);
     try {
       await fleetAssetApi.createAsset({
@@ -176,12 +182,19 @@ export function FleetAssetManagementPage() {
   };
 
   const scan = async () => {
+    if (!canManageFleet) return;
+    const scannedValue = forms.scanValue.trim();
+    if (!scannedValue) {
+      setActionMessage('Enter or scan a barcode value before capturing the event.');
+      return;
+    }
+    setActionMessage('');
     try {
       await fleetAssetApi.scan({
         kind: 'Barcode',
         assetId: selectedAssetId || undefined,
         shipmentId: selectedShipmentId || undefined,
-        scannedValue: forms.scanValue,
+        scannedValue,
         scannerId: 'WEB-SCAN-01',
         eventType: 'Scan',
         status: 'Captured',
@@ -195,7 +208,7 @@ export function FleetAssetManagementPage() {
   };
 
   const assign = async (mode: 'checkIn' | 'checkOut') => {
-    if (!selectedAssetId) return;
+    if (!canManageFleet || !selectedAssetId) return;
     try {
       if (mode === 'checkIn') {
         await fleetAssetApi.checkInAsset(selectedAssetId, {
@@ -220,7 +233,7 @@ export function FleetAssetManagementPage() {
     }
   };
 
-  if (loading) return <div className="min-h-screen bg-slate-950" />;
+  if (loading) return <LoadingState />;
 
   return (
     <main className="fleet-console text-slate-900">
@@ -240,6 +253,13 @@ export function FleetAssetManagementPage() {
             </Link>
           }
         />
+
+        {!canManageFleet && (
+          <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900" role="status">
+            <p className="font-semibold">Read-only Returnable Assets</p>
+            <p className="mt-0.5 text-xs text-sky-800">Fleet manage permission is required to create inventory, capture scans, or change asset custody.</p>
+          </div>
+        )}
 
         <div className="grid gap-3 lg:grid-cols-[1.1fr_0.9fr]">
           <div className="space-y-3">
@@ -298,10 +318,10 @@ export function FleetAssetManagementPage() {
                   <textarea value={forms.typeDescription} onChange={(e) => setForms((current) => ({ ...current, typeDescription: e.target.value }))} rows={3} placeholder="Type description" className="sm:col-span-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400" />
                 </div>
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  <button disabled={saving} onClick={createAsset} className="rounded-2xl bg-gradient-to-r from-blue-600 to-cyan-600 px-4 py-3 font-bold text-white shadow-lg transition hover:from-blue-500 hover:to-cyan-500 disabled:opacity-60">
+                  <button disabled={!canManageFleet || saving} onClick={createAsset} title={canManageFleet ? undefined : 'Requires fleet manage permission'} className="rounded-2xl bg-gradient-to-r from-blue-600 to-cyan-600 px-4 py-3 font-bold text-white shadow-lg transition hover:from-blue-500 hover:to-cyan-500 disabled:opacity-60">
                     {saving ? 'Saving...' : 'Create asset'}
                   </button>
-                  <button disabled={saving} onClick={createAssetType} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 font-bold text-slate-700 transition hover:border-cyan-300 hover:text-cyan-700 disabled:opacity-60">
+                  <button disabled={!canManageFleet || saving} onClick={createAssetType} title={canManageFleet ? undefined : 'Requires fleet manage permission'} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 font-bold text-slate-700 transition hover:border-cyan-300 hover:text-cyan-700 disabled:opacity-60">
                     Add asset type
                   </button>
                 </div>
@@ -337,9 +357,10 @@ export function FleetAssetManagementPage() {
               <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">Scan & custody</p>
               <h2 className="mt-2 text-2xl font-black text-slate-950">Barcode / RFID actions</h2>
               <div className="mt-5 space-y-3">
-                <input value={forms.scanValue} onChange={(e) => setForms((current) => ({ ...current, scanValue: e.target.value }))} placeholder="Scan value / tag" className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400" />
+                <input value={forms.scanValue} onChange={(e) => { setForms((current) => ({ ...current, scanValue: e.target.value })); if (actionMessage) setActionMessage(''); }} placeholder="Scan value / tag" className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400" />
                 <textarea value={forms.scanNotes} onChange={(e) => setForms((current) => ({ ...current, scanNotes: e.target.value }))} rows={3} placeholder="Scan notes" className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400" />
-                <button onClick={scan} className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 font-bold text-white transition hover:bg-slate-800">
+                {actionMessage && <p className="text-sm font-medium text-rose-600" role="alert">{actionMessage}</p>}
+                <button onClick={scan} disabled={!canManageFleet || !forms.scanValue.trim()} title={canManageFleet ? undefined : 'Requires fleet manage permission'} className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
                   <Barcode className="h-4 w-4" />
                   Capture barcode scan
                 </button>
@@ -356,11 +377,11 @@ export function FleetAssetManagementPage() {
                   {shipments.map((shipment) => <option key={shipment.id} value={shipment.id}>{shipment.shipmentNumber}</option>)}
                 </select>
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <button onClick={() => assign('checkOut')} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-blue-600 to-cyan-600 px-4 py-3 font-bold text-white transition hover:from-blue-500 hover:to-cyan-500">
+                  <button onClick={() => assign('checkOut')} disabled={!canManageFleet || !selectedAssetId} title={canManageFleet ? undefined : 'Requires fleet manage permission'} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-blue-600 to-cyan-600 px-4 py-3 font-bold text-white transition hover:from-blue-500 hover:to-cyan-500 disabled:cursor-not-allowed disabled:opacity-50">
                     <CheckCheck className="h-4 w-4" />
                     Check out
                   </button>
-                  <button onClick={() => assign('checkIn')} className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 font-bold text-slate-700 transition hover:border-cyan-300 hover:text-cyan-700">
+                  <button onClick={() => assign('checkIn')} disabled={!canManageFleet || !selectedAssetId} title={canManageFleet ? undefined : 'Requires fleet manage permission'} className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 font-bold text-slate-700 transition hover:border-cyan-300 hover:text-cyan-700 disabled:cursor-not-allowed disabled:opacity-50">
                     <Truck className="h-4 w-4" />
                     Check in
                   </button>

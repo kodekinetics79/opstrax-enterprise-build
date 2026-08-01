@@ -4,13 +4,9 @@ import type { AnyRecord } from "@/types";
 
 export const driversApi = {
   list: () => getDrivers(),
-  summary: () => getDrivers().then((rows) => ({
-    driverReadinessScore: Math.round(rows.reduce((sum, row) => sum + Number(row.driverReadinessScore ?? 0), 0) / Math.max(rows.length, 1)),
-    dataCompletenessScore: Math.round(rows.reduce((sum, row) => sum + Number(row.complianceScore ?? 0), 0) / Math.max(rows.length, 1)),
-    safetyScore: Math.round(rows.reduce((sum, row) => sum + Number(row.safetyScore ?? 0), 0) / Math.max(rows.length, 1)),
-    atRisk: rows.filter((row) => Number(row.complianceScore ?? 0) < 85 || /review|blocked/i.test(String(row.status))).length,
-    total: rows.length,
-  })),
+  // Use the tenant-wide aggregate endpoint rather than calculating KPIs from the
+  // capped driver list. Its camel-cased aliases match the existing page contract.
+  summary: () => unwrap<AnyRecord>(apiClient.get("/api/drivers/summary")),
   detail: (id: string | number) => getDriverById(id),
   // Recommendations come from the live detail envelope — never fabricated client-side.
   recommendations: (id: string | number) => getDriverById(id).then((detail) => (Array.isArray(detail.recommendations) ? detail.recommendations : [])),

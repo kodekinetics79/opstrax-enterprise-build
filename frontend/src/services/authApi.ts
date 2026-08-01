@@ -1,5 +1,5 @@
 import { apiClient, unwrap } from "./apiClient";
-import { setGlobalCsrfToken } from "@/hooks/useCsrf";
+import { setGlobalCsrfToken } from "@/auth/csrfTokenStore";
 import type { UserSession } from "@/types";
 
 function resolveEmail(usernameOrEmail: string): string {

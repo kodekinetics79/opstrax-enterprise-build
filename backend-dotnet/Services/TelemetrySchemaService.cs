@@ -52,6 +52,9 @@ public sealed class TelemetrySchemaService(Database db)
         new("location_events", "causation_id", "VARCHAR(120) NULL"),
         new("location_events", "client_generated_id", "VARCHAR(120) NULL"),
         new("location_events", "idempotency_key", "VARCHAR(120) NULL"),
+        // Keep owner-capable fresh installs aligned with the committed polygon
+        // geofence migration. GeofenceEvaluator always selects this column.
+        new("geofences", "polygon_json", "JSONB NULL"),
         new("telemetry_alerts", "correlation_id", "VARCHAR(120) NULL"),
         new("telemetry_alerts", "causation_id", "VARCHAR(120) NULL"),
         new("telemetry_alerts", "source_channel", "VARCHAR(40) NULL"),

@@ -2,9 +2,9 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowRight, CheckCircle2, Download, Edit3, FileCheck2, Info, MapPin, Package, Plus,
-  Search, Send, Sparkles, Trash2, TriangleAlert, Truck, X,
+  Search, Send, Sparkles, Trash2, TriangleAlert, Truck, UserCheck, X,
 } from "lucide-react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router";
 import {
   AiInsightCard, DataTable, EmptyState, ErrorState, KpiCard, LoadingState, PageHeader,
   RiskBadge, StatusBadge, exportCsv, labelize,
@@ -14,6 +14,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { isCustomerPortalRole, isDriverPortalRole, scopeRowsForSession } from "@/auth/accessScope";
 import { useJobDetail, useJobSummary } from "@/hooks/useBatch2";
 import { jobsApi } from "@/services/jobsApi";
+import { downloadServerExport } from "@/services/fleetDomainApi";
 import type { AnyRecord } from "@/types";
 
 const fields = [
@@ -83,6 +84,7 @@ const SURFACE_CONFIG: Record<ShipmentSurface, {
 export function JobsPage() {
   const [selected, setSelected] = useState<AnyRecord | null>(null);
   const [editing, setEditing] = useState<AnyRecord | null>(null);
+  const [assigning, setAssigning] = useState<AnyRecord | null>(null);
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("All");
   const [priority, setPriority] = useState("All");
@@ -97,8 +99,8 @@ export function JobsPage() {
   const [jobsOffset, setJobsOffset] = useState(0);
   // Server-side paginated + searched — never fetches all 4000+ jobs at once.
   const jobsPaged = useQuery({
-    queryKey: ["jobs", "paged", query.trim(), jobsOffset],
-    queryFn: () => jobsApi.listPaged({ limit: JOBS_PAGE_SIZE, offset: jobsOffset, search: query }),
+    queryKey: ["jobs", "paged", query.trim(), status, priority, jobsOffset],
+    queryFn: () => jobsApi.listPaged({ limit: JOBS_PAGE_SIZE, offset: jobsOffset, search: query, status, priority }),
   });
   const jobs = { data: jobsPaged.data?.rows ?? [], isLoading: jobsPaged.isLoading, isError: jobsPaged.isError, isFetching: jobsPaged.isFetching, error: jobsPaged.error };
   const jobsTotal = jobsPaged.data?.total ?? (jobsPaged.data?.rows?.length ?? 0);
@@ -115,12 +117,14 @@ export function JobsPage() {
     return "jobs";
   })();
   const surfaceConfig = SURFACE_CONFIG[surface];
-  const canManage = hasPermission("shipments:create") || hasPermission("shipments:update") || hasPermission("dispatch:update") || hasPermission("dispatch:assign");
-  const canExport = hasPermission("shipments:export") || hasPermission("shipments:view") || canManage;
-  const canCreate = canManage;
-  const canEdit = canManage;
-  const canDelete = canManage;
-  const canDispatch = hasPermission("dispatch:assign") || hasPermission("dispatch:update") || canManage;
+  const canManageDispatch = hasPermission("dispatch:manage");
+  const canCreate = canManageDispatch || hasPermission("shipments:create") || hasPermission("dispatch:create");
+  const canEdit = canManageDispatch || hasPermission("shipments:update") || hasPermission("dispatch:update");
+  const canCancel = canManageDispatch || hasPermission("dispatch:cancel");
+  const canDelete = canManageDispatch || hasPermission("shipments:delete") || canCancel;
+  const canDispatch = canManageDispatch || hasPermission("dispatch:update");
+  const canAssign = canManageDispatch || hasPermission("dispatch:assign");
+  const canExport = hasPermission("shipments:export") || hasPermission("shipments:view");
   const scopedRows = useMemo(() => scopeRowsForSession("jobs", jobs.data || [], session), [jobs.data, session]);
   const visibleSummary = useMemo(() => buildJobSummary(scopedRows, summary.data as AnyRecord | undefined, session), [scopedRows, session, summary.data]);
 
@@ -159,6 +163,29 @@ export function JobsPage() {
     },
     onError: () => notify("error", "Status change was rejected."),
   });
+  const assign = useMutation({
+    mutationFn: ({ id, payload }: { id: string | number; payload: AnyRecord }) => jobsApi.assign(id, payload),
+    onSuccess: async () => {
+      setAssigning(null);
+      await qc.invalidateQueries({ queryKey: ["jobs"] });
+      await qc.invalidateQueries({ queryKey: ["jobs", "summary"] });
+      await qc.invalidateQueries({ queryKey: ["jobs", "detail", selected?.id] });
+      notify("success", "Driver and vehicle assigned");
+    },
+    onError: () => notify("error", "Assignment was rejected. Check availability, HOS, and branch ownership."),
+  });
+
+  useEffect(() => setJobsOffset(0), [status, priority]);
+
+  const exportRoster = async () => {
+    if (!canExport) return;
+    try {
+      await downloadServerExport("/api/jobs/export", `${surfaceConfig.exportName}.csv`);
+      notify("success", "Full job roster exported");
+    } catch {
+      notify("error", "Could not export the full job roster.");
+    }
+  };
 
   const baseRows = useMemo(() => scopedRows.filter(surfaceConfig.filterRows), [scopedRows, surfaceConfig]);
 
@@ -210,7 +237,7 @@ export function JobsPage() {
         description={surfaceConfig.description}
         actions={<>
           <button type="button" className="btn-primary" disabled={!canCreate} title={!canCreate ? "You do not have permission to perform this action." : undefined} onClick={() => canCreate && setEditing({ priority: "Normal", jobType: "Delivery", status: "Unassigned" })}><Plus className="h-4 w-4" /> {surfaceConfig.createLabel}</button>
-          <button type="button" className="btn-ghost" disabled={!canExport} title={!canExport ? "You do not have permission to perform this action." : undefined} onClick={() => canExport && exportCsv(surfaceConfig.exportName, rows)}><Download className="h-4 w-4" /> Export Roster</button>
+          <button type="button" className="btn-ghost" disabled={!canExport} title={!canExport ? "You do not have permission to perform this action." : undefined} onClick={exportRoster}><Download className="h-4 w-4" /> Export Roster</button>
         </>}
       />
 
@@ -250,7 +277,7 @@ export function JobsPage() {
       {/* Lifecycle pipeline — clickable status filter with live counts */}
       <div className="panel p-2">
         <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4 lg:grid-cols-8">
-          <PipelineChip label="All" count={String(visibleSummary.totalJobsToday ?? scopedRows.length)} active={status === "All"} onClick={() => setStatus("All")} />
+          <PipelineChip label="All" count={String(visibleSummary.total ?? scopedRows.length)} active={status === "All"} onClick={() => setStatus("All")} />
           {PIPELINE.map((stage) => (
             <PipelineChip
               key={stage.statusValue}
@@ -298,15 +325,17 @@ export function JobsPage() {
         loading={detail.isLoading}
         onClose={() => setSelected(null)}
         onEdit={(record) => canEdit && setEditing(record)}
+        onAssign={(record) => canAssign && setAssigning(record)}
         onDelete={(id) => canDelete && remove.mutate(id)}
         onEta={(id) => canDispatch && action.mutate({ type: "eta", id })}
         onProof={(id) => canDispatch && action.mutate({ type: "proof", id })}
-        onStatus={(id, next) => canDispatch && changeStatus.mutate({ id, status: next })}
+        onStatus={(id, next) => (next === "Cancelled" ? canCancel : canDispatch) && changeStatus.mutate({ id, status: next })}
         statusPending={changeStatus.isPending}
         onExport={() => exportJobRecordCsv(selectedRecord(detail.data, selected), detail.data)}
-        canEdit={canEdit} canDelete={canDelete} canDispatch={canDispatch} canExport={canExport}
+        canEdit={canEdit} canDelete={canDelete} canDispatch={canDispatch} canCancel={canCancel} canAssign={canAssign} canExport={canExport}
       />
       {editing ? <JobModal initial={editing} saving={save.isPending} onClose={() => setEditing(null)} onSave={(payload) => save.mutate(payload)} /> : null}
+      {assigning ? <AssignmentModal initial={assigning} saving={assign.isPending} onClose={() => setAssigning(null)} onSave={(payload) => assign.mutate({ id: String(assigning.id), payload })} /> : null}
     </div>
   );
 }
@@ -344,11 +373,12 @@ function PipelineChip({ label, count, active, tone = "default", onClick }: { lab
   );
 }
 
-function JobDrawer({ detail, loading, onClose, onEdit, onEta, onProof, onStatus, statusPending, onDelete, onExport, canEdit, canDelete, canDispatch, canExport }: { detail?: AnyRecord; loading: boolean; onClose: () => void; onEdit: (record: AnyRecord) => void; onEta: (id: string | number) => void; onProof: (id: string | number) => void; onStatus: (id: string | number, status: string) => void; statusPending: boolean; onDelete: (id: string | number) => void; onExport: () => void; canEdit: boolean; canDelete: boolean; canDispatch: boolean; canExport: boolean }) {
+function JobDrawer({ detail, loading, onClose, onEdit, onAssign, onEta, onProof, onStatus, statusPending, onDelete, onExport, canEdit, canDelete, canDispatch, canCancel, canAssign, canExport }: { detail?: AnyRecord; loading: boolean; onClose: () => void; onEdit: (record: AnyRecord) => void; onAssign: (record: AnyRecord) => void; onEta: (id: string | number) => void; onProof: (id: string | number) => void; onStatus: (id: string | number, status: string) => void; statusPending: boolean; onDelete: (id: string | number) => void; onExport: () => void; canEdit: boolean; canDelete: boolean; canDispatch: boolean; canCancel: boolean; canAssign: boolean; canExport: boolean }) {
   const record = detail?.record as AnyRecord | undefined;
   if (!record && !loading) return null;
   if (!record) return null;
   const transitions = nextStatuses(String(record.status ?? ""));
+  const terminal = /completed|delivered|cancelled/i.test(String(record.status ?? ""));
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/40 backdrop-blur-sm anim-fade-in">
       <aside className="anim-slide-right flex h-full w-full max-w-3xl flex-col overflow-y-auto border-l border-slate-200 bg-white shadow-2xl">
@@ -369,10 +399,11 @@ function JobDrawer({ detail, loading, onClose, onEdit, onEta, onProof, onStatus,
           </div>
           <div className="mt-4 flex flex-wrap gap-2">
             <button type="button" className="btn-primary h-9 py-0" disabled={!canEdit} title={!canEdit ? "You do not have permission to perform this action." : undefined} onClick={() => canEdit && onEdit(record)}><Edit3 className="h-4 w-4" /> Edit</button>
-            <button type="button" className="btn-ghost h-9 py-0" disabled={!canDispatch} title={!canDispatch ? "You do not have permission to perform this action." : undefined} onClick={() => canDispatch && onEta(String(record.id))}><Send className="h-4 w-4" /> Send ETA</button>
-            <button type="button" className="btn-ghost h-9 py-0" disabled={!canDispatch} title={!canDispatch ? "You do not have permission to perform this action." : undefined} onClick={() => canDispatch && onProof(String(record.id))}><FileCheck2 className="h-4 w-4" /> Queue POD</button>
+            <button type="button" className="btn-ghost h-9 py-0" disabled={!canAssign || terminal} title={!canAssign ? "You do not have permission to assign jobs." : terminal ? "Terminal jobs cannot be reassigned." : undefined} onClick={() => canAssign && !terminal && onAssign(record)}><UserCheck className="h-4 w-4" /> {record.assignedDriverId ? "Reassign" : "Assign"}</button>
+            <button type="button" className="btn-ghost h-9 py-0" disabled={!canDispatch || terminal} title={!canDispatch ? "You do not have permission to perform this action." : terminal ? "ETA updates are closed for terminal jobs." : undefined} onClick={() => canDispatch && !terminal && onEta(String(record.id))}><Send className="h-4 w-4" /> Send ETA</button>
+            <button type="button" className="btn-ghost h-9 py-0" disabled={!canDispatch || terminal} title={!canDispatch ? "You do not have permission to perform this action." : terminal ? "POD is closed for terminal jobs." : undefined} onClick={() => canDispatch && !terminal && onProof(String(record.id))}><FileCheck2 className="h-4 w-4" /> Queue POD</button>
             <button type="button" className="btn-ghost h-9 py-0" disabled={!canExport} title={!canExport ? "You do not have permission to perform this action." : undefined} onClick={() => canExport && onExport()}><Download className="h-4 w-4" /> Export</button>
-            <button type="button" className="btn-ghost h-9 py-0 text-red-600" disabled={!canDelete} title={!canDelete ? "You do not have permission to perform this action." : undefined} onClick={() => canDelete && onDelete(String(record.id))}><Trash2 className="h-4 w-4" /> Delete</button>
+            <button type="button" className="btn-ghost h-9 py-0 text-red-600" disabled={!canDelete} title={!canDelete ? "You do not have permission to perform this action." : "Archive this job"} onClick={() => canDelete && onDelete(String(record.id))}><Trash2 className="h-4 w-4" /> Archive</button>
           </div>
         </div>
 
@@ -386,16 +417,21 @@ function JobDrawer({ detail, loading, onClose, onEdit, onEta, onProof, onStatus,
             {transitions.length ? (
               <div className="mt-3 flex flex-wrap gap-2">
                 {transitions.map((next) => (
+                  (() => {
+                  const permitted = next === "Cancelled" ? canCancel : canDispatch;
+                  return (
                   <button
                     key={next}
                     type="button"
                     className="btn-ghost h-9 py-0"
-                    disabled={!canDispatch || statusPending}
-                    title={!canDispatch ? "You do not have permission to perform this action." : `Move job to ${next}`}
-                    onClick={() => canDispatch && onStatus(String(record.id), next)}
+                    disabled={!permitted || statusPending}
+                    title={!permitted ? "You do not have permission to perform this action." : `Move job to ${next}`}
+                    onClick={() => permitted && onStatus(String(record.id), next)}
                   >
                     <ArrowRight className="h-4 w-4 text-teal-600" /> {next}
                   </button>
+                  );
+                  })()
                 ))}
               </div>
             ) : (
@@ -423,6 +459,61 @@ function JobDrawer({ detail, loading, onClose, onEdit, onEta, onProof, onStatus,
           ) : null}
         </div>
       </aside>
+    </div>
+  );
+}
+
+function AssignmentModal({ initial, saving, onClose, onSave }: { initial: AnyRecord; saving: boolean; onClose: () => void; onSave: (payload: AnyRecord) => void }) {
+  const [form, setForm] = useState<AnyRecord>({
+    driverId: initial.assignedDriverId ?? "",
+    vehicleId: initial.assignedVehicleId ?? "",
+    override: false,
+    overrideReason: "",
+  });
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    onSave({
+      ...form,
+      driverId: Number(form.driverId),
+      vehicleId: Number(form.vehicleId),
+    });
+  };
+  return (
+    <div className="fixed inset-0 z-[70] grid place-items-center bg-slate-900/50 p-4 backdrop-blur-sm anim-fade-in">
+      <form className="panel w-full max-w-lg p-6 shadow-2xl" onSubmit={submit}>
+        <div className="flex items-center justify-between border-b border-slate-200 pb-4">
+          <div>
+            <p className="section-title text-teal-700">Dispatch Assignment</p>
+            <h2 className="mt-1 text-xl font-bold text-slate-900">{String(initial.jobNumber ?? initial.jobCode ?? "Job")}</h2>
+          </div>
+          <button type="button" className="icon-btn" onClick={onClose} aria-label="Close"><X className="h-5 w-5" /></button>
+        </div>
+        <div className="mt-5 grid gap-4 sm:grid-cols-2">
+          <label className="block">
+            <span className="mb-1.5 block text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Driver ID</span>
+            <input className="field" type="number" min="1" step="1" required value={String(form.driverId)} onChange={(e) => setForm((x) => ({ ...x, driverId: e.target.value }))} />
+          </label>
+          <label className="block">
+            <span className="mb-1.5 block text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Vehicle ID</span>
+            <input className="field" type="number" min="1" step="1" required value={String(form.vehicleId)} onChange={(e) => setForm((x) => ({ ...x, vehicleId: e.target.value }))} />
+          </label>
+        </div>
+        <label className="mt-4 flex items-center gap-2 text-sm font-semibold text-slate-700">
+          <input type="checkbox" checked={Boolean(form.override)} onChange={(e) => setForm((x) => ({ ...x, override: e.target.checked }))} />
+          Request authorized soft-rule override
+        </label>
+        {form.override ? (
+          <label className="mt-4 block">
+            <span className="mb-1.5 block text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Override reason</span>
+            <textarea className="field min-h-24" maxLength={500} required value={String(form.overrideReason)} onChange={(e) => setForm((x) => ({ ...x, overrideReason: e.target.value }))} />
+          </label>
+        ) : null}
+        <p className="mt-4 text-xs text-slate-500">The server will verify tenant and branch ownership, driver HOS, vehicle availability, and active-assignment conflicts.</p>
+        <div className="mt-6 flex justify-end gap-3 border-t border-slate-200 pt-4">
+          <button type="button" className="btn-ghost" onClick={onClose}>Cancel</button>
+          <button type="submit" className="btn-primary" disabled={saving}>{saving ? "Assigning..." : "Assign Resources"}</button>
+        </div>
+      </form>
     </div>
   );
 }
@@ -493,17 +584,17 @@ function Grid({ title, rows, columns }: { title: string; rows: AnyRecord[]; colu
 
 function nextStatuses(current: string): string[] {
   const flow: Record<string, string[]> = {
-    Unassigned: ["Assigned"],
-    Assigned: ["En Route", "Delayed", "Exception"],
-    "En Route": ["At Stop", "Delayed", "Exception"],
-    "In Progress": ["At Stop", "Delayed", "Exception"],
-    "At Stop": ["Completed", "Delayed", "Exception"],
-    Delayed: ["En Route", "At Stop", "Completed", "Exception"],
-    "At Risk": ["En Route", "At Stop", "Completed", "Exception"],
-    Exception: ["Assigned", "En Route", "At Stop", "Completed"],
+    Unassigned: ["Cancelled"],
+    Assigned: ["En Route", "Delayed", "Exception", "Cancelled"],
+    "En Route": ["At Stop", "Delayed", "Exception", "Cancelled"],
+    "In Progress": ["At Stop", "Delayed", "Exception", "Cancelled"],
+    "At Stop": ["Completed", "Delayed", "Exception", "Cancelled"],
+    Delayed: ["En Route", "At Stop", "Completed", "Exception", "Cancelled"],
+    "At Risk": ["En Route", "At Stop", "Completed", "Exception", "Cancelled"],
+    Exception: ["Assigned", "En Route", "At Stop", "Completed", "Cancelled"],
     Completed: ["Delivered"],
   };
-  return flow[current] ?? ["Assigned", "En Route", "At Stop", "Completed", "Delayed", "Exception"];
+  return flow[current] ?? [];
 }
 
 function exportJobRecordCsv(record?: AnyRecord | null, detail?: AnyRecord) {
@@ -548,6 +639,7 @@ function buildJobSummary(rows: AnyRecord[], summary: AnyRecord | undefined, sess
   const revenueMargin = rows.reduce((acc, row) => acc + Number(row.marginEstimate ?? 0), 0);
   return {
     ...summary,
+    total,
     totalJobsToday: total,
     unassignedJobs: rows.filter((row) => /unassigned/i.test(String(row.status ?? ""))).length,
     assignedJobs: assigned,

@@ -20,7 +20,8 @@ namespace Opstrax.Api.Services;
 //      row itself. If any tenant rows remain (a cycle we couldn't break), the whole
 //      transaction rolls back and we throw, rather than half-deleting a tenant.
 //
-// Runs as the DB owner (DELETE across all tenants is legitimate admin work). Returns
+// Runs as the narrowly-granted opstrax_system identity (DELETE across all tenants is
+// legitimate audited admin work). Returns
 // per-table counts so the platform endpoint + tests can assert zero rows remain.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -56,18 +57,8 @@ public sealed class TenantOffboardingService(Database db)
 
     public async Task<OffboardResult> DeleteTenantAsync(long companyId, CancellationToken ct = default)
     {
-        await using var conn = await db.OpenAsync(ct);
+        await using var conn = await db.OpenSystemAsync(ct);
         await using var tx = await conn.BeginTransactionAsync(ct);
-
-        // Under the RLS-enforced posture the runtime connects as the restricted
-        // opstrax_app role: without the platform bypass GUC every tenant-scoped
-        // DELETE/EXISTS below silently sees ZERO rows (RLS filters them), the
-        // residual check false-passes, and the companies delete then dies on FK.
-        // Offboarding is a platform-permissioned, audited operation, so it runs
-        // under the same transaction-local bypass the platform middleware uses.
-        await using (var bypass = new NpgsqlCommand(
-            "SELECT set_config('app.platform_admin', 'on', true)", conn, tx))
-            await bypass.ExecuteNonQueryAsync(ct);
 
         var tenantTables = await DiscoverTenantTablesAsync(conn, tx, ct);
         var deletedByTable = new Dictionary<string, long>();

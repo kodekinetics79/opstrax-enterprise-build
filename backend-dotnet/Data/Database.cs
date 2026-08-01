@@ -26,6 +26,9 @@ public sealed class TenantScope : IAsyncDisposable
     internal NpgsqlConnection Connection { get; }
     internal NpgsqlTransaction Transaction { get; }
     private bool _completed;
+    private readonly Func<CancellationToken, Task>? _refreshTenantTicket;
+    private readonly TimeSpan _ticketRefreshInterval;
+    private long _refreshAfterTimestamp;
 
     // Serializes command execution on this scope's single shared connection. Under RLS
     // enforcement every query in a request runs on ONE connection/transaction; code that
@@ -33,10 +36,37 @@ public sealed class TenantScope : IAsyncDisposable
     // "a command is already in progress". This gate makes such calls queue safely.
     internal SemaphoreSlim Gate { get; } = new(1, 1);
 
-    internal TenantScope(NpgsqlConnection connection, NpgsqlTransaction transaction)
+    internal TenantScope(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Func<CancellationToken, Task>? refreshTenantTicket = null,
+        TimeSpan? ticketRefreshInterval = null)
     {
         Connection = connection;
         Transaction = transaction;
+        _refreshTenantTicket = refreshTenantTicket;
+        _ticketRefreshInterval = ticketRefreshInterval ?? TimeSpan.Zero;
+        _refreshAfterTimestamp = NextRefreshTimestamp(_ticketRefreshInterval);
+    }
+
+    // Called only while Gate is held. Renewal reissues the exact same tenant/PID/txid
+    // binding and replaces the transaction-local ticket before it expires. A failed
+    // renewal is propagated so the next data statement cannot run with stale authority.
+    internal async Task RefreshTenantTicketIfNeededAsync(CancellationToken ct)
+    {
+        if (_refreshTenantTicket is null ||
+            System.Diagnostics.Stopwatch.GetTimestamp() < Volatile.Read(ref _refreshAfterTimestamp))
+            return;
+
+        await _refreshTenantTicket(ct);
+        Volatile.Write(ref _refreshAfterTimestamp, NextRefreshTimestamp(_ticketRefreshInterval));
+    }
+
+    private static long NextRefreshTimestamp(TimeSpan interval)
+    {
+        if (interval <= TimeSpan.Zero) return long.MaxValue;
+        var delta = (long)(interval.TotalSeconds * System.Diagnostics.Stopwatch.Frequency);
+        return checked(System.Diagnostics.Stopwatch.GetTimestamp() + Math.Max(1L, delta));
     }
 
     // Commit the request transaction (persists any writes made within it).
@@ -68,15 +98,25 @@ public sealed class TenantScope : IAsyncDisposable
 public sealed class Database(IConfiguration configuration, TenantScopeAccessor? scopes = null)
 {
     // Credentials are environment-only — never hard-coded in appsettings.json.
-    // Resolution order: ConnectionStrings:DefaultConnection (incl. the
-    // ConnectionStrings__DefaultConnection env var used by docker-compose) →
-    // the PG_CONNECTION env var (used by Render / .env). Fails fast if neither is set.
+    // Production resolution is explicit: ConnectionStrings:DefaultConnection or
+    // PG_CONNECTION_APP. The legacy PG_CONNECTION fallback is non-production only.
     private readonly string _connectionString =
-        Coalesce(
-            configuration.GetConnectionString("DefaultConnection"),
-            Environment.GetEnvironmentVariable("PG_CONNECTION"))
+        ResolveAppConnection(configuration)
         ?? throw new InvalidOperationException(
-            "Database connection string is not configured. Set ConnectionStrings__DefaultConnection or PG_CONNECTION.");
+            "Application database connection string is not configured. Set ConnectionStrings__DefaultConnection or PG_CONNECTION_APP.");
+
+    private readonly bool _productionRls =
+        configuration.GetValue<bool>("Rls:EnforceTenantContext") &&
+        string.Equals(
+            configuration["ASPNETCORE_ENVIRONMENT"] ?? configuration["DOTNET_ENVIRONMENT"] ?? configuration["Environment"],
+            "Production", StringComparison.OrdinalIgnoreCase);
+
+    // Cross-tenant bootstrap, platform, public-token and background work uses a
+    // physically separate pool and the narrowly-granted opstrax_system login. In
+    // Production+RLS this value is mandatory and NEVER falls back to the app pool.
+    // Non-production retains the one-identity fallback so local schema tools and the
+    // existing owner-backed integration tests keep working without production secrets.
+    private readonly string? _systemConnectionString = ResolveSystemConnection(configuration);
 
     // Optional read-replica endpoint (Neon read replica / hot standby). When set,
     // read-only work can be routed here to offload the primary and to keep serving
@@ -101,9 +141,49 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
     // (background workers, SSE) MUST wrap their DB work in a scope or the restricted
     // `opstrax_app` role returns 0 rows (fail-closed) — see BeginSystemScopeAsync.
     public bool RlsEnforced { get; } = configuration.GetValue<bool>("Rls:EnforceTenantContext");
+    private readonly int _tenantTicketTtlSeconds = ResolveTenantTicketTtl(configuration);
 
     private static string? Coalesce(params string?[] values)
         => values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+
+    private static string? ResolveAppConnection(IConfiguration config)
+    {
+        var explicitApp = Coalesce(
+            config.GetConnectionString("DefaultConnection"),
+            config["PG_CONNECTION_APP"],
+            Environment.GetEnvironmentVariable("PG_CONNECTION_APP"));
+        var productionRls = config.GetValue<bool>("Rls:EnforceTenantContext") &&
+            string.Equals(
+                config["ASPNETCORE_ENVIRONMENT"] ?? config["DOTNET_ENVIRONMENT"] ?? config["Environment"],
+                "Production", StringComparison.OrdinalIgnoreCase);
+        return productionRls
+            ? explicitApp
+            : Coalesce(explicitApp, config["PG_CONNECTION"], Environment.GetEnvironmentVariable("PG_CONNECTION"));
+    }
+
+    private static string? ResolveSystemConnection(IConfiguration config)
+    {
+        var explicitSystem = Coalesce(
+            config.GetConnectionString("SystemConnection"),
+            config["PG_CONNECTION_SYSTEM"],
+            Environment.GetEnvironmentVariable("PG_CONNECTION_SYSTEM"));
+        var productionRls = config.GetValue<bool>("Rls:EnforceTenantContext") &&
+            string.Equals(
+                config["ASPNETCORE_ENVIRONMENT"] ?? config["DOTNET_ENVIRONMENT"] ?? config["Environment"],
+                "Production", StringComparison.OrdinalIgnoreCase);
+        if (productionRls && string.IsNullOrWhiteSpace(explicitSystem))
+            throw new InvalidOperationException(
+                "System database connection string is required in Production with RLS. Set ConnectionStrings__SystemConnection or PG_CONNECTION_SYSTEM.");
+        return explicitSystem;
+    }
+
+    private static int ResolveTenantTicketTtl(IConfiguration config)
+    {
+        var value = config.GetValue<int?>("Rls:TenantTicketTtlSeconds") ?? 120;
+        if (config.GetValue<bool>("Rls:EnforceTenantContext") && value is < 5 or > 300)
+            throw new InvalidOperationException("Rls:TenantTicketTtlSeconds must be between 5 and 300 seconds.");
+        return value;
+    }
 
     // ── DB metrics hook (observability) ─────────────────────────────────────────
     // Optional sink wired once at startup (Program.cs) so every query records its
@@ -119,18 +199,34 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
         try { sw.Stop(); sink(sw.Elapsed.TotalMilliseconds, failed); } catch { /* never break a query */ }
     }
 
-    // Runs off-pipeline work under a platform-admin bypass scope so cross-tenant
-    // background processing (which already filters by company_id in SQL) can read/write
-    // RLS tables as the restricted role. No-op wrapper when enforcement is off. The
+    // Runs off-pipeline work under the separately authenticated system scope so
+    // cross-tenant background processing can reach its narrowly-granted tables. No-op
+    // wrapper when enforcement is off. The
     // ambient scope is assigned from THIS frame so it flows into the awaited body, then
     // always cleared — never leaks onto a pooled connection.
     public async Task RunInSystemScopeAsync(Func<Task> body, CancellationToken ct = default)
     {
         if (!RlsEnforced) { await body(); return; }
+        var priorScope = _scopes.Current;
         await using var sys = await BeginSystemScopeAsync(ct);
         _scopes.Current = sys;
         try { await body(); await sys.CompleteAsync(ct); }
-        finally { _scopes.Current = null; }
+        finally { _scopes.Current = priorScope; }
+    }
+
+    public async Task<T> RunInSystemScopeAsync<T>(Func<Task<T>> body, CancellationToken ct = default)
+    {
+        if (!RlsEnforced) return await body();
+        var priorScope = _scopes.Current;
+        await using var sys = await BeginSystemScopeAsync(ct);
+        _scopes.Current = sys;
+        try
+        {
+            var result = await body();
+            await sys.CompleteAsync(ct);
+            return result;
+        }
+        finally { _scopes.Current = priorScope; }
     }
 
     // Runs a single short-lived tenant-scoped read/unit of work and returns its result.
@@ -141,13 +237,68 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
     public async Task<T> RunInTenantScopeAsync<T>(long companyId, Func<Task<T>> body, CancellationToken ct = default)
     {
         if (!RlsEnforced) return await body();
+        var priorScope = _scopes.Current;
         await using var scope = await BeginTenantScopeAsync(companyId, ct);
         _scopes.Current = scope;
         try { var result = await body(); await scope.CompleteAsync(ct); return result; }
+        finally { _scopes.Current = priorScope; }
+    }
+
+    // Runs a mutation as one transaction even when RLS is disabled locally. Request
+    // handlers normally already have an ambient tenant transaction when RLS is on;
+    // in that case reuse it rather than nesting transactions. Core assignment writes
+    // use this to keep reciprocal links, history, jobs, and dispatch rows atomic.
+    public async Task<T> RunInTenantTransactionAsync<T>(long companyId, Func<Task<T>> body, CancellationToken ct = default)
+    {
+        if (_scopes.Current is not null) return await body();
+        await using var scope = await BeginTenantScopeAsync(companyId, ct);
+        _scopes.Current = scope;
+        try
+        {
+            var result = await body();
+            await scope.CompleteAsync(ct);
+            return result;
+        }
         finally { _scopes.Current = null; }
     }
 
+    // Runs a cross-tenant/system mutation as one transaction even when RLS is disabled.
+    // This is intentionally distinct from RunInSystemScopeAsync, whose non-RLS path is
+    // a pass-through for background reads. Provisioning workflows such as demo-tenant
+    // creation must be all-or-nothing: a mid-seed exception cannot leave a company row
+    // that makes the next idempotent retry incorrectly report "already seeded".
+    public async Task<T> RunInSystemTransactionAsync<T>(Func<Task<T>> body, CancellationToken ct = default)
+    {
+        // A dev-seed request can already have an authenticated tenant transaction.
+        // Suspend (do not complete/dispose) that ambient scope while the independent
+        // platform transaction runs, then restore it for the request middleware.
+        var priorScope = _scopes.Current;
+        await using var scope = await BeginSystemScopeAsync(ct);
+        _scopes.Current = scope;
+        try
+        {
+            var result = await body();
+            await scope.CompleteAsync(ct);
+            return result;
+        }
+        finally { _scopes.Current = priorScope; }
+    }
+
     public async Task<NpgsqlConnection> OpenAsync(CancellationToken ct = default)
+        => await OpenWithRetryAsync(_connectionString, ct);
+
+    /// <summary>
+    /// Opens the isolated system pool. Production+RLS never aliases or falls back to
+    /// the application identity; local/test environments may use the app connection.
+    /// </summary>
+    public async Task<NpgsqlConnection> OpenSystemAsync(CancellationToken ct = default)
+    {
+        if (_productionRls && string.IsNullOrWhiteSpace(_systemConnectionString))
+            throw new InvalidOperationException("System database identity is unavailable.");
+        return await OpenWithRetryAsync(_systemConnectionString ?? _connectionString, ct);
+    }
+
+    private static async Task<NpgsqlConnection> OpenWithRetryAsync(string connectionString, CancellationToken ct)
     {
         // Retry transient open failures with backoff. Neon's serverless pooler can
         // cold-start (scale-to-zero) or drop idle connections, so the first attempt
@@ -155,7 +306,7 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
         const int maxAttempts = 3;
         for (var attempt = 1; ; attempt++)
         {
-            var connection = new NpgsqlConnection(_connectionString);
+            var connection = new NpgsqlConnection(connectionString);
             try
             {
                 await connection.OpenAsync(ct);
@@ -184,7 +335,7 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
             await replica.OpenAsync(ct);
             return replica;
         }
-        catch (Exception ex) when (!ct.IsCancellationRequested)
+        catch (Exception) when (!ct.IsCancellationRequested)
         {
             // Replica down → serve the read from the primary. Recorded as a DB failure
             // signal so the Reliability Center can surface replica degradation.
@@ -200,37 +351,246 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
         _ => false,
     };
 
+    /// <summary>
+    /// Proves the two Production runtime pools resolve to the exact, non-privileged
+    /// logins expected by Stage58. Configuration-string labels are not trusted: the
+    /// server-reported current_user and role attributes are authoritative.
+    /// </summary>
+    public async Task ValidateProductionIdentitiesAsync(CancellationToken ct = default)
+    {
+        await using var app = await OpenAsync(ct);
+        await using var system = await OpenSystemAsync(ct);
+        var appIdentity = await ReadIdentityAsync(app, ct);
+        var systemIdentity = await ReadIdentityAsync(system, ct);
+
+        ValidateIdentity(appIdentity, "opstrax_app", "application");
+        ValidateIdentity(systemIdentity, "opstrax_system", "system");
+        if (string.Equals(appIdentity.RoleName, systemIdentity.RoleName, StringComparison.Ordinal) ||
+            appIdentity.BackendPid == systemIdentity.BackendPid)
+            throw new InvalidOperationException("Application and system database identities are not isolated.");
+
+        // Prove both identities terminate at the same Stage58 trust domain. Matching
+        // role names on two different databases is not enough: the system pool must
+        // mint a ticket the app pool can verify for this exact backend transaction.
+        await using (var tx = await app.BeginTransactionAsync(ct))
+        {
+            int pid;
+            long txid;
+            await using (var binding = new NpgsqlCommand(
+                "SELECT pg_backend_pid(), txid_current()::bigint", app, tx))
+            await using (var reader = await binding.ExecuteReaderAsync(ct))
+            {
+                if (!await reader.ReadAsync(ct))
+                    throw new InvalidOperationException("Database ticket bridge binding failed.");
+                pid = reader.GetInt32(0);
+                txid = reader.GetInt64(1);
+            }
+
+            const long probeTenant = long.MaxValue;
+            var ticket = await IssueTenantTicketAsync(system, probeTenant, pid, txid, _tenantTicketTtlSeconds, ct);
+            await using (var install = new NpgsqlCommand(
+                "SELECT set_config('app.tenant_ticket',@ticket,true)", app, tx))
+            {
+                install.Parameters.AddWithValue("@ticket", ticket);
+                await install.ExecuteNonQueryAsync(ct);
+            }
+            await using (var verify = new NpgsqlCommand(
+                "SELECT opstrax_security.current_tenant_id()", app, tx))
+            {
+                var verified = await verify.ExecuteScalarAsync(ct);
+                if (verified is null or DBNull || Convert.ToInt64(verified) != probeTenant)
+                    throw new InvalidOperationException("Application/system database ticket bridge could not be proven.");
+            }
+            await tx.RollbackAsync(ct);
+        }
+
+        if (!string.IsNullOrWhiteSpace(_replicaConnectionString))
+        {
+            await using var replica = await OpenWithRetryAsync(_replicaConnectionString, ct);
+            ValidateIdentity(await ReadIdentityAsync(replica, ct), "opstrax_app", "application replica");
+        }
+    }
+
+    private sealed record RuntimeIdentity(
+        string RoleName, int BackendPid, bool CanLogin, bool IsSuper, bool BypassRls,
+        bool CanCreateDb, bool CanCreateRole, bool InheritsRoles, bool CanReplicate,
+        int MembershipCount, int GrantedToRoleCount, int OwnedDatabaseCount,
+        int OwnedSchemaCount, int OwnedRelationCount, int OwnedFunctionCount, int OwnedTypeCount,
+        bool DbConnect, bool DbCreate, bool DbTemporary,
+        bool SchemaUsage, bool SchemaCreate, bool CanIssueTicket, bool CanVerifyTicket);
+
+    private static async Task<RuntimeIdentity> ReadIdentityAsync(NpgsqlConnection connection, CancellationToken ct)
+    {
+        await using var command = new NpgsqlCommand(
+            @"SELECT current_user, pg_backend_pid(), r.rolcanlogin, r.rolsuper,
+                     r.rolbypassrls, r.rolcreatedb, r.rolcreaterole, r.rolinherit, r.rolreplication,
+                     (SELECT COUNT(*)::int FROM pg_auth_members m WHERE m.member=r.oid),
+                     (SELECT COUNT(*)::int FROM pg_auth_members m WHERE m.roleid=r.oid),
+                     (SELECT COUNT(*)::int FROM pg_database d WHERE d.datdba=r.oid),
+                     (SELECT COUNT(*)::int FROM pg_namespace n WHERE n.nspowner=r.oid),
+                     (SELECT COUNT(*)::int FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+                       WHERE c.relowner=r.oid AND n.nspname NOT LIKE 'pg\_%' ESCAPE '\' AND n.nspname<>'information_schema'),
+                     (SELECT COUNT(*)::int FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+                       WHERE p.proowner=r.oid AND n.nspname NOT LIKE 'pg\_%' ESCAPE '\' AND n.nspname<>'information_schema'),
+                     (SELECT COUNT(*)::int FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace
+                       WHERE t.typowner=r.oid AND n.nspname NOT LIKE 'pg\_%' ESCAPE '\' AND n.nspname<>'information_schema'),
+                     has_database_privilege(current_user,current_database(),'CONNECT'),
+                     has_database_privilege(current_user,current_database(),'CREATE'),
+                     has_database_privilege(current_user,current_database(),'TEMPORARY'),
+                     has_schema_privilege(current_user,'public','USAGE'),
+                     has_schema_privilege(current_user,'public','CREATE'),
+                     has_function_privilege(current_user,
+                       'opstrax_security.issue_tenant_ticket(bigint,integer,bigint,integer)','EXECUTE'),
+                     has_function_privilege(current_user,
+                       'opstrax_security.current_tenant_id()','EXECUTE')
+                FROM pg_roles r WHERE r.rolname=current_user", connection);
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct))
+            throw new InvalidOperationException("Database runtime identity could not be proven.");
+        return new RuntimeIdentity(
+            reader.GetString(0), reader.GetInt32(1), reader.GetBoolean(2), reader.GetBoolean(3),
+            reader.GetBoolean(4), reader.GetBoolean(5), reader.GetBoolean(6), reader.GetBoolean(7),
+            reader.GetBoolean(8), reader.GetInt32(9), reader.GetInt32(10), reader.GetInt32(11),
+            reader.GetInt32(12), reader.GetInt32(13), reader.GetInt32(14), reader.GetInt32(15),
+            reader.GetBoolean(16), reader.GetBoolean(17), reader.GetBoolean(18), reader.GetBoolean(19),
+            reader.GetBoolean(20), reader.GetBoolean(21), reader.GetBoolean(22));
+    }
+
+    private static void ValidateIdentity(RuntimeIdentity identity, string expectedRole, string lane)
+    {
+        if (!string.Equals(identity.RoleName, expectedRole, StringComparison.Ordinal) ||
+            !identity.CanLogin || identity.IsSuper || identity.BypassRls || identity.CanCreateDb ||
+            identity.CanCreateRole || identity.InheritsRoles || identity.CanReplicate ||
+            identity.MembershipCount != 0 || identity.GrantedToRoleCount != 0 ||
+            identity.OwnedDatabaseCount != 0 || identity.OwnedSchemaCount != 0 ||
+            identity.OwnedRelationCount != 0 || identity.OwnedFunctionCount != 0 ||
+            identity.OwnedTypeCount != 0 ||
+            !identity.DbConnect || identity.DbCreate ||
+            identity.DbTemporary || !identity.SchemaUsage || identity.SchemaCreate ||
+            !identity.CanVerifyTicket ||
+            (lane.StartsWith("application", StringComparison.Ordinal)
+                ? identity.CanIssueTicket
+                : !identity.CanIssueTicket))
+            throw new InvalidOperationException(
+                $"The {lane} database identity is not the exact restricted {expectedRole} role.");
+    }
+
     // ── Request-scoped tenant context (RLS activation, Option A1) ──────────────────
-    // Opens a connection + transaction and sets the tenant GUC as the FIRST statement
-    // (SET LOCAL semantics). All queries issued while this scope is the ambient scope
-    // run inside the same transaction, so Postgres RLS filters every one of them by
-    // `app.current_tenant_id`. The caller commits via CompleteAsync and disposes to
-    // release the connection.
+    // Opens an app connection+transaction, binds its PID+txid, obtains a short-lived
+    // DB-signed ticket through opstrax_system, then installs that opaque ticket with
+    // SET LOCAL semantics. A copied or fabricated tenant id cannot authorize RLS.
     public async Task<TenantScope> BeginTenantScopeAsync(long companyId, CancellationToken ct = default)
     {
         var connection = await OpenAsync(ct);
-        var tx = await connection.BeginTransactionAsync(ct);
-        await using (var cmd = new NpgsqlCommand("SELECT set_config('app.current_tenant_id', @cid, true)", connection, tx))
+        NpgsqlTransaction? tx = null;
+        try
         {
-            cmd.Parameters.AddWithValue("@cid", companyId.ToString());
-            await cmd.ExecuteNonQueryAsync(ct);
+            tx = await connection.BeginTransactionAsync(ct);
+            if (!RlsEnforced)
+            {
+                // Legacy local/test posture only. Production is required to enable RLS
+                // and therefore always takes the non-forgeable ticket path below.
+                await using var legacy = new NpgsqlCommand(
+                    "SELECT set_config('app.current_tenant_id', @cid, true)", connection, tx);
+                legacy.Parameters.AddWithValue("@cid", companyId.ToString());
+                await legacy.ExecuteNonQueryAsync(ct);
+                return new TenantScope(connection, tx);
+            }
+
+            int backendPid;
+            long transactionId;
+            await using (var binding = new NpgsqlCommand(
+                "SELECT pg_backend_pid(), txid_current()::bigint", connection, tx))
+            await using (var reader = await binding.ExecuteReaderAsync(ct))
+            {
+                if (!await reader.ReadAsync(ct))
+                    throw new InvalidOperationException("Could not bind the tenant transaction to its database backend.");
+                backendPid = reader.GetInt32(0);
+                transactionId = reader.GetInt64(1);
+            }
+
+            string ticket;
+            await using (var systemConnection = await OpenSystemAsync(ct))
+            {
+                ticket = await IssueTenantTicketAsync(
+                    systemConnection, companyId, backendPid, transactionId, _tenantTicketTtlSeconds, ct);
+            }
+
+            if (string.IsNullOrWhiteSpace(ticket))
+                throw new InvalidOperationException("The database did not issue a tenant transaction ticket.");
+
+            await using (var install = new NpgsqlCommand(
+                "SELECT set_config('app.tenant_ticket', @ticket, true)", connection, tx))
+            {
+                install.Parameters.AddWithValue("@ticket", ticket);
+                await install.ExecuteNonQueryAsync(ct);
+            }
+
+            var refreshInterval = TimeSpan.FromSeconds(Math.Max(1, _tenantTicketTtlSeconds / 2));
+            return new TenantScope(
+                connection,
+                tx,
+                async refreshCt =>
+                {
+                    string renewedTicket;
+                    await using (var systemConnection = await OpenSystemAsync(refreshCt))
+                    {
+                        renewedTicket = await IssueTenantTicketAsync(
+                            systemConnection,
+                            companyId,
+                            backendPid,
+                            transactionId,
+                            _tenantTicketTtlSeconds,
+                            refreshCt);
+                    }
+
+                    if (string.IsNullOrWhiteSpace(renewedTicket))
+                        throw new InvalidOperationException("The database did not renew the tenant transaction ticket.");
+
+                    await using var renew = new NpgsqlCommand(
+                        "SELECT set_config('app.tenant_ticket', @ticket, true)", connection, tx);
+                    renew.Parameters.AddWithValue("@ticket", renewedTicket);
+                    await renew.ExecuteNonQueryAsync(refreshCt);
+                },
+                refreshInterval);
         }
+        catch
+        {
+            if (tx is not null)
+            {
+                try { await tx.RollbackAsync(ct); } catch { }
+                await tx.DisposeAsync();
+            }
+            await connection.DisposeAsync();
+            throw;
+        }
+    }
+
+    // System scope uses the distinct opstrax_system pool. It never sets a bypass GUC;
+    // Stage58 grants the system control-plane policy directly to this exact role.
+    public async Task<TenantScope> BeginSystemScopeAsync(CancellationToken ct = default)
+    {
+        var connection = await OpenSystemAsync(ct);
+        var tx = await connection.BeginTransactionAsync(ct);
         return new TenantScope(connection, tx);
     }
 
-    // System / platform-admin scope — sets the SEPARATE `app.platform_admin` GUC that
-    // the Stage-19 `platform_admin_bypass` policy checks. Used for legitimately
-    // cross-tenant work (platform-admin routes, the pre-tenant auth bootstrap,
-    // token-scoped public routes, background workers). Never sets a tenant id.
-    public async Task<TenantScope> BeginSystemScopeAsync(CancellationToken ct = default)
+    private static async Task<string> IssueTenantTicketAsync(
+        NpgsqlConnection systemConnection,
+        long companyId,
+        int backendPid,
+        long transactionId,
+        int ttlSeconds,
+        CancellationToken ct)
     {
-        var connection = await OpenAsync(ct);
-        var tx = await connection.BeginTransactionAsync(ct);
-        await using (var cmd = new NpgsqlCommand("SELECT set_config('app.platform_admin', 'on', true)", connection, tx))
-        {
-            await cmd.ExecuteNonQueryAsync(ct);
-        }
-        return new TenantScope(connection, tx);
+        await using var issue = new NpgsqlCommand(
+            "SELECT opstrax_security.issue_tenant_ticket(@tenant_id,@backend_pid,@txid,@ttl_seconds)",
+            systemConnection);
+        issue.Parameters.AddWithValue("@tenant_id", companyId);
+        issue.Parameters.AddWithValue("@backend_pid", backendPid);
+        issue.Parameters.AddWithValue("@txid", transactionId);
+        issue.Parameters.AddWithValue("@ttl_seconds", ttlSeconds);
+        return (await issue.ExecuteScalarAsync(ct))?.ToString() ?? string.Empty;
     }
 
     // Returns the connection+transaction to use for a query: the ambient request
@@ -244,7 +604,16 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
         if (scope is not null)
         {
             await scope.Gate.WaitAsync(ct);
-            return (scope.Connection, scope.Transaction, false, scope);
+            try
+            {
+                await scope.RefreshTenantTicketIfNeededAsync(ct);
+                return (scope.Connection, scope.Transaction, false, scope);
+            }
+            catch
+            {
+                ReleaseScope(scope);
+                throw;
+            }
         }
         var connection = await OpenAsync(ct);
         return (connection, null, true, null);
@@ -385,6 +754,48 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
         }
     }
 
+    // Executes one write behind a PostgreSQL savepoint when the request is using the
+    // ambient RLS transaction.  Expected constraint violations may then be translated
+    // into a 409/per-row import error without leaving the whole request transaction in
+    // the failed state.  Holding the tenant-scope gate across SAVEPOINT -> statement ->
+    // RELEASE prevents another command in the same request from interleaving with it.
+    public async Task<int> ExecuteWithSavepointAsync(
+        string sql, Action<NpgsqlCommand>? bind = null, CancellationToken ct = default)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var failed = false;
+        var (connection, tx, owns, scope) = await AcquireAsync(ct);
+        var savepoint = $"opstrax_write_{Interlocked.Increment(ref _savepointSequence)}";
+        try
+        {
+            if (tx is not null)
+                await ExecuteControlStatementAsync(connection, tx, $"SAVEPOINT {savepoint}", ct);
+
+            try
+            {
+                await using var command = new NpgsqlCommand(sql, connection, tx);
+                bind?.Invoke(command);
+                var affected = await command.ExecuteNonQueryAsync(ct);
+                if (tx is not null)
+                    await ExecuteControlStatementAsync(connection, tx, $"RELEASE SAVEPOINT {savepoint}", ct);
+                return affected;
+            }
+            catch
+            {
+                failed = true;
+                if (tx is not null)
+                    await RollbackSavepointAsync(connection, tx, savepoint);
+                throw;
+            }
+        }
+        finally
+        {
+            RecordDb(sw, failed);
+            ReleaseScope(scope);
+            if (owns) await connection.DisposeAsync();
+        }
+    }
+
     // Runs work inside a serializable transaction, committing on success and rolling
     // back on any exception. Use this when multiple DB writes must be atomic. When an
     // ambient request scope is active, the work joins that transaction (Postgres has
@@ -396,6 +807,20 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
         var scope = _scopes.Current;
         if (scope is not null)
         {
+            // Refresh while exclusively holding the connection, then release the
+            // gate before invoking user work. Transaction callbacks may call other
+            // Database helpers (for example the idempotency service); holding the
+            // non-reentrant gate across the callback would self-deadlock. Each nested
+            // helper acquires the gate around its own command.
+            await scope.Gate.WaitAsync(ct);
+            try
+            {
+                await scope.RefreshTenantTicketIfNeededAsync(ct);
+            }
+            finally
+            {
+                ReleaseScope(scope);
+            }
             return await work(scope.Connection, scope.Transaction);
         }
 
@@ -434,6 +859,68 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
             ReleaseScope(scope);
             if (owns) await connection.DisposeAsync();
         }
+    }
+
+    public async Task<long> InsertWithSavepointAsync(
+        string sql, Action<NpgsqlCommand>? bind = null, CancellationToken ct = default)
+    {
+        var pgSql = sql.TrimEnd(';', ' ', '\n', '\r');
+        if (!pgSql.Contains("RETURNING", StringComparison.OrdinalIgnoreCase))
+            pgSql += " RETURNING id";
+
+        var (connection, tx, owns, scope) = await AcquireAsync(ct);
+        var savepoint = $"opstrax_write_{Interlocked.Increment(ref _savepointSequence)}";
+        try
+        {
+            if (tx is not null)
+                await ExecuteControlStatementAsync(connection, tx, $"SAVEPOINT {savepoint}", ct);
+
+            try
+            {
+                await using var command = new NpgsqlCommand(pgSql, connection, tx);
+                bind?.Invoke(command);
+                var value = await command.ExecuteScalarAsync(ct);
+                if (tx is not null)
+                    await ExecuteControlStatementAsync(connection, tx, $"RELEASE SAVEPOINT {savepoint}", ct);
+                return value is null or DBNull ? 0 : Convert.ToInt64(value);
+            }
+            catch
+            {
+                if (tx is not null)
+                    await RollbackSavepointAsync(connection, tx, savepoint);
+                throw;
+            }
+        }
+        finally
+        {
+            ReleaseScope(scope);
+            if (owns) await connection.DisposeAsync();
+        }
+    }
+
+    private static long _savepointSequence;
+
+    private static async Task ExecuteControlStatementAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, string sql, CancellationToken ct)
+    {
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
+        await command.ExecuteNonQueryAsync(ct);
+    }
+
+    private static async Task RollbackSavepointAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, string savepoint)
+    {
+        // Cancellation of the user operation must not prevent transaction recovery.
+        // If the connection itself is broken this may also fail, in which case the
+        // original statement exception remains the one propagated to the caller.
+        try
+        {
+            await ExecuteControlStatementAsync(
+                connection, transaction,
+                $"ROLLBACK TO SAVEPOINT {savepoint}; RELEASE SAVEPOINT {savepoint}",
+                CancellationToken.None);
+        }
+        catch { }
     }
 
     private static string ToCamel(string value)

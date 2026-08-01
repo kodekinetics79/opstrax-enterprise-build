@@ -91,9 +91,19 @@ public class Stage10PostgresTests
             }, "stage10-proof-idem");
             Assert.NotNull(proofPackage);
 
+            var proofDocumentId = await db.InsertAsync(
+                @"INSERT INTO documents (company_id,title,document_type,status,file_url)
+                  VALUES (@companyId,'Stage 10 Field Photo','Proof','Active',@fileUrl)",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@companyId", companyId);
+                    c.Parameters.AddWithValue("@fileUrl", $"objkey:tenant/{companyId}/proof/stage10/field-photo.jpg");
+                });
+
             var proofArtifact = await service.CreateProofArtifactAsync(companyId, Convert.ToInt64(proofPackage!["id"]), new Dictionary<string, object?>
             {
                 ["artifactType"] = "photo",
+                ["fileId"] = proofDocumentId,
                 ["capturedByUserId"] = 42,
                 ["notes"] = "Field photo",
                 ["deviceId"] = "device-1",
@@ -252,6 +262,7 @@ public class Stage10PostgresTests
     {
         await db.ExecuteAsync("DELETE FROM billing_confidence_records WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
         await db.ExecuteAsync("DELETE FROM proof_artifacts WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
+        await db.ExecuteAsync("DELETE FROM documents WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
         await db.ExecuteAsync("DELETE FROM proof_packages WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
         await db.ExecuteAsync("DELETE FROM warehouse_handovers WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
         await db.ExecuteAsync("DELETE FROM pickup_authorizations WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));

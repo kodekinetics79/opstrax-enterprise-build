@@ -155,7 +155,7 @@ public sealed class MarketPackSeeder(Database db, ILogger<MarketPackSeeder> log,
         await db.ExecuteAsync("""
             INSERT INTO business_tax_readiness (company_id, pack_code, vat_number, commercial_registration_no, e_invoice_readiness_status, updated_by)
             VALUES (@c,'saudi_gcc','300000000000003','1010101010','in_progress','seed')
-            ON CONFLICT (company_id, pack_code) DO NOTHING
+            ON CONFLICT (company_id, (COALESCE(branch_id, 0::bigint)), pack_code) DO NOTHING
             """, c => c.Parameters.AddWithValue("@c", companyId), ct);
     }
 }

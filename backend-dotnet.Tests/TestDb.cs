@@ -27,4 +27,22 @@ public static class TestDb
             return "Host=127.0.0.1;Port=5433;Database=opstrax_local;Username=opstrax_app;Password=opstrax_app_local";
         }
     }
+
+    // The independently authenticated control-plane/background identity introduced by
+    // Stage58. Production never aliases this to opstrax_app; integration tests must not
+    // either, otherwise they cannot exercise the real signed-ticket bridge.
+    public static string SystemConnectionString
+    {
+        get
+        {
+            var explicitSystem = Environment.GetEnvironmentVariable("OPSTRAX_TEST_DB_SYSTEM");
+            if (!string.IsNullOrWhiteSpace(explicitSystem)) return explicitSystem;
+            var owner = Environment.GetEnvironmentVariable("OPSTRAX_TEST_DB");
+            if (!string.IsNullOrWhiteSpace(owner))
+                return System.Text.RegularExpressions.Regex.Replace(
+                    System.Text.RegularExpressions.Regex.Replace(owner, "Username=[^;]*", "Username=opstrax_system"),
+                    "Password=[^;]*", "Password=opstrax_system_local");
+            return "Host=127.0.0.1;Port=5433;Database=opstrax_local;Username=opstrax_system;Password=opstrax_system_local";
+        }
+    }
 }

@@ -1,27 +1,27 @@
 import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "react-router";
 import { MapPin } from "lucide-react";
 import { ConsoleRail } from "@/components/console";
-import { apiClient, unwrap } from "@/services/apiClient";
-import { type LogisticsOverview, type LogisticsRoute, type LogisticsStop } from "@/services/logisticsApi";
-import { exportCsv, LoadingState, ErrorState, EmptyState, StatusBadge } from "@/components/ui";
+import { logisticsApi, type LogisticsRoute, type LogisticsStop } from "@/services/logisticsApi";
+import { LoadingState, ErrorState, EmptyState, StatusBadge } from "@/components/ui";
+import { useHasPermission } from "@/hooks/usePermission";
 import type { AnyRecord } from "@/types";
 
 // ── API ───────────────────────────────────────────────────────────────────────
 
 const lastMileApi = {
-  overview: () => unwrap<LogisticsOverview>(apiClient.get("/api/fleet-tms/logistics/overview")),
-  routes: () => unwrap<{ items: LogisticsRoute[] }>(apiClient.get("/api/fleet-tms/logistics/routes", { params: { status: "Active" } })),
-  routeStops: (id: string | number) => unwrap<{ items: LogisticsStop[] }>(apiClient.get(`/api/fleet-tms/logistics/routes/${id}/stops`)),
+  overview: logisticsApi.overview,
+  routes: () => logisticsApi.routes(),
+  routeStops: (id: string | number) => logisticsApi.routeStops(String(id)),
 };
 
 // ── Stop row ──────────────────────────────────────────────────────────────────
 
-function StopRow({ stop, index }: { stop: AnyRecord; index: number }) {
+function StopRow({ stop, index, canModify, onAction }: { stop: AnyRecord; index: number; canModify: boolean; onAction: (type: "deliver" | "attempt" | "reschedule") => void }) {
   const status = String(stop.status ?? "Pending");
   const proof = String(stop.proofStatus ?? "Not Required");
-  const isDone = status === "Completed";
+  const isDone = status === "Delivered" || status === "Completed";
 
   const dotColor =
     isDone ? "bg-teal-500" :
@@ -61,6 +61,13 @@ function StopRow({ stop, index }: { stop: AnyRecord; index: number }) {
           {stop.timeWindow ? <span>Window {String(stop.timeWindow)}</span> : null}
         </div>
         {stop.notes ? <p className="text-xs text-slate-500 mt-1 italic">{String(stop.notes)}</p> : null}
+        {!isDone && canModify ? (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <button type="button" className="btn-ghost h-8 px-2 text-xs" onClick={() => onAction("deliver")}>Confirm delivery</button>
+            <button type="button" className="btn-ghost h-8 px-2 text-xs" onClick={() => onAction("attempt")}>Record attempt</button>
+            <button type="button" className="btn-ghost h-8 px-2 text-xs" onClick={() => onAction("reschedule")}>Reschedule</button>
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -131,10 +138,18 @@ function RouteCard({ route, selected, onSelect }: { route: AnyRecord; selected: 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export function LastMileDeliveryPage() {
+  const qc = useQueryClient();
+  const hasPermission = useHasPermission();
+  const canModify = hasPermission("dispatch:update") || hasPermission("dispatch:manage") || hasPermission("fleet.pod.manage") || hasPermission("shipments:update");
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("All");
   const [search, setSearch] = useState("");
   const [toast, setToast] = useState<string | null>(null);
+  const [action, setAction] = useState<{ type: "deliver" | "attempt" | "reschedule"; stop: AnyRecord } | null>(null);
+  const [reason, setReason] = useState("");
+  const [recipient, setRecipient] = useState("");
+  const [nextEta, setNextEta] = useState("");
+  const [timeWindow, setTimeWindow] = useState("");
 
   const overviewQ = useQuery({ queryKey: ["last-mile", "overview"], queryFn: lastMileApi.overview });
   const routesQ = useQuery({ queryKey: ["last-mile", "routes"], queryFn: lastMileApi.routes, refetchInterval: 20_000 });
@@ -143,7 +158,7 @@ export function LastMileDeliveryPage() {
   const s = (overviewQ.data?.summary ?? {}) as AnyRecord;
 
   const filtered = routes.filter((r) => {
-    if (statusFilter !== "All" && r.status !== statusFilter) return false;
+    if (statusFilter !== "All" && (statusFilter === "Completed" ? !["Completed", "Closed"].includes(String(r.status)) : r.status !== statusFilter)) return false;
     if (search) {
       const q = search.toLowerCase();
       return (
@@ -163,23 +178,27 @@ export function LastMileDeliveryPage() {
   });
   const stops = (routeStopsQ.data?.items ?? []) as unknown as AnyRecord[];
 
+  const actionMutation = useMutation({
+    mutationFn: async () => {
+      if (!action) throw new Error("No stop action selected");
+      const id = String(action.stop.id);
+      if (action.type === "deliver") return logisticsApi.confirmDelivery(id, { recipientName: recipient, proofStatus: "Captured" });
+      if (action.type === "attempt") return logisticsApi.recordAttempt(id, { status: "Attempted", exceptionReason: reason, nextEtaUtc: nextEta ? new Date(nextEta).toISOString() : undefined });
+      return logisticsApi.rescheduleStop(id, { reason, timeWindow, nextEtaUtc: new Date(nextEta).toISOString() });
+    },
+    onSuccess: async () => {
+      await Promise.all([qc.invalidateQueries({ queryKey: ["last-mile"] }), qc.invalidateQueries({ queryKey: ["logistics"] })]);
+      setToast(action?.type === "deliver" ? "Delivery confirmed and billing artifact created." : action?.type === "attempt" ? "Delivery attempt recorded." : "Stop rescheduled.");
+      setAction(null); setReason(""); setRecipient(""); setNextEta(""); setTimeWindow("");
+      window.setTimeout(() => setToast(null), 3000);
+    },
+    onError: (error: Error) => { setToast(error.message || "The stop action failed."); window.setTimeout(() => setToast(null), 5000); },
+  });
+
   useEffect(() => {
     if (selectedId !== null || routes.length === 0) return;
     setSelectedId(Number(routes[0].id));
   }, [routes, selectedId]);
-
-  const flatStops = stops.map((s) => ({
-    route: String(selectedRoute?.routeCode ?? selectedRoute?.routeName ?? selectedRoute?.id ?? "--"),
-    driver: String(selectedRoute?.driverName ?? ""),
-    vehicle: String(selectedRoute?.vehicleNumber ?? selectedRoute?.vehicleCode ?? ""),
-    stop: s.sequenceNo ?? s.stopSequence,
-    type: s.stopType,
-    customer: s.customerName,
-    address: s.addressLine ?? s.address,
-    eta: s.etaUtc ?? s.eta,
-    status: s.status,
-    pod: s.proofStatus,
-  }));
 
   if (routesQ.isLoading || overviewQ.isLoading) return <LoadingState />;
   if (routesQ.isError) return <ErrorState message={(routesQ.error as Error)?.message} />;
@@ -203,7 +222,7 @@ export function LastMileDeliveryPage() {
           <span className="font-bold text-rose-600 tabular-nums">{String(s.highRiskRoutes ?? 0)}</span> high risk
         </>}
         actions={
-          <button type="button" className="btn-ghost h-10" onClick={() => exportCsv("last-mile-delivery", flatStops)}>
+          <button type="button" className="btn-ghost h-10" onClick={() => void logisticsApi.exportLastMile().catch((error: Error) => { setToast(error.message || "Export failed."); window.setTimeout(() => setToast(null), 5000); })}>
             Export CSV
           </button>
         }
@@ -215,7 +234,7 @@ export function LastMileDeliveryPage() {
           { label: "Active Routes", val: s.activeRoutes ?? routes.filter((r) => r.status === "Active").length, accent: "text-teal-600" },
           { label: "Planned Routes", val: s.plannedRoutes ?? routes.filter((r) => r.status === "Planned").length },
           { label: "Delayed", val: s.delayedRoutes ?? routes.filter((r) => r.status === "Delayed").length, accent: "text-red-600" },
-          { label: "Completed", val: s.completedRoutes ?? routes.filter((r) => r.status === "Completed").length, accent: "text-slate-600" },
+          { label: "Completed", val: s.completedRoutes ?? routes.filter((r) => r.status === "Completed" || r.status === "Closed").length, accent: "text-slate-600" },
           { label: "Avg Stops / Route", val: s.averageStopsPerRoute ?? "--" },
           { label: "Route Efficiency", val: s.routeEfficiencyScore ? `${s.routeEfficiencyScore}%` : "--", accent: "text-violet-600" },
           { label: "High Risk Routes", val: s.highRiskRoutes ?? 0, accent: "text-red-600" },
@@ -293,7 +312,7 @@ export function LastMileDeliveryPage() {
             ) : (
               <div className="flex flex-col">
                 {stops.map((stop, i) => (
-                  <StopRow key={String(stop.id ?? i)} stop={stop} index={i} />
+                  <StopRow key={String(stop.id ?? i)} stop={stop} index={i} canModify={canModify} onAction={(type) => { setAction({ type, stop }); setReason(""); setRecipient(""); setNextEta(""); setTimeWindow(""); }} />
                 ))}
               </div>
             )}
@@ -304,6 +323,26 @@ export function LastMileDeliveryPage() {
           </div>
         )}
       </div>
+
+      {action ? (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/40 p-4" role="dialog" aria-modal="true" aria-label="Last-mile stop action">
+          <form className="w-full max-w-lg rounded-xl bg-white p-5 shadow-xl" onSubmit={(event) => { event.preventDefault(); actionMutation.mutate(); }}>
+            <h2 className="text-base font-semibold text-slate-900">{action.type === "deliver" ? "Confirm delivery" : action.type === "attempt" ? "Record delivery attempt" : "Reschedule stop"}</h2>
+            <p className="mt-1 text-sm text-slate-500">{String(action.stop.orderNumber)} · {String(action.stop.customerName)}</p>
+            {action.type === "deliver" ? (
+              <label className="mt-4 block text-sm font-medium text-slate-700">Recipient name<input required maxLength={255} value={recipient} onChange={(event) => setRecipient(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2" /></label>
+            ) : (
+              <label className="mt-4 block text-sm font-medium text-slate-700">Reason<textarea required maxLength={2000} value={reason} onChange={(event) => setReason(event.target.value)} className="mt-1 min-h-24 w-full rounded-lg border border-slate-200 px-3 py-2" /></label>
+            )}
+            {action.type !== "deliver" ? <label className="mt-3 block text-sm font-medium text-slate-700">Next ETA{action.type === "reschedule" ? " (required)" : ""}<input type="datetime-local" required={action.type === "reschedule"} value={nextEta} min={new Date(Date.now() + 60_000).toISOString().slice(0, 16)} onChange={(event) => setNextEta(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2" /></label> : null}
+            {action.type === "reschedule" ? <label className="mt-3 block text-sm font-medium text-slate-700">Time window<input maxLength={80} value={timeWindow} onChange={(event) => setTimeWindow(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2" placeholder="14:00-16:00" /></label> : null}
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" className="btn-ghost h-9 px-3" disabled={actionMutation.isPending} onClick={() => setAction(null)}>Cancel</button>
+              <button type="submit" className="btn-primary h-9 px-4" disabled={actionMutation.isPending}>{actionMutation.isPending ? "Saving…" : "Confirm"}</button>
+            </div>
+          </form>
+        </div>
+      ) : null}
     </div>
   );
 }

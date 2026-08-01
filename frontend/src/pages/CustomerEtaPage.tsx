@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useParams } from "react-router-dom";
+import { useParams } from "react-router";
 import { MessageSquare, Send, Star, Truck } from "lucide-react";
 import { AiInsightCard, KpiCard, LoadingState, RiskBadge, StatusBadge, exportCsv } from "@/components/ui";
 import { useCustomerEtaRecommendations, useCustomerEtaSummary, useCustomerTracking } from "@/hooks/useBatch2";

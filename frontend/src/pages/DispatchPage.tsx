@@ -3,7 +3,6 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Download, Send, Sparkles, UserCheck } from "lucide-react";
 import { AiInsightCard, ErrorState, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, exportCsv } from "@/components/ui";
 import { useAvailableDrivers, useAvailableVehicles, useDispatchBoard, useDispatchRecommendations, useDispatchSummary } from "@/hooks/useBatch2";
-import { useEventStream } from "@/hooks/useEventStream";
 import { dispatchApi } from "@/services/dispatchApi";
 import type { AnyRecord } from "@/types";
 
@@ -16,7 +15,6 @@ export function DispatchPage() {
   const recommendations = useDispatchRecommendations();
   const drivers = useAvailableDrivers();
   const vehicles = useAvailableVehicles();
-  const events = useEventStream();
   const qc = useQueryClient();
 
   const assign = useMutation({
@@ -59,6 +57,9 @@ export function DispatchPage() {
   if (board.isError) return <ErrorState message={(board.error as Error)?.message} />;
   if (!board.data) return <LoadingState />;
   const s = summary.data || {};
+  // Never blend the demo Node simulator into customer dispatch. If the
+  // authenticated dispatch API supplies events, render those; otherwise empty.
+  const events = (((board.data as unknown as Record<string, unknown>)["events"] as AnyRecord[] | undefined) ?? []);
 
   return <div className="space-y-6">
     <PageHeader eyebrow="Dispatch Board" title="AI-assisted assignment cockpit" description="Kanban dispatch with match scores, exception radar, SLA watch, customer ETA actions and status movement buttons." actions={<><button type="button" className="btn-primary" onClick={() => autoSuggest.mutate()}><Sparkles className="h-4 w-4" /> Auto Suggest</button><button type="button" className="btn-ghost" onClick={() => eta.mutate()}><Send className="h-4 w-4" /> Send ETA Updates</button><button type="button" className="btn-ghost" onClick={() => { const sm = ((board.data as unknown as Record<string,unknown>)?.["stageMap"] ?? board.data) as Record<string, AnyRecord[]> | undefined; exportCsv("dispatch-plan", stages.flatMap(st => (sm?.[st] ?? []).map((r: AnyRecord) => ({ jobNumber: r["jobNumber"], customerName: r["customerName"], status: r["status"], driverName: r["driverName"], vehicleCode: r["vehicleCode"], eta: r["eta"], slaStatus: r["slaStatus"], priority: r["priority"] })))); }}><Download className="h-4 w-4" /> Export Dispatch Plan</button></>} />

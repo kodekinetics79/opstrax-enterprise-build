@@ -1,6 +1,8 @@
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 using Opstrax.Api.Controllers;
 using Opstrax.Api.Data;
+using Opstrax.Api.Services;
 
 namespace Opstrax.Tests;
 
@@ -16,6 +18,7 @@ public class LastMileBillingBridgePostgresTests
     public async Task Confirmed_LastMile_Delivery_Becomes_A_Billable_Charge_Once()
     {
         var db = CreateDatabase();
+        await new FleetTmsLogisticsSchemaService(db, NullLogger<FleetTmsLogisticsSchemaService>.Instance).EnsureAsync();
         var cid = await SeedCompanyAsync(db);
         var orderNo = $"LM-{Guid.NewGuid():N}".Substring(0, 12);
         const string customerName = "Acme Bridge Co";
@@ -26,9 +29,10 @@ public class LastMileBillingBridgePostgresTests
                   VALUES (@c, @n, @cust, 250.00, 'InTransit')",
                 c => { c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@n", orderNo); c.Parameters.AddWithValue("@cust", customerName); });
 
-            // Run the bridge twice — a repeated ConfirmDelivery must not double-bill.
-            await FleetTmsLogisticsEndpoints.BridgeLastMileToBillingAsync(db, cid, orderNo, customerName, CancellationToken.None);
-            await FleetTmsLogisticsEndpoints.BridgeLastMileToBillingAsync(db, cid, orderNo, customerName, CancellationToken.None);
+            // Concurrent retries simulate two mobile clients and a network retry. The
+            // advisory transaction lock must converge them on one financial artifact.
+            await Task.WhenAll(Enumerable.Range(0, 4).Select(_ =>
+                FleetTmsLogisticsEndpoints.BridgeLastMileToBillingAsync(db, cid, orderNo, customerName, CancellationToken.None)));
 
             // Exactly one canonical job for the order, linked to a customer.
             var jobId = await db.ScalarLongAsync(
@@ -39,7 +43,7 @@ public class LastMileBillingBridgePostgresTests
             var jobRow = (await db.QuerySingleAsync(
                 "SELECT customer_id, status FROM jobs WHERE id=@j", c => c.Parameters.AddWithValue("@j", jobId)))!;
             Assert.NotNull(jobRow["customerId"]);            // billing requires a customer
-            Assert.Equal("delivered", jobRow["status"]?.ToString());
+            Assert.Equal("Delivered", jobRow["status"]?.ToString());
 
             // Exactly one delivered dispatch_assignment (consolidation's period filter needs it).
             var deliveredAssignments = await db.ScalarLongAsync(

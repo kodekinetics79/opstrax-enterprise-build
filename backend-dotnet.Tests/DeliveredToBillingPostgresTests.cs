@@ -84,10 +84,15 @@ public class DeliveredToBillingPostgresTests
 
     private static async Task InvokeTransitionAsync(Database db, long cid, long aid, string to)
     {
+        var current = await db.QuerySingleAsync(
+            "SELECT assignment_status FROM dispatch_assignments WHERE id=@id AND company_id=@cid",
+            c => { c.Parameters.AddWithValue("@id", aid); c.Parameters.AddWithValue("@cid", cid); });
+        var expected = current?["assignmentStatus"]?.ToString()
+            ?? throw new InvalidOperationException("Assignment not found");
         var m = typeof(EndpointMappings).GetMethod("ApplyAssignmentTransitionAsync",
             BindingFlags.NonPublic | BindingFlags.Static)
             ?? throw new InvalidOperationException("ApplyAssignmentTransitionAsync not found");
-        await (Task)m.Invoke(null, new object[] { db, cid, aid, to, CancellationToken.None })!;
+        await (Task)m.Invoke(null, new object[] { db, cid, aid, to, expected, CancellationToken.None })!;
     }
 
     private static RevenueReadinessService CreateRevenue(Database db)

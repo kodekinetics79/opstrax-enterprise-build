@@ -1,19 +1,23 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router';
 import {
   AlertTriangle,
   ArrowRight,
   CheckCircle2,
   ChevronRight,
   Clock3,
+  Download,
   MapPinned,
   Package,
+  Pencil,
+  RefreshCw,
   Route,
   Sparkles,
   Truck,
 } from 'lucide-react';
 import { logisticsApi, type LogisticsOrder, type LogisticsOverview, type LogisticsRoute, type LogisticsStop } from '@/services/logisticsApi';
 import { notifyApiError } from '@/services/fleetTmsApi';
+import { usePermissions } from '@/hooks/usePermission';
 
 type DispatchMode = 'dispatch' | 'orders' | 'routes' | 'delivery';
 
@@ -22,7 +26,6 @@ const MODULES: Record<DispatchMode, {
   title: string;
   subtitle: string;
   accent: string;
-  path: string;
   summary: string;
 }> = {
   dispatch: {
@@ -30,7 +33,6 @@ const MODULES: Record<DispatchMode, {
     title: 'Logistics command',
     subtitle: 'Order intake, route movement, recovery actions and proof state across the operation.',
     accent: 'from-blue-600 via-sky-500 to-cyan-400',
-    path: '/dispatch',
     summary: '',
   },
   orders: {
@@ -38,7 +40,6 @@ const MODULES: Record<DispatchMode, {
     title: 'Orders pipeline',
     subtitle: 'Who ordered, current priority, dispatch state and promised times for every open order.',
     accent: 'from-indigo-600 via-blue-500 to-cyan-400',
-    path: '/dispatch/jobs-orders',
     summary: '',
   },
   routes: {
@@ -46,7 +47,6 @@ const MODULES: Record<DispatchMode, {
     title: 'Delivery routes',
     subtitle: 'Stop density, load, driver and completion state per active route.',
     accent: 'from-sky-600 via-cyan-500 to-teal-400',
-    path: '/dispatch/route-planning',
     summary: '',
   },
   delivery: {
@@ -54,14 +54,40 @@ const MODULES: Record<DispatchMode, {
     title: 'Last mile stops',
     subtitle: 'Live delivery state, attempts, reschedules and recipient proof per stop.',
     accent: 'from-cyan-600 via-sky-500 to-blue-400',
-    path: '/dispatch/last-mile-delivery',
     summary: '',
   },
 };
 
 const MODE_ORDER: DispatchMode[] = ['dispatch', 'orders', 'routes', 'delivery'];
+const PAGE_SIZE = 12;
+
+type Notice = { kind: 'success' | 'error' | 'info'; message: string };
+
+const normalizePermission = (value: string) => value.trim().toLowerCase().replaceAll('.', ':');
+const terminalOrder = (status: string) => status === 'Delivered' || status === 'Returned';
+const terminalRoute = (status: string) => status === 'Closed' || status === 'Completed';
+const terminalStop = (status: string) => status === 'Delivered';
+
+function toLocalInput(value?: string) {
+  if (!value) return '';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '' : new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+}
+
+function toIsoOrUndefined(value: string) {
+  if (!value.trim()) return undefined;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+}
 
 export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode?: DispatchMode }) {
+  const rawPermissions = usePermissions();
+  const permissions = useMemo(() => rawPermissions.map(normalizePermission), [rawPermissions]);
+  const directlyHas = (permission: string) => permissions.includes('*') || permissions.includes(normalizePermission(permission));
+  const canCreate = directlyHas('dispatch:create') || directlyHas('dispatch:manage');
+  const canUpdate = directlyHas('dispatch:update') || directlyHas('dispatch:manage');
+  const canAssign = directlyHas('dispatch:assign') || directlyHas('dispatch:manage');
+  const canDeliver = canUpdate || directlyHas('fleet:pod:manage') || directlyHas('shipments:update');
   const [mode, setMode] = useState<DispatchMode>(initialMode);
   const config = MODULES[mode];
   const [overview, setOverview] = useState<LogisticsOverview | null>(null);
@@ -71,8 +97,21 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
   const [routeStops, setRouteStops] = useState<LogisticsStop[]>([]);
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
+  const [editingRouteId, setEditingRouteId] = useState<string | null>(null);
+  const [orderStatus, setOrderStatus] = useState('All');
+  const [routeStatus, setRouteStatus] = useState('All');
+  const [stopStatus, setStopStatus] = useState('All');
+  const [stopSearch, setStopSearch] = useState('');
+  const [orderPage, setOrderPage] = useState(1);
+  const [stopPage, setStopPage] = useState(1);
+  const [orderTotal, setOrderTotal] = useState(0);
+  const [stopTotal, setStopTotal] = useState(0);
+  const requestSequence = useRef(0);
   const [orderForm, setOrderForm] = useState({
     orderNumber: '',
     customerName: '',
@@ -82,6 +121,10 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
     routeCode: '',
     itemCount: '',
     orderValue: '',
+    driverName: '',
+    vehicleNumber: '',
+    dispatchNotes: '',
+    promisedAtUtc: '',
   });
   const [routeForm, setRouteForm] = useState({
     routeCode: '',
@@ -91,12 +134,16 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
     vehicleNumber: '',
     plannedStops: '',
     distanceKm: '',
+    plannedForDate: '',
+    departureTimeUtc: '',
+    notes: '',
   });
   const [lastMileForm, setLastMileForm] = useState({
     recipientName: '',
     exceptionReason: '',
     nextStop: '',
     timeWindow: '',
+    nextEtaUtc: '',
   });
 
   const syncSelectedRoute = (routeList: LogisticsRoute[], stopList: LogisticsStop[]) => {
@@ -113,12 +160,38 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
   };
 
   const loadWorkspace = async (activeMode: DispatchMode = mode) => {
+    const sequence = ++requestSequence.current;
+    const orderParams = {
+      page: activeMode === 'orders' ? orderPage : 1,
+      pageSize: PAGE_SIZE,
+      status: activeMode === 'orders' && orderStatus !== 'All' ? orderStatus : undefined,
+    };
+    const stopParams = {
+      page: activeMode === 'delivery' ? stopPage : 1,
+      pageSize: PAGE_SIZE,
+      status: activeMode === 'delivery' && stopStatus !== 'All' ? stopStatus : undefined,
+      search: activeMode === 'delivery' ? stopSearch.trim() || undefined : undefined,
+    };
     const [ovRes, orderRes, routeRes, stopRes] = await Promise.allSettled([
       logisticsApi.overview(),
-      activeMode === 'dispatch' || activeMode === 'orders' ? logisticsApi.orders({ pageSize: 12 }) : Promise.resolve(null),
-      activeMode === 'dispatch' || activeMode === 'routes' || activeMode === 'delivery' ? logisticsApi.routes() : Promise.resolve(null),
-      activeMode === 'dispatch' || activeMode === 'delivery' ? logisticsApi.lastMile({ pageSize: 12 }) : Promise.resolve(null),
+      activeMode === 'dispatch' || activeMode === 'orders' ? logisticsApi.orders(orderParams) : Promise.resolve(null),
+      activeMode === 'dispatch' || activeMode === 'orders' || activeMode === 'routes' || activeMode === 'delivery'
+        ? logisticsApi.routes({ status: activeMode === 'routes' && routeStatus !== 'All' ? routeStatus : undefined })
+        : Promise.resolve(null),
+      activeMode === 'dispatch' || activeMode === 'delivery' ? logisticsApi.lastMile(stopParams) : Promise.resolve(null),
     ]);
+    if (sequence !== requestSequence.current) return;
+
+    const relevantResults = [
+      ovRes,
+      ...(activeMode === 'dispatch' || activeMode === 'orders' ? [orderRes] : []),
+      ...(activeMode === 'dispatch' || activeMode === 'orders' || activeMode === 'routes' || activeMode === 'delivery' ? [routeRes] : []),
+      ...(activeMode === 'dispatch' || activeMode === 'delivery' ? [stopRes] : []),
+    ];
+    const failures = relevantResults.filter((result) => result.status === 'rejected');
+    setLoadError(failures.length === relevantResults.length ? 'The logistics workspace could not load. Retry when the API is available.' : null);
+    if (failures.length > 0 && failures.length < relevantResults.length)
+      setNotice({ kind: 'info', message: 'Some logistics panels could not refresh; available live data is still shown.' });
 
     if (ovRes.status === 'fulfilled') {
       const ov = ovRes.value;
@@ -129,6 +202,8 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
       setOrders(nextOrders);
       setRoutes(nextRoutes);
       setStops(nextStops);
+      setOrderTotal(orderRes.status === 'fulfilled' && orderRes.value ? orderRes.value.total : nextOrders.length);
+      setStopTotal(stopRes.status === 'fulfilled' && stopRes.value ? stopRes.value.total : nextStops.length);
       syncSelectedRoute(nextRoutes, nextStops);
       return;
     }
@@ -137,6 +212,8 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
     setOrders(orderRes.status === 'fulfilled' && orderRes.value ? orderRes.value.items : []);
     setRoutes(routeRes.status === 'fulfilled' && routeRes.value ? routeRes.value.items : []);
     setStops(stopRes.status === 'fulfilled' && stopRes.value ? stopRes.value.items : []);
+    setOrderTotal(orderRes.status === 'fulfilled' && orderRes.value ? orderRes.value.total : 0);
+    setStopTotal(stopRes.status === 'fulfilled' && stopRes.value ? stopRes.value.total : 0);
     syncSelectedRoute(
       routeRes.status === 'fulfilled' && routeRes.value ? routeRes.value.items : [],
       stopRes.status === 'fulfilled' && stopRes.value ? stopRes.value.items : [],
@@ -148,45 +225,20 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
   };
 
   useEffect(() => {
-    let cancelled = false;
     setLoading(true);
-    (async () => {
-      try {
-        const [ovRes, orderRes, routeRes, stopRes] = await Promise.allSettled([
-          logisticsApi.overview(),
-          mode === 'dispatch' || mode === 'orders' ? logisticsApi.orders({ pageSize: 12 }) : Promise.resolve(null),
-          mode === 'dispatch' || mode === 'routes' || mode === 'delivery' ? logisticsApi.routes() : Promise.resolve(null),
-          mode === 'dispatch' || mode === 'delivery' ? logisticsApi.lastMile({ pageSize: 12 }) : Promise.resolve(null),
-        ]);
-        if (cancelled) return;
-        if (ovRes.status === 'fulfilled') {
-          const ov = ovRes.value;
-          setOverview(ov);
-          const nextOrders = orderRes.status === 'fulfilled' && orderRes.value ? orderRes.value.items : ov.orderCards;
-          const nextRoutes = routeRes.status === 'fulfilled' && routeRes.value ? routeRes.value.items : ov.routeCards;
-          const nextStops = stopRes.status === 'fulfilled' && stopRes.value ? stopRes.value.items : ov.liveStops;
-          setOrders(nextOrders);
-          setRoutes(nextRoutes);
-          setStops(nextStops);
-          syncSelectedRoute(nextRoutes, nextStops);
-        } else {
-          setOverview(null);
-          setOrders(orderRes.status === 'fulfilled' && orderRes.value ? orderRes.value.items : []);
-          setRoutes(routeRes.status === 'fulfilled' && routeRes.value ? routeRes.value.items : []);
-          setStops(stopRes.status === 'fulfilled' && stopRes.value ? stopRes.value.items : []);
-          syncSelectedRoute(
-            routeRes.status === 'fulfilled' && routeRes.value ? routeRes.value.items : [],
-            stopRes.status === 'fulfilled' && stopRes.value ? stopRes.value.items : [],
-          );
-        }
-      } catch (err) {
-        if (!cancelled) notifyApiError(err, 'Unable to load logistics workspace.');
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [mode]);
+    const pending = loadWorkspace(mode);
+    const sequence = requestSequence.current;
+    pending
+      .catch((err) => {
+        if (sequence === requestSequence.current) setLoadError(notifyApiError(err, 'Unable to load logistics workspace.'));
+      })
+      .finally(() => {
+        if (sequence === requestSequence.current) setLoading(false);
+      });
+  }, [mode, orderPage, orderStatus, routeStatus, stopPage, stopSearch, stopStatus]);
+
+  useEffect(() => { setOrderPage(1); }, [orderStatus]);
+  useEffect(() => { setStopPage(1); }, [stopStatus, stopSearch]);
 
   useEffect(() => {
     if (!selectedRouteId) {
@@ -199,7 +251,7 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
         const response = await logisticsApi.routeStops(selectedRouteId);
         if (!cancelled) setRouteStops(response.items);
       } catch (err) {
-        if (!cancelled) notifyApiError(err, 'Unable to load route stops.');
+        if (!cancelled) setNotice({ kind: 'error', message: notifyApiError(err, 'Unable to load route stops.') });
       }
     })();
     return () => { cancelled = true; };
@@ -367,7 +419,57 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
       ? routeStops
       : stops;
 
+  const reportError = (err: unknown, fallback: string) =>
+    setNotice({ kind: 'error', message: notifyApiError(err, fallback) });
+
+  const resetOrderForm = () => {
+    setEditingOrderId(null);
+    setOrderForm({ orderNumber: '', customerName: '', city: '', area: '', priority: 'Normal', routeCode: '', itemCount: '', orderValue: '', driverName: '', vehicleNumber: '', dispatchNotes: '', promisedAtUtc: '' });
+  };
+
+  const resetRouteForm = () => {
+    setEditingRouteId(null);
+    setRouteForm({ routeCode: '', hub: '', territory: '', driverName: '', vehicleNumber: '', plannedStops: '', distanceKm: '', plannedForDate: '', departureTimeUtc: '', notes: '' });
+  };
+
+  const beginEditOrder = (order: LogisticsOrder) => {
+    setMode('orders');
+    setEditingOrderId(order.id);
+    setOrderForm({
+      orderNumber: order.orderNumber ?? '', customerName: order.customerName ?? '', city: order.city ?? '', area: order.area ?? '',
+      priority: order.priority ?? 'Normal', routeCode: order.routeCode ?? '', itemCount: String(order.itemCount ?? ''),
+      orderValue: String(order.orderValue ?? ''), driverName: order.driverName ?? '', vehicleNumber: order.vehicleNumber ?? '',
+      dispatchNotes: order.dispatchNotes ?? '', promisedAtUtc: toLocalInput(order.promisedAtUtc),
+    });
+  };
+
+  const beginEditRoute = (route: LogisticsRoute) => {
+    setMode('routes');
+    setEditingRouteId(route.id);
+    setRouteForm({
+      routeCode: route.routeCode ?? '', hub: route.hub ?? '', territory: route.territory ?? '', driverName: route.driverName ?? '',
+      vehicleNumber: route.vehicleNumber ?? '', plannedStops: String(route.plannedStops ?? ''), distanceKm: String(route.distanceKm ?? ''),
+      plannedForDate: route.plannedForDate?.slice(0, 10) ?? '', departureTimeUtc: toLocalInput(route.departureTimeUtc), notes: route.notes ?? '',
+    });
+  };
+
+  const selectOrderRoute = (routeCode: string) => {
+    const route = routes.find((item) => item.routeCode === routeCode);
+    setOrderForm((current) => ({
+      ...current,
+      routeCode,
+      driverName: route?.driverName || current.driverName,
+      vehicleNumber: route?.vehicleNumber || current.vehicleNumber,
+    }));
+  };
+
   const handleDispatch = async (order: LogisticsOrder) => {
+    if (!canAssign) return setNotice({ kind: 'error', message: 'dispatch:assign is required to dispatch an order.' });
+    if (order.status !== 'Queued') return setNotice({ kind: 'info', message: `Only queued orders can be dispatched from this workspace; ${order.orderNumber} is ${order.status}.` });
+    if (!order.routeCode?.trim() || !order.driverName?.trim() || !order.vehicleNumber?.trim()) {
+      beginEditOrder(order);
+      return setNotice({ kind: 'info', message: 'Complete the route, driver, and vehicle assignment before dispatch.' });
+    }
     setSavingId(order.id);
     try {
       await logisticsApi.dispatchOrder(order.id, {
@@ -377,14 +479,20 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
         notes: order.dispatchNotes,
       });
       await refreshWorkspace();
+      setNotice({ kind: 'success', message: `${order.orderNumber} was dispatched.` });
     } catch (err) {
-      notifyApiError(err, 'Unable to dispatch this order.');
+      reportError(err, 'Unable to dispatch this order.');
     } finally {
       setSavingId(null);
     }
   };
 
   const handleProgress = async (route: LogisticsRoute) => {
+    if (!canUpdate) return setNotice({ kind: 'error', message: 'dispatch:update is required to progress a route.' });
+    if (!['Ready', 'Active', 'Delayed'].includes(route.status) || terminalRoute(route.status))
+      return setNotice({ kind: 'info', message: `${route.routeCode} cannot be progressed from ${route.status}.` });
+    if (route.plannedStops < 1 || route.completedStops >= route.plannedStops)
+      return setNotice({ kind: 'info', message: `${route.routeCode} has no remaining planned stops to progress.` });
     setSavingId(route.id);
     try {
       await logisticsApi.progressRoute(route.id, {
@@ -394,112 +502,175 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
         notes: 'Route advanced from the command center.',
       });
       await refreshWorkspace();
+      setNotice({ kind: 'success', message: `${route.routeCode} advanced by one completed stop.` });
     } catch (err) {
-      notifyApiError(err, 'Unable to advance the route.');
+      reportError(err, 'Unable to advance the route.');
     } finally {
       setSavingId(null);
     }
   };
 
   const handleConfirm = async (stop: LogisticsStop) => {
+    if (!canDeliver) return setNotice({ kind: 'error', message: 'Proof or dispatch update permission is required to confirm delivery.' });
+    if (terminalStop(stop.status)) return setNotice({ kind: 'info', message: 'This stop is already delivered.' });
+    const recipientName = lastMileForm.recipientName.trim();
+    if (!recipientName) return setNotice({ kind: 'error', message: 'Enter the actual recipient name before confirming delivery.' });
     setSavingId(stop.id);
     try {
       await logisticsApi.confirmDelivery(stop.id, {
-        recipientName: lastMileForm.recipientName || stop.recipientName || stop.customerName.split(' ')[0],
-        proofStatus: 'POD',
+        recipientName,
+        proofStatus: 'Captured',
       });
       await refreshWorkspace();
+      setNotice({ kind: 'success', message: `Delivery confirmed for ${stop.customerName}; proof and billing linkage were updated.` });
     } catch (err) {
-      notifyApiError(err, 'Unable to confirm delivery.');
+      reportError(err, 'Unable to confirm delivery.');
     } finally {
       setSavingId(null);
     }
   };
 
   const handleAttempt = async (stop: LogisticsStop) => {
+    if (!canUpdate) return setNotice({ kind: 'error', message: 'dispatch:update is required to record an attempt.' });
+    if (terminalStop(stop.status)) return setNotice({ kind: 'info', message: 'A delivered stop cannot be attempted.' });
+    const reason = lastMileForm.exceptionReason.trim();
+    if (!reason) return setNotice({ kind: 'error', message: 'Enter the real delivery-attempt reason.' });
+    const nextEtaUtc = toIsoOrUndefined(lastMileForm.nextEtaUtc);
+    if (lastMileForm.nextEtaUtc && (!nextEtaUtc || new Date(nextEtaUtc).getTime() <= Date.now()))
+      return setNotice({ kind: 'error', message: 'Next ETA must be a valid future time.' });
     setSavingId(stop.id);
     try {
       await logisticsApi.recordAttempt(stop.id, {
         status: 'Attempted',
         proofStatus: 'None',
-        exceptionReason: lastMileForm.exceptionReason,
-        nextEtaUtc: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(),
-        nextStop: lastMileForm.nextStop || stop.customerName,
+        exceptionReason: reason,
+        nextEtaUtc,
+        nextStop: lastMileForm.nextStop.trim() || undefined,
       });
       await refreshWorkspace();
+      setNotice({ kind: 'success', message: `Delivery attempt recorded for ${stop.customerName}.` });
     } catch (err) {
-      notifyApiError(err, 'Unable to record delivery attempt.');
+      reportError(err, 'Unable to record delivery attempt.');
     } finally {
       setSavingId(null);
     }
   };
 
   const handleReschedule = async (stop: LogisticsStop) => {
+    if (!canUpdate) return setNotice({ kind: 'error', message: 'dispatch:update is required to reschedule a stop.' });
+    if (terminalStop(stop.status)) return setNotice({ kind: 'info', message: 'A delivered stop cannot be rescheduled.' });
+    const reason = lastMileForm.exceptionReason.trim();
+    const nextEtaUtc = toIsoOrUndefined(lastMileForm.nextEtaUtc);
+    if (!reason) return setNotice({ kind: 'error', message: 'Enter the customer-confirmed reschedule reason.' });
+    if (!nextEtaUtc || new Date(nextEtaUtc).getTime() <= Date.now())
+      return setNotice({ kind: 'error', message: 'Choose a valid future ETA before rescheduling.' });
     setSavingId(stop.id);
     try {
       await logisticsApi.rescheduleStop(stop.id, {
-        timeWindow: lastMileForm.timeWindow,
-        reason: lastMileForm.exceptionReason,
-        nextEtaUtc: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString(),
+        timeWindow: lastMileForm.timeWindow.trim() || undefined,
+        reason,
+        nextEtaUtc,
       });
       await refreshWorkspace();
+      setNotice({ kind: 'success', message: `${stop.customerName} was rescheduled.` });
     } catch (err) {
-      notifyApiError(err, 'Unable to reschedule stop.');
+      reportError(err, 'Unable to reschedule stop.');
     } finally {
       setSavingId(null);
     }
   };
 
   const handleCreateOrder = async () => {
+    if (!canCreate && !editingOrderId) return setNotice({ kind: 'error', message: 'dispatch:create is required to create an order.' });
+    if (editingOrderId && !canUpdate) return setNotice({ kind: 'error', message: 'dispatch:update is required to edit an order.' });
+    const orderNumber = orderForm.orderNumber.trim();
+    const customerName = orderForm.customerName.trim();
+    const itemCount = Number(orderForm.itemCount);
+    const orderValue = Number(orderForm.orderValue || 0);
+    if (!orderNumber || !customerName) return setNotice({ kind: 'error', message: 'Order number and customer name are required.' });
+    if (!Number.isInteger(itemCount) || itemCount < 1 || itemCount > 100_000)
+      return setNotice({ kind: 'error', message: 'Item count must be a whole number between 1 and 100000.' });
+    if (!Number.isFinite(orderValue) || orderValue < 0 || orderValue > 1_000_000_000)
+      return setNotice({ kind: 'error', message: 'Order value must be between 0 and 1000000000.' });
     setCreating(true);
     try {
-      await logisticsApi.createOrder({
-        orderNumber: orderForm.orderNumber,
-        customerName: orderForm.customerName,
+      const body = {
+        orderNumber,
+        customerName,
         city: orderForm.city,
         area: orderForm.area,
         priority: orderForm.priority,
         routeCode: orderForm.routeCode,
-        itemCount: Number(orderForm.itemCount),
-        orderValue: Number(orderForm.orderValue),
-        status: 'Queued',
+        itemCount,
+        orderValue,
+        driverName: orderForm.driverName,
+        vehicleNumber: orderForm.vehicleNumber,
+        dispatchNotes: orderForm.dispatchNotes,
+        promisedAtUtc: toIsoOrUndefined(orderForm.promisedAtUtc),
         customerSegment: 'Retail',
         salesChannel: 'Portal',
-      });
-      setOrderForm((current) => ({ ...current, orderNumber: '', customerName: '' }));
-      await refreshWorkspace('orders');
+      };
+      if (editingOrderId) await logisticsApi.updateOrder(editingOrderId, body);
+      else await logisticsApi.createOrder({ ...body, status: 'Queued' });
+      setNotice({ kind: 'success', message: editingOrderId ? `${orderNumber} was updated.` : `${orderNumber} was created in Queued status.` });
+      resetOrderForm();
+      await refreshWorkspace();
     } catch (err) {
-      notifyApiError(err, 'Unable to create order.');
+      reportError(err, editingOrderId ? 'Unable to update order.' : 'Unable to create order.');
     } finally {
       setCreating(false);
     }
   };
 
   const handleCreateRoute = async () => {
+    if (!canCreate && !editingRouteId) return setNotice({ kind: 'error', message: 'dispatch:create is required to create a route.' });
+    if (editingRouteId && !canUpdate) return setNotice({ kind: 'error', message: 'dispatch:update is required to edit a route.' });
+    const routeCode = routeForm.routeCode.trim();
+    const plannedStops = Number(routeForm.plannedStops);
+    const distanceKm = Number(routeForm.distanceKm || 0);
+    const currentRoute = routes.find((route) => route.id === editingRouteId);
+    if (!routeCode) return setNotice({ kind: 'error', message: 'Route code is required.' });
+    if (!Number.isInteger(plannedStops) || plannedStops < 1 || plannedStops > 100_000)
+      return setNotice({ kind: 'error', message: 'Planned stops must be a whole number between 1 and 100000.' });
+    if (currentRoute && plannedStops < currentRoute.completedStops)
+      return setNotice({ kind: 'error', message: 'Planned stops cannot be lower than already completed stops.' });
+    if (!Number.isFinite(distanceKm) || distanceKm < 0)
+      return setNotice({ kind: 'error', message: 'Distance cannot be negative.' });
     setCreating(true);
     try {
-      await logisticsApi.createRoute({
-        routeCode: routeForm.routeCode,
+      const body = {
+        routeCode,
         hub: routeForm.hub,
         territory: routeForm.territory,
         driverName: routeForm.driverName,
         vehicleNumber: routeForm.vehicleNumber,
-        plannedStops: Number(routeForm.plannedStops),
-        distanceKm: Number(routeForm.distanceKm),
-        completedStops: 0,
-        completionPercent: 0,
-        status: 'Planned',
-        currentStop: '',
-        nextStop: '',
-        departureTimeUtc: new Date().toISOString(),
-        plannedForDate: new Date().toISOString(),
-      });
-      setRouteForm((current) => ({ ...current, routeCode: '' }));
-      await refreshWorkspace('routes');
+        plannedStops,
+        distanceKm,
+        departureTimeUtc: toIsoOrUndefined(routeForm.departureTimeUtc),
+        plannedForDate: routeForm.plannedForDate || undefined,
+        notes: routeForm.notes,
+      };
+      if (editingRouteId) await logisticsApi.updateRoute(editingRouteId, body);
+      else await logisticsApi.createRoute({ ...body, completedStops: 0, completionPercent: 0, status: 'Planned', currentStop: '', nextStop: '' });
+      setNotice({ kind: 'success', message: editingRouteId ? `${routeCode} was updated.` : `${routeCode} was created with ${plannedStops} planned stop${plannedStops === 1 ? '' : 's'}.` });
+      resetRouteForm();
+      await refreshWorkspace();
     } catch (err) {
-      notifyApiError(err, 'Unable to create route.');
+      reportError(err, editingRouteId ? 'Unable to update route.' : 'Unable to create route.');
     } finally {
       setCreating(false);
+    }
+  };
+
+  const handleExport = async () => {
+    try {
+      await logisticsApi.exportLastMile({
+        status: stopStatus === 'All' ? undefined : stopStatus,
+        search: stopSearch.trim() || undefined,
+      });
+      setNotice({ kind: 'success', message: 'Filtered last-mile CSV export started.' });
+    } catch (err) {
+      reportError(err, 'Unable to export last-mile records.');
     }
   };
 
@@ -520,13 +691,14 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
               </div>
             </div>
 
-            <div className="hidden items-center gap-2 rounded-full border border-white/70 bg-white/72 p-1 shadow-[0_14px_30px_rgba(37,99,235,0.05)] backdrop-blur-xl md:flex dark:border-white/[0.08] dark:bg-white/[0.04]">
+            <nav aria-label="Logistics workspace views" className="hidden items-center gap-2 rounded-full border border-white/70 bg-white/72 p-1 shadow-[0_14px_30px_rgba(37,99,235,0.05)] backdrop-blur-xl md:flex dark:border-white/[0.08] dark:bg-white/[0.04]">
               {MODE_ORDER.map((item) => {
                 const active = item === mode;
                 return (
                   <button
                     key={item}
                     type="button"
+                    aria-pressed={active}
                     onClick={() => setMode(item)}
                     className={`rounded-full px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] transition ${
                       active
@@ -538,8 +710,39 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
                   </button>
                 );
               })}
-            </div>
+            </nav>
           </div>
+
+          <label className="mb-4 md:hidden">
+            <span className="sr-only">Workspace view</span>
+            <select
+              aria-label="Workspace view"
+              value={mode}
+              onChange={(event) => setMode(event.target.value as DispatchMode)}
+              className="w-full rounded-2xl border border-white/80 bg-white/90 px-4 py-3 text-sm font-semibold text-slate-800 shadow-sm dark:border-white/10 dark:bg-slate-900 dark:text-white"
+            >
+              {MODE_ORDER.map((item) => <option key={item} value={item}>{MODULES[item].label}</option>)}
+            </select>
+          </label>
+
+          {notice && (
+            <div
+              role={notice.kind === 'error' ? 'alert' : 'status'}
+              aria-live={notice.kind === 'error' ? 'assertive' : 'polite'}
+              className={`mb-4 flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 text-sm ${notice.kind === 'error' ? 'border-red-200 bg-red-50 text-red-800' : notice.kind === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-blue-200 bg-blue-50 text-blue-800'}`}
+            >
+              <span>{notice.message}</span>
+              <button type="button" aria-label="Dismiss notification" onClick={() => setNotice(null)} className="font-bold">×</button>
+            </div>
+          )}
+          {loadError && (
+            <div role="alert" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+              <span>{loadError}</span>
+              <button type="button" onClick={() => { setLoading(true); refreshWorkspace().finally(() => setLoading(false)); }} className="inline-flex items-center gap-2 rounded-xl bg-red-700 px-3 py-2 font-semibold text-white">
+                <RefreshCw className="h-4 w-4" /> Retry
+              </button>
+            </div>
+          )}
 
           <section className="grid flex-1 gap-4 lg:grid-cols-[1.05fr_0.95fr]">
             <div className="rounded-[32px] border border-white/75 bg-[linear-gradient(160deg,rgba(251,253,255,0.92),rgba(239,245,255,0.74))] p-5 shadow-[0_24px_80px_rgba(37,99,235,0.12)] backdrop-blur-3xl dark:border-white/[0.08] dark:bg-[linear-gradient(160deg,rgba(11,18,34,0.96),rgba(7,12,24,0.92))]">
@@ -570,6 +773,40 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
                       {pillar}
                     </span>
                   ))}
+                </div>
+
+                <div className="mt-4 flex flex-wrap items-end gap-3 rounded-2xl border border-slate-200/70 bg-white/65 p-3 dark:border-white/10 dark:bg-white/[0.03]">
+                  {mode === 'orders' && (
+                    <label className="min-w-48 text-xs font-semibold text-slate-600 dark:text-slate-300">
+                      Order status
+                      <select aria-label="Order status filter" value={orderStatus} onChange={(event) => setOrderStatus(event.target.value)} className="mt-1 block w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900">
+                        {['All', 'Queued', 'Dispatched', 'InTransit', 'Exception', 'Delivered', 'Returned'].map((status) => <option key={status}>{status}</option>)}
+                      </select>
+                    </label>
+                  )}
+                  {mode === 'routes' && (
+                    <label className="min-w-48 text-xs font-semibold text-slate-600 dark:text-slate-300">
+                      Route status
+                      <select aria-label="Route status filter" value={routeStatus} onChange={(event) => setRouteStatus(event.target.value)} className="mt-1 block w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900">
+                        {['All', 'Planned', 'Ready', 'Active', 'Delayed', 'Closed', 'Completed'].map((status) => <option key={status}>{status}</option>)}
+                      </select>
+                    </label>
+                  )}
+                  {mode === 'delivery' && (
+                    <>
+                      <label className="min-w-48 flex-1 text-xs font-semibold text-slate-600 dark:text-slate-300">
+                        Search stops
+                        <input aria-label="Search last-mile stops" value={stopSearch} onChange={(event) => setStopSearch(event.target.value)} placeholder="Order, customer, route, city" className="mt-1 block w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900" />
+                      </label>
+                      <label className="min-w-44 text-xs font-semibold text-slate-600 dark:text-slate-300">
+                        Stop status
+                        <select aria-label="Last-mile status filter" value={stopStatus} onChange={(event) => setStopStatus(event.target.value)} className="mt-1 block w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm dark:border-white/10 dark:bg-slate-900">
+                          {['All', 'OutForDelivery', 'Attempted', 'Failed', 'Rescheduled', 'Delivered'].map((status) => <option key={status}>{status}</option>)}
+                        </select>
+                      </label>
+                      <button type="button" onClick={handleExport} className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white dark:bg-white dark:text-slate-900"><Download className="h-4 w-4" /> Export CSV</button>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -629,18 +866,31 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
                   <div className="space-y-3">
                     {mode === 'routes' ? (
                       routes.slice(0, 4).map((route) => (
-                        <ActionRouteCard key={route.id} route={route} saving={savingId === route.id} onAdvance={() => handleProgress(route)} onInspect={() => setSelectedRouteId(route.id)} />
+                        <ActionRouteCard key={route.id} route={route} canUpdate={canUpdate} saving={savingId === route.id} onAdvance={() => handleProgress(route)} onInspect={() => setSelectedRouteId(route.id)} onEdit={() => beginEditRoute(route)} />
                       ))
                     ) : mode === 'delivery' ? (
                       stops.slice(0, 6).map((stop) => (
-                        <ActionStopCard key={stop.id} stop={stop} saving={savingId === stop.id} onConfirm={() => handleConfirm(stop)} onAttempt={() => handleAttempt(stop)} onReschedule={() => handleReschedule(stop)} />
+                        <ActionStopCard key={stop.id} stop={stop} canUpdate={canUpdate} canDeliver={canDeliver} saving={savingId === stop.id} onConfirm={() => handleConfirm(stop)} onAttempt={() => handleAttempt(stop)} onReschedule={() => handleReschedule(stop)} />
                       ))
                     ) : (
                       orders.slice(0, 6).map((order) => (
-                        <ActionOrderCard key={order.id} order={order} saving={savingId === order.id} onDispatch={() => handleDispatch(order)} />
+                        <ActionOrderCard key={order.id} order={order} canAssign={canAssign} canUpdate={canUpdate} saving={savingId === order.id} onDispatch={() => handleDispatch(order)} onEdit={() => beginEditOrder(order)} />
                       ))
                     )}
+                    {!loading && ((mode === 'routes' && routes.length === 0) || (mode === 'delivery' && stops.length === 0) || ((mode === 'dispatch' || mode === 'orders') && orders.length === 0)) && (
+                      <div className="rounded-2xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500 dark:border-white/15 dark:text-slate-400">No records match this view and its current filters.</div>
+                    )}
                   </div>
+                  {(mode === 'orders' || mode === 'delivery') && (
+                    <div className="mt-4 flex items-center justify-between gap-3 text-xs text-slate-500">
+                      <span>{mode === 'orders' ? orderTotal : stopTotal} total record{(mode === 'orders' ? orderTotal : stopTotal) === 1 ? '' : 's'}</span>
+                      <div className="flex items-center gap-2">
+                        <button type="button" disabled={(mode === 'orders' ? orderPage : stopPage) <= 1 || loading} onClick={() => mode === 'orders' ? setOrderPage((page) => Math.max(1, page - 1)) : setStopPage((page) => Math.max(1, page - 1))} className="rounded-xl border border-slate-200 bg-white px-3 py-2 font-semibold disabled:opacity-40 dark:border-white/10 dark:bg-white/[0.04]">Previous</button>
+                        <span aria-live="polite">Page {mode === 'orders' ? orderPage : stopPage}</span>
+                        <button type="button" disabled={loading || (mode === 'orders' ? orderPage * PAGE_SIZE >= orderTotal : stopPage * PAGE_SIZE >= stopTotal)} onClick={() => mode === 'orders' ? setOrderPage((page) => page + 1) : setStopPage((page) => page + 1)} className="rounded-xl border border-slate-200 bg-white px-3 py-2 font-semibold disabled:opacity-40 dark:border-white/10 dark:bg-white/[0.04]">Next</button>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="rounded-[28px] border border-white/80 bg-white/74 p-4 shadow-[0_18px_40px_rgba(37,99,235,0.06)] backdrop-blur-xl dark:border-white/[0.06] dark:bg-white/[0.04]">
@@ -759,37 +1009,89 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
                     <Package className="h-4 w-4 text-sky-300/80" />
                   </div>
                   <div className="mt-3 space-y-3">
-                    {(mode === 'dispatch' || mode === 'orders') && (
+                    {(mode === 'dispatch' || mode === 'orders') && (canCreate || (editingOrderId && canUpdate) ? (
                       <>
-                        <input value={orderForm.orderNumber} onChange={(e) => setOrderForm((current) => ({ ...current, orderNumber: e.target.value }))} placeholder="Order number" className="w-full rounded-2xl border border-white/10 bg-white/[0.05] px-3 py-2.5 text-sm text-white outline-none placeholder:text-slate-500" />
-                        <input value={orderForm.customerName} onChange={(e) => setOrderForm((current) => ({ ...current, customerName: e.target.value }))} placeholder="Customer name" className="w-full rounded-2xl border border-white/10 bg-white/[0.05] px-3 py-2.5 text-sm text-white outline-none placeholder:text-slate-500" />
+                        <DarkField label="Order number" value={orderForm.orderNumber} onChange={(value) => setOrderForm((current) => ({ ...current, orderNumber: value }))} required disabled={Boolean(editingOrderId)} />
+                        <DarkField label="Customer name" value={orderForm.customerName} onChange={(value) => setOrderForm((current) => ({ ...current, customerName: value }))} required />
                         <div className="grid grid-cols-2 gap-2">
-                          <input value={orderForm.city} onChange={(e) => setOrderForm((current) => ({ ...current, city: e.target.value }))} placeholder="City" className="rounded-2xl border border-white/10 bg-white/[0.05] px-3 py-2.5 text-sm text-white outline-none placeholder:text-slate-500" />
-                          <input value={orderForm.routeCode} onChange={(e) => setOrderForm((current) => ({ ...current, routeCode: e.target.value }))} placeholder="Route code" className="rounded-2xl border border-white/10 bg-white/[0.05] px-3 py-2.5 text-sm text-white outline-none placeholder:text-slate-500" />
+                          <DarkField label="City" value={orderForm.city} onChange={(value) => setOrderForm((current) => ({ ...current, city: value }))} />
+                          <DarkField label="Area" value={orderForm.area} onChange={(value) => setOrderForm((current) => ({ ...current, area: value }))} />
                         </div>
-                        <button onClick={handleCreateOrder} disabled={creating} className="inline-flex w-full items-center justify-center rounded-2xl bg-gradient-to-r from-blue-600 via-sky-500 to-cyan-400 px-4 py-3 text-[12px] font-bold text-white shadow-[0_14px_30px_rgba(47,107,255,0.26)] transition hover:brightness-105 disabled:opacity-60">
-                          {creating ? 'Creating...' : 'Create order'}
-                        </button>
-                      </>
-                    )}
-                    {mode === 'routes' && (
-                      <>
-                        <input value={routeForm.routeCode} onChange={(e) => setRouteForm((current) => ({ ...current, routeCode: e.target.value }))} placeholder="Route code" className="w-full rounded-2xl border border-white/10 bg-white/[0.05] px-3 py-2.5 text-sm text-white outline-none placeholder:text-slate-500" />
                         <div className="grid grid-cols-2 gap-2">
-                          <input value={routeForm.driverName} onChange={(e) => setRouteForm((current) => ({ ...current, driverName: e.target.value }))} placeholder="Driver name" className="rounded-2xl border border-white/10 bg-white/[0.05] px-3 py-2.5 text-sm text-white outline-none placeholder:text-slate-500" />
-                          <input value={routeForm.vehicleNumber} onChange={(e) => setRouteForm((current) => ({ ...current, vehicleNumber: e.target.value }))} placeholder="Vehicle number" className="rounded-2xl border border-white/10 bg-white/[0.05] px-3 py-2.5 text-sm text-white outline-none placeholder:text-slate-500" />
+                          <DarkField label="Item count" type="number" min="1" max="100000" value={orderForm.itemCount} onChange={(value) => setOrderForm((current) => ({ ...current, itemCount: value }))} required />
+                          <DarkField label="Order value" type="number" min="0" step="0.01" value={orderForm.orderValue} onChange={(value) => setOrderForm((current) => ({ ...current, orderValue: value }))} />
                         </div>
-                        <button onClick={handleCreateRoute} disabled={creating} className="inline-flex w-full items-center justify-center rounded-2xl bg-gradient-to-r from-sky-600 via-cyan-500 to-teal-400 px-4 py-3 text-[12px] font-bold text-white shadow-[0_14px_30px_rgba(47,107,255,0.26)] transition hover:brightness-105 disabled:opacity-60">
-                          {creating ? 'Creating...' : 'Create route'}
-                        </button>
+                        <label className="block text-[11px] font-semibold text-white/70">Priority
+                          <select value={orderForm.priority} onChange={(event) => setOrderForm((current) => ({ ...current, priority: event.target.value }))} className="mt-1 w-full rounded-2xl border border-white/10 bg-slate-900 px-3 py-2.5 text-sm text-white">
+                            {['Low', 'Normal', 'High', 'Critical'].map((priority) => <option key={priority}>{priority}</option>)}
+                          </select>
+                        </label>
+                        <label className="block text-[11px] font-semibold text-white/70">Assigned route
+                          <select value={orderForm.routeCode} onChange={(event) => selectOrderRoute(event.target.value)} className="mt-1 w-full rounded-2xl border border-white/10 bg-slate-900 px-3 py-2.5 text-sm text-white">
+                            <option value="">Unassigned</option>
+                            {routes.filter((route) => !terminalRoute(route.status)).map((route) => <option key={route.id} value={route.routeCode}>{route.routeCode} · {route.status}</option>)}
+                          </select>
+                        </label>
+                        <div className="grid grid-cols-2 gap-2">
+                          <DarkField label="Driver name" value={orderForm.driverName} onChange={(value) => setOrderForm((current) => ({ ...current, driverName: value }))} />
+                          <DarkField label="Vehicle number" value={orderForm.vehicleNumber} onChange={(value) => setOrderForm((current) => ({ ...current, vehicleNumber: value }))} />
+                        </div>
+                        <DarkField label="Promised time" type="datetime-local" value={orderForm.promisedAtUtc} onChange={(value) => setOrderForm((current) => ({ ...current, promisedAtUtc: value }))} />
+                        <label className="block text-[11px] font-semibold text-white/70">Dispatch notes
+                          <textarea value={orderForm.dispatchNotes} onChange={(event) => setOrderForm((current) => ({ ...current, dispatchNotes: event.target.value }))} rows={2} className="mt-1 w-full rounded-2xl border border-white/10 bg-white/[0.05] px-3 py-2.5 text-sm text-white outline-none" />
+                        </label>
+                        <div className="flex gap-2">
+                          {editingOrderId && <button type="button" onClick={resetOrderForm} className="rounded-2xl border border-white/15 px-4 py-3 text-xs font-bold text-white">Cancel</button>}
+                          <button type="button" onClick={handleCreateOrder} disabled={creating} className="inline-flex flex-1 items-center justify-center rounded-2xl bg-gradient-to-r from-blue-600 via-sky-500 to-cyan-400 px-4 py-3 text-[12px] font-bold text-white disabled:opacity-60">
+                            {creating ? 'Saving...' : editingOrderId ? 'Save order' : 'Create order'}
+                          </button>
+                        </div>
                       </>
-                    )}
-                    {mode === 'delivery' && (
+                    ) : <ReadOnlyMessage />)}
+                    {mode === 'routes' && (canCreate || (editingRouteId && canUpdate) ? (
                       <>
-                        <input value={lastMileForm.recipientName} onChange={(e) => setLastMileForm((current) => ({ ...current, recipientName: e.target.value }))} placeholder="Recipient name override" className="w-full rounded-2xl border border-white/10 bg-white/[0.05] px-3 py-2.5 text-sm text-white outline-none placeholder:text-slate-500" />
-                        <textarea value={lastMileForm.exceptionReason} onChange={(e) => setLastMileForm((current) => ({ ...current, exceptionReason: e.target.value }))} rows={3} placeholder="Attempt / reschedule reason" className="w-full rounded-2xl border border-white/10 bg-white/[0.05] px-3 py-2.5 text-sm text-white outline-none placeholder:text-slate-500" />
+                        <DarkField label="Route code" value={routeForm.routeCode} onChange={(value) => setRouteForm((current) => ({ ...current, routeCode: value }))} required disabled={Boolean(editingRouteId)} />
+                        <div className="grid grid-cols-2 gap-2">
+                          <DarkField label="Hub" value={routeForm.hub} onChange={(value) => setRouteForm((current) => ({ ...current, hub: value }))} />
+                          <DarkField label="Territory" value={routeForm.territory} onChange={(value) => setRouteForm((current) => ({ ...current, territory: value }))} />
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <DarkField label="Driver name" value={routeForm.driverName} onChange={(value) => setRouteForm((current) => ({ ...current, driverName: value }))} />
+                          <DarkField label="Vehicle number" value={routeForm.vehicleNumber} onChange={(value) => setRouteForm((current) => ({ ...current, vehicleNumber: value }))} />
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <DarkField label="Planned stops" type="number" min="1" max="100000" value={routeForm.plannedStops} onChange={(value) => setRouteForm((current) => ({ ...current, plannedStops: value }))} required />
+                          <DarkField label="Distance (km)" type="number" min="0" step="0.1" value={routeForm.distanceKm} onChange={(value) => setRouteForm((current) => ({ ...current, distanceKm: value }))} />
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <DarkField label="Planned date" type="date" value={routeForm.plannedForDate} onChange={(value) => setRouteForm((current) => ({ ...current, plannedForDate: value }))} />
+                          <DarkField label="Departure time" type="datetime-local" value={routeForm.departureTimeUtc} onChange={(value) => setRouteForm((current) => ({ ...current, departureTimeUtc: value }))} />
+                        </div>
+                        <label className="block text-[11px] font-semibold text-white/70">Route notes
+                          <textarea value={routeForm.notes} onChange={(event) => setRouteForm((current) => ({ ...current, notes: event.target.value }))} rows={2} className="mt-1 w-full rounded-2xl border border-white/10 bg-white/[0.05] px-3 py-2.5 text-sm text-white outline-none" />
+                        </label>
+                        <div className="flex gap-2">
+                          {editingRouteId && <button type="button" onClick={resetRouteForm} className="rounded-2xl border border-white/15 px-4 py-3 text-xs font-bold text-white">Cancel</button>}
+                          <button type="button" onClick={handleCreateRoute} disabled={creating} className="inline-flex flex-1 items-center justify-center rounded-2xl bg-gradient-to-r from-sky-600 via-cyan-500 to-teal-400 px-4 py-3 text-[12px] font-bold text-white disabled:opacity-60">
+                            {creating ? 'Saving...' : editingRouteId ? 'Save route' : 'Create route'}
+                          </button>
+                        </div>
                       </>
-                    )}
+                    ) : <ReadOnlyMessage />)}
+                    {mode === 'delivery' && (canUpdate || canDeliver ? (
+                      <>
+                        <p className="text-[11px] leading-relaxed text-white/55">Enter real delivery evidence before selecting an action. A recipient is required for Deliver; a reason is required for Attempt; a reason and future ETA are required for Reschedule.</p>
+                        <DarkField label="Actual recipient name" value={lastMileForm.recipientName} onChange={(value) => setLastMileForm((current) => ({ ...current, recipientName: value }))} />
+                        <label className="block text-[11px] font-semibold text-white/70">Attempt or reschedule reason
+                          <textarea value={lastMileForm.exceptionReason} onChange={(event) => setLastMileForm((current) => ({ ...current, exceptionReason: event.target.value }))} rows={3} className="mt-1 w-full rounded-2xl border border-white/10 bg-white/[0.05] px-3 py-2.5 text-sm text-white outline-none" />
+                        </label>
+                        <DarkField label="Next ETA" type="datetime-local" value={lastMileForm.nextEtaUtc} onChange={(value) => setLastMileForm((current) => ({ ...current, nextEtaUtc: value }))} />
+                        <div className="grid grid-cols-2 gap-2">
+                          <DarkField label="Time window" value={lastMileForm.timeWindow} onChange={(value) => setLastMileForm((current) => ({ ...current, timeWindow: value }))} />
+                          <DarkField label="Next stop" value={lastMileForm.nextStop} onChange={(value) => setLastMileForm((current) => ({ ...current, nextStop: value }))} />
+                        </div>
+                      </>
+                    ) : <ReadOnlyMessage />)}
                   </div>
                 </div>
 
@@ -851,7 +1153,9 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
                   <Link to="/route-plans" className="rounded-full border border-white/15 px-3 py-1.5 text-[11px] font-semibold text-white/80 transition hover:bg-white/10">Route plans</Link>
                   <Link to="/last-mile-delivery" className="rounded-full border border-white/15 px-3 py-1.5 text-[11px] font-semibold text-white/80 transition hover:bg-white/10">Last mile</Link>
                   <Link to="/jobs" className="rounded-full border border-white/15 px-3 py-1.5 text-[11px] font-semibold text-white/80 transition hover:bg-white/10">Jobs board</Link>
+                  <Link to="/trips" className="rounded-full border border-white/15 px-3 py-1.5 text-[11px] font-semibold text-white/80 transition hover:bg-white/10">Trips</Link>
                   <Link to="/operations/proof-center" className="rounded-full border border-white/15 px-3 py-1.5 text-[11px] font-semibold text-white/80 transition hover:bg-white/10">Proof center</Link>
+                  <Link to="/finance/billing" className="rounded-full border border-white/15 px-3 py-1.5 text-[11px] font-semibold text-white/80 transition hover:bg-white/10">Billing</Link>
                 </div>
               </div>
             </div>
@@ -862,7 +1166,8 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
   );
 }
 
-function ActionOrderCard({ order, onDispatch, saving }: { order: LogisticsOrder; onDispatch: () => void; saving: boolean }) {
+function ActionOrderCard({ order, onDispatch, onEdit, saving, canAssign, canUpdate }: { order: LogisticsOrder; onDispatch: () => void; onEdit: () => void; saving: boolean; canAssign: boolean; canUpdate: boolean }) {
+  const dispatchable = order.status === 'Queued' && Boolean(order.routeCode?.trim() && order.driverName?.trim() && order.vehicleNumber?.trim());
   return (
     <div className="rounded-[24px] border border-slate-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.92),rgba(245,248,255,0.78))] p-4 shadow-[0_10px_24px_rgba(37,99,235,0.05)] dark:border-white/10 dark:bg-white/[0.04]">
       <div className="flex items-start justify-between gap-3">
@@ -886,20 +1191,20 @@ function ActionOrderCard({ order, onDispatch, saving }: { order: LogisticsOrder;
           ? 'Priority order with visible service impact if dispatch slips.'
           : 'Ready for operational assignment and route ownership.'}
       </p>
-      <button
-        type="button"
-        onClick={onDispatch}
-        disabled={saving}
-        className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-blue-600 via-sky-500 to-cyan-400 px-4 py-3 text-[12px] font-bold text-white shadow-[0_14px_30px_rgba(47,107,255,0.26)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
-      >
-        {saving ? 'Dispatching...' : 'Dispatch order'}
-        <ArrowRight className="h-4 w-4" />
-      </button>
+      {(canAssign || canUpdate) && !terminalOrder(order.status) && (
+        <div className={`mt-4 grid gap-2 ${canAssign && canUpdate ? 'grid-cols-2' : 'grid-cols-1'}`}>
+          {canUpdate && <button type="button" onClick={onEdit} disabled={saving} className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs font-bold text-slate-700 disabled:opacity-50 dark:border-white/10 dark:bg-white/[0.05] dark:text-white"><Pencil className="h-3.5 w-3.5" /> Edit</button>}
+          {canAssign && <button type="button" onClick={dispatchable ? onDispatch : onEdit} disabled={saving || order.status !== 'Queued'} title={!dispatchable && order.status === 'Queued' ? 'Complete route, driver, and vehicle assignment first' : undefined} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-blue-600 via-sky-500 to-cyan-400 px-4 py-3 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">
+            {saving ? 'Dispatching...' : dispatchable ? 'Dispatch' : 'Complete assignment'} <ArrowRight className="h-4 w-4" />
+          </button>}
+        </div>
+      )}
     </div>
   );
 }
 
-function ActionRouteCard({ route, onAdvance, onInspect, saving }: { route: LogisticsRoute; onAdvance: () => void; onInspect: () => void; saving: boolean }) {
+function ActionRouteCard({ route, onAdvance, onInspect, onEdit, saving, canUpdate }: { route: LogisticsRoute; onAdvance: () => void; onInspect: () => void; onEdit: () => void; saving: boolean; canUpdate: boolean }) {
+  const canProgress = canUpdate && ['Ready', 'Active', 'Delayed'].includes(route.status) && route.plannedStops > route.completedStops;
   return (
     <div className="rounded-[24px] border border-slate-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.92),rgba(245,248,255,0.78))] p-4 shadow-[0_10px_24px_rgba(37,99,235,0.05)] dark:border-white/10 dark:bg-white/[0.04]">
       <div className="flex items-start justify-between gap-3">
@@ -921,7 +1226,7 @@ function ActionRouteCard({ route, onAdvance, onInspect, saving }: { route: Logis
           ? `Next operational handoff is ${route.nextStop}.`
           : 'Planner view is ready for next-stop progression and route recovery.'}
       </p>
-      <div className="mt-4 grid grid-cols-2 gap-2">
+      <div className={`mt-4 grid gap-2 ${canUpdate ? 'grid-cols-3' : 'grid-cols-1'}`}>
         <button
           type="button"
           onClick={onInspect}
@@ -929,21 +1234,23 @@ function ActionRouteCard({ route, onAdvance, onInspect, saving }: { route: Logis
         >
           Inspect stops
         </button>
-        <button
+        {canUpdate && !terminalRoute(route.status) && <button type="button" onClick={onEdit} disabled={saving} className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-3 text-[11px] font-bold text-slate-700 disabled:opacity-50 dark:border-white/10 dark:bg-white/[0.05] dark:text-white"><Pencil className="h-3.5 w-3.5" /> Edit</button>}
+        {canUpdate && <button
           type="button"
           onClick={onAdvance}
-          disabled={saving}
+          disabled={saving || !canProgress}
           className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-sky-600 via-cyan-500 to-teal-400 px-4 py-3 text-[12px] font-bold text-white shadow-[0_14px_30px_rgba(47,107,255,0.26)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {saving ? 'Advancing...' : 'Advance route'}
           <ArrowRight className="h-4 w-4" />
-        </button>
+        </button>}
       </div>
     </div>
   );
 }
 
-function ActionStopCard({ stop, onConfirm, onAttempt, onReschedule, saving }: { stop: LogisticsStop; onConfirm: () => void; onAttempt: () => void; onReschedule: () => void; saving: boolean }) {
+function ActionStopCard({ stop, onConfirm, onAttempt, onReschedule, saving, canUpdate, canDeliver }: { stop: LogisticsStop; onConfirm: () => void; onAttempt: () => void; onReschedule: () => void; saving: boolean; canUpdate: boolean; canDeliver: boolean }) {
+  const terminal = terminalStop(stop.status);
   return (
     <div className="rounded-[24px] border border-slate-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.92),rgba(245,248,255,0.78))] p-4 shadow-[0_10px_24px_rgba(37,99,235,0.05)] dark:border-white/10 dark:bg-white/[0.04]">
       <div className="flex items-start justify-between gap-3">
@@ -967,32 +1274,45 @@ function ActionStopCard({ stop, onConfirm, onAttempt, onReschedule, saving }: { 
           ? 'This stop has an open exception — record an attempt, deliver or reschedule.'
           : 'Use proof, attempt, or reschedule actions to keep customer visibility current.'}
       </p>
-      <div className="mt-4 grid grid-cols-3 gap-2">
-        <button
+      {!terminal && (canUpdate || canDeliver) && <div className={`mt-4 grid gap-2 ${canUpdate && canDeliver ? 'grid-cols-3' : canUpdate ? 'grid-cols-2' : 'grid-cols-1'}`}>
+        {canUpdate && <button
           type="button"
           onClick={onAttempt}
           disabled={saving}
           className="inline-flex w-full items-center justify-center rounded-2xl border border-amber-200/70 bg-amber-50 px-3 py-3 text-[11px] font-bold text-amber-700 transition hover:border-amber-300 disabled:opacity-60"
         >
           Attempt
-        </button>
-        <button
+        </button>}
+        {canUpdate && <button
           type="button"
           onClick={onReschedule}
           disabled={saving}
           className="inline-flex w-full items-center justify-center rounded-2xl border border-slate-200/70 bg-white px-3 py-3 text-[11px] font-bold text-slate-700 transition hover:border-sky-300 disabled:opacity-60 dark:border-white/10 dark:bg-white/[0.05] dark:text-white"
         >
           Reschedule
-        </button>
-        <button
+        </button>}
+        {canDeliver && <button
           type="button"
           onClick={onConfirm}
           disabled={saving}
           className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-500 to-cyan-400 px-3 py-3 text-[11px] font-bold text-white shadow-[0_14px_30px_rgba(47,107,255,0.22)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {saving ? 'Saving...' : 'Deliver'}
-        </button>
-      </div>
+        </button>}
+      </div>}
     </div>
   );
+}
+
+function DarkField({ label, value, onChange, type = 'text', min, max, step, required = false, disabled = false }: { label: string; value: string; onChange: (value: string) => void; type?: string; min?: string; max?: string; step?: string; required?: boolean; disabled?: boolean }) {
+  return (
+    <label className="block text-[11px] font-semibold text-white/70">
+      {label}{required ? ' *' : ''}
+      <input type={type} min={min} max={max} step={step} required={required} disabled={disabled} value={value} onChange={(event) => onChange(event.target.value)} className="mt-1 w-full rounded-2xl border border-white/10 bg-white/[0.05] px-3 py-2.5 text-sm text-white outline-none disabled:cursor-not-allowed disabled:opacity-55" />
+    </label>
+  );
+}
+
+function ReadOnlyMessage() {
+  return <p className="rounded-2xl border border-white/10 bg-white/[0.04] p-3 text-xs leading-relaxed text-white/65">This is a read-only view. Ask an administrator for the required dispatch create or update permission to change records.</p>;
 }

@@ -1,7 +1,15 @@
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Net.Http.Headers;
 using Opstrax.Api.Middleware;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
+using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
 
 namespace Opstrax.Tests;
 
@@ -21,6 +29,40 @@ public class CsrfMiddlewareTests
         var cookieToken = ReadIssuedCookie(context);
         Assert.False(string.IsNullOrWhiteSpace(headerToken));
         Assert.Equal(cookieToken, headerToken);
+        Assert.Equal(headerToken, context.Items[CsrfMiddleware.TokenItemKey]);
+    }
+
+    [Fact]
+    public async Task ExistingBrowserCookie_IsPublishedAsAuthoritativeItemAndHeader()
+    {
+        const string token = "existing-cookie-token";
+        var context = CreateContext("GET", token);
+
+        await InvokeAsync(context);
+
+        Assert.Equal(token, context.Response.Headers[HeaderName].ToString());
+        Assert.Equal(token, context.Items[CsrfMiddleware.TokenItemKey]);
+        Assert.False(context.Response.Headers.ContainsKey(HeaderNames.SetCookie));
+    }
+
+    [Theory]
+    [InlineData("https", true, "None")]
+    [InlineData("http", false, "Lax")]
+    public async Task IssuedCookie_UsesSchemeAppropriateSecurityFlags(
+        string scheme,
+        bool secure,
+        string sameSite)
+    {
+        var context = CreateContext("GET");
+        context.Request.Scheme = scheme;
+
+        await InvokeAsync(context);
+
+        var setCookie = Assert.Single(context.Response.Headers.SetCookie).ToString();
+        Assert.Contains("max-age=28800", setCookie, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains($"samesite={sameSite}", setCookie, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("httponly", setCookie, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(secure, setCookie.Contains("secure", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -98,6 +140,68 @@ public class CsrfMiddlewareTests
 
         Assert.False(nextCalled);
         Assert.Equal(StatusCodes.Status403Forbidden, context.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task RealHttp_LoginTokenMatchesCookieAndHeader_ThenProtectsFleetMutation()
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseKestrel().UseUrls("http://127.0.0.1:0");
+        builder.Configuration["Cors:AllowedOrigins"] = "http://127.0.0.1";
+        var app = builder.Build();
+        app.UseMiddleware<CsrfMiddleware>();
+        app.MapPost("/api/auth/login", (HttpContext http) => Results.Ok(new
+        {
+            csrfToken = http.Items[CsrfMiddleware.TokenItemKey]?.ToString(),
+            token = "browser-session-token"
+        }));
+        app.MapPost("/api/fleet-tms/vehicles/1/service", () => Results.Ok(new { serviced = true }));
+
+        await app.StartAsync();
+        try
+        {
+            var address = app.Services.GetRequiredService<IServer>().Features
+                .Get<IServerAddressesFeature>()!.Addresses.Single();
+            var baseUri = new Uri(address);
+            var cookies = new CookieContainer();
+            using var client = new HttpClient(new HttpClientHandler { CookieContainer = cookies }) { BaseAddress = baseUri };
+
+            var login = await client.PostAsJsonAsync("/api/auth/login", new { email = "pilot@example.test", password = "secret" });
+            login.EnsureSuccessStatusCode();
+            var headerToken = login.Headers.GetValues(HeaderName).Single();
+            var cookieToken = Uri.UnescapeDataString(cookies.GetCookies(baseUri)[CookieName]!.Value);
+            using var loginJson = JsonDocument.Parse(await login.Content.ReadAsStringAsync());
+            var bodyToken = loginJson.RootElement.GetProperty("csrfToken").GetString();
+            Assert.False(string.IsNullOrWhiteSpace(bodyToken));
+            Assert.Equal(cookieToken, bodyToken);
+            Assert.Equal(headerToken, bodyToken);
+
+            // A subsequent login-style response must reuse the cookie already held
+            // by the browser, rather than silently replacing the body/header token.
+            var repeatLogin = await client.PostAsJsonAsync("/api/auth/login", new { email = "pilot@example.test", password = "secret" });
+            repeatLogin.EnsureSuccessStatusCode();
+            using var repeatJson = JsonDocument.Parse(await repeatLogin.Content.ReadAsStringAsync());
+            Assert.Equal(cookieToken, repeatLogin.Headers.GetValues(HeaderName).Single());
+            Assert.Equal(cookieToken, repeatJson.RootElement.GetProperty("csrfToken").GetString());
+            Assert.Equal(cookieToken, Uri.UnescapeDataString(cookies.GetCookies(baseUri)[CookieName]!.Value));
+
+            using var valid = new HttpRequestMessage(HttpMethod.Post, "/api/fleet-tms/vehicles/1/service")
+            { Content = JsonContent.Create(new { status = "Maintenance" }) };
+            valid.Headers.Add(HeaderName, bodyToken);
+            var validResponse = await client.SendAsync(valid);
+            Assert.Equal(HttpStatusCode.OK, validResponse.StatusCode);
+
+            using var invalid = new HttpRequestMessage(HttpMethod.Post, "/api/fleet-tms/vehicles/1/service")
+            { Content = JsonContent.Create(new { status = "Maintenance" }) };
+            invalid.Headers.Add(HeaderName, "wrong-token");
+            var invalidResponse = await client.SendAsync(invalid);
+            Assert.Equal(HttpStatusCode.Forbidden, invalidResponse.StatusCode);
+        }
+        finally
+        {
+            await app.StopAsync();
+            await app.DisposeAsync();
+        }
     }
 
     private static DefaultHttpContext CreateContext(

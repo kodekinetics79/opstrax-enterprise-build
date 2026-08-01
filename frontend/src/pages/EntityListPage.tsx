@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { tokens, chart } from "@/styles/tokens";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Activity, AlertTriangle, Bot, ClipboardCheck, Download, Edit3, FileDown, FileText, Plus, Save, Search, Sparkles, Target, Trash2, Upload, UserCheck, X } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 import { AiInsightCard, DataTable, EmptyState, ErrorState, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, exportCsv, labelize } from "@/components/ui";
 import { DriverIntelligenceBoard, triageOf, type Triage } from "@/components/DriverIntelligenceBoard";
@@ -335,6 +335,7 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
 
   if (list.isLoading) return <LoadingState />;
   if (list.isError) return <ErrorState message={list.error instanceof Error ? list.error.message : `Unable to load ${cfg.title.toLowerCase()}.`} />;
+  const mutationError = saveMutation.error || deleteMutation.error || assignMutation.error;
 
   return (
     <div className="flex h-full flex-col gap-6 overflow-y-auto">
@@ -362,6 +363,11 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
           </>
         }
       />
+      {mutationError ? (
+        <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          {mutationError instanceof Error ? mutationError.message : "The requested change could not be completed."}
+        </div>
+      ) : null}
 
       {kind === "drivers" ? (
         <DriverIntelligenceBoard
@@ -994,16 +1000,18 @@ function DecisionBrief({ config: cfg, record }: { config: EntityConfig; record: 
 
 function pickBestDriver(rows: AnyRecord[]) {
   const score = (r: AnyRecord) => Number(r.driverReadinessScore ?? r.readinessScore ?? r.safetyScore ?? 0);
-  const unassigned = rows.filter(r => !r.assignedVehicleId && !r.assigned_vehicle_id && (r.status === "Available" || !r.assignedVehicleId));
-  const pool = unassigned.length > 0 ? unassigned : rows;
-  return [...pool].sort((a, b) => score(b) - score(a))[0];
+  const eligible = rows.filter(r => !r.assignedVehicleId && !r.assigned_vehicle_id &&
+    ["Available", "Idle"].includes(String(r.status)) && Number(r.safetyScore ?? r.safety_score ?? 0) >= 65 &&
+    Number(r.activeAssignmentCount ?? r.active_assignment_count ?? 0) === 0);
+  return [...eligible].sort((a, b) => score(b) - score(a))[0];
 }
 
 function pickBestVehicle(rows: AnyRecord[]) {
   const score = (r: AnyRecord) => Number(r.fleetReadinessScore ?? r.readinessScore ?? r.dataQualityScore ?? 0);
-  const unassigned = rows.filter(r => !r.assignedDriverId && !r.assigned_driver_id && (r.status === "Available" || !r.assignedDriverId));
-  const pool = unassigned.length > 0 ? unassigned : rows;
-  return [...pool].sort((a, b) => score(b) - score(a))[0];
+  const eligible = rows.filter(r => !r.assignedDriverId && !r.assigned_driver_id &&
+    ["Available", "Idle"].includes(String(r.status)) && !Boolean(r.outOfService ?? r.out_of_service) &&
+    Number(r.activeAssignmentCount ?? r.active_assignment_count ?? 0) === 0);
+  return [...eligible].sort((a, b) => score(b) - score(a))[0];
 }
 
 function riskValue(row: AnyRecord) {

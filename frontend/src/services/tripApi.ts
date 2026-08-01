@@ -28,4 +28,7 @@ export const tripApi = {
 
   exception: (id: number | string, notes?: string) =>
     unwrap<AnyRecord>(apiClient.post(`/api/trips/${id}/exception`, { notes })),
+
+  cancel: (id: number | string, reason: string) =>
+    unwrap<AnyRecord>(apiClient.post(`/api/trips/${id}/cancel`, { reason })),
 };

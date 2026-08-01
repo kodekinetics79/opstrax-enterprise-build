@@ -125,13 +125,18 @@ public sealed class TenantIsolationAdversarialTests
     public void ComplianceHosGeofenceAndProofReads_UseAuthenticatedTenantPredicates()
     {
         var source = EndpointSource();
+        var proof = Block(source,
+            "private static async Task<IResult> GetJobProof(",
+            "private static Task<IResult> JobsImportPreview(");
 
         Assert.Contains("WHERE cv.company_id=@cid", source, StringComparison.Ordinal);
         Assert.Contains("WHERE cap.company_id=@cid", source, StringComparison.Ordinal);
         Assert.Contains("WHERE hc.company_id=@cid", source, StringComparison.Ordinal);
         Assert.Contains("WHERE hl.driver_id=@id AND hl.company_id=@cid", source, StringComparison.Ordinal);
         Assert.Contains("JOIN geofences g ON g.id=ge.geofence_id AND g.company_id=@cid", source, StringComparison.Ordinal);
-        Assert.Contains("JOIN jobs j ON j.id=pod.job_id AND j.company_id=@cid", source, StringComparison.Ordinal);
+        AssertOrdered(proof, "JobInAuthorizedScope", "FROM proof_of_delivery");
+        Assert.Contains("company_id=@companyId AND job_id=@id", proof, StringComparison.Ordinal);
+        Assert.Contains("AND branch_id=@branchId", source, StringComparison.Ordinal);
         Assert.Contains("WHERE tenant_id=@cid LIMIT 1", source, StringComparison.Ordinal);
         Assert.Contains("WHERE user_id=@uid LIMIT 1", source, StringComparison.Ordinal);
     }

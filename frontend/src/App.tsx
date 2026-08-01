@@ -1,5 +1,5 @@
 import { lazy, Suspense, type ReactNode } from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes } from "react-router";
 import { AppShell } from "@/layouts/AppShell";
 import { useAuth } from "@/hooks/useAuth";
 import { FeatureFlagsProvider, useFlag } from "@/hooks/useFeatureFlags";
@@ -91,7 +91,6 @@ const FleetWorkspacePage = lazy(() => import("@/pages/FleetWorkspacePage").then(
 const PublicShipmentTrackingPage = lazy(() => import("@/pages/PublicShipmentTrackingPage").then((module) => ({ default: module.PublicShipmentTrackingPage })));
 const FleetColdChainPage = lazy(() => import("@/pages/FleetColdChainPage").then((module) => ({ default: module.FleetColdChainPage })));
 const FleetAssetManagementPage = lazy(() => import("@/pages/FleetAssetManagementPage").then((module) => ({ default: module.FleetAssetManagementPage })));
-const FleetSaudiReadinessPage = lazy(() => import("@/pages/FleetSaudiReadinessPage").then((module) => ({ default: module.FleetSaudiReadinessPage })));
 const FleetCompliancePage = lazy(() => import("@/pages/FleetCompliancePage").then((module) => ({ default: module.FleetCompliancePage })));
 const DispatchWorkspacePage = lazy(() => import("@/pages/DispatchWorkspacePage").then((module) => ({ default: module.DispatchWorkspacePage })));
 const EntityListPage = lazy(() => import("@/pages/EntityListPage").then((module) => ({ default: module.EntityListPage })));
@@ -267,7 +266,7 @@ export default function App() {
         <Route path="/fleet-workspace" element={<RequirePermission permission="fleet:view"><FleetWorkspacePage mode="command" /></RequirePermission>} />
         <Route path="/fleet-cold-chain" element={<RequirePermission permission="fleet:view"><FleetColdChainPage /></RequirePermission>} />
         <Route path="/fleet-assets" element={<RequirePermission permission="fleet:view"><FleetAssetManagementPage /></RequirePermission>} />
-        <Route path="/fleet-saudi-readiness" element={<RequirePermission permission="fleet:view"><RequireRegion countries={GCC_COUNTRIES} moduleTitle="Saudi Readiness"><FleetSaudiReadinessPage /></RequireRegion></RequirePermission>} />
+        <Route path="/fleet-saudi-readiness" element={<RequirePermission permission="compliance:view"><RequireRegion countries={GCC_COUNTRIES} moduleTitle="Saudi Readiness"><FleetCompliancePage initialTab="saudi" /></RequireRegion></RequirePermission>} />
         <Route path="/fleet-compliance" element={<RequirePermission permission="compliance:view"><FleetCompliancePage /></RequirePermission>} />
         <Route path="/logistics-workspace" element={<RequirePermission permission="dispatch:view"><DispatchWorkspacePage mode="dispatch" /></RequirePermission>} />
 
@@ -326,7 +325,7 @@ export default function App() {
         {/* ── Fleet Ownership / Assignments ── */}
         <Route path="/owners" element={<Navigate to="/assignments/owners" replace />} />
         <Route path="/assignments" element={<Navigate to="/assignments/overview" replace />} />
-        <Route path="/assignments/*" element={<RequirePermission permission="fleet:view"><FleetAssignmentsPage /></RequirePermission>} />
+        <Route path="/assignments/*" element={<RequirePermission permission="dispatch:view"><FleetAssignmentsPage /></RequirePermission>} />
 
         {/* ── Finance ── */}
         <Route path="/fuel-idling" element={<RequirePermission permission="fuel:view"><Batch5FinancePage kind="fuel" /></RequirePermission>} />

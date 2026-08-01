@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.22.0"
   },
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 10000 --strictPort",
@@ -19,10 +19,10 @@
     "axios": "^1.13.2",
     "leaflet": "^1.9.4",
     "lucide-react": "^0.562.0",
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
     "react-leaflet": "^5.0.0",
-    "react-router-dom": "^7.11.0",
+    "react-router": "8.3.0",
     "recharts": "^3.5.0",
     "tailwindcss": "^4.1.18"
   },

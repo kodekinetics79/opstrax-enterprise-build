@@ -4,7 +4,7 @@ import {
   Activity, AlertTriangle, BellRing, ChevronRight, Clock, Gauge as GaugeIcon,
   MapPin, Package, Radio, ShieldAlert, Truck, Wifi, WifiOff, Wrench, Zap,
 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { LoadingState } from "@/components/ui";
 import { vehiclesApi } from "@/services/vehiclesApi";
 import { driversApi } from "@/services/driversApi";
