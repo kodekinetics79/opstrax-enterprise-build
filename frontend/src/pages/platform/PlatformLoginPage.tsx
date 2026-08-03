@@ -18,7 +18,11 @@ export function PlatformLoginPage() {
 
   const loginWith = async (nextEmail: string, nextPassword: string) => {
     setError(null);
-    setMfaRequired(false);
+    // Keep the MFA input visible across a failed code attempt: clear the flag only on a
+    // fresh password submit (no code entered). Resetting it unconditionally collapsed the
+    // field whenever a wrong code returned a message other than "MFA code required",
+    // stranding the user mid-authentication.
+    if (!mfaCode.trim()) setMfaRequired(false);
     setLoading(true);
     try {
       const session = await platformApi.login(nextEmail, nextPassword, mfaCode.trim() || undefined);

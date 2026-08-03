@@ -138,6 +138,10 @@ export type DeviceCommandRecord = {
   warrantyStatus: string;
   supportStatus: string;
   lifecycleStatus: string;
+  // The raw eld_devices.status (Active / Diagnostic / Malfunction / Provisioning / …).
+  // Recovery actions gate on THIS, not the derived connectionStatus, to match the
+  // backend mark/resolve-malfunction status contract.
+  eldStatus: string;
   archivedAt: string | null;
   linkedVehicleStatus: string;
   linkedVehicleLocation: string;
@@ -148,11 +152,43 @@ export type DeviceCommandRecord = {
   complianceSummary: string;
 };
 
+// ── Wire-format normalization ─────────────────────────────────────────────────────────
+// The .NET API returns db.QueryAsync rows whose SQL aliases are camel-cased by
+// Data/Database.cs (ToCamel: device_serial -> deviceSerial, row_version -> rowVersion, …),
+// and System.Text.Json emits those dictionary keys verbatim (there is no
+// DictionaryKeyPolicy override in Program.cs). This layer reads snake_case keys, so
+// without normalization every multi-word field resolves to `undefined` and the whole
+// device / GPS / diagnostics surface renders blank. normalizeKeys makes each row
+// readable by BOTH casings (additive snake_case aliases) so the reads below work
+// regardless of which casing the backend emits — and stays correct if it ever changes.
+function snakeCaseKey(key: string): string {
+  return key.replace(/([A-Z])/g, "_$1").replace(/_{2,}/g, "_").replace(/^_/, "").toLowerCase();
+}
+
+function normalizeKeys<T extends AnyRecord>(row: T): T {
+  if (!row || typeof row !== "object" || Array.isArray(row)) return row;
+  const out: AnyRecord = { ...row };
+  for (const [key, value] of Object.entries(row)) {
+    const snake = snakeCaseKey(key);
+    if (snake !== key && out[snake] === undefined) out[snake] = value;
+  }
+  return out as T;
+}
+
 function parseRowVersion(value: unknown): number | undefined {
   if (value == null) return undefined;
   const numeric = Number(value);
   if (Number.isInteger(numeric) && numeric > 0) return numeric;
   return undefined;
+}
+
+// The backend binds vehicle/driver ids to `long?` and System.Text.Json does NOT coerce a
+// JSON string to a number (no NumberHandling override), so any non-numeric id — or even a
+// numeric id sent as a string — 400s. Coerce to a real number or null before sending.
+function toNumericId(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  const parsed = typeof value === "number" ? value : Number(String(value).trim());
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
 function normalizeMalfunctionInput(notes: string): { malfunctionCode: string; malfunctionDescription: string } {
@@ -378,11 +414,12 @@ function deriveHealthScore(signals: HealthSignals): number {
 // Every field is sourced from the real /api/telemetry/devices row (snake_case) or an
 // honest "—"/"Unknown" marker. No seed consultation, no fabricated telemetry defaults.
 function mapDeviceRow(
-  row: AnyRecord,
+  rawRow: AnyRecord,
   faultCountBySerial: Map<string, number>,
   alertCountBySerial: Map<string, number>,
   session: UserSession | null,
 ): DeviceCommandRecord {
+  const row = normalizeKeys(rawRow);
   const serial = String(row.device_serial ?? "");
   const secondsSincePing = row.seconds_since_ping == null ? null : Number(row.seconds_since_ping);
   const revoked = Boolean(row.revoked_at);
@@ -444,6 +481,7 @@ function mapDeviceRow(
     warrantyStatus: "—",
     supportStatus: "—",
     lifecycleStatus: revoked ? "Archived" : String(row.status ?? "Unknown"),
+    eldStatus: String(row.status ?? "Unknown"),
     archivedAt: row.revoked_at ? String(row.revoked_at) : null,
     // Cross-links: only real fault/alert counts are honest here.
     linkedVehicleStatus: String(row.vehicle_status ?? "—"),
@@ -836,11 +874,11 @@ async function fetchDeviceRows(): Promise<AnyRecord[]> {
 }
 
 async function fetchActiveFaults(): Promise<AnyRecord[]> {
-  return unwrap<AnyRecord[]>(apiClient.get("/api/maintenance/fault-codes", { params: { status: "active" } }));
+  return (await unwrap<AnyRecord[]>(apiClient.get("/api/maintenance/fault-codes", { params: { status: "active" } }))).map(normalizeKeys);
 }
 
 async function fetchOpenAlerts(): Promise<AnyRecord[]> {
-  return unwrap<AnyRecord[]>(apiClient.get("/api/telemetry/alerts", { params: { status: "Open" } }));
+  return (await unwrap<AnyRecord[]>(apiClient.get("/api/telemetry/alerts", { params: { status: "Open" } }))).map(normalizeKeys);
 }
 
 function canReadEntitledFeed(session: UserSession | null, permission: string, entitlement: "maintenance" | "telematics") {
@@ -857,7 +895,7 @@ async function fetchOpenAlertsIfAuthorized(session: UserSession | null): Promise
 }
 
 async function fetchPositions(): Promise<AnyRecord[]> {
-  return unwrap<AnyRecord[]>(apiClient.get("/api/telemetry/positions"));
+  return (await unwrap<AnyRecord[]>(apiClient.get("/api/telemetry/positions"))).map(normalizeKeys);
 }
 
 // Assemble scoped DeviceCommandRecord[] from the live device + fault + alert feeds.
@@ -886,7 +924,7 @@ export const telematicsService = {
       unwrap<AnyRecord>(apiClient.get(`/api/telemetry/devices/${id}`)),
       fetchActiveFaultsIfAuthorized(session),
       canReadEntitledFeed(session, "telemetry.alerts.read", "telematics")
-        ? unwrap<AnyRecord[]>(apiClient.get("/api/telemetry/alerts", { params: { status: "All" } }))
+        ? unwrap<AnyRecord[]>(apiClient.get("/api/telemetry/alerts", { params: { status: "All" } })).then((rows) => rows.map(normalizeKeys))
         : Promise.resolve([]),
       fetchPositions(),
     ]);
@@ -1057,7 +1095,7 @@ export const telematicsService = {
   // (last_seen_at set / a live position exists). Drives the "Waiting for first
   // heartbeat…" → "Connected" pairing state in the connect dialog.
   async getDeviceConnectionState(deviceId: string | number): Promise<{ connected: boolean; lastSeenAt: string | null; status: string }> {
-    const row = await unwrap<AnyRecord>(apiClient.get(`/api/telemetry/devices/${deviceId}`));
+    const row = normalizeKeys(await unwrap<AnyRecord>(apiClient.get(`/api/telemetry/devices/${deviceId}`)));
     const lastSeenAt = row.last_seen_at ? String(row.last_seen_at) : null;
     const status = String(row.status ?? "Unknown");
     // Connected once the device has checked in at least once and is not revoked/suspended.
@@ -1069,8 +1107,10 @@ export const telematicsService = {
     const session = getSession();
     ensureManagementAccess(session);
     // POST /api/telemetry/devices/{id}/assign {vehicleId, driverId}
+    const numericVehicleId = toNumericId(vehicleId);
+    if (numericVehicleId == null) throw new Error("Select a valid vehicle to assign this device.");
     await unwrap<AnyRecord>(apiClient.post(`/api/telemetry/devices/${deviceId}/assign`, {
-      vehicleId,
+      vehicleId: numericVehicleId,
       driverId: null,
     }));
     const updated = await unwrap<AnyRecord>(apiClient.get(`/api/telemetry/devices/${deviceId}`));
@@ -1130,8 +1170,8 @@ export const telematicsService = {
     // (vehicle/driver). Apply it when the payload changes assignment, then re-read.
     if (payload.assignedVehicleId != null || payload.vehicleId != null || payload.assignedDriverId != null) {
       await unwrap<AnyRecord>(apiClient.post(`/api/telemetry/devices/${id}/assign`, {
-        vehicleId: payload.assignedVehicleId ?? payload.vehicleId ?? null,
-        driverId: payload.assignedDriverId ?? payload.driverId ?? null,
+        vehicleId: toNumericId(payload.assignedVehicleId ?? payload.vehicleId),
+        driverId: toNumericId(payload.assignedDriverId ?? payload.driverId),
       }));
     }
     // TODO: no endpoint persists deviceName/type/provider/firmware edits; those fields
@@ -1204,7 +1244,7 @@ export const telematicsService = {
     // persists the task via maintenanceApi.create. Here we resolve the real device so
     // the returned title/note reference the actual unit (no fabricated data). The task
     // itself is created against the real maintenance API downstream.
-    const device = await unwrap<AnyRecord>(apiClient.get(`/api/telemetry/devices/${deviceId}`));
+    const device = normalizeKeys(await unwrap<AnyRecord>(apiClient.get(`/api/telemetry/devices/${deviceId}`)));
     const label = String(device.vehicle_code ?? device.device_serial ?? deviceId);
     return {
       success: true as const,

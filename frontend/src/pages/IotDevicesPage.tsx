@@ -158,7 +158,7 @@ function activeTabCount(tab: DeviceTab, row: DeviceCommandRecord) {
   if (tab === "unassigned") return !row.assignedVehicleCode;
   if (tab === "offline") return /offline/i.test(row.connectionStatus);
   if (tab === "attention") return /attention|offline/i.test(row.connectionStatus) || row.openAlertCount > 0;
-  if (tab === "firmware") return row.firmwareVersion !== row.targetFirmwareVersion;
+  if (tab === "firmware") return true; // read-only current-version listing; no OTA/target diff exists in this pilot
   if (tab === "provisioning") return /provision|awaiting/i.test(row.connectionStatus) || /awaiting|warning/i.test(row.installStatus);
   if (tab === "diagnostics") return true;
   if (tab === "installations") return true;
@@ -192,6 +192,7 @@ function buildActionContracts(
     canDelete,
     canAssign,
     canDiagnostics,
+    canRecover,
     canFirmware,
     onEdit,
     onAssign,
@@ -208,6 +209,7 @@ function buildActionContracts(
     canDelete: boolean;
     canAssign: boolean;
     canDiagnostics: boolean;
+    canRecover: boolean;
     canFirmware: boolean;
     onEdit: () => void;
     onAssign: () => void;
@@ -221,7 +223,14 @@ function buildActionContracts(
     onResolve: () => void;
   },
 ) {
-  const inAttention = /offline|attention/i.test(device.connectionStatus);
+  // Recovery actions gate on the device's REAL ELD status, not the derived
+  // connectionStatus: resolve-malfunction accepts only Malfunction/Diagnostic and
+  // mark-malfunction accepts only Active/Diagnostic. Gating on connectionStatus made an
+  // Active-but-stale device offer "Resolve" -> 409, and left "Needs Attention" perpetually
+  // disabled. inRecovery drives Resolve; markEligible drives Needs Attention.
+  const eldStatus = String(device.eldStatus ?? "").toLowerCase();
+  const inRecovery = /malfunction|diagnostic/.test(eldStatus);
+  const markEligible = /active|diagnostic/.test(eldStatus);
   const hasCurrentVehicle = Boolean(device.assignedVehicleCode && device.assignedVehicleCode !== "Unassigned");
 
   const contracts: DeviceActionContract[] = [
@@ -288,16 +297,18 @@ function buildActionContracts(
       onClick: onScheduleFirmware,
     },
     {
-      key: inAttention ? "resolve" : "needs-attention",
-      label: inAttention ? "Resolve" : "Needs Attention",
-      icon: inAttention ? <ShieldCheck className="h-4 w-4" /> : <Activity className="h-4 w-4" />,
-      state: canDiagnostics ? (inAttention ? "ready" : "state-blocked") : "permission-blocked",
-      reason: canDiagnostics
-        ? inAttention
-          ? "Permission and state both allow recovery resolution."
-          : "Device must be in offline/attention state before resolve is available."
-        : "Requires TELEMATICS_DEVICES_DIAGNOSTICS.",
-      onClick: inAttention ? onResolve : onFlagAttention,
+      key: inRecovery ? "resolve" : "needs-attention",
+      label: inRecovery ? "Resolve" : "Needs Attention",
+      icon: inRecovery ? <ShieldCheck className="h-4 w-4" /> : <Activity className="h-4 w-4" />,
+      state: !canRecover ? "permission-blocked" : inRecovery || markEligible ? "ready" : "state-blocked",
+      reason: !canRecover
+        ? "Requires a compliance (compliance:update / compliance:manage) or telematics:manage permission."
+        : inRecovery
+          ? "Device is in recovery (Malfunction/Diagnostic) — resolve is available."
+          : markEligible
+            ? "Device is Active — you can flag it for malfunction review."
+            : `Recovery is not available while the device is ${device.eldStatus || "in this state"}.`,
+      onClick: inRecovery ? onResolve : onFlagAttention,
     },
     {
       key: "archive",
@@ -348,6 +359,13 @@ export function IotDevicesPage() {
   const canDelete = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_DELETE);
   const canAssign = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_ASSIGN);
   const canDiagnostics = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_DIAGNOSTICS);
+  // Recovery (mark/resolve malfunction) is gated server-side on
+  // compliance:update | compliance:manage | telematics:manage — NOT maintenance:manage,
+  // which the broader DIAGNOSTICS alias set includes. Gate the UI on the compliance set so
+  // a maintenance-manager never sees an enabled recovery button that then 403s. (A pure
+  // telematics:manage admin without any compliance grant sees a disabled button rather than
+  // a 403 — the safe failure direction.)
+  const canRecover = hasPermission(PERMISSIONS.COMPLIANCE_UPDATE);
   const canFirmware = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_FIRMWARE);
   const canExport = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_EXPORT);
   const canManageProviders = hasPermission(PERMISSIONS.TELEMATICS_PROVIDERS_MANAGE);
@@ -366,7 +384,7 @@ export function IotDevicesPage() {
   // Populated ONLY by a real provisionDevice() response.
   const [provisionResult, setProvisionResult] = useState<DeviceProvisionResult | null>(null);
   const [assignTarget, setAssignTarget] = useState<DeviceCommandRecord | null>(null);
-  const [assignVehicleCode, setAssignVehicleCode] = useState("");
+  const [assignVehicleId, setAssignVehicleId] = useState("");
   const [firmwareTarget, setFirmwareTarget] = useState<DeviceCommandRecord | null>(null);
   const [firmwareForm, setFirmwareForm] = useState<FirmwareFormState>({ targetVersion: "", scheduledFor: "" });
   const [attentionTarget, setAttentionTarget] = useState<DeviceCommandRecord | null>(null);
@@ -431,7 +449,7 @@ export function IotDevicesPage() {
     mutationFn: ({ deviceId, vehicleId }: { deviceId: string | number; vehicleId: string }) => telematicsService.assignDeviceToVehicle(deviceId, vehicleId),
     onSuccess: async () => {
       setAssignTarget(null);
-      setAssignVehicleCode("");
+      setAssignVehicleId("");
       setNotice("Device assigned successfully.");
       await refreshAll();
     },
@@ -744,7 +762,7 @@ export function IotDevicesPage() {
                           <div className="absolute right-0 z-50 mt-1 w-48 rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
                             <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50" onClick={() => { setSelectedId(row.id); setOpenMenuId(null); }}>View Details</button>
                             {canUpdate && <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50" onClick={() => { openEdit(row); setOpenMenuId(null); }}>Edit Device</button>}
-                            {canAssign && <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50" onClick={() => { setAssignTarget(row); setAssignVehicleCode(row.assignedVehicleCode || ""); setOpenMenuId(null); }}>Assign to Vehicle</button>}
+                            {canAssign && <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50" onClick={() => { setAssignTarget(row); setAssignVehicleId(row.assignedVehicleId || ""); setOpenMenuId(null); }}>Assign to Vehicle</button>}
                             {canDiagnostics && <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50" onClick={() => { navigate("/obd-j1939"); setOpenMenuId(null); }}>View Diagnostics</button>}
                             <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50" onClick={() => { refreshMut.mutate(row.id); setOpenMenuId(null); }}>Refresh Status</button>
                             {canFirmware && <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-400" disabled title="OTA scheduling is not connected in this pilot.">Firmware scheduling unavailable</button>}
@@ -779,12 +797,13 @@ export function IotDevicesPage() {
 	                      canDelete,
 	                      canAssign,
 	                      canDiagnostics,
+	                      canRecover,
 	                      canFirmware,
 	                      onEdit: () => openEdit(selectedRecord),
 	                      onAssign: () => {
 	                        if (selectedRecord) {
 	                          setAssignTarget(selectedRecord);
-	                          setAssignVehicleCode(selectedRecord.assignedVehicleCode || "");
+	                          setAssignVehicleId(selectedRecord.assignedVehicleId || "");
 	                        }
 	                      },
 	                      onUnassign: () => canAssign && unassignMut.mutate(selectedRecord.id),
@@ -798,9 +817,9 @@ export function IotDevicesPage() {
 	                          setFirmwareForm({ targetVersion: selectedRecord.targetFirmwareVersion, scheduledFor: "" });
 	                        }
 	                      },
-	                      onFlagAttention: () => setAttentionTarget(selectedRecord),
+	                      onFlagAttention: () => canRecover && setAttentionTarget(selectedRecord),
 	                      onResolve: () =>
-	                        canDiagnostics && resolveMut.mutate({ id: selectedRecord.id, rowVersion: selectedRecord.rowVersion }),
+	                        canRecover && resolveMut.mutate({ id: selectedRecord.id, rowVersion: selectedRecord.rowVersion }),
 	                    })
 	                    : []
 	                }
@@ -868,16 +887,16 @@ export function IotDevicesPage() {
           onClose={() => setAssignTarget(null)}
           onSubmit={(event) => {
             event.preventDefault();
-            assignMut.mutate({ deviceId: assignTarget.id, vehicleId: assignVehicleCode });
+            assignMut.mutate({ deviceId: assignTarget.id, vehicleId: assignVehicleId });
           }}
           submitLabel="Assign Device"
           busy={assignMut.isPending}
         >
           <FormField label="Vehicle">
-            <select className="field w-full" value={assignVehicleCode} onChange={(event) => setAssignVehicleCode(event.target.value)} required>
+            <select className="field w-full" value={assignVehicleId} onChange={(event) => setAssignVehicleId(event.target.value)} required>
               <option value="">Select a vehicle</option>
               {vehicleOptions.map((vehicle) => (
-                <option key={String(vehicle.id ?? vehicle.vehicleId)} value={String(vehicle.vehicleCode ?? vehicle.vehicleId)}>
+                <option key={String(vehicle.id ?? vehicle.vehicleId)} value={String(vehicle.id ?? vehicle.vehicleId)}>
                   {String(vehicle.vehicleCode ?? vehicle.vehicleId)} · {String(vehicle.status ?? "Fleet asset")}
                 </option>
               ))}
