@@ -56,7 +56,7 @@ public sealed class PlatformSuperAdminReconciler(Database db, ILogger<PlatformSu
         }
 
         // Same floor the accept-invite path enforces — never install a weak bootstrap password.
-        if (password.Length < 12 || !password.Any(char.IsLetter) || !password.Any(char.IsDigit))
+        if (!MeetsPasswordPolicy(password))
         {
             logger.LogWarning(new EventId(0, "platform_superadmin_reset_weak"),
                 "PLATFORM_SUPERADMIN_RESET is set but PLATFORM_SUPERADMIN_PASSWORD does not meet the policy " +
@@ -127,9 +127,7 @@ public sealed class PlatformSuperAdminReconciler(Database db, ILogger<PlatformSu
 
         // Idempotent: a healthy, in-sync account is a no-op, so leaving the flag armed does not
         // revoke sessions or spam the log on every deploy.
-        if (passwordMatches && string.Equals(status, "Active", StringComparison.OrdinalIgnoreCase)
-            && string.Equals(roleKey, SuperAdminRoleKey, StringComparison.OrdinalIgnoreCase)
-            && !hasPendingInvite)
+        if (!NeedsReconcile(passwordMatches, status, roleKey, hasPendingInvite))
         {
             logger.LogInformation(new EventId(0, "platform_superadmin_reset_noop"),
                 "PLATFORM_SUPERADMIN_RESET is armed but {Email} already matches the env password and is a healthy, " +
@@ -178,8 +176,30 @@ public sealed class PlatformSuperAdminReconciler(Database db, ILogger<PlatformSu
                     System.Text.Json.JsonSerializer.Serialize(new { reason = "PLATFORM_SUPERADMIN_RESET", outcome, sessionsRevoked }));
             }, ct);
 
-    private static bool IsTruthy(string? v) =>
+    // ── Pure decision logic (no DB / no env) — unit-tested directly ──────────────
+
+    /// <summary>The reset is armed only when the flag is an explicit truthy token.</summary>
+    internal static bool IsTruthy(string? v) =>
         v is not null && (v.Equals("true", StringComparison.OrdinalIgnoreCase)
                           || v.Equals("1", StringComparison.Ordinal)
                           || v.Equals("yes", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Bootstrap password floor — mirrors the accept-invite policy (≥12 chars, letter + digit).</summary>
+    internal static bool MeetsPasswordPolicy(string? password) =>
+        !string.IsNullOrEmpty(password)
+        && password.Length >= 12
+        && password.Any(char.IsLetter)
+        && password.Any(char.IsDigit);
+
+    /// <summary>
+    /// The idempotent core: an existing bootstrap admin needs reconciling ONLY when it has
+    /// drifted from the intended state — the env password no longer verifies, the account is
+    /// not Active, it is not the super-admin role, or an invite is still pending. A healthy,
+    /// in-sync account returns false so an armed flag is a harmless no-op on every boot.
+    /// </summary>
+    internal static bool NeedsReconcile(bool passwordMatches, string? status, string? roleKey, bool hasPendingInvite) =>
+        !(passwordMatches
+          && string.Equals(status, "Active", StringComparison.OrdinalIgnoreCase)
+          && string.Equals(roleKey, SuperAdminRoleKey, StringComparison.OrdinalIgnoreCase)
+          && !hasPendingInvite);
 }
