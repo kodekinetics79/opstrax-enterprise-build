@@ -7,6 +7,15 @@ const isLocalhost =
   typeof window !== "undefined" &&
   /^(localhost|127\.0\.0\.1|\[::1\])$/.test(window.location.hostname);
 
+const isVercelDeployment =
+  typeof window !== "undefined" &&
+  /\.vercel\.app$/i.test(window.location.hostname);
+
+// Keep localhost behavior for dev, but in Vercel production builds we harden
+// toward the managed backend so auth/login does not silently hit the same-origin
+// SPA host (which will 405 the API path).
+const vercelApiFallback = isVercelDeployment ? "https://osptrax-fleet-management.onrender.com" : "";
+
 // Local Vite development defaults to the published API port. A deployed build with
 // no explicit API URL uses the current origin instead of sending customer traffic to
 // localhost. The production nginx image deliberately supplies "/" and proxies /api
@@ -15,7 +24,7 @@ const isLocalhost =
 export const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ||
   import.meta.env.VITE_DOTNET_API_URL ||
-  (isLocalhost ? "http://localhost:8088" : "");
+  (isLocalhost ? "http://localhost:8088" : vercelApiFallback);
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
