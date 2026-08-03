@@ -10105,9 +10105,25 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
           COALESCE(is_custom,false) is_custom, updated_at,
           last_tested_at, last_test_ok, last_test_message";
 
+    // Server-side module-entitlement gate for the connector / Integration Hub surface.
+    // RBAC alone let a package_allowlist tenant WITHOUT the Integrations add-on read and
+    // exercise connectors (incl. via the Device Health provider-audit path). Mirrors
+    // FleetTmsEndpoints.RequireModule; legacy_allow tenants are unaffected (CheckModuleAsync
+    // returns allowed unless the module is explicitly disabled for the tenant).
+    private static async Task<IResult?> RequireIntegrationsModule(HttpContext http, Database db, CancellationToken ct)
+    {
+        var decision = await new Opstrax.Api.Services.EntitlementService(db)
+            .CheckModuleAsync(GetCompanyId(http), Opstrax.Api.Services.RevenueSchemaService.Modules.Integrations, ct);
+        return decision.Allowed
+            ? null
+            : Results.Json(ApiResponse<object>.Fail("Feature not entitled", decision.Reason ?? Opstrax.Api.Services.RevenueSchemaService.Modules.Integrations),
+                statusCode: StatusCodes.Status403Forbidden);
+    }
+
     private static async Task<IResult> IntegrationsList(HttpContext http, Database db, CancellationToken ct)
     {
         if (IntegrationsViewGuard(http) is { } denied) return denied;
+        if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
         var companyId = GetCompanyId(http);
         // Hydrate the connector catalog for this tenant on first read (idempotent,
         // never overwrites existing/custom rows). This is why the module is never
@@ -10269,6 +10285,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     private static async Task<IResult> IntegrationDetail(HttpContext http, long id, Database db, CancellationToken ct)
     {
         if (IntegrationsViewGuard(http) is { } denied) return denied;
+        if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
         var companyId = GetCompanyId(http);
         var record = await db.QuerySingleAsync(
             $"SELECT {IntegrationCols} FROM integrations WHERE company_id=@cid AND id=@id LIMIT 1",
@@ -10293,6 +10310,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     private static async Task<IResult> CreateIntegration(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
         if (IntegrationsManageGuard(http) is { } denied) return denied;
+        if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
         var companyId = GetCompanyId(http);
         var name = Get(body, "name")?.ToString()?.Trim();
         if (string.IsNullOrWhiteSpace(name))
@@ -10319,6 +10337,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     private static async Task<IResult> UpdateIntegration(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
         if (IntegrationsManageGuard(http) is { } denied) return denied;
+        if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
         var companyId = GetCompanyId(http);
         var exists = await db.ScalarLongAsync("SELECT COUNT(*) FROM integrations WHERE company_id=@cid AND id=@id",
             c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); }, ct);
@@ -10347,6 +10366,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     private static async Task<IResult> RemoveIntegration(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct)
     {
         if (IntegrationsManageGuard(http) is { } denied) return denied;
+        if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
         var companyId = GetCompanyId(http);
         var row = await db.QuerySingleAsync(
             "SELECT COALESCE(is_custom,false) is_custom, integration_key FROM integrations WHERE company_id=@cid AND id=@id LIMIT 1",
@@ -10374,6 +10394,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     private static async Task<IResult> SetIntegrationStatus(HttpContext http, long id, string status, string action, Database db, AuditService audit, CancellationToken ct)
     {
         if (IntegrationsManageGuard(http) is { } denied) return denied;
+        if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
         var companyId = GetCompanyId(http);
         var affected = await db.ExecuteAsync(
             @"UPDATE integrations SET status=@status,
@@ -10391,6 +10412,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         Opstrax.Api.Services.Connectors.ConnectorRegistry connectors, CancellationToken ct)
     {
         if (IntegrationsManageGuard(http) is { } denied) return denied;
+        if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
         var companyId = GetCompanyId(http);
         var row = await db.QuerySingleAsync(
             "SELECT integration_key, config_json FROM integrations WHERE company_id=@cid AND id=@id LIMIT 1",
@@ -10439,6 +10461,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         Opstrax.Api.Services.Connectors.ConnectorRegistry connectors, CancellationToken ct)
     {
         if (IntegrationsManageGuard(http) is { } denied) return denied;
+        if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
         var companyId = GetCompanyId(http);
         // Encrypt sensitive keys (authToken/apiKey/…) BEFORE persisting so provider
         // secrets never sit in the DB as plaintext. Merge over the stored config; move a
@@ -10464,6 +10487,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         Opstrax.Api.Services.Connectors.ConnectorRegistry connectors, CancellationToken ct)
     {
         if (IntegrationsManageGuard(http) is { } denied) return denied;
+        if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
         var companyId = GetCompanyId(http);
         var row = await db.QuerySingleAsync(
             "SELECT integration_key, provider_name, config_json FROM integrations WHERE company_id=@cid AND id=@id LIMIT 1",
@@ -10507,6 +10531,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         Opstrax.Api.Services.Connectors.ConnectorRegistry connectors, CancellationToken ct)
     {
         if (IntegrationsManageGuard(http) is { } denied) return denied;
+        if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
         var companyId = GetCompanyId(http);
         var action = body.ValueKind == System.Text.Json.JsonValueKind.Object && body.TryGetProperty("action", out var a) ? a.GetString() : null;
         if (string.IsNullOrWhiteSpace(action)) return Results.BadRequest(ApiResponse<object>.Fail("An 'action' is required."));
@@ -16705,6 +16730,10 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     {
         var denied = RequirePermission(http, "telemetry.devices.manage");
         if (denied is not null) return denied;
+        // device_serial is NOT NULL in eld_devices; guard here so a missing serial is a clean
+        // 400 rather than a Postgres 23502 surfaced as a 500.
+        if (string.IsNullOrWhiteSpace(body.DeviceSerial))
+            return Results.BadRequest(ApiResponse<object>.Fail("deviceSerial is required"));
         var companyId = GetCompanyId(http);
         var requestedBranchId = GetBranchId(http);
         if (await ValidateDeviceAssignmentAsync(db, companyId, requestedBranchId, body.VehicleId, body.DriverId, ct) is { } invalidAssignment)
