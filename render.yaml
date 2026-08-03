@@ -105,6 +105,14 @@ services:
         sync: false
       - key: PLATFORM_SUPERADMIN_PASSWORD
         sync: false
+      # Break-glass recovery ONLY. The super admin is seeded once; rotating the
+      # password above never re-reaches the DB on its own. Set this to "true",
+      # redeploy, sign in with PLATFORM_SUPERADMIN_EMAIL/PASSWORD, then set it back
+      # to "false" (or remove it) — PlatformSuperAdminReconciler reconciles the
+      # stored hash from env on boot only while it is armed. Leaving it "true" would
+      # overwrite any later self-service password change on the next deploy.
+      - key: PLATFORM_SUPERADMIN_RESET
+        value: "false"
       - key: DemoSeed__Enabled
         value: "false"
       - key: DemoSeed__Password

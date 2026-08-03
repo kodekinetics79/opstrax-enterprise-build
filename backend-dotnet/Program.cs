@@ -264,6 +264,7 @@ builder.Services.AddSingleton<RevenueSchemaService>();
 builder.Services.AddScoped<EntitlementService>();
 builder.Services.AddScoped<FeatureFlagService>();
 builder.Services.AddSingleton<RolePermissionReconciler>();
+builder.Services.AddSingleton<PlatformSuperAdminReconciler>();
 // Market-pack engine (Canada/NA + Saudi/GCC) — regional capability + compliance
 builder.Services.AddSingleton<MarketPackSchemaService>();
 builder.Services.AddSingleton<Opstrax.Api.Seed.MarketPackSeeder>();
@@ -497,6 +498,18 @@ using (var scope = app.Services.CreateScope())
     var reconciliationDb = scope.ServiceProvider.GetRequiredService<Database>();
     var reconciler = scope.ServiceProvider.GetRequiredService<RolePermissionReconciler>();
     await reconciliationDb.RunInSystemScopeAsync(() => reconciler.ReconcileAsync());
+}
+
+// Break-glass reconcile of the bootstrap Platform Super Admin password from env. Also DML,
+// also OUTSIDE the schema-init gate (and self-scoping to the opstrax_system identity), for
+// the same reason: the one-time seed never re-reads PLATFORM_SUPERADMIN_PASSWORD, and in
+// production the seed is skipped entirely — so a rotated env credential could never reach the
+// control plane, leaving the operator locked out with "Invalid credentials" against the exact
+// password they set in Render. Inert unless PLATFORM_SUPERADMIN_RESET is explicitly armed.
+using (var scope = app.Services.CreateScope())
+{
+    var platformAdminReconciler = scope.ServiceProvider.GetRequiredService<PlatformSuperAdminReconciler>();
+    await platformAdminReconciler.ReconcileAsync();
 }
 
 // Request telemetry runs FIRST: it establishes the trace_id / correlation_id for
