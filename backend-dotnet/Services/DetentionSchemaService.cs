@@ -139,6 +139,10 @@ public sealed class DetentionSchemaService(Database db)
             CREATE OR REPLACE FUNCTION detention_evidence_immutable() RETURNS trigger AS $$
             BEGIN
                 IF TG_OP = 'DELETE' THEN
+                    IF COALESCE(current_setting('opstrax.offboarding', true) = 'on', FALSE)
+                       AND pg_has_role(current_user, 'opstrax_system', 'MEMBER') THEN
+                        RETURN OLD;
+                    END IF;
                     RAISE EXCEPTION 'detention_evidence is immutable';
                 END IF;
                 -- Every column except the share fields is frozen (incl. created_at, which backs the

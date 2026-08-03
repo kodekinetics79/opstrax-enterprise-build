@@ -86,7 +86,8 @@ function recommendedAction(row: DeviceCommandRecord) {
   if (/offline/i.test(row.connectionStatus)) return "Dispatch a backup visibility path and inspect power, GNSS, and carrier continuity.";
   if (/attention/i.test(row.connectionStatus)) return "Run diagnostics, validate antenna placement, and confirm the next heartbeat before dispatch.";
   if (/provision/i.test(row.connectionStatus) || /awaiting/i.test(row.installStatus)) return "Finish installation, pair the provider feed, and verify assignment coverage.";
-  return "Device is healthy. Keep firmware current and monitor assignment coverage.";
+  if (!row.dataHealthAvailable) return "No health evidence is available yet; verify the first check-in before operational use.";
+  return "No current exception is evidenced. Continue monitoring check-in and assignment coverage.";
 }
 
 function toRecord(row: DeviceCommandRecord): IotDeviceRecord {
@@ -103,8 +104,8 @@ function toRecord(row: DeviceCommandRecord): IotDeviceRecord {
     battery: orNoData(row.powerStatus),
     lastHeartbeat: row.lastCheckIn,
     heartbeatAge: relativeHeartbeat(row.lastCheckIn),
-    dataQuality: Number.isFinite(row.dataHealthScore) && row.dataHealthScore > 0 ? `${row.dataHealthScore}%` : NO_DATA,
-    healthScore: row.dataHealthScore,
+    dataQuality: row.dataHealthAvailable && Number.isFinite(row.dataHealthScore) ? `${row.dataHealthScore}%` : NO_DATA,
+    healthScore: row.dataHealthAvailable ? row.dataHealthScore : 0,
     approvalStatus: row.complianceStatus,
     alertCount: row.openAlertCount,
     recommendedAction: recommendedAction(row),
@@ -148,8 +149,8 @@ function signalFromCluster(cluster: TelematicsClusterRecord) {
     humidity: NO_DATA,
     setPoint: orNoData(cluster.expectedRange),
     doorStatus: NO_DATA,
-    dataQuality: Number.isFinite(cluster.deviceHealth) && cluster.deviceHealth > 0 ? `${cluster.deviceHealth}%` : NO_DATA,
-    healthScore: Number(cluster.deviceHealth) || 0,
+    dataQuality: cluster.deviceHealthAvailable && Number.isFinite(cluster.deviceHealth) ? `${cluster.deviceHealth}%` : NO_DATA,
+    healthScore: cluster.deviceHealthAvailable ? Number(cluster.deviceHealth) : 0,
     recommendedAction: cluster.recommendedAction,
   };
 }

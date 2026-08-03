@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { platformApi, formatMoney } from "@/services/platformApi";
-import { PHeader, PCard, PKpi, PButton, PField, PSelect, PLoading, PError, PEmpty } from "./ui";
+import { PHeader, PCard, PKpi, PButton, PField, PInput, PSelect, PLoading, PError, PEmpty } from "./ui";
 
 type AnyRecord = Record<string, any>;
 
@@ -18,6 +18,7 @@ export function PlatformRevenuePage() {
   const [marketPacks, setMarketPacks] = useState<AnyRecord[]>([]);
   const [tenantPacks, setTenantPacks] = useState<Record<string, string>>({});
   const [complianceUsage, setComplianceUsage] = useState<AnyRecord | null>(null);
+  const [marketPackReason, setMarketPackReason] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
@@ -61,9 +62,11 @@ export function PlatformRevenuePage() {
 
   function toggleMarketPack(packCode: string, enable: boolean) {
     if (tenantId == null) return;
+    const reason = marketPackReason.trim();
+    if (!reason) return;
     setBusy(true);
-    platformApi.setTenantMarketPack(tenantId, { packCode, status: enable ? "active" : "disabled" })
-      .then(() => reloadTenant(tenantId))
+    platformApi.setTenantMarketPack(tenantId, { packCode, status: enable ? "active" : "disabled", reason })
+      .then(() => { setMarketPackReason(""); reloadTenant(tenantId); })
       .catch((e: any) => { setError(e?.message ?? "Failed to update market pack"); setBusy(false); });
   }
 
@@ -112,6 +115,16 @@ export function PlatformRevenuePage() {
           <h3 className="text-sm font-semibold text-white/90">Market Packs — {tenants.find((t) => Number(t.id) === tenantId)?.name ?? "tenant"}</h3>
         </div>
         <p className="mt-1 text-xs text-white/40">Paid regional add-ons. Enable/disable per tenant — deny-by-default; tenants cannot self-enable.</p>
+        <div className="mt-3 max-w-xl">
+          <PField label="Operator reason (recorded in Platform audit)">
+            <PInput
+              value={marketPackReason}
+              maxLength={500}
+              placeholder="e.g. Approved pilot add-on under signed order"
+              onChange={(event) => setMarketPackReason(event.target.value)}
+            />
+          </PField>
+        </div>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
           {marketPacks.map((p) => {
             const enabled = tenantPacks[p.code] === "active";
@@ -125,7 +138,7 @@ export function PlatformRevenuePage() {
                   <span className={`rounded-full px-2 py-0.5 text-xs ${enabled ? "bg-teal-400/15 text-teal-300" : "bg-white/5 text-white/40"}`}>{enabled ? "Enabled" : "Disabled"}</span>
                 </div>
                 <div className="mt-3">
-                  <PButton variant={enabled ? "danger" : "primary"} disabled={busy || tenantId == null} onClick={() => toggleMarketPack(p.code, !enabled)}>
+                  <PButton variant={enabled ? "danger" : "primary"} disabled={busy || tenantId == null || !marketPackReason.trim()} onClick={() => toggleMarketPack(p.code, !enabled)}>
                     {enabled ? "Disable" : "Enable"}
                   </PButton>
                 </div>

@@ -95,17 +95,38 @@ public sealed class SamsaraConnector(
         try
         {
             var sync = new SamsaraSync(Client(token!), scopeFactory, logger);
-            var summary = await sync.RunAsync(companyId, afterCursor, ct);
+            var cursor = afterCursor;
+            var positionsWritten = 0;
+            var vehiclesSeen = 0;
+            var unmatched = 0;
+            var hasNextPage = false;
+            var seenCursors = new HashSet<string>(StringComparer.Ordinal);
+            // Drain the cursor backlog in the same run instead of waiting five minutes
+            // between pages. The cap prevents a permanently advancing feed from owning a
+            // worker forever; the returned cursor resumes exactly where this run stopped.
+            for (var page = 0; page < 200; page++)
+            {
+                var pageSummary = await sync.RunAsync(companyId, cursor, ct);
+                positionsWritten += pageSummary.PositionsWritten;
+                vehiclesSeen += pageSummary.VehiclesSeen;
+                unmatched += pageSummary.Unmatched;
+                hasNextPage = pageSummary.HasNextPage;
+                if (!string.IsNullOrWhiteSpace(pageSummary.NextCursor)) cursor = pageSummary.NextCursor;
+                if (!hasNextPage) break;
+                if (string.IsNullOrWhiteSpace(cursor) || !seenCursors.Add(cursor))
+                    throw new InvalidOperationException("Samsara pagination did not advance its cursor.");
+                await Task.Delay(TimeSpan.FromMilliseconds(100), ct);
+            }
             return ConnectorResult.Ok(
-                $"Synced {summary.PositionsWritten} vehicle position(s) from Samsara" +
-                $"{(summary.Unmatched > 0 ? $"; {summary.Unmatched} Samsara vehicle(s) had no matching OpsTrax vehicle (map a device to link them)." : ".")}",
+                $"Synced {positionsWritten} vehicle position(s) from Samsara" +
+                $"{(unmatched > 0 ? $"; {unmatched} Samsara vehicle(s) had no matching OpsTrax vehicle (map a device to link them)." : ".")}",
                 new Dictionary<string, object?>
                 {
-                    ["positionsWritten"] = summary.PositionsWritten,
-                    ["vehiclesSeen"] = summary.VehiclesSeen,
-                    ["unmatched"] = summary.Unmatched,
-                    ["nextCursor"] = summary.NextCursor,
-                    ["hasNextPage"] = summary.HasNextPage,
+                    ["positionsWritten"] = positionsWritten,
+                    ["vehiclesSeen"] = vehiclesSeen,
+                    ["unmatched"] = unmatched,
+                    ["nextCursor"] = cursor,
+                    ["hasNextPage"] = hasNextPage,
                 });
         }
         catch (Exception ex)

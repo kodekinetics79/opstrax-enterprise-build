@@ -35,6 +35,10 @@ public sealed class Batch2SchemaService(Database db, IConfiguration? configurati
         await db.ExecuteAsync("CREATE UNIQUE INDEX IF NOT EXISTS uq_jobs_company_tracking_code ON jobs (company_id, tracking_code) WHERE tracking_code IS NOT NULL", ct: ct);
         await db.ExecuteAsync("CREATE UNIQUE INDEX IF NOT EXISTS uq_customer_eta_company_tracking ON customer_eta_links (company_id, tracking_code)", ct: ct);
         await db.ExecuteAsync("CREATE UNIQUE INDEX IF NOT EXISTS uq_customer_eta_secure_token ON customer_eta_links (secure_token) WHERE secure_token IS NOT NULL", ct: ct);
+        // POD list/detail/capture paths repeatedly resolve the newest proof for one
+        // tenant and job. Without this index the canonical read model degrades into
+        // repeated tenant-wide proof scans as pilot evidence accumulates.
+        await db.ExecuteAsync("CREATE INDEX IF NOT EXISTS idx_pod_company_job_projection_recent ON proof_of_delivery (company_id, job_id, (COALESCE(captured_at,created_at)) DESC, id DESC)", ct: ct);
         // Route planning is branch-owned even before resources/stops are assigned. These
         // indexes are also the final concurrency guard against duplicate codes/sequences
         // and two active routes claiming the same driver or vehicle.

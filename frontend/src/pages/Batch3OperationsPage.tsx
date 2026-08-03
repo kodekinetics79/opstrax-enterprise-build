@@ -89,7 +89,7 @@ const configs = {
     ],
     columns: ["reportNumber", "vehicleCode", "driverName", "inspectionType", "submittedAt", "inspectionStatus", "defectsFound", "safeToOperate", "mechanicReviewStatus", "repairCertificationStatus", "driverSignatureStatus", "countryCode", "defectSeverityScore", "recommendedAction"],
     fields: [["reportNumber", "Report Number"], ["driverId", "Driver ID"], ["vehicleId", "Vehicle ID"], ["countryCode", "Country/Profile"], ["inspectionType", "Inspection Type"], ["inspectionStatus", "Status"], ["defectsFound", "Defects Found"], ["safeToOperate", "Safe To Operate"], ["driverSignatureStatus", "Driver Signature"], ["mechanicReviewStatus", "Mechanic Review"], ["repairCertificationStatus", "Repair Certification"], ["riskScore", "Risk Score"], ["recommendedAction", "Recommended Action"], ["notes", "Notes"]],
-    actions: ["mechanicReview", "certifyRepair", "driverSign"],
+    actions: ["mechanicReview", "certifyRepair"],
     detailSections: [["Defects Found", "defects", ["defectCategory", "defectDescription", "severity", "status", "linkedWorkOrderId"]], ["Inspection Checklist", "checklist", ["itemLabel", "itemCategory", "required", "status"]], ["Linked Work Orders", "workOrders", ["workOrderNumber", "status", "priority", "estimatedCost"]]],
   },
   documents: {
@@ -379,11 +379,11 @@ async function runAction(kind: Batch3Kind, type: string, row: AnyRecord) {
     return workOrdersApi.complete(id);
   }
   if (kind === "dvir") {
-    if (type === "mechanicReview") return dvirApi.mechanicReview(id);
-    if (type === "certifyRepair") return dvirApi.certifyRepair(id);
-    return dvirApi.driverSign(id);
+    const rowVersion = Number(row.rowVersion ?? row.row_version);
+    if (type === "mechanicReview") return dvirApi.mechanicReview(id, rowVersion);
+    if (type === "certifyRepair") return dvirApi.certifyRepair(id, rowVersion);
+    throw new Error("Unsupported DVIR action");
   }
   if (type === "renew") return documentsApi.renewPlaceholder(id);
   return documentsApi.uploadPlaceholder(defaultForm("documents"));
 }
-

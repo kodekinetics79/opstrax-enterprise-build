@@ -155,6 +155,28 @@ public class PlatformControlPlaneTests
     }
 
     [Fact]
+    public async Task PlatformMe_RevalidatesWithoutEchoingTheBearerCredential()
+    {
+        var db = CreateDatabase();
+        await new PlatformSchemaService(db).EnsureAsync();
+        var (adminId, token, email) = await SeedAdminSessionAsync(db, "platform_super_admin");
+        try
+        {
+            var method = typeof(PlatformEndpoints).GetMethod("PlatformMe", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+            var result = await (Task<IResult>)method.Invoke(null, [Http(token), db, CancellationToken.None])!;
+
+            Assert.Equal(200, StatusOf(result));
+            using var json = JsonDocument.Parse(JsonOf(result));
+            var data = json.RootElement.GetProperty("Data");
+            Assert.False(data.TryGetProperty("token", out _));
+            Assert.DoesNotContain(token, json.RootElement.GetRawText(), StringComparison.Ordinal);
+            Assert.Equal(adminId, data.GetProperty("admin").GetProperty("id").GetInt64());
+            Assert.Contains("platform:*", data.GetProperty("permissions").EnumerateArray().Select(x => x.GetString()));
+        }
+        finally { await CleanupAdminAsync(db, adminId, email); }
+    }
+
+    [Fact]
     public async Task PlatformLogin_Locks_Out_After_Repeated_Failures()
     {
         var db = CreateDatabase();
@@ -291,6 +313,23 @@ public class PlatformControlPlaneTests
             Assert.Equal(200, StatusOf(create));
             companyId = await db.ScalarLongAsync("SELECT id FROM companies WHERE company_code=@c", c => c.Parameters.AddWithValue("@c", code));
             Assert.True(companyId > 0);
+            Assert.Equal(EntitlementService.PackageAllowlistPolicy,
+                (await db.QuerySingleAsync("SELECT entitlement_policy_mode FROM companies WHERE id=@id",
+                    c => c.Parameters.AddWithValue("@id", companyId)))?["entitlementPolicyMode"]?.ToString());
+
+            // Newly provisioned tenants deny missing module rows. The compatibility
+            // transition is a separate, entitlement-authorized, audited control.
+            var policyEvaluator = new EntitlementService(db);
+            Assert.False((await policyEvaluator.CheckModuleAsync(companyId, "dispatch")).Allowed);
+            var legacyPolicy = await PlatformEndpoints.EntitlementPolicySet(companyId, Http(token),
+                new Dictionary<string, object?> { ["policyMode"] = EntitlementService.LegacyAllowPolicy }, db, CancellationToken.None);
+            Assert.Equal(200, StatusOf(legacyPolicy));
+            Assert.True((await policyEvaluator.CheckModuleAsync(companyId, "dispatch")).Allowed);
+            var badPolicy = await PlatformEndpoints.EntitlementPolicySet(companyId, Http(token),
+                new Dictionary<string, object?> { ["policyMode"] = "fail_open" }, db, CancellationToken.None);
+            Assert.Equal(400, StatusOf(badPolicy));
+            await PlatformEndpoints.EntitlementPolicySet(companyId, Http(token),
+                new Dictionary<string, object?> { ["policyMode"] = EntitlementService.PackageAllowlistPolicy }, db, CancellationToken.None);
 
             // companies table survived the SQLi payload; name round-trips as a literal
             var storedName = (await db.QuerySingleAsync("SELECT name FROM companies WHERE id=@id",
@@ -420,11 +459,14 @@ public class PlatformControlPlaneTests
                 c => c.Parameters.AddWithValue("@cid", companyId)));
 
             // INVALID module keys rejected (typo/injection can't become a phantom row)
-            foreach (var bad in new[] { "'; DROP TABLE tenant_entitlements;--", "<script>", "Dispatch", "a" })
+            foreach (var bad in new[] { "'; DROP TABLE tenant_entitlements;--", "<script>", "Dispatch", "a", "dispatch_typo", "dashboard" })
             {
                 var rejected = await PlatformEndpoints.EntitlementsSet(companyId, Http(token),
                     new Dictionary<string, object?> { ["moduleKey"] = bad, ["enabled"] = false }, db, CancellationToken.None);
                 Assert.Equal(400, StatusOf(rejected));
+                Assert.Equal(0, await db.ScalarLongAsync(
+                    "SELECT COUNT(*) FROM tenant_entitlements WHERE company_id=@cid AND module_key=@moduleKey",
+                    c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@moduleKey", bad); }));
             }
 
             // BILLING: create invoice + mark paid
@@ -448,7 +490,7 @@ public class PlatformControlPlaneTests
             {
                 "tenant.created", "tenant.updated", "tenant.admin_invite.reset",
                 "tenant.suspend", "tenant.reactivate", "tenant.sessions_revoked", "tenant.cancel",
-                "entitlement.disabled", "entitlement.enabled", "invoice.created", "invoice.paid",
+                "entitlement.policy.changed", "entitlement.disabled", "entitlement.enabled", "invoice.created", "invoice.paid",
             })
                 Assert.Contains(expected, auditActions);
         }

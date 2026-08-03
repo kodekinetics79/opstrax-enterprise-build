@@ -14,6 +14,18 @@ export function useHasPermission(): (permission: string) => boolean {
   return (permission: string) => hasPermission(permissions, permission);
 }
 
+// Security-sensitive workflow endpoints intentionally accept only an explicit
+// grant (plus dot/colon spelling variants), not the broader semantic aliases
+// used for navigation and read surfaces. Keep their UI gates in lockstep with
+// EndpointMappings.RequireAnyDirectPermission so the client never advertises an
+// action that the server will deterministically reject.
+export function useHasDirectPermission(): (permission: string) => boolean {
+  const permissions = usePermissions();
+  const normalize = (permission: string) => permission.trim().toLowerCase().replace(/\./g, ":");
+  const owned = new Set(permissions.map(normalize));
+  return (permission: string) => owned.has("*") || owned.has(normalize(permission));
+}
+
 export function usePermission(permission: string): boolean {
   const has = useHasPermission();
   return has(permission);
@@ -47,15 +59,19 @@ export function ProtectedRoute({ redirectTo = "/login" }: { redirectTo?: string 
 export function RequirePermission({
   permission,
   permissions,
+  direct = false,
   children,
   fallback,
 }: {
   permission?: string;
   permissions?: string[];
+  direct?: boolean;
   children: ReactNode;
   fallback?: ReactNode;
 }) {
-  const has = useHasPermission();
+  const hasSemantic = useHasPermission();
+  const hasDirect = useHasDirectPermission();
+  const has = direct ? hasDirect : hasSemantic;
   const granted = permission ? has(permission) : (permissions ?? []).some((item) => has(item));
 
   if (!granted) {

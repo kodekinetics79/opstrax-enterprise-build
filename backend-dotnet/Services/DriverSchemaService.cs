@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS driver_offline_queue (
 CREATE TABLE IF NOT EXISTS hos_records (
     id                    BIGINT NOT NULL GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     company_id            BIGINT NULL,
+    branch_id             BIGINT NULL,
     driver_id             BIGINT NOT NULL,
     shift_date            DATE NOT NULL DEFAULT CURRENT_DATE,
     remaining_drive_hours NUMERIC(5,2) NULL,
@@ -77,6 +78,7 @@ CREATE TABLE IF NOT EXISTS hos_records (
     eld_device_id         BIGINT NULL,
     created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )");
+        await TryAddColumn("hos_records", "branch_id", "BIGINT NULL");
     }
 
     private async Task CreateIndexes()
@@ -86,6 +88,7 @@ CREATE TABLE IF NOT EXISTS hos_records (
             ("driver_offline_queue","idx_dq_driver_status",    "driver_id, status"),
             ("driver_offline_queue","idx_dq_company",          "company_id"),
             ("hos_records",         "idx_hos_driver_shift",    "driver_id, shift_date DESC"),
+            ("hos_records",         "idx_hos_company_branch_shift", "company_id, branch_id, driver_id, shift_date DESC"),
         };
 
         foreach (var (table, name, cols) in indexes)
@@ -117,5 +120,11 @@ CREATE TABLE IF NOT EXISTS hos_records (
     {
         try { await db.ExecuteAsync(ddl); }
         catch (Exception ex) { log.LogWarning(ex, "[DriverSchema] Create {Table} failed", table); }
+    }
+
+    private async Task TryAddColumn(string table, string column, string definition)
+    {
+        try { await db.ExecuteAsync($"ALTER TABLE \"{table}\" ADD COLUMN IF NOT EXISTS \"{column}\" {definition}"); }
+        catch (Exception ex) { log.LogWarning(ex, "[DriverSchema] Add {Table}.{Column} failed", table, column); }
     }
 }

@@ -27,14 +27,14 @@ export const maintenanceApi = {
       notes?: string;
     }>;
   }) => unwrap<AnyRecord>(apiClient.post("/api/maintenance/inspections", payload)),
-  reviewInspection: (id: number | string, notes?: string) =>
-    unwrap<AnyRecord>(apiClient.post(`/api/maintenance/inspections/${id}/review`, { notes })),
+  reviewInspection: (id: number | string, rowVersion: number, notes?: string) =>
+    unwrap<AnyRecord>(apiClient.post(`/api/maintenance/inspections/${id}/review`, { rowVersion, notes })),
 
   // Defects
   defects: (params?: { status?: string; vehicleId?: number }) =>
     unwrap<AnyRecord[]>(apiClient.get("/api/maintenance/defects", { params })),
-  acknowledgeDefect: (id: number | string) =>
-    unwrap<AnyRecord>(apiClient.post(`/api/maintenance/defects/${id}/acknowledge`, {})),
+  acknowledgeDefect: (id: number | string, rowVersion: number) =>
+    unwrap<AnyRecord>(apiClient.post(`/api/maintenance/defects/${id}/acknowledge`, { rowVersion })),
   resolveDefect: (id: number | string, notes?: string) =>
     unwrap<AnyRecord>(apiClient.post(`/api/maintenance/defects/${id}/resolve`, { notes })),
 

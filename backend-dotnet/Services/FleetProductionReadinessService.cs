@@ -1,4 +1,5 @@
 using Opstrax.Api.Data;
+using Opstrax.Api.Observability;
 
 namespace Opstrax.Api.Services;
 
@@ -9,8 +10,50 @@ namespace Opstrax.Api.Services;
 /// and tenant tables must have ENABLE + FORCE RLS, both canonical policies and
 /// runtime DML grants.
 /// </summary>
-public sealed class FleetProductionReadinessService(Database db, ILogger<FleetProductionReadinessService> log)
+public sealed class FleetProductionReadinessService
 {
+    internal static readonly string[] CriticalWorkerNames =
+    [
+        "TelemetryBackgroundService",
+        "SafetyBackgroundService",
+        "TripBackgroundService",
+        "MaintenanceBackgroundService",
+        "EscalationBackgroundService",
+        "ScheduledReportBackgroundService",
+        "RetentionEnforcementService",
+    ];
+
+    internal static readonly TimeSpan CriticalWorkerStartupGrace = TimeSpan.FromMinutes(2);
+    internal static readonly TimeSpan CriticalWorkerFreshness = TimeSpan.FromMinutes(10);
+    internal static int CriticalWorkerFailureThreshold(string serviceName) =>
+        string.Equals(serviceName, "RetentionEnforcementService", StringComparison.Ordinal) ? 1 : 3;
+
+    private readonly Database db;
+    private readonly ILogger<FleetProductionReadinessService> log;
+    private readonly TimeProvider timeProvider;
+    private readonly DateTimeOffset processStartedAt;
+
+    public FleetProductionReadinessService(Database db, ILogger<FleetProductionReadinessService> log)
+        : this(db, log, TimeProvider.System, new DateTimeOffset(BuildInfo.StartedAtUtc)) { }
+
+    internal FleetProductionReadinessService(
+        Database db,
+        ILogger<FleetProductionReadinessService> log,
+        TimeProvider timeProvider,
+        DateTimeOffset processStartedAt)
+    {
+        this.db = db;
+        this.log = log;
+        this.timeProvider = timeProvider;
+        this.processStartedAt = processStartedAt;
+    }
+
+    internal bool CriticalWorkerStartupGraceActive =>
+        timeProvider.GetUtcNow() - processStartedAt < CriticalWorkerStartupGrace;
+
+    internal int CriticalWorkerStartupGraceRemainingSeconds => Math.Max(0,
+        (int)Math.Ceiling((CriticalWorkerStartupGrace - (timeProvider.GetUtcNow() - processStartedAt)).TotalSeconds));
+
     public async Task<FleetProductionContractResult> CheckAsync(CancellationToken ct = default)
     {
         try
@@ -20,13 +63,19 @@ public sealed class FleetProductionReadinessService(Database db, ILogger<FleetPr
             // A plain restricted-role query has no tenant GUC and would see zero
             // RLS rows, falsely passing those checks. Use the canonical short-lived
             // system transaction while retaining the restricted database identity.
-            var row = await db.QuerySingleInSystemScopeAsync(Sql, ct: ct);
+            var row = await db.QuerySingleInSystemScopeAsync(Sql, command =>
+            {
+                command.Parameters.AddWithValue("@criticalWorkers", CriticalWorkerNames);
+                command.Parameters.AddWithValue("@processStartedAt", processStartedAt.UtcDateTime);
+            }, ct);
             if (row is null)
                 return FleetProductionContractResult.Failed("fleet_contract_no_result");
 
             static bool Bool(Dictionary<string, object?> r, string key) => r.GetValueOrDefault(key) is true;
             static int Int(Dictionary<string, object?> r, string key) => Convert.ToInt32(r.GetValueOrDefault(key) ?? -1);
 
+            var rawWorkerViolations = Int(row, "criticalWorkerViolations");
+            var startupGraceActive = CriticalWorkerStartupGraceActive;
             var result = new FleetProductionContractResult(
                 Bool(row, "roleRestricted"),
                 Int(row, "missingTables"),
@@ -50,7 +99,13 @@ public sealed class FleetProductionReadinessService(Database db, ILogger<FleetPr
                 Bool(row, "dataProtectionKeyRingMigrationApplied"),
                 Bool(row, "marketCatalogReady"),
                 Bool(row, "indexesReady"),
-                Int(row, "criticalWorkerViolations"),
+                startupGraceActive ? 0 : rawWorkerViolations,
+                rawWorkerViolations,
+                Int(row, "missingCriticalWorkers"),
+                Int(row, "staleCriticalWorkers"),
+                Int(row, "failedCriticalWorkers"),
+                startupGraceActive,
+                CriticalWorkerStartupGraceRemainingSeconds,
                 null);
 
             if (!result.Ready)
@@ -60,14 +115,16 @@ public sealed class FleetProductionReadinessService(Database db, ILogger<FleetPr
                     "rlsViolations={Rls}; grantViolations={Grants}; tenantCoverageViolations={TenantRls}; " +
                     "tenantGrantViolations={TenantGrants}; defaultPrivilegeViolations={DefaultGrants}; runtimeRouteColumnViolations={RouteColumns}; runtimeRouteObjectViolations={RouteObjects}; fleetIntegrityObjectViolations={IntegrityObjects}; workforceContractViolations={WorkforceContract}; migrationApplied={Migration}; " +
                     "runtimeSupportMigrationApplied={RuntimeMigration}; tenantCoverageMigrationApplied={TenantMigration}; coldChainIntegrityMigrationApplied={ColdChainMigration}; runtimeRouteMigrationApplied={RouteMigration}; assetTypeIntegrityMigrationApplied={AssetMigration}; workforceScheduleIntegrityMigrationApplied={WorkforceMigration}; tenantTicketMigrationApplied={TicketMigration}; dataProtectionKeyRingMigrationApplied={KeyRingMigration}; marketCatalogReady={Catalog}; " +
-                    "indexesReady={Indexes}; criticalWorkerViolations={Workers}",
+                    "indexesReady={Indexes}; criticalWorkerViolations={Workers}; rawCriticalWorkerViolations={RawWorkers}; missingCriticalWorkers={MissingWorkers}; staleCriticalWorkers={StaleWorkers}; failedCriticalWorkers={FailedWorkers}; workerStartupGraceActive={WorkerGrace}",
                     result.RoleRestricted, result.MissingTables, result.RlsViolations,
                     result.GrantViolations, result.TenantCoverageViolations, result.TenantGrantViolations,
                     result.DefaultPrivilegeViolations, result.RuntimeRouteColumnViolations, result.RuntimeRouteObjectViolations, result.FleetIntegrityObjectViolations, result.WorkforceContractViolations,
                     result.MigrationApplied, result.RuntimeSupportMigrationApplied,
                     result.TenantCoverageMigrationApplied, result.ColdChainIntegrityMigrationApplied,
                     result.RuntimeRouteMigrationApplied, result.AssetTypeIntegrityMigrationApplied, result.WorkforceScheduleIntegrityMigrationApplied, result.TenantTicketMigrationApplied, result.DataProtectionKeyRingMigrationApplied, result.MarketCatalogReady,
-                    result.IndexesReady, result.CriticalWorkerViolations);
+                    result.IndexesReady, result.CriticalWorkerViolations, result.RawCriticalWorkerViolations,
+                    result.MissingCriticalWorkers, result.StaleCriticalWorkers, result.FailedCriticalWorkers,
+                    result.CriticalWorkerStartupGraceActive);
             }
             return result;
         }
@@ -83,7 +140,9 @@ public sealed class FleetProductionReadinessService(Database db, ILogger<FleetPr
     }
 
     private const string Sql = """
-        WITH required(name, tenant_scoped) AS (VALUES
+        WITH critical_workers(service_name) AS (
+          SELECT unnest(@criticalWorkers::text[])
+        ), required(name, tenant_scoped) AS (VALUES
           ('companies',true),
           ('workforce_schedules',true),
           ('vehicles',true),('drivers',true),('vehicle_assignments',true),('dispatch_assignments',true),
@@ -160,7 +219,7 @@ public sealed class FleetProductionReadinessService(Database db, ILogger<FleetPr
           ('hos_clocks',false,false,false),
           ('security_events',true,false,false),('sso_connections',true,true,false),
           ('tenant_market_packs',false,false,false),
-          ('tenant_entitlements',false,false,false),('tenant_subscriptions',false,false,false),
+          ('tenant_entitlements',false,false,false),('demo_fixture_versions',false,false,false),('tenant_subscriptions',false,false,false),
           ('vehicle_compliance_status',false,false,false),('workforce_schedules',true,true,false),
           ('mfa_login_challenge_consumptions',true,false,true)
         ), workforce_columns(column_name,data_type,not_null,column_default,identity_kind) AS (VALUES
@@ -336,7 +395,14 @@ public sealed class FleetProductionReadinessService(Database db, ILogger<FleetPr
                 AND p.qual='true'
                 AND p.with_check=p.qual)))::int AS rls_violations,
           COUNT(*) FILTER (WHERE oid IS NOT NULL AND
-            ((tenant_scoped AND (NOT has_table_privilege('opstrax_app',oid,'SELECT')
+            ((tenant_scoped AND (((objects.name<>'eld_devices' AND NOT has_table_privilege('opstrax_app',oid,'SELECT'))
+               OR (objects.name='eld_devices' AND (
+                 NOT has_column_privilege('opstrax_app',oid,'device_serial','SELECT')
+                 OR has_column_privilege('opstrax_app',oid,'api_key_hash','SELECT')
+                 OR has_column_privilege('opstrax_app',oid,'api_key_previous_hash','SELECT')
+                 OR has_column_privilege('opstrax_app',oid,'hmac_secret','SELECT')
+                 OR has_column_privilege('opstrax_app',oid,'hmac_secret_encrypted','SELECT')
+                 OR has_column_privilege('opstrax_app',oid,'hmac_previous_secret_encrypted','SELECT'))))
                OR has_table_privilege('opstrax_app',oid,'TRUNCATE')
                OR has_table_privilege('opstrax_app',oid,'REFERENCES')
                OR has_table_privilege('opstrax_app',oid,'TRIGGER')
@@ -413,7 +479,14 @@ public sealed class FleetProductionReadinessService(Database db, ILogger<FleetPr
             AS tenant_coverage_violations,
           ((SELECT COUNT(*) FROM tenant_scope scope
             LEFT JOIN tenant_privileges expected ON expected.name=scope.name
-            WHERE NOT has_table_privilege('opstrax_app',scope.oid,'SELECT')
+            WHERE ((scope.name<>'eld_devices' AND NOT has_table_privilege('opstrax_app',scope.oid,'SELECT'))
+              OR (scope.name='eld_devices' AND (
+                NOT has_column_privilege('opstrax_app',scope.oid,'device_serial','SELECT')
+                OR has_column_privilege('opstrax_app',scope.oid,'api_key_hash','SELECT')
+                OR has_column_privilege('opstrax_app',scope.oid,'api_key_previous_hash','SELECT')
+                OR has_column_privilege('opstrax_app',scope.oid,'hmac_secret','SELECT')
+                OR has_column_privilege('opstrax_app',scope.oid,'hmac_secret_encrypted','SELECT')
+                OR has_column_privilege('opstrax_app',scope.oid,'hmac_previous_secret_encrypted','SELECT'))))
               OR has_table_privilege('opstrax_app',scope.oid,'TRUNCATE')
               OR has_table_privilege('opstrax_app',scope.oid,'REFERENCES')
               OR has_table_privilege('opstrax_app',scope.oid,'TRIGGER')
@@ -585,9 +658,28 @@ public sealed class FleetProductionReadinessService(Database db, ILogger<FleetPr
                 AND license_number LIKE 'enc:%'
                 AND NULLIF(BTRIM(license_number_bidx),'') IS NULL
             ) AS indexes_ready,
-          (SELECT COUNT(*)::int FROM service_heartbeats
-             WHERE consecutive_failures>=3
-                OR last_heartbeat_at < NOW()-INTERVAL '10 minutes') AS critical_worker_violations
+          (SELECT COUNT(*)::int
+             FROM critical_workers expected
+             LEFT JOIN service_heartbeats heartbeat ON heartbeat.service_name=expected.service_name
+            WHERE heartbeat.service_name IS NULL
+               OR heartbeat.consecutive_failures >= CASE
+                    WHEN expected.service_name='RetentionEnforcementService' THEN 1 ELSE 3 END
+               OR heartbeat.last_heartbeat_at < NOW()-INTERVAL '10 minutes'
+               OR heartbeat.last_heartbeat_at < @processStartedAt) AS critical_worker_violations,
+          (SELECT COUNT(*)::int
+             FROM critical_workers expected
+             LEFT JOIN service_heartbeats heartbeat ON heartbeat.service_name=expected.service_name
+            WHERE heartbeat.service_name IS NULL) AS missing_critical_workers,
+          (SELECT COUNT(*)::int
+             FROM critical_workers expected
+             JOIN service_heartbeats heartbeat ON heartbeat.service_name=expected.service_name
+            WHERE heartbeat.last_heartbeat_at < NOW()-INTERVAL '10 minutes'
+               OR heartbeat.last_heartbeat_at < @processStartedAt) AS stale_critical_workers,
+          (SELECT COUNT(*)::int
+             FROM critical_workers expected
+             JOIN service_heartbeats heartbeat ON heartbeat.service_name=expected.service_name
+            WHERE heartbeat.consecutive_failures >= CASE
+                    WHEN expected.service_name='RetentionEnforcementService' THEN 1 ELSE 3 END) AS failed_critical_workers
         FROM objects
         """;
 }
@@ -616,6 +708,12 @@ public sealed record FleetProductionContractResult(
     bool MarketCatalogReady,
     bool IndexesReady,
     int CriticalWorkerViolations,
+    int RawCriticalWorkerViolations,
+    int MissingCriticalWorkers,
+    int StaleCriticalWorkers,
+    int FailedCriticalWorkers,
+    bool CriticalWorkerStartupGraceActive,
+    int CriticalWorkerStartupGraceRemainingSeconds,
     string? FailureCode)
 {
     public bool Ready => RoleRestricted && MissingTables == 0 && RlsViolations == 0 && GrantViolations == 0
@@ -629,5 +727,5 @@ public sealed record FleetProductionContractResult(
                          && CriticalWorkerViolations == 0 && FailureCode is null;
 
     public static FleetProductionContractResult Failed(string code) =>
-        new(false, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, false, false, false, false, false, false, false, false, false, false, false, -1, code);
+        new(false, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, false, false, false, false, false, false, false, false, false, false, false, -1, -1, -1, -1, -1, false, 0, code);
 }

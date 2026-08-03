@@ -748,6 +748,7 @@ CREATE TABLE IF NOT EXISTS user_sessions (
   user_id BIGINT NOT NULL,
   company_id BIGINT NOT NULL,
   session_token VARCHAR(128) NOT NULL UNIQUE,
+  impersonation_grant_id BIGINT NULL,
   expires_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT fk_sessions_user FOREIGN KEY (user_id) REFERENCES users(id)

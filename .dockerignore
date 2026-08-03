@@ -30,4 +30,10 @@ mobile
 node-services
 services
 telematics
+!telematics/
+!telematics/Dockerfile
+!telematics/src/
+!telematics/src/**
+telematics/src/**/bin
+telematics/src/**/obj
 tmp

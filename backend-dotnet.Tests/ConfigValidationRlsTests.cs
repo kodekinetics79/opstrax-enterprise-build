@@ -38,9 +38,10 @@ public sealed class ConfigValidationRlsTests
             ["Platform:SuperAdminPassword"] = "LocalTestPassword!123",
             ["Cors:AllowedOrigins"] = "https://app.example.test",
             ["Rls:EnforceTenantContext"] = "true",
-            ["Telemetry:GatewaySecret"] = new string('g', 48),
+            ["DATA_ENCRYPTION_KEY"] = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
             ["DATA_PROTECTION_CERTIFICATE_BASE64"] = "test-certificate-payload",
             ["DATA_PROTECTION_CERTIFICATE_PASSWORD"] = "test-password-strong-123",
+            ["RetentionWorker:Enabled"] = "true",
         };
         var config = new ConfigurationBuilder().AddInMemoryCollection(values).Build();
 
@@ -77,6 +78,79 @@ public sealed class ConfigValidationRlsTests
             new ConfigurationBuilder().AddInMemoryCollection(values).Build()).Validate();
         Assert.Equal("fail", Assert.Single(result.Issues,
             i => i.Check == "database_identity_separation").Level);
+    }
+
+    [Fact]
+    public void Validate_ProductionWithTelemetrySimulator_FailsClosed()
+    {
+        var values = BaseValues("Production", "true");
+        values["Telemetry:Simulator:Enabled"] = "true";
+        var result = new ConfigValidationService(
+            new ConfigurationBuilder().AddInMemoryCollection(values).Build()).Validate();
+
+        Assert.Equal("fail", Assert.Single(result.Issues,
+            i => i.Check == "telemetry_simulator").Level);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("false")]
+    [InlineData("not-a-boolean")]
+    public void Validate_ProductionWithoutExplicitRetentionExecutor_FailsClosed(string? setting)
+    {
+        var values = BaseValues("Production", "true");
+        values["RetentionWorker:Enabled"] = setting;
+        var result = new ConfigValidationService(
+            new ConfigurationBuilder().AddInMemoryCollection(values).Build()).Validate();
+
+        var issue = Assert.Single(result.Issues, i => i.Check == "retention_worker");
+        Assert.Equal("fail", issue.Level);
+        Assert.Contains("explicitly true", issue.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Validate_ProductionWithExplicitRetentionExecutor_Passes()
+    {
+        var result = Validate("Production", "true");
+
+        Assert.Equal("pass", Assert.Single(result.Issues,
+            i => i.Check == "retention_worker").Level);
+    }
+
+    [Fact]
+    public void Validate_ProductionWithLegacyGatewaySecret_FailsClosed()
+    {
+        var values = BaseValues("Production", "true");
+        values["Telemetry:GatewaySecret"] = new string('g', 40);
+        var result = new ConfigValidationService(
+            new ConfigurationBuilder().AddInMemoryCollection(values).Build()).Validate();
+
+        Assert.Equal("fail", Assert.Single(result.Issues,
+            i => i.Check == "legacy_telemetry_gateway_secret").Level);
+    }
+
+    [Fact]
+    public void Validate_ProductionWithLegacyDeviceSecretRead_FailsClosed()
+    {
+        var values = BaseValues("Production", "true");
+        values[DeviceHmacSecretProtection.LegacyReadSetting] = "true";
+        var result = new ConfigValidationService(
+            new ConfigurationBuilder().AddInMemoryCollection(values).Build()).Validate();
+
+        Assert.Equal("fail", Assert.Single(result.Issues,
+            i => i.Check == "legacy_device_hmac_read").Level);
+    }
+
+    [Fact]
+    public void Validate_ProductionWithoutDeviceEncryptionKey_FailsClosed()
+    {
+        var values = BaseValues("Production", "true");
+        values["DATA_ENCRYPTION_KEY"] = null;
+        var result = new ConfigValidationService(
+            new ConfigurationBuilder().AddInMemoryCollection(values).Build()).Validate();
+
+        Assert.Equal("fail", Assert.Single(result.Issues,
+            i => i.Check == "device_hmac_encryption").Level);
     }
 
     [Theory]
@@ -176,9 +250,10 @@ public sealed class ConfigValidationRlsTests
             ["Platform:SuperAdminPassword"] = "LocalTestPassword!123",
             ["Cors:AllowedOrigins"] = "https://app.example.test",
             ["Rls:EnforceTenantContext"] = rlsValue,
-            ["Telemetry:GatewaySecret"] = new string('g', 48),
+            ["DATA_ENCRYPTION_KEY"] = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
             ["DATA_PROTECTION_CERTIFICATE_BASE64"] = "test-certificate-payload",
             ["DATA_PROTECTION_CERTIFICATE_PASSWORD"] = "test-password-strong-123",
+            ["RetentionWorker:Enabled"] = "true",
         };
 
     [Fact]

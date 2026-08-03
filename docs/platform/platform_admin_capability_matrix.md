@@ -1,5 +1,12 @@
 # Platform Admin Capability Matrix
 
+> Historical point-in-time audit (2026-07-02). For current module-by-module
+> commercial ownership, settings authority, deep-link/API enforcement and known
+> open surfaces, use
+> [`PLATFORM_ADMIN_ENTERPRISE_CONTROL_MAP.md`](./PLATFORM_ADMIN_ENTERPRISE_CONTROL_MAP.md).
+> In particular, the historical feature-control rows below must not be read as
+> proof that every Finance, Fleet or AI API is commercially gated.
+
 Audited 2026-07-02 on branch `harden/platform-admin-control-plane`.
 
 Legend: ✅ Exists and verified · 🟡 Exists but incomplete · 🔴 Exists but unsafe ·

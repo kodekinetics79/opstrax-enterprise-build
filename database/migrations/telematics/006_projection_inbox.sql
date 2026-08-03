@@ -160,7 +160,7 @@ $grant$;
 
 -- ── 4. Ledger ────────────────────────────────────────────────────────────────
 INSERT INTO schema_migrations (version, description)
-VALUES ('telematics_004_projection_inbox',
+VALUES ('telematics_006_projection_inbox',
         'Idempotent projection inbox (UNIQUE event_id dedupe) + monotonic latest-position upsert contract')
 ON CONFLICT (version) DO NOTHING;
 
@@ -171,7 +171,7 @@ COMMIT;
 -- ----------------------------------------------------------------------------
 -- BEGIN;
 --   DROP TABLE IF EXISTS telemetry_projection_inbox;   -- drops its policies, indexes and grants
---   DELETE FROM schema_migrations WHERE version = 'telematics_004_projection_inbox';
+--   DELETE FROM schema_migrations WHERE version = 'telematics_006_projection_inbox';
 --   -- latest_vehicle_positions is intentionally untouched here: this migration
 --   -- added no columns to it (it only documented the upsert contract), so there
 --   -- is nothing on that table to reverse.

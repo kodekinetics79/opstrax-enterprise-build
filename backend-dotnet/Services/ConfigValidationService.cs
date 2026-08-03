@@ -127,29 +127,36 @@ public sealed class ConfigValidationService(IConfiguration config)
                     ? "No previous Data Protection certificate is configured"
                     : "Previous Data Protection certificate is configured for rotation"));
 
-        // Device HMAC secret (telemetry ingest)
-        var deviceSecret = config["Telemetry:DeviceSecret"] ?? config["DeviceSecret"];
-        if (string.IsNullOrWhiteSpace(deviceSecret))
-            issues.Add(new("device_hmac_secret", "warn", "Telemetry device HMAC secret not configured — device auth will be degraded"));
-        else if (deviceSecret.Length < 32)
-            issues.Add(new("device_hmac_secret", "warn", $"Device HMAC secret is short ({deviceSecret.Length} chars; ≥32 recommended)"));
+        // Device credentials are unique per device and envelope-encrypted. The old global
+        // Telemetry:DeviceSecret was never consumed by ingest, so validating its presence gave a
+        // false sense of readiness. Validate the key that actually protects credential envelopes.
+        var dataEncryptionKey = FirstConfigured(
+            config["Pii:DataKey"], config["DATA_ENCRYPTION_KEY"],
+            Environment.GetEnvironmentVariable("DATA_ENCRYPTION_KEY"));
+        if (!IsBase64Key32(dataEncryptionKey))
+            issues.Add(new("device_hmac_encryption", isProduction ? "fail" : "warn",
+                "A valid 32-byte DATA_ENCRYPTION_KEY is required for encrypted per-device HMAC credentials"));
         else
-            issues.Add(new("device_hmac_secret", "pass", "Device HMAC secret present"));
+            issues.Add(new("device_hmac_encryption", "pass",
+                "Per-device HMAC envelope encryption is configured"));
 
-        // Vendor/field trackers terminate at a trusted protocol gateway. This separate
-        // secret authenticates that gateway; an IMEI is an identifier, not a credential.
-        var gatewaySecret = config["Telemetry:GatewaySecret"];
-        var gatewayIsProduction = string.Equals(
-            config["ASPNETCORE_ENVIRONMENT"] ?? config["DOTNET_ENVIRONMENT"] ?? config["Environment"],
-            "Production", StringComparison.OrdinalIgnoreCase);
-        if (string.IsNullOrWhiteSpace(gatewaySecret))
-            issues.Add(new("telemetry_gateway_secret", gatewayIsProduction ? "fail" : "warn",
-                "Trusted telemetry gateway secret is not configured — hardware tracker forwarding is unavailable"));
-        else if (gatewaySecret.Length < 32)
-            issues.Add(new("telemetry_gateway_secret", gatewayIsProduction ? "fail" : "warn",
-                "Trusted telemetry gateway secret is too short; minimum 32 characters"));
+        var allowLegacyDeviceSecrets = config.GetValue(DeviceHmacSecretProtection.LegacyReadSetting, false);
+        if (allowLegacyDeviceSecrets)
+            issues.Add(new("legacy_device_hmac_read", isProduction ? "fail" : "warn",
+                "Legacy plaintext device-secret compatibility is enabled; rotate development devices and disable it"));
         else
-            issues.Add(new("telemetry_gateway_secret", "pass", "Trusted telemetry gateway secret is present"));
+            issues.Add(new("legacy_device_hmac_read", "pass", "Legacy plaintext device-secret reads are disabled"));
+
+        // Per-gateway encrypted credentials in telemetry_gateways are mandatory. Presence of the
+        // former fleet-wide secret is now a release blocker because a headerless fallback would be
+        // a cross-tenant skeleton key.
+        var legacyGatewaySecret = config["Telemetry:GatewaySecret"];
+        if (!string.IsNullOrWhiteSpace(legacyGatewaySecret))
+            issues.Add(new("legacy_telemetry_gateway_secret", isProduction ? "fail" : "warn",
+                "Remove Telemetry:GatewaySecret; gateway ingest requires a tenant-bound X-Gateway-Id credential"));
+        else
+            issues.Add(new("legacy_telemetry_gateway_secret", "pass",
+                "Legacy fleet-wide telemetry gateway secret is absent"));
 
         // SSE ticket key
         var sseKey = config["Telemetry:SseTicketKey"] ?? config["Sse:TicketKey"] ?? config["SseTicketKey"];
@@ -203,6 +210,28 @@ public sealed class ConfigValidationService(IConfiguration config)
         else
             issues.Add(new("demo_seed_data", "pass", "Demo seed data flags are disabled"));
 
+        var simulatorEnabled = config.GetValue("Telemetry:Simulator:Enabled", false);
+        if (simulatorEnabled)
+            issues.Add(new("telemetry_simulator", isProduction ? "fail" : "warn",
+                "Telemetry simulator is enabled — production must use authenticated device/provider fixes only"));
+        else
+            issues.Add(new("telemetry_simulator", "pass", "Telemetry simulator is disabled"));
+
+        // Retention is a compliance control, not an optional convenience in Production.
+        // Require an explicit true value so a missing environment variable, typo, or
+        // inherited false default cannot leave published policies unenforced.
+        var retentionWorkerSetting = config["RetentionWorker:Enabled"];
+        var retentionWorkerExplicitlyEnabled = bool.TryParse(retentionWorkerSetting, out var retentionWorkerEnabled)
+                                               && retentionWorkerEnabled;
+        if (isProduction && !retentionWorkerExplicitlyEnabled)
+            issues.Add(new("retention_worker", "fail",
+                "RetentionWorker:Enabled must be explicitly true in Production"));
+        else if (retentionWorkerExplicitlyEnabled)
+            issues.Add(new("retention_worker", "pass", "Retention enforcement worker is explicitly enabled"));
+        else
+            issues.Add(new("retention_worker", "warn",
+                "Retention enforcement worker is not explicitly enabled; operational-row policies are not enforced"));
+
         // External email provider
         var smtpHost = config["Email:SmtpHost"] ?? config["Smtp:Host"];
         if (string.IsNullOrWhiteSpace(smtpHost))
@@ -240,6 +269,13 @@ public sealed class ConfigValidationService(IConfiguration config)
 
     private static string? FirstConfigured(params string?[] values) =>
         values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+
+    private static bool IsBase64Key32(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return false;
+        try { return Convert.FromBase64String(value.Trim()).Length == 32; }
+        catch { return false; }
+    }
 
     private static string? ConnectionPassword(string connectionString)
     {

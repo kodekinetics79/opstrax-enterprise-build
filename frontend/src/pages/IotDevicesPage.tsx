@@ -98,12 +98,12 @@ const DEVICE_TABS: Array<{ key: DeviceTab; label: string }> = [
   { key: "unassigned", label: "Unassigned" },
   { key: "offline", label: "Offline" },
   { key: "attention", label: "Needs Attention" },
-  { key: "firmware", label: "Firmware Updates" },
+  { key: "firmware", label: "Firmware (read-only)" },
   { key: "provisioning", label: "Provisioning" },
   { key: "diagnostics", label: "Diagnostics" },
   { key: "installations", label: "Installations" },
   { key: "data-health", label: "Data Health" },
-  { key: "providers", label: "Provider Integrations" },
+  { key: "providers", label: "Provider Connections" },
 ];
 
 const defaultForm: DeviceFormState = {
@@ -148,8 +148,8 @@ function downloadCsv(filename: string, body: string) {
 
 function emptyStateForTab(tab: DeviceTab) {
   if (tab === "offline") return { title: "No offline devices", subtitle: "Every scoped device is checking in within the current monitoring window." };
-  if (tab === "firmware") return { title: "No firmware updates pending", subtitle: "Every visible device is already on its approved firmware channel." };
-  if (tab === "providers") return { title: "Device integration required", subtitle: "Connect a telematics provider to activate live GPS, engine, and ELD data." };
+  if (tab === "firmware") return { title: "Current version only", subtitle: "OTA scheduling and firmware history are not connected in this pilot. Current versions appear when devices report them." };
+  if (tab === "providers") return { title: "Provider registry unavailable", subtitle: "Use Integrations to configure supported connectors. This page does not claim a provider connection without a verified registry response." };
   return { title: "No devices found", subtitle: "Refine the search, switch tabs, or register a device for this fleet." };
 }
 
@@ -392,7 +392,11 @@ export function IotDevicesPage() {
 
   const offlineCount = (devicesQ.data ?? []).filter((row) => /offline/i.test(row.connectionStatus)).length;
   const attentionCount = (devicesQ.data ?? []).filter((row) => /attention|offline/i.test(row.connectionStatus) || row.openAlertCount > 0).length;
-  const avgHealth = Math.round((devicesQ.data ?? []).reduce((sum, row) => sum + Number(row.dataHealthScore), 0) / Math.max((devicesQ.data ?? []).length, 1));
+  const measuredHealth = (devicesQ.data ?? []).filter((row) => row.dataHealthAvailable);
+  const managedCount = (devicesQ.data ?? []).length;
+  const avgHealth = measuredHealth.length
+    ? Math.round(measuredHealth.reduce((sum, row) => sum + Number(row.dataHealthScore), 0) / measuredHealth.length)
+    : null;
 
   if (devicesQ.isLoading) return <DeviceLoadingState />;
   if (devicesQ.isError) return <ErrorState message="Unable to load the device command center right now." />;
@@ -428,7 +432,7 @@ export function IotDevicesPage() {
       <PageHeader
         eyebrow="Telematics & IoT"
         title="Device Health"
-        description="GPS trackers, ELD units, OBD gateways, sensors — connection, firmware and diagnostics per device."
+        description="Evidence-backed device connectivity, assignment, reported firmware, and active diagnostic exceptions. Unsupported controls are labelled explicitly."
         actions={
           <>
             <button
@@ -459,11 +463,12 @@ export function IotDevicesPage() {
       ) : null}
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiCard label="Managed Devices" value={(devicesQ.data ?? []).length} status="Active" icon={<RadioTower className="h-4 w-4" />} />
-        <KpiCard label="Offline" value={offlineCount} status={offlineCount ? "Critical" : "Healthy"} icon={<WifiOff className="h-4 w-4" />} />
-        <KpiCard label="Needs Attention" value={attentionCount} status={attentionCount ? "Watch" : "Healthy"} icon={<Activity className="h-4 w-4" />} />
-        <KpiCard label="Average Data Health" value={`${Number.isFinite(avgHealth) ? avgHealth : 0}%`} status={avgHealth >= 85 ? "Healthy" : avgHealth >= 70 ? "Watch" : "Critical"} icon={<Cpu className="h-4 w-4" />} />
+        <KpiCard label="Managed Devices" value={managedCount} status={managedCount ? "Active" : "Pending"} icon={<RadioTower className="h-4 w-4" />} />
+        <KpiCard label="Offline" value={offlineCount} status={!managedCount ? "Pending" : offlineCount ? "Critical" : "Healthy"} icon={<WifiOff className="h-4 w-4" />} />
+        <KpiCard label="Needs Attention" value={attentionCount} status={!managedCount ? "Pending" : attentionCount ? "Watch" : "Healthy"} icon={<Activity className="h-4 w-4" />} />
+        <KpiCard label="Average Data Health" value={avgHealth == null ? "Unknown" : `${avgHealth}%`} status={avgHealth == null ? "Pending" : avgHealth >= 85 ? "Healthy" : avgHealth >= 70 ? "Watch" : "Critical"} icon={<Cpu className="h-4 w-4" />} />
       </div>
+      <p className="text-xs text-slate-500">Data health is a derived signal score: stale check-in, revoked/malfunction state, open telemetry alerts, and active faults reduce the score. Devices without any such evidence remain Unknown.</p>
 
       <div className="panel space-y-4 p-4">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
@@ -566,7 +571,7 @@ export function IotDevicesPage() {
                     <td className="px-4 py-3"><StatusBadge status={row.connectionStatus} /></td>
                     <td className="px-4 py-3 text-slate-700">{row.powerStatus}</td>
                     <td className="px-4 py-3"><RiskBadge risk={row.signalStrength} /></td>
-                    <td className="px-4 py-3 text-slate-700">{row.dataHealthScore}%</td>
+                    <td className="px-4 py-3 text-slate-700">{row.dataHealthAvailable ? `${row.dataHealthScore}%` : "Unknown"}</td>
                     <td className="px-4 py-3"><StatusBadge status={row.installStatus} /></td>
                     <td className="px-4 py-3"><StatusBadge status={row.complianceStatus} /></td>
                     <td className="px-4 py-3 text-slate-700">
@@ -587,9 +592,9 @@ export function IotDevicesPage() {
                             <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50" onClick={() => { setSelectedId(row.id); setOpenMenuId(null); }}>View Details</button>
                             {canUpdate && <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50" onClick={() => { openEdit(row); setOpenMenuId(null); }}>Edit Device</button>}
                             {canAssign && <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50" onClick={() => { setAssignTarget(row); setAssignVehicleCode(row.assignedVehicleCode || ""); setOpenMenuId(null); }}>Assign to Vehicle</button>}
-                            {canDiagnostics && <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50" disabled={diagnosticsMut.isPending} onClick={() => { diagnosticsMut.mutate(row.id); setOpenMenuId(null); }}>Run Diagnostics</button>}
+                            {canDiagnostics && <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50" onClick={() => { navigate("/obd-j1939"); setOpenMenuId(null); }}>View Diagnostics</button>}
                             <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50" onClick={() => { refreshMut.mutate(row.id); setOpenMenuId(null); }}>Refresh Status</button>
-                            {canFirmware && <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50" onClick={() => { setFirmwareTarget(row); setFirmwareForm({ targetVersion: row.targetFirmwareVersion, scheduledFor: "" }); setOpenMenuId(null); }}>Schedule Firmware</button>}
+                            {canFirmware && <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-400" disabled title="OTA scheduling is not connected in this pilot.">Firmware scheduling unavailable</button>}
                             {canDelete && <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50" onClick={() => { if (window.confirm(`Archive ${row.deviceName}?`)) { archiveMut.mutate(row.id); } setOpenMenuId(null); }}>Archive Device</button>}
                           </div>
                         )}
@@ -813,11 +818,11 @@ function DeviceDetailDrawer({
       <div className="mt-6 flex flex-wrap gap-3">
         <ActionButton label="Edit Device" icon={<Edit3 className="h-4 w-4" />} allowed={canUpdate} onClick={onEdit} />
         <ActionButton label="Assign" icon={<ArrowRightLeft className="h-4 w-4" />} allowed={canAssign} onClick={onAssign} />
-        <ActionButton label="Unassign" icon={<Truck className="h-4 w-4" />} allowed={canAssign && Boolean(device.assignedVehicleCode)} onClick={onUnassign} />
-        <ActionButton label="Mark Installed" icon={<CheckCircle2 className="h-4 w-4" />} allowed={canUpdate} onClick={onMarkInstalled} />
-        <ActionButton label="Run Diagnostics" icon={<Wrench className="h-4 w-4" />} allowed={canDiagnostics} onClick={onRunDiagnostics} />
-        <ActionButton label="Refresh Status" icon={<RefreshCw className="h-4 w-4" />} allowed={true} onClick={onRefresh} />
-        <ActionButton label="Schedule Firmware" icon={<FileUp className="h-4 w-4" />} allowed={canFirmware} onClick={onScheduleFirmware} />
+        <ActionButton label="Unassign unavailable" icon={<Truck className="h-4 w-4" />} allowed={false} onClick={onUnassign} unavailableReason="Unassign is not connected to a backend workflow in this pilot." />
+        <ActionButton label="Install checklist unavailable" icon={<CheckCircle2 className="h-4 w-4" />} allowed={false} onClick={onMarkInstalled} unavailableReason="Installation evidence is not connected in this pilot." />
+        <ActionButton label="On-demand diagnostics unavailable" icon={<Wrench className="h-4 w-4" />} allowed={false} onClick={onRunDiagnostics} unavailableReason="This pilot displays received DTC evidence but cannot request a diagnostic run." />
+        <ActionButton label="Reload Snapshot" icon={<RefreshCw className="h-4 w-4" />} allowed={true} onClick={onRefresh} />
+        <ActionButton label="OTA unavailable" icon={<FileUp className="h-4 w-4" />} allowed={false} onClick={onScheduleFirmware} unavailableReason="OTA scheduling is not connected in this pilot." />
         {/offline|attention/i.test(device.connectionStatus) ? (
           <ActionButton label="Resolve" icon={<ShieldCheck className="h-4 w-4" />} allowed={canDiagnostics} onClick={onResolve} />
         ) : (
@@ -847,7 +852,7 @@ function DeviceDetailDrawer({
           ["Connection", device.connectionStatus],
           ["Power", device.powerStatus],
           ["Signal", device.signalStrength],
-          ["Data health", `${device.dataHealthScore}%`],
+          ["Data health", device.dataHealthAvailable ? `${device.dataHealthScore}%` : "Unknown — no health evidence yet"],
           ["Install status", device.installStatus],
           ["Compliance", device.complianceSummary],
         ]} />
@@ -1143,7 +1148,9 @@ function DeviceCredentialsDialog({
             <CheckCircle2 className="h-5 w-5" />
           </div>
           <div>
-            <h2 id="device-credentials-title" className="text-2xl font-semibold text-slate-900">Connection established</h2>
+            <h2 id="device-credentials-title" className="text-2xl font-semibold text-slate-900">
+              {connected ? "Connection established" : "Device credentials created"}
+            </h2>
             <p className="mt-1 text-sm text-slate-500">
               {device.deviceName} · {device.serialNumber || credentials.deviceSerial}. Configure your device with the credentials below.
             </p>
@@ -1262,12 +1269,12 @@ function CopyField({ label, value, secret = false }: { label: string; value: str
   );
 }
 
-function ActionButton({ label, icon, allowed, onClick }: { label: string; icon: ReactNode; allowed: boolean; onClick: () => void }) {
+function ActionButton({ label, icon, allowed, onClick, unavailableReason }: { label: string; icon: ReactNode; allowed: boolean; onClick: () => void; unavailableReason?: string }) {
   return (
     <button
       className={allowed ? "btn-ghost" : "btn-ghost opacity-60"}
       disabled={!allowed}
-      title={actionTitle(allowed, label)}
+      title={allowed ? label : unavailableReason ?? "You do not have permission to perform this action."}
       onClick={() => allowed && onClick()}
     >
       {icon} {label}

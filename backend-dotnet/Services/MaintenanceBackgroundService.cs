@@ -244,8 +244,19 @@ public sealed class MaintenanceBackgroundService(
                 AND availability_status IN ('out_of_service','in_maintenance')
                 AND NOT EXISTS (
                     SELECT 1 FROM dvir_defects dd
-                    WHERE dd.vehicle_id=vehicles.id AND dd.out_of_service=TRUE
+                    WHERE dd.vehicle_id=vehicles.id AND dd.company_id=vehicles.company_id AND dd.out_of_service=TRUE
                       AND dd.status NOT IN ('resolved','rejected','Resolved','Rejected')
+                )
+                -- Closing the final defect is not a release authorization. A DVIR that
+                -- found defects remains blocking until repairs are certified and the
+                -- bound driver has reviewed/acknowledged those repairs.
+                AND NOT EXISTS (
+                    SELECT 1 FROM dvir_reports dr
+                    WHERE dr.vehicle_id=vehicles.id AND dr.company_id=vehicles.company_id
+                      AND dr.deleted_at IS NULL AND dr.defects_found>0
+                      AND (dr.repair_certification_status<>'Certified'
+                           OR dr.driver_repair_acknowledged_at IS NULL
+                           OR dr.safe_to_operate=FALSE)
                 )
                 AND NOT EXISTS (
                     SELECT 1 FROM work_orders wo

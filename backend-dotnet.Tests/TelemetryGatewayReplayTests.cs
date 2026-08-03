@@ -66,7 +66,7 @@ public sealed class TelemetryGatewayReplayTests
         var probeErrIdx = ingest.IndexOf("Availability.ProbeError", StringComparison.Ordinal);
         Assert.True(probeErrIdx >= 0, "Missing ProbeError fail-closed branch");
         var branch = ingest[probeErrIdx..];
-        Assert.Contains("telemetry.gps.replay_store_unavailable", branch, StringComparison.Ordinal);
+        Assert.Contains("Gateway telemetry replay ledger is unavailable; ingest failed closed.", branch, StringComparison.Ordinal);
         Assert.Contains("Status503ServiceUnavailable", branch, StringComparison.Ordinal);
     }
 

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { BookOpen, CheckCircle, XCircle } from "lucide-react";
 import { driverApi } from "@/services/driverApi";
+import { useSingleFlight } from "@/hooks/useSingleFlight";
 import type { AnyRecord } from "@/types";
 
 const PRIORITY_COLOR: Record<string, string> = {
@@ -16,15 +17,16 @@ export function DriverCoachingPage() {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [notes, setNotes] = useState<Record<number, string>>({});
   const [ackError, setAckError] = useState<string | null>(null);
+  const acknowledgeSingleFlight = useSingleFlight();
 
-  const { data, isLoading, isError, error } = useQuery<AnyRecord>({
+  const { data, isLoading, isError, error, refetch, isFetching } = useQuery<AnyRecord>({
     queryKey: ["driver", "coaching"],
     queryFn: driverApi.coaching,
   });
 
   const ackMut = useMutation({
-    mutationFn: ({ id, note }: { id: number; note?: string }) =>
-      driverApi.acknowledgeCoaching(id, note),
+    mutationFn: ({ id, rowVersion, note }: { id: number; rowVersion: number; note?: string }) =>
+      driverApi.acknowledgeCoaching(id, rowVersion, note),
     onSuccess: (_result, { id }) => {
       setExpandedId(null);
       setNotes(prev => { const n = { ...prev }; delete n[id]; return n; });
@@ -45,9 +47,12 @@ export function DriverCoachingPage() {
 
   if (isError) {
     return (
-      <div className="flex flex-col items-center justify-center gap-4 p-12">
+      <div className="flex flex-col items-center justify-center gap-4 p-12" role="alert">
         <XCircle className="h-10 w-10 text-red-400" />
         <p className="text-sm font-medium text-red-700">{(error as Error)?.message}</p>
+        <button type="button" className="rounded-xl border border-red-200 bg-white px-4 py-2 text-sm font-bold text-red-700 disabled:opacity-40" disabled={isFetching} onClick={() => void refetch()}>
+          {isFetching ? "Retrying…" : "Retry coaching tasks"}
+        </button>
       </div>
     );
   }
@@ -153,12 +158,12 @@ export function DriverCoachingPage() {
                         onChange={e => setNotes(prev => ({ ...prev, [id]: e.target.value }))}
                       />
                     </div>
-                    {ackError && <p className="text-xs text-red-600">{ackError}</p>}
+                    {ackError && <p role="alert" className="text-xs text-red-600">{ackError}</p>}
                     <button
                       type="button"
                       disabled={ackMut.isPending}
                       className="w-full rounded-2xl bg-teal-600 py-3 text-sm font-bold text-white disabled:opacity-40"
-                      onClick={() => ackMut.mutate({ id, note: notes[id] })}
+                      onClick={() => { void acknowledgeSingleFlight(() => ackMut.mutateAsync({ id, rowVersion: Number(task["rowVersion"] ?? 0), note: notes[id] })); }}
                     >
                       {ackMut.isPending ? "Acknowledging…" : "Acknowledge"}
                     </button>

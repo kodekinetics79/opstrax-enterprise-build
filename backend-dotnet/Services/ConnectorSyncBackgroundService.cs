@@ -4,10 +4,11 @@ using Opstrax.Api.Services.Connectors;
 namespace Opstrax.Api.Services;
 
 // Automatic third-party position sync — the 'keep your Samsara' overlay path. Every tick, each
-// CONNECTED integration whose connector implements a real 'sync' action (e.g. Samsara -> live
+// CONNECTED or retry-eligible ERROR integration whose connector implements a real 'sync' action
 // positions) runs an incremental pull with its stored cursor, so a tenant who connects an API key
 // gets continuous positions -> geofence events -> detention detection with zero manual syncs.
-// Failures mark the integration 'Error' and never block other tenants' syncs.
+// Failures mark the integration 'Error' and retry after a bounded cool-down; they never block
+// other tenants' syncs. Error is an observable state, not a terminal scheduling state.
 public sealed class ConnectorSyncBackgroundService(
     IServiceScopeFactory scopeFactory,
     ILogger<ConnectorSyncBackgroundService> logger) : BackgroundService
@@ -39,7 +40,9 @@ public sealed class ConnectorSyncBackgroundService(
     {
         var rows = await db.QueryAsync(
             @"SELECT id, company_id, integration_key, config_json FROM integrations
-              WHERE status='Connected' AND integration_key = ANY(@keys)",
+              WHERE (status='Connected'
+                     OR (status='Error' AND updated_at <= NOW() - INTERVAL '15 minutes'))
+                AND integration_key = ANY(@keys)",
             c => c.Parameters.AddWithValue("@keys", SyncCapable), ct);
 
         foreach (var row in rows)

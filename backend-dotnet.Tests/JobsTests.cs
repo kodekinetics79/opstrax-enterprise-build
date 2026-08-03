@@ -76,11 +76,13 @@ public class JobsSeedPermissionTests
         var api = ReadSource("frontend", "src", "services", "jobsApi.ts");
         var modules = ReadSource("frontend", "src", "modules", "moduleConfig.ts");
         Assert.Contains("status, priority, jobsOffset", page, StringComparison.Ordinal);
-        Assert.Contains("downloadServerExport(\"/api/jobs/export\"", page, StringComparison.Ordinal);
+        Assert.Contains("downloadServerExport(jobsApi.exportPath", page, StringComparison.Ordinal);
+        Assert.Contains("exportPath({ search: query, status, priority })", page, StringComparison.Ordinal);
         Assert.Contains("jobsApi.assign(id, payload)", page, StringComparison.Ordinal);
         Assert.Contains("Request authorized soft-rule override", page, StringComparison.Ordinal);
         Assert.Contains("return flow[current] ?? []", page, StringComparison.Ordinal);
         Assert.Contains("filters.set(\"status\"", api, StringComparison.Ordinal);
+        Assert.Contains("exportPath: (opts?: JobListOptions)", api, StringComparison.Ordinal);
         Assert.Contains("requiredPermission: \"shipments:view\"", modules, StringComparison.Ordinal);
     }
 

@@ -1,8 +1,8 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowRight, CheckCircle2, Download, Edit3, FileCheck2, Info, MapPin, Package, Plus,
-  Search, Send, Sparkles, Trash2, TriangleAlert, Truck, UserCheck, X,
+  Search, Send, Sparkles, Trash2, TriangleAlert, Truck, Upload, UserCheck, X,
 } from "lucide-react";
 import { useLocation, useNavigate } from "react-router";
 import {
@@ -22,7 +22,7 @@ const fields = [
   ["pickupAddress", "Pickup Address"], ["dropoffAddress", "Drop-off Address"], ["scheduledStart", "Scheduled Start"],
   ["scheduledEnd", "Scheduled End"], ["slaWindowStart", "SLA Start"], ["slaWindowEnd", "SLA End"],
   ["requiredVehicleType", "Required Vehicle Type"], ["requiredDriverCertification", "Required Driver Certification"],
-  ["assignedDriverId", "Assigned Driver ID"], ["assignedVehicleId", "Assigned Vehicle ID"], ["routeId", "Route ID"], ["notes", "Notes"],
+  ["routeId", "Route ID"], ["notes", "Notes"],
 ];
 
 // Lifecycle pipeline — drives both the status filter strip and KPI distribution.
@@ -32,11 +32,12 @@ const PIPELINE: { label: string; summaryKey: string; statusValue: string }[] = [
   { label: "En Route", summaryKey: "enRoute", statusValue: "En Route" },
   { label: "At Stop", summaryKey: "atStop", statusValue: "At Stop" },
   { label: "Completed", summaryKey: "completed", statusValue: "Completed" },
-  { label: "Delayed", summaryKey: "delayed", statusValue: "Delayed" },
+  { label: "Delayed", summaryKey: "delayedJobs", statusValue: "Delayed" },
   { label: "SLA Risk", summaryKey: "slaAtRisk", statusValue: "SLA At Risk" },
 ];
 
 type Toast = { kind: "success" | "error" | "info"; message: string };
+type JobImportSession = { rows: AnyRecord[]; preview: AnyRecord; idempotencyKey: string };
 
 type ShipmentSurface =
   | "jobs"
@@ -89,6 +90,9 @@ export function JobsPage() {
   const [status, setStatus] = useState("All");
   const [priority, setPriority] = useState("All");
   const [toast, setToast] = useState<Toast | null>(null);
+  const [importSession, setImportSession] = useState<JobImportSession | null>(null);
+  const importInput = useRef<HTMLInputElement>(null);
+  const focusedJobOpened = useRef<string | null>(null);
   const notify = (kind: Toast["kind"], message: string) => setToast({ kind, message });
   useEffect(() => {
     if (!toast) return;
@@ -97,10 +101,13 @@ export function JobsPage() {
   }, [toast]);
   const JOBS_PAGE_SIZE = 50;
   const [jobsOffset, setJobsOffset] = useState(0);
+  const location = useLocation();
+  const navigate = useNavigate();
+  const focusedJobId = new URLSearchParams(location.search).get("jobId");
   // Server-side paginated + searched — never fetches all 4000+ jobs at once.
   const jobsPaged = useQuery({
-    queryKey: ["jobs", "paged", query.trim(), status, priority, jobsOffset],
-    queryFn: () => jobsApi.listPaged({ limit: JOBS_PAGE_SIZE, offset: jobsOffset, search: query, status, priority }),
+    queryKey: ["jobs", "paged", query.trim(), status, priority, jobsOffset, focusedJobId],
+    queryFn: () => jobsApi.listPaged({ limit: JOBS_PAGE_SIZE, offset: jobsOffset, search: query, status, priority, jobId: focusedJobId ?? undefined }),
   });
   const jobs = { data: jobsPaged.data?.rows ?? [], isLoading: jobsPaged.isLoading, isError: jobsPaged.isError, isFetching: jobsPaged.isFetching, error: jobsPaged.error };
   const jobsTotal = jobsPaged.data?.total ?? (jobsPaged.data?.rows?.length ?? 0);
@@ -109,8 +116,6 @@ export function JobsPage() {
   const qc = useQueryClient();
   const hasPermission = useHasPermission();
   const { session } = useAuth();
-  const location = useLocation();
-  const navigate = useNavigate();
   const surface = ((): ShipmentSurface => {
     if (location.pathname === "/active-shipments") return "active-shipments";
     if (location.pathname === "/shipments") return "shipments";
@@ -124,34 +129,36 @@ export function JobsPage() {
   const canDelete = canManageDispatch || hasPermission("shipments:delete") || canCancel;
   const canDispatch = canManageDispatch || hasPermission("dispatch:update");
   const canAssign = canManageDispatch || hasPermission("dispatch:assign");
-  const canExport = hasPermission("shipments:export") || hasPermission("shipments:view");
+  const canExport = hasPermission("shipments:export");
   const scopedRows = useMemo(() => scopeRowsForSession("jobs", jobs.data || [], session), [jobs.data, session]);
   const visibleSummary = useMemo(() => buildJobSummary(scopedRows, summary.data as AnyRecord | undefined, session), [scopedRows, session, summary.data]);
 
   const save = useMutation({
     mutationFn: (payload: AnyRecord) => payload.id ? jobsApi.update(String(payload.id), payload) : jobsApi.create(payload),
     onSuccess: async (_d, payload) => { setEditing(null); await qc.invalidateQueries({ queryKey: ["jobs"] }); notify("success", payload.id ? "Job updated" : "Job created"); },
-    onError: () => notify("error", "Could not save the job. Please try again."),
+    onError: (error) => notify("error", requestError(error, "Could not save the job. Please try again.")),
   });
   const remove = useMutation({
     mutationFn: (id: string | number) => jobsApi.remove(id),
     onSuccess: async () => { setSelected(null); await qc.invalidateQueries({ queryKey: ["jobs"] }); notify("success", "Job archived"); },
-    onError: () => notify("error", "Could not archive the job."),
+    onError: (error) => notify("error", requestError(error, "Could not archive the job.")),
   });
   const action = useMutation({
     mutationFn: ({ type, id }: { type: string; id: string | number }) => type === "eta" ? jobsApi.sendEta(id) : jobsApi.proofPlaceholder(id),
-    onSuccess: async (_d, vars) => {
+    onSuccess: async (result, vars) => {
       await qc.invalidateQueries({ queryKey: ["jobs"] });
       await qc.invalidateQueries({ queryKey: ["jobs", "summary"] });
       await qc.invalidateQueries({ queryKey: ["jobs", "detail", selected?.id] });
       await qc.invalidateQueries({ queryKey: ["pod"] });
       await qc.invalidateQueries({ queryKey: ["pod", "summary"] });
-      notify("success", vars.type === "eta" ? "Customer ETA update sent" : "POD workflow queued");
+      notify("success", vars.type === "eta"
+        ? String(result.deliveryStatus) === "Sent" ? "Customer ETA recorded in-app" : "Customer ETA queued for provider delivery"
+        : "POD workflow queued");
       if (vars.type === "proof") {
         navigate(`/proof-of-delivery?jobId=${vars.id}`);
       }
     },
-    onError: () => notify("error", "The action could not be completed."),
+    onError: (error) => notify("error", requestError(error, "The action could not be completed.")),
   });
   const changeStatus = useMutation({
     mutationFn: ({ id, status: next }: { id: string | number; status: string }) => jobsApi.changeStatus(id, next),
@@ -161,7 +168,7 @@ export function JobsPage() {
       await qc.invalidateQueries({ queryKey: ["jobs", "detail", selected?.id] });
       notify("success", `Job advanced to ${vars.status}`);
     },
-    onError: () => notify("error", "Status change was rejected."),
+    onError: (error) => notify("error", requestError(error, "Status change was rejected.")),
   });
   const assign = useMutation({
     mutationFn: ({ id, payload }: { id: string | number; payload: AnyRecord }) => jobsApi.assign(id, payload),
@@ -172,7 +179,24 @@ export function JobsPage() {
       await qc.invalidateQueries({ queryKey: ["jobs", "detail", selected?.id] });
       notify("success", "Driver and vehicle assigned");
     },
-    onError: () => notify("error", "Assignment was rejected. Check availability, HOS, and branch ownership."),
+    onError: (error) => notify("error", requestError(error, "Assignment was rejected. Check availability, HOS, and branch ownership.")),
+  });
+  const previewImport = useMutation({
+    mutationFn: (rows: AnyRecord[]) => jobsApi.importPreview(rows),
+    onSuccess: (preview, rows) => setImportSession({ rows, preview, idempotencyKey: globalThis.crypto.randomUUID() }),
+    onError: (error) => notify("error", requestError(error, "The shipment CSV could not be validated.")),
+  });
+  const commitImport = useMutation({
+    mutationFn: ({ rows, idempotencyKey }: { rows: AnyRecord[]; idempotencyKey: string }) => jobsApi.importCommit(rows, idempotencyKey),
+    onSuccess: async (result) => {
+      setImportSession(null);
+      await qc.invalidateQueries({ queryKey: ["jobs"] });
+      const created = Number(result.created ?? 0);
+      const updated = Number(result.updated ?? 0);
+      const skipped = Array.isArray(result.skipped) ? result.skipped.length : Number(result.skipped ?? 0);
+      notify(skipped ? "info" : "success", `Import complete: ${created} created, ${updated} updated, ${skipped} skipped`);
+    },
+    onError: (error) => notify("error", requestError(error, "The shipment import could not be committed.")),
   });
 
   useEffect(() => setJobsOffset(0), [status, priority]);
@@ -180,10 +204,27 @@ export function JobsPage() {
   const exportRoster = async () => {
     if (!canExport) return;
     try {
-      await downloadServerExport("/api/jobs/export", `${surfaceConfig.exportName}.csv`);
+      await downloadServerExport(jobsApi.exportPath({ search: query, status, priority }), `${surfaceConfig.exportName}.csv`);
       notify("success", "Full job roster exported");
     } catch {
       notify("error", "Could not export the full job roster.");
+    }
+  };
+
+  const chooseImport = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) {
+      notify("error", "CSV files are limited to 2 MB.");
+      return;
+    }
+    try {
+      const rows = parseJobCsv(await file.text());
+      if (rows.length > 500) throw new Error("Import at most 500 shipment rows at a time.");
+      previewImport.mutate(rows);
+    } catch (error) {
+      notify("error", error instanceof Error ? error.message : "The CSV could not be parsed.");
     }
   };
 
@@ -200,10 +241,19 @@ export function JobsPage() {
     const matchesStatus = status === "All"
       || String(row.status) === status
       || (status === "En Route" && /In Progress/i.test(String(row.status)))
+      || (status === "Completed" && /Delivered/i.test(String(row.status)))
       || (status === "SLA At Risk" && (row.slaStatus === "At Risk" || /At Risk/i.test(String(row.status))));
     const matchesPriority = priority === "All" || String(row.priority) === priority;
     return matchesText && matchesStatus && matchesPriority;
   }), [baseRows, priority, query, status]);
+
+  useEffect(() => {
+    if (!focusedJobId || focusedJobOpened.current === focusedJobId) return;
+    const focused = rows.find((row) => String(row.id) === focusedJobId);
+    if (!focused) return;
+    focusedJobOpened.current = focusedJobId;
+    setSelected(focused);
+  }, [focusedJobId, rows]);
 
   useEffect(() => {
     if (selected && !rows.some((row) => String(row.id) === String(selected.id))) {
@@ -212,7 +262,7 @@ export function JobsPage() {
   }, [rows, selected]);
 
   if (jobs.isLoading) return <LoadingState />;
-  if (jobs.isError) return <ErrorState message={jobs.error instanceof Error ? jobs.error.message : "Unable to load jobs."} />;
+  if (jobs.isError) return <ErrorState message={jobs.error instanceof Error ? jobs.error.message : "Unable to load jobs."} onRetry={() => void jobsPaged.refetch()} />;
 
   const headline = [
     { label: surface === "active-shipments" ? "Active Now" : surface === "shipments" ? "Shipment Rows" : "Jobs Today", value: surface === "active-shipments" ? rows.length : visibleSummary.totalJobsToday, icon: <Package className="h-4 w-4" /> },
@@ -237,6 +287,8 @@ export function JobsPage() {
         description={surfaceConfig.description}
         actions={<>
           <button type="button" className="btn-primary" disabled={!canCreate} title={!canCreate ? "You do not have permission to perform this action." : undefined} onClick={() => canCreate && setEditing({ priority: "Normal", jobType: "Delivery", status: "Unassigned" })}><Plus className="h-4 w-4" /> {surfaceConfig.createLabel}</button>
+          <input ref={importInput} className="sr-only" type="file" accept=".csv,text/csv" onChange={chooseImport} tabIndex={-1} aria-hidden="true" />
+          <button type="button" className="btn-ghost" disabled={!canCreate || previewImport.isPending} title={!canCreate ? "You do not have permission to import shipments." : undefined} onClick={() => canCreate && importInput.current?.click()}><Upload className="h-4 w-4" /> {previewImport.isPending ? "Validating..." : "Import CSV"}</button>
           <button type="button" className="btn-ghost" disabled={!canExport} title={!canExport ? "You do not have permission to perform this action." : undefined} onClick={exportRoster}><Download className="h-4 w-4" /> Export Roster</button>
         </>}
       />
@@ -295,7 +347,7 @@ export function JobsPage() {
       <div className="panel flex flex-col gap-3 p-3.5 lg:flex-row lg:items-center">
         <div className="relative flex-1 lg:max-w-md">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <input className="field h-10 pl-9" value={query} onChange={(e) => { setQuery(e.target.value); setJobsOffset(0); }} placeholder="Search jobs, customers, drivers, addresses..." />
+          <input className="field h-10 pl-9" aria-label="Search shipments" value={query} onChange={(e) => { setQuery(e.target.value); setJobsOffset(0); }} placeholder="Search jobs, customers, drivers, addresses..." />
         </div>
         <select className="field h-10 lg:max-w-[180px]" aria-label="Filter by priority" value={priority} onChange={(e) => setPriority(e.target.value)}>
           <option value="All">All priorities</option><option>Low</option><option>Normal</option><option>High</option><option>Critical</option>
@@ -323,10 +375,14 @@ export function JobsPage() {
       <JobDrawer
         detail={detail.data}
         loading={detail.isLoading}
-        onClose={() => setSelected(null)}
+        error={detail.error}
+        onClose={() => {
+          setSelected(null);
+          if (focusedJobId) navigate(location.pathname, { replace: true });
+        }}
         onEdit={(record) => canEdit && setEditing(record)}
         onAssign={(record) => canAssign && setAssigning(record)}
-        onDelete={(id) => canDelete && remove.mutate(id)}
+        onDelete={(id) => canDelete && window.confirm("Archive this job? It will be removed from the active shipment register.") && remove.mutate(id)}
         onEta={(id) => canDispatch && action.mutate({ type: "eta", id })}
         onProof={(id) => canDispatch && action.mutate({ type: "proof", id })}
         onStatus={(id, next) => (next === "Cancelled" ? canCancel : canDispatch) && changeStatus.mutate({ id, status: next })}
@@ -336,6 +392,7 @@ export function JobsPage() {
       />
       {editing ? <JobModal initial={editing} saving={save.isPending} onClose={() => setEditing(null)} onSave={(payload) => save.mutate(payload)} /> : null}
       {assigning ? <AssignmentModal initial={assigning} saving={assign.isPending} onClose={() => setAssigning(null)} onSave={(payload) => assign.mutate({ id: String(assigning.id), payload })} /> : null}
+      {importSession ? <JobImportModal session={importSession} saving={commitImport.isPending} onClose={() => setImportSession(null)} onCommit={() => commitImport.mutate({ rows: importSession.rows, idempotencyKey: importSession.idempotencyKey })} /> : null}
     </div>
   );
 }
@@ -365,6 +422,7 @@ function PipelineChip({ label, count, active, tone = "default", onClick }: { lab
     <button
       type="button"
       onClick={onClick}
+      aria-pressed={active}
       className={`flex flex-col items-start rounded-xl border px-3 py-2.5 text-left transition ${active ? "border-teal-300 bg-teal-50 shadow-sm" : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"}`}
     >
       <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</span>
@@ -373,21 +431,28 @@ function PipelineChip({ label, count, active, tone = "default", onClick }: { lab
   );
 }
 
-function JobDrawer({ detail, loading, onClose, onEdit, onAssign, onEta, onProof, onStatus, statusPending, onDelete, onExport, canEdit, canDelete, canDispatch, canCancel, canAssign, canExport }: { detail?: AnyRecord; loading: boolean; onClose: () => void; onEdit: (record: AnyRecord) => void; onAssign: (record: AnyRecord) => void; onEta: (id: string | number) => void; onProof: (id: string | number) => void; onStatus: (id: string | number, status: string) => void; statusPending: boolean; onDelete: (id: string | number) => void; onExport: () => void; canEdit: boolean; canDelete: boolean; canDispatch: boolean; canCancel: boolean; canAssign: boolean; canExport: boolean }) {
+function JobDrawer({ detail, loading, error, onClose, onEdit, onAssign, onEta, onProof, onStatus, statusPending, onDelete, onExport, canEdit, canDelete, canDispatch, canCancel, canAssign, canExport }: { detail?: AnyRecord; loading: boolean; error?: unknown; onClose: () => void; onEdit: (record: AnyRecord) => void; onAssign: (record: AnyRecord) => void; onEta: (id: string | number) => void; onProof: (id: string | number) => void; onStatus: (id: string | number, status: string) => void; statusPending: boolean; onDelete: (id: string | number) => void; onExport: () => void; canEdit: boolean; canDelete: boolean; canDispatch: boolean; canCancel: boolean; canAssign: boolean; canExport: boolean }) {
   const record = detail?.record as AnyRecord | undefined;
-  if (!record && !loading) return null;
-  if (!record) return null;
+  if (!record && !loading && !error) return null;
+  if (!record) return (
+    <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/40 backdrop-blur-sm anim-fade-in">
+      <aside role="dialog" aria-modal="true" aria-label="Shipment detail" className="anim-slide-right flex h-full w-full max-w-3xl flex-col overflow-y-auto border-l border-slate-200 bg-white p-6 shadow-2xl">
+        <div className="flex justify-end"><button type="button" className="icon-btn" onClick={onClose} aria-label="Close shipment detail"><X className="h-5 w-5" /></button></div>
+        {error ? <ErrorState message={requestError(error, "Unable to load shipment detail.")} /> : <LoadingState />}
+      </aside>
+    </div>
+  );
   const transitions = nextStatuses(String(record.status ?? ""));
   const terminal = /completed|delivered|cancelled/i.test(String(record.status ?? ""));
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/40 backdrop-blur-sm anim-fade-in">
-      <aside className="anim-slide-right flex h-full w-full max-w-3xl flex-col overflow-y-auto border-l border-slate-200 bg-white shadow-2xl">
+      <aside role="dialog" aria-modal="true" aria-labelledby="job-detail-title" className="anim-slide-right flex h-full w-full max-w-3xl flex-col overflow-y-auto border-l border-slate-200 bg-white shadow-2xl">
         {/* Sticky header */}
         <div className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 px-6 py-5 backdrop-blur">
           <div className="flex items-start justify-between gap-4">
             <div>
               <p className="section-title text-teal-700">Job Detail</p>
-              <h2 className="mt-1 text-2xl font-bold text-slate-900">{String(record.jobNumber || record.jobCode)}</h2>
+              <h2 id="job-detail-title" className="mt-1 text-2xl font-bold text-slate-900">{String(record.jobNumber || record.jobCode)}</h2>
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <StatusBadge status={record.status} />
                 <RiskBadge risk={record.riskHeatScore} />
@@ -443,9 +508,10 @@ function JobDrawer({ detail, loading, onClose, onEdit, onAssign, onEta, onProof,
             <Panel title="Assignment" record={record} keys={["driverName", "vehicleCode", "requiredVehicleType", "requiredDriverCertification", "routeCode"]} />
             <Panel title="Pickup / Drop-off" record={record} keys={["pickupAddress", "dropoffAddress", "scheduledStart", "scheduledEnd"]} />
             <Panel title="SLA & ETA" record={record} keys={["slaWindowStart", "slaWindowEnd", "eta", "slaStatus", "customerUpdateStatus"]} />
-            <Panel title="Costs & Margin" record={(detail?.costs as AnyRecord) || {}} keys={["revenueEstimate", "costEstimate", "marginEstimate", "marginRisk"]} format="currency" />
+            <Panel title="Costs & Billing" record={{ ...((detail?.costs as AnyRecord) || {}), billingReadiness: record.billingReadiness }} keys={["revenueEstimate", "costEstimate", "marginEstimate", "marginRisk", "billingReadiness"]} format="currency" />
           </div>
 
+          <Grid title="Job Timeline" rows={(detail?.timeline as AnyRecord[]) || []} columns={["eventType", "title", "createdAt"]} />
           <Grid title="Route / Stops" rows={(detail?.stops as AnyRecord[]) || []} columns={["stopSequence", "stopType", "address", "status", "proofStatus", "eta"]} />
           <Grid title="Proof of Delivery / Service" rows={(detail?.proof as AnyRecord[]) || []} columns={["proofType", "status", "receivedBy", "capturedAt", "notes"]} />
           <Grid title="Customer Communications" rows={(detail?.communications as AnyRecord[]) || []} columns={["channel", "messageType", "message", "status", "sentAt"]} />
@@ -480,11 +546,11 @@ function AssignmentModal({ initial, saving, onClose, onSave }: { initial: AnyRec
   };
   return (
     <div className="fixed inset-0 z-[70] grid place-items-center bg-slate-900/50 p-4 backdrop-blur-sm anim-fade-in">
-      <form className="panel w-full max-w-lg p-6 shadow-2xl" onSubmit={submit}>
+      <form role="dialog" aria-modal="true" aria-labelledby="assignment-modal-title" className="panel w-full max-w-lg p-6 shadow-2xl" onSubmit={submit}>
         <div className="flex items-center justify-between border-b border-slate-200 pb-4">
           <div>
             <p className="section-title text-teal-700">Dispatch Assignment</p>
-            <h2 className="mt-1 text-xl font-bold text-slate-900">{String(initial.jobNumber ?? initial.jobCode ?? "Job")}</h2>
+            <h2 id="assignment-modal-title" className="mt-1 text-xl font-bold text-slate-900">{String(initial.jobNumber ?? initial.jobCode ?? "Job")}</h2>
           </div>
           <button type="button" className="icon-btn" onClick={onClose} aria-label="Close"><X className="h-5 w-5" /></button>
         </div>
@@ -518,14 +584,49 @@ function AssignmentModal({ initial, saving, onClose, onSave }: { initial: AnyRec
   );
 }
 
+function JobImportModal({ session, saving, onClose, onCommit }: { session: JobImportSession; saving: boolean; onClose: () => void; onCommit: () => void }) {
+  const previewRows = Array.isArray(session.preview.rows) ? session.preview.rows as AnyRecord[] : [];
+  const invalid = Number(session.preview.invalid ?? 0);
+  return (
+    <div className="fixed inset-0 z-[75] grid place-items-center bg-slate-900/50 p-4 backdrop-blur-sm anim-fade-in">
+      <section role="dialog" aria-modal="true" aria-labelledby="jobs-import-title" className="panel max-h-[90vh] w-full max-w-3xl overflow-y-auto p-6 shadow-2xl">
+        <div className="flex items-start justify-between gap-4 border-b border-slate-200 pb-4">
+          <div>
+            <p className="section-title text-teal-700">Validated CSV Import</p>
+            <h2 id="jobs-import-title" className="mt-1 text-xl font-bold text-slate-900">Review shipment changes</h2>
+            <p className="mt-1 text-sm text-slate-500">{Number(session.preview.creates ?? 0)} creates · {Number(session.preview.updates ?? 0)} updates · {invalid} invalid</p>
+          </div>
+          <button type="button" className="icon-btn" onClick={onClose} aria-label="Close import review"><X className="h-5 w-5" /></button>
+        </div>
+        <div className="mt-5 overflow-x-auto rounded-xl border border-slate-200">
+          <table className="min-w-full text-left text-sm">
+            <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-3 py-2">Row</th><th className="px-3 py-2">Job</th><th className="px-3 py-2">Action</th><th className="px-3 py-2">Validation</th></tr></thead>
+            <tbody>
+              {previewRows.map((row, index) => {
+                const errors = Array.isArray(row.errors) ? row.errors.map(String) : [];
+                return <tr key={`${String(row.key ?? "row")}-${index}`} className="border-t border-slate-100 align-top"><td className="px-3 py-2">{String(row.rowNumber ?? index + 1)}</td><td className="px-3 py-2 font-medium">{String(row.key ?? "--")}</td><td className="px-3 py-2">{String(row.action ?? "--")}</td><td className={`px-3 py-2 ${errors.length ? "text-red-700" : "text-emerald-700"}`}>{errors.length ? errors.join(" ") : "Ready"}</td></tr>;
+              })}
+            </tbody>
+          </table>
+        </div>
+        <p className="mt-4 text-xs text-slate-500">Invalid rows are never written. Existing jobs are updated only when your role has the exact update permission and the job belongs to your branch.</p>
+        <div className="mt-6 flex justify-end gap-3 border-t border-slate-200 pt-4">
+          <button type="button" className="btn-ghost" onClick={onClose} disabled={saving}>Cancel</button>
+          <button type="button" className="btn-primary" onClick={onCommit} disabled={saving || previewRows.length === 0 || invalid === previewRows.length}>{saving ? "Importing..." : "Commit Valid Rows"}</button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function JobModal({ initial, saving, onClose, onSave }: { initial: AnyRecord; saving: boolean; onClose: () => void; onSave: (payload: AnyRecord) => void }) {
   const [form, setForm] = useState<AnyRecord>(initial);
   const submit = (event: FormEvent) => { event.preventDefault(); onSave(form); };
   return (
     <div className="fixed inset-0 z-[60] grid place-items-center bg-slate-900/50 p-4 backdrop-blur-sm anim-fade-in">
-      <form className="panel max-h-[90vh] w-full max-w-3xl overflow-y-auto p-6 shadow-2xl" onSubmit={submit}>
+      <form role="dialog" aria-modal="true" aria-labelledby="job-modal-title" className="panel max-h-[90vh] w-full max-w-3xl overflow-y-auto p-6 shadow-2xl" onSubmit={submit}>
         <div className="flex items-center justify-between border-b border-slate-200 pb-4">
-          <h2 className="text-2xl font-bold text-slate-900">{form.id ? "Edit Job" : "Create Job"}</h2>
+          <h2 id="job-modal-title" className="text-2xl font-bold text-slate-900">{form.id ? "Edit Job" : "Create Job"}</h2>
           <button type="button" className="icon-btn" onClick={onClose} aria-label="Close"><X className="h-5 w-5" /></button>
         </div>
         <div className="mt-6 grid gap-4 md:grid-cols-2">
@@ -609,11 +710,73 @@ function exportJobRecordCsv(record?: AnyRecord | null, detail?: AnyRecord) {
     { section: "Detail", key: "proof", value: JSON.stringify(detail?.proof ?? []) },
     { section: "Detail", key: "communications", value: JSON.stringify(detail?.communications ?? []) },
   ];
-  exportCsv(`job-${String(record.jobNumber ?? record.jobCode ?? record.id ?? "report")}`, rows);
+  exportCsv(`job-${String(record.jobNumber ?? record.jobCode ?? record.id ?? "report")}`, rows.map((row) => ({
+    ...row,
+    value: safeSpreadsheetValue(row.value),
+  })));
+}
+
+function safeSpreadsheetValue(value: unknown) {
+  const text = String(value ?? "");
+  return /^[\s]*[=+\-@]/.test(text) ? `'${text}` : text;
 }
 
 function selectedRecord(detail: AnyRecord | undefined, selected: AnyRecord | null) {
   return (detail?.record as AnyRecord | undefined) ?? selected;
+}
+
+function requestError(error: unknown, fallback: string) {
+  const response = (error as { response?: { data?: { message?: unknown; errors?: unknown } } })?.response?.data;
+  const message = typeof response?.message === "string" ? response.message.trim() : "";
+  const errors = Array.isArray(response?.errors) ? response.errors.map(String).filter(Boolean) : [];
+  if (message && errors.length) return `${message}: ${errors.join(" ")}`;
+  if (message) return message;
+  if (error instanceof Error && error.message.trim()) return error.message;
+  return fallback;
+}
+
+function parseJobCsv(text: string): AnyRecord[] {
+  const grid: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let quoted = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === '"') {
+      if (quoted && text[index + 1] === '"') { cell += '"'; index += 1; }
+      else quoted = !quoted;
+    } else if (char === "," && !quoted) {
+      row.push(cell.trim()); cell = "";
+    } else if ((char === "\n" || char === "\r") && !quoted) {
+      if (char === "\r" && text[index + 1] === "\n") index += 1;
+      row.push(cell.trim()); cell = "";
+      if (row.some((value) => value.length > 0)) grid.push(row);
+      row = [];
+    } else cell += char;
+  }
+  if (quoted) throw new Error("The CSV contains an unterminated quoted value.");
+  row.push(cell.trim());
+  if (row.some((value) => value.length > 0)) grid.push(row);
+  if (grid.length < 2) throw new Error("The CSV must contain a header and at least one shipment row.");
+
+  const allowed = new Set([
+    "jobNumber", "jobCode", "customerId", "jobType", "priority", "pickupAddress", "dropoffAddress",
+    "scheduledStart", "scheduledEnd", "slaWindowStart", "slaWindowEnd", "requiredVehicleType",
+    "requiredDriverCertification", "notes",
+  ]);
+  const headers = grid[0].map((header, index) => index === 0 ? header.replace(/^\uFEFF/, "") : header);
+  if (new Set(headers).size !== headers.length) throw new Error("The CSV header contains duplicate columns.");
+  const unknown = headers.filter((header) => !allowed.has(header));
+  if (unknown.length) throw new Error(`Unsupported CSV columns: ${unknown.join(", ")}.`);
+  for (const required of ["customerId", "pickupAddress", "dropoffAddress"])
+    if (!headers.includes(required)) throw new Error(`The CSV is missing required column '${required}'.`);
+  if (!headers.includes("jobNumber") && !headers.includes("jobCode")) throw new Error("The CSV requires jobNumber.");
+
+  return grid.slice(1).map((values, index) => {
+    if (values.length !== headers.length)
+      throw new Error(`CSV row ${index + 2} has ${values.length} columns; expected ${headers.length}.`);
+    return Object.fromEntries(headers.map((header, column) => [header, values[column] ?? ""])) as AnyRecord;
+  });
 }
 
 function buildJobSummary(rows: AnyRecord[], summary: AnyRecord | undefined, session?: AnyRecord | null): AnyRecord {

@@ -110,6 +110,15 @@ public sealed class DefaultDeviceAuthenticator : IDeviceAuthenticator
             if (!hmac.IsAuthenticated)
                 return hmac;
         }
+        else if (policy.AuthMode is DeviceAuthMode.MutualTls or DeviceAuthMode.ClientCertificate)
+        {
+            // This gateway accepts a raw TcpClient and has no TLS client-certificate object to
+            // verify. Never translate a registry declaration into transport proof that did not
+            // occur; those modes require a TLS terminator that passes a verified certificate
+            // assertion through a separate authenticated integration.
+            return AuthResult.Rejected(AuthReasonCode.TransportProofUnavailable,
+                "raw TCP listener cannot verify the configured certificate authentication mode");
+        }
 
         // 7. Cleared every applicable control. Grant the honest trust tier for the mode: crypto
         //    modes are cryptographically authenticated; ImeiAllowlistOnly is explicitly not.

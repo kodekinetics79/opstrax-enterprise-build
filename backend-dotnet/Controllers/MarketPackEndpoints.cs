@@ -13,6 +13,9 @@ namespace Opstrax.Api.Controllers;
 // existing fleet_tms_saudi_regions reference table for Saudi geography.
 public static class MarketPackEndpoints
 {
+    internal const string ActiveMarketPackStatus = "active";
+    internal const string DisabledMarketPackStatus = "disabled";
+
     public static void MapMarketPackEndpoints(this WebApplication app)
     {
         // ── Market catalog (tenant) ───────────────────────────────────────────
@@ -760,32 +763,96 @@ ORDER BY id LIMIT 2", c => c.Parameters.AddWithValue("@c", Company(h)), ct);
         return OkJson(new { items });
     }
 
-    private static async Task<IResult> PlatformSetTenantMarketPack(long tenantId, HttpContext h, Dictionary<string, object?> body, Database db, CancellationToken ct)
+    internal static async Task<IResult> PlatformSetTenantMarketPack(long tenantId, HttpContext h, Dictionary<string, object?> body, Database db, CancellationToken ct)
     {
         var (principal, error) = await PlatformEndpoints.RequireAsync(h, db, "platform:packages:manage", ct);
         if (error is not null) return error;
-        var packCode = Str(body, "packCode");
-        if (string.IsNullOrWhiteSpace(packCode)) return Results.BadRequest(ApiResponse<object>.Fail("packCode is required"));
-        var status = string.IsNullOrWhiteSpace(Str(body, "status")) ? "active" : Str(body, "status");
-        long? priceOverride = long.TryParse(Str(body, "priceOverrideCents"), out var po) ? po : null;
-        await db.ExecuteAsync("""
-            INSERT INTO tenant_market_packs (company_id, pack_code, status, price_override_cents, enabled_by, enabled_at, updated_at)
-            VALUES (@c,@p,@s,@po,@by,NOW(),NOW())
-            ON CONFLICT (company_id, pack_code) DO UPDATE SET status=EXCLUDED.status, price_override_cents=EXCLUDED.price_override_cents, enabled_by=EXCLUDED.enabled_by, updated_at=NOW()
-            """,
-            c => { c.Parameters.AddWithValue("@c", tenantId); c.Parameters.AddWithValue("@p", packCode); c.Parameters.AddWithValue("@s", status); c.Parameters.AddWithValue("@po", (object?)priceOverride ?? DBNull.Value); c.Parameters.AddWithValue("@by", principal!.Email); }, ct);
+        var packCode = Str(body, "packCode").Trim();
+        if (string.IsNullOrWhiteSpace(packCode))
+            return Results.BadRequest(ApiResponse<object>.Fail("Validation failed", "packCode is required"));
 
-        // Mirror into tenant_entitlements so the feature module key is enabled/disabled.
-        var moduleKey = MarketPackSchemaService.ModuleKeyForPack(packCode);
-        await db.ExecuteAsync("""
-            INSERT INTO tenant_entitlements (company_id, module_key, enabled, source, updated_by, updated_at)
-            VALUES (@c,@m,@en,'market_pack',@by,NOW())
-            ON CONFLICT (company_id, module_key) DO UPDATE SET enabled=EXCLUDED.enabled, source='market_pack', updated_by=EXCLUDED.updated_by, updated_at=NOW()
-            """,
-            c => { c.Parameters.AddWithValue("@c", tenantId); c.Parameters.AddWithValue("@m", moduleKey); c.Parameters.AddWithValue("@en", status == "active"); c.Parameters.AddWithValue("@by", principal!.Email); }, ct);
+        // This is a commercial control-plane enum, not free-form workflow state.
+        // Keep the accepted wire values explicit so typos can never create a paid
+        // assignment that the deny-by-default read gate silently treats as disabled.
+        var status = string.IsNullOrWhiteSpace(Str(body, "status")) ? ActiveMarketPackStatus : Str(body, "status").Trim();
+        if (status is not (ActiveMarketPackStatus or DisabledMarketPackStatus))
+            return Results.BadRequest(ApiResponse<object>.Fail("Validation failed", "status must be active or disabled"));
 
-        await Ent(db).RecordAsync(tenantId, "market_packs.enabled", status == "active" ? 1 : 0, $"pack:{packCode}", principal!.Email, ct);
-        return OkJson(new { ok = true, packCode, status });
+        long? priceOverride = null;
+        if (body.TryGetValue("priceOverrideCents", out var rawPrice) && rawPrice is not null && !string.IsNullOrWhiteSpace(rawPrice.ToString()))
+        {
+            if (!long.TryParse(rawPrice.ToString(), out var parsedPrice) || parsedPrice < 0)
+                return Results.BadRequest(ApiResponse<object>.Fail("Validation failed", "priceOverrideCents must be a non-negative whole number"));
+            priceOverride = parsedPrice;
+        }
+
+        var reason = Str(body, "reason").Trim();
+        if (reason.Length > 500)
+            return Results.BadRequest(ApiResponse<object>.Fail("Validation failed", "reason cannot exceed 500 characters"));
+
+        return await db.RunInSystemTransactionAsync<IResult>(async () =>
+        {
+            // Lock the tenant row to serialize concurrent commercial mutations and
+            // validate both sides of the assignment before any ledger is changed.
+            var tenant = await db.QuerySingleAsync(
+                "SELECT id, company_code, name FROM companies WHERE id=@id FOR UPDATE",
+                c => c.Parameters.AddWithValue("@id", tenantId), ct);
+            if (tenant is null)
+                return Results.Json(ApiResponse<object>.Fail("Not found", "Tenant not found"), statusCode: StatusCodes.Status404NotFound);
+
+            var pack = await db.QuerySingleAsync(
+                "SELECT code, name, status FROM market_packs WHERE code=@code",
+                c => c.Parameters.AddWithValue("@code", packCode), ct);
+            if (pack is null)
+                return Results.Json(ApiResponse<object>.Fail("Not found", "Market pack not found"), statusCode: StatusCodes.Status404NotFound);
+            var catalogStatus = pack["status"]?.ToString() ?? "";
+            if (status == ActiveMarketPackStatus && catalogStatus != ActiveMarketPackStatus)
+                return Results.Json(ApiResponse<object>.Fail("Validation failed", "Market pack is not active in the catalog"), statusCode: StatusCodes.Status409Conflict);
+
+            var moduleKey = MarketPackSchemaService.ModuleKeyForPack(packCode);
+            var beforeAssignment = await db.QuerySingleAsync(
+                "SELECT id, status, price_override_cents, enabled_by, enabled_at, updated_at FROM tenant_market_packs WHERE company_id=@c AND pack_code=@p",
+                c => { c.Parameters.AddWithValue("@c", tenantId); c.Parameters.AddWithValue("@p", packCode); }, ct);
+            var beforeEntitlement = await db.QuerySingleAsync(
+                "SELECT enabled, source, updated_by, updated_at FROM tenant_entitlements WHERE company_id=@c AND module_key=@m",
+                c => { c.Parameters.AddWithValue("@c", tenantId); c.Parameters.AddWithValue("@m", moduleKey); }, ct);
+
+            var assignmentId = await db.InsertAsync("""
+                INSERT INTO tenant_market_packs (company_id, pack_code, status, price_override_cents, enabled_by, enabled_at, updated_at)
+                VALUES (@c,@p,@s,@po,@by,NOW(),NOW())
+                ON CONFLICT (company_id, pack_code) DO UPDATE SET
+                    status=EXCLUDED.status,
+                    price_override_cents=EXCLUDED.price_override_cents,
+                    enabled_by=EXCLUDED.enabled_by,
+                    updated_at=NOW()
+                RETURNING id
+                """,
+                c => { c.Parameters.AddWithValue("@c", tenantId); c.Parameters.AddWithValue("@p", packCode); c.Parameters.AddWithValue("@s", status); c.Parameters.AddWithValue("@po", (object?)priceOverride ?? DBNull.Value); c.Parameters.AddWithValue("@by", principal!.Email); }, ct);
+
+            var enabled = status == ActiveMarketPackStatus;
+            await db.ExecuteAsync("""
+                INSERT INTO tenant_entitlements (company_id, module_key, enabled, source, updated_by, updated_at)
+                VALUES (@c,@m,@en,'market_pack',@by,NOW())
+                ON CONFLICT (company_id, module_key) DO UPDATE SET enabled=EXCLUDED.enabled, source='market_pack', updated_by=EXCLUDED.updated_by, updated_at=NOW()
+                """,
+                c => { c.Parameters.AddWithValue("@c", tenantId); c.Parameters.AddWithValue("@m", moduleKey); c.Parameters.AddWithValue("@en", enabled); c.Parameters.AddWithValue("@by", principal!.Email); }, ct);
+
+            await Ent(db).RecordAsync(tenantId, "market_packs.enabled", enabled ? 1 : 0, $"pack:{packCode}", principal!.Email, ct);
+
+            // Platform audit is the immutable commercial mutation record. Usage
+            // metering remains separate evidence and cannot substitute for it.
+            await PlatformEndpoints.AuditAsync(db, principal!, h, "tenant.market_pack.changed", "MarketPackAssignment",
+                assignmentId, tenantId, new
+                {
+                    reason = string.IsNullOrWhiteSpace(reason) ? null : reason,
+                    pack = new { code = packCode, name = pack["name"], catalogStatus },
+                    moduleKey,
+                    before = new { assignment = beforeAssignment, entitlement = beforeEntitlement },
+                    after = new { assignment = new { id = assignmentId, status, priceOverrideCents = priceOverride, enabledBy = principal.Email }, entitlement = new { enabled, source = "market_pack", updatedBy = principal.Email } },
+                }, ct);
+
+            return OkJson(new { ok = true, packCode, status, moduleKey, auditRecorded = true });
+        }, ct);
     }
 
     private static async Task<IResult> PlatformComplianceUsage(long tenantId, HttpContext h, Database db, CancellationToken ct)

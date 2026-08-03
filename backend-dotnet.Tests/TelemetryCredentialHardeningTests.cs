@@ -27,8 +27,8 @@ public sealed class TelemetryCredentialHardeningTests
         Assert.Contains("SET api_key_hash = NULL", source, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("hmac_secret = NULL", source, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("api_key_hash IS NULL", source, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("hmac_secret IS NULL", source, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("length(hmac_secret) < 32", source, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("hmac_secret_encrypted IS NULL", source, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("length(hmac_secret_encrypted) < 24", source, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("revoked_at = COALESCE(revoked_at, NOW())", source, StringComparison.OrdinalIgnoreCase);
     }
 

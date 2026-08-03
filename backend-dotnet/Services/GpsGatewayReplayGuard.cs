@@ -6,7 +6,7 @@ namespace Opstrax.Api.Services;
 // Durable, cross-instance replay defense for POST /api/telemetry/gps-ingest (TEL-P1-REPLAY-005).
 //
 // The gps-ingest forward is authenticated by HMAC-SHA256 over "<timestamp>.<rawPayload>" under
-// the shared Telemetry:GatewaySecret. That signature is a per-message identity: the SAME signed
+// a tenant-bound per-gateway credential. That signature is a per-message identity: the SAME signed
 // request replayed produces the SAME signature bytes. This guard makes "have I already accepted
 // this exact signed message?" a durable, atomic question so a captured valid packet cannot be
 // re-accepted after a restart, on another instance, on retry, or under concurrent submission.
@@ -26,18 +26,20 @@ namespace Opstrax.Api.Services;
 // back — a probe ERROR fails closed so a DB blip during a cold cache can never silently disable
 // durable protection:
 //   - Present    : durable INSERT (accept/duplicate); insert throwing -> caller tx aborts (fail closed)
-//   - Absent     : table genuinely does not exist (COUNT==0) -> in-memory fallback (pre-migration)
+//   - Absent     : table genuinely does not exist (COUNT==0). Production callers fail closed;
+//                  local development may use the explicit in-memory test fallback.
 //   - ProbeError : probe threw (transient) -> FailClosed, never fall back
 public static class GpsGatewayReplayGuard
 {
     public enum Availability { Present, Absent, ProbeError }
 
-    /// <summary>Single global gateway scope until a per-gateway credential identity exists.</summary>
+    /// <summary>Development-only fallback scope; production callers always pass a provisioned gateway id.</summary>
     public const string DefaultGatewayId = "default";
 
-    // Definitive presence is cached once known; a transient probe error is NOT cached (re-probed).
-    private static volatile bool _known;
-    private static volatile bool _present;
+    // Definitive presence is cached once known. Absence is deliberately NOT cached: an owner can
+    // apply the migration while a gateway is running and the next request will recover without a
+    // restart. Transient probe errors are likewise re-probed and always fail closed at the caller.
+    private static volatile bool _presentKnown;
     private static readonly SemaphoreSlim _probeLock = new(1, 1);
 
     // Fallback replay set, used ONLY when the durable table is DEFINITIVELY absent (pre-migration).
@@ -51,11 +53,11 @@ public static class GpsGatewayReplayGuard
     /// </summary>
     public static async Task<Availability> DetermineAvailabilityAsync(Database db, CancellationToken ct = default)
     {
-        if (_known) return _present ? Availability.Present : Availability.Absent;
+        if (_presentKnown) return Availability.Present;
         await _probeLock.WaitAsync(ct);
         try
         {
-            if (_known) return _present ? Availability.Present : Availability.Absent;
+            if (_presentKnown) return Availability.Present;
             long n;
             try
             {
@@ -68,9 +70,12 @@ public static class GpsGatewayReplayGuard
                 // Transient failure — do NOT freeze a negative; fail closed for THIS call.
                 return Availability.ProbeError;
             }
-            _present = n > 0;
-            _known = true;
-            return _present ? Availability.Present : Availability.Absent;
+            if (n > 0)
+            {
+                _presentKnown = true;
+                return Availability.Present;
+            }
+            return Availability.Absent;
         }
         finally
         {

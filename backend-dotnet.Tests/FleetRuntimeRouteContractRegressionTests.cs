@@ -42,6 +42,23 @@ public sealed class FleetRuntimeRouteContractRegressionTests
     }
 
     [Fact]
+    public void ProductionReadinessDefinesAndLeftJoinsTheCriticalWorkerRoster()
+    {
+        var source = Read("backend-dotnet", "Services", "FleetProductionReadinessService.cs");
+        foreach (var worker in new[]
+        {
+            "TelemetryBackgroundService", "SafetyBackgroundService", "TripBackgroundService",
+            "MaintenanceBackgroundService", "EscalationBackgroundService", "ScheduledReportBackgroundService"
+        }) Assert.Contains(worker, source);
+        Assert.Contains("unnest(@criticalWorkers::text[])", source);
+        Assert.Contains("LEFT JOIN service_heartbeats heartbeat", source);
+        Assert.Contains("heartbeat.service_name IS NULL", source);
+        Assert.Contains("heartbeat.last_heartbeat_at < @processStartedAt", source);
+        Assert.Contains("CriticalWorkerStartupGrace", source);
+        Assert.Contains("CriticalWorkerFreshness", source);
+    }
+
+    [Fact]
     public void Stage55RepairsAuthorizationPolicyAndPrivilegeDriftExactly()
     {
         var sql = Read("database", "migrations", "2026_07_30_stage55_fleet_runtime_route_contract.sql");

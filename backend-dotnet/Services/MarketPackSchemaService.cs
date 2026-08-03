@@ -257,6 +257,21 @@ public sealed class MarketPackSchemaService(Database db)
             )
             """);
         await db.ExecuteAsync("CREATE INDEX IF NOT EXISTS idx_tenant_market_packs_company ON tenant_market_packs (company_id)");
+        // The API also validates this enum, while the database constraint protects
+        // imports, migrations and future writers from introducing ambiguous states.
+        await db.ExecuteAsync("""
+            DO $$
+            BEGIN
+              IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname='ck_tenant_market_packs_status'
+                  AND conrelid='tenant_market_packs'::regclass
+              ) THEN
+                ALTER TABLE tenant_market_packs
+                  ADD CONSTRAINT ck_tenant_market_packs_status CHECK (status IN ('active','disabled'));
+              END IF;
+            END $$
+            """);
 
         // Reference / configuration tables (market-scoped, not tenant data).
         await db.ExecuteAsync("""

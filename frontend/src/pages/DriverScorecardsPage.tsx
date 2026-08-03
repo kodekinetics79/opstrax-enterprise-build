@@ -1,10 +1,12 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { tokens, chart } from "@/styles/tokens";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { exportCsv, LoadingState, ErrorState, EmptyState, KpiCard } from "@/components/ui";
-import { useHasPermission } from "@/hooks/usePermission";
+import { useHasDirectPermission, useHasPermission } from "@/hooks/usePermission";
+import { useSingleFlight } from "@/hooks/useSingleFlight";
+import { coachingApi } from "@/services/coachingApi";
 import type { AnyRecord } from "@/types";
 
 // ── API ───────────────────────────────────────────────────────────────────────
@@ -14,8 +16,6 @@ const safetyApi = {
   driverScorecards: () => unwrap<AnyRecord[]>(apiClient.get("/api/safety/drivers/scorecards")),
   vehicleScorecards: () => unwrap<AnyRecord[]>(apiClient.get("/api/safety/vehicles/scorecards")),
   trends: () => unwrap<AnyRecord[]>(apiClient.get("/api/safety/trends")),
-  createCoachingTask: (driverId: string | number, payload: AnyRecord) =>
-    unwrap<AnyRecord>(apiClient.post(`/api/safety/events/${driverId}/create-coaching-task`, payload)),
 };
 
 // ── Score ring ────────────────────────────────────────────────────────────────
@@ -88,14 +88,14 @@ function DriverDrawer({
   ];
 
   return (
-    <div className="fixed inset-0 z-40 flex justify-end bg-slate-950/30 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-40 flex justify-end bg-slate-950/30 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Driver scorecard detail" onClick={onClose} onKeyDown={(e) => { if (e.key === "Escape") onClose(); }}>
       <div
         className="w-full max-w-xl h-full flex flex-col overflow-y-auto bg-white shadow-2xl border-l border-slate-200"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="sticky top-0 z-10 flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-white/95 backdrop-blur">
           <span className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">Driver Scorecard</span>
-          <button type="button" className="text-slate-400 hover:text-slate-700 text-lg leading-none" onClick={onClose}>✕</button>
+          <button type="button" aria-label="Close driver scorecard" className="text-slate-400 hover:text-slate-700 text-lg leading-none" onClick={onClose}>✕</button>
         </div>
 
         {/* Hero — prominent score ring */}
@@ -133,7 +133,7 @@ function DriverDrawer({
         </div>
 
         <div className="clay-card mx-5 mb-4 p-5">
-          <p className="text-[10px] font-black uppercase tracking-[0.16em] text-teal-600 mb-1.5">AI Recommendation</p>
+          <p className="text-[10px] font-black uppercase tracking-[0.16em] text-teal-600 mb-1.5">Rule-Based Recommendation</p>
           <p className="text-sm text-slate-600 leading-relaxed">
             {risk >= 60
               ? "Immediate coaching intervention recommended. Schedule a mandatory session focusing on following distance and speed compliance before next dispatch."
@@ -141,6 +141,18 @@ function DriverDrawer({
               ? "Monitor closely over the next 14 days. Assign a targeted coaching task for the highest-frequency behavior category."
               : "Driver is performing well. Maintain positive reinforcement — no corrective action required at this time."}
           </p>
+        </div>
+
+        <div className="clay-card mx-5 mb-4 p-5">
+          <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-500 mb-1.5">How this score was calculated</p>
+          <p className="text-sm text-slate-600">{String(driver.scoreFormula ?? "Score = 100 minus non-dismissed event impact over 30 days, clamped to 0–100.")}</p>
+          <pre className="mt-3 max-h-40 overflow-auto rounded-lg bg-slate-50 p-3 text-xs text-slate-600">{JSON.stringify(driver.scoreBreakdown ?? {}, null, 2)}</pre>
+          <div className="mt-3 grid gap-1 text-xs text-slate-400">
+            <p>Formula version: {String(driver.formulaVersion ?? "safety-impact-v1")}</p>
+            <p>Source events: {String(driver.sourceEventCount ?? driver.events30d ?? 0)}</p>
+            <p>Source window: {driver.sourceWindowStart ? new Date(String(driver.sourceWindowStart)).toLocaleString() : "--"} to {driver.sourceWindowEnd ? new Date(String(driver.sourceWindowEnd)).toLocaleString() : "--"}</p>
+            <p>Calculated: {driver.computedAt ? new Date(String(driver.computedAt)).toLocaleString() : "No events scored yet"}</p>
+          </div>
         </div>
 
         {canCoach && (
@@ -173,13 +185,14 @@ function CoachingModal({
   pending: boolean;
 }) {
   const [notes, setNotes] = useState("");
+  const operationKey = useMemo(() => crypto.randomUUID(), [driver?.id, driver?.driverId]);
   if (!driver) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="create-coaching-title" onClick={onClose} onKeyDown={(e) => { if (e.key === "Escape") onClose(); }}>
       <div className="panel w-full max-w-md mx-4 flex flex-col gap-4" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between">
-          <h3 className="text-base font-semibold text-slate-900">Create Coaching Task</h3>
-          <button type="button" className="text-slate-400 hover:text-slate-600" onClick={onClose}>✕</button>
+          <h3 id="create-coaching-title" className="text-base font-semibold text-slate-900">Create Coaching Task</h3>
+          <button type="button" aria-label="Close coaching task dialog" className="text-slate-400 hover:text-slate-600" onClick={onClose}>✕</button>
         </div>
         <p className="text-sm text-slate-600">
           Driver: <span className="font-medium">{String(driver.driverName)}</span> — Safety Score: <span className="font-medium">{String(driver.safetyScore)}</span>
@@ -200,7 +213,7 @@ function CoachingModal({
             type="button"
             disabled={pending}
             className="bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
-            onClick={() => onConfirm({ notes, priority: Number(driver.riskScore ?? 0) >= 50 ? "High" : "Normal" })}
+            onClick={() => onConfirm({ notes, priority: Number(driver.riskScore ?? 0) >= 50 ? "High" : "Normal", idempotencyKey: operationKey })}
           >
             {pending ? "Creating…" : "Create Task"}
           </button>
@@ -231,13 +244,16 @@ type Tab = "drivers" | "vehicles" | "trends";
 export function DriverScorecardsPage() {
   const qc = useQueryClient();
   const hasPermission = useHasPermission();
-  const canCoach = hasPermission("safety:create") || hasPermission("safety:review");
+  const hasDirectPermission = useHasDirectPermission();
+  const canCoach = hasDirectPermission("safety:create") || hasDirectPermission("safety:update") || hasDirectPermission("safety:manage");
+  const canExport = hasPermission("safety:evidence:export");
 
   const [tab, setTab] = useState<Tab>("drivers");
   const [selected, setSelected] = useState<AnyRecord | null>(null);
   const [coachTarget, setCoachTarget] = useState<AnyRecord | null>(null);
   const [search, setSearch] = useState("");
   const [toast, setToast] = useState<string | null>(null);
+  const coachingSingleFlight = useSingleFlight();
 
   const summaryQ = useQuery({ queryKey: ["safety", "summary"], queryFn: safetyApi.summary });
   const driversQ = useQuery({ queryKey: ["safety", "driver-scorecards"], queryFn: safetyApi.driverScorecards, refetchInterval: 30_000 });
@@ -246,7 +262,15 @@ export function DriverScorecardsPage() {
 
   const coachMutation = useMutation({
     mutationFn: ({ driverId, payload }: { driverId: string | number; payload: AnyRecord }) =>
-      safetyApi.createCoachingTask(driverId, payload),
+      coachingApi.create({
+        driverId,
+        coachingType: "Targeted Safety Coaching",
+        title: `Safety coaching for ${String(coachTarget?.driverName ?? "driver")}`,
+        description: String(payload.notes ?? "").trim() || "Review the scorecard breakdown and agree measurable corrective actions.",
+        priority: payload.priority,
+        dueAt: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+        idempotencyKey: payload.idempotencyKey,
+      }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["safety"] });
       setCoachTarget(null);
@@ -287,16 +311,19 @@ export function DriverScorecardsPage() {
   const totalVehicleIncidents = vehicles.reduce((a, v) => a + Number(v.incidentCount ?? 0), 0);
   const worstVehicles = [...vehicles].sort((a, b) => Number(a.safetyScore ?? 0) - Number(b.safetyScore ?? 0)).slice(0, 5);
 
-  if (driversQ.isLoading) return <LoadingState />;
-  if (driversQ.isError) return <ErrorState message={(driversQ.error as Error)?.message} />;
+  if (driversQ.isLoading || summaryQ.isLoading) return <LoadingState />;
+  if (driversQ.isError || summaryQ.isError) return <ErrorState message={((driversQ.error ?? summaryQ.error) as Error)?.message} onRetry={() => { void driversQ.refetch(); void summaryQ.refetch(); }} />;
 
   return (
     <div className="fleet-console flex h-full flex-col gap-3 overflow-y-auto">
       {toast && (
-        <div className="fixed top-4 right-4 z-50 bg-teal-600 text-white text-sm font-medium px-4 py-2.5 rounded-lg shadow-lg">
+        <div role="status" aria-live="polite" className="fixed top-4 right-4 z-50 bg-teal-600 text-white text-sm font-medium px-4 py-2.5 rounded-lg shadow-lg">
           {toast}
         </div>
       )}
+      {coachMutation.isError ? <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{(coachMutation.error as Error)?.message || "Unable to create the coaching task."}</div> : null}
+      {tab === "vehicles" && vehiclesQ.isError ? <ErrorState message={(vehiclesQ.error as Error)?.message} onRetry={() => void vehiclesQ.refetch()} /> : null}
+      {tab === "trends" && trendsQ.isError ? <ErrorState message={(trendsQ.error as Error)?.message} onRetry={() => void trendsQ.refetch()} /> : null}
 
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
@@ -306,6 +333,8 @@ export function DriverScorecardsPage() {
         <button
           type="button"
           className="btn-secondary text-sm"
+          disabled={!canExport || drivers.length === 0}
+          title={!canExport ? "You do not have permission to export safety data." : drivers.length === 0 ? "No scorecards to export." : "Export current driver scorecards."}
           onClick={() => exportCsv("driver-scorecards", drivers)}
         >
           Export CSV
@@ -342,19 +371,19 @@ export function DriverScorecardsPage() {
           delta={`${openCoaching} open tasks`}
         />
         <KpiCard
-          label="Open Incidents"
+          label="Open Safety Events"
           value={String(s.openIncidents ?? 0)}
           delta="Awaiting review"
         />
       </div>
 
       {/* Tab bar */}
-      <div className="panel flex gap-1.5 p-2">
+      <div className="panel flex gap-1.5 p-2" role="tablist" aria-label="Scorecard views">
         {(["drivers", "vehicles", "trends"] as Tab[]).map((t) => (
           <button
             key={t}
             type="button"
-            onClick={() => setTab(t)}
+            onClick={() => setTab(t)} role="tab" aria-selected={tab === t}
             className={`px-4 py-1.5 rounded-lg text-sm font-medium border transition-colors capitalize ${
               tab === t
                 ? "bg-teal-50 border-teal-300 text-teal-700"
@@ -406,6 +435,8 @@ export function DriverScorecardsPage() {
                         key={String(driver.id ?? i)}
                         className="hover:bg-slate-50 cursor-pointer"
                         onClick={() => setSelected(driver)}
+                        tabIndex={0}
+                        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelected(driver); } }}
                       >
                         <td className="px-4 py-3 text-slate-500 text-xs font-medium">#{i + 1}</td>
                         <td className="px-4 py-3">
@@ -486,6 +517,8 @@ export function DriverScorecardsPage() {
                     key={String(d.id ?? d.driverId ?? i)}
                     className="flex cursor-pointer items-center gap-3 rounded-xl px-1.5 py-1 transition-colors hover:bg-slate-50"
                     onClick={() => setSelected(d)}
+                    tabIndex={0}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelected(d); } }}
                   >
                     <ScoreRing score={Number(d.safetyScore ?? 0)} size={40} />
                     <div className="min-w-0 flex-1">
@@ -510,6 +543,8 @@ export function DriverScorecardsPage() {
                     key={String(d.id ?? d.driverId ?? i)}
                     className="flex cursor-pointer items-center gap-3 rounded-xl px-1.5 py-1 transition-colors hover:bg-slate-50"
                     onClick={() => setSelected(d)}
+                    tabIndex={0}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelected(d); } }}
                   >
                     <ScoreRing score={Number(d.safetyScore ?? 0)} size={40} />
                     <div className="min-w-0 flex-1">
@@ -666,9 +701,9 @@ export function DriverScorecardsPage() {
         driver={coachTarget}
         onClose={() => setCoachTarget(null)}
         pending={coachMutation.isPending}
-        onConfirm={(payload) =>
-          coachMutation.mutate({ driverId: (coachTarget!.driverId ?? coachTarget!.id) as string | number, payload })
-        }
+        onConfirm={(payload) => { void coachingSingleFlight(() =>
+          coachMutation.mutateAsync({ driverId: (coachTarget!.driverId ?? coachTarget!.id) as string | number, payload })
+        ); }}
       />
     </div>
   );

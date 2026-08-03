@@ -13,6 +13,9 @@
     <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.1.2" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="../telematics/src/Opstrax.Telematics.Protocols.J1939/Opstrax.Telematics.Protocols.J1939.csproj" />
+  </ItemGroup>
+  <ItemGroup>
     <None Include="../database/init/001_schema.sql" Link="Schema/001_schema.sql" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup>

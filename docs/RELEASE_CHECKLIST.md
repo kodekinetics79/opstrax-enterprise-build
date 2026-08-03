@@ -28,16 +28,30 @@ database/migrations/2026_07_22_stage47_detention_recovery.sql
 database/migrations/2026_07_22_stage48_driver_detention_pay.sql
 ```
 
-NOTE: stage47 is the full Detention Recovery DDL (tables + evidence-immutability trigger +
-RLS + grants), mirroring DetentionSchemaService; the detector health-gates and refuses to run
-until these tables exist, so applying it is what activates detention in prod. The GL boot step
-is gated by GeneralLedgerSchema:Enabled (non-prod default on; prod uses stage45/46).
+NOTE: stage47 is the core Detention Recovery owner DDL (detention tables,
+evidence-immutability trigger, RLS and grants), mirroring the core of
+DetentionSchemaService. Its `job_charges` columns/index and detention outbox indexes
+are installed only when the separately owned Business Spine/Foundation predecessor
+tables already exist. A Stage47 ledger therefore proves the immutable detention
+evidence/offboarding schema, but does **not** by itself prove the complete
+detention-to-charge/outbox/invoice path. Before enabling or selling Detention Recovery,
+verify `job_charges.detention_dwell_id`, `job_charges.evidence_sha256`,
+`uq_job_charges_detention`, `ux_outbox_detention_priced` and
+`ux_outbox_detention_warning`, then run the approval/billing/outbox PostgreSQL suites.
+The detector health gate and Stage47 core schema are necessary, not sufficient, for
+commercial activation. The GL boot step is gated by GeneralLedgerSchema:Enabled
+(non-prod default on; prod uses stage45/46).
 
 NOTE: stage48 is the detention→driver-pay policy table (`driver_detention_pay_policy`, one row
 per tenant, fail-closed: no enabled policy ⇒ drivers paid no detention). Detention pay lines are
 DERIVED during settlement generation keyed on the trigger date (billed/collected), so
 delete-and-recompute stays honest and never double-pays. This closes the differentiator: OpsTrax
 collects detention AND pays the driver their share on the same evidence chain.
+
+Stage48 remains a separate financial-product migration and is not implied by the
+Safety pilot's canonical Stage47/58/59/65–74 owner lane. If driver detention pay is
+in release scope, index its migration ledger and restricted-role/RLS evidence
+separately; otherwise exclude that capability from the client promise.
 
 Each migration also RLS-enrolls its new tables and grants the restricted `opstrax_app` role, so no
 separate RLS step is needed. Verify after: `SELECT tablename FROM pg_policies WHERE policyname='tenant_isolation'`
@@ -90,3 +104,11 @@ For each of the 4 tenants, in the admin UI:
 ## Verification
 - Cross-module chain: `OrderToCashE2EPostgresTests` (rate→bill→tax→issue→recognize→settle) is green in CI.
 - Full suite green in CI on every commit (dotnet-build-test + dotnet-integration-tests + frontend-build).
+- `tools/verify-dotnet-warning-baseline.sh` performs a clean Release rebuild and fails on a new warning
+  code or any increase above the checked-in per-code ceilings. A reduction must be followed by ratcheting
+  `tools/dotnet-warning-baseline.tsv` downward; the baseline is debt visibility, not a clean-build claim.
+- `tools/validate-ci-supply-chain-pins.sh` requires full commit SHAs for third-party Actions and manifest
+  digests for workflow/Docker base images. Dependency updates must deliberately update and revalidate pins.
+- The exact-SHA aggregator always uploads `opstrax-mandatory-gates-<sha>-<attempt>`, including failed,
+  skipped, or cancelled upstream results. It publishes `opstrax-release-candidate-<sha>` only when all seven
+  mandatory jobs succeed and the downloaded provenance resolves to the same commit SHA.

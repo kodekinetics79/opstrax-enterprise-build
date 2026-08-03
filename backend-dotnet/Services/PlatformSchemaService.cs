@@ -158,6 +158,20 @@ public sealed class PlatformSchemaService(Database db)
             """);
         await db.ExecuteAsync("CREATE INDEX IF NOT EXISTS idx_entitlement_company ON tenant_entitlements (company_id)");
 
+        // System-owned provenance for versioned demo/pilot fixture reconciliation.
+        // It is created during owner-capable schema initialization so the terminal RLS
+        // reconciliation can enroll it before any non-production seed endpoint runs.
+        // Production creates the same object out-of-band in Stage 68.
+        await db.ExecuteAsync("""
+            CREATE TABLE IF NOT EXISTS demo_fixture_versions (
+                company_id      BIGINT      NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+                fixture_key     VARCHAR(80) NOT NULL,
+                fixture_version INT         NOT NULL CHECK (fixture_version > 0),
+                applied_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                PRIMARY KEY (company_id, fixture_key)
+            )
+            """);
+
         await db.ExecuteAsync("""
             CREATE TABLE IF NOT EXISTS platform_invoices (
                 id             BIGINT       GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -182,11 +196,60 @@ public sealed class PlatformSchemaService(Database db)
                 id             BIGINT       GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                 admin_id       BIGINT       NOT NULL REFERENCES platform_admins(id),
                 company_id     BIGINT       NOT NULL REFERENCES companies(id),
+                target_user_id BIGINT       NULL REFERENCES users(id),
+                grant_ref      UUID         NULL DEFAULT gen_random_uuid(),
                 reason         VARCHAR(400) NOT NULL,
                 expires_at     TIMESTAMPTZ  NOT NULL,
                 ended_at       TIMESTAMPTZ  NULL,
                 created_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW()
             )
+            """);
+        await db.ExecuteAsync("ALTER TABLE platform_impersonation_sessions ADD COLUMN IF NOT EXISTS target_user_id BIGINT NULL REFERENCES users(id)");
+        await db.ExecuteAsync("ALTER TABLE platform_impersonation_sessions ADD COLUMN IF NOT EXISTS grant_ref UUID NULL DEFAULT gen_random_uuid()");
+        await db.ExecuteAsync("UPDATE platform_impersonation_sessions SET grant_ref=gen_random_uuid() WHERE grant_ref IS NULL");
+        await db.ExecuteAsync("""
+            DO $$ BEGIN
+                IF EXISTS (SELECT 1 FROM platform_impersonation_sessions WHERE target_user_id IS NULL) THEN
+                    RAISE EXCEPTION 'Unbound historical impersonation grants require operator reconciliation';
+                END IF;
+            END $$
+            """);
+        await db.ExecuteAsync("ALTER TABLE platform_impersonation_sessions ALTER COLUMN grant_ref SET NOT NULL");
+        await db.ExecuteAsync("ALTER TABLE platform_impersonation_sessions ALTER COLUMN target_user_id SET NOT NULL");
+        await db.ExecuteAsync("CREATE UNIQUE INDEX IF NOT EXISTS ux_platform_impersonation_grant_ref ON platform_impersonation_sessions(grant_ref)");
+        await db.ExecuteAsync("ALTER TABLE user_sessions ADD COLUMN IF NOT EXISTS impersonation_grant_id BIGINT NULL");
+        await db.ExecuteAsync("CREATE UNIQUE INDEX IF NOT EXISTS ux_user_sessions_impersonation_grant ON user_sessions(impersonation_grant_id) WHERE impersonation_grant_id IS NOT NULL");
+        await db.ExecuteAsync("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_user_sessions_impersonation_grant') THEN
+                    ALTER TABLE user_sessions ADD CONSTRAINT fk_user_sessions_impersonation_grant
+                    FOREIGN KEY (impersonation_grant_id) REFERENCES platform_impersonation_sessions(id) ON DELETE CASCADE;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='ck_platform_impersonation_expiry') THEN
+                    ALTER TABLE platform_impersonation_sessions ADD CONSTRAINT ck_platform_impersonation_expiry
+                    CHECK (expires_at > created_at AND expires_at <= created_at + INTERVAL '60 minutes');
+                END IF;
+            END $$
+            """);
+        await db.ExecuteAsync("""
+            CREATE OR REPLACE FUNCTION validate_impersonation_session_binding()
+            RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN
+                IF NEW.impersonation_grant_id IS NOT NULL AND NOT EXISTS (
+                    SELECT 1 FROM platform_impersonation_sessions p
+                    WHERE p.id=NEW.impersonation_grant_id
+                      AND p.company_id=NEW.company_id AND p.target_user_id=NEW.user_id
+                      AND p.ended_at IS NULL AND p.expires_at>NOW()
+                ) THEN
+                    RAISE EXCEPTION 'Invalid or inactive impersonation grant binding';
+                END IF;
+                RETURN NEW;
+            END $$;
+            DROP TRIGGER IF EXISTS trg_validate_impersonation_session_binding ON user_sessions;
+            CREATE TRIGGER trg_validate_impersonation_session_binding
+              BEFORE INSERT OR UPDATE OF impersonation_grant_id, user_id, company_id ON user_sessions
+              FOR EACH ROW EXECUTE FUNCTION validate_impersonation_session_binding();
             """);
 
         await EnsureTenantProfileColumnsAsync();
@@ -211,8 +274,30 @@ public sealed class PlatformSchemaService(Database db)
             "ALTER TABLE companies ADD COLUMN IF NOT EXISTS primary_contact_email VARCHAR(200) NULL",
             "ALTER TABLE companies ADD COLUMN IF NOT EXISTS primary_contact_phone VARCHAR(40) NULL",
             "ALTER TABLE companies ADD COLUMN IF NOT EXISTS billing_email VARCHAR(200) NULL",
+            // Compatibility-safe commercial authorization migration. Existing rows
+            // receive legacy_allow; tenant provisioning explicitly opts new customers
+            // into package_allowlist. A database default is intentionally legacy-safe
+            // for older seed/import paths that do not yet name the policy.
+            "ALTER TABLE companies ADD COLUMN IF NOT EXISTS entitlement_policy_mode VARCHAR(32) NOT NULL DEFAULT 'legacy_allow'",
         };
         foreach (var sql in companyCols) await db.ExecuteAsync(sql);
+
+        // PostgreSQL has no ADD CONSTRAINT IF NOT EXISTS. The catalog guard keeps this
+        // idempotent while ensuring invalid policy text can never silently fail open.
+        await db.ExecuteAsync("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'ck_companies_entitlement_policy_mode'
+                      AND conrelid = 'companies'::regclass
+                ) THEN
+                    ALTER TABLE companies
+                    ADD CONSTRAINT ck_companies_entitlement_policy_mode
+                    CHECK (entitlement_policy_mode IN ('legacy_allow', 'package_allowlist'));
+                END IF;
+            END $$
+            """);
 
         // Commercial term on the subscription: monthly | annual billing cadence.
         await db.ExecuteAsync("ALTER TABLE tenant_subscriptions ADD COLUMN IF NOT EXISTS billing_cycle VARCHAR(20) NOT NULL DEFAULT 'monthly'");
@@ -232,8 +317,8 @@ public sealed class PlatformSchemaService(Database db)
             ["platform:dashboard:view", "platform:tenants:view", "platform:packages:view", "platform:packages:manage", "platform:billing:view", "platform:billing:manage", "platform:audit:view"]),
         ["customer_success_admin"] = ("Customer Success Admin", "Tenant health, renewals and upsell follow-up.",
             ["platform:dashboard:view", "platform:tenants:view", "platform:health:view", "platform:health:manage", "platform:crm:view"]),
-        ["support_admin"] = ("Support Admin", "Inspect tenant status and run safe impersonation. No billing/package control.",
-            ["platform:dashboard:view", "platform:tenants:view", "platform:support:view", "platform:impersonation:start"]),
+        ["support_admin"] = ("Support Admin", "Inspect tenant status. Bounded support access requires an explicit, separately reviewed grant.",
+            ["platform:dashboard:view", "platform:tenants:view", "platform:support:view"]),
         ["product_admin"] = ("Product Admin", "Manage feature entitlements, packages and platform health.",
             ["platform:dashboard:view", "platform:tenants:view", "platform:entitlements:view", "platform:entitlements:manage", "platform:packages:view", "platform:packages:manage", "platform:countries:view", "platform:countries:manage", "platform:ops:view"]),
         ["compliance_admin"] = ("Compliance Admin", "Audit, security and access review oversight.",
@@ -244,6 +329,15 @@ public sealed class PlatformSchemaService(Database db)
 
     private async Task SeedRolesAsync()
     {
+        // The former seed granted write-capable impersonation to every support
+        // operator. Revoke that inherited grant; only an explicitly reviewed custom
+        // role (or platform super-admin) may reach the separately disabled endpoint.
+        await db.ExecuteAsync("""
+            DELETE FROM platform_role_permissions rp
+            USING platform_roles r
+            WHERE rp.role_id=r.id AND r.role_key='support_admin'
+              AND rp.permission_key='platform:impersonation:start'
+            """);
         foreach (var (key, def) in RoleSeed)
         {
             var roleId = await db.InsertAsync(

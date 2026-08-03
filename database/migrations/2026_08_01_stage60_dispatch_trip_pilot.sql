@@ -44,6 +44,10 @@ ALTER TABLE dispatch_assignments ADD COLUMN IF NOT EXISTS planned_pickup_at TIME
 ALTER TABLE dispatch_assignments ADD COLUMN IF NOT EXISTS planned_delivery_at TIMESTAMPTZ NULL;
 ALTER TABLE dispatch_assignments ADD COLUMN IF NOT EXISTS actual_pickup_at TIMESTAMPTZ NULL;
 ALTER TABLE dispatch_assignments ADD COLUMN IF NOT EXISTS actual_delivery_at TIMESTAMPTZ NULL;
+-- Detention attribution accepts either the canonical delivery timestamp or the
+-- legacy assignment completion timestamp. Production skips Batch2SchemaService,
+-- so the owner migration must carry both query dependencies.
+ALTER TABLE dispatch_assignments ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ NULL;
 ALTER TABLE dispatch_assignments ADD COLUMN IF NOT EXISTS accepted_at TIMESTAMPTZ NULL;
 ALTER TABLE dispatch_assignments ADD COLUMN IF NOT EXISTS acceptance_due_at TIMESTAMPTZ NULL;
 ALTER TABLE dispatch_assignments ADD COLUMN IF NOT EXISTS trip_id BIGINT NULL;

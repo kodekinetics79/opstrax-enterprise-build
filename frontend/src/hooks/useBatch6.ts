@@ -93,14 +93,14 @@ export function useHosAiRecs() {
 export function useCertifyHosLog() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: number) => hosApi.certifyLog(id),
+    mutationFn: ({ id, body }: { id: number; body: Record<string, unknown> }) => hosApi.certifyLog(id, body),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ["hos-logs"] }); },
   });
 }
 
 // ELD
-export function useEldDevices() {
-  return useQuery({ queryKey: ["eld-devices"], queryFn: eldApi.devices, staleTime: 30_000 });
+export function useEldDevices(enabled = true) {
+  return useQuery({ queryKey: ["eld-devices"], queryFn: eldApi.devices, staleTime: 30_000, enabled });
 }
 
 export function useMarkEldMalfunction() {
@@ -114,7 +114,7 @@ export function useMarkEldMalfunction() {
 export function useResolveEldMalfunction() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: number) => eldApi.resolveMalfunction(id),
+    mutationFn: ({ id, body }: { id: number; body: Record<string, unknown> }) => eldApi.resolveMalfunction(id, body),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ["eld-devices"] }); },
   });
 }

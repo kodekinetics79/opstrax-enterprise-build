@@ -17,7 +17,7 @@ public static class GeofenceEvaluator
         // GIS: both zone shapes evaluate — circular (center+radius, haversine) and polygon
         // (polygon_json vertex ring, ray-casting point-in-polygon) for docks/yards/irregular sites.
         var fences = await db.QueryAsync(
-            @"SELECT id, company_id, center_lat, center_lng, radius_meters, polygon_json
+            @"SELECT id, company_id, branch_id, center_lat, center_lng, radius_meters, polygon_json
               FROM geofences
               WHERE status='Active'
                 AND ((center_lat IS NOT NULL AND center_lng IS NOT NULL AND radius_meters IS NOT NULL)
@@ -26,7 +26,10 @@ public static class GeofenceEvaluator
         if (fences.Count == 0) return;
 
         var positions = await db.QueryAsync(
-            "SELECT vehicle_id, company_id, lat, lng FROM latest_vehicle_positions WHERE lat IS NOT NULL AND lng IS NOT NULL",
+            @"SELECT lvp.vehicle_id, lvp.company_id, v.branch_id, lvp.lat, lvp.lng
+              FROM latest_vehicle_positions lvp
+              JOIN vehicles v ON v.id=lvp.vehicle_id AND v.company_id=lvp.company_id AND v.deleted_at IS NULL
+              WHERE lvp.lat IS NOT NULL AND lvp.lng IS NOT NULL",
             ct: ct);
         if (positions.Count == 0) return;
 
@@ -43,6 +46,7 @@ public static class GeofenceEvaluator
         {
             var gid    = Convert.ToInt64(f["id"]);
             var fcid   = Convert.ToInt64(f["companyId"]);
+            var fenceBranch = f["branchId"] is null or DBNull ? (long?)null : Convert.ToInt64(f["branchId"]);
             var polygon = ParsePolygon(f["polygonJson"]?.ToString());
             var hasCircle = f["centerLat"] is not null and not DBNull && f["centerLng"] is not null and not DBNull && f["radiusMeters"] is not null and not DBNull;
             if (polygon is null && !hasCircle) continue;
@@ -53,6 +57,8 @@ public static class GeofenceEvaluator
             foreach (var p in positions)
             {
                 if (Convert.ToInt64(p["companyId"]) != fcid) continue;
+                var vehicleBranch = p["branchId"] is null or DBNull ? (long?)null : Convert.ToInt64(p["branchId"]);
+                if (fenceBranch is not null && vehicleBranch != fenceBranch) continue;
                 var vid = Convert.ToInt64(p["vehicleId"]);
                 var lat = Convert.ToDouble(p["lat"]);
                 var lng = Convert.ToDouble(p["lng"]);

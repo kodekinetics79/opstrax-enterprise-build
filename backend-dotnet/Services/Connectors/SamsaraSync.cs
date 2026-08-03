@@ -18,7 +18,7 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
         var url = "/fleet/vehicles/stats/feed?types=gps,engineStates,obdOdometerMeters";
         if (!string.IsNullOrWhiteSpace(afterCursor)) url += $"&after={Uri.EscapeDataString(afterCursor!)}";
 
-        using var resp = await client.GetAsync(url, ct);
+        using var resp = await GetWithRetryAsync(url, ct);
         resp.EnsureSuccessStatusCode();
         using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
 
@@ -58,6 +58,9 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
         {
             foreach (var r in readings)
             {
+                var fixAge = DateTime.UtcNow - r.EventTime.ToUniversalTime();
+                var telemetryStatus = fixAge <= TimeSpan.FromMinutes(5) ? "healthy" : "stale";
+                var riskLevel = fixAge <= TimeSpan.FromMinutes(5) ? "low" : "unknown";
                 // Match the Samsara vehicle to an OpsTrax vehicle via an eld_devices row.
                 // The Samsara vehicle id is stored as the device_serial. We upsert the
                 // device row (provider='Samsara') so the mapping self-heals; a device
@@ -69,9 +72,13 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
                     @"INSERT INTO location_events
                         (company_id, vehicle_id, device_id, lat, lng, speed_mph, heading,
                          event_type, engine_status, odometer_miles, source, source_channel,
-                         event_time, received_at)
-                      VALUES (@cid, @vid, @did, @lat, @lng, @spd, @hdg, 'ping', @eng, @odo,
-                              'samsara', 'samsara-api', @etime, NOW())",
+                         idempotency_key, observed_at, normalized_at, event_time, received_at)
+                      SELECT @cid, @vid, @did, @lat, @lng, @spd, @hdg, 'ping', @eng, @odo,
+                             'samsara', 'samsara-api', @idem, @etime, NOW(), @etime, NOW()
+                      WHERE NOT EXISTS (
+                          SELECT 1 FROM location_events existing
+                          WHERE existing.company_id=@cid AND existing.idempotency_key=@idem)
+                      ON CONFLICT DO NOTHING",
                     c =>
                     {
                         c.Parameters.AddWithValue("@cid", companyId);
@@ -83,6 +90,7 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
                         c.Parameters.AddWithValue("@hdg", (short)Math.Clamp(r.Heading, 0, 359));
                         c.Parameters.AddWithValue("@eng", (object?)r.EngineState ?? DBNull.Value);
                         c.Parameters.AddWithValue("@odo", (object?)(r.OdometerMiles is { } o ? (decimal)o : (object?)null) ?? DBNull.Value);
+                        c.Parameters.AddWithValue("@idem", $"samsara:{r.VehicleId}:{r.EventTime.Ticks}");
                         c.Parameters.AddWithValue("@etime", r.EventTime);
                     }, ct);
 
@@ -95,15 +103,15 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
                          engine_status, odometer_miles, event_time, received_at, event_count,
                          source_channel, telemetry_status, risk_level, updated_at{provCols})
                       VALUES (@cid, @vid, @did, @lat, @lng, @spd, @hdg, @eng, @odo, @etime, NOW(), 1,
-                              'samsara-api', 'healthy', 'low', NOW(){provVals})
+                              'samsara-api', @telemetryStatus, @riskLevel, NOW(){provVals})
                       ON CONFLICT (company_id, vehicle_id) DO UPDATE SET
                         device_id=EXCLUDED.device_id, lat=EXCLUDED.lat, lng=EXCLUDED.lng,
                         speed_mph=EXCLUDED.speed_mph, heading=EXCLUDED.heading,
                         engine_status=EXCLUDED.engine_status, odometer_miles=EXCLUDED.odometer_miles,
                         event_time=EXCLUDED.event_time, received_at=EXCLUDED.received_at,
                         event_count=latest_vehicle_positions.event_count+1,
-                        source_channel=EXCLUDED.source_channel, telemetry_status='healthy',
-                        risk_level='low', updated_at=NOW(){provUpd}
+                        source_channel=EXCLUDED.source_channel, telemetry_status=EXCLUDED.telemetry_status,
+                        risk_level=EXCLUDED.risk_level, updated_at=NOW(){provUpd}
                       WHERE latest_vehicle_positions.event_time IS NULL OR latest_vehicle_positions.event_time <= EXCLUDED.event_time",
                     c =>
                     {
@@ -117,6 +125,8 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
                         c.Parameters.AddWithValue("@eng", (object?)r.EngineState ?? "Running");
                         c.Parameters.AddWithValue("@odo", (object?)(r.OdometerMiles is { } o ? (decimal)o : (object?)null) ?? DBNull.Value);
                         c.Parameters.AddWithValue("@etime", r.EventTime);
+                        c.Parameters.AddWithValue("@telemetryStatus", telemetryStatus);
+                        c.Parameters.AddWithValue("@riskLevel", riskLevel);
                     }, ct);
 
                 written++;
@@ -136,6 +146,18 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
         }
 
         return new SyncSummary(readings.Count, written, unmatched, nextCursor, hasNext);
+    }
+
+    private async Task<HttpResponseMessage> GetWithRetryAsync(string url, CancellationToken ct)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            var response = await client.GetAsync(url, ct);
+            if ((int)response.StatusCode is not (429 or >= 500) || attempt >= 4) return response;
+            var retryAfter = response.Headers.RetryAfter?.Delta ?? TimeSpan.FromMilliseconds(250 * Math.Pow(2, attempt));
+            response.Dispose();
+            await Task.Delay(retryAfter > TimeSpan.FromSeconds(10) ? TimeSpan.FromSeconds(10) : retryAfter, ct);
+        }
     }
 
     // Upsert the eld_devices row for a Samsara vehicle (keyed by device_serial=Samsara
@@ -184,12 +206,17 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
 
             double lat = gps.TryGetProperty("latitude", out var la) && la.TryGetDouble(out var laV) ? laV : double.NaN;
             double lng = gps.TryGetProperty("longitude", out var lo) && lo.TryGetDouble(out var loV) ? loV : double.NaN;
-            if (double.IsNaN(lat) || double.IsNaN(lng)) continue; // no real fix → skip (no fabrication)
+            if (double.IsNaN(lat) || double.IsNaN(lng) || lat is < -90 or > 90 || lng is < -180 or > 180 || (lat == 0 && lng == 0))
+                continue; // no valid physical fix -> quarantine by omission, never fabricate
 
             double speed = gps.TryGetProperty("speedMilesPerHour", out var sp) && sp.TryGetDouble(out var spV) ? spV : 0;
+            if (speed is < 0 or > 200) continue;
             int heading = gps.TryGetProperty("headingDegrees", out var hd) && hd.TryGetInt32(out var hdV) ? hdV : 0;
-            DateTime time = gps.TryGetProperty("time", out var tm) && tm.ValueKind == JsonValueKind.String && DateTime.TryParse(tm.GetString(), out var t)
-                ? t.ToUniversalTime() : DateTime.UtcNow;
+            if (!gps.TryGetProperty("time", out var tm) || tm.ValueKind != JsonValueKind.String ||
+                !DateTimeOffset.TryParse(tm.GetString(), out var parsedTime)) continue;
+            var time = parsedTime.UtcDateTime;
+            var now = DateTime.UtcNow;
+            if (time < now.AddDays(-7) || time > now.AddMinutes(5)) continue;
 
             double? odoMiles = null;
             if (v.TryGetProperty("obdOdometerMeters", out var odo) && odo.TryGetProperty("value", out var ov) && ov.TryGetDouble(out var meters))

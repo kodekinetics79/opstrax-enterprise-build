@@ -101,10 +101,97 @@ public class DemoTenantSeederPostgresTests
         Assert.Equal(1, await db.ScalarLongAsync("SELECT COUNT(*) FROM companies WHERE company_code=@code", c => c.Parameters.AddWithValue("@code", testCompanyCode)));
         Assert.Equal(12, await db.ScalarLongAsync("SELECT COUNT(*) FROM jobs WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", companyId)));
 
-        // Two demo login users were seeded (internal admin + customer-portal).
-        // Two demo login users seeded for this tenant (emails are code-suffixed for the
-        // isolated test tenant so they never collide with the runtime demo tenant's users).
-        Assert.Equal(2, await db.ScalarLongAsync("SELECT COUNT(*) FROM users WHERE company_id=@c AND (email LIKE 'admin%@meridian.demo' OR email LIKE 'portal%@acme.demo')", c => c.Parameters.AddWithValue("@c", companyId)));
+        // Golden Safety pilot contract: two operating branches, the original admin/portal
+        // identities, and five least-privilege personas. The Driver identity is linked to
+        // exactly one driver record so browser/API identity derivation is deterministic.
+        Assert.Equal(2, await db.ScalarLongAsync("SELECT COUNT(*) FROM branches WHERE company_id=@c AND branch_code IN ('MER-NORTH','MER-SOUTH') AND status='Active'", c => c.Parameters.AddWithValue("@c", companyId)));
+        Assert.Equal(7, await db.ScalarLongAsync("SELECT COUNT(*) FROM users WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", companyId)));
+        foreach (var role in new[] { "Safety Manager", "Driver", "Dispatcher", "Maintenance Manager", "Safety Auditor" })
+            Assert.Equal(1, await db.ScalarLongAsync("SELECT COUNT(*) FROM users WHERE company_id=@c AND role_name=@role AND status='Active'", c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@role", role); }));
+        Assert.Equal(1, await db.ScalarLongAsync(
+            @"SELECT COUNT(*) FROM users WHERE company_id=@c AND role_name='Driver'
+                AND permissions_json='[""driver:self"",""notifications:view"",""messages:send"",""maintenance:create""]'::jsonb
+                AND NOT permissions_json ?| ARRAY['safety:view','safety:update','compliance:view','shipments:view','drivers:view','vehicles:view']",
+            c => c.Parameters.AddWithValue("@c", companyId)));
+        Assert.Equal(1, await db.ScalarLongAsync(
+            @"SELECT COUNT(*) FROM drivers d JOIN users u ON u.id=d.user_id AND u.company_id=d.company_id
+              WHERE d.company_id=@c AND d.driver_code='MER-DRV-1' AND u.role_name='Driver' AND d.branch_id=u.branch_id",
+            c => c.Parameters.AddWithValue("@c", companyId)));
+        Assert.Equal(1, await db.ScalarLongAsync(
+            "SELECT COUNT(*) FROM companies WHERE id=@c AND entitlement_policy_mode='package_allowlist'",
+            c => c.Parameters.AddWithValue("@c", companyId)));
+        Assert.Equal(9, await db.ScalarLongAsync(
+            @"SELECT COUNT(*) FROM tenant_entitlements
+              WHERE company_id=@c AND enabled=true AND tier='pilot' AND source='fixture'
+                AND module_key = ANY(ARRAY['safety','maintenance','dispatch','telematics','crm','customer_portal','reports','compliance','integrations'])",
+            c => c.Parameters.AddWithValue("@c", companyId)));
+
+        // Connected, explainable Safety stories—not disconnected vanity rows.
+        Assert.Equal(2, await db.ScalarLongAsync("SELECT COUNT(*) FROM safety_events WHERE company_id=@c AND event_number IN ('MER-SAFE-1','MER-SAFE-2') AND branch_id IS NOT NULL", c => c.Parameters.AddWithValue("@c", companyId)));
+        Assert.Equal(2, await db.ScalarLongAsync("SELECT COUNT(*) FROM coaching_tasks WHERE company_id=@c AND task_number IN ('MER-COACH-1','MER-COACH-2') AND safety_event_id IS NOT NULL AND assigned_to_user_id IS NOT NULL", c => c.Parameters.AddWithValue("@c", companyId)));
+        Assert.Equal(1, await db.ScalarLongAsync(
+            @"SELECT COUNT(*) FROM incidents i JOIN incident_evidence e ON e.company_id=i.company_id AND e.incident_id=i.id
+              WHERE i.company_id=@c AND i.incident_number='MER-INC-1' AND i.status='Under Review'
+                AND i.safety_event_id IS NOT NULL AND e.content_hash IS NOT NULL
+                AND e.evidence_title='Synthetic harsh-braking telemetry metadata'
+                AND e.evidence_url IS NULL
+                AND e.evidence_json @> '{""synthetic"":true,""verificationStatus"":""not_verified"",""custodyStatus"":""not_managed"",""retrievalStatus"":""not_available""}'::jsonb
+                AND NOT (e.evidence_json ? 'verified')",
+            c => c.Parameters.AddWithValue("@c", companyId)));
+        Assert.Equal(2, await db.ScalarLongAsync("SELECT COUNT(*) FROM dvir_reports WHERE company_id=@c AND report_number IN ('MER-DVIR-1','MER-DVIR-2') AND branch_id IS NOT NULL", c => c.Parameters.AddWithValue("@c", companyId)));
+        Assert.Equal(1, await db.ScalarLongAsync(
+            @"SELECT COUNT(*) FROM dvir_defects d JOIN work_orders w ON w.company_id=d.company_id AND w.id=d.linked_work_order_id
+              WHERE d.company_id=@c AND d.out_of_service=true AND w.work_order_code='MER-WO-DVIR-1' AND w.dvir_report_id=d.dvir_report_id",
+            c => c.Parameters.AddWithValue("@c", companyId)));
+        Assert.Equal(1, await db.ScalarLongAsync(
+            @"SELECT COUNT(*) FROM dvir_reports r JOIN vehicles v ON v.company_id=r.company_id AND v.id=r.vehicle_id
+              WHERE r.company_id=@c AND r.report_number='MER-DVIR-1' AND v.out_of_service=true AND v.availability_status='out_of_service'",
+            c => c.Parameters.AddWithValue("@c", companyId)));
+        Assert.Equal(1, await db.ScalarLongAsync("SELECT COUNT(*) FROM hos_records WHERE company_id=@c AND hos_status='Warning' AND branch_id IS NOT NULL", c => c.Parameters.AddWithValue("@c", companyId)));
+        Assert.Equal(1, await db.ScalarLongAsync(
+            "SELECT COUNT(*) FROM hos_clocks WHERE company_id=@c AND status='Warning' AND branch_id IS NOT NULL AND drive_time_remaining_minutes=165",
+            c => c.Parameters.AddWithValue("@c", companyId)));
+        Assert.Equal(1, await db.ScalarLongAsync(
+            @"SELECT COUNT(*) FROM hos_logs WHERE company_id=@c AND source='demo' AND source_event_id='safety-pilot-hos-1'
+                AND branch_id IS NOT NULL AND status='Driving' AND duration_minutes=150 AND is_certified=false
+                AND driving_hours=2.50 AND on_duty_hours=2.50 AND cycle_hours_left=18.50",
+            c => c.Parameters.AddWithValue("@c", companyId)));
+        Assert.Equal(1, await db.ScalarLongAsync(
+            @"SELECT COUNT(*) FROM eld_devices WHERE company_id=@c AND device_serial LIKE 'MER-ELD-%'
+                AND branch_id IS NOT NULL AND status='Diagnostic' AND provider_sync_status='Healthy'
+                AND api_key_hash IS NULL AND hmac_secret_encrypted IS NULL",
+            c => c.Parameters.AddWithValue("@c", companyId)));
+        Assert.Equal(2, await db.ScalarLongAsync("SELECT COUNT(*) FROM driver_safety_scores WHERE company_id=@c AND breakdown_json->>'formulaVersion'='safety-pilot-v2'", c => c.Parameters.AddWithValue("@c", companyId)));
+        Assert.Equal(DemoTenantSeeder.SafetyPilotFixtureVersion, await db.ScalarLongAsync(
+            "SELECT fixture_version FROM demo_fixture_versions WHERE company_id=@c AND fixture_key=@key",
+            c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@key", DemoTenantSeeder.SafetyPilotFixtureKey); }));
+
+        // Reconciliatory upgrade proof: simulate a stale v6 tenant with one missing persona,
+        // compatibility-mode commercial access, the retired incident token and the old
+        // misleading evidence claim. A v7 reconcile must repair every one atomically.
+        // A normal SeedAsync call must repair it without duplicating the tenant/base fixture.
+        // Synthetic persona credentials are part of the deterministic fixture contract: a
+        // configured credential rotation must repair stale hashes as well as roles/data.
+        await db.ExecuteAsync("DELETE FROM users WHERE company_id=@c AND role_name='Safety Auditor'", c => c.Parameters.AddWithValue("@c", companyId));
+        await db.ExecuteAsync("UPDATE users SET password_hash='stale-fixture-hash' WHERE company_id=@c AND role_name='Driver'", c => c.Parameters.AddWithValue("@c", companyId));
+        await db.ExecuteAsync("UPDATE companies SET entitlement_policy_mode='legacy_allow' WHERE id=@c", c => c.Parameters.AddWithValue("@c", companyId));
+        await db.ExecuteAsync("DELETE FROM tenant_entitlements WHERE company_id=@c AND module_key='safety'", c => c.Parameters.AddWithValue("@c", companyId));
+        await db.ExecuteAsync("UPDATE incidents SET status='Under Investigation' WHERE company_id=@c AND incident_number='MER-INC-1'", c => c.Parameters.AddWithValue("@c", companyId));
+        await db.ExecuteAsync(@"UPDATE incident_evidence SET evidence_title='Verified harsh-braking telemetry',
+            evidence_url='https://example.invalid/not-verified',evidence_json='{""fixture"":""safety-pilot-v2"",""verified"":true}'::jsonb
+            WHERE company_id=@c AND incident_id=(SELECT id FROM incidents WHERE company_id=@c AND incident_number='MER-INC-1')", c => c.Parameters.AddWithValue("@c", companyId));
+        await db.ExecuteAsync("UPDATE demo_fixture_versions SET fixture_version=6 WHERE company_id=@c AND fixture_key=@key", c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@key", DemoTenantSeeder.SafetyPilotFixtureKey); });
+        var repaired = await seeder.SeedAsync(testCompanyCode, TestCompanyName);
+        Assert.True(repaired.AlreadySeeded);
+        Assert.Equal(1, await db.ScalarLongAsync("SELECT COUNT(*) FROM users WHERE company_id=@c AND role_name='Safety Auditor'", c => c.Parameters.AddWithValue("@c", companyId)));
+        Assert.Equal(0, await db.ScalarLongAsync("SELECT COUNT(*) FROM users WHERE company_id=@c AND role_name='Driver' AND password_hash='stale-fixture-hash'", c => c.Parameters.AddWithValue("@c", companyId)));
+        Assert.Equal(1, await db.ScalarLongAsync("SELECT COUNT(*) FROM incidents WHERE company_id=@c AND incident_number='MER-INC-1'", c => c.Parameters.AddWithValue("@c", companyId)));
+        Assert.Equal(1, await db.ScalarLongAsync("SELECT COUNT(*) FROM incidents WHERE company_id=@c AND incident_number='MER-INC-1' AND status='Under Review'", c => c.Parameters.AddWithValue("@c", companyId)));
+        Assert.Equal(1, await db.ScalarLongAsync("SELECT COUNT(*) FROM companies WHERE id=@c AND entitlement_policy_mode='package_allowlist'", c => c.Parameters.AddWithValue("@c", companyId)));
+        Assert.Equal(9, await db.ScalarLongAsync("SELECT COUNT(*) FROM tenant_entitlements WHERE company_id=@c AND enabled=true AND source='fixture'", c => c.Parameters.AddWithValue("@c", companyId)));
+        Assert.Equal(1, await db.ScalarLongAsync(@"SELECT COUNT(*) FROM incident_evidence e JOIN incidents i ON i.id=e.incident_id AND i.company_id=e.company_id
+            WHERE e.company_id=@c AND i.incident_number='MER-INC-1' AND e.evidence_title='Synthetic harsh-braking telemetry metadata'
+              AND e.evidence_url IS NULL AND e.evidence_json->>'verificationStatus'='not_verified' AND NOT (e.evidence_json ? 'verified')", c => c.Parameters.AddWithValue("@c", companyId)));
 
         // NOTE: intentionally NOT deleted — the demo tenant persists so it is usable in a
         // live demo. The seeder is idempotent, so a subsequent suite run re-seeds cleanly.
@@ -330,7 +417,11 @@ public class DemoTenantSeederPostgresTests
             await Task.Delay(200);
         }
         var log = string.Join(Environment.NewLine, output.TakeLast(80));
-        if (!process.HasExited) process.Kill(entireProcessTree: true);
+        if (!process.HasExited)
+        {
+            process.Kill(entireProcessTree: true);
+            await process.WaitForExitAsync();
+        }
         throw new Xunit.Sdk.XunitException($"Clean app did not become healthy. Exit={process.ExitCode}; log:{Environment.NewLine}{log}");
     }
 

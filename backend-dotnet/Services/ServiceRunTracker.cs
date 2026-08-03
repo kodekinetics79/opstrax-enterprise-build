@@ -71,6 +71,29 @@ public sealed class ServiceRunTracker(
         catch { /* non-critical — tracker must not crash the service */ }
     }
 
+    /// <summary>
+    /// Refresh an idle service's readiness heartbeat between infrequent successful
+    /// cycles. This deliberately does not alter last_run_status, last_run_at, the
+    /// failure count, or the append-only run ledger.
+    /// </summary>
+    public async Task PulseAsync(string serviceName, CancellationToken ct)
+    {
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<Database>();
+            await db.RunInSystemScopeAsync(() => db.ExecuteAsync(
+                @"UPDATE service_heartbeats
+                  SET last_heartbeat_at=NOW(), updated_at=NOW()
+                  WHERE service_name=@sn",
+                c => c.Parameters.AddWithValue("@sn", serviceName), ct), ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "[Tracker] PulseAsync failed for {Service}", serviceName);
+        }
+    }
+
     /// <summary>Record a successful cycle completion.</summary>
     public async Task CompleteAsync(
         long runId, string serviceName, int processedCount, int durationMs,

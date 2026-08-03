@@ -1,7 +1,15 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { flushSync } from "react-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import type { UserSession } from "@/types";
 import { authApi } from "@/services/authApi";
-import { SESSION_STORAGE_KEY as STORAGE_KEY, RETIRED_SESSION_KEYS } from "@/auth/sessionStorage";
+import {
+  SESSION_STORAGE_KEY as STORAGE_KEY,
+  RETIRED_SESSION_KEYS,
+  SESSION_KEY_LOOKUP,
+  clearAllSessionKeys,
+  readRawSession,
+} from "@/auth/sessionStorage";
 import { clearGlobalCsrfToken, setGlobalCsrfToken } from "@/auth/csrfTokenStore";
 
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000; // 8 hours
@@ -34,6 +42,7 @@ type AuthContextValue = {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const queryClient = useQueryClient();
   // Compute the initial (possibly stale) session exactly once.
   const initialRef = useRef<UserSession | null | undefined>(undefined);
   if (initialRef.current === undefined) initialRef.current = loadSession();
@@ -57,7 +66,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
     } else {
       clearGlobalCsrfToken();
-      localStorage.removeItem(STORAGE_KEY);
+      clearAllSessionKeys();
+      // React Query data is tenant-scoped by server authorization, but most query
+      // keys intentionally omit company id. Never retain one tenant's rendered
+      // records across logout and a subsequent login in the same document.
+      queryClient.clear();
     }
   };
 
@@ -71,6 +84,67 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .catch(() => { if (!cancelled) setSession(null); })             // token invalid/expired -> sign out
       .finally(() => { if (!cancelled) setRevalidating(false); });
     return () => { cancelled = true; };
+  }, []);
+
+  // Logout/session replacement in another tab must invalidate this document too.
+  // A storage event is untrusted input: validate any replacement with /me before
+  // exposing it, and clear immediately when every known session key is gone.
+  useEffect(() => {
+    let validating = false;
+    const onStorage = (event: StorageEvent) => {
+      if (!event.key || !SESSION_KEY_LOOKUP.includes(event.key as (typeof SESSION_KEY_LOOKUP)[number])) return;
+      if (!readRawSession()) {
+        setSession(null);
+        return;
+      }
+      if (validating) return;
+      validating = true;
+      authApi.me()
+        // The originating tab already wrote the shared value. Update only this
+        // document's memory or two tabs would continuously rewrite expiresAt.
+        .then((fresh) => {
+          queryClient.clear();
+          setSessionState(fresh);
+          if (fresh.csrfToken) setGlobalCsrfToken(fresh.csrfToken);
+        })
+        .catch(() => setSession(null))
+        .finally(() => { validating = false; });
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
+  // A full-page navigation can leave an authenticated SPA document in the browser's
+  // back/forward cache. If another document logs out, Back would otherwise restore that
+  // old in-memory session and its already-rendered tenant data even though the server
+  // session has been revoked. Hide the cached document before it is stored, then reveal
+  // it only after /me has re-established current server authority (or cleared the session).
+  useEffect(() => {
+    let restoring = false;
+    const onPageHide = (event: PageTransitionEvent) => {
+      if (event.persisted) document.documentElement.style.visibility = "hidden";
+    };
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (!event.persisted || restoring) return;
+      restoring = true;
+      authApi.me()
+        .then((fresh) => {
+          queryClient.clear();
+          flushSync(() => setSession(fresh));
+        })
+        .catch(() => flushSync(() => setSession(null)))
+        .finally(() => {
+          restoring = false;
+          document.documentElement.style.visibility = "";
+        });
+    };
+    window.addEventListener("pagehide", onPageHide);
+    window.addEventListener("pageshow", onPageShow);
+    return () => {
+      window.removeEventListener("pagehide", onPageHide);
+      window.removeEventListener("pageshow", onPageShow);
+      document.documentElement.style.visibility = "";
+    };
   }, []);
 
   const value = useMemo(() => ({

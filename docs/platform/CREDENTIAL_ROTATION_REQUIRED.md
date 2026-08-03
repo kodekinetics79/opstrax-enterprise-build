@@ -14,22 +14,24 @@ exposure outside the repo is sufficient reason to rotate.
 
 ## Required actions (in order)
 
-1. **Neon console** → project → Roles → reset the password for the application
-   role (`neondb_owner` or the dedicated app role).
+1. **Neon console** → project → Roles → rotate every role that may have shared or
+   derived exposure. Keep the owner/migration identity out of runtime services.
 2. **Render** (backend `opstrax-enterprise-build-*` service) → Environment →
-   update the Postgres connection string / `PG_CONNECTION` value → redeploy.
+   update the distinct restricted `PG_CONNECTION_APP` and `PG_CONNECTION_SYSTEM`
+   secret values → redeploy the approved exact-SHA candidate.
 3. **Vercel** (frontend project) → only if any DB-derived secret is stored there
    (frontend should not hold DB credentials; verify none exist).
 4. **Local `.env` files** → update on developer machines.
 5. Verify the old password no longer authenticates (`psql` with old credential
    must fail).
-6. Record rotation date/operator below.
+6. Verify the healthy runtime reports distinct restricted app/system identities,
+   never the owner identity, and record UTC, operator and provider audit reference below.
 
 ## Rules
 
 - Never paste the new password into a chat session, commit, log, or ticket.
 - Prefer a dedicated least-privilege app role over `neondb_owner` when rotating.
 
-| Date | Operator | Action |
-|------|----------|--------|
-| _pending_ | _pending_ | Rotation not yet performed |
+| UTC date/time | Operator | Provider audit/reference | Action |
+|---|---|---|---|
+| _pending_ | _pending_ | _pending_ | Rotation not yet performed |

@@ -35,6 +35,8 @@ public sealed class DemoTenantSeeder(Database db, IConfiguration? config = null)
 {
     public const string DemoCompanyCode = "MERIDIAN-DEMO";
     public const string DemoCompanyName = "Meridian Logistics — Demo";
+    internal const string SafetyPilotFixtureKey = "safety-pilot";
+    internal const int SafetyPilotFixtureVersion = 7;
     private readonly string demoPassword = ResolveDemoPassword(config);
     // Deterministic late-failure injection for transaction regression tests. Production
     // DI never sets this; keeping the hook internal prevents it becoming an app feature.
@@ -59,8 +61,9 @@ public sealed class DemoTenantSeeder(Database db, IConfiguration? config = null)
             c => c.Parameters.AddWithValue("@code", companyCode), ct);
         if (existing > 0)
         {
+            await ReconcileSafetyPilotFixtureAsync(existing, companyCode, ct);
             return new DemoSeedResult(true, existing, companyName, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                "Demo tenant already exists — skipped (idempotent).");
+                "Demo tenant already exists — versioned pilot fixtures reconciled idempotently.");
         }
 
         var companyId = await db.InsertAsync(
@@ -256,9 +259,8 @@ public sealed class DemoTenantSeeder(Database db, IConfiguration? config = null)
         // "Fleet Manager" role's intent. Missing dispatch:update/cancel/override and job:*
         // previously 403'd the dispatch status/POD and job-lifecycle flows in the browser.
         const string internalPerms = "[\"dashboard:view\",\"vehicles:view\",\"vehicles:create\",\"vehicles:update\",\"vehicles:assign\",\"fleet:manage\",\"fleet.manage\",\"fleet.read\",\"drivers:view\",\"drivers:create\",\"drivers:update\",\"drivers:assign\",\"shipments:view\",\"shipments:create\",\"shipments:update\",\"job:create\",\"job:update\",\"job:status\",\"job:assign\",\"jobs:view\",\"dispatch:view\",\"dispatch:create\",\"dispatch:assign\",\"dispatch:update\",\"dispatch:cancel\",\"dispatch:override\",\"customers:view\",\"customers:create\",\"customers:update\",\"maintenance:view\",\"maintenance:create\",\"maintenance:update\",\"maintenance:close\",\"maintenance:manage\",\"compliance:view\",\"compliance:update\",\"alerts:view\",\"alerts:acknowledge\",\"alerts:close\",\"reports:view\",\"reports:export\",\"safety:view\",\"safety:create\",\"safety:update\",\"safety:review\",\"safety:manage\",\"operations.proof.read\",\"operations.proof.validate\",\"customer_portal:view\",\"customer_portal:manage\",\"finance:view\",\"finance.invoice.read\",\"finance.ar.summary.read\",\"finance.revenue.summary.read\",\"finance.job.ready_to_bill\",\"finance.invoice_draft.read\",\"finance.invoice_draft.create\",\"finance.invoice.issue\",\"finance.invoice.payment.record\",\"rate_card.read\",\"rate_card.manage\",\"contract.read\",\"contract.manage\",\"notifications:view\",\"notifications:manage\",\"messages:send\",\"settings:view\",\"users:view\",\"users:create\",\"users:update\",\"roles:view\",\"roles:create\",\"roles:update\"]";
-        // users.email is globally UNIQUE. The canonical demo tenant keeps the well-known
-        // logins; a non-default (e.g. test) tenant gets a code-suffixed variant so it never
-        // collides with the runtime demo tenant's users.
+        // The canonical demo tenant keeps the well-known logins; a non-default (e.g. test)
+        // tenant gets a code-suffixed variant so pilot identities stay unmistakable.
         var isCanonical = string.Equals(companyCode, DemoCompanyCode, StringComparison.Ordinal);
         var suffix = isCanonical ? "" : "+" + companyCode.ToLowerInvariant();
         var adminEmail = $"admin{suffix}@meridian.demo";
@@ -266,11 +268,254 @@ public sealed class DemoTenantSeeder(Database db, IConfiguration? config = null)
         await SeedUserAsync(companyId, adminEmail, "Meridian Ops Admin", "Fleet Manager", null, internalPerms, ct);
         await SeedUserAsync(companyId, portalEmail, "Acme Portal User", "Customer Portal User", customers[0], "[\"customer_portal:view\",\"shipments:view\"]", ct);
 
+        await ReconcileSafetyPilotFixtureAsync(companyId, companyCode, ct);
+
         return new DemoSeedResult(false, companyId, companyName,
             vehicles.Count, drivers.Count, customers.Count, jobs.Count, trips, dispatch, proofs,
             invoiceIds.Count, payments, feedback, 2, 1, 1,
             "Demo tenant seeded via real service layer (finance chain + feedback) and base-entity creation. Credentials are configured through DemoSeed:Password.");
     }, ct);
+
+    // Versioned, transactionally-applied reconciliation for the Safety pilot. Unlike the
+    // original create-only fixture, this runs for an existing Meridian tenant and repairs
+    // missing pilot personas/ownership/data. The outer transaction + advisory lock make a
+    // version either fully applied or not applied; the version row is written last.
+    private async Task ReconcileSafetyPilotFixtureAsync(long companyId, string companyCode, CancellationToken ct)
+    {
+        await db.ExecuteAsync(
+            @"CREATE TABLE IF NOT EXISTS demo_fixture_versions (
+                company_id BIGINT NOT NULL,
+                fixture_key VARCHAR(80) NOT NULL,
+                fixture_version INT NOT NULL,
+                applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                PRIMARY KEY (company_id, fixture_key))", ct: ct);
+
+        var currentVersion = await db.ScalarLongAsync(
+            "SELECT COALESCE((SELECT fixture_version FROM demo_fixture_versions WHERE company_id=@companyId AND fixture_key=@key),0)",
+            c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@key", SafetyPilotFixtureKey); }, ct);
+        if (currentVersion >= SafetyPilotFixtureVersion) return;
+
+        // The client-demo tenant is a reviewed commercial fixture, not an unreviewed
+        // migrated customer. Reset/reconciliation must therefore fail closed for every
+        // governed module that is not explicitly present. Keep all nine catalog entries
+        // explicit so Platform Admin can disable/re-enable one during the control-plane
+        // rehearsal without the remaining golden-path modules changing implicitly.
+        await db.ExecuteAsync(
+            @"UPDATE companies SET entitlement_policy_mode='package_allowlist' WHERE id=@companyId;
+              INSERT INTO tenant_entitlements(company_id,module_key,enabled,tier,source,updated_by,updated_at)
+              SELECT @companyId,module_key,true,'pilot','fixture','canonical-safety-pilot-v7',NOW()
+              FROM unnest(ARRAY['safety','maintenance','dispatch','telematics','crm','customer_portal','reports','compliance','integrations']) module_key
+              ON CONFLICT(company_id,module_key) DO UPDATE
+                SET enabled=true,tier='pilot',source='fixture',updated_by='canonical-safety-pilot-v7',updated_at=NOW();",
+            c => c.Parameters.AddWithValue("@companyId", companyId), ct);
+
+        // Keep this bootstrap here as well as in the production migration: a legacy demo
+        // database can be reconciled without requiring destructive reseeding.
+        await db.ExecuteAsync(
+            @"CREATE TABLE IF NOT EXISTS branches (
+                id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+                company_id BIGINT NOT NULL, branch_code VARCHAR(64) NOT NULL,
+                name VARCHAR(200) NOT NULL, branch_type VARCHAR(32) NOT NULL DEFAULT 'branch',
+                region VARCHAR(120) NULL, address VARCHAR(300) NULL, city VARCHAR(120) NULL,
+                state VARCHAR(120) NULL, country_code VARCHAR(8) NULL, timezone VARCHAR(64) NULL,
+                manager_user_id BIGINT NULL, status VARCHAR(32) NOT NULL DEFAULT 'Active',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NULL,
+                deleted_at TIMESTAMPTZ NULL, UNIQUE(company_id, branch_code));
+              ALTER TABLE users ADD COLUMN IF NOT EXISTS branch_id BIGINT NULL;
+              ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS branch_id BIGINT NULL;
+              ALTER TABLE drivers ADD COLUMN IF NOT EXISTS branch_id BIGINT NULL;", ct: ct);
+
+        var northBranchId = await UpsertBranchAsync(companyId, "MER-NORTH", "Northern Virginia Operations", "Manassas", ct);
+        var southBranchId = await UpsertBranchAsync(companyId, "MER-SOUTH", "Richmond Operations", "Richmond", ct);
+
+        var suffix = string.Equals(companyCode, DemoCompanyCode, StringComparison.Ordinal)
+            ? ""
+            : "+" + companyCode.ToLowerInvariant();
+        var eldSerial = string.Equals(companyCode, DemoCompanyCode, StringComparison.Ordinal)
+            ? "MER-ELD-1"
+            : $"MER-ELD-{companyCode}";
+        var safetyManagerId = await UpsertPilotUserAsync(companyId, northBranchId, $"safety{suffix}@meridian.demo",
+            "Meridian Safety Manager", "Safety Manager",
+            "[\"dashboard:view\",\"drivers:view\",\"vehicles:view\",\"safety:view\",\"safety:create\",\"safety:update\",\"safety:review\",\"safety:manage\",\"compliance:view\",\"compliance:update\",\"reports:view\",\"reports:export\",\"maintenance:view\",\"alerts:view\",\"alerts:acknowledge\",\"notifications:view\"]", ct);
+        var driverUserId = await UpsertPilotUserAsync(companyId, northBranchId, $"driver{suffix}@meridian.demo",
+            "Meridian Driver One", "Driver",
+            // Keep this exactly aligned with RolePermissionDefaults["Driver"]. A user-level
+            // safety:update or back-office read bypasses the authoritative Driver role
+            // reconciler because user permissions are unioned after role permissions.
+            "[\"driver:self\",\"notifications:view\",\"messages:send\",\"maintenance:create\"]", ct);
+        await UpsertPilotUserAsync(companyId, southBranchId, $"dispatch{suffix}@meridian.demo",
+            "Meridian Dispatcher", "Dispatcher",
+            "[\"dashboard:view\",\"drivers:view\",\"vehicles:view\",\"shipments:view\",\"dispatch:view\",\"dispatch:create\",\"dispatch:assign\",\"dispatch:update\",\"alerts:view\",\"safety:view\"]", ct);
+        await UpsertPilotUserAsync(companyId, northBranchId, $"maintenance{suffix}@meridian.demo",
+            "Meridian Maintenance Lead", "Maintenance Manager",
+            "[\"dashboard:view\",\"vehicles:view\",\"maintenance:view\",\"maintenance:create\",\"maintenance:update\",\"maintenance:close\",\"compliance:view\",\"compliance:update\",\"safety:view\"]", ct);
+        await UpsertPilotUserAsync(companyId, null, $"auditor{suffix}@meridian.demo",
+            "Meridian Safety Auditor", "Safety Auditor",
+            "[\"dashboard:view\",\"drivers:view\",\"vehicles:view\",\"safety:view\",\"compliance:view\",\"reports:view\",\"reports:export\"]", ct);
+
+        // Deterministic branch ownership gives the pilot both scoped and tenant-wide stories.
+        await db.ExecuteAsync(
+            @"UPDATE drivers SET branch_id=CASE WHEN driver_code IN ('MER-DRV-1','MER-DRV-2','MER-DRV-3') THEN @north ELSE @south END
+                WHERE company_id=@companyId AND driver_code LIKE 'MER-DRV-%';
+              UPDATE vehicles SET branch_id=CASE WHEN vehicle_code IN ('MER-TRK-1','MER-VAN-1','MER-REEF-1') THEN @north ELSE @south END
+                WHERE company_id=@companyId AND vehicle_code LIKE 'MER-%';
+              UPDATE drivers SET user_id=@driverUserId WHERE company_id=@companyId AND driver_code='MER-DRV-1';",
+            c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@north", northBranchId); c.Parameters.AddWithValue("@south", southBranchId); c.Parameters.AddWithValue("@driverUserId", driverUserId); }, ct);
+
+        var driver1 = await RequiredEntityIdAsync("drivers", "driver_code", "MER-DRV-1", companyId, ct);
+        var driver2 = await RequiredEntityIdAsync("drivers", "driver_code", "MER-DRV-2", companyId, ct);
+        var vehicle1 = await RequiredEntityIdAsync("vehicles", "vehicle_code", "MER-TRK-1", companyId, ct);
+        var vehicle2 = await RequiredEntityIdAsync("vehicles", "vehicle_code", "MER-VAN-1", companyId, ct);
+
+        // Normalize the original thin event and add a second connected event. Stable business
+        // keys make the result deterministic while preserving any operator-created records.
+        await db.ExecuteAsync(
+            @"UPDATE safety_events SET event_number='MER-SAFE-1', branch_id=@branch, event_type='Speeding', severity='High',
+                    status='In Review', occurred_at=NOW()-INTERVAL '2 day', event_time=NOW()-INTERVAL '2 day',
+                    score_impact=12, risk_score=72, coaching_status='Created',
+                    ai_summary='Repeated speeding pattern detected on the Northern Virginia corridor.',
+                    recommended_action='Complete speed-management coaching and review HOS context.'
+                WHERE id=(SELECT id FROM safety_events WHERE company_id=@companyId ORDER BY id LIMIT 1);
+              INSERT INTO safety_events (company_id,branch_id,event_number,driver_id,vehicle_id,event_type,severity,status,event_time,occurred_at,
+                    score_impact,risk_score,coaching_status,incident_status,location_description,ai_summary,recommended_action)
+                SELECT @companyId,@branch,'MER-SAFE-2',@driver2,@vehicle2,'Harsh Braking','Critical','Escalated',NOW()-INTERVAL '1 day',NOW()-INTERVAL '1 day',
+                    18,88,'Not Created','Open','I-95 Southbound near Richmond',
+                    'Hard-braking event correlated with an hours-of-service warning.','Open an incident and preserve evidence.'
+                WHERE NOT EXISTS (SELECT 1 FROM safety_events WHERE company_id=@companyId AND event_number='MER-SAFE-2');",
+            c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@branch", northBranchId); c.Parameters.AddWithValue("@driver2", driver2); c.Parameters.AddWithValue("@vehicle2", vehicle2); }, ct);
+        var event1 = await RequiredEntityIdAsync("safety_events", "event_number", "MER-SAFE-1", companyId, ct);
+        var event2 = await RequiredEntityIdAsync("safety_events", "event_number", "MER-SAFE-2", companyId, ct);
+
+        await db.ExecuteAsync(
+            @"UPDATE coaching_tasks SET branch_id=@branch,safety_event_id=@event1,assigned_to_user_id=@manager,status='Assigned',before_safety_score=88
+                WHERE company_id=@companyId AND task_number='MER-COACH-1';
+              INSERT INTO coaching_tasks (company_id,branch_id,task_number,driver_id,safety_event_id,assigned_to_user_id,coaching_type,title,status,priority,
+                    driver_acknowledged,acknowledged_at,completed_at,before_safety_score,after_safety_score,effectiveness_score,due_at)
+                VALUES (@companyId,@branch,'MER-COACH-2',@driver2,@event2,@manager,'Defensive Driving','Hard-braking follow-up','Completed','High',
+                    true,NOW()-INTERVAL '6 hour',NOW()-INTERVAL '5 hour',74,84,82,NOW()-INTERVAL '5 hour')
+                ON CONFLICT (company_id,task_number) DO NOTHING;",
+            c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@branch", northBranchId); c.Parameters.AddWithValue("@event1", event1); c.Parameters.AddWithValue("@event2", event2); c.Parameters.AddWithValue("@manager", safetyManagerId); c.Parameters.AddWithValue("@driver2", driver2); }, ct);
+
+        await db.ExecuteAsync(
+            @"INSERT INTO incidents (company_id,branch_id,incident_number,safety_event_id,driver_id,vehicle_id,incident_type,severity,status,
+                    location_description,occurred_at,driver_statement,ai_summary,recommended_action,insurance_report_status,idempotency_key)
+                VALUES (@companyId,@branch,'MER-INC-1',@event2,@driver2,@vehicle2,'Preventable Safety Event','Critical','Under Review',
+                    'I-95 Southbound near Richmond',NOW()-INTERVAL '1 day','Traffic compressed suddenly; vehicle stopped without contact.',
+                    'Event requires supervisor review; no collision or injury recorded.','Review telemetry and close with documented determination.','Not Required','demo:meridian:incident:1')
+                ON CONFLICT (company_id,incident_number) WHERE deleted_at IS NULL DO UPDATE
+                    SET status='Under Review', updated_at=NOW();",
+            c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@branch", northBranchId); c.Parameters.AddWithValue("@event2", event2); c.Parameters.AddWithValue("@driver2", driver2); c.Parameters.AddWithValue("@vehicle2", vehicle2); }, ct);
+        var incidentId = await RequiredEntityIdAsync("incidents", "incident_number", "MER-INC-1", companyId, ct);
+        await db.ExecuteAsync(
+            @"UPDATE incident_evidence
+                SET evidence_title='Synthetic harsh-braking telemetry metadata',evidence_url=NULL,
+                    content_hash=encode(sha256(convert_to('MER-INC-1:telemetry:v1','UTF8')),'hex'),
+                    evidence_json='{""fixture"":""safety-pilot-v7"",""synthetic"":true,""verificationStatus"":""not_verified"",""custodyStatus"":""not_managed"",""retrievalStatus"":""not_available""}'::jsonb
+                WHERE company_id=@companyId AND incident_id=@incident AND source_entity_type='safety_event' AND source_entity_id=@event2
+                  AND evidence_title IN ('Verified harsh-braking telemetry','Synthetic harsh-braking telemetry metadata');
+              INSERT INTO incident_evidence (company_id,branch_id,incident_id,evidence_type,evidence_title,content_hash,evidence_json,source_entity_type,source_entity_id)
+                SELECT @companyId,@branch,@incident,'Telemetry Snapshot','Synthetic harsh-braking telemetry metadata',encode(sha256(convert_to('MER-INC-1:telemetry:v1','UTF8')),'hex'),
+                    '{""fixture"":""safety-pilot-v7"",""synthetic"":true,""verificationStatus"":""not_verified"",""custodyStatus"":""not_managed"",""retrievalStatus"":""not_available""}'::jsonb,'safety_event',@event2
+                WHERE NOT EXISTS (SELECT 1 FROM incident_evidence WHERE company_id=@companyId AND incident_id=@incident
+                    AND source_entity_type='safety_event' AND source_entity_id=@event2);",
+            c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@branch", northBranchId); c.Parameters.AddWithValue("@incident", incidentId); c.Parameters.AddWithValue("@event2", event2); }, ct);
+
+        await db.ExecuteAsync(
+            @"UPDATE dvir_reports SET branch_id=@branch,defects_found=1,driver_signature_status='Signed',notes='Major brake defect routed to maintenance.'
+                WHERE company_id=@companyId AND report_number='MER-DVIR-1';
+              UPDATE dvir_defects SET branch_id=@branch,out_of_service=true
+                WHERE company_id=@companyId AND dvir_report_id=(SELECT id FROM dvir_reports WHERE company_id=@companyId AND report_number='MER-DVIR-1' LIMIT 1);
+              UPDATE vehicles SET out_of_service=true,availability_status='out_of_service'
+                WHERE company_id=@companyId AND id=(SELECT vehicle_id FROM dvir_reports WHERE company_id=@companyId AND report_number='MER-DVIR-1' LIMIT 1);
+              INSERT INTO work_orders (company_id,vehicle_id,dvir_report_id,work_order_code,work_order_number,title,issue_type,status,priority,due_date,estimated_cost,notes)
+                SELECT @companyId,r.vehicle_id,r.id,'MER-WO-DVIR-1','MER-WO-DVIR-1','Brake defect correction','DVIR Defect','Open','Critical',CURRENT_DATE+1,1250,'Created from the pilot DVIR defect workflow.'
+                FROM dvir_reports r WHERE r.company_id=@companyId AND r.report_number='MER-DVIR-1'
+                  AND NOT EXISTS (SELECT 1 FROM work_orders WHERE company_id=@companyId AND work_order_code='MER-WO-DVIR-1');
+              UPDATE dvir_defects SET linked_work_order_id=(SELECT id FROM work_orders WHERE company_id=@companyId AND work_order_code='MER-WO-DVIR-1' LIMIT 1)
+                WHERE company_id=@companyId AND dvir_report_id=(SELECT id FROM dvir_reports WHERE company_id=@companyId AND report_number='MER-DVIR-1' LIMIT 1);
+              INSERT INTO dvir_reports (company_id,branch_id,report_number,driver_id,vehicle_id,country_code,inspection_type,inspection_status,defects_found,
+                    safe_to_operate,driver_signature_status,mechanic_review_status,repair_certification_status,submitted_at,risk_score,notes)
+                SELECT @companyId,@branch,'MER-DVIR-2',@driver1,@vehicle1,'US','Post-Trip','Submitted',0,true,'Signed','Not Required','Not Required',NOW()-INTERVAL '4 hour',8,'No defects found.'
+                WHERE NOT EXISTS (SELECT 1 FROM dvir_reports WHERE company_id=@companyId AND report_number='MER-DVIR-2');
+              INSERT INTO hos_records (company_id,branch_id,driver_id,shift_date,remaining_drive_hours,remaining_shift_hours,remaining_cycle_hours,hos_status,created_at)
+                SELECT @companyId,@branch,@driver1,CURRENT_DATE,2.75,4.25,18.50,'Warning',NOW()-INTERVAL '15 minute'
+                WHERE NOT EXISTS (SELECT 1 FROM hos_records WHERE company_id=@companyId AND driver_id=@driver1 AND shift_date=CURRENT_DATE);
+              UPDATE hos_clocks SET branch_id=@branch,country_code='US',cycle_type='70hr/8day',drive_time_remaining_minutes=165,
+                    shift_time_remaining_minutes=255,cycle_time_remaining_minutes=1110,
+                    status='Warning',hos_warning='2.8h drive time remaining. Plan for a rest stop.'
+                WHERE company_id=@companyId AND driver_id=@driver1;
+              INSERT INTO hos_clocks (company_id,branch_id,driver_id,country_code,cycle_type,drive_time_remaining_minutes,
+                    shift_time_remaining_minutes,cycle_time_remaining_minutes,status,hos_warning)
+                SELECT @companyId,@branch,@driver1,'US','70hr/8day',165,255,1110,'Warning',
+                    '2.8h drive time remaining. Plan for a rest stop.'
+                WHERE NOT EXISTS (SELECT 1 FROM hos_clocks WHERE company_id=@companyId AND driver_id=@driver1);
+              INSERT INTO hos_logs (company_id,branch_id,driver_id,vehicle_id,log_date,driving_hours,on_duty_hours,cycle_hours_left,
+                    country_code,status,start_time,end_time,duration_minutes,location,is_certified,source,source_event_id)
+                SELECT @companyId,@branch,@driver1,@vehicle1,CURRENT_DATE,2.50,2.50,18.50,'US','Driving',NOW()-INTERVAL '3 hour',
+                    NOW()-INTERVAL '30 minute',150,'I-95 corridor',false,'demo','safety-pilot-hos-1'
+                WHERE NOT EXISTS (SELECT 1 FROM hos_logs WHERE company_id=@companyId AND source='demo' AND source_event_id='safety-pilot-hos-1');
+              INSERT INTO eld_devices (company_id,branch_id,device_serial,device_model,provider,vehicle_id,driver_id,status,
+                    last_sync_at,firmware_version,provider_sync_status,row_version)
+                SELECT @companyId,@branch,@eldSerial,'Pilot ELD','Synthetic Provider',@vehicle1,@driver1,'Diagnostic',
+                    NOW()-INTERVAL '5 minute','pilot-1.0','Healthy',1
+                WHERE NOT EXISTS (SELECT 1 FROM eld_devices WHERE company_id=@companyId AND device_serial=@eldSerial);",
+            c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@branch", northBranchId); c.Parameters.AddWithValue("@driver1", driver1); c.Parameters.AddWithValue("@vehicle1", vehicle1); c.Parameters.AddWithValue("@eldSerial", eldSerial); }, ct);
+
+        await db.ExecuteAsync(
+            @"INSERT INTO driver_safety_scorecards (company_id,branch_id,driver_id,period_start,period_end,safety_score,speeding_count,coaching_open_count,coaching_completed_count,incident_count,risk_score)
+                VALUES (@companyId,@branch,@driver1,CURRENT_DATE-29,CURRENT_DATE,76,3,1,0,0,68),(@companyId,@branch,@driver2,CURRENT_DATE-29,CURRENT_DATE,84,0,0,1,1,46)
+                ON CONFLICT (company_id,driver_id) DO UPDATE SET branch_id=EXCLUDED.branch_id,safety_score=EXCLUDED.safety_score,
+                    speeding_count=EXCLUDED.speeding_count,coaching_open_count=EXCLUDED.coaching_open_count,
+                    coaching_completed_count=EXCLUDED.coaching_completed_count,incident_count=EXCLUDED.incident_count,
+                    risk_score=EXCLUDED.risk_score,period_start=EXCLUDED.period_start,period_end=EXCLUDED.period_end;
+              INSERT INTO driver_safety_scores (company_id,driver_id,score_7d,score_30d,score_90d,events_7d,events_30d,events_90d,breakdown_json,computed_at)
+                VALUES (@companyId,@driver1,76,80,86,3,5,8,'{""formulaVersion"":""safety-pilot-v2"",""speeding"":3}'::jsonb,NOW()),
+                       (@companyId,@driver2,84,87,91,1,2,3,'{""formulaVersion"":""safety-pilot-v2"",""harshBraking"":1}'::jsonb,NOW())
+                ON CONFLICT (company_id,driver_id) DO UPDATE SET score_7d=EXCLUDED.score_7d,score_30d=EXCLUDED.score_30d,
+                    score_90d=EXCLUDED.score_90d,events_7d=EXCLUDED.events_7d,events_30d=EXCLUDED.events_30d,
+                    events_90d=EXCLUDED.events_90d,breakdown_json=EXCLUDED.breakdown_json,computed_at=EXCLUDED.computed_at;",
+            c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@branch", northBranchId); c.Parameters.AddWithValue("@driver1", driver1); c.Parameters.AddWithValue("@driver2", driver2); }, ct);
+
+        await db.ExecuteAsync(
+            @"INSERT INTO demo_fixture_versions(company_id,fixture_key,fixture_version,applied_at)
+                VALUES (@companyId,@key,@version,NOW())
+                ON CONFLICT(company_id,fixture_key) DO UPDATE SET fixture_version=EXCLUDED.fixture_version,applied_at=EXCLUDED.applied_at",
+            c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@key", SafetyPilotFixtureKey); c.Parameters.AddWithValue("@version", SafetyPilotFixtureVersion); }, ct);
+    }
+
+    private async Task<long> UpsertBranchAsync(long companyId, string code, string name, string city, CancellationToken ct)
+        => await db.ScalarLongAsync(
+            @"INSERT INTO branches(company_id,branch_code,name,branch_type,region,city,state,country_code,timezone,status)
+                VALUES (@companyId,@code,@name,'branch','Mid-Atlantic',@city,'VA','US','America/New_York','Active')
+                ON CONFLICT(company_id,branch_code) DO UPDATE SET name=EXCLUDED.name,city=EXCLUDED.city,status='Active',deleted_at=NULL
+                RETURNING id",
+            c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@code", code); c.Parameters.AddWithValue("@name", name); c.Parameters.AddWithValue("@city", city); }, ct);
+
+    private async Task<long> UpsertPilotUserAsync(long companyId, long? branchId, string email, string fullName, string roleName, string permissionsJson, CancellationToken ct)
+        => await db.ScalarLongAsync(
+            @"INSERT INTO users(company_id,branch_id,full_name,email,role_name,status,password_hash,permissions_json)
+                VALUES (@companyId,@branchId,@fullName,@email,@roleName,'Active',@passwordHash,@perms::jsonb)
+                ON CONFLICT(company_id,email) DO UPDATE SET branch_id=EXCLUDED.branch_id,full_name=EXCLUDED.full_name,role_name=EXCLUDED.role_name,
+                    status='Active',password_hash=EXCLUDED.password_hash,permissions_json=EXCLUDED.permissions_json
+                RETURNING id",
+            c =>
+            {
+                c.Parameters.AddWithValue("@companyId", companyId);
+                c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+                c.Parameters.AddWithValue("@fullName", fullName);
+                c.Parameters.AddWithValue("@email", email);
+                c.Parameters.AddWithValue("@roleName", roleName);
+                c.Parameters.AddWithValue("@passwordHash", PlatformSchemaService.HashPassword(demoPassword));
+                c.Parameters.AddWithValue("@perms", permissionsJson);
+            }, ct);
+
+    private async Task<long> RequiredEntityIdAsync(string table, string keyColumn, string key, long companyId, CancellationToken ct)
+    {
+        // table/column values are private compile-time call-site constants, never request data.
+        var id = await db.ScalarLongAsync($"SELECT COALESCE((SELECT id FROM {table} WHERE company_id=@companyId AND {keyColumn}=@key LIMIT 1),0)",
+            c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@key", key); }, ct);
+        return id > 0 ? id : throw new InvalidOperationException($"Safety pilot fixture requires {table}.{keyColumn}={key}.");
+    }
 
     // ── Backdated time-series enrichment (idempotent) ──────────────────────────────
     // Generates realistic ~90-day history for the tables that drive trend charts but

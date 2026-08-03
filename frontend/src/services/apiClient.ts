@@ -1,6 +1,6 @@
 import axios from "axios";
 import type { ApiEnvelope } from "@/types";
-import { getGlobalCsrfToken, setGlobalCsrfToken } from "@/auth/csrfTokenStore";
+import { getGlobalCsrfToken, hydrateGlobalCsrfToken, setGlobalCsrfToken } from "@/auth/csrfTokenStore";
 import { readRawSession, clearAllSessionKeys } from "@/auth/sessionStorage";
 
 const isLocalhost =
@@ -62,7 +62,7 @@ apiClient.interceptors.request.use((config) => {
         config.headers["X-Opstrax-Tenant-Id"] = String(tenantId);
       }
       if (inner.csrfToken) {
-        setGlobalCsrfToken(inner.csrfToken);
+        hydrateGlobalCsrfToken(inner.csrfToken);
       }
     } catch {
       clearAllSessionKeys();

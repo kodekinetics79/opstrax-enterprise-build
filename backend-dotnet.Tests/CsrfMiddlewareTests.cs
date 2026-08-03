@@ -15,7 +15,7 @@ namespace Opstrax.Tests;
 
 public class CsrfMiddlewareTests
 {
-    private const string CookieName = "__CSRF_Token__";
+    private const string CookieName = "__CSRF_Token_v2__";
     private const string HeaderName = "X-CSRF-Token";
 
     [Fact]
@@ -61,6 +61,7 @@ public class CsrfMiddlewareTests
         var setCookie = Assert.Single(context.Response.Headers.SetCookie).ToString();
         Assert.Contains("max-age=28800", setCookie, StringComparison.OrdinalIgnoreCase);
         Assert.Contains($"samesite={sameSite}", setCookie, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("path=/", setCookie, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("httponly", setCookie, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(secure, setCookie.Contains("secure", StringComparison.OrdinalIgnoreCase));
     }
@@ -140,6 +141,21 @@ public class CsrfMiddlewareTests
 
         Assert.False(nextCalled);
         Assert.Equal(StatusCodes.Status403Forbidden, context.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ExistingBrowserWithLegacyCookie_IsUpgradedOnSafeRequest()
+    {
+        var context = CreateContext("GET");
+        context.Request.Headers.Cookie = "__CSRF_Token__=legacy-path-token";
+        context.Request.Headers.Authorization = "Bearer browser-session-token";
+
+        await InvokeAsync(context);
+
+        Assert.False(string.IsNullOrWhiteSpace(context.Response.Headers[HeaderName]));
+        var setCookie = Assert.Single(context.Response.Headers.SetCookie).ToString();
+        Assert.Contains($"{CookieName}=", setCookie, StringComparison.Ordinal);
+        Assert.Contains("path=/", setCookie, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

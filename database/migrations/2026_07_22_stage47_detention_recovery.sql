@@ -1,5 +1,7 @@
 -- Stage 47 — Detention Recovery (owner migration for restricted-role prod; mirrors
 -- DetentionSchemaService exactly). Additive + idempotent. Includes RLS + grants so no separate step.
+BEGIN;
+
 ALTER TABLE geofences ADD COLUMN IF NOT EXISTS customer_id BIGINT NULL;
 ALTER TABLE geofences ADD COLUMN IF NOT EXISTS site_role VARCHAR(30) NULL;
 CREATE INDEX IF NOT EXISTS idx_geofences_company_customer ON geofences (company_id, customer_id) WHERE customer_id IS NOT NULL;
@@ -130,29 +132,38 @@ $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS trg_detention_evidence_immutable ON detention_evidence;
 CREATE TRIGGER trg_detention_evidence_immutable BEFORE UPDATE OR DELETE ON detention_evidence FOR EACH ROW EXECUTE FUNCTION detention_evidence_immutable();
 
-ALTER TABLE job_charges ADD COLUMN IF NOT EXISTS detention_dwell_id BIGINT NULL;
-ALTER TABLE job_charges ADD COLUMN IF NOT EXISTS evidence_sha256 CHAR(64) NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS uq_job_charges_detention ON job_charges (company_id, detention_dwell_id) WHERE detention_dwell_id IS NOT NULL;
+-- Older production baselines may not yet carry the optional Stage5/6 financial
+-- integration tables. Keep the core detention/evidence contract atomic and add
+-- those links only when their owning predecessor schemas are present.
+DO $stage47_optional_integrations$
+BEGIN
+    IF to_regclass('public.job_charges') IS NOT NULL THEN
+        ALTER TABLE job_charges ADD COLUMN IF NOT EXISTS detention_dwell_id BIGINT NULL;
+        ALTER TABLE job_charges ADD COLUMN IF NOT EXISTS evidence_sha256 CHAR(64) NULL;
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_job_charges_detention ON job_charges (company_id, detention_dwell_id) WHERE detention_dwell_id IS NOT NULL;
+    ELSE
+        RAISE NOTICE 'Stage47 core installed without optional detention-to-job-charge integration';
+    END IF;
+    IF to_regclass('public.outbox_messages') IS NOT NULL THEN
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_outbox_detention_priced ON outbox_messages (tenant_id, aggregate_id) WHERE event_type='detention.dwell.priced';
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_outbox_detention_warning ON outbox_messages (tenant_id, aggregate_id) WHERE event_type='detention.dwell.warning';
+    ELSE
+        RAISE NOTICE 'Stage47 core installed without optional detention outbox idempotency integration';
+    END IF;
+END
+$stage47_optional_integrations$;
 
-CREATE UNIQUE INDEX IF NOT EXISTS ux_outbox_detention_priced ON outbox_messages (tenant_id, aggregate_id) WHERE event_type='detention.dwell.priced';
-CREATE UNIQUE INDEX IF NOT EXISTS ux_outbox_detention_warning ON outbox_messages (tenant_id, aggregate_id) WHERE event_type='detention.dwell.warning';
-
--- RLS + restricted-role grants (mirror the reconciler's policy shape).
+-- Establish a fail-closed owner boundary. Stage58 is the terminal policy owner:
+-- on a fresh chain these tables remain inaccessible until its signed-ticket
+-- reconciliation; on a repair replay its existing signed policies remain intact.
+-- Never recreate the historical caller-forgeable app.current_tenant_id policies.
 DO $$
 DECLARE t text;
 BEGIN
     FOREACH t IN ARRAY ARRAY['detention_rule_cards','detention_dwells','detention_dwell_events','detention_notices','detention_evidence'] LOOP
         EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
-        IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename=t AND policyname='tenant_isolation') THEN
-            EXECUTE format($p$CREATE POLICY tenant_isolation ON public.%I FOR ALL
-                USING (company_id = NULLIF(current_setting('app.current_tenant_id', true), '')::bigint)
-                WITH CHECK (company_id = NULLIF(current_setting('app.current_tenant_id', true), '')::bigint)$p$, t);
-        END IF;
-        IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename=t AND policyname='platform_admin_bypass') THEN
-            EXECUTE format($p$CREATE POLICY platform_admin_bypass ON public.%I FOR ALL
-                USING (NULLIF(current_setting('app.platform_admin', true), '') = 'on')
-                WITH CHECK (NULLIF(current_setting('app.platform_admin', true), '') = 'on')$p$, t);
-        END IF;
+        EXECUTE format('DROP POLICY IF EXISTS tenant_isolation ON public.%I', t);
+        EXECUTE format('DROP POLICY IF EXISTS platform_admin_bypass ON public.%I', t);
         EXECUTE format('ALTER TABLE public.%I FORCE ROW LEVEL SECURITY', t);
     END LOOP;
 END $$;
@@ -162,3 +173,5 @@ BEGIN
         GRANT SELECT, INSERT, UPDATE, DELETE ON detention_rule_cards, detention_dwells, detention_dwell_events, detention_notices, detention_evidence TO opstrax_app;
     END IF;
 END $$;
+
+COMMIT;

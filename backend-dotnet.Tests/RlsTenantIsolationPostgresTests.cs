@@ -277,6 +277,85 @@ public sealed class RlsTenantIsolationPostgresTests
     }
 
     [Fact]
+    public async Task FleetReadiness_EnforcesExpectedWorkerRoster_AfterStartupGrace_AndRecovers()
+    {
+        var owner = await PreparedOwnerDbAsync();
+        var now = DateTimeOffset.UtcNow;
+        var afterGrace = new FleetProductionReadinessService(
+            RuntimeDb(), NullLogger<FleetProductionReadinessService>.Instance,
+            new FixedTimeProvider(now), now - FleetProductionReadinessService.CriticalWorkerStartupGrace - TimeSpan.FromSeconds(1));
+
+        try
+        {
+            await owner.ExecuteAsync(
+                "DELETE FROM service_heartbeats WHERE service_name=ANY(@names)",
+                c => c.Parameters.AddWithValue("@names", FleetProductionReadinessService.CriticalWorkerNames));
+
+            var empty = await afterGrace.CheckAsync();
+            Assert.False(empty.Ready);
+            Assert.Equal(FleetProductionReadinessService.CriticalWorkerNames.Length, empty.CriticalWorkerViolations);
+            Assert.Equal(FleetProductionReadinessService.CriticalWorkerNames.Length, empty.MissingCriticalWorkers);
+
+            await SeedFreshCriticalWorkersAsync(owner);
+            await owner.ExecuteAsync(
+                "DELETE FROM service_heartbeats WHERE service_name=@name",
+                c => c.Parameters.AddWithValue("@name", FleetProductionReadinessService.CriticalWorkerNames[0]));
+            var missing = await afterGrace.CheckAsync();
+            Assert.False(missing.Ready);
+            Assert.Equal(1, missing.CriticalWorkerViolations);
+            Assert.Equal(1, missing.MissingCriticalWorkers);
+
+            await SeedFreshCriticalWorkersAsync(owner);
+            await owner.ExecuteAsync(
+                "UPDATE service_heartbeats SET last_heartbeat_at=NOW()-INTERVAL '11 minutes' WHERE service_name=@name",
+                c => c.Parameters.AddWithValue("@name", FleetProductionReadinessService.CriticalWorkerNames[1]));
+            var stale = await afterGrace.CheckAsync();
+            Assert.False(stale.Ready);
+            Assert.Equal(1, stale.CriticalWorkerViolations);
+            Assert.Equal(1, stale.StaleCriticalWorkers);
+
+            await SeedFreshCriticalWorkersAsync(owner);
+            await owner.ExecuteAsync(
+                "UPDATE service_heartbeats SET last_heartbeat_at=NOW()-INTERVAL '3 minutes' WHERE service_name=@name",
+                c => c.Parameters.AddWithValue("@name", FleetProductionReadinessService.CriticalWorkerNames[1]));
+            var priorProcessHeartbeat = await afterGrace.CheckAsync();
+            Assert.False(priorProcessHeartbeat.Ready);
+            Assert.Equal(1, priorProcessHeartbeat.CriticalWorkerViolations);
+            Assert.Equal(1, priorProcessHeartbeat.StaleCriticalWorkers);
+
+            await SeedFreshCriticalWorkersAsync(owner);
+            await owner.ExecuteAsync(
+                "UPDATE service_heartbeats SET consecutive_failures=3,last_run_status='failed' WHERE service_name=@name",
+                c => c.Parameters.AddWithValue("@name", FleetProductionReadinessService.CriticalWorkerNames[2]));
+            var failed = await afterGrace.CheckAsync();
+            Assert.False(failed.Ready);
+            Assert.Equal(1, failed.CriticalWorkerViolations);
+            Assert.Equal(1, failed.FailedCriticalWorkers);
+
+            await SeedFreshCriticalWorkersAsync(owner);
+            var recovered = await afterGrace.CheckAsync();
+            Assert.True(recovered.Ready, $"Fresh critical-worker roster did not recover readiness: {recovered}");
+            Assert.Equal(0, recovered.CriticalWorkerViolations);
+
+            await owner.ExecuteAsync(
+                "DELETE FROM service_heartbeats WHERE service_name=ANY(@names)",
+                c => c.Parameters.AddWithValue("@names", FleetProductionReadinessService.CriticalWorkerNames));
+            var duringGrace = new FleetProductionReadinessService(
+                RuntimeDb(), NullLogger<FleetProductionReadinessService>.Instance,
+                new FixedTimeProvider(now), now - TimeSpan.FromSeconds(30));
+            var starting = await duringGrace.CheckAsync();
+            Assert.True(starting.Ready, $"Startup grace should permit workers to publish first heartbeats: {starting}");
+            Assert.True(starting.CriticalWorkerStartupGraceActive);
+            Assert.Equal(0, starting.CriticalWorkerViolations);
+            Assert.Equal(FleetProductionReadinessService.CriticalWorkerNames.Length, starting.RawCriticalWorkerViolations);
+        }
+        finally
+        {
+            await SeedFreshCriticalWorkersAsync(owner);
+        }
+    }
+
+    [Fact]
     public async Task FleetReadiness_RejectsPermissiveSpecialPolicyDrift()
     {
         var owner = await PreparedOwnerDbAsync();
@@ -401,6 +480,7 @@ public sealed class RlsTenantIsolationPostgresTests
             "2026_07_30_stage57_workforce_schedule_tenant_integrity.sql",
             "2026_07_31_stage58_nonforgeable_tenant_ticket.sql",
             "2026_07_31_stage59_data_protection_key_ring.sql",
+            "2026_08_02_stage67_telematics_diagnostics_integrity.sql",
         })
         {
             await owner.ExecuteAsync(File.ReadAllText(Path.Combine(root, "database", "migrations", migration)));
@@ -408,9 +488,27 @@ public sealed class RlsTenantIsolationPostgresTests
                 "INSERT INTO schema_migrations(version,description) VALUES(@version,'test terminal reconciliation') ON CONFLICT(version) DO NOTHING",
                 c => c.Parameters.AddWithValue("@version", Path.GetFileNameWithoutExtension(migration)));
         }
+        // Stage58 is the terminal, non-forgeable replacement for the legacy Stage53
+        // GUC policies. Do not replay Stage53 after Stage58-era tables exist; retain
+        // its historical ledger marker, as the production predeploy runner does.
         await owner.ExecuteAsync(
-            "UPDATE service_heartbeats SET last_heartbeat_at=NOW(),consecutive_failures=0");
+            "INSERT INTO schema_migrations(version,description) VALUES('2026_07_30_stage53_tenant_rls_reconciliation','superseded by Stage58 in test terminal reconciliation') ON CONFLICT(version) DO NOTHING");
+        await SeedFreshCriticalWorkersAsync(owner);
         return owner;
+    }
+
+    private static Task SeedFreshCriticalWorkersAsync(Database owner) => owner.ExecuteAsync(
+        @"INSERT INTO service_heartbeats
+            (service_name,last_heartbeat_at,last_run_at,last_run_status,consecutive_failures,last_error_safe,updated_at)
+          SELECT name,NOW(),NOW(),'succeeded',0,NULL,NOW() FROM unnest(@names::text[]) AS name
+          ON CONFLICT(service_name) DO UPDATE SET
+            last_heartbeat_at=NOW(),last_run_at=NOW(),last_run_status='succeeded',
+            consecutive_failures=0,last_error_safe=NULL,updated_at=NOW()",
+        c => c.Parameters.AddWithValue("@names", FleetProductionReadinessService.CriticalWorkerNames));
+
+    private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
     }
 
     private static string FindRoot()

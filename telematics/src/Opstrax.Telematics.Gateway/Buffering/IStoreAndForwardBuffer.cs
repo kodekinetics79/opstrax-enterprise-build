@@ -17,6 +17,13 @@ internal readonly record struct StoreAndForwardEntry(
     DateTimeOffset EnqueuedAt);
 
 /// <summary>
+/// An exclusively claimed entry. Completion removes it durably; abandonment releases it back to
+/// the head of the queue. The lease token lets a durable implementation recover claims abandoned
+/// by a crashed gateway without deleting an event before publication succeeds.
+/// </summary>
+internal readonly record struct StoreAndForwardLease(Guid Token, StoreAndForwardEntry Entry);
+
+/// <summary>
 /// The gateway's durability seam. A device edge cannot apply backpressure to a truck: when
 /// the backbone is unavailable, the bytes have already been decoded and acknowledged to the
 /// device, so dropping them loses a fix that no longer exists anywhere else. Everything the
@@ -43,6 +50,15 @@ internal interface IStoreAndForwardBuffer
     /// </summary>
     ValueTask EnqueueAsync(StoreAndForwardEntry entry, CancellationToken cancellationToken = default);
 
-    /// <summary>Takes the next parked entry for a replay attempt, oldest first.</summary>
-    bool TryDequeue(out StoreAndForwardEntry entry);
+    /// <summary>Claims the next parked entry, oldest first, without deleting it.</summary>
+    ValueTask<StoreAndForwardLease?> TryAcquireAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Deletes a claimed entry only after downstream publication succeeds.</summary>
+    ValueTask CompleteAsync(StoreAndForwardLease lease, CancellationToken cancellationToken = default);
+
+    /// <summary>Releases an unsuccessful claim for retry without changing its ordering position.</summary>
+    ValueTask AbandonAsync(
+        StoreAndForwardLease lease,
+        string? reason = null,
+        CancellationToken cancellationToken = default);
 }

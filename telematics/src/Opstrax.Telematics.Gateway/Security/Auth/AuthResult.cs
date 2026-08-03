@@ -57,6 +57,9 @@ public enum AuthReasonCode
 
     /// <summary>The reported SIM identity (ICCID/IMSI) differs from the pinned value — SIM-swap anomaly.</summary>
     SimPinMismatch = 11,
+
+    /// <summary>The configured cryptographic mode cannot be proven by this raw TCP transport.</summary>
+    TransportProofUnavailable = 12,
 }
 
 /// <summary>

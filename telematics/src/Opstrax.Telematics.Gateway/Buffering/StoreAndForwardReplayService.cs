@@ -28,7 +28,7 @@ internal sealed class StoreAndForwardReplayOptions
 }
 
 /// <summary>
-/// The consumer of <see cref="IStoreAndForwardBuffer.TryDequeue"/>. Drains events the gateway
+/// The consumer of <see cref="IStoreAndForwardBuffer.TryAcquireAsync"/>. Drains events the gateway
 /// parked during a backbone outage and republishes them, closing the durability loop the framing
 /// path opens when it enqueues on a publish failure.
 /// </summary>
@@ -48,10 +48,9 @@ internal sealed class StoreAndForwardReplayOptions
 /// costs a steady trickle of attempts, not a hot loop.
 /// </para>
 /// <para>
-/// <b>Shutdown.</b> If the host stops while an entry is still un-republished, that entry is placed
-/// back into the buffer so it is not silently dropped for the remainder of the process lifetime.
-/// (The in-memory buffer is not durable across a process restart — see
-/// <see cref="IStoreAndForwardBuffer"/> — a WAL-backed implementation closes that last gap.)
+/// <b>Shutdown/crash safety.</b> Acquisition is a lease, not a delete. Completion happens only
+/// after publication succeeds; cancellation abandons the claim, while a durable implementation
+/// expires orphaned leases after a process crash.
 /// </para>
 /// </remarks>
 internal sealed class StoreAndForwardReplayService : BackgroundService
@@ -146,10 +145,16 @@ internal sealed class StoreAndForwardReplayService : BackgroundService
     /// </summary>
     internal async Task DrainAsync(CancellationToken cancellationToken)
     {
-        while (!cancellationToken.IsCancellationRequested && _buffer.TryDequeue(out StoreAndForwardEntry entry))
+        while (!cancellationToken.IsCancellationRequested)
         {
+            StoreAndForwardLease? acquired = await _buffer.TryAcquireAsync(cancellationToken).ConfigureAwait(false);
+            if (acquired is null)
+                return;
+            StoreAndForwardLease lease = acquired.Value;
+            StoreAndForwardEntry entry = lease.Entry;
             bool republished = false;
             int attempt = 0;
+            string? finalError = null;
 
             while (!cancellationToken.IsCancellationRequested)
             {
@@ -162,8 +167,9 @@ internal sealed class StoreAndForwardReplayService : BackgroundService
                 }
                 catch (Exception ex)
                 {
+                    finalError = ex.GetType().Name;
                     if (cancellationToken.IsCancellationRequested)
-                        break; // shutting down; entry is re-buffered below, never dropped.
+                        break; // shutting down; claim is abandoned below, never dropped.
 
                     Interlocked.Increment(ref _retries);
                     attempt++;
@@ -186,12 +192,13 @@ internal sealed class StoreAndForwardReplayService : BackgroundService
                 }
             }
 
-            if (!republished)
+            if (republished)
             {
-                // Cancelled mid-flight while still holding an un-republished entry. Put it back so it
-                // is not lost. It returns to the tail, but the drain is stopping anyway, so no later
-                // same-device fix is being republished concurrently to overtake it.
-                await _buffer.EnqueueAsync(entry, CancellationToken.None).ConfigureAwait(false);
+                await _buffer.CompleteAsync(lease, CancellationToken.None).ConfigureAwait(false);
+            }
+            else
+            {
+                await _buffer.AbandonAsync(lease, finalError, CancellationToken.None).ConfigureAwait(false);
                 return;
             }
         }

@@ -58,6 +58,8 @@ public sealed class Batch4SchemaService(Database db, IConfiguration? configurati
         new("safety_events", "created_at",     "TIMESTAMPTZ NOT NULL DEFAULT NOW()"),
         new("safety_events", "updated_at",     "TIMESTAMPTZ NULL"),
         new("safety_events", "deleted_at",     "TIMESTAMPTZ NULL"),
+        new("safety_events", "branch_id",      "BIGINT NULL"),
+        new("safety_events", "row_version",    "BIGINT NOT NULL DEFAULT 0"),
 
         new("dashcam_events", "event_number", "VARCHAR(80) NULL"),
         new("dashcam_events", "event_type", "VARCHAR(120) NULL"),
@@ -89,6 +91,23 @@ public sealed class Batch4SchemaService(Database db, IConfiguration? configurati
         new("insurance_reports", "evidence_package_id", "BIGINT NULL"),
         new("insurance_reports", "report_summary",      "TEXT NULL"),
         new("insurance_reports", "export_url",          "VARCHAR(500) NULL"),
+        new("incidents", "branch_id", "BIGINT NULL"),
+        new("incidents", "row_version", "BIGINT NOT NULL DEFAULT 1"),
+        new("incidents", "idempotency_key", "VARCHAR(160) NULL"),
+        new("incidents", "idempotency_request_hash", "VARCHAR(64) NULL"),
+        new("incident_evidence", "branch_id", "BIGINT NULL"),
+        new("incident_evidence", "content_hash", "VARCHAR(64) NULL"),
+        new("insurance_reports", "branch_id", "BIGINT NULL"),
+        new("coaching_tasks", "branch_id", "BIGINT NULL"),
+        new("coaching_tasks", "row_version", "BIGINT NOT NULL DEFAULT 0"),
+        new("coaching_tasks", "idempotency_key", "VARCHAR(160) NULL"),
+        new("coaching_tasks", "idempotency_request_hash", "VARCHAR(64) NULL"),
+        new("coaching_tasks", "effectiveness_formula_version", "VARCHAR(40) NULL"),
+        new("coaching_tasks", "effectiveness_evaluated_at", "TIMESTAMPTZ NULL"),
+        new("coaching_tasks", "effectiveness_observation_json", "JSONB NULL"),
+        new("coaching_notes", "branch_id", "BIGINT NULL"),
+        new("driver_safety_scorecards", "branch_id", "BIGINT NULL"),
+        new("vehicle_safety_scorecards", "branch_id", "BIGINT NULL"),
 
         new("driver_safety_scorecards", "safety_score",               "DECIMAL(6,2) NOT NULL DEFAULT 80"),
         new("driver_safety_scorecards", "harsh_braking_count",        "INT NOT NULL DEFAULT 0"),
@@ -139,7 +158,7 @@ public sealed class Batch4SchemaService(Database db, IConfiguration? configurati
             updated_at TIMESTAMPTZ NULL, deleted_at TIMESTAMPTZ NULL)",
         @"CREATE TABLE IF NOT EXISTS incident_evidence (
             id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, company_id BIGINT NOT NULL DEFAULT 1, incident_id BIGINT NOT NULL,
-            evidence_type VARCHAR(120) NOT NULL, evidence_title VARCHAR(220) NOT NULL, evidence_url VARCHAR(400) NULL, evidence_json JSONB NULL,
+            evidence_type VARCHAR(120) NOT NULL, evidence_title VARCHAR(220) NOT NULL, evidence_url VARCHAR(400) NULL, content_hash VARCHAR(64) NULL, evidence_json JSONB NULL,
             source_entity_type VARCHAR(100) NULL, source_entity_id BIGINT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
         @"CREATE TABLE IF NOT EXISTS evidence_packages (
             id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, company_id BIGINT NOT NULL DEFAULT 1, package_number VARCHAR(80) NOT NULL,
@@ -181,6 +200,18 @@ public sealed class Batch4SchemaService(Database db, IConfiguration? configurati
         "CREATE INDEX IF NOT EXISTS ix_b4_incidents ON incidents(company_id, status, severity, incident_number)",
         "CREATE INDEX IF NOT EXISTS ix_b4_evidence_packages ON evidence_packages(company_id, status, package_number)",
         "CREATE INDEX IF NOT EXISTS ix_b4_insurance_reports ON insurance_reports(company_id, report_number, status)"
+        ,"CREATE UNIQUE INDEX IF NOT EXISTS uq_incidents_company_idempotency ON incidents(company_id,idempotency_key) WHERE idempotency_key IS NOT NULL"
+        ,"CREATE UNIQUE INDEX IF NOT EXISTS uq_incidents_company_number_active ON incidents(company_id,incident_number) WHERE deleted_at IS NULL"
+        ,"CREATE UNIQUE INDEX IF NOT EXISTS uq_insurance_reports_company_incident ON insurance_reports(company_id,incident_id)"
+        ,"CREATE INDEX IF NOT EXISTS idx_incidents_company_branch_status ON incidents(company_id,branch_id,status,occurred_at DESC) WHERE deleted_at IS NULL"
+        ,"CREATE UNIQUE INDEX IF NOT EXISTS uq_coaching_tasks_company_number ON coaching_tasks(company_id,task_number)"
+        ,"CREATE UNIQUE INDEX IF NOT EXISTS uq_coaching_tasks_company_idempotency ON coaching_tasks(company_id,idempotency_key) WHERE idempotency_key IS NOT NULL"
+        ,"CREATE UNIQUE INDEX IF NOT EXISTS uq_coaching_tasks_active_safety_event ON coaching_tasks(company_id,safety_event_id) WHERE safety_event_id IS NOT NULL AND deleted_at IS NULL AND LOWER(status) NOT IN ('completed','cancelled','dismissed')"
+        ,"CREATE UNIQUE INDEX IF NOT EXISTS uq_coaching_tasks_active_dashcam_event ON coaching_tasks(company_id,dashcam_event_id) WHERE dashcam_event_id IS NOT NULL AND deleted_at IS NULL AND LOWER(status) NOT IN ('completed','cancelled','dismissed')"
+        ,"CREATE INDEX IF NOT EXISTS idx_coaching_tasks_company_branch_status ON coaching_tasks(company_id,branch_id,status,due_at) WHERE deleted_at IS NULL"
+        ,"CREATE UNIQUE INDEX IF NOT EXISTS uq_driver_safety_scorecards_company_driver ON driver_safety_scorecards(company_id,driver_id)"
+        ,"CREATE UNIQUE INDEX IF NOT EXISTS uq_vehicle_safety_scorecards_company_vehicle ON vehicle_safety_scorecards(company_id,vehicle_id)"
+        ,"CREATE UNIQUE INDEX IF NOT EXISTS uq_safety_trends_company_date ON safety_trends(company_id,trend_date)"
     ];
 
     private static readonly string[] DemoSeeds =
@@ -249,7 +280,7 @@ public sealed class Batch4SchemaService(Database db, IConfiguration? configurati
                  ((n-1)%20)+1, ((n-1)%20)+1, ((n-1)%50)+1, ((n-1)%12)+1,
                  (ARRAY['Collision','Near Miss','Cargo Damage','Roadside Event','Customer Property'])[(n%5)+1],
                  (ARRAY['Low','Medium','High','Critical'])[(n%4)+1],
-                 (ARRAY['New','Under Review','Awaiting Driver Statement','Evidence Collected','Insurance Report Ready','Closed','Reopened'])[(n%7)+1],
+                 (ARRAY['New','Under Review','Awaiting Driver Statement','Evidence Collected','Closed'])[(n%5)+1],
                  (ARRAY['Manassas Yard','Woodbridge I-95','Alexandria','Dulles','Fairfax','Arlington','Washington DC'])[(n%7)+1],
                  NOW() - n * INTERVAL '1 day',
                  'Driver statement placeholder pending.', 'Witness statement placeholder pending.', 'Customer statement placeholder pending.',
@@ -257,11 +288,11 @@ public sealed class Batch4SchemaService(Database db, IConfiguration? configurati
                  'Collect evidence package and legal review placeholder',
                  CASE WHEN n%3 = 0 THEN 'Ready' ELSE 'Not Created' END
           FROM seq WHERE (SELECT COUNT(*) FROM incidents WHERE deleted_at IS NULL) < 15",
-        @"INSERT INTO incident_evidence (company_id, incident_id, evidence_type, evidence_title, evidence_url, evidence_json, source_entity_type, source_entity_id)
+        @"INSERT INTO incident_evidence (company_id, incident_id, evidence_type, evidence_title, evidence_url, content_hash, evidence_json, source_entity_type, source_entity_id)
           WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<30)
           SELECT 1, ((n-1)%15)+1,
                  (ARRAY['Video','GPS Trail','Speed Data','Driver Statement','DVIR Reference','Maintenance Context','Photo Placeholder'])[(n%7)+1],
-                 'Incident evidence ' || n, '/placeholder/evidence.dat',
+                 'Incident evidence ' || n, 'https://example.invalid/seed/evidence-' || n, repeat('0',64),
                  jsonb_build_object('source','OpsTrax seeded evidence','chainOfCustody','intact'),
                  (ARRAY['dashcam','safety','dvir','maintenance','document'])[(n%5)+1], n
           FROM seq WHERE (SELECT COUNT(*) FROM incident_evidence) < 30",

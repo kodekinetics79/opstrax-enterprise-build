@@ -26,7 +26,7 @@ export const hosApi = {
   clocks: () => unwrap<AnyRecord[]>(apiClient.get("/api/hos/clocks")),
   logs: () => unwrap<AnyRecord[]>(apiClient.get("/api/hos/logs")),
   driverLogs: (driverId: number) => unwrap<AnyRecord[]>(apiClient.get(`/api/hos/logs/${driverId}`)),
-  certifyLog: (id: number) => unwrap<AnyRecord>(apiClient.post(`/api/hos/logs/${id}/certify`, {})),
+  certifyLog: (id: number, body: Record<string, unknown>) => unwrap<AnyRecord>(apiClient.post(`/api/hos/logs/${id}/certify`, body)),
   aiRecommendations: () => unwrap<AnyRecord[]>(apiClient.get("/api/hos/ai/recommendations")),
 };
 
@@ -34,7 +34,7 @@ export const eldApi = {
   devices: () => unwrap<AnyRecord[]>(apiClient.get("/api/eld/devices")),
   device: (id: number) => unwrap<AnyRecord>(apiClient.get(`/api/eld/devices/${id}`)),
   markMalfunction: (id: number, body: Record<string, unknown>) => unwrap<AnyRecord>(apiClient.post(`/api/eld/devices/${id}/mark-malfunction`, body)),
-  resolveMalfunction: (id: number) => unwrap<AnyRecord>(apiClient.post(`/api/eld/devices/${id}/resolve-malfunction`, {})),
+  resolveMalfunction: (id: number, body: Record<string, unknown>) => unwrap<AnyRecord>(apiClient.post(`/api/eld/devices/${id}/resolve-malfunction`, body)),
 };
 
 export const localizationApi = {

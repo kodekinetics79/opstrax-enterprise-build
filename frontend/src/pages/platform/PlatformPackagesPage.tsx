@@ -7,7 +7,7 @@ import { usePlatformAuth } from "@/hooks/usePlatformAuth";
 import { PHeader, PCard, PBadge, PButton, PField, PInput, PLoading, PError, PEmpty, PDrawer, PConfirm } from "./ui";
 
 const MODULE_OPTIONS = [
-  "safety", "maintenance", "dispatch", "telematics", "crm", "customer_portal", "reports", "compliance",
+  "safety", "maintenance", "dispatch", "telematics", "crm", "customer_portal", "reports", "compliance", "integrations",
 ];
 
 function parseModules(v: unknown): string[] {

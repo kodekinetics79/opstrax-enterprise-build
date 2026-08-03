@@ -33,7 +33,14 @@ public sealed class TelemetrySchemaService(Database db)
         // this ensure; kept here so owner-capable envs self-heal and provisioning can write it.
         new("eld_devices", "imei",         "VARCHAR(32) NULL"),
         new("eld_devices", "api_key_hash", "VARCHAR(64) NULL"),
+        new("eld_devices", "api_key_previous_hash", "VARCHAR(64) NULL"),
+        new("eld_devices", "api_key_previous_valid_until", "TIMESTAMPTZ NULL"),
         new("eld_devices", "hmac_secret",  "VARCHAR(128) NULL"),
+        // Diagnostics ingest reads only the envelope-encrypted credentials. The legacy
+        // plaintext column remains temporarily for the older location ingest contract.
+        new("eld_devices", "hmac_secret_encrypted", "TEXT NULL"),
+        new("eld_devices", "hmac_previous_secret_encrypted", "TEXT NULL"),
+        new("eld_devices", "hmac_previous_valid_until", "TIMESTAMPTZ NULL"),
         new("eld_devices", "last_seen_at", "TIMESTAMPTZ NULL"),
         new("eld_devices", "revoked_at",   "TIMESTAMPTZ NULL"),
         new("eld_devices", "updated_at",   "TIMESTAMPTZ NULL"),
@@ -55,6 +62,11 @@ public sealed class TelemetrySchemaService(Database db)
         // Keep owner-capable fresh installs aligned with the committed polygon
         // geofence migration. GeofenceEvaluator always selects this column.
         new("geofences", "polygon_json", "JSONB NULL"),
+        // Stage 66 made geofences branch-scoped. Keep the owner-capable startup
+        // schema path aligned as well: GeofenceEvaluator and the geofence API
+        // select branch_id unconditionally, so an older development database
+        // must self-heal before the background worker begins polling.
+        new("geofences", "branch_id", "BIGINT NULL"),
         new("telemetry_alerts", "correlation_id", "VARCHAR(120) NULL"),
         new("telemetry_alerts", "causation_id", "VARCHAR(120) NULL"),
         new("telemetry_alerts", "source_channel", "VARCHAR(40) NULL"),
@@ -266,6 +278,17 @@ public sealed class TelemetrySchemaService(Database db)
 
     private static readonly string[] CredentialHardening =
     [
+        @"DO $$ BEGIN
+            IF EXISTS (
+              SELECT api_hash FROM (
+                SELECT api_key_hash api_hash FROM eld_devices WHERE api_key_hash IS NOT NULL AND deleted_at IS NULL
+                UNION ALL
+                SELECT api_key_previous_hash FROM eld_devices WHERE api_key_previous_hash IS NOT NULL AND deleted_at IS NULL
+              ) hashes GROUP BY api_hash HAVING COUNT(*) > 1
+            ) THEN RAISE EXCEPTION 'Duplicate current/previous device API-key hashes require reconciliation'; END IF;
+          END $$",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_eld_devices_api_key_hash ON eld_devices(api_key_hash) WHERE api_key_hash IS NOT NULL AND deleted_at IS NULL",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_eld_devices_api_key_previous_hash ON eld_devices(api_key_previous_hash) WHERE api_key_previous_hash IS NOT NULL AND deleted_at IS NULL",
         // Never manufacture credentials during schema startup. Legacy or incomplete
         // devices are quarantined until an operator explicitly rotates credentials.
         @"UPDATE eld_devices
@@ -279,35 +302,17 @@ public sealed class TelemetrySchemaService(Database db)
                 api_key_hash IS NULL
                 OR btrim(api_key_hash) = ''
                 OR api_key_hash !~ '^[0-9a-fA-F]{64}$'
-                OR hmac_secret IS NULL
-                OR btrim(hmac_secret) = ''
-                OR length(hmac_secret) < 32
+                OR hmac_secret_encrypted IS NULL
+                OR btrim(hmac_secret_encrypted) = ''
+                OR length(hmac_secret_encrypted) < 24
                 OR api_key_hash = encode(sha256(('opstrax-' || 'dev-' || device_serial)::bytea), 'hex')
-                OR hmac_secret = ('opstrax-' || 'hmac-dev-' || device_serial)
             )",
-        @"DO $$
-          BEGIN
-            IF NOT EXISTS (
-                SELECT 1
-                FROM pg_constraint
-                WHERE conname = 'ck_eld_devices_active_credentials'
-                  AND conrelid = 'eld_devices'::regclass
-            ) THEN
-                ALTER TABLE eld_devices
-                ADD CONSTRAINT ck_eld_devices_active_credentials
-                CHECK (
-                    status <> 'Active'
-                    OR (
-                        api_key_hash IS NOT NULL
-                        AND api_key_hash ~ '^[0-9a-fA-F]{64}$'
-                        AND hmac_secret IS NOT NULL
-                        AND length(btrim(hmac_secret)) >= 32
-                        AND api_key_hash <> encode(sha256(('opstrax-' || 'dev-' || device_serial)::bytea), 'hex')
-                        AND hmac_secret <> ('opstrax-' || 'hmac-dev-' || device_serial)
-                    )
-                );
-            END IF;
-          END
-          $$",
+        "ALTER TABLE eld_devices DROP CONSTRAINT IF EXISTS ck_eld_devices_active_credentials",
+        @"ALTER TABLE eld_devices ADD CONSTRAINT ck_eld_devices_active_credentials CHECK (
+            LOWER(status) <> 'active' OR (
+              api_key_hash IS NOT NULL AND api_key_hash ~ '^[0-9a-fA-F]{64}$'
+              AND hmac_secret_encrypted IS NOT NULL AND length(btrim(hmac_secret_encrypted)) >= 24
+              AND revoked_at IS NULL
+            )) NOT VALID",
     ];
 }

@@ -7,8 +7,8 @@ namespace Opstrax.Api.Services;
 //
 // Manages tenant-level data retention policies.
 // Physical deletion is never triggered from this service — it only stores policy.
-// A separate, explicitly-tested retention worker (not built here) would execute
-// deletions after verifying the policy and the legal_hold_active flag.
+// RetentionEnforcementBackgroundService separately executes the supported
+// operational-row categories after verifying the legal_hold_active flag.
 //
 // SAFETY: When legal_hold_active = 1, no data must be deleted for any category.
 // ─────────────────────────────────────────────────────────────────────────────

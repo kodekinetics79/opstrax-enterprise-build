@@ -1224,7 +1224,7 @@ export function IntegrationsPage() {
       <PageHeader
         eyebrow="Connector marketplace"
         title="Integrations"
-        description="Samsara-grade connector marketplace for ERP, accounting, telematics, fuel cards, routing, messaging, WMS, IoT, and compliance — every card, status, and event streamed live from the primary API and scoped to your tenant."
+        description="Tenant-scoped connector registry. A connector is shown as Connected only after the backend records a successful handshake; catalog presence alone does not mean the provider feature is supported."
         actions={
           <>
             <button type="button" className="btn-ghost text-sm" onClick={() => exportCsv("integrations", integrations)}>

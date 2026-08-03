@@ -1,4 +1,6 @@
 -- ============================================================================
+
+BEGIN;
 -- 004_device_trust_policy.sql
 --
 -- Persistence for the per-device TRUST POLICY that backs
@@ -76,3 +78,9 @@ COMMENT ON COLUMN telematics_device_trust_policy.pinned_source_cidrs IS
 -- Fast lookup of all devices provisioned for a given auth mode (fleet migration reporting).
 CREATE INDEX IF NOT EXISTS idx_tdtp_auth_mode
     ON telematics_device_trust_policy (auth_mode);
+
+INSERT INTO schema_migrations (version, description)
+VALUES ('telematics_004_device_trust_policy','Per-device trust policy and credential-handle contract')
+ON CONFLICT (version) DO UPDATE SET description=EXCLUDED.description;
+
+COMMIT;

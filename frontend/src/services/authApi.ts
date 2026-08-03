@@ -21,7 +21,9 @@ export type SsoDiscovery = {
 
 export const authApi = {
   bootstrap: async () => {
-    try { await apiClient.get("/api/health"); } catch { /* warm-up only — never block login */ }
+    // Use the real liveness route. The former /api/health path is not mapped and
+    // generated a guaranteed 404 on every password login before the real request.
+    try { await apiClient.get("/health/live"); } catch { /* warm-up only — never block login */ }
   },
   login: async (usernameOrEmail: string, password: string) => {
     const email = resolveEmail(usernameOrEmail);

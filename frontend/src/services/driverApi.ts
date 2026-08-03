@@ -73,6 +73,23 @@ export const driverApi = {
   dvirTemplates: () =>
     unwrap<AnyRecord[]>(apiClient.get("/api/driver/dvir/templates")),
 
+  dvirReports: () =>
+    unwrap<AnyRecord[]>(apiClient.get("/api/driver/dvir/reports")),
+
+  acknowledgeDvirRepairs: (id: number | string, rowVersion: number) =>
+    unwrap<AnyRecord>(apiClient.post(`/api/dvir/reports/${id}/driver-acknowledge-repair`, {
+      rowVersion,
+      attestationAccepted: true,
+      attestation: "I acknowledge that I reviewed the certified repairs for this DVIR.",
+    })),
+
+  signDvir: (id: number | string, rowVersion: number) =>
+    unwrap<AnyRecord>(apiClient.post(`/api/dvir/reports/${id}/driver-sign`, {
+      rowVersion,
+      attestationAccepted: true,
+      attestation: "I certify that this DVIR is true and correct and that I completed this inspection.",
+    })),
+
   submitDvir: (payload: {
     vehicleId: number;
     driverId?: number;   // backend overrides with session identity; send 0 or omit
@@ -80,6 +97,7 @@ export const driverApi = {
     odometerMiles?: number;
     engineHours?: number;
     notes?: string;
+    idempotencyKey?: string;
     checklistItems?: {
       category?: string;
       itemName?: string;
@@ -87,19 +105,34 @@ export const driverApi = {
       severity?: string;
       notes?: string;
     }[];
+    attestationAccepted: boolean;
+    attestation: string;
   }) =>
-    unwrap<AnyRecord>(apiClient.post("/api/driver/dvir", { ...payload, driverId: payload.driverId ?? 0 })),
+    unwrap<AnyRecord>(apiClient.post(
+      "/api/driver/dvir",
+      { ...payload, driverId: payload.driverId ?? 0 },
+      { headers: payload.idempotencyKey ? { "Idempotency-Key": payload.idempotencyKey } : undefined },
+    )),
 
   // ── Coaching ───────────────────────────────────────────────────────────────
   coaching: () =>
     unwrap<AnyRecord>(apiClient.get("/api/driver/coaching")),
 
-  acknowledgeCoaching: (id: number | string, note?: string) =>
+  acknowledgeCoaching: (id: number | string, rowVersion: number, note?: string) =>
     unwrap<AnyRecord>(
-      apiClient.post(`/api/driver/coaching/${id}/acknowledge`, { note })
+      apiClient.post(`/api/driver/coaching/${id}/acknowledge`, { rowVersion, note })
     ),
 
   // ── HOS/ELD ───────────────────────────────────────────────────────────────
   hos: () =>
     unwrap<AnyRecord>(apiClient.get("/api/driver/hos")),
+
+  hosLogs: () =>
+    unwrap<AnyRecord[]>(apiClient.get("/api/driver/hos/logs")),
+
+  certifyHosDay: (id: number | string) =>
+    unwrap<AnyRecord>(apiClient.post(`/api/hos/logs/${id}/certify`, {
+      attestationAccepted: true,
+      attestation: "I certify that this daily HOS record is true and correct.",
+    })),
 };

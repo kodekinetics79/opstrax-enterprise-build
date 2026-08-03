@@ -1,5 +1,3 @@
-using System.Collections.Concurrent;
-
 namespace Opstrax.Telematics.Gateway.Buffering;
 
 /// <summary>
@@ -19,7 +17,9 @@ namespace Opstrax.Telematics.Gateway.Buffering;
 /// </remarks>
 internal sealed class InMemoryStoreAndForwardBuffer : IStoreAndForwardBuffer
 {
-    private readonly ConcurrentQueue<StoreAndForwardEntry> _queue = new();
+    private readonly object _gate = new();
+    private readonly LinkedList<StoreAndForwardEntry> _queue = new();
+    private readonly Dictionary<Guid, StoreAndForwardEntry> _claimed = new();
     private readonly int _capacity;
 
     /// <summary>Creates the buffer.</summary>
@@ -32,22 +32,61 @@ internal sealed class InMemoryStoreAndForwardBuffer : IStoreAndForwardBuffer
     }
 
     /// <inheritdoc />
-    public int Count => _queue.Count;
+    public int Count
+    {
+        get { lock (_gate) return _queue.Count + _claimed.Count; }
+    }
 
     /// <inheritdoc />
     public ValueTask EnqueueAsync(StoreAndForwardEntry entry, CancellationToken cancellationToken = default)
     {
-        _queue.Enqueue(entry);
-
-        // Shed oldest until we are back within the cap. Racy by construction under concurrent
-        // enqueues, which is fine: the cap is a safety bound, not an exact quota.
-        while (_queue.Count > _capacity && _queue.TryDequeue(out _))
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_gate)
         {
+            _queue.AddLast(entry);
+            while (_queue.Count + _claimed.Count > _capacity && _queue.First is not null)
+                _queue.RemoveFirst();
         }
-
         return ValueTask.CompletedTask;
     }
 
     /// <inheritdoc />
-    public bool TryDequeue(out StoreAndForwardEntry entry) => _queue.TryDequeue(out entry);
+    public ValueTask<StoreAndForwardLease?> TryAcquireAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_gate)
+        {
+            if (_queue.First is null)
+                return ValueTask.FromResult<StoreAndForwardLease?>(null);
+            StoreAndForwardEntry entry = _queue.First.Value;
+            _queue.RemoveFirst();
+            var token = Guid.NewGuid();
+            _claimed[token] = entry;
+            return ValueTask.FromResult<StoreAndForwardLease?>(new StoreAndForwardLease(token, entry));
+        }
+    }
+
+    /// <inheritdoc />
+    public ValueTask CompleteAsync(StoreAndForwardLease lease, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_gate)
+            _claimed.Remove(lease.Token);
+        return ValueTask.CompletedTask;
+    }
+
+    /// <inheritdoc />
+    public ValueTask AbandonAsync(
+        StoreAndForwardLease lease,
+        string? reason = null,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_gate)
+        {
+            if (_claimed.Remove(lease.Token, out StoreAndForwardEntry entry))
+                _queue.AddFirst(entry);
+        }
+        return ValueTask.CompletedTask;
+    }
 }

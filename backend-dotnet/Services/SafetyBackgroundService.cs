@@ -204,8 +204,8 @@ public sealed class SafetyBackgroundService(
               FROM safety_events se
               LEFT JOIN telemetry_rules tr
                 ON tr.company_id=se.company_id AND tr.rule_type='safety_repeated_speeding_threshold' AND tr.enabled=TRUE
-              WHERE se.event_type='speeding'
-                AND se.status != 'dismissed'
+              WHERE LOWER(BTRIM(se.event_type))='speeding'
+                AND LOWER(BTRIM(se.status)) != 'dismissed'
                 AND se.driver_id IS NOT NULL
                 AND se.event_time > NOW() - 24 * INTERVAL '1 hour'
               GROUP BY se.company_id, se.driver_id, repeat_threshold
@@ -220,7 +220,7 @@ public sealed class SafetyBackgroundService(
 
             // Only create one open repeated_speeding event per driver per day
             var existing = await db.ScalarLongAsync(
-                "SELECT COUNT(*) FROM safety_events WHERE company_id=@cid AND driver_id=@did AND event_type='repeated_speeding' AND status='open' AND event_time > NOW() - 24 * INTERVAL '1 hour'",
+                "SELECT COUNT(*) FROM safety_events WHERE company_id=@cid AND driver_id=@did AND LOWER(REPLACE(BTRIM(event_type),' ','_'))='repeated_speeding' AND LOWER(BTRIM(status))='open' AND event_time > NOW() - 24 * INTERVAL '1 hour'",
                 c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@did", driverId); }, ct);
 
             if (existing > 0) continue;
@@ -254,12 +254,9 @@ public sealed class SafetyBackgroundService(
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<Database>();
 
-        // Find all company+driver pairs with events in the last 90 days
+        // Recompute every active driver so an expired final event cannot leave a stale penalty.
         var drivers = await db.QueryAsync(
-            @"SELECT DISTINCT company_id, driver_id
-              FROM safety_events
-              WHERE driver_id IS NOT NULL
-                AND event_time > NOW() - 90 * INTERVAL '1 day'",
+            @"SELECT company_id,id driver_id FROM drivers WHERE deleted_at IS NULL",
             ct: ct);
 
         foreach (var row in drivers)
@@ -380,7 +377,7 @@ public sealed class SafetyBackgroundService(
             @"SELECT event_type, severity, score_impact
               FROM safety_events
               WHERE company_id=@cid AND driver_id=@did
-                AND status NOT IN ('dismissed')
+                AND deleted_at IS NULL AND LOWER(status)<>'dismissed'
                 AND event_time > NOW() - @days * INTERVAL '1 day'",
             c =>
             {

@@ -1,11 +1,14 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle, ClipboardList, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle, ClipboardList, XCircle } from "lucide-react";
 import { driverApi } from "@/services/driverApi";
 import { ErrorState } from "@/components/ui";
+import { useSingleFlight } from "@/hooks/useSingleFlight";
+import { useDialogFocus } from "@/hooks/useDialogFocus";
 import type { AnyRecord } from "@/types";
 
 type ChecklistResult = "pass" | "fail" | "na";
+const DVIR_ATTESTATION = "I certify that this DVIR is true and correct and that I completed this inspection.";
 
 interface ChecklistItemState {
   templateId: number;
@@ -42,6 +45,9 @@ export function DriverDvirPage() {
   const [notes, setNotes] = useState("");
   const [items, setItems] = useState<ChecklistItemState[]>([]);
   const [submitted, setSubmitted] = useState(false);
+  const [attestationAccepted, setAttestationAccepted] = useState(false);
+  const idempotencyKey = useRef(crypto.randomUUID());
+  const submitSingleFlight = useSingleFlight();
 
   const templates = useQuery<AnyRecord[]>({
     queryKey: ["driver", "dvir-templates"],
@@ -78,6 +84,8 @@ export function DriverDvirPage() {
     mutationFn: driverApi.submitDvir,
     onSuccess: () => {
       setSubmitted(true);
+      setAttestationAccepted(false);
+      idempotencyKey.current = crypto.randomUUID();
       void qc.invalidateQueries({ queryKey: ["driver"] });
     },
   });
@@ -121,9 +129,11 @@ export function DriverDvirPage() {
         <p className="text-lg font-bold text-slate-900">DVIR Submitted</p>
         {hasFail && (
           <p className="text-sm text-amber-700 font-medium">
-            Defects recorded. Maintenance has been notified.
+            Defects recorded for maintenance review.
           </p>
         )}
+        <div className="w-full max-w-lg"><RepairAcknowledgments /></div>
+        <div className="w-full max-w-lg"><PendingDvirSignatures /></div>
         <button
           type="button"
           className="mt-4 rounded-2xl bg-teal-600 px-6 py-3 text-sm font-bold text-white"
@@ -144,7 +154,8 @@ export function DriverDvirPage() {
     );
   }
 
-  if (templates.isError) return <ErrorState message={(templates.error as Error)?.message} />;
+  if (templates.isError) return <ErrorState message={(templates.error as Error)?.message} onRetry={() => void templates.refetch()} />;
+  if (meQ.isError || assignmentsQ.isError) return <ErrorState message={`Authorized vehicle assignments are unavailable. No unassigned state has been inferred: ${((meQ.error ?? assignmentsQ.error) as Error)?.message ?? "request failed"}`} onRetry={() => { void meQ.refetch(); void assignmentsQ.refetch(); }} />;
 
   return (
     <div className="space-y-4 p-4 pb-10">
@@ -152,6 +163,9 @@ export function DriverDvirPage() {
         <p className="text-xs font-bold uppercase tracking-widest text-slate-400">Vehicle Inspection</p>
         <h1 className="mt-1 text-xl font-bold text-slate-900">DVIR</h1>
       </div>
+
+      <RepairAcknowledgments />
+      <PendingDvirSignatures />
 
       {/* Setup */}
       {!selectedTemplateId ? (
@@ -167,15 +181,7 @@ export function DriverDvirPage() {
                 <option value="">Select vehicle…</option>
                 {vehicles.map(v => <option key={v.id} value={v.id}>{v.code}</option>)}
               </select>
-            ) : (
-              <input
-                type="number"
-                className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm"
-                placeholder={assignmentsQ.isLoading ? "Loading your vehicles…" : "Vehicle ID (no assigned vehicles found)"}
-                value={vehicleId}
-                onChange={e => setVehicleId(e.target.value)}
-              />
-            )}
+            ) : <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />{assignmentsQ.isLoading || meQ.isLoading ? "Loading your authorized vehicles…" : "No authorized vehicle assignment is available. Contact dispatch before starting an inspection."}</div>}
           </div>
           <div>
             <label className="text-xs font-bold text-slate-500 block mb-1">Inspection Type</label>
@@ -313,6 +319,11 @@ export function DriverDvirPage() {
             <p className="text-xs text-amber-600 font-medium">Complete all required items (*) before submitting.</p>
           )}
 
+          <label className="flex items-start gap-3 rounded-2xl border border-teal-200 bg-teal-50 p-4">
+            <input type="checkbox" className="mt-1 h-4 w-4" checked={attestationAccepted} onChange={(event) => setAttestationAccepted(event.target.checked)} />
+            <span className="text-sm font-medium text-teal-950">{DVIR_ATTESTATION}</span>
+          </label>
+
           <div className="flex gap-3">
             <button
               type="button"
@@ -323,14 +334,15 @@ export function DriverDvirPage() {
             </button>
             <button
               type="button"
-              disabled={submitMut.isPending || incompleteRequired || !allDone}
+              disabled={submitMut.isPending || incompleteRequired || !allDone || !attestationAccepted}
               className="flex-1 rounded-2xl bg-teal-600 py-4 text-sm font-bold text-white disabled:opacity-40"
               onClick={() => {
-                void submitMut.mutateAsync({
+                void submitSingleFlight(() => submitMut.mutateAsync({
                   vehicleId: Number(vehicleId),
                   inspectionType,
                   odometerMiles: odometer ? Number(odometer) : undefined,
                   notes: notes || undefined,
+                  idempotencyKey: idempotencyKey.current,
                   checklistItems: items.map(i => ({
                     category:  i.category,
                     itemName:  i.itemName,
@@ -338,7 +350,9 @@ export function DriverDvirPage() {
                     severity:  i.result === "fail" ? i.severity : undefined,
                     notes:     i.result === "fail" ? i.notes : undefined,
                   })),
-                });
+                  attestationAccepted,
+                  attestation: DVIR_ATTESTATION,
+                }));
               }}
             >
               {submitMut.isPending ? "Submitting…" : "Submit DVIR"}
@@ -346,10 +360,56 @@ export function DriverDvirPage() {
           </div>
 
           {submitMut.isError && (
-            <p className="text-sm text-red-600">{(submitMut.error as Error)?.message}</p>
+            <p className="text-sm text-red-600" role="alert">{(submitMut.error as Error)?.message}</p>
           )}
         </div>
       )}
     </div>
   );
+}
+
+function PendingDvirSignatures() {
+  const qc = useQueryClient();
+  const [selected, setSelected] = useState<AnyRecord | null>(null);
+  const [accepted, setAccepted] = useState(false);
+  const signRequest = useRef<Promise<AnyRecord> | null>(null);
+  useDialogFocus<HTMLDivElement>(selected != null, () => setSelected(null));
+  const reportsQ = useQuery<AnyRecord[]>({ queryKey: ["driver", "dvir-reports"], queryFn: driverApi.dvirReports });
+  const sign = useMutation({
+    mutationFn: async (report: AnyRecord) => {
+      if (signRequest.current) return signRequest.current;
+      const request = driverApi.signDvir(Number(report.id), Number(report["rowVersion"] ?? report["row_version"]));
+      signRequest.current = request;
+      try { return await request; } finally { signRequest.current = null; }
+    },
+    onSuccess: async () => { setSelected(null); setAccepted(false); await qc.invalidateQueries({ queryKey: ["driver", "dvir-reports"] }); },
+  });
+  if (reportsQ.isError) return <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert">DVIR certifications are unavailable. No pending state has been inferred: {(reportsQ.error as Error)?.message}<button type="button" className="mt-2 block rounded-lg border border-red-200 bg-white px-3 py-2 text-xs font-bold disabled:opacity-40" disabled={reportsQ.isFetching} onClick={() => void reportsQ.refetch()}>{reportsQ.isFetching ? "Retrying…" : "Retry certifications"}</button></div>;
+  const pending = (reportsQ.data ?? []).filter((report) => String(report["driverSignatureStatus"] ?? report["driver_signature_status"] ?? "Pending").toLowerCase() !== "signed");
+  if (reportsQ.isLoading || pending.length === 0) return null;
+  return <section className="rounded-2xl border border-teal-300 bg-teal-50 p-4 space-y-3"><div><p className="font-bold text-teal-950">DVIRs awaiting your certification</p><p className="text-xs text-teal-800">Review each submitted inspection before accepting the exact driver attestation.</p></div>{pending.map((report) => <div key={String(report.id)} className="flex items-center justify-between gap-3 rounded-xl border border-teal-200 bg-white p-3"><div><p className="text-sm font-semibold text-slate-900">{String(report["reportNumber"] ?? report["report_number"] ?? report.id)}</p><p className="text-xs text-slate-500">{String(report["vehicleCode"] ?? report["vehicle_code"] ?? "Vehicle")} · {String(report["inspectionType"] ?? report["inspection_type"] ?? "Inspection")}</p></div><button type="button" className="rounded-xl bg-teal-600 px-3 py-2 text-xs font-bold text-white" onClick={() => { setAccepted(false); setSelected(report); }}>Review &amp; certify</button></div>)}{sign.isError && <p className="text-sm text-red-700" role="alert">{(sign.error as Error)?.message}</p>}{selected && <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4" role="dialog" aria-modal="true" aria-label="Certify DVIR"><div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl space-y-4"><div><h2 className="font-bold text-slate-900">Certify DVIR</h2><p className="mt-1 text-sm text-slate-600">Review {String(selected["reportNumber"] ?? selected["report_number"] ?? selected.id)} before certifying.</p></div><label className="flex items-start gap-3 rounded-xl border border-slate-200 p-3"><input type="checkbox" className="mt-1 h-4 w-4" checked={accepted} onChange={(event) => setAccepted(event.target.checked)} /><span className="text-sm font-medium text-slate-800">{DVIR_ATTESTATION}</span></label><div className="flex gap-2"><button type="button" className="flex-1 rounded-xl border border-slate-200 py-3 text-sm font-bold text-slate-600" onClick={() => setSelected(null)}>Cancel</button><button type="button" className="flex-1 rounded-xl bg-teal-600 py-3 text-sm font-bold text-white disabled:opacity-40" disabled={!accepted || sign.isPending} onClick={() => sign.mutate(selected)}>{sign.isPending ? "Certifying…" : "Certify DVIR"}</button></div></div></div>}</section>;
+}
+
+const REPAIR_ATTESTATION = "I acknowledge that I reviewed the certified repairs for this DVIR.";
+
+function RepairAcknowledgments() {
+  const qc = useQueryClient();
+  const [selected, setSelected] = useState<AnyRecord | null>(null);
+  const [accepted, setAccepted] = useState(false);
+  const acknowledgeRequest = useRef<Promise<AnyRecord> | null>(null);
+  useDialogFocus<HTMLDivElement>(selected != null, () => setSelected(null));
+  const reportsQ = useQuery<AnyRecord[]>({ queryKey: ["driver", "dvir-reports"], queryFn: driverApi.dvirReports });
+  const acknowledge = useMutation({
+    mutationFn: async (report: AnyRecord) => {
+      if (acknowledgeRequest.current) return acknowledgeRequest.current;
+      const request = driverApi.acknowledgeDvirRepairs(Number(report.id), Number(report["rowVersion"] ?? report["row_version"]));
+      acknowledgeRequest.current = request;
+      try { return await request; } finally { acknowledgeRequest.current = null; }
+    },
+    onSuccess: async () => { setSelected(null); setAccepted(false); await qc.invalidateQueries({ queryKey: ["driver", "dvir-reports"] }); },
+  });
+  if (reportsQ.isError) return <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert">Repaired DVIRs are unavailable. No acknowledgment state has been inferred: {(reportsQ.error as Error)?.message}<button type="button" className="ml-2 underline disabled:opacity-40" disabled={reportsQ.isFetching} onClick={() => void reportsQ.refetch()}>{reportsQ.isFetching ? "Retrying…" : "Retry"}</button></div>;
+  const pending = (reportsQ.data ?? []).filter((report) => String(report["repairCertificationStatus"] ?? report["repair_certification_status"]).toLowerCase() === "certified" && !(report["driverRepairAcknowledgedAt"] ?? report["driver_repair_acknowledged_at"]));
+  if (reportsQ.isLoading || pending.length === 0) return null;
+  return <section className="rounded-2xl border border-amber-300 bg-amber-50 p-4 space-y-3"><div className="flex items-start gap-2"><AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" /><div><p className="font-bold text-amber-900">Certified repairs need your review</p><p className="text-xs text-amber-800">The vehicle remains unavailable until you review and acknowledge the certified repairs.</p></div></div>{pending.map((report) => <div key={String(report.id)} className="flex items-center justify-between gap-3 rounded-xl border border-amber-200 bg-white p-3"><div><p className="text-sm font-semibold text-slate-900">{String(report["reportNumber"] ?? report["report_number"] ?? report.id)}</p><p className="text-xs text-slate-500">{String(report["vehicleCode"] ?? report["vehicle_code"] ?? "Vehicle")} · {String(report["inspectionType"] ?? report["inspection_type"] ?? "Inspection")}</p></div><button type="button" className="rounded-xl bg-amber-600 px-3 py-2 text-xs font-bold text-white" onClick={() => { setAccepted(false); setSelected(report); }}>Review repairs</button></div>)}{acknowledge.isError && <p className="text-sm text-red-700" role="alert">{(acknowledge.error as Error)?.message}</p>}{selected && <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4" role="dialog" aria-modal="true" aria-label="Acknowledge certified DVIR repairs"><div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl space-y-4"><div><h2 className="font-bold text-slate-900">Review certified repairs</h2><p className="mt-1 text-sm text-slate-600">Confirm only after you have reviewed the repairs for {String(selected["reportNumber"] ?? selected["report_number"] ?? selected.id)}.</p></div><label className="flex items-start gap-3 rounded-xl border border-slate-200 p-3"><input type="checkbox" className="mt-1 h-4 w-4" checked={accepted} onChange={(event) => setAccepted(event.target.checked)} /><span className="text-sm font-medium text-slate-800">{REPAIR_ATTESTATION}</span></label><div className="flex gap-2"><button type="button" className="flex-1 rounded-xl border border-slate-200 py-3 text-sm font-bold text-slate-600" onClick={() => setSelected(null)}>Cancel</button><button type="button" className="flex-1 rounded-xl bg-teal-600 py-3 text-sm font-bold text-white disabled:opacity-40" disabled={!accepted || acknowledge.isPending} onClick={() => acknowledge.mutate(selected)}>{acknowledge.isPending ? "Recording…" : "Acknowledge repairs"}</button></div></div></div>}</section>;
 }

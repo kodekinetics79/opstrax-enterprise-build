@@ -8,7 +8,7 @@ namespace Opstrax.Telematics.IntegrationTests;
 
 /// <summary>
 /// Unit tests for the store-and-forward replay path — the consumer of
-/// <see cref="IStoreAndForwardBuffer.TryDequeue"/> the Increment-1 review flagged as missing.
+/// <see cref="IStoreAndForwardBuffer.TryAcquireAsync"/> lease path the Increment-1 review flagged as missing.
 /// The two guarantees under test are the ones an outage would otherwise break: the drain
 /// republishes parked events in per-device order, and a transient downstream failure neither loses
 /// an event nor lets a later fix overtake the stuck one.

@@ -439,7 +439,7 @@ BEGIN
     ('fleet_tms_branch_migration_audit',false,false,false),('hos_clocks',false,false,false),
     ('security_events',true,false,false),
     ('sso_connections',true,true,false),('tenant_market_packs',false,false,false),
-    ('tenant_entitlements',false,false,false),
+    ('tenant_entitlements',false,false,false),('demo_fixture_versions',false,false,false),
     ('tenant_subscriptions',false,false,false),('vehicle_compliance_status',false,false,false),
     ('workforce_schedules',true,true,false),('mfa_login_challenge_consumptions',true,false,true)
   ) m(table_name,allow_insert,allow_update,allow_delete)
@@ -457,6 +457,38 @@ BEGIN
   END LOOP;
 END
 $tenant_contract$;
+
+-- The stream-ticket nonce ledger is intentionally not tenant-queryable: the app
+-- may atomically issue a nonce but cannot enumerate or consume capabilities.
+-- Stage58 runs last and must preserve Stage66's narrower infrastructure grants
+-- after its schema-wide privilege reset.
+DO $stream_nonce_contract$
+DECLARE pol record;
+BEGIN
+  IF to_regclass('public.telemetry_stream_ticket_nonces') IS NOT NULL THEN
+    ALTER TABLE public.telemetry_stream_ticket_nonces ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE public.telemetry_stream_ticket_nonces FORCE ROW LEVEL SECURITY;
+    FOR pol IN SELECT policyname FROM pg_policies
+      WHERE schemaname='public' AND tablename='telemetry_stream_ticket_nonces'
+    LOOP
+      EXECUTE format('DROP POLICY %I ON public.telemetry_stream_ticket_nonces',pol.policyname);
+    END LOOP;
+    CREATE POLICY stream_ticket_nonce_app_insert
+      ON public.telemetry_stream_ticket_nonces FOR INSERT TO opstrax_app
+      WITH CHECK (audit_company_id=(SELECT opstrax_security.current_tenant_id()));
+    CREATE POLICY system_control_plane
+      ON public.telemetry_stream_ticket_nonces FOR ALL TO opstrax_system
+      USING (true) WITH CHECK (true);
+    REVOKE ALL ON TABLE public.telemetry_stream_ticket_nonces FROM PUBLIC,opstrax_app,opstrax_system;
+    GRANT INSERT ON TABLE public.telemetry_stream_ticket_nonces TO opstrax_app;
+    GRANT SELECT,INSERT,UPDATE,DELETE ON TABLE public.telemetry_stream_ticket_nonces TO opstrax_system;
+  END IF;
+  IF to_regclass('public.telemetry_stream_ticket_nonces_id_seq') IS NOT NULL THEN
+    REVOKE ALL ON SEQUENCE public.telemetry_stream_ticket_nonces_id_seq FROM PUBLIC,opstrax_app,opstrax_system;
+    GRANT USAGE ON SEQUENCE public.telemetry_stream_ticket_nonces_id_seq TO opstrax_app,opstrax_system;
+  END IF;
+END
+$stream_nonce_contract$;
 
 -- Roles include immutable global templates (company_id IS NULL). App reads those
 -- plus its tenant roles, but can mutate only its tenant-owned rows. The per-command
@@ -571,7 +603,9 @@ BEGIN
       AND c.relname<>'companies'
       AND NOT EXISTS (SELECT 1 FROM information_schema.columns x WHERE x.table_schema='public' AND x.table_name=c.relname AND x.column_name IN ('company_id','tenant_id') AND x.data_type='bigint')
   LOOP EXECUTE format('GRANT SELECT,INSERT,UPDATE,DELETE ON TABLE public.%I TO opstrax_system',rec.relname); END LOOP;
-  FOR seq_rec IN SELECT c.oid::regclass::text AS seq_name FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='S'
+  FOR seq_rec IN SELECT c.oid::regclass::text AS seq_name FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+    WHERE n.nspname='public' AND c.relkind='S'
+      AND c.relname<>'telemetry_stream_ticket_nonces_id_seq'
   LOOP EXECUTE format('GRANT USAGE,SELECT ON SEQUENCE %s TO opstrax_system',seq_rec.seq_name); END LOOP;
 
   -- Audited exclusions from the tenant-column heuristic are system-only.
@@ -694,6 +728,39 @@ BEGIN
      OR has_table_privilege('opstrax_app','service_run_history','SELECT')
      OR has_table_privilege('opstrax_app','telemetry_nonces','SELECT') THEN
     RAISE EXCEPTION 'Stage 58 app retains control-plane/system-ledger access';
+  END IF;
+  IF to_regclass('public.telemetry_stream_ticket_nonces') IS NOT NULL AND (
+       NOT (SELECT relrowsecurity AND relforcerowsecurity FROM pg_class
+            WHERE oid='public.telemetry_stream_ticket_nonces'::regclass)
+       OR (SELECT count(*) FROM pg_policies
+           WHERE schemaname='public' AND tablename='telemetry_stream_ticket_nonces')<>2
+       OR NOT EXISTS (SELECT 1 FROM pg_policies
+           WHERE schemaname='public' AND tablename='telemetry_stream_ticket_nonces'
+             AND policyname='stream_ticket_nonce_app_insert' AND cmd='INSERT'
+             AND roles='{opstrax_app}'::name[] AND qual IS NULL
+             AND with_check LIKE '%opstrax_security.current_tenant_id()%')
+       OR NOT EXISTS (SELECT 1 FROM pg_policies
+           WHERE schemaname='public' AND tablename='telemetry_stream_ticket_nonces'
+             AND policyname='system_control_plane' AND cmd='ALL'
+             AND roles='{opstrax_system}'::name[] AND qual='true' AND with_check='true')
+       OR NOT has_table_privilege('opstrax_app','telemetry_stream_ticket_nonces','INSERT')
+       OR has_table_privilege('opstrax_app','telemetry_stream_ticket_nonces','SELECT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+       OR NOT has_table_privilege('opstrax_system','telemetry_stream_ticket_nonces','SELECT')
+       OR NOT has_table_privilege('opstrax_system','telemetry_stream_ticket_nonces','INSERT')
+       OR NOT has_table_privilege('opstrax_system','telemetry_stream_ticket_nonces','UPDATE')
+       OR NOT has_table_privilege('opstrax_system','telemetry_stream_ticket_nonces','DELETE')
+       OR has_table_privilege('opstrax_system','telemetry_stream_ticket_nonces','TRUNCATE,REFERENCES,TRIGGER')) THEN
+    RAISE EXCEPTION 'Stage 58 stream-ticket nonce table boundary unsafe';
+  END IF;
+  IF to_regclass('public.telemetry_stream_ticket_nonces_id_seq') IS NOT NULL AND (
+       NOT has_sequence_privilege('opstrax_app','telemetry_stream_ticket_nonces_id_seq','USAGE')
+       OR has_sequence_privilege('opstrax_app','telemetry_stream_ticket_nonces_id_seq','SELECT')
+       OR has_sequence_privilege('opstrax_app','telemetry_stream_ticket_nonces_id_seq','UPDATE')
+       OR NOT has_sequence_privilege('opstrax_system','telemetry_stream_ticket_nonces_id_seq','USAGE')
+       OR has_sequence_privilege('opstrax_system','telemetry_stream_ticket_nonces_id_seq','SELECT')
+       OR has_sequence_privilege('opstrax_system','telemetry_stream_ticket_nonces_id_seq','UPDATE')
+       OR has_sequence_privilege('public','telemetry_stream_ticket_nonces_id_seq','USAGE,SELECT,UPDATE')) THEN
+    RAISE EXCEPTION 'Stage 58 stream-ticket nonce sequence boundary unsafe';
   END IF;
   IF has_any_column_privilege('opstrax_app','platform_admins','SELECT,INSERT,UPDATE,REFERENCES')
      OR has_any_column_privilege('opstrax_app','platform_sessions','SELECT,INSERT,UPDATE,REFERENCES')
@@ -840,7 +907,7 @@ BEGIN
   IF EXISTS(SELECT 1 FROM (VALUES
       ('compliance_evidence',true,false,false),
       ('tenant_market_packs',false,false,false),
-      ('tenant_entitlements',false,false,false),
+      ('tenant_entitlements',false,false,false),('demo_fixture_versions',false,false,false),
       ('tenant_subscriptions',false,false,false)
     ) expected(table_name,allow_insert,allow_update,allow_delete)
     WHERE NOT has_table_privilege('opstrax_app','public.'||expected.table_name,'SELECT')

@@ -67,7 +67,7 @@ internal sealed class GatewayConnection
     /// <summary>Correlates every event, ack and rejection derived from this connection.</summary>
     private readonly Guid _correlationId = Guid.NewGuid();
 
-    private readonly Channel<CanonicalTelemetryEvent> _publishChannel;
+    private readonly Channel<PendingTelemetry> _publishChannel;
     private readonly string _remoteEndpoint;
 
     /// <summary>Observed source address of the peer, for the authenticator's source-IP pin. Null if unknown.</summary>
@@ -115,17 +115,26 @@ internal sealed class GatewayConnection
         _logger = logger;
 
         EndPoint? remote = SafeRemoteEndPoint(client);
-        _remoteEndpoint = remote?.ToString() ?? "unknown";
+        _remoteEndpoint = MaskRemoteEndpoint(remote);
         _remoteIp = (remote as IPEndPoint)?.Address;
         _accumulator = new byte[Math.Max(options.ReadBufferBytes, 512)];
 
-        _publishChannel = Channel.CreateBounded<CanonicalTelemetryEvent>(
+        _publishChannel = Channel.CreateBounded<PendingTelemetry>(
             new BoundedChannelOptions(Math.Max(1, options.MaxInFlightPerConnection))
             {
                 FullMode = BoundedChannelFullMode.Wait, // Wait == backpressure. Never DropWrite: a dropped fix is a lost fix.
                 SingleReader = true,
                 SingleWriter = true,
             });
+    }
+
+    private static string MaskRemoteEndpoint(EndPoint? endpoint)
+    {
+        if (endpoint is not IPEndPoint ipEndpoint) return "unknown";
+        byte[] bytes = ipEndpoint.Address.GetAddressBytes();
+        int retained = bytes.Length == 4 ? 3 : 6; // IPv4 /24; IPv6 /48. Never retain the source port.
+        Array.Clear(bytes, retained, bytes.Length - retained);
+        return $"{new IPAddress(bytes)}/{(bytes.Length == 4 ? 24 : 48)}";
     }
 
     /// <summary>
@@ -369,13 +378,15 @@ internal sealed class GatewayConnection
             return;
         }
 
-        // Protocol-level acknowledgement (heartbeat/status/alarm) for a device we DO know.
-        await SendAckIfRequiredAsync(message, stream, cancellationToken).ConfigureAwait(false);
-
-        // Positional frames become canonical events. Heartbeats carry no fix and are answered
-        // but not published as telemetry.
+        // Positional frames are durably published (or parked in the encrypted Postgres queue)
+        // before the protocol ACK is emitted. An ACK is a promise that the frame is owned; sending
+        // it while the event exists only in process memory loses data on a pod crash.
         if (message.MessageType is MessageType.Location or MessageType.Alarm)
             await PublishTelemetryAsync(message, owner, receivedAtUtc, cancellationToken).ConfigureAwait(false);
+
+        // Heartbeats carry no durable observation; positional/alarm frames reach here only after
+        // the publish pump confirmed an authoritative write or durable store-forward enqueue.
+        await SendAckIfRequiredAsync(message, stream, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -441,7 +452,10 @@ internal sealed class GatewayConnection
         using (trace.StartPublish())
         {
             // Bounded write: this is where backpressure lands if the backbone is slow.
-            await _publishChannel.Writer.WriteAsync(evt, cancellationToken).ConfigureAwait(false);
+            var persisted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            await _publishChannel.Writer.WriteAsync(new PendingTelemetry(evt, persisted), cancellationToken)
+                .ConfigureAwait(false);
+            await persisted.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
 
         // Accepted for publish (novel, or out-of-order-but-retained). The durable publish + the
@@ -601,9 +615,10 @@ internal sealed class GatewayConnection
     /// </summary>
     private async Task PublishPumpAsync()
     {
-        await foreach (CanonicalTelemetryEvent evt in
+        await foreach (PendingTelemetry pending in
             _publishChannel.Reader.ReadAllAsync(CancellationToken.None).ConfigureAwait(false))
         {
+            CanonicalTelemetryEvent evt = pending.Event;
             // Key and envelope scope both come from the event's REGISTRY-RESOLVED ownership.
             string key = TelematicsEventKey.ForDevice(evt.TenantId, evt.CompanyId, evt.DeviceId);
 
@@ -613,7 +628,7 @@ internal sealed class GatewayConnection
                 payload: evt,
                 correlationId: evt.CorrelationId,
                 schemaVersion: evt.SchemaVersion,
-                occurredAt: evt.OccurredAtDeviceUtc);
+                occurredAt: evt.OccurredAtDeviceUtc) with { EventId = evt.EventId };
 
             // Idempotent live-map projection. Applied on the same single-reader pump so a device's
             // fixes fold into the snapshot in decode order; it is idempotent + monotonic, so a
@@ -642,6 +657,7 @@ internal sealed class GatewayConnection
                     .ConfigureAwait(false);
 
                 _metrics.IncrementEventsPublished();
+                pending.Persisted.TrySetResult();
             }
             catch (Exception ex)
             {
@@ -652,15 +668,29 @@ internal sealed class GatewayConnection
                     "Backbone publish failed for device {DeviceId}; parking event {EventId} in store-and-forward.",
                     evt.DeviceId, evt.EventId);
 
-                await _forwardBuffer
-                    .EnqueueAsync(new StoreAndForwardEntry(
-                        TelematicsTopics.TelemetryNormalized, key, envelope, DateTimeOffset.UtcNow))
-                    .ConfigureAwait(false);
-
-                _metrics.IncrementPublishFailuresBuffered();
+                try
+                {
+                    await _forwardBuffer
+                        .EnqueueAsync(new StoreAndForwardEntry(
+                            TelematicsTopics.TelemetryNormalized, key, envelope, DateTimeOffset.UtcNow))
+                        .ConfigureAwait(false);
+                    _metrics.IncrementPublishFailuresBuffered();
+                    pending.Persisted.TrySetResult();
+                }
+                catch (Exception bufferException)
+                {
+                    pending.Persisted.TrySetException(bufferException);
+                    _logger.LogCritical(bufferException,
+                        "Both canonical persistence and durable store-forward failed for event {EventId}; no ACK will be sent.",
+                        evt.EventId);
+                }
             }
         }
     }
+
+    private readonly record struct PendingTelemetry(
+        CanonicalTelemetryEvent Event,
+        TaskCompletionSource Persisted);
 
     /// <summary>
     /// Publishes a rejection to <c>telemetry.rejected</c>. The envelope is deliberately

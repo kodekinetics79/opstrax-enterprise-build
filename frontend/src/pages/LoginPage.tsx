@@ -462,6 +462,13 @@ export function LoginPage() {
       });
       navigate(getLandingRouteForSession(session), { replace: true });
     },
+    // Do not leave a rejected credential resident in the rendered document or
+    // accidentally resubmit it. Keep the non-enumerating error, clear only the
+    // password, and return focus for a deliberate retry.
+    onError: () => {
+      setPassword("");
+      requestAnimationFrame(() => passwordRef.current?.focus());
+    },
   });
 
   // Move focus to the password field the moment it is revealed (a11y + speed).

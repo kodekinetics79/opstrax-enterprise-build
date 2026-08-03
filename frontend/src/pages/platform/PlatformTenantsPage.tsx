@@ -23,6 +23,7 @@ const GATED_MODULES: GatedModule[] = [
   { key: "customer_portal", label: "Customer Portal", blurb: "Customer-facing portal, ETA sharing, shipment visibility" },
   { key: "reports",         label: "Reports",         blurb: "Reporting and analytics" },
   { key: "compliance",      label: "Compliance",      blurb: "Compliance rules, HOS, audit packages" },
+  { key: "integrations",    label: "Integrations",    blurb: "Third-party connectors, provider sync, tests and external actions" },
 ];
 
 export function PlatformTenantsPage() {
@@ -372,6 +373,7 @@ function CreateTenantDrawer({ packages, onClose, onCreated }: {
         billingEmail: form.billingEmail || undefined,
         adminEmail: form.adminEmail || undefined,
         status: "trial",
+        entitlementPolicyMode: "package_allowlist",
       });
       onCreated();
     } catch (e) {
@@ -438,6 +440,9 @@ function CreateTenantDrawer({ packages, onClose, onCreated }: {
         </DrawerSection>
 
         <DrawerSection title="Subscription & commercial terms">
+          <div className="rounded-xl border border-teal-500/30 bg-teal-500/5 px-4 py-3 text-xs leading-5 text-slate-600">
+            <strong className="font-semibold text-slate-800">Package allowlist policy:</strong> this new tenant starts deny-by-default. Only modules in the selected package, country grants, or explicit Platform overrides are available.
+          </div>
           <PField label="Package">
             <PSelect value={form.packageId} onChange={(e) => set({ packageId: e.target.value })}>
               <option value="">— None (trial, no package) —</option>
@@ -496,6 +501,21 @@ function TenantDetailDrawer({ id, packages, canManage, canOffboard, canEntitleme
   const [regionEdit, setRegionEdit] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
+  const [snapshotBusy, setSnapshotBusy] = useState(false);
+  const snapshotBaselineKey = `opstrax:platform:control-snapshot-baseline:${id}`;
+  const [snapshotBaseline, setSnapshotBaseline] = useState<{ semanticSha256: string; snapshotSha256: string } | null>(() => {
+    try {
+      const raw = sessionStorage.getItem(snapshotBaselineKey);
+      return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+  });
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(snapshotBaselineKey);
+      setSnapshotBaseline(raw ? JSON.parse(raw) : null);
+    } catch { setSnapshotBaseline(null); }
+  }, [snapshotBaselineKey]);
+  const [policyChange, setPolicyChange] = useState<"legacy_allow" | "package_allowlist" | null>(null);
 
   // Server-driven country list (shared cache with the create drawer). Changing a
   // tenant's region re-runs the country cascade: currency/timezone defaults plus
@@ -553,6 +573,42 @@ function TenantDetailDrawer({ id, packages, canManage, canOffboard, canEntitleme
   const entitlements = (data?.entitlements ?? []) as AnyRecord[];
   const entMap = new Map(entitlements.map((e) => [String(e.moduleKey), e]));
   const tenantCode = String(tenant.companyCode ?? "");
+  const policyMode = String(tenant.entitlementPolicyMode ?? "legacy_allow") as "legacy_allow" | "package_allowlist";
+
+  const captureControlSnapshot = async () => {
+    setSnapshotBusy(true); setNotice(null);
+    try {
+      const evidence = await platformApi.captureTenantControlSnapshot(id);
+      const blob = new Blob([JSON.stringify(evidence, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `${tenantCode || `tenant-${id}`}-control-snapshot-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      const snapshot = (evidence.snapshot ?? {}) as AnyRecord;
+      const semanticComparison = (snapshot.semanticComparison ?? {}) as AnyRecord;
+      const current = {
+        semanticSha256: String(evidence.semanticSha256 ?? semanticComparison.semanticSha256 ?? ""),
+        snapshotSha256: String(evidence.snapshotSha256 ?? "unavailable"),
+      };
+      if (!current.semanticSha256) {
+        setNotice(`Audited control snapshot captured · SHA-256 ${current.snapshotSha256} · semantic comparison unavailable`);
+      } else if (!snapshotBaseline) {
+        sessionStorage.setItem(snapshotBaselineKey, JSON.stringify(current));
+        setSnapshotBaseline(current);
+        setNotice(`Audited baseline captured · evidence SHA-256 ${current.snapshotSha256} · semantic SHA-256 ${current.semanticSha256}`);
+      } else {
+        const unchanged = snapshotBaseline.semanticSha256 === current.semanticSha256;
+        setNotice(
+          `${unchanged ? "No semantic control drift" : "Semantic control drift detected"} · ` +
+          `baseline ${snapshotBaseline.semanticSha256} · current ${current.semanticSha256} · evidence ${current.snapshotSha256}`,
+        );
+      }
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : "Control snapshot capture failed");
+    } finally { setSnapshotBusy(false); }
+  };
 
   return (
     <PDrawer open onClose={onClose} title={isLoading ? "Loading…" : String(tenant.name ?? "Tenant")}>
@@ -565,6 +621,7 @@ function TenantDetailDrawer({ id, packages, canManage, canOffboard, canEntitleme
 
           <div className="grid grid-cols-2 gap-3 text-sm">
             <Info label="Package" value={String(tenant.packageName ?? "—")} />
+            <Info label="Access policy" value={policyMode === "package_allowlist" ? "Package allowlist" : "Legacy allow"} />
             <Info label="MRR" value={formatMoney(Number(tenant.mrrCents))} />
             <Info label="Seat limit" value={String(tenant.seatLimit ?? "—")} />
             <Info label="Users" value={String(tenant.userCount ?? 0)} />
@@ -580,6 +637,31 @@ function TenantDetailDrawer({ id, packages, canManage, canOffboard, canEntitleme
             <Info label="Trial ends" value={String(tenant.trialEndsAt ?? "—").slice(0, 10) || "—"} />
             <Info label="Contract end" value={String(tenant.contractEnd ?? "—").slice(0, 10) || "—"} />
           </div>
+
+          <section className="rounded-xl border border-teal-200 bg-teal-50/60 p-4">
+            <h3 className="mb-1 text-xs font-bold uppercase tracking-wider text-teal-700">Release control evidence</h3>
+            <p className="mb-3 text-xs leading-5 text-teal-800/80">
+              Capture a server-generated, SHA-256 identified JSON snapshot of lifecycle, package policy,
+              effective entitlements, role grants, pseudonymous user-to-branch bindings, market packs,
+              flags, connector readiness, environment posture and recent Platform audit IDs. Secrets
+              and actor/user PII are excluded. Repeat capture compares semantic controls while ignoring
+              timestamps and audit-capture drift.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <PButton variant="ghost" disabled={snapshotBusy} onClick={captureControlSnapshot}>
+                {snapshotBusy ? "Capturing…" : snapshotBaseline ? "Capture and compare snapshot" : "Capture audited control snapshot"}
+              </PButton>
+              {snapshotBaseline && (
+                <PButton variant="ghost" disabled={snapshotBusy} onClick={() => {
+                  sessionStorage.removeItem(snapshotBaselineKey);
+                  setSnapshotBaseline(null);
+                  setNotice("Snapshot comparison baseline cleared; the next capture becomes the baseline.");
+                }}>
+                  Clear comparison baseline
+                </PButton>
+              )}
+            </div>
+          </section>
 
           {notice && (
             <div className="rounded-xl border border-teal-500/30 bg-teal-500/5 px-4 py-2.5 text-sm text-teal-700">{notice}</div>
@@ -758,6 +840,24 @@ function TenantDetailDrawer({ id, packages, canManage, canOffboard, canEntitleme
             </section>
           )}
 
+          {canEntitlements && (
+            <section className="rounded-xl border border-amber-200 bg-amber-50/60 p-4">
+              <h3 className="mb-1 text-xs font-bold uppercase tracking-wider text-amber-700">Commercial access policy</h3>
+              <p className="mb-3 text-xs leading-5 text-amber-800/80">
+                Package allowlist denies every governed module without an enabled entitlement. Legacy allow preserves inherited access when no row exists. Changes take effect at the API edge immediately and are audited.
+              </p>
+              <PSelect
+                value={policyChange ?? policyMode}
+                aria-label="Commercial access policy"
+                onChange={(e) => setPolicyChange(e.target.value as "legacy_allow" | "package_allowlist")}
+                disabled={busy}
+              >
+                <option value="package_allowlist">Package allowlist (deny by default)</option>
+                <option value="legacy_allow">Legacy allow (compatibility)</option>
+              </PSelect>
+            </section>
+          )}
+
           {canManage && (
             <section>
               <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-400">Assign package</h3>
@@ -776,20 +876,21 @@ function TenantDetailDrawer({ id, packages, canManage, canOffboard, canEntitleme
             <p className="mb-3 text-xs leading-5 text-slate-500">
               Controls which product modules this tenant may use. <strong className="font-semibold text-slate-700">Server-enforced</strong> —
               turning one off makes every API route it owns return <span className="font-mono">403</span> immediately, even if called
-              directly outside the UI. Modules are <strong className="font-semibold text-slate-700">on by default</strong> (inherited)
-              until you explicitly disable them.
+              directly outside the UI. Missing rows follow the access policy: {policyMode === "package_allowlist"
+                ? <strong className="font-semibold text-slate-700">off by default</strong>
+                : <strong className="font-semibold text-slate-700">on by default</strong>}.
             </p>
             <div className="space-y-2">
               {gatedModules.map((m) => {
                 const ent = entMap.get(m.key);
-                const enabled = ent ? Boolean(ent.enabled) : true;
+                const enabled = ent ? Boolean(ent.enabled) : policyMode === "legacy_allow";
                 return (
                   <div key={m.key} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-2.5">
                     <div className="min-w-0">
                       <p className="text-sm font-semibold text-slate-800">{m.label}</p>
                       <p className="text-[11px] leading-4 text-slate-500">{m.blurb}</p>
                       <p className="mt-0.5 text-[11px] font-medium text-slate-400">
-                        {ent ? `${String(ent.source)} · ${String(ent.tier)}` : "inherited (default on)"}
+                        {ent ? `${String(ent.source)} · ${String(ent.tier)}` : policyMode === "legacy_allow" ? "inherited (legacy default on)" : "not in plan (default off)"}
                       </p>
                     </div>
                     <button
@@ -816,6 +917,20 @@ function TenantDetailDrawer({ id, packages, canManage, canOffboard, canEntitleme
             </section>
           )}
 
+          <PConfirm
+            open={policyChange !== null && policyChange !== policyMode}
+            title={policyChange === "package_allowlist" ? "Enable deny-by-default package access?" : "Restore legacy inherited access?"}
+            body={policyChange === "package_allowlist"
+              ? <>Modules outside the assigned package or explicit grants will be blocked immediately. Current package-derived rights will be reconciled.</>
+              : <>Missing entitlement rows will become accessible immediately. Use this compatibility mode only for a reviewed legacy tenant.</>}
+            confirmLabel={policyChange === "package_allowlist" ? "Enable package allowlist" : "Enable legacy access"}
+            busy={busy}
+            onConfirm={() => policyChange && act(
+              () => platformApi.setEntitlementPolicy(id, policyChange),
+              `Access policy changed to ${policyChange === "package_allowlist" ? "package allowlist" : "legacy allow"}`,
+            ).finally(() => setPolicyChange(null))}
+            onClose={() => setPolicyChange(null)}
+          />
           <PConfirm
             open={confirm === "delete"}
             title="Permanently delete this tenant?"

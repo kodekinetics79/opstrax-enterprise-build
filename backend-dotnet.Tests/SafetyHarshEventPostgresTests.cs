@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Opstrax.Api.Data;
+using Opstrax.Api.Foundation;
 using Opstrax.Api.Services;
 
 namespace Opstrax.Tests;
@@ -62,6 +63,32 @@ public class SafetyHarshEventPostgresTests
         finally { await CleanupAsync(db, cid); }
     }
 
+    [Fact]
+    public async Task RepeatedSpeeding_DetectsCanonicalTitleCaseEventsCaseInsensitively()
+    {
+        var db = CreateDatabase();
+        await ResetSequencesAsync(db);
+        var cid = await SeedCompanyAsync(db);
+        try
+        {
+            var driverId = await db.InsertAsync(
+                "INSERT INTO drivers(company_id,driver_code,full_name,status) VALUES(@c,@code,'Canonical Speed Driver','Available')",
+                c => { c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@code", $"SPD-{Guid.NewGuid():N}"[..20]); });
+            for (var i = 0; i < 3; i++)
+                await db.InsertAsync(
+                    "INSERT INTO safety_events(company_id,driver_id,event_type,severity,score_impact,status,event_time) VALUES(@c,@d,'Speeding','High',15,'open',NOW()-@minutes*INTERVAL '1 minute')",
+                    c => { c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@d", driverId); c.Parameters.AddWithValue("@minutes", i); });
+
+            await InvokeRepeatedSpeedingAsync(db);
+            await InvokeRepeatedSpeedingAsync(db);
+
+            Assert.Equal(1, await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM safety_events WHERE company_id=@c AND driver_id=@d AND LOWER(REPLACE(event_type,' ','_'))='repeated_speeding'",
+                c => { c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@d", driverId); }));
+        }
+        finally { await CleanupAsync(db, cid); }
+    }
+
     private static async Task InvokeConversionAsync(Database db)
     {
         var services = new ServiceCollection();
@@ -80,13 +107,29 @@ public class SafetyHarshEventPostgresTests
         await (Task)m.Invoke(svc, new object[] { CancellationToken.None })!;
     }
 
+    private static async Task InvokeRepeatedSpeedingAsync(Database db)
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton(db);
+        services.AddSingleton(new PostgresAiFoundationService(db));
+        services.AddSingleton<ServiceRunTracker>();
+        var provider = services.BuildServiceProvider();
+        var svc = new SafetyBackgroundService(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            NullLogger<SafetyBackgroundService>.Instance,
+            provider.GetRequiredService<ServiceRunTracker>());
+        var method = typeof(SafetyBackgroundService).GetMethod("DetectRepeatedSpeedingAsync", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        await (Task)method.Invoke(svc, new object[] { CancellationToken.None })!;
+    }
+
     private static async Task<long> SeedCompanyAsync(Database db) =>
         await db.InsertAsync("INSERT INTO companies (company_code, name, industry) VALUES (@code, 'Harsh Co', 'logistics') RETURNING id",
             c => c.Parameters.AddWithValue("@code", $"HZ-{Guid.NewGuid():N}".Substring(0, 16)));
 
     private static async Task CleanupAsync(Database db, long cid)
     {
-        foreach (var t in new[] { "safety_events", "telemetry_alerts", "location_events" })
+        foreach (var t in new[] { "ai_recommendations", "safety_events", "telemetry_alerts", "location_events", "drivers" })
             await db.ExecuteAsync($"DELETE FROM {t} WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", cid));
         await db.ExecuteAsync("DELETE FROM companies WHERE id=@c", c => c.Parameters.AddWithValue("@c", cid));
     }

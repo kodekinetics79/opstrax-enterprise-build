@@ -89,6 +89,19 @@ public class DefaultDeviceAuthenticatorTests
         Assert.Equal(AuthReasonCode.NoIdentifierPresented, result.Code);
     }
 
+    [Theory]
+    [InlineData(DeviceAuthMode.MutualTls)]
+    [InlineData(DeviceAuthMode.ClientCertificate)]
+    public async Task RawTcp_DoesNotPretendCertificateAuthenticationOccurred(DeviceAuthMode mode)
+    {
+        var result = await NewAuth().AuthenticateAsync(
+            Owner(), new DeviceTrustPolicy(mode), ImeiLogin());
+
+        Assert.Equal(AuthOutcome.Rejected, result.Outcome);
+        Assert.Equal(AuthReasonCode.TransportProofUnavailable, result.Code);
+        Assert.False(result.IsCryptographicallyAuthenticated);
+    }
+
     // ── Lifecycle gate ──────────────────────────────────────────────────────────
 
     [Fact]

@@ -121,9 +121,9 @@ public class Stage12TelemetryTests
     {
         // Active devices require real credentials (ck_eld_devices_active_credentials).
         var rawApiKey  = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
-        var hmacSecret = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+        var encryptedHmacSecret = "enc:" + Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(48));
         var deviceId = await db.InsertAsync(
-            @"INSERT INTO eld_devices (company_id, device_serial, vehicle_id, driver_id, api_key_hash, hmac_secret, status, created_at)
+            @"INSERT INTO eld_devices (company_id, device_serial, vehicle_id, driver_id, api_key_hash, hmac_secret_encrypted, status, created_at)
               VALUES (@companyId, @serial, @vehicleId, @driverId, encode(sha256(@rawKey::bytea), 'hex'), @hmac, 'Active', NOW())
               RETURNING id",
             c =>
@@ -133,7 +133,7 @@ public class Stage12TelemetryTests
                 c.Parameters.AddWithValue("@vehicleId", vehicleId);
                 c.Parameters.AddWithValue("@driverId", driverId);
                 c.Parameters.AddWithValue("@rawKey", rawApiKey);
-                c.Parameters.AddWithValue("@hmac", hmacSecret);
+                c.Parameters.AddWithValue("@hmac", encryptedHmacSecret);
             });
 
         await db.ExecuteAsync(

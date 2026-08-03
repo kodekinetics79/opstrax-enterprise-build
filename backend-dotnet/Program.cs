@@ -297,9 +297,9 @@ builder.Services.AddHostedService<EscalationBackgroundService>();
 // Agentic Ops Copilot — reasons over open dispatch exceptions and proposes actions.
 builder.Services.AddHostedService<AgenticOpsBackgroundService>();
 builder.Services.AddHostedService<ScheduledReportBackgroundService>();
-// Data-retention enforcement — executes the stored retention policies (purge of
-// expired operational logs), respecting legal hold. Opt-in in Production via
-// RetentionWorker:Enabled. Closes the "policy stored but never enforced" gap.
+// Data-retention enforcement — executes stored operational-row policies while
+// respecting legal hold. Production startup requires RetentionWorker:Enabled=true,
+// and its heartbeat is part of the critical-worker readiness contract.
 builder.Services.AddHostedService<RetentionEnforcementBackgroundService>();
 builder.Services.AddCors(options =>
 {
@@ -512,6 +512,15 @@ app.Use(async (context, next) =>
     context.Response.Headers.TryAdd("X-Frame-Options", "DENY");
     context.Response.Headers.TryAdd("Referrer-Policy", "strict-origin-when-cross-origin");
     context.Response.Headers.TryAdd("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+    if (context.Request.Path.StartsWithSegments("/api", StringComparison.OrdinalIgnoreCase))
+    {
+        // Authenticated and control-plane API payloads can contain tenant data.
+        // Prevent browser/proxy caches from resurrecting them after logout or
+        // serving them to a later identity in the same browser profile.
+        context.Response.Headers.CacheControl = "no-store, max-age=0";
+        context.Response.Headers.Pragma = "no-cache";
+        context.Response.Headers.Expires = "0";
+    }
     await next();
 });
 
@@ -600,24 +609,49 @@ app.UseWhen(
 
             // SSE stream path: authenticate exclusively via short-lived stream ticket (?sst=).
             // This avoids long-lived session tokens appearing in query strings (logs, proxies).
-            // The SST encodes {userId:companyId:exp} signed with HMAC-SHA256.
+            // The SST is a one-shot, short-lived capability carrying tenant, branch and
+            // the precise live-location permission snapshot, signed with HMAC-SHA256.
             var authHeader = context.Request.Headers.Authorization.ToString();
-            if (path.StartsWith("/api/telemetry/stream", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(path, "/api/telemetry/stream", StringComparison.OrdinalIgnoreCase))
             {
                 var sst = context.Request.Query["sst"].FirstOrDefault() ?? string.Empty;
                 if (!string.IsNullOrWhiteSpace(sst))
                 {
-                    var (sstOk, sstUserId, sstCompanyId) = TelemetryTicketHelper.Validate(TelemetryKeyStore.SseTicketKey, sst);
-                    if (!sstOk)
+                    var claims = TelemetryTicketHelper.ValidateScoped(TelemetryKeyStore.SseTicketKey, sst);
+                    if (!claims.Ok)
                     {
                         context.Response.StatusCode = StatusCodes.Status401Unauthorized;
                         await context.Response.WriteAsJsonAsync(ApiResponse<object>.Fail("Invalid or expired stream ticket"));
                         return;
                     }
-                    context.Items[EndpointMappings.AuthUserIdItemKey]      = sstUserId;
-                    context.Items[EndpointMappings.AuthCompanyIdItemKey]   = sstCompanyId;
+                    // Durable atomic consume: the same signed capability cannot open a
+                    // second stream on another instance or after a process restart.
+                    // This happens before tenant context exists, under the isolated
+                    // system identity; the row is still claim-bound and short-lived.
+                    var consumed = await scopedDb.RunInSystemScopeAsync(() => scopedDb.ExecuteAsync(
+                        @"UPDATE telemetry_stream_ticket_nonces
+                          SET consumed_at=NOW()
+                          WHERE nonce_hash=@nonce AND user_id=@uid AND audit_company_id=@cid
+                            AND branch_id IS NOT DISTINCT FROM @branchId
+                            AND consumed_at IS NULL AND expires_at>NOW()",
+                        c =>
+                        {
+                            c.Parameters.AddWithValue("@nonce", TelemetryTicketHelper.HashNonce(claims.Nonce));
+                            c.Parameters.AddWithValue("@uid", claims.UserId); c.Parameters.AddWithValue("@cid", claims.CompanyId);
+                            c.Parameters.AddWithValue("@branchId", (object?)claims.BranchId ?? DBNull.Value);
+                        }, context.RequestAborted), context.RequestAborted);
+                    if (consumed != 1)
+                    {
+                        context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                        await context.Response.WriteAsJsonAsync(ApiResponse<object>.Fail("Stream ticket was already used, expired, or revoked"));
+                        return;
+                    }
+                    context.Items[EndpointMappings.AuthUserIdItemKey]      = claims.UserId;
+                    context.Items[EndpointMappings.AuthCompanyIdItemKey]   = claims.CompanyId;
                     context.Items[EndpointMappings.AuthRoleItemKey]        = "sst-client";
-                    context.Items[EndpointMappings.AuthPermissionsItemKey] = Array.Empty<string>();
+                    context.Items[EndpointMappings.AuthPermissionsItemKey] = claims.Permissions;
+                    if (claims.BranchId is { } sstBranchId)
+                        context.Items[EndpointMappings.AuthBranchIdItemKey] = sstBranchId;
                     await next();
                     return;
                 }
@@ -647,13 +681,25 @@ app.UseWhen(
             // Pre-tenant bootstrap read of RLS-protected auth tables — runs under the
             // system identity so it succeeds before a tenant ticket exists.
             var sessionSql =
-                @"SELECT s.user_id, s.company_id, u.role_name, u.role_id, u.customer_id, u.branch_id, u.permissions_json, r.permissions_json role_permissions_json
+                @"SELECT s.user_id, s.company_id, u.role_name, u.role_id, u.customer_id, u.branch_id,
+                         u.permissions_json, r.permissions_json role_permissions_json,
+                         s.impersonation_grant_id, pis.grant_ref impersonation_grant_ref,
+                         pis.expires_at impersonation_grant_expires_at,
+                         pis.admin_id impersonation_admin_id
                   FROM user_sessions s
                   JOIN users u ON u.id = s.user_id AND u.company_id = s.company_id
                   LEFT JOIN roles r ON r.id = u.role_id AND (r.company_id IS NULL OR r.company_id=u.company_id)
+                  LEFT JOIN platform_impersonation_sessions pis ON pis.id=s.impersonation_grant_id
                   WHERE s.session_token=@token
                     AND s.expires_at > NOW()
                     AND u.status='Active'
+                    AND (
+                      s.impersonation_grant_id IS NULL
+                      OR (
+                        pis.id IS NOT NULL AND pis.ended_at IS NULL AND pis.expires_at > NOW()
+                        AND pis.company_id=s.company_id AND pis.target_user_id=s.user_id
+                      )
+                    )
                   LIMIT 1";
             var session = rlsEnforceTenantContext
                 ? await db.QuerySingleInSystemScopeAsync(
@@ -690,6 +736,7 @@ app.UseWhen(
                 ? await db.RunInSystemScopeAsync(ResolvePermissions, context.RequestAborted)
                 : await ResolvePermissions();
             var permissions = permissionSet.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            (long PlatformAdminId, long GrantId, Guid GrantRef, string Method, string Path)? supportAccessAudit = null;
 
             context.Items[EndpointMappings.AuthUserIdItemKey] = userId;
             context.Items[EndpointMappings.AuthCompanyIdItemKey] = companyId;
@@ -706,16 +753,73 @@ app.UseWhen(
                 context.Items[EndpointMappings.AuthCustomerIdItemKey] = Convert.ToInt64(custId);
             }
 
+            // Bounded Platform support access is a distinct principal mode. The
+            // grant is revalidated by the session query on every request, then the
+            // edge denies mutation before any tenant handler or transaction runs.
+            if (session.TryGetValue("impersonationGrantId", out var grantIdValue)
+                && grantIdValue is not null and not DBNull)
+            {
+                var grantId = Convert.ToInt64(grantIdValue);
+                var grantRef = Guid.Parse(session["impersonationGrantRef"]!.ToString()!);
+                var grantExpiresAt = Convert.ToDateTime(session["impersonationGrantExpiresAt"]);
+                var platformAdminId = Convert.ToInt64(session["impersonationAdminId"]);
+                context.Items[PlatformImpersonationPolicy.GrantIdItemKey] = grantId;
+                context.Items[PlatformImpersonationPolicy.GrantRefItemKey] = grantRef.ToString("D");
+                context.Items[PlatformImpersonationPolicy.GrantExpiresAtItemKey] = grantExpiresAt;
+
+                // A dedicated distributed ceiling prevents an authenticated support
+                // token from turning the mandatory dual-audit trail into a write-amplification
+                // vector. Global/IP and principal limits remain additional layers.
+                var withinAuditBudget = await SupportAccessWithinAuditBudgetAsync(
+                    scopedDb, grantId, context.RequestAborted);
+                if (!withinAuditBudget)
+                {
+                    context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+                    context.Response.Headers.RetryAfter = "60";
+                    await context.Response.WriteAsJsonAsync(ApiResponse<object>.Fail(
+                        "Support access rate limit exceeded", "Retry after 60 seconds."),
+                        context.RequestAborted);
+                    return;
+                }
+
+                var readOnlyAllowed = PlatformImpersonationPolicy.IsReadOnlyRequestAllowed(context.Request.Method, path);
+                if (!readOnlyAllowed)
+                {
+                    await AuditSupportAccessRequestAsync(scopedDb, companyId, platformAdminId, grantId,
+                        grantRef, context.Request.Method, path, allowed: false,
+                        StatusCodes.Status403Forbidden, context.RequestAborted);
+                    context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                    await context.Response.WriteAsJsonAsync(ApiResponse<object>.Fail(
+                        "Read-only support access", "This support session cannot change tenant data."),
+                        context.RequestAborted);
+                    return;
+                }
+                supportAccessAudit = (platformAdminId, grantId, grantRef, context.Request.Method, path);
+            }
+
             // ── Feature entitlement enforcement (server-side, tenant-isolated) ──────
-            // Platform Admin controls which modules a tenant may access. If a tenant has
-            // an entitlement row explicitly disabling the module this path belongs to,
-            // block it here — even if the client calls the API/URL directly. Default is
-            // allow (no row = inherit), preserving behaviour for un-gated modules.
+            // Platform Admin controls which modules a tenant may access. If the
+            // tenant's policy denies the module this path belongs to, block it here
+            // even if the client calls the API directly. Existing tenants use
+            // legacy_allow (missing row = allow); new customers use package_allowlist
+            // (missing row = deny).
             var moduleKey = ModuleKeyForPath(path);
             if (moduleKey is not null)
             {
-                const string entitlementSql =
-                    "SELECT COUNT(*) FROM tenant_entitlements WHERE company_id=@cid AND module_key=@mk AND enabled=false";
+                const string entitlementSql = """
+                    SELECT COUNT(*)
+                    FROM companies c
+                    LEFT JOIN tenant_entitlements e
+                      ON e.company_id=c.id AND e.module_key=@mk
+                    WHERE c.id=@cid
+                      AND (
+                        c.entitlement_policy_mode NOT IN ('legacy_allow','package_allowlist')
+                        OR
+                        (c.entitlement_policy_mode='package_allowlist' AND COALESCE(e.enabled,false)=false)
+                        OR
+                        (c.entitlement_policy_mode='legacy_allow' AND e.enabled=false)
+                      )
+                    """;
                 void BindEntitlement(Npgsql.NpgsqlCommand c)
                 {
                     c.Parameters.AddWithValue("@cid", companyId);
@@ -777,6 +881,15 @@ app.UseWhen(
             else
             {
                 await next();
+            }
+
+            // Log the completed outcome, not an optimistic pre-handler "read". A
+            // 403/404/429 therefore cannot be represented as successful access.
+            if (supportAccessAudit is { } supportAudit)
+            {
+                await AuditSupportAccessRequestAsync(scopedDb, companyId, supportAudit.PlatformAdminId,
+                    supportAudit.GrantId, supportAudit.GrantRef, supportAudit.Method, supportAudit.Path,
+                    allowed: true, context.Response.StatusCode, context.RequestAborted);
             }
         });
         // The authoritative company/user identifiers now exist. Apply the regular
@@ -896,6 +1009,12 @@ static async Task<IResult> ReadinessAsync(
             market_catalog_ready = fleetResult.MarketCatalogReady,
             indexes_ready = fleetResult.IndexesReady,
             critical_worker_violations = fleetResult.CriticalWorkerViolations,
+            raw_critical_worker_violations = fleetResult.RawCriticalWorkerViolations,
+            missing_critical_workers = fleetResult.MissingCriticalWorkers,
+            stale_critical_workers = fleetResult.StaleCriticalWorkers,
+            failed_critical_workers = fleetResult.FailedCriticalWorkers,
+            critical_worker_startup_grace_active = fleetResult.CriticalWorkerStartupGraceActive,
+            critical_worker_startup_grace_remaining_seconds = fleetResult.CriticalWorkerStartupGraceRemainingSeconds,
             failure_code = fleetResult.FailureCode
         };
         if (!fleetResult.Ready) failure ??= "fleet_production_contract_invalid";
@@ -948,8 +1067,16 @@ app.MapGet("/health/deep", async (
 
     // Background service heartbeats (read from DB if available)
     var serviceStatuses = new List<object>();
+    var servicesDegraded = false;
     if (dbOk)
     {
+        var expectedWorkers = FleetProductionReadinessService.CriticalWorkerNames.ToHashSet(StringComparer.Ordinal);
+        var observedExpectedWorkers = new HashSet<string>(StringComparer.Ordinal);
+        var startupGraceActive = fleetContract.CriticalWorkerStartupGraceActive;
+        var staleBefore = DateTime.UtcNow - FleetProductionReadinessService.CriticalWorkerFreshness;
+        if (Opstrax.Api.Observability.BuildInfo.StartedAtUtc > staleBefore)
+            staleBefore = Opstrax.Api.Observability.BuildInfo.StartedAtUtc;
+        var heartbeatLedgerReadable = true;
         try
         {
             // Health probes are outside the /api middleware branch, so no ambient
@@ -964,18 +1091,57 @@ app.MapGet("/health/deep", async (
                 var name    = row["serviceName"]?.ToString() ?? "";
                 var lastBeat = row["lastHeartbeatAt"] as DateTime?;
                 var consec   = row["consecutiveFailures"] is { } cf ? Convert.ToInt32(cf) : 0;
-                var svcStatus = consec >= 3 ? "degraded" : consec > 0 ? "warning" : "healthy";
+                var critical = expectedWorkers.Contains(name);
+                if (critical) observedExpectedWorkers.Add(name);
+                var stale = lastBeat is null || lastBeat.Value < staleBefore;
+                var criticalViolation = critical &&
+                    (stale || consec >= FleetProductionReadinessService.CriticalWorkerFailureThreshold(name));
+                var svcStatus = criticalViolation && startupGraceActive ? "starting"
+                    : criticalViolation ? "degraded"
+                    : consec > 0 ? "warning"
+                    : "healthy";
+                if (svcStatus == "degraded") servicesDegraded = true;
 
                 serviceStatuses.Add(new
                 {
                     name,
                     status              = svcStatus,
+                    expected_critical   = critical,
+                    reason              = criticalViolation ? (stale ? "stale" : "repeated_failures") : null,
                     last_heartbeat_utc  = lastBeat?.ToString("o"),
                     consecutive_failures = consec,
                 });
             }
+
         }
-        catch { /* DB readable but heartbeats table not yet migrated — non-fatal */ }
+        catch { heartbeatLedgerReadable = false; }
+
+        foreach (var missing in FleetProductionReadinessService.CriticalWorkerNames
+                     .Where(name => !observedExpectedWorkers.Contains(name)))
+        {
+            var status = startupGraceActive ? "starting" : "degraded";
+            if (status == "degraded") servicesDegraded = true;
+            serviceStatuses.Add(new
+            {
+                name = missing,
+                status,
+                expected_critical = true,
+                reason = heartbeatLedgerReadable ? "missing" : "heartbeat_ledger_unavailable",
+                last_heartbeat_utc = (string?)null,
+                consecutive_failures = 0,
+            });
+        }
+
+        checks["critical_worker_contract"] = new
+        {
+            status = servicesDegraded ? "invalid" : startupGraceActive ? "starting" : "healthy",
+            expected_count = FleetProductionReadinessService.CriticalWorkerNames.Length,
+            observed_count = observedExpectedWorkers.Count,
+            heartbeat_ledger_readable = heartbeatLedgerReadable,
+            startup_grace_active = startupGraceActive,
+            startup_grace_remaining_seconds = fleetContract.CriticalWorkerStartupGraceRemainingSeconds,
+            freshness_seconds = (int)FleetProductionReadinessService.CriticalWorkerFreshness.TotalSeconds,
+        };
     }
     checks["services"] = serviceStatuses;
 
@@ -1032,6 +1198,12 @@ app.MapGet("/health/deep", async (
             market_catalog_ready = fleetResult.MarketCatalogReady,
             indexes_ready = fleetResult.IndexesReady,
             critical_worker_violations = fleetResult.CriticalWorkerViolations,
+            raw_critical_worker_violations = fleetResult.RawCriticalWorkerViolations,
+            missing_critical_workers = fleetResult.MissingCriticalWorkers,
+            stale_critical_workers = fleetResult.StaleCriticalWorkers,
+            failed_critical_workers = fleetResult.FailedCriticalWorkers,
+            critical_worker_startup_grace_active = fleetResult.CriticalWorkerStartupGraceActive,
+            critical_worker_startup_grace_remaining_seconds = fleetResult.CriticalWorkerStartupGraceRemainingSeconds,
             failure_code = fleetResult.FailureCode
         };
     }
@@ -1041,20 +1213,19 @@ app.MapGet("/health/deep", async (
         !dbOk                                          ? "unhealthy" :
         dataProtectionResult is { Ready: false }       ? "unhealthy" :
         fleetResult is { Ready: false }                ? "unhealthy" :
-        serviceStatuses.Any(s => s.GetType().GetProperty("status")?.GetValue(s)?.ToString() == "degraded")
+        servicesDegraded
                                                        ? "degraded" :
         cfgResult.FailCount > 0                       ? "degraded" :
                                                          "healthy";
 
-    var statusCode = overallStatus == "unhealthy" ? StatusCodes.Status503ServiceUnavailable : StatusCodes.Status200OK;
+    var statusCode = overallStatus == "healthy" ? StatusCodes.Status200OK : StatusCodes.Status503ServiceUnavailable;
 
     var failureReason =
         !dbOk                    ? "database_unavailable" :
         dataProtectionResult is { Ready: false } ? "data_protection_key_ring_unavailable" :
         fleetResult is { Ready: false } ? "fleet_production_contract_invalid" :
         cfgResult.FailCount > 0  ? "critical_config_invalid" :
-        serviceStatuses.Any(s => s.GetType().GetProperty("status")?.GetValue(s)?.ToString() == "degraded")
-                                 ? "background_service_degraded" :
+        servicesDegraded        ? "background_service_degraded" :
                                    null;
 
     return Results.Json(new
@@ -1080,6 +1251,7 @@ EndpointMappings.MapFleetHealthEndpoints(app);
 app.MapFleetTmsEndpoints();
 app.MapFleetTmsColdChainEndpoints();
 app.MapFleetTmsLogisticsEndpoints();
+app.MapActiveShipmentsEndpoints();
 app.MapRevenueEndpoints();
 app.MapRevenueReadinessEndpoints();
 app.MapRatingEndpoints();
@@ -1116,6 +1288,21 @@ static (string Flag, bool DefaultOn)? FlagGateForPath(string path)
 static string? ModuleKeyForPath(string path)
 {
     if (string.IsNullOrEmpty(path)) return null;
+    // The legacy generic module-record surface uses /api/modules/{ui-module-key}.
+    // It must not bypass the same commercial envelope as the canonical endpoint:
+    // e.g. /api/modules/traffic-violations is still Safety. Resolve only catalogued
+    // keys; unknown buckets are not Platform-governed product modules.
+    const string genericModulePrefix = "/api/modules/";
+    if (path.StartsWith(genericModulePrefix, StringComparison.OrdinalIgnoreCase))
+    {
+        var remainder = path[genericModulePrefix.Length..];
+        var separator = remainder.IndexOf('/');
+        var moduleKey = separator < 0 ? remainder : remainder[..separator];
+        var catalogEntry = PlatformTenantModuleCatalog.Modules.FirstOrDefault(
+            module => string.Equals(module.Key, moduleKey, StringComparison.OrdinalIgnoreCase));
+        if (catalogEntry?.RequiredEntitlement is { Length: > 0 } entitlement)
+            return entitlement;
+    }
     // Order matters: most specific prefixes first.
     // Every route surface a gated module actually owns. Previously this map was
     // incomplete, so disabling e.g. `dispatch` still left /api/jobs open and
@@ -1123,14 +1310,19 @@ static string? ModuleKeyForPath(string path)
     // Keep the most specific prefixes first.
     (string Prefix, string Module)[] map =
     [
-        ("/api/foundation/safety-maintenance", "dashboard"),
-
         // Safety
         ("/api/safety",              "safety"),
         ("/api/dashcam",             "safety"),
         ("/api/incidents",           "safety"),
         ("/api/coaching",            "safety"),
         ("/api/traffic-violations",  "safety"),
+        ("/api/evidence-packages",   "safety"),
+
+        // Driver portal safety surfaces. These live below the shared /api/driver
+        // namespace, so they must be listed before any future broad driver gate.
+        // Otherwise a Platform Admin can disable the tenant module while the
+        // corresponding driver workflow remains callable.
+        ("/api/driver/coaching",     "safety"),
 
         // Maintenance
         ("/api/preventive-maintenance", "maintenance"),
@@ -1140,6 +1332,7 @@ static string? ModuleKeyForPath(string path)
         ("/api/service-history",     "maintenance"),
         ("/api/downtime",            "maintenance"),
         ("/api/dvir",                "maintenance"),
+        ("/api/driver/dvir",         "maintenance"),
 
         // Dispatch
         ("/api/dispatch",            "dispatch"),
@@ -1148,12 +1341,21 @@ static string? ModuleKeyForPath(string path)
         ("/api/routes",              "dispatch"),
         ("/api/smart-assign",        "dispatch"),
         ("/api/last-mile",           "dispatch"),
+        ("/api/proof-of-delivery",   "dispatch"),
+        // Legacy dedicated compatibility root retained for old clients. It must
+        // remain inside the same commercial boundary as canonical route APIs.
+        ("/api/route-planning",      "dispatch"),
 
         // Telematics
         ("/api/telemetry",           "telematics"),
         ("/api/devices",             "telematics"),
         ("/api/eld",                 "telematics"),
         ("/api/geofences",           "telematics"),
+
+        // Tenant-owned third-party connectors can cause external side effects and
+        // incur provider cost. Keep an independent Platform Admin entitlement rather
+        // than coupling the full connector marketplace to telematics alone.
+        ("/api/integrations",        "integrations"),
 
         // CRM  (customer-* prefixes below belong to the portal, not CRM)
         ("/api/customers",           "crm"),
@@ -1163,26 +1365,92 @@ static string? ModuleKeyForPath(string path)
         ("/api/campaigns",           "crm"),
         ("/api/quotations",          "crm"),
         ("/api/rate-cards",          "crm"),
+        // Compatibility aggregate for contracts/rates; direct calls must not
+        // outlive a disabled CRM entitlement.
+        ("/api/contracts-rates",     "crm"),
 
         // Customer portal
         ("/api/portal",              "customer_portal"),
         ("/api/customer-eta",        "customer_portal"),
         ("/api/customer-visibility", "customer_portal"),
+        ("/api/customer-portal",     "customer_portal"),
 
         // Reports
         ("/api/reports",             "reports"),
         ("/api/analytics",           "reports"),
+        ("/api/reports-analytics",   "reports"),
 
         // Compliance
         ("/api/fleet-compliance",    "compliance"),
         ("/api/compliance",          "compliance"),
         ("/api/hos",                 "compliance"),
+        ("/api/driver/hos",          "compliance"),
+        ("/api/hos-eld",             "compliance"),
     ];
     foreach (var (prefix, module) in map)
     {
         if (path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return module;
     }
     return null;
+}
+
+static async Task<bool> SupportAccessWithinAuditBudgetAsync(Database db, long grantId, CancellationToken ct)
+{
+    const string sql = """
+        SELECT COUNT(*)
+        FROM platform_audit_log
+        WHERE entity_type='SupportAccessGrant' AND entity_id=@grantId
+          AND action IN (
+            'platform.impersonation.read_completed', 'platform.impersonation.read_denied',
+            'platform.impersonation.read_failed', 'platform.impersonation.write_denied',
+            'platform.impersonation.session_logout')
+          AND created_at > NOW() - INTERVAL '1 minute'
+        """;
+    var count = await db.RunInSystemScopeAsync(() => db.ScalarLongAsync(
+        sql, c => c.Parameters.AddWithValue("@grantId", grantId), ct), ct);
+    return count < 120;
+}
+
+static async Task AuditSupportAccessRequestAsync(Database db, long companyId, long platformAdminId,
+    long grantId, Guid grantRef, string method, string path, bool allowed, int responseStatus, CancellationToken ct)
+{
+    await db.RunInSystemTransactionAsync(async () =>
+    {
+        var selfLogout = allowed && HttpMethods.IsPost(method)
+            && string.Equals(path, "/api/auth/logout", StringComparison.OrdinalIgnoreCase);
+        var outcome = responseStatus < 400 ? "completed" : responseStatus is 401 or 403 ? "denied" : "failed";
+        var platformAction = !allowed ? "platform.impersonation.write_denied"
+            : selfLogout ? "platform.impersonation.session_logout" : $"platform.impersonation.read_{outcome}";
+        var tenantAction = !allowed ? "platform.support_access.write_denied"
+            : selfLogout ? "platform.support_access.session_logout" : $"platform.support_access.read_{outcome}";
+        var details = JsonSerializer.Serialize(new { grantRef, mode = "read_only", method, path, responseStatus });
+        await AuditLogSequenceRepair.ExecuteWithSequenceRepairAsync(
+            db, "platform_audit_log", "id",
+            @"INSERT INTO platform_audit_log
+                (actor_admin_id, actor_role, action, entity_type, entity_id, target_company_id, details_json)
+              VALUES (@adminId, 'support_access', @action, 'SupportAccessGrant', @grantId, @companyId, @details::jsonb)",
+            c =>
+            {
+                c.Parameters.AddWithValue("@adminId", platformAdminId);
+                c.Parameters.AddWithValue("@action", platformAction);
+                c.Parameters.AddWithValue("@grantId", grantId);
+                c.Parameters.AddWithValue("@companyId", companyId);
+                c.Parameters.AddWithValue("@details", details);
+            }, ct);
+        await AuditLogSequenceRepair.ExecuteWithSequenceRepairAsync(
+            db, "audit_logs", "id",
+            @"INSERT INTO audit_logs
+                (company_id, actor_user_id, actor_name, action_name, entity_name, entity_id, details_json)
+              VALUES (@companyId, NULL, @actor, @action, 'SupportAccessGrant', NULL, @details::jsonb)",
+            c =>
+            {
+                c.Parameters.AddWithValue("@companyId", companyId);
+                c.Parameters.AddWithValue("@actor", $"platform-support:{grantRef:N}");
+                c.Parameters.AddWithValue("@action", tenantAction);
+                c.Parameters.AddWithValue("@details", details);
+            }, ct);
+        return true;
+    }, ct);
 }
 
 static async Task RunSchemaStep(WebApplication app, string name, Func<Task> step)

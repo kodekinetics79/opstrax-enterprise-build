@@ -49,6 +49,7 @@ const DriverScorecardsPage = lazy(() => import("@/pages/DriverScorecardsPage").t
 const LastMileDeliveryPage = lazy(() => import("@/pages/LastMileDeliveryPage").then((module) => ({ default: module.LastMileDeliveryPage })));
 const OperationsProofCenterPage = lazy(() => import("@/pages/OperationsProofCenterPage").then((module) => ({ default: module.OperationsProofCenterPage })));
 const GeofenceManagementPage = lazy(() => import("@/pages/GeofenceManagementPage").then((module) => ({ default: module.GeofenceManagementPage })));
+const TelematicsControlTowerPage = lazy(() => import("@/pages/TelematicsControlTowerPage").then((module) => ({ default: module.TelematicsControlTowerPage })));
 const FleetUtilizationPage = lazy(() => import("@/pages/FleetUtilizationPage").then((module) => ({ default: module.FleetUtilizationPage })));
 const CustomersPage = lazy(() => import("@/pages/CustomersPage").then((module) => ({ default: module.CustomersPage })));
 const ContractsPage = lazy(() => import("@/pages/ContractsPage").then((module) => ({ default: module.ContractsPage })));
@@ -97,9 +98,11 @@ const EntityListPage = lazy(() => import("@/pages/EntityListPage").then((module)
 const VehiclesModulePage = lazy(() => import("@/pages/VehiclesModulePage").then((module) => ({ default: module.VehiclesModulePage })));
 const DriversModulePage = lazy(() => import("@/pages/DriversModulePage").then((module) => ({ default: module.DriversModulePage })));
 const JobsPage = lazy(() => import("@/pages/JobsPage").then((module) => ({ default: module.JobsPage })));
+const ActiveShipmentsPage = lazy(() => import("@/pages/ActiveShipmentsPage").then((module) => ({ default: module.ActiveShipmentsPage })));
 const TripsPage = lazy(() => import("@/pages/TripsPage").then((module) => ({ default: module.TripsPage })));
 const IotDevicesPage = lazy(() => import("@/pages/IotDevicesPage").then((module) => ({ default: module.IotDevicesPage })));
 const TelematicsCommandPage = lazy(() => import("@/pages/TelematicsCommandPage").then((module) => ({ default: module.TelematicsCommandPage })));
+const DvirInspectionsPage = lazy(() => import("@/pages/DvirInspectionsPage").then((module) => ({ default: module.DvirInspectionsPage })));
 const ModulePage = lazy(() => import("@/pages/ModulePage").then((module) => ({ default: module.ModulePage })));
 const OperatingModulePage = lazy(() => import("@/pages/OperatingModulePage").then((module) => ({ default: module.OperatingModulePage })));
 const RoutePlanningPage = lazy(() => import("@/pages/RoutePlanningPage").then((module) => ({ default: module.RoutePlanningPage })));
@@ -206,8 +209,8 @@ export default function App() {
 
         {/* ── Control Tower ── */}
         <Route path="/live-dashboard" element={<RequirePermission permission="dashboard:view"><FleetOverviewPage /></RequirePermission>} />
-        <Route path="/active-shipments" element={<RequirePermission permission="dispatch:view"><JobsPage /></RequirePermission>} />
-        <Route path="/alerts" element={<RequirePermission permission="alerts:view"><AlertsCenterPage /></RequirePermission>} />
+        <Route path="/active-shipments" element={<RequirePermission permission="shipments:view" direct><ActiveShipmentsPage /></RequirePermission>} />
+        <Route path="/alerts" element={<RequirePermission permission="alerts:view" direct><AlertsCenterPage /></RequirePermission>} />
         <Route path="/map-view" element={<RequirePermission permission="telemetry.live_state.read"><LiveMapPage /></RequirePermission>} />
         <Route path="/fleet/live-wall" element={<RequirePermission permission="telemetry.live_state.read"><FleetLiveWallPage /></RequirePermission>} />
         <Route path="/vehicles/:id/live" element={<RequirePermission permission="telemetry.live_state.read"><VehicleLiveMonitorPage /></RequirePermission>} />
@@ -235,6 +238,7 @@ export default function App() {
         <Route path="/drivers/*" element={<RequirePermission permission="drivers:view"><DriversModulePage /></RequirePermission>} />
         <Route path="/assets" element={<RequirePermission permission="vehicles:view"><EntityListPage kind="assets" /></RequirePermission>} />
         <Route path="/iot-devices" element={<RequirePermission permission="telemetry.devices.read"><IotDevicesPage /></RequirePermission>} />
+        <Route path="/telematics-control-tower" element={<RequirePermission permission="telemetry.devices.read"><TelematicsControlTowerPage /></RequirePermission>} />
         <Route path="/gps-tracking" element={<RequirePermission permission="telematics:gps:view"><TelematicsCommandPage kind="gps-tracking" /></RequirePermission>} />
         <Route path="/obd-j1939" element={<RequirePermission permission="telematics:diagnostics:view"><TelematicsCommandPage kind="obd-j1939" /></RequirePermission>} />
         <Route path="/sensor-health" element={<RequirePermission permission="telematics:sensors:view"><TelematicsCommandPage kind="sensor-health" /></RequirePermission>} />
@@ -244,12 +248,12 @@ export default function App() {
         {/* ── Dispatch / Transport Ops ── */}
         <Route path="/dispatch" element={<RequirePermission permission="dispatch:view"><DispatchCommandPage /></RequirePermission>} />
         <Route path="/dispatch-legacy" element={<RequirePermission permission="dispatch:view"><DispatchPage /></RequirePermission>} />
-        <Route path="/jobs" element={<RequirePermission permission="shipments:view"><JobsPage /></RequirePermission>} />
+        <Route path="/jobs" element={<RequirePermission permission="shipments:view" direct><JobsPage /></RequirePermission>} />
         <Route path="/trips" element={<RequirePermission permission="dispatch:view"><TripsPage /></RequirePermission>} />
         <Route path="/routes" element={<RequirePermission permission="dispatch:view"><RoutePlanningPage /></RequirePermission>} />
         <Route path="/route-planning" element={<RequirePermission permission="dispatch:view"><RoutePlanningPage /></RequirePermission>} />
-        <Route path="/shipments" element={<RequirePermission permission="shipments:view"><JobsPage /></RequirePermission>} />
-        <Route path="/load-bookings" element={<RequirePermission permission="shipments:view"><JobsPage /></RequirePermission>} />
+        <Route path="/shipments" element={<RequirePermission permission="shipments:view" direct><JobsPage /></RequirePermission>} />
+        <Route path="/load-bookings" element={<RequirePermission permission="shipments:view" direct><JobsPage /></RequirePermission>} />
         <Route path="/route-plans" element={<RequirePermission permission="dispatch:view"><RoutePlanningPage /></RequirePermission>} />
         <Route path="/operations/proof-center" element={<RequirePermission permission="operations.execution_summary.read"><OperationsProofCenterPage /></RequirePermission>} />
         <Route path="/proof-of-delivery" element={<RequirePermission permission="shipments:view"><ProofOfDeliveryPage /></RequirePermission>} />
@@ -273,7 +277,7 @@ export default function App() {
         {/* ── Maintenance ── */}
         <Route path="/maintenance" element={<RequirePermission permission="maintenance:view"><MaintenanceCommandPage /></RequirePermission>} />
         <Route path="/work-orders" element={<RequirePermission permission="maintenance:view"><MaintenanceCommandPage /></RequirePermission>} />
-        <Route path="/dvir-inspections" element={<RequirePermission permission="maintenance:view"><MaintenanceCommandPage /></RequirePermission>} />
+        <Route path="/dvir-inspections" element={<RequirePermission permission="maintenance:view"><DvirInspectionsPage /></RequirePermission>} />
         <Route path="/inspections" element={<RequirePermission permission="maintenance:view"><MaintenanceCommandPage /></RequirePermission>} />
 
         {/* ── Safety ── */}

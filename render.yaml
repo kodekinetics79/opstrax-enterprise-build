@@ -9,7 +9,8 @@ services:
     # reachable AND critical config is valid; returns 503 until then. See
     # /health/ready in Program.cs.
     healthCheckPath: /health/ready
-    autoDeploy: true
+    # Release candidates are promoted only after exact-SHA evidence and approval.
+    autoDeploy: false
     envVars:
       - key: ASPNETCORE_ENVIRONMENT
         value: Production
@@ -91,9 +92,10 @@ services:
       # AWS region (used only when STORAGE_ENDPOINT is unset).
       - key: STORAGE_REGION
         sync: false
-      # Enable the data-retention purge worker (default off in Production).
+      # Required in Production. Config validation refuses startup unless the
+      # operator explicitly sets this to true after policy approval.
       - key: RetentionWorker__Enabled
-        value: "false"
+        sync: false
       # Allowed frontend origin(s) for CORS — set to the deployed Vercel URL.
       - key: Cors__AllowedOrigins
         sync: false

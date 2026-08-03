@@ -10,7 +10,13 @@ public class CsrfMiddleware
 {
     public const string TokenItemKey = "opstrax.csrf.token";
     public const string TokenHeaderName = "X-CSRF-Token";
-    public const string TokenCookieName = "__CSRF_Token__";
+    // v2 supersedes the legacy cookie that was issued without an explicit Path.
+    // Browsers could retain several same-name, path-scoped cookies and send an
+    // arbitrary value for /api/* mutations, making a correct response/header
+    // token fail double-submit validation. A versioned, root-scoped cookie
+    // provides exactly one authoritative browser token across every API route.
+    public const string TokenCookieName = "__CSRF_Token_v2__";
+    private const string LegacyTokenCookieName = "__CSRF_Token__";
     private static readonly string[] SAFE_METHODS = { "GET", "HEAD", "OPTIONS" };
 
     private readonly RequestDelegate _next;
@@ -32,7 +38,11 @@ public class CsrfMiddleware
     {
         var path = context.Request.Path.Value ?? string.Empty;
         var cookieToken = context.Request.Cookies[TokenCookieName];
-        var bearerOnly = string.IsNullOrEmpty(cookieToken) && HasBearerToken(context.Request);
+        var hasLegacyBrowserCookie = !string.IsNullOrEmpty(context.Request.Cookies[LegacyTokenCookieName]);
+        // A browser carrying the legacy cookie must be upgraded to the new
+        // root-scoped cookie. Do not misclassify it as a bearer-only API client,
+        // otherwise a normal authenticated GET would never issue v2 state.
+        var bearerOnly = string.IsNullOrEmpty(cookieToken) && !hasLegacyBrowserCookie && HasBearerToken(context.Request);
         var responseToken = cookieToken;
 
         // Bearer-only clients do not use ambient browser credentials, so CSRF does not
@@ -52,6 +62,7 @@ public class CsrfMiddleware
             var isHttps = context.Request.IsHttps;
             context.Response.Cookies.Append(TokenCookieName, responseToken, new CookieOptions
             {
+                Path = "/",
                 HttpOnly = false,
                 Secure = isHttps,
                 SameSite = isHttps ? SameSiteMode.None : SameSiteMode.Lax,

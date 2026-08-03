@@ -8,7 +8,9 @@ using Opstrax.Telematics.Contracts.Eventing;
 using Opstrax.Telematics.Contracts.Identity;
 using Opstrax.Telematics.Gateway;
 using Opstrax.Telematics.Gateway.Buffering;
+using Opstrax.Telematics.Gateway.Eventing;
 using Opstrax.Telematics.Gateway.Identity;
+using Opstrax.Telematics.Gateway.Infrastructure;
 using Opstrax.Telematics.Gateway.Observability;
 using Opstrax.Telematics.Gateway.Projection;
 using Opstrax.Telematics.Gateway.Security.Auth;
@@ -17,13 +19,8 @@ using Opstrax.Telematics.Protocols.Gt06;
 
 // ── Composition root for the Opstrax Telematics Device Edge Gateway ────────────
 //
-// Every dependency below is an interface the gateway depends on and a swappable
-// implementation it does not know about. The in-memory implementations here are the
-// dev/test doubles: production swaps in Kafka/Redpanda, the Postgres device table, and
-// the durable Postgres replay/projection stores WITHOUT the framing loop changing.
-//
-// No secrets are configured here. Device credentials never reach this process —
-// the registry returns an opaque CredentialHandle pointing at the vault.
+// Production is intentionally a separate, fail-closed branch: no seeded registry,
+// process-local replay state, in-memory backbone, or volatile outage buffer is reachable from it.
 
 HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
 
@@ -38,54 +35,57 @@ builder.Services.AddSingleton(options);
 // reassembly-buffer bound come from ONE configuration source and cannot silently diverge.
 builder.Services.AddSingleton<Gt06Adapter>(_ => new Gt06Adapter(options.MaxFrameBytes));
 
-// Dev/test backbone. Production: a Kafka/Redpanda-backed IEventBackbone.
-builder.Services.AddSingleton<IEventBackbone>(_ => new InMemoryEventBackbone());
-
-// The ONLY source of device ownership AND per-device trust policy. Production: the Postgres-backed
-// registry. The gateway reads the device's policy from here per device — it never hardcodes one.
-builder.Services.AddSingleton<IDeviceRegistry>(_ => InMemoryDeviceRegistry.SeededDefault());
-
-// Trust enforcement after identity resolution. The credential resolver is fail-closed: the dev
-// gateway has no vault wired, so any HMAC-mode device is rejected. The GT06 baseline is
-// ImeiAllowlistOnly, which never dereferences a key, so this is a no-op on the happy path.
-builder.Services.AddSingleton<ICredentialKeyResolver, VaultUnavailableCredentialKeyResolver>();
+// GT06 login frames do not carry the canonical HMAC proof this authenticator requires and this
+// raw TcpClient listener has no client-certificate transport. Keep cryptographic modes explicitly
+// unavailable here; deploy a proof-capable adapter/verified TLS terminator before enabling them.
+builder.Services.AddSingleton<ICredentialKeyResolver, RawTcpCryptographyUnavailableResolver>();
 builder.Services.AddSingleton<IDeviceAuthenticator, DefaultDeviceAuthenticator>();
 
-// Durability of replay/sequence defence AND live-map projection is CONFIG-DRIVEN. With a Telematics
-// Postgres connection string these use the shared, durable Postgres-backed stores: the replay window
-// becomes the database — it survives a restart and is shared across every gateway instance, closing
-// the process-local gap the threat model flags. Without one, the process-local in-memory doubles run
-// for dev/test and a loud warning is emitted after build so a non-durable gateway is never mistaken
-// for production.
 string? telematicsDb =
     builder.Configuration.GetConnectionString("Telematics")
     ?? builder.Configuration["Gateway:PostgresConnectionString"];
-bool durableStores = !string.IsNullOrWhiteSpace(telematicsDb);
+string? platformRegistryDb =
+    builder.Configuration.GetConnectionString("PlatformRegistry")
+    ?? builder.Configuration["Gateway:RegistryConnectionString"];
+string? protectedQueueKey = builder.Configuration["Gateway:StoreForwardEncryptionKey"];
+bool production = builder.Environment.IsProduction();
 
-if (durableStores)
+if (production)
 {
-    // PostgresReplayGuard's UNIQUE(device_id, serial, content_hash) is the durable, cross-instance
-    // dedup primitive; feed it a monotonic ingest sequence (it compares serials as 64-bit values).
+    if (string.IsNullOrWhiteSpace(platformRegistryDb))
+        throw new InvalidOperationException(
+            "Production requires ConnectionStrings:PlatformRegistry (or Gateway:RegistryConnectionString).");
+    if (string.IsNullOrWhiteSpace(telematicsDb))
+        throw new InvalidOperationException(
+            "Production requires ConnectionStrings:Telematics (or Gateway:PostgresConnectionString).");
+    if (!TryReadKey32(protectedQueueKey, out byte[] queueKey))
+        throw new InvalidOperationException(
+            "Production requires Gateway:StoreForwardEncryptionKey as a base64-encoded 32-byte key.");
+
+    builder.Services.AddSingleton<IDeviceRegistry>(_ => new PostgresDeviceRegistry(platformRegistryDb));
     builder.Services.AddSingleton<ITelemetryReplayGuard>(_ => new PostgresReplayGuard(telematicsDb!));
     builder.Services.AddSingleton<IPositionProjectionStore>(_ => new PostgresPositionProjectionStore(telematicsDb!));
+    builder.Services.AddSingleton<IEventBackbone>(_ => new PostgresEventBackbone(telematicsDb!));
+    var durableBuffer = new PostgresStoreAndForwardBuffer(telematicsDb!, queueKey);
+    System.Security.Cryptography.CryptographicOperations.ZeroMemory(queueKey);
+    builder.Services.AddSingleton<IStoreAndForwardBuffer>(durableBuffer);
+    builder.Services.AddSingleton(new ProductionStorageReadinessOptions(platformRegistryDb, telematicsDb));
+    builder.Services.AddHostedService<ProductionStorageReadinessService>();
 }
 else
 {
-    // The modulus matches GT06's 16-bit information serial so a legitimate counter wrap (65 535 → 0)
-    // reads as forward progress, not out-of-order. NON-DURABLE: forgotten on restart, not shared.
+    builder.Services.AddSingleton<IDeviceRegistry>(_ => InMemoryDeviceRegistry.SeededDefault());
     builder.Services.AddSingleton<ITelemetryReplayGuard>(_ => new InMemoryReplayGuard(serialModulus: 65536));
     builder.Services.AddSingleton<IPositionProjectionStore, InMemoryPositionProjectionStore>();
+    builder.Services.AddSingleton<IEventBackbone>(_ => new InMemoryEventBackbone());
+    builder.Services.AddSingleton<IStoreAndForwardBuffer>(_ => new InMemoryStoreAndForwardBuffer());
 }
 
 // OpenTelemetry tracer + meter providers (no-op exporter unless an OTLP endpoint is configured).
 builder.Services.AddTelematicsObservability(builder.Configuration);
 
-// Durability seam for broker outages. Production: a disk/WAL-backed buffer.
-builder.Services.AddSingleton<IStoreAndForwardBuffer>(_ => new InMemoryStoreAndForwardBuffer());
-
 // Closes the durability loop: drains the store-and-forward buffer and republishes parked events
-// in per-device order with bounded backoff once the backbone recovers. This is the ONLY consumer
-// of IStoreAndForwardBuffer.TryDequeue.
+// in per-device order with bounded backoff once the backbone recovers.
 builder.Services.AddSingleton<StoreAndForwardReplayOptions>();
 builder.Services.AddHostedService<StoreAndForwardReplayService>();
 
@@ -94,17 +94,14 @@ builder.Services.AddHostedService<TcpGatewayService>();
 
 IHost host = builder.Build();
 
-// Fail loud, not silent: a gateway running the non-durable in-memory replay/projection stores must
-// never be mistaken for a production deployment. Surfaced once at startup.
-if (!durableStores)
+if (!production)
 {
     host.Services.GetRequiredService<ILoggerFactory>()
         .CreateLogger("Opstrax.Telematics.Gateway.Startup")
         .LogWarning(
-            "No 'Telematics' Postgres connection string is configured — replay defence and live-map " +
-            "projection are running on PROCESS-LOCAL, NON-DURABLE in-memory stores. Dev/test only: a " +
-            "restart forgets the replay window and the guarantee is not shared across instances. Set " +
-            "ConnectionStrings:Telematics (or Gateway:PostgresConnectionString) before production use.");
+            "Development/test gateway: seeded ownership and PROCESS-LOCAL, NON-DURABLE " +
+            "event/replay/projection/store-forward implementations are active. Production refuses " +
+            "to start unless all durable registry, ledger and encryption settings are supplied.");
 }
 
 // Resolve the providers once so they are constructed (and disposed on shutdown) and begin
@@ -114,6 +111,24 @@ host.Services.GetService<TracerProvider>();
 host.Services.GetService<MeterProvider>();
 
 await host.RunAsync().ConfigureAwait(false);
+
+static bool TryReadKey32(string? configured, out byte[] key)
+{
+    key = Array.Empty<byte>();
+    if (string.IsNullOrWhiteSpace(configured)) return false;
+    try
+    {
+        key = Convert.FromBase64String(configured);
+        if (key.Length == 32) return true;
+        System.Security.Cryptography.CryptographicOperations.ZeroMemory(key);
+        key = Array.Empty<byte>();
+        return false;
+    }
+    catch (FormatException)
+    {
+        return false;
+    }
+}
 
 /// <summary>
 /// Assembly entry-point marker. Declared <see langword="public"/> and
@@ -125,14 +140,12 @@ public partial class Program
 }
 
 /// <summary>
-/// The fail-closed credential resolver the dev/local gateway ships with: no vault is wired, so it
-/// resolves <b>no</b> key. Per <see cref="ICredentialKeyResolver"/>'s contract, returning
-/// <see langword="null"/> makes the authenticator reject any device that requires a cryptographic
-/// proof. The honest GT06 baseline (<see cref="DeviceAuthMode.ImeiAllowlistOnly"/>) never
-/// dereferences a key, so this never runs on that path. Production swaps in a KMS/vault-backed
-/// resolver without touching the framing loop.
+/// Explicit fail-closed boundary for the current raw GT06 listener. This is not a placeholder that
+/// production silently upgrades: raw GT06 supplies no HMAC proof to verify, so dereferencing a key
+/// would add secret exposure without adding authentication. A future proof-capable protocol adapter
+/// replaces this registration together with the login-context construction.
 /// </summary>
-internal sealed class VaultUnavailableCredentialKeyResolver : ICredentialKeyResolver
+internal sealed class RawTcpCryptographyUnavailableResolver : ICredentialKeyResolver
 {
     public ValueTask<byte[]?> ResolveHmacKeyAsync(
         CredentialMaterial credential,
