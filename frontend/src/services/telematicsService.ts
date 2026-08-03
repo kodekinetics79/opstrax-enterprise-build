@@ -2,6 +2,7 @@ import { apiClient, unwrap } from "@/services/apiClient";
 import { isCustomerPortalRole, isDriverPortalRole, resolveCustomerIdentity, resolveDriverIdentity } from "@/auth/accessScope";
 import { hasPermission } from "@/auth/rbacConfig";
 import { readRawSession } from "@/auth/sessionStorage";
+import { integrationsApi } from "@/services/integrationsApi";
 import type { AnyRecord, UserSession } from "@/types";
 
 type DeviceMutationPayload = Record<string, unknown>;
@@ -95,10 +96,17 @@ export type TelematicsProviderSeedRecord = {
   deviceCount: number;
   lastSyncAt: string;
   supportTier: string;
+  pendingDevices?: number;
+  connectedTo?: string[];
+  matchConfidence?: "exact" | "fuzzy" | "none" | "restricted";
+  auditMessage?: string;
+  isMatchedToDevice?: boolean;
+  visibilitySource?: "connected" | "restricted" | "unmatched";
 };
 
 export type DeviceCommandRecord = {
   id: string | number;
+  rowVersion?: number;
   deviceId: string;
   deviceName: string;
   deviceType: string;
@@ -139,6 +147,39 @@ export type DeviceCommandRecord = {
   maintenanceStatus: string;
   complianceSummary: string;
 };
+
+function parseRowVersion(value: unknown): number | undefined {
+  if (value == null) return undefined;
+  const numeric = Number(value);
+  if (Number.isInteger(numeric) && numeric > 0) return numeric;
+  return undefined;
+}
+
+function normalizeMalfunctionInput(notes: string): { malfunctionCode: string; malfunctionDescription: string } {
+  const source = String(notes ?? "").trim();
+  if (!source) return { malfunctionCode: "MANUAL", malfunctionDescription: "Recovery review opened." };
+
+  const pipeIndex = source.indexOf("|");
+  const colonIndex = source.indexOf(":");
+  const splitIndex = colonIndex >= 0 ? colonIndex : pipeIndex >= 0 ? pipeIndex : -1;
+
+  if (splitIndex > 0 && splitIndex < source.length - 1) {
+    const code = source.slice(0, splitIndex).trim();
+    const description = source.slice(splitIndex + 1).trim();
+    if (code && description) return { malfunctionCode: code.slice(0, 80), malfunctionDescription: description.slice(0, 2000) };
+  }
+
+  const firstSpace = source.indexOf(" ");
+  if (firstSpace > 0 && firstSpace < Math.min(20, source.length - 1)) {
+    const code = source.slice(0, firstSpace).trim();
+    const description = source.slice(firstSpace + 1).trim();
+    if (/^[A-Za-z0-9-]{1,16}$/.test(code) && description) {
+      return { malfunctionCode: code.slice(0, 80), malfunctionDescription: description.slice(0, 2000) };
+    }
+  }
+
+  return { malfunctionCode: "MANUAL", malfunctionDescription: source.slice(0, 2000) };
+}
 
 export type DeviceDetailRecord = {
   device: DeviceCommandRecord;
@@ -364,6 +405,7 @@ function mapDeviceRow(
 
   return {
     id: (typeof row.id === "string" || typeof row.id === "number") ? row.id : serial,
+    rowVersion: parseRowVersion(row.row_version),
     deviceId: serial,
     deviceName: String(row.device_model ?? serial ?? "Telematics device"),
     deviceType: String(row.device_model ?? "ELD device"),
@@ -459,6 +501,196 @@ function readableSource(source: unknown) {
   const value = String(source ?? "").trim();
   if (!value) return "Unknown source";
   return value.replace(/[_-]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function normalizeProviderToken(value: string) {
+  return String(value ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "")
+    .trim();
+}
+
+function buildProviderNameSearchTerms(value: string) {
+  const normalized = String(value ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+  return normalized ? normalized.split(/\s+/).filter((term) => term.length > 2) : [];
+}
+
+function deriveProviderIntegrationAudit(
+  device: DeviceCommandRecord,
+  providerCatalog: TelematicsProviderSeedRecord[],
+): TelematicsProviderSeedRecord[] {
+  const providerName = String(device.provider ?? "").trim();
+  const normalizedDeviceProvider = normalizeProviderToken(providerName);
+  const searchTerms = buildProviderNameSearchTerms(providerName);
+  const seen = new Set<string>();
+
+  if (!providerCatalog.length) {
+    return [
+      {
+        id: "provider-catalog-empty",
+        name: providerName || "Unknown provider",
+        category: "Telematics & ELD",
+        integrationStatus: "Disconnected",
+        tenantId: device.tenantId ?? 0,
+        deviceCount: 0,
+        lastSyncAt: "—",
+        supportTier: "tenant",
+        pendingDevices: 0,
+        isMatchedToDevice: false,
+        matchConfidence: "none",
+        visibilitySource: "unmatched",
+        auditMessage: "No telematics connectors are available for this tenant.",
+      },
+    ];
+  }
+
+  if (!providerName) {
+    const firstConnected = providerCatalog.find((provider) => /connected/i.test(provider.integrationStatus));
+    if (firstConnected) {
+      return [
+        {
+          ...firstConnected,
+          id: `provider-audit-${String(firstConnected.id)}-${device.id}-missing-device`,
+          isMatchedToDevice: false,
+          matchConfidence: "none",
+          visibilitySource: "unmatched",
+          auditMessage: "Device provider field is empty; cannot map to a specific connector.",
+        },
+      ];
+    }
+    return [
+      {
+        id: "provider-not-provided",
+        name: "No provider on device",
+        category: "Telematics & ELD",
+        integrationStatus: "Disconnected",
+        tenantId: device.tenantId ?? 0,
+        deviceCount: 0,
+        lastSyncAt: "—",
+        supportTier: "tenant",
+        pendingDevices: 0,
+        isMatchedToDevice: false,
+        matchConfidence: "none",
+        visibilitySource: "unmatched",
+        auditMessage: "Device provider value is missing; cannot validate integration linkage.",
+      },
+    ];
+  }
+
+  const exactMatches = providerCatalog.filter((provider) =>
+    normalizeProviderToken(provider.name) && normalizeProviderToken(provider.name) === normalizedDeviceProvider,
+  );
+  const fuzzyMatches = exactMatches.length
+    ? []
+    : providerCatalog.filter((provider) => {
+        const normalizedCandidate = normalizeProviderToken(provider.name);
+        return (
+          normalizedCandidate.includes(normalizedDeviceProvider)
+          || normalizedDeviceProvider.includes(normalizedCandidate)
+          || searchTerms.some((term) => normalizedCandidate.includes(term))
+        );
+      });
+
+  const matched = [...exactMatches, ...fuzzyMatches];
+  const confidence: TelematicsProviderSeedRecord["matchConfidence"] = exactMatches.length ? "exact" : fuzzyMatches.length ? "fuzzy" : "none";
+
+  if (!matched.length) {
+    const visibleIntegration = providerCatalog.find((provider) => /connected/i.test(provider.integrationStatus));
+    return [
+      {
+        id: "provider-unmatched",
+        name: providerName,
+        category: "Telematics & ELD",
+        integrationStatus: "Disconnected",
+        tenantId: device.tenantId ?? 0,
+        deviceCount: 0,
+        lastSyncAt: "—",
+        supportTier: "tenant",
+        pendingDevices: 0,
+        isMatchedToDevice: false,
+        matchConfidence: "none",
+        visibilitySource: "unmatched",
+        auditMessage: visibleIntegration
+          ? "No connector name matches this device provider."
+          : "Provider catalog is visible, but no matching connector exists.",
+      },
+    ];
+  }
+
+  return matched
+    .filter((provider) => {
+      if (seen.has(provider.id)) return false;
+      seen.add(provider.id);
+      return true;
+    })
+    .map((provider) => ({
+      ...provider,
+      id: `provider-audit-${provider.id}-${device.id}`,
+      isMatchedToDevice: true,
+      matchConfidence: confidence,
+      visibilitySource: "connected",
+      auditMessage:
+        confidence === "exact"
+          ? "Provider identity matches the device provider field."
+          : "Provider identity partially matches the device provider field.",
+    }));
+}
+
+async function loadProviderCatalog(): Promise<TelematicsProviderSeedRecord[]> {
+  const payload = await integrationsApi.list();
+  const records = payload.records ?? [];
+  return records.map((record) => {
+    const providerRecord = record as AnyRecord;
+    const connectedTo = Array.isArray(providerRecord.connectedTo) ? (providerRecord.connectedTo as unknown[]) : [];
+    const connectedToCount = connectedTo.reduce((count: number, _entry: unknown) => count + (Boolean(_entry) ? 1 : 0), 0);
+    const status = String(providerRecord.status ?? "Disconnected");
+    const isError = /error/i.test(status);
+    return {
+      id: String(providerRecord.id ?? ""),
+      name: String(providerRecord.name ?? "Unknown provider"),
+      category: String(providerRecord.category ?? "Telematics & ELD"),
+      integrationStatus: status,
+      tenantId: Number(providerRecord.tenantId ?? 0) || 0,
+      deviceCount: Number(providerRecord.deviceCount ?? connectedToCount ?? 0) || connectedToCount || 0,
+      lastSyncAt: String(providerRecord.lastSyncAt ?? "—"),
+      supportTier: String(providerRecord.scope ?? "tenant"),
+      pendingDevices: isError || /pending/i.test(status) ? connectedToCount : 0,
+      connectedTo: connectedTo.length ? connectedTo.map(String) : [],
+      matchConfidence: "none",
+      visibilitySource: "connected",
+      isMatchedToDevice: false,
+      auditMessage: "",
+    };
+  });
+}
+
+async function buildProviderAuditForDevice(device: DeviceCommandRecord): Promise<TelematicsProviderSeedRecord[]> {
+  try {
+    const catalog = await loadProviderCatalog();
+    return deriveProviderIntegrationAudit(device, catalog);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to read integrations";
+    return [
+      {
+        id: "provider-audit-restricted",
+        name: "Integrations visibility restricted",
+        category: "Telematics & ELD",
+        integrationStatus: "Restricted",
+        tenantId: device.tenantId ?? 0,
+        deviceCount: 0,
+        lastSyncAt: "—",
+        supportTier: "tenant",
+        pendingDevices: 0,
+        isMatchedToDevice: false,
+        visibilitySource: "restricted",
+        matchConfidence: "restricted",
+        auditMessage: message || "Integration connector access is not available for this user/session.",
+      },
+    ];
+  }
 }
 
 function deriveSensorType(device: DeviceCommandRecord) {
@@ -728,7 +960,7 @@ export const telematicsService = {
       firmwareUpdates: [], // no OTA/firmware-schedule endpoint
       installations: [], // no installation-records endpoint
       sensorReadings: [], // no standalone sensor-reading endpoint
-      providers: [], // no provider-registry endpoint
+      providers: await buildProviderAuditForDevice(scoped),
       auditLog: [], // no device audit-log endpoint
       assignmentHistory: [], // no assignment-history endpoint
     };
@@ -845,20 +1077,40 @@ export const telematicsService = {
     return mapDeviceRow(updated, new Map(), new Map(), session);
   },
 
-  async markDeviceAttention(deviceId: string | number, _notes: string): Promise<DeviceCommandRecord> {
+  async markDeviceAttention(
+    deviceId: string | number,
+    notes: string,
+    rowVersionFromRow?: number,
+  ): Promise<DeviceCommandRecord> {
     const session = getSession();
     ensureManagementAccess(session);
+    const currentVersion = rowVersionFromRow ?? parseRowVersion((await this.getDeviceById(deviceId)).device.rowVersion);
+    if (currentVersion == null) throw new Error("Unable to open recovery: device row version is not available.");
+    const payload = normalizeMalfunctionInput(notes);
     // POST /api/eld/devices/{id}/mark-malfunction (notes have no backend field here).
-    await unwrap<AnyRecord>(apiClient.post(`/api/eld/devices/${deviceId}/mark-malfunction`, {}));
+    await unwrap<AnyRecord>(apiClient.post(`/api/eld/devices/${deviceId}/mark-malfunction`, {
+      rowVersion: currentVersion,
+      malfunctionCode: payload.malfunctionCode,
+      malfunctionDescription: payload.malfunctionDescription,
+    }));
     const updated = await unwrap<AnyRecord>(apiClient.get(`/api/telemetry/devices/${deviceId}`));
     return mapDeviceRow(updated, new Map(), new Map(), session);
   },
 
-  async resolveDeviceAttention(deviceId: string | number): Promise<DeviceCommandRecord> {
+  async resolveDeviceAttention(
+    deviceId: string | number,
+    rowVersionFromRow?: number,
+    evidence = "Recovery evidence captured in Device Health operations.",
+  ): Promise<DeviceCommandRecord> {
     const session = getSession();
     ensureManagementAccess(session);
+    const currentVersion = rowVersionFromRow ?? parseRowVersion((await this.getDeviceById(deviceId)).device.rowVersion);
+    if (currentVersion == null) throw new Error("Unable to resolve recovery: device row version is not available.");
     // POST /api/eld/devices/{id}/resolve-malfunction
-    await unwrap<AnyRecord>(apiClient.post(`/api/eld/devices/${deviceId}/resolve-malfunction`, {}));
+    await unwrap<AnyRecord>(apiClient.post(`/api/eld/devices/${deviceId}/resolve-malfunction`, {
+      rowVersion: currentVersion,
+      resolutionEvidence: String(evidence).slice(0, 2000),
+    }));
     const updated = await unwrap<AnyRecord>(apiClient.get(`/api/telemetry/devices/${deviceId}`));
     return mapDeviceRow(updated, new Map(), new Map(), session);
   },
@@ -893,10 +1145,13 @@ export const telematicsService = {
   async unassignDevice(deviceId: string | number) {
     const session = getSession();
     ensureManagementAccess(session);
-    // The assign endpoint requires a vehicleId; there is no verified "unassign" contract.
-    // TODO: expose a real unassign endpoint (POST assign with null vehicle) once defined.
-    void deviceId;
-    return { success: false, reason: "not supported" as const };
+    // POST /api/telemetry/devices/{id}/assign with nulls is the real unassign flow.
+    await unwrap<AnyRecord>(apiClient.post(`/api/telemetry/devices/${deviceId}/assign`, {
+      vehicleId: null,
+      driverId: null,
+    }));
+    const updated = await unwrap<AnyRecord>(apiClient.get(`/api/telemetry/devices/${deviceId}`));
+    return mapDeviceRow(updated, new Map(), new Map(), session);
   },
 
   async markInstalled(deviceId: string | number) {
@@ -919,11 +1174,8 @@ export const telematicsService = {
 
   async refreshDeviceStatus(deviceId: string | number) {
     const session = getSession();
-    // No status-refresh endpoint; callers should re-query getDevices/getDeviceById.
-    // TODO: wire to a real refresh/ping endpoint when available.
-    void deviceId;
-    void session;
-    return { success: false, reason: "not supported" as const };
+    const updated = await unwrap<AnyRecord>(apiClient.get(`/api/telemetry/devices/${deviceId}`));
+    return mapDeviceRow(updated, new Map(), new Map(), session);
   },
 
   async scheduleFirmwareUpdate(deviceId: string | number, _payload: DeviceMutationPayload) {
@@ -965,16 +1217,12 @@ export const telematicsService = {
   async syncProvider(providerId: string | number) {
     const session = getSession();
     ensureManagementAccess(session);
-    // No provider-registry or provider-sync endpoint exists.
-    // TODO: wire to a real provider-sync endpoint when available.
-    void providerId;
-    return { success: false, reason: "not supported" as const };
+    const detail = await integrationsApi.sync(providerId);
+    return detail;
   },
 
   async getProviders(): Promise<TelematicsProviderSeedRecord[]> {
-    // No provider-registry endpoint in the verified contract — honest empty list.
-    // TODO: wire to a real providers endpoint when available.
-    return [];
+    return loadProviderCatalog();
   },
 
   async getDeviceTelemetry(deviceId: string | number) {

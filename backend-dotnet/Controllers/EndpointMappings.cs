@@ -16663,7 +16663,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var devices = await db.QueryAsync(
             @"SELECT e.id, e.device_serial, e.imei, e.device_model, e.provider, e.status,
                      e.vehicle_id, e.driver_id, e.firmware_version,
-                     e.last_seen_at, e.revoked_at, e.created_at,
+                     e.last_seen_at, e.revoked_at, e.created_at, e.row_version,
                      v.vehicle_code, d.full_name driver_name,
                      EXTRACT(EPOCH FROM (NOW() - e.last_seen_at))::BIGINT seconds_since_ping
               FROM eld_devices e
@@ -16686,7 +16686,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var device = await db.QuerySingleAsync(
             @"SELECT e.id, e.device_serial, e.imei, e.device_model, e.provider, e.status,
                      e.vehicle_id, e.driver_id, e.firmware_version, e.notes,
-                     e.last_seen_at, e.revoked_at, e.created_at,
+                     e.last_seen_at, e.revoked_at, e.created_at, e.row_version,
                      v.vehicle_code, d.full_name driver_name
               FROM eld_devices e
               LEFT JOIN vehicles v ON v.id=e.vehicle_id AND v.company_id=e.company_id

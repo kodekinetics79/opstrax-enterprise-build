@@ -149,7 +149,7 @@ function downloadCsv(filename: string, body: string) {
 function emptyStateForTab(tab: DeviceTab) {
   if (tab === "offline") return { title: "No offline devices", subtitle: "Every scoped device is checking in within the current monitoring window." };
   if (tab === "firmware") return { title: "Current version only", subtitle: "OTA scheduling and firmware history are not connected in this pilot. Current versions appear when devices report them." };
-  if (tab === "providers") return { title: "Provider registry unavailable", subtitle: "Use Integrations to configure supported connectors. This page does not claim a provider connection without a verified registry response." };
+  if (tab === "providers") return { title: "No providers found", subtitle: "Integrations are pulled from your connected provider catalog." };
   return { title: "No devices found", subtitle: "Refine the search, switch tabs, or register a device for this fleet." };
 }
 
@@ -172,6 +172,158 @@ function actionTitle(allowed: boolean, allowedTitle: string) {
 
 function boolText(value: boolean) {
   return value ? "Yes" : "No";
+}
+
+type ActionContractState = "ready" | "permission-blocked" | "state-blocked" | "unsupported";
+
+type DeviceActionContract = {
+  key: string;
+  label: string;
+  icon: ReactNode;
+  state: ActionContractState;
+  reason: string;
+  onClick: () => void;
+};
+
+function buildActionContracts(
+  device: DeviceCommandRecord,
+  {
+    canUpdate,
+    canDelete,
+    canAssign,
+    canDiagnostics,
+    canFirmware,
+    onEdit,
+    onAssign,
+    onUnassign,
+    onArchive,
+    onMarkInstalled,
+    onRunDiagnostics,
+    onRefresh,
+    onScheduleFirmware,
+    onFlagAttention,
+    onResolve,
+  }: {
+    canUpdate: boolean;
+    canDelete: boolean;
+    canAssign: boolean;
+    canDiagnostics: boolean;
+    canFirmware: boolean;
+    onEdit: () => void;
+    onAssign: () => void;
+    onUnassign: () => void;
+    onArchive: () => void;
+    onMarkInstalled: () => void;
+    onRunDiagnostics: () => void;
+    onRefresh: () => void;
+    onScheduleFirmware: () => void;
+    onFlagAttention: () => void;
+    onResolve: () => void;
+  },
+) {
+  const inAttention = /offline|attention/i.test(device.connectionStatus);
+  const hasCurrentVehicle = Boolean(device.assignedVehicleCode && device.assignedVehicleCode !== "Unassigned");
+
+  const contracts: DeviceActionContract[] = [
+    {
+      key: "edit",
+      label: "Edit Device",
+      icon: <Edit3 className="h-4 w-4" />,
+      state: canUpdate ? "ready" : "permission-blocked",
+      reason: canUpdate ? "Permission + backend support available." : "Requires TELEMATICS_DEVICES_UPDATE.",
+      onClick: onEdit,
+    },
+    {
+      key: "assign",
+      label: "Assign",
+      icon: <ArrowRightLeft className="h-4 w-4" />,
+      state: canAssign ? "ready" : "permission-blocked",
+      reason: canAssign ? "Permission is available." : "Requires TELEMATICS_DEVICES_ASSIGN.",
+      onClick: onAssign,
+    },
+    {
+      key: "unassign",
+      label: "Unassign",
+      icon: <Truck className="h-4 w-4" />,
+      state: !canAssign ? "permission-blocked" : hasCurrentVehicle ? "ready" : "state-blocked",
+      reason: !canAssign
+        ? "Requires TELEMATICS_DEVICES_ASSIGN."
+        : hasCurrentVehicle
+          ? "Ready."
+          : "No active vehicle assignment to remove.",
+      onClick: onUnassign,
+    },
+    {
+      key: "install",
+      label: "Install checklist unavailable",
+      icon: <CheckCircle2 className="h-4 w-4" />,
+      state: "unsupported",
+      reason: "Installation command path is not connected in this pilot.",
+      onClick: onMarkInstalled,
+    },
+    {
+      key: "diagnostics",
+      label: "On-demand diagnostics unavailable",
+      icon: <Wrench className="h-4 w-4" />,
+      state: "unsupported",
+      reason: "Diagnostic run endpoint is not connected in this pilot; DTC evidence is read-only.",
+      onClick: onRunDiagnostics,
+    },
+    {
+      key: "refresh",
+      label: "Reload Snapshot",
+      icon: <RefreshCw className="h-4 w-4" />,
+      state: "ready",
+      reason: "Read endpoint available for a fresh status read.",
+      onClick: onRefresh,
+    },
+    {
+      key: "firmware",
+      label: canFirmware ? "OTA unavailable" : "OTA unavailable",
+      icon: <FileUp className="h-4 w-4" />,
+      state: canFirmware ? "unsupported" : "permission-blocked",
+      reason: canFirmware
+        ? "Firmware scheduling endpoint is not connected in this pilot."
+        : "Requires TELEMATICS_DEVICES_FIRMWARE to reach firmware controls.",
+      onClick: onScheduleFirmware,
+    },
+    {
+      key: inAttention ? "resolve" : "needs-attention",
+      label: inAttention ? "Resolve" : "Needs Attention",
+      icon: inAttention ? <ShieldCheck className="h-4 w-4" /> : <Activity className="h-4 w-4" />,
+      state: canDiagnostics ? (inAttention ? "ready" : "state-blocked") : "permission-blocked",
+      reason: canDiagnostics
+        ? inAttention
+          ? "Permission and state both allow recovery resolution."
+          : "Device must be in offline/attention state before resolve is available."
+        : "Requires TELEMATICS_DEVICES_DIAGNOSTICS.",
+      onClick: inAttention ? onResolve : onFlagAttention,
+    },
+    {
+      key: "archive",
+      label: "Archive",
+      icon: <Trash2 className="h-4 w-4" />,
+      state: canDelete ? "ready" : "permission-blocked",
+      reason: canDelete ? "Permission and revoke route available." : "Requires TELEMATICS_DEVICES_DELETE.",
+      onClick: onArchive,
+    },
+  ];
+
+  return contracts;
+}
+
+function actionContractTone(state: ActionContractState) {
+  if (state === "ready") return "border-emerald-300/60 bg-emerald-500/10 text-emerald-100";
+  if (state === "permission-blocked") return "border-amber-300/60 bg-amber-500/10 text-amber-100";
+  if (state === "state-blocked") return "border-sky-300/60 bg-sky-500/10 text-sky-100";
+  return "border-rose-300/60 bg-rose-500/10 text-rose-100";
+}
+
+function actionContractLabel(state: ActionContractState) {
+  if (state === "ready") return "Ready";
+  if (state === "permission-blocked") return "Permission";
+  if (state === "state-blocked") return "State";
+  return "Unavailable";
 }
 
 function DeviceLoadingState() {
@@ -262,7 +414,7 @@ export function IotDevicesPage() {
   const updateMut = useMutation({
     mutationFn: ({ id, payload }: { id: string | number; payload: DeviceFormState }) => telematicsService.updateDevice(id, payload),
     onSuccess: async () => {
-      setNotice("Device updated successfully.");
+      setNotice("Metadata edits were captured; only supported lifecycle metadata is currently persisted.");
       setDeviceModal(null);
       await refreshAll();
     },
@@ -305,7 +457,7 @@ export function IotDevicesPage() {
   const unassignMut = useMutation({
     mutationFn: (deviceId: string | number) => telematicsService.unassignDevice(deviceId),
     onSuccess: async (result) => {
-      noticeFromResult(result, "Device unassigned successfully.", "Unassign is not available for this device yet.");
+      noticeFromResult(result, "Device unassigned successfully.", "Unassign was not completed.");
       await refreshAll();
     },
   });
@@ -347,7 +499,8 @@ export function IotDevicesPage() {
     },
   });
   const attentionMut = useMutation({
-    mutationFn: ({ id, notes }: { id: string | number; notes: string }) => telematicsService.markDeviceAttention(id, notes),
+    mutationFn: ({ id, rowVersion, notes }: { id: string | number; rowVersion?: number; notes: string }) =>
+      telematicsService.markDeviceAttention(id, notes, rowVersion),
     onSuccess: async () => {
       setAttentionTarget(null);
       setAttentionNotes("");
@@ -356,7 +509,7 @@ export function IotDevicesPage() {
     },
   });
   const resolveMut = useMutation({
-    mutationFn: (id: string | number) => telematicsService.resolveDeviceAttention(id),
+    mutationFn: ({ id, rowVersion }: { id: string | number; rowVersion?: number }) => telematicsService.resolveDeviceAttention(id, rowVersion),
     onSuccess: async () => {
       setNotice("Recovery cleared and device returned to service.");
       await refreshAll();
@@ -525,7 +678,7 @@ export function IotDevicesPage() {
                     <button
                       className="btn-ghost"
                       disabled={!canManageProviders || providerSyncMut.isPending}
-                      title={actionTitle(canManageProviders, "Run a provider sync for scoped device inventory.")}
+                      title={actionTitle(canManageProviders, "Run provider sync for the selected integration scope.")}
                       onClick={() => canManageProviders && providerSyncMut.mutate(String(provider.id))}
                     >
                       <PlugZap className="h-4 w-4" /> Sync Provider
@@ -616,26 +769,43 @@ export function IotDevicesPage() {
               <LoadingState />
             ) : detailQ.isError || !detailQ.data ? (
               <ErrorState message="Unable to load this device." />
-            ) : (
-              <DeviceDetailDrawer
-                detail={detailQ.data}
-                onEdit={() => selectedRecord && openEdit(selectedRecord)}
-                onAssign={() => selectedRecord && (setAssignTarget(selectedRecord), setAssignVehicleCode(selectedRecord.assignedVehicleCode || ""))}
-                onUnassign={() => selectedRecord && canAssign && unassignMut.mutate(selectedRecord.id)}
-                onArchive={() => selectedRecord && canDelete && window.confirm(`Archive ${selectedRecord.deviceName}?`) && archiveMut.mutate(selectedRecord.id)}
-                onMarkInstalled={() => selectedRecord && canUpdate && installMut.mutate(selectedRecord.id)}
-                onRunDiagnostics={() => selectedRecord && canDiagnostics && diagnosticsMut.mutate(selectedRecord.id)}
-                onRefresh={() => selectedRecord && refreshMut.mutate(selectedRecord.id)}
-                onScheduleFirmware={() => selectedRecord && (setFirmwareTarget(selectedRecord), setFirmwareForm({ targetVersion: selectedRecord.targetFirmwareVersion, scheduledFor: "" }))}
-                onFlagAttention={() => selectedRecord && setAttentionTarget(selectedRecord)}
-                onResolve={() => selectedRecord && canDiagnostics && resolveMut.mutate(selectedRecord.id)}
-                canUpdate={canUpdate}
-                canDelete={canDelete}
-                canAssign={canAssign}
-                canDiagnostics={canDiagnostics}
-                canFirmware={canFirmware}
-              />
-            )}
+	            ) : (
+	              <DeviceDetailDrawer
+	                detail={detailQ.data}
+	                actionContracts={
+	                  selectedRecord
+	                    ? buildActionContracts(selectedRecord, {
+	                      canUpdate,
+	                      canDelete,
+	                      canAssign,
+	                      canDiagnostics,
+	                      canFirmware,
+	                      onEdit: () => openEdit(selectedRecord),
+	                      onAssign: () => {
+	                        if (selectedRecord) {
+	                          setAssignTarget(selectedRecord);
+	                          setAssignVehicleCode(selectedRecord.assignedVehicleCode || "");
+	                        }
+	                      },
+	                      onUnassign: () => canAssign && unassignMut.mutate(selectedRecord.id),
+	                      onArchive: () => canDelete && window.confirm(`Archive ${selectedRecord.deviceName}?`) && archiveMut.mutate(selectedRecord.id),
+	                      onMarkInstalled: () => canUpdate && installMut.mutate(selectedRecord.id),
+	                      onRunDiagnostics: () => canDiagnostics && diagnosticsMut.mutate(selectedRecord.id),
+	                      onRefresh: () => selectedRecord && void refreshMut.mutate(selectedRecord.id),
+	                      onScheduleFirmware: () => {
+	                        if (selectedRecord) {
+	                          setFirmwareTarget(selectedRecord);
+	                          setFirmwareForm({ targetVersion: selectedRecord.targetFirmwareVersion, scheduledFor: "" });
+	                        }
+	                      },
+	                      onFlagAttention: () => setAttentionTarget(selectedRecord),
+	                      onResolve: () =>
+	                        canDiagnostics && resolveMut.mutate({ id: selectedRecord.id, rowVersion: selectedRecord.rowVersion }),
+	                    })
+	                    : []
+	                }
+	              />
+	            )}
           </aside>
         </div>
       ) : null}
@@ -672,6 +842,9 @@ export function IotDevicesPage() {
           submitLabel="Save Device"
           busy={updateMut.isPending}
         >
+          <p className="mb-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+            Pilot scope: this form reflects device metadata for review, but only supported lifecycle writes are persisted today (assignment, unassign/revoke, provision, recovery).
+          </p>
           <div className="grid gap-4 md:grid-cols-2">
             <FormField label="Device Name"><input className="field w-full" value={deviceForm.deviceName} onChange={(event) => setDeviceForm((form) => ({ ...form, deviceName: event.target.value }))} required /></FormField>
             <FormField label="Device Type"><input className="field w-full" value={deviceForm.deviceType} onChange={(event) => setDeviceForm((form) => ({ ...form, deviceType: event.target.value }))} required /></FormField>
@@ -737,7 +910,11 @@ export function IotDevicesPage() {
           onClose={() => setAttentionTarget(null)}
           onSubmit={(event) => {
             event.preventDefault();
-            attentionMut.mutate({ id: attentionTarget.id, notes: attentionNotes });
+            attentionMut.mutate({
+              id: attentionTarget.id,
+              rowVersion: attentionTarget.rowVersion,
+              notes: attentionNotes,
+            });
           }}
           submitLabel="Open Recovery"
           busy={attentionMut.isPending}
@@ -753,38 +930,10 @@ export function IotDevicesPage() {
 
 function DeviceDetailDrawer({
   detail,
-  onEdit,
-  onAssign,
-  onUnassign,
-  onArchive,
-  onMarkInstalled,
-  onRunDiagnostics,
-  onRefresh,
-  onScheduleFirmware,
-  onFlagAttention,
-  onResolve,
-  canUpdate,
-  canDelete,
-  canAssign,
-  canDiagnostics,
-  canFirmware,
+  actionContracts,
 }: {
   detail: DeviceDetailRecord;
-  onEdit: () => void;
-  onAssign: () => void;
-  onUnassign: () => void;
-  onArchive: () => void;
-  onMarkInstalled: () => void;
-  onRunDiagnostics: () => void;
-  onRefresh: () => void;
-  onScheduleFirmware: () => void;
-  onFlagAttention: () => void;
-  onResolve: () => void;
-  canUpdate: boolean;
-  canDelete: boolean;
-  canAssign: boolean;
-  canDiagnostics: boolean;
-  canFirmware: boolean;
+  actionContracts: DeviceActionContract[];
 }) {
   const { device } = detail;
   // Guard every [0] access — these live sub-feeds are frequently empty. `telemetry`
@@ -815,20 +964,23 @@ function DeviceDetailDrawer({
         </div>
       </div>
 
+      <div className="mt-2 flex flex-wrap gap-2">
+        {actionContracts.map((contract) => (
+          <ActionContractBadge key={`contract-${contract.key}`} contract={contract} />
+        ))}
+      </div>
       <div className="mt-6 flex flex-wrap gap-3">
-        <ActionButton label="Edit Device" icon={<Edit3 className="h-4 w-4" />} allowed={canUpdate} onClick={onEdit} />
-        <ActionButton label="Assign" icon={<ArrowRightLeft className="h-4 w-4" />} allowed={canAssign} onClick={onAssign} />
-        <ActionButton label="Unassign unavailable" icon={<Truck className="h-4 w-4" />} allowed={false} onClick={onUnassign} unavailableReason="Unassign is not connected to a backend workflow in this pilot." />
-        <ActionButton label="Install checklist unavailable" icon={<CheckCircle2 className="h-4 w-4" />} allowed={false} onClick={onMarkInstalled} unavailableReason="Installation evidence is not connected in this pilot." />
-        <ActionButton label="On-demand diagnostics unavailable" icon={<Wrench className="h-4 w-4" />} allowed={false} onClick={onRunDiagnostics} unavailableReason="This pilot displays received DTC evidence but cannot request a diagnostic run." />
-        <ActionButton label="Reload Snapshot" icon={<RefreshCw className="h-4 w-4" />} allowed={true} onClick={onRefresh} />
-        <ActionButton label="OTA unavailable" icon={<FileUp className="h-4 w-4" />} allowed={false} onClick={onScheduleFirmware} unavailableReason="OTA scheduling is not connected in this pilot." />
-        {/offline|attention/i.test(device.connectionStatus) ? (
-          <ActionButton label="Resolve" icon={<ShieldCheck className="h-4 w-4" />} allowed={canDiagnostics} onClick={onResolve} />
-        ) : (
-          <ActionButton label="Needs Attention" icon={<Activity className="h-4 w-4" />} allowed={canDiagnostics} onClick={onFlagAttention} />
-        )}
-        <ActionButton label="Archive" icon={<Trash2 className="h-4 w-4" />} allowed={canDelete} onClick={onArchive} />
+        {actionContracts.map((contract) => (
+          <ActionButton
+            key={contract.key}
+            label={contract.label}
+            icon={contract.icon}
+            allowed={contract.state === "ready"}
+            onClick={() => contract.onClick()}
+            unavailableReason={contract.reason}
+            contractState={contract.state}
+          />
+        ))}
       </div>
 
       <div className="mt-6 grid gap-4 lg:grid-cols-3">
@@ -856,6 +1008,38 @@ function DeviceDetailDrawer({
           ["Install status", device.installStatus],
           ["Compliance", device.complianceSummary],
         ]} />
+      </div>
+
+      <div className="mt-6">
+        <PanelSection title="Provider / Integration Audit">
+          {detail.providers.length ? (
+            <div className="space-y-3">
+              {detail.providers.map((provider) => {
+                const connectedTo = Array.isArray(provider.connectedTo) && provider.connectedTo.length ? provider.connectedTo.join(", ") : "—";
+                const matchConfidence = provider.matchConfidence ?? "none";
+                return (
+                  <div key={String(provider.id)} className="rounded-xl border border-white/[0.07] bg-black/10 p-3">
+                    <MiniGrid rows={[
+                      ["Connector", String(provider.name)],
+                      ["Integration status", String(provider.integrationStatus)],
+                      ["Match confidence", String(matchConfidence)],
+                      ["Device match", provider.isMatchedToDevice ? "Matched to this device" : "No direct match"],
+                      ["Scoped devices", String(provider.deviceCount || 0)],
+                      ["Connected devices", connectedTo],
+                      ["Data visibility", String(provider.visibilitySource ?? "unmatched")],
+                      ["Needs follow-up", String(provider.pendingDevices ?? 0)],
+                    ]} />
+                    <p className="mt-3 rounded-lg border border-white/[0.08] bg-black/10 p-2 text-xs text-slate-300">
+                      {String(provider.auditMessage || "No integration audit note available.")}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="text-sm text-slate-400">No provider integration evidence is currently available for this device.</p>
+          )}
+        </PanelSection>
       </div>
 
       <div className="mt-6 grid gap-4 xl:grid-cols-2">
@@ -1269,12 +1453,49 @@ function CopyField({ label, value, secret = false }: { label: string; value: str
   );
 }
 
-function ActionButton({ label, icon, allowed, onClick, unavailableReason }: { label: string; icon: ReactNode; allowed: boolean; onClick: () => void; unavailableReason?: string }) {
+function ActionContractBadge({ contract }: { contract: DeviceActionContract }) {
+  return (
+    <span
+      className={`inline-flex rounded-full border px-2 py-1 text-xs font-semibold ${actionContractTone(contract.state)}`}
+      title={contract.reason}
+    >
+      {contract.label}
+      <span className="ml-1 rounded-full border border-current/40 px-1.5 py-0.5 text-[10px] text-current">
+        {actionContractLabel(contract.state)}
+      </span>
+    </span>
+  );
+}
+
+function ActionButton({
+  label,
+  icon,
+  allowed,
+  onClick,
+  unavailableReason,
+  contractState,
+}: {
+  label: string;
+  icon: ReactNode;
+  allowed: boolean;
+  onClick: () => void;
+  unavailableReason?: string;
+  contractState?: ActionContractState;
+}) {
+  const state = contractState ?? (allowed ? "ready" : "permission-blocked");
   return (
     <button
       className={allowed ? "btn-ghost" : "btn-ghost opacity-60"}
       disabled={!allowed}
-      title={allowed ? label : unavailableReason ?? "You do not have permission to perform this action."}
+      title={
+        allowed
+          ? unavailableReason
+            ? `${label} · ${unavailableReason}`
+            : label
+          : unavailableReason
+            ? `${actionContractLabel(state)}: ${unavailableReason}`
+            : "You do not have permission to perform this action."
+      }
       onClick={() => allowed && onClick()}
     >
       {icon} {label}
