@@ -140,7 +140,7 @@ export const logisticsApi = {
   progressRoute: (id: string, body: { completedStopsDelta?: number; currentStop?: string; nextStop?: string; etaCompleteUtc?: string; notes?: string; idempotencyKey?: string }) =>
     unwrap<LogisticsRoute>(apiClient.post(`/api/fleet-tms/logistics/routes/${id}/progress`, { ...body, idempotencyKey: body.idempotencyKey ?? actionKey() })),
 
-  confirmDelivery: (id: string, body: { recipientName?: string; proofStatus?: string; exceptionReason?: string; idempotencyKey?: string }) =>
+  confirmDelivery: (id: string, body: { recipientName?: string; proofStatus?: string; exceptionReason?: string; evidenceReference?: string; idempotencyKey?: string }) =>
     unwrap<LogisticsStop>(apiClient.post(`/api/fleet-tms/logistics/stops/${id}/deliver`, { ...body, idempotencyKey: body.idempotencyKey ?? actionKey() })),
 
   recordAttempt: (id: string, body: { status?: string; proofStatus?: string; exceptionReason?: string; nextEtaUtc?: string; nextStop?: string; idempotencyKey?: string }) =>

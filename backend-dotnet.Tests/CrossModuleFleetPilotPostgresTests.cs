@@ -113,7 +113,7 @@ public sealed class CrossModuleFleetPilotPostgresTests
             var stop = await db.ScalarLongAsync("SELECT id FROM fleet_tms_last_mile_stops WHERE company_id=@c AND order_number=@n",
                 c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@n", orderNumber); });
 
-            var delivery = new ConfirmDeliveryRequest("Receiving Lead", "Captured", null, $"deliver-{suffix}");
+            var delivery = new ConfirmDeliveryRequest("Receiving Lead", "Captured", null, "signed-pod", $"deliver-{suffix}");
             AssertStatus(await Fleet("ConfirmDelivery", Principal(company, otherBranch), stop, delivery, Db()), StatusCodes.Status404NotFound);
             AssertStatus(await Fleet("ConfirmDelivery", Principal(attackerCompany, attackerBranch), stop, delivery, Db()), StatusCodes.Status404NotFound);
             var deliveryResults = await Task.WhenAll(

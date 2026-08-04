@@ -2800,8 +2800,8 @@ public static partial class EndpointMappings
         // be persisted rather than issuing a token that is invalid on its first use.
         await db.ExecuteAsync(
             @"INSERT INTO user_sessions (user_id, company_id, session_token, expires_at)
-              VALUES (@uid, @cid, @tok, NOW() + 8 * INTERVAL '1 hour')
-              ON CONFLICT (session_token) DO UPDATE SET expires_at = NOW() + 8 * INTERVAL '1 hour'",
+              VALUES (@uid, @cid, @tok, NOW() + COALESCE((SELECT session_absolute_timeout_minutes FROM company_security_settings WHERE company_id=@cid), 480) * INTERVAL '1 minute')
+              ON CONFLICT (session_token) DO UPDATE SET expires_at = NOW() + COALESCE((SELECT session_absolute_timeout_minutes FROM company_security_settings WHERE company_id=@cid), 480) * INTERVAL '1 minute'",
             c =>
             {
                 c.Parameters.AddWithValue("@uid", userId);
@@ -3420,8 +3420,8 @@ public static partial class EndpointMappings
         var csrfToken = CurrentCsrfToken(http);
         await db.ExecuteAsync(
             @"INSERT INTO user_sessions (user_id, company_id, session_token, expires_at)
-              VALUES (@uid, @cid, @tok, NOW() + 8 * INTERVAL '1 hour')
-              ON CONFLICT (session_token) DO UPDATE SET expires_at = NOW() + 8 * INTERVAL '1 hour'",
+              VALUES (@uid, @cid, @tok, NOW() + COALESCE((SELECT session_absolute_timeout_minutes FROM company_security_settings WHERE company_id=@cid), 480) * INTERVAL '1 minute')
+              ON CONFLICT (session_token) DO UPDATE SET expires_at = NOW() + COALESCE((SELECT session_absolute_timeout_minutes FROM company_security_settings WHERE company_id=@cid), 480) * INTERVAL '1 minute'",
             c => { c.Parameters.AddWithValue("@uid", userId); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@tok", token); }, ct);
 
         return Results.Ok(ApiResponse<object>.Ok(new
@@ -3680,8 +3680,8 @@ public static partial class EndpointMappings
         var csrfToken = CurrentCsrfToken(http);
         await db.ExecuteAsync(
             @"INSERT INTO user_sessions (user_id, company_id, session_token, expires_at)
-              VALUES (@uid, @cid, @tok, NOW() + 8 * INTERVAL '1 hour')
-              ON CONFLICT (session_token) DO UPDATE SET expires_at = NOW() + 8 * INTERVAL '1 hour'",
+              VALUES (@uid, @cid, @tok, NOW() + COALESCE((SELECT session_absolute_timeout_minutes FROM company_security_settings WHERE company_id=@cid), 480) * INTERVAL '1 minute')
+              ON CONFLICT (session_token) DO UPDATE SET expires_at = NOW() + COALESCE((SELECT session_absolute_timeout_minutes FROM company_security_settings WHERE company_id=@cid), 480) * INTERVAL '1 minute'",
             c => { c.Parameters.AddWithValue("@uid", userId); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@tok", token); }, ct);
 
         await audit.LogAsync(http, "user.login", "User", userId,
@@ -3880,7 +3880,7 @@ public static partial class EndpointMappings
         var token = BearerToken(http);
         if (string.IsNullOrWhiteSpace(token)) return Results.Unauthorized();
         await db.ExecuteAsync(
-            "UPDATE user_sessions SET expires_at = NOW() + 8 * INTERVAL '1 hour' WHERE session_token=@tok",
+            "UPDATE user_sessions SET expires_at = NOW() + COALESCE((SELECT session_absolute_timeout_minutes FROM company_security_settings css WHERE css.company_id=user_sessions.company_id), 480) * INTERVAL '1 minute' WHERE session_token=@tok",
             c => c.Parameters.AddWithValue("@tok", token), ct);
         return await AuthMe(http, db, ct);
     }

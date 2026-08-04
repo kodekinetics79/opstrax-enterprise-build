@@ -29,7 +29,7 @@ public sealed class LastMileWorkflowPostgresTests
         {
             var wrongBranch = Principal(seed.Company, seed.OtherBranch, "fleet.pod.manage");
             Assert.Equal(StatusCodes.Status404NotFound, Status(await Invoke("ConfirmDelivery", wrongBranch, seed.Stop,
-                new ConfirmDeliveryRequest("Receiver", "Captured", null, "wrong-branch"), Db())));
+                new ConfirmDeliveryRequest("Receiver", "Captured", null, "signed-pod", "wrong-branch"), Db())));
 
             var operatorHttp = Principal(seed.Company, seed.Branch, "dispatch:update");
             Assert.Equal(StatusCodes.Status400BadRequest, Status(await Invoke("RecordAttempt", operatorHttp, seed.Stop,
@@ -60,7 +60,7 @@ public sealed class LastMileWorkflowPostgresTests
 
             var podHttp = Principal(seed.Company, seed.Branch, "fleet.pod.manage");
             podHttp.Items.Remove(EndpointMappings.AuthBranchIdItemKey);
-            var delivery = new ConfirmDeliveryRequest("Receiver", "Captured", null, "deliver-one");
+            var delivery = new ConfirmDeliveryRequest("Receiver", "Captured", null, "signed-pod", "deliver-one");
             var results = await Task.WhenAll(
                 Invoke("ConfirmDelivery", podHttp, seed.Stop, delivery, Db()),
                 Invoke("ConfirmDelivery", TenantWidePrincipal(seed.Company, "fleet.pod.manage"), seed.Stop, delivery, Db()));
@@ -131,7 +131,7 @@ public sealed class LastMileWorkflowPostgresTests
             var tenantWide = Principal(seed.Company, seed.Branch, "fleet.pod.manage");
             tenantWide.Items.Remove(EndpointMappings.AuthBranchIdItemKey);
             var result = await Invoke("ConfirmDelivery", tenantWide, seed.Stop,
-                new ConfirmDeliveryRequest("Receiver", "Captured", null, "cross-branch-link"), db);
+                new ConfirmDeliveryRequest("Receiver", "Captured", null, "signed-pod", "cross-branch-link"), db);
             Assert.Equal(StatusCodes.Status409Conflict, Status(result));
             Assert.Equal("OutForDelivery", (await db.QuerySingleAsync("SELECT status FROM fleet_tms_last_mile_stops WHERE id=@id", c => c.Parameters.AddWithValue("@id", seed.Stop)))!["status"]);
             Assert.Equal("InTransit", (await db.QuerySingleAsync("SELECT status FROM fleet_tms_dispatch_orders WHERE company_id=@c AND order_number=@o", c => { c.Parameters.AddWithValue("@c", seed.Company); c.Parameters.AddWithValue("@o", seed.OrderNumber); }))!["status"]);
@@ -149,7 +149,7 @@ public sealed class LastMileWorkflowPostgresTests
         {
             await db.ExecuteAsync("UPDATE fleet_tms_delivery_routes SET planned_stops=0 WHERE id=@id", c => c.Parameters.AddWithValue("@id", seed.Route));
             var result = await Invoke("ConfirmDelivery", Principal(seed.Company, seed.Branch, "fleet.pod.manage"), seed.Stop,
-                new ConfirmDeliveryRequest("Receiver", "Captured", null, "zero-plan"), db);
+                new ConfirmDeliveryRequest("Receiver", "Captured", null, "signed-pod", "zero-plan"), db);
             Assert.Equal(StatusCodes.Status409Conflict, Status(result));
             Assert.Equal("OutForDelivery", (await db.QuerySingleAsync("SELECT status FROM fleet_tms_last_mile_stops WHERE id=@id", c => c.Parameters.AddWithValue("@id", seed.Stop)))!["status"]);
         }

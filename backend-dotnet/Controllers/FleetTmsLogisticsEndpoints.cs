@@ -586,9 +586,11 @@ WHERE id=@id AND company_id=@companyId AND (@branchId::BIGINT IS NULL OR branch_
         var branchId = Bid(http);
         var key = Clean(req.IdempotencyKey, 80);
         var recipient = Clean(req.RecipientName, 255);
+        var evidence = Clean(req.EvidenceReference, 2000);
         var proof = Clean(req.ProofStatus, 30) ?? "Captured";
         if (key is null) return Bad("A valid idempotencyKey is required.");
         if (recipient is null) return Bad("Recipient name is required.");
+        if (evidence is null) return Bad("Delivery evidence (signature or photo reference) is required to confirm delivery.");
         if (proof is not ("Captured" or "Verified")) return Bad("proofStatus must be Captured or Verified.");
         var operation = $"fleet-tms.stop.{id}.deliver";
         var requestHash = ActionRequestHash(req);
@@ -610,10 +612,10 @@ WHERE id=@id AND company_id=@companyId AND (@branchId::BIGINT IS NULL OR branch_
             return Results.Conflict(ApiResponse<object>.Fail("The stop cannot be delivered from its current state."));
         await db.ExecuteAsync(@"
 UPDATE fleet_tms_last_mile_stops SET status='Delivered', proof_status=@proof, recipient_name=COALESCE(NULLIF(@recipient,''), recipient_name),
-  delivered_at_utc=NOW(), exception_reason=@exception, attempt_count=GREATEST(attempt_count, 1), updated_at_utc=NOW(),
+  proof_evidence_ref=@evidence, delivered_at_utc=NOW(), exception_reason=@exception, attempt_count=GREATEST(attempt_count, 1), updated_at_utc=NOW(),
   last_action_key=@key, last_action_type='Deliver'
 WHERE id=@id AND company_id=@companyId AND (@branchId::BIGINT IS NULL OR branch_id=@branchId)",
-            c => { c.Parameters.AddWithValue("@proof", proof); c.Parameters.AddWithValue("@recipient", recipient); c.Parameters.AddWithValue("@exception", Clean(req.ExceptionReason, 2000) ?? ""); c.Parameters.AddWithValue("@key", key); c.Parameters.AddWithValue("@id", id); BindScope(c, companyId, branchId); }, ct);
+            c => { c.Parameters.AddWithValue("@proof", proof); c.Parameters.AddWithValue("@recipient", recipient); c.Parameters.AddWithValue("@evidence", evidence); c.Parameters.AddWithValue("@exception", Clean(req.ExceptionReason, 2000) ?? ""); c.Parameters.AddWithValue("@key", key); c.Parameters.AddWithValue("@id", id); BindScope(c, companyId, branchId); }, ct);
 
         var orderNumber = stop["orderNumber"]?.ToString() ?? "";
         var routeCode = stop["routeCode"]?.ToString() ?? "";
@@ -812,6 +814,6 @@ public record LogisticsOrderRequest(string? OrderNumber, string? CustomerName, s
 public record LogisticsRouteRequest(string? RouteCode, string? Hub, string? Territory, string? DriverName, string? VehicleNumber, string? Status, int? PlannedStops, int? CompletedStops, decimal? DistanceKm, decimal? CompletionPercent, string? CurrentStop, string? NextStop, DateTime? PlannedForDate, DateTime? DepartureTimeUtc, DateTime? EtaCompleteUtc, string? Notes);
 public record DispatchOrderRequest(string? RouteCode, string? DriverName, string? VehicleNumber, string? Notes);
 public record RouteProgressRequest(int CompletedStopsDelta, string? CurrentStop, string? NextStop, DateTime? EtaCompleteUtc, string? Notes, string? IdempotencyKey = null);
-public record ConfirmDeliveryRequest(string? RecipientName, string? ProofStatus, string? ExceptionReason, string? IdempotencyKey = null);
+public record ConfirmDeliveryRequest(string? RecipientName, string? ProofStatus, string? ExceptionReason, string? EvidenceReference = null, string? IdempotencyKey = null);
 public record StopAttemptRequest(string? Status, string? ProofStatus, string? ExceptionReason, DateTime? NextEtaUtc, string? NextStop, string? IdempotencyKey = null);
 public record StopRescheduleRequest(DateTime? NextEtaUtc, string? TimeWindow, string? Reason, string? IdempotencyKey = null);
