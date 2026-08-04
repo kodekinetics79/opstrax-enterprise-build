@@ -37,6 +37,14 @@ export function DetentionPage() {
       void navigator.clipboard?.writeText(url);
     },
   });
+  const setAppointment = useMutation({
+    mutationFn: ({ id, appointmentAt }: { id: number; appointmentAt: string }) => detentionApi.setAppointment(id, appointmentAt),
+    onSuccess: invalidate,
+  });
+  const attestNoAppointment = useMutation({
+    mutationFn: (id: number) => detentionApi.attestNoAppointment(id),
+    onSuccess: invalidate,
+  });
 
   if (funnel.isLoading || dwells.isLoading) return <LoadingState />;
   if (dwells.isError) return <ErrorState message={(dwells.error as Error)?.message} onRetry={() => dwells.refetch()} />;
@@ -91,13 +99,17 @@ export function DetentionPage() {
         <DwellQueue rows={ready} kind="ready"
           onApprove={(id, note) => approve.mutate({ id, note })}
           onDismiss={(id, reason) => dismiss.mutate({ id, reason })}
-          onShare={(id) => share.mutate(id)} />
+          onShare={(id) => share.mutate(id)}
+          onSetAppointment={(id, appointmentAt) => setAppointment.mutateAsync({ id, appointmentAt })}
+          onAttestNoAppointment={(id) => attestNoAppointment.mutateAsync(id)} />
       )}
       {tab === "Needs attention" && (
         <DwellQueue rows={attention} kind="attention"
           onApprove={(id, note) => approve.mutate({ id, note })}
           onDismiss={(id, reason) => dismiss.mutate({ id, reason })}
-          onShare={(id) => share.mutate(id)} />
+          onShare={(id) => share.mutate(id)}
+          onSetAppointment={(id, appointmentAt) => setAppointment.mutateAsync({ id, appointmentAt })}
+          onAttestNoAppointment={(id) => attestNoAppointment.mutateAsync(id)} />
       )}
       {tab === "History" && (
         <Table rows={history} empty="No history yet — approved and dismissed dwells appear here."
@@ -115,15 +127,20 @@ export function DetentionPage() {
 }
 
 // ── The queue: each dwell is a sentence, not a chart. ──────────────────────────
-function DwellQueue({ rows, kind, onApprove, onDismiss, onShare }: {
+function DwellQueue({ rows, kind, onApprove, onDismiss, onShare, onSetAppointment, onAttestNoAppointment }: {
   rows: AnyRecord[];
   kind: "ready" | "attention";
   onApprove: (id: number, note?: string) => void;
   onDismiss: (id: number, reason: string) => void;
   onShare: (id: number) => void;
+  onSetAppointment: (id: number, appointmentAt: string) => Promise<unknown>;
+  onAttestNoAppointment: (id: number) => Promise<unknown>;
 }) {
   const [noteFor, setNoteFor] = useState<number | null>(null);
   const [note, setNote] = useState("");
+  const [apptFor, setApptFor] = useState<number | null>(null);
+  const [apptValue, setApptValue] = useState("");
+  const [apptError, setApptError] = useState<{ id: number; message: string } | null>(null);
 
   if (!rows.length)
     return <p className="py-8 text-center text-sm text-slate-400">
@@ -156,6 +173,41 @@ function DwellQueue({ rows, kind, onApprove, onDismiss, onShare }: {
               )}
             </p>
             <div className="flex flex-wrap items-center gap-2">
+              {r.status === "needs_appointment" && (
+                apptFor === id ? (
+                  <>
+                    <input type="datetime-local" value={apptValue} onChange={(e) => setApptValue(e.target.value)}
+                      className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-teal-500 focus:outline-none" />
+                    <button type="button" className="btn-primary text-sm" disabled={!apptValue}
+                      onClick={() => {
+                        setApptError(null);
+                        onSetAppointment(id, new Date(apptValue).toISOString())
+                          .then(() => { setApptFor(null); setApptValue(""); })
+                          .catch((e) => setApptError({ id, message: (e as Error)?.message ?? "Failed to set appointment" }));
+                      }}>
+                      Confirm appointment
+                    </button>
+                    <button type="button" className="text-xs text-slate-500 underline"
+                      onClick={() => { setApptFor(null); setApptValue(""); setApptError(null); }}>
+                      Cancel
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button type="button" className="btn-primary text-sm"
+                      onClick={() => { setApptFor(id); setApptValue(""); setApptError(null); }}>
+                      Confirm appointment
+                    </button>
+                    <button type="button" className="btn-secondary text-sm"
+                      onClick={() => {
+                        setApptError(null);
+                        onAttestNoAppointment(id).catch((e) => setApptError({ id, message: (e as Error)?.message ?? "Failed to attest" }));
+                      }}>
+                      Attest no appointment
+                    </button>
+                  </>
+                )
+              )}
               {(r.status === "priced_pending_review" || needsOverride) && (
                 noteFor === id || needsOverride ? (
                   <>
@@ -185,6 +237,7 @@ function DwellQueue({ rows, kind, onApprove, onDismiss, onShare }: {
                 Dismiss
               </button>
             </div>
+            {apptError?.id === id ? <p className="text-xs text-red-600">{apptError.message}</p> : null}
           </div>
         );
       })}

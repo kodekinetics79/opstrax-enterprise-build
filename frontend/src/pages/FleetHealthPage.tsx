@@ -501,6 +501,11 @@ function VehicleDrawer({
               icon={<AlertTriangle className="h-4 w-4" />}
               badge={defects.length > 0 ? "critical" : undefined}
             >
+              {ackDefect.isError && (
+                <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                  {(ackDefect.error as any)?.response?.data?.message ?? (ackDefect.error as any)?.message ?? "Failed to acknowledge defect."}
+                </p>
+              )}
               {defects.length === 0
                 ? <p className="text-sm text-slate-500 italic">No open defects.</p>
                 : defects.map((d, i) => {

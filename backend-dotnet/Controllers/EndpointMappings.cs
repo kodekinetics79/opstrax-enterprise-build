@@ -1983,21 +1983,51 @@ public static partial class EndpointMappings
               WHERE company_id=@cid AND module_key='driver-messages' AND deleted_at IS NULL
               ORDER BY created_at DESC LIMIT 100",
             c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
-        app.MapPost("/api/driver-messages", async (HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) => {
+        app.MapPost("/api/driver-messages", async (HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, NotificationService notif, CancellationToken ct) => {
             var c = GetCompanyId(http);
             var code = $"MSG-{Guid.NewGuid():N}"[..16];
-            var subject = body.GetValueOrDefault("subject")?.ToString() ?? "Message";
+            var subject   = body.GetValueOrDefault("subject")?.ToString() ?? "Message";
+            var recipient = body.GetValueOrDefault("recipient")?.ToString() ?? "";
+            // Compose posts the message text as `body`; fall back to the subject if empty.
+            var messageText = body.GetValueOrDefault("body")?.ToString();
+            if (string.IsNullOrWhiteSpace(messageText)) messageText = subject;
+            // History/KPI row for the Driver Messaging page (GET /api/driver-messages reads this).
             await db.ExecuteAsync(@"INSERT INTO module_records (company_id,module_key,record_code,title,status,tags,secondary_value,numeric_value) VALUES(@c,'driver-messages',@code,@subj,'Delivered',@ch,@recv,0)",
-                cmd => { cmd.Parameters.AddWithValue("@c", c); cmd.Parameters.AddWithValue("@code", code); cmd.Parameters.AddWithValue("@subj", subject); cmd.Parameters.AddWithValue("@ch", body.GetValueOrDefault("channel")?.ToString() ?? "In-App"); cmd.Parameters.AddWithValue("@recv", body.GetValueOrDefault("recipient")?.ToString() ?? ""); }, ct);
+                cmd => { cmd.Parameters.AddWithValue("@c", c); cmd.Parameters.AddWithValue("@code", code); cmd.Parameters.AddWithValue("@subj", subject); cmd.Parameters.AddWithValue("@ch", body.GetValueOrDefault("channel")?.ToString() ?? "In-App"); cmd.Parameters.AddWithValue("@recv", recipient); }, ct);
+            // Actually deliver the message: resolve the recipient driver (the composer posts the
+            // driver's display name or code, tenant-scoped) and raise a real in-app notification so
+            // it reaches the driver instead of only recording a hardcoded 'Delivered' row.
+            if (!string.IsNullOrWhiteSpace(recipient))
+            {
+                var driverRow = await db.QuerySingleAsync(
+                    @"SELECT id FROM drivers
+                      WHERE company_id=@c AND deleted_at IS NULL
+                        AND (full_name=@r OR driver_code=@r)
+                      LIMIT 1",
+                    cmd => { cmd.Parameters.AddWithValue("@c", c); cmd.Parameters.AddWithValue("@r", recipient); }, ct);
+                var driverId = driverRow?["id"] is not null and not DBNull ? Convert.ToInt64(driverRow["id"]) : (long?)null;
+                if (driverId.HasValue)
+                    await notif.CreateAsync(c, "driver_message.sent", "driver_message", null,
+                        "info", subject, messageText,
+                        "driver", ct, targetDriverId: driverId.Value);
+            }
             await audit.LogAsync(http, "driver_message.sent", "DriverMessage", 0, $"Sent driver message: {subject}", ct: ct);
             return Results.Ok(ApiResponse<object>.Ok(new { code, subject }));
         });
-        app.MapPost("/api/driver-messages/broadcast", async (HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) => {
+        app.MapPost("/api/driver-messages/broadcast", async (HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, NotificationService notif, CancellationToken ct) => {
             var c = GetCompanyId(http);
             var code = $"BCAST-{Guid.NewGuid():N}"[..18];
             var subject = body.GetValueOrDefault("subject")?.ToString() ?? "Broadcast";
+            var messageText = body.GetValueOrDefault("body")?.ToString();
+            if (string.IsNullOrWhiteSpace(messageText)) messageText = subject;
+            // History/KPI row (GET /api/driver-messages reads this).
             await db.ExecuteAsync(@"INSERT INTO module_records (company_id,module_key,record_code,title,status,tags,secondary_value) VALUES(@c,'driver-messages',@code,@subj,'Delivered','Broadcast',@grp)",
                 cmd => { cmd.Parameters.AddWithValue("@c", c); cmd.Parameters.AddWithValue("@code", code); cmd.Parameters.AddWithValue("@subj", subject); cmd.Parameters.AddWithValue("@grp", body.GetValueOrDefault("group")?.ToString() ?? "All Drivers"); }, ct);
+            // Actually deliver: audience "driver" with no target role-broadcasts to every Active
+            // Driver user in this tenant. Sub-group segmentation (shift/lane) is not modeled yet,
+            // so a broadcast reaches all drivers; the requested group is kept on the history row.
+            await notif.CreateAsync(c, "driver_message.broadcast", "driver_message", null,
+                "info", subject, messageText, "driver", ct);
             await audit.LogAsync(http, "driver_message.broadcast", "DriverMessage", 0, $"Broadcast sent: {subject}", ct: ct);
             return Results.Ok(ApiResponse<object>.Ok(new { code, subject }));
         });
@@ -3869,13 +3899,18 @@ public static partial class EndpointMappings
 
     // POST /api/auth/change-password — verify the current password hash, store a new
     // PBKDF2 hash, clear any legacy plaintext value, and revoke other sessions.
-    private static async Task<IResult> ChangePassword(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
+    private static async Task<IResult> ChangePassword(HttpContext http, Dictionary<string, object?> body, Database db,
+        SecuritySettingsService securitySettings, PasswordPolicyService passwordPolicy, AuditService audit, CancellationToken ct)
     {
         var userId = GetUserId(http);
         var current = Get(body, "currentPassword")?.ToString() ?? string.Empty;
         var next = Get(body, "newPassword")?.ToString() ?? string.Empty;
         if (next.Length < 6)
             return Results.BadRequest(ApiResponse<object>.Fail("New password must be at least 6 characters"));
+
+        var policy = await securitySettings.GetAsync(GetCompanyId(http), ct);
+        var validation = PasswordPolicyService.ValidatePassword(next, policy);
+        if (!validation.valid) return Results.BadRequest(ApiResponse<object>.Fail(string.Join(". ", validation.failures)));
 
         var user = await db.QuerySingleAsync(
             "SELECT password_hash FROM users WHERE id=@id AND status='Active' LIMIT 1",
@@ -6938,10 +6973,15 @@ public static partial class EndpointMappings
                      COALESCE(r.planned_start, r.created_at) planned_start_time,
                      COALESCE(r.planned_end, r.created_at + INTERVAL '6 hours') planned_end_time,
                      COALESCE(r.efficiency_score,85) efficiency_score
-              FROM routes r LEFT JOIN vehicles v ON v.id=r.assigned_vehicle_id LEFT JOIN drivers d ON d.id=r.assigned_driver_id
+              FROM routes r LEFT JOIN vehicles v ON v.id=r.assigned_vehicle_id AND v.company_id=r.company_id
+                            LEFT JOIN drivers d ON d.id=r.assigned_driver_id AND d.company_id=r.company_id
               WHERE r.company_id=@cid AND r.deleted_at IS NULL AND r.status IN ('Active','Planned','Delayed')
+                AND (@branchId::BIGINT IS NULL OR r.branch_id=@branchId
+                     OR (r.branch_id IS NULL AND (v.branch_id=@branchId OR d.branch_id=@branchId))
+                     OR (r.branch_id IS NULL AND EXISTS (SELECT 1 FROM route_stops rs JOIN jobs j ON j.id=rs.job_id AND j.company_id=r.company_id
+                                                        WHERE rs.route_id=r.id AND rs.company_id=r.company_id AND j.branch_id=@branchId)))
               ORDER BY COALESCE(r.planned_start, r.created_at)",
-            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct)).ToList();
+            c => { c.Parameters.AddWithValue("@cid", GetCompanyId(http)); c.Parameters.AddWithValue("@branchId", GetBranchId(http) ?? (object)DBNull.Value); }, ct)).ToList();
         var routeIds = routes.Select(r => (long)((IDictionary<string, object?>)r)["id"]!).ToList();
         var allStops = routeIds.Count > 0
             ? await db.QueryAsync(
@@ -21388,9 +21428,17 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         await db.ExecuteAsync(
             "UPDATE notification_recipients SET status='acknowledged', acknowledged_at=NOW() WHERE notification_id=@nid AND user_id=@uid AND company_id=@cid",
             c => { c.Parameters.AddWithValue("@nid", id); c.Parameters.AddWithValue("@uid", userId); c.Parameters.AddWithValue("@cid", companyId); }, ct);
-        await db.ExecuteAsync(
-            "UPDATE notifications SET status='acknowledged', acknowledged_at=NOW(), acknowledged_by=@uid, acknowledgement_note=COALESCE(@note, acknowledgement_note) WHERE id=@nid AND company_id=@cid",
-            c => { c.Parameters.AddWithValue("@nid", id); c.Parameters.AddWithValue("@uid", userId); c.Parameters.AddWithValue("@note", string.IsNullOrWhiteSpace(note) ? DBNull.Value : note); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+
+        // Only promote the shared parent row once every recipient has acknowledged it
+        // (mirror the read-promotion gate above); otherwise one recipient's ack would
+        // flip the notification for everyone.
+        var unacknowledged = await db.ScalarLongAsync(
+            "SELECT COUNT(*) FROM notification_recipients WHERE notification_id=@nid AND status<>'acknowledged'",
+            c => c.Parameters.AddWithValue("@nid", id), ct);
+        if (unacknowledged == 0)
+            await db.ExecuteAsync(
+                "UPDATE notifications SET status='acknowledged', acknowledged_at=NOW(), acknowledged_by=@uid, acknowledgement_note=COALESCE(@note, acknowledgement_note) WHERE id=@nid AND company_id=@cid",
+                c => { c.Parameters.AddWithValue("@nid", id); c.Parameters.AddWithValue("@uid", userId); c.Parameters.AddWithValue("@note", string.IsNullOrWhiteSpace(note) ? DBNull.Value : note); c.Parameters.AddWithValue("@cid", companyId); }, ct);
 
         await audit.LogAsync(http, "notification.acknowledged", "Notification", id, ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id, status = "acknowledged" }));
@@ -24735,7 +24783,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
         var openDefects = await db.QueryAsync(
             @"SELECT dd.id, dd.defect_description, dd.severity, dd.status,
-                     dr.safe_to_operate, dd.created_at
+                     dr.safe_to_operate, dd.created_at, dd.row_version
               FROM dvir_defects dd
               JOIN dvir_reports dr ON dr.id=dd.dvir_report_id
               WHERE dr.vehicle_id=@id AND dd.company_id=@cid

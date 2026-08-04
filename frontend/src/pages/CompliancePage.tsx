@@ -290,9 +290,9 @@ export function CompliancePage() {
                   </td>
                   <td className="py-2 pr-4"><CountryBadge code={String(d.countryCode)} /></td>
                   <td className="py-2 pr-4"><StatusDot status={String(d.overallStatus)} /></td>
-                  <td className="py-2 pr-4 text-xs text-slate-700">{formatDate(String(d.license_expiry ?? ""))}</td>
-                  <td className="py-2 pr-4"><span className={Number(d.medicalCertValid) ? "text-emerald-400 text-xs" : "text-red-400 text-xs"}>{Number(d.medicalCertValid) ? "✓" : "✗"} {formatDate(String(d.medical_cert_expiry ?? ""))}</span></td>
-                  <td className="py-2 pr-4"><span className={Number(d.drug_test_valid) ? "text-emerald-400 text-xs" : "text-red-400 text-xs"}>{Number(d.drug_test_valid) ? "✓" : "✗"} {formatDate(String(d.drug_test_expiry ?? ""))}</span></td>
+                  <td className="py-2 pr-4 text-xs text-slate-700">{formatDate(String(d.licenseExpiry ?? ""))}</td>
+                  <td className="py-2 pr-4"><span className={Number(d.medicalCertValid) ? "text-emerald-400 text-xs" : "text-red-400 text-xs"}>{Number(d.medicalCertValid) ? "✓" : "✗"} {formatDate(String(d.medicalCertExpiry ?? ""))}</span></td>
+                  <td className="py-2 pr-4"><span className={Number(d.drugTestValid) ? "text-emerald-400 text-xs" : "text-red-400 text-xs"}>{Number(d.drugTestValid) ? "✓" : "✗"} {formatDate(String(d.drugTestExpiry ?? ""))}</span></td>
                   <td className="py-2 pr-4"><StatusDot status={String(d.hosStatus)} /></td>
                   <td className="py-2 pr-4 text-center">
                     <span className={`font-bold ${Number(d.violationsCount) > 0 ? "text-red-400" : "text-emerald-400"}`}>{String(d.violationsCount)}</span>
@@ -323,11 +323,11 @@ export function CompliancePage() {
                   </td>
                   <td className="py-2 pr-4"><CountryBadge code={String(v.countryCode)} /></td>
                   <td className="py-2 pr-4"><StatusDot status={String(v.overallStatus)} /></td>
-                  <td className="py-2 pr-4 text-xs text-slate-700">{formatDate(String(v.registration_expiry ?? ""))}</td>
-                  <td className="py-2 pr-4"><span className={Number(v.insurance_valid) ? "text-emerald-400 text-xs" : "text-red-400 text-xs"}>{Number(v.insurance_valid) ? "✓" : "✗"} {formatDate(String(v.insurance_expiry ?? ""))}</span></td>
-                  <td className="py-2 pr-4"><span className={Number(v.inspectionValid) ? "text-emerald-400 text-xs" : "text-red-400 text-xs"}>{Number(v.inspectionValid) ? "✓" : "✗"} {formatDate(String(v.inspection_expiry ?? ""))}</span></td>
+                  <td className="py-2 pr-4 text-xs text-slate-700">{formatDate(String(v.registrationExpiry ?? ""))}</td>
+                  <td className="py-2 pr-4"><span className={Number(v.insuranceValid) ? "text-emerald-400 text-xs" : "text-red-400 text-xs"}>{Number(v.insuranceValid) ? "✓" : "✗"} {formatDate(String(v.insuranceExpiry ?? ""))}</span></td>
+                  <td className="py-2 pr-4"><span className={Number(v.inspectionValid) ? "text-emerald-400 text-xs" : "text-red-400 text-xs"}>{Number(v.inspectionValid) ? "✓" : "✗"} {formatDate(String(v.inspectionExpiry ?? ""))}</span></td>
                   <td className="py-2 pr-4">
-                    {Number(v.eld_installed) ? <span className="text-emerald-400 text-xs flex items-center gap-1"><Wifi className="h-3 w-3" />Installed</span> : <span className="text-slate-500 text-xs flex items-center gap-1"><WifiOff className="h-3 w-3" />None</span>}
+                    {Number(v.eldInstalled) ? <span className="text-emerald-400 text-xs flex items-center gap-1"><Wifi className="h-3 w-3" />Installed</span> : <span className="text-slate-500 text-xs flex items-center gap-1"><WifiOff className="h-3 w-3" />None</span>}
                   </td>
                   <td className="py-2 pr-4 text-center">
                     <span className={`font-bold ${Number(v.violationsCount) > 0 ? "text-red-400" : "text-emerald-400"}`}>{String(v.violationsCount)}</span>
@@ -357,9 +357,9 @@ export function CompliancePage() {
                 </div>
                 <div className="grid grid-cols-3 gap-2 text-center">
                   {[
-                    { label: "Drivers",    value: a.included_drivers },
-                    { label: "Vehicles",   value: a.included_vehicles },
-                    { label: "HOS Logs",   value: a.hos_logs_count },
+                    { label: "Drivers",    value: a.includedDrivers },
+                    { label: "Vehicles",   value: a.includedVehicles },
+                    { label: "HOS Logs",   value: a.hosLogsCount },
                   ].map(m => (
                     <div key={m.label} className="rounded bg-slate-50 py-1.5">
                       <p className="text-base font-bold text-slate-900">{String(m.value)}</p>
@@ -367,7 +367,8 @@ export function CompliancePage() {
                     </div>
                   ))}
                 </div>
-                <p className="text-[11px] text-slate-500">{formatDate(String(a.date_range_start))} – {formatDate(String(a.date_range_end))}</p>
+                {/* date_range_start/date_range_end don't exist on compliance_audit_packages; real columns are date_from/date_to */}
+                <p className="text-[11px] text-slate-500">{formatDate(String(a.dateFrom))} – {formatDate(String(a.dateTo))}</p>
                 {!!a.notes && <p className="text-xs text-slate-400 leading-snug">{String(a.notes)}</p>}
                 {String(a.status) === "Draft" || String(a.status) === "In Progress" ? (
                   <button

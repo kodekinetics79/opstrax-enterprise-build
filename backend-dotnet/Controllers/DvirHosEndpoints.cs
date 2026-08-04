@@ -79,12 +79,28 @@ public static partial class EndpointMappings
             ["vehicleId"] = vehicleId
         });
 
+    // Server-side module-entitlement gate for the paid DVIR / HOS / ELD compliance surface.
+    // RBAC alone let a package_allowlist tenant WITHOUT the fleet.compliance add-on read and
+    // exercise these endpoints. Mirrors FleetTmsEndpoints.RequireModule; legacy_allow tenants
+    // (the default) are unaffected — CheckModuleAsync returns allowed unless the module is
+    // explicitly disabled for the tenant.
+    private static async Task<IResult?> RequireComplianceModule(HttpContext http, Database db, CancellationToken ct)
+    {
+        var decision = await new EntitlementService(db)
+            .CheckModuleAsync(GetCompanyId(http), RevenueSchemaService.Modules.Compliance, ct);
+        return decision.Allowed
+            ? null
+            : Results.Json(ApiResponse<object>.Fail("Feature not entitled", decision.Reason ?? RevenueSchemaService.Modules.Compliance),
+                statusCode: StatusCodes.Status403Forbidden);
+    }
+
     // ── DVIR reads ──────────────────────────────────────────────────────────
 
-    private static Task<IResult> DriverDvirReportsPilot(HttpContext http, Database db, CancellationToken ct)
+    private static async Task<IResult> DriverDvirReportsPilot(HttpContext http, Database db, CancellationToken ct)
     {
-        if (RequireAnyDirectPermission(http, "driver:self") is { } denied) return Task.FromResult(denied);
-        return OkRows(db,
+        if (RequireAnyDirectPermission(http, "driver:self") is { } denied) return denied;
+        if (await RequireComplianceModule(http, db, ct) is { } gated) return gated;
+        return await OkRows(db,
             @"SELECT dr.id,dr.report_number,dr.inspection_type,dr.inspection_status,dr.defects_found,
                      dr.safe_to_operate,dr.driver_signature_status,dr.mechanic_review_status,
                      dr.repair_certification_status,dr.driver_repair_acknowledged_at,dr.row_version,
@@ -98,12 +114,12 @@ public static partial class EndpointMappings
             c => { c.Parameters.AddWithValue("@uid", PilotUserId(http)); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct: ct);
     }
 
-    private static Task<IResult> DvirReportsPilot(HttpContext http, Database db, CancellationToken ct)
+    private static async Task<IResult> DvirReportsPilot(HttpContext http, Database db, CancellationToken ct)
     {
-        if (RequireAnyDirectPermission(http, "maintenance:view") is { } denied)
-            return Task.FromResult(denied);
+        if (RequireAnyDirectPermission(http, "maintenance:view") is { } denied) return denied;
+        if (await RequireComplianceModule(http, db, ct) is { } gated) return gated;
 
-        return OkRows(db,
+        return await OkRows(db,
             DvirBaseSql + @"
               WHERE dr.company_id=@cid AND dr.deleted_at IS NULL" + PilotBranchClause("dr") + @"
               ORDER BY dr.submitted_at DESC, dr.id DESC",
@@ -113,6 +129,7 @@ public static partial class EndpointMappings
     private static async Task<IResult> DvirSummaryPilot(HttpContext http, Database db, CancellationToken ct)
     {
         if (RequireAnyDirectPermission(http, "maintenance:view") is { } denied) return denied;
+        if (await RequireComplianceModule(http, db, ct) is { } gated) return gated;
         var row = await db.QuerySingleAsync(
             @"SELECT COUNT(*) inspections_total,
                      COUNT(*) FILTER (WHERE submitted_at::date=CURRENT_DATE) inspections_today,
@@ -139,6 +156,7 @@ public static partial class EndpointMappings
     private static async Task<IResult> DvirDetailPilot(HttpContext http, long id, Database db, CancellationToken ct)
     {
         if (RequireAnyDirectPermission(http, "maintenance:view") is { } denied) return denied;
+        if (await RequireComplianceModule(http, db, ct) is { } gated) return gated;
         var rows = await db.QueryAsync(
             DvirBaseSql + " WHERE dr.id=@id AND dr.company_id=@cid AND dr.deleted_at IS NULL" + PilotBranchClause("dr"),
             c => { c.Parameters.AddWithValue("@id", id); BindPilotScope(c, http); }, ct);
@@ -163,6 +181,7 @@ public static partial class EndpointMappings
     private static async Task<IResult> DvirTimelinePilot(HttpContext http, long id, Database db, CancellationToken ct)
     {
         if (RequireAnyDirectPermission(http, "maintenance:view") is { } denied) return denied;
+        if (await RequireComplianceModule(http, db, ct) is { } gated) return gated;
         var owned = await db.ScalarLongAsync(
             @"SELECT COUNT(*) FROM dvir_reports WHERE id=@id AND company_id=@cid AND deleted_at IS NULL
                 AND (@branchId::bigint IS NULL OR branch_id=@branchId)",
@@ -190,6 +209,7 @@ public static partial class EndpointMappings
     private static async Task<IResult> DvirTemplatesPilot(HttpContext http, Database db, CancellationToken ct)
     {
         if (RequireAnyDirectPermission(http, "maintenance:view") is { } denied) return denied;
+        if (await RequireComplianceModule(http, db, ct) is { } gated) return gated;
         var companyId = GetCompanyId(http);
         var templates = await db.QueryAsync(
             "SELECT * FROM dvir_templates WHERE company_id=@cid ORDER BY template_name,id",
@@ -208,6 +228,7 @@ public static partial class EndpointMappings
         Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
         if (RequireAnyDirectPermission(http, "maintenance:update", "maintenance:manage") is { } denied) return denied;
+        if (await RequireComplianceModule(http, db, ct) is { } gated) return gated;
         var name = PilotText(body, "templateName", 160);
         var type = PilotText(body, "inspectionType", 40);
         if (name is null || type is null)
@@ -231,6 +252,7 @@ public static partial class EndpointMappings
         Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
         if (RequireAnyDirectPermission(http, "maintenance:update", "maintenance:manage") is { } denied) return denied;
+        if (await RequireComplianceModule(http, db, ct) is { } gated) return gated;
         var affected = await db.ExecuteAsync(
             @"UPDATE dvir_templates SET
                 template_name=COALESCE(@name,template_name),country_code=COALESCE(@country,country_code),
@@ -255,6 +277,7 @@ public static partial class EndpointMappings
         Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
         if (RequireAnyDirectPermission(http, "maintenance:create", "maintenance:manage") is { } denied) return denied;
+        if (await RequireComplianceModule(http, db, ct) is { } gated) return gated;
         if (!PilotPositiveLong(Get(body, "driverId"), out var driverId) ||
             !PilotPositiveLong(Get(body, "vehicleId"), out var vehicleId))
             return Results.BadRequest(ApiResponse<object>.Fail("A positive driverId and vehicleId are required"));
@@ -355,6 +378,7 @@ public static partial class EndpointMappings
         Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
         if (RequireAnyDirectPermission(http, "maintenance:update", "maintenance:manage") is { } denied) return denied;
+        if (await RequireComplianceModule(http, db, ct) is { } gated) return gated;
         var forbidden = new[] { "driverId", "vehicleId", "defectsFound", "safeToOperate", "inspectionStatus",
             "driverSignatureStatus", "mechanicReviewStatus", "repairCertificationStatus" };
         if (forbidden.Any(k => Get(body, k) is not DBNull))
@@ -390,6 +414,7 @@ public static partial class EndpointMappings
         Database db, AuditService audit, CancellationToken ct)
     {
         if (RequireAnyDirectPermission(http, "maintenance:update", "maintenance:manage") is { } denied) return denied;
+        if (await RequireComplianceModule(http, db, ct) is { } gated) return gated;
         var expectedVersion = PilotRowVersion(http);
         if (expectedVersion is null) return Results.BadRequest(ApiResponse<object>.Fail("rowVersion is required for DVIR archival"));
         var affected = await db.ExecuteAsync(
@@ -407,6 +432,7 @@ public static partial class EndpointMappings
         Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
         if (RequireAnyDirectPermission(http, "maintenance:update", "maintenance:manage") is { } denied) return denied;
+        if (await RequireComplianceModule(http, db, ct) is { } gated) return gated;
         var expectedVersion = PilotRowVersion(http, body);
         if (expectedVersion is null) return Results.BadRequest(ApiResponse<object>.Fail("rowVersion is required"));
         var companyId = GetCompanyId(http);
@@ -444,6 +470,7 @@ public static partial class EndpointMappings
         Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
         if (RequireAnyDirectPermission(http, "maintenance:close", "maintenance:manage") is { } denied) return denied;
+        if (await RequireComplianceModule(http, db, ct) is { } gated) return gated;
         var expectedVersion = PilotRowVersion(http, body);
         if (expectedVersion is null) return Results.BadRequest(ApiResponse<object>.Fail("rowVersion is required"));
         var companyId = GetCompanyId(http);
@@ -493,6 +520,7 @@ public static partial class EndpointMappings
         // A back-office user must never impersonate the driver's certification. Paper-signature
         // capture needs an evidence upload workflow; this endpoint is only for the bound driver.
         if (RequireAnyDirectPermission(http, "driver:self") is { } denied) return denied;
+        if (await RequireComplianceModule(http, db, ct) is { } gated) return gated;
         var expectedVersion = PilotRowVersion(http, body);
         var attestation = PilotText(body, "attestation", 300);
         var accepted = bool.TryParse(Get(body, "attestationAccepted")?.ToString(), out var parsed) && parsed;
@@ -545,6 +573,7 @@ public static partial class EndpointMappings
         Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
         if (RequireAnyDirectPermission(http, "driver:self") is { } denied) return denied;
+        if (await RequireComplianceModule(http, db, ct) is { } gated) return gated;
         var expectedVersion = PilotRowVersion(http, body);
         var attestation = PilotText(body, "attestation", 300);
         var accepted = bool.TryParse(Get(body, "attestationAccepted")?.ToString(), out var parsed) && parsed;
@@ -594,6 +623,7 @@ public static partial class EndpointMappings
         Database db, AuditService audit, CancellationToken ct)
     {
         if (RequireAnyDirectPermission(http, "maintenance:close", "maintenance:manage") is { } denied) return denied;
+        if (await RequireComplianceModule(http, db, ct) is { } gated) return gated;
         var expectedVersion = PilotRowVersion(http, body);
         var notes = PilotText(body, "notes", 2000);
         if (expectedVersion is null || notes is null)
@@ -619,10 +649,11 @@ public static partial class EndpointMappings
 
     // ── HOS / ELD ───────────────────────────────────────────────────────────
 
-    private static Task<IResult> DriverHosLogsPilot(HttpContext http, Database db, CancellationToken ct)
+    private static async Task<IResult> DriverHosLogsPilot(HttpContext http, Database db, CancellationToken ct)
     {
-        if (RequireAnyDirectPermission(http, "driver:self") is { } denied) return Task.FromResult(denied);
-        return OkRows(db,
+        if (RequireAnyDirectPermission(http, "driver:self") is { } denied) return denied;
+        if (await RequireComplianceModule(http, db, ct) is { } gated) return gated;
+        return await OkRows(db,
             @"SELECT hl.id,hl.log_date,hl.status,hl.start_time,hl.end_time,hl.duration_minutes,
                      hl.location,hl.is_certified,hl.certified_at,
                      CASE WHEN hl.end_time IS NOT NULL THEN GREATEST(0,FLOOR(EXTRACT(EPOCH FROM (hl.end_time-hl.start_time))/60))::int END calculated_duration_minutes,
@@ -634,10 +665,11 @@ public static partial class EndpointMappings
             c => { c.Parameters.AddWithValue("@uid", PilotUserId(http)); BindPilotScope(c, http); }, ct: ct);
     }
 
-    private static Task<IResult> HosDriversPilot(HttpContext http, Database db, CancellationToken ct)
+    private static async Task<IResult> HosDriversPilot(HttpContext http, Database db, CancellationToken ct)
     {
-        if (RequireAnyDirectPermission(http, "compliance:view") is { } denied) return Task.FromResult(denied);
-        return OkRows(db,
+        if (RequireAnyDirectPermission(http, "compliance:view") is { } denied) return denied;
+        if (await RequireComplianceModule(http, db, ct) is { } gated) return gated;
+        return await OkRows(db,
             @"SELECT hc.*,d.full_name driver_name,d.driver_code,d.status driver_status,cp.profile_name
               FROM hos_clocks hc
               JOIN drivers d ON d.id=hc.driver_id AND d.company_id=hc.company_id AND d.deleted_at IS NULL
@@ -647,10 +679,11 @@ public static partial class EndpointMappings
             c => BindPilotScope(c, http), ct: ct);
     }
 
-    private static Task<IResult> HosLogsPilot(HttpContext http, Database db, CancellationToken ct)
+    private static async Task<IResult> HosLogsPilot(HttpContext http, Database db, CancellationToken ct)
     {
-        if (RequireAnyDirectPermission(http, "compliance:view") is { } denied) return Task.FromResult(denied);
-        return OkRows(db,
+        if (RequireAnyDirectPermission(http, "compliance:view") is { } denied) return denied;
+        if (await RequireComplianceModule(http, db, ct) is { } gated) return gated;
+        return await OkRows(db,
             @"SELECT hl.*,d.full_name driver_name,d.driver_code,v.vehicle_code,
                      CASE WHEN hl.end_time IS NOT NULL THEN GREATEST(0,FLOOR(EXTRACT(EPOCH FROM (hl.end_time-hl.start_time))/60))::int END calculated_duration_minutes,
                      CASE WHEN hl.end_time IS NOT NULL AND ABS(hl.duration_minutes-FLOOR(EXTRACT(EPOCH FROM (hl.end_time-hl.start_time))/60))>1 THEN TRUE ELSE FALSE END duration_mismatch
@@ -663,10 +696,11 @@ public static partial class EndpointMappings
             c => BindPilotScope(c, http), ct: ct);
     }
 
-    private static Task<IResult> HosDriverLogsPilot(HttpContext http, long driverId, Database db, CancellationToken ct)
+    private static async Task<IResult> HosDriverLogsPilot(HttpContext http, long driverId, Database db, CancellationToken ct)
     {
-        if (RequireAnyDirectPermission(http, "compliance:view") is { } denied) return Task.FromResult(denied);
-        return OkRows(db,
+        if (RequireAnyDirectPermission(http, "compliance:view") is { } denied) return denied;
+        if (await RequireComplianceModule(http, db, ct) is { } gated) return gated;
+        return await OkRows(db,
             @"SELECT hl.*,v.vehicle_code
               FROM hos_logs hl
               JOIN drivers d ON d.id=hl.driver_id AND d.company_id=hl.company_id AND d.deleted_at IS NULL
@@ -680,6 +714,7 @@ public static partial class EndpointMappings
     private static async Task<IResult> HosSummaryPilot(HttpContext http, Database db, CancellationToken ct)
     {
         if (RequireAnyDirectPermission(http, "compliance:view") is { } denied) return denied;
+        if (await RequireComplianceModule(http, db, ct) is { } gated) return gated;
         var clocks = await db.QueryAsync(
             @"SELECT status,COUNT(*) cnt FROM hos_clocks WHERE company_id=@cid
                 AND (@branchId::bigint IS NULL OR branch_id=@branchId) GROUP BY status",
@@ -703,6 +738,7 @@ public static partial class EndpointMappings
         Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
         if (RequireAnyDirectPermission(http, "driver:self") is { } denied) return denied;
+        if (await RequireComplianceModule(http, db, ct) is { } gated) return gated;
         var attestation = PilotText(body, "attestation", 300);
         var accepted = bool.TryParse(Get(body, "attestationAccepted")?.ToString(), out var parsed) && parsed;
         if (!accepted || !string.Equals(attestation, HosDriverAttestation, StringComparison.Ordinal))
@@ -807,26 +843,28 @@ public static partial class EndpointMappings
         }, ct);
     }
 
-    private static Task<IResult> HosRecommendationsPilot(HttpContext http, Database db, CancellationToken ct)
+    private static async Task<IResult> HosRecommendationsPilot(HttpContext http, Database db, CancellationToken ct)
     {
-        if (RequireAnyDirectPermission(http, "compliance:view") is { } denied) return Task.FromResult(denied);
+        if (RequireAnyDirectPermission(http, "compliance:view") is { } denied) return denied;
+        if (await RequireComplianceModule(http, db, ct) is { } gated) return gated;
         // ai_recommendations has no authoritative branch ownership column. Returning
         // tenant-wide narratives to a branch-scoped operator can disclose another
         // branch's drivers, violations, or operational posture, so fail closed until
         // recommendations carry persisted branch metadata.
         if (GetBranchId(http) is not null)
-            return Task.FromResult<IResult>(Results.Ok(ApiResponse<object>.Ok(Array.Empty<object>(),
-                "No branch-scoped HOS/ELD recommendations are available")));
-        return OkRows(db,
+            return Results.Ok(ApiResponse<object>.Ok(Array.Empty<object>(),
+                "No branch-scoped HOS/ELD recommendations are available"));
+        return await OkRows(db,
             @"SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='hos-eld'
               ORDER BY score DESC,id DESC LIMIT 10",
             c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
     }
 
-    private static Task<IResult> EldDevicesPilot(HttpContext http, Database db, CancellationToken ct)
+    private static async Task<IResult> EldDevicesPilot(HttpContext http, Database db, CancellationToken ct)
     {
-        if (RequireAnyDirectPermission(http, "compliance:view", "telematics:view") is { } denied) return Task.FromResult(denied);
-        return OkRows(db,
+        if (RequireAnyDirectPermission(http, "compliance:view", "telematics:view") is { } denied) return denied;
+        if (await RequireComplianceModule(http, db, ct) is { } gated) return gated;
+        return await OkRows(db,
             @"SELECT e.id,e.company_id,e.branch_id,e.device_serial,e.device_model,e.provider,
                      e.vehicle_id,e.driver_id,e.status,e.malfunction_code,e.malfunction_description,
                      e.last_sync_at,e.firmware_version,e.created_at,e.updated_at,
@@ -845,6 +883,7 @@ public static partial class EndpointMappings
     private static async Task<IResult> EldDevicePilot(HttpContext http, long id, Database db, CancellationToken ct)
     {
         if (RequireAnyDirectPermission(http, "compliance:view", "telematics:view") is { } denied) return denied;
+        if (await RequireComplianceModule(http, db, ct) is { } gated) return gated;
         var rows = await db.QueryAsync(
             @"SELECT e.id,e.company_id,e.branch_id,e.device_serial,e.device_model,e.provider,
                      e.vehicle_id,e.driver_id,e.status,e.malfunction_code,e.malfunction_description,
@@ -866,6 +905,7 @@ public static partial class EndpointMappings
         Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
         if (RequireAnyDirectPermission(http, "compliance:update", "compliance:manage", "telematics:manage") is { } denied) return denied;
+        if (await RequireComplianceModule(http, db, ct) is { } gated) return gated;
         var code = PilotText(body, "malfunctionCode", 80);
         var description = PilotText(body, "malfunctionDescription", 2000);
         var expectedVersion = PilotRowVersion(http, body);
@@ -906,6 +946,7 @@ public static partial class EndpointMappings
         Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
         if (RequireAnyDirectPermission(http, "compliance:update", "compliance:manage", "telematics:manage") is { } denied) return denied;
+        if (await RequireComplianceModule(http, db, ct) is { } gated) return gated;
         var evidence = PilotText(body, "resolutionEvidence", 2000);
         var expectedVersion = PilotRowVersion(http, body);
         if (evidence is null || expectedVersion is null)
