@@ -315,9 +315,18 @@ public sealed class FleetProductionReadinessService
                    AND NOT has_database_privilege(rolname,current_database(),'TEMPORARY')
                    AND has_schema_privilege(rolname,'public','USAGE')
                    AND NOT has_schema_privilege(rolname,'public','CREATE'))
+                   -- Managed Postgres (Neon/RDS/Cloud SQL) auto-grants the database owner ADMIN
+                   -- membership in every role created under it, recorded with the provider's
+                   -- internal superuser as grantor, so the customer-visible owner CANNOT revoke
+                   -- it. Counting that edge made this readiness proof unsatisfiable on every
+                   -- managed provider. The owner already holds unrestricted access, so it grants
+                   -- nothing new; every OTHER principal still fails. Matches the same relaxation
+                   -- in Database.ValidateIdentity, Stage 58 and the predeploy runner.
                    AND NOT EXISTS (SELECT 1 FROM pg_auth_members membership
-                     WHERE membership.member IN (SELECT oid FROM pg_roles WHERE rolname IN ('opstrax_app','opstrax_system'))
-                        OR membership.roleid IN (SELECT oid FROM pg_roles WHERE rolname IN ('opstrax_app','opstrax_system')))
+                     WHERE membership.member IN (SELECT oid FROM pg_roles WHERE rolname IN ('opstrax_app','opstrax_system')))
+                   AND NOT EXISTS (SELECT 1 FROM pg_auth_members membership
+                     WHERE membership.roleid IN (SELECT oid FROM pg_roles WHERE rolname IN ('opstrax_app','opstrax_system'))
+                       AND membership.member<>(SELECT d.datdba FROM pg_database d WHERE d.datname=current_database()))
                    AND NOT has_function_privilege('opstrax_app','opstrax_security.issue_tenant_ticket(bigint,integer,bigint,integer)','EXECUTE')
                    AND has_function_privilege('opstrax_system','opstrax_security.issue_tenant_ticket(bigint,integer,bigint,integer)','EXECUTE')
                    AND has_function_privilege('opstrax_app','opstrax_security.current_tenant_id()','EXECUTE')
