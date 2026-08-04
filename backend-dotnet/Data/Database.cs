@@ -425,7 +425,15 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
             @"SELECT current_user, pg_backend_pid(), r.rolcanlogin, r.rolsuper,
                      r.rolbypassrls, r.rolcreatedb, r.rolcreaterole, r.rolinherit, r.rolreplication,
                      (SELECT COUNT(*)::int FROM pg_auth_members m WHERE m.member=r.oid),
-                     (SELECT COUNT(*)::int FROM pg_auth_members m WHERE m.roleid=r.oid),
+                     -- Managed Postgres (Neon/RDS/Cloud SQL) auto-grants the database owner
+                     -- ADMIN membership in every role created under it, recorded with the
+                     -- provider's internal superuser as grantor, so the customer-visible owner
+                     -- CANNOT revoke it (REVOKE is a no-op warning). Counting it here made this
+                     -- proof unsatisfiable on every managed provider. The database owner already
+                     -- holds unrestricted access, so that single edge grants it nothing new —
+                     -- every OTHER principal still fails the proof.
+                     (SELECT COUNT(*)::int FROM pg_auth_members m WHERE m.roleid=r.oid
+                        AND m.member<>(SELECT d.datdba FROM pg_database d WHERE d.datname=current_database())),
                      (SELECT COUNT(*)::int FROM pg_database d WHERE d.datdba=r.oid),
                      (SELECT COUNT(*)::int FROM pg_namespace n WHERE n.nspowner=r.oid),
                      (SELECT COUNT(*)::int FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
