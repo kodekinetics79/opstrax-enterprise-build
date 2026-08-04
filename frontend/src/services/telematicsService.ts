@@ -1109,9 +1109,14 @@ export const telematicsService = {
     // POST /api/telemetry/devices/{id}/assign {vehicleId, driverId}
     const numericVehicleId = toNumericId(vehicleId);
     if (numericVehicleId == null) throw new Error("Select a valid vehicle to assign this device.");
+    // Backend SETs driver_id with no COALESCE, so a vehicle-only re-assign would otherwise
+    // silently clear the device's existing driver. Read the current driver first and pass it
+    // through unchanged.
+    const current = await unwrap<AnyRecord>(apiClient.get(`/api/telemetry/devices/${deviceId}`));
+    const currentDriverId = toNumericId(current.driver_id);
     await unwrap<AnyRecord>(apiClient.post(`/api/telemetry/devices/${deviceId}/assign`, {
       vehicleId: numericVehicleId,
-      driverId: null,
+      driverId: currentDriverId,
     }));
     const updated = await unwrap<AnyRecord>(apiClient.get(`/api/telemetry/devices/${deviceId}`));
     return mapDeviceRow(updated, new Map(), new Map(), session);

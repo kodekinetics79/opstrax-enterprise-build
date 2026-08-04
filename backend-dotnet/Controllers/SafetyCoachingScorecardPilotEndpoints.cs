@@ -49,9 +49,25 @@ public static partial class EndpointMappings
             _ => false
         };
 
+    // Server-side module-entitlement gate for the paid Driver Safety add-on (coaching +
+    // safety scorecards). RBAC alone let a package_allowlist tenant WITHOUT the
+    // fleet.driver_safety add-on read and exercise these endpoints. Mirrors
+    // FleetTmsEndpoints.RequireModule; legacy_allow tenants (the default) are unaffected —
+    // CheckModuleAsync returns allowed unless the module is explicitly disabled for the tenant.
+    private static async Task<IResult?> RequireDriverSafetyModule(HttpContext http, Database db, CancellationToken ct)
+    {
+        var decision = await new EntitlementService(db)
+            .CheckModuleAsync(GetCompanyId(http), "fleet.driver_safety", ct);
+        return decision.Allowed
+            ? null
+            : Results.Json(ApiResponse<object>.Fail("Feature not entitled", decision.Reason ?? "fleet.driver_safety"),
+                statusCode: StatusCodes.Status403Forbidden);
+    }
+
     private static async Task<IResult> PilotCoachingSummary(HttpContext http, Database db, CancellationToken ct)
     {
         if (RequirePermission(http, "safety:view") is { } denied) return denied;
+        if (await RequireDriverSafetyModule(http, db, ct) is { } gated) return gated;
         var scope = CoachingBranchScope(http);
         var row = await db.QuerySingleAsync(
             @"SELECT COUNT(*) FILTER (WHERE ct.status NOT IN ('Completed','Cancelled','Dismissed')) open_coaching_tasks,
@@ -73,10 +89,11 @@ public static partial class EndpointMappings
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
     }
 
-    private static Task<IResult> PilotCoachingTasks(HttpContext http, Database db, CancellationToken ct)
+    private static async Task<IResult> PilotCoachingTasks(HttpContext http, Database db, CancellationToken ct)
     {
-        if (RequirePermission(http, "safety:view") is { } denied) return Task.FromResult(denied);
-        return OkRows(db,
+        if (RequirePermission(http, "safety:view") is { } denied) return denied;
+        if (await RequireDriverSafetyModule(http, db, ct) is { } gated) return gated;
+        return await OkRows(db,
             CoachingSql + " WHERE ct.company_id=@cid AND ct.deleted_at IS NULL" + CoachingBranchScope(http) +
             " ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Medium','Normal','Low'],ct.priority),ct.due_at NULLS LAST,ct.id",
             c => BindTenantAndBranch(c, http), ct: ct);
@@ -85,6 +102,7 @@ public static partial class EndpointMappings
     private static async Task<IResult> PilotCoachingTaskDetail(HttpContext http, long id, Database db, CancellationToken ct)
     {
         if (RequirePermission(http, "safety:view") is { } denied) return denied;
+        if (await RequireDriverSafetyModule(http, db, ct) is { } gated) return gated;
         var companyId = GetCompanyId(http);
         var record = (await db.QueryAsync(
             CoachingSql + " WHERE ct.id=@id AND ct.company_id=@cid AND ct.deleted_at IS NULL" + CoachingBranchScope(http),
@@ -108,6 +126,7 @@ public static partial class EndpointMappings
     private static async Task<IResult> PilotCreateCoachingTask(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
         if (RequireAnyDirectPermission(http, "safety:create", "safety:update", "safety:manage") is { } denied) return denied;
+        if (await RequireDriverSafetyModule(http, db, ct) is { } gated) return gated;
         var driverId = BodyLong(body, "driverId");
         var coachingType = BodyText(body, "coachingType");
         var title = BodyText(body, "title");
@@ -187,6 +206,7 @@ public static partial class EndpointMappings
     private static async Task<IResult> PilotUpdateCoachingTask(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
         if (RequireAnyDirectPermission(http, "safety:update", "safety:manage") is { } denied) return denied;
+        if (await RequireDriverSafetyModule(http, db, ct) is { } gated) return gated;
         var version = BodyLong(body, "rowVersion");
         if (version is null) return Results.BadRequest(ApiResponse<object>.Fail("rowVersion is required for safe updates."));
         if (body.ContainsKey("status")) return Results.BadRequest(ApiResponse<object>.Fail("Use a workflow action to change coaching status."));
@@ -276,6 +296,7 @@ public static partial class EndpointMappings
     private static async Task<IResult> PilotCoachingAssign(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
         if (RequireAnyDirectPermission(http, "safety:update", "safety:manage") is { } denied) return denied;
+        if (await RequireDriverSafetyModule(http, db, ct) is { } gated) return gated;
         var assignee = BodyLong(body, "assignedToUserId") ?? GetUserId(http);
         if (!await ValidCoachingAssignee(db, http, assignee, ct))
             return Results.BadRequest(ApiResponse<object>.Fail("Assignee must be an active user in your tenant and authorized branch."));
@@ -298,6 +319,7 @@ public static partial class EndpointMappings
     private static async Task<IResult> PilotCoachingAcknowledge(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
         if (RequireAnyDirectPermission(http, "driver:self") is { } denied) return denied;
+        if (await RequireDriverSafetyModule(http, db, ct) is { } gated) return gated;
         var driverId = await GetDriverIdFromAuthAsync(http, db, ct);
         if (driverId < 0) return DriverIdentityNotFound();
         var version = BodyLong(body, "rowVersion");
@@ -325,14 +347,17 @@ public static partial class EndpointMappings
         }, ct);
     }
 
-    private static Task<IResult> PilotCoachingComplete(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) =>
-        RequireAnyDirectPermission(http, "safety:update", "safety:manage") is { } denied
-            ? Task.FromResult(denied)
-            : PilotCoachingTransition(http, id, body, "Completed", db, audit, ct);
+    private static async Task<IResult> PilotCoachingComplete(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
+    {
+        if (RequireAnyDirectPermission(http, "safety:update", "safety:manage") is { } denied) return denied;
+        if (await RequireDriverSafetyModule(http, db, ct) is { } gated) return gated;
+        return await PilotCoachingTransition(http, id, body, "Completed", db, audit, ct);
+    }
 
     private static async Task<IResult> PilotCoachingAddNote(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
         if (RequireAnyDirectPermission(http, "safety:review", "safety:update", "safety:manage") is { } denied) return denied;
+        if (await RequireDriverSafetyModule(http, db, ct) is { } gated) return gated;
         var text = BodyText(body, "noteText");
         if (string.IsNullOrWhiteSpace(text)) return Results.BadRequest(ApiResponse<object>.Fail("Note text is required."));
         var companyId = GetCompanyId(http);
@@ -354,6 +379,7 @@ public static partial class EndpointMappings
     private static async Task<IResult> PilotDeleteCoachingTask(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct)
     {
         if (RequireAnyDirectPermission(http, "safety:delete", "safety:manage") is { } denied) return denied;
+        if (await RequireDriverSafetyModule(http, db, ct) is { } gated) return gated;
         var rawVersion = http.Request.Headers.IfMatch.FirstOrDefault()?.Trim().Trim('"');
         if (string.IsNullOrWhiteSpace(rawVersion)) rawVersion = http.Request.Query["rowVersion"].FirstOrDefault();
         if (!long.TryParse(rawVersion, out var version) || version < 0)
@@ -391,6 +417,7 @@ public static partial class EndpointMappings
     private static async Task<IResult> SafetyScorecardSummary(HttpContext http, Database db, CancellationToken ct)
     {
         if (RequirePermission(http, "safety:view") is { } denied) return denied;
+        if (await RequireDriverSafetyModule(http, db, ct) is { } gated) return gated;
         var branch = GetBranchId(http);
         var row = await db.QuerySingleAsync(
             @"WITH scoped_drivers AS (
@@ -413,21 +440,23 @@ public static partial class EndpointMappings
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
     }
 
-    private static Task<IResult> SafetyVehicleScorecards(HttpContext http, Database db, CancellationToken ct)
+    private static async Task<IResult> SafetyVehicleScorecards(HttpContext http, Database db, CancellationToken ct)
     {
-        if (RequirePermission(http, "safety:view") is { } denied) return Task.FromResult(denied);
+        if (RequirePermission(http, "safety:view") is { } denied) return denied;
+        if (await RequireDriverSafetyModule(http, db, ct) is { } gated) return gated;
         var (scope, branchId) = StrictBranchFilter(http, "v");
-        return OkRows(db, @"SELECT sc.*,v.vehicle_code,v.type FROM vehicle_safety_scorecards sc
+        return await OkRows(db, @"SELECT sc.*,v.vehicle_code,v.type FROM vehicle_safety_scorecards sc
                             JOIN vehicles v ON v.id=sc.vehicle_id AND v.company_id=sc.company_id
                             WHERE sc.company_id=@cid AND v.deleted_at IS NULL" + scope + " ORDER BY sc.risk_score DESC,sc.id",
             c => { c.Parameters.AddWithValue("@cid", GetCompanyId(http)); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct: ct);
     }
 
-    private static Task<IResult> SafetyDriverScorecardsPilot(HttpContext http, Database db, CancellationToken ct)
+    private static async Task<IResult> SafetyDriverScorecardsPilot(HttpContext http, Database db, CancellationToken ct)
     {
-        if (RequirePermission(http, "safety:view") is { } denied) return Task.FromResult(denied);
+        if (RequirePermission(http, "safety:view") is { } denied) return denied;
+        if (await RequireDriverSafetyModule(http, db, ct) is { } gated) return gated;
         var (scope, branchId) = StrictBranchFilter(http, "d");
-        return OkRows(db,
+        return await OkRows(db,
             @"SELECT d.id,d.id driver_id,d.driver_code,d.full_name driver_name,d.status driver_status,
                      dss.score_30d safety_score,CASE WHEN dss.id IS NULL THEN NULL ELSE GREATEST(0,100-dss.score_30d) END risk_score,
                      COALESCE(dss.events_7d,0) events_7d,COALESCE(dss.events_30d,0) events_30d,COALESCE(dss.events_90d,0) events_90d,
@@ -450,11 +479,12 @@ public static partial class EndpointMappings
             c => { c.Parameters.AddWithValue("@cid", GetCompanyId(http)); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct: ct);
     }
 
-    private static Task<IResult> SafetyScorecardTrends(HttpContext http, Database db, CancellationToken ct)
+    private static async Task<IResult> SafetyScorecardTrends(HttpContext http, Database db, CancellationToken ct)
     {
-        if (RequirePermission(http, "safety:view") is { } denied) return Task.FromResult(denied);
+        if (RequirePermission(http, "safety:view") is { } denied) return denied;
+        if (await RequireDriverSafetyModule(http, db, ct) is { } gated) return gated;
         var branch = GetBranchId(http);
-        return OkRows(db,
+        return await OkRows(db,
             @"WITH days AS (SELECT generate_series(CURRENT_DATE-29,CURRENT_DATE,'1 day')::date trend_date),
               scoped_drivers AS (
                 SELECT d.id FROM drivers d

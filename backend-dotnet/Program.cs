@@ -1348,6 +1348,11 @@ static string? ModuleKeyForPath(string path)
         ("/api/driver/dvir",         "maintenance"),
 
         // Dispatch
+        // Driver portal assignment surface lives under the shared /api/driver
+        // namespace, so it must be listed before any future broad driver gate.
+        // Otherwise a Platform Admin can disable the tenant `dispatch` module
+        // while the driver-app assignment workflow remains callable.
+        ("/api/driver/assignments",  "dispatch"),
         ("/api/dispatch",            "dispatch"),
         ("/api/jobs",                "dispatch"),
         ("/api/trips",               "dispatch"),

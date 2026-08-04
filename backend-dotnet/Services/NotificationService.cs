@@ -112,8 +112,11 @@ public sealed class NotificationService(Database db)
                 await InsertRecipientAsync(notifId, companyId, uid, null, null, channel, ct);
             }
 
-            // Always add role-broadcast fallback row
-            await InsertRoleRecipientAsync(notifId, companyId, audienceType, channel, ct);
+            // No role-broadcast fallback row here: the per-user rows above already cover every
+            // Active user of this role. A user_id IS NULL row carrying role_target=lowercase(audienceType)
+            // is unreachable — the role-scoped read/mark queries match role_target case-sensitively
+            // against the session's Title-Case role_name, and MarkRead only touches user_id rows — so it
+            // would never update, perpetually pinning the notification's aggregate unread roll-up.
         }
 
         // For external channels, mark as not configured

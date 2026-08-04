@@ -1105,9 +1105,12 @@ public static class PlatformEndpoints
         var (principal, error) = await RequireAsync(http, db, isDelete ? "platform:tenants:offboard" : "platform:tenants:manage", ct);
         if (error is not null) return error;
 
-        if (isDelete && !string.Equals(Str(body, "confirm"), "DELETE", StringComparison.Ordinal))
+        // The literal "DELETE" is too easy to fire by accident (copy/paste from docs,
+        // a saved request). Require the caller to echo back the exact tenant count
+        // being deleted, same spirit as the per-tenant company_code guard below.
+        if (isDelete && !string.Equals(Str(body, "confirm"), ids.Count.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal))
             return Results.Json(ApiResponse<object>.Fail("Confirmation required",
-                "To permanently delete these tenants and ALL their data, send {\"confirm\":\"DELETE\"}."),
+                $"To permanently delete these {ids.Count} tenants and ALL their data, send {{\"confirm\":\"{ids.Count}\"}}."),
                 statusCode: StatusCodes.Status400BadRequest);
 
         // assign-package needs a target package for the whole batch; seatLimit is an
