@@ -58,7 +58,19 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_app') THEN
     RAISE EXCEPTION 'Stage 53 requires restricted role opstrax_app; apply Stage 20 first';
   END IF;
-  EXECUTE 'ALTER ROLE opstrax_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION';
+  -- Managed Postgres (Neon/RDS) never grants superuser, and naming the SUPERUSER /
+  -- BYPASSRLS / REPLICATION attributes in ALTER ROLE requires it — even when the values
+  -- are already correct, making this a no-op that still errors with "permission denied to
+  -- alter role". Only issue the ALTER when the role actually deviates from the target
+  -- shape; the $verify$ block below still fails loudly if it is wrong and uncorrectable.
+  IF EXISTS (
+    SELECT 1 FROM pg_roles
+    WHERE rolname='opstrax_app'
+      AND (NOT rolcanlogin OR rolsuper OR rolbypassrls OR rolcreatedb
+           OR rolcreaterole OR rolinherit OR rolreplication)
+  ) THEN
+    EXECUTE 'ALTER ROLE opstrax_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION';
+  END IF;
   FOR rec IN
     SELECT granted.rolname
     FROM pg_auth_members membership
@@ -109,6 +121,15 @@ BEGIN
       rec.table_name,tenant_col,tenant_col);
     EXECUTE format(
       'CREATE POLICY platform_admin_bypass ON public.%I FOR ALL USING (NULLIF(current_setting(''app.platform_admin'',true),'''')=''on'') WITH CHECK (NULLIF(current_setting(''app.platform_admin'',true),'''')=''on'')',
+      rec.table_name);
+    -- Grant the baseline DML this stage's own verification block requires. Relying on
+    -- Stage 20's one-time "GRANT ... ON ALL TABLES" is not sufficient: any tenant table
+    -- created after Stage 20 ran (a later base-schema revision, a new module) has no
+    -- grants, so reconciliation would enable RLS and then fail its own verify with
+    -- "tenant RLS reconciliation incomplete". The least-privilege matrix below still
+    -- narrows this for its SELECT-only/append-only members.
+    EXECUTE format(
+      'GRANT SELECT,INSERT,UPDATE,DELETE ON TABLE public.%I TO opstrax_app',
       rec.table_name);
     EXECUTE format(
       'REVOKE TRUNCATE,REFERENCES,TRIGGER ON TABLE public.%I FROM opstrax_app',

@@ -25,8 +25,19 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_system') THEN
     CREATE ROLE opstrax_system LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION;
   END IF;
-  ALTER ROLE opstrax_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION;
-  ALTER ROLE opstrax_system LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION;
+  -- Managed Postgres (Neon/RDS) never grants superuser, and naming the SUPERUSER /
+  -- BYPASSRLS / REPLICATION attributes in ALTER ROLE requires it — even when the values
+  -- already match, which would fail here with "permission denied to alter role". Only
+  -- issue the ALTER for a role that actually deviates from the target shape; the
+  -- verification block below still fails loudly if a role is wrong and uncorrectable.
+  FOR rec IN
+    SELECT rolname FROM pg_roles
+    WHERE rolname IN ('opstrax_app','opstrax_system')
+      AND (NOT rolcanlogin OR rolsuper OR rolbypassrls OR rolcreatedb
+           OR rolcreaterole OR rolinherit OR rolreplication)
+  LOOP
+    EXECUTE format('ALTER ROLE %I LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION', rec.rolname);
+  END LOOP;
 
   FOR rec IN
     SELECT member_role.rolname AS member_name,granted.rolname AS granted_name
@@ -651,8 +662,20 @@ $global_contract$;
 DO $verify$
 DECLARE violations text[];
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname='opstrax_app' AND r.rolcanlogin AND NOT r.rolsuper AND NOT r.rolbypassrls AND NOT r.rolcreatedb AND NOT r.rolcreaterole AND NOT r.rolinherit AND NOT r.rolreplication AND NOT EXISTS(SELECT 1 FROM pg_auth_members m WHERE m.member=r.oid OR m.roleid=r.oid))
-     OR NOT EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname='opstrax_system' AND r.rolcanlogin AND NOT r.rolsuper AND NOT r.rolbypassrls AND NOT r.rolcreatedb AND NOT r.rolcreaterole AND NOT r.rolinherit AND NOT r.rolreplication AND NOT EXISTS(SELECT 1 FROM pg_auth_members m WHERE m.member=r.oid OR m.roleid=r.oid)) THEN
+  -- Managed Postgres (Neon/RDS/Cloud SQL) auto-grants the database owner ADMIN membership
+  -- in every role created under it, and records the grant with the provider's internal
+  -- superuser as grantor (e.g. Neon's cloud_admin). The customer-visible owner therefore
+  -- CANNOT revoke it — REVOKE is a no-op warning — which made this contract unsatisfiable
+  -- on every managed provider. That single membership grants no privilege the database
+  -- owner does not already hold, so it is not an escalation edge. Keep both directions
+  -- strict for every other principal: the runtime identity must still never be a member of
+  -- anything, and no principal other than the database owner may SET ROLE into it.
+  IF NOT EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname='opstrax_app' AND r.rolcanlogin AND NOT r.rolsuper AND NOT r.rolbypassrls AND NOT r.rolcreatedb AND NOT r.rolcreaterole AND NOT r.rolinherit AND NOT r.rolreplication
+       AND NOT EXISTS(SELECT 1 FROM pg_auth_members m WHERE m.member=r.oid)
+       AND NOT EXISTS(SELECT 1 FROM pg_auth_members m WHERE m.roleid=r.oid AND m.member<>(SELECT d.datdba FROM pg_database d WHERE d.datname=current_database())))
+     OR NOT EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname='opstrax_system' AND r.rolcanlogin AND NOT r.rolsuper AND NOT r.rolbypassrls AND NOT r.rolcreatedb AND NOT r.rolcreaterole AND NOT r.rolinherit AND NOT r.rolreplication
+       AND NOT EXISTS(SELECT 1 FROM pg_auth_members m WHERE m.member=r.oid)
+       AND NOT EXISTS(SELECT 1 FROM pg_auth_members m WHERE m.roleid=r.oid AND m.member<>(SELECT d.datdba FROM pg_database d WHERE d.datname=current_database()))) THEN
     RAISE EXCEPTION 'Stage 58 runtime role attributes/memberships unsafe';
   END IF;
   IF EXISTS(SELECT 1 FROM pg_database d CROSS JOIN LATERAL aclexplode(COALESCE(d.datacl,acldefault('d',d.datdba))) acl

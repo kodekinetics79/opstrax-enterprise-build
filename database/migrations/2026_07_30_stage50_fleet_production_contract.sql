@@ -888,6 +888,14 @@ ALTER TABLE "fleet_tms_cold_chain_reports" ADD COLUMN IF NOT EXISTS branch_id BI
 
 CREATE INDEX IF NOT EXISTS "idx_fleet_tms_cold_chain_reports_branch" ON "fleet_tms_cold_chain_reports" (company_id, branch_id);
 
+-- cold_chain_policies / cold_chain_event_log declare branch_id in their CREATE TABLE, so a
+-- FRESH database gets the column — but on an EXISTING deployment CREATE TABLE IF NOT EXISTS
+-- is a no-op and the column never appears, so the branch indexes below (and the branch-scoped
+-- reads) fail with 42703. Backfill the column here like every other cold-chain table.
+ALTER TABLE "fleet_tms_cold_chain_policies" ADD COLUMN IF NOT EXISTS branch_id BIGINT NULL;
+
+ALTER TABLE "fleet_tms_cold_chain_event_log" ADD COLUMN IF NOT EXISTS branch_id BIGINT NULL;
+
 ALTER TABLE "fleet_tms_refrigeration_unit_health" ADD COLUMN IF NOT EXISTS branch_id BIGINT NULL;
 
 CREATE INDEX IF NOT EXISTS "idx_fleet_tms_refrigeration_unit_health_branch" ON "fleet_tms_refrigeration_unit_health" (company_id, branch_id);
