@@ -70,6 +70,12 @@ fi
 command -v psql >/dev/null || { echo "ERROR: psql not found. brew install libpq (or run via docker exec)." >&2; exit 1; }
 
 MIGRATIONS=(
+  # Stage 20 MUST run first: it creates the restricted opstrax_app role that Stage 50's
+  # preflight hard-requires ("Stage 50 requires the restricted opstrax_app role"). It was
+  # missing from this list, so a database that never had the role could not be migrated
+  # past Stage 50. Additive + idempotent: the FORCE-RLS loop only touches tables that
+  # already have rowsecurity=true, so re-running it changes nothing.
+  2026_06_30_stage20_rls_force_and_app_role
   2026_06_30_stage21_customer_portal
   2026_07_02_stage23_schema_migration_ledger
   2026_07_02_stage24_compliance_tenant_scope
@@ -966,8 +972,18 @@ BEGIN
      OR NOT has_function_privilege('opstrax_app','opstrax_security.current_tenant_id()','EXECUTE') THEN
     RAISE EXCEPTION 'Stage58 ticket function grants unsafe';
   END IF;
-  IF EXISTS(SELECT 1 FROM pg_auth_members m JOIN pg_roles r ON r.oid=m.member OR r.oid=m.roleid
-            WHERE r.rolname IN ('opstrax_app','opstrax_system')) THEN
+  -- Managed Postgres (Neon/RDS/Cloud SQL) auto-grants the database owner ADMIN membership
+  -- in every role created under it, recorded with the provider's internal superuser as
+  -- grantor (Neon: cloud_admin), so the customer-visible owner CANNOT revoke it — REVOKE is
+  -- a no-op warning. That membership grants the database owner nothing it does not already
+  -- hold, so it is not an escalation edge. Mirrors the same relaxation in Stage 58 itself:
+  -- the runtime identity must still never be a member of anything, and no principal other
+  -- than the database owner may SET ROLE into it.
+  IF EXISTS(SELECT 1 FROM pg_auth_members m JOIN pg_roles r ON r.oid=m.member
+            WHERE r.rolname IN ('opstrax_app','opstrax_system'))
+     OR EXISTS(SELECT 1 FROM pg_auth_members m JOIN pg_roles r ON r.oid=m.roleid
+               WHERE r.rolname IN ('opstrax_app','opstrax_system')
+                 AND m.member<>(SELECT d.datdba FROM pg_database d WHERE d.datname=current_database())) THEN
     RAISE EXCEPTION 'Stage58 runtime role membership graph unsafe';
   END IF;
   IF NOT EXISTS(SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='vehicles'

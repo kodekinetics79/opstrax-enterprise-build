@@ -32,7 +32,15 @@ DO $role$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'opstrax_app') THEN
         CREATE ROLE opstrax_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT;
-    ELSE
+    -- Only re-assert the attributes when the role actually deviates: on managed Postgres
+    -- (Neon/RDS) the connecting owner is not a superuser, and naming NOSUPERUSER /
+    -- NOBYPASSRLS in ALTER ROLE requires superuser even when they already match — which
+    -- would make this idempotent migration fail on every re-run.
+    ELSIF EXISTS (
+        SELECT 1 FROM pg_roles
+        WHERE rolname = 'opstrax_app'
+          AND (rolsuper OR rolbypassrls OR rolcreatedb OR rolcreaterole)
+    ) THEN
         ALTER ROLE opstrax_app NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
     END IF;
 END
