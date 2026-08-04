@@ -13,14 +13,25 @@ import { exportCsv } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
 const emptySummary = {
-  overall_score: 0,
-  fleet_health_score: 0,
-  safety_score: 0,
-  compliance_score: 0,
-  financial_score: 0,
-  ai_brief: "No executive summary available yet.",
-  snapshot_date: "",
+  operationsHealthScore: 0,
+  fleetReadinessScore: 0,
+  safetyHealthScore: 0,
+  complianceHealthScore: 0,
+  costHealthScore: 0,
+  aiBrief: "No executive summary available yet.",
+  snapshotDate: "",
 };
+
+// executive_snapshots has no stored "overall" column — derive it the same way
+// the backend's /api/executive/summary trend query does: average of the four
+// health-score columns.
+function overallOf(row: AnyRecord): number {
+  const ops  = Number(row.operationsHealthScore ?? 0);
+  const safe = Number(row.safetyHealthScore ?? 0);
+  const comp = Number(row.complianceHealthScore ?? 0);
+  const fleet = Number(row.fleetReadinessScore ?? 0);
+  return Math.round(((ops + safe + comp + fleet) / 4) * 10) / 10;
+}
 
 // Navigation shortcuts to the live, backend-driven detail pages. These are UI
 // structure only (label/icon/route) — they intentionally carry no metric value,
@@ -105,12 +116,12 @@ export function ExecutivePage() {
     .map((s) => {
       const row = s as AnyRecord;
       return {
-      date:       row.snapshot_date ? new Date(String(row.snapshot_date)).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : String(row.date ?? "—"),
-      Fleet:      Number(row.fleet_health_score ?? row.Fleet ?? 0),
-      Safety:     Number(row.safety_score ?? row.Safety ?? 0),
-      Compliance: Number(row.compliance_score ?? row.Compliance ?? 0),
-      Financial:  Number(row.financial_score ?? row.Financial ?? 0),
-      Overall:    Number(row.overall_score ?? row.Overall ?? 0),
+      date:       row.snapshotDate ? new Date(String(row.snapshotDate)).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "—",
+      Fleet:      Number(row.fleetHealthScore ?? row.fleetReadinessScore ?? 0),
+      Safety:     Number(row.safetyScore ?? row.safetyHealthScore ?? 0),
+      Compliance: Number(row.complianceScore ?? row.complianceHealthScore ?? 0),
+      Financial:  Number(row.financialScore ?? row.costHealthScore ?? 0),
+      Overall:    Number(row.overallScore ?? overallOf(row) ?? 0),
       };
     });
 
@@ -120,11 +131,11 @@ export function ExecutivePage() {
 
   function handleExport() {
     exportCsv("executive-dashboard", [
-      { metric: "Overall Score",     value: Number(displaySnap.overall_score ?? 0) },
-      { metric: "Fleet Health",      value: Number(displaySnap.fleet_health_score ?? 0) },
-      { metric: "Safety Score",      value: Number(displaySnap.safety_score ?? 0) },
-      { metric: "Compliance Score",  value: Number(displaySnap.compliance_score ?? 0) },
-      { metric: "Financial Score",   value: Number(displaySnap.financial_score ?? 0) },
+      { metric: "Overall Score",     value: overallOf(displaySnap) },
+      { metric: "Fleet Health",      value: Number(displaySnap.fleetReadinessScore ?? 0) },
+      { metric: "Safety Score",      value: Number(displaySnap.safetyHealthScore ?? 0) },
+      { metric: "Compliance Score",  value: Number(displaySnap.complianceHealthScore ?? 0) },
+      { metric: "Financial Score",   value: Number(displaySnap.costHealthScore ?? 0) },
       { metric: "Critical KPIs",     value: kpiCritical },
       { metric: "Open SLA Breaches", value: slaBreaches },
       { metric: "Audit Actions Today", value: auditActions },
@@ -156,11 +167,11 @@ export function ExecutivePage() {
         <div className="flex items-center gap-2 mb-2">
           <Zap className="h-4 w-4 text-teal-600" />
           <span className="text-xs font-bold uppercase tracking-widest text-teal-700">Executive Summary</span>
-          {displaySnap.snapshot_date ? (
-            <span className="text-xs text-slate-400">{new Date(String(displaySnap.snapshot_date)).toLocaleDateString()}</span>
+          {displaySnap.snapshotDate ? (
+            <span className="text-xs text-slate-400">{new Date(String(displaySnap.snapshotDate)).toLocaleDateString()}</span>
           ) : null}
         </div>
-        <p className="text-sm text-slate-700 leading-relaxed">{String(displaySnap.ai_brief ?? "")}</p>
+        <p className="text-sm text-slate-700 leading-relaxed">{String(displaySnap.aiBrief ?? "")}</p>
       </div>
 
       {/* KPI navigation grid — links to the live detail pages (no fabricated values) */}
@@ -179,11 +190,11 @@ export function ExecutivePage() {
 
       {/* Score Rings */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
-        <ScoreRing value={Number(displaySnap.overall_score     ?? 0)} label="Overall"    color="#2dd4bf" />
-        <ScoreRing value={Number(displaySnap.fleet_health_score ?? 0)} label="Fleet"     color="#38bdf8" />
-        <ScoreRing value={Number(displaySnap.safety_score      ?? 0)} label="Safety"     color="#f87171" />
-        <ScoreRing value={Number(displaySnap.compliance_score  ?? 0)} label="Compliance" color="#34d399" />
-        <ScoreRing value={Number(displaySnap.financial_score   ?? 0)} label="Financial"  color="#f59e0b" />
+        <ScoreRing value={overallOf(displaySnap)}                          label="Overall"    color="#2dd4bf" />
+        <ScoreRing value={Number(displaySnap.fleetReadinessScore   ?? 0)} label="Fleet"      color="#38bdf8" />
+        <ScoreRing value={Number(displaySnap.safetyHealthScore     ?? 0)} label="Safety"     color="#f87171" />
+        <ScoreRing value={Number(displaySnap.complianceHealthScore ?? 0)} label="Compliance" color="#34d399" />
+        <ScoreRing value={Number(displaySnap.costHealthScore       ?? 0)} label="Financial"  color="#f59e0b" />
       </div>
 
       {/* Alert strip */}
@@ -300,13 +311,13 @@ export function ExecutivePage() {
             <tbody className="divide-y divide-slate-100">
               {snapshots.slice(0, 10).map((s, i) => (
                 <tr key={i} className="transition hover:bg-slate-50">
-                  <td className="px-4 py-3 text-slate-500 text-xs whitespace-nowrap">{s.snapshot_date ? new Date(String(s.snapshot_date)).toLocaleDateString() : "—"}</td>
-                  <td className="px-4 py-3 font-bold text-slate-900">{Number(s.overall_score ?? 0)}</td>
-                  <td className="px-4 py-3 text-sky-700">{Number(s.fleet_health_score ?? 0)}</td>
-                  <td className="px-4 py-3 text-red-700">{Number(s.safety_score ?? 0)}</td>
-                  <td className="px-4 py-3 text-emerald-700">{Number(s.compliance_score ?? 0)}</td>
-                  <td className="px-4 py-3 text-amber-700">{Number(s.financial_score ?? 0)}</td>
-                  <td className="px-4 py-3"><TrendChip val={Number(s.week_over_week_delta ?? 0)} /></td>
+                  <td className="px-4 py-3 text-slate-500 text-xs whitespace-nowrap">{s.snapshotDate ? new Date(String(s.snapshotDate)).toLocaleDateString() : "—"}</td>
+                  <td className="px-4 py-3 font-bold text-slate-900">{overallOf(s)}</td>
+                  <td className="px-4 py-3 text-sky-700">{Number(s.fleetReadinessScore ?? 0)}</td>
+                  <td className="px-4 py-3 text-red-700">{Number(s.safetyHealthScore ?? 0)}</td>
+                  <td className="px-4 py-3 text-emerald-700">{Number(s.complianceHealthScore ?? 0)}</td>
+                  <td className="px-4 py-3 text-amber-700">{Number(s.costHealthScore ?? 0)}</td>
+                  <td className="px-4 py-3"><TrendChip val={overallOf(s) - overallOf(snapshots[i + 7] ?? s)} /></td>
                 </tr>
               ))}
             </tbody>

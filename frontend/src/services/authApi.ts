@@ -19,16 +19,42 @@ export type SsoDiscovery = {
   connection: SsoConnection | null;
 };
 
+/** Returned by /api/auth/login when the tenant's security policy requires a second
+ *  factor: no session is issued yet, only a short-lived signed challenge that must
+ *  be proven via authApi.mfaLoginVerify. */
+export type MfaChallenge = {
+  mfaRequired: true;
+  challengeToken: string;
+  email: string;
+};
+
+export type LoginResult = UserSession | MfaChallenge;
+
+export function isMfaChallenge(result: LoginResult): result is MfaChallenge {
+  return (result as MfaChallenge).mfaRequired === true;
+}
+
 export const authApi = {
   bootstrap: async () => {
     // Use the real liveness route. The former /api/health path is not mapped and
     // generated a guaranteed 404 on every password login before the real request.
     try { await apiClient.get("/health/live"); } catch { /* warm-up only — never block login */ }
   },
-  login: async (usernameOrEmail: string, password: string) => {
+  login: async (usernameOrEmail: string, password: string): Promise<LoginResult> => {
     const email = resolveEmail(usernameOrEmail);
-    const response = await unwrap<UserSession>(
+    const response = await unwrap<LoginResult>(
       apiClient.post("/api/auth/login", { email, password })
+    );
+    if (!isMfaChallenge(response) && response.csrfToken) {
+      setGlobalCsrfToken(response.csrfToken);
+    }
+    return response;
+  },
+  /** Completes a two-step login: proves the TOTP code against the signed challenge
+   *  from `login`'s mfaRequired response and returns the real session. */
+  mfaLoginVerify: async (challengeToken: string, code: string) => {
+    const response = await unwrap<UserSession>(
+      apiClient.post("/api/auth/mfa/login-verify", { challengeToken, code })
     );
     if (response.csrfToken) {
       setGlobalCsrfToken(response.csrfToken);

@@ -128,9 +128,9 @@ export function AuditLogsPage() {
   // Client-side narrowing for deep-link params the API has no dedicated filter for.
   const logs = useMemo(() => {
     let rows = logsRaw as AnyRecord[];
-    if (dlActor)    rows = rows.filter((r) => String(r.actor_name  ?? "").toLowerCase().includes(dlActor.toLowerCase()));
-    if (dlEntity)   rows = rows.filter((r) => String(r.entity_name ?? "").toLowerCase().includes(dlEntity.toLowerCase()));
-    if (dlEntityId) rows = rows.filter((r) => String(r.entity_id   ?? "") === dlEntityId);
+    if (dlActor)    rows = rows.filter((r) => String(r.actorName  ?? "").toLowerCase().includes(dlActor.toLowerCase()));
+    if (dlEntity)   rows = rows.filter((r) => String(r.entityName ?? "").toLowerCase().includes(dlEntity.toLowerCase()));
+    if (dlEntityId) rows = rows.filter((r) => String(r.entityId   ?? "") === dlEntityId);
     return rows;
   }, [logsRaw, dlActor, dlEntity, dlEntityId]);
 
@@ -147,9 +147,9 @@ export function AuditLogsPage() {
     for (const log of logs) {
       const sev = String(log.severity ?? "Info");
       sevCounts[sev] = (sevCounts[sev] ?? 0) + 1;
-      const actor = String(log.actor_name ?? "system");
+      const actor = String(log.actorName ?? "system");
       if (actor) actors.add(actor);
-      const mod = String(log.module_key ?? "");
+      const mod = String(log.moduleKey ?? "");
       if (mod) modules.add(mod);
     }
     const criticalHigh = (sevCounts.Critical ?? 0) + (sevCounts.High ?? 0);
@@ -159,7 +159,7 @@ export function AuditLogsPage() {
     // Module event tallies for the side rail (top modules by activity).
     const moduleTally: Record<string, number> = {};
     for (const log of logs) {
-      const mod = String(log.module_key ?? "—");
+      const mod = String(log.moduleKey ?? "—");
       moduleTally[mod] = (moduleTally[mod] ?? 0) + 1;
     }
     const topModules = Object.entries(moduleTally)
@@ -168,8 +168,8 @@ export function AuditLogsPage() {
     // Most recent entries by timestamp for the "recent activity" side panel.
     const recent = [...logs]
       .sort((a, b) => {
-        const ta = a.created_at ? new Date(String(a.created_at)).getTime() : 0;
-        const tb = b.created_at ? new Date(String(b.created_at)).getTime() : 0;
+        const ta = a.createdAt ? new Date(String(a.createdAt)).getTime() : 0;
+        const tb = b.createdAt ? new Date(String(b.createdAt)).getTime() : 0;
         return tb - ta;
       })
       .slice(0, 6);
@@ -341,17 +341,17 @@ export function AuditLogsPage() {
                       onClick={() => setDrawerLog(log)}
                     >
                       <td className="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">
-                        {log.created_at ? new Date(String(log.created_at)).toLocaleString() : "—"}
+                        {log.createdAt ? new Date(String(log.createdAt)).toLocaleString() : "—"}
                       </td>
-                      <td className="px-4 py-3 text-slate-700">{String(log.actor_name ?? "system")}</td>
+                      <td className="px-4 py-3 text-slate-700">{String(log.actorName ?? "system")}</td>
                       <td className="px-4 py-3">
-                        <code className="rounded bg-teal-50 px-1.5 py-0.5 text-xs text-teal-700">{String(log.action_name ?? "")}</code>
+                        <code className="rounded bg-teal-50 px-1.5 py-0.5 text-xs text-teal-700">{String(log.actionName ?? "")}</code>
                       </td>
                       <td className="px-4 py-3 text-slate-700">
-                        {String(log.entity_name ?? "")}
-                        {!!log.entity_id && <span className="ml-1 text-slate-500 text-xs">#{String(log.entity_id)}</span>}
+                        {String(log.entityName ?? "")}
+                        {!!log.entityId && <span className="ml-1 text-slate-500 text-xs">#{String(log.entityId)}</span>}
                       </td>
-                      <td className="px-4 py-3 text-xs text-slate-500">{String(log.module_key ?? "—")}</td>
+                      <td className="px-4 py-3 text-xs text-slate-500">{String(log.moduleKey ?? "—")}</td>
                       <td className="px-4 py-3"><SeverityBadge severity={String(log.severity ?? "Info")} /></td>
                     </tr>
                   ))}
@@ -445,13 +445,13 @@ export function AuditLogsPage() {
                         onClick={() => setDrawerLog(log)}
                       >
                         <div className="flex items-center justify-between gap-2">
-                          <code className="truncate rounded bg-teal-50 px-1.5 py-0.5 text-[11px] text-teal-700">{String(log.action_name ?? "")}</code>
+                          <code className="truncate rounded bg-teal-50 px-1.5 py-0.5 text-[11px] text-teal-700">{String(log.actionName ?? "")}</code>
                           <SeverityBadge severity={String(log.severity ?? "Info")} />
                         </div>
                         <p className="mt-1 truncate text-[11px] text-slate-500">
-                          {String(log.actor_name ?? "system")}
+                          {String(log.actorName ?? "system")}
                           {" · "}
-                          {log.created_at ? new Date(String(log.created_at)).toLocaleString() : "—"}
+                          {log.createdAt ? new Date(String(log.createdAt)).toLocaleString() : "—"}
                         </p>
                       </li>
                     ))}

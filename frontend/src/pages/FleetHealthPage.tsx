@@ -423,14 +423,14 @@ function VehicleDrawer({
   const pmItems   = (data?.overduePmItems as AnyRecord[]) ?? [];
   const inspections = (data?.recentInspections as AnyRecord[]) ?? [];
   const assignment = data?.currentAssignment as AnyRecord | null;
-  const oos       = Boolean(veh.out_of_service);
+  const oos       = String(veh.status ?? "") === "Out of Service";
   const vehicleInfoRows: [string, string][] = [
     ["Type",            String(veh.type ?? "—")],
     ["Status",          String(veh.status ?? "—")],
-    ["Readiness",       `${num(veh.readiness_score, 50)}%`],
-    ["Device",          String(veh.device_status ?? "—")],
-    ["Assigned Driver", String(veh.assigned_driver_name ?? "Unassigned")],
-    ["Odometer",        veh.odometer_miles ? `${num(veh.odometer_miles).toLocaleString()} mi` : "—"],
+    ["Readiness",       `${num(veh.readinessScore, 50)}%`],
+    ["Device",          String(veh.deviceStatus ?? "—")],
+    ["Assigned Driver", String(veh.assignedDriverName ?? "Unassigned")],
+    ["Odometer",        veh.odometerMiles ? `${num(veh.odometerMiles).toLocaleString()} mi` : "—"],
   ];
 
   return (
@@ -443,7 +443,7 @@ function VehicleDrawer({
           <div className="flex-1 min-w-0">
             <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Vehicle Detail</p>
             <h2 className="font-bold text-slate-900 text-base truncate">
-              {String(veh.vehicle_code ?? `Vehicle #${vehicleId}`)}
+              {String(veh.vehicleCode ?? `Vehicle #${vehicleId}`)}
             </h2>
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -482,9 +482,9 @@ function VehicleDrawer({
               <Section title="Active Assignment" icon={<Activity className="h-4 w-4" />}>
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm space-y-1">
                   <p className="text-blue-800 font-semibold">{String(assignment.status ?? "")}</p>
-                  {!!assignment.pickup_address && <p className="text-blue-700 text-xs">From: {String(assignment.pickup_address)}</p>}
-                  {!!assignment.delivery_address && <p className="text-blue-700 text-xs">To: {String(assignment.delivery_address)}</p>}
-                  {!!assignment.driver_name && <p className="text-blue-700 text-xs">Driver: {String(assignment.driver_name)}</p>}
+                  {!!assignment.pickupAddress && <p className="text-blue-700 text-xs">From: {String(assignment.pickupAddress)}</p>}
+                  {!!assignment.deliveryAddress && <p className="text-blue-700 text-xs">To: {String(assignment.deliveryAddress)}</p>}
+                  {!!assignment.driverName && <p className="text-blue-700 text-xs">Driver: {String(assignment.driverName)}</p>}
                 </div>
               </Section>
             ) : (
@@ -504,12 +504,12 @@ function VehicleDrawer({
               {defects.length === 0
                 ? <p className="text-sm text-slate-500 italic">No open defects.</p>
                 : defects.map((d, i) => {
-                    const isCrit = Boolean(d.out_of_service);
+                    const isCrit = d.safeToOperate === false;
                     return (
                       <div key={i} className={`flex items-start justify-between gap-2 rounded-lg px-3 py-2 text-sm border ${isCrit ? "bg-red-50 border-red-200" : "bg-slate-50 border-slate-200"}`}>
                         <div className="flex-1 min-w-0">
                           <p className={`font-semibold ${isCrit ? "text-red-700" : "text-slate-700"}`}>
-                            {isCrit ? "⚠ " : ""}{String(d.defect_description ?? d.id)}
+                            {isCrit ? "⚠ " : ""}{String(d.defectDescription ?? d.id)}
                           </p>
                           <p className="text-xs text-slate-500 mt-0.5">{String(d.severity ?? "")} · {String(d.status ?? "")}</p>
                         </div>
@@ -545,8 +545,8 @@ function VehicleDrawer({
                     <div key={i} className="bg-orange-50 border border-orange-200 rounded-lg px-3 py-2 text-sm">
                       <p className="font-semibold text-orange-800">{String(f.code ?? "")} — {String(f.component ?? "")}</p>
                       {!!f.description && <p className="text-xs text-orange-600 mt-0.5">{String(f.description)}</p>}
-                      {num(f.recurrence_count) > 1 && (
-                        <p className="text-xs text-orange-500 mt-0.5">Recurred {num(f.recurrence_count)} times</p>
+                      {num(f.recurrenceCount) > 1 && (
+                        <p className="text-xs text-orange-500 mt-0.5">Recurred {num(f.recurrenceCount)} times</p>
                       )}
                     </div>
                   ))}
@@ -561,11 +561,11 @@ function VehicleDrawer({
                 ? <p className="text-sm text-slate-500 italic">No open work orders.</p>
                 : workOrders.map((wo, i) => (
                     <div key={i} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm">
-                      <p className="font-semibold text-slate-800">{String(wo.work_order_number ?? "")} — {String(wo.title ?? wo.service_type ?? "")}</p>
+                      <p className="font-semibold text-slate-800">{String(wo.workOrderNumber ?? "")} — {String(wo.title ?? "")}</p>
                       <div className="flex gap-3 text-xs text-slate-500 mt-0.5">
                         <span>Priority: {String(wo.priority ?? "Normal")}</span>
                         <span>Status: {String(wo.status ?? "")}</span>
-                        {!!wo.due_date && <span>Due: {String(wo.due_date)}</span>}
+                        {!!wo.dueDate && <span>Due: {String(wo.dueDate)}</span>}
                       </div>
                     </div>
                   ))}
@@ -581,9 +581,9 @@ function VehicleDrawer({
                 ? <p className="text-sm text-slate-500 italic">No overdue PM items.</p>
                 : pmItems.map((pm, i) => (
                     <div key={i} className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-sm">
-                      <p className="font-semibold text-amber-800">{String(pm.service_type ?? "")}</p>
+                      <p className="font-semibold text-amber-800">{String(pm.serviceType ?? "")}</p>
                       <p className="text-xs text-amber-600 mt-0.5">
-                        Due: {pm.due_date ? String(pm.due_date) : "—"} · Status: {String(pm.status ?? "")}
+                        Due: {pm.dueDate ? String(pm.dueDate) : "—"} · Status: {String(pm.status ?? "")}
                       </p>
                     </div>
                   ))}
@@ -596,15 +596,15 @@ function VehicleDrawer({
                 : inspections.map((ins, i) => (
                     <div key={i} className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm flex items-center justify-between">
                       <div>
-                        <p className="font-semibold text-slate-800">{String(ins.inspection_type ?? "Inspection")}</p>
-                        <p className="text-xs text-slate-500">{String(ins.submitted_at ?? "")}</p>
+                        <p className="font-semibold text-slate-800">{String(ins.inspectionType ?? "Inspection")}</p>
+                        <p className="text-xs text-slate-500">{String(ins.submittedAt ?? "")}</p>
                       </div>
                       <div className="text-right shrink-0">
-                        <span className={`text-xs font-bold ${Boolean(ins.safe_to_operate) ? "text-emerald-600" : "text-red-600"}`}>
-                          {Boolean(ins.safe_to_operate) ? "Safe" : "Unsafe"}
+                        <span className={`text-xs font-bold ${Boolean(ins.safeToOperate) ? "text-emerald-600" : "text-red-600"}`}>
+                          {Boolean(ins.safeToOperate) ? "Safe" : "Unsafe"}
                         </span>
-                        {num(ins.critical_defect_count) > 0 && (
-                          <p className="text-[10px] text-red-500">{num(ins.critical_defect_count)} critical</p>
+                        {num(ins.criticalDefectCount) > 0 && (
+                          <p className="text-[10px] text-red-500">{num(ins.criticalDefectCount)} critical</p>
                         )}
                       </div>
                     </div>
@@ -673,14 +673,14 @@ function DriverDrawer({
   const coachingTasks = (data?.coachingTasks as AnyRecord[]) ?? [];
   const hos          = data?.hosStatus as AnyRecord | null;
   const assignment   = data?.currentAssignment as AnyRecord | null;
-  const safetyScore  = num(drv.safety_score, 100);
+  const safetyScore  = num(drv.safetyScore, 100);
   const driverInfoRows: [string, string][] = [
-    ["Driver Code",   String(drv.driver_code ?? "—")],
+    ["Driver Code",   String(drv.driverCode ?? "—")],
     ["Status",        String(drv.status ?? "—")],
     ["Safety Score",  `${safetyScore}%`],
-    ["Risk Score",    `${num(drv.risk_score)}%`],
-    ["Vehicle",       String(drv.assigned_vehicle_code ?? "Unassigned")],
-    ["License",       String(drv.license_number ?? "—")],
+    ["Risk Score",    `${num(drv.riskScore)}%`],
+    ["Vehicle",       String(drv.assignedVehicleCode ?? "Unassigned")],
+    ["License",       String(drv.licenseNumber ?? "—")],
   ];
 
   return (
@@ -693,7 +693,7 @@ function DriverDrawer({
           <div className="flex-1 min-w-0">
             <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Driver Risk Detail</p>
             <h2 className="font-bold text-slate-900 text-base truncate">
-              {String(drv.full_name ?? `Driver #${driverId}`)}
+              {String(drv.fullName ?? `Driver #${driverId}`)}
             </h2>
           </div>
           <div className={`text-sm font-bold ${scoreColor(safetyScore)} shrink-0`}>
@@ -730,9 +730,9 @@ function DriverDrawer({
               <Section title="Current Assignment" icon={<Activity className="h-4 w-4" />}>
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm">
                   <p className="text-blue-800 font-semibold">{String(assignment.status ?? "")}</p>
-                  {!!assignment.pickup_address && <p className="text-blue-700 text-xs mt-0.5">From: {String(assignment.pickup_address)}</p>}
-                  {!!assignment.delivery_address && <p className="text-blue-700 text-xs">To: {String(assignment.delivery_address)}</p>}
-                  {!!assignment.vehicle_code && <p className="text-blue-700 text-xs">Vehicle: {String(assignment.vehicle_code)}</p>}
+                  {!!assignment.pickupAddress && <p className="text-blue-700 text-xs mt-0.5">From: {String(assignment.pickupAddress)}</p>}
+                  {!!assignment.deliveryAddress && <p className="text-blue-700 text-xs">To: {String(assignment.deliveryAddress)}</p>}
+                  {!!assignment.vehicleCode && <p className="text-blue-700 text-xs">Vehicle: {String(assignment.vehicleCode)}</p>}
                 </div>
               </Section>
             ) : null}
@@ -740,18 +740,18 @@ function DriverDrawer({
             {/* HOS */}
             <Section title="Hours of Service" icon={<Clock className="h-4 w-4" />}>
               {hos ? (
-                <div className={`border rounded-lg p-3 text-sm ${String(hos.hos_status) === "Violation" ? "bg-red-50 border-red-200" : "bg-slate-50 border-slate-200"}`}>
+                <div className={`border rounded-lg p-3 text-sm ${String(hos.hosStatus) === "Violation" ? "bg-red-50 border-red-200" : "bg-slate-50 border-slate-200"}`}>
                   <div className="flex gap-4">
                     <div>
                       <p className="text-[10px] text-slate-400 uppercase font-bold">Drive Remaining</p>
                       <p className="font-bold text-slate-800">
-                        {Math.floor(num(hos.drive_time_remaining_minutes) / 60)}h {num(hos.drive_time_remaining_minutes) % 60}m
+                        {Math.floor(num(hos.driveTimeRemainingMinutes) / 60)}h {num(hos.driveTimeRemainingMinutes) % 60}m
                       </p>
                     </div>
                     <div>
                       <p className="text-[10px] text-slate-400 uppercase font-bold">HOS Status</p>
-                      <p className={`font-bold ${String(hos.hos_status) === "Violation" ? "text-red-600" : String(hos.hos_status) === "Warning" ? "text-amber-600" : "text-emerald-600"}`}>
-                        {String(hos.hos_status ?? "OK")}
+                      <p className={`font-bold ${String(hos.hosStatus) === "Violation" ? "text-red-600" : String(hos.hosStatus) === "Warning" ? "text-amber-600" : "text-emerald-600"}`}>
+                        {String(hos.hosStatus ?? "OK")}
                       </p>
                     </div>
                   </div>
@@ -774,8 +774,8 @@ function DriverDrawer({
                 : events.map((ev, i) => (
                     <div key={i} className="bg-orange-50 border border-orange-200 rounded-lg px-3 py-2 text-sm flex items-start justify-between gap-2">
                       <div className="flex-1 min-w-0">
-                        <p className="font-semibold text-orange-800">{String(ev.event_type ?? "")}</p>
-                        <p className="text-xs text-orange-600 mt-0.5">{String(ev.severity ?? "")} · {String(ev.review_status ?? "")}</p>
+                        <p className="font-semibold text-orange-800">{String(ev.eventType ?? "")}</p>
+                        <p className="text-xs text-orange-600 mt-0.5">{String(ev.severity ?? "")} · {String(ev.reviewStatus ?? "")}</p>
                         {!!ev.description && <p className="text-xs text-orange-600 truncate">{String(ev.description)}</p>}
                       </div>
                       {canManageSafety && (
@@ -794,21 +794,21 @@ function DriverDrawer({
             <Section
               title={`Coaching Tasks (${coachingTasks.length})`}
               icon={<Shield className="h-4 w-4" />}
-              badge={coachingTasks.some((t) => t.due_at && new Date(String(t.due_at)) < new Date()) ? "medium" : undefined}
+              badge={coachingTasks.some((t) => t.dueAt && new Date(String(t.dueAt)) < new Date()) ? "medium" : undefined}
             >
               {coachingTasks.length === 0
                 ? <p className="text-sm text-slate-500 italic">No pending coaching tasks.</p>
                 : coachingTasks.map((ct, i) => {
-                    const overdue = ct.due_at && new Date(String(ct.due_at)) < new Date();
+                    const overdue = ct.dueAt && new Date(String(ct.dueAt)) < new Date();
                     return (
                       <div key={i} className={`border rounded-lg px-3 py-2 text-sm flex items-start justify-between gap-2 ${overdue ? "bg-amber-50 border-amber-200" : "bg-slate-50 border-slate-200"}`}>
                         <div className="flex-1 min-w-0">
                           <p className={`font-semibold ${overdue ? "text-amber-800" : "text-slate-800"}`}>
-                            {overdue ? "⚠ " : ""}{String(ct.title ?? ct.coaching_type ?? "")}
+                            {overdue ? "⚠ " : ""}{String(ct.title ?? ct.coachingType ?? "")}
                           </p>
                           <div className="flex gap-2 text-xs mt-0.5">
                             <span className={overdue ? "text-amber-600" : "text-slate-500"}>
-                              {overdue ? "OVERDUE" : "Due"}: {ct.due_at ? String(ct.due_at).split("T")[0] : "—"}
+                              {overdue ? "OVERDUE" : "Due"}: {ct.dueAt ? String(ct.dueAt).split("T")[0] : "—"}
                             </span>
                             <span className="text-slate-400">· {String(ct.priority ?? "")}</span>
                           </div>

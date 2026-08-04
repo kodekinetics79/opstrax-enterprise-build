@@ -1673,7 +1673,7 @@ public static partial class EndpointMappings
         // ===== BATCH 7: REPORTS & ANALYTICS ======================================
         app.MapGet("/api/reports/catalog", (HttpContext http, Database db, CancellationToken ct) => RequirePermission(http, "reports:view") is { } denied ? Task.FromResult(denied) : OkRows(db, "SELECT * FROM report_catalog WHERE status='Active' ORDER BY report_category, report_name", ct: ct));
         app.MapGet("/api/reports/summary", ReportsSummary);
-        app.MapGet("/api/reports/runs", (HttpContext http, Database db, CancellationToken ct) => RequirePermission(http, "reports:view") is { } denied ? Task.FromResult(denied) : OkRows(db, "SELECT * FROM report_runs ORDER BY started_at DESC LIMIT 50", ct: ct));
+        app.MapGet("/api/reports/runs", (HttpContext http, Database db, CancellationToken ct) => RequirePermission(http, "reports:view") is { } denied ? Task.FromResult(denied) : OkRows(db, "SELECT * FROM report_runs WHERE tenant_id=@cid ORDER BY started_at DESC LIMIT 50", p => p.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
         app.MapPost("/api/reports/{key}/run", ReportRun);
         app.MapGet("/api/reports/scheduled", (HttpContext http, Database db, CancellationToken ct) => RequirePermission(http, "reports:view") is { } denied ? Task.FromResult(denied) : OkRows(db, "SELECT * FROM scheduled_reports ORDER BY next_run_at LIMIT 30", ct: ct));
         app.MapPost("/api/reports/scheduled", CreateScheduledReport);
@@ -2044,6 +2044,10 @@ public static partial class EndpointMappings
         // module_records CRUD so it renders + supports create/edit (full quote→contract
         // conversion is a separate roadmap feature).
         MapDedicatedModule(app, "quotations");
+        // CRM: the Leads + Opportunities pages call /api/leads + /api/opportunities; back
+        // them with the tenant-scoped module_records CRUD (LoadModule scopes by company_id).
+        MapDedicatedModule(app, "leads");
+        MapDedicatedModule(app, "opportunities");
         MapDedicatedModule(app, "settings");
         MapDedicatedModule(app, "billing");
         MapDedicatedModule(app, "companies");
@@ -7920,7 +7924,7 @@ public static partial class EndpointMappings
             record,
             labor = await db.QueryAsync("SELECT * FROM work_order_labor WHERE work_order_id=@id ORDER BY created_at DESC", c => c.Parameters.AddWithValue("@id", id), ct),
             parts = await db.QueryAsync("SELECT * FROM work_order_parts WHERE work_order_id=@id ORDER BY created_at DESC", c => c.Parameters.AddWithValue("@id", id), ct),
-            timeline = await WorkOrderTimelineRows(id, db, ct),
+            timeline = await WorkOrderTimelineRows(id, GetCompanyId(http), db, ct),
             documents = await db.QueryAsync("SELECT * FROM documents WHERE entity_type IN ('work order','work_order') AND entity_id=@id AND deleted_at IS NULL", c => c.Parameters.AddWithValue("@id", id), ct),
             recommendations = await TenantModuleRecommendations(db, GetCompanyId(http), "work-orders", ct),
             auditTrail = await TenantAuditRows(db, GetCompanyId(http), "WorkOrder", id, ct)
@@ -7955,11 +7959,14 @@ public static partial class EndpointMappings
         return Results.Ok(ApiResponse<object>.Ok(new { id }, "Work order updated"));
     }
 
-    private static async Task<IResult> WorkOrderTimeline(long id, Database db, CancellationToken ct)
-        => Results.Ok(ApiResponse<object>.Ok(await WorkOrderTimelineRows(id, db, ct)));
+    private static async Task<IResult> WorkOrderTimeline(HttpContext http, long id, Database db, CancellationToken ct)
+    {
+        if (RequirePermission(http, "maintenance:view") is { } denied) return denied;
+        return Results.Ok(ApiResponse<object>.Ok(await WorkOrderTimelineRows(id, GetCompanyId(http), db, ct)));
+    }
 
-    private static Task<List<Dictionary<string, object?>>> WorkOrderTimelineRows(long id, Database db, CancellationToken ct)
-        => db.QueryAsync("SELECT * FROM work_order_status_events WHERE work_order_id=@id ORDER BY occurred_at DESC LIMIT 20", c => c.Parameters.AddWithValue("@id", id), ct);
+    private static Task<List<Dictionary<string, object?>>> WorkOrderTimelineRows(long id, long companyId, Database db, CancellationToken ct)
+        => db.QueryAsync("SELECT e.* FROM work_order_status_events e JOIN work_orders wo ON wo.id=e.work_order_id AND wo.company_id=@cid WHERE e.work_order_id=@id ORDER BY e.occurred_at DESC LIMIT 20", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
 
     private static async Task<IResult> WorkOrderAssign(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
@@ -9680,6 +9687,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         ["audit-logs"] = "audit:view",
         ["user-management"] = "users:view",
         ["quotations"] = "customers:view",
+        ["leads"] = "customers:view",
+        ["opportunities"] = "customers:view",
         ["settings"] = "settings:view",
         ["billing"] = "billing:view",
         ["companies"] = "users:view",
@@ -9706,6 +9715,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         ["carrier-management"] = "finance:manage",
         ["expenses"] = "finance:manage",
         ["quotations"] = "customers:update",
+        ["leads"] = "customers:update",
+        ["opportunities"] = "customers:update",
         ["white-label"] = "settings:update",
     };
 
@@ -12245,8 +12256,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     // BATCH 5 HANDLERS — EXPENSES
     // =====================================================================
 
-    private static async Task<IResult> ExpensesSummary(Database db, CancellationToken ct)
+    private static async Task<IResult> ExpensesSummary(HttpContext http, Database db, CancellationToken ct)
     {
+        if (RequirePermission(http, "finance:view") is { } denied) return denied;
         var row = await db.QuerySingleAsync(
             @"SELECT
                 CONCAT('$', TO_CHAR((COALESCE(SUM(CASE WHEN expense_date >= DATE_TRUNC('month', CURRENT_DATE) THEN amount ELSE 0 END),0))::numeric, 'FM9,999,999,990.00')) total_expenses_this_month,
@@ -12261,12 +12273,14 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 CONCAT('$', TO_CHAR((COALESCE(AVG(amount),0))::numeric, 'FM9,999,999,990.00')) average_expense_amount,
                 SUM(CASE WHEN receipt_status='Missing' THEN 1 ELSE 0 END) missing_receipts,
                 COUNT(*) total
-              FROM expenses WHERE deleted_at IS NULL", ct: ct);
+              FROM expenses WHERE company_id=@cid AND deleted_at IS NULL", p => p.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
     }
 
-    private static Task<IResult> Expenses(Database db, CancellationToken ct)
-        => OkRows(db,
+    private static Task<IResult> Expenses(HttpContext http, Database db, CancellationToken ct)
+    {
+        if (RequirePermission(http, "finance:view") is { } denied) return Task.FromResult(denied);
+        return OkRows(db,
             @"SELECT e.*, v.vehicle_code, d.full_name driver_name, j.job_code, c.name customer_name,
                      CASE WHEN e.risk_score >= 65 THEN 'High' WHEN e.risk_score >= 40 THEN 'Medium' ELSE 'Low' END risk_heat_score,
                      COALESCE(e.recommended_action, CASE WHEN e.receipt_status='Missing' THEN 'Upload receipt before approval' ELSE 'Review and approve expense' END) recommended_action
@@ -12275,8 +12289,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
               LEFT JOIN drivers d ON d.id=e.driver_id
               LEFT JOIN jobs j ON j.id=e.job_id
               LEFT JOIN customers c ON c.id=e.customer_id
-              WHERE e.deleted_at IS NULL
-              ORDER BY ARRAY_POSITION(ARRAY['Pending','Rejected','Approved'], e.approval_status), e.expense_date DESC", ct: ct);
+              WHERE e.company_id=@cid AND e.deleted_at IS NULL
+              ORDER BY ARRAY_POSITION(ARRAY['Pending','Rejected','Approved'], e.approval_status), e.expense_date DESC", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+    }
 
     private static async Task<IResult> ExpenseDetail(HttpContext http, long id, Database db, CancellationToken ct)
     {
@@ -12287,8 +12302,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
               LEFT JOIN drivers d ON d.id=e.driver_id
               LEFT JOIN jobs j ON j.id=e.job_id
               LEFT JOIN customers c ON c.id=e.customer_id
-              WHERE e.id=@id AND e.deleted_at IS NULL",
-            c => c.Parameters.AddWithValue("@id", id), ct);
+              WHERE e.id=@id AND e.company_id=@cid AND e.deleted_at IS NULL",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct);
         if (record is null) return Results.NotFound(ApiResponse<object>.Fail("Expense not found"));
         return Results.Ok(ApiResponse<object>.Ok(new
         {
@@ -12397,8 +12412,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     // BATCH 5 HANDLERS — CONTRACTS / RATES
     // =====================================================================
 
-    private static async Task<IResult> ContractsSummary(Database db, CancellationToken ct)
+    private static async Task<IResult> ContractsSummary(HttpContext http, Database db, CancellationToken ct)
     {
+        if (RequirePermission(http, "contract.view") is { } denied) return denied;
         var row = await db.QuerySingleAsync(
             @"SELECT
                 SUM(CASE WHEN status='Active' THEN 1 ELSE 0 END) active_contracts,
@@ -12413,12 +12429,14 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 CONCAT('$', TO_CHAR((COALESCE(SUM(base_rate * 1200),0))::numeric, 'FM9,999,999,999')) contract_revenue_estimate,
                 SUM(CASE WHEN status='Active' AND (expiry_date BETWEEN CURRENT_DATE AND CURRENT_DATE + 60 * INTERVAL '1 day') THEN 1 ELSE 0 END) renewal_queue,
                 COUNT(*) total
-              FROM contracts WHERE deleted_at IS NULL", ct: ct);
+              FROM contracts WHERE company_id=@cid AND deleted_at IS NULL", p => p.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
     }
 
-    private static Task<IResult> Contracts(Database db, CancellationToken ct)
-        => OkRows(db,
+    private static Task<IResult> Contracts(HttpContext http, Database db, CancellationToken ct)
+    {
+        if (RequirePermission(http, "contract.view") is { } denied) return Task.FromResult(denied);
+        return OkRows(db,
             @"SELECT con.*, c.name customer_name, car.name carrier_name,
                      CASE WHEN con.margin_risk='High' THEN 'High' WHEN con.margin_risk='Medium' THEN 'Medium' ELSE 'Low' END risk_heat_score,
                      CASE WHEN con.status='Expired' OR con.expiry_date < CURRENT_DATE THEN 'Renew contract immediately'
@@ -12431,8 +12449,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
               FROM contracts con
               LEFT JOIN customers c ON c.id=con.customer_id
               LEFT JOIN carriers car ON car.id=con.carrier_id
-              WHERE con.deleted_at IS NULL
-              ORDER BY ARRAY_POSITION(ARRAY['High','Medium','Low'], con.margin_risk), con.expiry_date", ct: ct);
+              WHERE con.company_id=@cid AND con.deleted_at IS NULL
+              ORDER BY ARRAY_POSITION(ARRAY['High','Medium','Low'], con.margin_risk), con.expiry_date", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+    }
 
     private static async Task<IResult> ContractDetail(HttpContext http, long id, Database db, CommercialFoundationService commercial, CancellationToken ct)
     {
@@ -12443,8 +12462,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
               FROM contracts con
               LEFT JOIN customers c ON c.id=con.customer_id
               LEFT JOIN carriers car ON car.id=con.carrier_id
-              WHERE con.id=@id AND con.deleted_at IS NULL",
-            c => c.Parameters.AddWithValue("@id", id), ct);
+              WHERE con.id=@id AND con.company_id=@cid AND con.deleted_at IS NULL",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct);
         if (record is null) return Results.NotFound(ApiResponse<object>.Fail("Contract not found"));
         return Results.Ok(ApiResponse<object>.Ok(new
         {
@@ -13426,14 +13445,16 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         };
     }
 
-    private static async Task<IResult> KpiSummary(Database db, CancellationToken ct)
+    private static async Task<IResult> KpiSummary(HttpContext http, Database db, CancellationToken ct)
     {
-        var total      = await db.ScalarLongAsync("SELECT COUNT(*) FROM kpi_metrics", ct: ct);
-        var onTarget   = await db.ScalarLongAsync("SELECT COUNT(*) FROM kpi_metrics WHERE status='On Target'", ct: ct);
-        var atRisk     = await db.ScalarLongAsync("SELECT COUNT(*) FROM kpi_metrics WHERE status='At Risk'", ct: ct);
-        var critical   = await db.ScalarLongAsync("SELECT COUNT(*) FROM kpi_metrics WHERE status='Critical'", ct: ct);
-        var drifting   = await db.QueryAsync("SELECT * FROM kpi_metrics WHERE status IN ('At Risk','Critical') ORDER BY ARRAY_POSITION(ARRAY['Critical','At Risk'], status) LIMIT 10", ct: ct);
-        var byCategory = await db.QueryAsync("SELECT category, COUNT(*) total, SUM(CASE WHEN status='On Target' THEN 1 ELSE 0 END) on_target, SUM(CASE WHEN status='At Risk' THEN 1 ELSE 0 END) at_risk, SUM(CASE WHEN status='Critical' THEN 1 ELSE 0 END) critical FROM kpi_metrics GROUP BY category", ct: ct);
+        if (RequirePermission(http, "reports:view") is { } denied) return denied;
+        var companyId = GetCompanyId(http);
+        var total      = await db.ScalarLongAsync("SELECT COUNT(*) FROM kpi_metrics WHERE tenant_id=@c", p => p.Parameters.AddWithValue("@c", companyId), ct);
+        var onTarget   = await db.ScalarLongAsync("SELECT COUNT(*) FROM kpi_metrics WHERE tenant_id=@c AND status='On Target'", p => p.Parameters.AddWithValue("@c", companyId), ct);
+        var atRisk     = await db.ScalarLongAsync("SELECT COUNT(*) FROM kpi_metrics WHERE tenant_id=@c AND status='At Risk'", p => p.Parameters.AddWithValue("@c", companyId), ct);
+        var critical   = await db.ScalarLongAsync("SELECT COUNT(*) FROM kpi_metrics WHERE tenant_id=@c AND status='Critical'", p => p.Parameters.AddWithValue("@c", companyId), ct);
+        var drifting   = await db.QueryAsync("SELECT * FROM kpi_metrics WHERE tenant_id=@c AND status IN ('At Risk','Critical') ORDER BY ARRAY_POSITION(ARRAY['Critical','At Risk'], status) LIMIT 10", p => p.Parameters.AddWithValue("@c", companyId), ct);
+        var byCategory = await db.QueryAsync("SELECT category, COUNT(*) total, SUM(CASE WHEN status='On Target' THEN 1 ELSE 0 END) on_target, SUM(CASE WHEN status='At Risk' THEN 1 ELSE 0 END) at_risk, SUM(CASE WHEN status='Critical' THEN 1 ELSE 0 END) critical FROM kpi_metrics WHERE tenant_id=@c GROUP BY category", p => p.Parameters.AddWithValue("@c", companyId), ct);
         return Results.Ok(ApiResponse<object>.Ok(new { total, onTarget, atRisk, critical, drifting, byCategory }, "KPI summary"));
     }
 

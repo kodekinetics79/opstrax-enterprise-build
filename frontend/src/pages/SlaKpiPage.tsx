@@ -119,9 +119,9 @@ export function SlaKpiPage() {
   const resolveBreache = useResolveSlaBreache();
 
   const kpiCategories = [...new Set(kpiMetrics.map((k) => String(k.category ?? "")))].filter(Boolean);
-  const slaTypes      = [...new Set(slaRecords.map((s) => String(s.sla_type ?? "")))].filter(Boolean);
+  const slaTypes      = [...new Set(slaRecords.map((s) => String(s.slaType ?? "")))].filter(Boolean);
   const filteredKpi   = filterCat     ? kpiMetrics.filter((k) => String(k.category) === filterCat) : kpiMetrics;
-  const filteredSla   = filterSlaType ? slaRecords.filter((s) => String(s.sla_type) === filterSlaType) : slaRecords;
+  const filteredSla   = filterSlaType ? slaRecords.filter((s) => String(s.slaType) === filterSlaType) : slaRecords;
 
   // Attainment vs target, derived from the same live kpiMetrics the KPI cards use
   // (pct = actual / target, capped at 110 to mirror KpiCard). Bars colour by pct.
@@ -245,18 +245,18 @@ export function SlaKpiPage() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filteredSla.map((s, i) => {
-                  const targetVal = Number(s.target_value ?? 0);
-                  const actualVal = Number(s.actual_value ?? 0);
+                  const targetVal = Number(s.targetValue ?? 0);
+                  const actualVal = Number(s.actualValue ?? 0);
                   const unit      = String(s.unit ?? "");
                   const attain    = targetVal > 0 ? Math.round((actualVal / targetVal) * 100) : 0;
                   return (
                     <tr key={i} className="transition hover:bg-slate-50">
                       <td className="px-4 py-3">
-                        <p className="font-medium text-slate-900">{String(s.sla_name ?? "")}</p>
-                        {s.job_number ? <p className="text-xs text-slate-500">Job: {String(s.job_number)}</p> : null}
+                        <p className="font-medium text-slate-900">{String(s.slaName ?? "")}</p>
+                        {s.jobNumber ? <p className="text-xs text-slate-500">Job: {String(s.jobNumber)}</p> : null}
                       </td>
-                      <td className="px-4 py-3 text-slate-700">{String(s.customer_name ?? "—")}</td>
-                      <td className="px-4 py-3 text-slate-500 text-xs">{String(s.sla_type ?? "")}</td>
+                      <td className="px-4 py-3 text-slate-700">{String(s.customerName ?? "—")}</td>
+                      <td className="px-4 py-3 text-slate-500 text-xs">{String(s.slaType ?? "")}</td>
                       <td className="px-4 py-3 font-mono text-slate-700">{targetVal.toLocaleString(undefined, { maximumFractionDigits: 1 })} {unit}</td>
                       <td className="px-4 py-3 font-mono text-slate-700">{actualVal.toLocaleString(undefined, { maximumFractionDigits: 1 })} {unit}</td>
                       <td className="px-4 py-3">
@@ -287,13 +287,13 @@ export function SlaKpiPage() {
               <AlertTriangle className="h-5 w-5 shrink-0 text-red-600 mt-0.5" />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <p className="font-semibold text-slate-900">{String(b.sla_name ?? "")}</p>
+                  <p className="font-semibold text-slate-900">{String(b.slaName ?? "")}</p>
                   <StatusBadge status={String(b.status ?? "")} />
-                  {b.customer_name ? <span className="text-xs text-slate-500">{String(b.customer_name)}</span> : null}
+                  {b.customerName ? <span className="text-xs text-slate-500">{String(b.customerName)}</span> : null}
                 </div>
-                <p className="mt-1 text-sm text-slate-700 leading-relaxed">{String(b.breach_reason ?? "")}</p>
-                <p className="mt-0.5 text-xs text-slate-500">Detected: {b.breach_detected_at ? new Date(String(b.breach_detected_at)).toLocaleString() : "—"}</p>
-                {b.resolution_action ? <p className="mt-1 text-xs text-teal-600 italic">{String(b.resolution_action)}</p> : null}
+                <p className="mt-1 text-sm text-slate-700 leading-relaxed">{String(b.description ?? "")}</p>
+                <p className="mt-0.5 text-xs text-slate-500">Detected: {b.detectedAt ? new Date(String(b.detectedAt)).toLocaleString() : "—"}</p>
+                {b.rootCausePlaceholder ? <p className="mt-1 text-xs text-teal-600 italic">{String(b.rootCausePlaceholder)}</p> : null}
               </div>
               <div className="flex flex-col gap-2 shrink-0">
                 {String(b.status) === "Open" && (
