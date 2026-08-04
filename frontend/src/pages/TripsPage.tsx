@@ -398,7 +398,7 @@ export function TripsPage() {
                   {breadcrumbs.length === 0 ? (
                     <EmptyState title="No breadcrumbs" subtitle="Trip breadcrumb history is not available yet." />
                   ) : (
-                    <DataTable rows={breadcrumbs} columns={["event_time", "lat", "lng", "speed_mph", "event_type"]} />
+                    <DataTable rows={breadcrumbs} columns={["eventTime", "lat", "lng", "speedMph", "eventType"]} />
                   )}
                 </div>
               </section>

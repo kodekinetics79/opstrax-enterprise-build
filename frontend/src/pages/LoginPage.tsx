@@ -6,7 +6,7 @@ import { flushSync } from "react-dom";
 import { Link, useNavigate } from "react-router";
 import { getLandingRouteForSession } from "@/auth/sessionRouting";
 import { useAuth } from "@/hooks/useAuth";
-import { authApi, type SsoConnection } from "@/services/authApi";
+import { authApi, isMfaChallenge, type MfaChallenge, type SsoConnection } from "@/services/authApi";
 import { API_BASE_URL } from "@/services/apiClient";
 import { OpsTraxLogo } from "@/components/OpsTraxLogo";
 
@@ -37,6 +37,38 @@ function getLoginErrorMessage(error: unknown): string {
   }
 
   return String(error.response?.data?.message ?? "We could not complete sign-in. Please try again.");
+}
+
+/** True when the backend rejected the MFA attempt because the signed challenge
+ *  itself is gone (expired or already consumed) rather than a wrong code — the
+ *  only case that requires restarting sign-in instead of just retrying the code. */
+function isMfaChallengeExpired(error: unknown): boolean {
+  if (!axios.isAxiosError(error)) return false;
+  const message = String(error.response?.data?.message ?? "");
+  return /expired|already used/i.test(message);
+}
+
+function getMfaErrorMessage(error: unknown): string {
+  if (!axios.isAxiosError(error)) {
+    return "We could not verify the code. Please try again.";
+  }
+  if (error.code === "ECONNABORTED") {
+    return "OpsTrax is taking too long to respond. Please try again in a few seconds.";
+  }
+  if (isMfaChallengeExpired(error)) {
+    return "Your sign-in session expired. Please sign in again.";
+  }
+  const status = error.response?.status;
+  if (status === 401) {
+    return "That code was not accepted. Check your authenticator app and try again.";
+  }
+  if (status === 429) {
+    return "Too many attempts were detected. Wait a moment, then try again.";
+  }
+  if (!error.response) {
+    return "We could not reach the OpsTrax API. Check the connection and try again.";
+  }
+  return String(error.response?.data?.message ?? "We could not verify the code. Please try again.");
 }
 
 /* ── Pointer-driven parallax tilt for the 3D scene ──────────────────────────
@@ -431,11 +463,15 @@ export function LoginPage() {
   const [showPassword, setShowPass] = useState(false);
   const [emailError, setEmailError] = useState("");
   // Identifier-first: "identify" collects the email; "authenticate" reveals the
-  // password field OR the SSO button depending on the domain's SSO config.
-  const [step, setStep]             = useState<"identify" | "authenticate">("identify");
+  // password field OR the SSO button depending on the domain's SSO config; "mfa"
+  // is a third step reached only when the tenant requires a second factor.
+  const [step, setStep]             = useState<"identify" | "authenticate" | "mfa">("identify");
   const [ssoConn, setSsoConn]       = useState<SsoConnection | null>(null);
+  const [mfaChallenge, setMfaChallenge] = useState<MfaChallenge | null>(null);
+  const [mfaCode, setMfaCode]       = useState("");
   const { panelRef, sceneRef } = usePointerTilt();
   const passwordRef = useRef<HTMLInputElement>(null);
+  const mfaCodeRef = useRef<HTMLInputElement>(null);
 
   // Resolve whether the email's domain routes to SSO. Fails OPEN to the password
   // field so a discovery outage never blocks a password login.
@@ -456,11 +492,19 @@ export function LoginPage() {
       await authApi.bootstrap();
       return authApi.login(e, p);
     },
-    onSuccess: (session) => {
+    onSuccess: (result) => {
+      if (isMfaChallenge(result)) {
+        // No session yet — the tenant requires a second factor. Hold the signed
+        // challenge and move to the code-entry step instead of signing in.
+        setMfaChallenge(result);
+        setMfaCode("");
+        setStep("mfa");
+        return;
+      }
       flushSync(() => {
-        setSession(session);
+        setSession(result);
       });
-      navigate(getLandingRouteForSession(session), { replace: true });
+      navigate(getLandingRouteForSession(result), { replace: true });
     },
     // Do not leave a rejected credential resident in the rendered document or
     // accidentally resubmit it. Keep the non-enumerating error, clear only the
@@ -471,10 +515,41 @@ export function LoginPage() {
     },
   });
 
+  const mfaVerify = useMutation({
+    mutationFn: async (code: string) => {
+      if (!mfaChallenge) throw new Error("Your sign-in session expired. Please sign in again.");
+      return authApi.mfaLoginVerify(mfaChallenge.challengeToken, code);
+    },
+    onSuccess: (session) => {
+      flushSync(() => {
+        setSession(session);
+      });
+      navigate(getLandingRouteForSession(session), { replace: true });
+    },
+    // A wrong code should not lose the in-flight challenge — only a genuinely
+    // expired/consumed challenge forces the user back to the password step.
+    onError: (err) => {
+      setMfaCode("");
+      if (isMfaChallengeExpired(err)) {
+        setMfaChallenge(null);
+        setStep("authenticate");
+        setPassword("");
+        requestAnimationFrame(() => passwordRef.current?.focus());
+        return;
+      }
+      requestAnimationFrame(() => mfaCodeRef.current?.focus());
+    },
+  });
+
   // Move focus to the password field the moment it is revealed (a11y + speed).
   useEffect(() => {
     if (step === "authenticate" && !ssoConn) passwordRef.current?.focus();
   }, [step, ssoConn]);
+
+  // Move focus to the MFA code field the moment it is revealed.
+  useEffect(() => {
+    if (step === "mfa") mfaCodeRef.current?.focus();
+  }, [step]);
 
   const continueWithEmail = () => {
     const value = email.trim();
@@ -487,7 +562,10 @@ export function LoginPage() {
     setStep("identify");
     setSsoConn(null);
     setPassword("");
+    setMfaChallenge(null);
+    setMfaCode("");
     login.reset();
+    mfaVerify.reset();
   };
 
   const goToSso = () => {
@@ -499,6 +577,7 @@ export function LoginPage() {
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     if (step === "identify") { continueWithEmail(); return; }
+    if (step === "mfa") { if (mfaCode.trim()) mfaVerify.mutate(mfaCode.trim()); return; }
     if (ssoConn) { goToSso(); return; }
     if (email.trim() && password) login.mutate({ email: email.trim(), password });
   };
@@ -650,13 +729,15 @@ export function LoginPage() {
                 <p className="mt-1.5 text-sm leading-6 text-slate-500">
                   {step === "identify"
                     ? "Enter your work email to continue."
-                    : ssoConn
-                      ? "Single sign-on is available for your organization."
-                      : "Enter your password to sign in."}
+                    : step === "mfa"
+                      ? "Enter the 6-digit code from your authenticator app."
+                      : ssoConn
+                        ? "Single sign-on is available for your organization."
+                        : "Enter your password to sign in."}
                 </p>
               </div>
 
-              {ssoErrorMessage && !login.isError && (
+              {ssoErrorMessage && !login.isError && !mfaVerify.isError && (
                 <div role="alert" className="mb-5 flex items-center gap-2.5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                   <AlertCircle className="h-4 w-4 shrink-0" />
                   {ssoErrorMessage}
@@ -667,6 +748,13 @@ export function LoginPage() {
                 <div role="alert" className="mb-5 flex items-center gap-2.5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                   <AlertCircle className="h-4 w-4 shrink-0" />
                   {getLoginErrorMessage(login.error)}
+                </div>
+              )}
+
+              {mfaVerify.isError && (
+                <div role="alert" className="mb-5 flex items-center gap-2.5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  {getMfaErrorMessage(mfaVerify.error)}
                 </div>
               )}
 
@@ -699,11 +787,21 @@ export function LoginPage() {
                   </div>
                 )}
 
-                {/* Reveal block — password OR SSO, animated open on step 2 */}
-                <div className="login2-reveal" data-open={step === "authenticate"} aria-hidden={step !== "authenticate"}>
+                {/* Reveal block — password, SSO, or MFA code, animated open past step 1 */}
+                <div className="login2-reveal" data-open={step !== "identify"} aria-hidden={step === "identify"}>
                   <div>
                     <div className="space-y-4 pt-1" aria-live="polite">
-                      {step !== "authenticate" ? null : ssoConn ? (
+                      {step === "mfa" ? (
+                        <div>
+                          <label htmlFor="login-mfa-code" className="mb-1.5 block text-sm font-medium text-slate-700">Authenticator code</label>
+                          <input
+                            ref={mfaCodeRef} id="login-mfa-code" inputMode="numeric" autoComplete="one-time-code"
+                            maxLength={6} value={mfaCode}
+                            onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, ""))}
+                            placeholder="123456"
+                            className="login2-field text-center font-mono text-lg tracking-[0.4em]" />
+                        </div>
+                      ) : step !== "authenticate" ? null : ssoConn ? (
                         <>
                           <button type="button" onClick={goToSso} className="login2-sso">
                             <ShieldCheck className="h-4 w-4" aria-hidden="true" />
@@ -738,16 +836,24 @@ export function LoginPage() {
                 </div>
 
                 {/* Primary CTA — hidden in SSO mode where the SSO button is the action */}
-                {!ssoConn && (
+                {!(ssoConn && step === "authenticate") && (
                   <button type="submit" className="login2-cta"
-                    disabled={step === "identify" ? (identifying || !email.trim()) : (login.isPending || !password)}>
+                    disabled={
+                      step === "identify" ? (identifying || !email.trim())
+                        : step === "mfa" ? (mfaVerify.isPending || mfaCode.trim().length !== 6)
+                          : (login.isPending || !password)
+                    }>
                     {step === "identify"
                       ? (identifying
                           ? <><span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" /> Checking…</>
                           : <>Continue <ArrowRight className="h-4 w-4" /></>)
-                      : (login.isPending
-                          ? <><span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" /> Signing in…</>
-                          : <>Sign in <ArrowRight className="h-4 w-4" /></>)}
+                      : step === "mfa"
+                        ? (mfaVerify.isPending
+                            ? <><span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" /> Verifying…</>
+                            : <>Verify code <ArrowRight className="h-4 w-4" /></>)
+                        : (login.isPending
+                            ? <><span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" /> Signing in…</>
+                            : <>Sign in <ArrowRight className="h-4 w-4" /></>)}
                   </button>
                 )}
               </form>

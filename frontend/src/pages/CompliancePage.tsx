@@ -104,8 +104,8 @@ export function CompliancePage() {
   const driverRows    = (summary?.drivers as AnyRecord[] | undefined) ?? [];
   const vehicleRows   = (summary?.vehicles as AnyRecord[] | undefined) ?? [];
   const eldRows       = (summary?.elDevices as AnyRecord[] | undefined) ?? [];
-  const driverViolationCount = driverRows.filter(r => String(r.overall_status) === "Violation").reduce((s, r) => s + Number(r.cnt ?? 0), 0);
-  const vehicleViolationCount = vehicleRows.filter(r => String(r.overall_status) === "Violation").reduce((s, r) => s + Number(r.cnt ?? 0), 0);
+  const driverViolationCount = driverRows.filter(r => String(r.overallStatus) === "Violation").reduce((s, r) => s + Number(r.cnt ?? 0), 0);
+  const vehicleViolationCount = vehicleRows.filter(r => String(r.overallStatus) === "Violation").reduce((s, r) => s + Number(r.cnt ?? 0), 0);
   const eldMalfunctions = eldRows.filter(r => String(r.status) === "Malfunction").reduce((s, r) => s + Number(r.cnt ?? 0), 0);
 
   const violations  = (violationsQ.data as AnyRecord[] | undefined) ?? [];
@@ -190,12 +190,12 @@ export function CompliancePage() {
             {(summary?.profiles as AnyRecord[] | undefined)?.map(p => (
               <div key={String(p.id)} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2">
                 <div>
-                  <p className="text-sm font-semibold text-slate-900">{String(p.profile_name)}</p>
-                  <p className="text-xs text-slate-500">{String(p.authority ?? "—")} · {String(p.hos_ruleset ?? "—")}</p>
+                  <p className="text-sm font-semibold text-slate-900">{String(p.profileName)}</p>
+                  <p className="text-xs text-slate-500">{String(p.authority ?? "—")} · {String(p.hosRuleset ?? "—")}</p>
                 </div>
                 <div className="text-end">
-                  <CountryBadge code={String(p.country_code)} />
-                  {!!p.eld_required && <p className="text-[10px] text-amber-700 mt-0.5">ELD Required</p>}
+                  <CountryBadge code={String(p.countryCode)} />
+                  {!!p.eldRequired && <p className="text-[10px] text-amber-700 mt-0.5">ELD Required</p>}
                 </div>
               </div>
             ))}
@@ -208,10 +208,10 @@ export function CompliancePage() {
               <div key={String(v.id)} className="flex items-start gap-2 rounded-lg bg-slate-50 px-3 py-2 cursor-pointer hover:bg-slate-100" onClick={() => setDrawer(v)}>
                 <SeverityBadge severity={String(v.severity)} />
                 <div className="min-w-0 flex-1">
-                  <p className="text-xs text-slate-700 truncate">{String(v.description ?? v.violation_code)}</p>
-                  <p className="text-[11px] text-slate-500">{String(v.violation_code)} · <StatusDot status={String(v.status)} /></p>
+                  <p className="text-xs text-slate-700 truncate">{String(v.description ?? v.violationCode)}</p>
+                  <p className="text-[11px] text-slate-500">{String(v.violationCode)} · <StatusDot status={String(v.status)} /></p>
                 </div>
-                <CountryBadge code={String(v.country_code)} />
+                <CountryBadge code={String(v.countryCode)} />
               </div>
             ))}
           </div>
@@ -232,13 +232,13 @@ export function CompliancePage() {
             <tbody className="divide-y divide-slate-100">
               {violations.map(v => (
                 <tr key={String(v.id)} className="hover:bg-slate-50 cursor-pointer" onClick={() => setDrawer(v)}>
-                  <td className="py-2 pr-4 font-mono text-xs text-teal-700">{String(v.violation_code)}</td>
+                  <td className="py-2 pr-4 font-mono text-xs text-teal-700">{String(v.violationCode)}</td>
                   <td className="py-2 pr-4"><SeverityBadge severity={String(v.severity)} /></td>
                   <td className="py-2 pr-4 text-slate-700">{String(v.category)}</td>
-                  <td className="py-2 pr-4 text-slate-700">{String(v.driver_name ?? "—")}</td>
-                  <td className="py-2 pr-4 text-slate-700">{String(v.vehicle_code ?? "—")}</td>
+                  <td className="py-2 pr-4 text-slate-700">{String(v.driverName ?? "—")}</td>
+                  <td className="py-2 pr-4 text-slate-700">{String(v.vehicleCode ?? "—")}</td>
                   <td className="py-2 pr-4"><StatusDot status={String(v.status)} /></td>
-                  <td className="py-2 pr-4 text-xs text-slate-500">{formatDate(String(v.detected_at))}</td>
+                  <td className="py-2 pr-4 text-xs text-slate-500">{formatDate(String(v.detectedAt))}</td>
                   <td className="py-2">
                     <div className="flex gap-1">
                       {String(v.status) === "Open" && (
@@ -285,17 +285,17 @@ export function CompliancePage() {
               {drivers.map(d => (
                 <tr key={String(d.id)} className="hover:bg-slate-50">
                   <td className="py-2 pr-4">
-                    <p className="font-semibold text-slate-900">{String(d.driver_name)}</p>
-                    <p className="text-[11px] text-slate-500">{String(d.driver_code)}</p>
+                    <p className="font-semibold text-slate-900">{String(d.driverName)}</p>
+                    <p className="text-[11px] text-slate-500">{String(d.driverCode)}</p>
                   </td>
-                  <td className="py-2 pr-4"><CountryBadge code={String(d.country_code)} /></td>
-                  <td className="py-2 pr-4"><StatusDot status={String(d.overall_status)} /></td>
+                  <td className="py-2 pr-4"><CountryBadge code={String(d.countryCode)} /></td>
+                  <td className="py-2 pr-4"><StatusDot status={String(d.overallStatus)} /></td>
                   <td className="py-2 pr-4 text-xs text-slate-700">{formatDate(String(d.license_expiry ?? ""))}</td>
-                  <td className="py-2 pr-4"><span className={Number(d.medical_cert_valid) ? "text-emerald-400 text-xs" : "text-red-400 text-xs"}>{Number(d.medical_cert_valid) ? "✓" : "✗"} {formatDate(String(d.medical_cert_expiry ?? ""))}</span></td>
+                  <td className="py-2 pr-4"><span className={Number(d.medicalCertValid) ? "text-emerald-400 text-xs" : "text-red-400 text-xs"}>{Number(d.medicalCertValid) ? "✓" : "✗"} {formatDate(String(d.medical_cert_expiry ?? ""))}</span></td>
                   <td className="py-2 pr-4"><span className={Number(d.drug_test_valid) ? "text-emerald-400 text-xs" : "text-red-400 text-xs"}>{Number(d.drug_test_valid) ? "✓" : "✗"} {formatDate(String(d.drug_test_expiry ?? ""))}</span></td>
-                  <td className="py-2 pr-4"><StatusDot status={String(d.hos_status)} /></td>
+                  <td className="py-2 pr-4"><StatusDot status={String(d.hosStatus)} /></td>
                   <td className="py-2 pr-4 text-center">
-                    <span className={`font-bold ${Number(d.violation_count) > 0 ? "text-red-400" : "text-emerald-400"}`}>{String(d.violation_count)}</span>
+                    <span className={`font-bold ${Number(d.violationsCount) > 0 ? "text-red-400" : "text-emerald-400"}`}>{String(d.violationsCount)}</span>
                   </td>
                 </tr>
               ))}
@@ -318,19 +318,19 @@ export function CompliancePage() {
               {vehicles.map(v => (
                 <tr key={String(v.id)} className="hover:bg-slate-50">
                   <td className="py-2 pr-4">
-                    <p className="font-semibold text-slate-900">{String(v.vehicle_code)}</p>
-                    <p className="text-[11px] text-slate-500">{String(v.vehicle_type ?? "")}</p>
+                    <p className="font-semibold text-slate-900">{String(v.vehicleCode)}</p>
+                    <p className="text-[11px] text-slate-500">{String(v.vehicleType ?? "")}</p>
                   </td>
-                  <td className="py-2 pr-4"><CountryBadge code={String(v.country_code)} /></td>
-                  <td className="py-2 pr-4"><StatusDot status={String(v.overall_status)} /></td>
+                  <td className="py-2 pr-4"><CountryBadge code={String(v.countryCode)} /></td>
+                  <td className="py-2 pr-4"><StatusDot status={String(v.overallStatus)} /></td>
                   <td className="py-2 pr-4 text-xs text-slate-700">{formatDate(String(v.registration_expiry ?? ""))}</td>
                   <td className="py-2 pr-4"><span className={Number(v.insurance_valid) ? "text-emerald-400 text-xs" : "text-red-400 text-xs"}>{Number(v.insurance_valid) ? "✓" : "✗"} {formatDate(String(v.insurance_expiry ?? ""))}</span></td>
-                  <td className="py-2 pr-4"><span className={Number(v.inspection_valid) ? "text-emerald-400 text-xs" : "text-red-400 text-xs"}>{Number(v.inspection_valid) ? "✓" : "✗"} {formatDate(String(v.inspection_expiry ?? ""))}</span></td>
+                  <td className="py-2 pr-4"><span className={Number(v.inspectionValid) ? "text-emerald-400 text-xs" : "text-red-400 text-xs"}>{Number(v.inspectionValid) ? "✓" : "✗"} {formatDate(String(v.inspection_expiry ?? ""))}</span></td>
                   <td className="py-2 pr-4">
                     {Number(v.eld_installed) ? <span className="text-emerald-400 text-xs flex items-center gap-1"><Wifi className="h-3 w-3" />Installed</span> : <span className="text-slate-500 text-xs flex items-center gap-1"><WifiOff className="h-3 w-3" />None</span>}
                   </td>
                   <td className="py-2 pr-4 text-center">
-                    <span className={`font-bold ${Number(v.violation_count) > 0 ? "text-red-400" : "text-emerald-400"}`}>{String(v.violation_count)}</span>
+                    <span className={`font-bold ${Number(v.violationsCount) > 0 ? "text-red-400" : "text-emerald-400"}`}>{String(v.violationsCount)}</span>
                   </td>
                 </tr>
               ))}
@@ -347,11 +347,11 @@ export function CompliancePage() {
               <div key={String(a.id)} className="panel space-y-3">
                 <div className="flex items-start justify-between">
                   <div>
-                    <p className="font-mono text-xs text-teal-700">{String(a.package_code)}</p>
-                    <p className="text-sm font-semibold text-slate-900 mt-0.5">{String(a.profile_name ?? "Fleet-Wide")}</p>
+                    <p className="font-mono text-xs text-teal-700">{String(a.packageCode)}</p>
+                    <p className="text-sm font-semibold text-slate-900 mt-0.5">{String(a.profileName ?? "Fleet-Wide")}</p>
                   </div>
                   <div className="flex flex-col items-end gap-1">
-                    <CountryBadge code={String(a.country_code)} />
+                    <CountryBadge code={String(a.countryCode)} />
                     <StatusDot status={String(a.status)} />
                   </div>
                 </div>
@@ -402,10 +402,10 @@ export function CompliancePage() {
                   <SeverityBadge severity={String(v.severity)} />
                   <div className="min-w-0 flex-1">
                     <p className="text-sm text-slate-700">{String(v.description)}</p>
-                    <p className="text-xs text-slate-500 mt-0.5">{String(v.violation_code)} · {String(v.profile_name ?? "—")} · {String(v.authority ?? "—")}</p>
+                    <p className="text-xs text-slate-500 mt-0.5">{String(v.violationCode)} · {String(v.profileName ?? "—")} · {String(v.authority ?? "—")}</p>
                   </div>
                   <div className="flex flex-col items-end gap-1 shrink-0">
-                    <CountryBadge code={String(v.country_code)} />
+                    <CountryBadge code={String(v.countryCode)} />
                     <StatusDot status={String(v.status)} />
                   </div>
                 </div>
@@ -451,19 +451,19 @@ export function CompliancePage() {
             </div>
             <div className="space-y-3 text-sm">
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-mono text-teal-300 text-xs">{String(drawer.violation_code)}</span>
+                <span className="font-mono text-teal-300 text-xs">{String(drawer.violationCode)}</span>
                 <SeverityBadge severity={String(drawer.severity)} />
                 <StatusDot status={String(drawer.status)} />
-                <CountryBadge code={String(drawer.country_code)} />
+                <CountryBadge code={String(drawer.countryCode)} />
               </div>
               <p className="text-slate-300 leading-relaxed">{String(drawer.description ?? "—")}</p>
               {[
                 { label: "Category",    value: drawer.category },
-                { label: "Driver",      value: drawer.driver_name },
-                { label: "Vehicle",     value: drawer.vehicle_code },
-                { label: "Profile",     value: drawer.profile_name },
-                { label: "Detected",    value: formatDate(String(drawer.detected_at ?? "")) },
-                { label: "Resolved",    value: drawer.resolved_at ? formatDate(String(drawer.resolved_at)) : null },
+                { label: "Driver",      value: drawer.driverName },
+                { label: "Vehicle",     value: drawer.vehicleCode },
+                { label: "Profile",     value: drawer.profileName },
+                { label: "Detected",    value: formatDate(String(drawer.detectedAt ?? "")) },
+                { label: "Resolved",    value: drawer.resolvedAt ? formatDate(String(drawer.resolvedAt)) : null },
               ].filter(r => r.value).map(r => (
                 <div key={r.label} className="flex justify-between border-b border-white/[0.05] pb-2">
                   <span className="text-slate-500">{r.label}</span>

@@ -2044,6 +2044,10 @@ public static partial class EndpointMappings
         // module_records CRUD so it renders + supports create/edit (full quote→contract
         // conversion is a separate roadmap feature).
         MapDedicatedModule(app, "quotations");
+        // CRM: the Leads + Opportunities pages call /api/leads + /api/opportunities; back
+        // them with the tenant-scoped module_records CRUD (LoadModule scopes by company_id).
+        MapDedicatedModule(app, "leads");
+        MapDedicatedModule(app, "opportunities");
         MapDedicatedModule(app, "settings");
         MapDedicatedModule(app, "billing");
         MapDedicatedModule(app, "companies");
@@ -9683,6 +9687,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         ["audit-logs"] = "audit:view",
         ["user-management"] = "users:view",
         ["quotations"] = "customers:view",
+        ["leads"] = "customers:view",
+        ["opportunities"] = "customers:view",
         ["settings"] = "settings:view",
         ["billing"] = "billing:view",
         ["companies"] = "users:view",
@@ -9709,6 +9715,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         ["carrier-management"] = "finance:manage",
         ["expenses"] = "finance:manage",
         ["quotations"] = "customers:update",
+        ["leads"] = "customers:update",
+        ["opportunities"] = "customers:update",
         ["white-label"] = "settings:update",
     };
 

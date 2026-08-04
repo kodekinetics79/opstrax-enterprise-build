@@ -9,14 +9,15 @@ const rateCardsApi = {
     rows.map((r) => ({
       ...r,
       rateCardId: r.rateCardId ?? r.code ?? `RC-${String(r.id)}`,
-      customerContract: r.customerContract ?? r.title ?? "",
+      customerContract: r.rateCardName ?? r.customerContract ?? r.title ?? "",
       originZone: r.originZone ?? r.origin ?? r.location_name ?? "",
       destinationZone: r.destinationZone ?? r.destination ?? "",
       baseRate: Number(r.baseRate ?? r.amount ?? 0),
       perKmRate: Number(r.perKmRate ?? 0),
-      fuelSurcharge: r.fuelSurcharge ?? "0%",
-      effectiveFrom: r.effectiveFrom ?? "",
-      effectiveTo: r.effectiveTo ?? r.due_at ?? "",
+      fuelSurcharge: r.fuelSurchargePercent ?? r.fuelSurcharge ?? "0%",
+      effectiveFrom: r.effectiveDate ?? r.effectiveFrom ?? "",
+      effectiveTo: r.expiryDate ?? r.effectiveTo ?? r.due_at ?? "",
+      pricingMethod: r.billingBasis ?? r.pricingMethod ?? "",
     }))
   ),
   create: (body: AnyRecord) => unwrap<AnyRecord>(apiClient.post("/api/rate-cards", body)),
@@ -45,10 +46,10 @@ function VehicleTypeBadge({ type }: { type: string }) {
 // ── Create Rate Card Modal ────────────────────────────────────────────────────
 
 function CreateRateCardModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
-  const [form, setForm] = useState({ title: "", originZone: "", destinationZone: "", vehicleType: "Dry Van", pricingMethod: "Per KM", baseRate: "", perKmRate: "", fuelSurcharge: "9%", currency: "SAR" });
+  const [form, setForm] = useState({ title: "", originZone: "", destinationZone: "", vehicleType: "Dry Van", pricingMethod: "Per KM", baseRate: "", perKmRate: "", fuelSurcharge: "9%", currency: "SAR", effectiveDate: "" });
   const qc = useQueryClient();
   const mut = useMutation({
-    mutationFn: () => rateCardsApi.create({ ...form, status: "Active", amount: form.baseRate } as unknown as AnyRecord),
+    mutationFn: () => rateCardsApi.create({ ...form, status: "Active", amount: form.baseRate, effectiveDate: form.effectiveDate } as unknown as AnyRecord),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ["rate-cards"] }); onSaved(); },
   });
   return (
@@ -100,11 +101,16 @@ function CreateRateCardModal({ onClose, onSaved }: { onClose: () => void; onSave
               {["SAR", "AED", "USD", "EUR"].map((c) => <option key={c}>{c}</option>)}
             </select>
           </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">Effective Date*</label>
+            <input type="date" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-400"
+              value={form.effectiveDate} onChange={(e) => setForm((f) => ({ ...f, effectiveDate: e.target.value }))} />
+          </div>
         </div>
         {mut.isError && <p className="text-xs text-red-600">{(mut.error as Error)?.message}</p>}
         <div className="flex justify-end gap-2 mt-2">
           <button type="button" className="btn-secondary text-sm" onClick={onClose}>Cancel</button>
-          <button type="button" disabled={!form.title || mut.isPending} className="btn-primary text-sm" onClick={() => mut.mutate()}>
+          <button type="button" disabled={!form.title || !form.effectiveDate || mut.isPending} className="btn-primary text-sm" onClick={() => mut.mutate()}>
             {mut.isPending ? "Saving…" : "Create Rate Card"}
           </button>
         </div>

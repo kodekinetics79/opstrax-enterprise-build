@@ -135,11 +135,12 @@ export function CustomerEtaPage() {
   });
 
   const bulkSend = useMutation({
-    mutationFn: () => customerEtaApi.sendUpdate("bulk"),
+    mutationFn: () => unwrap<AnyRecord>(apiClient.post("/api/dispatch/send-eta-updates", {})),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["customer-eta"] });
       showToast("ETA updates sent to all at-risk jobs");
     },
+    onError: () => showToast("Failed to send bulk ETA updates — please try again"),
   });
 
   function showToast(msg: string) {
