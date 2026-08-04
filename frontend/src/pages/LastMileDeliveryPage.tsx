@@ -148,6 +148,7 @@ export function LastMileDeliveryPage() {
   const [action, setAction] = useState<{ type: "deliver" | "attempt" | "reschedule"; stop: AnyRecord } | null>(null);
   const [reason, setReason] = useState("");
   const [recipient, setRecipient] = useState("");
+  const [evidence, setEvidence] = useState("");
   const [nextEta, setNextEta] = useState("");
   const [timeWindow, setTimeWindow] = useState("");
 
@@ -182,14 +183,17 @@ export function LastMileDeliveryPage() {
     mutationFn: async () => {
       if (!action) throw new Error("No stop action selected");
       const id = String(action.stop.id);
-      if (action.type === "deliver") return logisticsApi.confirmDelivery(id, { recipientName: recipient, proofStatus: "Captured" });
+      if (action.type === "deliver") {
+        if (!evidence.trim()) throw new Error("Delivery evidence (signature or photo reference) is required to confirm delivery.");
+        return logisticsApi.confirmDelivery(id, { recipientName: recipient, evidenceReference: evidence.trim(), proofStatus: "Captured" });
+      }
       if (action.type === "attempt") return logisticsApi.recordAttempt(id, { status: "Attempted", exceptionReason: reason, nextEtaUtc: nextEta ? new Date(nextEta).toISOString() : undefined });
       return logisticsApi.rescheduleStop(id, { reason, timeWindow, nextEtaUtc: new Date(nextEta).toISOString() });
     },
     onSuccess: async () => {
       await Promise.all([qc.invalidateQueries({ queryKey: ["last-mile"] }), qc.invalidateQueries({ queryKey: ["logistics"] })]);
       setToast(action?.type === "deliver" ? "Delivery confirmed and billing artifact created." : action?.type === "attempt" ? "Delivery attempt recorded." : "Stop rescheduled.");
-      setAction(null); setReason(""); setRecipient(""); setNextEta(""); setTimeWindow("");
+      setAction(null); setReason(""); setRecipient(""); setEvidence(""); setNextEta(""); setTimeWindow("");
       window.setTimeout(() => setToast(null), 3000);
     },
     onError: (error: Error) => { setToast(error.message || "The stop action failed."); window.setTimeout(() => setToast(null), 5000); },
@@ -312,7 +316,7 @@ export function LastMileDeliveryPage() {
             ) : (
               <div className="flex flex-col">
                 {stops.map((stop, i) => (
-                  <StopRow key={String(stop.id ?? i)} stop={stop} index={i} canModify={canModify} onAction={(type) => { setAction({ type, stop }); setReason(""); setRecipient(""); setNextEta(""); setTimeWindow(""); }} />
+                  <StopRow key={String(stop.id ?? i)} stop={stop} index={i} canModify={canModify} onAction={(type) => { setAction({ type, stop }); setReason(""); setRecipient(""); setEvidence(""); setNextEta(""); setTimeWindow(""); }} />
                 ))}
               </div>
             )}
@@ -330,7 +334,10 @@ export function LastMileDeliveryPage() {
             <h2 className="text-base font-semibold text-slate-900">{action.type === "deliver" ? "Confirm delivery" : action.type === "attempt" ? "Record delivery attempt" : "Reschedule stop"}</h2>
             <p className="mt-1 text-sm text-slate-500">{String(action.stop.orderNumber)} · {String(action.stop.customerName)}</p>
             {action.type === "deliver" ? (
-              <label className="mt-4 block text-sm font-medium text-slate-700">Recipient name<input required maxLength={255} value={recipient} onChange={(event) => setRecipient(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2" /></label>
+              <>
+                <label className="mt-4 block text-sm font-medium text-slate-700">Recipient name<input required maxLength={255} value={recipient} onChange={(event) => setRecipient(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2" /></label>
+                <label className="mt-3 block text-sm font-medium text-slate-700">Signature / evidence reference<input required maxLength={2000} value={evidence} onChange={(event) => setEvidence(event.target.value)} placeholder="Typed signature attestation or POD photo reference" className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2" /></label>
+              </>
             ) : (
               <label className="mt-4 block text-sm font-medium text-slate-700">Reason<textarea required maxLength={2000} value={reason} onChange={(event) => setReason(event.target.value)} className="mt-1 min-h-24 w-full rounded-lg border border-slate-200 px-3 py-2" /></label>
             )}

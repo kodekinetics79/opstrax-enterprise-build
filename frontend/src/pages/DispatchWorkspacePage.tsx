@@ -140,6 +140,7 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
   });
   const [lastMileForm, setLastMileForm] = useState({
     recipientName: '',
+    evidenceReference: '',
     exceptionReason: '',
     nextStop: '',
     timeWindow: '',
@@ -515,10 +516,13 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
     if (terminalStop(stop.status)) return setNotice({ kind: 'info', message: 'This stop is already delivered.' });
     const recipientName = lastMileForm.recipientName.trim();
     if (!recipientName) return setNotice({ kind: 'error', message: 'Enter the actual recipient name before confirming delivery.' });
+    const evidenceReference = lastMileForm.evidenceReference.trim();
+    if (!evidenceReference) return setNotice({ kind: 'error', message: 'Capture delivery evidence (signature or POD photo reference) before confirming delivery.' });
     setSavingId(stop.id);
     try {
       await logisticsApi.confirmDelivery(stop.id, {
         recipientName,
+        evidenceReference,
         proofStatus: 'Captured',
       });
       await refreshWorkspace();
@@ -1082,6 +1086,7 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
                       <>
                         <p className="text-[11px] leading-relaxed text-white/55">Enter real delivery evidence before selecting an action. A recipient is required for Deliver; a reason is required for Attempt; a reason and future ETA are required for Reschedule.</p>
                         <DarkField label="Actual recipient name" value={lastMileForm.recipientName} onChange={(value) => setLastMileForm((current) => ({ ...current, recipientName: value }))} />
+                        <DarkField label="Signature / evidence reference (required for Deliver)" value={lastMileForm.evidenceReference} onChange={(value) => setLastMileForm((current) => ({ ...current, evidenceReference: value }))} />
                         <label className="block text-[11px] font-semibold text-white/70">Attempt or reschedule reason
                           <textarea value={lastMileForm.exceptionReason} onChange={(event) => setLastMileForm((current) => ({ ...current, exceptionReason: event.target.value }))} rows={3} className="mt-1 w-full rounded-2xl border border-white/10 bg-white/[0.05] px-3 py-2.5 text-sm text-white outline-none" />
                         </label>

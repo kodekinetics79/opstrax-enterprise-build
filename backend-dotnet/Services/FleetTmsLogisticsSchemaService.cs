@@ -112,6 +112,7 @@ CREATE TABLE IF NOT EXISTS fleet_tms_last_mile_stops (
             "ALTER TABLE fleet_tms_last_mile_stops ADD COLUMN IF NOT EXISTS branch_id BIGINT NULL",
             "ALTER TABLE fleet_tms_last_mile_stops ADD COLUMN IF NOT EXISTS last_action_key VARCHAR(80) NULL",
             "ALTER TABLE fleet_tms_last_mile_stops ADD COLUMN IF NOT EXISTS last_action_type VARCHAR(30) NULL",
+            "ALTER TABLE fleet_tms_last_mile_stops ADD COLUMN IF NOT EXISTS proof_evidence_ref TEXT NULL",
         };
         foreach (var statement in statements)
             await TryExecute("upgrade", statement);
