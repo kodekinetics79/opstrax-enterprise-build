@@ -311,6 +311,17 @@ export function DriverAssignmentPage() {
         );
       })}
 
+      {/* Proof delivery button (when arrived at delivery). The backend omits 'delivered'
+          from the driver next-status candidate list, so the status-advance map never
+          surfaces it — this is the only path for a driver to submit delivery proof and
+          complete the load. */}
+      {status === "arrived_delivery" && (
+        <ActionButton
+          label="Submit Delivery Proof"
+          onClick={() => setShowProof("delivery")}
+        />
+      )}
+
       {/* Proof pickup button (when arrived) */}
       {status === "arrived_pickup" && (
         <ActionButton
