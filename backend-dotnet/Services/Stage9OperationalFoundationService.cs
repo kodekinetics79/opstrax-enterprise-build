@@ -64,23 +64,43 @@ public sealed class Stage9OperationalFoundationService(
             clientGeneratedId,
         }));
 
-        if (!string.IsNullOrWhiteSpace(idempotencyKey))
-        {
-            var existing = await LoadByIdempotencyAsync("smart_assignment_recommendations", companyId, idempotencyKey!, ct);
-            if (existing is not null)
-            {
-                return existing;
-            }
-        }
-
         var score = Dec(body, "score", CalculateRecommendationScore(body));
         var confidence = Dec(body, "confidenceScore", Math.Min(0.99m, Math.Max(0.25m, score)));
+        score = Math.Clamp(score, 0m, 1m);
+        confidence = Math.Clamp(confidence, 0m, 1m);
+        var riskLevel = (Str(body, "riskLevel") ?? "medium").Trim().ToLowerInvariant();
+        if (riskLevel is not ("low" or "medium" or "high" or "critical"))
+        {
+            return null;
+        }
         var reasonJson = Str(body, "reasonJson") ?? JsonSerializer.Serialize(new
         {
             driverCoverage = Long(body, "recommendedDriverId").HasValue,
             vehicleCoverage = Long(body, "recommendedVehicleId").HasValue,
             missingDataPenalty = score < 0.6m,
         });
+
+        return await db.RunInTenantTransactionAsync<Dictionary<string, object?>?>(companyId, async () =>
+        {
+        if (!string.IsNullOrWhiteSpace(idempotencyKey))
+        {
+            await db.ExecuteAsync(
+                "SELECT pg_advisory_xact_lock(hashtextextended(@key, @companyId))",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@key", idempotencyKey!);
+                    c.Parameters.AddWithValue("@companyId", companyId);
+                }, ct);
+            var existing = await LoadByIdempotencyAsync("smart_assignment_recommendations", companyId, idempotencyKey!, ct);
+            if (existing is not null)
+            {
+                var sameRequest = Convert.ToInt64(existing.GetValueOrDefault("jobId") ?? 0L) == (jobId ?? 0L)
+                    && Convert.ToInt64(existing.GetValueOrDefault("tripId") ?? 0L) == (tripId ?? 0L)
+                    && Convert.ToInt64(existing.GetValueOrDefault("recommendedDriverId") ?? 0L) == (Long(body, "recommendedDriverId") ?? 0L)
+                    && Convert.ToInt64(existing.GetValueOrDefault("recommendedVehicleId") ?? 0L) == (Long(body, "recommendedVehicleId") ?? 0L);
+                return sameRequest ? existing : null;
+            }
+        }
 
         var recommendationId = await db.InsertAsync(
             @"INSERT INTO smart_assignment_recommendations
@@ -104,16 +124,16 @@ public sealed class Stage9OperationalFoundationService(
                 c.Parameters.AddWithValue("@crewId", (object?)Long(body, "recommendedCrewId") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@type", Str(body, "recommendationType") ?? "pod.smart_assignment");
                 c.Parameters.AddWithValue("@score", score);
-                c.Parameters.AddWithValue("@riskLevel", Str(body, "riskLevel") ?? "medium");
+                c.Parameters.AddWithValue("@riskLevel", riskLevel);
                 c.Parameters.AddWithValue("@confidence", confidence);
                 c.Parameters.AddWithValue("@reason", reasonJson);
                 c.Parameters.AddWithValue("@constraints", Str(body, "constraintJson") ?? "{}");
                 c.Parameters.AddWithValue("@proposal", Str(body, "proposedActionJson") ?? "{}");
-                c.Parameters.AddWithValue("@status", Str(body, "status") ?? "draft");
+                c.Parameters.AddWithValue("@status", "draft");
                 c.Parameters.AddWithValue("@sourceChannel", (object?)sourceChannel ?? DBNull.Value);
                 c.Parameters.AddWithValue("@clientGeneratedId", (object?)clientGeneratedId ?? DBNull.Value);
                 c.Parameters.AddWithValue("@idempotencyKey", (object?)idempotencyKey ?? DBNull.Value);
-                c.Parameters.AddWithValue("@createdBy", (object?)Long(body, "createdBy") ?? DBNull.Value);
+                c.Parameters.AddWithValue("@createdBy", (object?)(ActorUserId() ?? Long(body, "createdBy")) ?? DBNull.Value);
                 c.Parameters.AddWithValue("@correlationId", (object?)correlation.CorrelationId ?? DBNull.Value);
                 c.Parameters.AddWithValue("@causationId", (object?)correlation.CausationId ?? DBNull.Value);
             }, ct);
@@ -145,6 +165,7 @@ public sealed class Stage9OperationalFoundationService(
             idempotencyKey);
 
         return recommendation;
+        }, ct);
     }
 
     public async Task<Stage9ActionOutcome> AcceptSmartAssignmentAsync(
@@ -153,11 +174,16 @@ public sealed class Stage9OperationalFoundationService(
         Dictionary<string, object?> body,
         CancellationToken ct = default)
     {
+        return await db.RunInTenantTransactionAsync<Stage9ActionOutcome>(companyId, async () =>
+        {
+        await db.ExecuteAsync("SELECT pg_advisory_xact_lock(@id)", c => c.Parameters.AddWithValue("@id", recommendationId), ct);
         var recommendation = await LoadByIdAsync("smart_assignment_recommendations", companyId, recommendationId, ct);
         if (recommendation is null)
         {
             return new(false, "Smart assignment recommendation not found");
         }
+        if (!string.Equals(recommendation.GetValueOrDefault("status")?.ToString(), "draft", StringComparison.OrdinalIgnoreCase))
+            return new(false, "Smart assignment recommendation is no longer pending");
 
         var riskLevel = recommendation.GetValueOrDefault("riskLevel")?.ToString() ?? "medium";
         var score = Convert.ToDecimal(recommendation.GetValueOrDefault("score") ?? 0m, CultureInfo.InvariantCulture);
@@ -165,6 +191,9 @@ public sealed class Stage9OperationalFoundationService(
 
         if (requiresApproval)
         {
+            var pendingApproval = await FindPendingApprovalAsync(companyId, "dispatch.trip.reassign_high_value", "smart_assignment_recommendation", recommendationId, ct);
+            if (pendingApproval.HasValue)
+                return new(false, "Smart assignment requires approval", true, pendingApproval, recommendation);
             var approvalRequest = approval.CreateRequest(
                 companyId.ToString(CultureInfo.InvariantCulture),
                 ActorTypes.TenantUser,
@@ -185,16 +214,17 @@ public sealed class Stage9OperationalFoundationService(
 
         await db.ExecuteAsync(
             @"INSERT INTO assignment_confirmations
-                (company_id, job_id, trip_id, driver_id, vehicle_id, status, accepted_at,
+                (company_id, recommendation_id, job_id, trip_id, driver_id, vehicle_id, status, accepted_at,
                  source_channel, client_generated_id, idempotency_key, device_id, mobile_app_version,
                  metadata_json, correlation_id, causation_id, created_at)
               VALUES
-                (@companyId, @jobId, @tripId, @driverId, @vehicleId, 'accepted', NOW(),
+                (@companyId, @recommendationId, @jobId, @tripId, @driverId, @vehicleId, 'accepted', NOW(),
                  @sourceChannel, @clientGeneratedId, @idempotencyKey, @deviceId, @mobileAppVersion,
                  COALESCE(@metadata::jsonb, '{}'::jsonb), @correlationId, @causationId, NOW())",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
+                c.Parameters.AddWithValue("@recommendationId", recommendationId);
                 c.Parameters.AddWithValue("@jobId", recommendation.GetValueOrDefault("jobId") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@tripId", recommendation.GetValueOrDefault("tripId") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@driverId", recommendation.GetValueOrDefault("recommendedDriverId") ?? DBNull.Value);
@@ -240,6 +270,7 @@ public sealed class Stage9OperationalFoundationService(
             $"assignment_confirmation:{recommendationId}");
 
         return new(true, "Smart assignment accepted", false, null, await LoadAssignmentConfirmationAsync(companyId, recommendationId, ct));
+        }, ct);
     }
 
     public async Task<Stage9ActionOutcome> RejectSmartAssignmentAsync(
@@ -248,11 +279,16 @@ public sealed class Stage9OperationalFoundationService(
         Dictionary<string, object?> body,
         CancellationToken ct = default)
     {
+        return await db.RunInTenantTransactionAsync<Stage9ActionOutcome>(companyId, async () =>
+        {
+        await db.ExecuteAsync("SELECT pg_advisory_xact_lock(@id)", c => c.Parameters.AddWithValue("@id", recommendationId), ct);
         var recommendation = await LoadByIdAsync("smart_assignment_recommendations", companyId, recommendationId, ct);
         if (recommendation is null)
         {
             return new(false, "Smart assignment recommendation not found");
         }
+        if (!string.Equals(recommendation.GetValueOrDefault("status")?.ToString(), "draft", StringComparison.OrdinalIgnoreCase))
+            return new(false, "Smart assignment recommendation is no longer pending");
 
         await db.ExecuteAsync(
             @"UPDATE smart_assignment_recommendations
@@ -266,16 +302,17 @@ public sealed class Stage9OperationalFoundationService(
 
         await db.ExecuteAsync(
             @"INSERT INTO assignment_confirmations
-                (company_id, job_id, trip_id, driver_id, vehicle_id, status, rejected_at, rejection_reason,
+                (company_id, recommendation_id, job_id, trip_id, driver_id, vehicle_id, status, rejected_at, rejection_reason,
                  source_channel, client_generated_id, idempotency_key, device_id, mobile_app_version,
                  metadata_json, correlation_id, causation_id, created_at)
               VALUES
-                (@companyId, @jobId, @tripId, @driverId, @vehicleId, 'rejected', NOW(), @reason,
+                (@companyId, @recommendationId, @jobId, @tripId, @driverId, @vehicleId, 'rejected', NOW(), @reason,
                  @sourceChannel, @clientGeneratedId, @idempotencyKey, @deviceId, @mobileAppVersion,
                  COALESCE(@metadata::jsonb, '{}'::jsonb), @correlationId, @causationId, NOW())",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
+                c.Parameters.AddWithValue("@recommendationId", recommendationId);
                 c.Parameters.AddWithValue("@jobId", recommendation.GetValueOrDefault("jobId") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@tripId", recommendation.GetValueOrDefault("tripId") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@driverId", recommendation.GetValueOrDefault("recommendedDriverId") ?? DBNull.Value);
@@ -302,6 +339,7 @@ public sealed class Stage9OperationalFoundationService(
             $"smart_assign.reject:{recommendationId}");
 
         return new(true, "Smart assignment rejected", false, null, recommendation);
+        }, ct);
     }
 
     public Task<List<Dictionary<string, object?>>> ListSiteAccessRequirementsAsync(long companyId, long? jobId = null, CancellationToken ct = default)
@@ -340,7 +378,7 @@ public sealed class Stage9OperationalFoundationService(
                 c.Parameters.AddWithValue("@jobId", (object?)jobId ?? DBNull.Value);
                 c.Parameters.AddWithValue("@tripId", (object?)tripId ?? DBNull.Value);
                 c.Parameters.AddWithValue("@type", Str(body, "requirementType") ?? "gate_pass");
-                c.Parameters.AddWithValue("@status", Str(body, "status") ?? "required");
+                c.Parameters.AddWithValue("@status", "required");
                 c.Parameters.AddWithValue("@requiredBefore", ParseDate(body, "requiredBefore") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@instructions", (object?)Str(body, "instructions") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@contactName", (object?)Str(body, "contactName") ?? DBNull.Value);
@@ -391,6 +429,17 @@ public sealed class Stage9OperationalFoundationService(
             return null;
         }
 
+        var currentStatus = current.GetValueOrDefault("status")?.ToString()?.ToLowerInvariant() ?? "required";
+        var status = (Str(body, "status") ?? currentStatus).Trim().ToLowerInvariant();
+        if (status is not ("required" or "verified" or "waived_with_approval"))
+        {
+            return null;
+        }
+        if ((currentStatus is "verified" or "waived_with_approval") && status != currentStatus)
+        {
+            return null;
+        }
+
         await db.ExecuteAsync(
             @"UPDATE site_access_requirements
               SET status=COALESCE(@status, status),
@@ -405,7 +454,7 @@ public sealed class Stage9OperationalFoundationService(
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
                 c.Parameters.AddWithValue("@id", id);
-                c.Parameters.AddWithValue("@status", (object?)Str(body, "status") ?? DBNull.Value);
+                c.Parameters.AddWithValue("@status", status);
                 c.Parameters.AddWithValue("@instructions", (object?)Str(body, "instructions") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@contactName", (object?)Str(body, "contactName") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@contactPhone", (object?)Str(body, "contactPhone") ?? DBNull.Value);
@@ -463,7 +512,7 @@ public sealed class Stage9OperationalFoundationService(
             tripId,
             documentType = Str(body, "documentType") ?? "gate_pass",
             documentNo = Str(body, "documentNo"),
-            status = Str(body, "status") ?? "required",
+            status = "required",
             sourceChannel = Str(body, "sourceChannel"),
             clientGeneratedId = Str(body, "clientGeneratedId"),
         }));
@@ -496,7 +545,7 @@ public sealed class Stage9OperationalFoundationService(
                 c.Parameters.AddWithValue("@requirementId", (object?)Long(body, "siteAccessRequirementId") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@type", Str(body, "documentType") ?? "gate_pass");
                 c.Parameters.AddWithValue("@documentNo", (object?)Str(body, "documentNo") ?? DBNull.Value);
-                c.Parameters.AddWithValue("@status", Str(body, "status") ?? "required");
+                c.Parameters.AddWithValue("@status", "required");
                 c.Parameters.AddWithValue("@issuedBy", (object?)Str(body, "issuedBy") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@issuedTo", (object?)Str(body, "issuedTo") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@validFrom", ParseDate(body, "validFrom") ?? (object)DBNull.Value);
@@ -506,7 +555,7 @@ public sealed class Stage9OperationalFoundationService(
                 c.Parameters.AddWithValue("@sourceChannel", (object?)Str(body, "sourceChannel") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@capturedAt", ParseDate(body, "capturedAt") ?? (object)DBNull.Value);
                 c.Parameters.AddWithValue("@uploadedAt", ParseDate(body, "uploadedAt") ?? (object)DBNull.Value);
-                c.Parameters.AddWithValue("@capturedByUserId", (object?)Long(body, "capturedByUserId") ?? DBNull.Value);
+                c.Parameters.AddWithValue("@capturedByUserId", (object?)(ActorUserId() ?? Long(body, "capturedByUserId")) ?? DBNull.Value);
                 c.Parameters.AddWithValue("@deviceId", (object?)Str(body, "deviceId") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@mobileAppVersion", (object?)Str(body, "mobileAppVersion") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@geoLat", (object?)DecN(body, "geoLatitude") ?? DBNull.Value);
@@ -543,9 +592,17 @@ public sealed class Stage9OperationalFoundationService(
             return new(false, "Access document not found");
         }
 
-        var status = Str(body, "status") ?? current.GetValueOrDefault("status")?.ToString() ?? "required";
+        var currentStatus = current.GetValueOrDefault("status")?.ToString()?.ToLowerInvariant() ?? "required";
+        var status = (Str(body, "status") ?? currentStatus).Trim().ToLowerInvariant();
+        if (status is not ("required" or "pending" or "verified" or "rejected" or "expired" or "waived_with_approval"))
+            return new(false, "Access document status is invalid");
+        if ((currentStatus is "verified" or "waived_with_approval" or "expired") && status != currentStatus)
+            return new(false, "Access document is in a terminal state");
         if (string.Equals(status, "waived_with_approval", StringComparison.OrdinalIgnoreCase))
         {
+            var pendingApproval = await FindPendingApprovalAsync(companyId, "operations.access_document.waive", "access_document", id, ct);
+            if (pendingApproval.HasValue)
+                return new(false, "Access document waiver requires approval", true, pendingApproval, current);
             var approvalRequest = approval.CreateRequest(
                 companyId.ToString(CultureInfo.InvariantCulture),
                 ActorTypes.TenantUser,
@@ -651,14 +708,14 @@ public sealed class Stage9OperationalFoundationService(
                 c.Parameters.AddWithValue("@authorizationNo", (object?)Str(body, "authorizationNo") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@authorizedPersonName", (object?)Str(body, "authorizedPersonName") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@authorizedPersonPhone", (object?)Str(body, "authorizedPersonPhone") ?? DBNull.Value);
-                c.Parameters.AddWithValue("@status", Str(body, "status") ?? "required");
+                c.Parameters.AddWithValue("@status", "required");
                 c.Parameters.AddWithValue("@validFrom", ParseDate(body, "validFrom") ?? (object)DBNull.Value);
                 c.Parameters.AddWithValue("@validTo", ParseDate(body, "validTo") ?? (object)DBNull.Value);
                 c.Parameters.AddWithValue("@notes", (object?)Str(body, "notes") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@sourceChannel", (object?)Str(body, "sourceChannel") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@capturedAt", ParseDate(body, "capturedAt") ?? (object)DBNull.Value);
                 c.Parameters.AddWithValue("@uploadedAt", ParseDate(body, "uploadedAt") ?? (object)DBNull.Value);
-                c.Parameters.AddWithValue("@capturedByUserId", (object?)Long(body, "capturedByUserId") ?? DBNull.Value);
+                c.Parameters.AddWithValue("@capturedByUserId", (object?)(ActorUserId() ?? Long(body, "capturedByUserId")) ?? DBNull.Value);
                 c.Parameters.AddWithValue("@deviceId", (object?)Str(body, "deviceId") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@mobileAppVersion", (object?)Str(body, "mobileAppVersion") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@metadata", Str(body, "metadataJson") ?? "{}");
@@ -688,7 +745,12 @@ public sealed class Stage9OperationalFoundationService(
             return new(false, "Pickup authorization not found");
         }
 
-        var status = Str(body, "status") ?? current.GetValueOrDefault("status")?.ToString() ?? "required";
+        var currentStatus = current.GetValueOrDefault("status")?.ToString()?.ToLowerInvariant() ?? "required";
+        var status = (Str(body, "status") ?? currentStatus).Trim().ToLowerInvariant();
+        if (status is not ("required" or "pending" or "verified" or "rejected" or "expired" or "revoked"))
+            return new(false, "Pickup authorization status is invalid");
+        if ((currentStatus is "verified" or "expired" or "revoked") && status != currentStatus)
+            return new(false, "Pickup authorization is in a terminal state");
         await db.ExecuteAsync(
             @"UPDATE pickup_authorizations
               SET status=@status,
@@ -767,15 +829,15 @@ public sealed class Stage9OperationalFoundationService(
                 c.Parameters.AddWithValue("@warehouseName", (object?)Str(body, "warehouseName") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@warehouseReferenceNo", (object?)Str(body, "warehouseReferenceNo") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@handoverType", Str(body, "handoverType") ?? "pickup");
-                c.Parameters.AddWithValue("@status", Str(body, "status") ?? "scheduled");
+                c.Parameters.AddWithValue("@status", "scheduled");
                 c.Parameters.AddWithValue("@scheduledAt", ParseDate(body, "scheduledAt") ?? (object)DBNull.Value);
-                c.Parameters.AddWithValue("@completedAt", ParseDate(body, "completedAt") ?? (object)DBNull.Value);
+                c.Parameters.AddWithValue("@completedAt", DBNull.Value);
                 c.Parameters.AddWithValue("@handledByName", (object?)Str(body, "handledByName") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@notes", (object?)Str(body, "notes") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@sourceChannel", (object?)Str(body, "sourceChannel") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@capturedAt", ParseDate(body, "capturedAt") ?? (object)DBNull.Value);
                 c.Parameters.AddWithValue("@uploadedAt", ParseDate(body, "uploadedAt") ?? (object)DBNull.Value);
-                c.Parameters.AddWithValue("@capturedByUserId", (object?)Long(body, "capturedByUserId") ?? DBNull.Value);
+                c.Parameters.AddWithValue("@capturedByUserId", (object?)(ActorUserId() ?? Long(body, "capturedByUserId")) ?? DBNull.Value);
                 c.Parameters.AddWithValue("@deviceId", (object?)Str(body, "deviceId") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@mobileAppVersion", (object?)Str(body, "mobileAppVersion") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@geoLat", (object?)DecN(body, "geoLatitude") ?? DBNull.Value);
@@ -807,11 +869,16 @@ public sealed class Stage9OperationalFoundationService(
             return new(false, "Warehouse handover not found");
         }
 
-        var status = Str(body, "status") ?? current.GetValueOrDefault("status")?.ToString() ?? "scheduled";
+        var currentStatus = current.GetValueOrDefault("status")?.ToString()?.ToLowerInvariant() ?? "scheduled";
+        var status = (Str(body, "status") ?? currentStatus).Trim().ToLowerInvariant();
+        if (status is not ("scheduled" or "in_progress" or "completed" or "cancelled"))
+            return new(false, "Warehouse handover status is invalid");
+        if ((currentStatus is "completed" or "cancelled") && status != currentStatus)
+            return new(false, "Warehouse handover is in a terminal state");
         await db.ExecuteAsync(
             @"UPDATE warehouse_handovers
               SET status=@status,
-                  completed_at=COALESCE(@completedAt, completed_at),
+                  completed_at=CASE WHEN @status='completed' THEN COALESCE(@completedAt, completed_at, NOW()) ELSE completed_at END,
                   handled_by_name=COALESCE(@handledByName, handled_by_name),
                   notes=COALESCE(@notes, notes),
                   metadata_json=COALESCE(@metadata::jsonb, metadata_json),
@@ -861,6 +928,33 @@ public sealed class Stage9OperationalFoundationService(
 
     public async Task<Dictionary<string, object?>?> CreateProofPackageAsync(long companyId, long? jobId, long? tripId, Dictionary<string, object?> body, string? idempotencyKey, CancellationToken ct = default)
     {
+        var proofType = (Str(body, "proofType") ?? "proof_of_delivery").Trim().ToLowerInvariant();
+        if (proofType is not ("proof_of_delivery" or "proof_of_pickup" or "warehouse_handover" or "exception"))
+            return null;
+        if (DecN(body, "geoLatitude") is < -90 or > 90 || DecN(body, "geoLongitude") is < -180 or > 180)
+            return null;
+        return await db.RunInTenantTransactionAsync<Dictionary<string, object?>?>(companyId, async () =>
+        {
+        var signatureFileId = Long(body, "receiverSignatureFileId");
+        if (signatureFileId.HasValue && !await ManagedDocumentExistsAsync(companyId, signatureFileId.Value, ct))
+            return null;
+        var clientGeneratedId = Str(body, "clientGeneratedId");
+        var allocationKey = !string.IsNullOrWhiteSpace(idempotencyKey) ? $"idem:{idempotencyKey}" :
+            !string.IsNullOrWhiteSpace(clientGeneratedId) ? $"client:{clientGeneratedId}" : null;
+        if (allocationKey is not null)
+            await db.ExecuteAsync("SELECT pg_advisory_xact_lock(hashtextextended(@key,@cid))",
+                c => { c.Parameters.AddWithValue("@key", allocationKey); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+        if (!string.IsNullOrWhiteSpace(idempotencyKey))
+        {
+            var persisted = await LoadByIdempotencyAsync("proof_packages", companyId, idempotencyKey!, ct);
+            if (persisted is not null)
+            {
+                var sameRequest = TryLong(persisted.GetValueOrDefault("jobId")) == jobId &&
+                    TryLong(persisted.GetValueOrDefault("tripId")) == tripId &&
+                    string.Equals(persisted.GetValueOrDefault("proofType")?.ToString(), proofType, StringComparison.OrdinalIgnoreCase);
+                return sameRequest ? persisted : null;
+            }
+        }
         var requestHash = FoundationPersistenceHelpers.ComputeHash(JsonSerializer.Serialize(new
         {
             companyId,
@@ -902,24 +996,24 @@ public sealed class Stage9OperationalFoundationService(
                 c.Parameters.AddWithValue("@companyId", companyId);
                 c.Parameters.AddWithValue("@jobId", (object?)jobId ?? DBNull.Value);
                 c.Parameters.AddWithValue("@tripId", (object?)tripId ?? DBNull.Value);
-                c.Parameters.AddWithValue("@proofType", Str(body, "proofType") ?? "proof_of_delivery");
-                c.Parameters.AddWithValue("@status", Str(body, "status") ?? "draft");
-                c.Parameters.AddWithValue("@completedAt", ParseDate(body, "completedAt") ?? (object)DBNull.Value);
-                c.Parameters.AddWithValue("@completedByUserId", (object?)Long(body, "completedByUserId") ?? DBNull.Value);
+                c.Parameters.AddWithValue("@proofType", proofType);
+                c.Parameters.AddWithValue("@status", "draft");
+                c.Parameters.AddWithValue("@completedAt", DBNull.Value);
+                c.Parameters.AddWithValue("@completedByUserId", DBNull.Value);
                 c.Parameters.AddWithValue("@receiverName", (object?)Str(body, "receiverName") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@receiverPhone", (object?)Str(body, "receiverPhone") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@signatureFileId", (object?)Long(body, "receiverSignatureFileId") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@geoLat", (object?)DecN(body, "geoLatitude") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@geoLong", (object?)DecN(body, "geoLongitude") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@notes", (object?)Str(body, "notes") ?? DBNull.Value);
-                c.Parameters.AddWithValue("@validationStatus", Str(body, "validationStatus") ?? "pending");
+                c.Parameters.AddWithValue("@validationStatus", "pending");
                 c.Parameters.AddWithValue("@validationSummary", (object?)Str(body, "validationSummary") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@sourceChannel", (object?)Str(body, "sourceChannel") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@clientGeneratedId", (object?)Str(body, "clientGeneratedId") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@idempotencyKey", (object?)idempotencyKey ?? DBNull.Value);
                 c.Parameters.AddWithValue("@capturedAt", ParseDate(body, "capturedAt") ?? (object)DBNull.Value);
                 c.Parameters.AddWithValue("@uploadedAt", ParseDate(body, "uploadedAt") ?? (object)DBNull.Value);
-                c.Parameters.AddWithValue("@capturedByUserId", (object?)Long(body, "capturedByUserId") ?? DBNull.Value);
+                c.Parameters.AddWithValue("@capturedByUserId", (object?)(ActorUserId() ?? Long(body, "capturedByUserId")) ?? DBNull.Value);
                 c.Parameters.AddWithValue("@deviceId", (object?)Str(body, "deviceId") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@mobileAppVersion", (object?)Str(body, "mobileAppVersion") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@metadata", Str(body, "metadataJson") ?? "{}");
@@ -943,15 +1037,27 @@ public sealed class Stage9OperationalFoundationService(
         }
 
         return await LoadByIdAsync("proof_packages", companyId, proofPackageId, ct);
+        }, ct);
     }
 
     public async Task<Stage9ActionOutcome> UpdateProofPackageAsync(long companyId, long id, Dictionary<string, object?> body, CancellationToken ct = default)
     {
+        return await db.RunInTenantTransactionAsync<Stage9ActionOutcome>(companyId, async () =>
+        {
+        await db.ExecuteAsync("SELECT pg_advisory_xact_lock(@id)", c => c.Parameters.AddWithValue("@id", id), ct);
         var current = await LoadByIdAsync("proof_packages", companyId, id, ct);
         if (current is null)
         {
             return new(false, "Proof package not found");
         }
+        var currentStatus = current.GetValueOrDefault("status")?.ToString()?.ToLowerInvariant() ?? "";
+        if (currentStatus is not ("draft" or "rejected"))
+            return new(false, $"Proof package cannot be edited from '{currentStatus}' status");
+        if (DecN(body, "geoLatitude") is < -90 or > 90 || DecN(body, "geoLongitude") is < -180 or > 180)
+            return new(false, "Proof coordinates are invalid");
+        var signatureFileId = Long(body, "receiverSignatureFileId");
+        if (signatureFileId.HasValue && !await ManagedDocumentExistsAsync(companyId, signatureFileId.Value, ct))
+            return new(false, "Receiver signature file is not an active uploaded document for this tenant");
 
         await db.ExecuteAsync(
             @"UPDATE proof_packages
@@ -980,23 +1086,24 @@ public sealed class Stage9OperationalFoundationService(
             }, ct);
 
         return new(true, "Proof package updated", false, null, await LoadByIdAsync("proof_packages", companyId, id, ct));
+        }, ct);
     }
 
     public async Task<Stage9ActionOutcome> SubmitProofPackageAsync(long companyId, long id, Dictionary<string, object?> body, CancellationToken ct = default)
     {
+        return await db.RunInTenantTransactionAsync<Stage9ActionOutcome>(companyId, async () =>
+        {
+        await db.ExecuteAsync("SELECT pg_advisory_xact_lock(@id)", c => c.Parameters.AddWithValue("@id", id), ct);
         var current = await LoadByIdAsync("proof_packages", companyId, id, ct);
         if (current is null)
         {
             return new(false, "Proof package not found");
         }
+        var currentStatus = current.GetValueOrDefault("status")?.ToString()?.ToLowerInvariant() ?? "";
+        if (currentStatus is not ("draft" or "rejected"))
+            return new(false, $"Proof package cannot be submitted from '{currentStatus}' status");
 
-        var artifactCount = await db.ScalarLongAsync(
-            "SELECT COUNT(*) FROM proof_artifacts WHERE company_id=@companyId AND proof_package_id=@id",
-            c =>
-            {
-                c.Parameters.AddWithValue("@companyId", companyId);
-                c.Parameters.AddWithValue("@id", id);
-            }, ct);
+        var artifactCount = await CountValidProofArtifactsAsync(companyId, id, ct);
 
         var exceptionNote = Str(body, "exceptionNote");
         if (artifactCount == 0 && string.IsNullOrWhiteSpace(exceptionNote))
@@ -1047,15 +1154,22 @@ public sealed class Stage9OperationalFoundationService(
             $"proof_package.submit:{id}");
 
         return new(true, "Proof package submitted", false, null, await LoadByIdAsync("proof_packages", companyId, id, ct));
+        }, ct);
     }
 
     public async Task<Stage9ActionOutcome> ValidateProofPackageAsync(long companyId, long id, Dictionary<string, object?> body, CancellationToken ct = default)
     {
+        return await db.RunInTenantTransactionAsync<Stage9ActionOutcome>(companyId, async () =>
+        {
+        await db.ExecuteAsync("SELECT pg_advisory_xact_lock(@id)", c => c.Parameters.AddWithValue("@id", id), ct);
         var proof = await LoadByIdAsync("proof_packages", companyId, id, ct);
         if (proof is null)
         {
             return new(false, "Proof package not found");
         }
+        var proofState = proof.GetValueOrDefault("status")?.ToString()?.ToLowerInvariant() ?? "";
+        if (proofState != "submitted")
+            return new(false, $"Proof package can only be validated from 'submitted', not '{proofState}'");
 
         var blockers = new List<string>();
         var jobId = proof.GetValueOrDefault("jobId") as long? ?? TryLong(proof.GetValueOrDefault("jobId"));
@@ -1077,13 +1191,7 @@ public sealed class Stage9OperationalFoundationService(
             blockers.AddRange(await CountBlockersAsync(companyId, tripId.Value, "warehouse_handovers", "trip_id", new[] { "completed" }, "warehouse_handover", ct));
         }
 
-        var artifactCount = await db.ScalarLongAsync(
-            "SELECT COUNT(*) FROM proof_artifacts WHERE company_id=@companyId AND proof_package_id=@id",
-            c =>
-            {
-                c.Parameters.AddWithValue("@companyId", companyId);
-                c.Parameters.AddWithValue("@id", id);
-            }, ct);
+        var artifactCount = await CountValidProofArtifactsAsync(companyId, id, ct);
 
         if (artifactCount == 0)
         {
@@ -1113,7 +1221,7 @@ public sealed class Stage9OperationalFoundationService(
                 c.Parameters.AddWithValue("@status", proofStatus);
                 c.Parameters.AddWithValue("@validationStatus", validationStatus);
                 c.Parameters.AddWithValue("@summary", summary);
-                c.Parameters.AddWithValue("@completedByUserId", (object?)Long(body, "completedByUserId") ?? DBNull.Value);
+                c.Parameters.AddWithValue("@completedByUserId", (object?)(ActorUserId() ?? Long(body, "completedByUserId")) ?? DBNull.Value);
             }, ct);
 
         if (hardBlocked)
@@ -1178,6 +1286,7 @@ public sealed class Stage9OperationalFoundationService(
             $"billing_confidence.updated:{id}");
 
         return new(true, summary, false, null, await LoadByIdAsync("proof_packages", companyId, id, ct), validationStatus, blockers);
+        }, ct);
     }
 
     public async Task<List<Dictionary<string, object?>>> ListProofArtifactsAsync(long companyId, long proofPackageId, CancellationToken ct = default)
@@ -1194,18 +1303,37 @@ public sealed class Stage9OperationalFoundationService(
 
     public async Task<Dictionary<string, object?>?> CreateProofArtifactAsync(long companyId, long proofPackageId, Dictionary<string, object?> body, string? idempotencyKey, CancellationToken ct = default)
     {
+        return await db.RunInTenantTransactionAsync<Dictionary<string, object?>?>(companyId, async () =>
+        {
+        await db.ExecuteAsync("SELECT pg_advisory_xact_lock(@id)", c => c.Parameters.AddWithValue("@id", proofPackageId), ct);
         var proofPackage = await LoadByIdAsync("proof_packages", companyId, proofPackageId, ct);
         if (proofPackage is null)
         {
             return null;
         }
+        var proofStatus = proofPackage.GetValueOrDefault("status")?.ToString()?.ToLowerInvariant() ?? "";
+        if (proofStatus is not ("draft" or "rejected"))
+            return null;
+        var artifactType = (Str(body, "artifactType") ?? "").Trim().ToLowerInvariant();
+        if (artifactType is not ("photo" or "signature" or "document" or "scan"))
+            return null;
+        var fileId = Long(body, "fileId");
+        if (fileId is not > 0)
+            return null;
+        if (!await ManagedDocumentExistsAsync(companyId, fileId.Value, ct))
+            return null;
+        if (DecN(body, "geoLatitude") is < -90 or > 90 || DecN(body, "geoLongitude") is < -180 or > 180)
+            return null;
 
         if (!string.IsNullOrWhiteSpace(idempotencyKey))
         {
             var existing = await LoadProofArtifactByIdempotencyAsync(companyId, idempotencyKey!, ct);
             if (existing is not null)
             {
-                return existing;
+                var sameRequest = TryLong(existing.GetValueOrDefault("proofPackageId")) == proofPackageId
+                    && TryLong(existing.GetValueOrDefault("fileId")) == fileId
+                    && string.Equals(existing.GetValueOrDefault("artifactType")?.ToString(), artifactType, StringComparison.OrdinalIgnoreCase);
+                return sameRequest ? existing : null;
             }
         }
 
@@ -1222,11 +1350,11 @@ public sealed class Stage9OperationalFoundationService(
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
                 c.Parameters.AddWithValue("@proofPackageId", proofPackageId);
-                c.Parameters.AddWithValue("@artifactType", Str(body, "artifactType") ?? "photo");
-                c.Parameters.AddWithValue("@fileId", (object?)Long(body, "fileId") ?? DBNull.Value);
+                c.Parameters.AddWithValue("@artifactType", artifactType);
+                c.Parameters.AddWithValue("@fileId", fileId.Value);
                 c.Parameters.AddWithValue("@capturedAt", ParseDate(body, "capturedAt") ?? (object)DBNull.Value);
                 c.Parameters.AddWithValue("@uploadedAt", ParseDate(body, "uploadedAt") ?? (object)DBNull.Value);
-                c.Parameters.AddWithValue("@capturedByUserId", (object?)Long(body, "capturedByUserId") ?? DBNull.Value);
+                c.Parameters.AddWithValue("@capturedByUserId", (object?)(ActorUserId() ?? Long(body, "capturedByUserId")) ?? DBNull.Value);
                 c.Parameters.AddWithValue("@geoLat", (object?)DecN(body, "geoLatitude") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@geoLong", (object?)DecN(body, "geoLongitude") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@deviceId", (object?)Str(body, "deviceId") ?? DBNull.Value);
@@ -1250,7 +1378,39 @@ public sealed class Stage9OperationalFoundationService(
             idempotencyKey);
 
         return await LoadByIdAsync("proof_artifacts", companyId, artifactId, ct);
+        }, ct);
     }
+
+    private async Task<bool> ManagedDocumentExistsAsync(long companyId, long fileId, CancellationToken ct)
+        => await db.ScalarLongAsync(
+            @"SELECT COUNT(*)
+              FROM documents
+              WHERE id=@fileId AND company_id=@companyId
+                AND deleted_at IS NULL
+                AND status='Active'
+                AND file_url LIKE @tenantPrefix",
+            c =>
+            {
+                c.Parameters.AddWithValue("@fileId", fileId);
+                c.Parameters.AddWithValue("@companyId", companyId);
+                c.Parameters.AddWithValue("@tenantPrefix", $"objkey:tenant/{companyId}/%");
+            }, ct) == 1;
+
+    private async Task<long> CountValidProofArtifactsAsync(long companyId, long proofPackageId, CancellationToken ct)
+        => await db.ScalarLongAsync(
+            @"SELECT COUNT(*)
+              FROM proof_artifacts pa
+              INNER JOIN documents d ON d.id=pa.file_id AND d.company_id=pa.company_id
+              WHERE pa.company_id=@companyId AND pa.proof_package_id=@proofPackageId
+                AND d.deleted_at IS NULL
+                AND d.status='Active'
+                AND d.file_url LIKE @tenantPrefix",
+            c =>
+            {
+                c.Parameters.AddWithValue("@companyId", companyId);
+                c.Parameters.AddWithValue("@proofPackageId", proofPackageId);
+                c.Parameters.AddWithValue("@tenantPrefix", $"objkey:tenant/{companyId}/%");
+            }, ct);
 
     public async Task<Dictionary<string, object?>?> GetBillingConfidenceAsync(long companyId, long proofPackageId, CancellationToken ct = default)
         => await db.QuerySingleAsync(
@@ -1435,13 +1595,31 @@ public sealed class Stage9OperationalFoundationService(
         return await db.QuerySingleAsync(
             @"SELECT *
               FROM assignment_confirmations
-              WHERE company_id=@companyId AND (job_id IS NOT NULL OR trip_id IS NOT NULL)
+              WHERE company_id=@companyId AND recommendation_id=@recommendationId
               ORDER BY created_at DESC, id DESC
               LIMIT 1",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
+                c.Parameters.AddWithValue("@recommendationId", recommendationId);
             }, ct);
+    }
+
+    private async Task<long?> FindPendingApprovalAsync(long companyId, string actionKey, string resourceType, long resourceId, CancellationToken ct)
+    {
+        var row = await db.QuerySingleAsync(
+            @"SELECT id FROM approval_requests
+              WHERE tenant_id=@companyId AND action_key=@actionKey AND resource_type=@resourceType
+                AND resource_id=@resourceId AND status='pending'
+              ORDER BY requested_at DESC, id DESC LIMIT 1",
+            c =>
+            {
+                c.Parameters.AddWithValue("@companyId", companyId);
+                c.Parameters.AddWithValue("@actionKey", actionKey);
+                c.Parameters.AddWithValue("@resourceType", resourceType);
+                c.Parameters.AddWithValue("@resourceId", resourceId.ToString(CultureInfo.InvariantCulture));
+            }, ct);
+        return row is null ? null : Convert.ToInt64(row["id"]);
     }
 
     private async Task<Dictionary<string, object?>?> LoadLatestByJobAsync(string table, long companyId, long jobId, CancellationToken ct)
@@ -1807,4 +1985,7 @@ public sealed class Stage9OperationalFoundationService(
         if (long.TryParse(value.ToString(), out var parsed)) return parsed;
         return null;
     }
+
+    private long? ActorUserId()
+        => long.TryParse(correlation.ActorId, NumberStyles.Integer, CultureInfo.InvariantCulture, out var id) && id > 0 ? id : null;
 }

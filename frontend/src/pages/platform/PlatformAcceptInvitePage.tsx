@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router";
 import { CheckCircle2, KeyRound, Loader2 } from "lucide-react";
 import { OpsTraxLogo } from "@/components/OpsTraxLogo";
 import { platformApi } from "@/services/platformApi";

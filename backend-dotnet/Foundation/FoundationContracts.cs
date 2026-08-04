@@ -302,6 +302,10 @@ public static class ApprovalPolicyCatalog
     {
         Normalize("finance.invoice.issue"),
         Normalize("finance.credit_note.approve"),
+        Normalize("settlement.approve"),
+        Normalize("finance.tax_profile.publish"),
+        Normalize("revrec.period.close"),
+        Normalize("finance.config.publish"),
         Normalize("customer.contract.rate_change"),
         Normalize("dispatch.trip.reassign_high_value"),
         Normalize("iot.vehicle.immobilize"),
@@ -379,6 +383,9 @@ public interface IOutboxMessageHandler
 public interface IOutboxMessageHandlerRegistry
 {
     IOutboxMessageHandler? Resolve(string eventType);
+    // Fan-out: an event type may have multiple independent derive-beside consumers (e.g. invoice.issued
+    // drives BOTH rev-rec and the general ledger). Returns all handlers in registration order.
+    IReadOnlyList<IOutboxMessageHandler> ResolveAll(string eventType);
     IReadOnlyCollection<string> RegisteredEventTypes { get; }
 }
 

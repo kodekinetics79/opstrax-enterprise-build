@@ -1,13 +1,48 @@
-FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:8.0@sha256:3c0edbfe1549dd93fb789dc96299a40df865ad7bffefcaf38e8c05940686d641 AS build
 WORKDIR /src
-COPY Opstrax.Api.csproj ./
-RUN dotnet restore
-COPY . ./
-RUN dotnet publish -c Release -o /app/publish
+COPY backend-dotnet/Opstrax.Api.csproj backend-dotnet/
+COPY telematics/src/Opstrax.Telematics.Protocols.J1939/Opstrax.Telematics.Protocols.J1939.csproj telematics/src/Opstrax.Telematics.Protocols.J1939/
+RUN dotnet restore backend-dotnet/Opstrax.Api.csproj
+COPY backend-dotnet/ backend-dotnet/
+COPY telematics/src/Opstrax.Telematics.Protocols.J1939/ telematics/src/Opstrax.Telematics.Protocols.J1939/
+COPY database/init/001_schema.sql database/init/001_schema.sql
+COPY database/migrations/2026_07_30_customer_feedback_contract.sql database/migrations/
+COPY database/migrations/2026_07_30_stage49_mfa_challenge_one_time.sql database/migrations/
+COPY database/migrations/2026_07_30_stage50_fleet_production_contract.sql database/migrations/
+COPY database/migrations/2026_07_30_stage51_production_runtime_support.sql database/migrations/
+COPY database/migrations/2026_07_30_stage52_fleet_identity_uniqueness.sql database/migrations/
+COPY database/migrations/2026_07_30_stage53_tenant_rls_reconciliation.sql database/migrations/
+COPY database/migrations/2026_07_30_stage54_cold_chain_device_integrity.sql database/migrations/
+COPY database/migrations/2026_07_30_stage55_fleet_runtime_route_contract.sql database/migrations/
+COPY database/migrations/2026_07_30_stage56_asset_type_integrity.sql database/migrations/
+COPY database/migrations/2026_07_30_stage57_workforce_schedule_tenant_integrity.sql database/migrations/
+COPY database/migrations/2026_07_31_stage58_nonforgeable_tenant_ticket.sql database/migrations/
+COPY database/migrations/2026_07_31_stage59_data_protection_key_ring.sql database/migrations/
+COPY database/migrations/2026_08_01_stage60_dispatch_trip_pilot.sql database/migrations/
+COPY database/migrations/2026_08_01_stage61_operations_proof_center.sql database/migrations/
+COPY database/migrations/2026_08_01_stage62_last_mile_pilot.sql database/migrations/
+COPY database/migrations/2026_08_01_stage63_route_plans_pilot.sql database/migrations/
+COPY database/migrations/2026_08_01_stage64_shipments_pilot.sql database/migrations/
+COPY database/migrations/2026_07_22_stage47_detention_recovery.sql database/migrations/
+COPY database/migrations/2026_08_01_stage65_safety_pilot.sql database/migrations/
+COPY database/migrations/2026_08_02_stage66_telematics_pilot.sql database/migrations/
+COPY database/migrations/2026_08_02_stage67_telematics_diagnostics_integrity.sql database/migrations/
+COPY database/migrations/2026_08_02_stage68_entitlement_policy_mode.sql database/migrations/
+COPY database/migrations/2026_08_02_stage69_market_pack_control_hardening.sql database/migrations/
+COPY database/migrations/2026_08_02_stage70_hos_pilot_schema_reconciliation.sql database/migrations/
+COPY database/migrations/2026_08_02_stage71_coaching_evidence_reconciliation.sql database/migrations/
+COPY database/migrations/2026_08_02_stage72_hos_offboarding_immutability_reconciliation.sql database/migrations/
+COPY database/migrations/2026_08_02_stage73_hos_offboarding_null_fail_closed.sql database/migrations/
+COPY database/migrations/2026_08_02_stage74_retention_policy_production_contract.sql database/migrations/
+COPY database/migrations/2026_08_02_stage75_bounded_support_access.sql database/migrations/
+COPY database/migrations/telematics database/migrations/telematics
+RUN dotnet publish backend-dotnet/Opstrax.Api.csproj -c Release -o /app/publish --no-restore
 
-FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS final
+FROM mcr.microsoft.com/dotnet/aspnet:8.0@sha256:8f6a307ae32fb393a4b4bcde0a81f0ce3f0a715de0e5575df71f3030448f2dde AS final
 WORKDIR /app
 COPY --from=build /app/publish .
+COPY --from=build /src/database/migrations ./Migrations
 ENV Rls__EnforceTenantContext=true
 EXPOSE 8080
+USER $APP_UID
 ENTRYPOINT ["dotnet", "Opstrax.Api.dll"]

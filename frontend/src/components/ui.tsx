@@ -7,6 +7,7 @@ import {
   Sparkles, TrendingUp, X,
 } from "lucide-react";
 import type { AnyRecord } from "@/types";
+import { useDialogFocus } from "@/hooks/useDialogFocus";
 
 /* ============================================================
    UTILITY
@@ -14,13 +15,23 @@ import type { AnyRecord } from "@/types";
 export function exportCsv(name: string, rows: AnyRecord[]) {
   if (!rows.length) return;
   const cols = Array.from(new Set(rows.flatMap((row) => Object.keys(row)))).slice(0, 24);
-  const csv = [cols.join(","), ...rows.map((row) => cols.map((c) => JSON.stringify(row[c] ?? "")).join(","))].join("\n");
+  // Spreadsheet programs execute cells beginning with these characters as formulae,
+  // even when the CSV field is quoted. Prefix user-controlled strings so exports are
+  // safe to open in Excel/Sheets without changing the value displayed to an operator.
+  const csvCell = (value: unknown) => {
+    const text = String(value ?? "");
+    const safe = /^[=+\-@\t\r]/.test(text) ? `'${text}` : text;
+    return JSON.stringify(safe);
+  };
+  const csv = [cols.map(csvCell).join(","), ...rows.map((row) => cols.map((c) => csvCell(row[c])).join(","))].join("\n");
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  const objectUrl = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  a.href = objectUrl;
   const now = new Date();
   const ts = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}_${String(now.getHours()).padStart(2, "0")}-${String(now.getMinutes()).padStart(2, "0")}`;
   a.download = `${name}_${ts}.csv`;
   a.click();
+  URL.revokeObjectURL(objectUrl);
 }
 
 export function labelize(value: string) {
@@ -506,17 +517,8 @@ export function FilterBar({
    DETAIL DRAWER  (generic slot, used outside Batch pages)
    ============================================================ */
 export function DetailDrawer({ record, onClose }: { record: AnyRecord | null; onClose: () => void }) {
-  const closeRef = useRef<HTMLButtonElement>(null);
   const open = record !== null;
-
-  // Dialog behavior: Escape dismisses, focus lands on the close control.
-  useEffect(() => {
-    if (!open) return;
-    closeRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  const dialogRef = useDialogFocus<HTMLElement>(open, onClose);
 
   if (!record) return null;
   return (
@@ -524,12 +526,13 @@ export function DetailDrawer({ record, onClose }: { record: AnyRecord | null; on
       {/* Backdrop dismiss is mouse-only; keyboard users have Escape + the Close button */}
       <div aria-hidden className="absolute inset-0" onClick={onClose} />
       <aside
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label="Record details"
         className="anim-slide-right relative h-full w-full max-w-lg overflow-y-auto border-l border-slate-200 bg-gradient-to-b from-white to-slate-50 p-6 shadow-2xl"
       >
-        <button ref={closeRef} aria-label="Close" className="float-right icon-btn" onClick={onClose}><X className="h-4 w-4" /></button>
+        <button aria-label="Close" className="float-right icon-btn" onClick={onClose}><X className="h-4 w-4" /></button>
         <p className="section-title text-teal-700">OpsTrax Detail</p>
         <h2 className="mt-3 text-[28px] font-black tracking-tight text-slate-950">
           {String(record.title || record.name || record.vehicleCode || record.driverCode || record.jobCode || `Record ${record.id}`)}

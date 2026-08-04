@@ -80,12 +80,15 @@ BEGIN
 
     -- ── ELD devices — one per ~active vehicle ──
     INSERT INTO eld_devices (company_id, device_serial, device_model, provider, vehicle_id,
-                            firmware_version, status, last_heartbeat_at, last_sync_at, created_at)
+                            firmware_version, api_key_hash, hmac_secret,
+                            status, last_heartbeat_at, last_sync_at, created_at)
     SELECT cid, 'ACME-ELD-' || LPAD(row_number() OVER (ORDER BY v.id)::text,4,'0'),
            (ARRAY['GO9','VG34','LBB-3'])[(v.id%3)+1],
            (ARRAY['Geotab','Samsara','Motive'])[(v.id%3)+1],
            v.id,
            'v' || (4+(v.id%3)) || '.' || (v.id%9) || '.' || ((v.id*7)%9),
+           encode(sha256(gen_random_bytes(32)), 'hex'),
+           encode(gen_random_bytes(32), 'hex'),
            (CASE WHEN v.status='Out of Service' THEN 'Malfunction'
                  WHEN v.device_status='Offline' THEN 'Diagnostic' ELSE 'Active' END),
            NOW() - ((v.id % 120) * INTERVAL '1 minute'),

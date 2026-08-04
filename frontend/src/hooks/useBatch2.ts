@@ -12,7 +12,10 @@ export const useDispatchSummary = () => useQuery({ queryKey: ["dispatch", "summa
 export const useDispatchRecommendations = () => useQuery({ queryKey: ["dispatch", "recommendations"], queryFn: dispatchApi.recommendations });
 export const useAvailableDrivers = () => useQuery({ queryKey: ["dispatch", "drivers"], queryFn: dispatchApi.availableDrivers });
 export const useAvailableVehicles = () => useQuery({ queryKey: ["dispatch", "vehicles"], queryFn: dispatchApi.availableVehicles });
-export const useRoutes = () => useQuery({ queryKey: ["routes"], queryFn: routesApi.list });
+export const useRoutes = (opts?: { limit?: number; offset?: number; search?: string; status?: string }) => useQuery({
+  queryKey: ["routes", "paged", opts?.search ?? "", opts?.status ?? "All", opts?.offset ?? 0, opts?.limit ?? 50],
+  queryFn: () => routesApi.listPaged(opts),
+});
 export const useRouteDetail = (id?: string | number) => useQuery({ queryKey: ["routes", "detail", id], queryFn: () => routesApi.detail(id!), enabled: Boolean(id) });
 export const useRouteSummary = () => useQuery({ queryKey: ["routes", "summary"], queryFn: routesApi.summary });
 export const useCustomerEtaSummary = () => useQuery({ queryKey: ["customer-eta", "summary"], queryFn: customerEtaApi.summary });

@@ -6,13 +6,16 @@ namespace Opstrax.Api.Services;
 // tenant_entitlements / usage_* tables created by RevenueSchemaService.
 //
 // ENFORCEMENT PHILOSOPHY (backwards-compatible):
-//   • A module is BLOCKED only when an explicit tenant_entitlements row exists with
-//     enabled = false. Absence of a row = allowed. This means existing/ungoverned
-//     tenants keep working, while Platform Admin can switch a module off per tenant.
+//   • legacy_allow: a module is blocked only by an explicit disabled row. Existing
+//     tenants were migrated to this mode, so rollout does not remove access.
+//   • package_allowlist: a module is allowed only by an explicit enabled row. New
+//     tenants default to this mode, making package omission deny-by-default.
 //   • Limits are enforced only when an entitlement row carries a non-null limit_value
 //     AND the override/contract does not allow overage.
 public sealed class EntitlementService(Database db)
 {
+    public const string LegacyAllowPolicy = "legacy_allow";
+    public const string PackageAllowlistPolicy = "package_allowlist";
     public sealed record EntitlementDecision(bool Allowed, string? Reason);
 
     public static string CurrentPeriodKey() => DateTime.UtcNow.ToString("yyyy-MM");
@@ -33,15 +36,32 @@ public sealed class EntitlementService(Database db)
             ? new EntitlementDecision(true, null)
             : new EntitlementDecision(false, $"Market pack '{packCode}' is not enabled for this tenant.");
 
-    // Is the module enabled for this tenant? Blocked only on explicit disable.
+    // Is the module enabled for this tenant? The tenant's explicit policy determines
+    // whether a missing row inherits allow (legacy) or deny (package allowlist).
     public async Task<EntitlementDecision> CheckModuleAsync(long companyId, string moduleKey, CancellationToken ct = default)
     {
         var row = await db.QuerySingleAsync(
-            "SELECT enabled FROM tenant_entitlements WHERE company_id=@c AND module_key=@m",
+            """
+                SELECT c.entitlement_policy_mode, e.enabled
+                FROM companies c
+                LEFT JOIN tenant_entitlements e
+                  ON e.company_id=c.id AND e.module_key=@m
+                WHERE c.id=@c
+                """,
             c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@m", moduleKey); }, ct);
-        if (row is null) return new EntitlementDecision(true, null); // ungoverned → allow
+        if (row is null)
+            return new EntitlementDecision(false, "Tenant entitlement policy could not be resolved.");
+
+        var policy = row["entitlementPolicyMode"]?.ToString() ?? LegacyAllowPolicy;
+        var hasExplicitRow = row["enabled"] is bool;
         var enabled = row["enabled"] is bool b && b;
-        return enabled
+        var allowed = policy switch
+        {
+            PackageAllowlistPolicy => hasExplicitRow && enabled,
+            LegacyAllowPolicy => !hasExplicitRow || enabled,
+            _ => false, // corrupted/unknown policy must never become a fail-open path
+        };
+        return allowed
             ? new EntitlementDecision(true, null)
             : new EntitlementDecision(false, $"Module '{moduleKey}' is not included in this tenant's plan.");
     }
@@ -52,11 +72,12 @@ public sealed class EntitlementService(Database db)
     // overage by inserting an override.
     public async Task<EntitlementDecision> CheckLimitAsync(long companyId, string moduleKey, string meterKey, CancellationToken ct = default)
     {
+        var moduleDecision = await CheckModuleAsync(companyId, moduleKey, ct);
+        if (!moduleDecision.Allowed) return moduleDecision;
+
         var ent = await db.QuerySingleAsync(
             "SELECT enabled, limit_value FROM tenant_entitlements WHERE company_id=@c AND module_key=@m",
             c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@m", moduleKey); }, ct);
-        if (ent is not null && ent["enabled"] is bool e && !e)
-            return new EntitlementDecision(false, $"Module '{moduleKey}' is not included in this tenant's plan.");
 
         var limit = ent?["limitValue"];
         if (limit is null or DBNull) return new EntitlementDecision(true, null); // no cap

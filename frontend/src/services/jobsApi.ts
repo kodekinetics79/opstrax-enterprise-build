@@ -6,9 +6,29 @@ function asRows(value: unknown): AnyRecord[] {
   return Array.isArray(value) ? (value as AnyRecord[]) : [];
 }
 
+export type JobListOptions = { limit?: number; offset?: number; search?: string; status?: string; priority?: string; jobId?: string | number };
+
+function jobFilters(opts?: JobListOptions) {
+  const filters = new URLSearchParams();
+  if (opts?.search?.trim()) filters.set("search", opts.search.trim());
+  if (opts?.status && opts.status !== "All") filters.set("status", opts.status);
+  if (opts?.priority && opts.priority !== "All") filters.set("priority", opts.priority);
+  if (opts?.jobId != null && String(opts.jobId).trim()) filters.set("jobId", String(opts.jobId).trim());
+  return filters;
+}
+
 export const jobsApi = {
   list: () => unwrap<AnyRecord[]>(apiClient.get("/api/jobs")),
-  listPaged: (opts?: { limit?: number; offset?: number; search?: string }) => apiPaged("/api/jobs", opts),
+  listPaged: (opts?: JobListOptions) => {
+    const filters = jobFilters(opts);
+    filters.delete("search"); // apiPaged adds the search parameter together with paging.
+    const query = filters.toString();
+    return apiPaged(`/api/jobs${query ? `?${query}` : ""}`, opts);
+  },
+  exportPath: (opts?: JobListOptions) => {
+    const query = jobFilters(opts).toString();
+    return `/api/jobs/export${query ? `?${query}` : ""}`;
+  },
   summary: () => unwrap<AnyRecord>(apiClient.get("/api/jobs/summary")),
   detail: (id: string | number) =>
     unwrap<AnyRecord>(apiClient.get(`/api/jobs/${id}`)).then((detail) => ({
@@ -27,10 +47,14 @@ export const jobsApi = {
   create: (payload: AnyRecord) => unwrap<AnyRecord>(apiClient.post("/api/jobs", payload)),
   update: (id: string | number, payload: AnyRecord) => unwrap<AnyRecord>(apiClient.put(`/api/jobs/${id}`, payload)),
   remove: (id: string | number) => unwrap<AnyRecord>(apiClient.delete(`/api/jobs/${id}`)),
-  importPreview: (payload: AnyRecord) => unwrap<AnyRecord>(apiClient.post("/api/jobs/import-preview", payload)),
+  importPreview: (rows: AnyRecord[]) => unwrap<AnyRecord>(apiClient.post("/api/jobs/import-preview", { rows })),
+  importCommit: (rows: AnyRecord[], idempotencyKey: string) => unwrap<AnyRecord>(apiClient.post("/api/jobs/import", { rows }, {
+    headers: { "Idempotency-Key": idempotencyKey },
+  })),
   assign: (id: string | number, payload: AnyRecord) => unwrap<AnyRecord>(apiClient.post(`/api/jobs/${id}/assign`, payload)),
   changeStatus: (id: string | number, status: string, notes?: string) => unwrap<AnyRecord>(apiClient.post(`/api/jobs/${id}/status`, { status, notes })),
-  sendEta: (id: string | number, payload: AnyRecord = {}) => unwrap<AnyRecord>(apiClient.post(`/api/jobs/${id}/send-eta`, payload)),
+  sendEta: (id: string | number, payload: AnyRecord = {}, idempotencyKey = globalThis.crypto.randomUUID()) =>
+    unwrap<AnyRecord>(apiClient.post(`/api/jobs/${id}/send-eta`, payload, { headers: { "Idempotency-Key": idempotencyKey } })),
   proofPlaceholder: (id: string | number, payload: AnyRecord = {}) => unwrap<AnyRecord>(apiClient.post(`/api/jobs/${id}/proof-placeholder`, payload)),
   captureProof: (id: string | number, payload: AnyRecord) => unwrap<AnyRecord>(apiClient.post(`/api/jobs/${id}/proof`, payload)),
 };

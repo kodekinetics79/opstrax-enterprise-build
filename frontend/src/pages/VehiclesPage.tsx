@@ -5,7 +5,7 @@ import {
   MapPin, Navigation, Plus, Save, Search, ShieldAlert, Sparkles, Trash2, TrendingUp,
   Truck, UserCheck, Video, Wrench, X, Radio,
 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { vehiclesApi } from "@/services/vehiclesApi";
 import { driversApi } from "@/services/driversApi";
 import { downloadServerExport } from "@/services/fleetDomainApi";
@@ -158,6 +158,7 @@ export function VehiclesPage() {
       if (selectedId != null) await queryClient.invalidateQueries({ queryKey: ["vehicles", "detail", selectedId] });
     },
   });
+  const actionError = save.error ?? remove.error ?? assign.error;
 
   if (list.isLoading) return <LoadingState />;
   if (list.isError) return <ErrorState message={list.error instanceof Error ? list.error.message : "Unable to load vehicles."} />;
@@ -204,6 +205,12 @@ export function VehiclesPage() {
           </div>
         </div>
       </header>
+
+      {actionError instanceof Error ? (
+        <div role="alert" className="shrink-0 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
+          {actionError.message || "The vehicle action could not be completed."}
+        </div>
+      ) : null}
 
       {/* ── Clay KPI tiles ───────────────────────────────────────────────── */}
       <div className="grid shrink-0 grid-cols-2 gap-3 xl:grid-cols-4">
@@ -357,7 +364,7 @@ export function VehiclesPage() {
       )}
 
       {editing && (
-        <VehicleFormModal title={isCreating ? "New vehicle" : "Edit vehicle"} initial={editing} saving={save.isPending}
+        <VehicleFormModal title={isCreating ? "New vehicle" : "Edit vehicle"} initial={editing} saving={save.isPending} serverError={save.error instanceof Error ? save.error.message : undefined}
           onClose={() => { setEditing(null); setIsCreating(false); }} onSave={(p) => save.mutate(p)} />
       )}
     </div>
@@ -726,7 +733,7 @@ function fmt(v: unknown) {
 
 /* ------------------------------------------------------------------ form modal */
 
-function VehicleFormModal({ title, initial, saving, onClose, onSave }: { title: string; initial: AnyRecord; saving: boolean; onClose: () => void; onSave: (p: AnyRecord) => void }) {
+function VehicleFormModal({ title, initial, saving, serverError, onClose, onSave }: { title: string; initial: AnyRecord; saving: boolean; serverError?: string; onClose: () => void; onSave: (p: AnyRecord) => void }) {
   const [form, setForm] = useState<AnyRecord>(initial);
   const [errors, setErrors] = useState<string[]>([]);
 
@@ -803,6 +810,11 @@ function VehicleFormModal({ title, initial, saving, onClose, onSave }: { title: 
             </ul>
           </div>
         )}
+        {serverError ? (
+          <div role="alert" className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            {serverError}
+          </div>
+        ) : null}
         <div className="mt-6 flex justify-end gap-3">
           <button type="button" onClick={onClose} className="btn-ghost h-11">Cancel</button>
           <button type="submit" disabled={saving} className="btn-primary h-11"><Save className="h-4 w-4" /> {saving ? "Saving…" : "Save vehicle"}</button>

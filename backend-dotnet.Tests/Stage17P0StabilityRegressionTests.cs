@@ -19,11 +19,14 @@ public class Stage17P0StabilityRegressionTests
     public void AppShell_Search_Uses_ModuleAware_Routing_And_Awaited_Logout()
     {
         var appShell = ReadSource("frontend", "src", "layouts", "AppShell.tsx");
+        var moduleConfig = ReadSource("frontend", "src", "modules", "moduleConfig.ts");
 
-        Assert.Contains("resolveSearchRoute", appShell);
-        Assert.Contains("navigate(resolveSearchRoute(sidebarQuery))", appShell);
+        Assert.Contains("const visibleSections = useMemo", appShell);
+        Assert.Contains("const firstFilteredRoute = filteredSections", appShell);
+        Assert.Contains("navigate(firstFilteredRoute.route)", appShell);
+        Assert.DoesNotContain("resolveSearchRoute", appShell);
         Assert.Contains("void logout().finally(() => setProfileOpen(false))", appShell);
-        Assert.Contains("route: \"/work-orders\"", appShell);
+        Assert.Contains("route: \"/work-orders\"", moduleConfig);
     }
 
     [Fact]

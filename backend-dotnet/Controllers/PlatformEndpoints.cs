@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Opstrax.Api.Data;
 using Opstrax.Api.DTOs;
@@ -22,6 +23,15 @@ public static class PlatformEndpoints
 {
     public sealed record PlatformPrincipal(long AdminId, string Email, string RoleKey, string RoleName, string[] Permissions);
 
+    // Canonical commercial catalog. Keep this aligned with the Platform tenant and
+    // package UIs plus Program.ModuleKeyForPath. Commercial writes must never create
+    // a well-formed but inert entitlement row because of an operator typo.
+    internal static readonly HashSet<string> GovernedEntitlementModuleKeys = new(StringComparer.Ordinal)
+    {
+        "safety", "maintenance", "dispatch", "telematics", "crm",
+        "customer_portal", "reports", "compliance", "integrations",
+    };
+
     public static void MapPlatformEndpoints(this WebApplication app)
     {
         // ── Auth ──────────────────────────────────────────────────────────────
@@ -39,12 +49,16 @@ public static class PlatformEndpoints
         app.MapPost("/api/platform/tenants", TenantCreate);
         app.MapPut("/api/platform/tenants/{id:long}", TenantUpdate);
         app.MapPost("/api/platform/tenants/{id:long}/status", TenantStatus);
+        // Safe, time-limited, fully-audited tenant impersonation (Platform Admin P0).
+        app.MapPost("/api/platform/tenants/{id:long}/impersonate", TenantImpersonate);
+        app.MapPost("/api/platform/impersonation/{id:long}/end", ImpersonationEnd);
         app.MapPost("/api/platform/tenants/{id:long}/assign-package", TenantAssignPackage);
         app.MapPost("/api/platform/tenants/{id:long}/reset-admin-invite", TenantResetInvite);
         // Emergency/support control: kill every active session for a tenant without
         // changing its subscription status (suspend/cancel also do this implicitly).
         app.MapPost("/api/platform/tenants/{id:long}/revoke-sessions", TenantRevokeSessions);
         app.MapGet("/api/platform/tenants/{id:long}/audit", TenantAudit);
+        app.MapPost("/api/platform/tenants/{id:long}/control-snapshot", TenantControlSnapshot);
         // Tenant user directory + platform-initiated password reset (works without SMTP:
         // returns a one-time temporary password for the operator to hand over).
         app.MapGet("/api/platform/tenants/{id:long}/users", TenantUsers);
@@ -58,6 +72,7 @@ public static class PlatformEndpoints
         // ── Feature Entitlements ────────────────────────────────────────────────
         app.MapGet("/api/platform/tenants/{id:long}/entitlements", EntitlementsGet);
         app.MapPut("/api/platform/tenants/{id:long}/entitlements", EntitlementsSet);
+        app.MapPut("/api/platform/tenants/{id:long}/entitlement-policy", EntitlementPolicySet);
 
         // ── Country Profiles (market/localization defaults + tenant cascade) ─────
         app.MapGet("/api/platform/country-profiles", CountryProfilesList);
@@ -591,6 +606,7 @@ public static class PlatformEndpoints
         @"SELECT c.id, c.name, c.company_code, c.industry, c.status company_status, c.created_at,
                  c.country, c.currency, c.legal_name, c.website, c.fleet_size, c.tax_id,
                  c.primary_contact_name, c.primary_contact_email, c.primary_contact_phone, c.billing_email,
+                 c.entitlement_policy_mode,
                  ts.status, ts.seat_limit, ts.billing_currency, ts.mrr_cents, ts.trial_ends_at, ts.billing_cycle,
                  ts.contract_start, ts.contract_end, ts.account_owner, ts.support_owner,
                  p.name package_name, p.package_code,
@@ -598,6 +614,135 @@ public static class PlatformEndpoints
           FROM companies c
           LEFT JOIN tenant_subscriptions ts ON ts.company_id = c.id
           LEFT JOIN packages p ON p.id = ts.package_id";
+
+    // POST /api/platform/tenants/{id}/impersonate {targetUserId, reason, minutes?} — issue a
+    // uniquely-bound, short-lived READ-ONLY support grant. Disabled by default. The tenant auth
+    // edge validates the grant on every request and denies state-changing methods before a handler.
+    internal static async Task<IResult> TenantImpersonate(long id, HttpContext http, System.Text.Json.JsonElement body,
+        Database db, IConfiguration configuration, CancellationToken ct)
+    {
+        var (principal, error) = await RequireAsync(http, db, "platform:impersonation:start", ct);
+        if (error is not null) return error;
+
+        if (!PlatformImpersonationPolicy.IsEnabled(configuration))
+            return Results.Json(ApiResponse<object>.Fail("Support access disabled",
+                "Platform impersonation is disabled by deployment policy."), statusCode: StatusCodes.Status503ServiceUnavailable);
+
+        var reason = body.TryGetProperty("reason", out var r) ? r.GetString()?.Trim() : null;
+        if (string.IsNullOrWhiteSpace(reason))
+            return Results.BadRequest(ApiResponse<object>.Fail("A reason is required to impersonate a tenant."));
+        if (reason.Length > 400)
+            return Results.BadRequest(ApiResponse<object>.Fail("Reason must be 400 characters or fewer."));
+        var minutes = body.TryGetProperty("minutes", out var m) && m.TryGetInt32(out var mv) ? mv : 30;
+        if (minutes is < 5 or > 60)
+            return Results.BadRequest(ApiResponse<object>.Fail("Support access duration must be between 5 and 60 minutes."));
+        if (!body.TryGetProperty("targetUserId", out var tu) || !tu.TryGetInt64(out var targetUserId))
+            return Results.BadRequest(ApiResponse<object>.Fail("targetUserId is required (the tenant user to act as)."));
+
+        // The target and tenant must both be active. A support grant must never
+        // bypass the same lifecycle controls as an ordinary login.
+        var target = await db.QuerySingleAsync(
+            @"SELECT u.id, u.email, u.full_name
+              FROM users u JOIN companies c ON c.id=u.company_id
+              WHERE u.id=@u AND u.company_id=@c
+                AND u.status='Active' AND c.status='Active'",
+            c => { c.Parameters.AddWithValue("@u", targetUserId); c.Parameters.AddWithValue("@c", id); }, ct);
+        if (target is null)
+            return Results.NotFound(ApiResponse<object>.Fail("Active target user not found in an active tenant."));
+
+        var grantRef = Guid.NewGuid();
+        var token = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+        var grantId = await db.RunInSystemTransactionAsync(async () =>
+        {
+            var createdGrantId = await db.InsertAsync(
+                @"INSERT INTO platform_impersonation_sessions
+                    (admin_id, company_id, target_user_id, grant_ref, reason, expires_at)
+                  VALUES (@a, @c, @u, @g, @r, NOW() + make_interval(mins => @min)) RETURNING id",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@a", principal!.AdminId);
+                    c.Parameters.AddWithValue("@c", id);
+                    c.Parameters.AddWithValue("@u", targetUserId);
+                    c.Parameters.AddWithValue("@g", grantRef);
+                    c.Parameters.AddWithValue("@r", reason);
+                    c.Parameters.AddWithValue("@min", minutes);
+                }, ct);
+
+            await db.ExecuteAsync(
+                @"INSERT INTO user_sessions (user_id, company_id, session_token, expires_at, impersonation_grant_id)
+                  VALUES (@u, @c, @t, NOW() + make_interval(mins => @min), @grantId)",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@u", targetUserId); c.Parameters.AddWithValue("@c", id);
+                    c.Parameters.AddWithValue("@t", token); c.Parameters.AddWithValue("@min", minutes);
+                    c.Parameters.AddWithValue("@grantId", createdGrantId);
+                }, ct);
+
+            await AuditAsync(db, principal!, http, "platform.impersonation.started", "SupportAccessGrant",
+                createdGrantId, id, new { grantRef, targetUserId, reason, minutes, mode = "read_only" }, ct);
+            await TenantSupportAuditAsync(db, id, "platform.support_access.started", grantRef,
+                new { mode = "read_only", expiresInMinutes = minutes }, ct);
+            return createdGrantId;
+        }, ct);
+
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            impersonationSessionId = grantId,
+            grantRef,
+            token,
+            actingAs = new { id = target["id"], email = target["email"], name = target["fullName"] },
+            mode = "read_only",
+            expiresInMinutes = minutes,
+        }, $"Read-only support access active for {minutes} minutes. Every request is attributed and audited."));
+    }
+
+    // POST /api/platform/impersonation/{id}/end — end early: stamps ended_at and revokes the tenant
+    // sessions minted inside the impersonation window for that (user, company).
+    internal static async Task<IResult> ImpersonationEnd(long id, HttpContext http, Database db, CancellationToken ct)
+    {
+        var (principal, error) = await RequireAsync(http, db, "platform:impersonation:start", ct);
+        if (error is not null) return error;
+
+        var row = await db.QuerySingleAsync(
+            "SELECT company_id, grant_ref, ended_at FROM platform_impersonation_sessions WHERE id=@id",
+            c => c.Parameters.AddWithValue("@id", id), ct);
+        if (row is null) return Results.NotFound(ApiResponse<object>.Fail("Impersonation session not found."));
+        if (row["endedAt"] is not null and not DBNull)
+            return Results.Ok(ApiResponse<object>.Ok(new { id }, "Already ended."));
+
+        var companyId = Convert.ToInt64(row["companyId"]);
+        var grantRef = Guid.Parse(row["grantRef"]!.ToString()!);
+        var revoked = await db.RunInSystemTransactionAsync(async () =>
+        {
+            var deleted = await db.ExecuteAsync(
+                "DELETE FROM user_sessions WHERE impersonation_grant_id=@id",
+                c => c.Parameters.AddWithValue("@id", id), ct);
+            await db.ExecuteAsync(
+                "UPDATE platform_impersonation_sessions SET ended_at=NOW() WHERE id=@id AND ended_at IS NULL",
+                c => c.Parameters.AddWithValue("@id", id), ct);
+            await AuditAsync(db, principal!, http, "platform.impersonation.ended", "SupportAccessGrant", id,
+                companyId, new { grantRef, sessionsRevoked = deleted }, ct);
+            await TenantSupportAuditAsync(db, companyId, "platform.support_access.ended", grantRef,
+                new { sessionsRevoked = deleted }, ct);
+            return deleted;
+        }, ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { id, grantRef, sessionsRevoked = revoked },
+            "Support access ended and its exact session was revoked."));
+    }
+
+    private static Task TenantSupportAuditAsync(Database db, long companyId, string action, Guid grantRef,
+        object details, CancellationToken ct) => AuditLogSequenceRepair.ExecuteWithSequenceRepairAsync(
+        db, "audit_logs", "id",
+        @"INSERT INTO audit_logs
+            (company_id, actor_user_id, actor_name, action_name, entity_name, details_json)
+          VALUES (@companyId, NULL, @actor, @action, 'SupportAccessGrant', @details::jsonb)",
+        c =>
+        {
+            c.Parameters.AddWithValue("@companyId", companyId);
+            c.Parameters.AddWithValue("@actor", $"platform-support:{grantRef:N}");
+            c.Parameters.AddWithValue("@action", action);
+            c.Parameters.AddWithValue("@details", JsonSerializer.Serialize(details));
+        }, ct);
 
     internal static async Task<IResult> TenantsList(HttpContext http, Database db, CancellationToken ct)
     {
@@ -646,6 +791,18 @@ public static class PlatformEndpoints
         var seatLimit = (int)(Long(body, "seatLimit") ?? 5);
         var status = Str(body, "status") ?? "trial";
         var trialDays = (int)(Long(body, "trialDays") ?? 14);
+        // Existing rows retain legacy_allow through the additive schema default;
+        // newly provisioned customers are commercially isolated by default.
+        var policyMode = Str(body, "entitlementPolicyMode") ?? EntitlementService.PackageAllowlistPolicy;
+        if (policyMode is not (EntitlementService.LegacyAllowPolicy or EntitlementService.PackageAllowlistPolicy))
+            return Results.Json(ApiResponse<object>.Fail("Validation failed",
+                "entitlementPolicyMode must be legacy_allow or package_allowlist"),
+                statusCode: StatusCodes.Status400BadRequest);
+        if (policyMode == EntitlementService.LegacyAllowPolicy &&
+            !HasPlatformPermission(principal!.Permissions, "platform:entitlements:manage"))
+            return Results.Json(ApiResponse<object>.Fail("Forbidden",
+                "Creating a legacy-allow tenant requires platform entitlement-management permission."),
+                statusCode: StatusCodes.Status403Forbidden);
 
         // Country profile (optional): resolve BEFORE insert so its default currency
         // seeds the subscription. Reject an unknown code rather than silently ignoring.
@@ -666,12 +823,13 @@ public static class PlatformEndpoints
         try
         {
             companyId = await db.InsertAsync(
-                "INSERT INTO companies (company_code, name, industry, status) VALUES (@code, @name, @ind, 'Active')",
+                "INSERT INTO companies (company_code, name, industry, status, entitlement_policy_mode) VALUES (@code, @name, @ind, 'Active', @policy)",
                 c =>
                 {
                     c.Parameters.AddWithValue("@code", code!);
                     c.Parameters.AddWithValue("@name", name!);
                     c.Parameters.AddWithValue("@ind", industry);
+                    c.Parameters.AddWithValue("@policy", policyMode);
                 }, ct);
         }
         catch (Npgsql.PostgresException pex) when (pex.SqlState == "23505") // race on unique company_code
@@ -733,24 +891,33 @@ public static class PlatformEndpoints
         if (countryProfile is not null)
             cascade = await countries.ApplyToTenantAsync(companyId, countryCode!, principal!.Email, ct);
 
-        // Optional tenant admin invite
+        // Optional tenant admin invite. A cross-tenant email collision is REFUSED (never
+        // relocated) — the tenant is still created, but without an admin invite, and the
+        // response says so instead of silently stealing another tenant's account.
         var adminEmail = Str(body, "adminEmail");
+        object? adminInvite = null;
         if (!string.IsNullOrWhiteSpace(adminEmail))
-            await CreateAdminInviteAsync(db, companyId, adminEmail!, Str(body, "adminName") ?? "Tenant Admin", ct);
+        {
+            var invite = await CreateAdminInviteAsync(http, db, companyId, adminEmail!, Str(body, "adminName") ?? "Tenant Admin", ct);
+            adminInvite = invite.Status == AdminInviteStatus.CrossTenantConflict
+                ? new { email = adminEmail, sent = false, invited = false, error = "That email already belongs to another tenant; the tenant was created without an admin invite. Re-issue the invite with a different admin email." }
+                : new { email = adminEmail, sent = invite.EmailSent, invited = true, error = (string?)null };
+        }
 
         // Give the new tenant the standard flag set (seeded enabled — these are kill
         // switches / ramp controls over features that already ship, not hidden features).
         await flags.SeedDefaultsAsync(companyId, ct);
 
         await AuditAsync(db, principal!, http, "tenant.created", "Tenant", companyId, companyId,
-            new { name, code, status, packageId, seatLimit, countryCode = cascade?.CountryCode, currency = cascade?.Currency, autoEnabled = cascade?.EnabledFeatures }, ct);
+            new { name, code, status, packageId, seatLimit, entitlementPolicyMode = policyMode, countryCode = cascade?.CountryCode, currency = cascade?.Currency, autoEnabled = cascade?.EnabledFeatures }, ct);
 
         return Results.Ok(ApiResponse<object>.Ok(new
         {
-            id = companyId, name, code, status,
+            id = companyId, name, code, status, entitlementPolicyMode = policyMode,
             country = cascade?.CountryCode,
             currency = cascade?.Currency ?? currency,
             autoEnabledFeatures = cascade?.EnabledFeatures ?? [],
+            adminInvite,
         }, "Tenant created"));
     }
 
@@ -920,10 +1087,10 @@ public static class PlatformEndpoints
         HttpContext http, Dictionary<string, object?> body, Database db, TenantOffboardingService offboarding, CancellationToken ct)
     {
         var action = (Str(body, "action") ?? "").ToLowerInvariant();
-        var allowed = new[] { "activate", "reactivate", "suspend", "cancel", "extend-trial", "manual-contract", "revoke-sessions", "delete" };
+        var allowed = new[] { "activate", "reactivate", "suspend", "cancel", "extend-trial", "manual-contract", "revoke-sessions", "assign-package", "delete" };
         if (!allowed.Contains(action))
             return Results.Json(ApiResponse<object>.Fail("Invalid action",
-                "Use activate|suspend|cancel|extend-trial|manual-contract|revoke-sessions|delete"),
+                "Use activate|suspend|cancel|extend-trial|manual-contract|revoke-sessions|assign-package|delete"),
                 statusCode: StatusCodes.Status400BadRequest);
 
         var ids = ReadLongArray(body, "ids").Distinct().ToList();
@@ -942,6 +1109,13 @@ public static class PlatformEndpoints
             return Results.Json(ApiResponse<object>.Fail("Confirmation required",
                 "To permanently delete these tenants and ALL their data, send {\"confirm\":\"DELETE\"}."),
                 statusCode: StatusCodes.Status400BadRequest);
+
+        // assign-package needs a target package for the whole batch; seatLimit is an
+        // optional shared override (null → each tenant keeps its current seat_limit).
+        var assignPackageId = Long(body, "packageId");
+        var assignSeatOverride = Long(body, "seatLimit") is { } sl ? (int)sl : (int?)null;
+        if (action == "assign-package" && !assignPackageId.HasValue)
+            return Results.Json(ApiResponse<object>.Fail("Validation failed", "packageId is required for assign-package"), statusCode: StatusCodes.Status400BadRequest);
 
         var days = (int)(Long(body, "days") ?? 14);
         var results = new List<object>();
@@ -966,6 +1140,11 @@ public static class PlatformEndpoints
                         c => c.Parameters.AddWithValue("@id", id), ct);
                     results.Add(new { id, ok = true, sessionsRevoked = revoked });
                 }
+                else if (action == "assign-package")
+                {
+                    var (seatLimit, mrrCents) = await ApplyAssignPackageAsync(db, id, assignPackageId!.Value, assignSeatOverride, principal!.Email, ct);
+                    results.Add(new { id, ok = true, packageId = assignPackageId, seatLimit, mrrCents });
+                }
                 else
                 {
                     var applied = await ApplyTenantStatusAsync(db, id, action, days, ct);
@@ -987,7 +1166,7 @@ public static class PlatformEndpoints
             $"Bulk {action}: {succeeded}/{ids.Count} succeeded"));
     }
 
-    private static async Task<IResult> TenantAssignPackage(long id, HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
+    internal static async Task<IResult> TenantAssignPackage(long id, HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
     {
         var (principal, error) = await RequireAsync(http, db, "platform:tenants:manage", ct);
         if (error is not null) return error;
@@ -996,27 +1175,63 @@ public static class PlatformEndpoints
         if (!packageId.HasValue)
             return Results.Json(ApiResponse<object>.Fail("Validation failed", "packageId is required"), statusCode: StatusCodes.Status400BadRequest);
 
-        var seatLimit = (int)(Long(body, "seatLimit")
-            ?? await db.ScalarLongAsync("SELECT seat_limit FROM tenant_subscriptions WHERE company_id=@id", c => c.Parameters.AddWithValue("@id", id), ct));
-        if (seatLimit <= 0) seatLimit = 5;
+        var targetExists = await db.ScalarLongAsync("SELECT COUNT(*) FROM companies WHERE id=@id",
+            c => c.Parameters.AddWithValue("@id", id), ct);
+        if (targetExists == 0)
+            return Results.Json(ApiResponse<object>.Fail("Not found", "Tenant not found"), statusCode: StatusCodes.Status404NotFound);
+        var packageExists = await db.ScalarLongAsync("SELECT COUNT(*) FROM packages WHERE id=@id AND active=true",
+            c => c.Parameters.AddWithValue("@id", packageId.Value), ct);
+        if (packageExists == 0)
+            return Results.Json(ApiResponse<object>.Fail("Not found", "Active package not found"), statusCode: StatusCodes.Status404NotFound);
 
-        var mrrCents = await ComputeMrrAsync(db, packageId.Value, seatLimit, ct);
+        var seatOverride = Long(body, "seatLimit") is { } s ? (int)s : (int?)null;
+        var (seatLimit, mrrCents) = await ApplyAssignPackageAsync(db, id, packageId.Value, seatOverride, principal!.Email, ct);
 
-        await db.ExecuteAsync(
-            @"INSERT INTO tenant_subscriptions (company_id, package_id, seat_limit, mrr_cents, status)
-              VALUES (@id, @pid, @seats, @mrr, 'active')
-              ON CONFLICT (company_id) DO UPDATE SET package_id=@pid, seat_limit=@seats, mrr_cents=@mrr, updated_at=NOW()",
-            c =>
-            {
-                c.Parameters.AddWithValue("@id", id);
-                c.Parameters.AddWithValue("@pid", packageId.Value);
-                c.Parameters.AddWithValue("@seats", seatLimit);
-                c.Parameters.AddWithValue("@mrr", mrrCents);
-            }, ct);
-
-        await SeedEntitlementsFromPackageAsync(db, id, packageId.Value, principal!.Email, ct);
         await AuditAsync(db, principal!, http, "tenant.package.assigned", "Tenant", id, id, new { packageId, seatLimit, mrrCents }, ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id, packageId, mrrCents }, "Package assigned"));
+    }
+
+    // Core assign-package transition — shared by the single-tenant TenantAssignPackage
+    // handler and the bulk TenantBulk handler so the tenant_subscriptions upsert and the
+    // package entitlement seeding can never diverge between the two entry points. When
+    // seatOverride is null the tenant's current seat_limit is reused (falling back to 5).
+    internal static async Task<(int SeatLimit, long MrrCents)> ApplyAssignPackageAsync(
+        Database db, long id, long packageId, int? seatOverride, string actor, CancellationToken ct)
+    {
+        return await db.RunInSystemTransactionAsync(async () =>
+        {
+            var packageExists = await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM packages WHERE id=@id AND active=true",
+                c => c.Parameters.AddWithValue("@id", packageId), ct);
+            if (packageExists == 0) throw new InvalidOperationException("Active package not found.");
+
+            var seatLimit = seatOverride ?? (int)await db.ScalarLongAsync(
+                "SELECT seat_limit FROM tenant_subscriptions WHERE company_id=@id", c => c.Parameters.AddWithValue("@id", id), ct);
+            if (seatLimit <= 0) seatLimit = 5;
+
+            var mrrCents = await ComputeMrrAsync(db, packageId, seatLimit, ct);
+
+            await db.ExecuteAsync(
+                @"INSERT INTO tenant_subscriptions (company_id, package_id, seat_limit, mrr_cents, status)
+                  VALUES (@id, @pid, @seats, @mrr, 'active')
+                  ON CONFLICT (company_id) DO UPDATE SET package_id=@pid, seat_limit=@seats, mrr_cents=@mrr, updated_at=NOW()",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@id", id);
+                    c.Parameters.AddWithValue("@pid", packageId);
+                    c.Parameters.AddWithValue("@seats", seatLimit);
+                    c.Parameters.AddWithValue("@mrr", mrrCents);
+                }, ct);
+
+            // Reassignment replaces package-derived rights only. Explicit Platform
+            // overrides and country/market-pack grants survive. Missing rows remain
+            // allowed in legacy mode and are denied in package_allowlist mode.
+            await db.ExecuteAsync(
+                "DELETE FROM tenant_entitlements WHERE company_id=@id AND source='package'",
+                c => c.Parameters.AddWithValue("@id", id), ct);
+            await SeedEntitlementsFromPackageAsync(db, id, packageId, actor, ct);
+            return (seatLimit, mrrCents);
+        }, ct);
     }
 
     internal static async Task<IResult> TenantResetInvite(long id, HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
@@ -1026,9 +1241,18 @@ public static class PlatformEndpoints
         var adminEmail = Str(body, "adminEmail");
         if (string.IsNullOrWhiteSpace(adminEmail))
             return Results.Json(ApiResponse<object>.Fail("Validation failed", "adminEmail is required"), statusCode: StatusCodes.Status400BadRequest);
-        await CreateAdminInviteAsync(db, id, adminEmail!, Str(body, "adminName") ?? "Tenant Admin", ct);
-        await AuditAsync(db, principal!, http, "tenant.admin_invite.reset", "Tenant", id, id, new { adminEmail }, ct);
-        return Results.Ok(ApiResponse<object>.Ok(new { id, adminEmail }, "Admin invite reset"));
+
+        var invite = await CreateAdminInviteAsync(http, db, id, adminEmail!, Str(body, "adminName") ?? "Tenant Admin", ct);
+        if (invite.Status == AdminInviteStatus.CrossTenantConflict)
+        {
+            await AuditAsync(db, principal!, http, "tenant.admin_invite.cross_tenant_denied", "Tenant", id, id, new { adminEmail }, ct);
+            return Results.Json(ApiResponse<object>.Fail("Conflict",
+                "That email already belongs to another tenant. Use a different admin email."),
+                statusCode: StatusCodes.Status409Conflict);
+        }
+
+        await AuditAsync(db, principal!, http, "tenant.admin_invite.reset", "Tenant", id, id, new { adminEmail, emailSent = invite.EmailSent }, ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { id, adminEmail, emailSent = invite.EmailSent }, "Admin invite reset"));
     }
 
     internal static async Task<IResult> TenantRevokeSessions(long id, HttpContext http, Database db, CancellationToken ct)
@@ -1129,6 +1353,253 @@ public static class PlatformEndpoints
         return Results.Ok(ApiResponse<object>.Ok(rows));
     }
 
+    // Release evidence capture for the exact tenant control boundary. This is a
+    // deliberately redacted snapshot: it includes connector readiness but never
+    // connector config/secrets, and configuration posture only as booleans.
+    private static async Task<IResult> TenantControlSnapshot(
+        long id, HttpContext http, Database db, IConfiguration configuration, CancellationToken ct)
+    {
+        var (principal, error) = await RequireAsync(http, db, "platform:tenants:view", ct);
+        if (error is not null) return error;
+
+        var tenant = await db.QuerySingleAsync(TenantSelect + " WHERE c.id=@id",
+            c => c.Parameters.AddWithValue("@id", id), ct);
+        if (tenant is null)
+            return Results.Json(ApiResponse<object>.Fail("Not found"), statusCode: StatusCodes.Status404NotFound);
+
+        var entitlements = await db.QueryAsync(
+            "SELECT module_key,enabled,limit_value,tier,source,updated_by,updated_at FROM tenant_entitlements WHERE company_id=@id ORDER BY module_key",
+            c => c.Parameters.AddWithValue("@id", id), ct);
+        var policyMode = tenant.GetValueOrDefault("entitlementPolicyMode")?.ToString()
+            ?? EntitlementService.LegacyAllowPolicy;
+        var entitlementRows = entitlements.ToDictionary(
+            row => row.GetValueOrDefault("moduleKey")?.ToString() ?? "",
+            row => row,
+            StringComparer.Ordinal);
+        var effectiveEntitlements = GovernedEntitlementModuleKeys.Order(StringComparer.Ordinal).Select(moduleKey =>
+        {
+            entitlementRows.TryGetValue(moduleKey, out var row);
+            var enabled = row is not null
+                ? Convert.ToBoolean(row.GetValueOrDefault("enabled") ?? false)
+                : policyMode == EntitlementService.LegacyAllowPolicy;
+            return new
+            {
+                moduleKey,
+                enabled,
+                decision = row is null
+                    ? (enabled ? "legacy inherited allow" : "package allowlist default deny")
+                    : $"{row.GetValueOrDefault("source") ?? "override"} {(enabled ? "allow" : "deny")}",
+                tier = row?.GetValueOrDefault("tier"),
+                limitValue = row?.GetValueOrDefault("limitValue"),
+                updatedAt = row?.GetValueOrDefault("updatedAt"),
+            };
+        }).ToArray();
+
+        var marketPacks = await db.QueryAsync(
+            "SELECT pack_code,status,price_override_cents,enabled_by,enabled_at,updated_at FROM tenant_market_packs WHERE company_id=@id ORDER BY pack_code",
+            c => c.Parameters.AddWithValue("@id", id), ct);
+        var featureFlags = await db.QueryAsync(
+            "SELECT flag_key,enabled,rollout_pct,environment,updated_at FROM feature_flags WHERE company_id=@id ORDER BY flag_key",
+            c => c.Parameters.AddWithValue("@id", id), ct);
+        var branches = await db.QueryAsync(
+            "SELECT id,name,branch_code,status FROM branches WHERE company_id=@id ORDER BY name,id",
+            c => c.Parameters.AddWithValue("@id", id), ct);
+        var personas = await db.QueryAsync(
+            @"SELECT COALESCE(r.name,u.role_name,'Unassigned') role_name,COUNT(*) user_count,
+                     COUNT(*) FILTER (WHERE LOWER(u.status)='active') active_user_count
+              FROM users u LEFT JOIN roles r ON r.id=u.role_id
+              WHERE u.company_id=@id GROUP BY COALESCE(r.name,u.role_name,'Unassigned') ORDER BY role_name",
+            c => c.Parameters.AddWithValue("@id", id), ct);
+        var roleRows = await db.QueryAsync(
+            @"SELECT id,name,company_id,permissions_json
+              FROM roles WHERE company_id IS NULL OR company_id=@id
+              ORDER BY name,company_id NULLS FIRST,id",
+            c => c.Parameters.AddWithValue("@id", id), ct);
+        var effectiveRoleGrants = new List<object>(roleRows.Count);
+        var roleRefs = new Dictionary<long, string>();
+        foreach (var role in roleRows)
+        {
+            var roleId = Convert.ToInt64(role.GetValueOrDefault("id") ?? 0L);
+            var roleName = role.GetValueOrDefault("name")?.ToString() ?? "Unassigned";
+            var permissions = await EndpointMappings.ResolveEffectivePermissionsAsync(
+                roleId, roleName, role.GetValueOrDefault("permissionsJson"), null, db, ct);
+            var roleRef = OpaqueControlRef(id, "role", roleId.ToString());
+            roleRefs[roleId] = roleRef;
+            effectiveRoleGrants.Add(new
+            {
+                roleRef,
+                roleName,
+                scope = role.GetValueOrDefault("companyId") is null or DBNull ? "global" : "tenant",
+                permissions = permissions.Order(StringComparer.OrdinalIgnoreCase).ToArray(),
+            });
+        }
+        var userRows = await db.QueryAsync(
+            @"SELECT u.id,u.status,u.role_id,u.role_name,u.permissions_json,u.branch_id,
+                     b.branch_code,b.status branch_status
+              FROM users u LEFT JOIN branches b ON b.id=u.branch_id AND b.company_id=u.company_id
+              WHERE u.company_id=@id ORDER BY u.id",
+            c => c.Parameters.AddWithValue("@id", id), ct);
+        var userBranchBindings = new List<object>(userRows.Count);
+        foreach (var user in userRows)
+        {
+            var userId = Convert.ToInt64(user.GetValueOrDefault("id") ?? 0L);
+            var roleId = Convert.ToInt64(user.GetValueOrDefault("roleId") ?? 0L);
+            var roleName = user.GetValueOrDefault("roleName")?.ToString() ?? "Unassigned";
+            var permissions = await EndpointMappings.ResolveEffectivePermissionsAsync(
+                roleId, roleName, null, user.GetValueOrDefault("permissionsJson"), db, ct);
+            userBranchBindings.Add(new
+            {
+                subjectRef = OpaqueControlRef(id, "user", userId.ToString()),
+                status = user.GetValueOrDefault("status"),
+                roleRef = roleId > 0 && roleRefs.TryGetValue(roleId, out var roleRef) ? roleRef : null,
+                roleName,
+                grantSource = roleId > 0 ? "role" : "legacy_user",
+                branchBinding = user.GetValueOrDefault("branchId") is null or DBNull ? "tenant_wide" : "branch",
+                branchId = user.GetValueOrDefault("branchId"),
+                branchCode = user.GetValueOrDefault("branchCode"),
+                branchStatus = user.GetValueOrDefault("branchStatus"),
+                effectivePermissionCount = permissions.Length,
+                effectiveGrantSha256 = Sha256Hex(JsonSerializer.Serialize(
+                    permissions.Order(StringComparer.OrdinalIgnoreCase).ToArray())),
+            });
+        }
+        var integrations = await db.QueryAsync(
+            @"SELECT integration_key,provider_name,category,status,scope,last_sync_at,
+                     last_tested_at,last_test_ok
+              FROM integrations WHERE company_id=@id ORDER BY category,provider_name",
+            c => c.Parameters.AddWithValue("@id", id), ct);
+        var recentAudit = await db.QueryAsync(
+            @"SELECT id,action,entity_type,actor_role,created_at
+              FROM platform_audit_log WHERE target_company_id=@id ORDER BY id DESC LIMIT 25",
+            c => c.Parameters.AddWithValue("@id", id), ct);
+
+        // Deliberately exclude billing/contact/tax/profile fields from the release
+        // evidence artifact. They do not affect access decisions and may contain PII.
+        var tenantControl = new
+        {
+            id = tenant.GetValueOrDefault("id"),
+            name = tenant.GetValueOrDefault("name"),
+            companyCode = tenant.GetValueOrDefault("companyCode"),
+            companyStatus = tenant.GetValueOrDefault("companyStatus"),
+            subscriptionStatus = tenant.GetValueOrDefault("status"),
+            entitlementPolicyMode = tenant.GetValueOrDefault("entitlementPolicyMode"),
+            packageName = tenant.GetValueOrDefault("packageName"),
+            packageCode = tenant.GetValueOrDefault("packageCode"),
+            seatLimit = tenant.GetValueOrDefault("seatLimit"),
+            country = tenant.GetValueOrDefault("country"),
+            currency = tenant.GetValueOrDefault("currency"),
+            billingCurrency = tenant.GetValueOrDefault("billingCurrency"),
+            trialEndsAt = tenant.GetValueOrDefault("trialEndsAt"),
+            contractStart = tenant.GetValueOrDefault("contractStart"),
+            contractEnd = tenant.GetValueOrDefault("contractEnd"),
+            createdAt = tenant.GetValueOrDefault("createdAt"),
+        };
+
+        var environment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Production";
+        var generatedAt = DateTimeOffset.UtcNow;
+        var moduleCatalog = PlatformTenantModuleCatalog.Modules
+            .Select(module => new { moduleKey = module.Key, requiredEntitlement = module.RequiredEntitlement })
+            .ToArray();
+        var governedModulesByEntitlement = PlatformTenantModuleCatalog.Modules
+            .Where(module => module.RequiredEntitlement is not null)
+            .GroupBy(module => module.RequiredEntitlement!, StringComparer.Ordinal)
+            .OrderBy(group => group.Key, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal);
+        var governedUiModuleCount = governedModulesByEntitlement.Values.Sum();
+        var totalUiModuleCount = PlatformTenantModuleCatalog.Modules.Count;
+        var includedCoreUiModuleCount = totalUiModuleCount - governedUiModuleCount;
+        var commercialModel = new
+        {
+            governedUiModules = governedUiModuleCount,
+            includedCoreUiModules = includedCoreUiModuleCount,
+            totalUiModules = totalUiModuleCount,
+            governedModulesByEntitlement,
+            governedEntitlementKeys = GovernedEntitlementModuleKeys.Order(StringComparer.Ordinal).ToArray(),
+            policyMode,
+        };
+        var semanticSnapshot = new
+        {
+            tenant = tenantControl,
+            commercialModel,
+            moduleCatalog,
+            effectiveEntitlements = effectiveEntitlements.Select(row => new
+            {
+                row.moduleKey, row.enabled, row.decision, row.tier, row.limitValue,
+            }).ToArray(),
+            marketPacks = marketPacks.Select(WithoutVolatileControlFields).ToArray(),
+            featureFlags = featureFlags.Select(WithoutVolatileControlFields).ToArray(),
+            branches,
+            personas,
+            effectiveRoleGrants,
+            userBranchBindings,
+            integrations = integrations.Select(WithoutVolatileControlFields).ToArray(),
+            environmentControls = new
+            {
+                environment,
+                production = string.Equals(environment, "Production", StringComparison.OrdinalIgnoreCase),
+                demoSeedEnabled = configuration.GetValue<bool>("DemoSeed:Enabled"),
+                demoResetEnabled = configuration.GetValue<bool>("DemoSeed:ResetEnabled"),
+                telemetrySimulatorEnabled = configuration.GetValue<bool>("Telemetry:Simulator:Enabled"),
+                tenantRlsEnforced = configuration.GetValue<bool>("Rls:EnforceTenantContext"),
+                systemConnectionConfigured = !string.IsNullOrWhiteSpace(configuration.GetConnectionString("SystemConnection")),
+            },
+        };
+        var semanticSha256 = Sha256Hex(JsonSerializer.Serialize(semanticSnapshot));
+        var snapshot = new
+        {
+            schemaVersion = 2,
+            generatedAt,
+            tenant = tenantControl,
+            commercialModel,
+            moduleCatalog,
+            effectiveEntitlements,
+            marketPacks,
+            featureFlags,
+            branches,
+            personas,
+            effectiveRoleGrants,
+            userBranchBindings,
+            integrations,
+            environmentControls = new
+            {
+                environment,
+                production = string.Equals(environment, "Production", StringComparison.OrdinalIgnoreCase),
+                demoSeedEnabled = configuration.GetValue<bool>("DemoSeed:Enabled"),
+                demoResetEnabled = configuration.GetValue<bool>("DemoSeed:ResetEnabled"),
+                telemetrySimulatorEnabled = configuration.GetValue<bool>("Telemetry:Simulator:Enabled"),
+                tenantRlsEnforced = configuration.GetValue<bool>("Rls:EnforceTenantContext"),
+                systemConnectionConfigured = !string.IsNullOrWhiteSpace(configuration.GetConnectionString("SystemConnection")),
+            },
+            recentPlatformAudit = recentAudit,
+            semanticComparison = new
+            {
+                profileVersion = 1,
+                semanticSha256,
+                excludes = new[] { "generatedAt", "recentPlatformAudit", "*.updatedAt", "*.enabledAt", "integrations.*.lastSyncAt", "integrations.*.lastTestedAt" },
+            },
+        };
+        var canonicalJson = JsonSerializer.Serialize(snapshot);
+        var snapshotSha256 = Sha256Hex(canonicalJson);
+
+        await AuditAsync(db, principal!, http, "tenant.control_snapshot.captured", "Company", id, id,
+            new { snapshotSha256, semanticSha256, generatedAt, schemaVersion = 2 }, ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { snapshotSha256, semanticSha256, snapshot }, "Control snapshot captured and audited"));
+    }
+
+    private static string OpaqueControlRef(long companyId, string kind, string value) =>
+        Sha256Hex($"opstrax-control-snapshot:v1:{companyId}:{kind}:{value}")[..20];
+
+    private static string Sha256Hex(string value) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
+
+    private static Dictionary<string, object?> WithoutVolatileControlFields(Dictionary<string, object?> row)
+    {
+        var stable = new Dictionary<string, object?>(row, StringComparer.Ordinal);
+        foreach (var key in new[] { "updatedAt", "enabledAt", "lastSyncAt", "lastTestedAt" })
+            stable.Remove(key);
+        return stable;
+    }
+
     // Hard delete a tenant and ALL its data (pilot "delete on request"). Schema-driven
     // cascade — see TenantOffboardingService. Requires an explicit confirm token in the
     // body ({"confirm":"<companyCode>"}) so a tenant can never be purged by a stray DELETE.
@@ -1193,11 +1664,10 @@ public static class PlatformEndpoints
         if (string.IsNullOrWhiteSpace(moduleKey))
             return Results.Json(ApiResponse<object>.Fail("Validation failed", "moduleKey is required"), statusCode: StatusCodes.Status400BadRequest);
 
-        // Module keys are lowercase snake_case identifiers (they feed the request-path
-        // gate in Program.cs). Reject anything else so a typo or hostile payload can
-        // never become a phantom entitlement row.
-        if (!System.Text.RegularExpressions.Regex.IsMatch(moduleKey, "^[a-z][a-z0-9_]{1,59}$"))
-            return Results.Json(ApiResponse<object>.Fail("Validation failed", "moduleKey must be a lowercase snake_case identifier"), statusCode: StatusCodes.Status400BadRequest);
+        if (!GovernedEntitlementModuleKeys.Contains(moduleKey))
+            return Results.Json(ApiResponse<object>.Fail("Validation failed",
+                $"moduleKey must be one of: {string.Join(", ", GovernedEntitlementModuleKeys.Order())}"),
+                statusCode: StatusCodes.Status400BadRequest);
 
         var tenantExists = await db.ScalarLongAsync("SELECT COUNT(*) FROM companies WHERE id=@id",
             c => c.Parameters.AddWithValue("@id", id), ct);
@@ -1225,6 +1695,52 @@ public static class PlatformEndpoints
         await AuditAsync(db, principal!, http, enabled ? "entitlement.enabled" : "entitlement.disabled",
             "Entitlement", id, id, new { moduleKey, enabled, limit, tier }, ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id, moduleKey, enabled }, "Entitlement updated"));
+    }
+
+    // Changing the semantics of a missing entitlement row is a commercial control,
+    // not a general tenant-profile edit. Restrict it to entitlement operators and
+    // record the before/after state for the release control snapshot.
+    internal static async Task<IResult> EntitlementPolicySet(long id, HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
+    {
+        var (principal, error) = await RequireAsync(http, db, "platform:entitlements:manage", ct);
+        if (error is not null) return error;
+
+        var policyMode = Str(body, "policyMode") ?? Str(body, "entitlementPolicyMode");
+        if (policyMode is not (EntitlementService.LegacyAllowPolicy or EntitlementService.PackageAllowlistPolicy))
+            return Results.Json(ApiResponse<object>.Fail("Validation failed",
+                "policyMode must be legacy_allow or package_allowlist"),
+                statusCode: StatusCodes.Status400BadRequest);
+
+        var current = await db.QuerySingleAsync(
+            "SELECT entitlement_policy_mode FROM companies WHERE id=@id",
+            c => c.Parameters.AddWithValue("@id", id), ct);
+        if (current is null)
+            return Results.Json(ApiResponse<object>.Fail("Not found"), statusCode: StatusCodes.Status404NotFound);
+
+        var before = current["entitlementPolicyMode"]?.ToString() ?? EntitlementService.LegacyAllowPolicy;
+        var reconciledPackageId = await db.RunInSystemTransactionAsync(async () =>
+        {
+            await db.ExecuteAsync(
+                "UPDATE companies SET entitlement_policy_mode=@mode WHERE id=@id",
+                c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@mode", policyMode); }, ct);
+
+            // Historical package assignments only ever added rows. Reconcile package
+            // sources while changing policy so stale rights from an older package can
+            // never become part of an allowlist. Overrides/country/add-ons survive.
+            await db.ExecuteAsync(
+                "DELETE FROM tenant_entitlements WHERE company_id=@id AND source='package'",
+                c => c.Parameters.AddWithValue("@id", id), ct);
+            var packageId = await db.ScalarLongAsync(
+                "SELECT COALESCE(package_id,0) FROM tenant_subscriptions WHERE company_id=@id",
+                c => c.Parameters.AddWithValue("@id", id), ct);
+            if (packageId > 0)
+                await SeedEntitlementsFromPackageAsync(db, id, packageId, principal!.Email, ct);
+            return packageId > 0 ? packageId : (long?)null;
+        }, ct);
+
+        await AuditAsync(db, principal!, http, "entitlement.policy.changed", "Company", id, id,
+            new { before, after = policyMode, reconciledPackageId }, ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { id, policyMode, reconciledPackageId }, "Entitlement policy updated"));
     }
 
     // ════════════════════════════════════════════════════════════════════════════
@@ -1344,7 +1860,8 @@ public static class PlatformEndpoints
         if (string.IsNullOrWhiteSpace(name))
             return Results.Json(ApiResponse<object>.Fail("Validation failed", "name is required"), statusCode: StatusCodes.Status400BadRequest);
         var code = Str(body, "packageCode") ?? "PKG-" + Guid.NewGuid().ToString("N")[..6].ToUpperInvariant();
-        var modules = body.TryGetValue("moduleKeys", out var mk) && mk is not null ? JsonSerializer.Serialize(mk) : "[]";
+        var (modules, moduleError) = ParseGovernedModuleKeys(body, defaultEmpty: true);
+        if (moduleError is not null) return moduleError;
 
         var newId = await db.InsertAsync(
             @"INSERT INTO packages (package_code, name, description, billing_interval, currency, base_price_cents, seat_price_cents, included_seats, setup_fee_cents, annual_price_cents, module_keys, is_custom, active)
@@ -1361,7 +1878,7 @@ public static class PlatformEndpoints
                 c.Parameters.AddWithValue("@incl", Long(body, "includedSeats") ?? 0);
                 c.Parameters.AddWithValue("@setup", Long(body, "setupFeeCents") ?? 0);
                 c.Parameters.AddWithValue("@annual", Long(body, "annualPriceCents") ?? 0);
-                c.Parameters.AddWithValue("@modules", modules);
+                c.Parameters.AddWithValue("@modules", modules!);
                 c.Parameters.AddWithValue("@custom", Bool(body, "isCustom") ?? false);
             }, ct);
 
@@ -1373,7 +1890,8 @@ public static class PlatformEndpoints
     {
         var (principal, error) = await RequireAsync(http, db, "platform:packages:manage", ct);
         if (error is not null) return error;
-        var modules = body.TryGetValue("moduleKeys", out var mk) && mk is not null ? JsonSerializer.Serialize(mk) : null;
+        var (modules, moduleError) = ParseGovernedModuleKeys(body, defaultEmpty: false);
+        if (moduleError is not null) return moduleError;
         await db.ExecuteAsync(
             @"UPDATE packages SET
                 name = COALESCE(@name, name),
@@ -1401,6 +1919,30 @@ public static class PlatformEndpoints
             }, ct);
         await AuditAsync(db, principal!, http, "package.updated", "Package", id, null, body.Keys, ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id }, "Package updated"));
+    }
+
+    private static (string? Json, IResult? Error) ParseGovernedModuleKeys(
+        Dictionary<string, object?> body, bool defaultEmpty)
+    {
+        if (!body.TryGetValue("moduleKeys", out var raw) || raw is null)
+            return (defaultEmpty ? "[]" : null, null);
+
+        string[]? keys;
+        try
+        {
+            keys = JsonSerializer.Deserialize<string[]>(JsonSerializer.Serialize(raw));
+        }
+        catch (JsonException)
+        {
+            keys = null;
+        }
+
+        if (keys is null || keys.Any(key => !GovernedEntitlementModuleKeys.Contains(key)))
+            return (null, Results.Json(ApiResponse<object>.Fail("Validation failed",
+                $"moduleKeys must be an array containing only: {string.Join(", ", GovernedEntitlementModuleKeys.Order())}"),
+                statusCode: StatusCodes.Status400BadRequest));
+
+        return (JsonSerializer.Serialize(keys.Distinct(StringComparer.Ordinal)), null);
     }
 
     // Delete a package. Refuses while any tenant is still subscribed to it — reassign
@@ -1625,7 +2167,8 @@ public static class PlatformEndpoints
     private static async Task<IResult> ReliabilityAckIncident(
         long id, HttpContext http, Database db, IncidentService incidents, CancellationToken ct)
     {
-        var (principal, error) = await RequireAsync(http, db, "platform:health:view", ct);
+        // Mutating an incident requires manage, not the read grant (a read-only role must not change state).
+        var (principal, error) = await RequireAsync(http, db, "platform:health:manage", ct);
         if (error is not null) return error;
 
         await incidents.AcknowledgeAsync(id, principal!.Email, ct);
@@ -1636,7 +2179,7 @@ public static class PlatformEndpoints
     private static async Task<IResult> ReliabilityResolveIncident(
         long id, HttpContext http, Database db, IncidentService incidents, CancellationToken ct)
     {
-        var (principal, error) = await RequireAsync(http, db, "platform:health:view", ct);
+        var (principal, error) = await RequireAsync(http, db, "platform:health:manage", ct);
         if (error is not null) return error;
 
         var body = await http.Request.ReadFromJsonAsync<PlatformIncidentResolve>(ct);
@@ -1698,11 +2241,23 @@ public static class PlatformEndpoints
         if (pkg?["moduleKeys"] is null) return;
 
         var raw = pkg["moduleKeys"]!.ToString() ?? "[]";
-        List<string> modules;
-        try { modules = JsonSerializer.Deserialize<List<string>>(raw) ?? []; }
-        catch { return; }
+        List<string> parsedModules;
+        try { parsedModules = JsonSerializer.Deserialize<List<string>>(raw) ?? []; }
+        catch (JsonException ex)
+        {
+            // A malformed persisted package is a control-plane integrity failure.
+            // Do not silently assign a commercially empty package and report success.
+            throw new InvalidOperationException("Package module catalog is invalid JSON.", ex);
+        }
 
-        foreach (var module in modules.Where(m => !string.IsNullOrWhiteSpace(m)))
+        var modules = parsedModules
+            .Select(module => module?.Trim() ?? string.Empty)
+            .ToArray();
+        if (modules.Any(string.IsNullOrWhiteSpace) ||
+            modules.Any(module => !GovernedEntitlementModuleKeys.Contains(module)))
+            throw new InvalidOperationException("Package contains an unknown governed module key.");
+
+        foreach (var module in modules.Distinct(StringComparer.Ordinal))
         {
             // Package default — never clobbers an explicit override (source='override').
             await db.ExecuteAsync(
@@ -1714,36 +2269,165 @@ public static class PlatformEndpoints
                 c =>
                 {
                     c.Parameters.AddWithValue("@cid", companyId);
-                    c.Parameters.AddWithValue("@mk", module.Trim());
+                    c.Parameters.AddWithValue("@mk", module);
                     c.Parameters.AddWithValue("@by", actor);
                 }, ct);
         }
     }
 
-    private static async Task CreateAdminInviteAsync(Database db, long companyId, string email, string name, CancellationToken ct)
+    internal enum AdminInviteStatus { Sent, CrossTenantConflict }
+
+    // Result of a tenant-admin invite attempt. CrossTenantConflict means the email is
+    // bound to a DIFFERENT company and was REFUSED (never relocated); the caller decides
+    // how to surface that. EmailSent reports whether the accept link actually went out.
+    internal sealed record AdminInviteResult(AdminInviteStatus Status, bool EmailSent, string? ConflictCompanyId);
+
+    // Tenant-admin onboarding invite. Mirrors the platform-operator invite in
+    // PlatformAdminEndpoints: a single-use, hashed-at-rest token with a 7-day expiry is
+    // minted and the accept link is emailed; NO usable password is set until the invitee
+    // completes the flow.
+    //
+    // The tenant side reuses the canonical tenant onboarding path — the
+    // password_reset_tokens table + POST /api/auth/reset-password (ResetPassword flips a
+    // 'Pending' user to 'Active', which is exactly what the login gate at Login() requires),
+    // so no separate tenant accept-invite page/endpoint is needed. The emailed link targets
+    // the TENANT app's existing /reset-password?...&welcome=1 route. (The platform
+    // accept-invite page is a distinct flow for operators against platform_admins and is
+    // deliberately NOT reused here.)
+    //
+    // SECURITY — the reason this helper exists: users.email is now unique PER TENANT
+    // (2026_07_13_users_email_per_tenant.sql), not globally. An email already bound to a
+    // DIFFERENT company is REFUSED, never absorbed. The previous body did
+    // `ON CONFLICT (email) DO UPDATE SET company_id=@cid`, which relocated the victim's
+    // existing users row — carrying their password_hash / role / permissions — into the
+    // new tenant: a provisioning typo became a cross-tenant account takeover. Re-inviting
+    // WITHIN the same tenant is fine.
+    private static async Task<AdminInviteResult> CreateAdminInviteAsync(
+        HttpContext http, Database db, long companyId, string email, string name, CancellationToken ct)
     {
+        var normEmail = email.Trim();
+
+        // Look up any existing owner of this email (case-insensitively, matching the
+        // login lookup). A hit under another company_id is refused outright.
+        var existing = await db.QuerySingleAsync(
+            "SELECT id, company_id, status FROM users WHERE LOWER(email)=LOWER(@e) LIMIT 1",
+            c => c.Parameters.AddWithValue("@e", normEmail), ct);
+
+        long userId;
+        if (existing is not null)
+        {
+            var owner = Convert.ToInt64(existing["companyId"]);
+            if (owner != companyId)
+                return new AdminInviteResult(AdminInviteStatus.CrossTenantConflict, false, owner.ToString());
+
+            userId = Convert.ToInt64(existing["id"]);
+
+            // Same-tenant re-invite. Never downgrade an already-active admin (that would
+            // lock them out of a working account); only (re)arm the Pending onboarding
+            // state for a user who has not yet finished setting a password.
+            var status = existing["status"]?.ToString() ?? "";
+            if (!string.Equals(status, "Active", StringComparison.OrdinalIgnoreCase))
+            {
+                await db.ExecuteAsync(
+                    "UPDATE users SET full_name=@n, role_name='Company Admin', status='Pending' WHERE id=@id AND company_id=@cid",
+                    c =>
+                    {
+                        c.Parameters.AddWithValue("@n", name);
+                        c.Parameters.AddWithValue("@id", userId);
+                        c.Parameters.AddWithValue("@cid", companyId);
+                    }, ct);
+            }
+        }
+        else
+        {
+            // Fresh admin: status 'Pending' (NOT the old 'Invited', which the login gate
+            // and ResetPassword both reject) and NO password_hash. ResetPassword flips
+            // 'Pending' -> 'Active' when the invite is accepted.
+            userId = await db.InsertAsync(
+                @"INSERT INTO users (company_id, full_name, email, role_name, status)
+                  VALUES (@cid, @name, @email, 'Company Admin', 'Pending')
+                  RETURNING id",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@cid", companyId);
+                    c.Parameters.AddWithValue("@name", name);
+                    c.Parameters.AddWithValue("@email", normEmail);
+                }, ct);
+        }
+
+        // Mint a single-use set-password token, hashed at rest, 7-day expiry — same shape
+        // and lifetime as the operator invite and the tenant activation-link path.
+        var rawToken = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))
+            .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        var tokenHash = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(rawToken)));
         await db.ExecuteAsync(
-            @"INSERT INTO users (company_id, full_name, email, role_name, status)
-              VALUES (@cid, @name, @email, 'Company Admin', 'Invited')
-              ON CONFLICT (email) DO UPDATE SET company_id=@cid, status='Invited'",
+            @"INSERT INTO password_reset_tokens (user_id, company_id, token_hash, expires_at, request_ip_hash)
+              VALUES (@uid, @cid, @hash, NOW() + INTERVAL '7 days', @ip)
+              ON CONFLICT (user_id) DO UPDATE SET token_hash=EXCLUDED.token_hash, expires_at=EXCLUDED.expires_at,
+                consumed_at=NULL, request_ip_hash=EXCLUDED.request_ip_hash, created_at=NOW()",
             c =>
             {
+                c.Parameters.AddWithValue("@uid", userId);
                 c.Parameters.AddWithValue("@cid", companyId);
-                c.Parameters.AddWithValue("@name", name);
-                c.Parameters.AddWithValue("@email", email);
+                c.Parameters.AddWithValue("@hash", tokenHash);
+                c.Parameters.AddWithValue("@ip", InviteRequestIpHash(http));
             }, ct);
+
+        var emailSent = await TrySendTenantInviteEmailAsync(http, normEmail, name, rawToken, ct);
+        return new AdminInviteResult(AdminInviteStatus.Sent, emailSent, null);
+    }
+
+    private static string InviteRequestIpHash(HttpContext http) =>
+        Convert.ToHexString(SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(http.Connection.RemoteIpAddress?.ToString() ?? string.Empty)))[..16];
+
+    // Emails the tenant admin their set-password link. Unlike the operator invite (which
+    // derives its base URL from the request Origin / PLATFORM_PUBLIC_URL and targets the
+    // platform SPA), this must target the TENANT app: the request Origin here is the
+    // platform console, so the tenant app's public URL (FRONTEND_PUBLIC_URL /
+    // PUBLIC_APP_URL) is used, exactly like ForgotPassword. Returns false when no tenant
+    // base URL or SMTP is configured — the caller reports that truthfully.
+    private static async Task<bool> TrySendTenantInviteEmailAsync(
+        HttpContext http, string email, string fullName, string rawToken, CancellationToken ct)
+    {
+        var baseUrl = (Environment.GetEnvironmentVariable("FRONTEND_PUBLIC_URL")
+            ?? Environment.GetEnvironmentVariable("PUBLIC_APP_URL") ?? "").TrimEnd('/');
+        if (string.IsNullOrWhiteSpace(baseUrl)) return false;
+
+        var link = $"{baseUrl}/reset-password?email={Uri.EscapeDataString(email)}&token={Uri.EscapeDataString(rawToken)}&welcome=1";
+        return await PlatformMailService.TrySendAsync(
+            email,
+            "OpsTrax — set up your administrator account",
+            $"""
+            Hello {fullName},
+
+            An OpsTrax administrator account has been created for you.
+
+            Set your password using this single-use link (valid for 7 days):
+            {link}
+
+            If you did not expect this, ignore this email and report it to your
+            administrator.
+            """,
+            ct);
     }
 
     internal static bool VerifyPassword(string password, string? storedHash)
     {
+        const int requiredIterations = 100_000;
+        const int requiredSaltLength = 16;
+        const int requiredSubkeyLength = 32;
         if (string.IsNullOrWhiteSpace(storedHash)) return false;
         var parts = storedHash.Split('$');
         if (parts.Length != 4 || !string.Equals(parts[0], "PBKDF2", StringComparison.OrdinalIgnoreCase)) return false;
-        if (!int.TryParse(parts[1], out var iterations)) return false;
+        if (!int.TryParse(parts[1], out var iterations) ||
+            iterations < requiredIterations || iterations > 2_000_000) return false;
         try
         {
             var salt = Convert.FromBase64String(parts[2]);
             var expected = Convert.FromBase64String(parts[3]);
+            if (salt.Length != requiredSaltLength || expected.Length != requiredSubkeyLength)
+                return false;
             var actual = Rfc2898DeriveBytes.Pbkdf2(password, salt, iterations, HashAlgorithmName.SHA256, expected.Length);
             return CryptographicOperations.FixedTimeEquals(actual, expected);
         }

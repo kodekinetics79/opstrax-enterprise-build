@@ -27,7 +27,7 @@ import {
   Wrench,
   X,
 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { EmptyState, ErrorState, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge } from "@/components/ui";
 import { PERMISSIONS } from "@/auth/rbacConfig";
 import { useHasPermission } from "@/hooks/usePermission";
@@ -73,11 +73,13 @@ type FirmwareFormState = {
 };
 
 // Minimal, honest inputs for INITIATING A CONNECTION (the Render/Vercel model).
-// The device serial is the real key the backend provisions credentials against;
-// everything else is optional metadata. IMEI/SIM/firmware/power/compliance are
-// intentionally NOT collected here — they are not part of the connection handshake.
+// The device serial is the real key the backend provisions credentials against.
+// IMEI is collected too (optional): hardware GPS trackers (GT06/Concox/PT40-class)
+// are resolved by IMEI at the trusted-gateway ingest, so onboarding one end-to-end
+// needs it. SIM/firmware/power/compliance remain out of the connection handshake.
 type ConnectFormState = {
   serialNumber: string;
+  imei: string;
   provider: string;
   deviceModel: string;
   assignedVehicleId: string;
@@ -85,6 +87,7 @@ type ConnectFormState = {
 
 const defaultConnectForm: ConnectFormState = {
   serialNumber: "",
+  imei: "",
   provider: "",
   deviceModel: "",
   assignedVehicleId: "",
@@ -95,12 +98,12 @@ const DEVICE_TABS: Array<{ key: DeviceTab; label: string }> = [
   { key: "unassigned", label: "Unassigned" },
   { key: "offline", label: "Offline" },
   { key: "attention", label: "Needs Attention" },
-  { key: "firmware", label: "Firmware Updates" },
+  { key: "firmware", label: "Firmware (read-only)" },
   { key: "provisioning", label: "Provisioning" },
   { key: "diagnostics", label: "Diagnostics" },
   { key: "installations", label: "Installations" },
   { key: "data-health", label: "Data Health" },
-  { key: "providers", label: "Provider Integrations" },
+  { key: "providers", label: "Provider Connections" },
 ];
 
 const defaultForm: DeviceFormState = {
@@ -145,8 +148,8 @@ function downloadCsv(filename: string, body: string) {
 
 function emptyStateForTab(tab: DeviceTab) {
   if (tab === "offline") return { title: "No offline devices", subtitle: "Every scoped device is checking in within the current monitoring window." };
-  if (tab === "firmware") return { title: "No firmware updates pending", subtitle: "Every visible device is already on its approved firmware channel." };
-  if (tab === "providers") return { title: "Device integration required", subtitle: "Connect a telematics provider to activate live GPS, engine, and ELD data." };
+  if (tab === "firmware") return { title: "Current version only", subtitle: "OTA scheduling and firmware history are not connected in this pilot. Current versions appear when devices report them." };
+  if (tab === "providers") return { title: "No providers found", subtitle: "Integrations are pulled from your connected provider catalog." };
   return { title: "No devices found", subtitle: "Refine the search, switch tabs, or register a device for this fleet." };
 }
 
@@ -155,7 +158,7 @@ function activeTabCount(tab: DeviceTab, row: DeviceCommandRecord) {
   if (tab === "unassigned") return !row.assignedVehicleCode;
   if (tab === "offline") return /offline/i.test(row.connectionStatus);
   if (tab === "attention") return /attention|offline/i.test(row.connectionStatus) || row.openAlertCount > 0;
-  if (tab === "firmware") return row.firmwareVersion !== row.targetFirmwareVersion;
+  if (tab === "firmware") return true; // read-only current-version listing; no OTA/target diff exists in this pilot
   if (tab === "provisioning") return /provision|awaiting/i.test(row.connectionStatus) || /awaiting|warning/i.test(row.installStatus);
   if (tab === "diagnostics") return true;
   if (tab === "installations") return true;
@@ -169,6 +172,169 @@ function actionTitle(allowed: boolean, allowedTitle: string) {
 
 function boolText(value: boolean) {
   return value ? "Yes" : "No";
+}
+
+type ActionContractState = "ready" | "permission-blocked" | "state-blocked" | "unsupported";
+
+type DeviceActionContract = {
+  key: string;
+  label: string;
+  icon: ReactNode;
+  state: ActionContractState;
+  reason: string;
+  onClick: () => void;
+};
+
+function buildActionContracts(
+  device: DeviceCommandRecord,
+  {
+    canUpdate,
+    canDelete,
+    canAssign,
+    canDiagnostics,
+    canRecover,
+    canFirmware,
+    onEdit,
+    onAssign,
+    onUnassign,
+    onArchive,
+    onMarkInstalled,
+    onRunDiagnostics,
+    onRefresh,
+    onScheduleFirmware,
+    onFlagAttention,
+    onResolve,
+  }: {
+    canUpdate: boolean;
+    canDelete: boolean;
+    canAssign: boolean;
+    canDiagnostics: boolean;
+    canRecover: boolean;
+    canFirmware: boolean;
+    onEdit: () => void;
+    onAssign: () => void;
+    onUnassign: () => void;
+    onArchive: () => void;
+    onMarkInstalled: () => void;
+    onRunDiagnostics: () => void;
+    onRefresh: () => void;
+    onScheduleFirmware: () => void;
+    onFlagAttention: () => void;
+    onResolve: () => void;
+  },
+) {
+  // Recovery actions gate on the device's REAL ELD status, not the derived
+  // connectionStatus: resolve-malfunction accepts only Malfunction/Diagnostic and
+  // mark-malfunction accepts only Active/Diagnostic. Gating on connectionStatus made an
+  // Active-but-stale device offer "Resolve" -> 409, and left "Needs Attention" perpetually
+  // disabled. inRecovery drives Resolve; markEligible drives Needs Attention.
+  const eldStatus = String(device.eldStatus ?? "").toLowerCase();
+  const inRecovery = /malfunction|diagnostic/.test(eldStatus);
+  const markEligible = /active|diagnostic/.test(eldStatus);
+  const hasCurrentVehicle = Boolean(device.assignedVehicleCode && device.assignedVehicleCode !== "Unassigned");
+
+  const contracts: DeviceActionContract[] = [
+    {
+      key: "edit",
+      label: "Edit Device",
+      icon: <Edit3 className="h-4 w-4" />,
+      state: canUpdate ? "ready" : "permission-blocked",
+      reason: canUpdate ? "Permission + backend support available." : "Requires TELEMATICS_DEVICES_UPDATE.",
+      onClick: onEdit,
+    },
+    {
+      key: "assign",
+      label: "Assign",
+      icon: <ArrowRightLeft className="h-4 w-4" />,
+      state: canAssign ? "ready" : "permission-blocked",
+      reason: canAssign ? "Permission is available." : "Requires TELEMATICS_DEVICES_ASSIGN.",
+      onClick: onAssign,
+    },
+    {
+      key: "unassign",
+      label: "Unassign",
+      icon: <Truck className="h-4 w-4" />,
+      state: !canAssign ? "permission-blocked" : hasCurrentVehicle ? "ready" : "state-blocked",
+      reason: !canAssign
+        ? "Requires TELEMATICS_DEVICES_ASSIGN."
+        : hasCurrentVehicle
+          ? "Ready."
+          : "No active vehicle assignment to remove.",
+      onClick: onUnassign,
+    },
+    {
+      key: "install",
+      label: "Install checklist unavailable",
+      icon: <CheckCircle2 className="h-4 w-4" />,
+      state: "unsupported",
+      reason: "Installation command path is not connected in this pilot.",
+      onClick: onMarkInstalled,
+    },
+    {
+      key: "diagnostics",
+      label: "On-demand diagnostics unavailable",
+      icon: <Wrench className="h-4 w-4" />,
+      state: "unsupported",
+      reason: "Diagnostic run endpoint is not connected in this pilot; DTC evidence is read-only.",
+      onClick: onRunDiagnostics,
+    },
+    {
+      key: "refresh",
+      label: "Reload Snapshot",
+      icon: <RefreshCw className="h-4 w-4" />,
+      state: "ready",
+      reason: "Read endpoint available for a fresh status read.",
+      onClick: onRefresh,
+    },
+    {
+      key: "firmware",
+      label: canFirmware ? "OTA unavailable" : "OTA unavailable",
+      icon: <FileUp className="h-4 w-4" />,
+      state: canFirmware ? "unsupported" : "permission-blocked",
+      reason: canFirmware
+        ? "Firmware scheduling endpoint is not connected in this pilot."
+        : "Requires TELEMATICS_DEVICES_FIRMWARE to reach firmware controls.",
+      onClick: onScheduleFirmware,
+    },
+    {
+      key: inRecovery ? "resolve" : "needs-attention",
+      label: inRecovery ? "Resolve" : "Needs Attention",
+      icon: inRecovery ? <ShieldCheck className="h-4 w-4" /> : <Activity className="h-4 w-4" />,
+      state: !canRecover ? "permission-blocked" : inRecovery || markEligible ? "ready" : "state-blocked",
+      reason: !canRecover
+        ? "Requires a compliance (compliance:update / compliance:manage) or telematics:manage permission."
+        : inRecovery
+          ? "Device is in recovery (Malfunction/Diagnostic) — resolve is available."
+          : markEligible
+            ? "Device is Active — you can flag it for malfunction review."
+            : `Recovery is not available while the device is ${device.eldStatus || "in this state"}.`,
+      onClick: inRecovery ? onResolve : onFlagAttention,
+    },
+    {
+      key: "archive",
+      label: "Archive",
+      icon: <Trash2 className="h-4 w-4" />,
+      state: canDelete ? "ready" : "permission-blocked",
+      reason: canDelete ? "Permission and revoke route available." : "Requires TELEMATICS_DEVICES_DELETE.",
+      onClick: onArchive,
+    },
+  ];
+
+  return contracts;
+}
+
+function actionContractTone(state: ActionContractState) {
+  if (state === "ready") return "border-emerald-300/60 bg-emerald-500/10 text-emerald-100";
+  if (state === "permission-blocked") return "border-amber-300/60 bg-amber-500/10 text-amber-100";
+  if (state === "state-blocked") return "border-sky-300/60 bg-sky-500/10 text-sky-100";
+  return "border-rose-300/60 bg-rose-500/10 text-rose-100";
+}
+
+function actionContractLabel(state: ActionContractState) {
+  if (state === "ready") return "Ready";
+  if (state === "permission-blocked") return "Permission";
+  if (state === "state-blocked") return "State";
+  return "Unavailable";
 }
 
 function DeviceLoadingState() {
@@ -193,6 +359,13 @@ export function IotDevicesPage() {
   const canDelete = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_DELETE);
   const canAssign = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_ASSIGN);
   const canDiagnostics = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_DIAGNOSTICS);
+  // Recovery (mark/resolve malfunction) is gated server-side on
+  // compliance:update | compliance:manage | telematics:manage — NOT maintenance:manage,
+  // which the broader DIAGNOSTICS alias set includes. Gate the UI on the compliance set so
+  // a maintenance-manager never sees an enabled recovery button that then 403s. (A pure
+  // telematics:manage admin without any compliance grant sees a disabled button rather than
+  // a 403 — the safe failure direction.)
+  const canRecover = hasPermission(PERMISSIONS.COMPLIANCE_UPDATE);
   const canFirmware = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_FIRMWARE);
   const canExport = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_EXPORT);
   const canManageProviders = hasPermission(PERMISSIONS.TELEMATICS_PROVIDERS_MANAGE);
@@ -211,7 +384,7 @@ export function IotDevicesPage() {
   // Populated ONLY by a real provisionDevice() response.
   const [provisionResult, setProvisionResult] = useState<DeviceProvisionResult | null>(null);
   const [assignTarget, setAssignTarget] = useState<DeviceCommandRecord | null>(null);
-  const [assignVehicleCode, setAssignVehicleCode] = useState("");
+  const [assignVehicleId, setAssignVehicleId] = useState("");
   const [firmwareTarget, setFirmwareTarget] = useState<DeviceCommandRecord | null>(null);
   const [firmwareForm, setFirmwareForm] = useState<FirmwareFormState>({ targetVersion: "", scheduledFor: "" });
   const [attentionTarget, setAttentionTarget] = useState<DeviceCommandRecord | null>(null);
@@ -242,6 +415,7 @@ export function IotDevicesPage() {
     mutationFn: (payload: ConnectFormState) =>
       telematicsService.provisionDevice({
         serialNumber: payload.serialNumber.trim(),
+        imei: payload.imei.trim(),
         provider: payload.provider.trim(),
         deviceName: payload.deviceModel.trim() || payload.serialNumber.trim(),
         deviceType: payload.deviceModel.trim() || "Device",
@@ -258,7 +432,7 @@ export function IotDevicesPage() {
   const updateMut = useMutation({
     mutationFn: ({ id, payload }: { id: string | number; payload: DeviceFormState }) => telematicsService.updateDevice(id, payload),
     onSuccess: async () => {
-      setNotice("Device updated successfully.");
+      setNotice("Metadata edits were captured; only supported lifecycle metadata is currently persisted.");
       setDeviceModal(null);
       await refreshAll();
     },
@@ -275,7 +449,7 @@ export function IotDevicesPage() {
     mutationFn: ({ deviceId, vehicleId }: { deviceId: string | number; vehicleId: string }) => telematicsService.assignDeviceToVehicle(deviceId, vehicleId),
     onSuccess: async () => {
       setAssignTarget(null);
-      setAssignVehicleCode("");
+      setAssignVehicleId("");
       setNotice("Device assigned successfully.");
       await refreshAll();
     },
@@ -301,7 +475,7 @@ export function IotDevicesPage() {
   const unassignMut = useMutation({
     mutationFn: (deviceId: string | number) => telematicsService.unassignDevice(deviceId),
     onSuccess: async (result) => {
-      noticeFromResult(result, "Device unassigned successfully.", "Unassign is not available for this device yet.");
+      noticeFromResult(result, "Device unassigned successfully.", "Unassign was not completed.");
       await refreshAll();
     },
   });
@@ -343,7 +517,8 @@ export function IotDevicesPage() {
     },
   });
   const attentionMut = useMutation({
-    mutationFn: ({ id, notes }: { id: string | number; notes: string }) => telematicsService.markDeviceAttention(id, notes),
+    mutationFn: ({ id, rowVersion, notes }: { id: string | number; rowVersion?: number; notes: string }) =>
+      telematicsService.markDeviceAttention(id, notes, rowVersion),
     onSuccess: async () => {
       setAttentionTarget(null);
       setAttentionNotes("");
@@ -352,7 +527,7 @@ export function IotDevicesPage() {
     },
   });
   const resolveMut = useMutation({
-    mutationFn: (id: string | number) => telematicsService.resolveDeviceAttention(id),
+    mutationFn: ({ id, rowVersion }: { id: string | number; rowVersion?: number }) => telematicsService.resolveDeviceAttention(id, rowVersion),
     onSuccess: async () => {
       setNotice("Recovery cleared and device returned to service.");
       await refreshAll();
@@ -388,7 +563,11 @@ export function IotDevicesPage() {
 
   const offlineCount = (devicesQ.data ?? []).filter((row) => /offline/i.test(row.connectionStatus)).length;
   const attentionCount = (devicesQ.data ?? []).filter((row) => /attention|offline/i.test(row.connectionStatus) || row.openAlertCount > 0).length;
-  const avgHealth = Math.round((devicesQ.data ?? []).reduce((sum, row) => sum + Number(row.dataHealthScore), 0) / Math.max((devicesQ.data ?? []).length, 1));
+  const measuredHealth = (devicesQ.data ?? []).filter((row) => row.dataHealthAvailable);
+  const managedCount = (devicesQ.data ?? []).length;
+  const avgHealth = measuredHealth.length
+    ? Math.round(measuredHealth.reduce((sum, row) => sum + Number(row.dataHealthScore), 0) / measuredHealth.length)
+    : null;
 
   if (devicesQ.isLoading) return <DeviceLoadingState />;
   if (devicesQ.isError) return <ErrorState message="Unable to load the device command center right now." />;
@@ -424,7 +603,7 @@ export function IotDevicesPage() {
       <PageHeader
         eyebrow="Telematics & IoT"
         title="Device Health"
-        description="GPS trackers, ELD units, OBD gateways, sensors — connection, firmware and diagnostics per device."
+        description="Evidence-backed device connectivity, assignment, reported firmware, and active diagnostic exceptions. Unsupported controls are labelled explicitly."
         actions={
           <>
             <button
@@ -455,11 +634,12 @@ export function IotDevicesPage() {
       ) : null}
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiCard label="Managed Devices" value={(devicesQ.data ?? []).length} status="Active" icon={<RadioTower className="h-4 w-4" />} />
-        <KpiCard label="Offline" value={offlineCount} status={offlineCount ? "Critical" : "Healthy"} icon={<WifiOff className="h-4 w-4" />} />
-        <KpiCard label="Needs Attention" value={attentionCount} status={attentionCount ? "Watch" : "Healthy"} icon={<Activity className="h-4 w-4" />} />
-        <KpiCard label="Average Data Health" value={`${Number.isFinite(avgHealth) ? avgHealth : 0}%`} status={avgHealth >= 85 ? "Healthy" : avgHealth >= 70 ? "Watch" : "Critical"} icon={<Cpu className="h-4 w-4" />} />
+        <KpiCard label="Managed Devices" value={managedCount} status={managedCount ? "Active" : "Pending"} icon={<RadioTower className="h-4 w-4" />} />
+        <KpiCard label="Offline" value={offlineCount} status={!managedCount ? "Pending" : offlineCount ? "Critical" : "Healthy"} icon={<WifiOff className="h-4 w-4" />} />
+        <KpiCard label="Needs Attention" value={attentionCount} status={!managedCount ? "Pending" : attentionCount ? "Watch" : "Healthy"} icon={<Activity className="h-4 w-4" />} />
+        <KpiCard label="Average Data Health" value={avgHealth == null ? "Unknown" : `${avgHealth}%`} status={avgHealth == null ? "Pending" : avgHealth >= 85 ? "Healthy" : avgHealth >= 70 ? "Watch" : "Critical"} icon={<Cpu className="h-4 w-4" />} />
       </div>
+      <p className="text-xs text-slate-500">Data health is a derived signal score: stale check-in, revoked/malfunction state, open telemetry alerts, and active faults reduce the score. Devices without any such evidence remain Unknown.</p>
 
       <div className="panel space-y-4 p-4">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
@@ -516,7 +696,7 @@ export function IotDevicesPage() {
                     <button
                       className="btn-ghost"
                       disabled={!canManageProviders || providerSyncMut.isPending}
-                      title={actionTitle(canManageProviders, "Run a provider sync for scoped device inventory.")}
+                      title={actionTitle(canManageProviders, "Run provider sync for the selected integration scope.")}
                       onClick={() => canManageProviders && providerSyncMut.mutate(String(provider.id))}
                     >
                       <PlugZap className="h-4 w-4" /> Sync Provider
@@ -562,7 +742,7 @@ export function IotDevicesPage() {
                     <td className="px-4 py-3"><StatusBadge status={row.connectionStatus} /></td>
                     <td className="px-4 py-3 text-slate-700">{row.powerStatus}</td>
                     <td className="px-4 py-3"><RiskBadge risk={row.signalStrength} /></td>
-                    <td className="px-4 py-3 text-slate-700">{row.dataHealthScore}%</td>
+                    <td className="px-4 py-3 text-slate-700">{row.dataHealthAvailable ? `${row.dataHealthScore}%` : "Unknown"}</td>
                     <td className="px-4 py-3"><StatusBadge status={row.installStatus} /></td>
                     <td className="px-4 py-3"><StatusBadge status={row.complianceStatus} /></td>
                     <td className="px-4 py-3 text-slate-700">
@@ -582,10 +762,10 @@ export function IotDevicesPage() {
                           <div className="absolute right-0 z-50 mt-1 w-48 rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
                             <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50" onClick={() => { setSelectedId(row.id); setOpenMenuId(null); }}>View Details</button>
                             {canUpdate && <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50" onClick={() => { openEdit(row); setOpenMenuId(null); }}>Edit Device</button>}
-                            {canAssign && <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50" onClick={() => { setAssignTarget(row); setAssignVehicleCode(row.assignedVehicleCode || ""); setOpenMenuId(null); }}>Assign to Vehicle</button>}
-                            {canDiagnostics && <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50" disabled={diagnosticsMut.isPending} onClick={() => { diagnosticsMut.mutate(row.id); setOpenMenuId(null); }}>Run Diagnostics</button>}
+                            {canAssign && <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50" onClick={() => { setAssignTarget(row); setAssignVehicleId(row.assignedVehicleId || ""); setOpenMenuId(null); }}>Assign to Vehicle</button>}
+                            {canDiagnostics && <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50" onClick={() => { navigate("/obd-j1939"); setOpenMenuId(null); }}>View Diagnostics</button>}
                             <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50" onClick={() => { refreshMut.mutate(row.id); setOpenMenuId(null); }}>Refresh Status</button>
-                            {canFirmware && <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50" onClick={() => { setFirmwareTarget(row); setFirmwareForm({ targetVersion: row.targetFirmwareVersion, scheduledFor: "" }); setOpenMenuId(null); }}>Schedule Firmware</button>}
+                            {canFirmware && <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-400" disabled title="OTA scheduling is not connected in this pilot.">Firmware scheduling unavailable</button>}
                             {canDelete && <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50" onClick={() => { if (window.confirm(`Archive ${row.deviceName}?`)) { archiveMut.mutate(row.id); } setOpenMenuId(null); }}>Archive Device</button>}
                           </div>
                         )}
@@ -607,26 +787,44 @@ export function IotDevicesPage() {
               <LoadingState />
             ) : detailQ.isError || !detailQ.data ? (
               <ErrorState message="Unable to load this device." />
-            ) : (
-              <DeviceDetailDrawer
-                detail={detailQ.data}
-                onEdit={() => selectedRecord && openEdit(selectedRecord)}
-                onAssign={() => selectedRecord && (setAssignTarget(selectedRecord), setAssignVehicleCode(selectedRecord.assignedVehicleCode || ""))}
-                onUnassign={() => selectedRecord && canAssign && unassignMut.mutate(selectedRecord.id)}
-                onArchive={() => selectedRecord && canDelete && window.confirm(`Archive ${selectedRecord.deviceName}?`) && archiveMut.mutate(selectedRecord.id)}
-                onMarkInstalled={() => selectedRecord && canUpdate && installMut.mutate(selectedRecord.id)}
-                onRunDiagnostics={() => selectedRecord && canDiagnostics && diagnosticsMut.mutate(selectedRecord.id)}
-                onRefresh={() => selectedRecord && refreshMut.mutate(selectedRecord.id)}
-                onScheduleFirmware={() => selectedRecord && (setFirmwareTarget(selectedRecord), setFirmwareForm({ targetVersion: selectedRecord.targetFirmwareVersion, scheduledFor: "" }))}
-                onFlagAttention={() => selectedRecord && setAttentionTarget(selectedRecord)}
-                onResolve={() => selectedRecord && canDiagnostics && resolveMut.mutate(selectedRecord.id)}
-                canUpdate={canUpdate}
-                canDelete={canDelete}
-                canAssign={canAssign}
-                canDiagnostics={canDiagnostics}
-                canFirmware={canFirmware}
-              />
-            )}
+	            ) : (
+	              <DeviceDetailDrawer
+	                detail={detailQ.data}
+	                actionContracts={
+	                  selectedRecord
+	                    ? buildActionContracts(selectedRecord, {
+	                      canUpdate,
+	                      canDelete,
+	                      canAssign,
+	                      canDiagnostics,
+	                      canRecover,
+	                      canFirmware,
+	                      onEdit: () => openEdit(selectedRecord),
+	                      onAssign: () => {
+	                        if (selectedRecord) {
+	                          setAssignTarget(selectedRecord);
+	                          setAssignVehicleId(selectedRecord.assignedVehicleId || "");
+	                        }
+	                      },
+	                      onUnassign: () => canAssign && unassignMut.mutate(selectedRecord.id),
+	                      onArchive: () => canDelete && window.confirm(`Archive ${selectedRecord.deviceName}?`) && archiveMut.mutate(selectedRecord.id),
+	                      onMarkInstalled: () => canUpdate && installMut.mutate(selectedRecord.id),
+	                      onRunDiagnostics: () => canDiagnostics && diagnosticsMut.mutate(selectedRecord.id),
+	                      onRefresh: () => selectedRecord && void refreshMut.mutate(selectedRecord.id),
+	                      onScheduleFirmware: () => {
+	                        if (selectedRecord) {
+	                          setFirmwareTarget(selectedRecord);
+	                          setFirmwareForm({ targetVersion: selectedRecord.targetFirmwareVersion, scheduledFor: "" });
+	                        }
+	                      },
+	                      onFlagAttention: () => canRecover && setAttentionTarget(selectedRecord),
+	                      onResolve: () =>
+	                        canRecover && resolveMut.mutate({ id: selectedRecord.id, rowVersion: selectedRecord.rowVersion }),
+	                    })
+	                    : []
+	                }
+	              />
+	            )}
           </aside>
         </div>
       ) : null}
@@ -663,6 +861,9 @@ export function IotDevicesPage() {
           submitLabel="Save Device"
           busy={updateMut.isPending}
         >
+          <p className="mb-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+            Pilot scope: this form reflects device metadata for review, but only supported lifecycle writes are persisted today (assignment, unassign/revoke, provision, recovery).
+          </p>
           <div className="grid gap-4 md:grid-cols-2">
             <FormField label="Device Name"><input className="field w-full" value={deviceForm.deviceName} onChange={(event) => setDeviceForm((form) => ({ ...form, deviceName: event.target.value }))} required /></FormField>
             <FormField label="Device Type"><input className="field w-full" value={deviceForm.deviceType} onChange={(event) => setDeviceForm((form) => ({ ...form, deviceType: event.target.value }))} required /></FormField>
@@ -686,16 +887,16 @@ export function IotDevicesPage() {
           onClose={() => setAssignTarget(null)}
           onSubmit={(event) => {
             event.preventDefault();
-            assignMut.mutate({ deviceId: assignTarget.id, vehicleId: assignVehicleCode });
+            assignMut.mutate({ deviceId: assignTarget.id, vehicleId: assignVehicleId });
           }}
           submitLabel="Assign Device"
           busy={assignMut.isPending}
         >
           <FormField label="Vehicle">
-            <select className="field w-full" value={assignVehicleCode} onChange={(event) => setAssignVehicleCode(event.target.value)} required>
+            <select className="field w-full" value={assignVehicleId} onChange={(event) => setAssignVehicleId(event.target.value)} required>
               <option value="">Select a vehicle</option>
               {vehicleOptions.map((vehicle) => (
-                <option key={String(vehicle.id ?? vehicle.vehicleId)} value={String(vehicle.vehicleCode ?? vehicle.vehicleId)}>
+                <option key={String(vehicle.id ?? vehicle.vehicleId)} value={String(vehicle.id ?? vehicle.vehicleId)}>
                   {String(vehicle.vehicleCode ?? vehicle.vehicleId)} · {String(vehicle.status ?? "Fleet asset")}
                 </option>
               ))}
@@ -728,7 +929,11 @@ export function IotDevicesPage() {
           onClose={() => setAttentionTarget(null)}
           onSubmit={(event) => {
             event.preventDefault();
-            attentionMut.mutate({ id: attentionTarget.id, notes: attentionNotes });
+            attentionMut.mutate({
+              id: attentionTarget.id,
+              rowVersion: attentionTarget.rowVersion,
+              notes: attentionNotes,
+            });
           }}
           submitLabel="Open Recovery"
           busy={attentionMut.isPending}
@@ -744,38 +949,10 @@ export function IotDevicesPage() {
 
 function DeviceDetailDrawer({
   detail,
-  onEdit,
-  onAssign,
-  onUnassign,
-  onArchive,
-  onMarkInstalled,
-  onRunDiagnostics,
-  onRefresh,
-  onScheduleFirmware,
-  onFlagAttention,
-  onResolve,
-  canUpdate,
-  canDelete,
-  canAssign,
-  canDiagnostics,
-  canFirmware,
+  actionContracts,
 }: {
   detail: DeviceDetailRecord;
-  onEdit: () => void;
-  onAssign: () => void;
-  onUnassign: () => void;
-  onArchive: () => void;
-  onMarkInstalled: () => void;
-  onRunDiagnostics: () => void;
-  onRefresh: () => void;
-  onScheduleFirmware: () => void;
-  onFlagAttention: () => void;
-  onResolve: () => void;
-  canUpdate: boolean;
-  canDelete: boolean;
-  canAssign: boolean;
-  canDiagnostics: boolean;
-  canFirmware: boolean;
+  actionContracts: DeviceActionContract[];
 }) {
   const { device } = detail;
   // Guard every [0] access — these live sub-feeds are frequently empty. `telemetry`
@@ -806,20 +983,23 @@ function DeviceDetailDrawer({
         </div>
       </div>
 
+      <div className="mt-2 flex flex-wrap gap-2">
+        {actionContracts.map((contract) => (
+          <ActionContractBadge key={`contract-${contract.key}`} contract={contract} />
+        ))}
+      </div>
       <div className="mt-6 flex flex-wrap gap-3">
-        <ActionButton label="Edit Device" icon={<Edit3 className="h-4 w-4" />} allowed={canUpdate} onClick={onEdit} />
-        <ActionButton label="Assign" icon={<ArrowRightLeft className="h-4 w-4" />} allowed={canAssign} onClick={onAssign} />
-        <ActionButton label="Unassign" icon={<Truck className="h-4 w-4" />} allowed={canAssign && Boolean(device.assignedVehicleCode)} onClick={onUnassign} />
-        <ActionButton label="Mark Installed" icon={<CheckCircle2 className="h-4 w-4" />} allowed={canUpdate} onClick={onMarkInstalled} />
-        <ActionButton label="Run Diagnostics" icon={<Wrench className="h-4 w-4" />} allowed={canDiagnostics} onClick={onRunDiagnostics} />
-        <ActionButton label="Refresh Status" icon={<RefreshCw className="h-4 w-4" />} allowed={true} onClick={onRefresh} />
-        <ActionButton label="Schedule Firmware" icon={<FileUp className="h-4 w-4" />} allowed={canFirmware} onClick={onScheduleFirmware} />
-        {/offline|attention/i.test(device.connectionStatus) ? (
-          <ActionButton label="Resolve" icon={<ShieldCheck className="h-4 w-4" />} allowed={canDiagnostics} onClick={onResolve} />
-        ) : (
-          <ActionButton label="Needs Attention" icon={<Activity className="h-4 w-4" />} allowed={canDiagnostics} onClick={onFlagAttention} />
-        )}
-        <ActionButton label="Archive" icon={<Trash2 className="h-4 w-4" />} allowed={canDelete} onClick={onArchive} />
+        {actionContracts.map((contract) => (
+          <ActionButton
+            key={contract.key}
+            label={contract.label}
+            icon={contract.icon}
+            allowed={contract.state === "ready"}
+            onClick={() => contract.onClick()}
+            unavailableReason={contract.reason}
+            contractState={contract.state}
+          />
+        ))}
       </div>
 
       <div className="mt-6 grid gap-4 lg:grid-cols-3">
@@ -843,10 +1023,42 @@ function DeviceDetailDrawer({
           ["Connection", device.connectionStatus],
           ["Power", device.powerStatus],
           ["Signal", device.signalStrength],
-          ["Data health", `${device.dataHealthScore}%`],
+          ["Data health", device.dataHealthAvailable ? `${device.dataHealthScore}%` : "Unknown — no health evidence yet"],
           ["Install status", device.installStatus],
           ["Compliance", device.complianceSummary],
         ]} />
+      </div>
+
+      <div className="mt-6">
+        <PanelSection title="Provider / Integration Audit">
+          {detail.providers.length ? (
+            <div className="space-y-3">
+              {detail.providers.map((provider) => {
+                const connectedTo = Array.isArray(provider.connectedTo) && provider.connectedTo.length ? provider.connectedTo.join(", ") : "—";
+                const matchConfidence = provider.matchConfidence ?? "none";
+                return (
+                  <div key={String(provider.id)} className="rounded-xl border border-white/[0.07] bg-black/10 p-3">
+                    <MiniGrid rows={[
+                      ["Connector", String(provider.name)],
+                      ["Integration status", String(provider.integrationStatus)],
+                      ["Match confidence", String(matchConfidence)],
+                      ["Device match", provider.isMatchedToDevice ? "Matched to this device" : "No direct match"],
+                      ["Scoped devices", String(provider.deviceCount || 0)],
+                      ["Connected devices", connectedTo],
+                      ["Data visibility", String(provider.visibilitySource ?? "unmatched")],
+                      ["Needs follow-up", String(provider.pendingDevices ?? 0)],
+                    ]} />
+                    <p className="mt-3 rounded-lg border border-white/[0.08] bg-black/10 p-2 text-xs text-slate-300">
+                      {String(provider.auditMessage || "No integration audit note available.")}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="text-sm text-slate-400">No provider integration evidence is currently available for this device.</p>
+          )}
+        </PanelSection>
       </div>
 
       <div className="mt-6 grid gap-4 xl:grid-cols-2">
@@ -979,9 +1191,10 @@ function DeviceDetailDrawer({
 
 // ── STEP 1: Register connection ─────────────────────────────────────────────
 // Minimal, honest form. Serial is the ONLY required field (the real key the
-// backend provisions credentials against). Provider is free text. Model/name
-// and assigned vehicle are optional. No IMEI/SIM/firmware/power/compliance —
-// none of those are part of the connection handshake.
+// backend provisions credentials against). IMEI is optional but is what a hardware
+// GPS tracker is resolved by at ingest, so it is collected for GT06/PT40-class units.
+// Provider, model/name and assigned vehicle are optional. SIM/firmware/power/
+// compliance remain out of the connection handshake.
 function ConnectDeviceDialog({
   form,
   onChange,
@@ -1030,6 +1243,16 @@ function ConnectDeviceDialog({
               required
               aria-required="true"
               aria-label="Device serial number, required"
+            />
+          </FormField>
+          <FormField label="IMEI (GPS trackers, optional)">
+            <input
+              className="field w-full font-mono"
+              value={form.imei}
+              onChange={(event) => onChange({ ...form, imei: event.target.value })}
+              placeholder="e.g. 862464068456321"
+              inputMode="numeric"
+              aria-label="Device IMEI, optional, for hardware GPS trackers"
             />
           </FormField>
           <FormField label="Provider">
@@ -1128,7 +1351,9 @@ function DeviceCredentialsDialog({
             <CheckCircle2 className="h-5 w-5" />
           </div>
           <div>
-            <h2 id="device-credentials-title" className="text-2xl font-semibold text-slate-900">Connection established</h2>
+            <h2 id="device-credentials-title" className="text-2xl font-semibold text-slate-900">
+              {connected ? "Connection established" : "Device credentials created"}
+            </h2>
             <p className="mt-1 text-sm text-slate-500">
               {device.deviceName} · {device.serialNumber || credentials.deviceSerial}. Configure your device with the credentials below.
             </p>
@@ -1247,12 +1472,49 @@ function CopyField({ label, value, secret = false }: { label: string; value: str
   );
 }
 
-function ActionButton({ label, icon, allowed, onClick }: { label: string; icon: ReactNode; allowed: boolean; onClick: () => void }) {
+function ActionContractBadge({ contract }: { contract: DeviceActionContract }) {
+  return (
+    <span
+      className={`inline-flex rounded-full border px-2 py-1 text-xs font-semibold ${actionContractTone(contract.state)}`}
+      title={contract.reason}
+    >
+      {contract.label}
+      <span className="ml-1 rounded-full border border-current/40 px-1.5 py-0.5 text-[10px] text-current">
+        {actionContractLabel(contract.state)}
+      </span>
+    </span>
+  );
+}
+
+function ActionButton({
+  label,
+  icon,
+  allowed,
+  onClick,
+  unavailableReason,
+  contractState,
+}: {
+  label: string;
+  icon: ReactNode;
+  allowed: boolean;
+  onClick: () => void;
+  unavailableReason?: string;
+  contractState?: ActionContractState;
+}) {
+  const state = contractState ?? (allowed ? "ready" : "permission-blocked");
   return (
     <button
       className={allowed ? "btn-ghost" : "btn-ghost opacity-60"}
       disabled={!allowed}
-      title={actionTitle(allowed, label)}
+      title={
+        allowed
+          ? unavailableReason
+            ? `${label} · ${unavailableReason}`
+            : label
+          : unavailableReason
+            ? `${actionContractLabel(state)}: ${unavailableReason}`
+            : "You do not have permission to perform this action."
+      }
       onClick={() => allowed && onClick()}
     >
       {icon} {label}

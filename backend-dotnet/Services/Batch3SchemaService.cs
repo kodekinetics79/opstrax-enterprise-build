@@ -105,7 +105,22 @@ public sealed class Batch3SchemaService(Database db, IConfiguration? configurati
         new("documents", "updated_at", "TIMESTAMPTZ NULL"),
         new("documents", "deleted_at", "TIMESTAMPTZ NULL"),
         new("notifications", "severity", "VARCHAR(50) NOT NULL DEFAULT 'Info'"),
-        new("notifications", "module_key", "VARCHAR(100) NULL")
+        new("notifications", "module_key", "VARCHAR(100) NULL"),
+        new("dvir_reports", "branch_id", "BIGINT NULL"),
+        new("dvir_reports", "idempotency_key", "VARCHAR(100) NULL"),
+        new("dvir_reports", "idempotency_request_hash", "VARCHAR(64) NULL"),
+        new("dvir_reports", "row_version", "INT NOT NULL DEFAULT 1"),
+        new("dvir_reports", "driver_repair_acknowledged_at", "TIMESTAMPTZ NULL"),
+        new("dvir_reports", "driver_repair_acknowledged_by", "BIGINT NULL"),
+        new("dvir_defects", "branch_id", "BIGINT NULL"),
+        new("dvir_defects", "out_of_service", "BOOLEAN NOT NULL DEFAULT FALSE"),
+        new("dvir_defects", "reviewed_at", "TIMESTAMPTZ NULL"),
+        new("dvir_defects", "reviewed_by", "BIGINT NULL"),
+        new("dvir_defects", "repair_certified_at", "TIMESTAMPTZ NULL"),
+        new("dvir_defects", "repair_certified_by", "BIGINT NULL"),
+        new("dvir_defects", "driver_acknowledged_at", "TIMESTAMPTZ NULL"),
+        new("dvir_defects", "driver_acknowledged_by", "BIGINT NULL"),
+        new("dvir_defects", "row_version", "INT NOT NULL DEFAULT 1")
     ];
 
     private static readonly string[] TableStatements =
@@ -239,7 +254,12 @@ public sealed class Batch3SchemaService(Database db, IConfiguration? configurati
         "CREATE INDEX IF NOT EXISTS ix_b3_dvir_status ON dvir_reports(company_id, inspection_status, safe_to_operate)",
         "CREATE INDEX IF NOT EXISTS ix_b3_dvir_number ON dvir_reports(company_id, report_number)",
         "CREATE INDEX IF NOT EXISTS ix_b3_documents_expiry ON documents(company_id, status, expires_at)",
-        "CREATE INDEX IF NOT EXISTS ix_b3_documents_number ON documents(company_id, document_number)"
+        "CREATE INDEX IF NOT EXISTS ix_b3_documents_number ON documents(company_id, document_number)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_dvir_reports_company_idempotency ON dvir_reports(company_id,idempotency_key) WHERE idempotency_key IS NOT NULL",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_dvir_reports_company_number_active ON dvir_reports(company_id,report_number) WHERE deleted_at IS NULL",
+        "CREATE INDEX IF NOT EXISTS idx_dvir_reports_company_branch_status ON dvir_reports(company_id,branch_id,inspection_status,submitted_at DESC) WHERE deleted_at IS NULL",
+        "CREATE INDEX IF NOT EXISTS idx_dvir_defects_company_branch_report ON dvir_defects(company_id,branch_id,dvir_report_id)",
+        "CREATE INDEX IF NOT EXISTS idx_dvir_defects_company_branch_status_oos ON dvir_defects(company_id,branch_id,status,out_of_service)"
     ];
 
     private static readonly string[] SeedStatements =

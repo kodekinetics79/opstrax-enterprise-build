@@ -1,23 +1,22 @@
 import axios from "axios";
 import type { ApiEnvelope } from "@/types";
-import { getGlobalCsrfToken, setGlobalCsrfToken } from "@/hooks/useCsrf";
+import { getGlobalCsrfToken, hydrateGlobalCsrfToken, setGlobalCsrfToken } from "@/auth/csrfTokenStore";
+import { readRawSession, clearAllSessionKeys } from "@/auth/sessionStorage";
 
-export const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL ||
-  import.meta.env.VITE_DOTNET_API_URL ||
-  "http://localhost:8088";
-
-// Optional realtime/integrations side-service. Only default to the local dev port
-// when actually running on localhost — in production an unset VITE_NODE_EVENTS_URL
-// resolves to "" (feature disabled) instead of hammering http://localhost:8090,
-// which would otherwise spam failed requests and infinite EventSource retries.
 const isLocalhost =
   typeof window !== "undefined" &&
   /^(localhost|127\.0\.0\.1|\[::1\])$/.test(window.location.hostname);
 
-export const NODE_EVENTS_URL =
-  import.meta.env.VITE_NODE_EVENTS_URL ||
-  (isLocalhost ? "http://localhost:8090" : "");
+// Local Vite development defaults to the published API port. A deployed build with
+// no explicit API URL uses the current origin instead of sending customer traffic to
+// localhost. The production nginx image deliberately supplies "/" and proxies /api
+// over the Compose network; Vercel deployments should set VITE_API_BASE_URL to the
+// externally reachable API origin when they are not using a same-origin proxy.
+export const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL ||
+  import.meta.env.VITE_DOTNET_API_URL ||
+  import.meta.env.VITE_PLATFORM_API_BASE_URL ||
+  (isLocalhost ? "http://localhost:8088" : "");
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -48,7 +47,9 @@ export function newTraceParent(): { traceparent: string; traceId: string; correl
 
 // Request interceptor: Add auth token and CSRF token
 apiClient.interceptors.request.use((config) => {
-  const session = localStorage.getItem("opstrax.session.v2") || localStorage.getItem("opstrax.session");
+  // Read the session (for the bearer token) from the SHARED key list — never hardcode it here, or a
+  // key bump silently drops the Authorization header and every authenticated call 401s.
+  const session = readRawSession();
   if (session) {
     try {
       const parsed = JSON.parse(session);
@@ -62,10 +63,10 @@ apiClient.interceptors.request.use((config) => {
         config.headers["X-Opstrax-Tenant-Id"] = String(tenantId);
       }
       if (inner.csrfToken) {
-        setGlobalCsrfToken(inner.csrfToken);
+        hydrateGlobalCsrfToken(inner.csrfToken);
       }
     } catch {
-      localStorage.removeItem("opstrax.session");
+      clearAllSessionKeys();
     }
   }
 
@@ -108,8 +109,7 @@ apiClient.interceptors.response.use(
         url.includes("/api/auth/refresh");
 
       if (shouldClearSession) {
-        localStorage.removeItem("opstrax.session.v2");
-        localStorage.removeItem("opstrax.session");
+        clearAllSessionKeys();
         if (window.location.pathname !== "/login") {
           window.location.href = "/login";
         }
@@ -124,29 +124,3 @@ export async function unwrap<T>(request: Promise<{ data: ApiEnvelope<T> }>): Pro
   if (!response.data.success) throw new Error(response.data.message || "API request failed");
   return response.data.data;
 }
-
-// ── Node.js microservice client ───────────────────────────────────────────────
-// Used for modules served by the Node.js event/integration backend (NODE_EVENTS_URL).
-// Auth is tenant-scoped via X-Opstrax-Tenant-Id header; no JWT check on this service.
-export const nodeApiClient = axios.create({
-  baseURL: NODE_EVENTS_URL,
-  headers: { Accept: "application/json" },
-  timeout: 15000,
-});
-
-nodeApiClient.interceptors.request.use((config) => {
-  const session = localStorage.getItem("opstrax.session.v2") || localStorage.getItem("opstrax.session");
-  if (session) {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const p = JSON.parse(session) as any;
-      const inner = p.session ?? p;
-      if (inner.token) {
-        config.headers.Authorization = `Bearer ${inner.token}`;
-      }
-      const tid = inner?.company?.id ?? inner?.company?.companyId ?? inner?.user?.companyId ?? inner?.user?.company_id;
-      if (tid) config.headers["X-Opstrax-Tenant-Id"] = String(tid);
-    } catch { /* ignore */ }
-  }
-  return config;
-});

@@ -4,7 +4,7 @@ import { API_BASE_URL } from "@/services/apiClient";
 
 // Platform Admin uses a SEPARATE session store and axios instance from the tenant
 // app, so platform staff identity never mixes with tenant user sessions.
-const PLATFORM_STORAGE_KEY = "opstrax.platform.session.v1";
+export const PLATFORM_STORAGE_KEY = "opstrax.platform.session.v1";
 
 export type PlatformSession = {
   token: string;
@@ -12,6 +12,8 @@ export type PlatformSession = {
   role: { key: string; name: string };
   permissions: string[];
 };
+
+export type PlatformSessionProfile = Omit<PlatformSession, "token">;
 
 export function loadPlatformSession(): PlatformSession | null {
   try {
@@ -99,7 +101,9 @@ export const platformApi = {
   // Auth
   login: (email: string, password: string, mfaCode?: string) =>
     unwrap<PlatformSession>(platformClient.post("/api/platform/auth/login", { email, password, mfaCode })),
-  me: () => unwrap<PlatformSession>(platformClient.get("/api/platform/auth/me")),
+  // Revalidation intentionally does not echo the bearer credential in a response
+  // body. The auth provider preserves the locally held token after this succeeds.
+  me: () => unwrap<PlatformSessionProfile>(platformClient.get("/api/platform/auth/me")),
   logout: () => platformClient.post("/api/platform/auth/logout").catch(() => undefined),
 
   // Self-service account management (any platform admin, own record only)
@@ -127,10 +131,14 @@ export const platformApi = {
   tenantUsers: (id: number) => unwrap<AnyRecord[]>(platformClient.get(`/api/platform/tenants/${id}/users`)),
   resetTenantUserPassword: (id: number, userId: number) =>
     unwrap<AnyRecord>(platformClient.post(`/api/platform/tenants/${id}/users/${userId}/reset-password`)),
+  captureTenantControlSnapshot: (id: number) =>
+    unwrap<AnyRecord>(platformClient.post(`/api/platform/tenants/${id}/control-snapshot`)),
 
   // Entitlements
   entitlements: (id: number) => unwrap<AnyRecord[]>(platformClient.get(`/api/platform/tenants/${id}/entitlements`)),
   setEntitlement: (id: number, body: AnyRecord) => unwrap<AnyRecord>(platformClient.put(`/api/platform/tenants/${id}/entitlements`, body)),
+  setEntitlementPolicy: (id: number, policyMode: "legacy_allow" | "package_allowlist") =>
+    unwrap<AnyRecord>(platformClient.put(`/api/platform/tenants/${id}/entitlement-policy`, { policyMode })),
 
   // Country profiles (market/localization defaults driving tenant-creation cascade)
   countryProfiles: () => unwrap<AnyRecord[]>(platformClient.get("/api/platform/country-profiles")),

@@ -50,9 +50,17 @@ const NEXT_STATUS: Record<string, string[]> = {
   arrived_pickup:   ["loaded", "exception"],
   loaded:           ["in_transit", "exception"],
   in_transit:       ["arrived_delivery", "exception"],
-  arrived_delivery: ["delivered", "exception"],
-  exception:        ["in_transit", "cancelled"],
+  arrived_delivery: ["exception"], // delivery is completed only through proof capture
+  exception:        ["cancelled"],
 };
+
+function nextStatusOptions(row: AnyRecord): string[] {
+  const status = String(row["assignmentStatus"] ?? row["status"] ?? "").trim().toLowerCase().replace(/[ -]+/g, "_");
+  if (status !== "exception") return NEXT_STATUS[status] ?? [];
+  const previous = String(row["previousStatus"] ?? "").trim().toLowerCase().replace(/[ -]+/g, "_");
+  const resumable = new Set(["assigned", "accepted", "en_route_pickup", "arrived_pickup", "loaded", "in_transit", "arrived_delivery"]);
+  return resumable.has(previous) ? [previous, "cancelled"] : ["cancelled"];
+}
 
 export function DispatchCommandPage() {
   const [activeTab, setActiveTab] = useState<Tab>("Board");
@@ -109,21 +117,31 @@ export function DispatchCommandPage() {
   const statusMutation = useMutation({
     mutationFn: ({ id, status }: { id: number; status: string }) =>
       dispatchApi.updateStatus(id, status),
-    onSuccess: invalidateAll,
-  });
-  const cancelMutation = useMutation({
-    mutationFn: (id: number) => dispatchApi.cancelAssignment(id),
     onSuccess: () => { invalidateAll(); setSelectedAssignment(null); },
   });
+  const cancelMutation = useMutation({
+    mutationFn: ({ id, notes }: { id: number; notes: string }) => dispatchApi.cancelAssignment(id, notes),
+    onSuccess: () => { invalidateAll(); setSelectedAssignment(null); },
+  });
+  const requestCancel = (id: number) => {
+    const notes = window.prompt("Enter the cancellation reason (required):")?.trim() ?? "";
+    if (notes.length >= 3) cancelMutation.mutate({ id, notes });
+  };
   const proofMutation = useMutation({
     mutationFn: ({ id, type }: { id: number; type: "pickup" | "delivery" }) =>
       dispatchApi.recordProof(id, { proofType: type }),
-    onSuccess: invalidateAll,
+    onSuccess: () => { invalidateAll(); setSelectedAssignment(null); },
   });
   const exceptionMutation = useMutation({
     mutationFn: ({ id, type, notes }: { id: number; type: string; notes: string }) =>
       dispatchApi.createException(id, { exceptionType: type, notes }),
     onSuccess: () => { invalidateAll(); setExceptionAssignId(null); setExceptionNotes(""); },
+  });
+  const assignMutation = useMutation({
+    mutationFn: (payload: {
+      vehicleId: number; driverId: number; jobId?: number; override?: boolean; overrideReason?: string;
+    }) => dispatchApi.createAssignment(payload),
+    onSuccess: () => { invalidateAll(); },
   });
 
   if (board.isLoading) return <LoadingState />;
@@ -136,6 +154,8 @@ export function DispatchCommandPage() {
 
   const stageMap: Record<string, AnyRecord[]> = board.data?.stageMap ?? {};
   const insights: AnyRecord[] = board.data?.insights ?? [];
+  const operationError = [statusMutation, cancelMutation, proofMutation, exceptionMutation]
+    .find((mutation) => mutation.isError)?.error as Error | undefined;
   const summary = {
     unassigned: (stageMap["Unassigned"] ?? []).length,
     active: Object.entries(stageMap)
@@ -174,6 +194,17 @@ export function DispatchCommandPage() {
         <ClayStat Icon={AlertTriangle} tone="fc-clay-red"     iconCls="text-rose-700"    label="Open Exceptions" value={summary.exceptions} caption={summary.exceptions > 0 ? "Needs dispatcher action" : "No open exceptions"} alert={summary.exceptions > 0} />
         <ClayStat Icon={User}          tone="fc-clay-emerald" iconCls="text-emerald-700" label="Available Drivers" value={availDrivers.data?.length ?? "—"} caption="Cleared for assignment" />
       </div>
+
+      {operationError ? (
+        <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+          Dispatch action failed: {operationError.message || "Refresh the board and try again."}
+        </div>
+      ) : null}
+      {[assignments, exceptions, availDrivers, availVehicles].some((query) => query.isError) ? (
+        <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          Some dispatch supporting data could not be loaded. Empty tables and availability counts may be incomplete; refresh before assigning.
+        </div>
+      ) : null}
 
       {/* System Dispatch Insights */}
       {insights.length > 0 && (
@@ -221,7 +252,7 @@ export function DispatchCommandPage() {
               canUpdate={canUpdate}
               canCancel={canCancel}
               onStatusChange={(id, status) => statusMutation.mutate({ id, status })}
-              onCancel={(id) => cancelMutation.mutate(id)}
+              onCancel={requestCancel}
               onSelect={setSelectedAssignment}
             />
           )}
@@ -233,8 +264,16 @@ export function DispatchCommandPage() {
               onDriverChange={setEligDriverId}
               result={eligQuery.data}
               isLoading={eligQuery.isLoading}
+              eligibilityError={eligQuery.isError ? (eligQuery.error as Error)?.message ?? "Eligibility check failed" : null}
+              vehicles={availVehicles.data ?? []}
+              drivers={availDrivers.data ?? []}
+              jobs={stageMap["Unassigned"] ?? []}
               canAssign={canAssign}
               canOverride={canOverride}
+              onAssign={(payload) => assignMutation.mutate(payload)}
+              assignPending={assignMutation.isPending}
+              assignError={assignMutation.isError ? (assignMutation.error as Error)?.message ?? "Assignment failed" : null}
+              assignResult={assignMutation.isSuccess ? assignMutation.data : null}
             />
           )}
           {activeTab === "Exceptions" && (
@@ -260,7 +299,7 @@ export function DispatchCommandPage() {
           canCancel={canCancel}
           onClose={() => setSelectedAssignment(null)}
           onStatusChange={(id, status) => statusMutation.mutate({ id, status })}
-          onCancel={(id) => cancelMutation.mutate(id)}
+          onCancel={requestCancel}
           onProof={(id, type) => proofMutation.mutate({ id, type })}
           onException={(id) => setExceptionAssignId(id)}
         />
@@ -359,7 +398,7 @@ function BoardCard({
 }) {
   const risk    = String(row["riskHeat"] ?? row["riskHeatScore"] ?? "Low");
   const status  = String(row["assignmentStatus"] ?? row["status"] ?? "").toLowerCase();
-  const nextStatuses = NEXT_STATUS[status] ?? [];
+  const nextStatuses = nextStatusOptions(row);
   const isException = stage === "Exception";
 
   return (
@@ -490,8 +529,8 @@ function AssignmentsTab({
         <tbody className="divide-y divide-slate-100">
           {rows.map((r) => {
             const status     = String(r["assignmentStatus"] ?? "").toLowerCase();
-            const nextOpts   = (NEXT_STATUS[status] ?? []).filter((s) => s !== "cancelled");
-            const showCancel = canCancel && !["delivered", "cancelled"].includes(status);
+            const nextOpts   = nextStatusOptions(r).filter((s) => s !== "cancelled");
+            const showCancel = canCancel && ["assigned", "accepted", "exception"].includes(status);
 
             return (
               <tr
@@ -552,6 +591,7 @@ function AssignmentsTab({
 // ── Eligibility Tab ───────────────────────────────────────────────────────────
 function EligibilityTab({
   vehicleId, driverId, onVehicleChange, onDriverChange, result, isLoading, canAssign, canOverride,
+  onAssign, assignPending, assignError, assignResult, eligibilityError, vehicles, drivers, jobs,
 }: {
   vehicleId: string;
   driverId: string;
@@ -559,42 +599,83 @@ function EligibilityTab({
   onDriverChange:  (v: string) => void;
   result: AnyRecord | undefined;
   isLoading: boolean;
+  eligibilityError: string | null;
+  vehicles: AnyRecord[];
+  drivers: AnyRecord[];
+  jobs: AnyRecord[];
   canAssign: boolean;
   canOverride: boolean;
+  onAssign: (payload: { vehicleId: number; driverId: number; jobId?: number; override?: boolean; overrideReason?: string }) => void;
+  assignPending: boolean;
+  assignError: string | null;
+  assignResult: AnyRecord | null;
 }) {
+  const [assignJobId, setAssignJobId] = useState("");
+  const [overrideReason, setOverrideReason] = useState("");
+
+  const outOfService   = !!result?.["vehicleOutOfService"];
+  const overrideNeeded = !!result?.["overrideRequired"];
+  const eligible       = !!result?.["eligible"];
+  // The pairing can be committed when eligible, or when an override is needed and the user is allowed
+  // to override (with a reason). An out-of-service vehicle can never be assigned.
+  const canCommit = canAssign && !!result && !outOfService &&
+    (eligible || (overrideNeeded && canOverride)) &&
+    (!overrideNeeded || overrideReason.trim().length > 0);
+
+  const submitAssign = () => {
+    onAssign({
+      vehicleId: Number(vehicleId),
+      driverId:  Number(driverId),
+      jobId:     Number(assignJobId) > 0 ? Number(assignJobId) : undefined,
+      override:  overrideNeeded ? true : undefined,
+      overrideReason: overrideNeeded ? overrideReason.trim() : undefined,
+    });
+  };
+
   return (
     <div className="space-y-6">
       <section>
         <h3 className="section-title mb-3">Eligibility Check</h3>
         <p className="text-sm text-slate-500 mb-4">
-          Enter a Vehicle ID and Driver ID to run the eligibility engine before creating an assignment.
+          Choose an available vehicle and driver to run the eligibility engine before creating an assignment.
           The engine checks out-of-service status, open defects, work orders, safety score, and HOS data.
         </p>
         <div className="flex gap-3 flex-wrap items-end">
           <label className="block">
-            <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Vehicle ID</span>
-            <input
-              type="number"
-              className="mt-1 block w-32 rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-teal-500 focus:outline-none"
+            <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Available Vehicle</span>
+            <select
+              className="mt-1 block min-w-56 rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-teal-500 focus:outline-none"
               value={vehicleId}
               onChange={(e) => onVehicleChange(e.target.value)}
-              placeholder="e.g. 42"
-            />
+            >
+              <option value="">Select vehicle…</option>
+              {vehicles.map((vehicle) => (
+                <option key={String(vehicle["id"])} value={String(vehicle["id"])}>
+                  {String(vehicle["vehicleCode"] ?? "Vehicle")} · ID {String(vehicle["id"])}
+                </option>
+              ))}
+            </select>
           </label>
           <label className="block">
-            <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Driver ID</span>
-            <input
-              type="number"
-              className="mt-1 block w-32 rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-teal-500 focus:outline-none"
+            <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Available Driver</span>
+            <select
+              className="mt-1 block min-w-56 rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-teal-500 focus:outline-none"
               value={driverId}
               onChange={(e) => onDriverChange(e.target.value)}
-              placeholder="e.g. 17"
-            />
+            >
+              <option value="">Select driver…</option>
+              {drivers.map((driver) => (
+                <option key={String(driver["id"])} value={String(driver["id"])}>
+                  {String(driver["fullName"] ?? "Driver")} · ID {String(driver["id"])}
+                </option>
+              ))}
+            </select>
           </label>
         </div>
       </section>
 
       {isLoading && <LoadingState />}
+      {eligibilityError ? <p role="alert" className="text-sm text-red-600">{eligibilityError}</p> : null}
 
       {result && !isLoading && (
         <section className={`rounded-xl border p-5 ${result["eligible"] ? "border-teal-200 bg-teal-50" : "border-red-200 bg-red-50"}`}>
@@ -660,6 +741,66 @@ function EligibilityTab({
               Vehicle is out of service. This block cannot be overridden — resolve critical defects first.
             </div>
           ) : null}
+
+          {/* Commit the pairing — the core dispatcher action. */}
+          <div className="mt-5 border-t border-slate-200 pt-4">
+            {assignResult ? (
+              <div className="rounded-lg bg-teal-100 p-3 text-sm text-teal-900">
+                <strong>Assignment created</strong>
+                {assignResult["id"] != null ? ` — #${String(assignResult["id"])}` : ""}
+                {assignResult["status"] != null ? ` (${String(assignResult["status"])})` : ""}. It now appears
+                on the board and can be accepted by the driver.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-end gap-3">
+                  <label className="block">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Unassigned Job (optional)</span>
+                    <select
+                      className="mt-1 block min-w-56 rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-teal-500 focus:outline-none"
+                      value={assignJobId}
+                      onChange={(e) => setAssignJobId(e.target.value)}
+                    >
+                      <option value="">Standalone assignment</option>
+                      {jobs.map((job) => (
+                        <option key={String(job["id"])} value={String(job["id"])}>
+                          {String(job["jobNumber"] ?? "Job")} · {String(job["customerName"] ?? "No customer")}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {overrideNeeded && canOverride ? (
+                    <label className="block flex-1 min-w-[16rem]">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-amber-700">Override reason (required)</span>
+                      <input
+                        type="text"
+                        className="mt-1 block w-full rounded-lg border border-amber-300 px-3 py-1.5 text-sm focus:border-amber-500 focus:outline-none"
+                        value={overrideReason}
+                        onChange={(e) => setOverrideReason(e.target.value)}
+                        placeholder="why you are overriding the eligibility block"
+                      />
+                    </label>
+                  ) : null}
+                  <button
+                    type="button"
+                    disabled={!canCommit || assignPending}
+                    onClick={submitAssign}
+                    className="rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                  >
+                    {assignPending ? "Assigning…" : overrideNeeded ? "Override & Assign" : "Create Assignment"}
+                  </button>
+                </div>
+                {!canAssign ? (
+                  <p className="text-xs text-slate-500">You do not have permission to create assignments (dispatch:assign).</p>
+                ) : outOfService ? (
+                  <p className="text-xs text-red-600">Cannot assign an out-of-service vehicle.</p>
+                ) : !eligible && !overrideNeeded ? (
+                  <p className="text-xs text-red-600">Not eligible — resolve the blocking reasons above before assigning.</p>
+                ) : null}
+                {assignError ? <p className="text-xs text-red-600">{assignError}</p> : null}
+              </div>
+            )}
+          </div>
         </section>
       )}
 
@@ -691,7 +832,7 @@ function AvailableDriversTab({ rows, isLoading }: { rows: AnyRecord[]; isLoading
   return (
     <DataTable
       rows={rows}
-      columns={["fullName", "status", "safetyScore", "availableHosHours", "activeAssignmentCount", "safetyBlocked", "matchReadiness"]}
+      columns={["id", "fullName", "status", "safetyScore", "availableHosHours", "activeAssignmentCount", "safetyBlocked", "matchReadiness"]}
     />
   );
 }
@@ -704,7 +845,7 @@ function AvailableVehiclesTab({ rows, isLoading }: { rows: AnyRecord[]; isLoadin
   return (
     <DataTable
       rows={rows}
-      columns={["vehicleCode", "type", "status", "availabilityStatus", "criticalDefectCount", "blockingWoCount", "activeAssignmentCount", "matchReadiness"]}
+      columns={["id", "vehicleCode", "type", "status", "availabilityStatus", "criticalDefectCount", "blockingWoCount", "activeAssignmentCount", "matchReadiness"]}
     />
   );
 }
@@ -724,12 +865,13 @@ function AssignmentDrawer({
 }) {
   const id     = Number(assignment["id"]);
   const status = String(assignment["assignmentStatus"] ?? "").toLowerCase();
-  const next   = NEXT_STATUS[status] ?? [];
+  const next   = nextStatusOptions(assignment);
+  const isUnassignedJob = !status;
 
   return (
     <div className="fixed inset-y-0 right-0 w-96 shadow-2xl bg-white border-l border-slate-200 z-50 overflow-y-auto">
       <div className="sticky top-0 bg-white border-b border-slate-200 px-5 py-4 flex items-center justify-between">
-        <h2 className="font-bold text-slate-900">Assignment Detail</h2>
+        <h2 className="font-bold text-slate-900">{isUnassignedJob ? "Unassigned Load" : "Assignment Detail"}</h2>
         <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-700">
           <XCircle className="h-5 w-5" />
         </button>
@@ -740,7 +882,7 @@ function AssignmentDrawer({
         <InfoRow label="Driver"     value={assignment["driverName"]} />
         <InfoRow label="Vehicle"    value={assignment["vehicleCode"]} />
         <InfoRow label="Status">
-          <StatusBadge status={assignment["assignmentStatus"]} />
+          <StatusBadge status={isUnassignedJob ? "Unassigned" : assignment["assignmentStatus"]} />
         </InfoRow>
         <InfoRow label="Safety Score">
           <SafetyScorePill score={assignment["driverSafetyScore"]} />
@@ -759,7 +901,12 @@ function AssignmentDrawer({
         ) : null}
 
         {/* State transition actions */}
-        {canUpdate && next.length > 0 && (
+        {isUnassignedJob ? (
+          <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
+            Select this load in the Eligibility tab when pairing an available driver and vehicle.
+          </p>
+        ) : null}
+        {canUpdate && !isUnassignedJob && next.length > 0 && (
           <div>
             <p className="text-xs font-bold uppercase text-slate-500 mb-2">Advance Status</p>
             <div className="flex flex-wrap gap-2">
@@ -778,7 +925,7 @@ function AssignmentDrawer({
         )}
 
         {/* Proof actions */}
-        {canUpdate && (
+        {canUpdate && !isUnassignedJob && (
           <div className="flex gap-2">
             {(status === "arrived_pickup" || status === "loaded") && (
               <button
@@ -789,7 +936,7 @@ function AssignmentDrawer({
                 Record Pickup
               </button>
             )}
-            {(status === "arrived_delivery" || status === "in_transit") && (
+            {status === "arrived_delivery" && (
               <button
                 type="button"
                 className="rounded-lg bg-teal-100 px-3 py-1.5 text-sm font-semibold text-teal-800 hover:bg-teal-200"
@@ -803,7 +950,7 @@ function AssignmentDrawer({
 
         {/* Exception + Cancel */}
         <div className="flex gap-2 pt-2 border-t border-slate-100">
-          {canUpdate && !["delivered", "cancelled"].includes(status) && (
+          {canUpdate && !isUnassignedJob && !["delivered", "cancelled"].includes(status) && (
             <button
               type="button"
               className="rounded-lg bg-amber-100 px-3 py-1.5 text-sm font-semibold text-amber-800 hover:bg-amber-200"
@@ -812,7 +959,7 @@ function AssignmentDrawer({
               Flag Exception
             </button>
           )}
-          {canCancel && !["delivered", "cancelled"].includes(status) && (
+          {canCancel && !isUnassignedJob && ["assigned", "accepted", "exception"].includes(status) && (
             <button
               type="button"
               className="rounded-lg bg-red-100 px-3 py-1.5 text-sm font-semibold text-red-700 hover:bg-red-200"
@@ -878,7 +1025,7 @@ function ExceptionModal({
           <button
             type="button"
             className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
-            disabled={isLoading}
+            disabled={isLoading || notes.trim().length === 0}
             onClick={onSubmit}
           >
             {isLoading ? "Creating…" : "Create Exception"}

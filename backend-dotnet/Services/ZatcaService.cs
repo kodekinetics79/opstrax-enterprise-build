@@ -89,11 +89,18 @@ public sealed class ZatcaService(Database db, IZatcaComplianceGateway gateway)
         // Phase-2: the first invoice's PIH is the base64 of SHA-256("0").
         var pih = prev is null ? Base64Sha256("0") : prev["invoiceHash"]?.ToString();
 
+        // Seller TRN sourced from seller_tax_registration (no longer hardcoded); the tax breakdown is
+        // grouped per category from the immutable issued_invoice_tax_lines snapshot.
+        var sellerTrn = (await db.QuerySingleAsync(
+            "SELECT tax_registration_no FROM seller_tax_registration WHERE company_id=@cid AND regime='zatca_vat' ORDER BY effective_date DESC LIMIT 1",
+            b => b.Parameters.AddWithValue("@cid", companyId), ct))?["taxRegistrationNo"]?.ToString() ?? "300000000000003";
+        var taxGroups = await LoadTaxSubtotalsAsync(companyId, issuedInvoiceId, ct);
+
         var ubl = BuildUblXml(invoiceUuid, invoiceNumber, invoiceType, issuedAt, currency,
-            sellerName, customerName, subtotal, vatTotal, total, icv, pih);
+            sellerName, customerName, sellerTrn, subtotal, vatTotal, total, icv, pih, taxGroups);
         var ublXml = ubl.ToString(SaveOptions.DisableFormatting);
         var invoiceHash = Base64Sha256(ublXml);
-        var qrBase64 = BuildQrTlv(sellerName, /*vatNumber*/ "300000000000003", issuedAt, total, vatTotal, invoiceHash);
+        var qrBase64 = BuildQrTlv(sellerName, sellerTrn, issuedAt, total, vatTotal, invoiceHash);
 
         // Onboarding boundary: stamp + clearance (stub -> pending_onboarding).
         var (stamped, signedXml) = await gateway.StampAsync(ublXml, ct);
@@ -136,12 +143,51 @@ public sealed class ZatcaService(Database db, IZatcaComplianceGateway gateway)
               FROM zatca_invoices WHERE company_id=@cid ORDER BY icv DESC LIMIT 200",
             b => b.Parameters.AddWithValue("@cid", companyId), ct);
 
+    // One per-category tax breakdown group for the UBL cac:TaxTotal/cac:TaxSubtotal (S/Z/E/O).
+    private sealed record TaxSubtotalGroup(string Category, decimal Percent, decimal Taxable, decimal TaxAmount, string? ExemptionReasonCode);
+
+    // Per-category tax subtotals from the immutable issued snapshot (empty => aggregate-only fallback).
+    private async Task<List<TaxSubtotalGroup>> LoadTaxSubtotalsAsync(long companyId, Guid issuedInvoiceId, CancellationToken ct)
+    {
+        var rows = await db.QueryAsync(
+            @"SELECT COALESCE(tax_category,'S') AS cat, rate, MAX(exemption_reason_code) AS erc,
+                     SUM(taxable_amount) AS taxable, SUM(tax_amount) AS tax
+              FROM issued_invoice_tax_lines WHERE company_id=@cid AND issued_invoice_id=@id
+              GROUP BY COALESCE(tax_category,'S'), rate ORDER BY cat, rate",
+            b => { b.Parameters.AddWithValue("@cid", companyId); b.Parameters.AddWithValue("@id", issuedInvoiceId); }, ct);
+        return rows.Select(r => new TaxSubtotalGroup(
+            r.GetValueOrDefault("cat")?.ToString() ?? "S",
+            Dec(r.GetValueOrDefault("rate")) * 100m,
+            Dec(r.GetValueOrDefault("taxable")), Dec(r.GetValueOrDefault("tax")),
+            r.GetValueOrDefault("erc") is { } e and not DBNull ? e.ToString() : null)).ToList();
+    }
+
     // ── UBL 2.1 invoice document (KSA subset) ──────────────────────────────────
     private static XElement BuildUblXml(Guid uuid, string invoiceNumber, string invoiceType, DateTime issued,
-        string currency, string seller, string customer, decimal subtotal, decimal vat, decimal total, long icv, string? pih)
+        string currency, string seller, string customer, string sellerTrn, decimal subtotal, decimal vat, decimal total,
+        long icv, string? pih, IReadOnlyList<TaxSubtotalGroup> taxGroups)
     {
         // InvoiceTypeCode: 388 = tax invoice. name subtype: "0100000" standard / "0200000" simplified.
         var typeName = invoiceType.Equals("simplified", StringComparison.OrdinalIgnoreCase) ? "0200000" : "0100000";
+
+        // Per-category TaxSubtotal (each with TaxCategory ID + Percent, and an exemption reason for Z/E/O)
+        // when a breakdown snapshot exists; otherwise the single aggregate TaxAmount (backward compatible).
+        var taxTotal = new XElement(Cac + "TaxTotal",
+            new XElement(Cbc + "TaxAmount", new XAttribute("currencyID", currency), Money(vat)));
+        foreach (var g in taxGroups)
+        {
+            var category = new XElement(Cac + "TaxCategory",
+                new XElement(Cbc + "ID", g.Category),
+                new XElement(Cbc + "Percent", Money(g.Percent)));
+            if (g.Category is "Z" or "E" or "O" && !string.IsNullOrEmpty(g.ExemptionReasonCode))
+                category.Add(new XElement(Cbc + "TaxExemptionReasonCode", g.ExemptionReasonCode));
+            category.Add(new XElement(Cac + "TaxScheme", new XElement(Cbc + "ID", "VAT")));
+            taxTotal.Add(new XElement(Cac + "TaxSubtotal",
+                new XElement(Cbc + "TaxableAmount", new XAttribute("currencyID", currency), Money(g.Taxable)),
+                new XElement(Cbc + "TaxAmount", new XAttribute("currencyID", currency), Money(g.TaxAmount)),
+                category));
+        }
+
         return new XElement(Inv + "Invoice",
             new XAttribute(XNamespace.Xmlns + "cbc", Cbc.NamespaceName),
             new XAttribute(XNamespace.Xmlns + "cac", Cac.NamespaceName),
@@ -163,12 +209,14 @@ public sealed class ZatcaService(Database db, IZatcaComplianceGateway gateway)
                     new XElement(Cbc + "EmbeddedDocumentBinaryObject", new XAttribute("mimeCode", "text/plain"), pih ?? ""))),
             new XElement(Cac + "AccountingSupplierParty",
                 new XElement(Cac + "Party",
+                    new XElement(Cac + "PartyTaxScheme",
+                        new XElement(Cbc + "CompanyID", sellerTrn),
+                        new XElement(Cac + "TaxScheme", new XElement(Cbc + "ID", "VAT"))),
                     new XElement(Cac + "PartyLegalEntity", new XElement(Cbc + "RegistrationName", seller)))),
             new XElement(Cac + "AccountingCustomerParty",
                 new XElement(Cac + "Party",
                     new XElement(Cac + "PartyLegalEntity", new XElement(Cbc + "RegistrationName", customer)))),
-            new XElement(Cac + "TaxTotal",
-                new XElement(Cbc + "TaxAmount", new XAttribute("currencyID", currency), Money(vat))),
+            taxTotal,
             new XElement(Cac + "LegalMonetaryTotal",
                 new XElement(Cbc + "LineExtensionAmount", new XAttribute("currencyID", currency), Money(subtotal)),
                 new XElement(Cbc + "TaxExclusiveAmount", new XAttribute("currencyID", currency), Money(subtotal)),

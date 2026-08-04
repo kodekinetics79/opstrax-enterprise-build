@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import { useQueries } from "@tanstack/react-query";
 import {
   Activity, AlertTriangle, ArrowUpRight, Camera, Cpu, Gauge,
@@ -408,7 +408,7 @@ export function FleetIntelligencePage() {
               {[
                 { label: "Live Units", value: pick(teleKpis, "liveUnits") ?? "--" },
                 { label: "Device Offline", value: pick(teleKpis, "deviceOfflineUnits") ?? "--" },
-                { label: "Camera Offline", value: pick(teleKpis, "cameraOfflineUnits") ?? "--" },
+                { label: "Camera feed", value: pick(teleKpis, "cameraOfflineUnits") ?? "Not connected" },
                 { label: "DVIR Today", value: pick((dvirSummary.data ?? {}) as AnyRecord, "inspections_today") ?? "--" },
               ].map((cell) => (
                 <div key={cell.label} className="rounded-xl bg-slate-50 px-3 py-2.5 shadow-[inset_0_1px_4px_rgba(15,23,42,.1)]">

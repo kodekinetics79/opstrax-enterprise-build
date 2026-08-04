@@ -9,8 +9,7 @@ namespace Opstrax.Tests;
 [Trait("Category", "Integration")]
 public class PlatformCommercialOpsTests
 {
-    private const string LocalConnectionString =
-        "Host=127.0.0.1;Port=5433;Database=opstrax_local;Username=zayra;Password=zayra";
+    private static readonly string LocalConnectionString = TestDb.ConnectionString;
 
     [Fact]
     public void HasPlatformPermission_Allows_Wildcard_And_Prefix()

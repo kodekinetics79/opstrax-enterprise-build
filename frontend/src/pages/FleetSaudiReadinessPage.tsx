@@ -9,6 +9,7 @@ import {
   type FleetReadinessExpiry, type FleetInvoiceReadySummary, type SaudiRegionReference,
 } from '@/services/fleetTmsApi';
 import { useTenantCountry, useTenantCurrency, countryLabel } from '@/hooks/useTenantRegion';
+import { useHasPermission } from '@/hooks/usePermission';
 import { exportCsv } from '@/components/ui';
 
 /* ── Domain constants (KSA regulatory facts, not seed data) ─────────────── */
@@ -198,6 +199,8 @@ type ExpirySummary = { totalDocuments: number; expiringSoon: number; expired: nu
 export function FleetSaudiReadinessPage() {
   const tenantCountry = useTenantCountry();
   const tenantCurrency = useTenantCurrency();
+  const hasPermission = useHasPermission();
+  const canManageCompliance = hasPermission('compliance:manage');
 
   const [regions, setRegions] = useState<SaudiRegionReference[]>([]);
   const [documents, setDocuments] = useState<FleetReadinessDocument[]>([]);
@@ -259,6 +262,7 @@ export function FleetSaudiReadinessPage() {
   };
 
   const createDocument = async () => {
+    if (!canManageCompliance) return;
     setError('');
     setMessage('');
     if (!form.subjectName.trim() || !form.documentType.trim()) {
@@ -280,7 +284,7 @@ export function FleetSaudiReadinessPage() {
   };
 
   const renewDocument = async (doc: FleetReadinessDocument) => {
-    if (!renewDate) return;
+    if (!canManageCompliance || !renewDate) return;
     setRenewSaving(true);
     try {
       const updated = await fleetReadinessApi.updateDocument(doc.id, { ...docToRequest(doc), gregorianExpiryDate: renewDate, requiresExpiry: true });
@@ -397,12 +401,19 @@ export function FleetSaudiReadinessPage() {
           >
             <Download className="h-3.5 w-3.5" /> Export CSV
           </button>
-          <button type="button" onClick={() => setFormOpen((v) => !v)} className="btn-primary inline-flex items-center gap-1.5 text-xs">
+          <button type="button" onClick={() => setFormOpen((v) => !v)} disabled={!canManageCompliance} title={canManageCompliance ? undefined : 'Requires compliance manage permission'} className="btn-primary inline-flex items-center gap-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-50">
             {formOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
             Log document
           </button>
         </div>
       </header>
+
+      {!canManageCompliance && (
+        <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900" role="status">
+          <p className="font-semibold">Read-only Saudi Readiness</p>
+          <p className="mt-0.5 text-xs text-sky-800">Compliance manage permission is required to log or renew regulatory documents. Search, review, refresh, and export remain available.</p>
+        </div>
+      )}
 
       {/* ── KPI band ── */}
       <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
@@ -505,7 +516,7 @@ export function FleetSaudiReadinessPage() {
                   {error || message}
                 </p>
               )}
-              <button type="button" onClick={createDocument} disabled={saving} className="btn-primary ml-auto inline-flex items-center gap-1.5 text-xs disabled:opacity-60">
+              <button type="button" onClick={createDocument} disabled={!canManageCompliance || saving} title={canManageCompliance ? undefined : 'Requires compliance manage permission'} className="btn-primary ml-auto inline-flex items-center gap-1.5 text-xs disabled:opacity-60">
                 {saving ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
                 Save document
               </button>
@@ -552,7 +563,7 @@ export function FleetSaudiReadinessPage() {
               body={documents.length === 0
                 ? 'Log commercial registrations, transport cards, permits and driver certifications to activate the expiry radar and ZATCA invoice-readiness checks.'
                 : 'Adjust the kind or status filters, or clear the search to see the full ledger.'}
-              action={documents.length === 0 ? (
+              action={documents.length === 0 && canManageCompliance ? (
                 <button type="button" onClick={() => setFormOpen(true)} className="btn-primary inline-flex items-center gap-1.5 text-xs">
                   <Plus className="h-3.5 w-3.5" /> Log first document
                 </button>
@@ -608,7 +619,7 @@ export function FleetSaudiReadinessPage() {
                           {renewingId === doc.id ? (
                             <span className="inline-flex items-center gap-1.5">
                               <input type="date" aria-label="New expiry date" className="input h-7 px-2 py-0 text-[11px]" value={renewDate} onChange={(e) => setRenewDate(e.target.value)} />
-                              <button type="button" disabled={renewSaving || !renewDate} onClick={() => renewDocument(doc)} className="btn-primary h-7 px-2 text-[11px] disabled:opacity-50">
+                              <button type="button" disabled={!canManageCompliance || renewSaving || !renewDate} onClick={() => renewDocument(doc)} className="btn-primary h-7 px-2 text-[11px] disabled:opacity-50">
                                 {renewSaving ? '…' : 'Save'}
                               </button>
                               <button type="button" onClick={() => { setRenewingId(null); setRenewDate(''); }} className="icon-btn h-7 w-7" aria-label="Cancel renewal">
@@ -619,7 +630,9 @@ export function FleetSaudiReadinessPage() {
                             <button
                               type="button"
                               onClick={() => { setRenewingId(doc.id); setRenewDate(doc.gregorianExpiryDate ? doc.gregorianExpiryDate.slice(0, 10) : ''); }}
-                              className="sr-neu-out rounded-lg px-2.5 py-1 text-[11px] font-bold text-teal-800 transition hover:text-teal-600"
+                              disabled={!canManageCompliance}
+                              title={canManageCompliance ? undefined : 'Requires compliance manage permission'}
+                              className="sr-neu-out rounded-lg px-2.5 py-1 text-[11px] font-bold text-teal-800 transition hover:text-teal-600 disabled:cursor-not-allowed disabled:opacity-50"
                             >
                               Renew
                             </button>

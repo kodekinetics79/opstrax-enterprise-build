@@ -2,14 +2,22 @@ using Opstrax.Api.Data;
 
 namespace Opstrax.Api.Services;
 
-public sealed class Batch6SchemaService(Database db)
+public sealed class Batch6SchemaService(Database db, IConfiguration? configuration = null)
 {
     public async Task EnsureAsync(CancellationToken ct = default)
     {
         foreach (var col in Columns) await EnsureColumnAsync(col.Table, col.Name, col.Definition, ct);
         foreach (var sql in Tables) await db.ExecuteAsync(sql, ct: ct);
         foreach (var sql in Indexes) { try { await db.ExecuteAsync(sql, ct: ct); } catch { } }
-        foreach (var sql in Seeds) await db.ExecuteAsync(sql, ct: ct);
+        // Global reference/catalog data (no tenant business rows) — always applied.
+        foreach (var sql in ReferenceSeeds) await db.ExecuteAsync(sql, ct: ct);
+        // Fabricated business rows for a REAL tenant (hardcoded company_id/tenant_id=1).
+        // These used to run on EVERY boot, inventing safety events / contracts / invoices /
+        // SLA + cost records that the product then presented as fact. Now they require the
+        // same explicit opt-in as the Batch1-3 seeds (see DemoSeedGate); real tenants get
+        // schema only.
+        if (DemoSeedGate.IsExplicitlyEnabled(configuration))
+            foreach (var sql in DemoSeeds) await db.ExecuteAsync(sql, ct: ct);
     }
 
     private async Task EnsureColumnAsync(string table, string column, string definition, CancellationToken ct)
@@ -29,6 +37,7 @@ public sealed class Batch6SchemaService(Database db)
         new("documents",    "issued_at",             "DATE NULL"),
         new("dvir_reports", "country_code",          "VARCHAR(10) NULL"),
         new("dvir_reports", "compliance_profile_id", "BIGINT NULL"),
+        new("coaching_tasks", "acknowledged_note",   "TEXT NULL"),
         new("hos_logs",     "vehicle_id",            "BIGINT NULL"),
         new("hos_logs",     "country_code",          "VARCHAR(10) NOT NULL DEFAULT 'US'"),
         new("hos_logs",     "profile_id",            "BIGINT NULL"),
@@ -36,8 +45,15 @@ public sealed class Batch6SchemaService(Database db)
         new("hos_logs",     "end_time",              "TIMESTAMPTZ NULL"),
         new("hos_logs",     "duration_minutes",      "INT NOT NULL DEFAULT 0"),
         new("hos_logs",     "location",              "VARCHAR(200) NULL"),
+        new("hos_logs",     "notes",                 "TEXT NULL"),
         new("hos_logs",     "is_certified",          "BOOLEAN NOT NULL DEFAULT false"),
         new("hos_logs",     "company_id",            "BIGINT NULL"),
+        new("hos_logs",     "branch_id",             "BIGINT NULL"),
+        new("hos_logs",     "source",                "VARCHAR(40) NOT NULL DEFAULT 'manual'"),
+        new("hos_logs",     "source_event_id",       "VARCHAR(120) NULL"),
+        new("hos_logs",     "certified_by",          "BIGINT NULL"),
+        new("hos_logs",     "certified_at",          "TIMESTAMPTZ NULL"),
+        new("hos_logs",     "deleted_at",            "TIMESTAMPTZ NULL"),
         new("ai_recommendations", "description",     "TEXT NULL"),
         new("ai_recommendations", "priority",        "VARCHAR(40) NULL"),
         new("ai_recommendations", "action_label",      "VARCHAR(160) NULL"),
@@ -51,7 +67,21 @@ public sealed class Batch6SchemaService(Database db)
         new("compliance_rules",    "threshold_value",  "DECIMAL(12,2) NULL"),
         new("compliance_rules",    "threshold_unit",   "VARCHAR(40) NULL"),
         new("hos_clocks",               "hos_warning",           "TEXT NULL"),
+        new("hos_clocks",               "break_needed_at",       "TIMESTAMPTZ NULL"),
+        new("hos_clocks",               "reset_at",              "TIMESTAMPTZ NULL"),
+        new("hos_clocks",               "updated_at",            "TIMESTAMPTZ NULL"),
         new("hos_clocks",               "company_id",            "BIGINT NULL"),
+        new("hos_clocks",               "branch_id",             "BIGINT NULL"),
+        new("eld_devices",              "company_id",            "BIGINT NULL"),
+        new("eld_devices",              "branch_id",             "BIGINT NULL"),
+        new("eld_devices",              "deleted_at",            "TIMESTAMPTZ NULL"),
+        new("eld_devices",              "malfunction_code",      "VARCHAR(80) NULL"),
+        new("eld_devices",              "malfunction_description", "TEXT NULL"),
+        new("eld_devices",              "malfunction_resolved_at", "TIMESTAMPTZ NULL"),
+        new("eld_devices",              "malfunction_resolved_by", "BIGINT NULL"),
+        new("eld_devices",              "resolution_evidence",     "TEXT NULL"),
+        new("eld_devices",              "row_version",             "BIGINT NOT NULL DEFAULT 1"),
+        new("eld_devices",              "provider_sync_status",    "VARCHAR(40) NULL"),
         new("eld_devices",              "last_sync_at",          "TIMESTAMPTZ NULL"),
         new("driver_compliance_status", "license_expiry",        "TIMESTAMPTZ NULL"),
         new("driver_compliance_status", "medical_cert_expiry",   "TIMESTAMPTZ NULL"),
@@ -67,6 +97,7 @@ public sealed class Batch6SchemaService(Database db)
         new("vehicle_compliance_status","company_id",            "BIGINT NULL"),
         new("compliance_violations",    "category",              "VARCHAR(80) NULL"),
         new("compliance_violations",    "company_id",            "BIGINT NULL"),
+        new("compliance_violations",    "branch_id",             "BIGINT NULL"),
         new("compliance_audit_packages","included_drivers",      "INT NULL"),
         new("compliance_audit_packages","included_vehicles",     "INT NULL"),
         new("compliance_audit_packages","included_documents",    "INT NULL"),
@@ -232,6 +263,188 @@ public sealed class Batch6SchemaService(Database db)
             updated_at TIMESTAMPTZ NULL
         )",
 
+        @"CREATE TABLE IF NOT EXISTS hos_certifications (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL,
+            branch_id BIGINT NULL,
+            driver_id BIGINT NOT NULL,
+            log_date DATE NOT NULL,
+            attestation_text TEXT NOT NULL,
+            attestation_hash VARCHAR(64) NOT NULL,
+            certified_by BIGINT NOT NULL,
+            certified_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            source_revision VARCHAR(64) NOT NULL,
+            source_snapshot JSONB NOT NULL DEFAULT '[]'::jsonb,
+            UNIQUE(company_id,driver_id,log_date,source_revision)
+        )",
+        @"ALTER TABLE hos_certifications ADD COLUMN IF NOT EXISTS source_snapshot JSONB NOT NULL DEFAULT '[]'::jsonb",
+
+        @"CREATE TABLE IF NOT EXISTS eld_malfunction_history (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL,
+            branch_id BIGINT NULL,
+            eld_device_id BIGINT NOT NULL,
+            event_type VARCHAR(40) NOT NULL,
+            from_status VARCHAR(40) NOT NULL,
+            to_status VARCHAR(40) NOT NULL,
+            malfunction_code VARCHAR(80) NULL,
+            malfunction_description TEXT NULL,
+            evidence TEXT NULL,
+            actor_user_id BIGINT NOT NULL,
+            occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )",
+        @"ALTER TABLE eld_malfunction_history ENABLE ROW LEVEL SECURITY;
+          ALTER TABLE eld_malfunction_history FORCE ROW LEVEL SECURITY;
+          DO $rls$
+          BEGIN
+            IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_app')
+               AND to_regprocedure('opstrax_security.current_tenant_id()') IS NOT NULL THEN
+              DROP POLICY IF EXISTS tenant_ticket_app ON eld_malfunction_history;
+              CREATE POLICY tenant_ticket_app ON eld_malfunction_history FOR ALL TO opstrax_app
+                USING (company_id=(SELECT opstrax_security.current_tenant_id()))
+                WITH CHECK (company_id=(SELECT opstrax_security.current_tenant_id()));
+              GRANT SELECT,INSERT,UPDATE,DELETE ON eld_malfunction_history TO opstrax_app;
+              GRANT USAGE,SELECT ON SEQUENCE eld_malfunction_history_id_seq TO opstrax_app;
+            END IF;
+            IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_system') THEN
+              DROP POLICY IF EXISTS system_control_plane ON eld_malfunction_history;
+              CREATE POLICY system_control_plane ON eld_malfunction_history FOR ALL TO opstrax_system USING(TRUE) WITH CHECK(TRUE);
+              GRANT SELECT,INSERT,UPDATE,DELETE ON eld_malfunction_history TO opstrax_system;
+              GRANT USAGE,SELECT ON SEQUENCE eld_malfunction_history_id_seq TO opstrax_system;
+            END IF;
+          END $rls$",
+
+        @"CREATE OR REPLACE FUNCTION stage65_hos_day_lock_key(
+            p_company_id BIGINT,p_driver_id BIGINT,p_log_date DATE,p_branch_id BIGINT)
+          RETURNS BIGINT LANGUAGE SQL STABLE AS $$
+            SELECT hashtextextended(
+              format('hos-cert:%s:%s:%s:%s',p_company_id,p_driver_id,
+                     (p_log_date-DATE '2000-01-01'),
+                     COALESCE(p_branch_id::TEXT,'<null>')),0)
+          $$",
+        @"CREATE OR REPLACE FUNCTION stage65_lock_hos_day_on_insert()
+          RETURNS TRIGGER LANGUAGE plpgsql AS $$
+          BEGIN
+            PERFORM pg_advisory_xact_lock(stage65_hos_day_lock_key(
+              NEW.company_id,NEW.driver_id,NEW.log_date,NEW.branch_id));
+            RETURN NEW;
+          END $$",
+        @"DROP TRIGGER IF EXISTS trg_stage65_hos_insert_day_lock ON hos_logs;
+          CREATE TRIGGER trg_stage65_hos_insert_day_lock
+          BEFORE INSERT ON hos_logs FOR EACH ROW WHEN (NEW.deleted_at IS NULL)
+          EXECUTE FUNCTION stage65_lock_hos_day_on_insert()",
+        @"CREATE OR REPLACE FUNCTION stage65_lock_hos_days_on_identity_change()
+          RETURNS TRIGGER LANGUAGE plpgsql AS $$
+          DECLARE
+            old_key BIGINT := stage65_hos_day_lock_key(OLD.company_id,OLD.driver_id,OLD.log_date,OLD.branch_id);
+            new_key BIGINT := stage65_hos_day_lock_key(NEW.company_id,NEW.driver_id,NEW.log_date,NEW.branch_id);
+          BEGIN
+            IF (OLD.company_id,OLD.driver_id,OLD.log_date,OLD.branch_id) IS NOT DISTINCT FROM
+               (NEW.company_id,NEW.driver_id,NEW.log_date,NEW.branch_id)
+               AND OLD.deleted_at IS NOT DISTINCT FROM NEW.deleted_at THEN RETURN NEW; END IF;
+            IF NOT pg_try_advisory_xact_lock(LEAST(old_key,new_key)) THEN
+              RAISE EXCEPTION 'HOS day is being certified; retry the segment change' USING ERRCODE='40001';
+            END IF;
+            IF old_key<>new_key AND NOT pg_try_advisory_xact_lock(GREATEST(old_key,new_key)) THEN
+              RAISE EXCEPTION 'HOS day is being certified; retry the segment change' USING ERRCODE='40001';
+            END IF;
+            NEW.is_certified:=FALSE; NEW.certified_at:=NULL; NEW.certified_by:=NULL;
+            RETURN NEW;
+          END $$",
+        @"DROP TRIGGER IF EXISTS trg_stage65_hos_identity_day_lock ON hos_logs;
+          CREATE TRIGGER trg_stage65_hos_identity_day_lock
+          BEFORE UPDATE OF company_id,driver_id,log_date,branch_id,deleted_at ON hos_logs
+          FOR EACH ROW EXECUTE FUNCTION stage65_lock_hos_days_on_identity_change()",
+        @"CREATE OR REPLACE FUNCTION stage65_invalidate_hos_days_on_identity_change()
+          RETURNS TRIGGER LANGUAGE plpgsql AS $$
+          BEGIN
+            IF (OLD.company_id,OLD.driver_id,OLD.log_date,OLD.branch_id) IS DISTINCT FROM
+               (NEW.company_id,NEW.driver_id,NEW.log_date,NEW.branch_id)
+               OR OLD.deleted_at IS DISTINCT FROM NEW.deleted_at THEN
+              UPDATE hos_logs SET is_certified=FALSE,certified_at=NULL,certified_by=NULL
+               WHERE id<>NEW.id AND deleted_at IS NULL AND is_certified=TRUE AND (
+                 (company_id=OLD.company_id AND driver_id=OLD.driver_id AND log_date=OLD.log_date
+                  AND branch_id IS NOT DISTINCT FROM OLD.branch_id) OR
+                 (company_id=NEW.company_id AND driver_id=NEW.driver_id AND log_date=NEW.log_date
+                  AND branch_id IS NOT DISTINCT FROM NEW.branch_id));
+            END IF;
+            RETURN NEW;
+          END $$",
+        @"DROP TRIGGER IF EXISTS trg_stage65_hos_identity_change_invalidates_days ON hos_logs;
+          CREATE TRIGGER trg_stage65_hos_identity_change_invalidates_days
+          AFTER UPDATE OF company_id,driver_id,log_date,branch_id,deleted_at ON hos_logs
+          FOR EACH ROW EXECUTE FUNCTION stage65_invalidate_hos_days_on_identity_change()",
+        @"CREATE OR REPLACE FUNCTION stage65_invalidate_hos_certification_on_material_change()
+          RETURNS TRIGGER LANGUAGE plpgsql AS $$
+          BEGIN
+            IF OLD.is_certified AND (
+                 OLD.vehicle_id IS DISTINCT FROM NEW.vehicle_id OR OLD.country_code IS DISTINCT FROM NEW.country_code
+              OR OLD.profile_id IS DISTINCT FROM NEW.profile_id OR OLD.status IS DISTINCT FROM NEW.status
+              OR OLD.start_time IS DISTINCT FROM NEW.start_time OR OLD.end_time IS DISTINCT FROM NEW.end_time
+              OR OLD.duration_minutes IS DISTINCT FROM NEW.duration_minutes OR OLD.location IS DISTINCT FROM NEW.location
+              OR OLD.source IS DISTINCT FROM NEW.source OR OLD.source_event_id IS DISTINCT FROM NEW.source_event_id
+              OR OLD.deleted_at IS DISTINCT FROM NEW.deleted_at
+            ) THEN
+              NEW.is_certified := FALSE; NEW.certified_at := NULL; NEW.certified_by := NULL;
+            END IF;
+            RETURN NEW;
+          END $$",
+        @"DROP TRIGGER IF EXISTS trg_stage65_hos_material_change_invalidates_certification ON hos_logs;
+          CREATE TRIGGER trg_stage65_hos_material_change_invalidates_certification
+          BEFORE UPDATE OF vehicle_id,country_code,profile_id,status,start_time,end_time,duration_minutes,
+                           location,source,source_event_id,deleted_at
+          ON hos_logs FOR EACH ROW EXECUTE FUNCTION stage65_invalidate_hos_certification_on_material_change()",
+        @"CREATE OR REPLACE FUNCTION stage65_invalidate_hos_certified_day()
+          RETURNS TRIGGER LANGUAGE plpgsql AS $$
+          BEGIN
+            UPDATE hos_logs SET is_certified=FALSE,certified_at=NULL,certified_by=NULL
+             WHERE company_id=NEW.company_id AND driver_id=NEW.driver_id AND log_date=NEW.log_date
+               AND branch_id IS NOT DISTINCT FROM NEW.branch_id
+               AND deleted_at IS NULL AND id<>NEW.id AND is_certified=TRUE;
+            RETURN NEW;
+          END $$",
+        @"DROP TRIGGER IF EXISTS trg_stage65_hos_segment_change_invalidates_day ON hos_logs;
+          CREATE TRIGGER trg_stage65_hos_segment_change_invalidates_day
+          AFTER UPDATE ON hos_logs FOR EACH ROW
+          WHEN (OLD.is_certified=TRUE AND NEW.is_certified=FALSE)
+          EXECUTE FUNCTION stage65_invalidate_hos_certified_day()",
+        @"CREATE OR REPLACE FUNCTION stage65_invalidate_hos_day_on_insert()
+          RETURNS TRIGGER LANGUAGE plpgsql AS $$
+          BEGIN
+            UPDATE hos_logs SET is_certified=FALSE,certified_at=NULL,certified_by=NULL
+             WHERE company_id=NEW.company_id AND driver_id=NEW.driver_id AND log_date=NEW.log_date
+               AND branch_id IS NOT DISTINCT FROM NEW.branch_id
+               AND deleted_at IS NULL AND id<>NEW.id AND is_certified=TRUE;
+            RETURN NEW;
+          END $$",
+        @"DROP TRIGGER IF EXISTS trg_stage65_hos_insert_invalidates_certified_day ON hos_logs;
+          CREATE TRIGGER trg_stage65_hos_insert_invalidates_certified_day
+          AFTER INSERT ON hos_logs FOR EACH ROW WHEN (NEW.deleted_at IS NULL)
+          EXECUTE FUNCTION stage65_invalidate_hos_day_on_insert()",
+        @"CREATE OR REPLACE FUNCTION stage65_prevent_certified_hos_log_delete()
+          RETURNS TRIGGER LANGUAGE plpgsql AS $$
+          BEGIN
+            IF OLD.is_certified AND NOT (
+              COALESCE(current_setting('opstrax.offboarding', true) = 'on', FALSE)
+              AND pg_has_role(current_user, 'opstrax_system', 'MEMBER')
+            ) THEN RAISE EXCEPTION 'Certified HOS segments cannot be deleted; create a correction and recertify'; END IF;
+            RETURN OLD;
+          END $$",
+        @"DROP TRIGGER IF EXISTS trg_stage65_prevent_certified_hos_log_delete ON hos_logs;
+          CREATE TRIGGER trg_stage65_prevent_certified_hos_log_delete
+          BEFORE DELETE ON hos_logs FOR EACH ROW EXECUTE FUNCTION stage65_prevent_certified_hos_log_delete()",
+        @"CREATE OR REPLACE FUNCTION stage65_guard_hos_certification_snapshot()
+          RETURNS TRIGGER LANGUAGE plpgsql AS $$
+          BEGIN
+            IF TG_OP='DELETE'
+              AND COALESCE(current_setting('opstrax.offboarding', true)='on', FALSE)
+              AND pg_has_role(current_user, 'opstrax_system', 'MEMBER') THEN RETURN OLD; END IF;
+            RAISE EXCEPTION 'HOS certification snapshots are immutable';
+          END $$",
+        @"DROP TRIGGER IF EXISTS trg_stage65_hos_certification_snapshot_immutable ON hos_certifications;
+          CREATE TRIGGER trg_stage65_hos_certification_snapshot_immutable
+          BEFORE UPDATE OR DELETE ON hos_certifications FOR EACH ROW EXECUTE FUNCTION stage65_guard_hos_certification_snapshot()",
+
         @"CREATE TABLE IF NOT EXISTS eld_devices (
             id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
             device_serial VARCHAR(120) NOT NULL UNIQUE,
@@ -303,9 +516,16 @@ public sealed class Batch6SchemaService(Database db)
         "CREATE INDEX IF NOT EXISTS idx_driver_compliance_driver ON driver_compliance_status(driver_id)",
         "CREATE INDEX IF NOT EXISTS idx_vehicle_compliance_vehicle ON vehicle_compliance_status(vehicle_id)",
         "CREATE INDEX IF NOT EXISTS idx_compliance_audit_packages_company ON compliance_audit_packages(company_id)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_hos_logs_company_source_event ON hos_logs(company_id,source,source_event_id) WHERE source_event_id IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS idx_hos_logs_company_branch_driver_time ON hos_logs(company_id,branch_id,driver_id,start_time DESC) WHERE deleted_at IS NULL",
+        "CREATE INDEX IF NOT EXISTS idx_hos_clocks_company_branch_status ON hos_clocks(company_id,branch_id,status,drive_time_remaining_minutes)",
+        "CREATE INDEX IF NOT EXISTS idx_hos_certifications_company_branch_driver_date ON hos_certifications(company_id,branch_id,driver_id,log_date DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_compliance_violations_company_branch_status ON compliance_violations(company_id,branch_id,status,detected_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_eld_devices_company_branch_status ON eld_devices(company_id,branch_id,status) WHERE deleted_at IS NULL",
+        "CREATE INDEX IF NOT EXISTS idx_eld_malfunction_history_company_device ON eld_malfunction_history(company_id,eld_device_id,occurred_at DESC,id DESC)",
     ];
 
-    private static readonly string[] Seeds =
+    private static readonly string[] ReferenceSeeds =
     [
         @"INSERT INTO countries (code,name,currency,distance_unit,volume_unit,hos_ruleset,rtl) VALUES
           ('US','United States','USD','Miles','Gallons','FMCSA 395.3',false),
@@ -322,12 +542,6 @@ public sealed class Batch6SchemaService(Database db)
           ('ar-SA','Arabic (Saudi Arabia)','العربية (السعودية)','SA',true),
           ('ar-AE','Arabic (UAE)','العربية (الإمارات)','AE',true),
           ('ur-PK','Urdu (Pakistan)','اردو (پاکستان)','PK',true)
-          ON CONFLICT DO NOTHING",
-
-        @"INSERT INTO tenant_locale_settings (id,tenant_id,default_language,default_country,timezone,date_format,currency,distance_unit,volume_unit)
-          OVERRIDING SYSTEM VALUE
-          SELECT 1,1,'en-US','US','America/New_York','MM/DD/YYYY','USD','Miles','Gallons'
-          WHERE NOT EXISTS (SELECT 1 FROM tenant_locale_settings WHERE id=1)
           ON CONFLICT DO NOTHING",
 
         @"INSERT INTO compliance_profiles (id,country_code,profile_name,authority,hos_ruleset,eld_required,max_driving_hours,max_duty_hours,rest_requirement_hours) OVERRIDING SYSTEM VALUE VALUES
@@ -350,6 +564,15 @@ public sealed class Batch6SchemaService(Database db)
           (8,4,'SA-HOS-10H','Saudi Arabia 10-Hour Limit','HOS','Maximum 10 hours driving per day under SASO regulations','High',10,'Hours'),
           (9,5,'AE-HOS-10H','UAE 10-Hour Driving Limit','HOS','UAE RTA: Maximum 10 hours driving per day','High',10,'Hours'),
           (10,6,'PK-NHA-10H','Pakistan 10-Hour Limit','HOS','NHA: Maximum 10 hours driving per day','Medium',10,'Hours')
+          ON CONFLICT DO NOTHING"
+    ];
+
+    private static readonly string[] DemoSeeds =
+    [
+        @"INSERT INTO tenant_locale_settings (id,tenant_id,default_language,default_country,timezone,date_format,currency,distance_unit,volume_unit)
+          OVERRIDING SYSTEM VALUE
+          SELECT 1,1,'en-US','US','America/New_York','MM/DD/YYYY','USD','Miles','Gallons'
+          WHERE NOT EXISTS (SELECT 1 FROM tenant_locale_settings WHERE id=1)
           ON CONFLICT DO NOTHING",
 
         @"INSERT INTO hos_clocks (id,driver_id,country_code,profile_id,cycle_type,drive_time_remaining_minutes,shift_time_remaining_minutes,cycle_time_remaining_minutes,status,hos_warning) OVERRIDING SYSTEM VALUE VALUES
@@ -471,6 +694,6 @@ public sealed class Batch6SchemaService(Database db)
           (1,1,'hos_action','hos-eld','Driver 4 - Repeat 11-Hour Violation Pattern','Driver 4 has exceeded the 11-hour driving limit twice in 3 days. This pattern indicates dispatch scheduling issues. Review route assignments.','Driver 4 has exceeded the 11-hour driving limit twice in 3 days. This pattern indicates dispatch scheduling issues. Review route assignments.',97,95,'{}'::jsonb,'{}'::jsonb,'{}'::jsonb,'Critical','Recommended',97,'Driver 4 has exceeded the 11-hour driving limit twice in 3 days. This pattern indicates dispatch scheduling issues. Review route assignments.','Critical','Review Schedule','hos_action'),
           (1,1,'hos_action','hos-eld','Driver 2 - 70-Hour Cycle Limit Warning','Driver 2 has only 240 minutes remaining in the 70-hour/8-day cycle. Plan mandatory reset before next dispatch.','Driver 2 has only 240 minutes remaining in the 70-hour/8-day cycle. Plan mandatory reset before next dispatch.',88,83,'{}'::jsonb,'{}'::jsonb,'{}'::jsonb,'High','Recommended',88,'Driver 2 has only 240 minutes remaining in the 70-hour/8-day cycle. Plan mandatory reset before next dispatch.','High','Plan Reset','hos_action'),
           (1,1,'eld_action','hos-eld','ELD-008 Firmware Update Available','Device ELD-008 is running firmware 3.4.0. Update to 3.4.1 available - addresses connectivity issues.','Device ELD-008 is running firmware 3.4.0. Update to 3.4.1 available - addresses connectivity issues.',55,50,'{}'::jsonb,'{}'::jsonb,'{}'::jsonb,'Low','Recommended',55,'Device ELD-008 is running firmware 3.4.0. Update to 3.4.1 available - addresses connectivity issues.','Low','Schedule Update','eld_action')
-          ON CONFLICT DO NOTHING",
+          ON CONFLICT DO NOTHING"
     ];
 }

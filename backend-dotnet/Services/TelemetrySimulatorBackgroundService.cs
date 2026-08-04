@@ -84,6 +84,13 @@ public sealed class TelemetrySimulatorBackgroundService(
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<Database>();
 
+        // Additive provenance: the simulator stamps source='simulator' on the rows it
+        // bootstraps, ONLY when the columns exist (deploy-safe — production may pre-date
+        // migration 001, and the simulator is demo/dev anyway). Probed once (cached).
+        var hasProv = await TelemetryProvenance.ColumnsAvailableAsync(db, ct);
+        var bootstrapProvCols   = hasProv ? ", source, normalized_at" : "";
+        var bootstrapProvSelect = hasProv ? $", '{TelemetryProvenance.SourceSimulator}', NOW()" : "";
+
         // Step 0 — Bootstrap coverage. Any vehicle that is assigned/on-road and has a
         // recent location_events fix but NO latest_vehicle_positions row is seeded one
         // from its most recent event. Without this, the simulator only ever moved the
@@ -91,17 +98,17 @@ public sealed class TelemetrySimulatorBackgroundService(
         // fleet frozen at Offline). This makes movement fleet-wide and self-healing as
         // new vehicles/events appear. Scoped to non-OOS units with a real GPS fix.
         await db.ExecuteAsync(
-            @"INSERT INTO latest_vehicle_positions
+            $@"INSERT INTO latest_vehicle_positions
                   (company_id, vehicle_id, device_id, driver_id, lat, lng, speed_mph, heading,
                    engine_status, fuel_level, odometer_miles, event_time, received_at, event_count,
-                   telemetry_status, risk_level, updated_at)
+                   telemetry_status, risk_level, updated_at{bootstrapProvCols})
               SELECT DISTINCT ON (le.vehicle_id)
                      le.company_id, le.vehicle_id, le.device_id, le.driver_id,
                      le.lat, le.lng,
                      COALESCE(le.speed_mph, 32), COALESCE(le.heading, (random()*360)::int),
                      CASE WHEN COALESCE(le.engine_status,'') IN ('Moving','Idle') THEN le.engine_status ELSE 'Moving' END,
                      COALESCE(le.fuel_level, 70), COALESCE(le.odometer_miles, 0),
-                     NOW(), NOW(), 1, 'healthy', 'low', NOW()
+                     NOW(), NOW(), 1, 'healthy', 'low', NOW(){bootstrapProvSelect}
               FROM location_events le
               JOIN vehicles v ON v.id = le.vehicle_id AND v.deleted_at IS NULL
               WHERE le.vehicle_id IS NOT NULL AND le.lat IS NOT NULL AND le.lng IS NOT NULL

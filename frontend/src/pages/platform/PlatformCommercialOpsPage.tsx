@@ -3,7 +3,7 @@ import { ArrowRight, AlertTriangle, ReceiptText, ShieldCheck, Sparkles } from "l
 import type { AnyRecord } from "@/types";
 import { platformApi, formatMoney } from "@/services/platformApi";
 import { PHeader, PCard, PKpi, PBadge, PButton, PLoading, PError, PEmpty } from "./ui";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 
 function asRows(value: unknown): AnyRecord[] {
   return Array.isArray(value) ? value as AnyRecord[] : [];

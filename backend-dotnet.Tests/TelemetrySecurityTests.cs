@@ -67,6 +67,43 @@ public class StreamTicketTests
         var (ok, _, _) = TelemetryTicketHelper.Validate(Key, ticket);
         Assert.True(ok);
     }
+
+    [Fact]
+    public void ScopedTicket_CarriesExplicitBranchAndPermission()
+    {
+        var ticket = TelemetryTicketHelper.IssueScoped(
+            Key, userId: 9, companyId: 41, branchId: 17,
+            permissions: ["telemetry.live_state.read"]);
+        var first = TelemetryTicketHelper.ValidateScoped(Key, ticket);
+        var secondValidation = TelemetryTicketHelper.ValidateScoped(Key, ticket);
+
+        Assert.True(first.Ok);
+        Assert.Equal(9, first.UserId);
+        Assert.Equal(41, first.CompanyId);
+        Assert.Equal(17, first.BranchId);
+        Assert.False(first.AllBranches);
+        Assert.Contains("telemetry.live_state.read", first.Permissions);
+        // Signature validation is stateless; durable one-shot consumption is enforced
+        // atomically by Program.cs against telemetry_stream_ticket_nonces.
+        Assert.True(secondValidation.Ok);
+    }
+
+    [Fact]
+    public void ScopedTicket_WithoutLivePermission_IsRejected()
+    {
+        var ticket = TelemetryTicketHelper.IssueScoped(Key, 9, 41, null, ["fleet:view"]);
+        Assert.False(TelemetryTicketHelper.ValidateScoped(Key, ticket).Ok);
+    }
+
+    [Fact]
+    public void ScopedTicket_NullBranch_IsExplicitAllBranchesClaim()
+    {
+        var ticket = TelemetryTicketHelper.IssueScoped(Key, 9, 41, null, ["telemetry.live_state.read"]);
+        var claims = TelemetryTicketHelper.ValidateScoped(Key, ticket);
+        Assert.True(claims.Ok);
+        Assert.Null(claims.BranchId);
+        Assert.True(claims.AllBranches);
+    }
 }
 
 public class TimestampAntiReplayTests
@@ -107,6 +144,25 @@ public class TimestampAntiReplayTests
     [Fact]
     public void UnparsableTimestamp_Rejected()
         => Assert.False(TelemetryTicketHelper.IsTimestampFresh("not-a-date"));
+}
+
+public class BufferedObservedAtTests
+{
+    [Fact]
+    public void SixDayBufferedFix_IsAcceptedAndPreserved()
+    {
+        var expected = DateTimeOffset.UtcNow.AddDays(-6);
+        Assert.True(TelemetryTicketHelper.TryParseObservedAt(expected.ToString("O"), out var observed));
+        Assert.InRange(Math.Abs((observed - expected.UtcDateTime).TotalSeconds), 0, 1);
+    }
+
+    [Fact]
+    public void OlderThanSevenDays_IsRejected()
+        => Assert.False(TelemetryTicketHelper.TryParseObservedAt(DateTimeOffset.UtcNow.AddDays(-8).ToString("O"), out _));
+
+    [Fact]
+    public void MoreThanFiveMinutesFuture_IsRejected()
+        => Assert.False(TelemetryTicketHelper.TryParseObservedAt(DateTimeOffset.UtcNow.AddMinutes(6).ToString("O"), out _));
 }
 
 public class CoordinateValidationTests

@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { exportCsv, LoadingState } from "@/components/ui";
+import { useHasPermission } from "@/hooks/usePermission";
 import type { AnyRecord } from "@/types";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -117,6 +118,8 @@ export function WorkforceManagementPage() {
   const [cell, setCell] = useState<{ driverName: string; day: string; current: ShiftType; driverId: number } | null>(null);
   const [filterStatus, setFilterStatus] = useState("");
   const queryClient = useQueryClient();
+  const hasPermission = useHasPermission();
+  const canAssign = hasPermission("dispatch:assign");
 
   const driversQ  = useQuery({ queryKey: ["workforce-drivers"],  queryFn: workforceApi.drivers,  staleTime: 30_000 });
   const scheduleQ = useQuery({ queryKey: ["workforce-schedule"], queryFn: workforceApi.schedule, staleTime: 30_000 });
@@ -172,16 +175,17 @@ export function WorkforceManagementPage() {
     : drivers;
 
   function handleCellClick(row: AnyRecord, day: string) {
+    if (!canAssign) return;
     setCell({
       driverId: Number(row.driverId),
       driverName: String(row.driverName ?? ""),
       day,
-      current: (String(row[day] ?? "Off")) as ShiftType,
+      current: (String(row[day.toLowerCase()] ?? "Off")) as ShiftType,
     });
   }
 
   function handleSave(shift: ShiftType) {
-    if (cell) {
+    if (cell && canAssign) {
       assign.mutate({ driverId: cell.driverId, day: cell.day, shift });
     }
     setCell(null);
@@ -246,7 +250,7 @@ export function WorkforceManagementPage() {
         <div className="panel overflow-x-auto">
           <div className="min-w-[720px]">
             <div className="p-4 pb-2 flex items-center justify-between">
-              <p className="text-sm font-semibold text-slate-700">{currentWeekLabel()} <span className="text-xs text-slate-400 ml-2">Click any cell to reassign</span></p>
+              <p className="text-sm font-semibold text-slate-700">{currentWeekLabel()} <span className="text-xs text-slate-400 ml-2">{canAssign ? "Click any cell to reassign" : "Read-only schedule"}</span></p>
               <div className="flex gap-2">
                 {(Object.entries(SHIFT_META) as [ShiftType, typeof SHIFT_META[ShiftType]][]).map(([key, meta]) => (
                   <span key={key} className={`text-[10px] px-2 py-0.5 rounded-full ${meta.bg} ${meta.text} font-semibold`}>{meta.label}</span>
@@ -270,7 +274,7 @@ export function WorkforceManagementPage() {
                       <p className="text-[10px] text-slate-400">{String(row.code ?? "")}</p>
                     </td>
                     {DAYS.map((day) => {
-                      const shift = (String(row[day] ?? "Off")) as ShiftType;
+                      const shift = (String(row[day.toLowerCase()] ?? "Off")) as ShiftType;
                       const meta  = SHIFT_META[shift] ?? SHIFT_META["Off"];
                       return (
                         <td key={day} className="px-1 py-1.5 text-center">
@@ -278,7 +282,8 @@ export function WorkforceManagementPage() {
                             type="button"
                             title={`${String(row.driverName)} · ${day}: ${shift}`}
                             onClick={() => handleCellClick(row, day)}
-                            className={`w-full rounded-lg px-1 py-1.5 text-[10px] font-semibold transition-all hover:ring-2 hover:ring-teal-400 ${meta.bg} ${meta.text}`}
+                            disabled={!canAssign || assign.isPending}
+                            className={`w-full rounded-lg px-1 py-1.5 text-[10px] font-semibold transition-all ${canAssign ? "hover:ring-2 hover:ring-teal-400" : "cursor-not-allowed opacity-70"} ${meta.bg} ${meta.text}`}
                           >
                             {meta.label}
                           </button>
@@ -294,6 +299,8 @@ export function WorkforceManagementPage() {
                 )}
               </tbody>
             </table>
+            {!canAssign && <p className="px-4 pb-4 text-xs text-slate-500">Read-only access — dispatch assignment permission is required to change shifts.</p>}
+            {assign.isError && <p role="alert" className="px-4 pb-4 text-xs text-red-600">{assign.error instanceof Error ? assign.error.message : "Shift assignment failed. Please try again."}</p>}
           </div>
         </div>
       )}

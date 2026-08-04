@@ -2,14 +2,22 @@ using Opstrax.Api.Data;
 
 namespace Opstrax.Api.Services;
 
-public sealed class Batch7SchemaService(Database db)
+public sealed class Batch7SchemaService(Database db, IConfiguration? configuration = null)
 {
     public async Task EnsureAsync(CancellationToken ct = default)
     {
         foreach (var col in Columns) await EnsureColumnAsync(col.Table, col.Name, col.Definition, ct);
         foreach (var sql in Tables) await db.ExecuteAsync(sql, ct: ct);
         foreach (var sql in Indexes) { try { await db.ExecuteAsync(sql, ct: ct); } catch { } }
-        foreach (var sql in Seeds) await db.ExecuteAsync(sql, ct: ct);
+        // Global reference/catalog data (no tenant business rows) — always applied.
+        foreach (var sql in ReferenceSeeds) await db.ExecuteAsync(sql, ct: ct);
+        // Fabricated business rows for a REAL tenant (hardcoded company_id/tenant_id=1).
+        // These used to run on EVERY boot, inventing safety events / contracts / invoices /
+        // SLA + cost records that the product then presented as fact. Now they require the
+        // same explicit opt-in as the Batch1-3 seeds (see DemoSeedGate); real tenants get
+        // schema only.
+        if (DemoSeedGate.IsExplicitlyEnabled(configuration))
+            foreach (var sql in DemoSeeds) await db.ExecuteAsync(sql, ct: ct);
     }
 
     private async Task EnsureColumnAsync(string table, string column, string definition, CancellationToken ct)
@@ -229,6 +237,8 @@ public sealed class Batch7SchemaService(Database db)
         // Workforce shift scheduling — one row per driver per week
         @"CREATE TABLE IF NOT EXISTS workforce_schedules (
             id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL REFERENCES companies(id),
+            branch_id BIGINT NULL,
             driver_id BIGINT NOT NULL,
             week_start DATE NOT NULL,
             monday VARCHAR(40) NOT NULL DEFAULT 'Off',
@@ -240,7 +250,7 @@ public sealed class Batch7SchemaService(Database db)
             sunday VARCHAR(40) NOT NULL DEFAULT 'Off',
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMPTZ NULL,
-            UNIQUE (driver_id, week_start)
+            UNIQUE (company_id, driver_id, week_start)
         )",
     ];
 
@@ -263,11 +273,11 @@ public sealed class Batch7SchemaService(Database db)
         "CREATE INDEX IF NOT EXISTS idx_audit_logs_module ON audit_logs(module_key)",
         "CREATE INDEX IF NOT EXISTS idx_audit_logs_severity ON audit_logs(severity)",
         "CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action_name)",
+        "CREATE INDEX IF NOT EXISTS idx_workforce_schedules_tenant_week ON workforce_schedules(company_id, week_start)",
     ];
 
-    private static readonly string[] Seeds =
+    private static readonly string[] ReferenceSeeds =
     [
-        // ── REPORT CATALOG (30 records) ──────────────────────────────────────────────
         @"INSERT INTO report_catalog (report_key,report_name,report_category,description,status) VALUES
           ('fleet-utilization',      'Fleet Utilization Report',           'Fleet Operations', 'Vehicle utilization, idle time, and uptime metrics across the fleet.',                          'Active'),
           ('vehicle-readiness',      'Vehicle Readiness Report',           'Fleet Operations', 'Fleet readiness by status, last inspection, maintenance backlog, and ELD health.',              'Active'),
@@ -302,6 +312,10 @@ public sealed class Batch7SchemaService(Database db)
           ON CONFLICT DO NOTHING",
 
         // ── REPORT RUN HISTORY (20 records) ────────────────────────────────────────
+    ];
+
+    private static readonly string[] DemoSeeds =
+    [
         @"INSERT INTO report_runs (id,tenant_id,report_key,report_name,run_by_name,status,row_count,started_at,completed_at) OVERRIDING SYSTEM VALUE VALUES
           (1,1,'fleet-utilization','Fleet Utilization Report','admin','Completed',18,'2026-05-20 08:00:00','2026-05-20 08:00:45'),
           (2,1,'delayed-jobs','Delayed Jobs Report','admin','Completed',7,'2026-05-20 08:15:00','2026-05-20 08:15:12'),
@@ -604,6 +618,6 @@ public sealed class Batch7SchemaService(Database db)
           (1,1,'executive_action','executive','ELD Malfunction on TRK-104 — FMCSA Compliance Risk','Unresolved ELD malfunction creates FMCSA compliance exposure. Immediate resolution required.','Unresolved ELD malfunction creates FMCSA compliance exposure. Immediate resolution required.',95,93,'{}'::jsonb,'{}'::jsonb,'{}'::jsonb,'Critical','draft',95,'Unresolved ELD malfunction creates FMCSA compliance exposure. Immediate resolution required.','Critical','View Compliance','executive_action'),
           (1,1,'executive_action','executive','Fleet Readiness Below 80% — 4 Vehicles Offline','Fleet readiness at 78.6% vs 90% target. 4 vehicles in maintenance. Dispatch coverage may be impacted.','Fleet readiness at 78.6% vs 90% target. 4 vehicles in maintenance. Dispatch coverage may be impacted.',86,83,'{}'::jsonb,'{}'::jsonb,'{}'::jsonb,'High','draft',86,'Fleet readiness at 78.6% vs 90% target. 4 vehicles in maintenance. Dispatch coverage may be impacted.','High','View Fleet Status','executive_action'),
           (1,1,'executive_action','executive','Cost Savings Opportunity — $1,200/week Route Optimization','Route efficiency analysis identifies $1,200/week savings from 4-lane optimization.','Route efficiency analysis identifies $1,200/week savings from 4-lane optimization.',78,74,'{}'::jsonb,'{}'::jsonb,'{}'::jsonb,'Medium','draft',78,'Route efficiency analysis identifies $1,200/week savings from 4-lane optimization.','Medium','View Route Analysis','executive_action')
-          ON CONFLICT DO NOTHING",
+          ON CONFLICT DO NOTHING"
     ];
 }

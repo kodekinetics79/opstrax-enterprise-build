@@ -8,8 +8,15 @@ namespace Opstrax.Api.Middleware;
 /// </summary>
 public class CsrfMiddleware
 {
-    private const string CSRF_TOKEN_HEADER = "X-CSRF-Token";
-    private const string CSRF_COOKIE_NAME = "__CSRF_Token__";
+    public const string TokenItemKey = "opstrax.csrf.token";
+    public const string TokenHeaderName = "X-CSRF-Token";
+    // v2 supersedes the legacy cookie that was issued without an explicit Path.
+    // Browsers could retain several same-name, path-scoped cookies and send an
+    // arbitrary value for /api/* mutations, making a correct response/header
+    // token fail double-submit validation. A versioned, root-scoped cookie
+    // provides exactly one authoritative browser token across every API route.
+    public const string TokenCookieName = "__CSRF_Token_v2__";
+    private const string LegacyTokenCookieName = "__CSRF_Token__";
     private static readonly string[] SAFE_METHODS = { "GET", "HEAD", "OPTIONS" };
 
     private readonly RequestDelegate _next;
@@ -30,8 +37,12 @@ public class CsrfMiddleware
     public async Task InvokeAsync(HttpContext context)
     {
         var path = context.Request.Path.Value ?? string.Empty;
-        var cookieToken = context.Request.Cookies[CSRF_COOKIE_NAME];
-        var bearerOnly = string.IsNullOrEmpty(cookieToken) && HasBearerToken(context.Request);
+        var cookieToken = context.Request.Cookies[TokenCookieName];
+        var hasLegacyBrowserCookie = !string.IsNullOrEmpty(context.Request.Cookies[LegacyTokenCookieName]);
+        // A browser carrying the legacy cookie must be upgraded to the new
+        // root-scoped cookie. Do not misclassify it as a bearer-only API client,
+        // otherwise a normal authenticated GET would never issue v2 state.
+        var bearerOnly = string.IsNullOrEmpty(cookieToken) && !hasLegacyBrowserCookie && HasBearerToken(context.Request);
         var responseToken = cookieToken;
 
         // Bearer-only clients do not use ambient browser credentials, so CSRF does not
@@ -49,8 +60,9 @@ public class CsrfMiddleware
         {
             responseToken = GenerateToken();
             var isHttps = context.Request.IsHttps;
-            context.Response.Cookies.Append(CSRF_COOKIE_NAME, responseToken, new CookieOptions
+            context.Response.Cookies.Append(TokenCookieName, responseToken, new CookieOptions
             {
+                Path = "/",
                 HttpOnly = false,
                 Secure = isHttps,
                 SameSite = isHttps ? SameSiteMode.None : SameSiteMode.Lax,
@@ -58,12 +70,21 @@ public class CsrfMiddleware
             });
         }
 
+        // A handler cannot read a cookie being created on this response. Publish the
+        // authoritative response token in request-local state so authentication
+        // payloads serialize the exact cookie/header value.
+        if (!string.IsNullOrEmpty(responseToken))
+            context.Items[TokenItemKey] = responseToken;
+
         // Validate cookie-authenticated state-changing requests. Bearer-only clients
         // are intentionally exempt because browsers do not attach Authorization
         // headers cross-origin without the caller explicitly possessing the token.
         if (!SAFE_METHODS.Contains(context.Request.Method) &&
             !bearerOnly &&
             !string.Equals(path, "/api/auth/login", StringComparison.OrdinalIgnoreCase) &&
+            // Second-factor login completion is pre-session like login: no CSRF cookie exists yet,
+            // and it is gated by a signed challenge token + a single-use TOTP code.
+            !string.Equals(path, "/api/auth/mfa/login-verify", StringComparison.OrdinalIgnoreCase) &&
             // Identifier-first SSO discovery is pre-session (no bearer/CSRF cookie
             // yet, same as login) and read-only apart from an audit log entry.
             !string.Equals(path, "/api/auth/sso/discover", StringComparison.OrdinalIgnoreCase) &&
@@ -84,7 +105,7 @@ public class CsrfMiddleware
             !string.Equals(path, "/api/telemetry/gps-ingest", StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(path, "/api/maintenance/fault-codes/ingest", StringComparison.OrdinalIgnoreCase))
         {
-            var headerToken = context.Request.Headers[CSRF_TOKEN_HEADER].ToString();
+            var headerToken = context.Request.Headers[TokenHeaderName].ToString();
 
             if (!IsAllowedOrigin(context.Request) || !TokensMatch(cookieToken, headerToken))
             {
@@ -97,7 +118,7 @@ public class CsrfMiddleware
         // Expose CSRF token as response header
         if (!string.IsNullOrEmpty(responseToken))
         {
-            context.Response.Headers[CSRF_TOKEN_HEADER] = responseToken;
+            context.Response.Headers[TokenHeaderName] = responseToken;
         }
 
         await _next(context);

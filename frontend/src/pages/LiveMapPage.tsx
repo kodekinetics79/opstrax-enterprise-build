@@ -28,6 +28,19 @@ import { LiveMap } from "@/components/LiveMap";
 import { useLiveTelemetry } from "@/hooks/useLiveTelemetry";
 import { AiInsightCard, ErrorState, LoadingState, PageHeader, RiskBadge, StatusBadge, labelize } from "@/components/ui";
 import type { AnyRecord } from "@/types";
+import {
+  classifySource,
+  sourceLabel,
+  categoryBadge,
+  categoryColor,
+  freshnessBucket,
+  bucketFromServerFreshness,
+  freshnessColor,
+  freshnessBucketLabel,
+  readSource,
+  type ProvenanceCategory,
+  type FreshnessBucket,
+} from "@/utils/telemetryProvenance";
 
 const QUICK_FILTERS = ["All", "Speeding", "Device offline", "Camera offline", "Fleet risk"] as const;
 
@@ -164,6 +177,7 @@ export function LiveMapPage() {
   const [search, setSearch] = useState("");
   const [layers, setLayers] = useState<Record<LayerKey, boolean>>({ vehicles: true, geofences: true });
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
+  const [legendOpen, setLegendOpen] = useState(false);
 
   // ── Breadcrumb replay ─────────────────────────────────────────────────────────
   const [replayOpen, setReplayOpen] = useState(false);
@@ -351,6 +365,15 @@ export function LiveMapPage() {
         // Reverse-geocoded street address for the map popup (may be undefined until the
         // reverse-geocode pass has run for this position).
         address: (live as { address?: string }).address,
+        // Provenance & trust — carried from the live fix so markers, roster, popup and
+        // detail drawer can show where a fix came from. All optional; absent ⇒ unknown.
+        source: live.source,
+        provider: live.provider,
+        protocol: live.protocol,
+        confidence: live.confidence,
+        deviceFixTime: live.deviceFixTime,
+        gatewayReceivedAt: live.gatewayReceivedAt,
+        freshness: live.freshness,
       };
     });
   }, [baseEntities, telemetry.positions]);
@@ -652,6 +675,10 @@ export function LiveMapPage() {
                 onRetry={() => void breadcrumbsQ.refetch()}
               />
             ) : null}
+
+            {/* Provenance + freshness key — how markers encode WHERE a fix came from
+                and HOW OLD it is. Hidden while the replay panel owns the bottom. */}
+            {!replayOpen ? <MapLegend open={legendOpen} onToggle={() => setLegendOpen((v) => !v)} /> : null}
           </div>
         </section>
 
@@ -750,7 +777,7 @@ export function LiveMapPage() {
         </div>
       )}
 
-      <VehicleDetailDrawer detail={detail.data} loading={detail.isLoading} onClose={() => { setSelected(null); setFocusId(null); }} />
+      <VehicleDetailDrawer detail={detail.data} entity={selected} loading={detail.isLoading} onClose={() => { setSelected(null); setFocusId(null); }} />
     </div>
   );
 }
@@ -863,6 +890,94 @@ function ReplayPanel({
   );
 }
 
+// ── Map key: provenance + freshness treatments ───────────────────────────────
+const FRESHNESS_KEYS: FreshnessBucket[] = ["live", "delayed", "stale", "offline"];
+const SOURCE_KEYS: { category: ProvenanceCategory; label: string }[] = [
+  { category: "direct", label: "Direct device (ELD / gateway)" },
+  { category: "simulated", label: "Simulated" },
+  { category: "seeded", label: "Seeded / legacy" },
+  { category: "vendor", label: "Vendor API" },
+  { category: "unknown", label: "Unknown source" },
+];
+
+/** Small swatch mirroring a marker's source ring so the key matches the map exactly. */
+function SourceSwatch({ category }: { category: ProvenanceCategory }) {
+  const color = categoryColor(category);
+  const ring: Record<ProvenanceCategory, string> = {
+    direct: "2px solid #14b8a6",
+    simulated: "2px dashed #8b5cf6",
+    seeded: "2px dotted #64748b",
+    vendor: "2px solid #2563eb",
+    unknown: "2px dashed #94a3b8",
+  };
+  return (
+    <span
+      className="inline-block h-3 w-3 shrink-0 rounded-full bg-white"
+      style={{ outline: ring[category], outlineOffset: "1px", boxShadow: `inset 0 0 0 3px ${color}` }}
+    />
+  );
+}
+
+function MapLegend({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+  return (
+    <div className="pointer-events-auto absolute bottom-3 left-3 z-[500] max-w-[240px] sm:bottom-4 sm:left-4">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white/95 px-2.5 py-1.5 text-xs font-semibold text-slate-600 shadow-md backdrop-blur hover:border-slate-300"
+        aria-expanded={open}
+      >
+        <Layers className="h-3.5 w-3.5" /> {open ? "Hide key" : "Map key"}
+      </button>
+      {open ? (
+        <div className="mt-2 rounded-xl border border-slate-200 bg-white/95 p-3 text-[11px] shadow-xl backdrop-blur">
+          <p className="mb-1.5 font-bold uppercase tracking-[0.14em] text-slate-400">Freshness (age of fix)</p>
+          <div className="space-y-1">
+            {FRESHNESS_KEYS.map((b) => (
+              <div key={b} className="flex items-center gap-2">
+                <span className="inline-block h-3 w-3 shrink-0 rounded-full" style={{ background: freshnessColor(b) }} />
+                <span className="text-slate-600">{freshnessBucketLabel(b)}</span>
+                <span className="text-slate-400">
+                  {b === "live" ? "≤ 2m" : b === "delayed" ? "≤ 15m" : b === "stale" ? "> 15m" : "no fix"}
+                </span>
+              </div>
+            ))}
+          </div>
+          <p className="mb-1.5 mt-3 font-bold uppercase tracking-[0.14em] text-slate-400">Data source</p>
+          <div className="space-y-1">
+            {SOURCE_KEYS.map(({ category, label }) => (
+              <div key={category} className="flex items-center gap-2">
+                <SourceSwatch category={category} />
+                <span className="text-slate-600">{label}</span>
+              </div>
+            ))}
+          </div>
+          <p className="mt-2 border-t border-slate-100 pt-2 text-[10px] leading-snug text-slate-400">
+            Fill = freshness, ring = source. Simulated & seeded fixes are ringed so they never read as a real device fix.
+          </p>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** Compact provenance badge (SIM / SEED / VENDOR / DIRECT) for roster rows. */
+function ProvenanceBadge({ source }: { source: string | null | undefined }) {
+  const category = classifySource(source);
+  // Direct fixes are the trusted baseline — don't clutter every row with a badge for them.
+  if (category === "direct") return null;
+  const color = categoryColor(category);
+  return (
+    <span
+      className="inline-flex items-center rounded-full border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.06em]"
+      style={{ color, borderColor: color }}
+      title={sourceLabel(source)}
+    >
+      {categoryBadge(category)}
+    </span>
+  );
+}
+
 type MetricTone = "slate" | "rose" | "amber" | "sky";
 
 function MetricPill({ label, value, tone = "slate" }: { label: string; value: string; tone?: MetricTone }) {
@@ -922,7 +1037,16 @@ function RosterRow({ entity, onClick }: { entity: AnyRecord; onClick: () => void
   const speed = Number(entity.speedMph ?? entity.speed_mph ?? 0);
   const driver = String(entity.driverName ?? entity.driver_name ?? "Unassigned");
   const label = String(entity.label ?? entity.vehicleCode ?? "Vehicle");
-  const fresh = freshnessLabel(entity.secondsSincePing as number | null | undefined);
+  const sspRaw = entity.secondsSincePing ?? entity.seconds_since_ping;
+  const ssp = sspRaw != null && Number.isFinite(Number(sspRaw)) ? Number(sspRaw) : null;
+  const fresh = freshnessLabel(ssp);
+  // Colorize the age by finer freshness bucket — prefer the server's fix-currency label,
+  // fall back to the client receipt-age bucket only when the server sent none.
+  const rosterBucket =
+    bucketFromServerFreshness(entity.freshness as string | null | undefined)
+    ?? (ssp != null ? freshnessBucket(ssp) : null);
+  const freshTone = rosterBucket != null ? freshnessColor(rosterBucket) : undefined;
+  const rawSource = readSource(entity);
   return (
     <button
       type="button"
@@ -932,7 +1056,10 @@ function RosterRow({ entity, onClick }: { entity: AnyRecord; onClick: () => void
       <span className={`mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full ${ROSTER_DOT[bucket]} ${bucket === "Moving" ? "animate-pulse" : ""}`} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-2">
-          <p className="truncate text-sm font-bold text-slate-900">{label}</p>
+          <div className="flex min-w-0 items-center gap-1.5">
+            <p className="truncate text-sm font-bold text-slate-900">{label}</p>
+            <ProvenanceBadge source={rawSource} />
+          </div>
           <RiskBadge risk={entity.riskLevel ?? entity.risk_level} />
         </div>
         <p className="truncate text-xs text-slate-500">{driver}</p>
@@ -943,7 +1070,7 @@ function RosterRow({ entity, onClick }: { entity: AnyRecord; onClick: () => void
             <span className={bucket === "Offline" ? "text-rose-500" : "text-indigo-500"}>{bucket === "Offline" ? "Offline" : "Idle"}</span>
           )}
           <span>·</span>
-          <span>{fresh}</span>
+          <span style={freshTone ? { color: freshTone } : undefined}>{fresh}</span>
           <span>·</span>
           <span className={String(entity.connectivityStatus ?? "").toLowerCase() === "connected" ? "text-teal-600" : String(entity.connectivityStatus ?? "").toLowerCase() === "degraded" ? "text-amber-600" : "text-slate-500"}>
             {String(entity.connectivityStatus ?? "Unknown")}
@@ -1009,7 +1136,76 @@ function TelemetryAlertRow({ alert, onAck, onResolve }: { alert: AnyRecord; onAc
   );
 }
 
-function VehicleDetailDrawer({ detail, loading, onClose }: { detail?: AnyRecord; loading: boolean; onClose: () => void }) {
+// Fix provenance + trust — WHERE a fix came from and HOW OLD it is. Sourced from the
+// live merged entity (the freshest provenance we hold). Fully tolerant of absence: a
+// pre-migration DB / older API simply yields nulls and this renders a clear "not
+// reported" state instead of crashing.
+function ProvenancePanel({ entity }: { entity?: AnyRecord | null }) {
+  if (!entity) return null;
+  const rawSource = readSource(entity);
+  const category = classifySource(rawSource);
+  const provider = String(entity.provider ?? "").trim();
+  const protocol = String(entity.protocol ?? "").trim();
+  const confidenceRaw = entity.confidence;
+  const hasConfidence = confidenceRaw != null && Number.isFinite(Number(confidenceRaw));
+  const deviceFix = String(entity.deviceFixTime ?? entity.device_fix_time ?? "").trim();
+  const gatewayRecv = String(entity.gatewayReceivedAt ?? entity.gateway_received_at ?? "").trim();
+  const sspRaw = entity.secondsSincePing ?? entity.seconds_since_ping;
+  const ssp = sspRaw != null && Number.isFinite(Number(sspRaw)) ? Number(sspRaw) : null;
+  // Authoritative server freshness (age of the actual fix) first; client receipt-age only as fallback.
+  const bucket =
+    bucketFromServerFreshness(entity.freshness as string | null | undefined)
+    ?? (ssp != null ? freshnessBucket(ssp) : null);
+  const color = categoryColor(category);
+
+  // Nothing provenance-related reported at all (pre-migration snapshot).
+  const anyProvenance = rawSource || provider || protocol || hasConfidence || deviceFix || gatewayRecv;
+
+  return (
+    <section className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+      <h3 className="section-title flex items-center gap-2"><Satellite className="h-4 w-4 text-slate-400" />Fix Provenance &amp; Trust</h3>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <span className="inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.06em]" style={{ color, borderColor: color }}>
+          {categoryBadge(category)}
+        </span>
+        <span className="text-sm font-semibold text-slate-800">{sourceLabel(rawSource)}</span>
+        {bucket ? (
+          <span className="inline-flex items-center gap-1.5 text-xs font-semibold" style={{ color: freshnessColor(bucket) }}>
+            <span className="h-2 w-2 rounded-full" style={{ background: freshnessColor(bucket) }} />
+            {freshnessBucketLabel(bucket)}
+          </span>
+        ) : null}
+      </div>
+      {anyProvenance ? (
+        <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+          <ProvRow label="Provider" value={provider || "—"} />
+          <ProvRow label="Protocol" value={protocol || "—"} />
+          <ProvRow label="Confidence" value={hasConfidence ? `${(Number(confidenceRaw) * 100).toFixed(0)}%` : "—"} />
+          <ProvRow label="Age" value={freshnessLabel(ssp)} />
+          <ProvRow label="Device fix time" value={deviceFix ? formatClock(deviceFix) : "—"} />
+          <ProvRow label="Gateway received" value={gatewayRecv ? formatClock(gatewayRecv) : "—"} />
+        </div>
+      ) : (
+        <p className="mt-3 text-xs text-slate-500">
+          Provenance metadata not reported for this fix. It may predate provenance tracking, or the field's telemetry pipeline has not been migrated yet.
+        </p>
+      )}
+      <p className="mt-3 text-[11px] leading-snug text-slate-400">
+        Device fix time is asserted by the device; gateway received is when a trusted forwarder relayed it; age is time since our last receipt.
+      </p>
+    </section>
+  );
+}
+
+function ProvRow({ label, value }: { label: string; value: string }) {
+  return (
+    <p className="text-sm text-slate-600">
+      <span className="text-slate-500">{label}:</span> {value}
+    </p>
+  );
+}
+
+function VehicleDetailDrawer({ detail, entity, loading, onClose }: { detail?: AnyRecord; entity?: AnyRecord | null; loading: boolean; onClose: () => void }) {
   const record = detail?.record as AnyRecord | undefined;
   if (!record && !loading) return null;
   if (!record) return null;
@@ -1028,6 +1224,7 @@ function VehicleDetailDrawer({ detail, loading, onClose }: { detail?: AnyRecord;
           <Mini title="Live Telemetry" record={record} keys={["driverName", "driver_name", "lat", "lng", "speedMph", "speed_mph", "heading", "deviceStatus", "device_status", "cameraStatus", "camera_status", "connectivityStatus", "connectivity_status", "connectivityIssues", "connectivity_issues"]} />
           <Mini title="Health & Diagnostics" record={record} keys={["readinessScore", "readiness_score", "dataQualityScore", "data_quality_score", "riskScore", "risk_score", "odometerMiles", "odometer_miles", "type", "vehicleStatus", "vehicle_status"]} />
         </div>
+        <ProvenancePanel entity={entity} />
         <Grid title="Active Jobs / SLA" rows={(detail?.activeJobs as AnyRecord[]) ?? []} columns={["jobNumber", "status", "slaStatus", "eta", "priority"]} />
         <Grid title="Safety Events" rows={(detail?.safetyEvents as AnyRecord[]) ?? []} columns={["eventNumber", "eventType", "severity", "reviewStatus", "occurredAt"]} />
         <Grid title="Maintenance Watch" rows={(detail?.maintenance as AnyRecord[]) ?? []} columns={["serviceType", "status", "priority", "dueDate", "riskScore"]} />

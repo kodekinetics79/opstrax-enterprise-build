@@ -43,20 +43,20 @@ public class DriverPermissionTests
         Assert.DoesNotContain("driver:self", fm);
     }
 
-    // Driver must have dispatch:view to see own assignments
+    // The Driver role is PORTAL-ONLY and isolated. Every /api/driver/* endpoint (assignments,
+    // DVIR, coaching, HOS, earnings) gates on driver:self, and the DVIR submit needs the narrow
+    // maintenance:create WRITE — nothing else. A driver must NOT carry back-office READ keys, so a
+    // driver token can never pull tenant operational data even by hitting an admin API directly.
     [Fact]
-    public void Driver_Has_DispatchView()
+    public void Driver_Is_Portal_Isolated_No_BackOffice_Reads()
     {
         var perms = EndpointMappings.RolePermissionDefaults["Driver"];
-        Assert.Contains("dispatch:view", perms);
-    }
-
-    // Driver must have maintenance:create to submit DVIR
-    [Fact]
-    public void Driver_Has_MaintenanceCreate()
-    {
-        var perms = EndpointMappings.RolePermissionDefaults["Driver"];
-        Assert.Contains("maintenance:create", perms);
+        Assert.Contains("driver:self", perms);          // the portal gate
+        Assert.Contains("maintenance:create", perms);   // DVIR submit (write only)
+        foreach (var backOfficeRead in new[] { "dispatch:view", "shipments:view", "vehicles:view",
+                                               "drivers:view", "safety:view", "compliance:view",
+                                               "alerts:view", "dashboard:view" })
+            Assert.DoesNotContain(backOfficeRead, perms);
     }
 }
 

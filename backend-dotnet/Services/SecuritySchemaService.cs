@@ -125,6 +125,40 @@ public sealed class SecuritySchemaService(Database db)
             )
             """);
 
+        // Encrypted TOTP secret for tenant-user MFA enrollment (mirrors platform_admins.mfa_secret).
+        // Without this, "require MFA" was a login lockout with no enrollment path (audit P0).
+        await db.ExecuteAsync("ALTER TABLE user_mfa_status ADD COLUMN IF NOT EXISTS mfa_secret TEXT NULL");
+
+        await db.ExecuteAsync("""
+            CREATE TABLE IF NOT EXISTS mfa_login_challenge_consumptions (
+                id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                company_id BIGINT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+                user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                challenge_hash VARCHAR(64) NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL,
+                consumed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                CONSTRAINT ck_mfa_challenge_hash_sha256
+                    CHECK (challenge_hash ~ '^[0-9a-f]{64}$')
+            )
+            """);
+        await db.ExecuteAsync("CREATE UNIQUE INDEX IF NOT EXISTS ux_mfa_challenge_consumptions_hash ON mfa_login_challenge_consumptions (challenge_hash)");
+        await db.ExecuteAsync("CREATE INDEX IF NOT EXISTS idx_mfa_challenge_consumptions_expiry ON mfa_login_challenge_consumptions (expires_at)");
+        await db.ExecuteAsync("CREATE INDEX IF NOT EXISTS idx_mfa_challenge_consumptions_tenant_user ON mfa_login_challenge_consumptions (company_id, user_id)");
+        await db.ExecuteAsync("ALTER TABLE mfa_login_challenge_consumptions ENABLE ROW LEVEL SECURITY");
+        await db.ExecuteAsync("ALTER TABLE mfa_login_challenge_consumptions FORCE ROW LEVEL SECURITY");
+        await db.ExecuteAsync("DROP POLICY IF EXISTS tenant_isolation ON mfa_login_challenge_consumptions");
+        await db.ExecuteAsync("""
+            CREATE POLICY tenant_isolation ON mfa_login_challenge_consumptions FOR ALL
+            USING (company_id = NULLIF(current_setting('app.current_tenant_id', true), '')::bigint)
+            WITH CHECK (company_id = NULLIF(current_setting('app.current_tenant_id', true), '')::bigint)
+            """);
+        await db.ExecuteAsync("DROP POLICY IF EXISTS platform_admin_bypass ON mfa_login_challenge_consumptions");
+        await db.ExecuteAsync("""
+            CREATE POLICY platform_admin_bypass ON mfa_login_challenge_consumptions FOR ALL
+            USING (NULLIF(current_setting('app.platform_admin', true), '') = 'on')
+            WITH CHECK (NULLIF(current_setting('app.platform_admin', true), '') = 'on')
+            """);
+
         await db.ExecuteAsync("""
             CREATE TABLE IF NOT EXISTS security_events (
                 id                  BIGINT       GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -276,6 +310,7 @@ public sealed class SecuritySchemaService(Database db)
         await db.ExecuteAsync("""
             CREATE TABLE IF NOT EXISTS compliance_evidence (
                 id               BIGINT       GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                company_id       BIGINT       NOT NULL REFERENCES companies(id),
                 control_id       VARCHAR(50)  NOT NULL,
                 evidence_type    VARCHAR(100) NOT NULL,
                 source_system    VARCHAR(100) NOT NULL,
@@ -298,6 +333,10 @@ public sealed class SecuritySchemaService(Database db)
             """);
         await db.ExecuteAsync("""
             CREATE INDEX IF NOT EXISTS idx_ce_generated ON compliance_evidence (generated_at)
+            """);
+        await db.ExecuteAsync("""
+            CREATE INDEX IF NOT EXISTS idx_compliance_evidence_company_generated
+            ON compliance_evidence (company_id, generated_at DESC)
             """);
 
         await db.ExecuteAsync("""
@@ -391,6 +430,10 @@ public sealed class SecuritySchemaService(Database db)
         // Safely add security columns to users table (ignore if already exist)
         foreach (var col in new[]
         {
+            // Customer-portal principals bind to exactly one tenant customer.
+            // The committed Stage-21 migration owns production rollout; this
+            // idempotent startup column keeps fresh owner-capable installs whole.
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS customer_id BIGINT NULL",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_login_attempts INT NOT NULL DEFAULT 0",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until TIMESTAMPTZ NULL",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS force_password_change BOOLEAN NOT NULL DEFAULT false",
@@ -399,6 +442,26 @@ public sealed class SecuritySchemaService(Database db)
         {
             try { await db.ExecuteAsync(col); }
             catch { /* column already exists — safe to ignore */ }
+        }
+
+        await db.ExecuteAsync("CREATE INDEX IF NOT EXISTS ix_users_company_customer ON users(company_id, customer_id) WHERE customer_id IS NOT NULL");
+
+        // Declared entity relationships for the IAM tables. NOT VALID skips the
+        // backfill scan (and tolerates any legacy orphan rows) while still
+        // enforcing referential integrity for every new write. Duplicate-add
+        // throws, which the catch treats as already-present.
+        foreach (var fk in new[]
+        {
+            "ALTER TABLE user_mfa_status ADD CONSTRAINT fk_mfa_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE NOT VALID",
+            "ALTER TABLE sso_connections ADD CONSTRAINT fk_sso_company FOREIGN KEY (company_id) REFERENCES companies(id) NOT VALID",
+            "ALTER TABLE access_reviews ADD CONSTRAINT fk_ar_company FOREIGN KEY (company_id) REFERENCES companies(id) NOT VALID",
+            "ALTER TABLE access_review_items ADD CONSTRAINT fk_ari_review FOREIGN KEY (review_id) REFERENCES access_reviews(id) ON DELETE CASCADE NOT VALID",
+            "ALTER TABLE access_review_items ADD CONSTRAINT fk_ari_company FOREIGN KEY (company_id) REFERENCES companies(id) NOT VALID",
+            "ALTER TABLE company_security_settings ADD CONSTRAINT fk_css_company FOREIGN KEY (company_id) REFERENCES companies(id) NOT VALID",
+        })
+        {
+            try { await db.ExecuteAsync(fk); }
+            catch { /* constraint already exists — safe to ignore */ }
         }
 
         // Seed default compliance controls if none exist

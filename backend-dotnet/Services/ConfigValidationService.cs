@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Configuration;
+using Npgsql;
 
 namespace Opstrax.Api.Services;
 
@@ -15,6 +16,9 @@ public sealed class ConfigValidationService(IConfiguration config)
     public ConfigCheckResult Validate()
     {
         var issues = new List<ConfigIssue>();
+        var env = config["ASPNETCORE_ENVIRONMENT"] ?? config["DOTNET_ENVIRONMENT"] ?? config["Environment"] ?? "Unknown";
+        var isProduction = string.Equals(env, "Production", StringComparison.OrdinalIgnoreCase);
+        var tenantRlsEnabled = config.GetValue<bool?>("Rls:EnforceTenantContext") == true;
 
         // JWT signing key
         var jwtKey = config["Jwt:Key"];
@@ -28,40 +32,131 @@ public sealed class ConfigValidationService(IConfiguration config)
             issues.Add(new("jwt_key", "pass",   "JWT signing key present and meets minimum length"));
 
         // Database connection
-        var dbConn = config.GetConnectionString("DefaultConnection")
-            ?? config["Database:ConnectionString"]
-            ?? config["PG_CONNECTION_APP"]
-            ?? config["PG_CONNECTION"]
-            ?? Environment.GetEnvironmentVariable("PG_CONNECTION_APP")
-            ?? Environment.GetEnvironmentVariable("PG_CONNECTION");
+        var explicitAppConn = FirstConfigured(
+            config.GetConnectionString("DefaultConnection"),
+            config["PG_CONNECTION_APP"],
+            Environment.GetEnvironmentVariable("PG_CONNECTION_APP"));
+        var legacyConn = FirstConfigured(config["PG_CONNECTION"], Environment.GetEnvironmentVariable("PG_CONNECTION"));
+        var dbConn = isProduction && tenantRlsEnabled ? explicitAppConn : FirstConfigured(explicitAppConn, legacyConn);
         if (string.IsNullOrWhiteSpace(dbConn))
-            issues.Add(new("database_connection", "fail", "Database connection string is not configured"));
+            issues.Add(new("database_application_connection", "fail",
+                "Application database connection is not configured; set ConnectionStrings:DefaultConnection or PG_CONNECTION_APP"));
         else
-            issues.Add(new("database_connection", "pass", "Database connection string is present"));
+            issues.Add(new("database_application_connection", "pass", "Application database connection is present"));
 
-        // Device HMAC secret (telemetry ingest)
-        var deviceSecret = config["Telemetry:DeviceSecret"] ?? config["DeviceSecret"];
-        if (string.IsNullOrWhiteSpace(deviceSecret))
-            issues.Add(new("device_hmac_secret", "warn", "Telemetry device HMAC secret not configured — device auth will be degraded"));
-        else if (deviceSecret.Length < 32)
-            issues.Add(new("device_hmac_secret", "warn", $"Device HMAC secret is short ({deviceSecret.Length} chars; ≥32 recommended)"));
+        var systemConn = FirstConfigured(
+            config.GetConnectionString("SystemConnection"),
+            config["PG_CONNECTION_SYSTEM"],
+            Environment.GetEnvironmentVariable("PG_CONNECTION_SYSTEM"));
+        if (string.IsNullOrWhiteSpace(systemConn))
+            issues.Add(new("database_system_connection", isProduction && tenantRlsEnabled ? "fail" : "warn",
+                "System database connection is not configured; set ConnectionStrings:SystemConnection or PG_CONNECTION_SYSTEM"));
         else
-            issues.Add(new("device_hmac_secret", "pass", "Device HMAC secret present"));
+            issues.Add(new("database_system_connection", "pass", "System database connection is present"));
 
-        // Vendor/field trackers terminate at a trusted protocol gateway. This separate
-        // secret authenticates that gateway; an IMEI is an identifier, not a credential.
-        var gatewaySecret = config["Telemetry:GatewaySecret"];
-        var gatewayIsProduction = string.Equals(
-            config["ASPNETCORE_ENVIRONMENT"] ?? config["DOTNET_ENVIRONMENT"] ?? config["Environment"],
-            "Production", StringComparison.OrdinalIgnoreCase);
-        if (string.IsNullOrWhiteSpace(gatewaySecret))
-            issues.Add(new("telemetry_gateway_secret", gatewayIsProduction ? "fail" : "warn",
-                "Trusted telemetry gateway secret is not configured — hardware tracker forwarding is unavailable"));
-        else if (gatewaySecret.Length < 32)
-            issues.Add(new("telemetry_gateway_secret", gatewayIsProduction ? "fail" : "warn",
-                "Trusted telemetry gateway secret is too short; minimum 32 characters"));
+        if (!string.IsNullOrWhiteSpace(dbConn) && !string.IsNullOrWhiteSpace(systemConn))
+        {
+            var appUser = ConnectionUsername(dbConn);
+            var systemUser = ConnectionUsername(systemConn);
+            var appPassword = ConnectionPassword(dbConn);
+            var systemPassword = ConnectionPassword(systemConn);
+            if (isProduction && tenantRlsEnabled && !string.Equals(appUser, "opstrax_app", StringComparison.Ordinal))
+                issues.Add(new("database_application_identity", "fail", "Application database connection must declare the exact opstrax_app identity"));
+            else
+                issues.Add(new("database_application_identity", "pass", "Application database identity is separately configured"));
+
+            if (isProduction && tenantRlsEnabled && !string.Equals(systemUser, "opstrax_system", StringComparison.Ordinal))
+                issues.Add(new("database_system_identity", "fail", "System database connection must declare the exact opstrax_system identity"));
+            else
+                issues.Add(new("database_system_identity", "pass", "System database identity is separately configured"));
+
+            if (string.Equals(appUser, systemUser, StringComparison.Ordinal) ||
+                string.Equals(dbConn.Trim(), systemConn.Trim(), StringComparison.Ordinal) ||
+                (!string.IsNullOrEmpty(appPassword) &&
+                 string.Equals(appPassword, systemPassword, StringComparison.Ordinal)))
+                issues.Add(new("database_identity_separation", isProduction && tenantRlsEnabled ? "fail" : "warn",
+                    "Application and system database connections alias an identity or credential"));
+            else
+                issues.Add(new("database_identity_separation", "pass", "Application and system database identities are distinct"));
+        }
+
+        var replicaConn = config.GetConnectionString("ReadReplica")
+            ?? config["PG_CONNECTION_REPLICA"]
+            ?? Environment.GetEnvironmentVariable("PG_CONNECTION_REPLICA");
+        if (!string.IsNullOrWhiteSpace(replicaConn))
+        {
+            var replicaUser = ConnectionUsername(replicaConn);
+            issues.Add(isProduction && tenantRlsEnabled &&
+                       !string.Equals(replicaUser, "opstrax_app", StringComparison.Ordinal)
+                ? new ConfigIssue("database_replica_identity", "fail",
+                    "Read-replica connection must declare the exact opstrax_app identity")
+                : new ConfigIssue("database_replica_identity", "pass",
+                    "Read-replica database identity is restricted to opstrax_app"));
+        }
+
+        var ticketTtl = config.GetValue<int?>("Rls:TenantTicketTtlSeconds") ?? 120;
+        issues.Add(ticketTtl is >= 5 and <= 300
+            ? new ConfigIssue("tenant_ticket_ttl", "pass", "Tenant transaction ticket TTL is within the enforced 5–300 second range")
+            : new ConfigIssue("tenant_ticket_ttl", isProduction && tenantRlsEnabled ? "fail" : "warn",
+                "Rls:TenantTicketTtlSeconds must be between 5 and 300 seconds"));
+
+        var dpCertificate = FirstConfigured(config["DataProtection:CertificateBase64"],
+            config["DATA_PROTECTION_CERTIFICATE_BASE64"]);
+        var dpPassword = FirstConfigured(config["DataProtection:CertificatePassword"],
+            config["DATA_PROTECTION_CERTIFICATE_PASSWORD"]);
+        if (string.IsNullOrWhiteSpace(dpCertificate) || string.IsNullOrWhiteSpace(dpPassword))
+            issues.Add(new("data_protection_key_ring", isProduction ? "fail" : "warn",
+                "Shared Data Protection certificate configuration is incomplete"));
+        else if (dpPassword.Length < 16)
+            issues.Add(new("data_protection_key_ring", isProduction ? "fail" : "warn",
+                "Data Protection certificate password must be at least 16 characters"));
         else
-            issues.Add(new("telemetry_gateway_secret", "pass", "Trusted telemetry gateway secret is present"));
+            issues.Add(new("data_protection_key_ring", "pass",
+                "Shared certificate-encrypted Data Protection key ring is configured"));
+
+        var dpPreviousCertificate = FirstConfigured(config["DataProtection:PreviousCertificateBase64"],
+            config["DATA_PROTECTION_PREVIOUS_CERTIFICATE_BASE64"]);
+        var dpPreviousPassword = FirstConfigured(config["DataProtection:PreviousCertificatePassword"],
+            config["DATA_PROTECTION_PREVIOUS_CERTIFICATE_PASSWORD"]);
+        if (string.IsNullOrWhiteSpace(dpPreviousCertificate) != string.IsNullOrWhiteSpace(dpPreviousPassword))
+            issues.Add(new("data_protection_certificate_rotation", isProduction ? "fail" : "warn",
+                "Previous Data Protection certificate and password must be configured together"));
+        else
+            issues.Add(new("data_protection_certificate_rotation", "pass",
+                string.IsNullOrWhiteSpace(dpPreviousCertificate)
+                    ? "No previous Data Protection certificate is configured"
+                    : "Previous Data Protection certificate is configured for rotation"));
+
+        // Device credentials are unique per device and envelope-encrypted. The old global
+        // Telemetry:DeviceSecret was never consumed by ingest, so validating its presence gave a
+        // false sense of readiness. Validate the key that actually protects credential envelopes.
+        var dataEncryptionKey = FirstConfigured(
+            config["Pii:DataKey"], config["DATA_ENCRYPTION_KEY"],
+            Environment.GetEnvironmentVariable("DATA_ENCRYPTION_KEY"));
+        if (!IsBase64Key32(dataEncryptionKey))
+            issues.Add(new("device_hmac_encryption", isProduction ? "fail" : "warn",
+                "A valid 32-byte DATA_ENCRYPTION_KEY is required for encrypted per-device HMAC credentials"));
+        else
+            issues.Add(new("device_hmac_encryption", "pass",
+                "Per-device HMAC envelope encryption is configured"));
+
+        var allowLegacyDeviceSecrets = config.GetValue(DeviceHmacSecretProtection.LegacyReadSetting, false);
+        if (allowLegacyDeviceSecrets)
+            issues.Add(new("legacy_device_hmac_read", isProduction ? "fail" : "warn",
+                "Legacy plaintext device-secret compatibility is enabled; rotate development devices and disable it"));
+        else
+            issues.Add(new("legacy_device_hmac_read", "pass", "Legacy plaintext device-secret reads are disabled"));
+
+        // Per-gateway encrypted credentials in telemetry_gateways are mandatory. Presence of the
+        // former fleet-wide secret is now a release blocker because a headerless fallback would be
+        // a cross-tenant skeleton key.
+        var legacyGatewaySecret = config["Telemetry:GatewaySecret"];
+        if (!string.IsNullOrWhiteSpace(legacyGatewaySecret))
+            issues.Add(new("legacy_telemetry_gateway_secret", isProduction ? "fail" : "warn",
+                "Remove Telemetry:GatewaySecret; gateway ingest requires a tenant-bound X-Gateway-Id credential"));
+        else
+            issues.Add(new("legacy_telemetry_gateway_secret", "pass",
+                "Legacy fleet-wide telemetry gateway secret is absent"));
 
         // SSE ticket key
         var sseKey = config["Telemetry:SseTicketKey"] ?? config["Sse:TicketKey"] ?? config["SseTicketKey"];
@@ -71,7 +166,6 @@ public sealed class ConfigValidationService(IConfiguration config)
             issues.Add(new("sse_ticket_key", "pass", "SSE ticket key present"));
 
         // Environment mode
-        var env = config["ASPNETCORE_ENVIRONMENT"] ?? config["DOTNET_ENVIRONMENT"] ?? config["Environment"] ?? "Unknown";
         if (string.Equals(env, "Development", StringComparison.OrdinalIgnoreCase))
             issues.Add(new("environment_mode", "warn", $"Environment is '{env}' — ensure production settings override demo/dev values before going live"));
         else if (string.Equals(env, "Production", StringComparison.OrdinalIgnoreCase))
@@ -82,11 +176,8 @@ public sealed class ConfigValidationService(IConfiguration config)
         // Platform superadmin bootstrap credential. PlatformSchemaService falls back to
         // a well-known demo password when the env var is unset — acceptable ONLY for
         // local/dev. In production the env var MUST be set and MUST NOT be the default.
-        var isProduction = string.Equals(env, "Production", StringComparison.OrdinalIgnoreCase);
-
         // Tenant RLS is a production invariant. Missing and explicit false are both
         // treated as disabled so a deployment cannot silently lose its DB backstop.
-        var tenantRlsEnabled = config.GetValue<bool?>("Rls:EnforceTenantContext") == true;
         if (tenantRlsEnabled)
             issues.Add(new("tenant_rls_enforcement", "pass", "Tenant RLS context enforcement is enabled"));
         else
@@ -119,6 +210,28 @@ public sealed class ConfigValidationService(IConfiguration config)
         else
             issues.Add(new("demo_seed_data", "pass", "Demo seed data flags are disabled"));
 
+        var simulatorEnabled = config.GetValue("Telemetry:Simulator:Enabled", false);
+        if (simulatorEnabled)
+            issues.Add(new("telemetry_simulator", isProduction ? "fail" : "warn",
+                "Telemetry simulator is enabled — production must use authenticated device/provider fixes only"));
+        else
+            issues.Add(new("telemetry_simulator", "pass", "Telemetry simulator is disabled"));
+
+        // Retention is a compliance control, not an optional convenience in Production.
+        // Require an explicit true value so a missing environment variable, typo, or
+        // inherited false default cannot leave published policies unenforced.
+        var retentionWorkerSetting = config["RetentionWorker:Enabled"];
+        var retentionWorkerExplicitlyEnabled = bool.TryParse(retentionWorkerSetting, out var retentionWorkerEnabled)
+                                               && retentionWorkerEnabled;
+        if (isProduction && !retentionWorkerExplicitlyEnabled)
+            issues.Add(new("retention_worker", "fail",
+                "RetentionWorker:Enabled must be explicitly true in Production"));
+        else if (retentionWorkerExplicitlyEnabled)
+            issues.Add(new("retention_worker", "pass", "Retention enforcement worker is explicitly enabled"));
+        else
+            issues.Add(new("retention_worker", "warn",
+                "Retention enforcement worker is not explicitly enabled; operational-row policies are not enforced"));
+
         // External email provider
         var smtpHost = config["Email:SmtpHost"] ?? config["Smtp:Host"];
         if (string.IsNullOrWhiteSpace(smtpHost))
@@ -146,6 +259,28 @@ public sealed class ConfigValidationService(IConfiguration config)
         var overallStatus = failCount > 0 ? "invalid" : warnCount > 0 ? "warnings" : "valid";
 
         return new ConfigCheckResult(overallStatus, failCount, warnCount, issues);
+    }
+
+    private static string? ConnectionUsername(string connectionString)
+    {
+        try { return new NpgsqlConnectionStringBuilder(connectionString).Username; }
+        catch { return null; }
+    }
+
+    private static string? FirstConfigured(params string?[] values) =>
+        values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+
+    private static bool IsBase64Key32(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return false;
+        try { return Convert.FromBase64String(value.Trim()).Length == 32; }
+        catch { return false; }
+    }
+
+    private static string? ConnectionPassword(string connectionString)
+    {
+        try { return new NpgsqlConnectionStringBuilder(connectionString).Password; }
+        catch { return null; }
     }
 
     public static void EnsureStartupAllowed(ConfigCheckResult result, bool isProduction)

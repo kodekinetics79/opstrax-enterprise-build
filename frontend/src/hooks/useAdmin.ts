@@ -90,7 +90,7 @@ export function useAccessReviews(enabled = true) {
 }
 
 export function useAccessReview(id: number | null) {
-  return useQuery({ queryKey: ["access-review", id], queryFn: () => adminApi.accessReview(Number(id)), enabled: Number.isFinite(Number(id)) });
+  return useQuery({ queryKey: ["access-review", id], queryFn: () => adminApi.accessReview(Number(id)), enabled: id != null && Number(id) > 0 });
 }
 
 export function useCreateAccessReview() {

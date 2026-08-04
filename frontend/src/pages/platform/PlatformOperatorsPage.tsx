@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { Copy, KeyRound, MailCheck, RefreshCw, ScrollText, ShieldOff, ShieldCheck, Smartphone, UserPlus } from "lucide-react";
 import { PHeader, PCard, PBadge, PButton, PField, PInput, PSelect, PLoading, PError, PEmpty, PDrawer, PConfirm, PCheckbox, PBulkBar, useRowSelection } from "./ui";
 import { platformApi } from "@/services/platformApi";

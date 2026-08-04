@@ -84,9 +84,15 @@ public sealed class TenantIsolationAdversarialTests
             "private static async Task<IResult> GpsTrackerIngest(",
             "internal static bool TryParseTrackerTimestamp(");
 
-        AssertOrdered(ingest, "Telemetry:GatewaySecret", "FROM eld_devices");
+        Assert.DoesNotContain("Telemetry:GatewaySecret", ingest, StringComparison.Ordinal);
+        AssertOrdered(ingest, "X-Gateway-Id", "FROM telemetry_gateways");
+        AssertOrdered(ingest, "FROM telemetry_gateways", "FixedTimeEquals");
         AssertOrdered(ingest, "FixedTimeEquals", "FROM eld_devices");
-        Assert.Contains("GpsGatewayReplayCache.TryAdd", ingest, StringComparison.Ordinal);
+        Assert.Contains("gatewayScopeCompanyId != companyId", ingest, StringComparison.Ordinal);
+        // Replay defense is now the durable, cross-instance guard (TEL-P1-REPLAY-005), not the old
+        // process-local in-memory cache. The reservation is scoped to the resolved device/tenant.
+        Assert.Contains("GpsGatewayReplayGuard.TryReserveDurableAsync", ingest, StringComparison.Ordinal);
+        Assert.Contains("isProduction && replayAvail != GpsGatewayReplayGuard.Availability.Present", ingest, StringComparison.Ordinal);
         Assert.Contains("var companyId = Convert.ToInt64(device[\"companyId\"]);", ingest, StringComparison.Ordinal);
         Assert.Contains("device[\"vehicleId\"]", ingest, StringComparison.Ordinal);
         Assert.DoesNotContain("Str(\"companyId\"", ingest, StringComparison.Ordinal);
@@ -123,13 +129,21 @@ public sealed class TenantIsolationAdversarialTests
     public void ComplianceHosGeofenceAndProofReads_UseAuthenticatedTenantPredicates()
     {
         var source = EndpointSource();
+        var hosSource = ReadRepoFile("backend-dotnet", "Controllers", "DvirHosEndpoints.cs");
+        var proof = Block(source,
+            "private static async Task<IResult> GetJobProof(",
+            "private static async Task<IResult> JobsImportPreview(");
 
         Assert.Contains("WHERE cv.company_id=@cid", source, StringComparison.Ordinal);
         Assert.Contains("WHERE cap.company_id=@cid", source, StringComparison.Ordinal);
-        Assert.Contains("WHERE hc.company_id=@cid", source, StringComparison.Ordinal);
-        Assert.Contains("WHERE hl.driver_id=@id AND hl.company_id=@cid", source, StringComparison.Ordinal);
-        Assert.Contains("JOIN geofences g ON g.id=ge.geofence_id AND g.company_id=@cid", source, StringComparison.Ordinal);
-        Assert.Contains("JOIN jobs j ON j.id=pod.job_id AND j.company_id=@cid", source, StringComparison.Ordinal);
+        Assert.Contains("WHERE hc.company_id=@cid AND (@branchId::bigint IS NULL OR hc.branch_id=@branchId)", hosSource, StringComparison.Ordinal);
+        Assert.Contains("WHERE hl.driver_id=@id AND hl.company_id=@cid AND hl.deleted_at IS NULL", hosSource, StringComparison.Ordinal);
+        Assert.Contains("AND (@branchId::bigint IS NULL OR hl.branch_id=@branchId)", hosSource, StringComparison.Ordinal);
+        Assert.Contains("JOIN geofences g ON g.id=ge.geofence_id AND g.company_id=ge.company_id", source, StringComparison.Ordinal);
+        Assert.Contains("WHERE ge.company_id=@cid AND ge.geofence_id=@id", source, StringComparison.Ordinal);
+        AssertOrdered(proof, "JobInAuthorizedScope", "FROM proof_of_delivery");
+        Assert.Contains("company_id=@companyId AND job_id=@id", proof, StringComparison.Ordinal);
+        Assert.Contains("AND branch_id=@branchId", source, StringComparison.Ordinal);
         Assert.Contains("WHERE tenant_id=@cid LIMIT 1", source, StringComparison.Ordinal);
         Assert.Contains("WHERE user_id=@uid LIMIT 1", source, StringComparison.Ordinal);
     }

@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- The shared contract surface is the source of truth for every downstream
+         adapter, gateway and test project. It has no external dependencies on
+         purpose: contracts must never drag transport, ORM or vendor SDKs into a
+         consumer's dependency graph. -->
+  </PropertyGroup>
+
+</Project>

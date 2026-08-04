@@ -15,8 +15,7 @@ namespace Opstrax.Tests;
 //   - ZERO rows remain in every table carrying its company_id/tenant_id.
 public class TenantOffboardingPostgresTests
 {
-    private const string LocalConnectionString =
-        "Host=127.0.0.1;Port=5433;Database=opstrax_local;Username=zayra;Password=zayra";
+    private static readonly string LocalConnectionString = TestDb.ConnectionString;
 
     [Fact]
     public async Task DeleteTenant_Removes_Every_Row_For_A_Real_Tenant()
@@ -32,6 +31,9 @@ public class TenantOffboardingPostgresTests
         Assert.True(await CountAsync(db, "driver_documents", "company_id", companyId) >= 1);
         Assert.True(await CountAsync(db, "user_sessions", "company_id", companyId) >= 1);
         Assert.True(await CountAsync(db, "customer_addresses", "company_id", companyId) >= 1);
+        Assert.Equal(1, await CountAsync(db, "hos_logs", "company_id", companyId));
+        Assert.Equal(1, await CountAsync(db, "hos_certifications", "company_id", companyId));
+        Assert.Equal(1, await CountAsync(db, "detention_evidence", "company_id", companyId));
 
         var result = await svc.DeleteTenantAsync(companyId);
 
@@ -97,12 +99,57 @@ public class TenantOffboardingPostgresTests
             c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@dc", $"DRV-{code}"); });
 
         await db.ExecuteAsync(
+            @"INSERT INTO hos_logs
+                (company_id,driver_id,log_date,driving_hours,on_duty_hours,cycle_hours_left,status,is_certified)
+              VALUES(@cid,@did,CURRENT_DATE,1,1,69,'Driving',TRUE);
+              INSERT INTO hos_certifications
+                (company_id,driver_id,log_date,attestation_text,attestation_hash,certified_by,source_revision,source_snapshot)
+              VALUES(@cid,@did,CURRENT_DATE,'Offboarding immutable-evidence test',repeat('a',64),@uid,repeat('b',64),'[]'::jsonb);",
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid", companyId);
+                c.Parameters.AddWithValue("@did", driverId);
+                c.Parameters.AddWithValue("@uid", userId);
+            });
+
+        await db.ExecuteAsync(
             "INSERT INTO driver_documents (company_id, driver_id, document_type, document_name, status) VALUES (@cid, @did, 'License', 'CDL', 'Valid')",
             c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@did", driverId); });
 
         var vehicleId = await db.InsertAsync(
             "INSERT INTO vehicles (company_id, vehicle_code, type, status) VALUES (@cid, @vc, 'Truck', 'Active') RETURNING id",
             c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@vc", $"VEH-{code}"); });
+
+        var dwellId = await db.InsertAsync(
+            @"INSERT INTO detention_dwells(company_id,geofence_id,vehicle_id,entry_event_id,entered_at)
+              VALUES(@cid,1,@vid,@entry,NOW()) RETURNING id",
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid", companyId);
+                c.Parameters.AddWithValue("@vid", vehicleId);
+                c.Parameters.AddWithValue("@entry", companyId);
+            });
+        await db.ExecuteAsync(
+            @"INSERT INTO detention_evidence
+                (company_id,dwell_id,evidence_canonical,evidence_json,evidence_sha256)
+              VALUES(@cid,@dwell,'offboarding immutable-evidence test','{}'::jsonb,repeat('c',64))",
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid", companyId);
+                c.Parameters.AddWithValue("@dwell", dwellId);
+            });
+
+        // Real dispatch state is mutually linked. This nullable FK cycle must not make
+        // a schema-driven tenant reset impossible or force a partial deletion.
+        await db.ExecuteAsync(
+            @"UPDATE drivers SET assigned_vehicle_id=@vid WHERE id=@did AND company_id=@cid;
+              UPDATE vehicles SET assigned_driver_id=@did WHERE id=@vid AND company_id=@cid;",
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid", companyId);
+                c.Parameters.AddWithValue("@did", driverId);
+                c.Parameters.AddWithValue("@vid", vehicleId);
+            });
 
         await db.ExecuteAsync(
             "INSERT INTO vehicle_documents (company_id, vehicle_id, document_type, document_name, status) VALUES (@cid, @vid, 'Registration', 'Reg', 'Valid')",
@@ -133,6 +180,7 @@ public class TenantOffboardingPostgresTests
                 ON t.table_name = c.table_name AND t.table_schema = c.table_schema
               WHERE c.table_schema='public' AND t.table_type='BASE TABLE'
                 AND c.column_name IN ('company_id','tenant_id')
+                AND c.data_type='bigint'
                 AND c.table_name <> 'companies'");
         var residual = new List<string>();
         foreach (var p in pairs)
@@ -157,6 +205,7 @@ public class TenantOffboardingPostgresTests
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["ConnectionStrings:DefaultConnection"] = LocalConnectionString,
+                ["ConnectionStrings:SystemConnection"] = TestDb.SystemConnectionString,
             })
             .Build();
         return new Database(config);

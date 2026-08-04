@@ -20,6 +20,7 @@ import { SaudiAddressFields } from './SaudiAddressFields';
 
 interface ShipmentLifecycleDrawerProps {
   shipment: FleetShipment;
+  canManage: boolean;
   onClose: () => void;
 }
 
@@ -73,13 +74,12 @@ function toDateTimeString(value: string) {
   }).format(date);
 }
 
-export function ShipmentLifecycleDrawer({ shipment, onClose }: ShipmentLifecycleDrawerProps) {
+export function ShipmentLifecycleDrawer({ shipment, canManage, onClose }: ShipmentLifecycleDrawerProps) {
   const [stops, setStops] = useState<ShipmentStop[]>([]);
   const [pods, setPods] = useState<ProofOfDelivery[]>([]);
   const [events, setEvents] = useState<ShipmentEvent[]>([]);
   const [links, setLinks] = useState<CustomerTrackingLink[]>([]);
   const [tasks, setTasks] = useState<DriverTask[]>([]);
-  const [carriers, setCarriers] = useState<Carrier[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [stopForm, setStopForm] = useState(blankStop);
@@ -88,12 +88,19 @@ export function ShipmentLifecycleDrawer({ shipment, onClose }: ShipmentLifecycle
   const [trackingLink, setTrackingLink] = useState<CustomerTrackingLink | null>(null);
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState('');
-  const [carrierId, setCarrierId] = useState('');
-  const [quotedAmount, setQuotedAmount] = useState('');
-  const [agreedAmount, setAgreedAmount] = useState('');
+  const [carriers, setCarriers] = useState<Carrier[]>([]);
+  const [carrierId, setCarrierId] = useState(shipment.carrierId ?? '');
+  const [quotedAmount, setQuotedAmount] = useState(shipment.carrierQuotedAmount?.toString() ?? '');
+  const [agreedAmount, setAgreedAmount] = useState(shipment.carrierAgreedAmount?.toString() ?? '');
+  const [carrierNotes, setCarrierNotes] = useState(shipment.carrierAssignmentNotes ?? '');
+  const [assignedCarrierName, setAssignedCarrierName] = useState(shipment.carrierName ?? '');
+  const [error, setError] = useState<string | null>(null);
+
+  const reportError = (err: unknown, fallback: string) => setError(notifyApiError(err, fallback));
 
   const load = async () => {
     setLoading(true);
+    setError(null);
     try {
       const [stopRes, podRes, eventRes, linkRes, taskRes, carrierRes] = await Promise.all([
         fleetLifecycleApi.getStops(shipment.id),
@@ -101,15 +108,15 @@ export function ShipmentLifecycleDrawer({ shipment, onClose }: ShipmentLifecycle
         fleetLifecycleApi.getShipmentEvents(shipment.id),
         fleetLifecycleApi.getTrackingLinks(shipment.id),
         fleetLifecycleApi.getDriverTasks({ driverName: shipment.driverName || undefined }),
-        fleetCommercialApi.carriers().catch(() => ({ items: [] as Carrier[] })),
+        fleetCommercialApi.carriers(),
       ]);
 
       setStops(stopRes.items);
       setPods(podRes.items);
       setTasks(taskRes.items.filter((task) => task.shipmentId === shipment.id));
-      setCarriers(carrierRes.items);
       setEvents(eventRes.items);
       setLinks(linkRes.items);
+      setCarriers(carrierRes.items);
       const latest = podRes.items[0];
       if (latest) {
         setPodForm({
@@ -124,33 +131,47 @@ export function ShipmentLifecycleDrawer({ shipment, onClose }: ShipmentLifecycle
           capturedLatitude: latest.capturedLatitude?.toString() ?? '',
           capturedLongitude: latest.capturedLongitude?.toString() ?? '',
         });
-      } else if (stopRes.items[0]) {
-        setPodForm((current) => ({ ...current, stopId: stopRes.items[0].id }));
+      } else {
+        const firstDelivery = stopRes.items.find((stop) => stop.stopType === 'Delivery');
+        if (firstDelivery) setPodForm((current) => ({ ...current, stopId: firstDelivery.id }));
       }
       setStopForm((current) => ({ ...current, sequenceNo: (stopRes.items.length ? Math.max(...stopRes.items.map((item) => item.sequenceNo)) : 0) + 1 }));
       setStopForm((current) => ({
         ...current,
         plannedArrivalAt: current.plannedArrivalAt || toLocalDateTime(new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()),
       }));
-      setTrackingLink(linkRes.items.find((link) => !link.isRevoked) ?? null);
-      if (!carrierId && shipment.carrierName) {
-        const matched = carrierRes.items.find((carrier) => carrier.name === shipment.carrierName);
-        if (matched) setCarrierId(matched.id);
-      }
     } catch (err) {
-      notifyApiError(err, 'Unable to load shipment lifecycle.');
+      reportError(err, 'Unable to load shipment lifecycle.');
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
+    // A create-time bearer secret belongs only to the shipment for which it was
+    // issued; never carry it across when the drawer switches shipments.
+    setTrackingLink(null);
+    setCarrierId(shipment.carrierId ?? '');
+    setQuotedAmount(shipment.carrierQuotedAmount?.toString() ?? '');
+    setAgreedAmount(shipment.carrierAgreedAmount?.toString() ?? '');
+    setCarrierNotes(shipment.carrierAssignmentNotes ?? '');
+    setAssignedCarrierName(shipment.carrierName ?? '');
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shipment.id]);
 
-  const latestPod = pods[0] ?? null;
-  const carrierName = carriers.find((carrier) => carrier.id === carrierId)?.name ?? shipment.carrierName ?? 'Unassigned';
+  const selectedPod = pods.find((pod) => String(pod.stopId) === String(podForm.stopId)) ?? null;
+  const selectPodStop = (stopId: string) => {
+    const pod = pods.find((item) => String(item.stopId) === stopId);
+    setPodForm(pod ? {
+      stopId: pod.stopId,
+      recipientName: pod.recipientName ?? '', recipientPhone: pod.recipientPhone ?? '',
+      signatureUrl: pod.signatureUrl ?? '', photoUrl: pod.photoUrl ?? '', documentUrl: pod.documentUrl ?? '',
+      notes: pod.notes ?? '', deliveryCondition: pod.deliveryCondition ?? 'Good',
+      capturedLatitude: pod.capturedLatitude?.toString() ?? '', capturedLongitude: pod.capturedLongitude?.toString() ?? '',
+    } : { ...blankPod, stopId });
+  };
+  const carrierName = assignedCarrierName || shipment.carrierName || 'Unassigned';
   const visibleEvents = useMemo(() => events.slice(0, 12), [events]);
   const completedStops = stops.filter((stop) => stop.status === 'Completed').length;
   const verifiedPods = pods.filter((pod) => pod.status === 'Verified').length;
@@ -186,7 +207,7 @@ export function ShipmentLifecycleDrawer({ shipment, onClose }: ShipmentLifecycle
       setStopForm((current) => ({ ...blankStop, sequenceNo: current.sequenceNo + 1, country: 'Saudi Arabia' }));
       await load();
     } catch (err) {
-      notifyApiError(err, 'Unable to create stop.');
+      reportError(err, 'Unable to create stop.');
     } finally {
       setBusy(null);
     }
@@ -202,7 +223,7 @@ export function ShipmentLifecycleDrawer({ shipment, onClose }: ShipmentLifecycle
       setNoteDraft('');
       await load();
     } catch (err) {
-      notifyApiError(err, `Unable to ${action} stop.`);
+      reportError(err, `Unable to ${action} stop.`);
     } finally {
       setBusy(null);
     }
@@ -224,17 +245,21 @@ export function ShipmentLifecycleDrawer({ shipment, onClose }: ShipmentLifecycle
         capturedLatitude: podForm.capturedLatitude ? Number(podForm.capturedLatitude) : undefined,
         capturedLongitude: podForm.capturedLongitude ? Number(podForm.capturedLongitude) : undefined,
       };
-      const created = latestPod?.id
-        ? await fleetLifecycleApi.updatePod(shipment.id, latestPod.id, payload)
-        : await fleetLifecycleApi.createPod(shipment.id, payload);
-      let next = created;
-      if (submit) next = await fleetLifecycleApi.submitPod(shipment.id, created.id);
-      if (verify) next = await fleetLifecycleApi.verifyPod(shipment.id, created.id);
-      if (reject) next = await fleetLifecycleApi.rejectPod(shipment.id, created.id, { notes: podForm.notes });
+      let next: ProofOfDelivery;
+      if (verify && selectedPod) {
+        next = await fleetLifecycleApi.verifyPod(shipment.id, selectedPod.id);
+      } else if (reject && selectedPod) {
+        next = await fleetLifecycleApi.rejectPod(shipment.id, selectedPod.id, { notes: podForm.notes });
+      } else {
+        const created = selectedPod?.id
+          ? await fleetLifecycleApi.updatePod(shipment.id, selectedPod.id, payload)
+          : await fleetLifecycleApi.createPod(shipment.id, payload);
+        next = submit ? await fleetLifecycleApi.submitPod(shipment.id, created.id) : created;
+      }
       setPods((current) => [next, ...current.filter((pod) => pod.id !== next.id)]);
       await load();
     } catch (err) {
-      notifyApiError(err, 'Unable to save POD.');
+      reportError(err, 'Unable to save POD.');
     } finally {
       setBusy(null);
     }
@@ -250,31 +275,14 @@ export function ShipmentLifecycleDrawer({ shipment, onClose }: ShipmentLifecycle
       setLinks((current) => [created, ...current.filter((link) => link.id !== created.id)]);
       await load();
     } catch (err) {
-      notifyApiError(err, 'Unable to create tracking link.');
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const handleAssignCarrier = async () => {
-    if (!carrierId) return;
-    setBusy('assign-carrier');
-    try {
-      await fleetCommercialApi.assignShipmentCarrier(shipment.id, {
-        carrierId,
-        quotedAmount: quotedAmount ? Number(quotedAmount) : undefined,
-        agreedAmount: agreedAmount ? Number(agreedAmount) : undefined,
-        notes: 'Assigned from the shipment lifecycle drawer.',
-      });
-      await load();
-    } catch (err) {
-      notifyApiError(err, 'Unable to assign carrier.');
+      reportError(err, 'Unable to create tracking link.');
     } finally {
       setBusy(null);
     }
   };
 
   const handleCopyTracking = async (link: CustomerTrackingLink) => {
+    if (!link.token) return;
     const url = `${window.location.origin}/track/${link.token}`;
     await navigator.clipboard.writeText(url);
     setCopiedToken(link.token);
@@ -287,7 +295,26 @@ export function ShipmentLifecycleDrawer({ shipment, onClose }: ShipmentLifecycle
       await fleetLifecycleApi.markInvoiceReady(shipment.id, { notes: 'Reviewed from the shipment lifecycle drawer.' });
       await load();
     } catch (err) {
-      notifyApiError(err, 'Unable to mark shipment invoice-ready.');
+      reportError(err, 'Unable to mark shipment invoice-ready.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleAssignCarrier = async () => {
+    if (!carrierId) return;
+    setBusy('assign-carrier');
+    try {
+      await fleetCommercialApi.assignShipmentCarrier(shipment.id, {
+        carrierId: Number(carrierId),
+        quotedAmount: quotedAmount ? Number(quotedAmount) : undefined,
+        agreedAmount: agreedAmount ? Number(agreedAmount) : undefined,
+        notes: carrierNotes,
+      });
+      setAssignedCarrierName(carriers.find((carrier) => carrier.id === carrierId)?.name ?? 'Assigned carrier');
+      await load();
+    } catch (err) {
+      reportError(err, 'Unable to assign carrier.');
     } finally {
       setBusy(null);
     }
@@ -306,7 +333,7 @@ export function ShipmentLifecycleDrawer({ shipment, onClose }: ShipmentLifecycle
               <p className="text-sm text-slate-500 dark:text-slate-400">{shipment.customerName} · {shipment.origin} to {shipment.destination}</p>
             </div>
             <div className="flex items-center gap-2">
-              <button type="button" onClick={handleMarkInvoiceReady} disabled={busy === 'invoice-ready'} className="rounded-full border border-emerald-200/80 bg-emerald-50 px-4 py-2 text-[11px] font-bold uppercase tracking-[0.18em] text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-60">
+              <button type="button" onClick={handleMarkInvoiceReady} disabled={!canManage || busy === 'invoice-ready'} title={canManage ? undefined : 'Requires fleet manage permission'} className="rounded-full border border-emerald-200/80 bg-emerald-50 px-4 py-2 text-[11px] font-bold uppercase tracking-[0.18em] text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-60">
                 {busy === 'invoice-ready' ? 'Marking...' : 'Mark invoice-ready'}
               </button>
               <button type="button" onClick={onClose} className="rounded-full border border-slate-200/80 bg-white/90 p-2 text-slate-500 transition hover:text-slate-900 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-300">
@@ -314,6 +341,11 @@ export function ShipmentLifecycleDrawer({ shipment, onClose }: ShipmentLifecycle
               </button>
             </div>
           </div>
+          {error && (
+            <div role="alert" className="relative z-10 mx-4 mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-800 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-100">
+              {error}
+            </div>
+          )}
 
           <div className="relative z-10 grid flex-1 gap-4 overflow-hidden p-4 lg:grid-cols-[1.15fr_0.85fr]">
             <div className="flex min-h-0 flex-col gap-4 overflow-y-auto pr-1">
@@ -370,11 +402,11 @@ export function ShipmentLifecycleDrawer({ shipment, onClose }: ShipmentLifecycle
                             </span>
                           </div>
                           <div className="mt-3 flex flex-wrap gap-2">
-                            <button type="button" onClick={() => handleStopAction(stop.id, 'arrive')} disabled={busy === `arrive-${stop.id}`} className="inline-flex items-center gap-2 rounded-full bg-slate-950 px-3 py-2 text-[11px] font-bold text-white disabled:opacity-60 dark:bg-white dark:text-slate-950">
+                            <button type="button" onClick={() => handleStopAction(stop.id, 'arrive')} disabled={!canManage || busy === `arrive-${stop.id}`} className="inline-flex items-center gap-2 rounded-full bg-slate-950 px-3 py-2 text-[11px] font-bold text-white disabled:opacity-60 dark:bg-white dark:text-slate-950">
                               <MapPinned className="h-4 w-4" />
                               Arrive
                             </button>
-                            <button type="button" onClick={() => handleStopAction(stop.id, 'complete')} disabled={busy === `complete-${stop.id}`} className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] font-bold text-emerald-700 disabled:opacity-60">
+                            <button type="button" onClick={() => handleStopAction(stop.id, 'complete')} disabled={!canManage || busy === `complete-${stop.id}`} className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] font-bold text-emerald-700 disabled:opacity-60">
                               <CheckCircle2 className="h-4 w-4" />
                               Complete
                             </button>
@@ -400,9 +432,9 @@ export function ShipmentLifecycleDrawer({ shipment, onClose }: ShipmentLifecycle
                     <div className="mt-4 space-y-3">
                       <label className="space-y-1">
                         <span className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-400">Stop</span>
-                        <select className="w-full rounded-2xl border border-slate-200/80 bg-white/85 px-3.5 py-3 text-sm text-slate-900 outline-none focus:border-cyan-400 dark:border-white/10 dark:bg-white/[0.04] dark:text-white" value={podForm.stopId} onChange={(e) => setPodForm((current) => ({ ...current, stopId: e.target.value }))}>
+                        <select className="w-full rounded-2xl border border-slate-200/80 bg-white/85 px-3.5 py-3 text-sm text-slate-900 outline-none focus:border-cyan-400 dark:border-white/10 dark:bg-white/[0.04] dark:text-white" value={podForm.stopId} onChange={(e) => selectPodStop(e.target.value)}>
                           <option value="">Select stop</option>
-                          {stops.map((stop) => <option key={stop.id} value={stop.id}>{stop.sequenceNo} · {stop.locationName}</option>)}
+                          {stops.filter((stop) => stop.stopType === 'Delivery').map((stop) => <option key={stop.id} value={stop.id}>{stop.sequenceNo} · {stop.locationName}</option>)}
                         </select>
                       </label>
                       <div className="grid gap-3 md:grid-cols-2">
@@ -415,9 +447,8 @@ export function ShipmentLifecycleDrawer({ shipment, onClose }: ShipmentLifecycle
                           <select className="w-full rounded-2xl border border-slate-200/80 bg-white/85 px-3.5 py-3 text-sm outline-none focus:border-cyan-400 dark:border-white/10 dark:bg-white/[0.04] dark:text-white" value={podForm.deliveryCondition} onChange={(e) => setPodForm((current) => ({ ...current, deliveryCondition: e.target.value }))}>
                             <option>Good</option>
                             <option>Damaged</option>
-                            <option>Short</option>
+                            <option>Partial</option>
                             <option>Rejected</option>
-                            <option>Other</option>
                           </select>
                         </label>
                       </div>
@@ -436,19 +467,19 @@ export function ShipmentLifecycleDrawer({ shipment, onClose }: ShipmentLifecycle
                         <textarea className="min-h-[88px] w-full rounded-2xl border border-slate-200/80 bg-white/85 px-3.5 py-3 text-sm outline-none focus:border-cyan-400 dark:border-white/10 dark:bg-white/[0.04] dark:text-white" value={podForm.notes} onChange={(e) => setPodForm((current) => ({ ...current, notes: e.target.value }))} placeholder="Optional POD notes" />
                       </label>
                       <div className="flex flex-wrap gap-2">
-                        <button type="button" onClick={() => handlePodSave(false, false, false)} disabled={busy === 'save-pod'} className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-cyan-600 via-sky-500 to-emerald-400 px-4 py-2.5 text-[11px] font-bold text-white shadow-[0_16px_30px_rgba(14,165,233,0.24)] disabled:opacity-60">
+                        <button type="button" onClick={() => handlePodSave(false, false, false)} disabled={!canManage || busy === 'save-pod' || !podForm.stopId || (selectedPod !== null && !['Draft', 'Rejected'].includes(selectedPod.status))} className="inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-cyan-600 via-sky-500 to-emerald-400 px-4 py-2.5 text-[11px] font-bold text-white shadow-[0_16px_30px_rgba(14,165,233,0.24)] disabled:opacity-60">
                           <ClipboardList className="h-4 w-4" />
-                          {latestPod ? 'Update POD' : 'Create POD'}
+                          {selectedPod ? 'Update POD' : 'Create POD'}
                         </button>
-                        <button type="button" onClick={() => handlePodSave(true, false, false)} disabled={busy === 'submit-pod'} className="inline-flex items-center gap-2 rounded-full border border-slate-200/80 bg-white px-4 py-2.5 text-[11px] font-bold text-slate-700 disabled:opacity-60 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-200">
+                        <button type="button" onClick={() => handlePodSave(true, false, false)} disabled={!canManage || busy === 'submit-pod' || !podForm.stopId || (selectedPod !== null && !['Draft', 'Rejected'].includes(selectedPod.status))} className="inline-flex items-center gap-2 rounded-full border border-slate-200/80 bg-white px-4 py-2.5 text-[11px] font-bold text-slate-700 disabled:opacity-60 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-200">
                           <ArrowRight className="h-4 w-4" />
                           Submit
                         </button>
-                        <button type="button" onClick={() => handlePodSave(false, true, false)} disabled={busy === 'verify-pod'} className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-[11px] font-bold text-emerald-700 disabled:opacity-60">
+                        <button type="button" onClick={() => handlePodSave(false, true, false)} disabled={!canManage || busy === 'verify-pod' || selectedPod?.status !== 'Submitted'} className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-[11px] font-bold text-emerald-700 disabled:opacity-60">
                           <ShieldCheck className="h-4 w-4" />
                           Verify
                         </button>
-                        <button type="button" onClick={() => handlePodSave(false, false, true)} disabled={busy === 'reject-pod'} className="inline-flex items-center gap-2 rounded-full border border-rose-200 bg-rose-50 px-4 py-2.5 text-[11px] font-bold text-rose-700 disabled:opacity-60">
+                        <button type="button" onClick={() => handlePodSave(false, false, true)} disabled={!canManage || busy === 'reject-pod' || selectedPod?.status !== 'Submitted' || !podForm.notes.trim()} className="inline-flex items-center gap-2 rounded-full border border-rose-200 bg-rose-50 px-4 py-2.5 text-[11px] font-bold text-rose-700 disabled:opacity-60">
                           <X className="h-4 w-4" />
                           Reject
                         </button>
@@ -471,30 +502,23 @@ export function ShipmentLifecycleDrawer({ shipment, onClose }: ShipmentLifecycle
                   <div className="mt-4 flex items-center gap-2">
                     <input className="w-24 rounded-2xl border border-slate-200/80 bg-white/85 px-3 py-2.5 text-sm outline-none dark:border-white/10 dark:bg-white/[0.04] dark:text-white" value={trackingDays} onChange={(e) => setTrackingDays(e.target.value)} />
                     <span className="text-sm text-slate-500">days before expiry</span>
-                    <button type="button" onClick={handleCreateTrackingLink} disabled={busy === 'tracking-link'} className="ml-auto rounded-full bg-slate-950 px-4 py-2.5 text-[11px] font-bold uppercase tracking-[0.16em] text-white disabled:opacity-60 dark:bg-white dark:text-slate-950">
+                    <button type="button" onClick={handleCreateTrackingLink} disabled={!canManage || busy === 'tracking-link'} className="ml-auto rounded-full bg-slate-950 px-4 py-2.5 text-[11px] font-bold uppercase tracking-[0.16em] text-white disabled:opacity-60 dark:bg-white dark:text-slate-950">
                       {busy === 'tracking-link' ? 'Creating...' : 'Create link'}
                     </button>
                   </div>
 
                   <div className="mt-4 space-y-2">
                     {links.map((link) => {
-                      const href = `${typeof window !== 'undefined' ? window.location.origin : ''}/track/${link.token}`;
                       return (
                         <div key={link.id} className="rounded-[20px] border border-slate-200/70 bg-slate-50/80 p-3 dark:border-white/10 dark:bg-white/[0.03]">
                           <div className="flex items-center justify-between gap-3">
                             <div className="min-w-0">
-                              <p className="truncate text-[12px] font-bold text-slate-900 dark:text-white">{link.token}</p>
+                              <p className="truncate text-[12px] font-bold text-slate-900 dark:text-white">Tracking secret hidden after creation</p>
                               <p className="text-[11px] text-slate-500 dark:text-slate-400">{link.isRevoked ? 'Revoked' : `Expires ${toDateTimeString(link.expiresAtUtc)}`}</p>
                             </div>
                             <div className="flex items-center gap-2">
-                              <button type="button" onClick={() => handleCopyTracking(link)} className="rounded-full border border-slate-200/80 bg-white px-3 py-2 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-700 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-200">
-                                {copiedToken === link.token ? 'Copied' : 'Copy'}
-                              </button>
-                              <a href={href} target="_blank" rel="noreferrer" className="rounded-full border border-cyan-200/70 bg-cyan-50 px-3 py-2 text-[10px] font-bold uppercase tracking-[0.16em] text-cyan-700">
-                                Open
-                              </a>
                               {!link.isRevoked && (
-                                <button type="button" onClick={() => fleetLifecycleApi.revokeTrackingLink(shipment.id, link.id).then(load).catch((err) => notifyApiError(err, 'Unable to revoke link.'))} className="rounded-full border border-rose-200 bg-rose-50 px-3 py-2 text-[10px] font-bold uppercase tracking-[0.16em] text-rose-700">
+                                <button type="button" onClick={() => fleetLifecycleApi.revokeTrackingLink(shipment.id, link.id).then(load).catch((err) => reportError(err, 'Unable to revoke link.'))} disabled={!canManage} className="rounded-full border border-rose-200 bg-rose-50 px-3 py-2 text-[10px] font-bold uppercase tracking-[0.16em] text-rose-700 disabled:opacity-60">
                                   Revoke
                                 </button>
                               )}
@@ -555,7 +579,7 @@ export function ShipmentLifecycleDrawer({ shipment, onClose }: ShipmentLifecycle
                       <select className="w-full rounded-2xl border border-slate-200/80 bg-white/85 px-3.5 py-3 text-sm outline-none dark:border-white/10 dark:bg-white/[0.04] dark:text-white" value={stopForm.stopType} onChange={(e) => setStopForm((current) => ({ ...current, stopType: e.target.value }))}>
                         <option>Pickup</option>
                         <option>Delivery</option>
-                        <option>Transfer</option>
+                        <option>Waypoint</option>
                         <option>Return</option>
                       </select>
                     </label>
@@ -622,7 +646,7 @@ export function ShipmentLifecycleDrawer({ shipment, onClose }: ShipmentLifecycle
                     <span className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-400">Notes</span>
                     <textarea className="min-h-[90px] w-full rounded-2xl border border-slate-200/80 bg-white/85 px-3.5 py-3 text-sm outline-none dark:border-white/10 dark:bg-white/[0.04] dark:text-white" value={stopForm.notes} onChange={(e) => setStopForm((current) => ({ ...current, notes: e.target.value }))} />
                   </label>
-                  <button type="button" onClick={handleCreateStop} disabled={busy === 'create-stop'} className="inline-flex items-center justify-center gap-2 rounded-[22px] bg-gradient-to-r from-emerald-600 via-cyan-500 to-sky-400 px-4 py-3.5 text-[12px] font-bold text-white shadow-[0_16px_30px_rgba(16,185,129,0.22)] disabled:opacity-60">
+                  <button type="button" onClick={handleCreateStop} disabled={!canManage || busy === 'create-stop'} className="inline-flex items-center justify-center gap-2 rounded-[22px] bg-gradient-to-r from-emerald-600 via-cyan-500 to-sky-400 px-4 py-3.5 text-[12px] font-bold text-white shadow-[0_16px_30px_rgba(16,185,129,0.22)] disabled:opacity-60">
                     <ArrowRight className="h-4 w-4" />
                     {busy === 'create-stop' ? 'Creating stop...' : 'Create stop'}
                   </button>
@@ -675,25 +699,29 @@ export function ShipmentLifecycleDrawer({ shipment, onClose }: ShipmentLifecycle
                     </div>
                     <Link2 className="h-4 w-4 text-violet-500" />
                   </div>
-                  <div className="mt-3 grid gap-3">
-                    <select className="w-full rounded-2xl border border-slate-200/80 bg-white/85 px-3.5 py-3 text-sm outline-none dark:border-white/10 dark:bg-white/[0.04] dark:text-white" value={carrierId} onChange={(e) => setCarrierId(e.target.value)}>
-                      <option value="">Choose carrier</option>
-                      {carriers.map((carrier) => (
-                        <option key={carrier.id} value={carrier.id}>{carrier.name} · {carrier.region}</option>
-                      ))}
-                    </select>
-                    <div className="grid gap-3 md:grid-cols-2">
-                      <label className="space-y-1">
-                        <span className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-400">Quoted amount</span>
-                        <input className="w-full rounded-2xl border border-slate-200/80 bg-white/85 px-3.5 py-3 text-sm outline-none dark:border-white/10 dark:bg-white/[0.04] dark:text-white" value={quotedAmount} onChange={(e) => setQuotedAmount(e.target.value)} />
-                      </label>
-                      <label className="space-y-1">
-                        <span className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-400">Agreed amount</span>
-                        <input className="w-full rounded-2xl border border-slate-200/80 bg-white/85 px-3.5 py-3 text-sm outline-none dark:border-white/10 dark:bg-white/[0.04] dark:text-white" value={agreedAmount} onChange={(e) => setAgreedAmount(e.target.value)} />
-                      </label>
-                    </div>
-                    <button type="button" onClick={handleAssignCarrier} disabled={busy === 'assign-carrier' || !carrierId} className="inline-flex items-center justify-center gap-2 rounded-[20px] bg-gradient-to-r from-violet-600 via-fuchsia-500 to-cyan-400 px-4 py-3 text-[12px] font-bold text-white shadow-[0_16px_30px_rgba(124,58,237,0.22)] disabled:opacity-60">
-                      <ArrowRight className="h-4 w-4" />
+                  <div className="mt-3 grid gap-3 md:grid-cols-2">
+                    <label className="space-y-1 md:col-span-2">
+                      <span className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-400">Approved carrier</span>
+                      <select value={carrierId} onChange={(event) => setCarrierId(event.target.value)} disabled={!canManage} className="w-full rounded-2xl border border-slate-200/80 bg-white/85 px-3.5 py-3 text-sm outline-none disabled:opacity-60 dark:border-white/10 dark:bg-white/[0.04] dark:text-white">
+                        <option value="">Select an active, compliant carrier</option>
+                        {carriers.filter((carrier) => carrier.status === 'Active' && carrier.documentStatus === 'Compliant').map((carrier) => (
+                          <option key={carrier.id} value={carrier.id}>{carrier.name} · {carrier.region || 'All regions'}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="space-y-1">
+                      <span className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-400">Quoted amount</span>
+                      <input type="number" min="0" value={quotedAmount} onChange={(event) => setQuotedAmount(event.target.value)} disabled={!canManage} className="w-full rounded-2xl border border-slate-200/80 bg-white/85 px-3.5 py-3 text-sm outline-none disabled:opacity-60 dark:border-white/10 dark:bg-white/[0.04] dark:text-white" />
+                    </label>
+                    <label className="space-y-1">
+                      <span className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-400">Agreed amount</span>
+                      <input type="number" min="0" value={agreedAmount} onChange={(event) => setAgreedAmount(event.target.value)} disabled={!canManage} className="w-full rounded-2xl border border-slate-200/80 bg-white/85 px-3.5 py-3 text-sm outline-none disabled:opacity-60 dark:border-white/10 dark:bg-white/[0.04] dark:text-white" />
+                    </label>
+                    <label className="space-y-1 md:col-span-2">
+                      <span className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-400">Assignment notes</span>
+                      <textarea value={carrierNotes} onChange={(event) => setCarrierNotes(event.target.value)} disabled={!canManage} className="min-h-[72px] w-full rounded-2xl border border-slate-200/80 bg-white/85 px-3.5 py-3 text-sm outline-none disabled:opacity-60 dark:border-white/10 dark:bg-white/[0.04] dark:text-white" />
+                    </label>
+                    <button type="button" onClick={handleAssignCarrier} disabled={!canManage || !carrierId || busy === 'assign-carrier'} className="md:col-span-2 rounded-full bg-violet-600 px-4 py-2.5 text-[11px] font-bold uppercase tracking-[0.16em] text-white disabled:opacity-60">
                       {busy === 'assign-carrier' ? 'Assigning...' : 'Assign carrier'}
                     </button>
                   </div>
@@ -706,9 +734,9 @@ export function ShipmentLifecycleDrawer({ shipment, onClose }: ShipmentLifecycle
                   <SummaryTile label="POD" value={shipment.podStatus || 'Pending'} />
                   <SummaryTile label="Invoice-ready" value={shipment.isInvoiceReady ? 'Yes' : 'No'} />
                 </div>
-                {trackingLink && (
+                {trackingLink?.token && (
                   <div className="mt-4 rounded-[20px] border border-cyan-200/60 bg-cyan-50/70 p-3 dark:border-cyan-400/10 dark:bg-cyan-400/8">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-cyan-700/70">Public tracking URL</p>
+                    <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-cyan-700/70">Public tracking URL — copy now; it will not be shown again</p>
                     <p className="mt-1 break-all text-sm font-semibold text-slate-900 dark:text-white">{typeof window !== 'undefined' ? `${window.location.origin}/track/${trackingLink.token}` : trackingLink.token}</p>
                   </div>
                 )}

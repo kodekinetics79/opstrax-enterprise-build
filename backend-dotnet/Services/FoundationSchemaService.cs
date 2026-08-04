@@ -269,6 +269,14 @@ public sealed class FoundationSchemaService(Database db)
         "CREATE INDEX IF NOT EXISTS idx_outbox_tenant_next_attempt ON outbox_messages (tenant_id, next_attempt_at)",
         "CREATE INDEX IF NOT EXISTS idx_outbox_tenant_locked_until ON outbox_messages (tenant_id, locked_until)",
         "CREATE INDEX IF NOT EXISTS idx_outbox_tenant_retry_pending ON outbox_messages (tenant_id, status, next_attempt_at)",
+        // Idempotent job.delivered enqueue (ADR-008 §B): at most one delivered event per (tenant, job),
+        // so a delivered transition fired twice enqueues once. Partial so it only constrains this type.
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_outbox_job_delivered ON outbox_messages (tenant_id, aggregate_id) WHERE event_type='job.delivered'",
+        // Rev-rec (ADR-008): one revenue.recognized event per recognized invoice (idempotent enqueue).
+        // The invoice.issued event is already enqueued once per issue by events.Publish and the handler
+        // is idempotent, so no invoice.issued unique index is needed (and adding one would change the
+        // existing publish semantics).
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_outbox_revenue_recognized ON outbox_messages (tenant_id, aggregate_id) WHERE event_type='revenue.recognized'",
         "CREATE INDEX IF NOT EXISTS idx_inbox_tenant_status ON inbox_messages (tenant_id, status, received_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_inbox_tenant_source_external ON inbox_messages (tenant_id, source, external_id)",
         "CREATE INDEX IF NOT EXISTS idx_inbox_tenant_locked_until ON inbox_messages (tenant_id, locked_until)",

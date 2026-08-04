@@ -430,7 +430,11 @@ public sealed class PostgresIdempotencyService(Database db) : IEventIdempotencyS
 {
     public IdempotencyRecord Reserve(string tenantId, string operation, string idempotencyKey, string requestHash, TimeSpan ttl, string? responseReference = null)
     {
-        return db.WithTransactionAsync(async (conn, tx) =>
+        // This interface is synchronous for compatibility with existing handlers.
+        // Run its asynchronous PostgreSQL transaction on the thread pool so blocking
+        // callers (including xUnit/legacy ASP.NET synchronization contexts) cannot
+        // deadlock an awaited Npgsql continuation while leaving a transaction open.
+        return Task.Run(() => db.WithTransactionAsync(async (conn, tx) =>
         {
             var companyId = FoundationPersistenceHelpers.RequireTenantId(tenantId);
             var lookup = new NpgsqlCommand(
@@ -472,12 +476,12 @@ public sealed class PostgresIdempotencyService(Database db) : IEventIdempotencyS
             insert.Parameters.AddWithValue("@createdAt", createdAt);
             var id = Convert.ToInt64(await insert.ExecuteScalarAsync());
             return new IdempotencyRecord(id, tenantId, operation, idempotencyKey, requestHash, null, responseReference, "reserved", createdAt.Add(ttl), createdAt);
-        }).GetAwaiter().GetResult();
+        })).GetAwaiter().GetResult();
     }
 
     public bool TryComplete(string tenantId, string operation, string idempotencyKey, string responseHash, string? responseReference = null)
     {
-        var updated = db.ExecuteAsync(
+        var updated = Task.Run(() => db.ExecuteAsync(
             @"UPDATE idempotency_keys
               SET response_hash=@responseHash, response_reference=@responseReference, status='completed'
               WHERE tenant_id=@tenantId AND operation=@operation AND idempotency_key=@idempotencyKey",
@@ -488,7 +492,7 @@ public sealed class PostgresIdempotencyService(Database db) : IEventIdempotencyS
                 c.Parameters.AddWithValue("@idempotencyKey", idempotencyKey);
                 c.Parameters.AddWithValue("@responseHash", responseHash);
                 c.Parameters.AddWithValue("@responseReference", (object?)responseReference ?? DBNull.Value);
-            }).GetAwaiter().GetResult();
+            })).GetAwaiter().GetResult();
         return updated > 0;
     }
 

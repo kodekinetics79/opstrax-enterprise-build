@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams } from 'react-router';
 import { AlertTriangle, CheckCircle2, MapPinned, Package, ShieldCheck, Sparkles, Truck } from 'lucide-react';
 import { publicTrackingApi, type PublicTrackingSummary } from '@/services/fleetTmsApi';
 function formatDate(value?: string | null) {
@@ -22,9 +22,8 @@ export function PublicShipmentTrackingPage() {
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    setError(null);
-    (async () => {
+    const load = async (initial: boolean) => {
+      if (initial) { setLoading(true); setError(null); }
       try {
         const [track, eventRes, podRes] = await Promise.all([
           publicTrackingApi.track(token),
@@ -35,14 +34,21 @@ export function PublicShipmentTrackingPage() {
         setSummary(track);
         setEvents(eventRes.items);
         setPod(podRes.items);
+        setError(null);
       } catch {
-        if (!cancelled) setError('This tracking link is unavailable, expired, or revoked.');
+        // Only surface an error on the first load — a transient poll failure must not blank out
+        // a page the customer is already watching.
+        if (!cancelled && initial) setError('This tracking link is unavailable, expired, or revoked.');
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled && initial) setLoading(false);
       }
-    })();
+    };
+    load(true);
+    // Live refresh: a customer watching a delivery sees fresh status / ETA / proof without reloading.
+    const timer = setInterval(() => load(false), 30_000);
     return () => {
       cancelled = true;
+      clearInterval(timer);
     };
   }, [token]);
 

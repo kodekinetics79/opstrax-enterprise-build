@@ -8,7 +8,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   Legend, ResponsiveContainer, ReferenceLine,
 } from "recharts";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { exportCsv } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 

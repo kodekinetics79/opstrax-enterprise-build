@@ -31,13 +31,48 @@ public sealed class EndpointMappingsSecurityHardeningTests
     }
 
     [Fact]
+    public void BrowserAuthenticationFlows_OnlyConsumeMiddlewareCsrfToken()
+    {
+        var source = Source();
+        var login = SourceBlock(source, "private static async Task<IResult> Login(", "private static IResult InvalidCredentials");
+        var mfa = SourceBlock(source, "private static async Task<IResult> MfaLoginVerify(", "private static async Task<IResult> SsoDiscover(");
+        var sso = SourceBlock(source, "private static async Task<IResult> SsoCallback(", "private static async Task<IResult> ForgotPassword(");
+        var authMe = SourceBlock(source, "private static async Task<IResult> AuthMe(", "private static async Task<IResult> AuthRefresh(");
+        var refresh = SourceBlock(source, "private static async Task<IResult> AuthRefresh(", "private static async Task<IResult> AuthLogout(");
+
+        foreach (var flow in new[] { login, mfa, sso, authMe })
+        {
+            Assert.Contains("CurrentCsrfToken(http)", flow, StringComparison.Ordinal);
+            Assert.DoesNotContain("RandomNumberGenerator.GetBytes(32)", flow, StringComparison.Ordinal);
+            Assert.DoesNotContain("Request.Cookies[\"__CSRF_Token__\"]", flow, StringComparison.Ordinal);
+        }
+
+        Assert.Contains("csrf={Uri.EscapeDataString(csrfToken)}", sso, StringComparison.Ordinal);
+        Assert.Contains("return await AuthMe(http, db, ct);", refresh, StringComparison.Ordinal);
+
+        var helper = SourceBlock(source, "private static string CurrentCsrfToken(", "// GET /api/auth/me");
+        Assert.Contains("CsrfMiddleware.TokenItemKey", helper, StringComparison.Ordinal);
+        Assert.DoesNotContain("Request.Cookies", helper, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void TelemetryIngest_RequiresSignatureAndStoredSecret()
     {
-        var ingest = MethodSource("TelemetryIngest(", "// 9. Secondary body EventTime check");
+        var ingest = MethodSource("private static async Task<IResult> TelemetryIngest", "// ── GET /api/telemetry/stream");
 
         AssertOrdered(ingest, "string.IsNullOrWhiteSpace(xSig)", "Look up device");
-        Assert.Contains("string.IsNullOrWhiteSpace(hmacSecret)", ingest, StringComparison.Ordinal);
+        Assert.Contains("hmac_secret_encrypted", ingest, StringComparison.Ordinal);
+        Assert.Contains("DeviceHmacSecretProtection.ResolveForVerification", ingest, StringComparison.Ordinal);
         Assert.Contains("Device credentials are incomplete", ingest, StringComparison.Ordinal);
+        Assert.Contains("allowLegacySecret", ingest, StringComparison.Ordinal);
+        Assert.Contains("credential_slot", ingest, StringComparison.Ordinal);
+        Assert.Contains("credential_match_count", ingest, StringComparison.Ordinal);
+        Assert.Contains("credentialSlot == \"current\"", ingest, StringComparison.Ordinal);
+        Assert.Contains("credentialSlot == \"previous\"", ingest, StringComparison.Ordinal);
+        AssertOrdered(ingest, "TryParseObservedAt", "db.RunInSystemScopeAsync");
+        AssertOrdered(ingest, "db.RunInSystemScopeAsync", "INSERT INTO telemetry_nonces");
+        AssertOrdered(ingest, "INSERT INTO telemetry_nonces", "INSERT INTO location_events");
+        Assert.Contains("ON CONFLICT DO NOTHING RETURNING id", ingest, StringComparison.Ordinal);
         Assert.DoesNotContain("skip HMAC", ingest, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -68,7 +103,10 @@ public sealed class EndpointMappingsSecurityHardeningTests
     {
         var ingest = MethodSource("GpsTrackerIngest(", "// ── GET /api/telemetry/metrics");
 
-        Assert.Contains("Telemetry:GatewaySecret", ingest, StringComparison.Ordinal);
+        Assert.DoesNotContain("Telemetry:GatewaySecret", ingest, StringComparison.Ordinal);
+        Assert.Contains("X-Gateway-Id", ingest, StringComparison.Ordinal);
+        Assert.Contains("FROM telemetry_gateways", ingest, StringComparison.Ordinal);
+        Assert.Contains("gatewayScopeCompanyId != companyId", ingest, StringComparison.Ordinal);
         Assert.Contains("FixedTimeEquals", ingest, StringComparison.Ordinal);
         Assert.Contains("last_heartbeat_at=NOW()", ingest, StringComparison.Ordinal);
         Assert.Contains("latest_vehicle_positions.event_time <= EXCLUDED.event_time", ingest, StringComparison.Ordinal);

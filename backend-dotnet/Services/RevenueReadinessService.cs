@@ -233,7 +233,8 @@ public sealed class RevenueReadinessService(
     IApprovalWorkflowService approval,
     IEventIdempotencyService idempotency,
     IDomainEventPublisher events,
-    ICorrelationContext correlation)
+    ICorrelationContext correlation,
+    TaxService tax)
 {
     public async Task<ReadyToBillOutcome> MarkJobReadyToBillAsync(long companyId, long jobId, CancellationToken ct = default)
     {
@@ -477,6 +478,11 @@ public sealed class RevenueReadinessService(
                 ct);
         }
 
+        // Tax engine (ADR-008 P3): compute the draft's tax from a published tax_profile and set
+        // tax_total/total. Fail-closed — no profile reproduces the literal tax_total=0/total=subtotal
+        // written above, byte-for-byte. Idempotent (delete-and-recompute), so re-running is safe.
+        _ = await tax.RecalculateDraftTaxAsync(companyId, draftId, ct);
+
         var draft = await GetInvoiceDraftAsync(companyId, draftId, ct);
         if (draft is null)
         {
@@ -495,7 +501,10 @@ public sealed class RevenueReadinessService(
                 jobId,
                 invoiceDraftNo,
                 chargeCount = charges.Count,
-                total = subtotal,
+                // Serialize the RELOADED taxed figures, not the pre-tax local subtotal.
+                subtotal = draft.Subtotal,
+                taxTotal = draft.TaxTotal,
+                total = draft.Total,
                 currency
             }),
             correlation.CorrelationId,
@@ -627,6 +636,17 @@ public sealed class RevenueReadinessService(
             return new InvoiceIssueOutcome(true, "Invoice already issued", Replay: true, Invoice: existingInvoice);
         }
 
+        // POD gate (ADR-008 billing Phase 1): when the tenant enables billing.require_pod_to_issue,
+        // a job-linked invoice can't issue without proof of delivery. Flag defaults OFF so existing
+        // issuance is unchanged; ad-hoc drafts (no JobId) are exempt. Evaluated live at issue time,
+        // so a POD captured after delivery just works on the next attempt.
+        if (draft.JobId is long podJobId
+            && await IsPodRequiredToIssueAsync(companyId, ct)
+            && !await HasDeliveryProofAsync(companyId, podJobId, ct))
+        {
+            return new InvoiceIssueOutcome(false, $"Cannot issue invoice: no proof of delivery captured for job {podJobId}");
+        }
+
         if (draft.ApprovalRequestId is null)
         {
             var approvalRequest = approval.CreateRequest(
@@ -695,15 +715,33 @@ public sealed class RevenueReadinessService(
             }
         }
 
-        var issued = await db.WithTransactionAsync(async (conn, tx) =>
+        IssuedInvoiceRecord issued;
+        try
         {
+        issued = await db.WithTransactionAsync(async (conn, tx) =>
+        {
+            // Tax engine (ADR-008 P3): recompute tax at the issue tax point INSIDE this tx so the issued
+            // figures and the immutable snapshot can never desync. Hard-gate — an unsupported/blocked
+            // computation must never issue; no_tax_profile is the fail-closed zero baseline (allowed).
+            var issueDate = DateOnly.FromDateTime(DateTimeOffset.UtcNow.UtcDateTime);
+            var taxOutcome = await tax.ComputeForDraftInTxAsync(conn, tx, companyId, draftId, issueDate, ct);
+            if (!taxOutcome.Applied && taxOutcome.Reason != "no_tax_profile")
+                throw new TaxIssueBlockedException(taxOutcome.Reason ?? "tax_blocked");
+            var freshSubtotal = taxOutcome.Applied ? taxOutcome.Subtotal : draft.Subtotal;
+            var freshTaxTotal = taxOutcome.Applied ? taxOutcome.TaxTotal : 0m;
+            var freshTotal = taxOutcome.Applied ? taxOutcome.Total : draft.Subtotal;
+            // Re-approval: if tax moved the total away from the approved amount (e.g. a profile published
+            // after approval was granted), the approval no longer covers what would be billed — reject.
+            if (freshTotal != draft.Total)
+                throw new TaxReapprovalException(freshTotal);
+
             var sourceLines = draft.Lines ?? [];
             var issuedAt = DateTimeOffset.UtcNow;
             var dueAt = issuedAt.AddDays(30);
             var invoiceId = Guid.NewGuid();
             var invoiceNumber = BuildIssuedInvoiceNumber(companyId, draftId);
             var amountPaid = 0m;
-            var balanceDue = draft.Total - amountPaid;
+            var balanceDue = freshTotal - amountPaid;
             var metadataJson = JsonSerializer.Serialize(new
             {
                 sourceInvoiceDraftId = draft.Id,
@@ -732,11 +770,13 @@ public sealed class RevenueReadinessService(
                 @"INSERT INTO issued_invoices
                     (id, company_id, customer_id, contract_id, job_id, approval_request_id, source_invoice_draft_id, source_invoice_draft_no,
                      invoice_number, status, currency, subtotal, tax_total, total, amount_paid, balance_due, payment_status,
-                     issued_at, due_at, issued_by_actor_type, issued_by_actor_id, correlation_id, causation_id, idempotency_key, metadata_json, created_at)
+                     issued_at, due_at, issued_by_actor_type, issued_by_actor_id, correlation_id, causation_id, idempotency_key, metadata_json, created_at,
+                     tax_profile_id, tax_point_date)
                   VALUES
                     (@id, @companyId, @customerId, @contractId, @jobId, @approvalRequestId, @sourceDraftId, @sourceDraftNo,
                      @invoiceNumber, 'issued', @currency, @subtotal, @taxTotal, @total, @amountPaid, @balanceDue, @paymentStatus,
-                     @issuedAt, @dueAt, @issuedByActorType, @issuedByActorId, @correlationId, @causationId, @idempotencyKey, @metadata::jsonb, @createdAt)
+                     @issuedAt, @dueAt, @issuedByActorType, @issuedByActorId, @correlationId, @causationId, @idempotencyKey, @metadata::jsonb, @createdAt,
+                     @taxProfileId, @taxPointDate)
                   RETURNING id", conn, tx))
             {
                 insert.Parameters.AddWithValue("@id", invoiceId);
@@ -749,9 +789,11 @@ public sealed class RevenueReadinessService(
                 insert.Parameters.AddWithValue("@sourceDraftNo", draft.InvoiceDraftNo);
                 insert.Parameters.AddWithValue("@invoiceNumber", invoiceNumber);
                 insert.Parameters.AddWithValue("@currency", draft.Currency);
-                insert.Parameters.AddWithValue("@subtotal", draft.Subtotal);
-                insert.Parameters.AddWithValue("@taxTotal", draft.TaxTotal);
-                insert.Parameters.AddWithValue("@total", draft.Total);
+                insert.Parameters.AddWithValue("@subtotal", freshSubtotal);
+                insert.Parameters.AddWithValue("@taxTotal", freshTaxTotal);
+                insert.Parameters.AddWithValue("@total", freshTotal);
+                insert.Parameters.AddWithValue("@taxProfileId", (object?)taxOutcome.TaxProfileId ?? DBNull.Value);
+                insert.Parameters.AddWithValue("@taxPointDate", taxOutcome.Applied ? issueDate : (object)DBNull.Value);
                 insert.Parameters.AddWithValue("@amountPaid", amountPaid);
                 insert.Parameters.AddWithValue("@balanceDue", balanceDue);
                 insert.Parameters.AddWithValue("@paymentStatus", balanceDue <= 0 ? "paid" : "unpaid");
@@ -793,6 +835,12 @@ public sealed class RevenueReadinessService(
                 await lineInsert.ExecuteNonQueryAsync(ct);
             }
 
+            // Copy the mutable tax breakdown into the immutable issued snapshot (asserts it still foots
+            // to the draft tax_total). Append-only — corrections are reversing credit notes, never edits.
+            await tax.SnapshotIssuedTaxLinesAsync(conn, tx, companyId, draftId, invoiceId, ct);
+            // NB: the post-commit events.Publish("invoice.issued") below already enqueues the durable
+            // outbox event that drives the rev-rec sub-ledger (derive-beside) — no explicit enqueue here.
+
             await using (var draftUpdate = new Npgsql.NpgsqlCommand(
                 @"UPDATE invoice_drafts
                   SET status='issued',
@@ -816,9 +864,9 @@ public sealed class RevenueReadinessService(
                 invoiceNumber,
                 "issued",
                 draft.Currency,
-                draft.Subtotal,
-                draft.TaxTotal,
-                draft.Total,
+                freshSubtotal,
+                freshTaxTotal,
+                freshTotal,
                 amountPaid,
                 balanceDue,
                 balanceDue <= 0 ? "paid" : "unpaid",
@@ -835,6 +883,26 @@ public sealed class RevenueReadinessService(
                 null,
                 issuedLines);
         }, ct);
+        }
+        catch (TaxReapprovalException reapproval)
+        {
+            // Tax changed the billable total after approval — the granted approval is void. Reset the
+            // draft to pending_review and open a fresh approval request for the new amount.
+            var newRequest = approval.CreateRequest(
+                companyId.ToString(CultureInfo.InvariantCulture), ActorTypes.TenantUser, correlation.ActorId,
+                "finance.invoice.issue", "invoice_draft", draftId.ToString(),
+                JsonSerializer.Serialize(new { invoiceDraftId = draftId, invoiceDraftNo = draft.InvoiceDraftNo, total = reapproval.NewTotal, currency = draft.Currency }),
+                "high");
+            await db.ExecuteAsync(
+                @"UPDATE invoice_drafts SET status='pending_review', approval_request_id=@r, updated_at=NOW()
+                  WHERE company_id=@c AND id=@id",
+                c => { c.Parameters.AddWithValue("@r", newRequest.Id); c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@id", draftId); }, ct);
+            return new InvoiceIssueOutcome(false, "Tax changed since approval — re-approval required", true, newRequest.Id);
+        }
+        catch (TaxIssueBlockedException blocked)
+        {
+            return new InvoiceIssueOutcome(false, $"Cannot issue invoice: tax computation blocked ({blocked.Reason})");
+        }
 
         _ = events.Publish(
             companyId.ToString(CultureInfo.InvariantCulture),
@@ -926,7 +994,17 @@ public sealed class RevenueReadinessService(
             var paymentRow = await InsertInvoicePaymentAsync(conn, tx, companyId, invoiceId, amount, currency, paymentReference, paymentMethod, metadataJson, correlation.CorrelationId, correlation.CausationId, receivedAt, ct);
 
             var newAmountPaid = invoice.AmountPaid + amount;
-            var newBalance = invoice.Total - newAmountPaid;
+            // Balance derives from total - paid - CREDITED. Without subtracting credit_total, recording
+            // a payment would silently resurrect balance that a credit note already relieved.
+            decimal creditTotal;
+            await using (var creditCmd = new Npgsql.NpgsqlCommand(
+                "SELECT credit_total FROM issued_invoices WHERE id=@id AND company_id=@companyId", conn, tx))
+            {
+                creditCmd.Parameters.AddWithValue("@id", invoiceId);
+                creditCmd.Parameters.AddWithValue("@companyId", companyId);
+                creditTotal = Convert.ToDecimal(await creditCmd.ExecuteScalarAsync(ct) ?? 0m);
+            }
+            var newBalance = invoice.Total - creditTotal - newAmountPaid;
             var paymentStatus = newBalance <= 0 ? "paid" : "partial";
 
             await using (var update = new Npgsql.NpgsqlCommand(
@@ -1395,6 +1473,38 @@ public sealed class RevenueReadinessService(
             },
             ct);
         return row is null ? null : MapInvoiceDraft(row);
+    }
+
+    // Tenant opt-in to POD-gated issuance (feature_flags). Default OFF (no row -> false).
+    private async Task<bool> IsPodRequiredToIssueAsync(long companyId, CancellationToken ct)
+    {
+        try
+        {
+            var n = await db.ScalarLongAsync(
+                @"SELECT CASE WHEN EXISTS (SELECT 1 FROM feature_flags
+                    WHERE company_id=@cid AND flag_key='billing.require_pod_to_issue' AND enabled) THEN 1 ELSE 0 END",
+                c => c.Parameters.AddWithValue("@cid", companyId), ct);
+            return n == 1;
+        }
+        catch { return false; } // feature_flags absent (pre-migration) -> flag off, unchanged behavior
+    }
+
+    // A job "has POD" if EITHER store shows it: proof_of_delivery.status='Captured' (ops/job path)
+    // OR dispatch_proofs.proof_type='delivery' (driver/dispatch path). Neither alone is authoritative
+    // because the two capture surfaces write different tables; jobs.proof_status is not trustworthy
+    // (driver PODs never set it). Both sides are double-scoped by company_id.
+    private async Task<bool> HasDeliveryProofAsync(long companyId, long jobId, CancellationToken ct)
+    {
+        var n = await db.ScalarLongAsync(
+            @"SELECT CASE WHEN
+                EXISTS (SELECT 1 FROM proof_of_delivery
+                        WHERE company_id=@cid AND job_id=@jid AND status='Captured')
+                OR EXISTS (SELECT 1 FROM dispatch_proofs dp
+                        JOIN dispatch_assignments da ON da.id=dp.assignment_id AND da.company_id=@cid
+                        WHERE dp.company_id=@cid AND da.job_id=@jid AND dp.proof_type='delivery')
+              THEN 1 ELSE 0 END",
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@jid", jobId); }, ct);
+        return n == 1;
     }
 
     private async Task<IssuedInvoiceRecord?> LoadIssuedInvoiceByDraftAsync(long companyId, Guid draftId, CancellationToken ct)
@@ -1866,4 +1976,16 @@ public sealed class RevenueReadinessService(
             : DateTimeOffset.MinValue;
     private static DateTimeOffset? DtoN(Dictionary<string, object?> row, string key)
         => row.TryGetValue(key, out var value) && value is not null and not DBNull ? (value is DateTimeOffset dto ? dto : new DateTimeOffset(Convert.ToDateTime(value, CultureInfo.InvariantCulture), TimeSpan.Zero)) : null;
+}
+
+// Control-flow signals for the issue transaction's tax gate (ADR-008 P3). Thrown inside the issue
+// WithTransactionAsync to roll it back, caught by IssueInvoiceFromDraftAsync to return a typed outcome.
+internal sealed class TaxReapprovalException(decimal newTotal) : Exception
+{
+    public decimal NewTotal { get; } = newTotal;
+}
+
+internal sealed class TaxIssueBlockedException(string reason) : Exception
+{
+    public string Reason { get; } = reason;
 }

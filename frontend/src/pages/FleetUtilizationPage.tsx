@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { tokens, chart } from "@/styles/tokens";
 import { useQuery } from "@tanstack/react-query";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router";
 import {
   ArrowRight,
   Clock3,
@@ -110,6 +110,7 @@ function buildOpportunities(rows: AnyRecord[]) {
     const jobs = num(g(row, "activeJobs"));
     const fuelCost = num(g(row, "fuelCostMonth"));
     const status = String(g(row, "status") ?? "");
+    const hasUtilizationEvidence = String(g(row, "utilizationBasis", "utilization_basis") ?? "").startsWith("trip_hours_30d");
     const results: Opportunity[] = [];
 
     if (idleMinutes >= 45 && readiness >= 75 && /available|idle|at stop/i.test(status)) {
@@ -154,7 +155,7 @@ function buildOpportunities(rows: AnyRecord[]) {
       });
     }
 
-    if (fuelCost > 0 && fuelCost >= fuelAverage * 1.25 && utilization < 70) {
+    if (hasUtilizationEvidence && fuelCost > 0 && fuelCost >= fuelAverage * 1.25 && utilization < 70) {
       results.push({
         id: `${vehicleId}-fuel`,
         vehicleId,
@@ -168,7 +169,7 @@ function buildOpportunities(rows: AnyRecord[]) {
       });
     }
 
-    if (utilization <= 35 && readiness >= 85 && !/maintenance|out of service/i.test(status)) {
+    if (hasUtilizationEvidence && utilization <= 35 && readiness >= 85 && !/maintenance|out of service/i.test(status)) {
       results.push({
         id: `${vehicleId}-reserve`,
         vehicleId,
@@ -275,6 +276,8 @@ export function FleetUtilizationPage() {
   const idleCost = num(summary.idleCostToday);
   const fuelSpend = num(summary.fuelSpendMonth);
   const atRisk = rows.filter((row) => riskTier(row) === "High").length;
+  const evidenceGaps = rows.filter((row) => String(g(row, "utilizationBasis", "utilization_basis") ?? "") === "no_trip_evidence").length;
+  const estimatedOpenTrips = rows.reduce((sum, row) => sum + num(g(row, "openTripEstimateCount", "open_trip_estimate_count")), 0);
 
   const exportRows =
     section === "efficiency" ? efficiencyRows :
@@ -307,7 +310,7 @@ export function FleetUtilizationPage() {
       <ConsoleNav sections={SECTIONS} active={section} onSelect={(key) => navigate(`/fleet-utilization/${key}`)} />
 
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-        <ClayStat Icon={Gauge}  tone="fc-clay-teal"    iconCls="text-teal-700"    label="Average utilization" value={`${utilization}%`} caption={`${active}/${Math.max(total, 1)} active now`} />
+        <ClayStat Icon={Gauge}  tone="fc-clay-teal"    iconCls="text-teal-700"    label="30-day utilization" value={`${utilization}%`} caption={evidenceGaps ? `${evidenceGaps} unit(s) lack trip-hour evidence` : estimatedOpenTrips ? `${estimatedOpenTrips} open trip(s) estimated and capped at 24h` : "Active trip hours ÷ 240-hour baseline"} />
         <ClayStat Icon={Truck}  tone="fc-clay-emerald" iconCls="text-emerald-700" label="Ready reserve" value={available} caption={`${readiness}% average readiness`} />
         <ClayStat Icon={Wrench} tone="fc-clay-red"     iconCls="text-rose-700"    label="At risk units" value={atRisk} caption={`${maintenance} blocked by maintenance`} alert={atRisk > 0} />
         <ClayStat Icon={Clock3} tone="fc-clay-amber"   iconCls="text-amber-700"   label="Idle drag today" value={idleCost ? `$${idleCost.toLocaleString()}` : `${idleHours}h`} caption={idleHours ? `${idleHours} idle hours logged` : "No idle drag detected"} alert={idleHours > 0} />
@@ -700,6 +703,7 @@ function VehicleInsightPanel({
   const fuelCost = num(g(row, "fuelCostMonth"));
   const idle = num(g(row, "idleMinutesToday"));
   const risk = num(g(row, "riskScore", "risk_score"));
+  const activeHours = num(g(row, "activeHours30d", "active_hours_30d"));
 
   return (
     <aside className="panel p-5">
@@ -713,10 +717,11 @@ function VehicleInsightPanel({
       </div>
       <div className="mt-4 grid grid-cols-2 gap-3">
         <MetricMini label="Readiness" value={`${readiness}%`} />
-        <MetricMini label="Utilization" value={`${utilization}%`} />
+        <MetricMini label="30-day utilization" value={`${utilization}%`} />
         <MetricMini label="Risk" value={`${risk}`} />
         <MetricMini label="Fuel month" value={`$${fuelCost.toLocaleString()}`} />
       </div>
+      <p className="mt-2 text-xs text-slate-500">{activeHours.toFixed(1)} active trip hours in the last 30 days, measured against a 240-hour operating baseline.</p>
       <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
         {section === "capacity" && `${String(g(row, "vehicleCode", "vehicle_code"))} is currently carrying ${num(g(row, "activeJobs"))} active job(s) with ${idle} idle minutes today. Use the roster to rebalance it or open dispatch to cover available demand.`}
         {section === "efficiency" && `${String(g(row, "vehicleCode", "vehicle_code"))} is showing ${idle} idle minutes and $${fuelCost.toLocaleString()} fuel spend this month. This is where operators decide whether the issue is routing, dispatch timing or asset health.`}

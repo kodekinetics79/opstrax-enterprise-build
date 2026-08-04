@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { Link, Outlet, useLocation, useNavigate } from "react-router";
 import {
   Bell, ChevronDown, ChevronLeft, ChevronRight, Filter, LogOut,
-  Menu, Search, Settings, User, X,
+  Menu, Search, Settings, ShieldAlert, User, X,
 } from "lucide-react";
 import { OpsTraxLogo } from "@/components/OpsTraxLogo";
 import { WorkspaceExperience } from "@/components/WorkspaceExperience";
 import { modules, moduleIcons } from "@/modules/moduleConfig";
 import { useAuth } from "@/hooks/useAuth";
 import { useFlag } from "@/hooks/useFeatureFlags";
-import { useHasPermission } from "@/hooks/usePermission";
+import { useHasDirectPermission, useHasPermission } from "@/hooks/usePermission";
 import { moduleAvailableForCountry, useTenantCountry } from "@/hooks/useTenantRegion";
 import { getLandingRouteForSession } from "@/auth/sessionRouting";
 import type { AnyRecord, UserSession } from "@/types";
@@ -18,7 +18,7 @@ const NAV_SECTIONS = [
   {
     label: "Operations",
     color: "text-teal-600",
-    items: ["command-center", "fleet-health", "live-dashboard", "map-view", "alerts"],
+    items: ["command-center", "fleet-health", "live-dashboard", "map-view", "fleet-live-wall", "alerts"],
   },
   {
     label: "Fleet",
@@ -78,35 +78,6 @@ type NavState = Partial<Record<Group, boolean>>;
 
 const NAV_STORAGE_PREFIX = "opstrax.nav.sidebar";
 
-function resolveSearchRoute(query: string): string {
-  const q = query.trim().toLowerCase();
-  if (!q) return "/command-center";
-
-  const exactModule = modules.find((module) => {
-    const haystack = [module.key, module.title, module.route, module.description].join(" ").toLowerCase();
-    return haystack.includes(q);
-  });
-
-  if (exactModule) return exactModule.route;
-
-  const keywordRoutes: Array<{ test: RegExp; route: string }> = [
-    { test: /\bmap\b|\blive map\b|\bgps\b|\btelemetry\b/, route: "/map-view" },
-    { test: /\bhealth\b|\bfleet health\b/, route: "/fleet-health" },
-    { test: /\bvehicle\b|\bvehicles\b|\btruck\b|\bvan\b/, route: "/vehicles" },
-    { test: /\bdriver\b|\bdrivers\b/, route: "/drivers" },
-    { test: /\bwork order\b|\bwork orders\b|\bmaintenance\b|\brepair\b/, route: "/work-orders" },
-    { test: /\bjob\b|\bjobs\b|\bdispatch\b|\btrip\b|\btrips\b/, route: "/dispatch-board" },
-    { test: /\balert\b|\balerts\b/, route: "/alerts" },
-    { test: /\bshipment\b|\bshipments\b|\bpod\b/, route: "/shipments" },
-  ];
-
-  for (const item of keywordRoutes) {
-    if (item.test.test(q)) return item.route;
-  }
-
-  return "/command-center";
-}
-
 function normalizeRoute(route: string) {
   if (route === "/") return route;
   return route.replace(/\/+$/, "");
@@ -160,13 +131,24 @@ function getSessionPlanLabel(session: SessionLike) {
     company?.tier,
   ];
   const found = candidates.find((value) => typeof value === "string" && value.trim().length > 0);
-  return found ? String(found) : "Enterprise";
+  return found ? String(found) : "";
 }
 
 function findActiveModule(pathname: string) {
   return [...modules]
     .sort((left, right) => right.route.length - left.route.length)
     .find((module) => isRouteActive(module.route, pathname));
+}
+
+export function moduleAllowedByEntitlement(module: (typeof modules)[number], session: UserSession | null): boolean {
+  if (!module.requiredEntitlement) return true;
+  const evaluated = session?.entitlements;
+  if (evaluated && Object.prototype.hasOwnProperty.call(evaluated, module.requiredEntitlement)) {
+    return evaluated[module.requiredEntitlement] === true;
+  }
+  // Older sessions and explicitly migrated legacy tenants inherit access.
+  // Allowlist tenants fail closed if the authoritative snapshot omits a key.
+  return session?.entitlementPolicyMode !== "package_allowlist";
 }
 
 function buildBreadcrumbs(pathname: string, session: SessionLike): BreadcrumbItem[] {
@@ -292,6 +274,7 @@ export function AppShell() {
   const location = useLocation();
   const navigate = useNavigate();
   const hasPermission = useHasPermission();
+  const hasDirectPermission = useHasDirectPermission();
   const tenantCountry = useTenantCountry();
 
   const navStateKey = useMemo(() => getSessionIdentityKey(session), [session?.company?.id, session?.company?.companyId, session?.role, session?.user?.email, session?.user?.id, session?.user?.name]);
@@ -329,6 +312,7 @@ export function AppShell() {
   }, [navStateKey, sectionOpen]);
 
   const activeModule = useMemo(() => findActiveModule(location.pathname), [location.pathname]);
+  const activeModuleEntitled = !activeModule || moduleAllowedByEntitlement(activeModule, session);
   const pageBreadcrumbs = useMemo(() => buildBreadcrumbs(location.pathname, session), [location.pathname, session]);
   const currentPageTitle = pageBreadcrumbs.at(-1)?.label ?? activeModule?.title ?? "Dashboard";
   // Feature-flag gating of nav items. The server gate is the real enforcement; this
@@ -346,7 +330,10 @@ export function AppShell() {
         .map((key) => modules.find((module) => module.key === key || module.route === key || module.route === `/${key}`))
         .filter((module): module is (typeof modules)[number] => Boolean(
           module
-          && (!module.requiredPermission || hasPermission(module.requiredPermission))
+          && (!module.requiredPermission || (module.permissionMatch === "direct"
+            ? hasDirectPermission(module.requiredPermission)
+            : hasPermission(module.requiredPermission)))
+          && moduleAllowedByEntitlement(module, session)
           && moduleAvailableForCountry(module, tenantCountry)
           && moduleAllowedByFlag(module.key),
         ));
@@ -356,7 +343,7 @@ export function AppShell() {
         items: accessibleItems,
       };
     }).filter((section) => section.items.length > 0),
-    [hasPermission, session?.permissions, tenantCountry, moduleAllowedByFlag],
+    [hasDirectPermission, hasPermission, session, tenantCountry, moduleAllowedByFlag],
   );
 
   const normalizedSidebarQuery = sidebarQuery.trim().toLowerCase();
@@ -609,12 +596,14 @@ export function AppShell() {
                         setSidebarQuery("");
                         return;
                       }
-                      navigate(resolveSearchRoute(sidebarQuery));
-                      setSidebarQuery("");
                     }}
+                    aria-describedby={sidebarQuery.length > 0 && !firstFilteredRoute ? "module-search-status" : undefined}
                   />
                   {sidebarQuery.length > 0 && firstFilteredRoute && (
                     <kbd className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded border border-slate-200 bg-white px-1 text-[10px] font-semibold leading-4 text-slate-400">↵</kbd>
+                  )}
+                  {sidebarQuery.length > 0 && !firstFilteredRoute && (
+                    <span id="module-search-status" className="sr-only" role="status">No accessible modules match.</span>
                   )}
                 </div>
               </div>
@@ -706,7 +695,7 @@ export function AppShell() {
                     </span>
                     <span className="hidden min-w-0 flex-col items-start leading-tight lg:flex">
                       <span className="max-w-[140px] truncate text-[12px] font-semibold text-slate-900">{displayName}</span>
-                      <span className="max-w-[140px] truncate text-[10px] text-slate-500">{roleLabel} · {planLabel}</span>
+                      <span className="max-w-[140px] truncate text-[10px] text-slate-500">{planLabel ? `${roleLabel} · ${planLabel}` : roleLabel}</span>
                     </span>
                     <ChevronDown className="hidden h-3 w-3 shrink-0 text-slate-400 lg:block" />
                   </button>
@@ -763,6 +752,11 @@ export function AppShell() {
             fixed-viewport layout render a `flex h-full flex-col` root and let their
             own data region scroll; simpler pages just scroll this container. ── */}
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+          {session?.supportAccess?.active && (
+            <div className="shrink-0 border-b border-amber-300 bg-amber-50 px-4 py-2 text-center text-sm font-semibold text-amber-950" role="status" data-testid="support-access-banner">
+              Read-only Platform support session · tenant changes are blocked · reference {session.supportAccess.grantRef}
+            </div>
+          )}
           <div className="mx-auto w-full max-w-[1800px] shrink-0 px-4 pt-4 md:px-6">
             <WorkspaceExperience
               pageTitle={currentPageTitle}
@@ -774,7 +768,18 @@ export function AppShell() {
 
           {/* ── Content ── */}
           <main className="mx-auto flex w-full min-h-0 max-w-[1800px] flex-1 flex-col px-4 py-6 md:px-6">
-            <Outlet />
+            {activeModuleEntitled ? <Outlet /> : (
+              <div className="grid min-h-[55vh] place-items-center px-4">
+                <div className="panel max-w-xl p-8 text-center">
+                  <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-amber-400/20 bg-amber-400/10 text-amber-600">
+                    <ShieldAlert className="h-7 w-7" />
+                  </div>
+                  <p className="mt-5 text-[11px] font-bold uppercase tracking-[0.22em] text-amber-700">Not included in your plan</p>
+                  <h1 className="mt-2 text-2xl font-bold tracking-tight text-slate-900">{activeModule?.title ?? "This module"} is unavailable</h1>
+                  <p className="mt-3 text-sm leading-6 text-slate-500">Platform access for this module is disabled for your organisation. Contact your account owner to review the assigned package.</p>
+                </div>
+              </div>
+            )}
           </main>
         </div>
       </div>

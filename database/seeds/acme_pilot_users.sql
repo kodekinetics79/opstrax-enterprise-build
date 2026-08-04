@@ -10,11 +10,15 @@ DECLARE cid bigint; b1 bigint;
 BEGIN
     SELECT id INTO cid FROM companies WHERE company_code='ACME-TRANSPORT';
     IF cid IS NULL THEN RAISE NOTICE 'ACME-TRANSPORT not found — run harness first.'; RETURN; END IF;
-    SELECT id INTO b1 FROM branches WHERE company_id=cid AND branch_type='branch' ORDER BY id LIMIT 1;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS branch_id BIGINT NULL;
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='branches') THEN
+        EXECUTE 'SELECT id FROM branches WHERE company_id=$1 AND branch_type=''branch'' ORDER BY id LIMIT 1'
+            INTO b1 USING cid;
+    END IF;
 
     -- (email, full_name, role_name, role_id, branch_id, permissions_json, temp_password)
-    -- NOTE: this schema binds customer-portal scope by permission, not a users.customer_id
-    -- column, so the portal user carries only customer_portal:view here.
+    -- Customer-portal identity binding is completed through the normal invitation
+    -- workflow; these seed identities intentionally remain unbound/invited.
     INSERT INTO users (company_id, email, full_name, role_name, role_id, branch_id, status, permissions_json, demo_password)
     VALUES
       (cid, 'admin@acme-transport.com',        'Acme Company Admin',     'Company Admin',        2, NULL, 'Invited', '["*"]'::jsonb, NULL),
@@ -28,9 +32,18 @@ BEGIN
       (cid, 'driver@acme-transport.com',       'Acme Driver',            'Driver',               5, NULL, 'Invited', '["driver:self","driver:portal","jobs:view","dvir:manage"]'::jsonb, NULL),
       (cid, 'portal@acme-cus.example',         'Acme Customer Portal',   'Customer Portal User', 10, NULL, 'Invited', '["customer_portal:view","shipments:view"]'::jsonb, NULL),
       (cid, 'viewer@acme-transport.com',       'Acme Viewer/Auditor',    'Read-only Auditor',    12, NULL, 'Invited', '["dashboard:view","vehicles:view","drivers:view","shipments:view","reports:view","audit:view"]'::jsonb, NULL)
-    ON CONFLICT (email) DO UPDATE
-       SET company_id = EXCLUDED.company_id, role_name = EXCLUDED.role_name, role_id = EXCLUDED.role_id,
+    ON CONFLICT (company_id, email) DO UPDATE
+       SET role_name = EXCLUDED.role_name, role_id = EXCLUDED.role_id,
            branch_id = EXCLUDED.branch_id, permissions_json = EXCLUDED.permissions_json;
+
+    -- Role identity values are installation-specific; reconcile by canonical
+    -- role name instead of trusting the historical numeric placeholders above.
+    UPDATE users u
+       SET role_id = r.id
+      FROM roles r
+     WHERE u.company_id = cid
+       AND r.company_id IS NULL
+       AND lower(r.name) = lower(u.role_name);
 
     RAISE NOTICE 'ACME pilot users seeded/updated: 11 roles (admin, dispatcher, fleet, branch, safety, maint, tech, finance, driver, portal, viewer).';
 END

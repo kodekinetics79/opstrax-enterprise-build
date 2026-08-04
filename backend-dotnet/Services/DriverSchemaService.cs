@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS driver_offline_queue (
 CREATE TABLE IF NOT EXISTS hos_records (
     id                    BIGINT NOT NULL GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     company_id            BIGINT NULL,
+    branch_id             BIGINT NULL,
     driver_id             BIGINT NOT NULL,
     shift_date            DATE NOT NULL DEFAULT CURRENT_DATE,
     remaining_drive_hours NUMERIC(5,2) NULL,
@@ -77,16 +78,17 @@ CREATE TABLE IF NOT EXISTS hos_records (
     eld_device_id         BIGINT NULL,
     created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )");
+        await TryAddColumn("hos_records", "branch_id", "BIGINT NULL");
     }
 
     private async Task CreateIndexes()
     {
         var indexes = new[]
         {
-            ("drivers",             "idx_drivers_user_id",     "user_id"),
             ("driver_offline_queue","idx_dq_driver_status",    "driver_id, status"),
             ("driver_offline_queue","idx_dq_company",          "company_id"),
             ("hos_records",         "idx_hos_driver_shift",    "driver_id, shift_date DESC"),
+            ("hos_records",         "idx_hos_company_branch_shift", "company_id, branch_id, driver_id, shift_date DESC"),
         };
 
         foreach (var (table, name, cols) in indexes)
@@ -97,11 +99,32 @@ CREATE TABLE IF NOT EXISTS hos_records (
             }
             catch (Exception ex) { log.LogWarning(ex, "[DriverSchema] Index {Name} failed", name); }
         }
+
+        // drivers.user_id is the driver's portal identity, so it must be UNIQUE — the old
+        // idx_drivers_user_id was a plain index, which let two drivers share one login while
+        // GetDriverIdFromAuthAsync's `LIMIT 1` silently picked one of them. Partial, so the
+        // many un-provisioned (NULL) and soft-deleted drivers don't collide.
+        // Kept in step with db/init/009_driver_portal_identity.sql, which is what production
+        // actually applies (schema init is skipped there under the restricted role).
+        try
+        {
+            await db.ExecuteAsync("DROP INDEX IF EXISTS idx_drivers_user_id");
+            await db.ExecuteAsync(
+                @"CREATE UNIQUE INDEX IF NOT EXISTS uq_drivers_user_id ON drivers (user_id)
+                  WHERE user_id IS NOT NULL AND deleted_at IS NULL");
+        }
+        catch (Exception ex) { log.LogWarning(ex, "[DriverSchema] uq_drivers_user_id failed"); }
     }
 
     private async Task TryCreate(string table, string ddl)
     {
         try { await db.ExecuteAsync(ddl); }
         catch (Exception ex) { log.LogWarning(ex, "[DriverSchema] Create {Table} failed", table); }
+    }
+
+    private async Task TryAddColumn(string table, string column, string definition)
+    {
+        try { await db.ExecuteAsync($"ALTER TABLE \"{table}\" ADD COLUMN IF NOT EXISTS \"{column}\" {definition}"); }
+        catch (Exception ex) { log.LogWarning(ex, "[DriverSchema] Add {Table}.{Column} failed", table, column); }
     }
 }

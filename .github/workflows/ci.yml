@@ -5,15 +5,25 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   frontend-build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22
-      - run: npm install
+          node-version: '22.23.2'
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          dotnet-version: '8.0.x'
+      - run: npm ci --no-audit --no-fund
+        working-directory: frontend
+      - run: npm audit --omit=dev --audit-level=low
+        working-directory: frontend
+      - run: npm run lint -- --max-warnings=0
         working-directory: frontend
       - run: npm run build
         working-directory: frontend
@@ -21,37 +31,472 @@ jobs:
   node-backend-build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22
-      - run: npm install
+          node-version: '22.23.2'
+      - run: npm ci --no-audit --no-fund
+        working-directory: backend
+      - run: npm audit --omit=dev --audit-level=low
         working-directory: backend
       - run: npm run build
         working-directory: backend
 
-  node-events-install:
+  demo-node-events-check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22
-      - run: npm install
-        working-directory: node-services/events
+          node-version: '22.23.2'
+      - run: npm ci --no-audit --no-fund
+        working-directory: services/node-events
+      - run: npm audit --omit=dev --audit-level=low
+        working-directory: services/node-events
+      - run: npm run check
+        working-directory: services/node-events
 
   dotnet-build-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           dotnet-version: '8.0.x'
       - run: dotnet restore backend-dotnet/Opstrax.Api.csproj
       - run: dotnet build backend-dotnet/Opstrax.Api.csproj --no-restore
       - run: dotnet restore backend-dotnet.Tests/Opstrax.Tests.csproj
       - run: dotnet build backend-dotnet.Tests/Opstrax.Tests.csproj --no-restore
-      # DB-backed suites run in the dedicated SIT environment (isolated Neon branch),
-      # not in unit CI — they require a live connection and write tenant data.
+      - name: Enforce no-growth .NET warning baseline
+        run: tools/verify-dotnet-warning-baseline.sh
+      # DB-backed suites run in the dedicated integration job below (hermetic Postgres service),
+      # not here — they require a live connection and write tenant data.
       - name: Run unit/source/regression tests
         run: dotnet test backend-dotnet.Tests/Opstrax.Tests.csproj --no-build --filter "FullyQualifiedName!~Postgres&Category!=Integration"
+
+  # Integration / DB-backed suites against a hermetic, disposable Postgres service (never prod).
+  # Targets the DB via OPSTRAX_TEST_DB (TestDb helper). Schema is materialized the way a dev box
+  # builds it: base init SQL + owner migrations, then the app's EnsureAsync at boot.
+  dotnet-integration-tests:
+    runs-on: ubuntu-latest
+    # BLOCKING gate: the full DB-backed suite (94 tests incl. the rating engine money-math) runs
+    # against a hermetic Postgres and must pass. Legacy schema drift that surfaced here has been
+    # reconciled (feature_flags creation, enroll-on-create RLS, ai_recommendations backfills).
+    services:
+      postgres:
+        image: postgres:17@sha256:a426e44bac0b759c95894d68e1a0ac03ecc20b619f498a91aae373bf06d8508d
+        env:
+          POSTGRES_USER: zayra
+          POSTGRES_PASSWORD: zayra
+          POSTGRES_DB: opstrax_local
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U zayra -d opstrax_local"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      OPSTRAX_TEST_DB: "Host=127.0.0.1;Port=5433;Database=opstrax_local;Username=zayra;Password=zayra"
+      OPSTRAX_TEST_DB_APP: "Host=127.0.0.1;Port=5433;Database=opstrax_local;Username=opstrax_app;Password=opstrax_app_local"
+      OPSTRAX_TEST_DB_SYSTEM: "Host=127.0.0.1;Port=5433;Database=opstrax_local;Username=opstrax_system;Password=opstrax_system_local"
+      PGPASSWORD: zayra
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          dotnet-version: '8.0.x'
+      - name: Install psql client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Create independent restricted runtime roles
+        run: |
+          psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -v ON_ERROR_STOP=1 -c \
+            "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_app') THEN CREATE ROLE opstrax_app LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD 'opstrax_app_local'; END IF; IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_system') THEN CREATE ROLE opstrax_system LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD 'opstrax_system_local'; END IF; END \$\$;"
+      - name: Apply base schema + production owner migrations (fail closed)
+        run: |
+          for f in database/init/001_schema.sql database/init/002_seed.sql database/init/004_jobs_execution.sql; do
+            echo "Applying $f"
+            psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -v ON_ERROR_STOP=1 -q -f "$f"
+          done
+          for f in \
+            database/migrations/2026_06_30_stage19_row_level_security.sql \
+            database/migrations/2026_06_30_stage20_rls_force_and_app_role.sql \
+            database/migrations/2026_07_01_stage22_rls_reconcile_coverage.sql; do
+            echo "Applying $f"
+            psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -v ON_ERROR_STOP=1 -q -f "$f"
+          done
+          NEON_PG_URI='postgresql://zayra:zayra@127.0.0.1:5433/opstrax_local?sslmode=disable' \
+            ./tools/apply-neon-predeploy-migrations.sh
+      - name: Build API + tests
+        run: |
+          dotnet build backend-dotnet/Opstrax.Api.csproj
+          dotnet build backend-dotnet.Tests/Opstrax.Tests.csproj
+      - name: Materialize app schema (EnsureAsync via a bounded boot)
+        env:
+          ConnectionStrings__DefaultConnection: "Host=127.0.0.1;Port=5433;Database=opstrax_local;Username=zayra;Password=zayra"
+          Rls__EnforceTenantContext: "false"
+          ASPNETCORE_ENVIRONMENT: Development
+          ASPNETCORE_URLS: http://localhost:8099
+          Jwt__Key: "ci-only-jwt-signing-key-at-least-32-chars-long-000"
+          Telemetry__GatewaySecret: "ci-gateway-secret-at-least-32-characters-long-00"
+        run: |
+          (dotnet run --no-build --project backend-dotnet > /tmp/api_boot.log 2>&1 & echo $! > /tmp/api.pid)
+          # Schema init (all *SchemaService.EnsureAsync) runs during startup and completes BEFORE the
+          # app begins listening — so wait for that signal, not an arbitrary table count (which fired
+          # mid-init and left issued_invoices/ai_action_outcomes uncreated + backfills unapplied).
+          ok=0
+          for i in $(seq 1 90); do
+            if grep -qiE "Now listening on|Application started" /tmp/api_boot.log 2>/dev/null; then ok=1; break; fi
+            if grep -qiE "Unhandled exception|Application startup exception|schema init.*fail" /tmp/api_boot.log 2>/dev/null; then echo "BOOT FAILED:"; tail -40 /tmp/api_boot.log; exit 1; fi
+            sleep 2
+          done
+          sleep 8   # grace for any trailing ensure step
+          kill "$(cat /tmp/api.pid)" 2>/dev/null || true; sleep 2; kill -9 "$(cat /tmp/api.pid)" 2>/dev/null || true
+          [ "$ok" = 1 ] || { echo "app never reported listening — boot log tail:"; tail -40 /tmp/api_boot.log; exit 1; }
+          echo "tables after init: $(psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';")"
+      - name: Reapply mandatory terminal tenant boundary after schema materialization
+        run: |
+          psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -v ON_ERROR_STOP=1 -q \
+            -f database/migrations/2026_07_31_stage58_nonforgeable_tenant_ticket.sql
+          psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -v ON_ERROR_STOP=1 -q \
+            -f database/migrations/2026_07_31_stage59_data_protection_key_ring.sql
+          psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -v ON_ERROR_STOP=1 -q \
+            -f database/migrations/2026_08_02_stage67_telematics_diagnostics_integrity.sql
+          test "$(psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -tAc "SELECT count(*) FROM pg_policies WHERE schemaname='public' AND roles='{public}'::name[]")" = "0"
+      - name: Run DB-backed integration suites
+        run: dotnet test backend-dotnet.Tests/Opstrax.Tests.csproj --no-build --filter "FullyQualifiedName~Postgres|Category=Integration"
+
+  # A release migration must work from the real predecessor baseline without
+  # startup schema materialization masking a missing owner migration. This job
+  # also boots the candidate in Production with separate restricted identities.
+  production-shaped-release-rehearsal:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17@sha256:a426e44bac0b759c95894d68e1a0ac03ecc20b619f498a91aae373bf06d8508d
+        env:
+          POSTGRES_USER: zayra
+          POSTGRES_PASSWORD: zayra
+          POSTGRES_DB: postgres
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U zayra -d postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      OPSTRAX_TEST_DB_HOST: 127.0.0.1
+      OPSTRAX_TEST_DB_PORT: "5433"
+      OPSTRAX_TEST_DB_USER: zayra
+      OPSTRAX_TEST_DB_PASSWORD: zayra
+      OPSTRAX_TEST_DB_APP_PASSWORD: opstrax_app_local
+      OPSTRAX_TEST_DB_SYSTEM_PASSWORD: opstrax_system_local
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          dotnet-version: '8.0.x'
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Create independent restricted runtime roles
+        env:
+          PGPASSWORD: zayra
+        run: |
+          psql -h 127.0.0.1 -p 5433 -U zayra -d postgres -v ON_ERROR_STOP=1 -c \
+            "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_app') THEN CREATE ROLE opstrax_app LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD 'opstrax_app_local'; END IF; IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_system') THEN CREATE ROLE opstrax_system LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD 'opstrax_system_local'; END IF; END \$\$;"
+      - name: Prove clean predecessor migration and Production-shaped runtime
+        run: |
+          tools/test-predeploy-clean-chain.sh
+          tools/test-production-shaped-local-rehearsal.sh
+
+  release-container-builds:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22.23.2'
+      - name: Verify launch-critical source and migrations are packaged
+        run: |
+          test -f .dockerignore
+          test -f backend-dotnet/Middleware/PrincipalRateLimitingMiddleware.cs
+          test -f backend-dotnet/Services/FleetProductionReadinessService.cs
+          test -f backend-dotnet/Services/MfaChallengeConsumptionService.cs
+          test -f frontend/src/auth/csrfTokenStore.ts
+          test -f database/migrations/2026_07_30_customer_feedback_contract.sql
+          test -f database/migrations/2026_07_30_stage49_mfa_challenge_one_time.sql
+          test -f database/migrations/2026_07_30_stage50_fleet_production_contract.sql
+          test -f database/migrations/2026_07_30_stage51_production_runtime_support.sql
+          test -f database/migrations/2026_07_30_stage52_fleet_identity_uniqueness.sql
+          test -f database/migrations/2026_07_30_stage53_tenant_rls_reconciliation.sql
+          test -f database/migrations/2026_07_30_stage54_cold_chain_device_integrity.sql
+          test -f database/migrations/2026_07_30_stage55_fleet_runtime_route_contract.sql
+          test -f database/migrations/2026_07_30_stage56_asset_type_integrity.sql
+          test -f database/migrations/2026_07_30_stage57_workforce_schedule_tenant_integrity.sql
+          test -f database/migrations/2026_07_31_stage58_nonforgeable_tenant_ticket.sql
+          test -f database/migrations/2026_07_31_stage59_data_protection_key_ring.sql
+          test -f database/migrations/2026_08_01_stage60_dispatch_trip_pilot.sql
+          test -f database/migrations/2026_08_01_stage61_operations_proof_center.sql
+          test -f database/migrations/2026_08_01_stage62_last_mile_pilot.sql
+          test -f database/migrations/2026_08_01_stage63_route_plans_pilot.sql
+          test -f database/migrations/2026_07_22_stage47_detention_recovery.sql
+          test -f database/migrations/2026_08_01_stage64_shipments_pilot.sql
+          test -f database/migrations/2026_08_01_stage65_safety_pilot.sql
+          test -f database/migrations/2026_08_02_stage66_telematics_pilot.sql
+          test -f database/migrations/2026_08_02_stage67_telematics_diagnostics_integrity.sql
+          test -f database/migrations/2026_08_02_stage68_entitlement_policy_mode.sql
+          test -f database/migrations/2026_08_02_stage69_market_pack_control_hardening.sql
+          test -f database/migrations/2026_08_02_stage70_hos_pilot_schema_reconciliation.sql
+          test -f database/migrations/2026_08_02_stage71_coaching_evidence_reconciliation.sql
+          test -f database/migrations/2026_08_02_stage72_hos_offboarding_immutability_reconciliation.sql
+          test -f database/migrations/2026_08_02_stage73_hos_offboarding_null_fail_closed.sql
+          test -f database/migrations/2026_08_02_stage74_retention_policy_production_contract.sql
+          test -f database/migrations/2026_08_02_stage75_bounded_support_access.sql
+          test -f database/migrations/telematics/001_latest_position_provenance.sql
+          test -f database/migrations/telematics/002_device_lifecycle.sql
+          test -f database/migrations/telematics/003_canonical_telemetry_timeseries.sql
+          test -f database/migrations/telematics/004_device_trust_policy.sql
+          test -f database/migrations/telematics/005_replay_guard.sql
+          test -f database/migrations/telematics/006_projection_inbox.sql
+          test -f tools/generate-fleet-production-migration.mjs
+          test -x tools/collect-release-candidate-provenance.sh
+          test -x tools/test-release-candidate-provenance.sh
+          test -x tools/collect-safety-pilot-evidence.sh
+          test -x tools/test-safety-pilot-evidence-collector.sh
+          test -x tools/validate-safety-pilot-external-ops-evidence.sh
+          test -x tools/test-safety-pilot-external-ops-evidence.sh
+          test -x tools/dr-restore-drill.sh
+          test -x tools/test-dr-restore-drill-contract.sh
+          test -x tools/verify-dotnet-warning-baseline.sh
+          test -x tools/validate-ci-supply-chain-pins.sh
+          test -x tools/validate-mandatory-ci-gates.sh
+          test -x tools/test-mandatory-ci-gates.sh
+          test -f docs/pilot/RELEASE_CANDIDATE_PROVENANCE.md
+          test -f backend-dotnet.Tests/ReleaseProvenanceContractTests.cs
+          test -f backend-dotnet.Tests/CoreFleetAssignmentsRegressionTests.cs
+          test -f backend-dotnet.Tests/CoreFleetDriversRegressionTests.cs
+          test -f backend-dotnet.Tests/CoreFleetUtilizationRegressionTests.cs
+          test -f backend-dotnet.Tests/CoreFleetVehiclesRegressionTests.cs
+          test -f backend-dotnet.Tests/CoreFleetIdentityConflictPostgresTests.cs
+          test -f backend-dotnet.Tests/FleetIdentityReadinessRegressionTests.cs
+          test -f backend-dotnet.Tests/CoreJobsBranchHosApiTests.cs
+          test -f backend-dotnet.Tests/FleetIdentityReadinessRegressionTests.cs
+          test -f backend-dotnet.Tests/FleetPilotSafetyUiTests.cs
+          test -f backend-dotnet.Tests/FleetSpecializedBranchTests.cs
+          test -f backend-dotnet.Tests/FleetSummaryApiRegressionTests.cs
+          test -f backend-dotnet.Tests/FleetTmsAuthorizationTests.cs
+          test -f backend-dotnet.Tests/FleetTmsSecurityHardeningTests.cs
+          test -f backend-dotnet.Tests/FleetTmsWorkspaceConcurrencyTests.cs
+          test -f backend-dotnet.Tests/WorkforceScheduleTenantIntegrityTests.cs
+          test -f backend-dotnet.Tests/FleetTmsWorkspaceWave1Tests.cs
+          test -f backend-dotnet.Tests/TenantRlsCoverageReadinessRegressionTests.cs
+          test -f backend-dotnet.Tests/FleetRuntimeRouteContractRegressionTests.cs
+          bash -n tools/apply-neon-predeploy-migrations.sh
+          tools/test-safety-pilot-evidence-collector.sh
+          tools/test-safety-pilot-external-ops-evidence.sh
+          tools/test-dr-restore-drill-contract.sh
+          tools/validate-ci-supply-chain-pins.sh
+          tools/test-mandatory-ci-gates.sh
+      - name: Verify generated Fleet production migration is current
+        run: |
+          cp database/migrations/2026_07_30_stage50_fleet_production_contract.sql "$RUNNER_TEMP/stage50.sql"
+          node tools/generate-fleet-production-migration.mjs
+          cmp "$RUNNER_TEMP/stage50.sql" database/migrations/2026_07_30_stage50_fleet_production_contract.sql
+      - name: Validate Compose model
+        env:
+          JWT_KEY: ci-only-jwt-signing-key-at-least-32-chars-long-000
+          PLATFORM_SUPERADMIN_PASSWORD: ci-only-platform-password
+          PG_CONNECTION: postgresql://ci:ci@postgres/ci
+          PG_CONNECTION_APP: postgresql://opstrax_app:app-ci-only@postgres/ci
+          PG_CONNECTION_SYSTEM: postgresql://opstrax_system:system-ci-only@postgres/ci
+          DATA_PROTECTION_CERTIFICATE_BASE64: Y2ktY29tcG9zZS1vbmx5
+          DATA_PROTECTION_CERTIFICATE_PASSWORD: ci-compose-only
+        run: docker compose config --quiet
+      - name: Prove production artifacts cannot enable the demo event simulator
+        run: |
+          if grep -R -E 'node-events|VITE_NODE_EVENTS_URL|NODE_EVENTS_URL|useEventStream' \
+            frontend/Dockerfile frontend/nginx.conf frontend/src docker-compose.yml render.yaml; then
+            echo "Demo event simulator reference found in a production artifact" >&2
+            exit 1
+          fi
+      - name: Build production API container
+        run: docker build --file backend-dotnet/Dockerfile --tag opstrax-api:ci .
+      - name: Test and audit Telematics gateway solution
+        run: |
+          dotnet restore telematics/Opstrax.Telematics.sln
+          dotnet test telematics/Opstrax.Telematics.sln --no-restore --configuration Release
+          dotnet list telematics/Opstrax.Telematics.sln package --vulnerable --include-transitive | tee /tmp/telematics-vulnerabilities.txt
+          ! grep -q "has the following vulnerable packages" /tmp/telematics-vulnerabilities.txt
+      - name: Build production Telematics gateway container
+        run: docker build --file telematics/Dockerfile --tag opstrax-telematics-gateway:ci .
+      - name: Build production frontend container
+        run: docker build --file frontend/Dockerfile --tag opstrax-frontend:ci frontend
+      - name: Smoke-test unprivileged frontend, SPA deep links, and API proxy
+        run: |
+          cleanup() {
+            docker rm -f opstrax-ci-frontend opstrax-ci-api >/dev/null 2>&1 || true
+            docker network rm opstrax-ci-network >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          cleanup
+          docker network create opstrax-ci-network >/dev/null
+          docker run -d --name opstrax-ci-api --network opstrax-ci-network --network-alias api-dotnet \
+            node:22.23.2-alpine3.24@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 \
+            node -e "require('http').createServer((req,res)=>{res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({source:'api-dotnet',path:req.url}))}).listen(8080,'0.0.0.0')" \
+            >/dev/null
+          docker run -d --name opstrax-ci-frontend --network opstrax-ci-network -p 18080:8080 opstrax-frontend:ci >/dev/null
+          for attempt in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:18080/health >/dev/null && break
+            sleep 1
+          done
+          test "$(docker inspect --format '{{.Config.User}}' opstrax-frontend:ci)" = "101"
+          test "$(docker exec opstrax-ci-frontend id -u)" = "101"
+          for path in / /login /fleet-overview /vehicles/overview /drivers/overview \
+            /fleet-utilization/overview /assignments/overview /track/ci-token \
+            /eta/ci-code /reset-password?token=ci /unknown-route; do
+            curl -fsS "http://127.0.0.1:18080$path" | grep -q '<div id="root"></div>'
+          done
+          curl -fsS http://127.0.0.1:18080/api/probe | grep -q '"source":"api-dotnet"'
+          if grep -R -E 'react-router-dom|node-events|VITE_NODE_EVENTS_URL|NODE_EVENTS_URL' frontend/src; then
+            echo "Retired production dependency or demo event reference found" >&2
+            exit 1
+          fi
+      - name: Block fixed high and critical container vulnerabilities
+        run: |
+          for image in opstrax-api:ci opstrax-frontend:ci opstrax-telematics-gateway:ci; do
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v opstrax-trivy-cache:/root/.cache/trivy \
+              aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e \
+              image --ignore-unfixed --severity HIGH,CRITICAL --exit-code 1 --no-progress "$image"
+          done
+      - name: Generate exact-commit image provenance and CycloneDX SBOMs
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          tools/test-release-candidate-provenance.sh
+          tools/collect-release-candidate-provenance.sh \
+            --output artifacts/release-provenance \
+            --image api=opstrax-api:ci \
+            --image frontend=opstrax-frontend:ci \
+            --image gateway=opstrax-telematics-gateway:ci
+          test "$(awk -F '\t' '$1==\"commit_sha\" {print $2}' artifacts/release-provenance/candidate.tsv)" = "$GITHUB_SHA"
+          test "$(find artifacts/release-provenance/sboms -type f -name '*.cyclonedx.json' | wc -l)" = "3"
+          if awk -F '\t' 'NR>1 && $5=="NOT_EVIDENCED" {missing=1} END {exit !missing}' artifacts/release-provenance/images.tsv; then
+            echo "Local image IDs and SBOMs captured; registry RepoDigests remain a deployment/publish gate." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Record CI execution context
+        run: |
+          mkdir -p artifacts/ci-context
+          {
+            printf 'field\tvalue\n'
+            printf 'commit_sha\t%s\n' "$GITHUB_SHA"
+            printf 'workflow\t%s\n' "$GITHUB_WORKFLOW"
+            printf 'run_id\t%s\n' "$GITHUB_RUN_ID"
+            printf 'run_attempt\t%s\n' "$GITHUB_RUN_ATTEMPT"
+            printf 'event_name\t%s\n' "$GITHUB_EVENT_NAME"
+            printf 'run_url\t%s/%s/actions/runs/%s\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+          } > artifacts/ci-context/context.tsv
+      - name: Upload intermediate release provenance
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-provenance-${{ github.sha }}
+          path: |
+            artifacts/release-provenance
+            artifacts/ci-context
+          if-no-files-found: error
+          retention-days: 30
+
+  exact-sha-release-evidence:
+    runs-on: ubuntu-latest
+    if: ${{ always() }}
+    needs:
+      - frontend-build
+      - node-backend-build
+      - demo-node-events-check
+      - dotnet-build-test
+      - dotnet-integration-tests
+      - production-shaped-release-rehearsal
+      - release-container-builds
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Record mandatory gate results even when a gate fails
+        id: gates
+        if: ${{ always() }}
+        env:
+          FRONTEND_RESULT: ${{ needs.frontend-build.result }}
+          NODE_RESULT: ${{ needs.node-backend-build.result }}
+          EVENTS_RESULT: ${{ needs.demo-node-events-check.result }}
+          DOTNET_RESULT: ${{ needs.dotnet-build-test.result }}
+          INTEGRATION_RESULT: ${{ needs.dotnet-integration-tests.result }}
+          REHEARSAL_RESULT: ${{ needs.production-shaped-release-rehearsal.result }}
+          CONTAINER_RESULT: ${{ needs.release-container-builds.result }}
+        run: |
+          mkdir -p artifacts/mandatory-gate-results
+          {
+            printf 'gate\tresult\n'
+            printf 'frontend-build\t%s\n' "$FRONTEND_RESULT"
+            printf 'node-backend-build\t%s\n' "$NODE_RESULT"
+            printf 'demo-node-events-check\t%s\n' "$EVENTS_RESULT"
+            printf 'dotnet-build-test\t%s\n' "$DOTNET_RESULT"
+            printf 'dotnet-integration-tests\t%s\n' "$INTEGRATION_RESULT"
+            printf 'production-shaped-release-rehearsal\t%s\n' "$REHEARSAL_RESULT"
+            printf 'release-container-builds\t%s\n' "$CONTAINER_RESULT"
+          } > artifacts/mandatory-gate-results/mandatory-ci-gates.tsv
+          if awk -F '\t' 'NR > 1 && $2 != "success" { failed=1 } END { exit failed }' \
+            artifacts/mandatory-gate-results/mandatory-ci-gates.tsv; then
+            echo 'all_success=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'all_success=false' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Upload mandatory gate result ledger
+        id: gate_ledger
+        if: ${{ always() && steps.gates.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: opstrax-mandatory-gates-${{ github.sha }}-${{ github.run_attempt }}
+          path: artifacts/mandatory-gate-results
+          if-no-files-found: error
+          retention-days: 30
+      - name: Download exact-commit provenance
+        if: ${{ always() && steps.gates.outputs.all_success == 'true' }}
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-provenance-${{ github.sha }}
+          path: artifacts/exact-sha-release
+      - name: Verify exact commit and mandatory success contract
+        id: verify_candidate
+        if: ${{ always() && steps.gates.outputs.all_success == 'true' }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(awk -F '\t' '$1==\"commit_sha\" {print $2}' artifacts/exact-sha-release/release-provenance/candidate.tsv)" = "$GITHUB_SHA"
+          cp artifacts/mandatory-gate-results/mandatory-ci-gates.tsv artifacts/exact-sha-release/
+          tools/validate-mandatory-ci-gates.sh --require-success artifacts/exact-sha-release/mandatory-ci-gates.tsv
+          find artifacts/exact-sha-release -type f -print | LC_ALL=C sort | xargs sha256sum > artifacts/exact-sha-release-index.sha256
+      - name: Upload exact-SHA release-candidate evidence
+        id: release_evidence
+        if: ${{ always() && steps.verify_candidate.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: opstrax-release-candidate-${{ github.sha }}
+          path: |
+            artifacts/exact-sha-release
+            artifacts/exact-sha-release-index.sha256
+          if-no-files-found: error
+          retention-days: 30
+      - name: Publish immutable evidence identity
+        if: ${{ always() && steps.release_evidence.outcome == 'success' }}
+        run: |
+          {
+            echo "### Exact-SHA release evidence"
+            echo "- Commit: \`$GITHUB_SHA\`"
+            echo "- Artifact: \`opstrax-release-candidate-$GITHUB_SHA\`"
+            echo "- Artifact digest: \`${{ steps.release_evidence.outputs.artifact-digest }}\`"
+            echo "- Registry deploy digests: not produced by CI; capture after authorized image publication"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Enforce release evidence outcome
+        if: ${{ always() }}
+        env:
+          ALL_GATES_SUCCESS: ${{ steps.gates.outputs.all_success }}
+          GATE_LEDGER_OUTCOME: ${{ steps.gate_ledger.outcome }}
+          VERIFY_OUTCOME: ${{ steps.verify_candidate.outcome }}
+          RELEASE_EVIDENCE_OUTCOME: ${{ steps.release_evidence.outcome }}
+        run: |
+          test "$GATE_LEDGER_OUTCOME" = "success"
+          test "$ALL_GATES_SUCCESS" = "true"
+          test "$VERIFY_OUTCOME" = "success"
+          test "$RELEASE_EVIDENCE_OUTCOME" = "success"

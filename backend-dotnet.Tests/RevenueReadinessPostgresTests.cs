@@ -11,8 +11,7 @@ namespace Opstrax.Tests;
 
 public class RevenueReadinessPostgresTests
 {
-    private const string LocalConnectionString =
-        "Host=127.0.0.1;Port=5433;Database=opstrax_local;Username=zayra;Password=zayra";
+    private static readonly string LocalConnectionString = TestDb.ConnectionString;
 
     [Fact]
     public void Stage7A_SchemaContract_File_Exists_And_Contains_RevenueDraftTables()
@@ -21,6 +20,56 @@ public class RevenueReadinessPostgresTests
         Assert.Contains("CREATE TABLE IF NOT EXISTS invoice_drafts", contract, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("CREATE TABLE IF NOT EXISTS invoice_draft_lines", contract, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("uq_invoice_drafts_company_invoice_no", contract, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Issue_With_Published_Tax_Profile_Taxes_Invoice_And_Snapshots_Breakdown()
+    {
+        var db = CreateDatabase();
+        await EnsureSchemasAsync(db);
+        var companyId = await SeedCompanyAsync(db);
+        var customerId = await SeedCustomerAsync(db, companyId, "customer-tax");
+        var contractId = await SeedContractAsync(db, companyId, customerId, "contract-tax");
+        var spine = new BusinessSpineService(db);
+        var rateCard = await spine.CreateRateCardAsync(companyId, "RC-TAX-1", "Tax rate card", customerId, contractId,
+            "Per Mile", "Metro", "North", "South", "Truck", "USD", 3.25m, 150m, 6.5m, "Base",
+            DateOnly.FromDateTime(DateTime.UtcNow.Date), null, "Active", "corr-tax", "cause-tax", "Tax rate card");
+        var jobId = await SeedJobAsync(db, companyId, customerId, contractId, rateCard.Id, "Completed", "JOB-TAX-1");
+        await spine.CreateJobChargeAsync(companyId, jobId, null, rateCard.Id, "BASE", "Base charge", "base", "Line", 1m, 1000m, 1000m, "USD", "approved");
+
+        // Publish a 15% VAT profile with a catch-all standard rule + seller registration.
+        var profileId = await db.InsertAsync(
+            @"INSERT INTO tax_profiles (company_id, profile_code, profile_name, regime, price_inclusive, currency, effective_date, status, author_user_id, published_by_user_id, published_at)
+              VALUES (@c, 'TP-ISSUE', 'P', 'vat', FALSE, NULL, DATE '2025-01-01', 'published', 1, 2, NOW()) RETURNING id",
+            c => c.Parameters.AddWithValue("@c", companyId));
+        await db.ExecuteAsync("INSERT INTO tax_rules (company_id, tax_profile_id, tax_code, tax_category, rate, taxable, priority) VALUES (@c,@p,'STANDARD','S',0.15,TRUE,0)",
+            c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@p", profileId); });
+        await db.ExecuteAsync("INSERT INTO seller_tax_registration (company_id, jurisdiction, regime, tax_registration_no, effective_date) VALUES (@c,'XX','vat','TRN', DATE '2025-01-01')",
+            c => c.Parameters.AddWithValue("@c", companyId));
+
+        var service = CreateRevenueService(db);
+        var draftOutcome = await service.CreateInvoiceDraftFromJobAsync(companyId, jobId, "tax-issue-draft");
+        Assert.True(draftOutcome.Success);
+        // Draft already carries the computed tax (1000 * 0.15 = 150).
+        var draft = await service.GetInvoiceDraftAsync(companyId, draftOutcome.Draft!.Id);
+        Assert.Equal(150m, draft!.TaxTotal);
+        Assert.Equal(1150m, draft.Total);
+
+        var gate = await service.UpdateInvoiceDraftAsync(companyId, draftOutcome.Draft.Id, "approved");
+        var approval = new PostgresApprovalWorkflowService(db, new InMemoryCorrelationContext("corr-ti", "cause-ti", "req-ti", companyId.ToString(), ActorTypes.TenantUser, "42"));
+        approval.Decide(gate.ApprovalRequestId!.Value, "approver-ti", "approved", "ok");
+
+        var issue = await service.IssueInvoiceFromDraftAsync(companyId, draftOutcome.Draft.Id, "tax-issue");
+        Assert.True(issue.Success);
+        // Issued invoice carries the fresh taxed figures.
+        Assert.Equal(150m, issue.Invoice!.TaxTotal);
+        Assert.Equal(1150m, issue.Invoice.Total);
+
+        // Immutable tax snapshot exists and foots to the header tax_total.
+        var snapSum = await db.ScalarDecimalAsync(
+            "SELECT COALESCE(SUM(tax_amount),0) FROM issued_invoice_tax_lines WHERE company_id=@c AND issued_invoice_id=@i",
+            c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@i", issue.Invoice.Id); });
+        Assert.Equal(150m, snapSum);
     }
 
     [Fact]
@@ -714,6 +763,59 @@ public class RevenueReadinessPostgresTests
             });
     }
 
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task IssueInvoice_POD_Gate_Blocks_Without_Proof_When_Flag_On()
+    {
+        var db = CreateDatabase();
+        await EnsureSchemasAsync(db);
+        var companyId = await SeedCompanyAsync(db);
+        var customerId = await SeedCustomerAsync(db, companyId, "cust-pod");
+        var spine = new BusinessSpineService(db);
+        var service = CreateRevenueService(db);
+
+        async Task<(long jobId, Guid draftId)> DraftAsync(string code)
+        {
+            var jobId = await SeedJobAsync(db, companyId, customerId, null, null, "delivered", code);
+            await spine.CreateJobChargeAsync(companyId, jobId, null, null, "BASE", "Base charge", "base", "line", 1m, 100m, 100m, "USD", "approved");
+            var d = await service.CreateInvoiceDraftFromJobAsync(companyId, jobId, code);
+            Assert.True(d.Success);
+            return (jobId, d.Draft!.Id);
+        }
+
+        try
+        {
+            // Flag OFF (default): issuance is not POD-gated.
+            var (_, draftOff) = await DraftAsync($"POD-OFF-{companyId}");
+            var off = await service.IssueInvoiceFromDraftAsync(companyId, draftOff, $"iss-off-{companyId}");
+            Assert.DoesNotContain("no proof of delivery", off.Message, StringComparison.OrdinalIgnoreCase);
+
+            // Turn the gate on for this tenant.
+            await db.ExecuteAsync(
+                @"INSERT INTO feature_flags (company_id, flag_key, name, enabled)
+                  VALUES (@c, 'billing.require_pod_to_issue', 'Require POD to issue', TRUE)",
+                c => c.Parameters.AddWithValue("@c", companyId));
+
+            // Flag ON, no POD -> blocked.
+            var (_, draftNoPod) = await DraftAsync($"POD-NONE-{companyId}");
+            var blocked = await service.IssueInvoiceFromDraftAsync(companyId, draftNoPod, $"iss-nopod-{companyId}");
+            Assert.False(blocked.Success);
+            Assert.Contains("no proof of delivery", blocked.Message, StringComparison.OrdinalIgnoreCase);
+
+            // Flag ON, POD captured (proof_of_delivery path) -> passes the gate.
+            var (jobPod, draftPod) = await DraftAsync($"POD-YES-{companyId}");
+            await db.ExecuteAsync(
+                "INSERT INTO proof_of_delivery (company_id, job_id, receiver_name, status) VALUES (@c, @j, 'Jane Receiver', 'Captured')",
+                c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@j", jobPod); });
+            var allowed = await service.IssueInvoiceFromDraftAsync(companyId, draftPod, $"iss-pod-{companyId}");
+            Assert.DoesNotContain("no proof of delivery", allowed.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            await db.ExecuteAsync("DELETE FROM feature_flags WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", companyId));
+        }
+    }
+
     private static RevenueReadinessService CreateRevenueService(Database db)
     {
         var correlation = new InMemoryCorrelationContext("corr-stage7", "cause-stage7", "req-stage7", null, ActorTypes.TenantUser, "42");
@@ -723,7 +825,8 @@ public class RevenueReadinessPostgresTests
             new PostgresApprovalWorkflowService(db, correlation),
             new PostgresIdempotencyService(db),
             new PostgresDomainEventPublisher(db, correlation),
-            correlation);
+            correlation,
+            new TaxService(db));
     }
 
     private static Database CreateDatabase()
@@ -773,9 +876,15 @@ CREATE TABLE IF NOT EXISTS vehicles (
 )");
 
         await db.ExecuteAsync(@"
-INSERT INTO companies (company_code, name, industry, timezone, status)
-VALUES ('OPX-DEMO', 'OpsTrax Demo Logistics', 'Transport & Field Operations', 'America/New_York', 'Active')
-ON CONFLICT (company_code) DO UPDATE SET name=EXCLUDED.name RETURNING id");
+INSERT INTO companies (id, company_code, name, industry, timezone, status)
+OVERRIDING SYSTEM VALUE
+VALUES (1, 'OPX-BASE-ID-1', 'OpsTrax Demo Logistics', 'Transport & Field Operations', 'America/New_York', 'Active')
+ON CONFLICT (id) DO UPDATE SET
+  name=EXCLUDED.name,
+  industry=EXCLUDED.industry,
+  timezone=EXCLUDED.timezone,
+  status=EXCLUDED.status");
+        await db.ExecuteAsync("SELECT setval(pg_get_serial_sequence('companies', 'id'), (SELECT COALESCE(MAX(id), 1) FROM companies))");
 
         await db.ExecuteAsync("ALTER TABLE ai_recommendations ADD COLUMN IF NOT EXISTS company_id BIGINT NOT NULL DEFAULT 1");
         await db.ExecuteAsync("ALTER TABLE ai_recommendations ADD COLUMN IF NOT EXISTS module_key VARCHAR(100) NULL");
@@ -793,6 +902,7 @@ SELECT n, 1, 'DRV-' || LPAD(n::TEXT, 3, '0'), 'Stage 7 Driver ' || n, '+1 571 43
        'Available', 90 + (n % 8), 88 + (n % 10), 10 + (n % 7), 90 + (n % 6), NULL
 FROM generate_series(1, 20) AS n
 ON CONFLICT DO NOTHING");
+        await db.ExecuteAsync("SELECT setval(pg_get_serial_sequence('drivers', 'id'), (SELECT COALESCE(MAX(id), 1) FROM drivers))");
 
         await db.ExecuteAsync(@"
 INSERT INTO vehicles (id, company_id, vehicle_code, type, make, model, year, vin, plate_number, status, odometer_miles, readiness_score, data_quality_score, risk_score, device_status, camera_status, assigned_driver_id)
@@ -815,6 +925,7 @@ SELECT n, 1,
        n
 FROM generate_series(1, 20) AS n
 ON CONFLICT DO NOTHING");
+        await db.ExecuteAsync("SELECT setval(pg_get_serial_sequence('vehicles', 'id'), (SELECT COALESCE(MAX(id), 1) FROM vehicles))");
 
         await db.ExecuteAsync("UPDATE drivers SET assigned_vehicle_id=v.id FROM vehicles v WHERE v.assigned_driver_id=drivers.id");
     }

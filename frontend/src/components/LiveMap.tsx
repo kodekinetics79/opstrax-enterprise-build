@@ -2,6 +2,20 @@ import { useEffect, useRef } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import type { AnyRecord } from "@/types";
+import {
+  classifySource,
+  sourceLabel,
+  categoryBadge,
+  categoryColor,
+  markerSourceRing,
+  freshnessBucket,
+  bucketFromServerFreshness,
+  freshnessColor,
+  freshnessBucketLabel,
+  readSource,
+  type FreshnessBucket,
+  type ProvenanceCategory,
+} from "@/utils/telemetryProvenance";
 
 // Returns the vehicle's real GPS coordinate, or null when there is no genuine fix.
 // We never fabricate a position — a dot a dispatcher can't trust poisons the whole map.
@@ -16,22 +30,58 @@ function isMovingState(status: string, speed: number): boolean {
   return speed > 3 || /active|on route|moving|driving|en route/i.test(status);
 }
 
-function markerColor(risk: string, status: string, speed: number, isStale: boolean, deviceStatus?: string, cameraStatus?: string): string {
+// Compact "2m ago" freshness from seconds-since-fix (null-safe).
+function fmtAge(seconds: number | null): string {
+  if (seconds == null || !Number.isFinite(seconds)) return "—";
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  return `${Math.floor(s / 3600)}h ago`;
+}
+
+// Local short clock for a timestamp string (null/invalid → em dash).
+function fmtClock(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+// Status line text: surface Stale/Offline over the raw status when the fix is not
+// recent; otherwise fall back to the original status string (legacy behavior).
+function notRecentText(fresh: FreshnessBucket | null, isStale: boolean, status: string): string {
+  if (fresh === "offline") return "Offline";
+  if (fresh === "stale") return "Stale";
+  if (fresh == null && isStale) return "Offline"; // legacy fallback when no fresh signal
+  return status;
+}
+
+// Marker color. Freshness (age of the fix) dominates the "can I trust this dot"
+// question: offline/stale render muted so a stale fix can never look live; a
+// delayed (aging) fix reads amber. When freshness is unknown (pre-migration API
+// with no fix-age signal) the function falls back to the original isStale logic,
+// so existing behavior is preserved exactly.
+function markerColor(freshness: FreshnessBucket | null, risk: string, status: string, speed: number, isStale: boolean, deviceStatus?: string, cameraStatus?: string): string {
+  if (freshness === "offline") return freshnessColor("offline");
+  if (freshness === "stale" || (freshness == null && isStale)) return freshnessColor("stale");
   const deviceOnline = !deviceStatus || /online|recording/i.test(deviceStatus);
   const cameraOnline = !cameraStatus || /online|recording/i.test(cameraStatus);
-  if (isStale) return "#94a3b8"; // offline / no recent ping
   if (!deviceOnline && !cameraOnline) return "#ef4444";
   if (!deviceOnline || !cameraOnline) return "#f59e0b";
   if (/high|critical/i.test(risk)) return "#ef4444";
   if (/medium|warning/i.test(risk)) return "#f59e0b";
+  if (freshness === "delayed") return freshnessColor("delayed"); // aging fix
   return isMovingState(status, speed) ? "#14b8a6" : "#6366f1";
 }
 
-function makeVehicleIcon(risk: string, status: string, speed: number, heading: number, isStale: boolean, deviceStatus?: string, cameraStatus?: string): L.DivIcon {
-  const moving = isMovingState(status, speed) && !isStale;
-  const color = markerColor(risk, status, speed, isStale, deviceStatus, cameraStatus);
+function makeVehicleIcon(freshness: FreshnessBucket | null, sourceCategory: ProvenanceCategory, risk: string, status: string, speed: number, heading: number, isStale: boolean, deviceStatus?: string, cameraStatus?: string): L.DivIcon {
+  // "Not recent" = stale/offline (or, pre-migration, the legacy isStale flag). Such a
+  // fix never renders as a moving arrow and shows the hollow-ring treatment.
+  const notRecent = freshness === "offline" || freshness === "stale" || (freshness == null && isStale);
+  const moving = isMovingState(status, speed) && !notRecent;
+  const color = markerColor(freshness, risk, status, speed, isStale, deviceStatus, cameraStatus);
 
-  // Moving units render as a heading-aware arrow; stationary as a dot; offline as a hollow ring.
+  // Moving units render as a heading-aware arrow; stationary as a dot; offline/stale as a hollow ring.
   const inner = moving
     ? `<div style="
         width:0;height:0;
@@ -43,16 +93,22 @@ function makeVehicleIcon(risk: string, status: string, speed: number, heading: n
       "></div>`
     : `<div style="
         width:14px;height:14px;border-radius:50%;
-        background:${isStale ? "white" : color};
-        border:2.5px solid ${isStale ? color : "white"};
+        background:${notRecent ? "white" : color};
+        border:2.5px solid ${notRecent ? color : "white"};
         box-shadow:0 1px 6px rgba(0,0,0,0.35);
       "></div>`;
+
+  // Source ring: direct-device fixes get no ring (trusted baseline); simulated,
+  // seeded and vendor fixes get a distinct dashed/dotted/solid outline so they can
+  // never be mistaken for a real direct-device fix. Outline doesn't affect layout.
+  const sourceRing = markerSourceRing(sourceCategory);
 
   return L.divIcon({
     className: "opstrax-vehicle-marker",
     html: `<div style="
-      display:flex;align-items:center;justify-content:center;width:18px;height:18px;
-      ${moving ? "animation:opstrax-pulse 2s ease-in-out infinite;border-radius:50%;" : ""}
+      display:flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;
+      ${sourceRing}
+      ${moving ? "animation:opstrax-pulse 2s ease-in-out infinite;" : ""}
     ">${inner}</div>`,
     iconSize: [18, 18],
     iconAnchor: [9, 9],
@@ -250,23 +306,59 @@ export function LiveMap({ entities, geofences, routeTrails = [], onSelect, focus
       // Reverse-geocoded street address (cached server-side); shown instead of raw coords.
       const address = String(entity.address ?? "").trim();
 
+      // ── Provenance & freshness (all optional; absent ⇒ neutral/unknown) ──────
+      // When there is NO fix-age signal at all (older API / pre-migration snapshot),
+      // fresh stays null and the marker falls back to the legacy isStale coloring —
+      // we must not mute a marker to "offline" just because the column is missing.
+      const secondsSincePing = entity.secondsSincePing ?? entity.seconds_since_ping;
+      const hasFreshSignal = secondsSincePing != null && Number.isFinite(Number(secondsSincePing));
+      // Prefer the server's freshness (age of the actual FIX — the worst of receipt-age
+      // and device-fix-age) over a bucket derived from secondsSincePing (receipt-age only),
+      // so a backdated/buffered fix can't be colored 'live'. Fall back to the client
+      // derivation only when the server sent no freshness (older API / pre-migration).
+      const fresh: FreshnessBucket | null =
+        bucketFromServerFreshness(entity.freshness as string | null | undefined)
+        ?? (hasFreshSignal ? freshnessBucket(Number(secondsSincePing)) : null);
+      const rawSource = readSource(entity);
+      const sourceCat = classifySource(rawSource);
+      const provider = String(entity.provider ?? "").trim();
+      const protocol = String(entity.protocol ?? "").trim();
+      const confidenceRaw = entity.confidence;
+      const deviceFix = String(entity.deviceFixTime ?? entity.device_fix_time ?? "").trim();
+      const gatewayRecv = String(entity.gatewayReceivedAt ?? entity.gateway_received_at ?? "").trim();
+      const ageLabel = fmtAge(hasFreshSignal ? Number(secondsSincePing) : null);
+      const catColor = categoryColor(sourceCat);
+      // Prefer a derived bucket; else the server-provided freshness string; else "Unknown".
+      const serverFreshness = String(entity.freshness ?? "").trim();
+      const freshLabel = fresh != null
+        ? freshnessBucketLabel(fresh)
+        : serverFreshness ? serverFreshness.charAt(0).toUpperCase() + serverFreshness.slice(1) : "Unknown";
+      const freshDotColor = fresh != null ? freshnessColor(fresh) : "#94a3b8";
+
       const popupHtml =
-        `<div style="font-family:system-ui;font-size:12px;min-width:190px;line-height:1.5">
+        `<div style="font-family:system-ui;font-size:12px;min-width:210px;line-height:1.5">
           <p style="font-weight:700;margin:0 0 2px;font-size:13px">${label}</p>
           <p style="margin:0;color:#475569">${driver}</p>
-          <p style="margin:2px 0 0;color:#64748b">${speedRaw != null ? `${Math.round(speed)} mph &bull; ` : ""}${isStale ? "Offline" : status}</p>
+          <p style="margin:2px 0 0;color:#64748b">${speedRaw != null ? `${Math.round(speed)} mph &bull; ` : ""}${notRecentText(fresh, isStale, status)}</p>
           ${address ? `<p style="margin:3px 0 0;color:#334155;font-size:11px">&#128205; ${address}</p>` : ""}
-          <p style="margin:2px 0 0;color:#94a3b8;font-size:11px">Device: ${deviceStatus} &bull; Cam: ${camStatus}</p>
+          <div style="margin:6px 0 0;padding-top:5px;border-top:1px solid #e2e8f0">
+            <span style="display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:700;color:${catColor};border:1px solid ${catColor};border-radius:9999px;padding:1px 6px;text-transform:uppercase;letter-spacing:.04em">${categoryBadge(sourceCat)}</span>
+            <span style="display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:700;color:${freshDotColor};margin-left:6px"><span style="width:7px;height:7px;border-radius:50%;background:${freshDotColor};display:inline-block"></span>${freshLabel}</span>
+          </div>
+          <p style="margin:4px 0 0;color:#334155;font-size:11px">Source: <b>${sourceLabel(rawSource)}</b>${provider ? ` &bull; ${provider}` : ""}${protocol ? ` &bull; ${protocol}` : ""}</p>
+          ${confidenceRaw != null && Number.isFinite(Number(confidenceRaw)) ? `<p style="margin:2px 0 0;color:#64748b;font-size:11px">Confidence: ${(Number(confidenceRaw) * 100).toFixed(0)}%</p>` : ""}
+          <p style="margin:2px 0 0;color:#94a3b8;font-size:11px">Age: ${ageLabel}${deviceFix ? ` &bull; device fix ${fmtClock(deviceFix)}` : ""}${gatewayRecv ? ` &bull; gateway ${fmtClock(gatewayRecv)}` : ""}</p>
+          <p style="margin:4px 0 0;color:#94a3b8;font-size:11px">Device: ${deviceStatus} &bull; Cam: ${camStatus}</p>
           <p style="margin:2px 0 0;color:#94a3b8;font-size:11px">Connectivity: ${connectivity} &bull; ${connectivityIssues}</p>
         </div>`;
 
       let marker = markers.get(key);
       if (marker) {
         marker.setLatLng([lat, lng]);
-        marker.setIcon(makeVehicleIcon(risk, status, speed, heading, isStale, deviceStatus, camStatus));
+        marker.setIcon(makeVehicleIcon(fresh, sourceCat, risk, status, speed, heading, isStale, deviceStatus, camStatus));
         marker.setPopupContent(popupHtml);
       } else {
-        marker = L.marker([lat, lng], { icon: makeVehicleIcon(risk, status, speed, heading, isStale, deviceStatus, camStatus) })
+        marker = L.marker([lat, lng], { icon: makeVehicleIcon(fresh, sourceCat, risk, status, speed, heading, isStale, deviceStatus, camStatus) })
           .addTo(map)
           .bindPopup(popupHtml, { closeButton: false });
         markers.set(key, marker);

@@ -170,5 +170,6 @@ export function useTripActions() {
   const start     = useMutation({ mutationFn: (id: number) => tripApi.start(id),     onSuccess: invalidate });
   const complete  = useMutation({ mutationFn: (id: number) => tripApi.complete(id),  onSuccess: invalidate });
   const exception = useMutation({ mutationFn: ({ id, notes }: { id: number; notes?: string }) => tripApi.exception(id, notes), onSuccess: invalidate });
-  return { start, complete, exception };
+  const cancel    = useMutation({ mutationFn: ({ id, reason }: { id: number; reason: string }) => tripApi.cancel(id, reason), onSuccess: invalidate });
+  return { start, complete, exception, cancel };
 }

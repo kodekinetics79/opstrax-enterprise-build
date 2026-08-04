@@ -155,10 +155,12 @@ multi-region tenants, run separate regional deployments (the app is single-regio
 | 3 | Enable Neon read replica | Neon | `PG_CONNECTION_REPLICA` | 🟠 soon (resilience) |
 | 4 | Put Cloudflare in front of API | Cloudflare | — | 🟠 soon (WAF/DDoS) |
 | 5 | Run DR drill; record RPO/RTO | CLI | `NEON_PROJECT_ID` | 🟠 quarterly |
-| 6 | Enable retention worker | Render | `RetentionWorker__Enabled=true` | 🟡 after policy review |
+| 6 | Approve policy and explicitly enable retention worker (Production startup otherwise fails) | Render | `RetentionWorker__Enabled=true` | 🔴 before Production |
 | 7 | Move key to KMS | AWS/Vault | implement `IDataKeyProvider` | 🟡 for SOC 2 audit |
 | 8 | Pin regions + DPA | Neon/Render/R2 | — | 🟡 residency |
 
-Everything in code is deployed and defaults safe: with **no** provisioning the app
-still runs (local file store, PII pass-through) and the **Reliability Center flags each
-unconfigured pillar as degraded** — so the gaps are visible, never silent.
+Development can still run with local fallbacks, but Production fails startup for
+mandatory identity, cryptographic and retention-executor configuration. External
+storage, regional placement, restore proof and monitoring delivery remain explicit
+release gates; the Reliability Center cannot turn an unprovisioned dependency into
+deployment evidence.

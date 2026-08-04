@@ -3,7 +3,7 @@ import { useMutation } from "@tanstack/react-query";
 import axios from "axios";
 import { AlertCircle, ArrowRight, Building2, ClipboardCheck, Lock, Route, ShieldCheck, Wrench } from "lucide-react";
 import { flushSync } from "react-dom";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router";
 import { getLandingRouteForSession } from "@/auth/sessionRouting";
 import { useAuth } from "@/hooks/useAuth";
 import { authApi, type SsoConnection } from "@/services/authApi";
@@ -461,6 +461,13 @@ export function LoginPage() {
         setSession(session);
       });
       navigate(getLandingRouteForSession(session), { replace: true });
+    },
+    // Do not leave a rejected credential resident in the rendered document or
+    // accidentally resubmit it. Keep the non-enumerating error, clear only the
+    // password, and return focus for a deliberate retry.
+    onError: () => {
+      setPassword("");
+      requestAnimationFrame(() => passwordRef.current?.focus());
     },
   });
 

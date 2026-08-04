@@ -2,6 +2,8 @@ using System.Reflection;
 using System.IO;
 using System.Linq;
 using Opstrax.Api.Controllers;
+using Opstrax.Api.Services;
+using Microsoft.Extensions.Configuration;
 using Xunit;
 
 namespace Opstrax.Tests;
@@ -32,6 +34,48 @@ public class FleetWorkspaceRegressionTests
         var api = ReadSource("frontend", "src", "services", "fleetTmsApi.ts");
 
         Assert.Contains("params: { page: 1, pageSize: 20, ...params }", api);
+    }
+
+    [Fact]
+    public void FleetCompliance_SaudiTab_UsesCanonicalMarketPackLedgerOnly()
+    {
+        var page = ReadSource("frontend", "src", "pages", "FleetCompliancePage.tsx");
+        var saudiSection = page[(page.IndexOf("function SaudiReadiness()", StringComparison.Ordinal))..];
+
+        Assert.Contains("marketPackApi.saudiDocuments()", saudiSection);
+        Assert.Contains("marketPackApi.createSaudiDocument", saudiSection);
+        Assert.DoesNotContain("fleetReadinessApi.documents()", saudiSection);
+        Assert.DoesNotContain("fleetReadinessApi.createDocument", saudiSection);
+        var endpoints = ReadSource("backend-dotnet", "Controllers", "FleetTmsColdChainEndpoints.cs");
+        Assert.Contains("SaudiLedgerRetired()", endpoints);
+        Assert.Contains("Status410Gone", endpoints);
+    }
+
+    [Fact]
+    public void FleetCompliance_DoesNotCreateFabricatedInspectionOrMileageFacts()
+    {
+        var page = ReadSource("frontend", "src", "pages", "FleetCompliancePage.tsx");
+
+        Assert.DoesNotContain("vehicleLabel: \"Truck\", inspectionType: \"pre_trip\", status: \"pass\"", page);
+        Assert.DoesNotContain("provinceState: \"QC\", distance: \"1200\", taxPeriod: \"2026-Q2\"", page);
+        Assert.Contains("inspectorName", page);
+        Assert.Contains("mileageForm", page);
+    }
+
+    [Fact]
+    public void FleetDemoFlag_DoesNotEnableLegacyCrossTenantBatchSeeds()
+    {
+        var fleetOnly = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Fleet:EnableDemoSeed"] = "true",
+        }).Build();
+        var legacy = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["LegacyBatchDemoSeed:Enabled"] = "true",
+        }).Build();
+
+        Assert.False(DemoSeedGate.IsExplicitlyEnabled(fleetOnly));
+        Assert.True(DemoSeedGate.IsExplicitlyEnabled(legacy));
     }
 
     private static void AssertRouteDefaults(string methodName)

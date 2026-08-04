@@ -93,10 +93,17 @@ public sealed class NotificationService(Database db)
         }
         else
         {
-            // Broadcast by role
+            // Broadcast by role.
+            // `users` has NO deleted_at column — it soft-deletes via status ('Deleted'). This
+            // query filtered on `deleted_at IS NULL` and therefore threw 42703 on EVERY
+            // role-broadcast notification, in every tenant, from all 8 CreateAsync call sites:
+            // "assignment accepted" to the dispatcher, maintenance alerts, safety escalations.
+            // Callers that don't swallow it (e.g. driver accept) 500'd outright. It went
+            // unnoticed because the driver surface that triggers most of these was itself
+            // locked out. Also match role_name case-insensitively — role names are free text.
             var roleMap = MapAudienceToRole(audienceType);
             var users = await db.QueryAsync(
-                "SELECT id FROM users WHERE company_id=@cid AND role_name=@role AND status='Active' AND deleted_at IS NULL",
+                "SELECT id FROM users WHERE company_id=@cid AND LOWER(role_name)=LOWER(@role) AND status='Active'",
                 c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@role", roleMap); }, ct);
 
             foreach (var u in users)

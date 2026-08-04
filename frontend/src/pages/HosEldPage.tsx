@@ -1,7 +1,6 @@
 import { useState } from "react";
-import { Activity, AlertTriangle, CheckCircle, Clock, Cpu, Radio, WifiOff, X, Zap } from "lucide-react";
+import { Activity, AlertTriangle, CheckCircle, Clock, Cpu, Download, Radio, WifiOff, X, Zap } from "lucide-react";
 import {
-  useCertifyHosLog,
   useEldDevices,
   useHosAiRecs,
   useHosDrivers,
@@ -10,6 +9,11 @@ import {
   useResolveEldMalfunction,
 } from "@/hooks/useBatch6";
 import { useI18n } from "@/i18n";
+import { EmptyState, ErrorState, LoadingState, exportCsv } from "@/components/ui";
+import { useHasPermission } from "@/hooks/usePermission";
+import { useDialogFocus } from "@/hooks/useDialogFocus";
+import { useSingleFlight } from "@/hooks/useSingleFlight";
+import { useAuth } from "@/hooks/useAuth";
 import type { AnyRecord } from "@/types";
 import { formatDate, formatDateTime, formatMinutesAsClock } from "@/utils/formatters";
 
@@ -34,7 +38,8 @@ const ELD_STATUS_COLOR: Record<string, string> = {
   Malfunction: "text-red-700",
 };
 
-function ClockBar({ value, max, status }: { value: number; max: number; status: string }) {
+function ClockBar({ value, max, status }: { value: number | null; max: number; status: string }) {
+  if (value == null) return <div className="h-1.5 w-full rounded-full bg-slate-200" aria-label="Clock value unavailable" />;
   const pct = Math.max(0, Math.min(100, (value / max) * 100));
   const color = status === "Violation" ? "bg-red-500" : status === "Warning" ? "bg-amber-500" : "bg-emerald-500";
   return (
@@ -42,6 +47,16 @@ function ClockBar({ value, max, status }: { value: number; max: number; status: 
       <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${pct}%` }} />
     </div>
   );
+}
+
+function minutes(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function clockLabel(value: number | null) {
+  return value == null ? "Unavailable" : formatMinutesAsClock(value);
 }
 
 function CountryBadge({ code }: { code: string }) {
@@ -60,18 +75,33 @@ function Disclaimer() {
 
 export function HosEldPage() {
   const { t } = useI18n();
+  const { session } = useAuth();
+  const hasPermission = useHasPermission();
+  const canManage = hasPermission("compliance:update") || hasPermission("compliance:manage") || hasPermission("telematics:manage");
+  const eldEntitled = session?.entitlements && Object.prototype.hasOwnProperty.call(session.entitlements, "telematics")
+    ? session.entitlements.telematics === true
+    : session?.entitlementPolicyMode !== "package_allowlist";
   const [tab, setTab] = useState<TabId>("drivers");
   const [drawer, setDrawer] = useState<AnyRecord | null>(null);
-  const [malfForm, setMalfForm] = useState<{ id: number; code: string; desc: string } | null>(null);
+  const [malfForm, setMalfForm] = useState<{ id: number; rowVersion: number; code: string; desc: string } | null>(null);
+  const [resolveForm, setResolveForm] = useState<{ id: number; rowVersion: number; evidence: string; status: string } | null>(null);
+  const [actionMessage, setActionMessage] = useState<{ kind: "success" | "error"; text: string } | null>(null);
+  const clockDialogRef = useDialogFocus<HTMLElement>(drawer != null, () => setDrawer(null));
+  const malfunctionDialogRef = useDialogFocus<HTMLDivElement>(malfForm != null, () => setMalfForm(null));
+  const resolutionDialogRef = useDialogFocus<HTMLDivElement>(resolveForm != null, () => setResolveForm(null));
 
   const driversQ    = useHosDrivers();
   const logsQ       = useHosLogs();
-  const eldQ        = useEldDevices();
+  // HOS and ELD intentionally have different commercial owners. Do not issue an
+  // ELD request when Telematics is excluded, and do not misrender its 403 as an
+  // empty/healthy fleet. HOS remains available under the Compliance entitlement.
+  const eldQ        = useEldDevices(eldEntitled);
   const aiQ         = useHosAiRecs();
 
-  const certifyMut     = useCertifyHosLog();
   const markMalfMut    = useMarkEldMalfunction();
   const resolveMalfMut = useResolveEldMalfunction();
+  const markSingleFlight = useSingleFlight();
+  const resolveSingleFlight = useSingleFlight();
 
   const drivers = (driversQ.data as AnyRecord[] | undefined) ?? [];
   const logs    = (logsQ.data  as AnyRecord[] | undefined) ?? [];
@@ -104,6 +134,20 @@ export function HosEldPage() {
 
       <Disclaimer />
 
+      {!canManage && (
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600" role="status">
+          Read-only access: ELD malfunction actions require compliance or telematics management permission.
+        </div>
+      )}
+      <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-xs text-blue-800" role="status">
+        Back-office users may review HOS records but cannot certify for a driver. Daily certification is available only to the authenticated driver in the Driver Portal and does not submit records to a regulator.
+      </div>
+      {actionMessage && (
+        <div className={`rounded-xl border p-3 text-xs ${actionMessage.kind === "error" ? "border-red-300 bg-red-50 text-red-700" : "border-emerald-300 bg-emerald-50 text-emerald-700"}`} role={actionMessage.kind === "error" ? "alert" : "status"}>
+          {actionMessage.text}
+        </div>
+      )}
+
       {/* KPI strip */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {[
@@ -123,11 +167,13 @@ export function HosEldPage() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-0.5 border-b border-slate-200 overflow-x-auto pb-0">
+      <div className="flex gap-0.5 border-b border-slate-200 overflow-x-auto pb-0" role="tablist" aria-label="HOS and ELD views">
         {TABS.map(t2 => (
           <button
             key={t2.id}
             type="button"
+            role="tab"
+            aria-selected={tab === t2.id}
             onClick={() => setTab(t2.id)}
             className={`px-3 py-2 text-[12px] font-semibold whitespace-nowrap transition-colors border-b-2 -mb-px ${
               tab === t2.id ? "border-amber-500 text-amber-700" : "border-transparent text-slate-500 hover:text-slate-700"
@@ -140,29 +186,33 @@ export function HosEldPage() {
 
       {/* Driver Clocks */}
       {tab === "drivers" && (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        driversQ.isLoading ? <LoadingState /> : driversQ.isError ? (
+          <ErrorState message={(driversQ.error as Error)?.message} onRetry={() => void driversQ.refetch()} />
+        ) : drivers.length === 0 ? (
+          <EmptyState title="No HOS clocks available" subtitle="No persisted driver-clock records are available for your authorized branch." />
+        ) : <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {drivers.map(d => {
-            const driveRem = Number(d.drive_time_remaining_minutes ?? 660);
-            const shiftRem = Number(d.shift_time_remaining_minutes ?? 840);
-            const cycleRem = Number(d.cycle_time_remaining_minutes ?? 4200);
-            const st       = String(d.status ?? "OK");
+            const driveRem = minutes(d.driveTimeRemainingMinutes);
+            const shiftRem = minutes(d.shiftTimeRemainingMinutes);
+            const cycleRem = minutes(d.cycleTimeRemainingMinutes);
+            const st       = String(d.status ?? "Unavailable");
             const stColor  = CLOCK_STATUS_COLOR[st] ?? "text-slate-500";
 
             return (
-              <div key={String(d.id)} className="panel space-y-3 cursor-pointer hover:border-amber-300 transition-colors" onClick={() => setDrawer(d)}>
+              <div key={String(d.id)} className="panel space-y-3 cursor-pointer hover:border-amber-300 transition-colors" role="button" tabIndex={0} aria-label={`Open HOS clock for ${String(d.driverName ?? "driver")}`} onClick={() => setDrawer(d)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setDrawer(d); } }}>
                 <div className="flex items-start justify-between">
                   <div>
-                    <p className="font-semibold text-slate-900">{String(d.driver_name)}</p>
-                    <p className="text-[11px] text-slate-500">{String(d.driver_code)} · {String(d.cycle_type)}</p>
+                    <p className="font-semibold text-slate-900">{String(d.driverName)}</p>
+                    <p className="text-[11px] text-slate-500">{String(d.driverCode)} · {String(d.cycleType)}</p>
                   </div>
                   <div className="flex flex-col items-end gap-1">
-                    <CountryBadge code={String(d.country_code)} />
+                    <CountryBadge code={String(d.countryCode)} />
                     <span className={`text-xs font-bold ${stColor}`}>{st}</span>
                   </div>
                 </div>
-                {!!d.hos_warning && (
+                {!!d.hosWarning && (
                   <div className="rounded bg-amber-50 border border-amber-200 px-2 py-1 text-[11px] text-amber-700 flex items-center gap-1.5">
-                    <AlertTriangle className="h-3 w-3 shrink-0" />{String(d.hos_warning)}
+                    <AlertTriangle className="h-3 w-3 shrink-0" />{String(d.hosWarning)}
                   </div>
                 )}
                 <div className="space-y-2">
@@ -174,7 +224,7 @@ export function HosEldPage() {
                     <div key={bar.label}>
                       <div className="flex justify-between text-[10px] mb-0.5">
                         <span className="text-slate-500">{bar.label}</span>
-                        <span className="text-slate-700 font-mono">{formatMinutesAsClock(bar.value)}</span>
+                        <span className="text-slate-700 font-mono">{clockLabel(bar.value)}</span>
                       </div>
                       <ClockBar value={bar.value} max={bar.max} status={st} />
                     </div>
@@ -188,7 +238,16 @@ export function HosEldPage() {
 
       {/* HOS Logs */}
       {tab === "logs" && (
-        <div className="panel overflow-auto">
+        logsQ.isLoading ? <LoadingState /> : logsQ.isError ? (
+          <ErrorState message={(logsQ.error as Error)?.message} onRetry={() => void logsQ.refetch()} />
+        ) : logs.length === 0 ? (
+          <EmptyState title="No HOS logs available" subtitle="No persisted duty-status segments are available for your authorized branch." />
+        ) : <div className="panel overflow-auto">
+          <div className="mb-3 flex justify-end">
+            <button type="button" className="btn-ghost h-9 gap-1.5 px-3 text-xs" onClick={() => exportCsv("hos-logs", logs)}>
+              <Download className="h-3.5 w-3.5" /> Export visible logs
+            </button>
+          </div>
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-200 text-left">
@@ -201,32 +260,27 @@ export function HosEldPage() {
               {logs.map(l => (
                 <tr key={String(l.id)} className="hover:bg-slate-50">
                   <td className="py-2 pr-4">
-                    <p className="font-semibold text-slate-900 text-xs">{String(l.driver_name)}</p>
-                    <p className="text-[10px] text-slate-500">{String(l.driver_code)}</p>
+                    <p className="font-semibold text-slate-900 text-xs">{String(l.driverName)}</p>
+                    <p className="text-[10px] text-slate-500">{String(l.driverCode)}</p>
                   </td>
-                  <td className="py-2 pr-4 text-xs text-slate-700">{formatDate(String(l.log_date))}</td>
+                  <td className="py-2 pr-4 text-xs text-slate-700">{formatDate(String(l.logDate))}</td>
                   <td className="py-2 pr-4">
                     <span className="flex items-center gap-1.5 text-xs font-semibold text-slate-700">
                       <span className={`h-2 w-2 rounded-full shrink-0 ${logColors[String(l.status)] ?? "bg-slate-400"}`} />
                       {String(l.status)}
                     </span>
                   </td>
-                  <td className="py-2 pr-4 text-xs text-slate-600 font-mono">{String(l.start_time ?? "").substring(11, 16)}</td>
-                  <td className="py-2 pr-4 text-xs text-slate-600 font-mono">{String(l.end_time ?? "").substring(11, 16)}</td>
-                  <td className="py-2 pr-4 text-xs text-slate-700">{String(l.duration_minutes)}m</td>
+                  <td className="py-2 pr-4 text-xs text-slate-600 font-mono">{String(l.startTime ?? "").substring(11, 16)}</td>
+                  <td className="py-2 pr-4 text-xs text-slate-600 font-mono">{String(l.endTime ?? "").substring(11, 16)}</td>
+                  <td className="py-2 pr-4 text-xs text-slate-700">
+                    {String(l.calculatedDurationMinutes ?? l.durationMinutes)}m
+                    {Boolean(l.durationMismatch) && <span className="ml-1 text-red-700" title="Stored duration differs from start/end timestamps">Data issue</span>}
+                  </td>
                   <td className="py-2 pr-4 text-xs text-slate-600 truncate max-w-[120px]">{String(l.location ?? "—")}</td>
                   <td className="py-2 pr-4">
-                    {Number(l.is_certified) ? (
+                    {Boolean(l.isCertified) ? (
                       <span className="text-emerald-700 text-xs flex items-center gap-1"><CheckCircle className="h-3 w-3" />Yes</span>
-                    ) : (
-                      <button
-                        type="button"
-                        className="rounded border border-teal-300 bg-teal-50 px-2 py-0.5 text-[10px] text-teal-700 hover:bg-teal-100 transition"
-                        onClick={() => certifyMut.mutate(Number(l.id))}
-                      >
-                        Certify
-                      </button>
-                    )}
+                    ) : <span className="text-xs text-slate-500">Pending driver</span>}
                   </td>
                 </tr>
               ))}
@@ -237,7 +291,16 @@ export function HosEldPage() {
 
       {/* ELD Devices */}
       {tab === "eld" && (
-        <div className="space-y-3">
+        !eldEntitled ? (
+          <div className="rounded-xl border border-amber-300 bg-amber-50 p-5" role="status" data-testid="eld-entitlement-boundary">
+            <p className="font-bold text-amber-900">ELD device operations are not included</p>
+            <p className="mt-1 text-sm text-amber-800">Hours-of-service records remain available. A Platform Admin must enable the Telematics entitlement before device status, malfunction history or recovery actions can be accessed.</p>
+          </div>
+        ) : eldQ.isLoading ? <LoadingState /> : eldQ.isError ? (
+          <ErrorState message={(eldQ.error as Error)?.message} onRetry={() => void eldQ.refetch()} />
+        ) : elds.length === 0 ? (
+          <EmptyState title="No ELD devices available" subtitle="No persisted third-party device records are available for your authorized branch." />
+        ) : <div className="space-y-3">
           <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-[11px] text-amber-700">
             <span className="font-bold text-amber-800">ELD Notice: </span>
             OpsTrax is not a certified ELD. This table shows third-party ELD device status as reported by the connected provider. FMCSA-registered ELD certification is the responsibility of the ELD provider.
@@ -254,37 +317,62 @@ export function HosEldPage() {
               <tbody className="divide-y divide-slate-100">
                 {elds.map(e => (
                   <tr key={String(e.id)} className="hover:bg-slate-50">
-                    <td className="py-2 pr-4 font-mono text-xs text-teal-700">{String(e.device_serial)}</td>
-                    <td className="py-2 pr-4 text-xs text-slate-700">{String(e.device_model ?? "—")}</td>
+                    <td className="py-2 pr-4 font-mono text-xs text-teal-700">{String(e.deviceSerial)}</td>
+                    <td className="py-2 pr-4 text-xs text-slate-700">{String(e.deviceModel ?? "—")}</td>
                     <td className="py-2 pr-4 text-xs text-slate-700">{String(e.provider ?? "—")}</td>
-                    <td className="py-2 pr-4 text-xs text-slate-700">{String(e.vehicle_code ?? "—")}</td>
-                    <td className="py-2 pr-4 text-xs text-slate-700">{String(e.driver_name ?? "—")}</td>
+                    <td className="py-2 pr-4 text-xs text-slate-700">{String(e.vehicleCode ?? "—")}</td>
+                    <td className="py-2 pr-4 text-xs text-slate-700">{String(e.driverName ?? "—")}</td>
                     <td className="py-2 pr-4">
                       <span className={`flex items-center gap-1.5 text-xs font-semibold ${ELD_STATUS_COLOR[String(e.status)] ?? "text-slate-600"}`}>
                         {String(e.status) === "Active" ? <Radio className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
                         {String(e.status)}
                       </span>
                     </td>
-                    <td className="py-2 pr-4 text-xs text-slate-500">{formatDateTime(String(e.last_sync_at ?? ""))}</td>
-                    <td className="py-2 pr-4 text-xs font-mono text-slate-600">{String(e.firmware_version ?? "—")}</td>
+                    <td className="py-2 pr-4 text-xs text-slate-500">{formatDateTime(String(e.lastSyncAt ?? ""))}</td>
+                    <td className="py-2 pr-4 text-xs font-mono text-slate-600">{String(e.firmwareVersion ?? "—")}</td>
                     <td className="py-2 pr-4">
                       {String(e.status) === "Malfunction" ? (
                         <button
                           type="button"
+                          disabled={!canManage || resolveMalfMut.isPending}
                           className="rounded border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[10px] text-emerald-700 hover:bg-emerald-100 transition"
-                          onClick={() => resolveMalfMut.mutate(Number(e.id))}
+                          title={!canManage ? "Requires compliance update permission" : "Resolve malfunction"}
+                          onClick={() => setResolveForm({ id: Number(e.id), rowVersion: Number(e.rowVersion), evidence: "", status: String(e.status) })}
                         >
                           Resolve
                         </button>
-                      ) : String(e.status) !== "Active" ? null : (
+                      ) : String(e.status) === "Diagnostic" ? (
+                        <div className="flex gap-1">
+                          <button
+                            type="button"
+                            disabled={!canManage}
+                            className="rounded border border-red-300 bg-red-50 px-2 py-0.5 text-[10px] text-red-700 hover:bg-red-100 transition"
+                            title={!canManage ? "Requires compliance update permission" : "Record a confirmed malfunction from the diagnostic state"}
+                            onClick={() => setMalfForm({ id: Number(e.id), rowVersion: Number(e.rowVersion), code: "", desc: "" })}
+                          >
+                            Mark Malfunction
+                          </button>
+                          <button
+                            type="button"
+                            disabled={!canManage || resolveMalfMut.isPending}
+                            className="rounded border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[10px] text-emerald-700 hover:bg-emerald-100 transition"
+                            title={!canManage ? "Requires compliance update permission" : "Verify recovery after a healthy provider sync"}
+                            onClick={() => setResolveForm({ id: Number(e.id), rowVersion: Number(e.rowVersion), evidence: "", status: String(e.status) })}
+                          >
+                            Verify Recovery
+                          </button>
+                        </div>
+                      ) : String(e.status) === "Active" ? (
                         <button
                           type="button"
+                          disabled={!canManage}
                           className="rounded border border-red-300 bg-red-50 px-2 py-0.5 text-[10px] text-red-700 hover:bg-red-100 transition"
-                          onClick={() => setMalfForm({ id: Number(e.id), code: "", desc: "" })}
+                          title={!canManage ? "Requires compliance update permission" : "Record reported malfunction"}
+                          onClick={() => setMalfForm({ id: Number(e.id), rowVersion: Number(e.rowVersion), code: "", desc: "" })}
                         >
                           Mark Malfunction
                         </button>
-                      )}
+                      ) : null}
                     </td>
                   </tr>
                 ))}
@@ -296,7 +384,11 @@ export function HosEldPage() {
 
       {/* AI Recommendations */}
       {tab === "ai" && (
-        <div className="panel space-y-3">
+        aiQ.isLoading ? <LoadingState /> : aiQ.isError ? (
+          <ErrorState message={(aiQ.error as Error)?.message} onRetry={() => void aiQ.refetch()} />
+        ) : aiRecs.length === 0 ? (
+          <EmptyState title="No recommendations available" subtitle="No persisted HOS/ELD recommendations are available for this tenant." />
+        ) : <div className="panel space-y-3">
           <p className="section-title flex items-center gap-2"><Zap className="h-3.5 w-3.5 text-violet-600" />HOS / ELD Recommendations</p>
           {aiRecs.map((rec, i) => (
             <div key={i} className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-1.5">
@@ -309,9 +401,9 @@ export function HosEldPage() {
                 }`}>{String(rec.priority)}</span>
               </div>
               <p className="text-xs text-slate-600 leading-relaxed">{String(rec.description)}</p>
-              {!!rec.action_label && (
+              {!!rec.actionLabel && (
                 <p className="mt-1 text-xs font-semibold text-violet-700">
-                  Recommended: {String(rec.action_label)}
+                  Recommended: {String(rec.actionLabel)}
                 </p>
               )}
             </div>
@@ -323,22 +415,22 @@ export function HosEldPage() {
       {drawer && tab === "drivers" && (
         <div className="fixed inset-0 z-50 flex justify-end anim-fade-in">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setDrawer(null)} />
-          <aside className="anim-slide-left relative z-10 w-full max-w-sm overflow-y-auto bg-slate-900 border-s border-white/[0.09] p-5 shadow-2xl">
+          <aside ref={clockDialogRef} className="anim-slide-left relative z-10 w-full max-w-sm overflow-y-auto bg-slate-900 border-s border-white/[0.09] p-5 shadow-2xl" role="dialog" aria-modal="true" aria-label="Driver HOS clock details">
             <div className="flex items-center justify-between mb-4">
               <p className="font-semibold text-white flex items-center gap-2"><Clock className="h-4 w-4 text-amber-400" />HOS Clock</p>
               <button type="button" aria-label="Close" className="icon-btn" onClick={() => setDrawer(null)}><X className="h-4 w-4" /></button>
             </div>
             <div className="space-y-3 text-sm">
               <div>
-                <p className="text-base font-bold text-white">{String(drawer.driver_name)}</p>
-                <p className="text-xs text-slate-500">{String(drawer.driver_code)} · {String(drawer.cycle_type)}</p>
+                <p className="text-base font-bold text-white">{String(drawer.driverName)}</p>
+                <p className="text-xs text-slate-500">{String(drawer.driverCode)} · {String(drawer.cycleType)}</p>
               </div>
-              <CountryBadge code={String(drawer.country_code)} />
+              <CountryBadge code={String(drawer.countryCode)} />
               {[
-                { label: "Drive Remaining", value: formatMinutesAsClock(Number(drawer.drive_time_remaining_minutes ?? 0)) },
-                { label: "Shift Remaining", value: formatMinutesAsClock(Number(drawer.shift_time_remaining_minutes ?? 0)) },
-                { label: "Cycle Remaining", value: formatMinutesAsClock(Number(drawer.cycle_time_remaining_minutes ?? 0)) },
-                { label: "Profile",         value: drawer.profile_name },
+                { label: "Drive Remaining", value: clockLabel(minutes(drawer.driveTimeRemainingMinutes)) },
+                { label: "Shift Remaining", value: clockLabel(minutes(drawer.shiftTimeRemainingMinutes)) },
+                { label: "Cycle Remaining", value: clockLabel(minutes(drawer.cycleTimeRemainingMinutes)) },
+                { label: "Profile",         value: drawer.profileName },
                 { label: "Status",          value: drawer.status },
               ].map(r => (
                 <div key={r.label} className="flex justify-between border-b border-white/[0.05] pb-2">
@@ -346,9 +438,9 @@ export function HosEldPage() {
                   <span className={`font-semibold ${String(drawer.status) === "Violation" ? "text-red-400" : String(drawer.status) === "Warning" ? "text-amber-400" : "text-white"}`}>{String(r.value ?? "—")}</span>
                 </div>
               ))}
-              {!!drawer.hos_warning && (
+              {!!drawer.hosWarning && (
                 <div className="rounded bg-amber-400/10 border border-amber-400/20 px-3 py-2 text-xs text-amber-300">
-                  <AlertTriangle className="h-3 w-3 inline-block mr-1" />{String(drawer.hos_warning)}
+                  <AlertTriangle className="h-3 w-3 inline-block mr-1" />{String(drawer.hosWarning)}
                 </div>
               )}
             </div>
@@ -360,7 +452,7 @@ export function HosEldPage() {
       {malfForm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center anim-fade-in">
           <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setMalfForm(null)} />
-          <div className="relative z-10 w-full max-w-sm rounded-2xl border border-white/[0.09] bg-slate-900 p-5 shadow-2xl space-y-4">
+          <div ref={malfunctionDialogRef} className="relative z-10 w-full max-w-sm rounded-2xl border border-white/[0.09] bg-slate-900 p-5 shadow-2xl space-y-4" role="dialog" aria-modal="true" aria-label="Mark ELD malfunction">
             <div className="flex items-center justify-between">
               <p className="font-semibold text-white flex items-center gap-2"><Cpu className="h-4 w-4 text-red-400" />Mark ELD Malfunction</p>
               <button type="button" aria-label="Close" className="icon-btn" onClick={() => setMalfForm(null)}><X className="h-4 w-4" /></button>
@@ -375,22 +467,46 @@ export function HosEldPage() {
                 <textarea className="field w-full h-20 resize-none" placeholder="Describe the malfunction..." value={malfForm.desc} onChange={e => setMalfForm(f => f ? { ...f, desc: e.target.value } : f)} />
               </div>
               <div className="rounded border border-amber-400/20 bg-amber-400/5 p-2 text-[11px] text-amber-200/70">
-                Per FMCSA regulations, when an ELD malfunctions, the driver must note the malfunction and revert to paper records until the device is repaired or replaced.
+                Follow the carrier&apos;s applicable jurisdiction and connected ELD provider procedure. In U.S. FMCSA operations, this generally includes documenting the malfunction and maintaining required records by an allowed alternate method until resolved.
               </div>
             </div>
             <div className="flex gap-2">
               <button type="button" className="flex-1 btn-ghost" onClick={() => setMalfForm(null)}>Cancel</button>
               <button
                 type="button"
+                disabled={!malfForm.code.trim() || !malfForm.desc.trim() || markMalfMut.isPending}
                 className="flex-1 rounded-lg bg-red-500/80 hover:bg-red-500 text-white text-sm font-semibold py-2 transition"
                 onClick={() => {
-                  markMalfMut.mutate({ id: malfForm.id, body: { malfunctionCode: malfForm.code, malfunctionDescription: malfForm.desc } });
-                  setMalfForm(null);
+                  void markSingleFlight(() => markMalfMut.mutateAsync({ id: malfForm.id, body: { rowVersion: malfForm.rowVersion, malfunctionCode: malfForm.code.trim(), malfunctionDescription: malfForm.desc.trim() } }).then(() => {
+                    setActionMessage({ kind: "success", text: "ELD malfunction recorded." }); setMalfForm(null);
+                  }).catch((error) => {
+                    setActionMessage({ kind: "error", text: error instanceof Error ? error.message : "ELD malfunction update failed." });
+                    throw error;
+                  }));
                 }}
               >
                 <Activity className="h-3.5 w-3.5 inline-block mr-1" />Confirm Malfunction
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {resolveForm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center anim-fade-in">
+          <button type="button" className="absolute inset-0 bg-black/70 backdrop-blur-sm" aria-label="Close resolution dialog" onClick={() => setResolveForm(null)} />
+          <div ref={resolutionDialogRef} className="relative z-10 w-full max-w-md rounded-2xl border border-white/[0.09] bg-slate-900 p-5 shadow-2xl space-y-4" role="dialog" aria-modal="true" aria-label="Resolve ELD malfunction">
+            <div className="flex items-center justify-between">
+              <p className="font-semibold text-white flex items-center gap-2"><Cpu className="h-4 w-4 text-emerald-400" />{resolveForm.status === "Diagnostic" ? "Verify ELD Recovery" : "Resolve ELD Malfunction"}</p>
+              <button type="button" aria-label="Close" className="icon-btn" onClick={() => setResolveForm(null)}><X className="h-4 w-4" /></button>
+            </div>
+            <label className="block"><span className="mb-1 block text-xs text-slate-300">Operational verification evidence</span><textarea className="field min-h-28 w-full" maxLength={2000} value={resolveForm.evidence} onChange={(event) => setResolveForm((current) => current ? { ...current, evidence: event.target.value } : current)} placeholder="Describe the diagnostic check, provider confirmation, test drive, or other evidence…" /></label>
+            <p className="text-[11px] leading-5 text-amber-200/80">Evidence is retained with the malfunction history. The device returns to Active only with valid provisioned credentials and a healthy provider sync within the last 15 minutes; otherwise it remains Diagnostic.</p>
+            <div className="flex gap-2"><button type="button" className="btn-ghost flex-1" onClick={() => setResolveForm(null)}>Cancel</button><button type="button" className="btn-primary flex-1" disabled={!resolveForm.evidence.trim() || resolveMalfMut.isPending} onClick={() => { void resolveSingleFlight(() => resolveMalfMut.mutateAsync({ id: resolveForm.id, body: { rowVersion: resolveForm.rowVersion, resolutionEvidence: resolveForm.evidence.trim() } }).then((data) => {
+              setActionMessage({ kind: "success", text: `Resolution recorded. Device status: ${String((data as AnyRecord).status ?? "Diagnostic")}.` }); setResolveForm(null);
+            }).catch((error) => {
+              setActionMessage({ kind: "error", text: error instanceof Error ? error.message : "ELD resolution failed." });
+              throw error;
+            })); }}>Record resolution</button></div>
           </div>
         </div>
       )}

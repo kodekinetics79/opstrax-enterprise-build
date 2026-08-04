@@ -27,8 +27,20 @@ public sealed class TelemetrySchemaService(Database db)
     [
         // eld_devices security + lifecycle columns
         new("eld_devices", "company_id",   "BIGINT NOT NULL DEFAULT 1"),
+        // IMEI is the hardware GPS-tracker identifier (GT06/Concox/PT40-class) the trusted
+        // gateway resolves a device by. An identifier, never a credential. Also created by
+        // migration 2026_07_11_stage32_device_imei.sql for restricted-role prod that skips
+        // this ensure; kept here so owner-capable envs self-heal and provisioning can write it.
+        new("eld_devices", "imei",         "VARCHAR(32) NULL"),
         new("eld_devices", "api_key_hash", "VARCHAR(64) NULL"),
+        new("eld_devices", "api_key_previous_hash", "VARCHAR(64) NULL"),
+        new("eld_devices", "api_key_previous_valid_until", "TIMESTAMPTZ NULL"),
         new("eld_devices", "hmac_secret",  "VARCHAR(128) NULL"),
+        // Diagnostics ingest reads only the envelope-encrypted credentials. The legacy
+        // plaintext column remains temporarily for the older location ingest contract.
+        new("eld_devices", "hmac_secret_encrypted", "TEXT NULL"),
+        new("eld_devices", "hmac_previous_secret_encrypted", "TEXT NULL"),
+        new("eld_devices", "hmac_previous_valid_until", "TIMESTAMPTZ NULL"),
         new("eld_devices", "last_seen_at", "TIMESTAMPTZ NULL"),
         new("eld_devices", "revoked_at",   "TIMESTAMPTZ NULL"),
         new("eld_devices", "updated_at",   "TIMESTAMPTZ NULL"),
@@ -47,6 +59,14 @@ public sealed class TelemetrySchemaService(Database db)
         new("location_events", "causation_id", "VARCHAR(120) NULL"),
         new("location_events", "client_generated_id", "VARCHAR(120) NULL"),
         new("location_events", "idempotency_key", "VARCHAR(120) NULL"),
+        // Keep owner-capable fresh installs aligned with the committed polygon
+        // geofence migration. GeofenceEvaluator always selects this column.
+        new("geofences", "polygon_json", "JSONB NULL"),
+        // Stage 66 made geofences branch-scoped. Keep the owner-capable startup
+        // schema path aligned as well: GeofenceEvaluator and the geofence API
+        // select branch_id unconditionally, so an older development database
+        // must self-heal before the background worker begins polling.
+        new("geofences", "branch_id", "BIGINT NULL"),
         new("telemetry_alerts", "correlation_id", "VARCHAR(120) NULL"),
         new("telemetry_alerts", "causation_id", "VARCHAR(120) NULL"),
         new("telemetry_alerts", "source_channel", "VARCHAR(40) NULL"),
@@ -63,6 +83,24 @@ public sealed class TelemetrySchemaService(Database db)
         new("latest_vehicle_positions", "next_action", "VARCHAR(160) NULL"),
         new("latest_vehicle_positions", "summary_json", "JSONB NULL"),
         new("latest_vehicle_positions", "updated_at", "TIMESTAMPTZ NULL"),
+        // Provenance & trust metadata — EXACTLY mirrors migration
+        // database/migrations/telematics/001_latest_position_provenance.sql so
+        // owner-capable environments auto-create them here and production (which
+        // runs as a restricted role and SKIPS this startup init) gets them from
+        // migration 001. correlation_id is intentionally NOT re-declared (already
+        // present above). Every read/write guards on
+        // TelemetryProvenance.ColumnsAvailableAsync, so an environment where these
+        // are still absent never 42703s ("column ... does not exist").
+        new("latest_vehicle_positions", "source",              "TEXT NULL"),
+        new("latest_vehicle_positions", "provider",            "TEXT NULL"),
+        new("latest_vehicle_positions", "protocol",            "TEXT NULL"),
+        new("latest_vehicle_positions", "adapter_version",     "TEXT NULL"),
+        new("latest_vehicle_positions", "device_fix_time",     "TIMESTAMPTZ NULL"),
+        new("latest_vehicle_positions", "gateway_received_at", "TIMESTAMPTZ NULL"),
+        new("latest_vehicle_positions", "normalized_at",       "TIMESTAMPTZ NULL"),
+        new("latest_vehicle_positions", "confidence",          "NUMERIC(4,3) NULL"),
+        new("latest_vehicle_positions", "trust_score",         "NUMERIC(4,3) NULL"),
+        new("latest_vehicle_positions", "quality_flags",       "JSONB NULL"),
     ];
 
     private static readonly string[] Tables =
@@ -116,6 +154,42 @@ public sealed class TelemetrySchemaService(Database db)
             nonce VARCHAR(128) NOT NULL,
             used_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             UNIQUE (device_id, nonce)
+        )",
+
+        // Durable, cross-instance replay defense for the trusted-gateway path
+        // (POST /api/telemetry/gps-ingest). The HMAC signature is the per-message identity;
+        // UNIQUE(gateway_id, signature) makes 'already accepted?' atomic and shared across
+        // instances/restarts. Not tenant-scoped, no RLS (infra ledger written before ownership
+        // matters, like telemetry_nonces). device_id/company_id are recorded for audit scoping.
+        // Rows older than the retention window are pruned by TelemetryBackgroundService.
+        // Mirrored by migration 2026_07_14_stage33_gps_gateway_replay.sql for restricted prod.
+        @"CREATE TABLE IF NOT EXISTS gps_gateway_replay (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            gateway_id VARCHAR(120) NOT NULL DEFAULT 'default',
+            signature VARCHAR(256) NOT NULL,
+            signed_at TIMESTAMPTZ NOT NULL,
+            device_id BIGINT NULL,
+            company_id BIGINT NULL,
+            received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE (gateway_id, signature)
+        )",
+
+        // Per-gateway credentials (H3): each trusted forwarding gateway has its OWN HMAC secret and is
+        // bound to exactly one authorized tenant. Replaces the single shared fleet-wide secret; a device
+        // resolved outside the gateway's company_id is rejected, closing the cross-tenant skeleton key.
+        // secret_encrypted is envelope-encrypted (PiiProtectionService). company_id present but this is a
+        // control-plane lookup table read pre-tenant-context (system scope); RLS-enrolled for defense.
+        @"CREATE TABLE IF NOT EXISTS telemetry_gateways (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            gateway_id VARCHAR(120) NOT NULL,
+            company_id BIGINT NOT NULL,
+            gateway_name VARCHAR(220) NULL,
+            secret_encrypted TEXT NOT NULL,
+            status VARCHAR(20) NOT NULL DEFAULT 'active',
+            last_seen_at TIMESTAMPTZ NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NULL,
+            UNIQUE (gateway_id)
         )",
 
         // Per-tenant, per-rule configurable thresholds. Defaults seeded below.
@@ -174,9 +248,13 @@ public sealed class TelemetrySchemaService(Database db)
         "CREATE INDEX IF NOT EXISTS idx_le_received ON location_events(company_id, received_at)",
         "CREATE INDEX IF NOT EXISTS idx_eld_apikey ON eld_devices(api_key_hash)",
         "CREATE INDEX IF NOT EXISTS idx_eld_company ON eld_devices(company_id, status)",
+        // Globally-unique IMEI lookup (partial: many devices legitimately have no IMEI).
+        // Matches ux_eld_devices_imei from migration stage32 so both provisioning paths agree.
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_eld_devices_imei ON eld_devices(imei) WHERE imei IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS idx_lvp_tenant ON latest_vehicle_positions(company_id, received_at)",
         "CREATE INDEX IF NOT EXISTS idx_lvp_status ON latest_vehicle_positions(company_id, telemetry_status, risk_level)",
         "CREATE INDEX IF NOT EXISTS idx_tn_device_used ON telemetry_nonces(device_id, used_at)",
+        "CREATE INDEX IF NOT EXISTS idx_ggr_received ON gps_gateway_replay(received_at)",
         "CREATE INDEX IF NOT EXISTS idx_tr_company ON telemetry_rules(company_id, rule_type, enabled)",
         "CREATE INDEX IF NOT EXISTS idx_tlsa_company_updated ON telemetry_live_asset_states(company_id, updated_at)",
         "CREATE INDEX IF NOT EXISTS idx_tlsa_company_risk ON telemetry_live_asset_states(company_id, risk_level, open_alert_count)",
@@ -200,6 +278,17 @@ public sealed class TelemetrySchemaService(Database db)
 
     private static readonly string[] CredentialHardening =
     [
+        @"DO $$ BEGIN
+            IF EXISTS (
+              SELECT api_hash FROM (
+                SELECT api_key_hash api_hash FROM eld_devices WHERE api_key_hash IS NOT NULL AND deleted_at IS NULL
+                UNION ALL
+                SELECT api_key_previous_hash FROM eld_devices WHERE api_key_previous_hash IS NOT NULL AND deleted_at IS NULL
+              ) hashes GROUP BY api_hash HAVING COUNT(*) > 1
+            ) THEN RAISE EXCEPTION 'Duplicate current/previous device API-key hashes require reconciliation'; END IF;
+          END $$",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_eld_devices_api_key_hash ON eld_devices(api_key_hash) WHERE api_key_hash IS NOT NULL AND deleted_at IS NULL",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_eld_devices_api_key_previous_hash ON eld_devices(api_key_previous_hash) WHERE api_key_previous_hash IS NOT NULL AND deleted_at IS NULL",
         // Never manufacture credentials during schema startup. Legacy or incomplete
         // devices are quarantined until an operator explicitly rotates credentials.
         @"UPDATE eld_devices
@@ -213,35 +302,17 @@ public sealed class TelemetrySchemaService(Database db)
                 api_key_hash IS NULL
                 OR btrim(api_key_hash) = ''
                 OR api_key_hash !~ '^[0-9a-fA-F]{64}$'
-                OR hmac_secret IS NULL
-                OR btrim(hmac_secret) = ''
-                OR length(hmac_secret) < 32
+                OR hmac_secret_encrypted IS NULL
+                OR btrim(hmac_secret_encrypted) = ''
+                OR length(hmac_secret_encrypted) < 24
                 OR api_key_hash = encode(sha256(('opstrax-' || 'dev-' || device_serial)::bytea), 'hex')
-                OR hmac_secret = ('opstrax-' || 'hmac-dev-' || device_serial)
             )",
-        @"DO $$
-          BEGIN
-            IF NOT EXISTS (
-                SELECT 1
-                FROM pg_constraint
-                WHERE conname = 'ck_eld_devices_active_credentials'
-                  AND conrelid = 'eld_devices'::regclass
-            ) THEN
-                ALTER TABLE eld_devices
-                ADD CONSTRAINT ck_eld_devices_active_credentials
-                CHECK (
-                    status <> 'Active'
-                    OR (
-                        api_key_hash IS NOT NULL
-                        AND api_key_hash ~ '^[0-9a-fA-F]{64}$'
-                        AND hmac_secret IS NOT NULL
-                        AND length(btrim(hmac_secret)) >= 32
-                        AND api_key_hash <> encode(sha256(('opstrax-' || 'dev-' || device_serial)::bytea), 'hex')
-                        AND hmac_secret <> ('opstrax-' || 'hmac-dev-' || device_serial)
-                    )
-                );
-            END IF;
-          END
-          $$",
+        "ALTER TABLE eld_devices DROP CONSTRAINT IF EXISTS ck_eld_devices_active_credentials",
+        @"ALTER TABLE eld_devices ADD CONSTRAINT ck_eld_devices_active_credentials CHECK (
+            LOWER(status) <> 'active' OR (
+              api_key_hash IS NOT NULL AND api_key_hash ~ '^[0-9a-fA-F]{64}$'
+              AND hmac_secret_encrypted IS NOT NULL AND length(btrim(hmac_secret_encrypted)) >= 24
+              AND revoked_at IS NULL
+            )) NOT VALID",
     ];
 }

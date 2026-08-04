@@ -19,8 +19,7 @@ namespace Opstrax.Tests;
 [Trait("Category", "Integration")]
 public class PlatformControlPlaneTests
 {
-    private const string LocalConnectionString =
-        "Host=127.0.0.1;Port=5433;Database=opstrax_local;Username=zayra;Password=zayra";
+    private static readonly string LocalConnectionString = TestDb.ConnectionString;
 
     private static Database CreateDatabase()
     {
@@ -90,6 +89,11 @@ public class PlatformControlPlaneTests
             "DELETE FROM platform_invoices WHERE company_id=@id",
             "DELETE FROM tenant_entitlements WHERE company_id=@id",
             "DELETE FROM tenant_subscriptions WHERE company_id=@id",
+            // TenantCreate seeds each new tenant's default feature flags, and feature_flags has
+            // an FK to companies — so without this the final DELETE FROM companies fails 23503
+            // and every provisioned test tenant leaks. Anything TenantCreate writes has to be
+            // torn down here, in FK order, ending with companies.
+            "DELETE FROM feature_flags WHERE company_id=@id",
             "DELETE FROM user_sessions WHERE company_id=@id",
             "DELETE FROM users WHERE company_id=@id",
             "DELETE FROM companies WHERE id=@id",
@@ -146,6 +150,28 @@ public class PlatformControlPlaneTests
                 "SELECT details_json::text detail FROM platform_audit_log WHERE actor_email=@e AND action='platform.login_failed'",
                 c => c.Parameters.AddWithValue("@e", email));
             Assert.All(details, d => Assert.DoesNotContain("wrong-password", d["detail"]?.ToString() ?? ""));
+        }
+        finally { await CleanupAdminAsync(db, adminId, email); }
+    }
+
+    [Fact]
+    public async Task PlatformMe_RevalidatesWithoutEchoingTheBearerCredential()
+    {
+        var db = CreateDatabase();
+        await new PlatformSchemaService(db).EnsureAsync();
+        var (adminId, token, email) = await SeedAdminSessionAsync(db, "platform_super_admin");
+        try
+        {
+            var method = typeof(PlatformEndpoints).GetMethod("PlatformMe", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+            var result = await (Task<IResult>)method.Invoke(null, [Http(token), db, CancellationToken.None])!;
+
+            Assert.Equal(200, StatusOf(result));
+            using var json = JsonDocument.Parse(JsonOf(result));
+            var data = json.RootElement.GetProperty("Data");
+            Assert.False(data.TryGetProperty("token", out _));
+            Assert.DoesNotContain(token, json.RootElement.GetRawText(), StringComparison.Ordinal);
+            Assert.Equal(adminId, data.GetProperty("admin").GetProperty("id").GetInt64());
+            Assert.Contains("platform:*", data.GetProperty("permissions").EnumerateArray().Select(x => x.GetString()));
         }
         finally { await CleanupAdminAsync(db, adminId, email); }
     }
@@ -287,6 +313,23 @@ public class PlatformControlPlaneTests
             Assert.Equal(200, StatusOf(create));
             companyId = await db.ScalarLongAsync("SELECT id FROM companies WHERE company_code=@c", c => c.Parameters.AddWithValue("@c", code));
             Assert.True(companyId > 0);
+            Assert.Equal(EntitlementService.PackageAllowlistPolicy,
+                (await db.QuerySingleAsync("SELECT entitlement_policy_mode FROM companies WHERE id=@id",
+                    c => c.Parameters.AddWithValue("@id", companyId)))?["entitlementPolicyMode"]?.ToString());
+
+            // Newly provisioned tenants deny missing module rows. The compatibility
+            // transition is a separate, entitlement-authorized, audited control.
+            var policyEvaluator = new EntitlementService(db);
+            Assert.False((await policyEvaluator.CheckModuleAsync(companyId, "dispatch")).Allowed);
+            var legacyPolicy = await PlatformEndpoints.EntitlementPolicySet(companyId, Http(token),
+                new Dictionary<string, object?> { ["policyMode"] = EntitlementService.LegacyAllowPolicy }, db, CancellationToken.None);
+            Assert.Equal(200, StatusOf(legacyPolicy));
+            Assert.True((await policyEvaluator.CheckModuleAsync(companyId, "dispatch")).Allowed);
+            var badPolicy = await PlatformEndpoints.EntitlementPolicySet(companyId, Http(token),
+                new Dictionary<string, object?> { ["policyMode"] = "fail_open" }, db, CancellationToken.None);
+            Assert.Equal(400, StatusOf(badPolicy));
+            await PlatformEndpoints.EntitlementPolicySet(companyId, Http(token),
+                new Dictionary<string, object?> { ["policyMode"] = EntitlementService.PackageAllowlistPolicy }, db, CancellationToken.None);
 
             // companies table survived the SQLi payload; name round-trips as a literal
             var storedName = (await db.QuerySingleAsync("SELECT name FROM companies WHERE id=@id",
@@ -322,16 +365,24 @@ public class PlatformControlPlaneTests
                 new Dictionary<string, object?> { ["seatLimit"] = 5L }, db, countries, CancellationToken.None);
             Assert.Equal(404, StatusOf(missing));
 
-            // TENANT ADMIN INVITE — creates an Invited user without any credential
+            // TENANT ADMIN INVITE — creates a Pending user with NO password, plus a single-use
+            // reset token so the admin can actually onboard. ('Pending', not the old dead-end
+            // 'Invited' that the login gate rejected forever; the invite now mints a
+            // password_reset_tokens row and emails an accept link.)
             var inviteEmail = $"invite-{Unique()}@opstrax.test";
             var invite = await PlatformEndpoints.TenantResetInvite(companyId, Http(token),
                 new Dictionary<string, object?> { ["adminEmail"] = inviteEmail }, db, CancellationToken.None);
             Assert.Equal(200, StatusOf(invite));
-            var invited = await db.QuerySingleAsync("SELECT status, password_hash FROM users WHERE email=@e",
+            var invited = await db.QuerySingleAsync("SELECT id, status, password_hash FROM users WHERE email=@e",
                 c => c.Parameters.AddWithValue("@e", inviteEmail));
             Assert.NotNull(invited);
-            Assert.Equal("Invited", invited!["status"]?.ToString());
+            Assert.Equal("Pending", invited!["status"]?.ToString());
             Assert.True(invited["passwordHash"] is null or DBNull, "invite must never set a password");
+            // The corrected flow must leave a live credential-setting path (unexpired reset token).
+            var inviteTokenCount = await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM password_reset_tokens WHERE user_id=@uid AND consumed_at IS NULL AND expires_at > NOW()",
+                c => c.Parameters.AddWithValue("@uid", Convert.ToInt64(invited["id"])));
+            Assert.True(inviteTokenCount >= 1, "invite must create a single-use, unexpired reset token");
 
             // ACTIVE USER SESSION → SUSPEND revokes it and locks the company
             var userId = await db.InsertAsync(
@@ -408,11 +459,14 @@ public class PlatformControlPlaneTests
                 c => c.Parameters.AddWithValue("@cid", companyId)));
 
             // INVALID module keys rejected (typo/injection can't become a phantom row)
-            foreach (var bad in new[] { "'; DROP TABLE tenant_entitlements;--", "<script>", "Dispatch", "a" })
+            foreach (var bad in new[] { "'; DROP TABLE tenant_entitlements;--", "<script>", "Dispatch", "a", "dispatch_typo", "dashboard" })
             {
                 var rejected = await PlatformEndpoints.EntitlementsSet(companyId, Http(token),
                     new Dictionary<string, object?> { ["moduleKey"] = bad, ["enabled"] = false }, db, CancellationToken.None);
                 Assert.Equal(400, StatusOf(rejected));
+                Assert.Equal(0, await db.ScalarLongAsync(
+                    "SELECT COUNT(*) FROM tenant_entitlements WHERE company_id=@cid AND module_key=@moduleKey",
+                    c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@moduleKey", bad); }));
             }
 
             // BILLING: create invoice + mark paid
@@ -436,7 +490,7 @@ public class PlatformControlPlaneTests
             {
                 "tenant.created", "tenant.updated", "tenant.admin_invite.reset",
                 "tenant.suspend", "tenant.reactivate", "tenant.sessions_revoked", "tenant.cancel",
-                "entitlement.disabled", "entitlement.enabled", "invoice.created", "invoice.paid",
+                "entitlement.policy.changed", "entitlement.disabled", "entitlement.enabled", "invoice.created", "invoice.paid",
             })
                 Assert.Contains(expected, auditActions);
         }
@@ -454,6 +508,7 @@ public class PlatformControlPlaneTests
     public async Task Seat_Limit_Blocks_User_Creation_At_Capacity()
     {
         var db = CreateDatabase();
+        await new CoreSchemaService(db, Microsoft.Extensions.Logging.Abstractions.NullLogger<CoreSchemaService>.Instance).EnsureAsync();
         await new PlatformSchemaService(db).EnsureAsync();
         await new SecuritySchemaService(db).EnsureAsync();
         var code = $"CPT-{Unique()}";

@@ -4,20 +4,18 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   BatteryCharging,
-  CheckCircle2,
   Download,
   Gauge,
   MapPinned,
   RadioTower,
   RefreshCw,
   Search,
-  ShieldCheck,
   Thermometer,
   Truck,
   Wrench,
   X,
 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { EmptyState, ErrorState, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge } from "@/components/ui";
 import { PERMISSIONS } from "@/auth/rbacConfig";
 import { useHasPermission } from "@/hooks/usePermission";
@@ -44,8 +42,8 @@ const configs: Record<TelematicsKind, ClusterConfig> = {
   "gps-tracking": {
     eyebrow: "Telematics & IoT",
     title: "GPS Tracking",
-    description: "Fleet location intelligence with geofence posture, stale GPS detection, route linkage, and dispatch-ready visibility.",
-    columns: ["vehicleCode", "deviceName", "driverName", "locationLabel", "lastPingAt", "speedMph", "heading", "geofenceStatus", "staleGps", "dataFreshnessStatus"],
+    description: "Current and last-known positions with fix time, gateway receipt, provenance, and explicit blockers. Route linkage is not inferred.",
+    columns: ["vehicleCode", "deviceName", "locationLabel", "positionSource", "positionAccuracy", "deviceFixAt", "gatewayReceivedAt", "dataFreshnessStatus", "routingReadiness"],
     emptyTitle: "No GPS records found",
     emptySubtitle: "No vehicles match the current GPS filters for this tenant.",
     searchPlaceholder: "Search vehicle, driver, location, route, status, or device health...",
@@ -57,8 +55,8 @@ const configs: Record<TelematicsKind, ClusterConfig> = {
   "obd-j1939": {
     eyebrow: "Telematics & IoT",
     title: "OBD / J1939",
-    description: "Engine diagnostics, protocol coverage, odometer and fuel telemetry, battery health, trouble-code readiness, and maintenance escalation in one workflow.",
-    columns: ["vehicleCode", "deviceName", "protocolType", "engineStatus", "engineHours", "odometer", "fuelLevel", "batteryVoltage", "lastEngineDataAt", "dataFreshnessStatus"],
+    description: "Received OBD/J1939/CAN evidence with explicit protocol identity, active DTCs, freshness, and maintenance escalation. DTCs are not assumed to be emissions faults.",
+    columns: ["vehicleCode", "deviceName", "protocolType", "troubleCodes", "engineStatus", "odometer", "fuelLevel", "batteryVoltage", "lastEngineDataAt", "dataFreshnessStatus"],
     emptyTitle: "No diagnostics records found",
     emptySubtitle: "No engine or bus diagnostics are visible for the current filters.",
     searchPlaceholder: "Search vehicle, protocol, driver, fault code, freshness, or provider...",
@@ -108,13 +106,13 @@ function filterRecord(kind: TelematicsKind, record: TelematicsClusterRecord, tab
     if (tab === "Online") return !record.offlineWarning && record.dataFreshnessStatus === "Fresh";
     if (tab === "Stale GPS") return /h ago|Stale/i.test(record.staleGps) || record.dataFreshnessStatus === "Stale";
     if (tab === "Offline") return record.offlineWarning;
-    return record.deviceHealth < 70 || record.alertStatus === "Open";
+    return (record.deviceHealthAvailable && record.deviceHealth < 70) || record.alertStatus === "Open";
   }
   if (kind === "obd-j1939") {
     if (tab === "Fresh") return record.dataFreshnessStatus === "Fresh";
     if (tab === "Watch") return record.dataFreshnessStatus === "Watch";
     if (tab === "Stale") return record.dataFreshnessStatus === "Stale";
-    return record.troubleCodes.length > 0 || /inspection/i.test(record.emissionsStatus);
+    return record.troubleCodes.length > 0;
   }
   if (kind === "sensor-health" || kind === "cold-chain") {
     if (tab === "Nominal") return record.sensorStatus === "Nominal";
@@ -161,6 +159,7 @@ function renderCell(column: string, row: TelematicsClusterRecord) {
   if (column === "latestReading" && String(row.latestReading).includes("Ambient")) {
     return "Ambient";
   }
+  if (column === "troubleCodes") return row.troubleCodes.join(", ") || "None reported";
   return String(row[column as keyof TelematicsClusterRecord] ?? "—");
 }
 
@@ -218,28 +217,13 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
       );
     },
   });
-  const acknowledgeMut = useMutation({
-    mutationFn: ({ deviceId, note }: { deviceId: string | number; note: string }) => telematicsService.acknowledgeTelematicsIssue(deviceId, note),
-    onSuccess: async (result) => {
-      await queryClient.invalidateQueries({ queryKey: ["telematics-cluster", kind] });
-      okOrReason(result, "Telematics issue acknowledged.", "Per-device acknowledgement is not available yet.");
-    },
-  });
-  const resolveMut = useMutation({
-    mutationFn: (deviceId: string | number) => telematicsService.resolveDeviceAttention(deviceId),
-    onSuccess: async () => {
-      setNotice("Telematics exception resolved.");
-      await queryClient.invalidateQueries({ queryKey: ["telematics-cluster", kind] });
-      await queryClient.invalidateQueries({ queryKey: ["telematics-cluster-detail"] });
-    },
-  });
   const maintenanceMut = useMutation({
     mutationFn: async (record: TelematicsClusterRecord) => {
       const maintenance = await telematicsService.createMaintenanceTask(record.deviceId, `Created from ${config.title} for ${record.vehicleCode}`);
       await maintenanceApi.create({
         vehicleCode: record.vehicleCode,
         title: maintenance.title,
-        priority: record.deviceHealth < 70 ? "High" : "Medium",
+        priority: record.deviceHealthAvailable && record.deviceHealth < 70 ? "High" : "Medium",
         status: "Scheduled",
         estimatedCost: 0,
         notes: maintenance.note,
@@ -274,12 +258,12 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
 
   const selectedRecord = rows.find((row) => row.id === selected?.id) ?? selected;
   const offlineCount = rows.filter((row) => row.offlineWarning).length;
-  const issueCount = rows.filter((row) => row.alertStatus === "Open" || (row.troubleCodes?.length ?? 0) > 0 || row.deviceHealth < 70).length;
+  const issueCount = rows.filter((row) => row.alertStatus === "Open" || (row.troubleCodes?.length ?? 0) > 0 || (row.deviceHealthAvailable && row.deviceHealth < 70)).length;
 
   // Average health only counts rows that carry a real numeric health signal. With an
   // empty (or all-signal-less) fleet there is nothing to average, so we surface "—"
   // rather than a fabricated 0% / NaN%.
-  const healthValues = rows.map((row) => Number(row.deviceHealth)).filter((value) => Number.isFinite(value));
+  const healthValues = rows.filter((row) => row.deviceHealthAvailable).map((row) => Number(row.deviceHealth)).filter((value) => Number.isFinite(value));
   const avgHealth = healthValues.length
     ? Math.round(healthValues.reduce((sum, value) => sum + value, 0) / healthValues.length)
     : null;
@@ -352,7 +336,7 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="font-semibold text-slate-900">{row.vehicleCode}</p>
-                  <p className="mt-1 text-xs text-slate-400">{row.locationLabel} · {row.routeAssociation}</p>
+                  <p className="mt-1 text-xs text-slate-400">{row.locationLabel} · {row.positionSource}</p>
                 </div>
                 <RiskBadge risk={row.geofenceStatus} />
               </div>
@@ -360,6 +344,7 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
                 <div className="flex justify-between"><span>GPS ping</span><span>{row.staleGps || "—"}</span></div>
                 <div className="flex justify-between"><span>Coordinates</span><span>{formatCoordinates(row.latitude, row.longitude)}</span></div>
                 <div className="flex justify-between"><span>Speed / heading</span><span>{formatSpeedHeading(row.speedMph, row.heading)}</span></div>
+                <div className="flex justify-between gap-3"><span>Operational use</span><span className="text-right">{row.routingReadiness}</span></div>
               </div>
             </button>
           ))}
@@ -416,7 +401,7 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap gap-2">
                         <button className="btn-ghost h-8 px-3" onClick={() => setSelected(row)}>
-                          {kind === "gps-tracking" ? "View on map" : kind === "obd-j1939" ? "View diagnostics" : "View sensor"}
+                          {kind === "gps-tracking" ? "Inspect position" : kind === "obd-j1939" ? "View diagnostics" : "View sensor"}
                         </button>
                         <button className="btn-ghost h-8 px-3" onClick={() => navigate("/iot-devices")}>View device</button>
                         <button className="btn-ghost h-8 px-3" onClick={() => navigate("/vehicles")}>View vehicle</button>
@@ -429,18 +414,10 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
                           title={permissionTitle(canUpdate, kind === "gps-tracking" ? "Refresh GPS visibility." : "Refresh telematics stream.")}
                           onClick={() => canUpdate && refreshMut.mutate(row.deviceId)}
                         >
-                          Refresh
+                          Reload snapshot
                         </button>
                         {kind === "obd-j1939" ? (
                           <>
-                            <button
-                              className="btn-ghost h-8 px-3"
-                              disabled={!canUpdate}
-                              title={permissionTitle(canUpdate, "Acknowledge this diagnostic issue.")}
-                              onClick={() => canUpdate && acknowledgeMut.mutate({ deviceId: row.deviceId, note: `Acknowledged ${row.vehicleCode} diagnostics review.` })}
-                            >
-                              Acknowledge
-                            </button>
                             <button
                               className="btn-primary h-8 px-3"
                               disabled={!canUpdate || maintenanceMut.isPending}
@@ -454,14 +431,6 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
                         {kind === "sensor-health" ? (
                           <>
                             <button
-                              className="btn-ghost h-8 px-3"
-                              disabled={!canUpdate}
-                              title={permissionTitle(canUpdate, "Acknowledge this sensor alert.")}
-                              onClick={() => canUpdate && acknowledgeMut.mutate({ deviceId: row.deviceId, note: `Acknowledged ${row.sensorType} alert on ${row.vehicleCode}.` })}
-                            >
-                              Acknowledge
-                            </button>
-                            <button
                               className="btn-primary h-8 px-3"
                               disabled={!canUpdate || maintenanceMut.isPending}
                               title={permissionTitle(canUpdate, "Create a maintenance task for this sensor.")}
@@ -470,16 +439,6 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
                               Create Task
                             </button>
                           </>
-                        ) : null}
-                        {kind === "gps-tracking" && (row.offlineWarning || row.dataFreshnessStatus === "Stale") ? (
-                          <button
-                            className="btn-primary h-8 px-3"
-                            disabled={!canUpdate || resolveMut.isPending}
-                            title={permissionTitle(canUpdate, "Resolve the stale or offline GPS state.")}
-                            onClick={() => canUpdate && resolveMut.mutate(row.deviceId)}
-                          >
-                            Resolve
-                          </button>
                         ) : null}
                       </div>
                     </td>
@@ -506,8 +465,6 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
                 detail={detailQ.data}
                 canUpdate={canUpdate}
                 onRefresh={() => canUpdate && refreshMut.mutate(selectedRecord.deviceId)}
-                onAcknowledge={() => canUpdate && acknowledgeMut.mutate({ deviceId: selectedRecord.deviceId, note: `Acknowledged ${selectedRecord.vehicleCode} telematics alert.` })}
-                onResolve={() => canUpdate && resolveMut.mutate(selectedRecord.deviceId)}
                 onMaintenance={() => canUpdate && maintenanceMut.mutate(selectedRecord)}
               />
             )}
@@ -524,8 +481,6 @@ function TelematicsDetailDrawer({
   detail,
   canUpdate,
   onRefresh,
-  onAcknowledge,
-  onResolve,
   onMaintenance,
 }: {
   kind: TelematicsKind;
@@ -533,8 +488,6 @@ function TelematicsDetailDrawer({
   detail: DeviceDetailRecord;
   canUpdate: boolean;
   onRefresh: () => void;
-  onAcknowledge: () => void;
-  onResolve: () => void;
   onMaintenance: () => void;
 }) {
   const latestDiagnostic = detail.diagnostics[0];
@@ -555,24 +508,25 @@ function TelematicsDetailDrawer({
       </div>
 
       <div className="mt-6 flex flex-wrap gap-3">
-        <button className="btn-ghost" onClick={() => window.location.assign(`/map-view`)}><MapPinned className="h-4 w-4" /> View on map</button>
+        <button className="btn-ghost" disabled={!row.positionAvailable} title={row.positionAvailable ? "Open the current position on the fleet map." : "Map unavailable because this record has no valid position."} onClick={() => row.positionAvailable && window.location.assign(`/map-view`)}><MapPinned className="h-4 w-4" /> {row.positionAvailable ? "View on map" : "No valid map fix"}</button>
         <button className="btn-ghost" onClick={() => window.location.assign(`/iot-devices`)}><Truck className="h-4 w-4" /> View device</button>
         <button className="btn-ghost" onClick={() => window.location.assign(`/vehicles`)}><Truck className="h-4 w-4" /> View vehicle</button>
         {row.shipmentId !== "No active shipment" ? <button className="btn-ghost" onClick={() => window.location.assign(`/jobs`)}><Truck className="h-4 w-4" /> Open trip</button> : null}
-        <button className="btn-ghost" disabled={!canUpdate} title={permissionTitle(canUpdate, "Refresh telematics data.")} onClick={onRefresh}><RefreshCw className="h-4 w-4" /> Refresh</button>
-        {kind !== "gps-tracking" ? <button className="btn-ghost" disabled={!canUpdate} title={permissionTitle(canUpdate, "Acknowledge this issue.")} onClick={onAcknowledge}><ShieldCheck className="h-4 w-4" /> Acknowledge</button> : null}
+        <button className="btn-ghost" disabled={!canUpdate} title={permissionTitle(canUpdate, "Reload the latest server snapshot.")} onClick={onRefresh}><RefreshCw className="h-4 w-4" /> Reload snapshot</button>
         {kind !== "gps-tracking" ? <button className="btn-primary" disabled={!canUpdate} title={permissionTitle(canUpdate, "Create a maintenance follow-up.")} onClick={onMaintenance}><Wrench className="h-4 w-4" /> Create maintenance</button> : null}
-        {row.offlineWarning || row.alertStatus === "Open" ? <button className="btn-primary" disabled={!canUpdate} title={permissionTitle(canUpdate, "Resolve this telematics exception.")} onClick={onResolve}><CheckCircle2 className="h-4 w-4" /> Resolve</button> : null}
       </div>
 
       <div className="mt-6 grid gap-4 lg:grid-cols-3">
-        <InfoPanel title="Location / Route" items={[
+        <InfoPanel title="Position evidence" items={[
           ["Location", row.locationLabel],
-          ["GPS ping", row.lastPingAt],
-          ["Stale warning", row.staleGps],
-          ["Route", row.routeAssociation],
-          ["Shipment", row.shipmentId],
-          ["Geofence", row.geofenceStatus],
+          ["Source", row.positionSource],
+          ["Source provider", row.positionProvider],
+          ["Accuracy", row.positionAccuracy],
+          ["Confidence", row.positionConfidence],
+          ["Device fix time", row.deviceFixAt],
+          ["Gateway receipt", row.gatewayReceivedAt],
+          ["Freshness", row.dataFreshnessStatus],
+          ["Operational use", row.routingReadiness],
         ]} />
         <InfoPanel title="Vehicle / Device" items={[
           ["Device", row.deviceName],
@@ -580,11 +534,11 @@ function TelematicsDetailDrawer({
           ["Vehicle", row.vehicleCode],
           ["Driver", row.driverName],
           ["Signal", row.signalStrength],
-          ["Health", `${row.deviceHealth}%`],
+          ["Health", row.deviceHealthAvailable ? `${row.deviceHealth}%` : "Unknown — insufficient evidence"],
         ]} />
         <InfoPanel title={kind === "obd-j1939" ? "Diagnostics" : "Sensors"} items={[
           ["Protocol", row.protocolType],
-          ["Trouble codes", row.troubleCodes.join(", ") || "None"],
+          ["Trouble codes", row.troubleCodes.join(", ") || "None reported"],
           ["Battery", row.batteryVoltage],
           ["Latest reading", row.latestReading],
           ["Expected range", row.expectedRange],
@@ -598,7 +552,7 @@ function TelematicsDetailDrawer({
           ["Engine hours", row.engineHours],
           ["Odometer", row.odometer],
           ["Fuel level", row.fuelLevel],
-          ["Emissions", row.emissionsStatus],
+          ["Emissions classification", row.emissionsStatus],
           ["Last engine data", row.lastEngineDataAt],
         ]} />
         <InfoPanel title="Sensor / Health" items={[
@@ -607,7 +561,7 @@ function TelematicsDetailDrawer({
           ["Calibration", row.calibrationStatus],
           ["Power", row.powerStatus],
           ["Signal strength", row.signalStrength],
-          ["Health event", latestHealth ? `${latestHealth.status} · ${latestHealth.score}%` : "Healthy"],
+          ["Health event", latestHealth ? `${latestHealth.status} · ${latestHealth.score}%` : "No health event recorded"],
         ]} />
       </div>
 

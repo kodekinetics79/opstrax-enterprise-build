@@ -15,8 +15,7 @@ namespace Opstrax.Tests;
 //             and a post-creation override persists (defaults-not-locks).
 public class CountryProfilePostgresTests
 {
-    private const string LocalConnectionString =
-        "Host=127.0.0.1;Port=5433;Database=opstrax_local;Username=zayra;Password=zayra";
+    private static readonly string LocalConnectionString = TestDb.ConnectionString;
 
     // ── STEP 1c: seeded profiles return exact expected values ────────────────────
     [Fact]

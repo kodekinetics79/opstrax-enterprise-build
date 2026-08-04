@@ -3,7 +3,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Bell, Camera, CheckCircle, CircleDot, Gauge, MapPin, Navigation, RadioTower, Route, Satellite, Send, ShieldAlert, Wifi, WifiOff, Wrench, X } from "lucide-react";
 import { apiClient, unwrap } from "@/services/apiClient";
 import { AiInsightCard, DataTable, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, labelize } from "@/components/ui";
-import { useEventStream } from "@/hooks/useEventStream";
 import { useLiveTelemetry } from "@/hooks/useLiveTelemetry";
 import { controlTowerApi } from "@/services/controlTowerApi";
 import { LiveMap } from "@/components/LiveMap";
@@ -20,7 +19,6 @@ export function ControlTowerPage() {
     queryFn: () => controlTowerApi.entity("vehicle", (selected?.vehicleId || selected?.id) as string | number),
     enabled: Boolean(selected?.vehicleId || selected?.id),
   });
-  const stream = useEventStream();
   const telemetry = useLiveTelemetry();
   const qc = useQueryClient();
   const action = useMutation({
@@ -69,7 +67,9 @@ export function ControlTowerPage() {
   const geofences = (data.geofences as AnyRecord[]) || [];
   const recommendations = (data.recommendations as AnyRecord[]) || [];
   const kpis = (data.kpis as AnyRecord) || {};
-  const events = stream.length ? stream : ((data.events as AnyRecord[]) || []);
+  // Event data comes only from the authenticated, tenant-scoped .NET summary.
+  // Live positions use the ticketed .NET telemetry stream above.
+  const events = (data.events as AnyRecord[]) || [];
   const tabs = ["Dispatch", "Active Trips", "Diagnostics", "Video Safety"];
 
   return (

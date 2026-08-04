@@ -56,7 +56,7 @@ export function MaintenanceCommandPage() {
   };
 
   const ackDefect = useMutation({
-    mutationFn: (id: number) => maintenanceApi.acknowledgeDefect(id),
+    mutationFn: (record: AnyRecord) => maintenanceApi.acknowledgeDefect(Number(record.id), Number(record["rowVersion"] ?? record["row_version"])),
     onSuccess: invalidateAll,
   });
   const resolveDefect = useMutation({
@@ -64,7 +64,7 @@ export function MaintenanceCommandPage() {
     onSuccess: invalidateAll,
   });
   const reviewInspection = useMutation({
-    mutationFn: (id: number) => maintenanceApi.reviewInspection(id),
+    mutationFn: (record: AnyRecord) => maintenanceApi.reviewInspection(Number(record.id), Number(record["rowVersion"] ?? record["row_version"])),
     onSuccess: invalidateAll,
   });
   const completeWo = useMutation({
@@ -170,7 +170,7 @@ export function MaintenanceCommandPage() {
               kpis={kpis}
               canManage={canManage}
               canClose={canClose}
-              onAck={(id) => ackDefect.mutate(id)}
+              onAck={(record) => ackDefect.mutate(record)}
               onResolve={(id) => resolveDefect.mutate(id)}
               onCompleteWo={(id) => completeWo.mutate(id)}
             />
@@ -182,7 +182,7 @@ export function MaintenanceCommandPage() {
               isLoading={defects.isLoading}
               canManage={canManage}
               canClose={canClose}
-              onAck={(id) => ackDefect.mutate(id)}
+              onAck={(record) => ackDefect.mutate(record)}
               onResolve={(id) => resolveDefect.mutate(id)}
             />
           )}
@@ -192,7 +192,7 @@ export function MaintenanceCommandPage() {
               rows={inspections.data ?? []}
               isLoading={inspections.isLoading}
               canManage={canManage}
-              onReview={(id) => reviewInspection.mutate(id)}
+              onReview={(record) => reviewInspection.mutate(record)}
             />
           )}
 
@@ -267,7 +267,7 @@ function OverviewTab({
   kpis: AnyRecord;
   canManage: boolean;
   canClose: boolean;
-  onAck: (id: number) => void;
+  onAck: (record: AnyRecord) => void;
   onResolve: (id: number) => void;
   onCompleteWo: (id: number) => void;
 }) {
@@ -283,7 +283,7 @@ function OverviewTab({
                 defect={d}
                 canManage={canManage}
                 canClose={canClose}
-                onAck={() => onAck(Number(d["id"]))}
+                onAck={() => onAck(d)}
                 onResolve={() => onResolve(Number(d["id"]))}
               />
             ))
@@ -329,7 +329,7 @@ function DefectsTab({
   isLoading: boolean;
   canManage: boolean;
   canClose: boolean;
-  onAck: (id: number) => void;
+  onAck: (record: AnyRecord) => void;
   onResolve: (id: number) => void;
 }) {
   if (isLoading) return <LoadingState />;
@@ -342,7 +342,7 @@ function DefectsTab({
           defect={d}
           canManage={canManage}
           canClose={canClose}
-          onAck={() => onAck(Number(d["id"]))}
+          onAck={() => onAck(d)}
           onResolve={() => onResolve(Number(d["id"]))}
         />
       ))}
@@ -357,7 +357,7 @@ function InspectionsTab({
   rows: AnyRecord[];
   isLoading: boolean;
   canManage: boolean;
-  onReview: (id: number) => void;
+  onReview: (record: AnyRecord) => void;
 }) {
   if (isLoading) return <LoadingState />;
   if (!rows.length) return <Empty icon={<ClipboardList className="h-8 w-8 text-slate-300" />} message="No inspections yet" />;
@@ -396,7 +396,7 @@ function InspectionsTab({
                   <button
                     type="button"
                     className="btn-ghost text-xs py-1 px-2"
-                    onClick={() => onReview(Number(r["id"]))}
+                    onClick={() => onReview(r)}
                   >
                     Review
                   </button>

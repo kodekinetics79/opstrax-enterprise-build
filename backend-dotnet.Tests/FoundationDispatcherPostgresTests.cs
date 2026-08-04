@@ -6,8 +6,7 @@ namespace Opstrax.Tests;
 
 public class FoundationDispatcherPostgresTests
 {
-    private const string LocalConnectionString =
-        "Host=127.0.0.1;Port=5433;Database=opstrax_local;Username=zayra;Password=zayra";
+    private static readonly string LocalConnectionString = TestDb.ConnectionString;
 
     [Fact]
     public async Task OutboxDispatcher_Processes_FoundationSmokeRequested_Event()

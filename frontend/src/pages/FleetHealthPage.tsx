@@ -390,7 +390,7 @@ function VehicleDrawer({
   const qc = useQueryClient();
 
   const ackDefect = useMutation({
-    mutationFn: (defectId: number) => maintenanceApi.acknowledgeDefect(defectId),
+    mutationFn: (defect: AnyRecord) => maintenanceApi.acknowledgeDefect(num(defect.id), num(defect.rowVersion ?? defect.row_version)),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["fleet-health"] }),
   });
 
@@ -518,7 +518,7 @@ function VehicleDrawer({
                             <button
                               type="button"
                               disabled={ackDefect.isPending}
-                              onClick={() => ackDefect.mutate(num(d.id))}
+                              onClick={() => ackDefect.mutate(d)}
                               className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-0.5 hover:bg-amber-100 disabled:opacity-50"
                             >Ack</button>
                             <button
@@ -961,7 +961,7 @@ export function FleetHealthPage() {
       const detail = await fleetHealthApi.vehicleDetail(vehicleId);
       const firstDefect = ((detail?.openDefects as AnyRecord[]) ?? [])[0];
       if (!firstDefect) throw new Error("No open defect found");
-      return maintenanceApi.acknowledgeDefect(num(firstDefect.id));
+      return maintenanceApi.acknowledgeDefect(num(firstDefect.id), num(firstDefect.rowVersion ?? firstDefect.row_version));
     },
     onMutate:  (id) => setMutatingId(id),
     onSettled: () => { setMutatingId(null); qc.invalidateQueries({ queryKey: ["fleet-health"] }); },

@@ -35,10 +35,16 @@ public sealed class AuditService(Database db)
     public Task LogAsync(HttpContext http, string actionName, string entityName, long? entityId = null, string? detailsJson = null, CancellationToken ct = default)
     {
         var companyId = EndpointMappings.GetCompanyId(http);
-        var actorId = http.Items.TryGetValue(EndpointMappings.AuthUserIdItemKey, out var userIdValue) && userIdValue is not null
+        var supportGrantRef = http.Items.TryGetValue(PlatformImpersonationPolicy.GrantRefItemKey, out var grantRefValue)
+            ? grantRefValue?.ToString()
+            : null;
+        var actorId = supportGrantRef is null
+            && http.Items.TryGetValue(EndpointMappings.AuthUserIdItemKey, out var userIdValue) && userIdValue is not null
             ? Convert.ToInt64(userIdValue)
             : 0L;
-        var actor = http.Items.TryGetValue(EndpointMappings.AuthRoleItemKey, out var roleValue) && roleValue is not null
+        var actor = supportGrantRef is not null
+            ? $"platform-support:{supportGrantRef.Replace("-", string.Empty, StringComparison.Ordinal)}"
+            : http.Items.TryGetValue(EndpointMappings.AuthRoleItemKey, out var roleValue) && roleValue is not null
             ? $"{roleValue}:{actorId}"
             : actorId > 0 ? $"user:{actorId}" : "system";
 

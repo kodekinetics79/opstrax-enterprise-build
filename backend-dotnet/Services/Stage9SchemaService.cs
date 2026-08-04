@@ -13,6 +13,10 @@ public sealed class Stage9SchemaService(Database db)
             await db.ExecuteAsync(sql, ct: ct);
         }
 
+        await db.ExecuteAsync("ALTER TABLE assignment_confirmations ADD COLUMN IF NOT EXISTS recommendation_id BIGINT NULL", ct: ct);
+        await db.ExecuteAsync("ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_url VARCHAR(400) NULL", ct: ct);
+        await db.ExecuteAsync("ALTER TABLE documents ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ NULL", ct: ct);
+
         foreach (var sql in Indexes)
         {
             try
@@ -56,6 +60,7 @@ public sealed class Stage9SchemaService(Database db)
         @"CREATE TABLE IF NOT EXISTS assignment_confirmations (
             id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
             company_id BIGINT NOT NULL,
+            recommendation_id BIGINT NULL,
             job_id BIGINT NULL,
             trip_id BIGINT NULL,
             driver_id BIGINT NULL,
@@ -216,7 +221,7 @@ public sealed class Stage9SchemaService(Database db)
             company_id BIGINT NOT NULL,
             proof_package_id BIGINT NOT NULL,
             artifact_type VARCHAR(80) NOT NULL,
-            file_id BIGINT NULL,
+            file_id BIGINT NOT NULL,
             captured_at TIMESTAMPTZ NULL,
             uploaded_at TIMESTAMPTZ NULL,
             captured_by_user_id BIGINT NULL,
@@ -259,6 +264,7 @@ public sealed class Stage9SchemaService(Database db)
         "CREATE INDEX IF NOT EXISTS idx_ac_company_job_status ON assignment_confirmations (company_id, job_id, status, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_ac_company_trip_status ON assignment_confirmations (company_id, trip_id, status, created_at DESC)",
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_ac_company_idempotency_key ON assignment_confirmations (company_id, idempotency_key) WHERE idempotency_key IS NOT NULL",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_ac_company_recommendation ON assignment_confirmations (company_id, recommendation_id) WHERE recommendation_id IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS idx_sarq_company_job_status ON site_access_requirements (company_id, job_id, status, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_sarq_company_trip_status ON site_access_requirements (company_id, trip_id, status, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_ad_company_job_status ON access_documents (company_id, job_id, status, created_at DESC)",
@@ -279,6 +285,11 @@ public sealed class Stage9SchemaService(Database db)
         "CREATE INDEX IF NOT EXISTS idx_bcr_company_job_created ON billing_confidence_records (company_id, job_id, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_bcr_company_trip_created ON billing_confidence_records (company_id, trip_id, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_bcr_company_package_created ON billing_confidence_records (company_id, proof_package_id, created_at DESC)"
+        ,"CREATE UNIQUE INDEX IF NOT EXISTS uq_bcr_company_package ON billing_confidence_records (company_id, proof_package_id) WHERE proof_package_id IS NOT NULL"
+        ,"CREATE INDEX IF NOT EXISTS idx_jobs_active_projection ON jobs (company_id, branch_id, status, created_at DESC, id DESC) WHERE deleted_at IS NULL AND LOWER(status) NOT IN ('delivered','cancelled','canceled')"
+        ,"CREATE INDEX IF NOT EXISTS idx_dispatch_assignments_job_projection_recent ON dispatch_assignments (company_id, job_id, (COALESCE(updated_at,assigned_at,created_at)) DESC, id DESC)"
+        ,"CREATE INDEX IF NOT EXISTS idx_proof_packages_company_job_recent ON proof_packages (company_id, job_id, proof_type, created_at DESC, id DESC)"
+        ,"CREATE INDEX IF NOT EXISTS idx_location_company_vehicle_recent ON location_events (company_id, vehicle_id, event_time DESC, id DESC)"
+        ,"CREATE INDEX IF NOT EXISTS idx_pod_company_job_projection_recent ON proof_of_delivery (company_id, job_id, (COALESCE(captured_at,created_at)) DESC, id DESC)"
     ];
 }
-

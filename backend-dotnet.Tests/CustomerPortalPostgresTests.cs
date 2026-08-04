@@ -10,8 +10,7 @@ namespace Opstrax.Tests;
 // and query-level internal-field stripping — with realistic seeded data + real amounts.
 public class CustomerPortalPostgresTests
 {
-    private const string LocalConnectionString =
-        "Host=127.0.0.1;Port=5433;Database=opstrax_local;Username=zayra;Password=zayra";
+    private static readonly string LocalConnectionString = TestDb.ConnectionString;
 
     [Fact]
     public async Task PortalInvoices_AreScopedToTheCustomer_NotJustTheCompany()
@@ -187,6 +186,7 @@ public class CustomerPortalPostgresTests
         await db.ExecuteAsync("ALTER TABLE customer_feedback ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NULL");
         await db.ExecuteAsync("ALTER TABLE ai_recommendations ADD COLUMN IF NOT EXISTS company_id BIGINT NOT NULL DEFAULT 1");
         await db.ExecuteAsync("ALTER TABLE ai_recommendations ADD COLUMN IF NOT EXISTS body TEXT NULL");
+        await db.ExecuteAsync("SELECT setval(pg_get_serial_sequence('drivers', 'id'), (SELECT COALESCE(MAX(id), 1) FROM drivers))");
     }
 
     private static async Task<long> SeedCompanyAsync(Database db) => await db.InsertAsync(

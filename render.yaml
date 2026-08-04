@@ -2,14 +2,15 @@ services:
   - type: web
     name: opstrax-api
     runtime: docker
-    rootDir: backend-dotnet
-    dockerfilePath: ./Dockerfile
+    rootDir: .
+    dockerfilePath: ./backend-dotnet/Dockerfile
     dockerContext: .
     # Readiness (not liveness) so Render only routes traffic once the DB is
     # reachable AND critical config is valid; returns 503 until then. See
     # /health/ready in Program.cs.
     healthCheckPath: /health/ready
-    autoDeploy: true
+    # Release candidates are promoted only after exact-SHA evidence and approval.
+    autoDeploy: false
     envVars:
       - key: ASPNETCORE_ENVIRONMENT
         value: Production
@@ -26,9 +27,11 @@ services:
       # fallback — leave OPSTRAX_DEPLOY_VERSION unset to auto-track the commit.
       - key: OPSTRAX_DEPLOY_VERSION
         sync: false
-      # Neon connection string (postgresql://user:pass@host/db?sslmode=require).
-      # Set in the Render dashboard after the service is created — never in git.
-      - key: PG_CONNECTION
+      # Restricted application identity. Never use the owner/migration credential.
+      - key: PG_CONNECTION_APP
+        sync: false
+      # Separate control-plane/background identity provisioned by Stage58.
+      - key: PG_CONNECTION_SYSTEM
         sync: false
       - key: Jwt__Key
         sync: false
@@ -44,6 +47,19 @@ services:
       # RLS-protected request transaction.
       - key: Rls__EnforceTenantContext
         value: "true"
+      - key: Rls__TenantTicketTtlSeconds
+        value: "120"
+      # Shared ASP.NET Data Protection certificate (base64 PKCS12/PFX). The key ring
+      # itself is stored in Neon by Stage59; every instance uses this certificate.
+      - key: DATA_PROTECTION_CERTIFICATE_BASE64
+        sync: false
+      - key: DATA_PROTECTION_CERTIFICATE_PASSWORD
+        sync: false
+      # Optional prior PFX retained only during certificate/key-ring rotation.
+      - key: DATA_PROTECTION_PREVIOUS_CERTIFICATE_BASE64
+        sync: false
+      - key: DATA_PROTECTION_PREVIOUS_CERTIFICATE_PASSWORD
+        sync: false
       # OPTIONAL Neon read-replica connection string. When set, read-only queries
       # can be offloaded here and reads survive a primary blip (auto-fallback to
       # primary). Leave unset to route everything to the primary.
@@ -76,9 +92,10 @@ services:
       # AWS region (used only when STORAGE_ENDPOINT is unset).
       - key: STORAGE_REGION
         sync: false
-      # Enable the data-retention purge worker (default off in Production).
+      # Required in Production. Config validation refuses startup unless the
+      # operator explicitly sets this to true after policy approval.
       - key: RetentionWorker__Enabled
-        value: "false"
+        sync: false
       # Allowed frontend origin(s) for CORS — set to the deployed Vercel URL.
       - key: Cors__AllowedOrigins
         sync: false
@@ -88,6 +105,14 @@ services:
         sync: false
       - key: PLATFORM_SUPERADMIN_PASSWORD
         sync: false
+      # Break-glass recovery ONLY. The super admin is seeded once; rotating the
+      # password above never re-reaches the DB on its own. Set this to "true",
+      # redeploy, sign in with PLATFORM_SUPERADMIN_EMAIL/PASSWORD, then set it back
+      # to "false" (or remove it) — PlatformSuperAdminReconciler reconciles the
+      # stored hash from env on boot only while it is armed. Leaving it "true" would
+      # overwrite any later self-service password change on the next deploy.
+      - key: PLATFORM_SUPERADMIN_RESET
+        value: "false"
       - key: DemoSeed__Enabled
         value: "false"
       - key: DemoSeed__Password
@@ -101,19 +126,4 @@ services:
       - key: SMTP_PASS
         sync: false
       - key: SMTP_FROM
-        sync: false
-
-  - type: web
-    name: opstrax-events
-    runtime: docker
-    rootDir: services/node-events
-    dockerfilePath: ./Dockerfile
-    dockerContext: .
-    healthCheckPath: /health
-    autoDeploy: true
-    envVars:
-      - key: PORT
-        value: "8090"
-      # Allowed frontend origin for CORS — set to the deployed Vercel URL.
-      - key: CORS_ORIGIN
         sync: false

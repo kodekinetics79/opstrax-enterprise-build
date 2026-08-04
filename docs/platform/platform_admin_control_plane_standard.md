@@ -5,6 +5,11 @@ Console) is allowed to do, what requires elevated protection, and what it must
 never do. Any change to `/api/platform/*` or `frontend/src/pages/platform/`
 must conform to this standard.
 
+The exhaustive tenant-visible ownership and commercial enforcement inventory is
+[`PLATFORM_ADMIN_ENTERPRISE_CONTROL_MAP.md`](./PLATFORM_ADMIN_ENTERPRISE_CONTROL_MAP.md).
+That map is the authority for which modules are Platform-controlled versus
+tenant-governed core/open and is guarded by an automated catalog-drift test.
+
 ## Executive principle
 
 Platform Admin is a **SaaS business control plane**, not a superuser backdoor.
@@ -45,7 +50,7 @@ audited support-access workflow.
 | Suspend / reactivate / cancel tenant | `platform:tenants:manage` | MUST revoke all tenant sessions on suspend/cancel and mirror `companies.status` |
 | Extend trial / manual contract | `platform:tenants:manage` | |
 | Change plan / assign package | `platform:tenants:manage` | Recomputes MRR; seeds entitlements without clobbering overrides |
-| Set limits / quotas (seats) | `platform:tenants:manage` | Enforced at tenant login/user-creation paths |
+| Set limits / quotas (seats) | `platform:tenants:manage` | Enforced when staff users are created. A later reduction can leave a tenant over quota; existing users are not denied login on that basis. |
 | Enable / disable modules | `platform:entitlements:manage` | Server-enforced at the API middleware per request |
 | Create / reset tenant admin invite | `platform:tenants:manage` | Creates `users` row with status `Invited`; never sets a password directly |
 | Revoke tenant sessions | `platform:tenants:manage` | Explicit endpoint; also implicit on suspend/cancel |
@@ -61,7 +66,7 @@ audited support-access workflow.
 | Capability | Requirement |
 |---|---|
 | **Tenant offboarding (hard delete)** | Dedicated permission `platform:tenants:offboard` (super admin only via `platform:*`), a body confirm token equal to the tenant's `company_code`, and an audit row that survives the deletion. Never exposed as a casual UI button. |
-| **Support access to tenant data / impersonation** | **Not implemented.** The `platform_impersonation_sessions` table and `platform:impersonation:start` permission are reserved. If ever built it MUST be: time-boxed, reason-required, visibly audited to the tenant, and read-only by default. Do not build silent impersonation. |
+| **Support access to tenant data / impersonation** | **Bounded implementation; deployment-default off and excluded from the Safety pilot.** Stage 75 binds one 5–60 minute grant to exactly one session and target user/tenant, removes the permission from seeded Support Admin, admits only an explicit reviewed Safety/audit read-route allowlist plus self-logout, denies other methods/routes at the auth edge, displays a persistent read-only banner, writes Platform-attributed and tenant-visible pseudonymous audit, and revokes by the exact grant FK. Enabling still requires a separately reviewed role, `PlatformImpersonation:Enabled=true`, Stage 75 evidence and an approved support-access runbook. |
 | **Export of tenant data** | Only through tenant-scoped, tenant-RBAC'd export endpoints. The platform plane has no bulk tenant-data export. |
 | **Emergency lockout** | Use suspend (revokes sessions + blocks login). There is no separate "kill switch" that bypasses audit. |
 | **Manual DB-like corrections** | Never through ad-hoc SQL against production-like DBs. Schema changes require a migration file; data corrections require an audited endpoint or a documented, reviewed runbook entry. |
@@ -85,6 +90,15 @@ audited support-access workflow.
   never the password) and rate-limited.
 - Suspending or cancelling a tenant MUST delete all of that tenant's
   `user_sessions` rows in the same request — blocking new logins is not enough.
+- A bounded support-access bearer is revalidated against its grant on every request.
+  Only the explicitly reviewed Safety/audit read-route allowlist and exact self-logout
+  are admitted; method-only “all GETs are safe” logic is prohibited. Completed reads
+  record the actual HTTP outcome (`completed`, `denied` or `failed`) in both Platform
+  and tenant-visible pseudonymous audit, so a downstream 403/404/5xx is never labelled
+  as a successful read. A distributed ledger-backed ceiling of 120 audited requests
+  per grant per minute prevents audit-write amplification; excess requests fail 429.
+  Central request telemetry remains authoritative for exceptions that abort before a
+  normal HTTP outcome is returned.
 
 ## Frontend rules
 

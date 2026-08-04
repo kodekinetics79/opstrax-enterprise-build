@@ -55,8 +55,157 @@ public sealed class MarketPackSchemaService(Database db)
         await CoreTablesAsync();
         await CanadaTablesAsync();
         await SaudiTablesAsync();
+        await EnsureBranchOwnershipAsync();
+        await BackfillLegacySaudiLedgerAsync();
         await SeedReferenceAsync();
         await SeedRevenueMappingAsync();
+    }
+
+    private async Task BackfillLegacySaudiLedgerAsync()
+    {
+        // compliance_records is the single Saudi document ledger. Preserve any
+        // records created by the retired Fleet TMS readiness surface exactly once.
+        await db.ExecuteAsync("""
+            DO $migration$
+            BEGIN
+              IF to_regclass('public.fleet_tms_readiness_documents') IS NOT NULL THEN
+                INSERT INTO compliance_records
+                  (company_id, branch_id, pack_code, subject_type, subject_name, doc_key, document_no,
+                   document_status, expiry_date, hijri_expiry_date, metadata, created_at, updated_at)
+                SELECT f.company_id, f.branch_id, 'saudi_gcc', lower(f.subject_type), f.subject_name,
+                       lower(f.document_type), NULLIF(f.document_number,''),
+                       CASE lower(f.document_status)
+                         WHEN 'expired' THEN 'expired' WHEN 'cancelled' THEN 'expired'
+                         WHEN 'suspended' THEN 'expiring' ELSE 'valid' END,
+                       f.gregorian_expiry_date, f.hijri_expiry_date::text,
+                       jsonb_build_object('legacyFleetReadinessId', f.id, 'migratedFrom', 'fleet_tms_readiness_documents',
+                         'transportDocumentNo', f.transport_document_no, 'permitNo', f.permit_no,
+                         'vatNumber', f.vat_number, 'commercialRegistrationNo', f.commercial_registration_no),
+                       COALESCE(f.created_at_utc, NOW()), COALESCE(f.updated_at_utc, NOW())
+                FROM fleet_tms_readiness_documents f
+                WHERE NOT EXISTS (
+                  SELECT 1 FROM compliance_records c
+                  WHERE c.company_id=f.company_id AND c.branch_id IS NOT DISTINCT FROM f.branch_id
+                    AND c.pack_code='saudi_gcc' AND c.metadata->>'legacyFleetReadinessId'=f.id::text);
+              END IF;
+            END $migration$;
+            """);
+    }
+
+    private async Task EnsureBranchOwnershipAsync()
+    {
+        string[] tables =
+        [
+            "compliance_records", "compliance_record_documents", "compliance_expiry_events",
+            "vehicle_inspection_records", "inspection_defects", "jurisdiction_mileage_records",
+            "jurisdiction_fuel_records", "driver_duty_status_records", "eld_device_registry",
+            "market_addresses", "business_tax_readiness"
+        ];
+        foreach (var table in tables)
+        {
+            await db.ExecuteAsync($"ALTER TABLE \"{table}\" ADD COLUMN IF NOT EXISTS branch_id BIGINT NULL");
+            await db.ExecuteAsync($"CREATE INDEX IF NOT EXISTS \"idx_{table}_branch\" ON \"{table}\" (company_id, branch_id)");
+        }
+
+        // The original tenant-only key cannot represent one readiness profile per
+        // branch. Replace it with a NULL-safe tenant/branch/pack ownership key.
+        await db.ExecuteAsync("ALTER TABLE business_tax_readiness DROP CONSTRAINT IF EXISTS business_tax_readiness_company_id_pack_code_key");
+        await db.ExecuteAsync("CREATE UNIQUE INDEX IF NOT EXISTS uq_business_tax_readiness_branch_pack ON business_tax_readiness (company_id, COALESCE(branch_id, 0), pack_code)");
+        await ClassifyAndBackfillBranchesAsync();
+    }
+
+    private async Task ClassifyAndBackfillBranchesAsync()
+    {
+        await db.ExecuteAsync("""
+            CREATE TABLE IF NOT EXISTS market_pack_branch_migration_audit (
+              id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+              company_id BIGINT NOT NULL,
+              table_name VARCHAR(100) NOT NULL,
+              row_id BIGINT NOT NULL,
+              classification VARCHAR(40) NOT NULL,
+              reason VARCHAR(300) NOT NULL,
+              resolved_branch_id BIGINT NULL,
+              resolved_at TIMESTAMPTZ NULL,
+              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              UNIQUE(table_name,row_id,classification)
+            );
+
+            UPDATE compliance_record_documents d SET branch_id=r.branch_id
+              FROM compliance_records r WHERE d.company_id=r.company_id AND d.record_id=r.id AND d.branch_id IS NULL AND r.branch_id IS NOT NULL;
+            UPDATE compliance_expiry_events e SET branch_id=r.branch_id
+              FROM compliance_records r WHERE e.company_id=r.company_id AND e.record_id=r.id AND e.branch_id IS NULL AND r.branch_id IS NOT NULL;
+            UPDATE inspection_defects d SET branch_id=i.branch_id
+              FROM vehicle_inspection_records i WHERE d.company_id=i.company_id AND d.inspection_id=i.id AND d.branch_id IS NULL AND i.branch_id IS NOT NULL;
+
+            DO $branch_rollout$
+            BEGIN
+              IF to_regclass('public.branches') IS NOT NULL THEN
+                WITH sole AS (
+                  SELECT company_id, MIN(id) branch_id FROM branches
+                  WHERE deleted_at IS NULL AND status='Active'
+                  GROUP BY company_id HAVING COUNT(*)=1
+                )
+                UPDATE compliance_records x SET branch_id=s.branch_id FROM sole s WHERE x.company_id=s.company_id AND x.branch_id IS NULL;
+                WITH sole AS (SELECT company_id,MIN(id) branch_id FROM branches WHERE deleted_at IS NULL AND status='Active' GROUP BY company_id HAVING COUNT(*)=1)
+                UPDATE vehicle_inspection_records x SET branch_id=s.branch_id FROM sole s WHERE x.company_id=s.company_id AND x.branch_id IS NULL;
+                WITH sole AS (SELECT company_id,MIN(id) branch_id FROM branches WHERE deleted_at IS NULL AND status='Active' GROUP BY company_id HAVING COUNT(*)=1)
+                UPDATE jurisdiction_mileage_records x SET branch_id=s.branch_id FROM sole s WHERE x.company_id=s.company_id AND x.branch_id IS NULL;
+                WITH sole AS (SELECT company_id,MIN(id) branch_id FROM branches WHERE deleted_at IS NULL AND status='Active' GROUP BY company_id HAVING COUNT(*)=1)
+                UPDATE jurisdiction_fuel_records x SET branch_id=s.branch_id FROM sole s WHERE x.company_id=s.company_id AND x.branch_id IS NULL;
+                WITH sole AS (SELECT company_id,MIN(id) branch_id FROM branches WHERE deleted_at IS NULL AND status='Active' GROUP BY company_id HAVING COUNT(*)=1)
+                UPDATE driver_duty_status_records x SET branch_id=s.branch_id FROM sole s WHERE x.company_id=s.company_id AND x.branch_id IS NULL;
+                WITH sole AS (SELECT company_id,MIN(id) branch_id FROM branches WHERE deleted_at IS NULL AND status='Active' GROUP BY company_id HAVING COUNT(*)=1)
+                UPDATE eld_device_registry x SET branch_id=s.branch_id FROM sole s WHERE x.company_id=s.company_id AND x.branch_id IS NULL;
+                WITH sole AS (SELECT company_id,MIN(id) branch_id FROM branches WHERE deleted_at IS NULL AND status='Active' GROUP BY company_id HAVING COUNT(*)=1)
+                UPDATE business_tax_readiness x SET branch_id=s.branch_id FROM sole s WHERE x.company_id=s.company_id AND x.branch_id IS NULL;
+              END IF;
+            END $branch_rollout$;
+
+            UPDATE compliance_record_documents d SET branch_id=r.branch_id FROM compliance_records r
+              WHERE d.company_id=r.company_id AND d.record_id=r.id AND d.branch_id IS NULL AND r.branch_id IS NOT NULL;
+            UPDATE compliance_expiry_events e SET branch_id=r.branch_id FROM compliance_records r
+              WHERE e.company_id=r.company_id AND e.record_id=r.id AND e.branch_id IS NULL AND r.branch_id IS NOT NULL;
+            UPDATE inspection_defects d SET branch_id=i.branch_id FROM vehicle_inspection_records i
+              WHERE d.company_id=i.company_id AND d.inspection_id=i.id AND d.branch_id IS NULL AND i.branch_id IS NOT NULL;
+
+            UPDATE market_pack_branch_migration_audit a SET resolved_branch_id=x.branch_id,resolved_at=NOW()
+              FROM compliance_records x WHERE a.table_name='compliance_records' AND a.row_id=x.id AND x.branch_id IS NOT NULL AND a.resolved_at IS NULL;
+            UPDATE market_pack_branch_migration_audit a SET resolved_branch_id=x.branch_id,resolved_at=NOW()
+              FROM compliance_expiry_events x WHERE a.table_name='compliance_expiry_events' AND a.row_id=x.id AND x.branch_id IS NOT NULL AND a.resolved_at IS NULL;
+            UPDATE market_pack_branch_migration_audit a SET resolved_branch_id=x.branch_id,resolved_at=NOW()
+              FROM vehicle_inspection_records x WHERE a.table_name='vehicle_inspection_records' AND a.row_id=x.id AND x.branch_id IS NOT NULL AND a.resolved_at IS NULL;
+            UPDATE market_pack_branch_migration_audit a SET resolved_branch_id=x.branch_id,resolved_at=NOW()
+              FROM inspection_defects x WHERE a.table_name='inspection_defects' AND a.row_id=x.id AND x.branch_id IS NOT NULL AND a.resolved_at IS NULL;
+            UPDATE market_pack_branch_migration_audit a SET resolved_branch_id=x.branch_id,resolved_at=NOW()
+              FROM jurisdiction_mileage_records x WHERE a.table_name='jurisdiction_mileage_records' AND a.row_id=x.id AND x.branch_id IS NOT NULL AND a.resolved_at IS NULL;
+            UPDATE market_pack_branch_migration_audit a SET resolved_branch_id=x.branch_id,resolved_at=NOW()
+              FROM jurisdiction_fuel_records x WHERE a.table_name='jurisdiction_fuel_records' AND a.row_id=x.id AND x.branch_id IS NOT NULL AND a.resolved_at IS NULL;
+            UPDATE market_pack_branch_migration_audit a SET resolved_branch_id=x.branch_id,resolved_at=NOW()
+              FROM driver_duty_status_records x WHERE a.table_name='driver_duty_status_records' AND a.row_id=x.id AND x.branch_id IS NOT NULL AND a.resolved_at IS NULL;
+            UPDATE market_pack_branch_migration_audit a SET resolved_branch_id=x.branch_id,resolved_at=NOW()
+              FROM eld_device_registry x WHERE a.table_name='eld_device_registry' AND a.row_id=x.id AND x.branch_id IS NOT NULL AND a.resolved_at IS NULL;
+            UPDATE market_pack_branch_migration_audit a SET resolved_branch_id=x.branch_id,resolved_at=NOW()
+              FROM business_tax_readiness x WHERE a.table_name='business_tax_readiness' AND a.row_id=x.id AND x.branch_id IS NOT NULL AND a.resolved_at IS NULL;
+
+            INSERT INTO market_pack_branch_migration_audit(company_id,table_name,row_id,classification,reason)
+            SELECT company_id,'compliance_records',id,'tenant_unassigned','Multiple or zero active branches; manual ownership required' FROM compliance_records WHERE branch_id IS NULL ON CONFLICT DO NOTHING;
+            INSERT INTO market_pack_branch_migration_audit(company_id,table_name,row_id,classification,reason)
+            SELECT company_id,'compliance_expiry_events',id,'tenant_unassigned','Parent unresolved or event has no canonical record' FROM compliance_expiry_events WHERE branch_id IS NULL ON CONFLICT DO NOTHING;
+            INSERT INTO market_pack_branch_migration_audit(company_id,table_name,row_id,classification,reason)
+            SELECT company_id,'vehicle_inspection_records',id,'tenant_unassigned','Multiple or zero active branches; manual ownership required' FROM vehicle_inspection_records WHERE branch_id IS NULL ON CONFLICT DO NOTHING;
+            INSERT INTO market_pack_branch_migration_audit(company_id,table_name,row_id,classification,reason)
+            SELECT company_id,'inspection_defects',id,'tenant_unassigned','Parent inspection ownership unresolved' FROM inspection_defects WHERE branch_id IS NULL ON CONFLICT DO NOTHING;
+            INSERT INTO market_pack_branch_migration_audit(company_id,table_name,row_id,classification,reason)
+            SELECT company_id,'jurisdiction_mileage_records',id,'tenant_unassigned','Multiple or zero active branches; manual ownership required' FROM jurisdiction_mileage_records WHERE branch_id IS NULL ON CONFLICT DO NOTHING;
+            INSERT INTO market_pack_branch_migration_audit(company_id,table_name,row_id,classification,reason)
+            SELECT company_id,'jurisdiction_fuel_records',id,'tenant_unassigned','Multiple or zero active branches; manual ownership required' FROM jurisdiction_fuel_records WHERE branch_id IS NULL ON CONFLICT DO NOTHING;
+            INSERT INTO market_pack_branch_migration_audit(company_id,table_name,row_id,classification,reason)
+            SELECT company_id,'driver_duty_status_records',id,'tenant_unassigned','Multiple or zero active branches; manual ownership required' FROM driver_duty_status_records WHERE branch_id IS NULL ON CONFLICT DO NOTHING;
+            INSERT INTO market_pack_branch_migration_audit(company_id,table_name,row_id,classification,reason)
+            SELECT company_id,'eld_device_registry',id,'tenant_unassigned','Multiple or zero active branches; manual ownership required' FROM eld_device_registry WHERE branch_id IS NULL ON CONFLICT DO NOTHING;
+            INSERT INTO market_pack_branch_migration_audit(company_id,table_name,row_id,classification,reason)
+            SELECT company_id,'business_tax_readiness',id,'tenant_unassigned','Multiple or zero active branches; manual ownership required' FROM business_tax_readiness WHERE branch_id IS NULL ON CONFLICT DO NOTHING;
+            """);
     }
 
     // ── Phase 1: market-pack core ───────────────────────────────────────────
@@ -108,6 +257,21 @@ public sealed class MarketPackSchemaService(Database db)
             )
             """);
         await db.ExecuteAsync("CREATE INDEX IF NOT EXISTS idx_tenant_market_packs_company ON tenant_market_packs (company_id)");
+        // The API also validates this enum, while the database constraint protects
+        // imports, migrations and future writers from introducing ambiguous states.
+        await db.ExecuteAsync("""
+            DO $$
+            BEGIN
+              IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname='ck_tenant_market_packs_status'
+                  AND conrelid='tenant_market_packs'::regclass
+              ) THEN
+                ALTER TABLE tenant_market_packs
+                  ADD CONSTRAINT ck_tenant_market_packs_status CHECK (status IN ('active','disabled'));
+              END IF;
+            END $$
+            """);
 
         // Reference / configuration tables (market-scoped, not tenant data).
         await db.ExecuteAsync("""
@@ -268,6 +432,8 @@ public sealed class MarketPackSchemaService(Database db)
             )
             """);
         await db.ExecuteAsync("CREATE INDEX IF NOT EXISTS idx_compliance_expiry_company ON compliance_expiry_events (company_id, pack_code)");
+        await db.ExecuteAsync("ALTER TABLE compliance_expiry_events ADD COLUMN IF NOT EXISTS retired_at TIMESTAMPTZ NULL");
+        await db.ExecuteAsync("ALTER TABLE compliance_expiry_events ADD COLUMN IF NOT EXISTS retirement_reason VARCHAR(240) NULL");
     }
 
     // ── Phase 2: Canada / North America operational tables ──────────────────
@@ -284,12 +450,20 @@ public sealed class MarketPackSchemaService(Database db)
                 inspector_name  VARCHAR(160) NULL,
                 inspection_type VARCHAR(40) NOT NULL DEFAULT 'pre_trip', -- pre_trip|post_trip|annual
                 status          VARCHAR(20) NOT NULL DEFAULT 'pass', -- pass|fail|conditional
+                out_of_service  BOOLEAN NOT NULL DEFAULT false,
+                repair_status   VARCHAR(24) NOT NULL DEFAULT 'not_required', -- not_required|open|certified
+                repair_certified_at TIMESTAMPTZ NULL,
+                repair_certified_by VARCHAR(160) NULL,
                 inspected_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 notes           VARCHAR(500) NULL,
                 created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
             """);
         await db.ExecuteAsync("CREATE INDEX IF NOT EXISTS idx_vir_company ON vehicle_inspection_records (company_id)");
+        await db.ExecuteAsync("ALTER TABLE vehicle_inspection_records ADD COLUMN IF NOT EXISTS out_of_service BOOLEAN NOT NULL DEFAULT false");
+        await db.ExecuteAsync("ALTER TABLE vehicle_inspection_records ADD COLUMN IF NOT EXISTS repair_status VARCHAR(24) NOT NULL DEFAULT 'not_required'");
+        await db.ExecuteAsync("ALTER TABLE vehicle_inspection_records ADD COLUMN IF NOT EXISTS repair_certified_at TIMESTAMPTZ NULL");
+        await db.ExecuteAsync("ALTER TABLE vehicle_inspection_records ADD COLUMN IF NOT EXISTS repair_certified_by VARCHAR(160) NULL");
 
         await db.ExecuteAsync("""
             CREATE TABLE IF NOT EXISTS inspection_defects (
@@ -301,9 +475,13 @@ public sealed class MarketPackSchemaService(Database db)
                 defect_severity VARCHAR(20) NOT NULL DEFAULT 'minor', -- minor|major|critical
                 repair_required BOOLEAN NOT NULL DEFAULT false,
                 repair_certified_at TIMESTAMPTZ NULL,
+                repair_certified_by VARCHAR(160) NULL,
+                repair_notes   VARCHAR(500) NULL,
                 created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
             """);
+        await db.ExecuteAsync("ALTER TABLE inspection_defects ADD COLUMN IF NOT EXISTS repair_certified_by VARCHAR(160) NULL");
+        await db.ExecuteAsync("ALTER TABLE inspection_defects ADD COLUMN IF NOT EXISTS repair_notes VARCHAR(500) NULL");
 
         await db.ExecuteAsync("""
             CREATE TABLE IF NOT EXISTS jurisdiction_mileage_records (
@@ -402,6 +580,7 @@ public sealed class MarketPackSchemaService(Database db)
                 UNIQUE (company_id, pack_code)
             )
             """);
+        await db.ExecuteAsync("ALTER TABLE business_tax_readiness ADD COLUMN IF NOT EXISTS evidence_record_id BIGINT NULL");
     }
 
     // ── Reference seeds (always run; idempotent) ────────────────────────────

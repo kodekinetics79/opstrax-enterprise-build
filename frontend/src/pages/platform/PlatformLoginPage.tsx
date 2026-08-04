@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import axios from "axios";
 import { ArrowRight, Loader2, ShieldCheck } from "lucide-react";
 import { OpsTraxLogo } from "@/components/OpsTraxLogo";
@@ -18,6 +18,11 @@ export function PlatformLoginPage() {
 
   const loginWith = async (nextEmail: string, nextPassword: string) => {
     setError(null);
+    // Keep the MFA input visible across a failed code attempt: clear the flag only on a
+    // fresh password submit (no code entered). Resetting it unconditionally collapsed the
+    // field whenever a wrong code returned a message other than "MFA code required",
+    // stranding the user mid-authentication.
+    if (!mfaCode.trim()) setMfaRequired(false);
     setLoading(true);
     try {
       const session = await platformApi.login(nextEmail, nextPassword, mfaCode.trim() || undefined);
@@ -26,12 +31,25 @@ export function PlatformLoginPage() {
     } catch (err) {
       if (axios.isAxiosError(err)) {
         const data = err.response?.data as { message?: string; errors?: string[] } | undefined;
+        const message = (data?.message || "Login failed").trim();
         if (data?.errors?.includes("mfa_required")) {
           setMfaRequired(true);
           setError("Enter the 6-digit code from your authenticator app.");
           return;
         }
-        setError(data?.message ?? "Login failed");
+
+        if (message === "Too many failed attempts") {
+          setError("Too many failed attempts on this account. Please wait about 15 minutes and retry, or contact platform operations to reset lockout.");
+          return;
+        }
+
+        if (message === "MFA code required") {
+          setMfaRequired(true);
+          setError("Enter the 6-digit code from your authenticator app.");
+          return;
+        }
+
+        setError(message);
         return;
       }
       setError(err instanceof Error ? err.message : "Login failed");

@@ -4,12 +4,14 @@ import {
   Activity, AlertTriangle, BellRing, ChevronRight, Clock, Gauge as GaugeIcon,
   MapPin, Package, Radio, ShieldAlert, Truck, Wifi, WifiOff, Wrench, Zap,
 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { LoadingState } from "@/components/ui";
 import { vehiclesApi } from "@/services/vehiclesApi";
 import { driversApi } from "@/services/driversApi";
 import { alertsApi } from "@/services/alertsApi";
 import { jobsApi } from "@/services/jobsApi";
+import { useAuth } from "@/hooks/useAuth";
+import { useHasDirectPermission, useHasPermission } from "@/hooks/usePermission";
 import type { AnyRecord } from "@/types";
 
 // Vehicle movement status is derived from real vehicle + telemetry fields. We do NOT
@@ -114,12 +116,22 @@ const SEVERITY_TEXT: Record<string, string> = {
 
 export function FleetOverviewPage() {
   const navigate = useNavigate();
+  const { session } = useAuth();
+  const hasPermission = useHasPermission();
+  const hasDirectPermission = useHasDirectPermission();
   const [tab, setTab] = useState<Tab>("All");
 
-  const vehiclesQ = useQuery({ queryKey: ["fleet-overview-vehicles"], queryFn: () => vehiclesApi.list(), refetchInterval: 30_000 });
-  const driversQ  = useQuery({ queryKey: ["fleet-overview-drivers"],  queryFn: () => driversApi.list() });
-  const alertsQ   = useQuery({ queryKey: ["fleet-overview-alerts"],   queryFn: () => alertsApi.list(),  refetchInterval: 60_000 });
-  const jobsQ     = useQuery({ queryKey: ["fleet-overview-jobs"],     queryFn: () => jobsApi.summary(), refetchInterval: 60_000 });
+  const canViewAlerts = hasDirectPermission("alerts:view");
+  const canViewJobs = hasDirectPermission("shipments:view");
+  const canViewVehicles = hasPermission("vehicles:view");
+  const canViewDrivers = hasPermission("drivers:view");
+  const canViewDevices = hasPermission("telemetry.devices.read")
+    && (session?.entitlementPolicyMode !== "package_allowlist" || session.entitlements?.telematics === true);
+
+  const vehiclesQ = useQuery({ queryKey: ["fleet-overview-vehicles"], queryFn: () => vehiclesApi.list(), refetchInterval: 30_000, enabled: canViewVehicles });
+  const driversQ  = useQuery({ queryKey: ["fleet-overview-drivers"],  queryFn: () => driversApi.list(), enabled: canViewDrivers });
+  const alertsQ   = useQuery({ queryKey: ["fleet-overview-alerts"],   queryFn: () => alertsApi.list(),  refetchInterval: 60_000, enabled: canViewAlerts });
+  const jobsQ     = useQuery({ queryKey: ["fleet-overview-jobs"],     queryFn: () => jobsApi.summary(), refetchInterval: 60_000, enabled: canViewJobs });
 
   const driverById = useMemo(() => {
     const map = new Map<string, string>();
@@ -176,6 +188,7 @@ export function FleetOverviewPage() {
   }), [fleet]);
 
   const alerts = useMemo(() => {
+    if (!canViewAlerts) return [];
     const rows = (alertsQ.data ?? []) as AnyRecord[];
     return rows
       .map((r, i) => ({
@@ -190,9 +203,20 @@ export function FleetOverviewPage() {
         (SEVERITY_RANK[a.severity.toLowerCase()] ?? 9) - (SEVERITY_RANK[b.severity.toLowerCase()] ?? 9)
         || (Date.parse(b.createdAt ?? "") || 0) - (Date.parse(a.createdAt ?? "") || 0))
       .slice(0, 8);
-  }, [alertsQ.data]);
+  }, [alertsQ.data, canViewAlerts]);
 
   const toggleTab = (next: Tab) => setTab((cur) => (cur === next ? "All" : next));
+
+  if (!canViewVehicles) {
+    return (
+      <div className="ops-deck flex h-full flex-col gap-3">
+        <div className="deck-neumo m-auto max-w-md p-10 text-center">
+          <p className="text-sm font-bold text-slate-700">Fleet data is not available for this role</p>
+          <p className="mt-1 text-xs text-slate-500">The current session does not include vehicle read access.</p>
+        </div>
+      </div>
+    );
+  }
 
   if (vehiclesQ.isLoading) return <LoadingState />;
 
@@ -379,19 +403,21 @@ export function FleetOverviewPage() {
               <span className={`deck-led ${flagged > 0 ? "deck-led-amber" : "deck-led-slate"}`} />
               <span className="tabular-nums">{flagged} flagged</span>
             </span>
-            <button type="button" className="ml-auto inline-flex items-center gap-1 font-bold text-teal-700 hover:underline" onClick={() => navigate("/iot-devices")}>
-              Device Health
-              <ChevronRight className="h-3 w-3" />
-            </button>
+            {canViewDevices && (
+              <button type="button" className="ml-auto inline-flex items-center gap-1 font-bold text-teal-700 hover:underline" onClick={() => navigate("/iot-devices")}>
+                Device Health
+                <ChevronRight className="h-3 w-3" />
+              </button>
+            )}
           </div>
         </section>
 
         {/* Instrument rail — gauge, signal bay, jobs pulse, alert feed */}
         <aside className="flex min-h-0 flex-col gap-3 xl:overflow-y-auto">
           <ReadinessGauge readiness={readiness} flagged={flagged} />
-          <SignalBay counts={deviceCounts} total={fleet.length} onOpen={() => navigate("/iot-devices")} />
-          <JobsPulse query={jobsQ} onOpen={() => navigate("/jobs")} />
-          <AlertsFeed query={alertsQ} alerts={alerts} onOpen={() => navigate("/alerts")} />
+          {canViewDevices && <SignalBay counts={deviceCounts} total={fleet.length} onOpen={() => navigate("/iot-devices")} />}
+          <JobsPulse authorized={canViewJobs} query={jobsQ} onOpen={() => navigate("/jobs")} />
+          <AlertsFeed authorized={canViewAlerts} query={alertsQ} alerts={alerts} onOpen={() => navigate("/alerts")} />
         </aside>
       </div>
     </div>
@@ -605,7 +631,8 @@ const PULSE_ROWS: Array<{ key: string; label: string; fill: string }> = [
   { key: "completed",      label: "Completed",   fill: "deck-fill-emerald" },
 ];
 
-function JobsPulse({ query, onOpen }: { query: { data?: AnyRecord; isLoading: boolean; isError: boolean }; onOpen: () => void }) {
+function JobsPulse({ authorized, query, onOpen }: { authorized: boolean; query: { data?: AnyRecord; isLoading: boolean; isError: boolean }; onOpen: () => void }) {
+  if (!authorized) return <RoleUnavailablePanel icon={<Package className="h-3.5 w-3.5 text-slate-500" />} title="Jobs Pulse" />;
   const summary = (query.data ?? {}) as AnyRecord;
   const total = Number(summary.totalJobsToday ?? 0);
   return (
@@ -652,12 +679,14 @@ function JobsPulse({ query, onOpen }: { query: { data?: AnyRecord; isLoading: bo
 
 /* ── Live alerts feed — raised chips on an inset tray ─────────────────── */
 function AlertsFeed({
-  query, alerts, onOpen,
+  authorized, query, alerts, onOpen,
 }: {
+  authorized: boolean;
   query: { isLoading: boolean; isError: boolean };
   alerts: Array<{ id: string; title: string; severity: string; status: string; createdAt?: string }>;
   onOpen: () => void;
 }) {
+  if (!authorized) return <RoleUnavailablePanel icon={<BellRing className="h-3.5 w-3.5 text-slate-500" />} title="Open Alerts" tall />;
   return (
     <div className="deck-neumo flex min-h-[240px] flex-1 flex-col overflow-hidden p-4 xl:min-h-[190px]">
       <div className="flex shrink-0 items-center justify-between">
@@ -702,6 +731,15 @@ function AlertsFeed({
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function RoleUnavailablePanel({ icon, title, tall = false }: { icon: React.ReactNode; title: string; tall?: boolean }) {
+  return (
+    <div className={`deck-neumo shrink-0 p-4 ${tall ? "min-h-[190px]" : ""}`}>
+      <span className="section-title inline-flex items-center gap-2">{icon}{title}</span>
+      <p className="mt-3 text-[11.5px] font-medium text-slate-500">Not available for this role.</p>
     </div>
   );
 }

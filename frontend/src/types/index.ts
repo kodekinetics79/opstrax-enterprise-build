@@ -38,6 +38,10 @@ export type ModuleConfig = {
   accent: "blue" | "teal" | "amber" | "red" | "green" | "purple";
   /** Permission key required to see this module. Omit for unrestricted access. */
   requiredPermission?: string;
+  /** Use an exact grant (dot/colon spelling aside), matching direct server guards. */
+  permissionMatch?: "semantic" | "direct";
+  /** Platform-controlled commercial entitlement required for this module. */
+  requiredEntitlement?: string;
   /** ISO-3166 alpha-2 country codes this module is scoped to. The tenant's
       operating country (companies.country, set by the platform admin when
       provisioning the client) must match one of these for the module to be
@@ -52,4 +56,12 @@ export type UserSession = {
   role: string;
   company: AnyRecord;
   permissions: string[];
+  entitlementPolicyMode?: "legacy_allow" | "package_allowlist";
+  entitlements?: Record<string, boolean>;
+  supportAccess?: {
+    active: true;
+    grantRef: string;
+    mode: "read_only";
+    expiresAt: string;
+  } | null;
 };
