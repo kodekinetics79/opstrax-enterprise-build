@@ -1983,21 +1983,51 @@ public static partial class EndpointMappings
               WHERE company_id=@cid AND module_key='driver-messages' AND deleted_at IS NULL
               ORDER BY created_at DESC LIMIT 100",
             c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
-        app.MapPost("/api/driver-messages", async (HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) => {
+        app.MapPost("/api/driver-messages", async (HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, NotificationService notif, CancellationToken ct) => {
             var c = GetCompanyId(http);
             var code = $"MSG-{Guid.NewGuid():N}"[..16];
-            var subject = body.GetValueOrDefault("subject")?.ToString() ?? "Message";
+            var subject   = body.GetValueOrDefault("subject")?.ToString() ?? "Message";
+            var recipient = body.GetValueOrDefault("recipient")?.ToString() ?? "";
+            // Compose posts the message text as `body`; fall back to the subject if empty.
+            var messageText = body.GetValueOrDefault("body")?.ToString();
+            if (string.IsNullOrWhiteSpace(messageText)) messageText = subject;
+            // History/KPI row for the Driver Messaging page (GET /api/driver-messages reads this).
             await db.ExecuteAsync(@"INSERT INTO module_records (company_id,module_key,record_code,title,status,tags,secondary_value,numeric_value) VALUES(@c,'driver-messages',@code,@subj,'Delivered',@ch,@recv,0)",
-                cmd => { cmd.Parameters.AddWithValue("@c", c); cmd.Parameters.AddWithValue("@code", code); cmd.Parameters.AddWithValue("@subj", subject); cmd.Parameters.AddWithValue("@ch", body.GetValueOrDefault("channel")?.ToString() ?? "In-App"); cmd.Parameters.AddWithValue("@recv", body.GetValueOrDefault("recipient")?.ToString() ?? ""); }, ct);
+                cmd => { cmd.Parameters.AddWithValue("@c", c); cmd.Parameters.AddWithValue("@code", code); cmd.Parameters.AddWithValue("@subj", subject); cmd.Parameters.AddWithValue("@ch", body.GetValueOrDefault("channel")?.ToString() ?? "In-App"); cmd.Parameters.AddWithValue("@recv", recipient); }, ct);
+            // Actually deliver the message: resolve the recipient driver (the composer posts the
+            // driver's display name or code, tenant-scoped) and raise a real in-app notification so
+            // it reaches the driver instead of only recording a hardcoded 'Delivered' row.
+            if (!string.IsNullOrWhiteSpace(recipient))
+            {
+                var driverRow = await db.QuerySingleAsync(
+                    @"SELECT id FROM drivers
+                      WHERE company_id=@c AND deleted_at IS NULL
+                        AND (full_name=@r OR driver_code=@r)
+                      LIMIT 1",
+                    cmd => { cmd.Parameters.AddWithValue("@c", c); cmd.Parameters.AddWithValue("@r", recipient); }, ct);
+                var driverId = driverRow?["id"] is not null and not DBNull ? Convert.ToInt64(driverRow["id"]) : (long?)null;
+                if (driverId.HasValue)
+                    await notif.CreateAsync(c, "driver_message.sent", "driver_message", null,
+                        "info", subject, messageText,
+                        "driver", ct, targetDriverId: driverId.Value);
+            }
             await audit.LogAsync(http, "driver_message.sent", "DriverMessage", 0, $"Sent driver message: {subject}", ct: ct);
             return Results.Ok(ApiResponse<object>.Ok(new { code, subject }));
         });
-        app.MapPost("/api/driver-messages/broadcast", async (HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) => {
+        app.MapPost("/api/driver-messages/broadcast", async (HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, NotificationService notif, CancellationToken ct) => {
             var c = GetCompanyId(http);
             var code = $"BCAST-{Guid.NewGuid():N}"[..18];
             var subject = body.GetValueOrDefault("subject")?.ToString() ?? "Broadcast";
+            var messageText = body.GetValueOrDefault("body")?.ToString();
+            if (string.IsNullOrWhiteSpace(messageText)) messageText = subject;
+            // History/KPI row (GET /api/driver-messages reads this).
             await db.ExecuteAsync(@"INSERT INTO module_records (company_id,module_key,record_code,title,status,tags,secondary_value) VALUES(@c,'driver-messages',@code,@subj,'Delivered','Broadcast',@grp)",
                 cmd => { cmd.Parameters.AddWithValue("@c", c); cmd.Parameters.AddWithValue("@code", code); cmd.Parameters.AddWithValue("@subj", subject); cmd.Parameters.AddWithValue("@grp", body.GetValueOrDefault("group")?.ToString() ?? "All Drivers"); }, ct);
+            // Actually deliver: audience "driver" with no target role-broadcasts to every Active
+            // Driver user in this tenant. Sub-group segmentation (shift/lane) is not modeled yet,
+            // so a broadcast reaches all drivers; the requested group is kept on the history row.
+            await notif.CreateAsync(c, "driver_message.broadcast", "driver_message", null,
+                "info", subject, messageText, "driver", ct);
             await audit.LogAsync(http, "driver_message.broadcast", "DriverMessage", 0, $"Broadcast sent: {subject}", ct: ct);
             return Results.Ok(ApiResponse<object>.Ok(new { code, subject }));
         });
