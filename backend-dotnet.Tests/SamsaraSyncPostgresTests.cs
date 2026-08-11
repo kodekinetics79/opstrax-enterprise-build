@@ -51,8 +51,8 @@ public sealed class SamsaraSyncPostgresTests
         try
         {
             var observedAt = DateTimeOffset.UtcNow.AddSeconds(-10).ToString("O");
-            var feed = $$"""
-                {"data":[{"id":"{{providerVehicleId}}","name":"Replay truck","gps":{"time":"{{observedAt}}","latitude":34.05,"longitude":-118.24,"headingDegrees":90,"speedMilesPerHour":80}}],"pagination":{"endCursor":"cursor-1","hasNextPage":false}}
+            var feed = $$$"""
+                {"data":[{"id":"{{{providerVehicleId}}}","name":"Replay truck","gps":{"time":"{{{observedAt}}}","latitude":34.05,"longitude":-118.24,"headingDegrees":90,"speedMilesPerHour":80}}],"pagination":{"endCursor":"cursor-1","hasNextPage":false}}
                 """;
             var client = new HttpClient(new StaticJsonHandler(feed))
             {
@@ -97,8 +97,8 @@ public sealed class SamsaraSyncPostgresTests
                 "UPDATE telemetry_alerts SET status='Closed' WHERE company_id=@cid",
                 c => c.Parameters.AddWithValue("@cid", companyId));
             var olderAt = DateTimeOffset.UtcNow.AddHours(-2).ToString("O");
-            var olderFeed = $$"""
-                {"data":[{"id":"{{providerVehicleId}}","name":"Replay truck","gps":{"time":"{{olderAt}}","latitude":35.05,"longitude":-119.24,"headingDegrees":90,"speedMilesPerHour":90}}],"pagination":{"endCursor":"cursor-older","hasNextPage":false}}
+            var olderFeed = $$$"""
+                {"data":[{"id":"{{{providerVehicleId}}}","name":"Replay truck","gps":{"time":"{{{olderAt}}}","latitude":35.05,"longitude":-119.24,"headingDegrees":90,"speedMilesPerHour":90}}],"pagination":{"endCursor":"cursor-older","hasNextPage":false}}
                 """;
             var olderSync = Sync(db, olderFeed);
             Assert.Equal(0, (await olderSync.RunAsync(companyId, null, CancellationToken.None)).PositionsWritten);
@@ -114,8 +114,8 @@ public sealed class SamsaraSyncPostgresTests
 
             // A first, buffered fix for a newly discovered provider device must not stamp NOW().
             var newProviderVehicleId = $"new-{suffix}";
-            var staleFirstFeed = $$"""
-                {"data":[{"id":"{{newProviderVehicleId}}","gps":{"time":"{{olderAt}}","latitude":34.05,"longitude":-118.24,"headingDegrees":0,"speedMilesPerHour":0}}],"pagination":{"hasNextPage":false}}
+            var staleFirstFeed = $$$"""
+                {"data":[{"id":"{{{newProviderVehicleId}}}","gps":{"time":"{{{olderAt}}}","latitude":34.05,"longitude":-118.24,"headingDegrees":0,"speedMilesPerHour":0}}],"pagination":{"hasNextPage":false}}
                 """;
             await Sync(db, staleFirstFeed).RunAsync(companyId, null, CancellationToken.None);
             var discovered = await db.QuerySingleAsync(

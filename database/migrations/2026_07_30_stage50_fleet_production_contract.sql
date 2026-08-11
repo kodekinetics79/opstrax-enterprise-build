@@ -511,6 +511,7 @@ CREATE TABLE IF NOT EXISTS fleet_tms_cold_chain_event_log (
 CREATE TABLE IF NOT EXISTS fleet_tms_dispatch_orders (
     id                BIGINT NOT NULL GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     company_id        BIGINT NOT NULL,
+    branch_id         BIGINT NULL,
     order_number      VARCHAR(60)  NOT NULL DEFAULT '',
     customer_name     VARCHAR(255) NOT NULL DEFAULT '',
     customer_segment  VARCHAR(80)  NOT NULL DEFAULT 'Retail',
@@ -535,6 +536,7 @@ CREATE TABLE IF NOT EXISTS fleet_tms_dispatch_orders (
 CREATE TABLE IF NOT EXISTS fleet_tms_delivery_routes (
     id                 BIGINT NOT NULL GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     company_id         BIGINT NOT NULL,
+    branch_id          BIGINT NULL,
     route_code         VARCHAR(60)  NOT NULL DEFAULT '',
     hub                VARCHAR(120) NOT NULL DEFAULT '',
     territory          VARCHAR(120) NOT NULL DEFAULT '',
@@ -550,12 +552,14 @@ CREATE TABLE IF NOT EXISTS fleet_tms_delivery_routes (
     planned_for_date   DATE         NOT NULL DEFAULT CURRENT_DATE,
     departure_time_utc TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     eta_complete_utc   TIMESTAMPTZ NULL,
-    notes              TEXT         NOT NULL DEFAULT ''
+    notes              TEXT         NOT NULL DEFAULT '',
+    last_progress_key  VARCHAR(80) NULL
 );
 
 CREATE TABLE IF NOT EXISTS fleet_tms_last_mile_stops (
     id                                   BIGINT NOT NULL GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     company_id                           BIGINT NOT NULL,
+    branch_id                            BIGINT NULL,
     order_number                         VARCHAR(60)  NOT NULL DEFAULT '',
     route_code                           VARCHAR(60)  NOT NULL DEFAULT '',
     customer_name                        VARCHAR(255) NOT NULL DEFAULT '',
@@ -577,7 +581,9 @@ CREATE TABLE IF NOT EXISTS fleet_tms_last_mile_stops (
     delivered_at_utc                     TIMESTAMPTZ NULL,
     exception_reason                     TEXT         NOT NULL DEFAULT '',
     created_at_utc                       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at_utc                       TIMESTAMPTZ NULL
+    updated_at_utc                       TIMESTAMPTZ NULL,
+    last_action_key                      VARCHAR(80) NULL,
+    last_action_type                     VARCHAR(30) NULL
 );
 
 CREATE TABLE IF NOT EXISTS market_packs (
@@ -887,14 +893,6 @@ CREATE INDEX IF NOT EXISTS "idx_fleet_tms_temperature_alerts_branch" ON "fleet_t
 ALTER TABLE "fleet_tms_cold_chain_reports" ADD COLUMN IF NOT EXISTS branch_id BIGINT NULL;
 
 CREATE INDEX IF NOT EXISTS "idx_fleet_tms_cold_chain_reports_branch" ON "fleet_tms_cold_chain_reports" (company_id, branch_id);
-
--- cold_chain_policies / cold_chain_event_log declare branch_id in their CREATE TABLE, so a
--- FRESH database gets the column — but on an EXISTING deployment CREATE TABLE IF NOT EXISTS
--- is a no-op and the column never appears, so the branch indexes below (and the branch-scoped
--- reads) fail with 42703. Backfill the column here like every other cold-chain table.
-ALTER TABLE "fleet_tms_cold_chain_policies" ADD COLUMN IF NOT EXISTS branch_id BIGINT NULL;
-
-ALTER TABLE "fleet_tms_cold_chain_event_log" ADD COLUMN IF NOT EXISTS branch_id BIGINT NULL;
 
 ALTER TABLE "fleet_tms_refrigeration_unit_health" ADD COLUMN IF NOT EXISTS branch_id BIGINT NULL;
 
@@ -1213,23 +1211,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_ftms_active_task_per_stop
 CREATE UNIQUE INDEX IF NOT EXISTS uq_ftms_tracking_hash
   ON fleet_tms_tracking_links (token_hash);
 
-DO $asset_quantity_constraints$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='ck_ftms_assets_quantity_positive') THEN
-    ALTER TABLE fleet_tms_assets ADD CONSTRAINT ck_ftms_assets_quantity_positive CHECK (quantity > 0);
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='ck_ftms_asset_assignments_quantity_positive') THEN
-    ALTER TABLE fleet_tms_asset_assignments ADD CONSTRAINT ck_ftms_asset_assignments_quantity_positive CHECK (quantity > 0);
-  END IF;
-END $asset_quantity_constraints$;
-
-CREATE UNIQUE INDEX IF NOT EXISTS ux_ftms_assets_branch_tag_normalized
-  ON fleet_tms_assets (company_id, COALESCE(branch_id, 0), lower(btrim(asset_tag)));
-
-CREATE UNIQUE INDEX IF NOT EXISTS ux_ftms_asset_active_custody
-  ON fleet_tms_asset_assignments (company_id, COALESCE(branch_id, 0), asset_id)
-  WHERE released_at_utc IS NULL AND status IN ('Assigned','CheckedOut','InUse');
-
 ALTER TABLE fleet_tms_temperature_devices ADD COLUMN IF NOT EXISTS source_channel VARCHAR(40) NULL;
 
 ALTER TABLE fleet_tms_temperature_devices ADD COLUMN IF NOT EXISTS branch_id BIGINT NULL;
@@ -1306,6 +1287,28 @@ ALTER TABLE fleet_tms_cold_chain_reports ADD COLUMN IF NOT EXISTS metadata_json 
 
 ALTER TABLE fleet_tms_cold_chain_reports ADD COLUMN IF NOT EXISTS report_status VARCHAR(40) NOT NULL DEFAULT 'ready';
 
+ALTER TABLE fleet_tms_cold_chain_policies ADD COLUMN IF NOT EXISTS branch_id BIGINT NULL;
+
+ALTER TABLE fleet_tms_cold_chain_event_log ADD COLUMN IF NOT EXISTS branch_id BIGINT NULL;
+
+DROP INDEX IF EXISTS uq_ftms_ccpolicy_company_idem;
+
+DROP INDEX IF EXISTS uq_ftms_cclog_company_idem;
+
+ALTER TABLE fleet_tms_dispatch_orders ADD COLUMN IF NOT EXISTS branch_id BIGINT NULL;
+
+ALTER TABLE fleet_tms_delivery_routes ADD COLUMN IF NOT EXISTS branch_id BIGINT NULL;
+
+ALTER TABLE fleet_tms_delivery_routes ADD COLUMN IF NOT EXISTS last_progress_key VARCHAR(80) NULL;
+
+ALTER TABLE fleet_tms_last_mile_stops ADD COLUMN IF NOT EXISTS branch_id BIGINT NULL;
+
+ALTER TABLE fleet_tms_last_mile_stops ADD COLUMN IF NOT EXISTS last_action_key VARCHAR(80) NULL;
+
+ALTER TABLE fleet_tms_last_mile_stops ADD COLUMN IF NOT EXISTS last_action_type VARCHAR(30) NULL;
+
+ALTER TABLE fleet_tms_last_mile_stops ADD COLUMN IF NOT EXISTS proof_evidence_ref TEXT NULL;
+
 DO $migration$
             BEGIN
               IF to_regclass('public.fleet_tms_readiness_documents') IS NOT NULL THEN
@@ -1349,6 +1352,50 @@ ALTER TABLE inspection_defects ADD COLUMN IF NOT EXISTS repair_certified_by VARC
 ALTER TABLE inspection_defects ADD COLUMN IF NOT EXISTS repair_notes VARCHAR(500) NULL;
 
 ALTER TABLE business_tax_readiness ADD COLUMN IF NOT EXISTS evidence_record_id BIGINT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_ftms_ccpolicy_company_scope ON fleet_tms_cold_chain_policies (company_id, scope_type, scope_key, status);
+
+CREATE INDEX IF NOT EXISTS idx_ftms_ccpolicy_branch ON fleet_tms_cold_chain_policies (company_id, branch_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ftms_ccpolicy_branch_scope ON fleet_tms_cold_chain_policies (company_id, COALESCE(branch_id, 0), policy_code, scope_type, scope_key);
+
+CREATE INDEX IF NOT EXISTS idx_ftms_cclog_branch ON fleet_tms_cold_chain_event_log (company_id, branch_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ftms_ccpolicy_branch_idem ON fleet_tms_cold_chain_policies (company_id, COALESCE(branch_id, 0), idempotency_key) WHERE idempotency_key IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ftms_tread_branch_idem ON fleet_tms_temperature_readings (company_id, COALESCE(branch_id, 0), idempotency_key) WHERE idempotency_key IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ftms_talert_branch_idem ON fleet_tms_temperature_alerts (company_id, COALESCE(branch_id, 0), idempotency_key) WHERE idempotency_key IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ftms_tdev_tenant_code_norm ON fleet_tms_temperature_devices (company_id, LOWER(BTRIM(device_code)));
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ftms_tdev_branch_idem ON fleet_tms_temperature_devices (company_id, COALESCE(branch_id, 0), idempotency_key) WHERE NULLIF(BTRIM(idempotency_key),'') IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ftms_atype_tenant_code_norm ON fleet_tms_asset_types (company_id, LOWER(BTRIM(code)));
+
+CREATE INDEX IF NOT EXISTS idx_ftms_ccpolicy_company_code ON fleet_tms_cold_chain_policies (company_id, policy_code);
+
+CREATE INDEX IF NOT EXISTS idx_ftms_cclog_company_event ON fleet_tms_cold_chain_event_log (company_id, event_type, occurred_at_utc DESC);
+
+CREATE INDEX IF NOT EXISTS idx_ftms_cclog_company_agg ON fleet_tms_cold_chain_event_log (company_id, aggregate_type, aggregate_id, occurred_at_utc DESC);
+
+CREATE INDEX IF NOT EXISTS idx_ftms_cclog_company_status ON fleet_tms_cold_chain_event_log (company_id, status, retry_count, occurred_at_utc DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ftms_cclog_branch_event_idem ON fleet_tms_cold_chain_event_log (company_id, COALESCE(branch_id, 0), event_type, idempotency_key) WHERE idempotency_key IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ftms_dorders_company_number ON fleet_tms_dispatch_orders(company_id, order_number);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ftms_droutes_company_code ON fleet_tms_delivery_routes(company_id, route_code);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ftms_lmstops_company_order ON fleet_tms_last_mile_stops(company_id, order_number);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ftms_route_progress_key ON fleet_tms_delivery_routes(company_id, last_progress_key) WHERE last_progress_key IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ftms_stop_action_key ON fleet_tms_last_mile_stops(company_id, last_action_key) WHERE last_action_key IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_job_charges_last_mile ON job_charges(company_id, job_id, charge_code) WHERE charge_code = 'LASTMILE';
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_branches_company_id_id ON branches(company_id, id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_business_tax_readiness_branch_pack ON business_tax_readiness (company_id, COALESCE(branch_id, 0), pack_code);
 
@@ -1471,6 +1518,63 @@ CREATE INDEX IF NOT EXISTS "idx_ftms_lmstops_company_status" ON "fleet_tms_last_
 CREATE INDEX IF NOT EXISTS "idx_ftms_lmstops_route" ON "fleet_tms_last_mile_stops" (company_id, route_code);
 
 CREATE INDEX IF NOT EXISTS "idx_ftms_lmstops_order" ON "fleet_tms_last_mile_stops" (company_id, order_number);
+
+DO $asset_quantity_constraints$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='ck_ftms_assets_quantity_positive') THEN
+    ALTER TABLE fleet_tms_assets ADD CONSTRAINT ck_ftms_assets_quantity_positive CHECK (quantity > 0);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='ck_ftms_asset_assignments_quantity_positive') THEN
+    ALTER TABLE fleet_tms_asset_assignments ADD CONSTRAINT ck_ftms_asset_assignments_quantity_positive CHECK (quantity > 0);
+  END IF;
+END $asset_quantity_constraints$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_ftms_assets_branch_tag_normalized
+  ON fleet_tms_assets (company_id, COALESCE(branch_id, 0), lower(btrim(asset_tag)));
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_ftms_asset_active_custody
+  ON fleet_tms_asset_assignments (company_id, COALESCE(branch_id, 0), asset_id)
+  WHERE released_at_utc IS NULL AND status IN ('Assigned','CheckedOut','InUse');
+
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='ck_ftms_dorders_status') THEN ALTER TABLE fleet_tms_dispatch_orders ADD CONSTRAINT ck_ftms_dorders_status CHECK (status IN ('Queued','Dispatched','InTransit','Exception','Delivered','Returned')) NOT VALID; END IF; END $$;
+
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='ck_ftms_dorders_values') THEN ALTER TABLE fleet_tms_dispatch_orders ADD CONSTRAINT ck_ftms_dorders_values CHECK (btrim(order_number) <> '' AND item_count >= 0 AND order_value >= 0) NOT VALID; END IF; END $$;
+
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='ck_ftms_droutes_status') THEN ALTER TABLE fleet_tms_delivery_routes ADD CONSTRAINT ck_ftms_droutes_status CHECK (status IN ('Planned','Ready','Active','Delayed','Closed','Completed')) NOT VALID; END IF; END $$;
+
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='ck_ftms_droutes_values') THEN ALTER TABLE fleet_tms_delivery_routes ADD CONSTRAINT ck_ftms_droutes_values CHECK (btrim(route_code) <> '' AND planned_stops >= 0 AND completed_stops >= 0 AND completed_stops <= planned_stops AND distance_km >= 0 AND completion_percent BETWEEN 0 AND 100) NOT VALID; END IF; END $$;
+
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='ck_ftms_lmstops_status') THEN ALTER TABLE fleet_tms_last_mile_stops ADD CONSTRAINT ck_ftms_lmstops_status CHECK (status IN ('OutForDelivery','Attempted','Failed','Rescheduled','Delivered')) NOT VALID; END IF; END $$;
+
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='ck_ftms_lmstops_values') THEN ALTER TABLE fleet_tms_last_mile_stops ADD CONSTRAINT ck_ftms_lmstops_values CHECK (btrim(order_number) <> '' AND btrim(route_code) <> '' AND attempt_count >= 0) NOT VALID; END IF; END $$;
+
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_ftms_dorders_company') THEN ALTER TABLE fleet_tms_dispatch_orders ADD CONSTRAINT fk_ftms_dorders_company FOREIGN KEY(company_id) REFERENCES companies(id) NOT VALID; END IF; END $$;
+
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_ftms_droutes_company') THEN ALTER TABLE fleet_tms_delivery_routes ADD CONSTRAINT fk_ftms_droutes_company FOREIGN KEY(company_id) REFERENCES companies(id) NOT VALID; END IF; END $$;
+
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_ftms_lmstops_company') THEN ALTER TABLE fleet_tms_last_mile_stops ADD CONSTRAINT fk_ftms_lmstops_company FOREIGN KEY(company_id) REFERENCES companies(id) NOT VALID; END IF; END $$;
+
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_ftms_dorders_branch') THEN ALTER TABLE fleet_tms_dispatch_orders ADD CONSTRAINT fk_ftms_dorders_branch FOREIGN KEY(company_id,branch_id) REFERENCES branches(company_id,id) NOT VALID; END IF; END $$;
+
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_ftms_droutes_branch') THEN ALTER TABLE fleet_tms_delivery_routes ADD CONSTRAINT fk_ftms_droutes_branch FOREIGN KEY(company_id,branch_id) REFERENCES branches(company_id,id) NOT VALID; END IF; END $$;
+
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_ftms_lmstops_branch') THEN ALTER TABLE fleet_tms_last_mile_stops ADD CONSTRAINT fk_ftms_lmstops_branch FOREIGN KEY(company_id,branch_id) REFERENCES branches(company_id,id) NOT VALID; END IF; END $$;
+
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_ftms_lmstops_order') THEN ALTER TABLE fleet_tms_last_mile_stops ADD CONSTRAINT fk_ftms_lmstops_order FOREIGN KEY(company_id,order_number) REFERENCES fleet_tms_dispatch_orders(company_id,order_number) NOT VALID; END IF; END $$;
+
+DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fk_ftms_lmstops_route') THEN ALTER TABLE fleet_tms_last_mile_stops ADD CONSTRAINT fk_ftms_lmstops_route FOREIGN KEY(company_id,route_code) REFERENCES fleet_tms_delivery_routes(company_id,route_code) NOT VALID; END IF; END $$;
+
+DO $$
+            BEGIN
+              IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname='ck_tenant_market_packs_status'
+                  AND conrelid='tenant_market_packs'::regclass
+              ) THEN
+                ALTER TABLE tenant_market_packs
+                  ADD CONSTRAINT ck_tenant_market_packs_status CHECK (status IN ('active','disabled'));
+              END IF;
+            END $$;
 
 INSERT INTO market_packs
   (code,name,description,region,status,default_currency,default_distance_unit,default_fuel_unit,supported_languages,feature_keys,package_key,base_price_cents)

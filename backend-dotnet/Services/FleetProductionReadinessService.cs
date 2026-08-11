@@ -172,7 +172,8 @@ public sealed class FleetProductionReadinessService
           ('saved_reports',true),('report_execution_log',true),('scheduled_report_deliveries',true),
           ('scheduled_reports',true),('routes',true),('route_stops',true),('trips',true),('trip_stops',true),
           ('location_events',true),('latest_vehicle_positions',true),('telemetry_alerts',true),
-          ('telemetry_rules',true),('telemetry_nonces',false),('gps_gateway_replay',false),
+          ('telemetry_rules',true),('telemetry_gateways',true),
+          ('telemetry_nonces',false),('gps_gateway_replay',false),
           ('safety_events',true),('driver_safety_scores',true),('telemetry_live_asset_states',true),
           ('fleet_health_snapshots',true),('evidence_package_items',true),('vehicle_safety_scorecards',true),
           ('ai_recommendations',true),('maintenance_pm_rules',true),('maintenance_items',true),
@@ -423,14 +424,20 @@ public sealed class FleetProductionReadinessService
                 AND p.qual='true'
                 AND p.with_check=p.qual)))::int AS rls_violations,
           COUNT(*) FILTER (WHERE oid IS NOT NULL AND
-            ((tenant_scoped AND (((objects.name<>'eld_devices' AND NOT has_table_privilege('opstrax_app',oid,'SELECT'))
+            ((tenant_scoped AND (((objects.name NOT IN ('eld_devices','telemetry_gateways')
+                                  AND NOT has_table_privilege('opstrax_app',oid,'SELECT'))
                OR (objects.name='eld_devices' AND (
                  NOT has_column_privilege('opstrax_app',oid,'device_serial','SELECT')
                  OR has_column_privilege('opstrax_app',oid,'api_key_hash','SELECT')
                  OR has_column_privilege('opstrax_app',oid,'api_key_previous_hash','SELECT')
                  OR has_column_privilege('opstrax_app',oid,'hmac_secret','SELECT')
                  OR has_column_privilege('opstrax_app',oid,'hmac_secret_encrypted','SELECT')
-                 OR has_column_privilege('opstrax_app',oid,'hmac_previous_secret_encrypted','SELECT'))))
+                 OR has_column_privilege('opstrax_app',oid,'hmac_previous_secret_encrypted','SELECT')))
+               OR (objects.name='telemetry_gateways' AND (
+                 NOT has_column_privilege('opstrax_app',oid,'gateway_id','SELECT')
+                 OR NOT has_column_privilege('opstrax_app',oid,'status','UPDATE')
+                 OR has_column_privilege('opstrax_app',oid,'secret_encrypted','SELECT')
+                 OR has_column_privilege('opstrax_app',oid,'secret_encrypted','UPDATE'))))
                OR has_table_privilege('opstrax_app',oid,'TRUNCATE')
                OR has_table_privilege('opstrax_app',oid,'REFERENCES')
                OR has_table_privilege('opstrax_app',oid,'TRIGGER')

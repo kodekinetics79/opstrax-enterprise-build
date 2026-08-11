@@ -72,7 +72,7 @@ public sealed class SamsaraConnectorBehaviorTests
         {
             page++;
             return Json(HttpStatusCode.OK,
-                $$"""{"data":[],"pagination":{"endCursor":"cursor-{{page}}","hasNextPage":true}}""");
+                $$$"""{"data":[],"pagination":{"endCursor":"cursor-{{{page}}}","hasNextPage":true}}""");
         });
         var connector = Connector(handler, maxPages: 2);
         using var body = JsonDocument.Parse("{\"companyId\":17}");

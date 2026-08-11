@@ -199,6 +199,7 @@ psql "$owner_uri" -v ON_ERROR_STOP=1 -At <<'SQL' >"$rehearsal_tmp/database-evide
 SELECT 'migration_ledgers=' || count(*)
 FROM schema_migrations
 WHERE version IN (
+  '2026_07_16_stage42_telemetry_gateways',
   '2026_07_22_stage47_detention_recovery',
   '2026_07_31_stage58_nonforgeable_tenant_ticket',
   '2026_07_31_stage59_data_protection_key_ring',
@@ -364,7 +365,7 @@ SELECT 'stage76_replay_schema_violations=' || CASE WHEN
   ) OR EXISTS (SELECT 1 FROM telemetry_replay_device_state)
   THEN 1 ELSE 0 END;
 SQL
-grep -qx 'migration_ledgers=15' "$rehearsal_tmp/database-evidence.txt"
+grep -qx 'migration_ledgers=16' "$rehearsal_tmp/database-evidence.txt"
 grep -qx 'public_policies=0' "$rehearsal_tmp/database-evidence.txt"
 grep -qx 'unsafe_runtime_roles=0' "$rehearsal_tmp/database-evidence.txt"
 grep -qx 'stage76_secret_read_violations=0' "$rehearsal_tmp/database-evidence.txt"
@@ -381,4 +382,4 @@ echo "  owner migrations + Stage76 terminal reconciliation: passed"
 echo "  restricted identities: opstrax_app + opstrax_system"
 echo "  /health/live, /health/ready, /health/deep: 200 and contract-valid"
 echo "  signed-ticket tenant isolation + branch isolation: focused tests passed"
-echo "  migration ledgers: 15/15; PUBLIC policies: 0; unsafe runtime roles: 0; Stage76 ACL violations: 0"
+echo "  migration ledgers: 16/16; PUBLIC policies: 0; unsafe runtime roles: 0; Stage76 ACL violations: 0"
