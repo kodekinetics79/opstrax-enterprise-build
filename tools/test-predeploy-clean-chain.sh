@@ -102,8 +102,11 @@ psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_02_stag
 psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_02_stage73_hos_offboarding_null_fail_closed.sql
 # Prove the Production retention ledger is owner-repairable after schema drift.
 psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -c 'DROP TABLE data_retention_policies'
-# Use the real runner so Stage74 recreates the table and the terminal Stage58
-# reconciliation restores its FORCE-RLS policies and restricted-role grants.
+# Simulate a ledgered Stage42 schema loss too. The owner runner must recreate the credential
+# registry before terminal Stage58/76 restore its policies and secret-column boundary.
+psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -c 'DROP TABLE telemetry_gateways'
+# Use the real runner so Stage42/74 recreate their tables and the terminal Stage58
+# reconciliation restores FORCE-RLS policies and restricted-role grants.
 ./tools/apply-neon-predeploy-migrations.sh >"$log_dir/pass3.log" 2>&1
 psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q <<'SQL'
 SET ROLE opstrax_system;
@@ -136,6 +139,7 @@ stage67_line=$(grep -n "Reapplying Stage67 least-privilege device credential bou
 stage76_line=$(grep -n "Applying terminal Stage76 telemetry" "$log_dir/pass1.log" | cut -d: -f1)
 test -n "$terminal_line" && test -n "$coverage_line" && test "$terminal_line" -lt "$coverage_line"
 test -n "$stage67_line" && test -n "$stage76_line" && test "$stage67_line" -lt "$stage76_line"
+grep -q "applying 2026_07_16_stage42_telemetry_gateways" "$log_dir/pass1.log"
 grep -q "Tenant RLS coverage: .* in-scope tables verified" "$log_dir/pass1.log"
 grep -q "Existing Stage58/59/67/76 deployment reconciled with Stage76 terminal" "$log_dir/pass2.log"
 grep -q "Applying terminal Stage76 telemetry" "$log_dir/pass2.log"
@@ -162,6 +166,7 @@ BEGIN
 
   IF EXISTS (
     SELECT 1 FROM (VALUES
+      ('2026_07_16_stage42_telemetry_gateways'),
       ('2026_07_31_stage58_nonforgeable_tenant_ticket'),
       ('2026_07_22_stage47_detention_recovery'),
       ('2026_07_31_stage59_data_protection_key_ring'),
@@ -191,6 +196,10 @@ BEGIN
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN
     RAISE EXCEPTION 'Clean-chain target ledgers are missing or duplicated';
+  END IF;
+
+  IF to_regclass('public.telemetry_gateways') IS NULL THEN
+    RAISE EXCEPTION 'Stage42 telemetry gateway owner schema is missing from the clean chain';
   END IF;
 
   IF NOT EXISTS (

@@ -5,8 +5,12 @@ test.describe("@readonly public access", () => {
   test("login renders identifier-first access without a stored session", async ({ page }) => {
     await page.goto("/login");
     await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
-    await expect(page.getByLabel("Work email")).toBeVisible();
-    await expect(page.getByRole("button", { name: /Continue/i })).toBeEnabled();
+    const email = page.getByLabel("Work email");
+    const continueButton = page.getByRole("button", { name: /Continue/i });
+    await expect(email).toBeVisible();
+    await expect(continueButton).toBeDisabled();
+    await email.fill("qa@example.com");
+    await expect(continueButton).toBeEnabled();
   });
 
   test("invalid work email is rejected without a network request", async ({ page }) => {

@@ -102,7 +102,7 @@ export function PublicShipmentTrackingPage() {
           <div className="rounded-[30px] border border-amber-200/70 bg-amber-50/90 p-6 text-amber-900 shadow-[0_18px_40px_rgba(15,23,42,0.08)]">
             <div className="flex items-center gap-2">
               <AlertTriangle className="h-5 w-5" />
-              <p className="text-lg font-bold">Tracking unavailable</p>
+              <h2 className="text-lg font-bold">Tracking unavailable</h2>
             </div>
             <p className="mt-2 text-sm leading-relaxed">{error}</p>
           </div>

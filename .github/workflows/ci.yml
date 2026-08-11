@@ -399,6 +399,7 @@ jobs:
           test -f backend-dotnet/Services/FleetProductionReadinessService.cs
           test -f backend-dotnet/Services/MfaChallengeConsumptionService.cs
           test -f frontend/src/auth/csrfTokenStore.ts
+          test -f database/migrations/2026_07_16_stage42_telemetry_gateways.sql
           test -f database/migrations/2026_07_30_customer_feedback_contract.sql
           test -f database/migrations/2026_07_30_stage49_mfa_challenge_one_time.sql
           test -f database/migrations/2026_07_30_stage50_fleet_production_contract.sql
@@ -498,6 +499,24 @@ jobs:
           fi
       - name: Build production API container
         run: docker build --file backend-dotnet/Dockerfile --tag opstrax-api:ci .
+      - name: Verify production API migration payload
+        run: |
+          api_container="$(docker create opstrax-api:ci)"
+          cleanup() {
+            docker rm -f "$api_container" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          mkdir -p "$RUNNER_TEMP/api-migrations"
+          docker cp "$api_container:/app/Migrations/2026_07_16_stage42_telemetry_gateways.sql" \
+            "$RUNNER_TEMP/api-migrations/2026_07_16_stage42_telemetry_gateways.sql"
+          docker cp "$api_container:/app/Migrations/2026_08_11_stage76_telematics_security_hardening.sql" \
+            "$RUNNER_TEMP/api-migrations/2026_08_11_stage76_telematics_security_hardening.sql"
+          cmp database/migrations/2026_07_16_stage42_telemetry_gateways.sql \
+            "$RUNNER_TEMP/api-migrations/2026_07_16_stage42_telemetry_gateways.sql"
+          cmp database/migrations/2026_08_11_stage76_telematics_security_hardening.sql \
+            "$RUNNER_TEMP/api-migrations/2026_08_11_stage76_telematics_security_hardening.sql"
+          cleanup
+          trap - EXIT
       - name: Test and audit Telematics gateway solution
         run: |
           dotnet restore telematics/Opstrax.Telematics.sln

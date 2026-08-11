@@ -16,7 +16,7 @@ This ledger separates four evidence states:
 | Large-data plan | 10,000 dependency-aware positive operations + 10 structured negatives; source-binder contracts; guarded runner | All requests materialize, including HMAC telemetry | 26/26 plan/executor tests pass; dry-run materialized 10,000/10,000 with zero network; mock executor completed 10,000/10,000 | No staging API or database execution. Negative pack not applied. |
 | Load/stress | Read-only k6 workload; exact staging host; HTTPS; isolated-tenant acknowledgement; mode-0600 credential file; hard caps | k6 script statically inspected as two GETs only | 10/10 guard/static tests pass | k6 binary and isolated staging credentials unavailable; no load or stress traffic sent. |
 | Telematics tools | Offline fingerprint, loopback-first capture with an exact 1 MiB per-connection payload cap, CRC-validated ACK, confined mode-0600 captures, git-tracked one-shot public staging replay | Python imports/CLI paths validated | 18/18 unit tests pass; 9/9 fingerprint vectors pass; public replay dry-run reports zero network | No public listener bind, physical-device capture, provider traffic, or deployed-gateway replay. PT40 protocol remains unconfirmed without a physical capture. |
-| Stage76 terminal ordering | Predeploy, clean-chain, production rehearsal and CI all place Stage76 after Stage58/59/67; exact-SHA ledger includes new jobs | Shell syntax and 6/6 CI-contract tests | Static/order tests executed | Disposable Postgres clean-chain/rehearsal and GitHub Actions were not executed in this workspace. Production migration was not applied. |
+| Stage76 terminal ordering | Predeploy, clean-chain, production rehearsal and CI all place Stage76 after Stage58/59/67; exact-SHA ledger includes new jobs | Shell syntax and 7/7 CI-contract tests | Static/order tests executed | Disposable Postgres clean-chain/rehearsal and GitHub Actions were not executed in this workspace. Production migration was not applied. |
 | Publish/deploy | Branch publication and a draft PR are authorized; the exact-SHA mandatory gate graph is prepared | Workflow source validated locally | Local release-candidate validation recorded here; GitHub records the subsequent commit, branch, PR, and CI identities | Merge, package/image publication, production deployment, and provider actions are not authorized and remain gated on exact-SHA CI evidence. |
 
 ## Executed command evidence
@@ -33,7 +33,7 @@ tests/e2e: npm run test:guard                                  PASS 12/12
 tests/e2e: npm run test:list                                   COMPILED 48 tests / 7 files
 
 tools/launch: node --test test_launch_plan.mjs                 PASS 26/26
-tools/launch: node --test test_ci_contract.mjs                 PASS 6/6
+tools/launch: node --test test_ci_contract.mjs                 PASS 7/7
 tools/launch: execute_launch_plan.mjs --dry-run                PASS 10,000 materialized; 0 network
 
 tests/load: node --test test_load_guard.mjs                    PASS 10/10

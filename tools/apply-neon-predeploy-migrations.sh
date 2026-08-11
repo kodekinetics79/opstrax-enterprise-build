@@ -83,6 +83,9 @@ MIGRATIONS=(
   2026_07_02_stage24_compliance_tenant_scope
   2026_07_02_stage25_branches_org_hierarchy
   2026_07_02_stage26_platform_control_plane
+  # Required owner schema for per-gateway credentials. Stage76 intentionally fails closed when
+  # this table is absent; do not rely on the runtime EnsureAsync path to materialize Production.
+  2026_07_16_stage42_telemetry_gateways
   2026_07_30_customer_feedback_contract
   2026_07_30_stage49_mfa_challenge_one_time
   2026_07_30_stage50_fleet_production_contract
@@ -140,6 +143,7 @@ for m in "${MIGRATIONS[@]}"; do
   applied=$(psql "$NEON_PG_URI" -tA -c "SELECT COUNT(*) FROM schema_migrations WHERE version='$ledger_version'" 2>/dev/null || echo 0)
   repair_migration=false
   case "$m" in
+    2026_07_16_stage42_telemetry_gateways|\
     2026_07_30_stage53_tenant_rls_reconciliation|\
     2026_07_30_stage54_cold_chain_device_integrity|\
     2026_07_30_stage55_fleet_runtime_route_contract|\
@@ -174,13 +178,14 @@ for m in "${MIGRATIONS[@]}"; do
   fi
 done
 
-# Pilot-wave migrations are release gates, not optional seed packs. Verify their
-# ledgers and critical integrity objects before the terminal Stage58 reconciliation.
+# Required owner schemas and pilot-wave migrations are release gates, not optional seed packs.
+# Verify their ledgers and critical objects before the terminal Stage58 reconciliation.
 psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 <<'SQL'
 DO $verify_pilot_wave$
 BEGIN
   IF EXISTS (
     SELECT 1 FROM (VALUES
+      ('2026_07_16_stage42_telemetry_gateways'),
       ('2026_08_01_stage60_dispatch_trip_pilot'),
       ('2026_07_22_stage47_detention_recovery'),
       ('2026_08_01_stage61_operations_proof_center'),
@@ -205,8 +210,9 @@ BEGIN
       ('2026_08_02_stage74_retention_policy_production_contract'),
       ('2026_08_02_stage75_bounded_support_access')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
-  ) THEN RAISE EXCEPTION 'Pilot-wave migration ledger missing or duplicated'; END IF;
+  ) THEN RAISE EXCEPTION 'Required owner/pilot migration ledger missing or duplicated'; END IF;
   IF to_regclass('public.uq_ftms_dorders_company_number') IS NULL
+     OR to_regclass('public.telemetry_gateways') IS NULL
      OR to_regclass('public.uq_ftms_route_progress_key') IS NULL
      OR to_regclass('public.uq_route_stops_company_route_sequence') IS NULL
      OR to_regclass('public.uq_routes_active_driver') IS NULL
@@ -223,7 +229,7 @@ BEGIN
      OR to_regclass('public.idx_telemetry_store_forward_pending') IS NULL
      OR to_regclass('public.idx_telemetry_stream_ticket_expiry') IS NULL
      OR to_regclass('public.idx_telemetry_gateway_rejections_received') IS NULL THEN
-    RAISE EXCEPTION 'Pilot-wave concurrency/index contract is incomplete';
+    RAISE EXCEPTION 'Required owner/pilot schema and concurrency contract is incomplete';
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns
@@ -290,7 +296,7 @@ BEGIN
 END
 $verify_pilot_wave$;
 SQL
-echo "Pilot integrity: Stage60/61/62/63/64/65/66/67/68/69/70/71/72/73 ledgers and critical contracts verified"
+echo "Owner integrity: Stage42 gateway schema plus pilot ledgers and critical contracts verified"
 
 if [ "$stage58_already_applied" = "1" ]; then
   echo "Reapplying terminal Stage58 without a legacy-policy window…"
