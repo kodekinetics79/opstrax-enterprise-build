@@ -378,22 +378,25 @@ internal sealed class GatewayConnection
             return;
         }
 
-        // Positional frames are durably published (or parked in the encrypted Postgres queue)
-        // before the protocol ACK is emitted. An ACK is a promise that the frame is owned; sending
-        // it while the event exists only in process memory loses data on a pod crash.
-        if (message.MessageType is MessageType.Location or MessageType.Alarm)
+        // Position, alarm, heartbeat, and status observations are durably published (or parked in
+        // the encrypted Postgres queue) before the protocol ACK is emitted. Heartbeats are real
+        // lifecycle evidence even without a location; dropping them here leaves device health stale.
+        // An ACK is a promise that the frame is owned, so it follows durable acceptance.
+        if (message.MessageType is MessageType.Location or MessageType.Alarm or
+            MessageType.Heartbeat or MessageType.Status)
             await PublishTelemetryAsync(message, owner, receivedAtUtc, cancellationToken).ConfigureAwait(false);
 
-        // Heartbeats carry no durable observation; positional/alarm frames reach here only after
-        // the publish pump confirmed an authoritative write or durable store-forward enqueue.
+        // Observable frames reach here only after the publish pump confirmed an authoritative
+        // write or durable store-forward enqueue.
         await SendAckIfRequiredAsync(message, stream, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
-    /// Runs one positional frame from a bound device through the ingest pipeline: opens the OTel
+    /// Runs one observable frame from a bound device through the ingest pipeline: opens the OTel
     /// span chain, applies per-device replay/sequence defence, and — for a novel or merely
-    /// out-of-order fix — queues the canonical event for publication. A byte-for-byte replay is
-    /// dropped and counted; an out-of-order fix is <b>flagged, not dropped</b>.
+    /// out-of-order observation — queues the canonical event for publication. A byte-for-byte
+    /// retry is counted and idempotently repair-processed with its stored event identity; an
+    /// out-of-order observation is <b>flagged, not dropped</b>.
     /// </summary>
     private async Task PublishTelemetryAsync(
         DecodedMessage message,
@@ -417,22 +420,35 @@ internal sealed class GatewayConnection
         string contentHash = HashFrame(message.RawFrame);
 
         ReplayDecision decision;
+        bool duplicateRepair = false;
         using (Activity? validation = trace.StartValidation())
         {
-            decision = await _replayGuard.CheckAsync(owner.DeviceId, serial, contentHash, evt.OccurredAtDeviceUtc, cancellationToken).ConfigureAwait(false);
+            decision = await _replayGuard.CheckAsync(
+                owner.DeviceId, serial, contentHash, evt.OccurredAtDeviceUtc, cancellationToken).ConfigureAwait(false);
+            // The durable guard owns counter unwrapping and event identity. Immediate retries get
+            // the stored UUID, while a legitimate later GT06 counter generation gets a new UUID.
+            // Refuse a guard that cannot provide this acceptance-repair invariant.
+            evt = evt with
+            {
+                EventId = decision.EventId
+                    ?? throw new InvalidOperationException("Replay guard did not return a durable event identity.")
+            };
 
             switch (decision.Outcome)
             {
                 case ReplayOutcome.DuplicateReplay:
-                    // A byte-for-byte replay of an already-accepted frame. Drop it, count it, and
-                    // never let it reach the backbone or the projection.
+                    // The replay ledger may have been reserved by an attempt whose projection or
+                    // canonical persistence failed before ACK. Re-run the idempotent acceptance
+                    // pipeline with the replay ledger's stored EventId. A fully accepted duplicate becomes
+                    // a no-op; a partial attempt is repaired before this retry is acknowledged.
+                    duplicateRepair = true;
                     trace.MarkRejected(validation, "duplicate-replay");
                     TelematicsInstrumentation.Duplicates.Add(1, ReplayLabels(owner.CompanyId));
                     TelematicsInstrumentation.Replays.Add(1, ReplayLabels(owner.CompanyId));
                     _logger.LogInformation(
-                        "Dropping replayed {MessageType} (serial {Serial}) for device {DeviceId} on {RemoteEndpoint}.",
+                        "Repair-checking replayed {MessageType} (serial {Serial}) for device {DeviceId} on {RemoteEndpoint}.",
                         message.MessageType, serial, owner.DeviceId, _remoteEndpoint);
-                    return;
+                    break;
 
                 case ReplayOutcome.OutOfOrder:
                     // Stale/reordered but not a recognised duplicate: keep the fix, but FLAG it so
@@ -458,14 +474,15 @@ internal sealed class GatewayConnection
             await persisted.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        // Accepted for publish (novel, or out-of-order-but-retained). The durable publish + the
-        // idempotent projection happen on the pump; this counts the fix that cleared validation.
-        TelematicsInstrumentation.PacketsAccepted.Add(1, new TagList
-        {
-            { TelematicsInstrumentation.MetricLabels.Protocol, ProtocolLabel },
-            { TelematicsInstrumentation.MetricLabels.Adapter, Gt06Adapter.ProtocolName },
-            { TelematicsInstrumentation.MetricLabels.CompanyId, owner.CompanyId },
-        });
+        // Count only the novel validation winner. A duplicate still traverses the pipeline so it
+        // can repair a partial prior attempt, but idempotent storage and metrics must not double-count.
+        if (!duplicateRepair)
+            TelematicsInstrumentation.PacketsAccepted.Add(1, new TagList
+            {
+                { TelematicsInstrumentation.MetricLabels.Protocol, ProtocolLabel },
+                { TelematicsInstrumentation.MetricLabels.Adapter, Gt06Adapter.ProtocolName },
+                { TelematicsInstrumentation.MetricLabels.CompanyId, owner.CompanyId },
+            });
     }
 
     private static TagList ReplayLabels(long companyId) => new()
@@ -640,18 +657,21 @@ internal sealed class GatewayConnection
             }
             catch (Exception ex)
             {
-                // The projection is a read-model; a failure here must never block or fault the
-                // authoritative publish below.
+                // History/latest/heartbeat/alerts are part of raw-ingest acceptance parity. Do not
+                // publish or ACK a canonical-only event: the replay ledger's stable retry will reuse this
+                // EventId and safely repair the projection before canonical persistence.
+                pending.Persisted.TrySetException(ex);
                 _logger.LogError(ex,
-                    "Position projection failed for device {DeviceId}, event {EventId}; continuing to publish.",
+                    "Position projection failed for device {DeviceId}, event {EventId}; no ACK will be sent.",
                     evt.DeviceId, evt.EventId);
+                continue;
             }
 
             try
             {
                 // Intentionally NOT passing the stopping token: these events are already decoded
-                // and already acked to the device, so cancelling the publish on shutdown would
-                // lose a fix that exists nowhere else. The drain is time-bounded by the service.
+                // and awaiting the persistence result that gates their ACK. Cancelling the publish
+                // on shutdown could lose the only durable copy. The drain is time-bounded by the service.
                 await _backbone
                     .PublishAsync(TelematicsTopics.TelemetryNormalized, key, envelope, CancellationToken.None)
                     .ConfigureAwait(false);

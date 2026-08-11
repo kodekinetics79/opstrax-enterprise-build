@@ -33,6 +33,8 @@ internal sealed class PostgresEventBackbone(string systemConnectionString) : IEv
         }
         else if (topic == TelematicsTopics.TelemetryNormalized && canonicalPayload is not null)
         {
+            if (canonicalPayload.CompanyId <= 0 || canonicalPayload.TenantId == Guid.Empty)
+                throw new InvalidOperationException("Canonical telemetry requires registry-resolved tenant ownership.");
             if (envelope.TenantId != canonicalPayload.TenantId || envelope.CompanyId != canonicalPayload.CompanyId)
                 throw new InvalidOperationException("Envelope ownership does not match canonical payload ownership.");
             string expectedKey = TelematicsEventKey.ForDevice(
@@ -102,7 +104,7 @@ internal sealed class PostgresEventBackbone(string systemConnectionString) : IEv
                  adapter_version, confidence, trust_score, quality_flags, payload,
                  device_fix_time, gateway_received_at, event_time)
             VALUES
-                (@company_id, @vehicle_id, @device_id, @correlation_id, 'location.updated',
+                (@company_id, @vehicle_id, @device_id, @correlation_id, @event_type,
                  @lat, @lng, @speed_mph, @heading, @source, @provider, @protocol,
                  @adapter_version, @confidence, @trust_score, @quality_flags::jsonb, @payload::jsonb,
                  @device_fix_time, @gateway_received_at, @event_time);
@@ -112,6 +114,7 @@ internal sealed class PostgresEventBackbone(string systemConnectionString) : IEv
         command.Parameters.AddWithValue("vehicle_id", (object?)evt.VehicleId ?? DBNull.Value);
         command.Parameters.AddWithValue("device_id", long.TryParse(evt.DeviceId, out long deviceId) ? deviceId : DBNull.Value);
         command.Parameters.AddWithValue("correlation_id", evt.CorrelationId);
+        command.Parameters.AddWithValue("event_type", evt.Location is null ? "device.heartbeat" : "location.updated");
         command.Parameters.AddWithValue("lat", (object?)evt.Location?.Lat ?? DBNull.Value);
         command.Parameters.AddWithValue("lng", (object?)evt.Location?.Lng ?? DBNull.Value);
         command.Parameters.AddWithValue("speed_mph", evt.Location?.SpeedKph is { } kph ? kph * 0.621371 : DBNull.Value);

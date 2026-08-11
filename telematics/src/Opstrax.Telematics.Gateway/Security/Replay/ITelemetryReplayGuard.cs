@@ -9,31 +9,36 @@ public enum ReplayOutcome
     Accept,
 
     /// <summary>
-    /// The exact triple <c>(deviceId, serial, contentHash)</c> has already been seen inside the
-    /// guard's memory/dedup window. This is a byte-for-byte replay and MUST be dropped.
+    /// The exact occurrence <c>(deviceId, unwrappedSerial, contentHash)</c> has already been seen
+    /// inside the guard's dedup ledger/window. It must not create a second logical event; an ingest
+    /// boundary may idempotently re-run persistence with <see cref="ReplayDecision.EventId"/> to
+    /// repair an earlier attempt that failed before acknowledgement.
     /// </summary>
     DuplicateReplay,
 
     /// <summary>
     /// The frame carries a protocol serial strictly behind the device's high-water mark and is
     /// not a recognised duplicate. It is either a stale/reordered packet or a replay whose window
-    /// entry has already been evicted. Either way it MUST be dropped. <see cref="ReplayDecision.LastSeenSerial"/>
-    /// carries the high-water serial that made this frame out-of-order.
+    /// entry has already been evicted. It must not advance authoritative latest state; callers may
+    /// retain it as explicitly flagged historical evidence. <see cref="ReplayDecision.LastSeenSerial"/>
+    /// carries the raw high-water serial that made this frame out-of-order.
     /// </summary>
     OutOfOrder,
 }
 
 /// <summary>
 /// The immutable result of a single <see cref="ITelemetryReplayGuard.Check"/> call. Models the
-/// closed set <c>{ Accept | DuplicateReplay | OutOfOrder(lastSeen) }</c>: only the
-/// <see cref="ReplayOutcome.OutOfOrder"/> arm carries a payload (<see cref="LastSeenSerial"/>).
+/// closed set <c>{ Accept | DuplicateReplay | OutOfOrder(lastSeen) }</c>. Every durable decision
+/// carries the replay occurrence's stable <see cref="EventId"/>; only the out-of-order arm also
+/// carries <see cref="LastSeenSerial"/>.
 /// </summary>
 public readonly record struct ReplayDecision
 {
-    private ReplayDecision(ReplayOutcome outcome, long? lastSeenSerial)
+    private ReplayDecision(ReplayOutcome outcome, long? lastSeenSerial, Guid? eventId)
     {
         Outcome = outcome;
         LastSeenSerial = lastSeenSerial;
+        EventId = eventId;
     }
 
     /// <summary>Which of the three verdicts this decision represents.</summary>
@@ -45,17 +50,24 @@ public readonly record struct ReplayDecision
     /// </summary>
     public long? LastSeenSerial { get; }
 
+    /// <summary>
+    /// Durable event identity assigned to this replay-window occurrence. Exact retries receive
+    /// the same value; a later protocol-counter generation receives a new value.
+    /// </summary>
+    public Guid? EventId { get; }
+
     /// <summary><see langword="true"/> only when the frame should be processed.</summary>
     public bool IsAccepted => Outcome == ReplayOutcome.Accept;
 
     /// <summary>The frame is novel and in-order.</summary>
-    public static ReplayDecision Accept() => new(ReplayOutcome.Accept, null);
+    public static ReplayDecision Accept(Guid? eventId = null) => new(ReplayOutcome.Accept, null, eventId);
 
-    /// <summary>The exact <c>(deviceId, serial, contentHash)</c> triple was already seen.</summary>
-    public static ReplayDecision DuplicateReplay() => new(ReplayOutcome.DuplicateReplay, null);
+    /// <summary>The exact <c>(deviceId, unwrappedSerial, contentHash)</c> occurrence was already seen.</summary>
+    public static ReplayDecision DuplicateReplay(Guid? eventId = null) => new(ReplayOutcome.DuplicateReplay, null, eventId);
 
     /// <summary>The serial fell behind the device high-water mark <paramref name="lastSeenSerial"/>.</summary>
-    public static ReplayDecision OutOfOrder(long lastSeenSerial) => new(ReplayOutcome.OutOfOrder, lastSeenSerial);
+    public static ReplayDecision OutOfOrder(long lastSeenSerial, Guid? eventId = null) =>
+        new(ReplayOutcome.OutOfOrder, lastSeenSerial, eventId);
 
     /// <inheritdoc />
     public override string ToString() => Outcome switch
@@ -83,18 +95,17 @@ public readonly record struct ReplayDecision
 /// <b>Two defenses, one call.</b> The guard combines
 /// </para>
 /// <list type="bullet">
-///   <item><description>a <b>bounded dedup window</b> keyed on the exact triple
-///     <c>(deviceId, serial, contentHash)</c> — catches byte-for-byte replays near the
-///     high-water mark and returns <see cref="ReplayOutcome.DuplicateReplay"/>; and</description></item>
+///   <item><description>a <b>dedup ledger/window</b> keyed on the exact occurrence
+///     <c>(deviceId, unwrappedSerial, contentHash)</c> — catches byte-for-byte retries within one
+///     counter generation and returns <see cref="ReplayOutcome.DuplicateReplay"/>; and</description></item>
 ///   <item><description>a <b>per-device monotonic serial high-water mark</b> — a serial that has
 ///     fallen strictly behind the mark (and is not a known duplicate) is
 ///     <see cref="ReplayOutcome.OutOfOrder"/>.</description></item>
 /// </list>
 /// <para>
-/// Together these give a durable safety property: a replay of a previously accepted frame is
-/// <em>always</em> rejected — as <see cref="ReplayOutcome.DuplicateReplay"/> while it is still in
-/// the window, and as <see cref="ReplayOutcome.OutOfOrder"/> after its window entry is evicted
-/// (its serial is by then below the high-water mark).
+/// Together these give a durable safety property: a retry in the same unwrapped counter generation
+/// receives the same event identity and cannot double-apply. A later legitimate counter wrap is a
+/// new generation and receives a new identity; delayed pre-wrap frames remain out-of-order.
 /// </para>
 /// <para>
 /// <b>The serial.</b> For GT06 this is the frame's 16-bit information serial number
@@ -102,8 +113,8 @@ public readonly record struct ReplayDecision
 /// Because that counter wraps at 65 536, implementations may be constructed with a wraparound
 /// modulus so a legitimate wrap (e.g. 65 530 → 3) is treated as forward progress rather than
 /// out-of-order. The contract itself is protocol-agnostic: <paramref name="protocolSerial"/> is a
-/// plain 64-bit monotonic token and <paramref name="contentHash"/> is an opaque digest of the
-/// frame payload the caller wishes to deduplicate on.
+/// raw or monotonic 64-bit protocol token and <paramref name="contentHash"/> is an opaque digest
+/// of the frame payload the caller wishes to deduplicate on.
 /// </para>
 /// <para><b>Thread-safety.</b> Implementations MUST be safe for concurrent calls across devices
 /// and for concurrent calls for the same device.</para>

@@ -45,7 +45,7 @@ import {
 const QUICK_FILTERS = ["All", "Speeding", "Device offline", "Camera offline", "Fleet risk"] as const;
 
 type LayerKey = "vehicles" | "geofences";
-type StatusBucket = "Moving" | "Idle" | "Offline";
+type StatusBucket = "Moving" | "Idle" | "Offline" | "Unknown";
 
 /** Breadcrumb-replay time-window presets (hours back from now). */
 const REPLAY_WINDOWS = [
@@ -96,13 +96,13 @@ type RouteTrail = {
 function hasValidPosition(entity: AnyRecord): boolean {
   const lat = Number(entity.lat ?? entity.latitude);
   const lng = Number(entity.lng ?? entity.longitude);
-  return Number.isFinite(lat) && Number.isFinite(lng) && lat !== 0 && lng !== 0;
+  return Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 && !(lat === 0 && lng === 0);
 }
 
 function extractPoint(entity: AnyRecord): [number, number] | null {
   const lat = Number(entity.lat ?? entity.latitude ?? entity.centerLat ?? entity.center_lat);
   const lng = Number(entity.lng ?? entity.longitude ?? entity.centerLng ?? entity.center_lng);
-  return Number.isFinite(lat) && Number.isFinite(lng) && lat !== 0 && lng !== 0 ? [lat, lng] : null;
+  return Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 && !(lat === 0 && lng === 0) ? [lat, lng] : null;
 }
 
 function haversineMiles(a: [number, number], b: [number, number]): number {
@@ -129,16 +129,23 @@ function formatDistance(miles: number): string {
 
 /** Classify a vehicle into a single live-status bucket — the heart of the status board. */
 function statusBucket(entity: AnyRecord): StatusBucket {
-  if (!hasValidPosition(entity) || entity.isStale) return "Offline";
+  if (!hasValidPosition(entity)) return "Unknown";
+  const secondsRaw = entity.secondsSincePing ?? entity.seconds_since_ping;
+  const hasFreshnessAge = secondsRaw != null && Number.isFinite(Number(secondsRaw));
+  const serverFreshness = String(entity.freshness ?? entity.telemetryStatus ?? entity.telemetry_status ?? "").toLowerCase();
+  if (entity.isStale === true || /stale|offline/.test(serverFreshness)) return "Offline";
+  if (!hasFreshnessAge) return "Unknown";
+  if (serverFreshness && !/live|fresh|online|healthy|delayed/.test(serverFreshness)) return "Unknown";
   const status = String(entity.status ?? "").toLowerCase();
-  const speed = Number(entity.speedMph ?? entity.speed_mph ?? 0);
-  if (speed > 3 || /active|on route|moving|driving|en route/.test(status)) return "Moving";
+  const speedRaw = entity.speedMph ?? entity.speed_mph;
+  const speed = speedRaw != null && Number.isFinite(Number(speedRaw)) ? Number(speedRaw) : null;
+  if ((speed != null && speed > 3) || /active|on route|moving|driving|en route/.test(status)) return "Moving";
   return "Idle";
 }
 
 function matchesFilter(entity: AnyRecord, filter: string): boolean {
   if (filter === "All") return true;
-  if (filter === "Moving" || filter === "Idle" || filter === "Offline") {
+  if (filter === "Moving" || filter === "Idle" || filter === "Offline" || filter === "Unknown") {
     return statusBucket(entity) === filter;
   }
   const alert = String(entity.liveAlert ?? entity.live_alert ?? "").toLowerCase();
@@ -255,7 +262,7 @@ export function LiveMapPage() {
     () =>
       replayPoints
         .map((p) => [Number(p.lat), Number(p.lng)] as [number, number])
-        .filter(([lat, lng]) => Number.isFinite(lat) && Number.isFinite(lng) && lat !== 0 && lng !== 0),
+        .filter(([lat, lng]) => Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 && !(lat === 0 && lng === 0)),
     [replayPoints],
   );
 
@@ -410,7 +417,8 @@ export function LiveMapPage() {
       return risk === "medium" || Number(row.openAlertCount ?? row.open_alert_count ?? 0) > 0;
     }).length;
     const geocoded = source.filter(hasValidPosition).length;
-    const avgFreshness = source.reduce((sum, row) => sum + Number(row.secondsSincePing ?? row.seconds_since_ping ?? 0), 0) / Math.max(source.length, 1);
+    const freshnessValues = source.map((row) => row.secondsSincePing ?? row.seconds_since_ping).filter((value) => value != null && Number.isFinite(Number(value))).map(Number);
+    const avgFreshness = freshnessValues.length ? freshnessValues.reduce((sum, value) => sum + value, 0) / freshnessValues.length : null;
     return { stale, highRisk, watch, geocoded, total: source.length, avgFreshness };
   }, [assetStates, liveEntities]);
 
@@ -428,18 +436,18 @@ export function LiveMapPage() {
       .map((row) => ({
         id: String(row.id ?? row.vehicleId ?? row.vehicle_id ?? row.vehicleCode ?? row.vehicle_code),
         label: String(row.vehicleCode ?? row.vehicle_code ?? row.label ?? "Vehicle"),
-        risk: String(row.riskLevel ?? row.risk_level ?? "Low"),
-        status: String(row.telemetryStatus ?? row.telemetry_status ?? row.status ?? "Healthy"),
-        fresh: freshnessLabel(Number(row.secondsSincePing ?? row.seconds_since_ping ?? null)),
-        note: String(row.nextAction ?? row.next_action ?? row.liveAlert ?? row.live_alert ?? "Monitoring live"),
+        risk: String(row.riskLevel ?? row.risk_level ?? "Unknown"),
+        status: String(row.telemetryStatus ?? row.telemetry_status ?? "Unknown"),
+        fresh: freshnessLabel(row.secondsSincePing != null || row.seconds_since_ping != null ? Number(row.secondsSincePing ?? row.seconds_since_ping) : null),
+        note: String(row.nextAction ?? row.next_action ?? row.liveAlert ?? row.live_alert ?? "Telemetry state unavailable"),
         connectivity: String(row.connectivityStatus ?? row.connectivity_status ?? "Unknown"),
-        connectivityIssues: String(row.connectivityIssues ?? row.connectivity_issues ?? "None"),
+        connectivityIssues: String(row.connectivityIssues ?? row.connectivity_issues ?? "Not reported"),
       }));
   }, [liveStatesQ.data, liveEntities]);
 
-  // Live status segmentation — Moving / Idle / Offline — the signature fleet-status board.
+  // Live status segmentation keeps missing/unverifiable telemetry distinct from offline.
   const buckets = useMemo(() => {
-    const counts: Record<StatusBucket, number> = { Moving: 0, Idle: 0, Offline: 0 };
+    const counts: Record<StatusBucket, number> = { Moving: 0, Idle: 0, Offline: 0, Unknown: 0 };
     for (const e of liveEntities) counts[statusBucket(e)] += 1;
     return counts;
   }, [liveEntities]);
@@ -450,7 +458,7 @@ export function LiveMapPage() {
         .filter((e) => matchesFilter(e, activeFilter) && matchesSearch(e, search))
         // Surface what needs attention first: offline, then moving, then idle.
         .sort((a, b) => {
-          const order: Record<StatusBucket, number> = { Offline: 0, Moving: 1, Idle: 2 };
+          const order: Record<StatusBucket, number> = { Offline: 0, Unknown: 1, Moving: 2, Idle: 3 };
           return order[statusBucket(a)] - order[statusBucket(b)];
         }),
     [liveEntities, activeFilter, search],
@@ -493,7 +501,7 @@ export function LiveMapPage() {
         actions={
           telemetry.connected ? (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-teal-50 px-3 py-1.5 text-xs font-semibold text-teal-700">
-              <Wifi className="h-3.5 w-3.5" /> GPS live · {telemetry.positions.length} units
+              <Wifi className="h-3.5 w-3.5" /> Stream connected · {telemetry.positions.filter(hasValidPosition).length} valid positions
               {telemetry.lastUpdated ? <span className="font-medium text-teal-600/70">· {telemetry.lastUpdated.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span> : null}
             </span>
           ) : (
@@ -504,12 +512,20 @@ export function LiveMapPage() {
         }
       />
 
+      {telemetry.error && (
+        <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          <span>{telemetry.error}</span>
+          <button type="button" className="btn-ghost py-1 text-xs" onClick={telemetry.refresh}>Retry telemetry snapshot</button>
+        </div>
+      )}
+
       {/* Status segmentation — the single primary metric row. */}
-      <div className="live-map-status-grid order-2 grid min-w-0 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="live-map-status-grid order-2 grid min-w-0 gap-2 sm:grid-cols-2 lg:grid-cols-5">
         <StatusBoardCard label="All Units"     count={liveEntities.length} tone="slate"  meaning="Tracked"        active={activeFilter === "All"}     onClick={() => setActiveFilter("All")} />
         <StatusBoardCard label="Moving"        count={buckets.Moving}      tone="teal"   meaning="On the road"    active={activeFilter === "Moving"}  onClick={() => setActiveFilter(activeFilter === "Moving" ? "All" : "Moving")} />
         <StatusBoardCard label="Idle / Parked" count={buckets.Idle}        tone="indigo" meaning="Stopped, live"  active={activeFilter === "Idle"}    onClick={() => setActiveFilter(activeFilter === "Idle" ? "All" : "Idle")} />
         <StatusBoardCard label="Offline"       count={buckets.Offline}     tone="rose"   meaning="No recent GPS"  active={activeFilter === "Offline"} onClick={() => setActiveFilter(activeFilter === "Offline" ? "All" : "Offline")} />
+        <StatusBoardCard label="Unknown"       count={buckets.Unknown}     tone="slate"  meaning="No trusted state" active={activeFilter === "Unknown"} onClick={() => setActiveFilter(activeFilter === "Unknown" ? "All" : "Unknown")} />
       </div>
 
       <div className="live-map-primary order-1 grid min-w-0 items-stretch gap-3 xl:grid-cols-[minmax(0,1.55fr)_minmax(280px,.45fr)]">
@@ -518,10 +534,10 @@ export function LiveMapPage() {
           <div className="flex flex-wrap items-center justify-between gap-x-5 gap-y-2">
             <h2 className="section-title">Live Operations Map</h2>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs font-semibold text-slate-400">
-              <MetaStat icon={<Satellite className="h-3.5 w-3.5 text-teal-500" />} value={String(kpis.onlineDevices ?? 0)} label="devices" />
-              <MetaStat icon={<Camera className="h-3.5 w-3.5 text-violet-500" />} value={String(kpis.onlineCameras ?? 0)} label="cameras" />
+              <MetaStat icon={<Satellite className="h-3.5 w-3.5 text-teal-500" />} value={String(kpis.onlineDevices ?? "--")} label="devices" />
+              <MetaStat icon={<Camera className="h-3.5 w-3.5 text-violet-500" />} value={String(kpis.onlineCameras ?? "--")} label="cameras" />
               <MetaStat icon={<Gauge className="h-3.5 w-3.5 text-blue-500" />} value={String(kpis.telemetryQuality ?? "--")} label="quality" />
-              <MetaStat icon={<ShieldAlert className="h-3.5 w-3.5 text-amber-500" />} value={String(kpis.speedAlerts ?? 0)} label="speed alerts" />
+              <MetaStat icon={<ShieldAlert className="h-3.5 w-3.5 text-amber-500" />} value={String(kpis.speedAlerts ?? "--")} label="speed alerts" />
             </div>
           </div>
 
@@ -581,13 +597,13 @@ export function LiveMapPage() {
             <div className="rounded-2xl border border-slate-200/80 bg-white/80 p-3 shadow-sm">
               <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-400">Connectivity</p>
               <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
-                <MetricPill label="Connected" value={String(kpis.connectedUnits ?? 0)} tone="sky" />
-                <MetricPill label="Degraded" value={String(kpis.degradedUnits ?? 0)} tone="amber" />
-                <MetricPill label="Device offline" value={String(kpis.deviceOfflineUnits ?? 0)} tone="rose" />
-                <MetricPill label="Camera offline" value={String(kpis.cameraOfflineUnits ?? 0)} tone="rose" />
+                <MetricPill label="Connected" value={String(kpis.connectedUnits ?? "--")} tone="sky" />
+                <MetricPill label="Degraded" value={String(kpis.degradedUnits ?? "--")} tone="amber" />
+                <MetricPill label="Device offline" value={String(kpis.deviceOfflineUnits ?? "--")} tone="rose" />
+                <MetricPill label="Camera offline" value={String(kpis.cameraOfflineUnits ?? "--")} tone="rose" />
               </div>
               <p className="mt-2 text-[11px] text-slate-500">
-                Connectivity coverage {String(kpis.connectivityCoverage ?? 0)}% · real vehicle, device, camera and GPS signals
+                Connectivity coverage {kpis.connectivityCoverage == null ? "unknown" : `${String(kpis.connectivityCoverage)}%`} · real vehicle, device, camera and GPS signals
               </p>
             </div>
           </div>
@@ -754,7 +770,14 @@ export function LiveMapPage() {
               </h3>
             </div>
             <div className="mt-2 max-h-44 space-y-2 overflow-y-auto">
-              {openAlerts.length === 0 ? (
+              {alerts.isError ? (
+                <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
+                  <p>Alert feed unavailable. No all-clear can be confirmed.</p>
+                  <button type="button" className="btn-ghost mt-2 py-1 text-xs" onClick={() => void alerts.refetch()}>Retry alerts</button>
+                </div>
+              ) : alerts.isLoading ? (
+                <p className="py-1 text-sm text-slate-500">Loading telemetry alerts…</p>
+              ) : openAlerts.length === 0 ? (
                 <p className="flex items-center gap-2 py-1 text-sm text-slate-500"><CheckCircle className="h-4 w-4 text-teal-600" /> No open alerts.</p>
               ) : (
                 openAlerts.slice(0, 6).map((alert) => (
@@ -804,7 +827,9 @@ function ReplayPanel({
   onRetry: () => void;
 }) {
   const hasTrail = totalPoints > 0;
-  const speedMph = currentPoint ? Number(currentPoint.speed_mph ?? 0) : 0;
+  const speedMph = currentPoint?.speed_mph != null && Number.isFinite(Number(currentPoint.speed_mph))
+    ? Number(currentPoint.speed_mph)
+    : null;
   return (
     <div className="pointer-events-auto absolute inset-x-3 bottom-3 z-[500] rounded-2xl border border-amber-300 bg-white/95 p-3 shadow-xl backdrop-blur sm:inset-x-4 sm:bottom-4 sm:p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -882,7 +907,7 @@ function ReplayPanel({
             <span>·</span>
             <span>{formatClock(currentPoint?.event_time)}</span>
             <span>·</span>
-            <span className="inline-flex items-center gap-1 text-teal-600"><Navigation className="h-3 w-3" />{Math.round(speedMph)} mph</span>
+            <span className="inline-flex items-center gap-1 text-teal-600"><Navigation className="h-3 w-3" />{speedMph == null ? "speed unavailable" : `${Math.round(speedMph)} mph`}</span>
           </div>
         </>
       )}
@@ -1030,11 +1055,13 @@ const ROSTER_DOT: Record<StatusBucket, string> = {
   Moving: "bg-teal-500",
   Idle: "bg-indigo-400",
   Offline: "bg-rose-500",
+  Unknown: "bg-slate-400",
 };
 
 function RosterRow({ entity, onClick }: { entity: AnyRecord; onClick: () => void }) {
   const bucket = statusBucket(entity);
-  const speed = Number(entity.speedMph ?? entity.speed_mph ?? 0);
+  const speedRaw = entity.speedMph ?? entity.speed_mph;
+  const speed = speedRaw != null && Number.isFinite(Number(speedRaw)) ? Number(speedRaw) : null;
   const driver = String(entity.driverName ?? entity.driver_name ?? "Unassigned");
   const label = String(entity.label ?? entity.vehicleCode ?? "Vehicle");
   const sspRaw = entity.secondsSincePing ?? entity.seconds_since_ping;
@@ -1065,9 +1092,9 @@ function RosterRow({ entity, onClick }: { entity: AnyRecord; onClick: () => void
         <p className="truncate text-xs text-slate-500">{driver}</p>
         <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] font-medium text-slate-400">
           {bucket === "Moving" ? (
-            <span className="inline-flex items-center gap-1 text-teal-600"><Navigation className="h-3 w-3" />{Math.round(speed)} mph</span>
+            <span className="inline-flex items-center gap-1 text-teal-600"><Navigation className="h-3 w-3" />{speed == null ? "speed unavailable" : `${Math.round(speed)} mph`}</span>
           ) : (
-            <span className={bucket === "Offline" ? "text-rose-500" : "text-indigo-500"}>{bucket === "Offline" ? "Offline" : "Idle"}</span>
+            <span className={bucket === "Offline" ? "text-rose-500" : bucket === "Unknown" ? "text-slate-500" : "text-indigo-500"}>{bucket}</span>
           )}
           <span>·</span>
           <span style={freshTone ? { color: freshTone } : undefined}>{fresh}</span>
@@ -1076,7 +1103,7 @@ function RosterRow({ entity, onClick }: { entity: AnyRecord; onClick: () => void
             {String(entity.connectivityStatus ?? "Unknown")}
           </span>
         </div>
-        <p className="mt-1 text-[10px] text-slate-400">{String(entity.connectivityIssues ?? "None")}</p>
+        <p className="mt-1 text-[10px] text-slate-400">{String(entity.connectivityIssues ?? "Not reported")}</p>
       </div>
     </button>
   );

@@ -47,6 +47,8 @@
 #   stage72  Dual-gated immutable-evidence offboarding reconciliation
 #   stage73  Null-safe fail-closed HOS offboarding reconciliation
 #   stage74  Production retention-policy schema contract
+#   stage75  Bounded support-access control plane
+#   stage76  FINAL telemetry default-deny/exact runtime ACL reconciliation
 #
 # WHAT IT DELIBERATELY SKIPS
 #   stage19/20/22 (the broad Row-Level Security cutover). Stage49 itself is
@@ -294,20 +296,26 @@ if [ "$stage58_already_applied" = "1" ]; then
   echo "Reapplying terminal Stage58 without a legacy-policy window…"
   psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_07_31_stage58_nonforgeable_tenant_ticket.sql
   psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_07_31_stage59_data_protection_key_ring.sql
+  echo "Reapplying Stage67 device-credential boundary after Stage58…"
   psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_02_stage67_telematics_diagnostics_integrity.sql
+  echo "Applying terminal Stage76 telemetry ACL reconciliation…"
+  psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_11_stage76_telematics_security_hardening.sql
   psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 <<'SQL'
 DO $stage58_rerun$
 BEGIN
   IF (SELECT count(*) FROM pg_policies WHERE schemaname='public' AND roles='{public}'::name[])<>0
      OR (SELECT count(*) FROM schema_migrations WHERE version='2026_07_31_stage58_nonforgeable_tenant_ticket')<>1
+     OR (SELECT count(*) FROM schema_migrations WHERE version='2026_08_11_stage76_telematics_security_hardening')<>1
      OR NOT has_function_privilege('opstrax_system','opstrax_security.issue_tenant_ticket(bigint,integer,bigint,integer)','EXECUTE')
-     OR has_function_privilege('opstrax_app','opstrax_security.issue_tenant_ticket(bigint,integer,bigint,integer)','EXECUTE') THEN
-    RAISE EXCEPTION 'Stage58 rerun verification failed';
+     OR has_function_privilege('opstrax_app','opstrax_security.issue_tenant_ticket(bigint,integer,bigint,integer)','EXECUTE')
+     OR has_table_privilege('opstrax_app','eld_devices','SELECT')
+     OR has_column_privilege('opstrax_app','eld_devices','hmac_secret_encrypted','SELECT') THEN
+    RAISE EXCEPTION 'Stage58/59/67/76 terminal rerun verification failed';
   END IF;
 END
 $stage58_rerun$;
 SQL
-  echo "✅ Existing Stage58/59 deployment reconciled without restoring legacy GUC policies."
+  echo "✅ Existing Stage58/59/67/76 deployment reconciled with Stage76 terminal."
   exit 0
 fi
 
@@ -693,10 +701,11 @@ BEGIN
   IF EXISTS (
     SELECT 1
     FROM pg_default_acl d
-    JOIN pg_namespace ns ON ns.oid=d.defaclnamespace AND ns.nspname='public'
+    LEFT JOIN pg_namespace ns ON ns.oid=d.defaclnamespace
     CROSS JOIN LATERAL aclexplode(d.defaclacl) acl
     JOIN pg_roles grantee ON grantee.oid=acl.grantee
-    WHERE grantee.rolname='opstrax_app'
+    WHERE (d.defaclnamespace=0 OR ns.nspname='public')
+      AND grantee.rolname='opstrax_app'
       AND d.defaclobjtype IN ('r','S')
   ) THEN
     RAISE EXCEPTION 'Broad opstrax_app default privileges remain';
@@ -1028,8 +1037,24 @@ BEGIN
 END
 $verify_stage67_credentials$;
 SQL
+echo "Applying terminal Stage76 telemetry default-deny/runtime ACL reconciliation…"
+psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_11_stage76_telematics_security_hardening.sql
+psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q <<'SQL'
+DO $verify_stage76_terminal$
+BEGIN
+  IF (SELECT count(*) FROM schema_migrations
+      WHERE version='2026_08_11_stage76_telematics_security_hardening')<>1
+     OR has_table_privilege('opstrax_app','eld_devices','SELECT')
+     OR has_column_privilege('opstrax_app','eld_devices','api_key_hash','SELECT')
+     OR has_column_privilege('opstrax_app','eld_devices','hmac_secret_encrypted','SELECT')
+     OR NOT has_column_privilege('opstrax_app','eld_devices','device_serial','SELECT') THEN
+    RAISE EXCEPTION 'Stage76 is not the effective terminal telemetry boundary';
+  END IF;
+END
+$verify_stage76_terminal$;
+SQL
 echo
 echo "Ledger:"
 psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -tA -c "SELECT version FROM schema_migrations ORDER BY version"
 echo
-echo "✅ Neon is ready for the new backend. Safe to merge to main / deploy."
+echo "✅ Neon predeploy chain is prepared with Stage76 terminal; deployment still requires exact-SHA release evidence."

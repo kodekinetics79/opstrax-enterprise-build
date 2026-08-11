@@ -8,9 +8,9 @@
 --   and row D2): it forgets its window on restart, is not shared across gateway
 --   instances, and can balloon memory under a distinct-nonce flood. This table
 --   gives the same atomic guarantee the STRONG path already gets from
---   telemetry_nonces: a UNIQUE constraint means only the first insert of a
---   (device_id, serial, content_hash) triple can win; concurrent/later attempts
---   are rejected via 23505 -> DuplicateReplay, durably and fleet-wide.
+--   telemetry_nonces: a per-device locked high-water unwrap plus UNIQUE
+--   (device_id,unwrapped_serial,content_hash) means only the first occurrence wins;
+--   concurrent retries receive its stored event_id durably and fleet-wide.
 --
 -- GROUNDING / SCOPE
 --   This is an INFRASTRUCTURE/security table keyed by device identity + protocol
@@ -23,14 +23,13 @@
 --   BIGINT). `content_hash` is an opaque digest (e.g. SHA-256 hex) of the frame.
 --
 -- SEQUENCE SEMANTICS
---   The guard reads MAX(serial) per device as the monotonic high-water mark; a new
---   row whose serial is strictly below that mark is classified OutOfOrder. The raw
---   GT06 counter wraps at 65536 — feed a monotonic ingest sequence (or unwrap the
---   counter) when wrap tolerance is required; the in-memory guard offers a wrap mode.
+--   The guard updates telemetry_replay_device_state under a per-device advisory lock.
+--   GT06's 16-bit raw counter is unwrapped into a durable monotonic generation; the
+--   nearer half-range advances, the farther half and exact half fail closed behind.
 --
 -- SAFETY / REVERSIBILITY
---   ADDITIVE + idempotent + re-runnable. MUST be applied by the DB OWNER.
---   Explicit -- ROLLBACK section at the foot. No existing object is altered.
+--   Idempotent + re-runnable repair. MUST be applied by the DB OWNER.
+--   Explicit -- ROLLBACK section at the foot.
 -- ============================================================================
 
 BEGIN;
@@ -40,33 +39,69 @@ CREATE TABLE IF NOT EXISTS telemetry_replay_seen (
     id              BIGINT       GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     device_id       TEXT         NOT NULL,          -- resolved device id, else untrusted claim (IMEI)
     serial          BIGINT       NOT NULL,          -- protocol frame serial / sequence number
+    unwrapped_serial BIGINT      NOT NULL,          -- durable monotonic generation-aware serial
     content_hash    TEXT         NOT NULL,          -- opaque digest of the frame (e.g. sha256 hex)
+    event_id        UUID         NOT NULL,          -- stable only for this unwrapped occurrence/retries
     device_fix_time TIMESTAMPTZ  NULL,              -- device-stamped fix time, when known (audit/context)
-    seen_at         TIMESTAMPTZ  NOT NULL DEFAULT NOW()  -- server receive time (pruning key)
+    seen_at         TIMESTAMPTZ  NOT NULL DEFAULT NOW()  -- server receive time (audit/query key)
 );
 
--- The replay guarantee: the FIRST insert of a triple wins; every other attempt
--- hits 23505. Named so the guard's ON CONFLICT target is explicit and stable.
+-- Repair installations created by the original raw-serial-only migration. Legacy rows are
+-- conservatively generation zero; no unreliable chronology is inferred from them.
+ALTER TABLE telemetry_replay_seen ADD COLUMN IF NOT EXISTS unwrapped_serial BIGINT NULL;
+ALTER TABLE telemetry_replay_seen ADD COLUMN IF NOT EXISTS event_id UUID NULL;
+UPDATE telemetry_replay_seen
+   SET unwrapped_serial=serial
+ WHERE unwrapped_serial IS NULL;
+UPDATE telemetry_replay_seen
+   SET event_id=md5('opstrax.replay.legacy.v1:'||id::text||':'||device_id||':'||serial::text||':'||content_hash)::uuid
+ WHERE event_id IS NULL;
+ALTER TABLE telemetry_replay_seen ALTER COLUMN unwrapped_serial SET NOT NULL;
+ALTER TABLE telemetry_replay_seen ALTER COLUMN event_id SET NOT NULL;
+
+CREATE TABLE IF NOT EXISTS telemetry_replay_device_state (
+    device_id            TEXT        PRIMARY KEY,
+    last_raw_serial      BIGINT      NOT NULL,
+    high_water_unwrapped BIGINT      NOT NULL,
+    updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+-- Do not infer high-water state from legacy rows. The former raw-key uniqueness could suppress
+-- later-generation identical frames, so that history is not a trustworthy chronology. The guard
+-- bootstraps each legacy device on its first post-upgrade frame into a fresh epoch above every
+-- legacy unwrapped value while holding its advisory lock.
+
+-- The replay guarantee: the first insert of an unwrapped occurrence wins; every retry
+-- resolves the same stored event id through ON CONFLICT DO NOTHING.
 ALTER TABLE telemetry_replay_seen DROP CONSTRAINT IF EXISTS uq_telemetry_replay_seen_triple;
 ALTER TABLE telemetry_replay_seen
-    ADD CONSTRAINT uq_telemetry_replay_seen_triple UNIQUE (device_id, serial, content_hash);
+    DROP CONSTRAINT IF EXISTS uq_telemetry_replay_seen_unwrapped;
+ALTER TABLE telemetry_replay_seen
+    ADD CONSTRAINT uq_telemetry_replay_seen_unwrapped
+    UNIQUE (device_id, unwrapped_serial, content_hash);
 
--- High-water lookup: MAX(serial) per device for the out-of-order check.
-CREATE INDEX IF NOT EXISTS idx_telemetry_replay_seen_device_serial
-    ON telemetry_replay_seen (device_id, serial DESC);
+-- Operational generation lookup; authoritative high-water lives in the state table.
+DROP INDEX IF EXISTS idx_telemetry_replay_seen_device_serial;
+CREATE INDEX idx_telemetry_replay_seen_device_serial
+    ON telemetry_replay_seen (device_id, unwrapped_serial DESC);
 
--- Retention / pruning sweep support (drop rows older than the freshness window).
+-- Historical receive-time lookup only. This index is not evidence that an age cutoff is safe;
+-- the retention contract below deliberately forbids blanket pruning.
 CREATE INDEX IF NOT EXISTS idx_telemetry_replay_seen_seen_at
     ON telemetry_replay_seen (seen_at);
 
--- ── 2. Least-privilege grants to the restricted app role where it exists ─────
--- Append + read + prune. No UPDATE: a seen row is immutable; only a retention
--- sweep (DELETE by seen_at) removes it.
+-- ── 2. Least-privilege grants to the separately authenticated system role ────
+-- Seen rows are immutable; only the high-water state needs UPDATE. Tenant app
+-- identity never reads raw replay identities or opaque frame hashes.
 DO $grant$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'opstrax_app') THEN
-        GRANT SELECT, INSERT, DELETE ON telemetry_replay_seen TO opstrax_app;
-        GRANT USAGE, SELECT ON SEQUENCE telemetry_replay_seen_id_seq TO opstrax_app;
+        REVOKE ALL PRIVILEGES ON telemetry_replay_seen,telemetry_replay_device_state FROM opstrax_app;
+        REVOKE ALL PRIVILEGES ON SEQUENCE telemetry_replay_seen_id_seq FROM opstrax_app;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'opstrax_system') THEN
+        GRANT SELECT,INSERT,DELETE ON telemetry_replay_seen TO opstrax_system;
+        GRANT SELECT,INSERT,UPDATE ON telemetry_replay_device_state TO opstrax_system;
+        GRANT USAGE,SELECT ON SEQUENCE telemetry_replay_seen_id_seq TO opstrax_system;
     END IF;
 END
 $grant$;
@@ -74,18 +109,21 @@ $grant$;
 -- ── 3. Ledger ───────────────────────────────────────────────────────────────
 INSERT INTO schema_migrations (version, description)
 VALUES ('telematics_005_replay_guard',
-        'telemetry_replay_seen (device_id,serial,content_hash) UNIQUE — durable replay/sequence store')
+        'Durable unwrapped replay generations with stable per-occurrence event identities')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;
 
 -- ============================================================================
--- RETENTION (operational note — run on a timer, e.g. TelemetryBackgroundService)
---   A bounded window is enough: once a serial is below the device high-water mark
---   its replays are caught as OutOfOrder even without a dedup row. Prune well
---   beyond the ingest freshness window (gps-ingest = ±300 s) to keep the table
---   small without reopening a replay gap:
---     DELETE FROM telemetry_replay_seen WHERE seen_at < NOW() - INTERVAL '24 hours';
+-- RETENTION SAFETY
+--   No blanket age-based DELETE is safe for this ledger. Removing the occurrence at a
+--   device's current high-water mark lets the same raw serial + content hash insert again with
+--   a new event_id; removing legacy rows also weakens the fresh-epoch bootstrap for a device
+--   that does not yet have durable state. There is intentionally no runtime prune worker.
+--
+--   Keep every row until a transactional, state-aware retention design exists that preserves
+--   all current-high-water occurrence identities and every row for devices without a durable
+--   state row. A simple `seen_at` cutoff does not satisfy that contract.
 -- ============================================================================
 
 -- ============================================================================

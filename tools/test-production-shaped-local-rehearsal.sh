@@ -4,9 +4,9 @@ set -euo pipefail
 : "${OPSTRAX_TEST_DB_HOST:=127.0.0.1}"
 : "${OPSTRAX_TEST_DB_PORT:=59955}"
 : "${OPSTRAX_TEST_DB_USER:=zayra}"
-: "${OPSTRAX_TEST_DB_PASSWORD:=zayra}"
-: "${OPSTRAX_TEST_DB_APP_PASSWORD:=opstrax_app_local}"
-: "${OPSTRAX_TEST_DB_SYSTEM_PASSWORD:=opstrax_system_local}"
+: "${OPSTRAX_TEST_DB_PASSWORD:?Set OPSTRAX_TEST_DB_PASSWORD for the disposable owner identity}"
+: "${OPSTRAX_TEST_DB_APP_PASSWORD:?Set OPSTRAX_TEST_DB_APP_PASSWORD for the disposable app identity}"
+: "${OPSTRAX_TEST_DB_SYSTEM_PASSWORD:?Set OPSTRAX_TEST_DB_SYSTEM_PASSWORD for the disposable system identity}"
 
 for command_name in createdb dropdb psql openssl curl jq dotnet; do
   command -v "$command_name" >/dev/null || {
@@ -212,20 +212,173 @@ WHERE version IN (
   '2026_08_02_stage72_hos_offboarding_immutability_reconciliation',
   '2026_08_02_stage73_hos_offboarding_null_fail_closed',
   '2026_08_02_stage74_retention_policy_production_contract',
-  '2026_08_02_stage75_bounded_support_access');
+  '2026_08_02_stage75_bounded_support_access',
+  '2026_08_11_stage76_telematics_security_hardening');
 SELECT 'public_policies=' || count(*) FROM pg_policies
 WHERE schemaname='public' AND roles='{public}'::name[];
 SELECT 'unsafe_runtime_roles=' || count(*) FROM pg_roles
 WHERE rolname IN ('opstrax_app','opstrax_system') AND (rolsuper OR rolbypassrls OR rolcreatedb OR rolcreaterole);
+SELECT 'stage76_secret_read_violations=' || count(*)
+FROM (VALUES
+  ('api_key_hash'),('api_key_previous_hash'),('hmac_secret'),
+  ('hmac_secret_encrypted'),('hmac_previous_secret_encrypted')) credential(column_name)
+WHERE has_column_privilege('opstrax_app','eld_devices',credential.column_name,'SELECT');
+SELECT 'stage76_default_acl_violations=' || count(*)
+FROM pg_default_acl defaults
+LEFT JOIN pg_namespace namespace ON namespace.oid=defaults.defaclnamespace
+CROSS JOIN LATERAL aclexplode(defaults.defaclacl) privilege
+LEFT JOIN pg_roles grantee ON grantee.oid=privilege.grantee
+WHERE (defaults.defaclnamespace=0 OR namespace.nspname='public')
+  AND defaults.defaclobjtype IN ('r','S')
+  AND (privilege.grantee=0 OR grantee.rolname IN ('opstrax_app','opstrax_system'));
+SELECT 'stage76_runtime_acl_violations=' || count(*)
+FROM (VALUES
+  ('opstrax_app','eld_devices','SELECT',FALSE),
+  ('opstrax_app','eld_devices','INSERT',FALSE),
+  ('opstrax_app','eld_devices','UPDATE',FALSE),
+  ('opstrax_app','eld_devices','DELETE',FALSE),
+  ('opstrax_app','telemetry_gateways','SELECT',FALSE),
+  ('opstrax_app','telemetry_gateways','INSERT',FALSE),
+  ('opstrax_app','telemetry_gateways','UPDATE',FALSE),
+  ('opstrax_app','telemetry_gateways','DELETE',FALSE),
+  ('opstrax_app','telemetry_stream_ticket_nonces','SELECT',FALSE),
+  ('opstrax_app','telemetry_stream_ticket_nonces','INSERT',TRUE),
+  ('opstrax_app','telemetry_stream_ticket_nonces','UPDATE',FALSE),
+  ('opstrax_app','telemetry_stream_ticket_nonces','DELETE',FALSE),
+  ('opstrax_app','telemetry_replay_seen','SELECT',FALSE),
+  ('opstrax_app','telemetry_replay_seen','INSERT',FALSE),
+  ('opstrax_app','telemetry_replay_seen','UPDATE',FALSE),
+  ('opstrax_app','telemetry_replay_seen','DELETE',FALSE),
+  ('opstrax_app','telemetry_replay_device_state','SELECT',FALSE),
+  ('opstrax_app','telemetry_replay_device_state','INSERT',FALSE),
+  ('opstrax_app','telemetry_replay_device_state','UPDATE',FALSE),
+  ('opstrax_app','telemetry_replay_device_state','DELETE',FALSE),
+  ('opstrax_app','canonical_telemetry_events','SELECT',FALSE),
+  ('opstrax_app','canonical_telemetry_events','INSERT',FALSE),
+  ('opstrax_app','canonical_telemetry_events','UPDATE',FALSE),
+  ('opstrax_app','canonical_telemetry_events','DELETE',FALSE),
+  ('opstrax_system','telemetry_nonces','SELECT',TRUE),
+  ('opstrax_system','telemetry_nonces','INSERT',TRUE),
+  ('opstrax_system','telemetry_nonces','UPDATE',FALSE),
+  ('opstrax_system','telemetry_nonces','DELETE',TRUE),
+  ('opstrax_system','gps_gateway_replay','SELECT',TRUE),
+  ('opstrax_system','gps_gateway_replay','INSERT',TRUE),
+  ('opstrax_system','gps_gateway_replay','UPDATE',FALSE),
+  ('opstrax_system','gps_gateway_replay','DELETE',TRUE),
+  ('opstrax_system','telemetry_gateway_rejections','SELECT',TRUE),
+  ('opstrax_system','telemetry_gateway_rejections','INSERT',TRUE),
+  ('opstrax_system','telemetry_gateway_rejections','UPDATE',FALSE),
+  ('opstrax_system','telemetry_gateway_rejections','DELETE',TRUE),
+  ('opstrax_system','telemetry_replay_seen','SELECT',TRUE),
+  ('opstrax_system','telemetry_replay_seen','INSERT',TRUE),
+  ('opstrax_system','telemetry_replay_seen','UPDATE',FALSE),
+  ('opstrax_system','telemetry_replay_seen','DELETE',TRUE),
+  ('opstrax_system','telemetry_replay_device_state','SELECT',TRUE),
+  ('opstrax_system','telemetry_replay_device_state','INSERT',TRUE),
+  ('opstrax_system','telemetry_replay_device_state','UPDATE',TRUE),
+  ('opstrax_system','telemetry_replay_device_state','DELETE',FALSE),
+  ('opstrax_system','telemetry_projection_inbox','SELECT',TRUE),
+  ('opstrax_system','telemetry_projection_inbox','INSERT',TRUE),
+  ('opstrax_system','telemetry_projection_inbox','UPDATE',FALSE),
+  ('opstrax_system','telemetry_projection_inbox','DELETE',TRUE),
+  ('opstrax_system','canonical_telemetry_events','SELECT',TRUE),
+  ('opstrax_system','canonical_telemetry_events','INSERT',TRUE),
+  ('opstrax_system','canonical_telemetry_events','UPDATE',FALSE),
+  ('opstrax_system','canonical_telemetry_events','DELETE',TRUE)
+) expected(role_name,table_name,privilege_name,allowed)
+WHERE has_table_privilege(
+  expected.role_name::name,
+  'public.'||expected.table_name,
+  expected.privilege_name
+)<>expected.allowed;
+SELECT 'stage76_app_column_acl_violations=' || count(*)
+FROM (VALUES
+  ('telemetry_replay_seen'),
+  ('telemetry_replay_device_state'),
+  ('canonical_telemetry_events')
+) expected(table_name)
+WHERE has_any_column_privilege(
+  'opstrax_app','public.'||expected.table_name,'SELECT,INSERT,UPDATE,REFERENCES'
+);
+SELECT 'stage76_lifecycle_update_violations=' || count(*)
+FROM (VALUES
+  ('malfunction_resolved_at',TRUE),
+  ('malfunction_resolved_by',TRUE),
+  ('resolution_evidence',TRUE),
+  ('row_version',TRUE),
+  ('id',FALSE),
+  ('company_id',FALSE),
+  ('api_key_hash',FALSE),
+  ('api_key_previous_hash',FALSE),
+  ('hmac_secret',FALSE),
+  ('hmac_secret_encrypted',FALSE),
+  ('hmac_previous_secret_encrypted',FALSE)
+) expected(column_name,allowed)
+WHERE has_column_privilege(
+  'opstrax_app','public.eld_devices',expected.column_name,'UPDATE'
+)<>expected.allowed;
+SELECT 'stage76_sequence_acl_violations=' || count(*)
+FROM (VALUES
+  ('opstrax_app','telemetry_replay_seen_id_seq','USAGE',FALSE),
+  ('opstrax_app','telemetry_replay_seen_id_seq','SELECT',FALSE),
+  ('opstrax_app','telemetry_replay_seen_id_seq','UPDATE',FALSE),
+  ('opstrax_system','telemetry_replay_seen_id_seq','USAGE',TRUE),
+  ('opstrax_system','telemetry_replay_seen_id_seq','SELECT',TRUE),
+  ('opstrax_system','telemetry_replay_seen_id_seq','UPDATE',FALSE),
+  ('opstrax_app','canonical_telemetry_events_id_seq','USAGE',FALSE),
+  ('opstrax_app','canonical_telemetry_events_id_seq','SELECT',FALSE),
+  ('opstrax_app','canonical_telemetry_events_id_seq','UPDATE',FALSE),
+  ('opstrax_system','canonical_telemetry_events_id_seq','USAGE',TRUE),
+  ('opstrax_system','canonical_telemetry_events_id_seq','SELECT',TRUE),
+  ('opstrax_system','canonical_telemetry_events_id_seq','UPDATE',FALSE)
+) expected(role_name,sequence_name,privilege_name,allowed)
+WHERE has_sequence_privilege(
+  expected.role_name::name,
+  'public.'||expected.sequence_name,
+  expected.privilege_name
+)<>expected.allowed;
+SELECT 'stage76_replay_schema_violations=' || CASE WHEN
+  to_regclass('public.telemetry_replay_device_state') IS NULL
+  OR NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname='uq_telemetry_replay_seen_unwrapped'
+      AND conrelid='public.telemetry_replay_seen'::regclass
+      AND contype='u'
+      AND pg_get_constraintdef(oid)='UNIQUE (device_id, unwrapped_serial, content_hash)'
+  ) OR EXISTS (
+    SELECT 1 FROM (VALUES
+      ('telemetry_replay_seen','unwrapped_serial'),
+      ('telemetry_replay_seen','event_id'),
+      ('telemetry_replay_device_state','device_id'),
+      ('telemetry_replay_device_state','last_raw_serial'),
+      ('telemetry_replay_device_state','high_water_unwrapped'),
+      ('telemetry_replay_device_state','updated_at')
+    ) required(table_name,column_name)
+    WHERE NOT EXISTS (
+      SELECT 1 FROM information_schema.columns actual
+      WHERE actual.table_schema='public'
+        AND actual.table_name=required.table_name
+        AND actual.column_name=required.column_name
+        AND actual.is_nullable='NO'
+    )
+  ) OR EXISTS (SELECT 1 FROM telemetry_replay_device_state)
+  THEN 1 ELSE 0 END;
 SQL
-grep -qx 'migration_ledgers=14' "$rehearsal_tmp/database-evidence.txt"
+grep -qx 'migration_ledgers=15' "$rehearsal_tmp/database-evidence.txt"
 grep -qx 'public_policies=0' "$rehearsal_tmp/database-evidence.txt"
 grep -qx 'unsafe_runtime_roles=0' "$rehearsal_tmp/database-evidence.txt"
+grep -qx 'stage76_secret_read_violations=0' "$rehearsal_tmp/database-evidence.txt"
+grep -qx 'stage76_default_acl_violations=0' "$rehearsal_tmp/database-evidence.txt"
+grep -qx 'stage76_runtime_acl_violations=0' "$rehearsal_tmp/database-evidence.txt"
+grep -qx 'stage76_app_column_acl_violations=0' "$rehearsal_tmp/database-evidence.txt"
+grep -qx 'stage76_lifecycle_update_violations=0' "$rehearsal_tmp/database-evidence.txt"
+grep -qx 'stage76_sequence_acl_violations=0' "$rehearsal_tmp/database-evidence.txt"
+grep -qx 'stage76_replay_schema_violations=0' "$rehearsal_tmp/database-evidence.txt"
 
 trap - ERR
 echo "Production-shaped local rehearsal passed:"
-echo "  owner migrations + terminal reconciliation: passed"
+echo "  owner migrations + Stage76 terminal reconciliation: passed"
 echo "  restricted identities: opstrax_app + opstrax_system"
 echo "  /health/live, /health/ready, /health/deep: 200 and contract-valid"
 echo "  signed-ticket tenant isolation + branch isolation: focused tests passed"
-echo "  migration ledgers: 14/14; PUBLIC policies: 0; unsafe runtime roles: 0"
+echo "  migration ledgers: 15/15; PUBLIC policies: 0; unsafe runtime roles: 0; Stage76 ACL violations: 0"

@@ -44,7 +44,8 @@ export function PublicShipmentTrackingPage() {
       }
     };
     load(true);
-    // Live refresh: a customer watching a delivery sees fresh status / ETA / proof without reloading.
+    // Live refresh: a customer watching a delivery sees fresh status, planned timing,
+    // and proof without reloading. The API does not currently provide a calculated ETA.
     const timer = setInterval(() => load(false), 30_000);
     return () => {
       cancelled = true;
@@ -52,10 +53,11 @@ export function PublicShipmentTrackingPage() {
     };
   }, [token]);
 
-  const eta = useMemo(() => {
-    if (!summary) return 'Pending';
+  const plannedTiming = useMemo(() => {
+    if (!summary) return { label: 'Planned schedule', value: 'Pending' };
     const nextStop = summary.stops.find((stop) => !stop.completedAt) ?? summary.stops[summary.stops.length - 1];
-    return formatDate(nextStop?.plannedArrivalAt ?? summary.pickupScheduledAtUtc ?? null);
+    if (nextStop?.plannedArrivalAt) return { label: 'Planned arrival', value: formatDate(nextStop.plannedArrivalAt) };
+    return { label: 'Pickup schedule', value: formatDate(summary.pickupScheduledAtUtc ?? null) };
   }, [summary]);
 
   return (
@@ -113,13 +115,13 @@ export function PublicShipmentTrackingPage() {
               </div>
               <h2 className="mt-4 text-[30px] font-black tracking-tight text-slate-950">{summary.origin} to {summary.destination}</h2>
               <p className="mt-2 max-w-2xl text-[15px] leading-relaxed text-slate-600">
-                This view is intentionally limited to what a customer should see: shipment progress, ETA, public events, and proof of delivery if it has been shared.
+                This view is intentionally limited to what a customer should see: shipment progress, planned schedule, public events, and proof of delivery if it has been shared.
               </p>
 
               <div className="mt-5 grid gap-3 sm:grid-cols-3">
                 <InfoCard label="Reference" value={summary.shipmentNumber} icon={<Package className="h-4 w-4 text-cyan-500" />} />
                 <InfoCard label="Status" value={summary.status} icon={<Truck className="h-4 w-4 text-emerald-500" />} />
-                <InfoCard label="ETA" value={eta} icon={<MapPinned className="h-4 w-4 text-violet-500" />} />
+                <InfoCard label={plannedTiming.label} value={plannedTiming.value} icon={<MapPinned className="h-4 w-4 text-violet-500" />} />
               </div>
 
               <div className="mt-6">

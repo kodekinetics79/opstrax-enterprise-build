@@ -62,7 +62,7 @@ public class InMemoryReplayGuardTests
     }
 
     [Fact]
-    public void OutOfOrder_IsNotRecorded_SoRepeatStaysOutOfOrder()
+    public void OutOfOrder_IsRecorded_SoRetryHasStableEventIdentity()
     {
         var guard = new InMemoryReplayGuard();
         guard.Check(Device, 20, "hashHigh", Fix);
@@ -71,7 +71,9 @@ public class InMemoryReplayGuardTests
         var second = guard.Check(Device, 5, "hashLow", Fix);
 
         Assert.Equal(ReplayOutcome.OutOfOrder, first.Outcome);
-        Assert.Equal(ReplayOutcome.OutOfOrder, second.Outcome);
+        Assert.Equal(ReplayOutcome.DuplicateReplay, second.Outcome);
+        Assert.NotNull(first.EventId);
+        Assert.Equal(first.EventId, second.EventId);
     }
 
     [Fact]
@@ -164,6 +166,32 @@ public class InMemoryReplayGuardTests
         // A genuine backward step within the near half is still out-of-order.
         var backward = guard.Check(Device, 1, "backward", Fix);
         Assert.Equal(ReplayOutcome.OutOfOrder, backward.Outcome);
+    }
+
+    [Fact]
+    public void WraparoundMode_ExactHalfRange_IsAmbiguousAndFailsClosed()
+    {
+        var guard = new InMemoryReplayGuard(serialModulus: 65_536);
+        guard.Check(Device, 0, "baseline", Fix);
+
+        ReplayDecision ambiguous = guard.Check(Device, 32_768, "ambiguous", Fix);
+
+        Assert.Equal(ReplayOutcome.OutOfOrder, ambiguous.Outcome);
+        Assert.Equal(0, ambiguous.LastSeenSerial);
+    }
+
+    [Fact]
+    public void WraparoundMode_RepeatedHeartbeatInLaterGenerationGetsANewEventIdentity()
+    {
+        var guard = new InMemoryReplayGuard(perDeviceWindow: 64, serialModulus: 65_536);
+        ReplayDecision first = guard.Check(Device, 40_000, "identical-heartbeat", Fix);
+        guard.Check(Device, 60_000, "advance-one", Fix);
+        guard.Check(Device, 10_000, "advance-wrap", Fix);
+
+        ReplayDecision laterGeneration = guard.Check(Device, 40_000, "identical-heartbeat", Fix);
+
+        Assert.Equal(ReplayOutcome.Accept, laterGeneration.Outcome);
+        Assert.NotEqual(first.EventId, laterGeneration.EventId);
     }
 
     [Theory]

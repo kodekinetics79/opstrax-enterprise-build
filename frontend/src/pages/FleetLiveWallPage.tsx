@@ -36,7 +36,9 @@ export function FleetLiveWallPage() {
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {rows.map((r) => {
-            const fresh = freshness(String(r.telemetryStatus ?? ""), Number(r.staleSeconds ?? 0));
+            const staleSeconds = optionalNumber(r.staleSeconds);
+            const alertCount = optionalNumber(r.openAlertCount);
+            const fresh = freshness(String(r.telemetryStatus ?? ""), staleSeconds);
             return (
               <a
                 key={String(r.vehicleId ?? r.id)}
@@ -54,10 +56,10 @@ export function FleetLiveWallPage() {
                 </div>
                 <div className="flex items-center justify-between text-xs text-slate-500">
                   <span>{r.driverName ? String(r.driverName) : "Unassigned"}</span>
-                  <span>{Number(r.staleSeconds ?? 0)}s ago</span>
+                  <span>{staleSeconds == null ? "age unavailable" : `${Math.max(0, Math.round(staleSeconds))}s ago`}</span>
                 </div>
-                {Number(r.openAlertCount ?? 0) > 0 ? (
-                  <div className="mt-2 text-xs font-medium text-orange-600">{String(r.openAlertCount)} open alert(s)</div>
+                {alertCount == null ? <div className="mt-2 text-xs font-medium text-slate-500">Alert state unknown</div> : alertCount > 0 ? (
+                  <div className="mt-2 text-xs font-medium text-orange-600">{String(alertCount)} open alert(s)</div>
                 ) : null}
                 <div className="mt-3 flex items-center gap-1 text-xs text-slate-400 opacity-0 transition group-hover:opacity-100">
                   <ExternalLink className="h-3.5 w-3.5" /> open on its own screen
@@ -71,14 +73,21 @@ export function FleetLiveWallPage() {
   );
 }
 
-function freshness(status: string, staleSeconds: number): { label: string; badge: string } {
+function freshness(status: string, staleSeconds: number | null): { label: string; badge: string } {
   const s = status.toLowerCase();
-  if (s === "offline" || staleSeconds > 900) return { label: "Offline", badge: "bg-red-100 text-red-700" };
-  if (s === "stale" || staleSeconds > 120) return { label: "Stale", badge: "bg-amber-100 text-amber-700" };
-  return { label: "Live", badge: "bg-emerald-100 text-emerald-700" };
+  if (s === "offline" || (staleSeconds != null && staleSeconds > 900)) return { label: "Offline", badge: "bg-red-100 text-red-700" };
+  if (s === "stale" || (staleSeconds != null && staleSeconds > 120)) return { label: "Stale", badge: "bg-amber-100 text-amber-700" };
+  if ((s === "live" || s === "online" || s === "fresh" || s === "healthy") && staleSeconds != null) return { label: "Live", badge: "bg-emerald-100 text-emerald-700" };
+  return { label: "Unknown", badge: "bg-slate-100 text-slate-600" };
 }
 
 function fmt(v: unknown, digits = 0): string {
+  const n = optionalNumber(v);
+  return n != null ? n.toFixed(digits) : "—";
+}
+
+function optionalNumber(v: unknown): number | null {
+  if (v == null || v === "") return null;
   const n = Number(v);
-  return Number.isFinite(n) ? n.toFixed(digits) : "—";
+  return Number.isFinite(n) ? n : null;
 }

@@ -144,4 +144,17 @@ public class PositionProjectionStoreTests
         Assert.Null(store.Latest(Company, Vehicle));
         Assert.Equal(1, store.SeenCount);
     }
+
+    [Fact]
+    public void PostgresProjection_DoesNotLabelAnOldOrFutureFixHealthy()
+    {
+        DateTime now = new(2026, 8, 11, 12, 0, 0, DateTimeKind.Utc);
+
+        Assert.Equal(("healthy", "low"),
+            PostgresPositionProjectionStore.ClassifyFixFreshness(now.AddMinutes(-2), now));
+        Assert.Equal(("stale", "unknown"),
+            PostgresPositionProjectionStore.ClassifyFixFreshness(now.AddMinutes(-30), now));
+        Assert.Equal(("unknown", "unknown"),
+            PostgresPositionProjectionStore.ClassifyFixFreshness(now.AddMinutes(6), now));
+    }
 }

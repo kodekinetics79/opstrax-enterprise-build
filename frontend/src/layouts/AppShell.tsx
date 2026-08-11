@@ -10,6 +10,7 @@ import { modules, moduleIcons } from "@/modules/moduleConfig";
 import { useAuth } from "@/hooks/useAuth";
 import { useFlag } from "@/hooks/useFeatureFlags";
 import { useHasDirectPermission, useHasPermission } from "@/hooks/usePermission";
+import { useDialogFocus } from "@/hooks/useDialogFocus";
 import { moduleAvailableForCountry, useTenantCountry } from "@/hooks/useTenantRegion";
 import { getLandingRouteForSession } from "@/auth/sessionRouting";
 import type { AnyRecord, UserSession } from "@/types";
@@ -284,6 +285,7 @@ export function AppShell() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [sidebarQuery, setSidebarQuery] = useState("");
   const [now, setNow] = useState(() => new Date());
+  const mobileNavRef = useDialogFocus<HTMLElement>(mobileOpen, () => setMobileOpen(false));
   const notifRef = useRef<HTMLDivElement>(null);
   const profileRef = useRef<HTMLDivElement>(null);
 
@@ -506,7 +508,7 @@ export function AppShell() {
             className="absolute inset-0 bg-slate-900/30 backdrop-blur-sm"
             onClick={() => setMobileOpen(false)}
           />
-          <aside className="anim-slide-left absolute inset-y-0 left-0 w-[272px] overflow-y-auto border-r border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fbff_100%)] p-3 shadow-2xl">
+          <aside ref={mobileNavRef} id="tenant-mobile-navigation" className="anim-slide-left absolute inset-y-0 left-0 w-[272px] overflow-y-auto border-r border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fbff_100%)] p-3 shadow-2xl" role="dialog" aria-modal="true" aria-label="Tenant navigation">
             <button
               type="button"
               aria-label="Close navigation"
@@ -531,7 +533,7 @@ export function AppShell() {
             <div className="flex h-[54px] items-center gap-3">
 
               {/* Mobile menu button */}
-              <button type="button" aria-label="Open navigation" className="icon-btn xl:hidden shrink-0" onClick={() => setMobileOpen(true)}>
+              <button type="button" aria-label="Open navigation" aria-expanded={mobileOpen} aria-controls="tenant-mobile-navigation" className="icon-btn xl:hidden shrink-0" onClick={() => setMobileOpen(true)}>
                 <Menu className="h-4 w-4" />
               </button>
 

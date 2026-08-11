@@ -37,23 +37,23 @@ public sealed class TelemetryGatewayReplayTests
     [Fact]
     public void GpsIngest_DurableReservationIsInsideTheWriteTransaction()
     {
-        // TOCTOU fix: the durable reserve must sit INSIDE db.RunInSystemScopeAsync (same tx as the
+        // TOCTOU fix: the durable reserve must sit INSIDE db.RunInSystemTransactionAsync (same tx as the
         // writes) so a write failure rolls the nonce back. Assert the reserve call appears after
         // the scope opens and a duplicate is handled post-commit.
         var ingest = Block(EndpointsSource(), "private static async Task<IResult> GpsTrackerIngest(", "// ── GET /api/telemetry/metrics");
-        AssertOrdered(ingest, "db.RunInSystemScopeAsync", "TryReserveDurableAsync");
+        AssertOrdered(ingest, "db.RunInSystemTransactionAsync", "TryReserveDurableAsync");
         AssertOrdered(ingest, "TryReserveDurableAsync", "durableReplayDuplicate = true");
-        Assert.Contains("if (durableReplayDuplicate)", ingest, StringComparison.Ordinal);
+        Assert.Contains("if (!gatewayWriteCommitted || durableReplayDuplicate)", ingest, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void GpsIngest_Duplicate_Rejects409_WithMetricAndAudit()
+    public void GpsIngest_Duplicate_Rejects409_WithMetricAndValueSafeLog()
     {
         var ingest = Block(EndpointsSource(), "private static async Task<IResult> GpsTrackerIngest(", "// ── GET /api/telemetry/metrics");
 
         Assert.Contains("Interlocked.Increment(ref _telemetryRejectedReplay)", ingest, StringComparison.Ordinal);
         Assert.Contains("Interlocked.Increment(ref _telemetryRejected)", ingest, StringComparison.Ordinal);
-        Assert.Contains("telemetry.gps.replay_rejected", ingest, StringComparison.Ordinal);
+        Assert.Contains("Duplicate signed gateway telemetry submission rejected", ingest, StringComparison.Ordinal);
         Assert.Contains("Results.Conflict(", ingest, StringComparison.Ordinal);
     }
 

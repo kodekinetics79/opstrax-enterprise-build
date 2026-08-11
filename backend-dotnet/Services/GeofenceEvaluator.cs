@@ -112,6 +112,75 @@ public static class GeofenceEvaluator
         return inside;
     }
 
+    // Alert-oriented membership evaluation. Active tenant/branch fences form one allowed-area
+    // set: inside any valid circle or polygon is authorized, and outside every valid fence is a
+    // breach. Returning null when no valid fence exists avoids fabricating an alert from bad data.
+    internal static async Task<Dictionary<string, object?>?> FindAuthorizedAreaBreachAsync(
+        Database db,
+        long companyId,
+        long? branchId,
+        double lat,
+        double lng,
+        CancellationToken ct = default)
+    {
+        var fences = await db.QueryAsync(
+            @"SELECT id,name,center_lat,center_lng,radius_meters,polygon_json
+              FROM geofences
+              WHERE company_id=@cid AND status='Active'
+                AND (branch_id IS NULL OR branch_id=@branchId)",
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid", companyId);
+                c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+            }, ct);
+
+        Dictionary<string, object?>? firstValidFence = null;
+        foreach (var fence in fences)
+        {
+            var isValid = false;
+            var isInside = false;
+            var polygon = ParsePolygon(fence.GetValueOrDefault("polygonJson")?.ToString());
+            if (polygon is not null)
+            {
+                isValid = true;
+                isInside = PointInPolygon(lat, lng, polygon);
+            }
+            else if (TryReadFiniteDouble(fence.GetValueOrDefault("centerLat"), out var centerLat)
+                     && TryReadFiniteDouble(fence.GetValueOrDefault("centerLng"), out var centerLng)
+                     && TryReadFiniteDouble(fence.GetValueOrDefault("radiusMeters"), out var radiusMeters)
+                     && radiusMeters > 0)
+            {
+                isValid = true;
+                isInside = DistanceMeters(lat, lng, centerLat, centerLng) <= radiusMeters;
+            }
+
+            if (!isValid) continue;
+            firstValidFence ??= new Dictionary<string, object?>
+            {
+                ["id"] = fence.GetValueOrDefault("id"),
+                ["name"] = fence.GetValueOrDefault("name")
+            };
+            if (isInside) return null;
+        }
+
+        return firstValidFence;
+    }
+
+    private static bool TryReadFiniteDouble(object? raw, out double value)
+    {
+        value = 0;
+        if (raw is null or DBNull) return false;
+        try
+        {
+            value = Convert.ToDouble(raw, System.Globalization.CultureInfo.InvariantCulture);
+            return double.IsFinite(value);
+        }
+        catch (Exception ex) when (ex is FormatException or InvalidCastException or OverflowException)
+        {
+            return false;
+        }
+    }
+
     private static Task EmitAsync(Database db, long companyId, long geofenceId, long vehicleId, string eventType, CancellationToken ct) =>
         db.ExecuteAsync(
             @"INSERT INTO geofence_events (company_id, geofence_id, vehicle_id, event_type, event_time)

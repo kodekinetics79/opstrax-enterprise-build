@@ -30,8 +30,11 @@ public static class DeviceHmacSecretProtection
         }
     }
 
+    public static bool IsProtectedEnvironment(IHostEnvironment environment) =>
+        environment.IsProduction() || environment.IsStaging();
+
     public static bool LegacyReadAllowed(IHostEnvironment environment, IConfiguration configuration) =>
-        !environment.IsProduction() && configuration.GetValue(LegacyReadSetting, false);
+        !IsProtectedEnvironment(environment) && configuration.GetValue(LegacyReadSetting, false);
 
     public static int RotationGraceMinutes(IConfiguration configuration) =>
         Math.Clamp(

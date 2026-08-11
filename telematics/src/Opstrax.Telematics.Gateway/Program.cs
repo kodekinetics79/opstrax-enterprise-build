@@ -63,7 +63,8 @@ if (production)
             "Production requires Gateway:StoreForwardEncryptionKey as a base64-encoded 32-byte key.");
 
     builder.Services.AddSingleton<IDeviceRegistry>(_ => new PostgresDeviceRegistry(platformRegistryDb));
-    builder.Services.AddSingleton<ITelemetryReplayGuard>(_ => new PostgresReplayGuard(telematicsDb!));
+    builder.Services.AddSingleton<ITelemetryReplayGuard>(_ =>
+        new PostgresReplayGuard(telematicsDb!, serialModulus: 65_536));
     builder.Services.AddSingleton<IPositionProjectionStore>(_ => new PostgresPositionProjectionStore(telematicsDb!));
     builder.Services.AddSingleton<IEventBackbone>(_ => new PostgresEventBackbone(telematicsDb!));
     var durableBuffer = new PostgresStoreAndForwardBuffer(telematicsDb!, queueKey);
