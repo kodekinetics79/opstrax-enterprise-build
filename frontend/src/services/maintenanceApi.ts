@@ -35,25 +35,25 @@ export const maintenanceApi = {
     unwrap<AnyRecord[]>(apiClient.get("/api/maintenance/defects", { params })),
   acknowledgeDefect: (id: number | string, rowVersion: number) =>
     unwrap<AnyRecord>(apiClient.post(`/api/maintenance/defects/${id}/acknowledge`, { rowVersion })),
-  resolveDefect: (id: number | string, notes?: string) =>
-    unwrap<AnyRecord>(apiClient.post(`/api/maintenance/defects/${id}/resolve`, { notes })),
+  resolveDefect: (id: number | string, rowVersion: number, notes: string) =>
+    unwrap<AnyRecord>(apiClient.post(`/api/maintenance/defects/${id}/resolve`, { rowVersion, notes })),
 
   // Work Orders
   workOrders: (params?: { status?: string; vehicleId?: number; limit?: number }) =>
     unwrap<AnyRecord[]>(apiClient.get("/api/maintenance/work-orders", { params })),
   createWorkOrder: (payload: {
     vehicleId: number;
-    title?: string;
-    serviceType?: string;
+    title: string;
+    serviceType: string;
     description?: string;
     priority?: string;
     defectId?: number;
-    estimatedCost?: number;
-    scheduledAt?: string;
+    estimatedCost: number;
+    scheduledAt: string;
   }) => unwrap<AnyRecord>(apiClient.post("/api/maintenance/work-orders", payload)),
   assignWorkOrder: (id: number | string, assignedToUserId: number) =>
     unwrap<AnyRecord>(apiClient.post(`/api/maintenance/work-orders/${id}/assign`, { assignedToUserId })),
-  completeWorkOrder: (id: number | string, actualCost?: number, notes?: string) =>
+  completeWorkOrder: (id: number | string, actualCost: number, notes: string) =>
     unwrap<AnyRecord>(apiClient.post(`/api/maintenance/work-orders/${id}/complete`, { actualCost, notes })),
 
   // PM Rules

@@ -102,8 +102,10 @@ public sealed class SafetyBackgroundService(
                      ta.alert_type, ta.severity, ta.message, ta.source_event_id, ta.created_at,
                      le.lat, le.lng, le.speed_mph
               FROM telemetry_alerts ta
-              LEFT JOIN location_events le ON le.id = ta.source_event_id
-              LEFT JOIN safety_events se ON se.source_telemetry_alert_id = ta.id
+              LEFT JOIN location_events le
+                ON le.id = ta.source_event_id AND le.company_id = ta.company_id
+              LEFT JOIN safety_events se
+                ON se.source_telemetry_alert_id = ta.id AND se.company_id = ta.company_id
               WHERE se.id IS NULL
                 AND ta.alert_type IN ('speeding','geofence_breach','stale_device',
                                       'harsh_braking','harsh_acceleration','harsh_turn','harsh_cornering','crash','sos')

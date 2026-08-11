@@ -41,14 +41,15 @@ export type VehiclePosition = {
 
 function toPosition(r: AnyRecord): VehiclePosition {
   const ssp = r["secondsSincePing"] != null ? Number(r["secondsSincePing"]) : null;
+  const numeric = (value: unknown): number => value != null && Number.isFinite(Number(value)) ? Number(value) : Number.NaN;
   return {
     vehicleCode:      String(r["vehicleCode"] ?? r["vehicle_code"] ?? ""),
     vehicleId:        r["vehicleId"]   != null ? Number(r["vehicleId"])   : null,
     driverId:         r["driverId"]    != null ? Number(r["driverId"])    : null,
-    lat:              Number(r["lat"] ?? 0),
-    lng:              Number(r["lng"] ?? 0),
-    speedMph:         Number(r["speedMph"]  ?? r["speed_mph"] ?? 0),
-    heading:          Number(r["heading"]   ?? 0),
+    lat:              numeric(r["lat"]),
+    lng:              numeric(r["lng"]),
+    speedMph:         numeric(r["speedMph"] ?? r["speed_mph"]),
+    heading:          numeric(r["heading"]),
     eventType:        String(r["eventType"] ?? r["event_type"] ?? "ping"),
     engineStatus:     r["engineStatus"] != null ? String(r["engineStatus"]) : null,
     fuelLevel:        r["fuelLevel"]    != null ? Number(r["fuelLevel"])    : null,
@@ -104,12 +105,11 @@ export function useLiveTelemetry(): UseLiveTelemetryReturn {
   const fetchSnapshot = useCallback(async () => {
     try {
       const rows = await unwrap<AnyRecord[]>(apiClient.get("/api/telemetry/positions"));
-      if (rows.length > 0) {
-        setPositions(rows.map(toPosition));
-        setLastUpdated(new Date());
-      }
+      setPositions(rows.map(toPosition));
+      setLastUpdated(new Date());
+      setError(null);
     } catch {
-      // ignore — SSE will keep data fresh
+      setError("Unable to refresh the telemetry snapshot — retry or wait for the live stream");
     }
   }, []);
 

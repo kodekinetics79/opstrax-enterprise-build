@@ -48,6 +48,8 @@ from __future__ import annotations
 import argparse
 import binascii
 import datetime as _dt
+import os
+from pathlib import Path
 import socket
 import socketserver
 import sys
@@ -55,6 +57,9 @@ import threading
 
 MAX_READ = 4096          # per-recv cap
 MAX_CONN_BYTES = 1 << 20 # 1 MiB per connection, then we stop recording (flood guard)
+CAPTURE_ROOT = (Path(__file__).resolve().parent / "captures").resolve()
+PUBLIC_BIND_ACK = "I_UNDERSTAND_THIS_EXPOSES_A_SYNTHETIC_CAPTURE_PORT"
+ACTIVE_ACK = "I_CONFIRMED_GT06_AND_ACCEPT_DEVICE_REPLIES"
 
 _write_lock = threading.Lock()
 
@@ -100,16 +105,75 @@ def try_gt06_ack(chunk: bytes) -> bytes | None:
     if len(chunk) < 10 or chunk[0:2] != b"\x78\x78":
         return None
     length = chunk[2]
-    if len(chunk) < length + 5:
+    frame_end = 3 + length
+    total = frame_end + 2
+    if length < 5 or len(chunk) < total:
+        return None
+    if chunk[frame_end:total] != b"\x0d\x0a":
         return None
     protocol = chunk[3]
     if protocol not in (0x01, 0x13, 0x23):
         return None
-    # serial sits just before the 2-byte CRC and the 0D0A terminator
-    serial = chunk[2 + length - 4 : 2 + length - 2]
+    crc_pos = frame_end - 2
+    found_crc = int.from_bytes(chunk[crc_pos:frame_end], "big")
+    if crc_itu(chunk[2:crc_pos]) != found_crc:
+        return None
+    # serial sits immediately before the 2-byte CRC.
+    serial = chunk[crc_pos - 2 : crc_pos]
     if len(serial) != 2:
         return None
     return build_gt06_ack(protocol, serial)
+
+
+def resolve_capture_path(value: str) -> Path:
+    """Confine captures to the ignored tool capture directory."""
+    candidate = Path(value)
+    if candidate.is_absolute():
+        resolved = candidate.resolve()
+    else:
+        resolved = (CAPTURE_ROOT / candidate).resolve()
+    if resolved != CAPTURE_ROOT and CAPTURE_ROOT not in resolved.parents:
+        raise ValueError(f"capture output must stay under {CAPTURE_ROOT}")
+    return resolved
+
+
+def prepare_capture_file(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(path.parent, 0o700)
+    if path.exists() and (path.stat().st_mode & 0o077):
+        raise ValueError(f"existing capture must be mode 0600 (or stricter): {path}")
+
+
+def append_capture(path: Path, line: str) -> None:
+    fd = os.open(path, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
+    try:
+        os.write(fd, (line + "\n").encode("utf-8"))
+    finally:
+        os.close(fd)
+
+
+def bounded_capture_chunk(chunk: bytes, already_recorded: int) -> tuple[bytes, int, int]:
+    """Return the recordable prefix, new total, and dropped-byte count at the exact cap."""
+    remaining = max(0, MAX_CONN_BYTES - already_recorded)
+    recorded = chunk[:remaining]
+    return recorded, already_recorded + len(recorded), len(chunk) - len(recorded)
+
+
+def validate_config(cfg: argparse.Namespace) -> None:
+    if cfg.environment == "production":
+        raise ValueError("capture listener refuses production")
+    if not 1 <= cfg.port <= 65535:
+        raise ValueError("port must be between 1 and 65535")
+    if not 1 <= cfg.idle_timeout <= 600:
+        raise ValueError("idle timeout must be between 1 and 600 seconds")
+    loopback = cfg.host.lower() in {"127.0.0.1", "localhost", "::1"}
+    if not loopback:
+        if cfg.environment != "staging" or not cfg.public_staging or cfg.public_bind_ack != PUBLIC_BIND_ACK:
+            raise ValueError("non-loopback capture requires staging, --public-staging, and the exact public-bind acknowledgement")
+    if cfg.gt06_ack and (cfg.confirmed_protocol != "GT06" or cfg.active_ack != ACTIVE_ACK):
+        raise ValueError("GT06 replies require confirmed protocol and the exact active-ack acknowledgement")
+    cfg.out = resolve_capture_path(cfg.out)
+    prepare_capture_file(cfg.out)
 
 
 class CaptureHandler(socketserver.BaseRequestHandler):
@@ -137,28 +201,32 @@ class CaptureHandler(socketserver.BaseRequestHandler):
                 if not chunk:
                     break  # clean close
 
+                recorded, total, dropped = bounded_capture_chunk(chunk, total)
+                if not recorded:
+                    self._emit(f"# flood guard: {total} bytes from {peer}, dropped={dropped}, closing")
+                    break
+
                 frame_no += 1
-                total += len(chunk)
-                hexs = binascii.hexlify(chunk).decode()
+                hexs = binascii.hexlify(recorded).decode()
                 ascii_preview = "".join(
-                    (chr(b) if 32 <= b < 127 else ".") for b in chunk[:64]
+                    (chr(b) if 32 <= b < 127 else ".") for b in recorded[:64]
                 )
 
                 # The capture file is what you send me: one hex payload per line.
                 self._emit(hexs)
                 self._emit(
-                    f"#   ^ frame={frame_no} bytes={len(chunk)} peer={peer} "
+                    f"#   ^ frame={frame_no} bytes={len(recorded)} peer={peer} "
                     f"at={_utc_now()} ascii={ascii_preview!r}"
                 )
                 print(
-                    f"[{_utc_now()}] RX {len(chunk):4d}B from {peer}\n"
+                    f"[{_utc_now()}] RX {len(recorded):4d}B from {peer}\n"
                     f"    HEX   {hexs}\n"
                     f"    ASCII {ascii_preview}",
                     flush=True,
                 )
 
-                if cfg.gt06_ack:
-                    ack = try_gt06_ack(chunk)
+                if cfg.gt06_ack and dropped == 0:
+                    ack = try_gt06_ack(recorded)
                     if ack:
                         try:
                             self.request.sendall(ack)
@@ -170,8 +238,8 @@ class CaptureHandler(socketserver.BaseRequestHandler):
                             self._emit(f"# ack send failed peer={peer}: {exc!r}")
                             break
 
-                if total >= MAX_CONN_BYTES:
-                    self._emit(f"# flood guard: {total} bytes from {peer}, closing")
+                if dropped or total >= MAX_CONN_BYTES:
+                    self._emit(f"# flood guard: {total} bytes from {peer}, dropped={dropped}, closing")
                     break
         except Exception as exc:  # never let one connection kill the listener
             self._emit(f"# handler exception peer={peer}: {exc!r}")
@@ -184,8 +252,7 @@ class CaptureHandler(socketserver.BaseRequestHandler):
         if not cfg.out:
             return
         with _write_lock:
-            with open(cfg.out, "a", encoding="utf-8") as fh:
-                fh.write(line + "\n")
+            append_capture(cfg.out, line)
 
 
 class Listener(socketserver.ThreadingTCPServer):
@@ -197,9 +264,12 @@ def main() -> int:
     ap = argparse.ArgumentParser(
         description="Raw TCP capture listener for GPS trackers (PT40 fingerprinting)."
     )
-    ap.add_argument("--host", default="0.0.0.0", help="bind address (default: all interfaces)")
+    ap.add_argument("--host", default="127.0.0.1", help="bind address (default: loopback only)")
     ap.add_argument("--port", type=int, default=5023, help="bind port (default: 5023)")
-    ap.add_argument("--out", default="capture.hex", help="append captured hex here")
+    ap.add_argument("--out", default="capture.hex", help="capture filename under tools/telematics/captures/")
+    ap.add_argument("--environment", choices=("local", "staging", "production"), default="local")
+    ap.add_argument("--public-staging", action="store_true", help="allow a non-loopback staging bind")
+    ap.add_argument("--public-bind-ack", default="", help=argparse.SUPPRESS)
     ap.add_argument(
         "--idle-timeout",
         type=float,
@@ -211,7 +281,14 @@ def main() -> int:
         action="store_true",
         help="reply to GT06 login/heartbeat frames (ONLY after fingerprint confirms GT06)",
     )
+    ap.add_argument("--confirmed-protocol", choices=("GT06",), help="required with --gt06-ack")
+    ap.add_argument("--active-ack", default="", help=argparse.SUPPRESS)
     cfg = ap.parse_args()
+
+    try:
+        validate_config(cfg)
+    except ValueError as exc:
+        ap.error(str(exc))
 
     srv = Listener((cfg.host, cfg.port), CaptureHandler)
     srv.cfg = cfg  # type: ignore[attr-defined]

@@ -12,6 +12,9 @@ gate	result
 frontend-build	success
 node-backend-build	success
 demo-node-events-check	success
+mobile-build-test	success
+launch-tooling-tests	success
+playwright-public-tests	success
 dotnet-build-test	success
 dotnet-integration-tests	success
 production-shaped-release-rehearsal	success

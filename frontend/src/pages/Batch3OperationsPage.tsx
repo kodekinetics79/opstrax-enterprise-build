@@ -45,7 +45,7 @@ const configs = {
     ],
     columns: ["id", "vehicleCode", "assetName", "serviceType", "dueDate", "dueOdometer", "dueEngineHours", "priority", "status", "estimatedCost", "maintenanceRiskHeatScore", "recommendedAction"],
     fields: [["vehicleId", "Vehicle ID"], ["assetId", "Asset ID"], ["serviceType", "Service Type"], ["description", "Description"], ["priority", "Priority"], ["status", "Status"], ["dueDate", "Due Date"], ["dueOdometer", "Odometer Due"], ["dueEngineHours", "Engine Hours Due"], ["estimatedCost", "Estimated Cost"], ["riskScore", "Risk Score"], ["recommendedAction", "Recommended Action"]],
-    actions: ["schedule", "defer", "createWorkOrder"],
+    actions: ["schedule", "defer"],
     detailSections: [["Linked Work Orders", "workOrders", ["workOrderNumber", "issueType", "priority", "status", "estimatedCost"]], ["Service Schedules", "schedules", ["serviceType", "triggerType", "nextDueDate", "nextDueOdometer", "status"]]],
   },
   "work-orders": {
@@ -368,7 +368,7 @@ async function runAction(kind: Batch3Kind, type: string, row: AnyRecord) {
   if (kind === "maintenance") {
     if (type === "schedule") return maintenanceApi.schedule(id);
     if (type === "defer") return maintenanceApi.defer(id);
-    return maintenanceApi.createWorkOrder({ vehicleId: Number(id) });
+    throw new Error("Use the Work Orders form to provide a vehicle, title, service, estimated cost, and due date.");
   }
   if (kind === "work-orders") {
     if (type === "assign") return workOrdersApi.assign(id, {});

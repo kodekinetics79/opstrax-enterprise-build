@@ -22,7 +22,7 @@ import {
 function getCoords(entity: AnyRecord): [number, number] | null {
   const lat = Number(entity.lat ?? entity.latitude);
   const lng = Number(entity.lng ?? entity.longitude);
-  if (Number.isFinite(lat) && Number.isFinite(lng) && lat !== 0 && lng !== 0) return [lat, lng];
+  if (Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 && !(lat === 0 && lng === 0)) return [lat, lng];
   return null;
 }
 
@@ -53,6 +53,7 @@ function notRecentText(fresh: FreshnessBucket | null, isStale: boolean, status: 
   if (fresh === "offline") return "Offline";
   if (fresh === "stale") return "Stale";
   if (fresh == null && isStale) return "Offline"; // legacy fallback when no fresh signal
+  if (fresh == null) return "Unknown";
   return status;
 }
 
@@ -64,8 +65,9 @@ function notRecentText(fresh: FreshnessBucket | null, isStale: boolean, status: 
 function markerColor(freshness: FreshnessBucket | null, risk: string, status: string, speed: number, isStale: boolean, deviceStatus?: string, cameraStatus?: string): string {
   if (freshness === "offline") return freshnessColor("offline");
   if (freshness === "stale" || (freshness == null && isStale)) return freshnessColor("stale");
-  const deviceOnline = !deviceStatus || /online|recording/i.test(deviceStatus);
-  const cameraOnline = !cameraStatus || /online|recording/i.test(cameraStatus);
+  if (freshness == null || (!deviceStatus && !cameraStatus)) return "#64748b";
+  const deviceOnline = Boolean(deviceStatus && /online|recording/i.test(deviceStatus));
+  const cameraOnline = Boolean(cameraStatus && /online|recording/i.test(cameraStatus));
   if (!deviceOnline && !cameraOnline) return "#ef4444";
   if (!deviceOnline || !cameraOnline) return "#f59e0b";
   if (/high|critical/i.test(risk)) return "#ef4444";
@@ -137,7 +139,7 @@ function entityKey(entity: AnyRecord, index: number): string {
 function makeGeofenceCircle(zone: AnyRecord, index: number): L.Circle | null {
   const lat = Number(zone.lat ?? zone.latitude ?? zone.center_lat ?? zone.centerLat);
   const lng = Number(zone.lng ?? zone.longitude ?? zone.center_lng ?? zone.centerLng);
-  if (isNaN(lat) || isNaN(lng) || (lat === 0 && lng === 0)) return null;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180 || (lat === 0 && lng === 0)) return null;
   return L.circle([lat, lng], {
     radius: Number(zone.radius_meters ?? zone.radiusMeters ?? 8000),
     color: "#14b8a6",
@@ -160,7 +162,7 @@ function makeGeofencePolygon(zone: AnyRecord): L.Polygon | null {
       if (v && typeof v === "object" && "lat" in v && "lng" in v) return [Number((v as AnyRecord).lat), Number((v as AnyRecord).lng)] as [number, number];
       return null;
     })
-    .filter((p): p is [number, number] => p !== null && Number.isFinite(p[0]) && Number.isFinite(p[1]));
+    .filter((p): p is [number, number] => p !== null && Number.isFinite(p[0]) && Number.isFinite(p[1]) && Math.abs(p[0]) <= 90 && Math.abs(p[1]) <= 180 && !(p[0] === 0 && p[1] === 0));
   if (points.length < 3) return null;
   return L.polygon(points, {
     color: "#7c3aed",
@@ -181,7 +183,7 @@ function makeRoutePolyline(route: AnyRecord, index: number): L.Polyline | null {
       const lng = Number((point as AnyRecord).lng ?? (point as AnyRecord).longitude ?? (point as AnyRecord).center_lng);
       return [lat, lng] as [number, number];
     })
-    .filter(([lat, lng]) => Number.isFinite(lat) && Number.isFinite(lng) && lat !== 0 && lng !== 0);
+    .filter(([lat, lng]) => Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 && !(lat === 0 && lng === 0));
 
   if (points.length < 2) return null;
 
@@ -291,18 +293,18 @@ export function LiveMap({ entities, geofences, routeTrails = [], onSelect, focus
       const [lat, lng] = coord;
       coords.set(key, [lat, lng]);
 
-      const risk = String(entity.riskLevel ?? entity.risk_level ?? "Low");
+      const risk = String(entity.riskLevel ?? entity.risk_level ?? "Unknown");
       const status = String(entity.status ?? "");
       const label = String(entity.label ?? entity.vehicleCode ?? entity.vehicle_code ?? "Vehicle");
       const driver = String(entity.driverName ?? entity.driver_name ?? "Unassigned");
       const speedRaw = entity.speedMph ?? entity.speed_mph;
-      const speed = Number(speedRaw ?? 0);
+      const speed = speedRaw != null && Number.isFinite(Number(speedRaw)) ? Number(speedRaw) : Number.NaN;
       const heading = Number(entity.heading ?? 0);
       const isStale = Boolean(entity.isStale);
       const deviceStatus = String(entity.deviceStatus ?? entity.device_status ?? "--");
       const camStatus = String(entity.cameraStatus ?? entity.camera_status ?? "--");
       const connectivity = String(entity.connectivityStatus ?? entity.connectivity_status ?? "--");
-      const connectivityIssues = String(entity.connectivityIssues ?? entity.connectivity_issues ?? "None");
+      const connectivityIssues = String(entity.connectivityIssues ?? entity.connectivity_issues ?? "Not reported");
       // Reverse-geocoded street address (cached server-side); shown instead of raw coords.
       const address = String(entity.address ?? "").trim();
 
@@ -339,7 +341,7 @@ export function LiveMap({ entities, geofences, routeTrails = [], onSelect, focus
         `<div style="font-family:system-ui;font-size:12px;min-width:210px;line-height:1.5">
           <p style="font-weight:700;margin:0 0 2px;font-size:13px">${label}</p>
           <p style="margin:0;color:#475569">${driver}</p>
-          <p style="margin:2px 0 0;color:#64748b">${speedRaw != null ? `${Math.round(speed)} mph &bull; ` : ""}${notRecentText(fresh, isStale, status)}</p>
+          <p style="margin:2px 0 0;color:#64748b">${Number.isFinite(speed) ? `${Math.round(speed)} mph &bull; ` : ""}${notRecentText(fresh, isStale, status)}</p>
           ${address ? `<p style="margin:3px 0 0;color:#334155;font-size:11px">&#128205; ${address}</p>` : ""}
           <div style="margin:6px 0 0;padding-top:5px;border-top:1px solid #e2e8f0">
             <span style="display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:700;color:${catColor};border:1px solid ${catColor};border-radius:9999px;padding:1px 6px;text-transform:uppercase;letter-spacing:.04em">${categoryBadge(sourceCat)}</span>
@@ -521,6 +523,8 @@ export function LiveMap({ entities, geofences, routeTrails = [], onSelect, focus
     <div
       ref={containerRef}
       style={{ height: "100%", width: "100%" }}
+      role="region"
+      aria-label="Live fleet map. Vehicles without valid GPS coordinates are not plotted."
       // Override leaflet default font so it matches app
       className="[&_.leaflet-popup-content-wrapper]:rounded-xl [&_.leaflet-popup-content-wrapper]:shadow-lg"
     />

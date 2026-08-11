@@ -23,7 +23,10 @@ export function VehicleLiveMonitorPage() {
   if (isError || !data) return <ErrorState message="This vehicle has no live state yet." onRetry={() => { void refetch(); }} />;
 
   const r = data as AnyRecord;
-  const fresh = freshness(String(r.telemetryStatus ?? ""), Number(r.staleSeconds ?? 0));
+  const staleSeconds = optionalNumber(r.staleSeconds);
+  const fresh = freshness(String(r.telemetryStatus ?? ""), staleSeconds);
+  const alertCount = optionalNumber(r.openAlertCount);
+  const risk = r.riskLevel != null ? String(r.riskLevel) : "Unknown";
 
   return (
     <div className="space-y-6">
@@ -43,7 +46,7 @@ export function VehicleLiveMonitorPage() {
           <Activity className="h-5 w-5" /> {fresh.label}
         </div>
         <div className="text-sm opacity-80">
-          last fix {Number(r.staleSeconds ?? 0)}s ago · updated {new Date(dataUpdatedAt).toLocaleTimeString()}
+          last fix {staleSeconds == null ? "age unavailable" : `${Math.max(0, Math.round(staleSeconds))}s ago`} · updated {new Date(dataUpdatedAt).toLocaleTimeString()}
         </div>
       </div>
 
@@ -52,12 +55,12 @@ export function VehicleLiveMonitorPage() {
         <Tile icon={<Navigation className="h-5 w-5" />} label="Heading" value={`${fmt(r.heading)}°`} />
         <Tile icon={<Power className="h-5 w-5" />} label="Engine" value={String(r.engineStatus ?? "—")} />
         <Tile icon={<Fuel className="h-5 w-5" />} label="Fuel" value={r.fuelLevel != null ? `${fmt(r.fuelLevel)}%` : "—"} />
-        <Tile icon={<MapPin className="h-5 w-5" />} label="Latitude" value={fmt(r.lat, 5)} />
-        <Tile icon={<MapPin className="h-5 w-5" />} label="Longitude" value={fmt(r.lng, 5)} />
-        <Tile icon={<AlertTriangle className="h-5 w-5" />} label="Open alerts" value={String(r.openAlertCount ?? 0)}
-              tone={Number(r.openAlertCount ?? 0) > 0 ? "warn" : "ok"} />
-        <Tile icon={<User className="h-5 w-5" />} label="Risk" value={String(r.riskLevel ?? "low")}
-              tone={String(r.riskLevel ?? "").toLowerCase() === "high" ? "warn" : "ok"} />
+        <Tile icon={<MapPin className="h-5 w-5" />} label="Latitude" value={fmtCoordinate(r.lat, r.lng, 0)} />
+        <Tile icon={<MapPin className="h-5 w-5" />} label="Longitude" value={fmtCoordinate(r.lat, r.lng, 1)} />
+        <Tile icon={<AlertTriangle className="h-5 w-5" />} label="Open alerts" value={alertCount == null ? "Unknown" : String(alertCount)}
+              tone={alertCount == null ? "neutral" : alertCount > 0 ? "warn" : "ok"} />
+        <Tile icon={<User className="h-5 w-5" />} label="Risk" value={risk}
+              tone={risk === "Unknown" ? "neutral" : risk.toLowerCase() === "high" ? "warn" : "ok"} />
       </div>
 
       {r.nextAction ? (
@@ -73,7 +76,7 @@ export function VehicleLiveMonitorPage() {
   );
 }
 
-function Tile({ icon, label, value, tone = "ok" }: { icon: ReactNode; label: string; value: string; tone?: "ok" | "warn" }) {
+function Tile({ icon, label, value, tone = "neutral" }: { icon: ReactNode; label: string; value: string; tone?: "ok" | "warn" | "neutral" }) {
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
       <div className={`mb-1 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide ${tone === "warn" ? "text-orange-500" : "text-slate-400"}`}>
@@ -84,14 +87,29 @@ function Tile({ icon, label, value, tone = "ok" }: { icon: ReactNode; label: str
   );
 }
 
-function freshness(status: string, staleSeconds: number): { label: string; wrap: string } {
+function freshness(status: string, staleSeconds: number | null): { label: string; wrap: string } {
   const s = status.toLowerCase();
-  if (s === "offline" || staleSeconds > 900) return { label: "Offline", wrap: "border-red-200 bg-red-50 text-red-700" };
-  if (s === "stale" || staleSeconds > 120) return { label: "Stale signal", wrap: "border-amber-200 bg-amber-50 text-amber-700" };
-  return { label: "Live", wrap: "border-emerald-200 bg-emerald-50 text-emerald-700" };
+  if (s === "offline" || (staleSeconds != null && staleSeconds > 900)) return { label: "Offline", wrap: "border-red-200 bg-red-50 text-red-700" };
+  if (s === "stale" || (staleSeconds != null && staleSeconds > 120)) return { label: "Stale signal", wrap: "border-amber-200 bg-amber-50 text-amber-700" };
+  if ((s === "live" || s === "online" || s === "fresh" || s === "healthy") && staleSeconds != null) return { label: "Live", wrap: "border-emerald-200 bg-emerald-50 text-emerald-700" };
+  return { label: "Unknown telemetry", wrap: "border-slate-200 bg-slate-50 text-slate-600" };
 }
 
 function fmt(v: unknown, digits = 1): string {
+  const n = optionalNumber(v);
+  return n != null ? n.toFixed(digits) : "—";
+}
+
+function optionalNumber(v: unknown): number | null {
+  if (v == null || v === "") return null;
   const n = Number(v);
-  return Number.isFinite(n) ? n.toFixed(digits) : "—";
+  return Number.isFinite(n) ? n : null;
+}
+
+function fmtCoordinate(latValue: unknown, lngValue: unknown, index: 0 | 1): string {
+  const lat = optionalNumber(latValue);
+  const lng = optionalNumber(lngValue);
+  if (lat == null || lng == null || Math.abs(lat) > 90 || Math.abs(lng) > 180 || (lat === 0 && lng === 0)) return "—";
+  const n = index === 0 ? lat : lng;
+  return n.toFixed(5);
 }

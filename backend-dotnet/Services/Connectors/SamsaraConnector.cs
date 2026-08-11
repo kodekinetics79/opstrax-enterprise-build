@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Opstrax.Api.Data;
 
 namespace Opstrax.Api.Services.Connectors;
@@ -20,11 +21,13 @@ namespace Opstrax.Api.Services.Connectors;
 //
 // The connector is a singleton, so it resolves scoped services (Database,
 // TelemetryLiveStateService) per call via IServiceScopeFactory, and wraps cross-
-// tenant writes in Database.RunInSystemScopeAsync so they succeed under RLS.
+// tenant writes in Database.RunInSystemTransactionAsync so replay/history/latest/alerts
+// succeed under RLS and commit atomically.
 // ─────────────────────────────────────────────────────────────────────────────
 public sealed class SamsaraConnector(
     IHttpClientFactory httpFactory,
     IServiceScopeFactory scopeFactory,
+    IConfiguration configuration,
     ILogger<SamsaraConnector> logger) : IConnector
 {
     public IReadOnlyCollection<string> Keys { get; } = new[] { "samsara" };
@@ -101,10 +104,14 @@ public sealed class SamsaraConnector(
             var unmatched = 0;
             var hasNextPage = false;
             var seenCursors = new HashSet<string>(StringComparer.Ordinal);
+            if (!string.IsNullOrWhiteSpace(cursor)) seenCursors.Add(cursor);
+            var completed = false;
+            var maxPages = Math.Clamp(configuration.GetValue("Samsara:MaxPagesPerSync", 200), 1, 200);
+            var interPageDelayMs = Math.Clamp(configuration.GetValue("Samsara:InterPageDelayMs", 100), 0, 1_000);
             // Drain the cursor backlog in the same run instead of waiting five minutes
             // between pages. The cap prevents a permanently advancing feed from owning a
             // worker forever; the returned cursor resumes exactly where this run stopped.
-            for (var page = 0; page < 200; page++)
+            for (var page = 0; page < maxPages; page++)
             {
                 var pageSummary = await sync.RunAsync(companyId, cursor, ct);
                 positionsWritten += pageSummary.PositionsWritten;
@@ -112,14 +119,21 @@ public sealed class SamsaraConnector(
                 unmatched += pageSummary.Unmatched;
                 hasNextPage = pageSummary.HasNextPage;
                 if (!string.IsNullOrWhiteSpace(pageSummary.NextCursor)) cursor = pageSummary.NextCursor;
-                if (!hasNextPage) break;
+                if (!hasNextPage)
+                {
+                    completed = true;
+                    break;
+                }
                 if (string.IsNullOrWhiteSpace(cursor) || !seenCursors.Add(cursor))
                     throw new InvalidOperationException("Samsara pagination did not advance its cursor.");
-                await Task.Delay(TimeSpan.FromMilliseconds(100), ct);
+                if (interPageDelayMs > 0)
+                    await Task.Delay(TimeSpan.FromMilliseconds(interPageDelayMs), ct);
             }
+            var boundedPartial = !completed && hasNextPage;
             return ConnectorResult.Ok(
                 $"Synced {positionsWritten} vehicle position(s) from Samsara" +
-                $"{(unmatched > 0 ? $"; {unmatched} Samsara vehicle(s) had no matching OpsTrax vehicle (map a device to link them)." : ".")}",
+                $"{(unmatched > 0 ? $"; {unmatched} Samsara vehicle(s) had no matching OpsTrax vehicle (map a device to link them)." : ".")}" +
+                $"{(boundedPartial ? $" Reached the bounded {maxPages}-page run limit; the returned cursor will resume the remaining backlog." : "")}",
                 new Dictionary<string, object?>
                 {
                     ["positionsWritten"] = positionsWritten,
@@ -127,6 +141,7 @@ public sealed class SamsaraConnector(
                     ["unmatched"] = unmatched,
                     ["nextCursor"] = cursor,
                     ["hasNextPage"] = hasNextPage,
+                    ["boundedPartial"] = boundedPartial,
                 });
         }
         catch (Exception ex)

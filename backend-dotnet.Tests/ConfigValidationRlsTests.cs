@@ -151,6 +151,34 @@ public sealed class ConfigValidationRlsTests
 
         Assert.Equal("fail", Assert.Single(result.Issues,
             i => i.Check == "device_hmac_encryption").Level);
+        Assert.Equal("fail", Assert.Single(result.Issues,
+            i => i.Check == "connector_secret_encryption").Level);
+    }
+
+    [Fact]
+    public void Validate_StagingWithoutEncryptionKey_FailsDeviceAndConnectorChecks()
+    {
+        var values = BaseValues("Staging", "false");
+        values["DATA_ENCRYPTION_KEY"] = null;
+        var result = new ConfigValidationService(
+            new ConfigurationBuilder().AddInMemoryCollection(values).Build()).Validate();
+
+        Assert.Equal("fail", Assert.Single(result.Issues,
+            i => i.Check == "device_hmac_encryption").Level);
+        Assert.Equal("fail", Assert.Single(result.Issues,
+            i => i.Check == "connector_secret_encryption").Level);
+    }
+
+    [Fact]
+    public void Validate_StagingWithLegacyDeviceSecretRead_FailsClosed()
+    {
+        var values = BaseValues("Staging", "false");
+        values[DeviceHmacSecretProtection.LegacyReadSetting] = "true";
+        var result = new ConfigValidationService(
+            new ConfigurationBuilder().AddInMemoryCollection(values).Build()).Validate();
+
+        Assert.Equal("fail", Assert.Single(result.Issues,
+            i => i.Check == "legacy_device_hmac_read").Level);
     }
 
     [Theory]

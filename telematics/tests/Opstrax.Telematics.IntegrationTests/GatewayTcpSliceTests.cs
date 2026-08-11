@@ -1,10 +1,12 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using Microsoft.Extensions.Logging.Abstractions;
 using Opstrax.Telematics.Contracts;
+using Opstrax.Telematics.Contracts.Adapters;
 using Opstrax.Telematics.Contracts.Eventing;
 using Opstrax.Telematics.Contracts.Identity;
 using Opstrax.Telematics.Contracts.Lifecycle;
@@ -104,6 +106,28 @@ public class GatewayTcpSliceTests
         await WaitUntilAsync(() => gw.Metrics.EventsPublished >= 1, TimeSpan.FromSeconds(2));
         Assert.Equal(1L, gw.Metrics.EventsPublished);
         Assert.Equal(0L, gw.Metrics.UnknownDeviceRejections);
+    }
+
+    [Fact]
+    public async Task Bound_heartbeat_is_durably_published_before_its_protocol_ack()
+    {
+        await using GatewayHarness gw = await GatewayHarness.StartAsync();
+        await using IEventSubscription<CanonicalTelemetryEvent> normalized =
+            gw.Bus.Subscribe<CanonicalTelemetryEvent>(TelematicsTopics.TelemetryNormalized);
+        using TcpClient client = await gw.ConnectAsync();
+        NetworkStream stream = client.GetStream();
+
+        await stream.WriteAsync(Fixture("login.hex"));
+        Assert.Equal(Fixture("login_ack.hex"), await ReadExactlyAsync(stream, 10));
+        await stream.WriteAsync(Fixture("heartbeat_0x13.hex"));
+
+        DeliveredEvent<CanonicalTelemetryEvent>? delivered = await ReadOneAsync(normalized);
+        Assert.NotNull(delivered);
+        Assert.Null(delivered!.Value.Envelope.Payload.Location);
+        Assert.Equal(InMemoryDeviceRegistry.KnownDeviceId, delivered.Value.Envelope.Payload.DeviceId);
+        Assert.Equal(Fixture("heartbeat_ack.hex"), await ReadExactlyAsync(stream, 10));
+        await WaitUntilAsync(() => gw.Metrics.EventsPublished >= 1, TimeSpan.FromSeconds(2));
+        Assert.Equal(1L, gw.Metrics.EventsPublished);
     }
 
     // ── (c): an unknown IMEI must never be attributed to anyone ────────────────
@@ -292,12 +316,13 @@ public class GatewayTcpSliceTests
         Assert.True(gw.Metrics.ActiveConnections <= 2);
     }
 
-    // ── (a) Increment-2: a byte-for-byte replay is dropped and counted ─────────
+    // ── (a) Increment-2: a byte-for-byte retry is counted and repair-processed ──
 
     [Fact]
-    public async Task A_replayed_location_frame_is_dropped_and_counted_not_published_twice()
+    public async Task A_fully_accepted_replay_is_acknowledged_without_double_projection_or_canonical_delivery()
     {
-        await using GatewayHarness gw = await GatewayHarness.StartAsync();
+        await using GatewayHarness gw = await GatewayHarness.StartAsync(
+            publishBackboneFactory: inner => new IdempotentBackbone(inner));
 
         await using IEventSubscription<CanonicalTelemetryEvent> normalized =
             gw.Bus.Subscribe<CanonicalTelemetryEvent>(TelematicsTopics.TelemetryNormalized);
@@ -321,17 +346,108 @@ public class GatewayTcpSliceTests
         await stream.WriteAsync(frame);
         DeliveredEvent<CanonicalTelemetryEvent>? first = await ReadOneAsync(normalized);
         Assert.NotNull(first);
+        Assert.Equal(AckForFrame(frame), await ReadExactlyAsync(stream, 10));
 
-        // Exact same bytes again: a byte-for-byte replay → dropped, never a second event.
+        // Exact same bytes again: replay metrics are emitted, then the replay ledger's stored EventId
+        // traverses the repair pipeline. Both projection and canonical persistence are no-ops,
+        // but ACK remains safe because the first acceptance is already durable.
         await stream.WriteAsync(frame);
+        Assert.Equal(AckForFrame(frame), await ReadExactlyAsync(stream, 10));
         Assert.Null(await ReadOneAsync(normalized, TimeSpan.FromMilliseconds(500)));
 
-        await WaitUntilAsync(() => gw.Metrics.EventsPublished >= 1, TimeSpan.FromSeconds(2));
-        Assert.Equal(1L, gw.Metrics.EventsPublished);
+        Assert.Equal(1, Assert.IsType<InMemoryPositionProjectionStore>(gw.ProjectionStore).SeenCount);
 
         // "Counted": the replay was recorded on the security-relevant instruments.
         Assert.True(Interlocked.Read(ref duplicates) >= 1, "the duplicate-packets counter should have recorded the replay");
         Assert.True(Interlocked.Read(ref replays) >= 1, "the replay-rejections counter should have recorded the replay");
+    }
+
+    [Fact]
+    public async Task Projection_failure_sends_no_ack_and_duplicate_retry_repairs_with_the_same_event_id()
+    {
+        var projection = new FailingOnceProjectionStore();
+        await using GatewayHarness gw = await GatewayHarness.StartAsync(
+            projectionStore: projection,
+            publishBackboneFactory: inner => new IdempotentBackbone(inner));
+        byte[] frame = BuildLocationFrame(serial: 410, fixTime: BaseFix);
+
+        using (TcpClient first = await gw.ConnectAsync())
+        {
+            NetworkStream stream = first.GetStream();
+            await stream.WriteAsync(Fixture("login.hex"));
+            await ReadExactlyAsync(stream, 10);
+            await stream.WriteAsync(frame);
+            Assert.Empty(await ReadUntilClosedAsync(stream));
+        }
+
+        await using IEventSubscription<CanonicalTelemetryEvent> normalized =
+            gw.Bus.Subscribe<CanonicalTelemetryEvent>(TelematicsTopics.TelemetryNormalized);
+        using TcpClient retry = await gw.ConnectAsync();
+        NetworkStream retryStream = retry.GetStream();
+        await retryStream.WriteAsync(Fixture("login.hex"));
+        await ReadExactlyAsync(retryStream, 10);
+        await retryStream.WriteAsync(frame);
+
+        DeliveredEvent<CanonicalTelemetryEvent>? delivered = await ReadOneAsync(normalized);
+        Assert.NotNull(delivered);
+        Assert.Equal(AckForFrame(frame), await ReadExactlyAsync(retryStream, 10));
+        Assert.Equal(2, projection.Attempts);
+        Assert.Equal(1, projection.Inner.SeenCount);
+        Assert.Equal(projection.EventIds[0], projection.EventIds[1]);
+        Assert.Equal(delivered!.Value.Envelope.EventId, projection.EventIds[1]);
+    }
+
+    [Fact]
+    public async Task Canonical_and_buffer_failure_sends_no_ack_then_duplicate_retry_repairs_without_double_history()
+    {
+        ControllableBackbone? controlled = null;
+        var projection = new InMemoryPositionProjectionStore();
+        await using GatewayHarness gw = await GatewayHarness.StartAsync(
+            projectionStore: projection,
+            forwardBuffer: new ThrowingForwardBuffer(),
+            publishBackboneFactory: inner =>
+            {
+                controlled = new ControllableBackbone(inner, up: false);
+                return new IdempotentBackbone(controlled);
+            });
+        byte[] frame = BuildLocationFrame(serial: 411, fixTime: BaseFix.AddSeconds(1));
+
+        using (TcpClient first = await gw.ConnectAsync())
+        {
+            NetworkStream stream = first.GetStream();
+            await stream.WriteAsync(Fixture("login.hex"));
+            await ReadExactlyAsync(stream, 10);
+            await stream.WriteAsync(frame);
+            Assert.Empty(await ReadUntilClosedAsync(stream));
+        }
+
+        Assert.Equal(1, projection.SeenCount);
+        controlled!.Up = true;
+        await using IEventSubscription<CanonicalTelemetryEvent> normalized =
+            gw.Bus.Subscribe<CanonicalTelemetryEvent>(TelematicsTopics.TelemetryNormalized);
+        using TcpClient retry = await gw.ConnectAsync();
+        NetworkStream retryStream = retry.GetStream();
+        await retryStream.WriteAsync(Fixture("login.hex"));
+        await ReadExactlyAsync(retryStream, 10);
+        await retryStream.WriteAsync(frame);
+
+        DeliveredEvent<CanonicalTelemetryEvent>? delivered = await ReadOneAsync(normalized);
+        Assert.NotNull(delivered);
+        Assert.Equal(AckForFrame(frame), await ReadExactlyAsync(retryStream, 10));
+        Assert.Equal(1, projection.SeenCount);
+    }
+
+    [Fact]
+    public void Replay_guard_returns_the_same_event_identity_for_an_immediate_retry()
+    {
+        var replay = new InMemoryReplayGuard(serialModulus: 65536);
+        ReplayDecision first = replay.Check("101", 42, "frame-hash", BaseFix);
+        ReplayDecision retry = replay.Check("101", 42, "frame-hash", BaseFix);
+
+        Assert.Equal(ReplayOutcome.Accept, first.Outcome);
+        Assert.Equal(ReplayOutcome.DuplicateReplay, retry.Outcome);
+        Assert.NotNull(first.EventId);
+        Assert.Equal(first.EventId, retry.EventId);
     }
 
     // ── (b) Increment-2: an out-of-order frame is FLAGGED, not dropped ──────────
@@ -588,8 +704,8 @@ public class GatewayTcpSliceTests
             InMemoryEventBackbone bus,
             IEventBackbone publishBackbone,
             GatewayMetrics metrics,
-            InMemoryStoreAndForwardBuffer forwardBuffer,
-            InMemoryPositionProjectionStore projectionStore)
+            IStoreAndForwardBuffer forwardBuffer,
+            IPositionProjectionStore projectionStore)
         {
             Service = service;
             Bus = bus;
@@ -609,16 +725,18 @@ public class GatewayTcpSliceTests
 
         public GatewayMetrics Metrics { get; }
 
-        public InMemoryStoreAndForwardBuffer ForwardBuffer { get; }
+        public IStoreAndForwardBuffer ForwardBuffer { get; }
 
-        public InMemoryPositionProjectionStore ProjectionStore { get; }
+        public IPositionProjectionStore ProjectionStore { get; }
 
         public int Port => Service.BoundPort;
 
         public static async Task<GatewayHarness> StartAsync(
             GatewayOptions? options = null,
             IDeviceRegistry? registry = null,
-            Func<InMemoryEventBackbone, IEventBackbone>? publishBackboneFactory = null)
+            Func<InMemoryEventBackbone, IEventBackbone>? publishBackboneFactory = null,
+            IPositionProjectionStore? projectionStore = null,
+            IStoreAndForwardBuffer? forwardBuffer = null)
         {
             options ??= new GatewayOptions
             {
@@ -633,8 +751,8 @@ public class GatewayTcpSliceTests
             var bus = new InMemoryEventBackbone();
             IEventBackbone publishBackbone = publishBackboneFactory?.Invoke(bus) ?? bus;
             var metrics = new GatewayMetrics();
-            var forwardBuffer = new InMemoryStoreAndForwardBuffer();
-            var projectionStore = new InMemoryPositionProjectionStore();
+            forwardBuffer ??= new InMemoryStoreAndForwardBuffer();
+            projectionStore ??= new InMemoryPositionProjectionStore();
 
             // Same wiring the composition root uses: the honest GT06 authenticator with a fail-closed
             // key resolver, and the wrap-aware replay guard (GT06's 16-bit serial modulus).
@@ -690,6 +808,38 @@ public class GatewayTcpSliceTests
         }
 
         return buffer;
+    }
+
+    private static async Task<byte[]> ReadUntilClosedAsync(NetworkStream stream)
+    {
+        using var cts = new CancellationTokenSource(SocketTimeout);
+        var result = new List<byte>();
+        var buffer = new byte[64];
+        try
+        {
+            while (true)
+            {
+                int read = await stream.ReadAsync(buffer, cts.Token);
+                if (read == 0) return result.ToArray();
+                result.AddRange(buffer.AsSpan(0, read).ToArray());
+            }
+        }
+        catch (IOException)
+        {
+            return result.ToArray();
+        }
+        catch (OperationCanceledException)
+        {
+            throw new TimeoutException("Gateway did not close the failed acceptance before the socket timeout.");
+        }
+    }
+
+    private static byte[] AckForFrame(byte[] frame)
+    {
+        var adapter = new Gt06Adapter();
+        IReadOnlyList<DecodedMessage> messages = adapter.Decode(frame, out int consumed);
+        Assert.Equal(frame.Length, consumed);
+        return adapter.EncodeAck(Assert.Single(messages));
     }
 
     private static async Task<DeliveredEvent<T>?> ReadOneAsync<T>(
@@ -895,6 +1045,74 @@ public class GatewayTcpSliceTests
 
         public IEventSubscription<T> Subscribe<T>(string topic, Guid? tenantFilter = null) =>
             _inner.Subscribe<T>(topic, tenantFilter);
+    }
+
+    private sealed class IdempotentBackbone(IEventBackbone inner) : IEventBackbone
+    {
+        private readonly ConcurrentDictionary<(string Topic, Guid EventId), byte> _accepted = new();
+
+        public async Task PublishAsync<T>(
+            string topic,
+            string key,
+            EventEnvelope<T> envelope,
+            CancellationToken cancellationToken = default)
+        {
+            var identity = (topic, envelope.EventId);
+            if (!_accepted.TryAdd(identity, 0)) return;
+            try
+            {
+                await inner.PublishAsync(topic, key, envelope, cancellationToken);
+            }
+            catch
+            {
+                _accepted.TryRemove(identity, out _);
+                throw;
+            }
+        }
+
+        public IEventSubscription<T> Subscribe<T>(string topic, Guid? tenantFilter = null) =>
+            inner.Subscribe<T>(topic, tenantFilter);
+    }
+
+    private sealed class FailingOnceProjectionStore : IPositionProjectionStore
+    {
+        private int _attempts;
+        public InMemoryPositionProjectionStore Inner { get; } = new();
+        public int Attempts => Volatile.Read(ref _attempts);
+        public List<Guid> EventIds { get; } = new();
+
+        public Task<ProjectionOutcome> ApplyAsync(
+            CanonicalTelemetryEvent evt,
+            CancellationToken cancellationToken = default)
+        {
+            lock (EventIds) EventIds.Add(evt.EventId);
+            if (Interlocked.Increment(ref _attempts) == 1)
+                throw new InvalidOperationException("simulated projection outage");
+            return Inner.ApplyAsync(evt, cancellationToken);
+        }
+    }
+
+    private sealed class ThrowingForwardBuffer : IStoreAndForwardBuffer
+    {
+        public int Count => 0;
+
+        public ValueTask EnqueueAsync(
+            StoreAndForwardEntry entry,
+            CancellationToken cancellationToken = default) =>
+            ValueTask.FromException(new InvalidOperationException("simulated durable buffer outage"));
+
+        public ValueTask<StoreAndForwardLease?> TryAcquireAsync(
+            CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult<StoreAndForwardLease?>(null);
+
+        public ValueTask CompleteAsync(
+            StoreAndForwardLease lease,
+            CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+
+        public ValueTask AbandonAsync(
+            StoreAndForwardLease lease,
+            string? reason = null,
+            CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
     }
 
     /// <summary>Fail-closed credential resolver for the test harness: no vault, so no key ever resolves.</summary>

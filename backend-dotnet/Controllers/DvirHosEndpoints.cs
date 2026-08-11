@@ -625,9 +625,13 @@ public static partial class EndpointMappings
         if (RequireAnyDirectPermission(http, "maintenance:close", "maintenance:manage") is { } denied) return denied;
         if (await RequireComplianceModule(http, db, ct) is { } gated) return gated;
         var expectedVersion = PilotRowVersion(http, body);
-        var notes = PilotText(body, "notes", 2000);
-        if (expectedVersion is null || notes is null)
-            return Results.BadRequest(ApiResponse<object>.Fail("rowVersion and repair notes are required"));
+        var notes = Get(body, "notes")?.ToString()?.Trim();
+        if (expectedVersion is null)
+            return Results.BadRequest(ApiResponse<object>.Fail("rowVersion is required"));
+        if (string.IsNullOrWhiteSpace(notes) || notes.Length < 3)
+            return Results.BadRequest(ApiResponse<object>.Fail("Repair notes must be at least 3 characters"));
+        if (notes.Length > 2000)
+            return Results.BadRequest(ApiResponse<object>.Fail("Repair notes must be 2000 characters or fewer"));
         var companyId = GetCompanyId(http);
         var affected = await db.ExecuteAsync(
             @"UPDATE dvir_defects SET status='Resolved',resolved_at=NOW(),resolved_by=@uid,

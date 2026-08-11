@@ -2,6 +2,8 @@
 .env.local
 .env.*
 !.env.example
+!**/.env.example
+!**/.env.*.example
 node_modules/
 dist/
 coverage/
@@ -17,6 +19,8 @@ obj/
 .DS_Store
 npm-debug.log*
 *.log
+__pycache__/
+*.py[cod]
 .vercel
 appsettings.json
 appsettings.*.json
@@ -26,3 +30,14 @@ tsconfig.tsbuildinfo
 /package-lock.json
 DEMO_CREDENTIALS.md
 .render-secrets.generated
+
+# Launch-assurance runtime material (may contain bearer cookies or test data)
+tests/e2e/playwright/.auth/
+tests/e2e/test-results/
+tests/e2e/playwright-report/
+tests/e2e/.env.e2e.local
+tests/load/.env.local
+tests/load/results/
+tools/launch/.env.local
+tools/launch/generated/
+tools/telematics/captures/

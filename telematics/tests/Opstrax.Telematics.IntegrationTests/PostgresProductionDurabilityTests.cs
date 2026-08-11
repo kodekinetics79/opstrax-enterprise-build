@@ -7,11 +7,266 @@ using Opstrax.Telematics.Contracts.Provenance;
 using Opstrax.Telematics.Gateway.Buffering;
 using Opstrax.Telematics.Gateway.Eventing;
 using Opstrax.Telematics.Gateway.Identity;
+using Opstrax.Telematics.Gateway.Projection;
+using Opstrax.Telematics.Gateway.Security.Replay;
 
 namespace Opstrax.Telematics.IntegrationTests;
 
 public sealed class PostgresProductionDurabilityTests
 {
+    [Fact]
+    public async Task DurableReplay_ConcurrentDuplicatesConvergeOnOneStoredEventIdentityAcrossInstances()
+    {
+        await using var database = await IsolatedSchema.CreateAsync();
+        await database.ExecuteAsync("""
+            CREATE TABLE telemetry_replay_seen(
+                id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                device_id text NOT NULL, serial bigint NOT NULL,
+                unwrapped_serial bigint NOT NULL, content_hash text NOT NULL,
+                event_id uuid NOT NULL, device_fix_time timestamptz NULL,
+                seen_at timestamptz NOT NULL DEFAULT now(),
+                UNIQUE(device_id,unwrapped_serial,content_hash));
+            CREATE TABLE telemetry_replay_device_state(
+                device_id text PRIMARY KEY, last_raw_serial bigint NOT NULL,
+                high_water_unwrapped bigint NOT NULL, updated_at timestamptz NOT NULL DEFAULT now());
+            """);
+
+        using var firstInstance = new PostgresReplayGuard(
+            database.ScopedConnectionString, serialModulus: 65_536);
+        using var secondInstance = new PostgresReplayGuard(
+            database.ScopedConnectionString, serialModulus: 65_536);
+        Task<ReplayDecision>[] attempts = Enumerable.Range(0, 16)
+            .Select(index => (index & 1) == 0 ? firstInstance : secondInstance)
+            .Select(guard => guard.CheckAsync(
+                "shared-device", 12_345, "same-frame", DateTime.MinValue))
+            .ToArray();
+
+        ReplayDecision[] decisions = await Task.WhenAll(attempts);
+
+        Assert.Single(decisions, decision => decision.Outcome == ReplayOutcome.Accept);
+        Assert.Equal(15, decisions.Count(decision => decision.Outcome == ReplayOutcome.DuplicateReplay));
+        Assert.True(decisions[0].EventId.HasValue);
+        Guid eventId = decisions[0].EventId.Value;
+        Assert.All(decisions, decision => Assert.Equal(eventId, decision.EventId));
+        Assert.Equal(1, await database.ScalarLongAsync(
+            "SELECT count(*) FROM telemetry_replay_seen WHERE device_id='shared-device'"));
+        Assert.Equal(12_345, await database.ScalarLongAsync(
+            "SELECT high_water_unwrapped FROM telemetry_replay_device_state WHERE device_id='shared-device'"));
+    }
+
+    [Fact]
+    public async Task DurableReplay_UnwrapsGt06GenerationsAndBootstrapsAboveIncompleteLegacyHistory()
+    {
+        await using var database = await IsolatedSchema.CreateAsync();
+        await database.ExecuteAsync("""
+            CREATE TABLE telemetry_replay_seen(
+                id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                device_id text NOT NULL, serial bigint NOT NULL,
+                unwrapped_serial bigint NOT NULL, content_hash text NOT NULL,
+                event_id uuid NOT NULL, device_fix_time timestamptz NULL,
+                seen_at timestamptz NOT NULL DEFAULT now(),
+                UNIQUE(device_id,unwrapped_serial,content_hash));
+            CREATE TABLE telemetry_replay_device_state(
+                device_id text PRIMARY KEY, last_raw_serial bigint NOT NULL,
+                high_water_unwrapped bigint NOT NULL, updated_at timestamptz NOT NULL DEFAULT now());
+            INSERT INTO telemetry_replay_seen
+                (device_id,serial,unwrapped_serial,content_hash,event_id,seen_at)
+            VALUES
+                ('legacy-device',65535,65535,'different-frame','10000000-0000-0000-0000-000000000001',now()-interval '2 days'),
+                -- Raw-key uniqueness in the predecessor could retain an old generation of this
+                -- repeated heartbeat while suppressing a later one; chronology is unknowable.
+                ('legacy-device',40001,40001,'repeated-heartbeat','10000000-0000-0000-0000-000000000002',now()-interval '3 days');
+            """);
+
+        using var guard = new PostgresReplayGuard(database.ScopedConnectionString, serialModulus: 65_536);
+        ReplayDecision cutover = await guard.CheckAsync(
+            "legacy-device", 40001, "repeated-heartbeat", DateTime.MinValue);
+        ReplayDecision cutoverRetry = await guard.CheckAsync(
+            "legacy-device", 40001, "repeated-heartbeat", DateTime.MinValue);
+
+        Assert.Equal(ReplayOutcome.Accept, cutover.Outcome);
+        Assert.Equal(ReplayOutcome.DuplicateReplay, cutoverRetry.Outcome);
+        Assert.NotEqual(Guid.Parse("10000000-0000-0000-0000-000000000002"), cutover.EventId);
+        Assert.Equal(cutover.EventId, cutoverRetry.EventId);
+        Assert.Equal(105537, await database.ScalarLongAsync(
+            "SELECT high_water_unwrapped FROM telemetry_replay_device_state WHERE device_id='legacy-device'"));
+
+        ReplayDecision nearWrap = await guard.CheckAsync("wrap-device", 65535, "near-wrap", DateTime.MinValue);
+        ReplayDecision afterWrap = await guard.CheckAsync("wrap-device", 0, "after-wrap", DateTime.MinValue);
+        ReplayDecision retry = await guard.CheckAsync("wrap-device", 0, "after-wrap", DateTime.MinValue);
+        ReplayDecision latePreWrap = await guard.CheckAsync("wrap-device", 65535, "late-pre-wrap", DateTime.MinValue);
+
+        Assert.Equal(ReplayOutcome.Accept, nearWrap.Outcome);
+        Assert.Equal(ReplayOutcome.Accept, afterWrap.Outcome);
+        Assert.NotEqual(nearWrap.EventId, afterWrap.EventId);
+        Assert.Equal(ReplayOutcome.DuplicateReplay, retry.Outcome);
+        Assert.Equal(afterWrap.EventId, retry.EventId);
+        Assert.Equal(ReplayOutcome.OutOfOrder, latePreWrap.Outcome);
+        Assert.Equal(65_536, await database.ScalarLongAsync(
+            "SELECT high_water_unwrapped FROM telemetry_replay_device_state WHERE device_id='wrap-device'"));
+
+        ReplayDecision repeatedFirst = await guard.CheckAsync(
+            "heartbeat-device", 40000, "identical-heartbeat", DateTime.MinValue);
+        await guard.CheckAsync("heartbeat-device", 60000, "advance-one", DateTime.MinValue);
+        await guard.CheckAsync("heartbeat-device", 10000, "advance-wrap", DateTime.MinValue);
+        ReplayDecision repeatedNextGeneration = await guard.CheckAsync(
+            "heartbeat-device", 40000, "identical-heartbeat", DateTime.MinValue);
+        Assert.Equal(ReplayOutcome.Accept, repeatedNextGeneration.Outcome);
+        Assert.NotEqual(repeatedFirst.EventId, repeatedNextGeneration.EventId);
+
+        await guard.CheckAsync("half-range-device", 0, "baseline", DateTime.MinValue);
+        ReplayDecision ambiguousHalf = await guard.CheckAsync(
+            "half-range-device", 32_768, "ambiguous", DateTime.MinValue);
+        Assert.Equal(ReplayOutcome.OutOfOrder, ambiguousHalf.Outcome);
+        Assert.Equal(0, await database.ScalarLongAsync(
+            "SELECT high_water_unwrapped FROM telemetry_replay_device_state WHERE device_id='half-range-device'"));
+    }
+
+    [Fact]
+    public async Task RawGt06Projection_IsAtomicAndReplaySafeAcrossHistoryLatestHeartbeatAndAlerts()
+    {
+        await using var database = await IsolatedSchema.CreateAsync();
+        await database.ExecuteAsync("""
+            CREATE TABLE vehicles(
+                id bigint PRIMARY KEY, company_id bigint NOT NULL, branch_id bigint NULL,
+                deleted_at timestamptz NULL);
+            CREATE TABLE eld_devices(
+                id bigint PRIMARY KEY, company_id bigint NOT NULL, vehicle_id bigint NULL,
+                driver_id bigint NULL, deleted_at timestamptz NULL,
+                last_seen_at timestamptz NULL, last_heartbeat_at timestamptz NULL,
+                updated_at timestamptz NULL);
+            CREATE TABLE telemetry_projection_inbox(
+                event_id uuid PRIMARY KEY, correlation_id uuid NOT NULL, tenant_id uuid NOT NULL,
+                company_id bigint NOT NULL, device_id text NULL, vehicle_id bigint NULL,
+                device_fix_time timestamptz NOT NULL, schema_version int NOT NULL);
+            CREATE TABLE location_events(
+                id bigserial PRIMARY KEY, company_id bigint NOT NULL, vehicle_id bigint NULL,
+                device_id bigint NULL, driver_id bigint NULL, lat numeric NOT NULL, lng numeric NOT NULL,
+                speed_mph numeric NOT NULL, heading smallint NULL, event_type text NOT NULL,
+                engine_status text NULL, fuel_level numeric NULL, odometer_miles numeric NULL,
+                source text NULL, source_channel text NULL, idempotency_key text NULL,
+                observed_at timestamptz NULL, normalized_at timestamptz NULL,
+                event_time timestamptz NOT NULL, received_at timestamptz NOT NULL,
+                UNIQUE(company_id,idempotency_key));
+            CREATE TABLE latest_vehicle_positions(
+                id bigserial PRIMARY KEY, company_id bigint NOT NULL, vehicle_id bigint NOT NULL,
+                device_id bigint NULL, driver_id bigint NULL, lat numeric NOT NULL, lng numeric NOT NULL,
+                speed_mph numeric NOT NULL, heading smallint NOT NULL, engine_status text NULL,
+                fuel_level numeric NULL, odometer_miles numeric NULL, source text NULL,
+                provider text NULL, protocol text NULL, adapter_version text NULL,
+                confidence numeric NULL, trust_score numeric NULL, quality_flags jsonb NULL,
+                device_fix_time timestamptz NULL, gateway_received_at timestamptz NULL,
+                normalized_at timestamptz NULL, event_time timestamptz NOT NULL,
+                received_at timestamptz NOT NULL, event_count bigint NOT NULL,
+                source_event_id bigint NULL, source_channel text NULL,
+                telemetry_status text NULL, risk_level text NULL, updated_at timestamptz NULL,
+                UNIQUE(company_id,vehicle_id));
+            CREATE TABLE telemetry_rules(
+                id bigserial PRIMARY KEY, company_id bigint NOT NULL, rule_type text NOT NULL,
+                threshold_value numeric NOT NULL, severity text NOT NULL, enabled boolean NOT NULL);
+            CREATE TABLE geofences(
+                id bigserial PRIMARY KEY, company_id bigint NOT NULL, branch_id bigint NULL,
+                name text NOT NULL, status text NOT NULL, center_lat numeric NULL,
+                center_lng numeric NULL, radius_meters int NULL, polygon_json jsonb NULL);
+            CREATE TABLE telemetry_alerts(
+                id bigserial PRIMARY KEY, company_id bigint NOT NULL, vehicle_id bigint NULL,
+                device_id bigint NULL, driver_id bigint NULL, alert_type text NOT NULL,
+                severity text NOT NULL, message text NOT NULL, source_event_id bigint NULL,
+                status text NOT NULL, source_channel text NULL, created_at timestamptz NOT NULL);
+            INSERT INTO vehicles VALUES(501,11,71,NULL);
+            INSERT INTO eld_devices(id,company_id,vehicle_id,driver_id) VALUES(101,11,501,301);
+            INSERT INTO telemetry_rules(company_id,rule_type,threshold_value,severity,enabled)
+              VALUES(11,'speeding',50,'High',TRUE);
+            INSERT INTO geofences(company_id,name,status,center_lat,center_lng,radius_meters)
+              VALUES(11,'Depot','Active',34.05,-118.24,100);
+            """);
+
+        DateTime fixTime = DateTime.UtcNow.AddSeconds(-30);
+        var evt = new CanonicalTelemetryEvent
+        {
+            SchemaVersion = 1,
+            EventId = Guid.NewGuid(),
+            CorrelationId = Guid.NewGuid(),
+            OccurredAtDeviceUtc = fixTime,
+            ReceivedAtGatewayUtc = fixTime.AddSeconds(1),
+            NormalizedAtUtc = fixTime.AddSeconds(2),
+            TenantId = Guid.NewGuid(),
+            CompanyId = 11,
+            DeviceId = "101",
+            VehicleId = 501,
+            Source = TelemetrySource.DirectDevice,
+            Transport = Transport.Tcp,
+            ProtocolName = "GT06",
+            AdapterName = "GT06",
+            AdapterVersion = "1.0.0",
+            Location = new GeoPoint(35.05, -119.24, SpeedKph: 130, HeadingDeg: 90),
+            EngineOn = true,
+            FuelPercent = 62,
+            OdometerKm = 12_345,
+        };
+        var projector = new PostgresPositionProjectionStore(database.ScopedConnectionString);
+
+        Assert.Equal(ProjectionOutcome.Applied, await projector.ApplyAsync(evt));
+        Assert.Equal(ProjectionOutcome.DuplicateIgnored, await projector.ApplyAsync(evt));
+
+        Assert.Equal(1, await database.ScalarLongAsync("SELECT count(*) FROM location_events"));
+        Assert.Equal(1, await database.ScalarLongAsync("SELECT event_count FROM latest_vehicle_positions"));
+        Assert.Equal(2, await database.ScalarLongAsync("SELECT count(*) FROM telemetry_alerts"));
+        Assert.Equal(2, await database.ScalarLongAsync(
+            "SELECT count(*) FROM telemetry_alerts a JOIN location_events e ON e.id=a.source_event_id AND e.company_id=a.company_id"));
+        Assert.Equal(1, await database.ScalarLongAsync(
+            "SELECT count(*) FROM eld_devices WHERE last_seen_at IS NOT NULL AND last_heartbeat_at IS NOT NULL"));
+
+        // A novel historical fix remains breadcrumb evidence but loses the monotonic latest race.
+        // Closing the existing alerts proves the old fix cannot open replacements.
+        await database.ExecuteAsync("UPDATE telemetry_alerts SET status='Closed'");
+        var outOfOrder = evt with
+        {
+            EventId = Guid.NewGuid(),
+            CorrelationId = Guid.NewGuid(),
+            OccurredAtDeviceUtc = fixTime.AddMinutes(-10),
+            ReceivedAtGatewayUtc = fixTime.AddMinutes(2),
+            NormalizedAtUtc = fixTime.AddMinutes(2).AddSeconds(1),
+        };
+        Assert.Equal(ProjectionOutcome.StaleIgnored, await projector.ApplyAsync(outOfOrder));
+        Assert.Equal(2, await database.ScalarLongAsync("SELECT count(*) FROM location_events"));
+        Assert.Equal(1, await database.ScalarLongAsync("SELECT event_count FROM latest_vehicle_positions"));
+        Assert.Equal(0, await database.ScalarLongAsync("SELECT count(*) FROM telemetry_alerts WHERE status='Open'"));
+
+        // A vehicle inside one of several active yards is authorized. Being outside the first
+        // yard must not create a false geofence breach when it is inside another active yard.
+        await database.ExecuteAsync("""
+            INSERT INTO vehicles VALUES(502,11,71,NULL);
+            INSERT INTO eld_devices(id,company_id,vehicle_id,driver_id) VALUES(102,11,502,302);
+            INSERT INTO geofences(company_id,name,status,center_lat,center_lng,radius_meters)
+              VALUES(11,'Alternate Yard','Active',35.05,-119.24,500);
+            """);
+        var insideAlternateYard = evt with
+        {
+            EventId = Guid.NewGuid(),
+            CorrelationId = Guid.NewGuid(),
+            DeviceId = "102",
+            VehicleId = 502,
+            Location = new GeoPoint(35.05, -119.24, SpeedKph: 20, HeadingDeg: 90),
+        };
+        Assert.Equal(ProjectionOutcome.Applied, await projector.ApplyAsync(insideAlternateYard));
+        Assert.Equal(0, await database.ScalarLongAsync(
+            "SELECT count(*) FROM telemetry_alerts WHERE vehicle_id=502 AND alert_type='geofence_breach'"));
+
+        var heartbeat = evt with
+        {
+            EventId = Guid.NewGuid(),
+            CorrelationId = Guid.NewGuid(),
+            OccurredAtDeviceUtc = fixTime.AddMinutes(1),
+            ReceivedAtGatewayUtc = fixTime.AddMinutes(1).AddSeconds(1),
+            NormalizedAtUtc = fixTime.AddMinutes(1).AddSeconds(2),
+            Location = null,
+        };
+        Assert.Equal(ProjectionOutcome.NoLocation, await projector.ApplyAsync(heartbeat));
+        Assert.Equal(3, await database.ScalarLongAsync("SELECT count(*) FROM location_events"));
+        Assert.Equal(4, await database.ScalarLongAsync("SELECT count(*) FROM telemetry_projection_inbox"));
+    }
+
     [Fact]
     public async Task Registry_ResolvesOnlyExactOwner_AndRejectsAmbiguousCrossTenantIdentity()
     {
@@ -147,6 +402,17 @@ public sealed class PostgresProductionDurabilityTests
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             backbone.PublishAsync(TelematicsTopics.TelemetryNormalized, entry.Key, forged));
         Assert.Contains("ownership", error.Message, StringComparison.OrdinalIgnoreCase);
+
+        var unownedPayload = valid.Payload with { CompanyId = 0, TenantId = Guid.Empty };
+        var unownedEnvelope = valid with
+        {
+            CompanyId = 0,
+            TenantId = Guid.Empty,
+            Payload = unownedPayload,
+        };
+        var unownedError = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            backbone.PublishAsync(TelematicsTopics.TelemetryNormalized, entry.Key, unownedEnvelope));
+        Assert.Contains("registry-resolved tenant ownership", unownedError.Message, StringComparison.Ordinal);
     }
 
     private static StoreAndForwardEntry Entry(Guid eventId, string deviceId, long companyId)
@@ -187,7 +453,8 @@ public sealed class PostgresProductionDurabilityTests
         public static async Task<IsolatedSchema> CreateAsync()
         {
             string admin = Environment.GetEnvironmentVariable("OPSTRAX_TEST_DB")
-                ?? "Host=127.0.0.1;Port=59955;Database=opstrax_consultant;Username=zayra;Password=zayra";
+                ?? throw new InvalidOperationException(
+                    "OPSTRAX_TEST_DB is required for Postgres production-durability tests.");
             string schema = $"telematics_test_{Guid.NewGuid():N}";
             await using var connection = new NpgsqlConnection(admin);
             await connection.OpenAsync();

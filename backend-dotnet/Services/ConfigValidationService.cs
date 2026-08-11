@@ -18,6 +18,8 @@ public sealed class ConfigValidationService(IConfiguration config)
         var issues = new List<ConfigIssue>();
         var env = config["ASPNETCORE_ENVIRONMENT"] ?? config["DOTNET_ENVIRONMENT"] ?? config["Environment"] ?? "Unknown";
         var isProduction = string.Equals(env, "Production", StringComparison.OrdinalIgnoreCase);
+        var isStaging = string.Equals(env, "Staging", StringComparison.OrdinalIgnoreCase);
+        var isProtectedEnvironment = isProduction || isStaging;
         var tenantRlsEnabled = config.GetValue<bool?>("Rls:EnforceTenantContext") == true;
 
         // JWT signing key
@@ -134,16 +136,25 @@ public sealed class ConfigValidationService(IConfiguration config)
             config["Pii:DataKey"], config["DATA_ENCRYPTION_KEY"],
             Environment.GetEnvironmentVariable("DATA_ENCRYPTION_KEY"));
         if (!IsBase64Key32(dataEncryptionKey))
-            issues.Add(new("device_hmac_encryption", isProduction ? "fail" : "warn",
-                "A valid 32-byte DATA_ENCRYPTION_KEY is required for encrypted per-device HMAC credentials"));
+            issues.Add(new("device_hmac_encryption", isProtectedEnvironment ? "fail" : "warn",
+                "A valid 32-byte DATA_ENCRYPTION_KEY is required for encrypted device and connector credentials"));
         else
             issues.Add(new("device_hmac_encryption", "pass",
-                "Per-device HMAC envelope encryption is configured"));
+                "Device and connector credential envelope encryption is configured"));
+
+        // Keep an explicit connector-specific readiness signal. The shared DEK protects
+        // both device HMAC material and integration config secrets, but distinct checks
+        // stop a release report from proving one while overlooking the other.
+        issues.Add(IsBase64Key32(dataEncryptionKey)
+            ? new ConfigIssue("connector_secret_encryption", "pass",
+                "Connector secret envelope encryption is configured")
+            : new ConfigIssue("connector_secret_encryption", isProtectedEnvironment ? "fail" : "warn",
+                "A valid 32-byte DATA_ENCRYPTION_KEY is required before connector credentials can be stored or used"));
 
         var allowLegacyDeviceSecrets = config.GetValue(DeviceHmacSecretProtection.LegacyReadSetting, false);
         if (allowLegacyDeviceSecrets)
-            issues.Add(new("legacy_device_hmac_read", isProduction ? "fail" : "warn",
-                "Legacy plaintext device-secret compatibility is enabled; rotate development devices and disable it"));
+            issues.Add(new("legacy_device_hmac_read", isProtectedEnvironment ? "fail" : "warn",
+                "Legacy plaintext device-secret compatibility is enabled; it is forbidden in Staging and Production"));
         else
             issues.Add(new("legacy_device_hmac_read", "pass", "Legacy plaintext device-secret reads are disabled"));
 

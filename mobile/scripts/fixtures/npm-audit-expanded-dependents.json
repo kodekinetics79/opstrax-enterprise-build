@@ -1,0 +1,46 @@
+{
+  "vulnerabilities": {
+    "@expo/cli": { "name": "@expo/cli", "severity": "high", "via": ["@expo/log-box", "@expo/metro", "@expo/metro-config", "@expo/router-server", "expo", "react-native"] },
+    "@expo/devtools": { "name": "@expo/devtools", "severity": "high", "via": ["react-native"] },
+    "@expo/dom-webview": { "name": "@expo/dom-webview", "severity": "high", "via": ["expo", "react-native"] },
+    "@expo/log-box": { "name": "@expo/log-box", "severity": "high", "via": ["@expo/dom-webview", "expo", "react-native"] },
+    "@expo/metro": { "name": "@expo/metro", "severity": "high", "via": ["metro", "metro-config", "metro-transform-worker"] },
+    "@expo/metro-config": { "name": "@expo/metro-config", "severity": "high", "via": ["@expo/metro", "expo"] },
+    "@expo/router-server": { "name": "@expo/router-server", "severity": "high", "via": ["expo", "expo-constants", "expo-font"] },
+    "@react-native/community-cli-plugin": { "name": "@react-native/community-cli-plugin", "severity": "high", "via": ["metro", "metro-config"] },
+    "@react-native/virtualized-lists": { "name": "@react-native/virtualized-lists", "severity": "high", "via": ["react-native"] },
+    "@react-navigation/bottom-tabs": { "name": "@react-navigation/bottom-tabs", "severity": "high", "via": ["@react-navigation/elements", "@react-navigation/native", "react-native", "react-native-safe-area-context", "react-native-screens"] },
+    "@react-navigation/elements": { "name": "@react-navigation/elements", "severity": "high", "via": ["@react-navigation/native", "react-native", "react-native-safe-area-context"] },
+    "@react-navigation/native": { "name": "@react-navigation/native", "severity": "high", "via": ["react-native"] },
+    "@react-navigation/native-stack": { "name": "@react-navigation/native-stack", "severity": "high", "via": ["@react-navigation/elements", "@react-navigation/native", "react-native", "react-native-safe-area-context", "react-native-screens"] },
+    "babel-preset-expo": { "name": "babel-preset-expo", "severity": "high", "via": ["expo"] },
+    "expo": { "name": "expo", "severity": "high", "via": ["@expo/cli", "@expo/devtools", "@expo/dom-webview", "@expo/log-box", "@expo/metro", "@expo/metro-config", "babel-preset-expo", "expo-asset", "expo-constants", "expo-file-system", "expo-font", "expo-keep-awake", "expo-modules-core", "react-native"] },
+    "expo-asset": { "name": "expo-asset", "severity": "high", "via": ["expo", "expo-constants", "react-native"] },
+    "expo-constants": { "name": "expo-constants", "severity": "high", "via": ["expo", "react-native"] },
+    "expo-file-system": { "name": "expo-file-system", "severity": "high", "via": ["expo", "react-native"] },
+    "expo-font": { "name": "expo-font", "severity": "high", "via": ["expo", "react-native"] },
+    "expo-keep-awake": { "name": "expo-keep-awake", "severity": "high", "via": ["expo"] },
+    "expo-modules-core": { "name": "expo-modules-core", "severity": "high", "via": ["expo-modules-jsi", "react-native"] },
+    "expo-modules-jsi": { "name": "expo-modules-jsi", "severity": "high", "via": ["react-native"] },
+    "expo-secure-store": { "name": "expo-secure-store", "severity": "high", "via": ["expo"] },
+    "expo-status-bar": { "name": "expo-status-bar", "severity": "high", "via": ["expo", "react-native"] },
+    "image-size": {
+      "name": "image-size",
+      "severity": "high",
+      "via": [
+        { "source": 1138808, "name": "image-size", "dependency": "image-size", "severity": "high", "url": "https://github.com/advisories/GHSA-w3rx-r6r6-pgpr" },
+        { "source": 1138809, "name": "image-size", "dependency": "image-size", "severity": "high", "url": "https://github.com/advisories/GHSA-5p2g-fcmc-qvqq" }
+      ]
+    },
+    "metro": { "name": "metro", "severity": "high", "via": ["image-size", "metro-config", "metro-transform-worker"] },
+    "metro-config": { "name": "metro-config", "severity": "high", "via": ["metro"] },
+    "metro-transform-worker": { "name": "metro-transform-worker", "severity": "high", "via": ["metro"] },
+    "react-native": { "name": "react-native", "severity": "high", "via": ["@react-native/community-cli-plugin", "@react-native/virtualized-lists"] },
+    "react-native-gesture-handler": { "name": "react-native-gesture-handler", "severity": "high", "via": ["react-native"] },
+    "react-native-safe-area-context": { "name": "react-native-safe-area-context", "severity": "high", "via": ["react-native"] },
+    "react-native-screens": { "name": "react-native-screens", "severity": "high", "via": ["react-native"] }
+  },
+  "metadata": {
+    "vulnerabilities": { "info": 0, "low": 0, "moderate": 0, "high": 32, "critical": 0, "total": 32 }
+  }
+}

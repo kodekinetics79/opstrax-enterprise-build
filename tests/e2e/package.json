@@ -1,0 +1,19 @@
+{
+  "name": "opstrax-launch-e2e",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.22.0"
+  },
+  "scripts": {
+    "test:guard": "node --test guard/*.test.mjs",
+    "test:list": "playwright test --list",
+    "test:public": "playwright test --project=public-chromium",
+    "test:local": "playwright test --project=public-chromium",
+    "test:staging:readonly": "playwright test --grep @readonly",
+    "test:staging:mutations": "playwright test --project=staging-mutations"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1"
+  }
+}
