@@ -50,9 +50,10 @@ frontend: npm audit; lint; production build; bundle budget      PASS (0 advisori
 database: tools/test-predeploy-clean-chain.sh                    PASS
 database: tools/test-production-shaped-local-rehearsal.sh        PASS (16/16 ledgers; 0 PUBLIC policies; 0 ACL violations)
 compose: clean-env docker compose config --quiet                PASS
-containers: API release image build                             PASS sha256:6e5125072bef
+containers: API release image build                             PASS sha256:0b44efb26244
 containers: frontend release image build                        PASS sha256:0feeb520bc6e
-containers: telematics gateway release image build              PASS sha256:f9f9cdcbfdf
+containers: telematics gateway release image build              PASS sha256:c4b741d46e4e
+containers: patched API + telematics Trivy HIGH/CRITICAL scan    PASS 0 fixed findings
 ```
 
 ## Mobile dependency advisory disposition
