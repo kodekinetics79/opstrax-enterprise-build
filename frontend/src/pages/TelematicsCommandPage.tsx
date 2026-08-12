@@ -81,14 +81,14 @@ const configs: Record<TelematicsKind, ClusterConfig> = {
   "cold-chain": {
     eyebrow: "Telematics & IoT",
     title: "Cold Chain Telemetry",
-    description: "Cold-chain sensor posture with reefer readings, humidity, door status, and shipment protection decisions.",
+    description: "Live cold-chain device readings, configured zone thresholds, battery, shipment linkage, freshness, and breach posture.",
     columns: ["vehicleCode", "deviceName", "sensorType", "latestReading", "expectedRange", "sensorStatus", "signalStrength", "powerStatus", "calibrationStatus", "alertStatus"],
     emptyTitle: "No cold-chain telemetry found",
     emptySubtitle: "No cold-chain sensors are visible for this tenant and filter set.",
     searchPlaceholder: "Search reefer unit, route, reading, shipment, or alert status...",
-    query: () => telematicsService.getSensorHealthRecords(),
+    query: () => telematicsService.getColdChainRecords(),
     requiredExportPermission: PERMISSIONS.TELEMATICS_SENSORS_EXPORT,
-    requiredUpdatePermission: PERMISSIONS.TELEMATICS_SENSORS_UPDATE,
+    requiredUpdatePermission: "fleet:manage",
     filterTabs: ["All", "Nominal", "Watch", "Alerting", "Offline"],
   },
 };

@@ -49,7 +49,7 @@ const NAV_SECTIONS = [
   {
     label: "Telematics",
     color: "text-violet-700",
-    items: ["iot-devices", "gps-tracking", "obd-j1939"],
+    items: ["telematics-control-tower", "iot-devices", "gps-tracking", "obd-j1939", "sensor-health", "cold-chain"],
   },
   {
     label: "Customers",

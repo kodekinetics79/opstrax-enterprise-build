@@ -3,6 +3,7 @@ import { isCustomerPortalRole, isDriverPortalRole, resolveCustomerIdentity, reso
 import { hasPermission } from "@/auth/rbacConfig";
 import { readRawSession } from "@/auth/sessionStorage";
 import { integrationsApi } from "@/services/integrationsApi";
+import { fleetColdChainApi, type TemperatureAlert, type TemperatureDevice, type TemperatureZone } from "@/services/fleetTmsApi";
 import type { AnyRecord, UserSession } from "@/types";
 
 type DeviceMutationPayload = Record<string, unknown>;
@@ -317,9 +318,9 @@ function isSuperAdmin(session: UserSession | null) {
 }
 
 function getTenantId(session: UserSession | null) {
-  const raw = session?.company?.id ?? session?.company?.companyId ?? session?.user?.companyId ?? session?.user?.company_id ?? 1;
+  const raw = session?.company?.id ?? session?.company?.companyId ?? session?.user?.companyId ?? session?.user?.company_id;
   const parsed = Number(raw);
-  return Number.isFinite(parsed) ? parsed : 1;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
 function ensureManagementAccess(session: UserSession | null) {
@@ -867,6 +868,92 @@ function toClusterRecord(device: DeviceCommandRecord, positions: AnyRecord[], fa
   };
 }
 
+function toColdChainClusterRecord(
+  device: TemperatureDevice,
+  zones: TemperatureZone[],
+  alerts: TemperatureAlert[],
+): TelematicsClusterRecord {
+  const zone = zones.find((candidate) => String(candidate.id) === String(device.zoneId));
+  const deviceAlerts = alerts.filter((alert) =>
+    String(alert.deviceId) === String(device.id) && !/resolved/i.test(String(alert.status)),
+  );
+  const temperature = device.lastReportedTemperatureCelsius;
+  const hasTemperature = temperature !== null && temperature !== undefined && Number.isFinite(Number(temperature));
+  const battery = device.batteryPercent;
+  const hasBattery = battery !== null && battery !== undefined && Number.isFinite(Number(battery));
+  const lastPingAt = device.lastPingAtUtc ? String(device.lastPingAtUtc) : "";
+  const lastPingMs = lastPingAt ? new Date(lastPingAt).getTime() : Number.NaN;
+  const stale = !Number.isFinite(lastPingMs) || Date.now() - lastPingMs > 15 * 60 * 1000;
+  const inactive = !/active|online/i.test(String(device.status));
+  const outsideZone = Boolean(zone && hasTemperature && (Number(temperature) < zone.minCelsius || Number(temperature) > zone.maxCelsius));
+  const alerting = deviceAlerts.length > 0 || outsideZone;
+  const lowBattery = hasBattery && Number(battery) <= 20;
+  const offlineWarning = stale || inactive;
+  const sensorStatus = offlineWarning ? "Offline" : alerting ? "Alerting" : lowBattery ? "Watch" : "Nominal";
+  const freshness = !lastPingAt ? "No data" : stale ? "Stale" : "Fresh";
+  const expectedRange = zone ? `${zone.minCelsius}–${zone.maxCelsius} °C` : "Not configured";
+  const shipmentLabel = device.shipmentNumber ? String(device.shipmentNumber) : "No active shipment";
+
+  return {
+    id: `cold-chain-${device.id}`,
+    deviceId: device.id,
+    deviceName: device.name || device.deviceCode,
+    deviceType: "Cold-chain sensor",
+    provider: device.sourceChannel ? String(device.sourceChannel) : "Cold-chain service",
+    vehicleId: "",
+    vehicleCode: device.vehicleNumber || "Unassigned",
+    driverId: "",
+    driverName: "Unassigned",
+    shipmentId: shipmentLabel,
+    shipmentStatus: device.shipmentNumber ? "Linked" : "Not linked",
+    routeAssociation: device.shipmentNumber ? `Shipment ${device.shipmentNumber}` : "Not linked",
+    locationLabel: device.zoneName || zone?.name || "No configured zone",
+    latitude: "—",
+    longitude: "—",
+    speedMph: "—",
+    heading: "—",
+    geofenceStatus: "Not applicable",
+    lastPingAt: lastPingAt || "—",
+    staleGps: relativeAge(lastPingAt),
+    offlineWarning,
+    deviceHealth: 0,
+    deviceHealthAvailable: false,
+    protocolType: "SENSOR",
+    positionAvailable: false,
+    positionSource: "Cold-chain reading",
+    positionProvider: device.sourceChannel ? String(device.sourceChannel) : "Cold-chain service",
+    positionAccuracy: "Not reported",
+    positionConfidence: "Not reported",
+    deviceFixAt: "—",
+    gatewayReceivedAt: lastPingAt || "—",
+    routingReadiness: "Not applicable",
+    engineHours: "—",
+    odometer: "—",
+    fuelLevel: "—",
+    batteryVoltage: "—",
+    troubleCodes: [],
+    engineStatus: "Not applicable",
+    emissionsStatus: "Not applicable",
+    lastEngineDataAt: "—",
+    dataFreshnessStatus: freshness,
+    sensorType: zone?.name || device.zoneName || "Temperature",
+    latestReading: hasTemperature ? `${Number(temperature).toFixed(1)} °C` : "—",
+    expectedRange,
+    sensorStatus,
+    powerStatus: hasBattery ? `${Math.round(Number(battery))}% battery` : "Not reported",
+    signalStrength: "Not reported",
+    calibrationStatus: "Not reported",
+    alertStatus: alerting ? "Open" : "Clear",
+    recommendedAction: offlineWarning
+      ? "Restore the device heartbeat before relying on this shipment's temperature posture."
+      : alerting
+        ? `Investigate the active breach against ${expectedRange}.`
+        : lowBattery
+          ? "Plan a battery service before the device stops reporting."
+          : "Reading is current and within the configured zone.",
+  };
+}
+
 // ── Shared reads ─────────────────────────────────────────────────────────────────────
 
 async function fetchDeviceRows(): Promise<AnyRecord[]> {
@@ -1036,6 +1123,17 @@ export const telematicsService = {
     return devices
       .filter((device) => /sensor|temperature|door|fuel|tire|reefer|cold/i.test(device.deviceType))
       .map((device) => toClusterRecord(device, positions, faults));
+  },
+
+  async getColdChainRecords(): Promise<TelematicsClusterRecord[]> {
+    const [devicesPayload, alertsPayload, summary] = await Promise.all([
+      fleetColdChainApi.devices(),
+      fleetColdChainApi.alerts(),
+      fleetColdChainApi.summary(),
+    ]);
+    return devicesPayload.items.map((device) =>
+      toColdChainClusterRecord(device, summary.zones, alertsPayload.items),
+    );
   },
 
   // ── Mutations backed by real endpoints ────────────────────────────────────────────
