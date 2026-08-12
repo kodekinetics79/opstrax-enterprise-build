@@ -28,6 +28,7 @@ export function useAsyncResource<T>(loader: () => Promise<T>, deps: unknown[] = 
       })
       .catch((err) => {
         if (!active) return;
+        setData(null);
         setError(err instanceof Error ? err.message : "Unable to load data.");
       })
       .finally(() => {

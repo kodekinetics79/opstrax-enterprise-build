@@ -2,51 +2,36 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "react-router";
 import { apiClient, unwrap } from "@/services/apiClient";
-import { withFallback } from "@/services/fleetDomainApi";
 import {
-  exportCsv, LoadingState, EmptyState,
+  exportCsv, LoadingState, EmptyState, ErrorState,
   KpiCard, ClayCard, ProgressBar, Timeline, RiskBadge,
 } from "@/components/ui";
 import type { AnyRecord } from "@/types";
+import { useTenantCurrency } from "@/hooks/useTenantRegion";
+import { formatCurrency } from "@/utils/formatters";
 
 // ── Live data builders ────────────────────────────────────────────────────────
 
-function buildServiceHistorySeed(): AnyRecord[] {
-  return [];
-}
-
-function buildDowntimeSeed(): AnyRecord[] {
-  return [];
-}
-
-function buildPMSeed(): AnyRecord[] {
-  return [];
-}
-
-const serviceHistoryApi = () => withFallback(
+const serviceHistoryApi = () =>
   unwrap<AnyRecord[]>(apiClient.get("/api/service-history")).then((rows) =>
     rows.map((r) => ({
       ...r,
       workOrderCode: r.workOrderCode ?? r.work_order_code ?? `WO-${String(r.id)}`,
       vehicleCode: r.vehicleCode ?? r.vehicle_code ?? "",
       vendorName: r.vendorName ?? r.vendor_name ?? "Internal",
-      cost: Number(r.estimatedCost ?? r.estimated_cost ?? 0),
+      cost: Number(r.actualCost ?? r.actual_cost ?? r.estimatedCost ?? r.estimated_cost ?? 0),
       downtimeHours: Number(r.downtimeHours ?? r.downtime_hours ?? 0),
       completedAt: r.completedAt ?? r.completed_at ?? r.dueDate ?? r.due_date ?? "",
       issueType: r.issueType ?? r.issue_type ?? r.title ?? "",
     }))
-  ),
-  () => buildServiceHistorySeed()
-);
+  );
 
-const downtimeApi = () => withFallback(
+const downtimeApi = () =>
   unwrap<AnyRecord[]>(apiClient.get("/api/downtime")).then((rows) =>
     rows.map((r) => ({ ...r, vehicleCode: r.vehicleCode ?? r.vehicle_code ?? "", downtimeHours: Number(r.downtimeHours ?? r.downtime_hours ?? 0) }))
-  ),
-  () => buildDowntimeSeed()
-);
+  );
 
-const pmApi = () => withFallback(
+const pmApi = () =>
   unwrap<AnyRecord[]>(apiClient.get("/api/preventive-maintenance")).then((rows) =>
     rows.map((r) => ({
       ...r,
@@ -55,9 +40,7 @@ const pmApi = () => withFallback(
       daysUntilDue: Number(r.daysUntilDue ?? r.days_until_due ?? 30),
       riskLevel: r.riskLevel ?? r.risk_level ?? "Medium",
     }))
-  ),
-  () => buildPMSeed()
-);
+  );
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -128,6 +111,7 @@ const TABS: { key: Tab; label: string }[] = [
 // ── Tab content ───────────────────────────────────────────────────────────────
 
 function ServiceHistoryTab() {
+  const currency = useTenantCurrency() ?? "USD";
   const q = useQuery({ queryKey: ["service-history"], queryFn: serviceHistoryApi });
   const rows = (q.data ?? []) as AnyRecord[];
 
@@ -153,11 +137,12 @@ function ServiceHistoryTab() {
   }, [rows]);
 
   if (q.isLoading) return <LoadingState />;
+  if (q.isError) return <ErrorState message={q.error instanceof Error ? q.error.message : "Service history is unavailable."} onRetry={() => void q.refetch()} />;
   return (
     <div className="fleet-console flex flex-col gap-4">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <KpiCard label="Completed Services" value={rows.length} />
-        <KpiCard label="Total Cost" value={`$${totalCost.toLocaleString()}`} delta={`$${Math.round(avgCost).toLocaleString()} avg / order`} />
+        <KpiCard label={`Total Cost (${currency})`} value={formatCurrency(totalCost, currency)} delta={`${formatCurrency(Math.round(avgCost), currency)} avg / order`} />
         <KpiCard label="Total Downtime" value={`${totalDowntime.toFixed(1)}h`} status={totalDowntime > 0 ? "Impact" : undefined} />
         <KpiCard label="Vendors Engaged" value={vendorRollup.length} />
       </div>
@@ -182,7 +167,7 @@ function ServiceHistoryTab() {
                       <td className="px-4 py-3 text-xs text-slate-600">{String(r.issueType ?? r.title ?? "—")}</td>
                       <td className="px-4 py-3 text-xs text-slate-500">{String(r.vendorName ?? "Internal")}</td>
                       <td className="px-4 py-3"><PriorityBadge priority={String(r.priority ?? "Normal")} /></td>
-                      <td className="px-4 py-3 font-medium text-slate-700">${Number(r.cost ?? 0).toLocaleString()}</td>
+                      <td className="px-4 py-3 font-medium text-slate-700">{formatCurrency(Number(r.cost ?? 0), currency)}</td>
                       <td className="px-4 py-3 text-xs text-slate-600">{Number(r.downtimeHours ?? 0) > 0 ? `${String(r.downtimeHours)}h` : "—"}</td>
                       <td className="px-4 py-3 text-xs text-slate-500">{String(r.completedAt ?? "—")}</td>
                     </tr>
@@ -198,7 +183,7 @@ function ServiceHistoryTab() {
                 <div key={v.vendor} className="flex flex-col gap-1.5">
                   <div className="flex items-center justify-between gap-3">
                     <span className="truncate text-sm font-semibold text-slate-700">{v.vendor}</span>
-                    <span className="shrink-0 text-xs font-bold text-slate-800 tabular-nums">${v.cost.toLocaleString()}</span>
+                    <span className="shrink-0 text-xs font-bold text-slate-800 tabular-nums">{formatCurrency(v.cost, currency)}</span>
                   </div>
                   <ProgressBar value={v.cost} max={vendorRollup[0]?.cost || 1} color="var(--teal)" />
                   <div className="flex items-center justify-between text-[11px] text-slate-500">
@@ -216,6 +201,7 @@ function ServiceHistoryTab() {
 }
 
 function DowntimeTab() {
+  const currency = useTenantCurrency() ?? "USD";
   const q = useQuery({ queryKey: ["downtime"], queryFn: downtimeApi });
   const rows = (q.data ?? []) as AnyRecord[];
 
@@ -256,12 +242,13 @@ function DowntimeTab() {
   };
 
   if (q.isLoading) return <LoadingState />;
+  if (q.isError) return <ErrorState message={q.error instanceof Error ? q.error.message : "Downtime data is unavailable."} onRetry={() => void q.refetch()} />;
   return (
     <div className="fleet-console flex flex-col gap-4">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <KpiCard label="Downtime Events" value={rows.length} />
         <KpiCard label="Total Hours" value={`${totalHours.toFixed(1)}h`} status={totalHours > 0 ? "Risk" : undefined} />
-        <KpiCard label="Est. Revenue Loss" value={`$${(totalHours * 280).toLocaleString()}`} delta="@ $280 / hr" />
+        <KpiCard label="Affected Vehicles" value={vehicleRollup.length} />
         <KpiCard label="Longest Event" value={`${worstHours.toFixed(1)}h`} />
       </div>
 
@@ -285,7 +272,7 @@ function DowntimeTab() {
                       <td className="px-4 py-3 text-xs text-slate-600">{String(r.title ?? "—")}</td>
                       <td className="px-4 py-3"><PriorityBadge priority={String(r.priority ?? "Normal")} /></td>
                       <td className="px-4 py-3 font-medium text-red-700">{String(r.downtimeHours ?? 0)}h</td>
-                      <td className="px-4 py-3 text-slate-700 text-xs">${Number(r.cost ?? 0).toLocaleString()}</td>
+                      <td className="px-4 py-3 text-slate-700 text-xs">{formatCurrency(Number(r.cost ?? 0), currency)}</td>
                       <td className="px-4 py-3 text-xs text-slate-500">{String(r.vendorName ?? "Internal")}</td>
                       <td className="px-4 py-3 text-xs text-slate-600">{String(r.status ?? "—")}</td>
                     </tr>
@@ -328,6 +315,7 @@ function DowntimeTab() {
 }
 
 function PMScheduleTab() {
+  const currency = useTenantCurrency() ?? "USD";
   const q = useQuery({ queryKey: ["preventive-maintenance"], queryFn: pmApi });
   const rows = (q.data ?? []) as AnyRecord[];
 
@@ -352,6 +340,7 @@ function PMScheduleTab() {
   }, [rows]);
 
   if (q.isLoading) return <LoadingState />;
+  if (q.isError) return <ErrorState message={q.error instanceof Error ? q.error.message : "Preventive maintenance data is unavailable."} onRetry={() => void q.refetch()} />;
   return (
     <div className="fleet-console flex flex-col gap-4">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -386,7 +375,7 @@ function PMScheduleTab() {
                           {Number(r.daysUntilDue) < 0 ? `${Math.abs(Number(r.daysUntilDue))}d overdue` : `${String(r.daysUntilDue)}d`}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-xs text-slate-600">${Number(r.estimatedCost ?? 0).toLocaleString()}</td>
+                      <td className="px-4 py-3 text-xs text-slate-600">{formatCurrency(Number(r.estimatedCost ?? 0), currency)}</td>
                       <td className="px-4 py-3"><PriorityBadge priority={String(r.riskLevel ?? "Low")} /></td>
                     </tr>
                   ))}
@@ -424,11 +413,25 @@ export function MaintenancePlanningPage() {
   const { pathname } = useLocation();
   const defaultTab = (ROUTE_TAB[pathname] as Tab) ?? "history";
   const [tab, setTab] = useState<Tab>(defaultTab);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
-  const exportFns: Record<Tab, () => void> = {
-    history: () => exportCsv("service-history", buildServiceHistorySeed()),
-    downtime: () => exportCsv("downtime", buildDowntimeSeed()),
-    pm: () => exportCsv("preventive-maintenance", buildPMSeed()),
+  const exportFns: Record<Tab, () => Promise<void>> = {
+    history: async () => exportCsv("service-history", await serviceHistoryApi()),
+    downtime: async () => exportCsv("downtime", await downtimeApi()),
+    pm: async () => exportCsv("preventive-maintenance", await pmApi()),
+  };
+
+  const runExport = async () => {
+    setExporting(true);
+    setExportError(null);
+    try {
+      await exportFns[tab]();
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : "Export failed.");
+    } finally {
+      setExporting(false);
+    }
   };
 
   const titles: Record<Tab, string> = {
@@ -450,8 +453,10 @@ export function MaintenancePlanningPage() {
           <h1 className="text-xl font-bold text-slate-900">{titles[tab]}</h1>
           <p className="text-sm text-slate-500 mt-0.5">{descriptions[tab]}</p>
         </div>
-        <button type="button" className="btn-secondary text-sm" onClick={exportFns[tab]}>Export CSV</button>
+        <button type="button" className="btn-secondary text-sm" onClick={() => void runExport()} disabled={exporting}>{exporting ? "Exporting…" : "Export CSV"}</button>
       </div>
+
+      {exportError ? <ErrorState message={exportError} onRetry={() => void runExport()} /> : null}
 
       <div className="panel flex gap-1 p-1.5">
         {TABS.map((t) => (

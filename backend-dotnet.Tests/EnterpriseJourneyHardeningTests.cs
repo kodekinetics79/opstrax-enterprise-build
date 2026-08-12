@@ -169,6 +169,22 @@ public sealed class EnterpriseJourneyHardeningTests
         Assert.Contains("No partial-page fallback was downloaded", page);
     }
 
+    [Fact]
+    public void MaintenancePlanningShowsFailuresAndExportsOnlyLiveServerRows()
+    {
+        var page = Read("frontend", "src", "pages", "MaintenancePlanningPage.tsx");
+
+        Assert.DoesNotContain("withFallback", page);
+        Assert.DoesNotContain("buildServiceHistorySeed", page);
+        Assert.DoesNotContain("totalHours * 280", page);
+        Assert.Contains("actualCost ?? r.actual_cost", page);
+        Assert.Contains("useTenantCurrency", page);
+        Assert.Contains("if (q.isError) return <ErrorState", page);
+        Assert.Contains("exportCsv(\"service-history\", await serviceHistoryApi())", page);
+        Assert.Contains("exportCsv(\"downtime\", await downtimeApi())", page);
+        Assert.Contains("exportCsv(\"preventive-maintenance\", await pmApi())", page);
+    }
+
     private static string Block(string source, string startMarker, string endMarker)
     {
         var start = source.IndexOf(startMarker, StringComparison.Ordinal);

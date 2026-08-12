@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { View } from "react-native";
+import { Alert, View } from "react-native";
 import { ActionButton, EmptyState, Field, LoadingState, Panel, Pill, Row, Screen, SectionHeader } from "@/components/ui";
 import { useSession } from "@/auth/SessionProvider";
 import { useWorkflow } from "@/workflow/WorkflowContext";
@@ -42,6 +42,30 @@ export function WorkflowScreen() {
 
   const refreshAll = () => bumpRefreshKey();
 
+  const decideRecommendation = (action: "accept" | "reject") => {
+    if (!latestRecommendation?.id) return;
+    Alert.alert(
+      action === "accept" ? "Accept recommendation?" : "Reject recommendation?",
+      "This changes the live assignment workflow. The server will re-check permissions and tenant scope.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: action === "accept" ? "Accept" : "Reject",
+          style: action === "reject" ? "destructive" : "default",
+          onPress: () => void (async () => {
+            try {
+              if (action === "accept") await api.acceptSmartAssignment(latestRecommendation.id as number | string);
+              else await api.rejectSmartAssignment(latestRecommendation.id as number | string);
+              refreshAll();
+            } catch (error) {
+              Alert.alert("Assignment action failed", error instanceof Error ? error.message : "The server rejected the action.");
+            }
+          })(),
+        },
+      ],
+    );
+  };
+
   return (
     <Screen>
       <Panel>
@@ -76,8 +100,8 @@ export function WorkflowScreen() {
             )}
             {hasPermission("dispatch.smart_assign.accept") || hasPermission("dispatch.smart_assign.reject") ? (
               <Row>
-                {hasPermission("dispatch.smart_assign.accept") ? <ActionButton label="Accept" onPress={() => refreshAll()} /> : null}
-                {hasPermission("dispatch.smart_assign.reject") ? <ActionButton label="Reject" onPress={() => refreshAll()} variant="secondary" /> : null}
+                {hasPermission("dispatch.smart_assign.accept") ? <ActionButton label="Accept" onPress={() => decideRecommendation("accept")} /> : null}
+                {hasPermission("dispatch.smart_assign.reject") ? <ActionButton label="Reject" onPress={() => decideRecommendation("reject")} variant="secondary" /> : null}
               </Row>
             ) : null}
           </Panel>

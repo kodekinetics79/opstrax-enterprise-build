@@ -3,34 +3,50 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import * as SecureStore from "expo-secure-store";
 import { createMobileApiClient } from "@/api/client";
 import { SECURE_SESSION_KEY } from "@/config";
-import type { MobileSession, MobileSessionEnvelope } from "@/types";
+import type { LoginResult, MfaChallenge, MobileSession } from "@/types";
 import { classifyRole, type RoleModel, ROLE_MODELS } from "@/data/roleModel";
 
 type SessionContextValue = {
   ready: boolean;
   session: MobileSession | null;
   authError: string | null;
+  mfaChallenge: MfaChallenge | null;
   roleModel: RoleModel;
   normalizedRole: ReturnType<typeof classifyRole>;
   hasPermission: (permission: string) => boolean;
   api: ReturnType<typeof createMobileApiClient>;
   login: (email: string, password: string) => Promise<void>;
+  verifyMfa: (code: string) => Promise<void>;
+  cancelMfa: () => void;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
 };
 
 const SessionContext = createContext<SessionContextValue | null>(null);
 
-function normalizeSession(value: MobileSession | MobileSessionEnvelope | null | undefined): MobileSession | null {
+const PERMISSION_ALIASES: Record<string, string[]> = {
+  "dispatch.smart_assign.read": ["dispatch:view", "dispatch:manage", "dispatch:assign"],
+  "dispatch.smart_assign.accept": ["dispatch:manage", "dispatch:assign"],
+  "dispatch.smart_assign.reject": ["dispatch:manage", "dispatch:assign"],
+  "operations.proof.read": ["dispatch:view", "dispatch:manage", "driver:self", "customer_portal:view"],
+  "operations.proof.submit": ["operations.proof.create", "dispatch:manage", "driver:self"],
+  "operations.proof.validate": ["dispatch:manage"],
+  "operations.proof_artifact.read": ["operations.proof.read", "dispatch:view", "dispatch:manage", "driver:self", "customer_portal:view"],
+};
+
+function normalizeSession(value: LoginResult | null | undefined): MobileSession | null {
   if (!value) return null;
-  if ("session" in value) return value.session;
-  return value;
+  const candidate = "session" in value ? value.session : value;
+  return "token" in candidate && typeof candidate.token === "string" && candidate.token.length > 0
+    ? candidate as MobileSession
+    : null;
 }
 
 export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
   const [session, setSessionState] = useState<MobileSession | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [mfaChallenge, setMfaChallenge] = useState<MfaChallenge | null>(null);
   const sessionRef = useRef<MobileSession | null>(null);
 
   useEffect(() => {
@@ -94,10 +110,26 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const login = useCallback(async (email: string, password: string) => {
     setAuthError(null);
     const next = await api.login(email.trim(), password);
+    if ("mfaRequired" in next && next.mfaRequired === true) {
+      setMfaChallenge(next);
+      return;
+    }
     const normalized = normalizeSession(next);
     if (!normalized) throw new Error("Login succeeded but no session was returned.");
     setSession(normalized);
   }, [api]);
+
+  const verifyMfa = useCallback(async (code: string) => {
+    if (!mfaChallenge) throw new Error("Restart sign-in to request a new MFA challenge.");
+    setAuthError(null);
+    const next = await api.verifyMfaLogin(mfaChallenge.challengeToken, code.trim());
+    const normalized = normalizeSession(next);
+    if (!normalized) throw new Error("MFA verification succeeded but no session was returned.");
+    setMfaChallenge(null);
+    setSession(normalized);
+  }, [api, mfaChallenge]);
+
+  const cancelMfa = useCallback(() => setMfaChallenge(null), []);
 
   const logout = useCallback(async () => {
     try {
@@ -118,7 +150,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const normalizedRole = classifyRole(session?.role);
   const roleModel = ROLE_MODELS.find((entry) => entry.role === normalizedRole) ?? ROLE_MODELS.find((entry) => entry.role === "general")!;
   const hasPermission = useCallback(
-    (permission: string) => Boolean(session?.permissions?.some((value) => value === "*" || value.toLowerCase() === permission.toLowerCase())),
+    (permission: string) => {
+      const accepted = [permission, ...(PERMISSION_ALIASES[permission] ?? [])].map((value) => value.toLowerCase());
+      return Boolean(session?.permissions?.some((value) => value === "*" || accepted.includes(value.toLowerCase())));
+    },
     [session],
   );
 
@@ -127,15 +162,18 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       ready,
       session,
       authError,
+      mfaChallenge,
       roleModel,
       normalizedRole,
       hasPermission,
       api,
       login,
+      verifyMfa,
+      cancelMfa,
       logout,
       refresh,
     }),
-    [ready, session, authError, roleModel, normalizedRole, api, hasPermission, login, logout, refresh],
+    [ready, session, authError, mfaChallenge, roleModel, normalizedRole, api, hasPermission, login, verifyMfa, cancelMfa, logout, refresh],
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;

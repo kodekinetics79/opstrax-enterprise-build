@@ -12,6 +12,11 @@ export function TelemetryScreen() {
   const telemetry = useAsyncResource(async () => api.telemetrySummary(), [api]);
   const safety = useAsyncResource(async () => api.safetyDashboard(), [api]);
   const maintenance = useAsyncResource(async () => api.maintenanceDashboard(), [api]);
+  const telemetryRecord = telemetry.data as Record<string, unknown> | null;
+  const telemetryKpis = telemetryRecord?.kpis as Record<string, unknown> | undefined;
+  const safetyRecord = safety.data as Record<string, unknown> | null;
+  const maintenanceRecord = maintenance.data as Record<string, unknown> | null;
+  const maintenanceKpis = maintenanceRecord?.kpis as Record<string, unknown> | undefined;
 
   return (
     <Screen>
@@ -24,10 +29,10 @@ export function TelemetryScreen() {
         {telemetry.loading ? <LoadingState label="Loading telemetry..." /> : telemetry.error ? <EmptyState title="Telemetry unavailable" body={telemetry.error} /> : null}
         {telemetry.data ? (
           <View style={{ gap: 10 }}>
-            <Field label="Status" value={textOf((telemetry.data as Record<string, unknown>).status)} />
-            <Field label="Open alerts" value={textOf((telemetry.data as Record<string, unknown>).open_alert_count)} />
-            <Field label="Connected assets" value={textOf((telemetry.data as Record<string, unknown>).connected_assets ?? (telemetry.data as Record<string, unknown>).assets)} />
-            <Field label="Risk level" value={textOf((telemetry.data as Record<string, unknown>).risk_level)} />
+            <Field label="As of" value={textOf(telemetryRecord?.asOf)} />
+            <Field label="Open alerts" value={textOf(telemetryKpis?.openAlerts)} />
+            <Field label="Connected assets" value={textOf(telemetryKpis?.connectedUnits)} />
+            <Field label="Stale assets" value={textOf(telemetryKpis?.staleUnits)} />
           </View>
         ) : (
           <EmptyState title="No telemetry yet" body="The telemetry API returned no summary object." />
@@ -39,9 +44,9 @@ export function TelemetryScreen() {
         {safety.loading ? <LoadingState label="Loading safety..." /> : safety.error ? <EmptyState title="Safety unavailable" body={safety.error} /> : null}
         {safety.data ? (
           <View style={{ gap: 10 }}>
-            <Field label="Safety status" value={textOf((safety.data as Record<string, unknown>).status)} />
-            <Field label="Open events" value={textOf((safety.data as Record<string, unknown>).open_events)} />
-            <Field label="Risk score" value={textOf((safety.data as Record<string, unknown>).risk_score)} />
+            <Field label="Fleet safety score" value={textOf(safetyRecord?.fleetSafetyScore)} />
+            <Field label="Open events" value={textOf(safetyRecord?.openEvents)} />
+            <Field label="Critical open" value={textOf(safetyRecord?.criticalOpen)} />
           </View>
         ) : (
           <EmptyState title="No safety dashboard" body="The safety dashboard is only displayed if the backend returns a payload." />
@@ -53,9 +58,9 @@ export function TelemetryScreen() {
         {maintenance.loading ? <LoadingState label="Loading maintenance..." /> : maintenance.error ? <EmptyState title="Maintenance unavailable" body={maintenance.error} /> : null}
         {maintenance.data ? (
           <View style={{ gap: 10 }}>
-            <Field label="Maintenance status" value={textOf((maintenance.data as Record<string, unknown>).status)} />
-            <Field label="Open work orders" value={textOf((maintenance.data as Record<string, unknown>).open_work_orders)} />
-            <Field label="Critical issues" value={textOf((maintenance.data as Record<string, unknown>).critical_issues)} />
+            <Field label="Fleet availability" value={textOf(maintenanceKpis?.fleetAvailabilityPct)} />
+            <Field label="Open work orders" value={textOf(maintenanceKpis?.openWorkOrders)} />
+            <Field label="Critical open defects" value={textOf(maintenanceKpis?.criticalOpenDefects)} />
           </View>
         ) : (
           <EmptyState title="No maintenance dashboard" body="The maintenance dashboard is only displayed if the backend returns a payload." />
@@ -64,4 +69,3 @@ export function TelemetryScreen() {
     </Screen>
   );
 }
-

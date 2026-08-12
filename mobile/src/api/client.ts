@@ -1,5 +1,5 @@
 import { API_BASE_URL } from "@/config";
-import type { ApiEnvelope, JsonRecord, MobileSession } from "@/types";
+import type { ApiEnvelope, JsonRecord, LoginResult, MobileSession } from "@/types";
 
 type RequestOptions = {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -91,9 +91,15 @@ export function createMobileApiClient(access: SessionAccess) {
   return {
     request,
     login: (email: string, password: string) =>
-      rawRequest<MobileSession>("/api/auth/login", {
+      rawRequest<LoginResult>("/api/auth/login", {
         method: "POST",
         body: { email, password },
+        retryOn401: false,
+      }),
+    verifyMfaLogin: (challengeToken: string, code: string) =>
+      rawRequest<MobileSession>("/api/auth/mfa/login-verify", {
+        method: "POST",
+        body: { challengeToken, code },
         retryOn401: false,
       }),
     me: () => rawRequest<MobileSession>("/api/auth/me", { method: "GET" }),
@@ -114,13 +120,13 @@ export function createMobileApiClient(access: SessionAccess) {
     warehouseHandovers: (jobId: number | string) => request.get<JsonRecord[]>(`/api/jobs/${jobId}/warehouse-handovers`),
     createWarehouseHandover: (jobId: number | string, body: JsonRecord) => request.post<JsonRecord>(`/api/jobs/${jobId}/warehouse-handovers`, body),
     updateWarehouseHandover: (id: number | string, body: JsonRecord) => request.patch<JsonRecord>(`/api/warehouse-handovers/${id}`, body),
-    proofPackages: (jobId: number | string) => request.get<JsonRecord[]>(`/api/jobs/${jobId}/proof-packages`),
+    proofPackages: (jobId: number | string) => request.get<{ items: JsonRecord[] }>(`/api/jobs/${jobId}/proof-packages`),
     createProofPackage: (jobId: number | string, body: JsonRecord) => request.post<JsonRecord>(`/api/jobs/${jobId}/proof-packages`, body),
     proofPackage: (id: number | string) => request.get<JsonRecord>(`/api/proof-packages/${id}`),
     updateProofPackage: (id: number | string, body: JsonRecord) => request.patch<JsonRecord>(`/api/proof-packages/${id}`, body),
     submitProofPackage: (id: number | string, body: JsonRecord = {}) => request.post<JsonRecord>(`/api/proof-packages/${id}/submit`, body),
     validateProofPackage: (id: number | string, body: JsonRecord = {}) => request.post<JsonRecord>(`/api/proof-packages/${id}/validate`, body),
-    proofArtifacts: (proofPackageId: number | string) => request.get<JsonRecord[]>(`/api/proof-packages/${proofPackageId}/artifacts`),
+    proofArtifacts: (proofPackageId: number | string) => request.get<{ items: JsonRecord[] }>(`/api/proof-packages/${proofPackageId}/artifacts`),
     createProofArtifact: (proofPackageId: number | string, body: JsonRecord) => request.post<JsonRecord>(`/api/proof-packages/${proofPackageId}/artifacts`, body),
     billingConfidence: (proofPackageId: number | string) => request.get<JsonRecord>(`/api/proof-packages/${proofPackageId}/billing-confidence`),
     telemetrySummary: () => request.get<JsonRecord>("/api/telemetry/live-map-summary"),
@@ -144,12 +150,15 @@ async function refreshSession(access: SessionAccess) {
     },
   });
 
-  if (!response.ok) return false;
+  if (!response.ok) {
+    access.setSession(null);
+    return false;
+  }
   const payload = await parseJson(response);
   if (isEnvelope<MobileSession>(payload) && payload.success) {
     access.setSession(payload.data);
     return true;
   }
+  access.setSession(null);
   return false;
 }
-

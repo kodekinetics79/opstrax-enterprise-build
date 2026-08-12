@@ -20,6 +20,17 @@ test.describe("@readonly public access", () => {
     await expect(page.getByText("Enter a valid work email address.")).toBeVisible();
   });
 
+  test("login controls expose names and a visible keyboard focus path", async ({ page }) => {
+    await page.goto("/login");
+    const email = page.getByLabel("Work email");
+    const continueButton = page.getByRole("button", { name: /Continue/i });
+    await email.focus();
+    await expect(email).toBeFocused();
+    await email.fill("qa@example.com");
+    await page.keyboard.press("Tab");
+    await expect(continueButton).toBeFocused();
+  });
+
   test("forgot-password entry point renders but does not submit", async ({ page }) => {
     await page.goto("/forgot-password");
     await expect(page.getByRole("heading", { name: "Reset your password" })).toBeVisible();
