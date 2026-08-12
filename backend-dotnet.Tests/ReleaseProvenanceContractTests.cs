@@ -8,6 +8,7 @@ public sealed class ReleaseProvenanceContractTests
         foreach (var dockerfile in new[] { Read("Dockerfile"), Read("backend-dotnet", "Dockerfile") })
         foreach (var migration in new[]
         {
+            "2026_07_16_stage42_telemetry_gateways.sql",
             "2026_07_22_stage47_detention_recovery.sql",
             "2026_08_02_stage68_entitlement_policy_mode.sql",
             "2026_08_02_stage69_market_pack_control_hardening.sql",
@@ -17,6 +18,7 @@ public sealed class ReleaseProvenanceContractTests
             "2026_08_02_stage73_hos_offboarding_null_fail_closed.sql",
             "2026_08_02_stage74_retention_policy_production_contract.sql",
             "2026_08_02_stage75_bounded_support_access.sql",
+            "2026_08_11_stage76_telematics_security_hardening.sql",
         }) Assert.Contains(migration, dockerfile, StringComparison.Ordinal);
 
         var immutableEvidenceReconciliation = Read(

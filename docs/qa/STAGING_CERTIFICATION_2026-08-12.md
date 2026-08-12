@@ -98,3 +98,13 @@ Abort the affected lane immediately for a component SHA mismatch, production hos
 For each completed lane retain: exact Git SHA and artifact digests, UTC start/end, environment identifiers, sanitized command/configuration, test versions and counts, machine-readable results, relevant logs/metrics/traces, database reconciliation, cleanup status, and reviewer disposition. Secrets, auth-state files, raw provider tokens, customer data, and sensitive packet payloads must not enter git or PR comments.
 
 This branch may fix confirmed staging defects with regression coverage. It must remain a draft and **must not be merged as a certification claim** until every required row above is executed or an authorized release owner explicitly documents an accepted exception.
+
+## Staging execution update — 2026-08-12
+
+The original candidate `c288c89418b794a65bada9a93977abf9023cee07` passed all 11 exact-SHA CI jobs. Hosting inventory then positively identified the existing OpsTrax Vercel project and two Render workspaces as Production-linked; they were not reused or modified. A separate Render workspace named `opstrax` contained no projects or services and was selected as the isolated staging boundary.
+
+The first resource created there is `opstrax-staging-api` (`https://opstrax-staging-api.onrender.com`), with auto-deploy disabled and branch `agent/opstrax-staging-certification`. Render automatically began its initial build at exact commit `c288c89418b794a65bada9a93977abf9023cee07`. That build was cancelled before runtime configuration because the service selected the repository-root `Dockerfile`, which omitted Stage42 and the terminal Stage76 telemetry-security migration from its image payload.
+
+This packaging gap is defect `STG-001`. Regression coverage now requires both production API Dockerfiles to package Stage42 and Stage76, and the root Dockerfile is corrected on this branch. The service must not be redeployed until the corrected exact head passes CI. No database connection, credential, migration, staging traffic, or production access occurred during discovery.
+
+Neon provisioning is deferred by operator direction. Therefore PostgreSQL, migrator, API/embedded workers, gateway, seeding, authenticated browser journeys, data/load/recovery tests, and backup/restore remain **BLOCKED**. The isolated Render service is an unconfigured resource shell, not a deployed or healthy component.
