@@ -268,6 +268,17 @@ BEGIN
      ) THEN
     RAISE EXCEPTION 'Clean-chain protected runtime foundation schema is incomplete';
   END IF;
+  IF NOT EXISTS (
+       SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='ai_recommendations'
+         AND column_name='tenant_id' AND data_type='bigint' AND is_nullable='NO'
+     ) OR NOT EXISTS (
+       SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='ai_recommendations'
+         AND column_name='company_id' AND data_type='bigint'
+     ) THEN
+    RAISE EXCEPTION 'Clean-chain ai_recommendations tenant compatibility is incomplete';
+  END IF;
 
   IF to_regclass('public.data_retention_policies') IS NULL
      OR NOT EXISTS (

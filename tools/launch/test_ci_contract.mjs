@@ -75,6 +75,10 @@ test("protected clean database receives the complete pre-RLS runtime foundation"
   const commercial = read("database/migrations/2026_06_29_stage18_commercial_foundation.sql");
   assert.match(commercial, /ADD COLUMN IF NOT EXISTS contract_number/);
   assert.match(commercial, /ALTER COLUMN contract_number SET NOT NULL/);
+  const foundation = read("database/migrations/2026_06_27_stage5_p0b1a_foundation.sql");
+  assert.match(foundation, /ALTER TABLE ai_recommendations ADD COLUMN IF NOT EXISTS tenant_id/);
+  assert.match(foundation, /SET company_id=COALESCE\(company_id, tenant_id\)/);
+  assert.match(foundation, /ALTER TABLE ai_recommendations ALTER COLUMN tenant_id SET NOT NULL/);
 });
 
 test("clean chain and production rehearsal require Stage76 evidence", () => {

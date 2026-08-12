@@ -174,6 +174,19 @@ CREATE TABLE IF NOT EXISTS ai_recommendations (
     causation_id VARCHAR(120) NULL
 );
 
+-- database/init/001_schema.sql predates the tenant-oriented foundation shape
+-- and creates this table with company_id but without tenant_id or created_at.
+-- Protected environments do not run FoundationSchemaService, so reconcile the
+-- two supported predecessor shapes here before the tenant index is created.
+ALTER TABLE ai_recommendations ADD COLUMN IF NOT EXISTS company_id BIGINT NULL;
+ALTER TABLE ai_recommendations ADD COLUMN IF NOT EXISTS tenant_id BIGINT NULL;
+ALTER TABLE ai_recommendations ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+UPDATE ai_recommendations
+SET company_id=COALESCE(company_id, tenant_id),
+    tenant_id=COALESCE(tenant_id, company_id)
+WHERE company_id IS NULL OR tenant_id IS NULL;
+ALTER TABLE ai_recommendations ALTER COLUMN tenant_id SET NOT NULL;
+
 CREATE TABLE IF NOT EXISTS ai_recommendation_reasons (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     tenant_id BIGINT NOT NULL,
