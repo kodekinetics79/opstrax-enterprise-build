@@ -340,7 +340,7 @@ public class GatewayTcpSliceTests
         await stream.WriteAsync(Fixture("login.hex"));
         await ReadExactlyAsync(stream, Fixture("login_ack.hex").Length);
 
-        byte[] frame = BuildLocationFrame(serial: 100, fixTime: BaseFix);
+        byte[] frame = Fixture("heartbeat_0x13.hex");
 
         // First transmission: novel, in-order → published.
         await stream.WriteAsync(frame);
@@ -369,7 +369,7 @@ public class GatewayTcpSliceTests
         await using GatewayHarness gw = await GatewayHarness.StartAsync(
             projectionStore: projection,
             publishBackboneFactory: inner => new IdempotentBackbone(inner));
-        byte[] frame = BuildLocationFrame(serial: 410, fixTime: BaseFix);
+        byte[] frame = Fixture("heartbeat_0x13.hex");
 
         using (TcpClient first = await gw.ConnectAsync())
         {
@@ -410,7 +410,7 @@ public class GatewayTcpSliceTests
                 controlled = new ControllableBackbone(inner, up: false);
                 return new IdempotentBackbone(controlled);
             });
-        byte[] frame = BuildLocationFrame(serial: 411, fixTime: BaseFix.AddSeconds(1));
+        byte[] frame = Fixture("heartbeat_0x13.hex");
 
         using (TcpClient first = await gw.ConnectAsync())
         {

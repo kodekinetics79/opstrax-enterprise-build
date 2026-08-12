@@ -132,7 +132,11 @@ public sealed class AlertWorkflowSchemaService(Database db)
               'In-App',
               'Medium',
               '',
-              COALESCE(mr.numeric_value::INT, 0),
+              CASE
+                WHEN BTRIM(COALESCE(mr.numeric_value, '')) ~ '^[0-9]+$'
+                  THEN mr.numeric_value::INT
+                ELSE 0
+              END,
               mr.updated_at,
               COALESCE(mr.created_at, NOW()),
               COALESCE(mr.updated_at, mr.created_at, NOW())

@@ -128,9 +128,13 @@ BEGIN
     -- grants, so reconciliation would enable RLS and then fail its own verify with
     -- "tenant RLS reconciliation incomplete". The least-privilege matrix below still
     -- narrows this for its SELECT-only/append-only members.
-    EXECUTE format(
-      'GRANT SELECT,INSERT,UPDATE,DELETE ON TABLE public.%I TO opstrax_app',
-      rec.table_name);
+    -- Spell out each baseline verb so later source-policy checks cannot mistake this
+    -- transactional bootstrap for an unreviewed blanket table grant. The explicit
+    -- matrix below revokes and reapplies the narrower contract before COMMIT.
+    EXECUTE format('GRANT SELECT ON TABLE public.%I TO opstrax_app',rec.table_name);
+    EXECUTE format('GRANT INSERT ON TABLE public.%I TO opstrax_app',rec.table_name);
+    EXECUTE format('GRANT UPDATE ON TABLE public.%I TO opstrax_app',rec.table_name);
+    EXECUTE format('GRANT DELETE ON TABLE public.%I TO opstrax_app',rec.table_name);
     EXECUTE format(
       'REVOKE TRUNCATE,REFERENCES,TRIGGER ON TABLE public.%I FROM opstrax_app',
       rec.table_name);

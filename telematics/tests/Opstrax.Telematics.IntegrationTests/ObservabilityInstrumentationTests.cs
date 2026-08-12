@@ -7,6 +7,12 @@ using Opstrax.Telematics.Gateway.Observability;
 
 namespace Opstrax.Telematics.IntegrationTests;
 
+[CollectionDefinition(Name, DisableParallelization = true)]
+public sealed class TelematicsObservabilityCollection
+{
+    public const string Name = "Telematics observability";
+}
+
 /// <summary>
 /// Verifies the isolated OpenTelemetry primitives in <c>Gateway/Observability</c>: that the
 /// concrete instruments from <c>metrics.md</c> are registered on the meter, that a
@@ -15,6 +21,7 @@ namespace Opstrax.Telematics.IntegrationTests;
 /// providers. Everything is observed through an in-memory <see cref="ActivityListener"/> /
 /// <see cref="MeterListener"/> — no exporter, no collector, no socket.
 /// </summary>
+[Collection(TelematicsObservabilityCollection.Name)]
 public sealed class ObservabilityInstrumentationTests
 {
     [Fact]

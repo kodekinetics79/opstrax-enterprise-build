@@ -126,8 +126,8 @@ public sealed class ConnectorSecretHardeningTests
     }
 
     [Theory]
-    [InlineData(Environments.Staging)]
-    [InlineData(Environments.Production)]
+    [InlineData("Staging")]
+    [InlineData("Production")]
     public void ProtectedEnvironment_RejectsMissingEncryptionAndLegacyPlaintext(string environment)
     {
         var registry = Registry(new DisabledKeyProvider(), environment);

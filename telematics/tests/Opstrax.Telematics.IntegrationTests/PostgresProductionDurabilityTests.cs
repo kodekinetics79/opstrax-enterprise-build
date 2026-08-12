@@ -4,6 +4,7 @@ using Opstrax.Telematics.Contracts;
 using Opstrax.Telematics.Contracts.Eventing;
 using Opstrax.Telematics.Contracts.Identity;
 using Opstrax.Telematics.Contracts.Provenance;
+using Opstrax.Telematics.Contracts.Signals;
 using Opstrax.Telematics.Gateway.Buffering;
 using Opstrax.Telematics.Gateway.Eventing;
 using Opstrax.Telematics.Gateway.Identity;

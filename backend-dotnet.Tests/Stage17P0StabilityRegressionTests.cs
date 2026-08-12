@@ -63,7 +63,8 @@ public class Stage17P0StabilityRegressionTests
         Assert.Contains("target.value", entityList);
         Assert.Contains("must be a valid number", vehiclesPage);
         Assert.Contains("target.value", vehiclesPage);
-        Assert.Contains("serviceType: \"fleet_health\"", fleetHealth);
+        Assert.Contains("Open Work Order Form", fleetHealth);
+        Assert.DoesNotContain("serviceType: \"fleet_health\"", fleetHealth);
         Assert.Contains("DrawerSkeleton", fleetHealth);
     }
 }

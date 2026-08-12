@@ -219,11 +219,18 @@ BEGIN
        'hmac_secret_encrypted','hmac_previous_secret_encrypted');
   IF sequence_name IS NULL THEN RAISE EXCEPTION 'Stage76 could not build safe eld_devices column grant'; END IF;
   EXECUTE format('GRANT SELECT (%s) ON TABLE public.eld_devices TO opstrax_app',sequence_name);
-  GRANT UPDATE (
-    branch_id,imei,device_model,provider,vehicle_id,driver_id,
-    firmware_version,notes,status,malfunction_code,malfunction_description,
-    malfunction_resolved_at,malfunction_resolved_by,resolution_evidence,row_version,updated_at
-  ) ON TABLE public.eld_devices TO opstrax_app;
+  SELECT string_agg(quote_ident(column_name),',' ORDER BY ordinal_position)
+    INTO sequence_name
+    FROM information_schema.columns
+   WHERE table_schema='public' AND table_name='eld_devices'
+     AND column_name=ANY(ARRAY[
+       'branch_id','imei','device_model','provider','vehicle_id','driver_id',
+       'firmware_version','status','malfunction_code','malfunction_description',
+       'malfunction_resolved_at','malfunction_resolved_by','resolution_evidence',
+       'row_version','updated_at'
+     ]);
+  IF sequence_name IS NULL THEN RAISE EXCEPTION 'Stage76 could not build safe eld_devices update grant'; END IF;
+  EXECUTE format('GRANT UPDATE (%s) ON TABLE public.eld_devices TO opstrax_app',sequence_name);
 
   SELECT string_agg(quote_ident(column_name),',' ORDER BY ordinal_position)
     INTO sequence_name

@@ -76,6 +76,8 @@ jobs:
         working-directory: mobile
       - run: npm run test:audit-policy
         working-directory: mobile
+      - run: npm run test:contracts
+        working-directory: mobile
       - name: Fail closed on new mobile advisories while tracking the reviewed Expo 56 chain
         run: |
           npm audit --json > "$RUNNER_TEMP/mobile-audit.json" || true
@@ -487,6 +489,7 @@ jobs:
           PG_CONNECTION: postgresql://ci:ci@postgres/ci
           PG_CONNECTION_APP: postgresql://opstrax_app:app-ci-only@postgres/ci
           PG_CONNECTION_SYSTEM: postgresql://opstrax_system:system-ci-only@postgres/ci
+          RETENTION_WORKER_ENABLED: "true"
           DATA_PROTECTION_CERTIFICATE_BASE64: Y2ktY29tcG9zZS1vbmx5
           DATA_PROTECTION_CERTIFICATE_PASSWORD: ci-compose-only
         run: docker compose config --quiet

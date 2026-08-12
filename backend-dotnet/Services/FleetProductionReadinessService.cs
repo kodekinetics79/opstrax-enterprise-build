@@ -468,7 +468,7 @@ public sealed class FleetProductionReadinessService
                       has_table_privilege('opstrax_system',oid,'SELECT')<>expected.system_select
                       OR has_table_privilege('opstrax_system',oid,'INSERT')<>expected.system_insert
                       OR has_table_privilege('opstrax_system',oid,'UPDATE')<>expected.system_update
-                      OR has_table_privilege('opstrax_system',oid,'DELETE')<>expected.system_delete)))))::int AS grant_violations,
+                      OR has_table_privilege('opstrax_system',oid,'DELETE')<>expected.system_delete))))))::int AS grant_violations,
           ((SELECT COUNT(*) FROM tenant_scope scope WHERE
             NOT scope.relrowsecurity OR NOT scope.relforcerowsecurity
             OR (SELECT COUNT(*) FROM pg_policies p
@@ -563,7 +563,7 @@ public sealed class FleetProductionReadinessService
               OR (expected.name IS NOT NULL AND (
                 has_table_privilege('opstrax_app',scope.oid,'INSERT')<>expected.allow_insert
                 OR has_table_privilege('opstrax_app',scope.oid,'UPDATE')<>expected.allow_update
-                OR has_table_privilege('opstrax_app',scope.oid,'DELETE')<>expected.allow_delete)))
+                OR has_table_privilege('opstrax_app',scope.oid,'DELETE')<>expected.allow_delete))))
            +
            (SELECT COUNT(*) FROM tenant_scope scope
             JOIN pg_depend dep ON dep.refobjid=scope.oid AND dep.refobjsubid>0 AND dep.deptype IN ('a','i')
