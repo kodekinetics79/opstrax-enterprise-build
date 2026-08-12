@@ -145,5 +145,47 @@ The operator deferred Stripe Projects and Neon provisioning and redirected the b
 | STG-002 | The new Telematics Control Tower route existed but was omitted from the primary sidebar, leaving operators on the older device/GPS/OBD surfaces; Sensor Health and Cold Chain were hidden there too. | The Telematics navigation now exposes Control Tower first, followed by Device Health, GPS, OBD/J1939, Sensor Health, and Cold Chain. A launch regression requires the complete ordered surface. | FIXED on branch; exact-head CI pending |
 | STG-003 | The `/cold-chain` telematics module queried the generic device-model projection, which has no standalone sensor-reading contract, despite a tenant-scoped cold-chain API already providing devices, readings, zones, battery and alerts. | Cold Chain now consumes the dedicated device, alert and summary/zone endpoints and renders only evidence-backed temperature, threshold, battery, shipment, freshness and breach state. Route permission now matches the backend `fleet:view` contract. | FIXED on branch; exact-head CI pending |
 | STG-004 | Frontend telematics metadata silently substituted tenant `1` when the authenticated session lacked a tenant id. | The fallback is now unscoped `0`; the backend remains authoritative for tenancy. A regression rejects tenant-one fallbacks and mock-data imports in the telematics service. | FIXED on branch; exact-head CI pending |
+| STG-005 | Pull-request CI described its provenance as exact-head evidence but Actions checked out the synthetic `refs/pull/19/merge` commit `24803170af7d0b10dd70f1aae7e85090a99ddeae`; artifacts therefore recorded that merge SHA instead of branch head `50d0c3ff623b4a07084094eb4a7b109a58ea2a52`. Both commits had tree `22a7cd531da3737e63f7ec4d615e0df5dd060fd2`, but the immutable commit identity did not match the staging candidate. | CI now derives `CANDIDATE_SHA` from `github.event.pull_request.head.sha` with `github.sha` only for push events, checks out that exact ref in every job, and uses it in provenance checks, context, artifact names and summaries. JavaScript and .NET release-contract regressions reject a return to synthetic-merge artifact identity. | FIXED in source; exact-head CI artifact pending |
 
-Local evidence for this update: telematics surface regression **3/3 passed**; complete launch tooling **36/36 passed**; frontend lint passed; production frontend build passed with 2,664 modules, 203 chunks, and 95.22 KiB maximum gzip chunk. Live authenticated validation remains blocked until an isolated database/API and disposable personas exist; these local results are not relabeled as staging certification.
+Local evidence for this update: telematics surface regression **3/3 passed**; complete launch tooling **45/45 passed**, including the exact-head provenance contract; focused .NET release-provenance contracts **4/4 passed**; frontend lint passed; production frontend build passed with 2,664 modules, 203 chunks, and 95.22 KiB maximum gzip chunk. Live authenticated validation remains blocked until an isolated database/API and disposable personas exist; these local results are not relabeled as staging certification.
+
+## Isolated pilot-closure environment update — 2026-08-12
+
+This update supersedes the earlier Neon-deferred state. Production projects, databases, data, credentials, integrations and domains were not used or modified.
+
+### Resource and cost inventory
+
+| Component | Isolated resource | State | Incremental monthly cost |
+| --- | --- | --- | ---: |
+| PostgreSQL | Neon project `opstrax-staging-certification-2026-08-12` (`wild-paper-65837531`), branch `main` (`br-flat-base-awwl7uwj`), database `opstrax_staging` | CREATED; migrated with owner/migrator identity; no tenant/user/operational rows yet | $0 Free plan |
+| API and embedded workers | Render `opstrax-staging-api` (`srv-d9u6qnajobas73ef2590`), `https://opstrax-staging-api.onrender.com` | CONFIGURED; exact corrected head deployment pending CI | $0 Free plan |
+| Frontend | Vercel project `opstrax-staging-certification` (`prj_eSx1C33oCP4iZjg71mT3zP2E0GZS`) | Existing isolated preview is stale; exact corrected head deployment pending CI | $0 incremental |
+| Durable object storage | None | BLOCKED: Render Objects is unavailable to this workspace and no staging bucket credential is authorized | $0 |
+| Public raw-device TCP gateway | None | BLOCKED: the available Render web-service topology does not provide positively identified public TCP ingress | $0 |
+
+Expected total is **$0/month before provider quota overages**. No annual commitment, paid upgrade or uncapped paid resource was created. Render Starter could not be selected because the workspace has no payment method; the service remains Free, so reliable soak/restart certification is blocked by spin-down and ephemeral-runtime limits.
+
+The Render secret store contains 28 staging-only configuration keys, including separate application/system PostgreSQL connections, cryptographic keys and certificate material, environment/SHA inputs, RLS enforcement, CORS and safe worker switches. Values are redacted. Stripe, SMTP/SMS, provider, customer webhook and production object-storage credentials are absent. Demo and telemetry-simulator flags are disabled.
+
+### Database migration evidence
+
+- Positively identified target before migration: Neon project `wild-paper-65837531`, database `opstrax_staging`.
+- Applied the schema baseline without `database/init/002_seed.sql`; Avery Stone, Batch-3 and all other demo operational seeds were excluded.
+- Stage 42, Stage 58 and Stage 76 ledgers exist exactly once. The complete owner chain initially produced 54 unique ledgers.
+- A clean protected database then exposed a release defect: `platform_roles=0`, global tenant `roles=0`, `platform_admins=0`, `companies=0`. Stage 26 claimed to seed platform roles but contained no inserts; protected Staging correctly skips runtime owner schema seeding, so the first administrator could not be created.
+- Stage 77 now installs only 16 global tenant authorization roles, 9 platform authorization roles and 51 platform permission references. It creates no tenant, person, credential or operational data. Two consecutive applications produced one ledger row, proving idempotency.
+- The full owner runner re-executed after Stage 77 and passed the terminal Stage 58/59/67/76 security reconciliation. The database still contained zero platform admins and zero tenants at the pre-deploy checkpoint.
+
+### Pilot-closure defects
+
+| ID | Finding | Regression/fix | State |
+| --- | --- | --- | --- |
+| STG-006 | Staging followed multiple Production-only security branches and could start without the protected dual-identity, RLS, Data Protection, retention, demo/simulator, readiness and outbound contracts. | One protected-environment predicate now covers both Staging and Production while diagnostics retain the exact `Staging` label. Config/startup regressions pass 29/29. | FIXED in source; exact-head CI/deploy pending |
+| STG-007 | A clean protected database had no authorization reference roles, preventing first platform-admin creation and tenant admin invitations. | New idempotent Stage 77 migration adds authorization reference data only; owner runner, clean-chain and both API image provenance contracts require it. Applied twice successfully to `opstrax_staging`. | FIXED in source and isolated DB; exact-head CI pending |
+| STG-008 | Trusted gateway harsh/crash/SOS alerts used lowercase `open`, while live-state and acknowledgement contracts require `Open`; alerts were hidden and unacknowledgeable. | Canonical `Open` status plus cross-contract regression. Telemetry launch tests pass 9/9. | FIXED in source; deploy/browser evidence pending |
+| STG-009 | Mobile rendered a successful telemetry response containing `error` as zero-valued truth, called endpoints without their permissions and exposed silent/no-op workflow controls. | Error/retry truth, permission-scoped navigation and requests, proof lifecycle blockers, envelope types and accessibility metadata; mobile contracts pass 8/8. | FIXED in source; physical mobile remains BLOCKED |
+| STG-010 | Authenticated Playwright projects could exit green after skipping every role journey, could use an unintended API origin and did not fail unexpected request failures. | Missing states now fail setup; UI/API origin is verified from runtime traffic; unexpected failures fail closed; CI builds the bundle against the declared local API. Guards pass 16/16 and anonymous Chromium passes 21/21. | FIXED in source; 28 authenticated journeys await deployed personas |
+
+### Current gate
+
+The branch remains **CUSTOMER PILOT NO-GO** and Staging/Production remain **NO-GO**. The isolated database is real and migrated, but the corrected exact SHA is not yet deployed; no synthetic tenants/personas exist; authenticated UI→API→PostgreSQL persistence/audit and cross-tenant denial have not run; object storage, public TCP gateway, restore, 10,000-record, load/soak and failure-recovery evidence remain outstanding. Samsara, PT40/GT06 hardware and physical iOS/Android remain explicitly **BLOCKED**, never passed by simulation.

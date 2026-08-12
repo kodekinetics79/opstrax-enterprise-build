@@ -62,14 +62,14 @@ export function LoginScreen() {
             {mfaChallenge ? (
               <>
                 <Text style={{ color: colors.text }}>Enter the 6-digit authenticator code for {mfaChallenge.email}.</Text>
-                <Input label="Authenticator code" value={mfaCode} onChangeText={setMfaCode} placeholder="123456" keyboardType="numeric" />
+                <Input label="Authenticator code" value={mfaCode} onChangeText={setMfaCode} placeholder="123456" keyboardType="numeric" autoComplete="one-time-code" textContentType="oneTimeCode" />
                 <ActionButton label={busy ? "Verifying..." : "Verify code"} onPress={submitMfa} disabled={busy || !/^\d{6}$/.test(mfaCode)} />
                 <ActionButton label="Restart sign-in" onPress={() => { cancelMfa(); setMfaCode(""); }} disabled={busy} variant="secondary" />
               </>
             ) : (
               <>
-                <Input label="Email" value={email} onChangeText={setEmail} placeholder="name@company.com" keyboardType="email-address" />
-                <Input label="Password" value={password} onChangeText={setPassword} placeholder="Enter password" secureTextEntry />
+                <Input label="Email" value={email} onChangeText={setEmail} placeholder="name@company.com" keyboardType="email-address" autoComplete="email" textContentType="emailAddress" />
+                <Input label="Password" value={password} onChangeText={setPassword} placeholder="Enter password" secureTextEntry autoComplete="password" textContentType="password" />
                 <ActionButton label={busy ? "Signing in..." : "Sign in"} onPress={submit} disabled={busy || !email || !password} />
               </>
             )}

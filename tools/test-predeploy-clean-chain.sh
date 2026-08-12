@@ -192,6 +192,7 @@ BEGIN
       ('2026_08_02_stage73_hos_offboarding_null_fail_closed'),
       ('2026_08_02_stage74_retention_policy_production_contract'),
       ('2026_08_02_stage75_bounded_support_access'),
+      ('2026_08_12_stage77_protected_role_bootstrap'),
       ('2026_08_11_stage76_telematics_security_hardening')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN
@@ -211,6 +212,37 @@ BEGIN
       AND conname='ck_stage71_coaching_acknowledged_note_length'
   ) THEN
     RAISE EXCEPTION 'Stage71 coaching acknowledgement evidence contract is incomplete';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM (VALUES
+      ('Super Admin'),('Company Admin'),('Fleet Manager'),('Dispatcher'),('Driver'),
+      ('Mechanic'),('Safety Manager'),('Compliance Manager'),('Customer Service'),
+      ('Customer Portal User'),('Reseller / Partner Admin'),('Read-only Auditor'),
+      ('Operations Manager'),('Finance & Billing Manager'),('CRM & Sales Manager'),
+      ('Vendor Service Provider')
+    ) required(name)
+    WHERE NOT EXISTS (
+      SELECT 1 FROM roles role
+      WHERE role.company_id IS NULL AND role.is_system AND role.name=required.name
+    )
+  ) OR EXISTS (
+    SELECT 1 FROM (VALUES
+      ('platform_super_admin'),('sales_admin'),('marketing_admin'),('finance_admin'),
+      ('customer_success_admin'),('support_admin'),('product_admin'),
+      ('compliance_admin'),('readonly_executive')
+    ) required(role_key)
+    WHERE NOT EXISTS (SELECT 1 FROM platform_roles role WHERE role.role_key=required.role_key)
+  ) OR NOT EXISTS (
+    SELECT 1 FROM platform_role_permissions permission
+    JOIN platform_roles role ON role.id=permission.role_id
+    WHERE role.role_key='platform_super_admin' AND permission.permission_key='platform:*'
+  ) OR EXISTS (
+    SELECT 1 FROM platform_role_permissions permission
+    JOIN platform_roles role ON role.id=permission.role_id
+    WHERE role.role_key='support_admin' AND permission.permission_key='platform:impersonation:start'
+  ) THEN
+    RAISE EXCEPTION 'Clean-chain Stage77 authorization bootstrap is incomplete or unsafe';
   END IF;
 
   IF to_regclass('public.data_retention_policies') IS NULL

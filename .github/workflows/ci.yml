@@ -8,11 +8,19 @@ on:
 permissions:
   contents: read
 
+env:
+  # pull_request workflows otherwise check out github's synthetic refs/pull/*/merge
+  # commit. Release evidence must identify the immutable branch head that staging
+  # and artifact publication consume; push workflows continue to use github.sha.
+  CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
 jobs:
   frontend-build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '22.23.2'
@@ -32,6 +40,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '22.23.2'
@@ -46,6 +56,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '22.23.2'
@@ -60,6 +72,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '22.23.2'
@@ -93,6 +107,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '22.23.2'
@@ -111,12 +127,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '22.23.2'
       - run: npm ci --no-audit --no-fund
         working-directory: frontend
-      - run: npm run build
+      - name: Build frontend against the local browser-test API origin
+        env:
+          VITE_API_BASE_URL: http://127.0.0.1:4173
+        run: npm run build
         working-directory: frontend
       - run: npm ci --no-audit --no-fund
         working-directory: tests/e2e
@@ -152,7 +173,7 @@ jobs:
         if: ${{ failure() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: playwright-failure-${{ github.sha }}
+          name: playwright-failure-${{ env.CANDIDATE_SHA }}
           path: |
             tests/e2e/test-results
             tests/e2e/playwright-report
@@ -163,6 +184,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           dotnet-version: '8.0.x'
@@ -204,6 +227,8 @@ jobs:
       PGPASSWORD: zayra
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           dotnet-version: '8.0.x'
@@ -354,6 +379,8 @@ jobs:
       OPSTRAX_TEST_DB_SYSTEM_PASSWORD: opstrax_system_local
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           dotnet-version: '8.0.x'
@@ -388,6 +415,8 @@ jobs:
       OPSTRAX_TEST_DB: "Host=127.0.0.1;Port=5433;Database=opstrax_local;Username=zayra;Password=zayra"
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '22.23.2'
@@ -432,6 +461,7 @@ jobs:
           test -f database/migrations/2026_08_02_stage74_retention_policy_production_contract.sql
           test -f database/migrations/2026_08_02_stage75_bounded_support_access.sql
           test -f database/migrations/2026_08_11_stage76_telematics_security_hardening.sql
+          test -f database/migrations/2026_08_12_stage77_protected_role_bootstrap.sql
           test -f database/migrations/telematics/001_latest_position_provenance.sql
           test -f database/migrations/telematics/002_device_lifecycle.sql
           test -f database/migrations/telematics/003_canonical_telemetry_timeseries.sql
@@ -514,10 +544,14 @@ jobs:
             "$RUNNER_TEMP/api-migrations/2026_07_16_stage42_telemetry_gateways.sql"
           docker cp "$api_container:/app/Migrations/2026_08_11_stage76_telematics_security_hardening.sql" \
             "$RUNNER_TEMP/api-migrations/2026_08_11_stage76_telematics_security_hardening.sql"
+          docker cp "$api_container:/app/Migrations/2026_08_12_stage77_protected_role_bootstrap.sql" \
+            "$RUNNER_TEMP/api-migrations/2026_08_12_stage77_protected_role_bootstrap.sql"
           cmp database/migrations/2026_07_16_stage42_telemetry_gateways.sql \
             "$RUNNER_TEMP/api-migrations/2026_07_16_stage42_telemetry_gateways.sql"
           cmp database/migrations/2026_08_11_stage76_telematics_security_hardening.sql \
             "$RUNNER_TEMP/api-migrations/2026_08_11_stage76_telematics_security_hardening.sql"
+          cmp database/migrations/2026_08_12_stage77_protected_role_bootstrap.sql \
+            "$RUNNER_TEMP/api-migrations/2026_08_12_stage77_protected_role_bootstrap.sql"
           cleanup
           trap - EXIT
       - name: Test and audit Telematics gateway solution
@@ -569,14 +603,14 @@ jobs:
           done
       - name: Generate exact-commit image provenance and CycloneDX SBOMs
         run: |
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
           tools/test-release-candidate-provenance.sh
           tools/collect-release-candidate-provenance.sh \
             --output artifacts/release-provenance \
             --image api=opstrax-api:ci \
             --image frontend=opstrax-frontend:ci \
             --image gateway=opstrax-telematics-gateway:ci
-          test "$(awk -F '\t' '$1=="commit_sha" {print $2}' artifacts/release-provenance/candidate.tsv)" = "$GITHUB_SHA"
+          test "$(awk -F '\t' '$1=="commit_sha" {print $2}' artifacts/release-provenance/candidate.tsv)" = "$CANDIDATE_SHA"
           test "$(find artifacts/release-provenance/sboms -type f -name '*.cyclonedx.json' | wc -l)" = "3"
           if awk -F '\t' 'NR>1 && $5=="NOT_EVIDENCED" {missing=1} END {exit !missing}' artifacts/release-provenance/images.tsv; then
             echo "Local image IDs and SBOMs captured; registry RepoDigests remain a deployment/publish gate." >> "$GITHUB_STEP_SUMMARY"
@@ -586,7 +620,7 @@ jobs:
           mkdir -p artifacts/ci-context
           {
             printf 'field\tvalue\n'
-            printf 'commit_sha\t%s\n' "$GITHUB_SHA"
+            printf 'commit_sha\t%s\n' "$CANDIDATE_SHA"
             printf 'workflow\t%s\n' "$GITHUB_WORKFLOW"
             printf 'run_id\t%s\n' "$GITHUB_RUN_ID"
             printf 'run_attempt\t%s\n' "$GITHUB_RUN_ATTEMPT"
@@ -596,7 +630,7 @@ jobs:
       - name: Upload intermediate release provenance
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: release-provenance-${{ github.sha }}
+          name: release-provenance-${{ env.CANDIDATE_SHA }}
           path: |
             artifacts/release-provenance
             artifacts/ci-context
@@ -619,6 +653,8 @@ jobs:
       - release-container-builds
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
       - name: Record mandatory gate results even when a gate fails
         id: gates
         if: ${{ always() }}
@@ -659,7 +695,7 @@ jobs:
         if: ${{ always() && steps.gates.outcome == 'success' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: opstrax-mandatory-gates-${{ github.sha }}-${{ github.run_attempt }}
+          name: opstrax-mandatory-gates-${{ env.CANDIDATE_SHA }}-${{ github.run_attempt }}
           path: artifacts/mandatory-gate-results
           if-no-files-found: error
           retention-days: 30
@@ -667,14 +703,14 @@ jobs:
         if: ${{ always() && steps.gates.outputs.all_success == 'true' }}
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: release-provenance-${{ github.sha }}
+          name: release-provenance-${{ env.CANDIDATE_SHA }}
           path: artifacts/exact-sha-release
       - name: Verify exact commit and mandatory success contract
         id: verify_candidate
         if: ${{ always() && steps.gates.outputs.all_success == 'true' }}
         run: |
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(awk -F '\t' '$1=="commit_sha" {print $2}' artifacts/exact-sha-release/release-provenance/candidate.tsv)" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(awk -F '\t' '$1=="commit_sha" {print $2}' artifacts/exact-sha-release/release-provenance/candidate.tsv)" = "$CANDIDATE_SHA"
           cp artifacts/mandatory-gate-results/mandatory-ci-gates.tsv artifacts/exact-sha-release/
           tools/validate-mandatory-ci-gates.sh --require-success artifacts/exact-sha-release/mandatory-ci-gates.tsv
           find artifacts/exact-sha-release -type f -print | LC_ALL=C sort | xargs sha256sum > artifacts/exact-sha-release-index.sha256
@@ -683,7 +719,7 @@ jobs:
         if: ${{ always() && steps.verify_candidate.outcome == 'success' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: opstrax-release-candidate-${{ github.sha }}
+          name: opstrax-release-candidate-${{ env.CANDIDATE_SHA }}
           path: |
             artifacts/exact-sha-release
             artifacts/exact-sha-release-index.sha256
@@ -694,8 +730,8 @@ jobs:
         run: |
           {
             echo "### Exact-SHA release evidence"
-            echo "- Commit: \`$GITHUB_SHA\`"
-            echo "- Artifact: \`opstrax-release-candidate-$GITHUB_SHA\`"
+            echo "- Commit: \`$CANDIDATE_SHA\`"
+            echo "- Artifact: \`opstrax-release-candidate-$CANDIDATE_SHA\`"
             echo "- Artifact digest: \`${{ steps.release_evidence.outputs.artifact-digest }}\`"
             echo "- Registry deploy digests: not produced by CI; capture after authorized image publication"
           } >> "$GITHUB_STEP_SUMMARY"

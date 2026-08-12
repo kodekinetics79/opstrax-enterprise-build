@@ -10,8 +10,8 @@
     "test:list": "playwright test --list",
     "test:public": "playwright test --project=public-chromium",
     "test:local": "playwright test --project=public-chromium",
-    "test:staging:readonly": "playwright test --grep @readonly",
-    "test:staging:mutations": "playwright test --project=staging-mutations"
+    "test:staging:readonly": "E2E_TARGET_ENV=staging playwright test --grep @readonly",
+    "test:staging:mutations": "E2E_TARGET_ENV=staging playwright test --project=staging-mutations"
   },
   "devDependencies": {
     "@playwright/test": "1.62.1"

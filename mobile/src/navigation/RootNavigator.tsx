@@ -15,8 +15,21 @@ const Stack = createNativeStackNavigator();
 const Tabs = createBottomTabNavigator();
 
 function AppTabs() {
-  const { roleModel } = useSession();
-  const routes = new Set(roleModel.routeFamilies);
+  const { roleModel, hasPermission } = useSession();
+  const hasAnyPermission = (...permissions: string[]) => permissions.some(hasPermission);
+  const canUseWorkflows = hasAnyPermission(
+    "dispatch.smart_assign.read", "dispatch.smart_assign.recommend", "dispatch.smart_assign.accept", "dispatch.smart_assign.reject",
+    "operations.site_access.read", "operations.site_access.create", "operations.site_access.update",
+    "operations.pickup_authorization.read", "operations.pickup_authorization.create", "operations.pickup_authorization.update",
+    "operations.warehouse_handover.read", "operations.warehouse_handover.create", "operations.warehouse_handover.update",
+    "operations.proof.read", "operations.proof.create", "operations.proof.update", "operations.proof.submit", "operations.proof.validate",
+    "dispatch:view", "dispatch:manage", "driver:self",
+  );
+  const canUseProof = hasAnyPermission("operations.proof.read", "operations.proof.create", "operations.proof.update", "operations.proof.submit", "operations.proof.validate");
+  const canUseFleetHealth = hasAnyPermission(
+    "telemetry.live_state.read", "telemetry.live-state.read", "telemetry.alerts.read", "dashboard:view", "map:view",
+    "fleet:view", "telematics:gps:view", "safety:view", "maintenance:view",
+  );
 
   return (
     <Tabs.Navigator
@@ -30,10 +43,10 @@ function AppTabs() {
       }}
     >
       <Tabs.Screen name="Dashboard" component={DashboardScreen} options={{ title: roleModel.title, tabBarLabel: "Dashboard" }} />
-      {routes.has("Workflows") ? <Tabs.Screen name="Workflows" component={WorkflowScreen} options={{ title: "Workflows", tabBarLabel: "Work" }} /> : null}
-      {routes.has("Proof") ? <Tabs.Screen name="Proof" component={ProofScreen} options={{ title: "Proof", tabBarLabel: "Proof" }} /> : null}
-      {routes.has("Telemetry") ? <Tabs.Screen name="Telemetry" component={TelemetryScreen} options={{ title: "Telemetry", tabBarLabel: "Telemetry" }} /> : null}
-      {routes.has("Settings") ? <Tabs.Screen name="Settings" component={SettingsScreen} options={{ title: "Settings", tabBarLabel: "Settings" }} /> : null}
+      {canUseWorkflows ? <Tabs.Screen name="Workflows" component={WorkflowScreen} options={{ title: "Workflows", tabBarLabel: "Work" }} /> : null}
+      {canUseProof ? <Tabs.Screen name="Proof" component={ProofScreen} options={{ title: "Proof", tabBarLabel: "Proof" }} /> : null}
+      {canUseFleetHealth ? <Tabs.Screen name="Telemetry" component={TelemetryScreen} options={{ title: "Telemetry", tabBarLabel: "Telemetry" }} /> : null}
+      <Tabs.Screen name="Settings" component={SettingsScreen} options={{ title: "Settings", tabBarLabel: "Settings" }} />
     </Tabs.Navigator>
   );
 }

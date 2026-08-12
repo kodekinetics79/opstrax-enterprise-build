@@ -16,11 +16,14 @@ using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
+static bool IsProtectedEnvironment(IHostEnvironment environment) =>
+    environment.IsProduction() || environment.IsStaging();
+
 // ── Structured (JSON) logging ────────────────────────────────────────────────
 // Production emits one JSON object per log line (trace_id/correlation_id/tenant
 // enriched from the ambient TelemetryContext), which Render/Loki/Datadog ingest
 // natively. Dev keeps the readable console formatter. Toggle with Logging:Json.
-var useJsonLogs = builder.Configuration.GetValue("Logging:Json", builder.Environment.IsProduction());
+var useJsonLogs = builder.Configuration.GetValue("Logging:Json", IsProtectedEnvironment(builder.Environment));
 if (useJsonLogs)
 {
     builder.Logging.ClearProviders();
@@ -118,7 +121,7 @@ builder.Services.AddSingleton<PostgresDataProtectionXmlRepository>();
 builder.Services.AddSingleton<DataProtectionReadinessService>();
 var dataProtection = builder.Services.AddDataProtection()
     .SetApplicationName("opstrax-api-v1");
-if (builder.Environment.IsProduction())
+if (IsProtectedEnvironment(builder.Environment))
 {
     var certificates = Opstrax.Api.Security.DataProtectionCertificateLoader
         .LoadProductionCertificates(builder.Configuration);
@@ -239,7 +242,7 @@ builder.Services.AddSingleton<IOutboxMessageHandler, FoundationSmokeRequestedHan
 builder.Services.AddSingleton<IOutboxMessageHandler, JobDeliveredBillingHandler>();
 builder.Services.AddSingleton<IOutboxMessageHandlerRegistry, OutboxMessageHandlerRegistry>();
 builder.Services.AddSingleton<IOutboxDispatcher, PostgresOutboxDispatcher>();
-if (outboxDispatcherOptions.Enabled && (!builder.Environment.IsProduction() || outboxDispatcherOptions.AllowProduction))
+if (outboxDispatcherOptions.Enabled && (!IsProtectedEnvironment(builder.Environment) || outboxDispatcherOptions.AllowProduction))
 {
     builder.Services.AddHostedService<OutboxDispatcherBackgroundService>();
 }
@@ -299,7 +302,7 @@ builder.Services.AddHostedService<EscalationBackgroundService>();
 builder.Services.AddHostedService<AgenticOpsBackgroundService>();
 builder.Services.AddHostedService<ScheduledReportBackgroundService>();
 // Data-retention enforcement — executes stored operational-row policies while
-// respecting legal hold. Production startup requires RetentionWorker:Enabled=true,
+// respecting legal hold. Protected-environment startup requires RetentionWorker:Enabled=true,
 // and its heartbeat is part of the critical-worker readiness contract.
 builder.Services.AddHostedService<RetentionEnforcementBackgroundService>();
 builder.Services.AddCors(options =>
@@ -317,7 +320,7 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-// Validate before any database initialization or hosted workload starts. Production
+// Validate before any database initialization or hosted workload starts. Staging and Production
 // must explicitly enable tenant RLS context enforcement; missing/false is fatal.
 {
     var validator = app.Services.GetRequiredService<ConfigValidationService>();
@@ -328,7 +331,7 @@ var app = builder.Build();
 
     try
     {
-        ConfigValidationService.EnsureStartupAllowed(result, app.Environment.IsProduction());
+        ConfigValidationService.EnsureStartupAllowed(result, IsProtectedEnvironment(app.Environment));
     }
     catch (InvalidOperationException)
     {
@@ -343,9 +346,9 @@ var app = builder.Build();
 }
 
 // A connection string that merely claims a restricted username is not evidence.
-// Production opens both pools and validates the server-reported roles before schema
+// Protected environments open both pools and validate the server-reported roles before schema
 // checks, background services, or request middleware can touch customer data.
-if (app.Environment.IsProduction() && app.Configuration.GetValue<bool>("Rls:EnforceTenantContext"))
+if (IsProtectedEnvironment(app.Environment) && app.Configuration.GetValue<bool>("Rls:EnforceTenantContext"))
 {
     try
     {
@@ -354,8 +357,8 @@ if (app.Environment.IsProduction() && app.Configuration.GetValue<bool>("Rls:Enfo
     }
     catch (Exception ex)
     {
-        app.Logger.LogCritical(ex, "Production startup refused: dual database identities could not be proven.");
-        throw new InvalidOperationException("Production requires exact isolated opstrax_app and opstrax_system database identities.", ex);
+        app.Logger.LogCritical(ex, "Protected-environment startup refused: dual database identities could not be proven.");
+        throw new InvalidOperationException("Staging and Production require exact isolated opstrax_app and opstrax_system database identities.", ex);
     }
 }
 
@@ -414,48 +417,48 @@ using (var scope = app.Services.CreateScope())
     await RunSchemaStep(app, "SafetyMaintenanceFoundation", () => scope.ServiceProvider.GetRequiredService<SafetyMaintenanceFoundationSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "BusinessSpine",     () => scope.ServiceProvider.GetRequiredService<BusinessSpineSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "CommercialFoundation", () => scope.ServiceProvider.GetRequiredService<CommercialFoundationSchemaService>().EnsureAsync());
-    var revenueReadinessSchemaEnabled = builder.Configuration.GetValue("RevenueReadinessSchema:Enabled", !app.Environment.IsProduction());
+    var revenueReadinessSchemaEnabled = builder.Configuration.GetValue("RevenueReadinessSchema:Enabled", !IsProtectedEnvironment(app.Environment));
     if (revenueReadinessSchemaEnabled)
     {
         await RunSchemaStep(app, "RevenueReadiness", () => scope.ServiceProvider.GetRequiredService<RevenueReadinessSchemaService>().EnsureAsync());
     }
-    var financeActivationSchemaEnabled = builder.Configuration.GetValue("FinanceActivationSchema:Enabled", !app.Environment.IsProduction());
+    var financeActivationSchemaEnabled = builder.Configuration.GetValue("FinanceActivationSchema:Enabled", !IsProtectedEnvironment(app.Environment));
     if (financeActivationSchemaEnabled)
     {
         await RunSchemaStep(app, "FinanceActivation", () => scope.ServiceProvider.GetRequiredService<FinanceActivationSchemaService>().EnsureAsync());
     }
-    var settlementSchemaEnabled = builder.Configuration.GetValue("SettlementSchema:Enabled", !app.Environment.IsProduction());
+    var settlementSchemaEnabled = builder.Configuration.GetValue("SettlementSchema:Enabled", !IsProtectedEnvironment(app.Environment));
     if (settlementSchemaEnabled)
     {
         await RunSchemaStep(app, "Settlement", () => scope.ServiceProvider.GetRequiredService<SettlementSchemaService>().EnsureAsync());
     }
-    var taxSchemaEnabled = builder.Configuration.GetValue("TaxSchema:Enabled", !app.Environment.IsProduction());
+    var taxSchemaEnabled = builder.Configuration.GetValue("TaxSchema:Enabled", !IsProtectedEnvironment(app.Environment));
     if (taxSchemaEnabled)
     {
         await RunSchemaStep(app, "Tax", () => scope.ServiceProvider.GetRequiredService<TaxSchemaService>().EnsureAsync());
     }
-    var billingSchemaEnabled = builder.Configuration.GetValue("BillingSchema:Enabled", !app.Environment.IsProduction());
+    var billingSchemaEnabled = builder.Configuration.GetValue("BillingSchema:Enabled", !IsProtectedEnvironment(app.Environment));
     if (billingSchemaEnabled)
     {
         await RunSchemaStep(app, "Billing", () => scope.ServiceProvider.GetRequiredService<BillingProfileSchemaService>().EnsureAsync());
     }
-    var revrecSchemaEnabled = builder.Configuration.GetValue("RevRecSchema:Enabled", !app.Environment.IsProduction());
+    var revrecSchemaEnabled = builder.Configuration.GetValue("RevRecSchema:Enabled", !IsProtectedEnvironment(app.Environment));
     if (revrecSchemaEnabled)
     {
         await RunSchemaStep(app, "RevRec", () => scope.ServiceProvider.GetRequiredService<RevenueRecognitionSchemaService>().EnsureAsync());
     }
-    var finConfigSchemaEnabled = builder.Configuration.GetValue("FinConfigSchema:Enabled", !app.Environment.IsProduction());
+    var finConfigSchemaEnabled = builder.Configuration.GetValue("FinConfigSchema:Enabled", !IsProtectedEnvironment(app.Environment));
     if (finConfigSchemaEnabled)
     {
         await RunSchemaStep(app, "FinConfig", () => scope.ServiceProvider.GetRequiredService<FinancialConfigSchemaService>().EnsureAsync());
     }
-    var glSchemaEnabled = builder.Configuration.GetValue("GeneralLedgerSchema:Enabled", !app.Environment.IsProduction());
+    var glSchemaEnabled = builder.Configuration.GetValue("GeneralLedgerSchema:Enabled", !IsProtectedEnvironment(app.Environment));
     if (glSchemaEnabled)
     {
         await RunSchemaStep(app, "GeneralLedger", () => scope.ServiceProvider.GetRequiredService<GeneralLedgerSchemaService>().EnsureAsync());
         await RunSchemaStep(app, "GeneralLedgerPeriods", () => scope.ServiceProvider.GetRequiredService<GeneralLedgerPeriodSchemaService>().EnsureAsync());
     }
-    var stage9SchemaEnabled = builder.Configuration.GetValue("Stage9Schema:Enabled", !app.Environment.IsProduction());
+    var stage9SchemaEnabled = builder.Configuration.GetValue("Stage9Schema:Enabled", !IsProtectedEnvironment(app.Environment));
     if (stage9SchemaEnabled)
     {
         await RunSchemaStep(app, "Stage9", () => scope.ServiceProvider.GetRequiredService<Stage9SchemaService>().EnsureAsync());
@@ -543,7 +546,7 @@ app.UseRateLimiter();
 app.UseMiddleware<CsrfMiddleware>();
 app.UseSwagger();
 
-// RLS enforcement (Option A1). Production startup requires this to be explicitly
+// RLS enforcement (Option A1). Protected-environment startup requires this to be explicitly
 // true. Non-production may leave it off for local/test compatibility. Enable it
 // only when PG_CONNECTION_APP uses the restricted `opstrax_app` role
 // (see 2026_06_30_stage20_rls_force_and_app_role.sql). When true, each authenticated
@@ -975,7 +978,7 @@ static async Task<IResult> ReadinessAsync(
     if (cfgResult.FailCount > 0) failure ??= "critical_config_invalid";
 
     DataProtectionReadinessResult? dataProtectionResult = null;
-    if (environment.IsProduction() && dbOk && cfgResult.FailCount == 0)
+    if (IsProtectedEnvironment(environment) && dbOk && cfgResult.FailCount == 0)
     {
         dataProtectionResult = await dataProtectionReadiness.CheckAsync(ct);
         checks["data_protection_key_ring"] = new
@@ -987,13 +990,13 @@ static async Task<IResult> ReadinessAsync(
         if (!dataProtectionResult.Ready) failure ??= "data_protection_key_ring_unavailable";
     }
 
-    // Production Fleet readiness is a real database-contract proof, not SELECT 1.
+    // Protected-environment Fleet readiness is a real database-contract proof, not SELECT 1.
     // It verifies the restricted runtime identity, the complete Stage-50 schema,
     // FORCE RLS/policies/grants, market reference data and correctness indexes.
     // Details remain in structured logs; the public envelope exposes counts/booleans
     // only and never SQL, role credentials, table data or connection values.
     FleetProductionContractResult? fleetResult = null;
-    if (environment.IsProduction() && dbOk && cfgResult.FailCount == 0)
+    if (IsProtectedEnvironment(environment) && dbOk && cfgResult.FailCount == 0)
     {
         fleetResult = await fleetContract.CheckAsync(ct);
         checks["fleet_production_contract"] = new
@@ -1034,8 +1037,8 @@ static async Task<IResult> ReadinessAsync(
     }
 
     var ready = dbOk && cfgResult.FailCount == 0 &&
-                (dataProtectionResult?.Ready ?? !environment.IsProduction()) &&
-                (fleetResult?.Ready ?? !environment.IsProduction());
+                (dataProtectionResult?.Ready ?? !IsProtectedEnvironment(environment)) &&
+                (fleetResult?.Ready ?? !IsProtectedEnvironment(environment));
     var envelope = HealthEnvelope(ready ? "ready" : "not_ready", checks, ready ? null : failure);
     return Results.Json(envelope, statusCode: ready ? StatusCodes.Status200OK : StatusCodes.Status503ServiceUnavailable);
 }
@@ -1170,7 +1173,7 @@ app.MapGet("/health/deep", async (
     };
 
     DataProtectionReadinessResult? dataProtectionResult = null;
-    if (environment.IsProduction() && dbOk && cfgResult.FailCount == 0)
+    if (IsProtectedEnvironment(environment) && dbOk && cfgResult.FailCount == 0)
     {
         dataProtectionResult = await dataProtectionReadiness.CheckAsync(ct);
         checks["data_protection_key_ring"] = new
@@ -1182,7 +1185,7 @@ app.MapGet("/health/deep", async (
     }
 
     FleetProductionContractResult? fleetResult = null;
-    if (environment.IsProduction() && dbOk && cfgResult.FailCount == 0)
+    if (IsProtectedEnvironment(environment) && dbOk && cfgResult.FailCount == 0)
     {
         fleetResult = await fleetContract.CheckAsync(ct);
         checks["fleet_production_contract"] = new
@@ -1537,18 +1540,18 @@ static async Task<bool> ShouldRunSchemaInitAsync(WebApplication app, Database db
         var looksLikeOwner = isSuper || bypassRls;
         var rlsEnforced = app.Configuration.GetValue<bool>("Rls:EnforceTenantContext");
 
-        if (app.Environment.IsProduction() && rlsEnforced &&
+        if (IsProtectedEnvironment(app.Environment) && rlsEnforced &&
             (!string.Equals(roleName, "opstrax_app", StringComparison.Ordinal) || !roleRestricted))
         {
             app.Logger.LogCritical(
-                "Production startup refused: database role '{Role}' is not the required restricted opstrax_app identity " +
+                "Protected-environment startup refused: database role '{Role}' is not the required restricted opstrax_app identity " +
                 "(login={Login}, super={Super}, bypassrls={Bypass}, createdb={CreateDb}, createrole={CreateRole}, inherit={Inherit}, replication={Replication}, memberships={Memberships}, " +
                 "db_connect={DbConnect}, db_create={DbCreate}, db_temp={DbTemp}, schema_usage={SchemaUsage}, schema_create={SchemaCreate}). " +
                 "Run owner migrations out-of-band, then connect the API as opstrax_app.",
                 roleName, canLogin, isSuper, bypassRls, canCreateDb, canCreateRole, inheritsRoles, canReplicate, membershipCount,
                 dbConnect, dbCreate, dbTemporary, schemaUsage, schemaCreate);
             throw new InvalidOperationException(
-                "Production runtime database role must be exact restricted opstrax_app with no role memberships.");
+                "Protected-environment runtime database role must be exact restricted opstrax_app with no role memberships.");
         }
 
         if (looksLikeOwner)
@@ -1571,12 +1574,12 @@ static async Task<bool> ShouldRunSchemaInitAsync(WebApplication app, Database db
     }
     catch (Exception ex)
     {
-        if (app.Environment.IsProduction() && app.Configuration.GetValue<bool>("Rls:EnforceTenantContext"))
+        if (IsProtectedEnvironment(app.Environment) && app.Configuration.GetValue<bool>("Rls:EnforceTenantContext"))
         {
             app.Logger.LogCritical(ex,
-                "Production startup refused: the restricted runtime database identity could not be proven.");
+                "Protected-environment startup refused: the restricted runtime database identity could not be proven.");
             throw new InvalidOperationException(
-                "Production runtime database role must be provably restricted opstrax_app.", ex);
+                "Protected-environment runtime database role must be provably restricted opstrax_app.", ex);
         }
         // Never block startup on the check itself failing (e.g. restricted pg_roles view).
         app.Logger.LogWarning(ex, "Schema init role check could not be evaluated; proceeding with schema init.");

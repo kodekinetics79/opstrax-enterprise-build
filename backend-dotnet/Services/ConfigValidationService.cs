@@ -17,9 +17,9 @@ public sealed class ConfigValidationService(IConfiguration config)
     {
         var issues = new List<ConfigIssue>();
         var env = config["ASPNETCORE_ENVIRONMENT"] ?? config["DOTNET_ENVIRONMENT"] ?? config["Environment"] ?? "Unknown";
-        var isProduction = string.Equals(env, "Production", StringComparison.OrdinalIgnoreCase);
-        var isStaging = string.Equals(env, "Staging", StringComparison.OrdinalIgnoreCase);
-        var isProtectedEnvironment = isProduction || isStaging;
+        var isProtectedEnvironment =
+            string.Equals(env, "Production", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(env, "Staging", StringComparison.OrdinalIgnoreCase);
         var tenantRlsEnabled = config.GetValue<bool?>("Rls:EnforceTenantContext") == true;
 
         // JWT signing key
@@ -39,7 +39,7 @@ public sealed class ConfigValidationService(IConfiguration config)
             config["PG_CONNECTION_APP"],
             Environment.GetEnvironmentVariable("PG_CONNECTION_APP"));
         var legacyConn = FirstConfigured(config["PG_CONNECTION"], Environment.GetEnvironmentVariable("PG_CONNECTION"));
-        var dbConn = isProduction && tenantRlsEnabled ? explicitAppConn : FirstConfigured(explicitAppConn, legacyConn);
+        var dbConn = isProtectedEnvironment && tenantRlsEnabled ? explicitAppConn : FirstConfigured(explicitAppConn, legacyConn);
         if (string.IsNullOrWhiteSpace(dbConn))
             issues.Add(new("database_application_connection", "fail",
                 "Application database connection is not configured; set ConnectionStrings:DefaultConnection or PG_CONNECTION_APP"));
@@ -51,7 +51,7 @@ public sealed class ConfigValidationService(IConfiguration config)
             config["PG_CONNECTION_SYSTEM"],
             Environment.GetEnvironmentVariable("PG_CONNECTION_SYSTEM"));
         if (string.IsNullOrWhiteSpace(systemConn))
-            issues.Add(new("database_system_connection", isProduction && tenantRlsEnabled ? "fail" : "warn",
+            issues.Add(new("database_system_connection", isProtectedEnvironment && tenantRlsEnabled ? "fail" : "warn",
                 "System database connection is not configured; set ConnectionStrings:SystemConnection or PG_CONNECTION_SYSTEM"));
         else
             issues.Add(new("database_system_connection", "pass", "System database connection is present"));
@@ -62,12 +62,12 @@ public sealed class ConfigValidationService(IConfiguration config)
             var systemUser = ConnectionUsername(systemConn);
             var appPassword = ConnectionPassword(dbConn);
             var systemPassword = ConnectionPassword(systemConn);
-            if (isProduction && tenantRlsEnabled && !string.Equals(appUser, "opstrax_app", StringComparison.Ordinal))
+            if (isProtectedEnvironment && tenantRlsEnabled && !string.Equals(appUser, "opstrax_app", StringComparison.Ordinal))
                 issues.Add(new("database_application_identity", "fail", "Application database connection must declare the exact opstrax_app identity"));
             else
                 issues.Add(new("database_application_identity", "pass", "Application database identity is separately configured"));
 
-            if (isProduction && tenantRlsEnabled && !string.Equals(systemUser, "opstrax_system", StringComparison.Ordinal))
+            if (isProtectedEnvironment && tenantRlsEnabled && !string.Equals(systemUser, "opstrax_system", StringComparison.Ordinal))
                 issues.Add(new("database_system_identity", "fail", "System database connection must declare the exact opstrax_system identity"));
             else
                 issues.Add(new("database_system_identity", "pass", "System database identity is separately configured"));
@@ -76,7 +76,7 @@ public sealed class ConfigValidationService(IConfiguration config)
                 string.Equals(dbConn.Trim(), systemConn.Trim(), StringComparison.Ordinal) ||
                 (!string.IsNullOrEmpty(appPassword) &&
                  string.Equals(appPassword, systemPassword, StringComparison.Ordinal)))
-                issues.Add(new("database_identity_separation", isProduction && tenantRlsEnabled ? "fail" : "warn",
+                issues.Add(new("database_identity_separation", isProtectedEnvironment && tenantRlsEnabled ? "fail" : "warn",
                     "Application and system database connections alias an identity or credential"));
             else
                 issues.Add(new("database_identity_separation", "pass", "Application and system database identities are distinct"));
@@ -88,7 +88,7 @@ public sealed class ConfigValidationService(IConfiguration config)
         if (!string.IsNullOrWhiteSpace(replicaConn))
         {
             var replicaUser = ConnectionUsername(replicaConn);
-            issues.Add(isProduction && tenantRlsEnabled &&
+            issues.Add(isProtectedEnvironment && tenantRlsEnabled &&
                        !string.Equals(replicaUser, "opstrax_app", StringComparison.Ordinal)
                 ? new ConfigIssue("database_replica_identity", "fail",
                     "Read-replica connection must declare the exact opstrax_app identity")
@@ -99,7 +99,7 @@ public sealed class ConfigValidationService(IConfiguration config)
         var ticketTtl = config.GetValue<int?>("Rls:TenantTicketTtlSeconds") ?? 120;
         issues.Add(ticketTtl is >= 5 and <= 300
             ? new ConfigIssue("tenant_ticket_ttl", "pass", "Tenant transaction ticket TTL is within the enforced 5–300 second range")
-            : new ConfigIssue("tenant_ticket_ttl", isProduction && tenantRlsEnabled ? "fail" : "warn",
+            : new ConfigIssue("tenant_ticket_ttl", isProtectedEnvironment && tenantRlsEnabled ? "fail" : "warn",
                 "Rls:TenantTicketTtlSeconds must be between 5 and 300 seconds"));
 
         var dpCertificate = FirstConfigured(config["DataProtection:CertificateBase64"],
@@ -107,10 +107,10 @@ public sealed class ConfigValidationService(IConfiguration config)
         var dpPassword = FirstConfigured(config["DataProtection:CertificatePassword"],
             config["DATA_PROTECTION_CERTIFICATE_PASSWORD"]);
         if (string.IsNullOrWhiteSpace(dpCertificate) || string.IsNullOrWhiteSpace(dpPassword))
-            issues.Add(new("data_protection_key_ring", isProduction ? "fail" : "warn",
+            issues.Add(new("data_protection_key_ring", isProtectedEnvironment ? "fail" : "warn",
                 "Shared Data Protection certificate configuration is incomplete"));
         else if (dpPassword.Length < 16)
-            issues.Add(new("data_protection_key_ring", isProduction ? "fail" : "warn",
+            issues.Add(new("data_protection_key_ring", isProtectedEnvironment ? "fail" : "warn",
                 "Data Protection certificate password must be at least 16 characters"));
         else
             issues.Add(new("data_protection_key_ring", "pass",
@@ -121,7 +121,7 @@ public sealed class ConfigValidationService(IConfiguration config)
         var dpPreviousPassword = FirstConfigured(config["DataProtection:PreviousCertificatePassword"],
             config["DATA_PROTECTION_PREVIOUS_CERTIFICATE_PASSWORD"]);
         if (string.IsNullOrWhiteSpace(dpPreviousCertificate) != string.IsNullOrWhiteSpace(dpPreviousPassword))
-            issues.Add(new("data_protection_certificate_rotation", isProduction ? "fail" : "warn",
+            issues.Add(new("data_protection_certificate_rotation", isProtectedEnvironment ? "fail" : "warn",
                 "Previous Data Protection certificate and password must be configured together"));
         else
             issues.Add(new("data_protection_certificate_rotation", "pass",
@@ -163,7 +163,7 @@ public sealed class ConfigValidationService(IConfiguration config)
         // a cross-tenant skeleton key.
         var legacyGatewaySecret = config["Telemetry:GatewaySecret"];
         if (!string.IsNullOrWhiteSpace(legacyGatewaySecret))
-            issues.Add(new("legacy_telemetry_gateway_secret", isProduction ? "fail" : "warn",
+            issues.Add(new("legacy_telemetry_gateway_secret", isProtectedEnvironment ? "fail" : "warn",
                 "Remove Telemetry:GatewaySecret; gateway ingest requires a tenant-bound X-Gateway-Id credential"));
         else
             issues.Add(new("legacy_telemetry_gateway_secret", "pass",
@@ -179,28 +179,28 @@ public sealed class ConfigValidationService(IConfiguration config)
         // Environment mode
         if (string.Equals(env, "Development", StringComparison.OrdinalIgnoreCase))
             issues.Add(new("environment_mode", "warn", $"Environment is '{env}' — ensure production settings override demo/dev values before going live"));
-        else if (string.Equals(env, "Production", StringComparison.OrdinalIgnoreCase))
-            issues.Add(new("environment_mode", "pass", "Environment is Production"));
+        else if (isProtectedEnvironment)
+            issues.Add(new("environment_mode", "pass", $"Environment is {env}"));
         else
             issues.Add(new("environment_mode", "warn", $"Environment is '{env}'"));
 
         // Platform superadmin bootstrap credential. PlatformSchemaService falls back to
         // a well-known demo password when the env var is unset — acceptable ONLY for
         // local/dev. In production the env var MUST be set and MUST NOT be the default.
-        // Tenant RLS is a production invariant. Missing and explicit false are both
+        // Tenant RLS is a protected-environment invariant. Missing and explicit false are both
         // treated as disabled so a deployment cannot silently lose its DB backstop.
         if (tenantRlsEnabled)
             issues.Add(new("tenant_rls_enforcement", "pass", "Tenant RLS context enforcement is enabled"));
         else
-            issues.Add(new("tenant_rls_enforcement", isProduction ? "fail" : "warn",
-                "Rls:EnforceTenantContext must be explicitly true before running in Production"));
+            issues.Add(new("tenant_rls_enforcement", isProtectedEnvironment ? "fail" : "warn",
+                "Rls:EnforceTenantContext must be explicitly true in Staging and Production"));
 
         var platformPwd = Environment.GetEnvironmentVariable("PLATFORM_SUPERADMIN_PASSWORD") ?? config["Platform:SuperAdminPassword"];
         if (string.IsNullOrWhiteSpace(platformPwd))
-            issues.Add(new("platform_superadmin_password", isProduction ? "fail" : "warn",
+            issues.Add(new("platform_superadmin_password", isProtectedEnvironment ? "fail" : "warn",
                 "PLATFORM_SUPERADMIN_PASSWORD is not set — the bootstrap platform admin uses a well-known default password"));
         else if (string.Equals(platformPwd, "Platform@12345", StringComparison.Ordinal))
-            issues.Add(new("platform_superadmin_password", isProduction ? "fail" : "warn",
+            issues.Add(new("platform_superadmin_password", isProtectedEnvironment ? "fail" : "warn",
                 "PLATFORM_SUPERADMIN_PASSWORD is set to the well-known default — rotate it"));
         else if (platformPwd.Length < 12)
             issues.Add(new("platform_superadmin_password", "warn", $"Platform superadmin password is short ({platformPwd.Length} chars; ≥12 recommended)"));
@@ -216,27 +216,27 @@ public sealed class ConfigValidationService(IConfiguration config)
             ?? config["ENABLE_FLEET_DEMO_SEED"];
         if (string.Equals(seedEnabled, "true", StringComparison.OrdinalIgnoreCase)
             || string.Equals(fleetSeedEnabled, "true", StringComparison.OrdinalIgnoreCase))
-            issues.Add(new("demo_seed_data", isProduction ? "fail" : "warn",
-                "Demo seed data is enabled — disable DemoSeed:Enabled and Fleet:EnableDemoSeed in production"));
+            issues.Add(new("demo_seed_data", isProtectedEnvironment ? "fail" : "warn",
+                "Demo seed data is enabled — disable DemoSeed:Enabled and Fleet:EnableDemoSeed in protected environments"));
         else
             issues.Add(new("demo_seed_data", "pass", "Demo seed data flags are disabled"));
 
         var simulatorEnabled = config.GetValue("Telemetry:Simulator:Enabled", false);
         if (simulatorEnabled)
-            issues.Add(new("telemetry_simulator", isProduction ? "fail" : "warn",
-                "Telemetry simulator is enabled — production must use authenticated device/provider fixes only"));
+            issues.Add(new("telemetry_simulator", isProtectedEnvironment ? "fail" : "warn",
+                "Telemetry simulator is enabled — protected environments must use authenticated device/provider fixes only"));
         else
             issues.Add(new("telemetry_simulator", "pass", "Telemetry simulator is disabled"));
 
-        // Retention is a compliance control, not an optional convenience in Production.
+        // Retention is a compliance control, not an optional convenience in protected environments.
         // Require an explicit true value so a missing environment variable, typo, or
         // inherited false default cannot leave published policies unenforced.
         var retentionWorkerSetting = config["RetentionWorker:Enabled"];
         var retentionWorkerExplicitlyEnabled = bool.TryParse(retentionWorkerSetting, out var retentionWorkerEnabled)
                                                && retentionWorkerEnabled;
-        if (isProduction && !retentionWorkerExplicitlyEnabled)
+        if (isProtectedEnvironment && !retentionWorkerExplicitlyEnabled)
             issues.Add(new("retention_worker", "fail",
-                "RetentionWorker:Enabled must be explicitly true in Production"));
+                "RetentionWorker:Enabled must be explicitly true in Staging and Production"));
         else if (retentionWorkerExplicitlyEnabled)
             issues.Add(new("retention_worker", "pass", "Retention enforcement worker is explicitly enabled"));
         else
@@ -294,9 +294,9 @@ public sealed class ConfigValidationService(IConfiguration config)
         catch { return null; }
     }
 
-    public static void EnsureStartupAllowed(ConfigCheckResult result, bool isProduction)
+    public static void EnsureStartupAllowed(ConfigCheckResult result, bool isProtectedEnvironment)
     {
-        if (isProduction && result.FailCount > 0)
+        if (isProtectedEnvironment && result.FailCount > 0)
             throw new InvalidOperationException(
                 $"Refusing to start with {result.FailCount} critical configuration failure(s). See logs (values redacted).");
     }

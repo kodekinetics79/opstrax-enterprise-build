@@ -78,6 +78,22 @@ test("new mobile, launch-tooling and Playwright jobs are exact-SHA mandatory gat
   }
 });
 
+test("pull request release evidence is bound to the immutable branch head", () => {
+  const workflow = read(".github/workflows/ci.yml");
+  assert.match(
+    workflow,
+    /CANDIDATE_SHA: \$\{\{ github\.event\.pull_request\.head\.sha \|\| github\.sha \}\}/,
+  );
+  const checkoutCount = (workflow.match(/uses: actions\/checkout@[0-9a-f]{40}/g) || []).length;
+  const candidateRefCount = (workflow.match(/ref: \$\{\{ env\.CANDIDATE_SHA \}\}/g) || []).length;
+  assert.ok(checkoutCount > 0, "workflow has no source checkouts");
+  assert.equal(candidateRefCount, checkoutCount, "every job must check out the candidate head");
+  assert.match(workflow, /name: release-provenance-\$\{\{ env\.CANDIDATE_SHA \}\}/);
+  assert.match(workflow, /name: opstrax-release-candidate-\$\{\{ env\.CANDIDATE_SHA \}\}/);
+  assert.doesNotMatch(workflow, /name: (?:release-provenance|opstrax-release-candidate)-\$\{\{ github\.sha \}\}/);
+  assert.doesNotMatch(workflow, /git rev-parse HEAD\)" = "\$GITHUB_SHA"/);
+});
+
 test("release container Telematics tests have a hermetic Postgres service", () => {
   const workflow = read(".github/workflows/ci.yml");
   const release = workflow.slice(
@@ -101,12 +117,23 @@ test("release API image contains the required gateway and terminal migrations", 
   for (const migration of [
     "2026_07_16_stage42_telemetry_gateways.sql",
     "2026_08_11_stage76_telematics_security_hardening.sql",
+    "2026_08_12_stage77_protected_role_bootstrap.sql",
   ]) {
     assert.match(dockerfile, new RegExp(`COPY database/migrations/${migration} database/migrations/`));
     assert.match(release, new RegExp(`test -f database/migrations/${migration}`));
     assert.match(release, new RegExp(`docker cp \\\"\\$api_container:/app/Migrations/${migration}\\\"`));
     assert.match(release, new RegExp(`cmp database/migrations/${migration}`));
   }
+});
+
+test("Playwright bundle and browser use the same local API origin", () => {
+  const workflow = read(".github/workflows/ci.yml");
+  const job = workflow.slice(
+    workflow.indexOf("playwright-public-tests:"),
+    workflow.indexOf("dotnet-build-test:"),
+  );
+  assert.match(job, /name: Build frontend against the local browser-test API origin[\s\S]*VITE_API_BASE_URL: http:\/\/127\.0\.0\.1:4173[\s\S]*run: npm run build/);
+  assert.match(job, /E2E_API_BASE_URL: http:\/\/127\.0\.0\.1:4173/);
 });
 
 test("credential examples are tracked while runtime secrets and artifacts are ignored", () => {

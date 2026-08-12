@@ -1,5 +1,5 @@
 import { test as base, expect } from "@playwright/test";
-import { assertRuntimeSignalsHealthy } from "./lib/signals.mjs";
+import { apiRequestMatchesTarget, assertRuntimeSignalsHealthy, assertStagingAuthConfigured } from "./lib/signals.mjs";
 import { assertRequestAllowed, authStateFor, mutationGate, resolveTarget } from "./lib/target.mjs";
 
 const target = resolveTarget(process.env);
@@ -10,9 +10,9 @@ export const test = base.extend({
   storageState: async ({ workerStorageState }, use) => use(workerStorageState),
   workerStorageState: [async ({}, use, workerInfo) => {
     const role = String(workerInfo.project.metadata?.role || "anonymous");
-    const state = role === "anonymous"
-      ? { cookies: [], origins: [] }
-      : authStateFor(role, workerInfo.parallelIndex, process.env) || { cookies: [], origins: [] };
+    const configuredState = role === "anonymous" ? undefined : authStateFor(role, workerInfo.parallelIndex, process.env);
+    assertStagingAuthConfigured(target, role, configuredState);
+    const state = role === "anonymous" ? { cookies: [], origins: [] } : configuredState || { cookies: [], origins: [] };
     await use(state);
   }, { scope: "worker" }],
   authConfigured: [async ({}, use, testInfo) => {
@@ -25,13 +25,32 @@ export const test = base.extend({
     await use(safe);
   }, { scope: "worker" }],
   clientSignals: [async ({ page, target: activeTarget }, use, testInfo) => {
-    const signals = { consoleErrors: [], pageErrors: [], failedRequests: [], serverErrors: [], blockedMutations: [] };
+    const role = String(testInfo.project.metadata?.role || "anonymous");
+    const signals = { consoleErrors: [], pageErrors: [], failedRequests: [], serverErrors: [], blockedMutations: [], apiRequests: [], apiTargetMismatches: [] };
     page.on("console", (message) => {
       if (message.type() === "error") signals.consoleErrors.push(message.text());
     });
     page.on("pageerror", (error) => signals.pageErrors.push(error.message));
     page.on("requestfailed", (request) => {
-      signals.failedRequests.push({ method: request.method(), url: request.url(), failure: request.failure()?.errorText || "unknown" });
+      const requestUrl = new URL(request.url());
+      const allowReason = activeTarget.environment === "local"
+        && role === "anonymous"
+        && request.method() === "GET"
+        && request.resourceType() === "xhr"
+        && requestUrl.pathname === "/api/localization/user-preferences"
+        && apiRequestMatchesTarget(request.url(), activeTarget.apiBaseUrl)
+        ? "local-anonymous-preference-bootstrap"
+        : undefined;
+      signals.failedRequests.push({ method: request.method(), resourceType: request.resourceType(), url: request.url(), failure: request.failure()?.errorText || "unknown", ...(allowReason ? { allowReason } : {}) });
+    });
+    page.on("request", (request) => {
+      const requestUrl = new URL(request.url());
+      if (!requestUrl.pathname.includes("/api/")) return;
+      const observed = { method: request.method(), url: request.url() };
+      signals.apiRequests.push(observed);
+      if (!apiRequestMatchesTarget(request.url(), activeTarget.apiBaseUrl)) {
+        signals.apiTargetMismatches.push({ ...observed, expected: activeTarget.apiBaseUrl });
+      }
     });
     page.on("response", (response) => {
       if (response.status() >= 500) signals.serverErrors.push({ status: response.status(), url: response.url() });
@@ -50,6 +69,9 @@ export const test = base.extend({
     }
 
     await use(signals);
+    if (activeTarget.environment === "staging" && role !== "anonymous" && signals.apiRequests.length === 0) {
+      signals.apiTargetMismatches.push({ reason: "No application API request was observed", expected: activeTarget.apiBaseUrl });
+    }
     if (Object.values(signals).some((items) => items.length > 0)) {
       await testInfo.attach("browser-signals.json", {
         body: Buffer.from(JSON.stringify(signals, null, 2)),

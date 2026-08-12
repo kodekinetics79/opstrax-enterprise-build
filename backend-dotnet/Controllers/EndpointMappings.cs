@@ -16526,7 +16526,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 await db.ExecuteAsync(
                     @"INSERT INTO telemetry_alerts
                         (company_id, vehicle_id, device_id, driver_id, alert_type, severity, message, source_event_id, status, source_channel, created_at)
-                      VALUES (@cid, @vid, @did, @drid, @type, @sev, @msg, @src, 'open', 'trusted-gateway', NOW())",
+                      VALUES (@cid, @vid, @did, @drid, @type, @sev, @msg, @src, 'Open', 'trusted-gateway', NOW())",
                     c =>
                     {
                         c.Parameters.AddWithValue("@cid", companyId);

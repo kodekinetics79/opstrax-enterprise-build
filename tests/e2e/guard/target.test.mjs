@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assertRuntimeSignalsHealthy } from "../lib/signals.mjs";
+import { apiRequestMatchesTarget, assertRuntimeSignalsHealthy, assertStagingAuthConfigured, isAllowedRequestFailure } from "../lib/signals.mjs";
 import { assertRequestAllowed, authStateFor, mutationGate, resolveTarget } from "../lib/target.mjs";
 
 const base = {
@@ -126,5 +126,44 @@ test("runtime exceptions and 5xx responses fail every browser target", () => {
   assert.throws(
     () => assertRuntimeSignalsHealthy({ pageErrors: [], serverErrors: [{ status: 503, url: "/api" }] }),
     /HTTP 5xx/,
+  );
+});
+
+test("staging authenticated projects fail when their storage state is missing", () => {
+  assert.throws(() => assertStagingAuthConfigured({ environment: "staging" }, "tenant", undefined), /E2E_TENANT_AUTH_STATE/);
+  assert.doesNotThrow(() => assertStagingAuthConfigured({ environment: "staging" }, "tenant", "/tmp/tenant.json"));
+  assert.doesNotThrow(() => assertStagingAuthConfigured({ environment: "local" }, "tenant", undefined));
+});
+
+test("rendered API requests must use the configured API origin and base path", () => {
+  assert.equal(apiRequestMatchesTarget("https://api.example.test/api/jobs", "https://api.example.test"), true);
+  assert.equal(apiRequestMatchesTarget("https://api.example.test/gateway/api/jobs", "https://api.example.test/gateway"), true);
+  assert.equal(apiRequestMatchesTarget("https://wrong.example.test/api/jobs", "https://api.example.test"), false);
+  assert.equal(apiRequestMatchesTarget("https://api.example.test/api/jobs", "https://api.example.test/gateway"), false);
+});
+
+test("request-failure allowlist is limited to navigation aborts and the exact local preference bootstrap", () => {
+  const navigationAbort = { method: "GET", resourceType: "document", failure: "net::ERR_ABORTED" };
+  assert.equal(isAllowedRequestFailure(navigationAbort), true);
+  assert.doesNotThrow(() => assertRuntimeSignalsHealthy({ pageErrors: [], serverErrors: [], failedRequests: [navigationAbort] }));
+  const localPreferenceBootstrap = {
+    method: "GET", resourceType: "xhr", failure: "net::ERR_CONNECTION_REFUSED",
+    url: "http://127.0.0.1:8088/api/localization/user-preferences",
+    allowReason: "local-anonymous-preference-bootstrap",
+  };
+  assert.equal(isAllowedRequestFailure(localPreferenceBootstrap), true);
+  assert.equal(isAllowedRequestFailure({ ...localPreferenceBootstrap, url: "http://127.0.0.1:8088/api/jobs" }), false);
+  for (const failure of [
+    { method: "GET", resourceType: "fetch", failure: "net::ERR_FAILED", url: "/api/jobs" },
+    { method: "POST", resourceType: "fetch", failure: "net::ERR_ABORTED", url: "/api/jobs" },
+  ]) {
+    assert.throws(() => assertRuntimeSignalsHealthy({ pageErrors: [], serverErrors: [], failedRequests: [failure] }), /unexpected request failures/i);
+  }
+});
+
+test("API target mismatches fail browser journeys", () => {
+  assert.throws(
+    () => assertRuntimeSignalsHealthy({ pageErrors: [], serverErrors: [], apiTargetMismatches: [{ url: "https://wrong.test/api/jobs" }] }),
+    /does not match E2E_API_BASE_URL/,
   );
 });

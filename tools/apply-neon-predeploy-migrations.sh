@@ -49,6 +49,7 @@
 #   stage74  Production retention-policy schema contract
 #   stage75  Bounded support-access control plane
 #   stage76  FINAL telemetry default-deny/exact runtime ACL reconciliation
+#   stage77  Protected-environment authorization reference bootstrap
 #
 # WHAT IT DELIBERATELY SKIPS
 #   stage19/20/22 (the broad Row-Level Security cutover). Stage49 itself is
@@ -119,6 +120,7 @@ MIGRATIONS=(
   2026_08_02_stage73_hos_offboarding_null_fail_closed
   2026_08_02_stage74_retention_policy_production_contract
   2026_08_02_stage75_bounded_support_access
+  2026_08_12_stage77_protected_role_bootstrap
 )
 
 echo "Target host: $(printf '%s' "$NEON_PG_URI" | sed -E 's|.*@([^/:?]+).*|\1|')"
@@ -159,7 +161,8 @@ for m in "${MIGRATIONS[@]}"; do
     2026_08_02_stage72_hos_offboarding_immutability_reconciliation|\
     2026_08_02_stage73_hos_offboarding_null_fail_closed|\
     2026_08_02_stage74_retention_policy_production_contract|\
-    2026_08_02_stage75_bounded_support_access) repair_migration=true ;;
+    2026_08_02_stage75_bounded_support_access|\
+    2026_08_12_stage77_protected_role_bootstrap) repair_migration=true ;;
   esac
   if [ "$applied" = "1" ] && [ "$repair_migration" = false ]; then
     echo "── $m: already applied (ledger) — skipping"
@@ -208,7 +211,8 @@ BEGIN
       ('2026_08_02_stage72_hos_offboarding_immutability_reconciliation'),
       ('2026_08_02_stage73_hos_offboarding_null_fail_closed'),
       ('2026_08_02_stage74_retention_policy_production_contract'),
-      ('2026_08_02_stage75_bounded_support_access')) required(version)
+      ('2026_08_02_stage75_bounded_support_access'),
+      ('2026_08_12_stage77_protected_role_bootstrap')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN RAISE EXCEPTION 'Required owner/pilot migration ledger missing or duplicated'; END IF;
   IF to_regclass('public.uq_ftms_dorders_company_number') IS NULL
@@ -230,6 +234,36 @@ BEGIN
      OR to_regclass('public.idx_telemetry_stream_ticket_expiry') IS NULL
      OR to_regclass('public.idx_telemetry_gateway_rejections_received') IS NULL THEN
     RAISE EXCEPTION 'Required owner/pilot schema and concurrency contract is incomplete';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM (VALUES
+      ('Super Admin'),('Company Admin'),('Fleet Manager'),('Dispatcher'),('Driver'),
+      ('Mechanic'),('Safety Manager'),('Compliance Manager'),('Customer Service'),
+      ('Customer Portal User'),('Reseller / Partner Admin'),('Read-only Auditor'),
+      ('Operations Manager'),('Finance & Billing Manager'),('CRM & Sales Manager'),
+      ('Vendor Service Provider')
+    ) required(name)
+    WHERE NOT EXISTS (
+      SELECT 1 FROM roles role
+      WHERE role.company_id IS NULL AND role.is_system AND role.name=required.name
+    )
+  ) OR EXISTS (
+    SELECT 1 FROM (VALUES
+      ('platform_super_admin'),('sales_admin'),('marketing_admin'),('finance_admin'),
+      ('customer_success_admin'),('support_admin'),('product_admin'),
+      ('compliance_admin'),('readonly_executive')
+    ) required(role_key)
+    WHERE NOT EXISTS (SELECT 1 FROM platform_roles role WHERE role.role_key=required.role_key)
+  ) OR NOT EXISTS (
+    SELECT 1 FROM platform_role_permissions permission
+    JOIN platform_roles role ON role.id=permission.role_id
+    WHERE role.role_key='platform_super_admin' AND permission.permission_key='platform:*'
+  ) OR EXISTS (
+    SELECT 1 FROM platform_role_permissions permission
+    JOIN platform_roles role ON role.id=permission.role_id
+    WHERE role.role_key='support_admin' AND permission.permission_key='platform:impersonation:start'
+  ) THEN
+    RAISE EXCEPTION 'Stage77 protected authorization reference bootstrap is incomplete or unsafe';
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns

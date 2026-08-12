@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { Pressable, Text, View } from "react-native";
-import { ActionButton, EmptyState, Field, Input, LoadingState, MetricCard, Panel, Pill, Row, Screen, SectionHeader, colors } from "@/components/ui";
+import { ActionButton, EmptyState, ErrorState, Field, Input, LoadingState, MetricCard, Panel, Pill, Row, Screen, SectionHeader, colors } from "@/components/ui";
 import { useSession } from "@/auth/SessionProvider";
 import { useWorkflow } from "@/workflow/WorkflowContext";
 import { useAsyncResource } from "@/hooks/useAsyncResource";
@@ -25,8 +25,10 @@ function textOf(value: unknown) {
 export function DashboardScreen() {
   const { session, roleModel, api, hasPermission } = useSession();
   const { selectedJobId, selectedJobInput, setSelectedJobInput, applySelectedJob, setSelectedJobId } = useWorkflow();
-  const jobs = useAsyncResource(async () => api.jobs(), [api]);
-  const summary = useAsyncResource(async () => (selectedJobId ? api.executionSummary(selectedJobId) : null), [api, selectedJobId]);
+  const canReadJobs = hasPermission("shipments:view");
+  const canReadSummary = ["operations.execution_summary.read", "dispatch:view", "dispatch:manage", "shipments:view", "fleet:view", "driver:self"].some(hasPermission);
+  const jobs = useAsyncResource(async () => (canReadJobs ? api.jobs() : null), [api, canReadJobs]);
+  const summary = useAsyncResource(async () => (selectedJobId && canReadSummary ? api.executionSummary(selectedJobId) : null), [api, selectedJobId, canReadSummary]);
 
   const recentJobs = useMemo(() => asArray(jobs.data), [jobs.data]);
   const previewSummary = summary.data ?? null;
@@ -77,22 +79,27 @@ export function DashboardScreen() {
         />
         <View style={{ gap: 10 }}>
           <Field label="Selected job" value={selectedJobId ? String(selectedJobId) : null} />
-          <Field label="Backend execution summary access" value={hasPermission("operations.execution_summary.read") ? "Allowed" : "Denied"} />
+          <Field label="Backend execution summary access" value={canReadSummary ? "Allowed" : "Denied"} />
           <Input label="Job id input" value={selectedJobInput} onChangeText={setSelectedJobInput} placeholder="Enter a real job id" keyboardType="numeric" />
-          <ActionButton label="Set job" onPress={applySelectedJob} />
+          <ActionButton label="Set job" onPress={applySelectedJob} disabled={!canReadSummary} />
           <ActionButton label="Clear job" onPress={() => setSelectedJobId(null)} variant="secondary" />
         </View>
       </Panel>
 
       <Panel>
         <SectionHeader eyebrow="Recent jobs" title="Real backend job list" description="This is a live list from the existing job endpoint when the backend is reachable." />
-        {jobs.loading ? <LoadingState label="Loading jobs..." /> : jobs.error ? <EmptyState title="Jobs unavailable" body={jobs.error} /> : null}
-        {!jobs.loading && !jobs.error && recentJobs.length === 0 ? (
+        {!canReadJobs ? (
+          <EmptyState title="Job list not available" body="This authenticated session does not grant shipment-list access. A permitted job id can still be entered above." />
+        ) : jobs.loading ? (
+          <LoadingState label="Loading jobs..." />
+        ) : jobs.error ? (
+          <ErrorState title="Jobs unavailable" body={jobs.error} onRetry={jobs.refresh} />
+        ) : recentJobs.length === 0 ? (
           <EmptyState title="No jobs yet" body="The backend returned an empty job list. That is honest; the app does not fabricate assignments." />
         ) : null}
         <View style={{ gap: 10 }}>
           {recentJobs.slice(0, 5).map((job, index) => (
-            <Pressable key={String(job.id ?? index)} onPress={() => setSelectedJobId(Number(job.id ?? 0) || null)} style={({ pressed }) => [{ opacity: pressed ? 0.85 : 1 }, styles.jobRow]}>
+            <Pressable accessibilityRole="button" accessibilityLabel={`Select ${textOf(job.jobNumber ?? job.job_number ?? job.reference ?? `job ${job.id ?? index + 1}`)}`} key={String(job.id ?? index)} onPress={() => setSelectedJobId(Number(job.id ?? 0) || null)} style={({ pressed }) => [{ opacity: pressed ? 0.85 : 1 }, styles.jobRow]}>
               <View style={{ flex: 1, gap: 4 }}>
                 <Text style={styles.jobTitle}>{textOf(job.jobNumber ?? job.job_number ?? job.reference ?? `Job ${job.id ?? index + 1}`)}</Text>
                 <Text style={styles.jobSubtitle}>{textOf(job.customerName ?? job.customer_name ?? job.title ?? job.description)}</Text>
@@ -108,12 +115,14 @@ export function DashboardScreen() {
 
       <Panel>
         <SectionHeader eyebrow="Execution summary" title="Live workflow snapshot" description="The summary below is pulled from the real backend once a job id is selected." />
-        {selectedJobId == null ? (
+        {!canReadSummary ? (
+          <EmptyState title="Execution summary not available" body="This authenticated session does not grant execution-summary access." />
+        ) : selectedJobId == null ? (
           <EmptyState title="No job selected" body="Set a live job id above to view assignment, proof, access, and billing confidence summaries." />
         ) : summary.loading ? (
           <LoadingState label="Loading execution summary..." />
         ) : summary.error ? (
-          <EmptyState title="Summary unavailable" body={summary.error} />
+          <ErrorState title="Summary unavailable" body={summary.error} onRetry={summary.refresh} />
         ) : previewSummary ? (
           <View style={{ gap: 10 }}>
             <Field label="Execution status" value={textOf((previewSummary as JsonRecord).status ?? (previewSummary as JsonRecord).summary_status)} />

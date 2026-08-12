@@ -1,5 +1,5 @@
 import { View } from "react-native";
-import { EmptyState, Field, LoadingState, Panel, Screen, SectionHeader } from "@/components/ui";
+import { EmptyState, ErrorState, Field, LoadingState, Panel, Screen, SectionHeader } from "@/components/ui";
 import { useSession } from "@/auth/SessionProvider";
 import { useAsyncResource } from "@/hooks/useAsyncResource";
 
@@ -8,15 +8,19 @@ function textOf(value: unknown) {
 }
 
 export function TelemetryScreen() {
-  const { api } = useSession();
-  const telemetry = useAsyncResource(async () => api.telemetrySummary(), [api]);
-  const safety = useAsyncResource(async () => api.safetyDashboard(), [api]);
-  const maintenance = useAsyncResource(async () => api.maintenanceDashboard(), [api]);
+  const { api, hasPermission } = useSession();
+  const canReadTelemetry = ["telemetry.live_state.read", "telemetry.live-state.read", "telemetry.alerts.read", "dashboard:view", "map:view", "fleet:view", "telematics:gps:view"].some(hasPermission);
+  const canReadSafety = hasPermission("safety:view");
+  const canReadMaintenance = hasPermission("maintenance:view");
+  const telemetry = useAsyncResource(async () => (canReadTelemetry ? api.telemetrySummary() : null), [api, canReadTelemetry]);
+  const safety = useAsyncResource(async () => (canReadSafety ? api.safetyDashboard() : null), [api, canReadSafety]);
+  const maintenance = useAsyncResource(async () => (canReadMaintenance ? api.maintenanceDashboard() : null), [api, canReadMaintenance]);
   const telemetryRecord = telemetry.data as Record<string, unknown> | null;
   const telemetryKpis = telemetryRecord?.kpis as Record<string, unknown> | undefined;
   const safetyRecord = safety.data as Record<string, unknown> | null;
   const maintenanceRecord = maintenance.data as Record<string, unknown> | null;
   const maintenanceKpis = maintenanceRecord?.kpis as Record<string, unknown> | undefined;
+  const telemetryPayloadError = typeof telemetryRecord?.error === "string" ? telemetryRecord.error : null;
 
   return (
     <Screen>
@@ -26,8 +30,13 @@ export function TelemetryScreen() {
 
       <Panel>
         <SectionHeader eyebrow="Live state" title="Telemetry summary" description="The app only shows the live state the backend returns." />
-        {telemetry.loading ? <LoadingState label="Loading telemetry..." /> : telemetry.error ? <EmptyState title="Telemetry unavailable" body={telemetry.error} /> : null}
-        {telemetry.data ? (
+        {!canReadTelemetry ? (
+          <EmptyState title="Telemetry not available" body="This authenticated session does not grant live telemetry access." />
+        ) : telemetry.loading ? (
+          <LoadingState label="Loading telemetry..." />
+        ) : telemetry.error || telemetryPayloadError ? (
+          <ErrorState title="Telemetry unavailable" body={telemetry.error ?? telemetryPayloadError ?? "Unable to load telemetry."} onRetry={telemetry.refresh} />
+        ) : telemetry.data ? (
           <View style={{ gap: 10 }}>
             <Field label="As of" value={textOf(telemetryRecord?.asOf)} />
             <Field label="Open alerts" value={textOf(telemetryKpis?.openAlerts)} />
@@ -41,8 +50,13 @@ export function TelemetryScreen() {
 
       <Panel>
         <SectionHeader eyebrow="Safety" title="Safety dashboard" description="Safety remains backend-enforced and tenant-scoped." />
-        {safety.loading ? <LoadingState label="Loading safety..." /> : safety.error ? <EmptyState title="Safety unavailable" body={safety.error} /> : null}
-        {safety.data ? (
+        {!canReadSafety ? (
+          <EmptyState title="Safety not available" body="This authenticated session does not grant safety dashboard access." />
+        ) : safety.loading ? (
+          <LoadingState label="Loading safety..." />
+        ) : safety.error ? (
+          <ErrorState title="Safety unavailable" body={safety.error} onRetry={safety.refresh} />
+        ) : safety.data ? (
           <View style={{ gap: 10 }}>
             <Field label="Fleet safety score" value={textOf(safetyRecord?.fleetSafetyScore)} />
             <Field label="Open events" value={textOf(safetyRecord?.openEvents)} />
@@ -55,8 +69,13 @@ export function TelemetryScreen() {
 
       <Panel>
         <SectionHeader eyebrow="Maintenance" title="Maintenance dashboard" description="A mobile manager can preview maintenance state without the full web portal." />
-        {maintenance.loading ? <LoadingState label="Loading maintenance..." /> : maintenance.error ? <EmptyState title="Maintenance unavailable" body={maintenance.error} /> : null}
-        {maintenance.data ? (
+        {!canReadMaintenance ? (
+          <EmptyState title="Maintenance not available" body="This authenticated session does not grant maintenance dashboard access." />
+        ) : maintenance.loading ? (
+          <LoadingState label="Loading maintenance..." />
+        ) : maintenance.error ? (
+          <ErrorState title="Maintenance unavailable" body={maintenance.error} onRetry={maintenance.refresh} />
+        ) : maintenance.data ? (
           <View style={{ gap: 10 }}>
             <Field label="Fleet availability" value={textOf(maintenanceKpis?.fleetAvailabilityPct)} />
             <Field label="Open work orders" value={textOf(maintenanceKpis?.openWorkOrders)} />
