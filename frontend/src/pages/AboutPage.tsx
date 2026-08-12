@@ -5,6 +5,7 @@ import {
   Phone, Server, Shield, ShieldCheck, Truck, Zap,
 } from "lucide-react";
 import { aboutApi } from "@/services/aboutApi";
+import { useRuntimeDiagnostics } from "@/services/runtimeDiagnostics";
 
 type AnyRecord = Record<string, unknown>;
 
@@ -56,11 +57,14 @@ function statusOk(status: unknown): boolean | null {
 export function AboutPage() {
   const { data: platformRaw }     = useQuery({ queryKey: ["about-platform"],      queryFn: aboutApi.platform,      staleTime: 300_000 });
   const { data: healthRaw }       = useQuery({ queryKey: ["about-health"],        queryFn: aboutApi.healthSummary, staleTime: 30_000 });
+  const runtimeQuery = useRuntimeDiagnostics();
 
   const platform = platformRaw as AnyRecord | undefined;
   const health   = healthRaw   as AnyRecord | undefined;
 
   const support   = platform?.support as AnyRecord | undefined;
+  const runtime = runtimeQuery.data;
+  const runtimeVerified = runtime?.state === "Live" || runtime?.state === "Staging";
 
   return (
     <div className="flex h-full flex-col gap-8 pb-8 overflow-y-auto">
@@ -78,10 +82,10 @@ export function AboutPage() {
               <h1 className="text-2xl font-extrabold text-white">About OpsTrax</h1>
               <p className="text-xs font-bold uppercase tracking-[0.22em] text-teal-300/70">Transport Management Solution</p>
             </div>
-            {statusOk(health?.databaseStatus) && (
-              <div className="ml-auto hidden sm:flex items-center gap-2 rounded-full border border-teal-400/20 bg-teal-400/7 px-3 py-1.5">
-                <span className="live-dot h-[6px] w-[6px]" />
-                <span className="text-xs font-bold text-teal-300">Live Tenant Connected</span>
+            {runtime && (
+              <div className={`ml-auto hidden items-center gap-2 rounded-full border px-3 py-1.5 sm:flex ${runtimeVerified ? "border-teal-400/20 bg-teal-400/7" : "border-amber-300/30 bg-amber-300/10"}`}>
+                <span className={`h-[6px] w-[6px] rounded-full ${runtimeVerified ? "bg-teal-400" : "bg-amber-400"}`} />
+                <span className={`text-xs font-bold ${runtimeVerified ? "text-teal-300" : "text-amber-200"}`}>{runtime.state}</span>
               </div>
             )}
           </div>
@@ -95,6 +99,37 @@ export function AboutPage() {
       </div>
 
       {/* ── Build / Health Status ── */}
+      <div className="panel p-4" data-testid="runtime-provenance">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Runtime provenance</p>
+          <button type="button" className="text-xs font-semibold text-teal-700 hover:text-teal-600" onClick={() => runtimeQuery.refetch()} disabled={runtimeQuery.isFetching}>
+            {runtimeQuery.isFetching ? "Checking…" : "Recheck"}
+          </button>
+        </div>
+        {runtimeQuery.isError ? (
+          <p role="alert" className="text-sm font-semibold text-rose-700">Runtime diagnostics are unavailable. No healthy or live state is assumed.</p>
+        ) : (
+          <div className="grid gap-x-8 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
+            {[
+              ["Runtime status", runtime?.state ?? "Unavailable"],
+              ["Frontend SHA", runtime?.frontendSha ?? "unknown"],
+              ["API SHA", runtime?.apiSha ?? "unverified"],
+              ["Frontend environment", runtime?.frontendEnvironment ?? "unknown"],
+              ["API environment", runtime?.apiEnvironment ?? "unverified"],
+              ["API base URL", runtime?.apiBaseUrl ?? "unverified"],
+              ["Database contract", runtime?.databaseReady ? "Verified" : "Not verified"],
+              ["Critical workers", runtime?.workerContractReady ? "Fresh" : "Not verified / stale"],
+              ["Telemetry worker", runtime?.telemetryFresh ? "Fresh" : "Not verified / stale"],
+            ].map(([label, value]) => (
+              <div key={label} className="min-w-0">
+                <p className="text-[10px] uppercase tracking-widest text-slate-500">{label}</p>
+                <p className="mt-0.5 break-all font-semibold text-slate-700">{value}</p>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {health && (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
           {[
@@ -206,7 +241,7 @@ export function AboutPage() {
             ["Product",     String(platform?.fullProductName ?? "OpsTrax Transport Management Solution")],
             ["Developer",   String(platform?.developer       ?? "Kode Kinetics")],
             ["Version",     String(platform?.version         ?? "Enterprise Build")],
-            ["Environment", String(platform?.environment     ?? "Local / Seeded")],
+            ["Environment", String(platform?.environment     ?? "Unknown")],
           ].map(([k, v]) => (
             <div key={k}>
               <p className="text-[10px] text-slate-500 uppercase tracking-widest">{k}</p>

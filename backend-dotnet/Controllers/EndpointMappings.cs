@@ -941,16 +941,21 @@ public static partial class EndpointMappings
             var (branchClause, branchId) = StrictBranchFilter(http, "v");
             return OkRows(db,
             @"SELECT wo.id, wo.work_order_code, wo.title, wo.priority, wo.status,
-                     wo.due_date, wo.estimated_cost, COALESCE(wo.downtime_hours,0) downtime_hours,
+                     wo.due_date, wo.estimated_cost, wo.actual_cost, COALESCE(wo.downtime_hours,0) downtime_hours,
                      v.vehicle_code, d.full_name driver_name,
                      COALESCE(wo.vendor_name,'Internal') vendor_name,
                      COALESCE(wo.issue_type, wo.title) issue_type,
-                     COALESCE(wo.completed_at, wo.due_date) completed_at
+                     COALESCE(wo.completed_at, wo.due_date) completed_at,
+                     CASE WHEN wo.work_order_code LIKE 'WO-B3-%%'
+                               OR wo.title LIKE 'Batch 3 work order %%'
+                               OR COALESCE(wo.notes,'') ILIKE '%%Batch 3%%'
+                          THEN 'seeded_synthetic_database'
+                          ELSE 'unknown_database_record' END record_origin
               FROM work_orders wo
-              LEFT JOIN vehicles v ON v.id=wo.vehicle_id
-              LEFT JOIN drivers d ON d.id=wo.assigned_to_user_id
-              WHERE wo.deleted_at IS NULL AND wo.status='Completed'" + branchClause + @"
-              ORDER BY completed_at DESC LIMIT 50", c => { if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct: ct);
+              LEFT JOIN vehicles v ON v.id=wo.vehicle_id AND v.company_id=wo.company_id
+              LEFT JOIN drivers d ON d.id=wo.assigned_to_user_id AND d.company_id=wo.company_id
+              WHERE wo.company_id=@cid AND wo.deleted_at IS NULL AND wo.status='Completed'" + branchClause + @"
+              ORDER BY completed_at DESC LIMIT 50", c => { c.Parameters.AddWithValue("@cid", GetCompanyId(http)); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct: ct);
         });
         app.MapGet("/api/downtime", (HttpContext http, Database db, CancellationToken ct) =>
         {
@@ -959,12 +964,17 @@ public static partial class EndpointMappings
             return OkRows(db,
             @"SELECT wo.id, wo.work_order_code, wo.title, COALESCE(wo.downtime_hours,0) downtime_hours,
                      wo.priority, wo.status, wo.due_date,
-                     COALESCE(wo.estimated_cost, 0) cost, v.vehicle_code,
-                     COALESCE(wo.vendor_name,'Internal') vendor_name
+                     wo.estimated_cost cost, v.vehicle_code,
+                     COALESCE(wo.vendor_name,'Internal') vendor_name,
+                     CASE WHEN wo.work_order_code LIKE 'WO-B3-%%'
+                               OR wo.title LIKE 'Batch 3 work order %%'
+                               OR COALESCE(wo.notes,'') ILIKE '%%Batch 3%%'
+                          THEN 'seeded_synthetic_database'
+                          ELSE 'unknown_database_record' END record_origin
               FROM work_orders wo
-              LEFT JOIN vehicles v ON v.id=wo.vehicle_id
-              WHERE wo.deleted_at IS NULL AND wo.downtime_hours > 0" + branchClause + @"
-              ORDER BY wo.downtime_hours DESC LIMIT 50", c => { if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct: ct);
+              LEFT JOIN vehicles v ON v.id=wo.vehicle_id AND v.company_id=wo.company_id
+              WHERE wo.company_id=@cid AND wo.deleted_at IS NULL AND wo.downtime_hours > 0" + branchClause + @"
+              ORDER BY wo.downtime_hours DESC LIMIT 50", c => { c.Parameters.AddWithValue("@cid", GetCompanyId(http)); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct: ct);
         });
         app.MapGet("/api/preventive-maintenance", (HttpContext http, Database db, CancellationToken ct) =>
         {
@@ -979,11 +989,15 @@ public static partial class EndpointMappings
                      (mi.due_date::date - CURRENT_DATE) days_until_due,
                      CASE WHEN mi.due_date < CURRENT_DATE THEN 'Overdue'
                           WHEN mi.due_date BETWEEN CURRENT_DATE AND CURRENT_DATE + 7 * INTERVAL '1 day' THEN 'Due Soon'
-                          ELSE 'Scheduled' END pm_status
+                          ELSE 'Scheduled' END pm_status,
+                     CASE WHEN mi.title LIKE 'B3 maintenance item %%'
+                               OR COALESCE(mi.description,'') ILIKE '%%Seeded Batch 3%%'
+                          THEN 'seeded_synthetic_database'
+                          ELSE 'unknown_database_record' END record_origin
               FROM maintenance_items mi
-              LEFT JOIN vehicles v ON v.id=mi.vehicle_id
-              WHERE mi.deleted_at IS NULL AND mi.status NOT IN ('Completed','Cancelled')" + branchClause + @"
-              ORDER BY mi.due_date ASC", c => { if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct: ct);
+              LEFT JOIN vehicles v ON v.id=mi.vehicle_id AND v.company_id=mi.company_id
+              WHERE mi.company_id=@cid AND mi.deleted_at IS NULL AND mi.status NOT IN ('Completed','Cancelled')" + branchClause + @"
+              ORDER BY mi.due_date ASC", c => { c.Parameters.AddWithValue("@cid", GetCompanyId(http)); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct: ct);
         });
 
         app.MapGet("/api/fleet/utilization", FleetUtilizationList);
@@ -19195,7 +19209,12 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
         var rows = await db.QueryAsync(
             @"SELECT wo.*, COALESCE(wo.work_order_number, wo.work_order_code) wo_number,
-                     COALESCE(v.vehicle_code,av.vehicle_code) vehicle_code, u.full_name assigned_to_name
+                     COALESCE(v.vehicle_code,av.vehicle_code) vehicle_code, u.full_name assigned_to_name,
+                     CASE WHEN wo.work_order_code LIKE 'WO-B3-%%'
+                               OR wo.title LIKE 'Batch 3 work order %%'
+                               OR COALESCE(wo.notes,'') ILIKE '%%Batch 3%%'
+                          THEN 'seeded_synthetic_database'
+                          ELSE 'unknown_database_record' END record_origin
               FROM work_orders wo
               LEFT JOIN vehicles v ON v.id=wo.vehicle_id AND v.company_id=wo.company_id AND v.deleted_at IS NULL
               LEFT JOIN assets a ON a.id=wo.asset_id AND a.company_id=wo.company_id AND a.deleted_at IS NULL

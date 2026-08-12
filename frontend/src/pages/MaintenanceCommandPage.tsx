@@ -609,6 +609,8 @@ function WorkOrderCard({
           <div className="flex items-center gap-2">
             <RiskBadge risk={wo["priority"]} />
             <StatusBadge status={wo["status"]} />
+            {wo["recordOrigin"] === "seeded_synthetic_database" ? <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-bold text-violet-700">Demo Data</span> : null}
+            {wo["recordOrigin"] === "unknown_database_record" ? <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-bold text-slate-600">Unverified DB Record</span> : null}
             <span className="font-mono text-xs text-slate-500">{String(wo["woNumber"] ?? wo["workOrderNumber"] ?? wo["workOrderCode"] ?? "--")}</span>
           </div>
           <p className="mt-1.5 text-sm font-semibold text-slate-900">{String(wo["title"] ?? wo["issueType"] ?? "Work Order")}</p>

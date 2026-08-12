@@ -34,45 +34,28 @@ import {
   StatusBadge,
   LoadingState,
 } from "@/components/ui";
-import { developmentFleetSeedData } from "@/data/developmentFleetSeedData";
 import { alertsApi } from "@/services/alertsApi";
 import { useHasPermission } from "@/hooks/usePermission";
 import type { AnyRecord } from "@/types";
 import { calculateCustomerHealth, calculateProfitability, calculateShipmentDelay, formatCurrency, formatDate } from "@/utils/formatters";
 import { useNavigate } from "react-router";
 
-// developmentFleetSeedData is LOCAL-DEV-ONLY scaffolding. The `import.meta.env.DEV`
-// flag is statically inlined by Vite (true in `vite dev`, false in `vite build`),
-// so this conditional is dead-code-eliminated in production and the seed module is
-// tree-shaken out of the bundle entirely. In a production build the page renders
-// honest empty states instead of synthetic data.
-const seed = (import.meta.env.DEV
-  ? developmentFleetSeedData
-  : ({
-      bookings: [], campaigns: [], contracts: [], customers: [], devices: [],
-      drivers: [], expenses: [], incidents: [], invoices: [], leads: [],
-      maintenance: [], opportunities: [], quotations: [], rateCards: [],
-      shipments: [], supportTickets: [], vehicles: [], alerts: [],
-    } as unknown as typeof developmentFleetSeedData));
+// This generic shell has no executable backend contract. It must remain empty in
+// every environment: development convenience data previously leaked into the
+// production bundle and made unwired modules look operational. The type query is
+// erased by TypeScript; there is deliberately no runtime import of the seed module.
+type DevelopmentSeedShape = typeof import("@/data/developmentFleetSeedData").developmentFleetSeedData;
+const seed = ({
+  bookings: [], campaigns: [], contracts: [], customers: [], devices: [],
+  drivers: [], expenses: [], incidents: [], invoices: [], leads: [],
+  maintenance: [], opportunities: [], quotations: [], rateCards: [],
+  shipments: [], supportTickets: [], vehicles: [], alerts: [],
+} as unknown as DevelopmentSeedShape);
 
 const {
-  bookings,
-  campaigns,
-  contracts,
-  customers,
-  devices,
-  drivers,
-  expenses,
-  incidents,
-  invoices,
-  leads,
-  maintenance,
-  opportunities,
-  quotations,
-  rateCards,
-  shipments,
-  supportTickets,
-  vehicles,
+  bookings, campaigns, contracts, customers, devices, drivers, expenses,
+  incidents, invoices, leads, maintenance, opportunities, quotations,
+  rateCards, shipments, supportTickets, vehicles,
 } = seed;
 
 type ModuleDefinition = {

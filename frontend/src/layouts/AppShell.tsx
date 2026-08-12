@@ -13,6 +13,7 @@ import { useHasDirectPermission, useHasPermission } from "@/hooks/usePermission"
 import { useDialogFocus } from "@/hooks/useDialogFocus";
 import { moduleAvailableForCountry, useTenantCountry } from "@/hooks/useTenantRegion";
 import { getLandingRouteForSession } from "@/auth/sessionRouting";
+import { useRuntimeDiagnostics } from "@/services/runtimeDiagnostics";
 import type { AnyRecord, UserSession } from "@/types";
 
 const NAV_SECTIONS = [
@@ -277,6 +278,10 @@ export function AppShell() {
   const hasPermission = useHasPermission();
   const hasDirectPermission = useHasDirectPermission();
   const tenantCountry = useTenantCountry();
+  const runtimeQuery = useRuntimeDiagnostics();
+  const tenantIsExplicitlySynthetic = /\b(demo|synthetic|test)\b/i.test(String(session?.company?.name ?? ""));
+  const runtimeState = tenantIsExplicitlySynthetic ? "Demo Data" : (runtimeQuery.data?.state ?? "Unavailable");
+  const runtimeIsVerified = runtimeState === "Live" || runtimeState === "Staging";
 
   const navStateKey = useMemo(() => getSessionIdentityKey(session), [session?.company?.id, session?.company?.companyId, session?.role, session?.user?.email, session?.user?.id, session?.user?.name]);
   const [sectionOpen, setSectionOpen] = useState<NavState | null>(null);
@@ -415,7 +420,10 @@ export function AppShell() {
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <p className="text-[14px] font-black tracking-tight text-slate-950">OpsTrax</p>
-            <span className="live-dot h-1.5 w-1.5" title="Live" />
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${runtimeIsVerified ? "bg-emerald-500" : runtimeState === "Stale" ? "bg-amber-500" : "bg-slate-400"}`}
+              title={runtimeState}
+            />
           </div>
           <p className="truncate text-[10px] font-medium tracking-wide text-slate-400">{companyLabel}</p>
         </div>
@@ -623,10 +631,19 @@ export function AppShell() {
               {/* Right section */}
               <div className="ml-auto flex items-center gap-2 md:ml-3 md:border-l md:border-slate-200 md:pl-3">
 
-                {/* Live status */}
-                <div className="hidden sm:flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">
-                  <span className="live-dot h-1.5 w-1.5" />
-                  Live
+                {/* Runtime truth status: green only after API/DB/worker/telemetry verification. */}
+                <div
+                  className={`hidden items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold sm:flex ${
+                    runtimeIsVerified
+                      ? "border-emerald-500/30 bg-emerald-50 text-emerald-700"
+                      : runtimeState === "Stale"
+                        ? "border-amber-400/40 bg-amber-50 text-amber-800"
+                        : "border-slate-300 bg-slate-100 text-slate-700"
+                  }`}
+                  title={`Frontend ${runtimeQuery.data?.frontendSha ?? "unknown"}; API ${runtimeQuery.data?.apiSha ?? "unverified"}`}
+                >
+                  <span className={`h-1.5 w-1.5 rounded-full ${runtimeIsVerified ? "bg-emerald-500" : runtimeState === "Stale" ? "bg-amber-500" : "bg-slate-400"}`} />
+                  {runtimeState}
                 </div>
 
                 {/* Notifications */}
