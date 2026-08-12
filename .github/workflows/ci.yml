@@ -576,7 +576,7 @@ jobs:
             --image api=opstrax-api:ci \
             --image frontend=opstrax-frontend:ci \
             --image gateway=opstrax-telematics-gateway:ci
-          test "$(awk -F '\t' '$1==\"commit_sha\" {print $2}' artifacts/release-provenance/candidate.tsv)" = "$GITHUB_SHA"
+          test "$(awk -F '\t' '$1=="commit_sha" {print $2}' artifacts/release-provenance/candidate.tsv)" = "$GITHUB_SHA"
           test "$(find artifacts/release-provenance/sboms -type f -name '*.cyclonedx.json' | wc -l)" = "3"
           if awk -F '\t' 'NR>1 && $5=="NOT_EVIDENCED" {missing=1} END {exit !missing}' artifacts/release-provenance/images.tsv; then
             echo "Local image IDs and SBOMs captured; registry RepoDigests remain a deployment/publish gate." >> "$GITHUB_STEP_SUMMARY"
@@ -674,7 +674,7 @@ jobs:
         if: ${{ always() && steps.gates.outputs.all_success == 'true' }}
         run: |
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(awk -F '\t' '$1==\"commit_sha\" {print $2}' artifacts/exact-sha-release/release-provenance/candidate.tsv)" = "$GITHUB_SHA"
+          test "$(awk -F '\t' '$1=="commit_sha" {print $2}' artifacts/exact-sha-release/release-provenance/candidate.tsv)" = "$GITHUB_SHA"
           cp artifacts/mandatory-gate-results/mandatory-ci-gates.tsv artifacts/exact-sha-release/
           tools/validate-mandatory-ci-gates.sh --require-success artifacts/exact-sha-release/mandatory-ci-gates.tsv
           find artifacts/exact-sha-release -type f -print | LC_ALL=C sort | xargs sha256sum > artifacts/exact-sha-release-index.sha256
