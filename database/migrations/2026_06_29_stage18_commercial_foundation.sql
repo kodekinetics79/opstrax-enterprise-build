@@ -3,6 +3,41 @@
 
 BEGIN;
 
+-- Reconcile the legacy 001_schema contracts table with the current write/read
+-- contract before creating indexes. CREATE TABLE IF NOT EXISTS alone cannot add
+-- these columns when the earlier table already exists.
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS contract_number VARCHAR(80) NULL;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS carrier_id BIGINT NULL;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS contract_type VARCHAR(80) NULL;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS expiry_date DATE NULL;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS currency VARCHAR(10) NOT NULL DEFAULT 'USD';
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS base_rate DECIMAL(12,4) NOT NULL DEFAULT 0;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS fuel_surcharge_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS fuel_surcharge_percent DECIMAL(6,2) NULL;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS sla_terms TEXT NULL;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS margin_risk VARCHAR(50) NOT NULL DEFAULT 'Low';
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS notes TEXT NULL;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NULL;
+
+DO $reconcile_legacy_contracts$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+             WHERE table_schema='public' AND table_name='contracts' AND column_name='contract_code') THEN
+    UPDATE contracts
+    SET contract_number=COALESCE(NULLIF(BTRIM(contract_code),''), 'CON-' || id::text)
+    WHERE contract_number IS NULL;
+  ELSE
+    UPDATE contracts SET contract_number='CON-' || id::text WHERE contract_number IS NULL;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+             WHERE table_schema='public' AND table_name='contracts' AND column_name='expiration_date') THEN
+    UPDATE contracts SET expiry_date=expiration_date WHERE expiry_date IS NULL;
+  END IF;
+END
+$reconcile_legacy_contracts$;
+ALTER TABLE contracts ALTER COLUMN contract_number SET NOT NULL;
+
 ALTER TABLE contracts ADD COLUMN IF NOT EXISTS source_channel VARCHAR(40) NULL;
 ALTER TABLE contracts ADD COLUMN IF NOT EXISTS client_generated_id VARCHAR(120) NULL;
 ALTER TABLE contracts ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(160) NULL;

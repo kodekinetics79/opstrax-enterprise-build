@@ -39,6 +39,10 @@ public sealed class FleetRuntimeRouteContractRegressionTests
         Assert.Contains("runtime_route_column_violations", source);
         Assert.Contains("runtime_route_object_violations", source);
         Assert.Contains("2026_07_30_stage55_fleet_runtime_route_contract", source);
+        Assert.Contains("('outbox_messages',true)", source);
+        Assert.Contains("('inbox_messages',true)", source);
+        Assert.Contains("('platform_admins','invite_token_hash'", source);
+        Assert.Contains("('platform_admins','mfa_secret'", source);
     }
 
     [Fact]

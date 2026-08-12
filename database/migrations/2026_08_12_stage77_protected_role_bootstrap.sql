@@ -12,6 +12,17 @@
 
 BEGIN;
 
+-- Stage 26 shipped the original platform_admins table before the operator invite,
+-- durable lockout and MFA columns were added to PlatformSchemaService. Protected
+-- environments skip that runtime DDL, so reconcile the owner schema here before
+-- the first bootstrap administrator is created.
+ALTER TABLE platform_admins ADD COLUMN IF NOT EXISTS invite_token_hash VARCHAR(128) NULL;
+ALTER TABLE platform_admins ADD COLUMN IF NOT EXISTS invite_expires_at TIMESTAMPTZ NULL;
+ALTER TABLE platform_admins ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE platform_admins ADD COLUMN IF NOT EXISTS mfa_secret VARCHAR(160) NULL;
+CREATE INDEX IF NOT EXISTS idx_platform_audit_email_action
+  ON platform_audit_log (actor_email, action, created_at DESC);
+
 INSERT INTO roles (name, permissions_json, is_system)
 SELECT seed.name, seed.permissions_json, TRUE
 FROM (VALUES

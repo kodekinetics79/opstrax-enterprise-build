@@ -73,6 +73,17 @@ fi
 command -v psql >/dev/null || { echo "ERROR: psql not found. brew install libpq (or run via docker exec)." >&2; exit 1; }
 
 MIGRATIONS=(
+  # A clean protected database never runs owner-capable runtime schema services.
+  # Package the complete pre-RLS foundation explicitly before the security cutover.
+  2026_06_27_stage5_p0b1a_foundation
+  2026_06_28_stage5b_p0b1a2_persistence_hardening
+  2026_06_28_stage5d_p0b1a3_dispatcher
+  2026_06_28_stage6_p0b1b_business_spine
+  2026_06_28_stage7a_revenue_readiness_schema_contract
+  2026_06_28_stage8_finance_activation
+  2026_06_28_stage12a_telemetry_live_state
+  2026_06_28_stage13b_safety_maintenance_foundation
+  2026_06_29_stage18_commercial_foundation
   # Stage 20 MUST run first: it creates the restricted opstrax_app role that Stage 50's
   # preflight hard-requires ("Stage 50 requires the restricted opstrax_app role"). It was
   # missing from this list, so a database that never had the role could not be migrated
@@ -145,6 +156,15 @@ for m in "${MIGRATIONS[@]}"; do
   applied=$(psql "$NEON_PG_URI" -tA -c "SELECT COUNT(*) FROM schema_migrations WHERE version='$ledger_version'" 2>/dev/null || echo 0)
   repair_migration=false
   case "$m" in
+    2026_06_27_stage5_p0b1a_foundation|\
+    2026_06_28_stage5b_p0b1a2_persistence_hardening|\
+    2026_06_28_stage5d_p0b1a3_dispatcher|\
+    2026_06_28_stage6_p0b1b_business_spine|\
+    2026_06_28_stage7a_revenue_readiness_schema_contract|\
+    2026_06_28_stage8_finance_activation|\
+    2026_06_28_stage12a_telemetry_live_state|\
+    2026_06_28_stage13b_safety_maintenance_foundation|\
+    2026_06_29_stage18_commercial_foundation|\
     2026_07_16_stage42_telemetry_gateways|\
     2026_07_30_stage53_tenant_rls_reconciliation|\
     2026_07_30_stage54_cold_chain_device_integrity|\
@@ -188,6 +208,15 @@ DO $verify_pilot_wave$
 BEGIN
   IF EXISTS (
     SELECT 1 FROM (VALUES
+      ('2026_06_27_stage5_p0b1a_foundation'),
+      ('2026_06_28_stage5b_p0b1a2_persistence_hardening'),
+      ('2026_06_28_stage5d_p0b1a3_dispatcher'),
+      ('2026_06_28_stage6_p0b1b_business_spine'),
+      ('2026_06_28_stage7a_revenue_readiness_schema_contract'),
+      ('2026_06_28_stage8_finance_activation'),
+      ('2026_06_28_stage12a_telemetry_live_state'),
+      ('2026_06_28_stage13b_safety_maintenance_foundation'),
+      ('2026_06_29_stage18_commercial_foundation'),
       ('2026_07_16_stage42_telemetry_gateways'),
       ('2026_08_01_stage60_dispatch_trip_pilot'),
       ('2026_07_22_stage47_detention_recovery'),
@@ -264,6 +293,21 @@ BEGIN
     WHERE role.role_key='support_admin' AND permission.permission_key='platform:impersonation:start'
   ) THEN
     RAISE EXCEPTION 'Stage77 protected authorization reference bootstrap is incomplete or unsafe';
+  END IF;
+  IF to_regclass('public.outbox_messages') IS NULL
+     OR to_regclass('public.inbox_messages') IS NULL
+     OR EXISTS (
+       SELECT 1 FROM (VALUES
+         ('invite_token_hash'),('invite_expires_at'),('updated_at'),('mfa_secret')
+       ) required(column_name)
+       WHERE NOT EXISTS (
+         SELECT 1 FROM information_schema.columns column_state
+         WHERE column_state.table_schema='public'
+           AND column_state.table_name='platform_admins'
+           AND column_state.column_name=required.column_name
+       )
+     ) THEN
+    RAISE EXCEPTION 'Protected runtime foundation schema is incomplete';
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns

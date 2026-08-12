@@ -143,7 +143,7 @@ public sealed class FleetProductionReadinessService
         WITH critical_workers(service_name) AS (
           SELECT unnest(@criticalWorkers::text[])
         ), required(name, tenant_scoped) AS (VALUES
-          ('companies',true),
+          ('companies',true),('outbox_messages',true),('inbox_messages',true),('platform_admins',false),
           ('workforce_schedules',true),
           ('vehicles',true),('drivers',true),('vehicle_assignments',true),('dispatch_assignments',true),
           ('fleet_tms_shipments',true),('fleet_tms_shipment_stops',true),('fleet_tms_pods',true),
@@ -308,6 +308,10 @@ public sealed class FleetProductionReadinessService
           ('location_events','causation_id','character varying(120)',false,'',''),
           ('location_events','client_generated_id','character varying(120)',false,'',''),
           ('location_events','idempotency_key','character varying(120)',false,'','')
+          ,('platform_admins','invite_token_hash','character varying(128)',false,'','')
+          ,('platform_admins','invite_expires_at','timestamp with time zone',false,'','')
+          ,('platform_admins','updated_at','timestamp with time zone',true,'now()','')
+          ,('platform_admins','mfa_secret','character varying(160)',false,'','')
         ), identity_indexes(name, table_name, key1, key2, predicate) AS (VALUES
           ('uq_vehicles_identity_code_normalized','vehicles','company_id','lower(btrim(vehicle_code::text))',''),
           ('uq_drivers_identity_code_normalized','drivers','company_id','lower(btrim(driver_code::text))',''),

@@ -51,6 +51,32 @@ test("predeploy runner makes Stage76 terminal on first and repair runs", () => {
   ]);
 });
 
+test("protected clean database receives the complete pre-RLS runtime foundation", () => {
+  const runner = read("tools/apply-neon-predeploy-migrations.sh");
+  const clean = read("tools/test-predeploy-clean-chain.sh");
+  const stage77 = read("database/migrations/2026_08_12_stage77_protected_role_bootstrap.sql");
+  for (const migration of [
+    "2026_06_27_stage5_p0b1a_foundation",
+    "2026_06_28_stage5b_p0b1a2_persistence_hardening",
+    "2026_06_28_stage5d_p0b1a3_dispatcher",
+    "2026_06_28_stage6_p0b1b_business_spine",
+    "2026_06_28_stage7a_revenue_readiness_schema_contract",
+    "2026_06_28_stage8_finance_activation",
+    "2026_06_28_stage12a_telemetry_live_state",
+    "2026_06_28_stage13b_safety_maintenance_foundation",
+    "2026_06_29_stage18_commercial_foundation",
+  ]) {
+    assert.match(runner, new RegExp(migration));
+    assert.match(clean, new RegExp(migration));
+  }
+  assert.match(stage77, /ADD COLUMN IF NOT EXISTS invite_token_hash/);
+  assert.match(stage77, /ADD COLUMN IF NOT EXISTS mfa_secret/);
+  assert.match(runner, /to_regclass\('public\.outbox_messages'\) IS NULL/);
+  const commercial = read("database/migrations/2026_06_29_stage18_commercial_foundation.sql");
+  assert.match(commercial, /ADD COLUMN IF NOT EXISTS contract_number/);
+  assert.match(commercial, /ALTER COLUMN contract_number SET NOT NULL/);
+});
+
 test("clean chain and production rehearsal require Stage76 evidence", () => {
   const clean = read("tools/test-predeploy-clean-chain.sh");
   const rehearsal = read("tools/test-production-shaped-local-rehearsal.sh");
