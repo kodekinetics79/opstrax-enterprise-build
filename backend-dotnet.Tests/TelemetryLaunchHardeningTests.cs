@@ -142,8 +142,9 @@ public sealed class TelemetryLaunchHardeningTests
 
         Assert.Contains("REVOKE ALL ON SCHEMA public FROM PUBLIC", migration, StringComparison.Ordinal);
         Assert.Contains("GRANT SELECT (%s) ON TABLE public.eld_devices", migration, StringComparison.Ordinal);
-        Assert.Contains("GRANT UPDATE (", migration, StringComparison.Ordinal);
-        Assert.Contains("malfunction_resolved_at,malfunction_resolved_by,resolution_evidence,row_version", migration, StringComparison.Ordinal);
+        Assert.Contains("GRANT UPDATE (%s) ON TABLE public.eld_devices", migration, StringComparison.Ordinal);
+        Assert.Contains("'malfunction_resolved_at','malfunction_resolved_by','resolution_evidence'", migration, StringComparison.Ordinal);
+        Assert.Contains("'row_version','updated_at'", migration, StringComparison.Ordinal);
         Assert.Contains("secret_encrypted','UPDATE", migration, StringComparison.Ordinal);
         Assert.Contains("telemetry_stream_ticket_nonces_id_seq", migration, StringComparison.Ordinal);
         Assert.Contains("Stage76 stream-ticket nonce sequence ACL is unsafe", migration, StringComparison.Ordinal);

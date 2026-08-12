@@ -11,12 +11,12 @@ This ledger separates four evidence states:
 
 | Surface | Prepared | Compiled | Executed in rebuild | Blocked / not claimed |
 | --- | --- | --- | --- | --- |
-| Expo SDK 56 mobile | Expo-compatible versions, `expo-constants`, Babel preset, safe overrides | TypeScript, ESLint, Expo web export | Typecheck pass; lint pass; 661-module web export pass; 4 audit-policy tests pass; both 11- and 32-finding registry representations resolve exclusively to the same two reviewed advisories | Native iOS/Android build and physical-device run not executed. Online Expo compatibility check is delegated to blocking CI; local check ran offline. |
-| Playwright safety/roles | Five persona projects, production GET-only interception, production auth rejection, exact staging mutation allowlist, per-worker readonly storage state, failure artifacts, and all-target runtime/5xx enforcement | 48 meaningful tests enumerated across 7 spec files | 12/12 guard tests pass | 48 browser cases were not locally executed because a Playwright Chromium binary is not installed. CI browser job is prepared but has not run in GitHub. Staging mutation case remains opt-in and secret-gated. |
+| Expo SDK 56 mobile | Expo-compatible versions, `expo-constants`, Babel preset, safe overrides, MFA completion, identity-scoped navigation/state, and real Proof/Workflow mutations | TypeScript, ESLint, Expo web export | Typecheck pass; lint pass; 662-module web export pass; 4 audit-policy and 4 workflow-contract tests pass; current 11-finding registry representation resolves exclusively to the two reviewed advisories | Native iOS/Android build and physical-device run not executed. |
+| Playwright safety/roles | Five persona projects, production GET-only interception, production auth rejection, exact staging mutation allowlist, per-worker readonly storage state, failure artifacts, and all-target runtime/5xx enforcement | 49 meaningful tests enumerated across 7 spec files | 12/12 guard tests pass; 21/21 anonymous local Chromium journeys pass, including accessible names and keyboard focus | Authenticated tenant/driver/customer/Platform journeys require staging role-state files. Staging mutation remains opt-in and secret-gated. |
 | Large-data plan | 10,000 dependency-aware positive operations + 10 structured negatives; source-binder contracts; guarded runner | All requests materialize, including HMAC telemetry | 26/26 plan/executor tests pass; dry-run materialized 10,000/10,000 with zero network; mock executor completed 10,000/10,000 | No staging API or database execution. Negative pack not applied. |
 | Load/stress | Read-only k6 workload; exact staging host; HTTPS; isolated-tenant acknowledgement; mode-0600 credential file; hard caps | k6 script statically inspected as two GETs only | 10/10 guard/static tests pass | k6 binary and isolated staging credentials unavailable; no load or stress traffic sent. |
 | Telematics tools | Offline fingerprint, loopback-first capture with an exact 1 MiB per-connection payload cap, CRC-validated ACK, confined mode-0600 captures, git-tracked one-shot public staging replay | Python imports/CLI paths validated | 18/18 unit tests pass; 9/9 fingerprint vectors pass; public replay dry-run reports zero network | No public listener bind, physical-device capture, provider traffic, or deployed-gateway replay. PT40 protocol remains unconfirmed without a physical capture. |
-| Stage76 terminal ordering | Predeploy, clean-chain, production rehearsal and CI all place Stage76 after Stage58/59/67; exact-SHA ledger includes new jobs | Shell syntax and 7/7 CI-contract tests | Static/order tests executed | Disposable Postgres clean-chain/rehearsal and GitHub Actions were not executed in this workspace. Production migration was not applied. |
+| Stage76 terminal ordering | Predeploy, clean-chain, production rehearsal and CI all place Stage76 after Stage58/59/67; exact-SHA ledger includes new jobs | Shell syntax and 7/7 CI-contract tests | Static/order tests, disposable clean-chain, and Production-shaped rehearsal pass; separate restricted identities, health contracts, signed-ticket isolation, 16/16 ledgers, zero PUBLIC policies, and zero Stage76 ACL violations | Production migration was not applied. GitHub Actions exact-SHA execution remains pending. |
 | Publish/deploy | Branch publication and a draft PR are authorized; the exact-SHA mandatory gate graph is prepared | Workflow source validated locally | Local release-candidate validation recorded here; GitHub records the subsequent commit, branch, PR, and CI identities | Merge, package/image publication, production deployment, and provider actions are not authorized and remain gated on exact-SHA CI evidence. |
 
 ## Executed command evidence
@@ -24,13 +24,14 @@ This ledger separates four evidence states:
 ```text
 mobile: npm run typecheck                                      PASS
 mobile: npm run lint                                           PASS
-mobile: EXPO_NO_TELEMETRY=1 EXPO_OFFLINE=1 npm run build       PASS (661 modules)
+mobile: npm run build                                          PASS (662 modules)
 mobile: npm run test:audit-policy                              PASS 4/4
-mobile: npm audit + validate-audit.mjs                         POLICY PASS (this runner: 11 high, 0 critical)
-mobile: retained dependent-expanded audit + validator          POLICY PASS (32 high, 0 critical)
+mobile: npm run test:contracts                                 PASS 4/4
+mobile: npm audit + validate-audit.mjs                         POLICY PASS (11 reviewed findings, 0 critical)
 
 tests/e2e: npm run test:guard                                  PASS 12/12
-tests/e2e: npm run test:list                                   COMPILED 48 tests / 7 files
+tests/e2e: npm run test:list                                   COMPILED 49 tests / 7 files
+tests/e2e: npm run test:local                                  PASS 21/21 Chromium
 
 tools/launch: node --test test_launch_plan.mjs                 PASS 26/26
 tools/launch: node --test test_ci_contract.mjs                 PASS 7/7
@@ -41,6 +42,17 @@ tests/load: node --test test_load_guard.mjs                    PASS 10/10
 tools/telematics: python3 -m unittest discover ...             PASS 18/18
 tools/telematics: fingerprint.py --self-test                   PASS 9/9 vectors
 tools/telematics: public_replay.py ... --dry-run               PASS 1 fixture; 0 network
+
+backend: non-DB unit/source/regression suite                    PASS 1,440/1,440
+backend: PostgreSQL/RLS/integration suite                       PASS 340/340
+telematics: Release solution with disposable PostgreSQL         PASS 128/128 (39 + 39 + 50)
+frontend: npm audit; lint; production build; bundle budget      PASS (0 advisories; 203 chunks; 95.22 KiB max gzip)
+database: tools/test-predeploy-clean-chain.sh                    PASS
+database: tools/test-production-shaped-local-rehearsal.sh        PASS (16/16 ledgers; 0 PUBLIC policies; 0 ACL violations)
+compose: clean-env docker compose config --quiet                PASS
+containers: API release image build                             PASS sha256:6e5125072bef
+containers: frontend release image build                        PASS sha256:0feeb520bc6e
+containers: telematics gateway release image build              PASS sha256:f9f9cdcbfdf
 ```
 
 ## Mobile dependency advisory disposition
@@ -64,7 +76,7 @@ Playwright production projects reject any configured role state and abort every 
 ## Remaining launch blockers
 
 1. Run the blocking GitHub workflow at the exact candidate SHA, including mobile and local Chromium journeys.
-2. Run clean-chain and production-shaped Stage76 rehearsals on disposable Postgres; retain their artifacts.
+2. Retain the CI artifact from the production-shaped Stage76 rehearsal at the exact candidate SHA.
 3. Run readonly load/stress only against an explicitly allowlisted isolated staging tenant and retain k6 thresholds/results.
 4. Execute authenticated staging persona journeys with independently provisioned readonly role states; separately authorize the single mutation canary if desired.
 5. Capture and fingerprint one physical PT40 frame before recording any device protocol claim.
