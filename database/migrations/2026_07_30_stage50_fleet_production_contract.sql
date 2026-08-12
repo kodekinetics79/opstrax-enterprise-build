@@ -1309,6 +1309,8 @@ ALTER TABLE fleet_tms_last_mile_stops ADD COLUMN IF NOT EXISTS last_action_type 
 
 ALTER TABLE fleet_tms_last_mile_stops ADD COLUMN IF NOT EXISTS proof_evidence_ref TEXT NULL;
 
+DO $optional_job_charges$ BEGIN IF to_regclass('public.job_charges') IS NOT NULL THEN CREATE UNIQUE INDEX IF NOT EXISTS uq_job_charges_last_mile ON job_charges(company_id, job_id, charge_code) WHERE charge_code = 'LASTMILE'; END IF; END $optional_job_charges$;
+
 DO $migration$
             BEGIN
               IF to_regclass('public.fleet_tms_readiness_documents') IS NOT NULL THEN
@@ -1392,17 +1394,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_ftms_lmstops_company_order ON fleet_tms_las
 CREATE UNIQUE INDEX IF NOT EXISTS uq_ftms_route_progress_key ON fleet_tms_delivery_routes(company_id, last_progress_key) WHERE last_progress_key IS NOT NULL;
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_ftms_stop_action_key ON fleet_tms_last_mile_stops(company_id, last_action_key) WHERE last_action_key IS NOT NULL;
-
-DO $optional_job_charges$
-BEGIN
-  -- Finance is an optional pack on the predecessor baseline. Fleet production
-  -- hardening must remain deployable when its job_charges table is absent.
-  IF to_regclass('public.job_charges') IS NOT NULL THEN
-    CREATE UNIQUE INDEX IF NOT EXISTS uq_job_charges_last_mile
-      ON job_charges(company_id, job_id, charge_code) WHERE charge_code = 'LASTMILE';
-  END IF;
-END
-$optional_job_charges$;
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_branches_company_id_id ON branches(company_id, id);
 
