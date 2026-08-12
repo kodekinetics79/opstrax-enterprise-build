@@ -16,6 +16,7 @@ const Tabs = createBottomTabNavigator();
 
 function AppTabs() {
   const { roleModel } = useSession();
+  const routes = new Set(roleModel.routeFamilies);
 
   return (
     <Tabs.Navigator
@@ -29,10 +30,10 @@ function AppTabs() {
       }}
     >
       <Tabs.Screen name="Dashboard" component={DashboardScreen} options={{ title: roleModel.title, tabBarLabel: "Dashboard" }} />
-      <Tabs.Screen name="Workflows" component={WorkflowScreen} options={{ title: "Workflows", tabBarLabel: "Work" }} />
-      <Tabs.Screen name="Proof" component={ProofScreen} options={{ title: "Proof", tabBarLabel: "Proof" }} />
-      <Tabs.Screen name="Telemetry" component={TelemetryScreen} options={{ title: "Telemetry", tabBarLabel: "Telemetry" }} />
-      <Tabs.Screen name="Settings" component={SettingsScreen} options={{ title: "Settings", tabBarLabel: "Settings" }} />
+      {routes.has("Workflows") ? <Tabs.Screen name="Workflows" component={WorkflowScreen} options={{ title: "Workflows", tabBarLabel: "Work" }} /> : null}
+      {routes.has("Proof") ? <Tabs.Screen name="Proof" component={ProofScreen} options={{ title: "Proof", tabBarLabel: "Proof" }} /> : null}
+      {routes.has("Telemetry") ? <Tabs.Screen name="Telemetry" component={TelemetryScreen} options={{ title: "Telemetry", tabBarLabel: "Telemetry" }} /> : null}
+      {routes.has("Settings") ? <Tabs.Screen name="Settings" component={SettingsScreen} options={{ title: "Settings", tabBarLabel: "Settings" }} /> : null}
     </Tabs.Navigator>
   );
 }
@@ -77,4 +78,3 @@ const darkTheme = {
     notification: colors.red,
   },
 };
-

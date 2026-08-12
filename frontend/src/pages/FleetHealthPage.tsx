@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { tokens, chart } from "@/styles/tokens";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router";
 import {
   Activity, AlertTriangle, CheckCircle, ChevronRight,
   Clock, RefreshCw, Shield, Truck, User, Wrench, X,
@@ -55,6 +56,11 @@ function sevLabel(sev: Sev | string): string {
 function num(v: unknown, fallback = 0): number {
   const n = Number(v);
   return isNaN(n) ? fallback : n;
+}
+
+function hasReadinessEvidence(vehicle: AnyRecord): boolean {
+  return [vehicle.deviceStatus ?? vehicle.device_status, vehicle.cameraStatus ?? vehicle.camera_status]
+    .some((status) => status != null && !/^(unknown|unavailable|--)$/i.test(String(status).trim()));
 }
 
 function scoreColor(score: number): string {
@@ -374,13 +380,13 @@ function RiskCard({
 // ── Vehicle drawer ──────────────────────────────────────────────────────────
 
 function VehicleDrawer({
-  vehicleId, onClose, canManageMaint, onWOCreated,
+  vehicleId, onClose, canManageMaint,
 }: {
   vehicleId: number | null;
   onClose: () => void;
   canManageMaint: boolean;
-  onWOCreated: () => void;
 }) {
+  const navigate = useNavigate();
   const { data, isLoading, isError } = useQuery<AnyRecord>({
     queryKey: ["fleet-health", "vehicle", vehicleId],
     queryFn: () => fleetHealthApi.vehicleDetail(vehicleId!),
@@ -392,26 +398,6 @@ function VehicleDrawer({
   const ackDefect = useMutation({
     mutationFn: (defect: AnyRecord) => maintenanceApi.acknowledgeDefect(num(defect.id), num(defect.rowVersion ?? defect.row_version)),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["fleet-health"] }),
-  });
-
-  const resolveDefect = useMutation({
-    mutationFn: (defectId: number) => maintenanceApi.resolveDefect(defectId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["fleet-health"] }),
-  });
-
-  const createWO = useMutation({
-    mutationFn: (vehicleId: number) =>
-      maintenanceApi.createWorkOrder({
-        vehicleId,
-        serviceType: "fleet_health",
-        title: "Fleet health review",
-        description: "Created from Fleet Health to track critical readiness issues.",
-        priority: "High",
-      }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["fleet-health"] });
-      onWOCreated();
-    },
   });
 
   if (vehicleId === null) return null;
@@ -427,7 +413,7 @@ function VehicleDrawer({
   const vehicleInfoRows: [string, string][] = [
     ["Type",            String(veh.type ?? "—")],
     ["Status",          String(veh.status ?? "—")],
-    ["Readiness",       `${num(veh.readinessScore, 50)}%`],
+    ["Readiness",       hasReadinessEvidence(veh) ? `${num(veh.readinessScore)}%` : "Unknown"],
     ["Device",          String(veh.deviceStatus ?? "—")],
     ["Assigned Driver", String(veh.assignedDriverName ?? "Unassigned")],
     ["Odometer",        veh.odometerMiles ? `${num(veh.odometerMiles).toLocaleString()} mi` : "—"],
@@ -528,10 +514,10 @@ function VehicleDrawer({
                             >Ack</button>
                             <button
                               type="button"
-                              disabled={resolveDefect.isPending}
-                              onClick={() => resolveDefect.mutate(num(d.id))}
-                              className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-0.5 hover:bg-emerald-100 disabled:opacity-50"
-                            >Resolve</button>
+                              onClick={() => navigate("/work-orders?tab=Defects")}
+                              className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-0.5 hover:bg-emerald-100"
+                              title="Open the confirmation flow to record repair notes"
+                            >Review resolution</button>
                           </div>
                         )}
                       </div>
@@ -623,12 +609,11 @@ function VehicleDrawer({
           <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 shrink-0">
             <button
               type="button"
-              disabled={createWO.isPending}
-              onClick={() => createWO.mutate(vehicleId)}
+              onClick={() => navigate(`/work-orders?vehicleId=${vehicleId}`)}
               className="w-full flex items-center justify-center gap-2 text-sm font-bold text-white bg-slate-800 rounded-xl px-4 py-2.5 hover:bg-slate-700 transition-colors disabled:opacity-50"
             >
               <Wrench className="h-4 w-4" />
-              {createWO.isPending ? "Creating…" : "Create Work Order"}
+              Open Work Order Form
             </button>
           </div>
         )}
@@ -924,6 +909,7 @@ function FilterBar({
 // ── Main page ───────────────────────────────────────────────────────────────
 
 export function FleetHealthPage() {
+  const navigate = useNavigate();
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("all");
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>("all");
   const [vehicleDrawerId, setVehicleDrawerId] = useState<number | null>(null);
@@ -946,19 +932,6 @@ export function FleetHealthPage() {
     queryKey: ["fleet-health", "risks"],
     queryFn:  () => fleetHealthApi.risks(),
     refetchInterval: 60_000,
-  });
-
-  const createWO = useMutation({
-    mutationFn: (vehicleId: number) =>
-      maintenanceApi.createWorkOrder({
-        vehicleId,
-        serviceType: "fleet_health",
-        title: "Fleet health review",
-        description: "Created from Fleet Health to track critical readiness issues.",
-        priority: "High",
-      }),
-    onMutate:  (id) => setMutatingId(id),
-    onSettled: () => { setMutatingId(null); qc.invalidateQueries({ queryKey: ["fleet-health"] }); },
   });
 
   const ackFirstDefect = useMutation({
@@ -1021,7 +994,6 @@ export function FleetHealthPage() {
         vehicleId={vehicleDrawerId}
         onClose={() => setVehicleDrawerId(null)}
         canManageMaint={canManageMaint}
-        onWOCreated={() => qc.invalidateQueries({ queryKey: ["fleet-health"] })}
       />
       <DriverDrawer
         driverId={driverDrawerId}
@@ -1142,7 +1114,7 @@ export function FleetHealthPage() {
                     item={item}
                     onVehicleClick={setVehicleDrawerId}
                     onDriverClick={setDriverDrawerId}
-                    onCreateWO={(id) => createWO.mutate(id)}
+                    onCreateWO={(id) => navigate(`/work-orders?vehicleId=${id}`)}
                     onAckDefect={(id) => ackFirstDefect.mutate(id)}
                     onAssignCoaching={(id) => assignCoaching.mutate(id)}
                     canManageMaint={canManageMaint}
@@ -1168,7 +1140,7 @@ export function FleetHealthPage() {
                     item={item}
                     onVehicleClick={setVehicleDrawerId}
                     onDriverClick={setDriverDrawerId}
-                    onCreateWO={(id) => createWO.mutate(id)}
+                    onCreateWO={(id) => navigate(`/work-orders?vehicleId=${id}`)}
                     onAckDefect={(id) => ackFirstDefect.mutate(id)}
                     onAssignCoaching={(id) => assignCoaching.mutate(id)}
                     canManageMaint={canManageMaint}

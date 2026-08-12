@@ -144,7 +144,7 @@ CREATE TABLE IF NOT EXISTS fleet_tms_last_mile_stops (
         await TryExecute("uq_ftms_lmstops_company_order", "CREATE UNIQUE INDEX IF NOT EXISTS uq_ftms_lmstops_company_order ON fleet_tms_last_mile_stops(company_id, order_number)");
         await TryExecute("uq_ftms_route_progress_key", "CREATE UNIQUE INDEX IF NOT EXISTS uq_ftms_route_progress_key ON fleet_tms_delivery_routes(company_id, last_progress_key) WHERE last_progress_key IS NOT NULL");
         await TryExecute("uq_ftms_stop_action_key", "CREATE UNIQUE INDEX IF NOT EXISTS uq_ftms_stop_action_key ON fleet_tms_last_mile_stops(company_id, last_action_key) WHERE last_action_key IS NOT NULL");
-        await TryExecute("uq_job_charges_last_mile", "CREATE UNIQUE INDEX IF NOT EXISTS uq_job_charges_last_mile ON job_charges(company_id, job_id, charge_code) WHERE charge_code = 'LASTMILE'");
+        await TryExecute("uq_job_charges_last_mile", "DO $optional_job_charges$ BEGIN IF to_regclass('public.job_charges') IS NOT NULL THEN CREATE UNIQUE INDEX IF NOT EXISTS uq_job_charges_last_mile ON job_charges(company_id, job_id, charge_code) WHERE charge_code = 'LASTMILE'; END IF; END $optional_job_charges$");
         await TryExecute("uq_branches_company_id_id", "CREATE UNIQUE INDEX IF NOT EXISTS uq_branches_company_id_id ON branches(company_id, id)");
     }
 

@@ -8,6 +8,7 @@ import {
 import { driverApi } from "@/services/driverApi";
 import { messagesApi } from "@/services/messagesApi";
 import { useFlag } from "@/hooks/useFeatureFlags";
+import { useDialogFocus } from "@/hooks/useDialogFocus";
 import type { AnyRecord } from "@/types";
 
 // Touch/mouse signature capture. Exports the drawn ink as a PNG Blob for upload.
@@ -117,6 +118,15 @@ export function DriverAssignmentPage() {
   const [artifacts, setArtifacts] = useState<AnyRecord[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadErr, setUploadErr] = useState<string | null>(null);
+  const closeProof = () => {
+    if (proofMut.isPending || uploading) return;
+    setShowProof(null);
+    setArtifacts([]);
+    setProofNotes("");
+    setProofHash("");
+    setUploadErr(null);
+  };
+  const proofDialogRef = useDialogFocus<HTMLDivElement>(showProof !== null, closeProof);
 
   // Feature flag: POD media capture. The server gate on the upload endpoint is the real
   // enforcement — this just keeps the UI honest so a driver isn't shown a camera whose
@@ -286,7 +296,7 @@ export function DriverAssignmentPage() {
             <ActionButton
               key={s}
               label="Submit Delivery Proof"
-              onClick={() => setShowProof("delivery")}
+              onClick={() => { proofMut.reset(); setShowProof("delivery"); }}
             />
           );
         }
@@ -318,7 +328,7 @@ export function DriverAssignmentPage() {
       {status === "arrived_delivery" && (
         <ActionButton
           label="Submit Delivery Proof"
-          onClick={() => setShowProof("delivery")}
+          onClick={() => { proofMut.reset(); setShowProof("delivery"); }}
         />
       )}
 
@@ -327,7 +337,7 @@ export function DriverAssignmentPage() {
         <ActionButton
           variant="ghost"
           label="Record Pickup Proof"
-          onClick={() => setShowProof("pickup")}
+          onClick={() => { proofMut.reset(); setShowProof("pickup"); }}
         />
       )}
 
@@ -393,13 +403,13 @@ export function DriverAssignmentPage() {
 
       {/* Proof modal */}
       {showProof && (
-        <div className="fixed inset-0 z-50 flex items-end bg-black/40">
+        <div ref={proofDialogRef} className="fixed inset-0 z-50 flex items-end bg-black/40" role="dialog" aria-modal="true" aria-labelledby="driver-proof-title">
           <div className="w-full rounded-t-3xl bg-white p-6 space-y-4">
             <div className="flex items-center justify-between">
-              <p className="text-base font-bold text-slate-900">
+              <p id="driver-proof-title" className="text-base font-bold text-slate-900">
                 {showProof === "delivery" ? "Delivery Confirmation" : "Pickup Confirmation"}
               </p>
-              <button type="button" onClick={() => setShowProof(null)}><X className="h-5 w-5 text-slate-500" /></button>
+              <button type="button" onClick={closeProof} aria-label="Close proof dialog"><X className="h-5 w-5 text-slate-500" /></button>
             </div>
             <div>
               <label className="text-xs font-bold text-slate-500 block mb-1">Notes (optional)</label>
@@ -412,13 +422,16 @@ export function DriverAssignmentPage() {
               />
             </div>
             <div>
-              <label className="text-xs font-bold text-slate-500 block mb-1">Evidence Reference (optional)</label>
+              <label className="text-xs font-bold text-slate-500 block mb-1">
+                Evidence reference {showProof === "delivery" ? "(required unless media is attached)" : "(optional)"}
+              </label>
               <input
                 type="text"
                 className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm"
                 placeholder="e.g. photo ID or reference number"
                 value={proofHash}
                 onChange={(e) => setProofHash(e.target.value)}
+                maxLength={128}
               />
             </div>
             {podMediaOn && (
@@ -446,13 +459,19 @@ export function DriverAssignmentPage() {
                   </div>
                 )}
                 {uploading && <p className="text-xs text-slate-400">Uploading…</p>}
-                {uploadErr && <p className="text-xs text-red-600">{uploadErr}</p>}
+                {uploadErr && <p role="alert" className="text-xs text-red-600">{uploadErr}</p>}
               </div>
             )}
+            {showProof === "delivery" && !proofHash.trim() && artifacts.length === 0 && (
+              <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-medium text-amber-800">
+                Delivery cannot be closed until you attach a photo/signature or enter a verifiable evidence reference.
+              </p>
+            )}
+            {proofMut.isError && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-medium text-red-700">{(proofMut.error as Error)?.message ?? "Proof submission failed"}</p>}
             <button
               type="button"
               className="w-full rounded-2xl bg-teal-600 py-4 text-sm font-bold text-white active:bg-teal-700 disabled:opacity-50"
-              disabled={proofMut.isPending || uploading}
+              disabled={proofMut.isPending || uploading || (showProof === "delivery" && !proofHash.trim() && artifacts.length === 0)}
               onClick={() => {
                 // Media travels in `artifacts`, the reference/hash stays a hash. Packing the
                 // media manifest into evidenceHash (a VARCHAR(128)) is what made every POD
@@ -471,7 +490,10 @@ export function DriverAssignmentPage() {
               {proofMut.isPending ? "Submitting…" : `Confirm ${showProof === "delivery" ? "Delivery" : "Pickup"}`}
             </button>
             {showProof === "delivery" && (
-              <p className="text-xs text-center text-slate-500">Confirming delivery will close this assignment.</p>
+              <div className="space-y-1 text-center text-xs text-slate-500">
+                <p>Confirming delivery will close this assignment.</p>
+                <p>Submission requires connectivity. This screen does not queue proof offline; duplicate retries are rejected by the server.</p>
+              </div>
             )}
           </div>
         </div>

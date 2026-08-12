@@ -6,7 +6,8 @@
     "@react-navigation/bottom-tabs": "^7.18.3",
     "@react-navigation/native": "^7.3.4",
     "@react-navigation/native-stack": "^7.17.6",
-    "expo": "~56.0.12",
+    "expo": "~56.0.19",
+    "expo-constants": "~56.0.23",
     "expo-secure-store": "~56.0.4",
     "expo-status-bar": "~56.0.4",
     "react": "19.2.3",
@@ -14,11 +15,12 @@
     "react-native": "0.85.3",
     "react-native-gesture-handler": "~2.31.1",
     "react-native-safe-area-context": "~5.7.0",
-    "react-native-screens": "4.25.2",
+    "react-native-screens": "~4.26.0",
     "react-native-web": "^0.21.2"
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
+    "babel-preset-expo": "~56.0.19",
     "babel-plugin-module-resolver": "^5.0.3",
     "eslint": "^8.57.1",
     "eslint-config-expo": "^56.0.4",
@@ -31,7 +33,16 @@
     "web": "expo start --web",
     "build": "expo export --platform web",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint . --ext .js,.jsx,.ts,.tsx"
+    "lint": "eslint . --ext .js,.jsx,.ts,.tsx",
+    "test:audit-policy": "node --test scripts/test-validate-audit.mjs",
+    "test:contracts": "node --test scripts/test-launch-workflows.mjs"
+  },
+  "overrides": {
+    "brace-expansion@1.1.15": "1.1.18",
+    "brace-expansion@2.1.1": "2.1.4",
+    "brace-expansion@5.0.6": "5.0.9",
+    "js-yaml@4.3.0": "4.3.1",
+    "uuid": "11.1.1"
   },
   "private": true
 }

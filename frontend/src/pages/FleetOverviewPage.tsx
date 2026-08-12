@@ -16,12 +16,13 @@ import type { AnyRecord } from "@/types";
 
 // Vehicle movement status is derived from real vehicle + telemetry fields. We do NOT
 // fabricate GPS speed/location — where live telemetry is absent we show honest blanks.
-type VStatus = "Active" | "Idle" | "Available" | "Offline" | "OOS";
-type MStatus = "Healthy" | "Due Soon" | "Overdue" | "Critical";
-type Signal  = "Online" | "Degraded" | "Offline";
+type VStatus = "Active" | "Idle" | "Available" | "Offline" | "OOS" | "Unknown";
+type MStatus = "Healthy" | "Due Soon" | "Overdue" | "Critical" | "Unknown";
+type Signal  = "Online" | "Degraded" | "Offline" | "Unknown";
 
 interface FleetRow {
   id:          string;
+  vehicleId:   string;
   type:        string;
   driver:      string | null;
   status:      VStatus;
@@ -33,7 +34,7 @@ interface FleetRow {
   flag:        string | null;
 }
 
-const STATUS_TABS = ["All", "Active", "Idle", "Available", "OOS", "Offline"] as const;
+const STATUS_TABS = ["All", "Active", "Idle", "Available", "OOS", "Offline", "Unknown"] as const;
 type Tab = typeof STATUS_TABS[number];
 
 const STATUS_CFG: Record<VStatus, { badge: string; dot: string; label: string }> = {
@@ -42,6 +43,7 @@ const STATUS_CFG: Record<VStatus, { badge: string; dot: string; label: string }>
   Available: { badge: "inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold bg-slate-100 text-slate-600 border border-slate-200", dot: "bg-slate-400", label: "Available" },
   Offline:   { badge: "badge badge-danger",                                                dot: "bg-red-500",                   label: "Offline" },
   OOS:       { badge: "inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold bg-red-100 text-red-700 border border-red-200",      dot: "bg-red-500 animate-pulse", label: "OOS" },
+  Unknown:   { badge: "inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold bg-slate-100 text-slate-600 border border-slate-200", dot: "bg-slate-400", label: "Unknown" },
 };
 
 const MAINT_CFG: Record<MStatus, { cls: string }> = {
@@ -49,30 +51,34 @@ const MAINT_CFG: Record<MStatus, { cls: string }> = {
   "Due Soon":{ cls: "text-amber-600 text-xs font-medium" },
   Overdue:   { cls: "text-red-600 text-xs font-semibold" },
   Critical:  { cls: "text-red-700 text-xs font-bold" },
+  Unknown:   { cls: "text-slate-500 text-xs font-medium" },
 };
 
 const SIGNAL_ICON: Record<Signal, React.ReactNode> = {
   Online:   <Wifi className="h-3.5 w-3.5 text-emerald-500" />,
   Degraded: <Wifi className="h-3.5 w-3.5 text-amber-500" />,
   Offline:  <WifiOff className="h-3.5 w-3.5 text-red-400" />,
+  Unknown:  <Radio className="h-3.5 w-3.5 text-slate-400" />,
 };
 
 function deriveStatus(v: AnyRecord): VStatus {
   if (v.outOfService === true || /out.?of.?service|oos/i.test(String(v.status ?? ""))) return "OOS";
-  const device = String(v.deviceStatus ?? "").toLowerCase();
-  if (device && device !== "online") return "Offline";
   const s = String(v.status ?? "").toLowerCase();
   if (/maintenance|repair/.test(s)) return "OOS";
   if (/active|on route|driving|in.?transit|dispatched/.test(s)) return "Active";
   if (/idle|idling/.test(s)) return "Idle";
-  return "Available";
+  if (/available|ready/.test(s)) return "Available";
+  if (/offline|inactive/.test(s)) return "Offline";
+  return "Unknown";
 }
 
 function deriveMaint(v: AnyRecord): MStatus {
   const s = String(v.status ?? "").toLowerCase();
   if (/critical/.test(s)) return "Critical";
   if (/maintenance|repair|overdue/.test(s)) return "Overdue";
-  const readiness = Number(v.readinessScore ?? v.fleetReadinessScore ?? 100);
+  const readinessRaw = v.readinessScore ?? v.fleetReadinessScore;
+  if (readinessRaw == null || !Number.isFinite(Number(readinessRaw))) return "Unknown";
+  const readiness = Number(readinessRaw);
   if (readiness < 60) return "Overdue";
   if (readiness < 80) return "Due Soon";
   return "Healthy";
@@ -80,7 +86,7 @@ function deriveMaint(v: AnyRecord): MStatus {
 
 function deriveSignal(v: AnyRecord): Signal {
   const device = String(v.deviceStatus ?? "").toLowerCase();
-  if (!device) return "Offline";
+  if (!device) return "Unknown";
   if (device === "online") return "Online";
   if (/degraded|weak|intermittent/.test(device)) return "Degraded";
   return "Offline";
@@ -145,6 +151,7 @@ export function FleetOverviewPage() {
     const rows = (vehiclesQ.data ?? []) as AnyRecord[];
     return rows.map((v) => ({
       id:          String(v.vehicleCode ?? v.id),
+      vehicleId:   String(v.id),
       type:        String(v.type ?? [v.make, v.model].filter(Boolean).join(" ") ?? "Vehicle"),
       driver:      v.assignedDriverId != null ? (driverById.get(String(v.assignedDriverId)) || String(v.assignedDriver ?? "")) || null : null,
       status:      deriveStatus(v),
@@ -163,6 +170,7 @@ export function FleetOverviewPage() {
     Available: fleet.filter((v) => v.status === "Available").length,
     Offline:   fleet.filter((v) => v.status === "Offline").length,
     OOS:       fleet.filter((v) => v.status === "OOS").length,
+    Unknown:   fleet.filter((v) => v.status === "Unknown").length,
   }), [fleet]);
 
   const filtered = useMemo(
@@ -185,6 +193,7 @@ export function FleetOverviewPage() {
     Online:   fleet.filter((v) => v.signal === "Online").length,
     Degraded: fleet.filter((v) => v.signal === "Degraded").length,
     Offline:  fleet.filter((v) => v.signal === "Offline").length,
+    Unknown:  fleet.filter((v) => v.signal === "Unknown").length,
   }), [fleet]);
 
   const alerts = useMemo(() => {
@@ -227,6 +236,7 @@ export function FleetOverviewPage() {
           <AlertTriangle className="mx-auto h-8 w-8 text-red-500" />
           <p className="mt-3 text-sm font-bold text-slate-700">Unable to load fleet data</p>
           <p className="mt-1 text-xs text-slate-500">The vehicles service did not respond. Retry in a moment.</p>
+          <button type="button" className="btn-ghost mt-4" onClick={() => void vehiclesQ.refetch()}>Retry fleet registry</button>
         </div>
       </div>
     );
@@ -245,7 +255,7 @@ export function FleetOverviewPage() {
           <div className="min-w-0">
             <span className="section-title inline-flex items-center gap-2">
               <span className="live-dot h-1.5 w-1.5" />
-              Live Operations Deck
+              Fleet Operations Deck
             </span>
             <h1 className="mt-1 text-[26px] font-black leading-none tracking-tight text-slate-950">Fleet Command</h1>
             <p className="mt-1.5 text-[12.5px] font-medium text-slate-500">
@@ -263,12 +273,13 @@ export function FleetOverviewPage() {
       </header>
 
       {/* ── Clay status tiles — puffy, pressable fleet filters ────────────── */}
-      <div className="grid shrink-0 grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+      <div className="grid shrink-0 grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
         <ClayKpi label="Active"         count={counts.Active}    total={fleet.length} Icon={Truck}       tone="deck-clay-emerald" fill="deck-fill-emerald" icon="text-emerald-700" dot="bg-emerald-500 animate-pulse" active={tab === "Active"}    onClick={() => toggleTab("Active")} />
         <ClayKpi label="Idle"           count={counts.Idle}      total={fleet.length} Icon={Zap}         tone="deck-clay-amber"   fill="deck-fill-amber"   icon="text-amber-700"   dot="bg-amber-400"                 active={tab === "Idle"}      onClick={() => toggleTab("Idle")} />
         <ClayKpi label="Available"      count={counts.Available} total={fleet.length} Icon={Clock}       tone="deck-clay-sky"     fill="deck-fill-sky"     icon="text-sky-700"     dot="bg-sky-400"                   active={tab === "Available"} onClick={() => toggleTab("Available")} />
         <ClayKpi label="Out of Service" count={counts.OOS}       total={fleet.length} Icon={ShieldAlert} tone="deck-clay-red"     fill="deck-fill-red"     icon="text-red-700"     dot="bg-red-500 animate-pulse"     active={tab === "OOS"}       onClick={() => toggleTab("OOS")} />
         <ClayKpi label="Offline"        count={counts.Offline}   total={fleet.length} Icon={WifiOff}     tone="deck-clay-slate"   fill="deck-fill-slate"   icon="text-slate-600"   dot="bg-slate-400"                 active={tab === "Offline"}   onClick={() => toggleTab("Offline")} />
+        <ClayKpi label="Unknown"        count={counts.Unknown}   total={fleet.length} Icon={Radio}       tone="deck-clay-slate"   fill="deck-fill-slate"   icon="text-slate-600"   dot="bg-slate-400"                 active={tab === "Unknown"}   onClick={() => toggleTab("Unknown")} />
       </div>
 
       {/* ── Main deck: roster console + instrument rail ───────────────────── */}
@@ -298,7 +309,7 @@ export function FleetOverviewPage() {
             </div>
             <span className="ml-auto inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-500">
               <Activity className="h-3 w-3 text-teal-600" />
-              Live · refreshes every 30 s
+              Registry · refreshes every 30 s
             </span>
           </div>
 
@@ -370,8 +381,8 @@ export function FleetOverviewPage() {
                           </div>
                         </td>
                         <td className="px-3 py-3">
-                          <button type="button" className="btn-ghost invisible h-7 gap-1 px-3 text-xs group-hover:visible" onClick={() => navigate("/vehicles")}>
-                            Detail
+                          <button type="button" className="btn-ghost h-7 gap-1 px-3 text-xs" onClick={() => navigate(`/vehicles/${v.vehicleId}/live`)}>
+                            Live detail
                             <ChevronRight className="h-3 w-3" />
                           </button>
                         </td>
@@ -586,7 +597,7 @@ function ReadinessGauge({
 function SignalBay({
   counts, total, onOpen,
 }: {
-  counts: { Online: number; Degraded: number; Offline: number };
+  counts: { Online: number; Degraded: number; Offline: number; Unknown: number };
   total: number;
   onOpen: () => void;
 }) {
@@ -594,6 +605,7 @@ function SignalBay({
     { label: "Online",   value: counts.Online,   led: "deck-led-emerald", fill: "deck-fill-emerald" },
     { label: "Degraded", value: counts.Degraded, led: "deck-led-amber",   fill: "deck-fill-amber" },
     { label: "Offline",  value: counts.Offline,  led: "deck-led-red",     fill: "deck-fill-red" },
+    { label: "Unknown",  value: counts.Unknown,  led: "deck-led-slate",   fill: "deck-fill-slate" },
   ];
   return (
     <div className="deck-neumo shrink-0 p-4">

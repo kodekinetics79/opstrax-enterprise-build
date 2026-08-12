@@ -1,5 +1,6 @@
 using System.Data;
 using Npgsql;
+using NpgsqlTypes;
 
 namespace Opstrax.Telematics.Gateway.Security.Replay;
 
@@ -7,10 +8,10 @@ namespace Opstrax.Telematics.Gateway.Security.Replay;
 /// A durable, shared <see cref="ITelemetryReplayGuard"/> backed by the
 /// <c>telemetry_replay_seen</c> table (see migration
 /// <c>database/migrations/telematics/005_replay_guard.sql</c>). Its replay guarantee is the same
-/// atomic primitive the strong ingest path uses for <c>telemetry_nonces</c>: a
-/// <c>UNIQUE(device_id, serial, content_hash)</c> constraint means only the first insert of a given
-/// triple can win, and every concurrent or later attempt is rejected — durably and across every
-/// gateway instance that shares the database.
+/// atomic primitive the strong ingest path uses for <c>telemetry_nonces</c>. A per-device locked
+/// high-water row unwraps wrapping counters into a durable monotonic sequence; the immutable seen
+/// ledger is unique on <c>(device_id,unwrapped_serial,content_hash)</c> and stores the stable event
+/// UUID returned to every immediate retry.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -21,9 +22,9 @@ namespace Opstrax.Telematics.Gateway.Security.Replay;
 /// database, not a single process's heap.
 /// </para>
 /// <para>
-/// <b>Atomicity.</b> Each <see cref="Check"/> runs one round-trip: a CTE reads the device's current
-/// high-water serial and, in the same statement, attempts the insert with
-/// <c>ON CONFLICT DO NOTHING</c>. Three outcomes:
+/// <b>Atomicity.</b> Each <see cref="Check"/> runs a transaction under a per-device advisory lock,
+/// locks/advances the durable unwrap state only for forward frames, and inserts the immutable
+/// occurrence identity. Three outcomes:
 /// </para>
 /// <list type="bullet">
 ///   <item><description>insert suppressed by the unique constraint ⇒
@@ -34,14 +35,14 @@ namespace Opstrax.Telematics.Gateway.Security.Replay;
 ///     <see cref="ReplayOutcome.Accept"/>.</description></item>
 /// </list>
 /// <para>
-/// <b>Serial semantics.</b> This guard compares serials as plain 64-bit values. If a raw wrapping
-/// protocol counter (GT06's 16-bit serial) is fed directly it will read a legitimate wrap as
-/// out-of-order; feed it a monotonic ingest sequence, or unwrap the counter before calling, when
-/// wrap tolerance is required. The in-memory guard offers a wraparound mode for dev/test.
+/// <b>Serial semantics.</b> With a modulus, the nearer half-range is forward, the farther half is
+/// behind, and exactly half is ambiguous/fail-closed. State survives restart and scale-out. A
+/// legacy device with no state bootstraps into a fresh epoch strictly above its legacy rows, since
+/// the predecessor's raw-key uniqueness made historical chronology incomplete.
 /// </para>
 /// <para>
 /// <b>Blocking I/O.</b> <see cref="Check"/> is synchronous to satisfy the interface and performs a
-/// synchronous, pooled round-trip; prefer <see cref="CheckAsync"/> from async call sites.
+/// synchronous, pooled transaction; prefer <see cref="CheckAsync"/> from async call sites.
 /// Connections are opened per call and returned to Npgsql's pool.
 /// </para>
 /// </remarks>
@@ -52,39 +53,26 @@ public sealed class PostgresReplayGuard : ITelemetryReplayGuard, IDisposable
 
     private readonly NpgsqlDataSource _dataSource;
     private readonly bool _ownsDataSource;
-
-    // Single-round-trip classify+record. Named CTE `prev` captures the high-water mark BEFORE the
-    // insert lands; `ins` performs the idempotent insert. `inserted` distinguishes a fresh row (1)
-    // from a suppressed duplicate (0); `prev_max` is NULL for a device's very first frame.
-    private const string CheckSql = $@"
-WITH prev AS (
-    SELECT max(serial) AS max_serial FROM {TableName} WHERE device_id = @device_id
-),
-ins AS (
-    INSERT INTO {TableName} (device_id, serial, content_hash, device_fix_time)
-    VALUES (@device_id, @serial, @content_hash, @device_fix_time)
-    ON CONFLICT (device_id, serial, content_hash) DO NOTHING
-    RETURNING 1
-)
-SELECT (SELECT count(*) FROM ins)::int AS inserted,
-       (SELECT max_serial FROM prev)   AS prev_max;";
+    private readonly long? _serialModulus;
 
     /// <summary>Creates a guard over an existing, caller-owned <see cref="NpgsqlDataSource"/>.</summary>
     /// <param name="dataSource">A configured Npgsql data source. Not disposed by this guard.</param>
-    public PostgresReplayGuard(NpgsqlDataSource dataSource)
+    public PostgresReplayGuard(NpgsqlDataSource dataSource, long? serialModulus = null)
     {
         _dataSource = dataSource ?? throw new ArgumentNullException(nameof(dataSource));
         _ownsDataSource = false;
+        _serialModulus = ValidateModulus(serialModulus);
     }
 
     /// <summary>Creates a guard from a connection string, building (and owning) its own data source.</summary>
     /// <param name="connectionString">A Postgres connection string.</param>
-    public PostgresReplayGuard(string connectionString)
+    public PostgresReplayGuard(string connectionString, long? serialModulus = null)
     {
         if (string.IsNullOrWhiteSpace(connectionString))
             throw new ArgumentException("connectionString must be non-empty.", nameof(connectionString));
         _dataSource = NpgsqlDataSource.Create(connectionString);
         _ownsDataSource = true;
+        _serialModulus = ValidateModulus(serialModulus);
     }
 
     /// <inheritdoc />
@@ -92,10 +80,8 @@ SELECT (SELECT count(*) FROM ins)::int AS inserted,
     {
         ValidateArgs(deviceId, contentHash);
 
-        using var connection = _dataSource.OpenConnection();
-        using var command = BuildCommand(connection, deviceId, protocolSerial, contentHash, deviceFixTimeUtc);
-        using var reader = command.ExecuteReader(CommandBehavior.SingleRow);
-        return Interpret(reader, protocolSerial);
+        return CheckCoreAsync(deviceId, protocolSerial, contentHash, deviceFixTimeUtc, CancellationToken.None)
+            .GetAwaiter().GetResult();
     }
 
     /// <summary>Asynchronous equivalent of <see cref="Check"/>; prefer this from async call sites.</summary>
@@ -108,53 +94,167 @@ SELECT (SELECT count(*) FROM ins)::int AS inserted,
     {
         ValidateArgs(deviceId, contentHash);
 
-        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-        await using var command = BuildCommand(connection, deviceId, protocolSerial, contentHash, deviceFixTimeUtc);
-        await using var reader = await command
-            .ExecuteReaderAsync(CommandBehavior.SingleRow, cancellationToken)
+        return await CheckCoreAsync(deviceId, protocolSerial, contentHash, deviceFixTimeUtc, cancellationToken)
             .ConfigureAwait(false);
-        if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
-            return ReplayDecision.Accept(); // unreachable: the SELECT always yields one row.
-        return InterpretRow(reader, protocolSerial);
     }
 
-    private static NpgsqlCommand BuildCommand(
-        NpgsqlConnection connection,
+    private async Task<ReplayDecision> CheckCoreAsync(
         string deviceId,
         long protocolSerial,
         string contentHash,
-        DateTime deviceFixTimeUtc)
+        DateTime deviceFixTimeUtc,
+        CancellationToken cancellationToken)
     {
-        var command = new NpgsqlCommand(CheckSql, connection);
+        ValidateArgs(deviceId, contentHash);
+        if (_serialModulus is long modulus && (protocolSerial < 0 || protocolSerial >= modulus))
+            throw new ArgumentOutOfRangeException(nameof(protocolSerial),
+                "A modular protocol serial must be inside its configured counter range.");
+
+        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+
+        // The state row may not exist for a first frame, so use a per-device advisory transaction
+        // lock as the creation/update mutex. Every gateway instance converges on one unwrap epoch.
+        await using (var deviceLock = new NpgsqlCommand(
+            "SELECT pg_advisory_xact_lock(hashtextextended(@device_id,0))", connection, transaction))
+        {
+            deviceLock.Parameters.AddWithValue("device_id", deviceId);
+            await deviceLock.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        DeviceHighWater? state = null;
+        await using (var stateCommand = new NpgsqlCommand(
+            "SELECT last_raw_serial,high_water_unwrapped FROM telemetry_replay_device_state WHERE device_id=@device_id FOR UPDATE",
+            connection, transaction))
+        {
+            stateCommand.Parameters.AddWithValue("device_id", deviceId);
+            await using var stateReader = await stateCommand.ExecuteReaderAsync(
+                CommandBehavior.SingleRow, cancellationToken).ConfigureAwait(false);
+            if (await stateReader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                state = new DeviceHighWater(stateReader.GetInt64(0), stateReader.GetInt64(1));
+        }
+
+        long unwrappedSerial;
+        if (state is null)
+        {
+            await using var legacyHigh = new NpgsqlCommand(
+                $"SELECT MAX(unwrapped_serial) FROM {TableName} WHERE device_id=@device_id",
+                connection, transaction);
+            legacyHigh.Parameters.AddWithValue("device_id", deviceId);
+            object? highResult = await legacyHigh.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+            long? maxExisting = highResult is null or DBNull ? null : Convert.ToInt64(highResult);
+            unwrappedSerial = BootstrapUnwrapped(protocolSerial, maxExisting, _serialModulus);
+        }
+        else
+        {
+            unwrappedSerial = Unwrap(
+                protocolSerial, state.LastRawSerial, state.HighWaterUnwrapped, _serialModulus);
+        }
+        long? previousHighWater = state?.HighWaterUnwrapped;
+        long? previousRawSerial = state?.LastRawSerial;
+
+        if (state is null)
+        {
+            await using var createState = new NpgsqlCommand(
+                "INSERT INTO telemetry_replay_device_state(device_id,last_raw_serial,high_water_unwrapped,updated_at) VALUES(@device_id,@serial,@unwrapped,NOW())",
+                connection, transaction);
+            AddStateParameters(createState, deviceId, protocolSerial, unwrappedSerial);
+            await createState.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+        else if (unwrappedSerial > state.HighWaterUnwrapped)
+        {
+            await using var advanceState = new NpgsqlCommand(
+                "UPDATE telemetry_replay_device_state SET last_raw_serial=@serial,high_water_unwrapped=@unwrapped,updated_at=NOW() WHERE device_id=@device_id",
+                connection, transaction);
+            AddStateParameters(advanceState, deviceId, protocolSerial, unwrappedSerial);
+            await advanceState.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        Guid candidateEventId = Guid.NewGuid();
+        Guid eventId;
+        bool inserted;
+        await using (var insert = new NpgsqlCommand(
+            $"""
+            INSERT INTO {TableName}
+                (device_id,serial,unwrapped_serial,content_hash,event_id,device_fix_time)
+            VALUES (@device_id,@serial,@unwrapped,@content_hash,@event_id,@device_fix_time)
+            ON CONFLICT (device_id,unwrapped_serial,content_hash) DO NOTHING
+            RETURNING event_id
+            """, connection, transaction))
+        {
+            insert.Parameters.AddWithValue("device_id", deviceId);
+            insert.Parameters.AddWithValue("serial", protocolSerial);
+            insert.Parameters.AddWithValue("unwrapped", unwrappedSerial);
+            insert.Parameters.AddWithValue("content_hash", contentHash);
+            insert.Parameters.AddWithValue("event_id", candidateEventId);
+            insert.Parameters.Add("device_fix_time", NpgsqlDbType.TimestampTz).Value =
+                deviceFixTimeUtc == default
+                    ? DBNull.Value
+                    : DateTime.SpecifyKind(deviceFixTimeUtc, DateTimeKind.Utc);
+            object? result = await insert.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+            inserted = result is Guid;
+            eventId = result is Guid created ? created : Guid.Empty;
+        }
+
+        if (!inserted)
+        {
+            await using var existing = new NpgsqlCommand(
+                $"SELECT event_id FROM {TableName} WHERE device_id=@device_id AND unwrapped_serial=@unwrapped AND content_hash=@content_hash",
+                connection, transaction);
+            existing.Parameters.AddWithValue("device_id", deviceId);
+            existing.Parameters.AddWithValue("unwrapped", unwrappedSerial);
+            existing.Parameters.AddWithValue("content_hash", contentHash);
+            eventId = (Guid)(await existing.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false)
+                ?? throw new InvalidOperationException("Replay identity conflict did not resolve to a durable event id."));
+        }
+
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+
+        if (!inserted) return ReplayDecision.DuplicateReplay(eventId);
+        if (previousHighWater is long high && unwrappedSerial < high)
+            return ReplayDecision.OutOfOrder(previousRawSerial ?? protocolSerial, eventId);
+        return ReplayDecision.Accept(eventId);
+    }
+
+    private static void AddStateParameters(
+        NpgsqlCommand command,
+        string deviceId,
+        long rawSerial,
+        long unwrappedSerial)
+    {
         command.Parameters.AddWithValue("device_id", deviceId);
-        command.Parameters.AddWithValue("serial", protocolSerial);
-        command.Parameters.AddWithValue("content_hash", contentHash);
-        object fixTimeParam = deviceFixTimeUtc == default
-            ? DBNull.Value
-            : DateTime.SpecifyKind(deviceFixTimeUtc, DateTimeKind.Utc);
-        command.Parameters.AddWithValue("device_fix_time", fixTimeParam);
-        return command;
+        command.Parameters.AddWithValue("serial", rawSerial);
+        command.Parameters.AddWithValue("unwrapped", unwrappedSerial);
     }
 
-    private static ReplayDecision Interpret(NpgsqlDataReader reader, long protocolSerial)
+    internal static long Unwrap(long candidate, long lastRaw, long highWater, long? modulus)
     {
-        if (!reader.Read())
-            return ReplayDecision.Accept(); // unreachable: the SELECT always yields one row.
-        return InterpretRow(reader, protocolSerial);
+        // Preserve the bootstrap offset even for a non-wrapping counter. Normally raw and
+        // unwrapped values are equal; after a legacy cutover the first frame may deliberately
+        // start above incomplete historical rows.
+        if (modulus is not long size) return checked(highWater + (candidate - lastRaw));
+        long forward = ((candidate - lastRaw) % size + size) % size;
+        if (forward == 0) return highWater;
+        // Exactly half a counter range is directionally ambiguous. Fail closed by mapping it
+        // behind the high-water mark; only a strictly nearer forward distance may advance state.
+        return forward <= (size - 1) / 2
+            ? checked(highWater + forward)
+            : checked(highWater - (size - forward));
     }
 
-    private static ReplayDecision InterpretRow(NpgsqlDataReader reader, long protocolSerial)
+    internal static long BootstrapUnwrapped(long candidate, long? maxExisting, long? modulus)
     {
-        int inserted = reader.GetInt32(0);
-        long? prevMax = reader.IsDBNull(1) ? null : reader.GetInt64(1);
+        if (maxExisting is null) return candidate;
+        if (modulus is not long size) return checked(maxExisting.Value + 1);
+        long nextEpoch = checked(((maxExisting.Value / size) + 1) * size);
+        return checked(nextEpoch + candidate);
+    }
 
-        if (inserted == 0)
-            return ReplayDecision.DuplicateReplay();
-
-        if (prevMax is long mark && protocolSerial < mark)
-            return ReplayDecision.OutOfOrder(mark);
-
-        return ReplayDecision.Accept();
+    private static long? ValidateModulus(long? modulus)
+    {
+        if (modulus is <= 1)
+            throw new ArgumentOutOfRangeException(nameof(modulus), "Serial modulus must be greater than one.");
+        return modulus;
     }
 
     private static void ValidateArgs(string deviceId, string contentHash)
@@ -171,4 +271,6 @@ SELECT (SELECT count(*) FROM ins)::int AS inserted,
         if (_ownsDataSource)
             _dataSource.Dispose();
     }
+
+    private sealed record DeviceHighWater(long LastRawSerial, long HighWaterUnwrapped);
 }

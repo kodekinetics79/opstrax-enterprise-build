@@ -41,7 +41,7 @@ const financialApi = {
           amountPaid,
           balanceDue,
           total,
-          currency: r.currency ?? "USD",
+          currency: currencyCode(r.currency),
         };
       })
     ),
@@ -57,8 +57,6 @@ const financialApi = {
         invoiceRef: r.invoiceRef ?? r.invoice_ref ?? "",
       }))
     ),
-  // Real AR aging buckets (built + tested in the Finance module).
-  arAging: () => unwrap<AnyRecord>(apiClient.get("/api/finance/ar-aging")),
   profitability: () =>
     unwrap<AnyRecord[]>(apiClient.get("/api/profitability")).then((rows) =>
       rows.map((r) => ({
@@ -70,6 +68,7 @@ const financialApi = {
         grossMargin: Number(r.grossMargin ?? r.gross_margin ?? 0),
         grossMarginPercent: Number(r.grossMarginPercent ?? r.gross_margin_percent ?? 0),
         riskScore: Number(r.riskScore ?? r.risk_score ?? 0),
+        currency: currencyCode(r.currency ?? r.currency_code),
       }))
     ),
 };
@@ -103,18 +102,36 @@ function MarginBadge({ pct }: { pct: number }) {
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
 
-function money(n: number, currency = "USD"): string {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency, maximumFractionDigits: 2 }).format(n);
+function currencyCode(value: unknown): string {
+  const code = String(value ?? "").trim().toUpperCase();
+  return /^[A-Z]{3}$/.test(code) ? code : "Unknown";
+}
+
+function money(n: number, currency: string): string {
+  if (currency === "Unknown") return `${n.toLocaleString(undefined, { maximumFractionDigits: 2 })} (currency unavailable)`;
+  try {
+    return new Intl.NumberFormat("en-US", { style: "currency", currency, maximumFractionDigits: 2 }).format(n);
+  } catch {
+    return `${n.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${currency}`;
+  }
+}
+
+function totalsByCurrency(rows: AnyRecord[], value: (row: AnyRecord) => number): Array<{ currency: string; total: number }> {
+  const totals = new Map<string, number>();
+  rows.forEach((row) => {
+    const currency = currencyCode(row.currency);
+    totals.set(currency, (totals.get(currency) ?? 0) + value(row));
+  });
+  return [...totals].sort(([left], [right]) => left.localeCompare(right)).map(([currency, total]) => ({ currency, total }));
 }
 
 function InvoicesTab() {
   const q = useQuery({ queryKey: ["issued-invoices"], queryFn: financialApi.invoices });
   const rows = (q.data ?? []) as AnyRecord[];
-  const outstandingBalance = rows.reduce((s, r) => s + Number(r.balanceDue ?? 0), 0);
+  const outstandingBalances = totalsByCurrency(rows, (r) => Number(r.balanceDue ?? 0));
   const overdue = rows.filter((r) => String(r.paymentStatus) === "Overdue").length;
-  const totalValue = rows.reduce((s, r) => s + Number(r.total ?? 0), 0);
+  const totalValues = totalsByCurrency(rows, (r) => Number(r.total ?? 0));
   const paidCount = rows.filter((r) => String(r.paymentStatus) === "Paid").length;
-  const currency = String(rows[0]?.currency ?? "USD");
   if (q.isLoading) return <LoadingState />;
   if (q.isError) return <ErrorState message={(q.error as Error)?.message ?? "Unable to load invoices."} />;
 
@@ -123,9 +140,9 @@ function InvoicesTab() {
   const tableRows = rows.map((r) => ({
     "Invoice #": String(r.invoiceNumber ?? "—"),
     Customer: String(r.customerName ?? "—"),
-    Total: money(Number(r.total ?? 0), String(r.currency ?? currency)),
-    Paid: money(Number(r.amountPaid ?? 0), String(r.currency ?? currency)),
-    "Balance Due": money(Number(r.balanceDue ?? 0), String(r.currency ?? currency)),
+    Total: money(Number(r.total ?? 0), currencyCode(r.currency)),
+    Paid: money(Number(r.amountPaid ?? 0), currencyCode(r.currency)),
+    "Balance Due": money(Number(r.balanceDue ?? 0), currencyCode(r.currency)),
     status: String(r.paymentStatus ?? "—"),
     "Due Date": String(r.dueDate || "—"),
     Aging: Number(r.agingDays) > 0 ? `${Number(r.agingDays)}d` : "—",
@@ -135,10 +152,10 @@ function InvoicesTab() {
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap gap-3">
         <KpiCard label="Total Invoices" value={rows.length} />
-        <KpiCard label="Outstanding" value={money(outstandingBalance, currency)} status="Review" />
+        {outstandingBalances.map(({ currency, total }) => <KpiCard key={`outstanding-${currency}`} label={`Outstanding (${currency})`} value={money(total, currency)} status="Review" />)}
         <KpiCard label="Overdue" value={overdue} status={overdue > 0 ? "Overdue" : "Healthy"} />
         <KpiCard label="Paid" value={paidCount} status="Healthy" />
-        <KpiCard label="Total Value" value={money(totalValue, currency)} />
+        {totalValues.map(({ currency, total }) => <KpiCard key={`total-${currency}`} label={`Total Value (${currency})`} value={money(total, currency)} />)}
       </div>
       <div className="panel grid gap-3 md:grid-cols-3">
         <div>
@@ -168,84 +185,77 @@ function InvoicesTab() {
   );
 }
 
+function buildAgingByCurrency(rows: AnyRecord[]): AnyRecord[] {
+  const groups = new Map<string, AnyRecord & { customersMap: Map<string, AnyRecord> }>();
+  for (const row of rows) {
+    const balance = Number(row.balanceDue ?? 0);
+    if (!Number.isFinite(balance) || balance <= 0) continue;
+    const currency = currencyCode(row.currency);
+    const group = groups.get(currency) ?? { currency, current: 0, days1To30: 0, days31To60: 0, days61To90: 0, days90Plus: 0, totalOutstanding: 0, customersMap: new Map<string, AnyRecord>() };
+    const customerName = String(row.customerName ?? "Unknown customer");
+    const customerKey = String(row.customerId ?? customerName);
+    const customer = group.customersMap.get(customerKey) ?? { customerName, currency, current: 0, days1To30: 0, days31To60: 0, days61To90: 0, days90Plus: 0, totalOutstanding: 0 };
+    const age = Math.max(0, Number(row.agingDays ?? 0));
+    const bucket = age <= 0 ? "current" : age <= 30 ? "days1To30" : age <= 60 ? "days31To60" : age <= 90 ? "days61To90" : "days90Plus";
+    group[bucket] = Number(group[bucket] ?? 0) + balance;
+    group.totalOutstanding = Number(group.totalOutstanding) + balance;
+    customer[bucket] = Number(customer[bucket] ?? 0) + balance;
+    customer.totalOutstanding = Number(customer.totalOutstanding) + balance;
+    group.customersMap.set(customerKey, customer);
+    groups.set(currency, group);
+  }
+  return [...groups.values()].map(({ customersMap, ...group }) => ({ ...group, customers: [...customersMap.values()] }));
+}
+
 function ArAgingTab() {
-  const q = useQuery({ queryKey: ["ar-aging"], queryFn: financialApi.arAging });
+  const q = useQuery({ queryKey: ["issued-invoices"], queryFn: financialApi.invoices });
   if (q.isLoading) return <LoadingState />;
   if (q.isError) return <ErrorState message={(q.error as Error)?.message ?? "Unable to load AR aging."} />;
-  const d = (q.data ?? {}) as AnyRecord;
-  const currency = String(d.currency ?? "USD");
+  const groups = buildAgingByCurrency((q.data ?? []) as AnyRecord[]);
   const buckets: { label: string; key: string; status?: string }[] = [
-    { label: "Current",     key: "current" },
-    { label: "1–30 days",   key: "days1To30" },
-    { label: "31–60 days",  key: "days31To60", status: "Review" },
-    { label: "61–90 days",  key: "days61To90", status: "Review" },
-    { label: "90+ days",    key: "days90Plus", status: "Overdue" },
+    { label: "Current", key: "current" }, { label: "1–30 days", key: "days1To30" },
+    { label: "31–60 days", key: "days31To60", status: "Review" }, { label: "61–90 days", key: "days61To90", status: "Review" },
+    { label: "90+ days", key: "days90Plus", status: "Overdue" },
   ];
-  const customers = (d.customers ?? []) as AnyRecord[];
-  const custRows = customers.map((c) => ({
-    Customer: String(c.customerName ?? "—"),
-    Current: money(Number(c.current ?? 0), currency),
-    "1–30": money(Number(c.days1To30 ?? 0), currency),
-    "31–60": money(Number(c.days31To60 ?? 0), currency),
-    "61–90": money(Number(c.days61To90 ?? 0), currency),
-    "90+": money(Number(c.days90Plus ?? 0), currency),
-    "Total Outstanding": money(Number(c.totalOutstanding ?? 0), currency),
-  }));
+  const custRows = groups.flatMap((group) => ((group.customers ?? []) as AnyRecord[]).map((customer) => ({
+    Currency: String(group.currency), Customer: String(customer.customerName ?? "—"),
+    Current: money(Number(customer.current ?? 0), String(group.currency)), "1–30": money(Number(customer.days1To30 ?? 0), String(group.currency)),
+    "31–60": money(Number(customer.days31To60 ?? 0), String(group.currency)), "61–90": money(Number(customer.days61To90 ?? 0), String(group.currency)),
+    "90+": money(Number(customer.days90Plus ?? 0), String(group.currency)), "Total Outstanding": money(Number(customer.totalOutstanding ?? 0), String(group.currency)),
+  })));
 
-  return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap gap-3">
-        {buckets.map((b) => (
-          <KpiCard key={b.key} label={b.label} value={money(Number(d[b.key] ?? 0), currency)} status={b.status} />
-        ))}
-        <KpiCard label="Total Outstanding" value={money(Number(d.totalOutstanding ?? 0), currency)} status="Review" />
-      </div>
-      <div className="panel grid gap-3 md:grid-cols-3">
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Aging basis</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">Outstanding balance bucketed by days past due.</p>
-        </div>
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Collections risk</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">
-            {Number(d.days90Plus ?? 0) > 0 ? `${money(Number(d.days90Plus), currency)} is 90+ days overdue` : "No balances past 90 days"}
-          </p>
-        </div>
-        <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Live data policy</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">Sourced from the live revenue spine (issued_invoices).</p>
-        </div>
-      </div>
-      {custRows.length === 0 ? <EmptyState title="No outstanding receivables" /> : (
-        <DataTable
-          rows={custRows}
-          columns={["Customer", "Current", "1–30", "31–60", "61–90", "90+", "Total Outstanding"]}
-        />
-      )}
+  return <div className="flex flex-col gap-4">
+    <div className="flex flex-wrap gap-3">
+      {groups.flatMap((group) => [...buckets.map((bucket) => <KpiCard key={`${group.currency}-${bucket.key}`} label={`${bucket.label} (${group.currency})`} value={money(Number(group[bucket.key] ?? 0), String(group.currency))} status={bucket.status} />), <KpiCard key={`${group.currency}-total`} label={`Total Outstanding (${group.currency})`} value={money(Number(group.totalOutstanding ?? 0), String(group.currency))} status="Review" />])}
     </div>
-  );
+    <div className="panel grid gap-3 md:grid-cols-3">
+      <div><p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Aging basis</p><p className="mt-1 text-sm font-semibold text-slate-900">Outstanding balance bucketed by days past due and separated by currency.</p></div>
+      <div><p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Collections risk</p><div className="mt-1 space-y-1 text-sm font-semibold text-slate-900">{groups.map((group) => <p key={String(group.currency)}>{Number(group.days90Plus ?? 0) > 0 ? `${money(Number(group.days90Plus), String(group.currency))} is 90+ days overdue` : `No ${String(group.currency)} balances past 90 days`}</p>)}</div></div>
+      <div><p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Live data policy</p><p className="mt-1 text-sm font-semibold text-slate-900">Calculated from tenant-scoped issued invoices; currencies are never combined.</p></div>
+    </div>
+    {custRows.length === 0 ? <EmptyState title="No outstanding receivables" /> : <DataTable rows={custRows} columns={["Currency", "Customer", "Current", "1–30", "31–60", "61–90", "90+", "Total Outstanding"]} />}
+  </div>;
 }
 
 function PaymentsTab() {
   const q = useQuery({ queryKey: ["payments"], queryFn: financialApi.payments });
   const rows = (q.data ?? []) as AnyRecord[];
-  const received = rows.filter((r) => r.status === "Received").reduce((s, r) => s + Number(r.amount ?? 0), 0);
-  const pending = rows.filter((r) => r.status !== "Received").reduce((s, r) => s + Number(r.amount ?? 0), 0);
+  const received = totalsByCurrency(rows.filter((r) => r.status === "Received"), (r) => Number(r.amount ?? 0));
+  const pending = totalsByCurrency(rows.filter((r) => r.status !== "Received"), (r) => Number(r.amount ?? 0));
   if (q.isLoading) return <LoadingState />;
   if (q.isError) return <ErrorState message={(q.error as Error)?.message ?? "Unable to load payments."} />;
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap gap-3">
-        {[
-          { label: "Total Payments", val: rows.length },
-          { label: "Collected", val: `$${received.toLocaleString()}`, accent: "text-teal-600" },
-          { label: "Pending", val: `$${pending.toLocaleString()}`, accent: "text-amber-600" },
-        ].map(({ label, val, accent }) => (
+        <div className="panel flex min-w-32 flex-col gap-1"><span className="text-xl font-bold text-slate-900">{rows.length}</span><span className="text-xs font-medium text-slate-500">Total Payments</span></div>
+        {received.map(({ currency, total }) => ({ label: `Collected (${currency})`, val: money(total, currency), accent: "text-teal-600" }))
+          .concat(pending.map(({ currency, total }) => ({ label: `Pending (${currency})`, val: money(total, currency), accent: "text-amber-600" })))
+          .map(({ label, val, accent }) => (
           <div key={label} className="panel flex flex-col gap-1 min-w-32">
             <span className={`text-xl font-bold ${accent ?? "text-slate-900"}`}>{String(val)}</span>
             <span className="text-xs text-slate-500 font-medium">{label}</span>
           </div>
-        ))}
+          ))}
       </div>
       {rows.length === 0 ? <EmptyState title="No payments found" /> : (
         <div className="panel overflow-hidden p-0">
@@ -264,8 +274,8 @@ function PaymentsTab() {
                     <td className="px-4 py-3 font-medium text-slate-900">{String(r.paymentNumber ?? "--")}</td>
                     <td className="px-4 py-3 text-slate-700">{String(r.customerName ?? "—")}</td>
                     <td className="px-4 py-3 text-xs text-slate-500">{String(r.invoiceRef ?? "—")}</td>
-                    <td className="px-4 py-3 font-semibold text-slate-900">{Number(r.amount ?? 0).toLocaleString()}</td>
-                    <td className="px-4 py-3 text-xs text-slate-500">{String(r.currency ?? "USD")}</td>
+                    <td className="px-4 py-3 font-semibold text-slate-900">{money(Number(r.amount ?? 0), currencyCode(r.currency))}</td>
+                    <td className="px-4 py-3 text-xs text-slate-500">{currencyCode(r.currency)}</td>
                     <td className="px-4 py-3 text-xs text-slate-600">{String(r.paymentMethod ?? "—")}</td>
                     <td className="px-4 py-3 text-xs text-slate-500">{String(r.paymentDate ?? "—")}</td>
                     <td className="px-4 py-3"><PaymentStatusBadge status={String(r.status ?? "Pending")} /></td>
@@ -283,9 +293,9 @@ function PaymentsTab() {
 function ProfitabilityTab() {
   const q = useQuery({ queryKey: ["profitability"], queryFn: financialApi.profitability });
   const rows = (q.data ?? []) as AnyRecord[];
-  const totalRev = rows.reduce((s, r) => s + Number(r.revenueEstimate ?? 0), 0);
-  const totalCost = rows.reduce((s, r) => s + Number(r.totalCost ?? 0), 0);
-  const totalMargin = totalRev - totalCost;
+  const totalRev = totalsByCurrency(rows, (r) => Number(r.revenueEstimate ?? 0));
+  const totalCost = totalsByCurrency(rows, (r) => Number(r.totalCost ?? 0));
+  const totalMargin = totalsByCurrency(rows, (r) => Number(r.revenueEstimate ?? 0) - Number(r.totalCost ?? 0));
   const avgMarginPct = rows.length > 0 ? rows.reduce((s, r) => s + Number(r.grossMarginPercent ?? 0), 0) / rows.length : 0;
   if (q.isLoading) return <LoadingState />;
   if (q.isError) return <ErrorState message={(q.error as Error)?.message ?? "Unable to load profitability data."} />;
@@ -297,17 +307,16 @@ function ProfitabilityTab() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap gap-3">
-        {[
-          { label: "Total Revenue",  val: `$${totalRev.toLocaleString()}`,    accent: "text-teal-600" },
-          { label: "Total Cost",     val: `$${totalCost.toLocaleString()}`,   accent: "text-slate-700" },
-          { label: "Gross Margin",   val: `$${totalMargin.toLocaleString()}`, accent: totalMargin > 0 ? "text-teal-600" : "text-red-600" },
-          { label: "Avg Margin %",   val: `${avgMarginPct.toFixed(1)}%`,      accent: avgMarginPct >= 25 ? "text-teal-600" : "text-amber-600" },
-        ].map(({ label, val, accent }) => (
+        {totalRev.map(({ currency, total }) => ({ label: `Total Revenue (${currency})`, val: money(total, currency), accent: "text-teal-600" }))
+          .concat(totalCost.map(({ currency, total }) => ({ label: `Total Cost (${currency})`, val: money(total, currency), accent: "text-slate-700" })))
+          .concat(totalMargin.map(({ currency, total }) => ({ label: `Gross Margin (${currency})`, val: money(total, currency), accent: total > 0 ? "text-teal-600" : "text-red-600" })))
+          .concat([{ label: "Avg Margin %", val: `${avgMarginPct.toFixed(1)}%`, accent: avgMarginPct >= 25 ? "text-teal-600" : "text-amber-600" }])
+          .map(({ label, val, accent }) => (
           <div key={label} className="panel flex flex-col gap-1 min-w-36">
             <span className={`text-xl font-bold ${accent}`}>{val}</span>
             <span className="text-xs text-slate-500 font-medium">{label}</span>
           </div>
-        ))}
+          ))}
       </div>
       <div className="panel grid gap-3 md:grid-cols-3">
         <div>
@@ -342,7 +351,7 @@ function ProfitabilityTab() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50">
-                  {["Entity", "Type", "Revenue", "Total Cost", "Gross Margin", "Margin %", "Risk Score"].map((h) => (
+                  {["Entity", "Type", "Revenue", "Total Cost", "Gross Margin", "Currency", "Margin %", "Risk Score"].map((h) => (
                     <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
                   ))}
                 </tr>
@@ -352,9 +361,10 @@ function ProfitabilityTab() {
                   <tr key={String(r.id ?? i)} className="hover:bg-slate-50">
                     <td className="px-4 py-3 font-medium text-slate-900">{String(r.entityName ?? "—")}</td>
                     <td className="px-4 py-3 text-xs text-slate-500">{String(r.entityType ?? "—")}</td>
-                    <td className="px-4 py-3 text-slate-700">${Number(r.revenueEstimate ?? 0).toLocaleString()}</td>
-                    <td className="px-4 py-3 text-slate-600">${Number(r.totalCost ?? 0).toLocaleString()}</td>
-                    <td className="px-4 py-3 font-semibold text-teal-700">${Number(r.grossMargin ?? 0).toLocaleString()}</td>
+                    <td className="px-4 py-3 text-slate-700">{money(Number(r.revenueEstimate ?? 0), currencyCode(r.currency))}</td>
+                    <td className="px-4 py-3 text-slate-600">{money(Number(r.totalCost ?? 0), currencyCode(r.currency))}</td>
+                    <td className="px-4 py-3 font-semibold text-teal-700">{money(Number(r.grossMargin ?? 0), currencyCode(r.currency))}</td>
+                    <td className="px-4 py-3 text-xs text-slate-500">{currencyCode(r.currency)}</td>
                     <td className="px-4 py-3"><MarginBadge pct={Number(r.grossMarginPercent ?? 0)} /></td>
                     <td className="px-4 py-3 text-xs text-slate-500">{Number(r.riskScore ?? 0).toFixed(0)}</td>
                   </tr>
@@ -409,7 +419,14 @@ export function FinancialAnalyticsPage() {
 
   const exportFns: Record<Tab, () => void> = {
     invoices: async () => exportCsv("invoices", await loadInvoiceRows()),
-    "ar-aging": async () => exportCsv("ar-aging", ((await financialApi.arAging()).customers as AnyRecord[]) ?? []),
+    "ar-aging": async () => {
+      const groups = buildAgingByCurrency(await loadInvoiceRows());
+      const rows = groups.flatMap((group) => ((group.customers ?? []) as AnyRecord[]).map((customer) => ({
+        ...customer,
+        currency: group.currency,
+      })));
+      exportCsv("ar-aging", rows);
+    },
     payments: async () => exportCsv("payments", await loadPaymentRows()),
     profitability: async () => exportCsv("profitability", await loadProfitabilityRows()),
   };

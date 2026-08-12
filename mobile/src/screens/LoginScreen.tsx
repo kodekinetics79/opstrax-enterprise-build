@@ -5,9 +5,10 @@ import { API_BASE_URL, APP_NAME, STAGE_LABEL } from "@/config";
 import { useSession } from "@/auth/SessionProvider";
 
 export function LoginScreen() {
-  const { login, authError, roleModel } = useSession();
+  const { login, verifyMfa, cancelMfa, mfaChallenge, authError, roleModel } = useSession();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [mfaCode, setMfaCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(authError);
 
@@ -18,6 +19,18 @@ export function LoginScreen() {
       await login(email, password);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitMfa = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await verifyMfa(mfaCode);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "MFA verification failed.");
     } finally {
       setBusy(false);
     }
@@ -46,9 +59,20 @@ export function LoginScreen() {
             description="No visible role picker, no mobile-only auth shortcut, and no hardcoded tenant identifiers."
           />
           <View style={{ gap: 14 }}>
-            <Input label="Email" value={email} onChangeText={setEmail} placeholder="name@company.com" keyboardType="email-address" />
-            <Input label="Password" value={password} onChangeText={setPassword} placeholder="Enter password" secureTextEntry />
-            <ActionButton label={busy ? "Signing in..." : "Sign in"} onPress={submit} disabled={busy || !email || !password} />
+            {mfaChallenge ? (
+              <>
+                <Text style={{ color: colors.text }}>Enter the 6-digit authenticator code for {mfaChallenge.email}.</Text>
+                <Input label="Authenticator code" value={mfaCode} onChangeText={setMfaCode} placeholder="123456" keyboardType="numeric" />
+                <ActionButton label={busy ? "Verifying..." : "Verify code"} onPress={submitMfa} disabled={busy || !/^\d{6}$/.test(mfaCode)} />
+                <ActionButton label="Restart sign-in" onPress={() => { cancelMfa(); setMfaCode(""); }} disabled={busy} variant="secondary" />
+              </>
+            ) : (
+              <>
+                <Input label="Email" value={email} onChangeText={setEmail} placeholder="name@company.com" keyboardType="email-address" />
+                <Input label="Password" value={password} onChangeText={setPassword} placeholder="Enter password" secureTextEntry />
+                <ActionButton label={busy ? "Signing in..." : "Sign in"} onPress={submit} disabled={busy || !email || !password} />
+              </>
+            )}
             <Text style={{ color: colors.muted, fontSize: 12, lineHeight: 18 }}>
               The backend determines tenant, role, and permissions from the authenticated session. The mobile client only renders what the session allows.
             </Text>
@@ -60,4 +84,3 @@ export function LoginScreen() {
     </Screen>
   );
 }
-

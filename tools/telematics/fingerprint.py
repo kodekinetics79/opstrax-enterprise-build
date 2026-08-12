@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import string
 import sys
 from typing import Callable, List, NamedTuple, Optional, Tuple
@@ -57,6 +58,7 @@ class Verdict(NamedTuple):
 _HEX_CHARS = set("0123456789abcdefABCDEF")
 _SEPARATORS = " \t\r\n:,-_"
 _PRINTABLE = set(bytes(string.printable, "ascii"))
+MAX_CAPTURE_BYTES = 1 << 20
 
 
 def parse_hex(text: str) -> bytes:
@@ -96,10 +98,14 @@ def looks_like_hex_text(raw: bytes) -> bool:
 def read_capture(path: str) -> bytes:
     """Read a capture file (or '-' for stdin); auto-detect hex-text vs raw binary."""
     if path == "-":
-        raw = sys.stdin.buffer.read()
+        raw = sys.stdin.buffer.read(MAX_CAPTURE_BYTES + 1)
     else:
+        if os.path.getsize(path) > MAX_CAPTURE_BYTES:
+            raise ValueError("capture exceeds the 1 MiB safety limit")
         with open(path, "rb") as fh:
-            raw = fh.read()
+            raw = fh.read(MAX_CAPTURE_BYTES + 1)
+    if len(raw) > MAX_CAPTURE_BYTES:
+        raise ValueError("capture exceeds the 1 MiB safety limit")
     if not raw:
         raise ValueError("capture is empty")
     if looks_like_hex_text(raw):

@@ -481,6 +481,7 @@ public sealed class RlsTenantIsolationPostgresTests
             "2026_07_31_stage58_nonforgeable_tenant_ticket.sql",
             "2026_07_31_stage59_data_protection_key_ring.sql",
             "2026_08_02_stage67_telematics_diagnostics_integrity.sql",
+            "2026_08_11_stage76_telematics_security_hardening.sql",
         })
         {
             await owner.ExecuteAsync(File.ReadAllText(Path.Combine(root, "database", "migrations", migration)));

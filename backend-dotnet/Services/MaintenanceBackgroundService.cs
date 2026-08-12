@@ -202,11 +202,11 @@ public sealed class MaintenanceBackgroundService(
     }
 
     // ── Vehicle availability update ────────────────────────────────────────────────
-    // Critical open defects → out_of_service=1, availability_status='out_of_service'.
+    // Critical open defects or diagnostic holds → out_of_service=1, availability_status='out_of_service'.
     // Work orders in-progress or waiting_parts → availability_status='in_maintenance'.
     // No critical defects + no blocking WO → availability_status='available'.
-    // Restoring availability requires BOTH conditions: no critical open defect AND
-    // no open WO in in_progress/waiting_parts state.
+    // Restoring availability requires every safety/maintenance gate to be clear:
+    // no critical defect, diagnostic hold, uncertified DVIR repair, or blocking work order.
     internal static async Task UpdateVehicleAvailabilityAsync(Database db, CancellationToken ct)
     {
         // Step 1 — Mark out-of-service where critical open defects exist.
@@ -214,12 +214,16 @@ public sealed class MaintenanceBackgroundService(
             @"UPDATE vehicles
               SET out_of_service=TRUE, availability_status='out_of_service'
               WHERE deleted_at IS NULL
-                AND EXISTS (
-                    SELECT 1 FROM dvir_defects dd
-                    WHERE dd.vehicle_id=vehicles.id
-                      AND dd.out_of_service=TRUE
-                      AND dd.status NOT IN ('resolved','rejected','Resolved','Rejected')
-                )",
+                AND (EXISTS (
+                        SELECT 1 FROM dvir_defects dd
+                        WHERE dd.vehicle_id=vehicles.id AND dd.company_id=vehicles.company_id
+                          AND dd.out_of_service=TRUE
+                          AND dd.status NOT IN ('resolved','rejected','Resolved','Rejected')
+                     ) OR EXISTS (
+                        SELECT 1 FROM diagnostic_holds dh
+                        WHERE dh.vehicle_id=vehicles.id AND dh.company_id=vehicles.company_id
+                          AND dh.status IN ('active','acknowledged')
+                     ))",
             ct: ct);
 
         // Step 2 — Mark in_maintenance where open work orders exist (but not out-of-service).
@@ -247,6 +251,11 @@ public sealed class MaintenanceBackgroundService(
                     WHERE dd.vehicle_id=vehicles.id AND dd.company_id=vehicles.company_id AND dd.out_of_service=TRUE
                       AND dd.status NOT IN ('resolved','rejected','Resolved','Rejected')
                 )
+                AND NOT EXISTS (
+                    SELECT 1 FROM diagnostic_holds dh
+                    WHERE dh.vehicle_id=vehicles.id AND dh.company_id=vehicles.company_id
+                      AND dh.status IN ('active','acknowledged')
+                )
                 -- Closing the final defect is not a release authorization. A DVIR that
                 -- found defects remains blocking until repairs are certified and the
                 -- bound driver has reviewed/acknowledged those repairs.
@@ -254,9 +263,9 @@ public sealed class MaintenanceBackgroundService(
                     SELECT 1 FROM dvir_reports dr
                     WHERE dr.vehicle_id=vehicles.id AND dr.company_id=vehicles.company_id
                       AND dr.deleted_at IS NULL AND dr.defects_found>0
-                      AND (dr.repair_certification_status<>'Certified'
+                      AND (COALESCE(dr.repair_certification_status,'')<>'Certified'
                            OR dr.driver_repair_acknowledged_at IS NULL
-                           OR dr.safe_to_operate=FALSE)
+                           OR COALESCE(dr.safe_to_operate,FALSE)=FALSE)
                 )
                 AND NOT EXISTS (
                     SELECT 1 FROM work_orders wo

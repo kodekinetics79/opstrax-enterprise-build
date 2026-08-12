@@ -384,7 +384,6 @@ export function AdminPage() {
           setInviteResult({ link: String(result.activationLink), expiresAt: result.activationExpiresAt });
         }
       } else if (userModal === "edit" && userForm.id) {
-        if (userForm.password.trim()) body.password = userForm.password;
         await updateUser.mutateAsync({ id: Number(userForm.id), body });
       }
       setUserModal(null);
@@ -1088,6 +1087,8 @@ export function AdminPage() {
               {([
                 ["Email", selectedUser.email],
                 ["Company", selectedUser.companyName ?? selectedUser.company_name],
+                ["Branch scope", selectedUser.branchId ?? selectedUser.branch_id ?? "Tenant-wide"],
+                ["Customer scope", selectedUser.customerId ?? selectedUser.customer_id ?? "Not assigned"],
                 ["Role", selectedUser.roleDisplayName ?? selectedUser.roleName ?? selectedUser.role_name],
                 ["Status", selectedUser.status],
                 ["Last login", selectedUser.lastLoginAt ?? selectedUser.last_login_at],
@@ -1191,13 +1192,17 @@ export function AdminPage() {
                   {["Active", "Inactive", "Pending"].map((status) => <option key={status} value={status}>{status}</option>)}
                 </select>
               </div>
-              <div>
-                <label className="label">{userModal === "create" ? "Password (optional)" : "Password"}</label>
-                <input className="field w-full" type="password" value={String(userForm.password ?? "")} onChange={(e) => setUserForm((f) => ({ ...f, password: e.target.value }))} placeholder={userModal === "create" ? "Set initial password" : "Leave blank to keep current password"} />
-                {userModal === "create" && (
+              {userModal === "create" ? (
+                <div>
+                  <label className="label">Password (optional)</label>
+                  <input className="field w-full" type="password" value={String(userForm.password ?? "")} onChange={(e) => setUserForm((f) => ({ ...f, password: e.target.value }))} placeholder="Set initial password" />
                   <p className="mt-1 text-xs text-slate-500">Leave blank to invite: you'll get a one-time activation link to share.</p>
-                )}
-              </div>
+                </div>
+              ) : (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+                  Passwords are not changed from this form. Use the one-time activation link from User Detail for credential recovery.
+                </div>
+              )}
               <div>
                 <label className="label">Company ID</label>
                 <input className="field w-full" type="number" value={Number(userForm.companyId || 0)} onChange={(e) => setUserForm((f) => ({ ...f, companyId: Number(e.target.value) }))} disabled={!String(session?.role ?? "").match(/super/i)} />

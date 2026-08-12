@@ -31,6 +31,7 @@ public sealed class DeviceHmacSecretProtectionTests
         }).Build();
 
         Assert.False(DeviceHmacSecretProtection.LegacyReadAllowed(new Environment("Production"), config));
+        Assert.False(DeviceHmacSecretProtection.LegacyReadAllowed(new Environment("Staging"), config));
         Assert.True(DeviceHmacSecretProtection.LegacyReadAllowed(new Environment("Development"), config));
     }
 

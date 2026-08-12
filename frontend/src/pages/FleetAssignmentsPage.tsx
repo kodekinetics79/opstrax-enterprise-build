@@ -582,6 +582,7 @@ function AssignmentDetailPanel({
 
   const assignment = (detail.assignment as AnyRecord) || selected;
   const proofs = (detail.proofs as AnyRecord[]) || [];
+  const proofArtifacts = (detail.proofArtifacts as AnyRecord[]) || [];
   const exceptions = (detail.exceptions as AnyRecord[]) || [];
   const auditTrail = (detail.auditTrail as AnyRecord[]) || [];
 
@@ -611,6 +612,7 @@ function AssignmentDetailPanel({
 
       <div className="mt-4 grid gap-3">
         <EvidenceSummary title="Proofs" rows={proofs} loading={loading} empty="No proof records returned yet." />
+        <EvidenceSummary title="Proof artifacts" rows={proofArtifacts} loading={loading} empty="No tenant-scoped proof artifacts returned for this assignment." />
         <EvidenceSummary title="Exceptions" rows={exceptions} loading={loading} empty="No exception records on this assignment." />
         <EvidenceSummary title="Audit" rows={auditTrail} loading={loading} empty="No audit entries returned." />
       </div>
@@ -655,8 +657,8 @@ function EvidenceSummary({
         {!loading && !rows.length ? <p className="text-sm text-slate-400">{empty}</p> : null}
         {rows.slice(0, 3).map((row, index) => (
           <div key={String(row.id ?? index)} className="rounded-xl border border-slate-200 bg-white px-3 py-2">
-            <p className="text-sm font-semibold text-slate-900">{String(g(row, "title", "proofType", "proof_type", "actionName", "action_name", "exceptionType", "exception_type") ?? `${title} item`)}</p>
-            <p className="mt-1 text-xs text-slate-500">{String(g(row, "notes", "createdAt", "created_at", "confirmedAt", "confirmed_at", "severity") ?? "No extra detail")}</p>
+            <p className="text-sm font-semibold text-slate-900">{String(g(row, "title", "proofType", "proof_type", "kind", "actionName", "action_name", "exceptionType", "exception_type") ?? `${title} item`)}</p>
+            <p className="mt-1 break-all text-xs text-slate-500">{String(g(row, "notes", "reference", "createdAt", "created_at", "confirmedAt", "confirmed_at", "severity") ?? "No extra detail")}</p>
           </div>
         ))}
       </div>

@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/dotnet/sdk:8.0@sha256:3c0edbfe1549dd93fb789dc96299a40df865ad7bffefcaf38e8c05940686d641 AS build
+FROM mcr.microsoft.com/dotnet/sdk:8.0.419-bookworm-slim@sha256:dd09bcce84d9130e7f3e85c83a8ce9709e1d95e45c48c722a0d7923b38d8024c AS build
 WORKDIR /src
 COPY backend-dotnet/Opstrax.Api.csproj backend-dotnet/
 COPY telematics/src/Opstrax.Telematics.Protocols.J1939/Opstrax.Telematics.Protocols.J1939.csproj telematics/src/Opstrax.Telematics.Protocols.J1939/
@@ -6,6 +6,7 @@ RUN dotnet restore backend-dotnet/Opstrax.Api.csproj
 COPY backend-dotnet/ backend-dotnet/
 COPY telematics/src/Opstrax.Telematics.Protocols.J1939/ telematics/src/Opstrax.Telematics.Protocols.J1939/
 COPY database/init/001_schema.sql database/init/001_schema.sql
+COPY database/migrations/2026_07_16_stage42_telemetry_gateways.sql database/migrations/
 COPY database/migrations/2026_07_30_customer_feedback_contract.sql database/migrations/
 COPY database/migrations/2026_07_30_stage49_mfa_challenge_one_time.sql database/migrations/
 COPY database/migrations/2026_07_30_stage50_fleet_production_contract.sql database/migrations/
@@ -35,10 +36,11 @@ COPY database/migrations/2026_08_02_stage72_hos_offboarding_immutability_reconci
 COPY database/migrations/2026_08_02_stage73_hos_offboarding_null_fail_closed.sql database/migrations/
 COPY database/migrations/2026_08_02_stage74_retention_policy_production_contract.sql database/migrations/
 COPY database/migrations/2026_08_02_stage75_bounded_support_access.sql database/migrations/
+COPY database/migrations/2026_08_11_stage76_telematics_security_hardening.sql database/migrations/
 COPY database/migrations/telematics database/migrations/telematics
 RUN dotnet publish backend-dotnet/Opstrax.Api.csproj -c Release -o /app/publish --no-restore
 
-FROM mcr.microsoft.com/dotnet/aspnet:8.0@sha256:8f6a307ae32fb393a4b4bcde0a81f0ce3f0a715de0e5575df71f3030448f2dde AS final
+FROM mcr.microsoft.com/dotnet/aspnet:8.0.30-bookworm-slim@sha256:b0beb9cc1dee1c1b0749796110d4734292071b814207ad0d4f40611f7db04f7b AS final
 WORKDIR /app
 COPY --from=build /app/publish .
 COPY --from=build /src/database/migrations ./Migrations

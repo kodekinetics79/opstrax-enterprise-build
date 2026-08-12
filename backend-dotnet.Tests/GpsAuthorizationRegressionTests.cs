@@ -69,8 +69,10 @@ public sealed class GpsAuthorizationRegressionTests
     [Fact]
     public void SamsaraSync_DrainsCursorAndRejectsFabricatedFixes()
     {
-        Assert.Contains("for (var page = 0; page < 200; page++)", SamsaraConnector);
-        Assert.Contains("if (!hasNextPage) break", SamsaraConnector);
+        Assert.Contains("for (var page = 0; page < maxPages; page++)", SamsaraConnector);
+        Assert.Contains("Samsara:MaxPagesPerSync", SamsaraConnector);
+        Assert.Contains("if (!hasNextPage)", SamsaraConnector);
+        Assert.Contains("completed = true", SamsaraConnector);
         Assert.Contains("pagination did not advance its cursor", SamsaraConnector);
         Assert.Contains("GetWithRetryAsync", SamsaraSync);
         Assert.Contains("existing.idempotency_key=@idem", SamsaraSync);

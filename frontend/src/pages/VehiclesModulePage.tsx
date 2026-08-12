@@ -65,6 +65,17 @@ function riskTier(row: AnyRecord): "High" | "Medium" | "Low" {
   return n >= 70 ? "High" : n >= 40 ? "Medium" : "Low";
 }
 
+function hasReadinessEvidence(row: AnyRecord): boolean {
+  return [g(row, "deviceStatus", "device_status"), g(row, "cameraStatus", "camera_status")]
+    .some((status) => status != null && !/^(unknown|unavailable|--)$/i.test(String(status).trim()));
+}
+
+function vehicleReadiness(row: AnyRecord): number | null {
+  if (!hasReadinessEvidence(row)) return null;
+  const value = Number(g(row, "fleetReadinessScore", "fleet_readiness_score", "readinessScore", "readiness_score"));
+  return Number.isFinite(value) ? value : null;
+}
+
 export function VehiclesModulePage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -87,8 +98,15 @@ export function VehiclesModulePage() {
   const available = rows.filter((row) => /available/i.test(String(g(row, "status")))).length;
   const atRisk = num(visibleSummary.atRisk ?? visibleSummary.at_risk) || rows.filter((row) => riskTier(row) === "High").length;
   const deviceEx = num(visibleSummary.deviceExceptions ?? visibleSummary.device_exceptions) ||
-    rows.filter((row) => !/online/i.test(String(g(row, "deviceStatus", "device_status") ?? "Online")) || !/online/i.test(String(g(row, "cameraStatus", "camera_status") ?? "Online"))).length;
-  const readiness = Math.round(num(visibleSummary.fleetReadinessScore ?? visibleSummary.fleet_readiness_score) || avg(rows, "fleetReadinessScore"));
+    rows.filter((row) => !/online/i.test(String(g(row, "deviceStatus", "device_status") ?? "Unknown")) || !/online/i.test(String(g(row, "cameraStatus", "camera_status") ?? "Unknown"))).length;
+  const readinessRows = rows.filter(hasReadinessEvidence);
+  const summaryReadiness = Number(visibleSummary.fleetReadinessScore ?? visibleSummary.fleet_readiness_score);
+  const evidencedScores = readinessRows.map(vehicleReadiness).filter((score): score is number => score != null);
+  const readiness = readinessRows.length === 0
+    ? null
+    : Math.round(Number.isFinite(summaryReadiness)
+      ? summaryReadiness
+      : evidencedScores.reduce((total, score) => total + score, 0) / Math.max(evidencedScores.length, 1));
 
   const shellBanner = (
     <header className="fc-rail relative px-6 py-4">
@@ -99,7 +117,7 @@ export function VehiclesModulePage() {
           </span>
           <h1 className="mt-1 text-[26px] font-black leading-none tracking-tight text-slate-950">Vehicles</h1>
           <p className="mt-1.5 text-[12.5px] font-medium text-slate-500">
-            <span className="font-bold text-slate-700 tabular-nums">{rows.length}</span> units in the live registry ·{" "}
+            <span className="font-bold text-slate-700 tabular-nums">{rows.length}</span> units in the fleet registry ·{" "}
             <span className="font-bold text-emerald-600 tabular-nums">{available}</span> available ·{" "}
             <span className="font-bold text-rose-600 tabular-nums">{atRisk}</span> need attention
           </p>
@@ -143,7 +161,7 @@ export function VehiclesModulePage() {
       {section === "overview" && (
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-            <OverviewClay Icon={Gauge}       tone="fc-clay-teal"    iconCls="text-teal-700"    label="Fleet readiness" value={`${readiness}%`} caption={`${rows.length} live units`} />
+            <OverviewClay Icon={Gauge}       tone="fc-clay-teal"    iconCls="text-teal-700"    label="Fleet readiness" value={readiness == null ? "Unknown" : `${readiness}%`} caption={`${readinessRows.length} assessed · ${rows.length - readinessRows.length} unknown`} />
             <OverviewClay Icon={Truck}       tone="fc-clay-emerald" iconCls="text-emerald-700" label="Available now"   value={available}       caption="Ready for dispatch" />
             <OverviewClay Icon={ShieldAlert} tone="fc-clay-red"     iconCls="text-rose-700"    label="At risk"         value={atRisk}          caption="High risk or down" alert={atRisk > 0} />
             <OverviewClay Icon={Boxes}       tone="fc-clay-amber"   iconCls="text-amber-700"   label="Device gaps"     value={deviceEx}        caption="Telematics blind spots" alert={deviceEx > 0} />
@@ -267,13 +285,13 @@ function PlanningView({ rows, planning, onNavigate }: { rows: AnyRecord[]; plann
       {!forecast.length && !gaps.length && !customerBusiness.length && !routeBusiness.length ? (
         <EmptyState title="No planning data" subtitle="The backend returned no planning insight rows." />
       ) : null}
-      <p className="text-xs text-slate-500">{rows.length} live vehicles feed this view.</p>
+      <p className="text-xs text-slate-500">{rows.length} registry vehicles feed this view; telemetry may be unavailable.</p>
     </div>
   );
 }
 
 function HealthView({ rows, onNavigate }: { rows: AnyRecord[]; onNavigate: (route: string) => void }) {
-  const risky = rows.filter((row) => riskTier(row) === "High" || !/online/i.test(String(g(row, "deviceStatus", "device_status") ?? "Online")) || !/online/i.test(String(g(row, "cameraStatus", "camera_status") ?? "Online")));
+  const risky = rows.filter((row) => riskTier(row) === "High" || !/online/i.test(String(g(row, "deviceStatus", "device_status") ?? "Unknown")) || !/online/i.test(String(g(row, "cameraStatus", "camera_status") ?? "Unknown")));
   return (
     <div className="space-y-5">
       <section className="panel p-5">
@@ -284,8 +302,8 @@ function HealthView({ rows, onNavigate }: { rows: AnyRecord[]; onNavigate: (rout
         {[
           { label: "Ready", value: rows.filter((row) => /available/i.test(String(g(row, "status")))).length },
           { label: "Risk", value: rows.filter((row) => riskTier(row) === "High").length },
-          { label: "Device gaps", value: rows.filter((row) => !/online/i.test(String(g(row, "deviceStatus", "device_status") ?? "Online"))).length },
-          { label: "Camera gaps", value: rows.filter((row) => !/online/i.test(String(g(row, "cameraStatus", "camera_status") ?? "Online"))).length },
+          { label: "Device gaps", value: rows.filter((row) => !/online/i.test(String(g(row, "deviceStatus", "device_status") ?? "Unknown"))).length },
+          { label: "Camera gaps", value: rows.filter((row) => !/online/i.test(String(g(row, "cameraStatus", "camera_status") ?? "Unknown"))).length },
         ].map((k) => <KpiCard key={k.label} label={k.label} value={String(k.value)} />)}
       </div>
       <SimpleListCard title="Vehicles needing attention" rows={risky.slice(0, 8)} fields={["vehicleCode", "status", "deviceStatus", "cameraStatus", "riskHeatScore"]} />
@@ -423,9 +441,4 @@ function RelatedChip({ label, onClick }: { label: string; onClick: () => void })
       {label}
     </button>
   );
-}
-
-function avg(rows: AnyRecord[], key: string) {
-  if (!rows.length) return 0;
-  return rows.reduce((t, r) => t + num(g(r, key, key.replace(/([A-Z])/g, "_$1").toLowerCase())), 0) / rows.length;
 }

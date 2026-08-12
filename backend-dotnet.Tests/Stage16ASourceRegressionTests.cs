@@ -51,9 +51,11 @@ public class Stage16ASourceRegressionTests
         Assert.DoesNotContain("seedInvoices", finance);
         Assert.DoesNotContain("seedCustomers", finance);
         // The Invoices/AR-aging surfaces are wired to the real revenue spine (issued_invoices)
-        // and the tested AR-aging endpoint — NOT the generic module_records feed.
+        // and derives aging from those canonical invoice balances — NOT the generic
+        // module_records feed or a second, divergent aging endpoint.
         Assert.Contains("/api/issued-invoices", finance);
-        Assert.Contains("/api/finance/ar-aging", finance);
+        Assert.Contains("buildAgingByCurrency(await loadInvoiceRows())", finance);
+        Assert.DoesNotContain("/api/finance/ar-aging", finance);
         Assert.DoesNotContain("/api/invoices", finance);
         Assert.Contains("Sourced from the live revenue spine (issued_invoices).", finance);
     }

@@ -406,7 +406,11 @@ public class DemoTenantSeederPostgresTests
         process.BeginErrorReadLine();
 
         using var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}") };
-        var deadline = DateTime.UtcNow.AddSeconds(60);
+        // A genuinely empty database runs every authoritative schema service before
+        // Kestrel listens. The launch-hardened graph is intentionally larger than an
+        // already-migrated boot, so keep this bounded without assuming a 60-second
+        // workstation/CI scheduler budget.
+        var deadline = DateTime.UtcNow.AddSeconds(120);
         while (DateTime.UtcNow < deadline && !process.HasExited)
         {
             try

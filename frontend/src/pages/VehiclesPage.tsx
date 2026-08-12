@@ -12,7 +12,7 @@ import { downloadServerExport } from "@/services/fleetDomainApi";
 import { useHasPermission } from "@/hooks/usePermission";
 import { useAuth } from "@/hooks/useAuth";
 import { scopeRowsForSession } from "@/auth/accessScope";
-import { exportCsv, labelize, LoadingState, ErrorState, EmptyState } from "@/components/ui";
+import { labelize, LoadingState, ErrorState, EmptyState } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
 /* ------------------------------------------------------------------ helpers */
@@ -36,6 +36,17 @@ function riskTier(row: AnyRecord): "High" | "Medium" | "Low" {
 // location_events join; where they are absent we say so honestly (no fabricated motion).
 function isMoving(row: AnyRecord): boolean {
   return num(g(row, "speedMph", "speed_mph")) > 1;
+}
+
+function hasReadinessEvidence(row: AnyRecord): boolean {
+  return [g(row, "deviceStatus", "device_status"), g(row, "cameraStatus", "camera_status")]
+    .some((status) => status != null && !/^(unknown|unavailable|--)$/i.test(String(status).trim()));
+}
+
+function vehicleReadiness(row: AnyRecord): number | null {
+  if (!hasReadinessEvidence(row)) return null;
+  const value = Number(g(row, "fleetReadinessScore", "fleet_readiness_score", "readinessScore", "readiness_score"));
+  return Number.isFinite(value) ? value : null;
 }
 
 function freshness(iso?: unknown): { label: string; live: boolean } | null {
@@ -91,6 +102,7 @@ export function VehiclesPage() {
   const [selectedId, setSelectedId] = useState<string | number | null>(null);
   const [editing, setEditing] = useState<AnyRecord | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
   const [offset, setOffset] = useState(0);
   const PAGE_SIZE = 50;
 
@@ -129,12 +141,19 @@ export function VehiclesPage() {
   }, [rows, filter]);
 
   const sum = (summary.data as AnyRecord) || {};
-  const readiness = Math.round(num(g(sum, "fleetReadinessScore", "fleet_readiness_score")) || avg(rows, "fleetReadinessScore"));
+  const readinessRows = rows.filter(hasReadinessEvidence);
+  const summaryReadiness = Number(g(sum, "fleetReadinessScore", "fleet_readiness_score"));
+  const evidencedScores = readinessRows.map(vehicleReadiness).filter((score): score is number => score != null);
+  const readiness = readinessRows.length === 0
+    ? null
+    : Math.round(Number.isFinite(summaryReadiness)
+      ? summaryReadiness
+      : evidencedScores.reduce((total, score) => total + score, 0) / Math.max(evidencedScores.length, 1));
   const available = rows.filter((r) => /available/i.test(String(g(r, "status")))).length;
   const moving = rows.filter(isMoving).length;
   const atRisk = num(g(sum, "atRisk", "at_risk")) || rows.filter((r) => riskTier(r) === "High").length;
   const deviceEx = num(g(sum, "deviceExceptions", "device_exceptions")) ||
-    rows.filter((r) => !/online/i.test(String(g(r, "deviceStatus", "device_status") ?? "Online")) || !/online/i.test(String(g(r, "cameraStatus", "camera_status") ?? "Online"))).length;
+    rows.filter((r) => !/online/i.test(String(g(r, "deviceStatus", "device_status") ?? "Unknown")) || !/online/i.test(String(g(r, "cameraStatus", "camera_status") ?? "Unknown"))).length;
 
   const save = useMutation({
     mutationFn: (p: AnyRecord) => (p.id && !isCreating ? vehiclesApi.update(String(p.id), p) : vehiclesApi.create(p)),
@@ -190,10 +209,10 @@ export function VehiclesPage() {
           </div>
           <div className="ml-auto flex flex-wrap items-center gap-2.5">
             <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-500">
-              <Activity className="h-3 w-3 text-teal-600" /> Live · 30 s
+              <Activity className="h-3 w-3 text-teal-600" /> Registry · 30 s
             </span>
             <button type="button" disabled={!canExport}
-              onClick={() => { if (!canExport) return; void downloadServerExport("/api/vehicles/export", `vehicles_${new Date().toISOString().slice(0, 10)}.csv`).catch(() => exportCsv("vehicles", filtered)); }}
+              onClick={() => { if (!canExport) return; setExportError(null); void downloadServerExport("/api/vehicles/export", `vehicles_${new Date().toISOString().slice(0, 10)}.csv`).catch((error: unknown) => setExportError(error instanceof Error ? error.message : "Full fleet export failed.")); }}
               title="Export the full fleet (all pages)" className="btn-ghost h-10">
               <Download className="h-4 w-4" /> Export
             </button>
@@ -211,10 +230,11 @@ export function VehiclesPage() {
           {actionError.message || "The vehicle action could not be completed."}
         </div>
       ) : null}
+      {exportError ? <div role="alert" className="shrink-0 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{exportError} No partial-page fallback was downloaded.</div> : null}
 
       {/* ── Clay KPI tiles ───────────────────────────────────────────────── */}
       <div className="grid shrink-0 grid-cols-2 gap-3 xl:grid-cols-4">
-        <ClayStat Icon={Gauge}      tone="fc-clay-teal"    iconCls="text-teal-700"    label="Fleet readiness"      value={`${readiness}%`} meter={readiness} caption={`${rows.length} units this page`} />
+        <ClayStat Icon={Gauge}      tone="fc-clay-teal"    iconCls="text-teal-700"    label="Fleet readiness"      value={readiness == null ? "Unknown" : `${readiness}%`} meter={readiness ?? undefined} caption={`${readinessRows.length} assessed · ${rows.length - readinessRows.length} unknown`} />
         <ClayStat Icon={Navigation} tone="fc-clay-emerald" iconCls="text-emerald-700" label="Moving now"           value={moving}          meter={rows.length ? (moving / rows.length) * 100 : 0} caption={`${available} available idle`} />
         <ClayStat Icon={ShieldAlert} tone="fc-clay-red"    iconCls="text-rose-700"    label="At risk"              value={atRisk}          alert={atRisk > 0} caption="High risk or down" />
         <ClayStat Icon={Cpu}        tone="fc-clay-amber"   iconCls="text-amber-700"   label="Device / camera gaps" value={deviceEx}        alert={deviceEx > 0} caption="Telematics blind spots" />
@@ -264,7 +284,7 @@ export function VehiclesPage() {
                 </thead>
                 <tbody className="divide-y divide-slate-100/90">
                   {filtered.map((row) => {
-                    const ready = num(g(row, "fleetReadinessScore", "fleet_readiness_score", "readinessScore"));
+                    const ready = vehicleReadiness(row);
                     const speed = num(g(row, "speedMph", "speed_mph"));
                     const fresh = freshness(g(row, "lastSeenAt", "last_seen_at"));
                     const moving = isMoving(row);
@@ -304,8 +324,8 @@ export function VehiclesPage() {
                         <td className="hidden px-4 py-3 text-slate-600 md:table-cell">{String(g(row, "assignedDriver", "assigned_driver", "driverName") ?? "—")}</td>
                         <td className="hidden px-4 py-3 xl:table-cell">
                           <div className="flex items-center gap-3">
-                            <HealthDot ok={/online/i.test(String(g(row, "deviceStatus", "device_status") ?? "Online"))} icon={<Cpu className="h-3.5 w-3.5" />} />
-                            <HealthDot ok={/online|recording/i.test(String(g(row, "cameraStatus", "camera_status") ?? "Online"))} icon={<Camera className="h-3.5 w-3.5" />} />
+                          <HealthDot ok={/online/i.test(String(g(row, "deviceStatus", "device_status") ?? "Unknown"))} icon={<Cpu className="h-3.5 w-3.5" />} />
+                          <HealthDot ok={/online|recording/i.test(String(g(row, "cameraStatus", "camera_status") ?? "Unknown"))} icon={<Camera className="h-3.5 w-3.5" />} />
                           </div>
                         </td>
                         <td className="px-4 py-3 text-right">
@@ -357,7 +377,7 @@ export function VehiclesPage() {
           canUpdate={canUpdate} canDelete={canDelete} canAssign={canAssign} assigning={assign.isPending}
           onClose={() => setSelectedId(null)}
           onEdit={() => { if (canUpdate) { setIsCreating(false); setEditing(selectedRecord); } }}
-          onDelete={() => canDelete && remove.mutate(String(selectedRecord.id))}
+          onDelete={() => canDelete && window.confirm(`Archive ${String(g(selectedRecord, "vehicleCode", "vehicle_code") ?? "this vehicle")}? It will leave the active fleet registry; the server may block archival while operational records still depend on it.`) && remove.mutate(String(selectedRecord.id))}
           onAssign={() => canAssign && assign.mutate(selectedRecord.id as string)}
           onNavigate={navigate}
         />
@@ -372,11 +392,6 @@ export function VehiclesPage() {
 }
 
 /* ------------------------------------------------------------------ primitives */
-
-function avg(rows: AnyRecord[], key: string) {
-  if (!rows.length) return 0;
-  return rows.reduce((t, r) => t + num(g(r, key, key.replace(/([A-Z])/g, "_$1").toLowerCase())), 0) / rows.length;
-}
 
 function Screw({ className, slot }: { className: string; slot: string }) {
   return <span aria-hidden className={`deck-screw absolute ${className}`} style={{ "--slot": slot } as React.CSSProperties} />;
@@ -419,7 +434,8 @@ function RiskChip({ tier }: { tier: "High" | "Medium" | "Low" }) {
   return <span className={`inline-flex rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${tone}`}>{tier}</span>;
 }
 
-function Meter({ value }: { value: number }) {
+function Meter({ value }: { value: number | null }) {
+  if (value == null) return <span className="text-xs font-semibold text-slate-400">Unknown</span>;
   const v = Math.round(value);
   const color = v >= 85 ? "deck-fill-emerald" : v >= 70 ? "deck-fill-amber" : "deck-fill-red";
   return (
@@ -523,7 +539,7 @@ function VehicleDrawer({ record, detail, loading, canUpdate, canDelete, canAssig
             <button type="button" disabled={!canUpdate} onClick={onEdit} className="btn-primary h-9 px-3 text-xs"><Wrench className="h-3.5 w-3.5" /> Edit</button>
             <button type="button" disabled={!canAssign || assigning} onClick={onAssign} className="btn-ghost h-9 px-3 text-xs"><UserCheck className="h-3.5 w-3.5" /> {assigning ? "Assigning…" : "Smart assign"}</button>
             <button type="button" onClick={() => onNavigate("/map-view")} className="btn-ghost h-9 px-3 text-xs"><MapPin className="h-3.5 w-3.5" /> Live map</button>
-            <button type="button" disabled={!canDelete} onClick={onDelete} className="ml-auto inline-flex h-9 items-center gap-1.5 rounded-xl border border-rose-200 px-3 text-xs font-semibold text-rose-600 transition hover:bg-rose-50 disabled:opacity-40"><Trash2 className="h-3.5 w-3.5" /> Delete</button>
+            <button type="button" disabled={!canDelete} onClick={onDelete} className="ml-auto inline-flex h-9 items-center gap-1.5 rounded-xl border border-rose-200 px-3 text-xs font-semibold text-rose-600 transition hover:bg-rose-50 disabled:opacity-40"><Trash2 className="h-3.5 w-3.5" /> Archive vehicle</button>
           </div>
         </div>
 

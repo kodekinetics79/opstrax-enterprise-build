@@ -8,7 +8,7 @@ export const colors = {
   borderStrong: "#2b476a",
   text: "#edf4ff",
   muted: "#9db0c9",
-  subtle: "#6d8098",
+  subtle: "#8ca0ba",
   teal: "#34d1bf",
   blue: "#7cb8ff",
   amber: "#f5b84d",
@@ -76,7 +76,7 @@ export function ActionButton({
   disabled?: boolean;
 }) {
   return (
-    <Pressable onPress={onPress} disabled={disabled} style={({ pressed }) => [styles.button, buttonStyle(variant), disabled && styles.buttonDisabled, pressed && !disabled && styles.buttonPressed]}>
+    <Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ disabled: Boolean(disabled) }} onPress={onPress} disabled={disabled} style={({ pressed }) => [styles.button, buttonStyle(variant), disabled && styles.buttonDisabled, pressed && !disabled && styles.buttonPressed]}>
       <Text style={[styles.buttonText, variant === "ghost" && styles.buttonTextGhost]}>{label}</Text>
     </Pressable>
   );
@@ -120,6 +120,7 @@ export function Input({
     <View style={{ gap: 6 }}>
       <Text style={styles.fieldLabel}>{label}</Text>
       <TextInput
+        accessibilityLabel={label}
         value={value}
         onChangeText={onChangeText}
         placeholder={placeholder}
@@ -372,4 +373,3 @@ const styles = StyleSheet.create({
     backgroundColor: colors.border,
   },
 });
-

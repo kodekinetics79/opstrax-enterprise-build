@@ -1,4 +1,4 @@
-import { Text, View } from "react-native";
+import { Alert, Text, View } from "react-native";
 import { ActionButton, EmptyState, Field, LoadingState, Panel, Row, Screen, SectionHeader } from "@/components/ui";
 import { useSession } from "@/auth/SessionProvider";
 import { useWorkflow } from "@/workflow/WorkflowContext";
@@ -7,6 +7,9 @@ import type { JsonRecord } from "@/types";
 
 function asArray(value: unknown): JsonRecord[] {
   if (Array.isArray(value)) return value as JsonRecord[];
+  if (value && typeof value === "object" && Array.isArray((value as Record<string, unknown>).items)) {
+    return (value as { items: JsonRecord[] }).items;
+  }
   return [];
 }
 
@@ -23,6 +26,29 @@ export function ProofScreen() {
 
   const proofArtifacts = useAsyncResource(async () => (latestProof?.id ? api.proofArtifacts(latestProof.id as number | string) : []), [api, latestProof?.id, refreshKey]);
   const billingConfidence = useAsyncResource(async () => (latestProof?.id ? api.billingConfidence(latestProof.id as number | string) : null), [api, latestProof?.id, refreshKey]);
+
+  const runProofAction = (action: "submit" | "validate") => {
+    if (!latestProof?.id) return;
+    Alert.alert(
+      action === "submit" ? "Submit proof package?" : "Validate proof package?",
+      "The server will enforce tenant scope, assignment scope, evidence, and allowed status transitions.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: action === "submit" ? "Submit" : "Validate",
+          onPress: () => void (async () => {
+            try {
+              if (action === "submit") await api.submitProofPackage(latestProof.id as number | string);
+              else await api.validateProofPackage(latestProof.id as number | string);
+              bumpRefreshKey();
+            } catch (error) {
+              Alert.alert("Proof action failed", error instanceof Error ? error.message : "The server rejected the action.");
+            }
+          })(),
+        },
+      ],
+    );
+  };
 
   return (
     <Screen>
@@ -59,8 +85,8 @@ export function ProofScreen() {
           <Panel>
             <SectionHeader eyebrow="Proof actions" title="Submit and validate" description="Action buttons are visible only when the session has the corresponding permission." />
             <Row>
-              {hasPermission("operations.proof.submit") ? <ActionButton label="Submit" onPress={bumpRefreshKey} /> : null}
-              {hasPermission("operations.proof.validate") ? <ActionButton label="Validate" onPress={bumpRefreshKey} variant="secondary" /> : null}
+              {hasPermission("operations.proof.submit") ? <ActionButton label="Submit" onPress={() => runProofAction("submit")} /> : null}
+              {hasPermission("operations.proof.validate") ? <ActionButton label="Validate" onPress={() => runProofAction("validate")} variant="secondary" /> : null}
             </Row>
             <Text style={{ color: "white" }}>AI and the mobile client never execute business actions automatically.</Text>
           </Panel>
@@ -104,4 +130,3 @@ export function ProofScreen() {
     </Screen>
   );
 }
-

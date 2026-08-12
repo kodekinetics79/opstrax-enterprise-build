@@ -172,7 +172,8 @@ public sealed class FleetProductionReadinessService
           ('saved_reports',true),('report_execution_log',true),('scheduled_report_deliveries',true),
           ('scheduled_reports',true),('routes',true),('route_stops',true),('trips',true),('trip_stops',true),
           ('location_events',true),('latest_vehicle_positions',true),('telemetry_alerts',true),
-          ('telemetry_rules',true),('telemetry_nonces',false),('gps_gateway_replay',false),
+          ('telemetry_rules',true),('telemetry_gateways',true),
+          ('telemetry_nonces',false),('gps_gateway_replay',false),
           ('safety_events',true),('driver_safety_scores',true),('telemetry_live_asset_states',true),
           ('fleet_health_snapshots',true),('evidence_package_items',true),('vehicle_safety_scorecards',true),
           ('ai_recommendations',true),('maintenance_pm_rules',true),('maintenance_items',true),
@@ -182,8 +183,17 @@ public sealed class FleetProductionReadinessService
           ('market_document_types'),('market_driver_requirements'),('market_vehicle_requirements'),
           ('market_inspection_templates'),('inspection_items'),('market_tax_reporting_rules'),
           ('market_unit_settings'),('market_currency_settings'),('market_language_settings')
-        ), runtime_global(name) AS (VALUES
-          ('service_run_history'),('service_heartbeats'),('telemetry_nonces'),('gps_gateway_replay')
+        ), runtime_global(name,system_select,system_insert,system_update,system_delete) AS (VALUES
+          ('service_run_history',true,true,true,true),('service_heartbeats',true,true,true,true),
+          ('telemetry_nonces',true,true,false,true),('gps_gateway_replay',true,true,false,true)
+        ), tenant_system_only(name) AS (VALUES
+          ('telematics_device_trust_policy'),('telemetry_replay_seen'),
+          ('telemetry_projection_inbox'),('raw_packets'),
+          ('telemetry_store_forward'),('telemetry_gateway_rejections'),
+          ('canonical_telemetry_events')
+        ), system_no_update(name) AS (VALUES
+          ('telemetry_replay_seen'),('telemetry_projection_inbox'),('telemetry_gateway_rejections'),
+          ('canonical_telemetry_events')
         ), tenant_scope AS (
           SELECT c.oid,c.relname AS name,c.relrowsecurity,c.relforcerowsecurity,
             CASE
@@ -217,6 +227,16 @@ public sealed class FleetProductionReadinessService
           ('data_retention_policies',true,true,false),('driver_compliance_status',false,false,false),
           ('export_requests',true,true,false),('fleet_tms_branch_migration_audit',false,false,false),
           ('hos_clocks',false,false,false),
+          ('eld_devices',false,false,false),
+          ('location_events',false,false,false),('latest_vehicle_positions',false,false,false),
+          ('telemetry_alerts',false,true,false),('telemetry_rules',true,true,false),
+          ('telemetry_gateways',false,false,false),
+          ('device_state_transitions',true,false,false),('device_installations',true,true,false),
+          ('device_installation_evidence',true,false,false),('device_channel_health',true,true,false),
+          ('telematics_device_commands',true,true,false),('telemetry_privacy_policies',true,true,false),
+          ('fault_codes',true,true,false),('fault_occurrences',true,false,false),
+          ('diagnostic_holds',true,true,false),('canonical_telemetry_events',false,false,false),
+          ('telemetry_stream_ticket_nonces',true,false,false),
           ('security_events',true,false,false),('sso_connections',true,true,false),
           ('tenant_market_packs',false,false,false),
           ('tenant_entitlements',false,false,false),('demo_fixture_versions',false,false,false),('tenant_subscriptions',false,false,false),
@@ -404,14 +424,20 @@ public sealed class FleetProductionReadinessService
                 AND p.qual='true'
                 AND p.with_check=p.qual)))::int AS rls_violations,
           COUNT(*) FILTER (WHERE oid IS NOT NULL AND
-            ((tenant_scoped AND (((objects.name<>'eld_devices' AND NOT has_table_privilege('opstrax_app',oid,'SELECT'))
+            ((tenant_scoped AND (((objects.name NOT IN ('eld_devices','telemetry_gateways')
+                                  AND NOT has_table_privilege('opstrax_app',oid,'SELECT'))
                OR (objects.name='eld_devices' AND (
                  NOT has_column_privilege('opstrax_app',oid,'device_serial','SELECT')
                  OR has_column_privilege('opstrax_app',oid,'api_key_hash','SELECT')
                  OR has_column_privilege('opstrax_app',oid,'api_key_previous_hash','SELECT')
                  OR has_column_privilege('opstrax_app',oid,'hmac_secret','SELECT')
                  OR has_column_privilege('opstrax_app',oid,'hmac_secret_encrypted','SELECT')
-                 OR has_column_privilege('opstrax_app',oid,'hmac_previous_secret_encrypted','SELECT'))))
+                 OR has_column_privilege('opstrax_app',oid,'hmac_previous_secret_encrypted','SELECT')))
+               OR (objects.name='telemetry_gateways' AND (
+                 NOT has_column_privilege('opstrax_app',oid,'gateway_id','SELECT')
+                 OR NOT has_column_privilege('opstrax_app',oid,'status','UPDATE')
+                 OR has_column_privilege('opstrax_app',oid,'secret_encrypted','SELECT')
+                 OR has_column_privilege('opstrax_app',oid,'secret_encrypted','UPDATE'))))
                OR has_table_privilege('opstrax_app',oid,'TRUNCATE')
                OR has_table_privilege('opstrax_app',oid,'REFERENCES')
                OR has_table_privilege('opstrax_app',oid,'TRIGGER')
@@ -437,10 +463,12 @@ public sealed class FleetProductionReadinessService
                  OR has_table_privilege('opstrax_app',oid,'INSERT')
                  OR has_table_privilege('opstrax_app',oid,'UPDATE')
                  OR has_table_privilege('opstrax_app',oid,'DELETE')
-                 OR NOT has_table_privilege('opstrax_system',oid,'SELECT')
-                 OR NOT has_table_privilege('opstrax_system',oid,'INSERT')
-                 OR NOT has_table_privilege('opstrax_system',oid,'UPDATE')
-                 OR NOT has_table_privilege('opstrax_system',oid,'DELETE')))))::int AS grant_violations,
+                 OR EXISTS (SELECT 1 FROM runtime_global expected
+                    WHERE expected.name=objects.name AND (
+                      has_table_privilege('opstrax_system',oid,'SELECT')<>expected.system_select
+                      OR has_table_privilege('opstrax_system',oid,'INSERT')<>expected.system_insert
+                      OR has_table_privilege('opstrax_system',oid,'UPDATE')<>expected.system_update
+                      OR has_table_privilege('opstrax_system',oid,'DELETE')<>expected.system_delete))))))::int AS grant_violations,
           ((SELECT COUNT(*) FROM tenant_scope scope WHERE
             NOT scope.relrowsecurity OR NOT scope.relforcerowsecurity
             OR (SELECT COUNT(*) FROM pg_policies p
@@ -488,32 +516,54 @@ public sealed class FleetProductionReadinessService
             AS tenant_coverage_violations,
           ((SELECT COUNT(*) FROM tenant_scope scope
             LEFT JOIN tenant_privileges expected ON expected.name=scope.name
-            WHERE ((scope.name<>'eld_devices' AND NOT has_table_privilege('opstrax_app',scope.oid,'SELECT'))
+            WHERE ((scope.name NOT IN ('eld_devices','telemetry_gateways')
+                    AND NOT EXISTS (SELECT 1 FROM tenant_system_only system_only WHERE system_only.name=scope.name)
+                    AND NOT has_table_privilege('opstrax_app',scope.oid,'SELECT'))
               OR (scope.name='eld_devices' AND (
-                NOT has_column_privilege('opstrax_app',scope.oid,'device_serial','SELECT')
+                has_table_privilege('opstrax_app',scope.oid,'SELECT')
+                OR NOT has_column_privilege('opstrax_app',scope.oid,'device_serial','SELECT')
                 OR has_column_privilege('opstrax_app',scope.oid,'api_key_hash','SELECT')
                 OR has_column_privilege('opstrax_app',scope.oid,'api_key_previous_hash','SELECT')
                 OR has_column_privilege('opstrax_app',scope.oid,'hmac_secret','SELECT')
                 OR has_column_privilege('opstrax_app',scope.oid,'hmac_secret_encrypted','SELECT')
-                OR has_column_privilege('opstrax_app',scope.oid,'hmac_previous_secret_encrypted','SELECT'))))
+                OR has_column_privilege('opstrax_app',scope.oid,'hmac_previous_secret_encrypted','SELECT')
+                OR NOT has_column_privilege('opstrax_app',scope.oid,'status','UPDATE')
+                OR NOT has_column_privilege('opstrax_app',scope.oid,'malfunction_resolved_at','UPDATE')
+                OR NOT has_column_privilege('opstrax_app',scope.oid,'malfunction_resolved_by','UPDATE')
+                OR NOT has_column_privilege('opstrax_app',scope.oid,'resolution_evidence','UPDATE')
+                OR NOT has_column_privilege('opstrax_app',scope.oid,'row_version','UPDATE')
+                OR has_column_privilege('opstrax_app',scope.oid,'api_key_hash','UPDATE')
+                OR has_column_privilege('opstrax_app',scope.oid,'hmac_secret_encrypted','UPDATE')))
+              OR (scope.name='telemetry_gateways' AND (
+                has_table_privilege('opstrax_app',scope.oid,'SELECT')
+                OR NOT has_column_privilege('opstrax_app',scope.oid,'gateway_id','SELECT')
+                OR NOT has_column_privilege('opstrax_app',scope.oid,'status','UPDATE')
+                OR has_column_privilege('opstrax_app',scope.oid,'secret_encrypted','SELECT')
+                OR has_column_privilege('opstrax_app',scope.oid,'secret_encrypted','UPDATE')))
+              OR (EXISTS (SELECT 1 FROM tenant_system_only system_only WHERE system_only.name=scope.name)
+                AND (has_table_privilege('opstrax_app',scope.oid,'SELECT,INSERT,UPDATE,DELETE')
+                  OR has_any_column_privilege('opstrax_app',scope.oid,'SELECT,INSERT,UPDATE,REFERENCES')))
               OR has_table_privilege('opstrax_app',scope.oid,'TRUNCATE')
               OR has_table_privilege('opstrax_app',scope.oid,'REFERENCES')
               OR has_table_privilege('opstrax_app',scope.oid,'TRIGGER')
               OR NOT has_table_privilege('opstrax_system',scope.oid,'SELECT')
               OR NOT has_table_privilege('opstrax_system',scope.oid,'INSERT')
-              OR NOT has_table_privilege('opstrax_system',scope.oid,'UPDATE')
+              OR has_table_privilege('opstrax_system',scope.oid,'UPDATE')<>
+                   (NOT EXISTS (SELECT 1 FROM system_no_update no_update WHERE no_update.name=scope.name))
               OR NOT has_table_privilege('opstrax_system',scope.oid,'DELETE')
               OR has_table_privilege('opstrax_system',scope.oid,'TRUNCATE')
               OR has_table_privilege('opstrax_system',scope.oid,'REFERENCES')
               OR has_table_privilege('opstrax_system',scope.oid,'TRIGGER')
-              OR (expected.name IS NULL AND (
+              OR (expected.name IS NULL
+                AND NOT EXISTS (SELECT 1 FROM tenant_system_only system_only WHERE system_only.name=scope.name)
+                AND (
                 NOT has_table_privilege('opstrax_app',scope.oid,'INSERT')
                 OR NOT has_table_privilege('opstrax_app',scope.oid,'UPDATE')
                 OR NOT has_table_privilege('opstrax_app',scope.oid,'DELETE')))
               OR (expected.name IS NOT NULL AND (
                 has_table_privilege('opstrax_app',scope.oid,'INSERT')<>expected.allow_insert
                 OR has_table_privilege('opstrax_app',scope.oid,'UPDATE')<>expected.allow_update
-                OR has_table_privilege('opstrax_app',scope.oid,'DELETE')<>expected.allow_delete)))
+                OR has_table_privilege('opstrax_app',scope.oid,'DELETE')<>expected.allow_delete))))
            +
            (SELECT COUNT(*) FROM tenant_scope scope
             JOIN pg_depend dep ON dep.refobjid=scope.oid AND dep.refobjsubid>0 AND dep.deptype IN ('a','i')
@@ -521,10 +571,12 @@ public sealed class FleetProductionReadinessService
             WHERE has_sequence_privilege('opstrax_app',seq.oid,'USAGE')<>
                     has_table_privilege('opstrax_app',scope.oid,'INSERT')
                OR has_sequence_privilege('opstrax_app',seq.oid,'SELECT')<>
-                    has_table_privilege('opstrax_app',scope.oid,'INSERT')
+                    (has_table_privilege('opstrax_app',scope.oid,'INSERT')
+                     AND scope.name<>'telemetry_stream_ticket_nonces')
                OR has_sequence_privilege('opstrax_app',seq.oid,'UPDATE')
                OR NOT has_sequence_privilege('opstrax_system',seq.oid,'USAGE')
-               OR NOT has_sequence_privilege('opstrax_system',seq.oid,'SELECT')
+               OR has_sequence_privilege('opstrax_system',seq.oid,'SELECT')<>
+                    (scope.name<>'telemetry_stream_ticket_nonces')
                OR has_sequence_privilege('opstrax_system',seq.oid,'UPDATE'))
            +
            (SELECT COUNT(*) FROM (VALUES
@@ -552,10 +604,11 @@ public sealed class FleetProductionReadinessService
               OR has_sequence_privilege('opstrax_system','public.'||expected.sequence_name,'UPDATE')))::int AS tenant_grant_violations,
           (SELECT COUNT(*)::int
             FROM pg_default_acl defaults
-            JOIN pg_namespace default_ns ON default_ns.oid=defaults.defaclnamespace AND default_ns.nspname='public'
+            LEFT JOIN pg_namespace default_ns ON default_ns.oid=defaults.defaclnamespace
             CROSS JOIN LATERAL aclexplode(defaults.defaclacl) default_acl
-            JOIN pg_roles default_grantee ON default_grantee.oid=default_acl.grantee
-            WHERE default_grantee.rolname IN ('opstrax_app','opstrax_system')
+            LEFT JOIN pg_roles default_grantee ON default_grantee.oid=default_acl.grantee
+            WHERE (defaults.defaclnamespace=0 OR default_ns.nspname='public')
+              AND (default_acl.grantee=0 OR default_grantee.rolname IN ('opstrax_app','opstrax_system'))
               AND defaults.defaclobjtype IN ('r','S')) AS default_privilege_violations,
           (SELECT COUNT(*)::int FROM runtime_route_columns expected
             LEFT JOIN pg_class route_table ON route_table.oid=to_regclass('public.'||expected.table_name)

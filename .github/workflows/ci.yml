@@ -56,6 +56,109 @@ jobs:
       - run: npm run check
         working-directory: services/node-events
 
+  mobile-build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22.23.2'
+      - run: npm ci --no-audit --no-fund
+        working-directory: mobile
+      - name: Validate Expo 56 dependency compatibility
+        env:
+          EXPO_NO_TELEMETRY: '1'
+        run: npx expo install --check
+        working-directory: mobile
+      - run: npm run typecheck
+        working-directory: mobile
+      - run: npm run lint
+        working-directory: mobile
+      - run: npm run test:audit-policy
+        working-directory: mobile
+      - run: npm run test:contracts
+        working-directory: mobile
+      - name: Fail closed on new mobile advisories while tracking the reviewed Expo 56 chain
+        run: |
+          npm audit --json > "$RUNNER_TEMP/mobile-audit.json" || true
+          node scripts/validate-audit.mjs "$RUNNER_TEMP/mobile-audit.json"
+        working-directory: mobile
+      - name: Export mobile web bundle
+        env:
+          EXPO_NO_TELEMETRY: '1'
+        run: npm run build
+        working-directory: mobile
+
+  launch-tooling-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22.23.2'
+      - name: Validate executable 10k launch plan and zero-network dry-run
+        run: |
+          node --test tools/launch/test_*.mjs
+          node tools/launch/execute_launch_plan.mjs --dry-run
+      - name: Validate bounded read-only load profiles
+        run: node --test tests/load/test_load_guard.mjs
+      - name: Validate fingerprint, capture and public replay safety
+        run: |
+          python3 -m unittest discover -s tools/telematics/tests -p 'test_*.py' -v
+          python3 tools/telematics/fingerprint.py --self-test
+
+  playwright-public-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22.23.2'
+      - run: npm ci --no-audit --no-fund
+        working-directory: frontend
+      - run: npm run build
+        working-directory: frontend
+      - run: npm ci --no-audit --no-fund
+        working-directory: tests/e2e
+      - name: Block unsafe target and mutation configurations
+        run: npm run test:guard
+        working-directory: tests/e2e
+      - name: Compile and enumerate all Playwright journeys
+        run: npm run test:list
+        working-directory: tests/e2e
+      - name: Install pinned Playwright Chromium
+        run: npx playwright install --with-deps chromium
+        working-directory: tests/e2e
+      - name: Execute anonymous local browser journeys
+        env:
+          E2E_TARGET_ENV: local
+          E2E_UI_BASE_URL: http://127.0.0.1:4173
+          E2E_API_BASE_URL: http://127.0.0.1:4173
+        run: |
+          cleanup() { kill "${preview_pid:-}" >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          (
+            cd frontend
+            exec node_modules/.bin/vite preview --host 127.0.0.1 --port 4173 --strictPort
+          ) > "$RUNNER_TEMP/frontend-preview.log" 2>&1 &
+          preview_pid=$!
+          for attempt in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:4173/ >/dev/null && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:4173/ >/dev/null
+          npm --prefix tests/e2e run test:local
+      - name: Upload Playwright failure evidence
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: playwright-failure-${{ github.sha }}
+          path: |
+            tests/e2e/test-results
+            tests/e2e/playwright-report
+          if-no-files-found: ignore
+          retention-days: 14
+
   dotnet-build-test:
     runs-on: ubuntu-latest
     steps:
@@ -152,7 +255,7 @@ jobs:
           kill "$(cat /tmp/api.pid)" 2>/dev/null || true; sleep 2; kill -9 "$(cat /tmp/api.pid)" 2>/dev/null || true
           [ "$ok" = 1 ] || { echo "app never reported listening — boot log tail:"; tail -40 /tmp/api_boot.log; exit 1; }
           echo "tables after init: $(psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';")"
-      - name: Reapply mandatory terminal tenant boundary after schema materialization
+      - name: Reapply mandatory terminal tenant and telemetry boundaries after schema materialization
         run: |
           psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -v ON_ERROR_STOP=1 -q \
             -f database/migrations/2026_07_31_stage58_nonforgeable_tenant_ticket.sql
@@ -160,7 +263,68 @@ jobs:
             -f database/migrations/2026_07_31_stage59_data_protection_key_ring.sql
           psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -v ON_ERROR_STOP=1 -q \
             -f database/migrations/2026_08_02_stage67_telematics_diagnostics_integrity.sql
+          psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -v ON_ERROR_STOP=1 -q \
+            -f database/migrations/2026_08_11_stage76_telematics_security_hardening.sql
           test "$(psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -tAc "SELECT count(*) FROM pg_policies WHERE schemaname='public' AND roles='{public}'::name[]")" = "0"
+          test "$(psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -tAc "SELECT count(*) FROM schema_migrations WHERE version='2026_08_11_stage76_telematics_security_hardening'")" = "1"
+          test "$(psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -tAc "SELECT has_table_privilege('opstrax_app','eld_devices','SELECT') OR has_column_privilege('opstrax_app','eld_devices','api_key_hash','SELECT') OR has_column_privilege('opstrax_app','eld_devices','hmac_secret_encrypted','SELECT')")" = "f"
+          test "$(psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -tAc "SELECT count(*) FROM pg_default_acl d LEFT JOIN pg_namespace n ON n.oid=d.defaclnamespace CROSS JOIN LATERAL aclexplode(d.defaclacl) a LEFT JOIN pg_roles r ON r.oid=a.grantee WHERE (d.defaclnamespace=0 OR n.nspname='public') AND d.defaclobjtype IN ('r','S') AND (a.grantee=0 OR r.rolname IN ('opstrax_app','opstrax_system'))")" = "0"
+          psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -v ON_ERROR_STOP=1 -q <<'SQL'
+          DO $stage76_ci_terminal$
+          BEGIN
+            IF has_table_privilege('opstrax_app','canonical_telemetry_events','SELECT,INSERT,UPDATE,DELETE')
+               OR NOT has_table_privilege('opstrax_system','canonical_telemetry_events','SELECT')
+               OR NOT has_table_privilege('opstrax_system','canonical_telemetry_events','INSERT')
+               OR has_table_privilege('opstrax_system','canonical_telemetry_events','UPDATE')
+               OR NOT has_table_privilege('opstrax_system','canonical_telemetry_events','DELETE')
+               OR has_table_privilege('opstrax_app','telemetry_replay_seen','SELECT,INSERT,UPDATE,DELETE')
+               OR has_table_privilege('opstrax_app','telemetry_replay_device_state','SELECT,INSERT,UPDATE,DELETE')
+               OR has_any_column_privilege('opstrax_app','telemetry_replay_seen','SELECT,INSERT,UPDATE,REFERENCES')
+               OR has_any_column_privilege('opstrax_app','telemetry_replay_device_state','SELECT,INSERT,UPDATE,REFERENCES')
+               OR has_any_column_privilege('opstrax_app','canonical_telemetry_events','SELECT,INSERT,UPDATE,REFERENCES')
+               OR NOT has_table_privilege('opstrax_system','telemetry_replay_device_state','SELECT')
+               OR NOT has_table_privilege('opstrax_system','telemetry_replay_device_state','INSERT')
+               OR NOT has_table_privilege('opstrax_system','telemetry_replay_device_state','UPDATE')
+               OR has_table_privilege('opstrax_system','telemetry_replay_device_state','DELETE')
+               OR NOT has_column_privilege('opstrax_app','eld_devices','malfunction_resolved_at','UPDATE')
+               OR NOT has_column_privilege('opstrax_app','eld_devices','malfunction_resolved_by','UPDATE')
+               OR NOT has_column_privilege('opstrax_app','eld_devices','resolution_evidence','UPDATE')
+               OR NOT has_column_privilege('opstrax_app','eld_devices','row_version','UPDATE')
+               OR has_column_privilege('opstrax_app','eld_devices','company_id','UPDATE')
+               OR has_column_privilege('opstrax_app','eld_devices','api_key_hash','UPDATE')
+               OR has_sequence_privilege('opstrax_app','telemetry_replay_seen_id_seq','USAGE,SELECT,UPDATE')
+               OR NOT has_sequence_privilege('opstrax_system','telemetry_replay_seen_id_seq','USAGE')
+               OR NOT has_sequence_privilege('opstrax_system','telemetry_replay_seen_id_seq','SELECT')
+               OR has_sequence_privilege('opstrax_system','telemetry_replay_seen_id_seq','UPDATE')
+               OR has_sequence_privilege('opstrax_app','canonical_telemetry_events_id_seq','USAGE,SELECT,UPDATE')
+               OR NOT has_sequence_privilege('opstrax_system','canonical_telemetry_events_id_seq','USAGE')
+               OR NOT has_sequence_privilege('opstrax_system','canonical_telemetry_events_id_seq','SELECT')
+               OR has_sequence_privilege('opstrax_system','canonical_telemetry_events_id_seq','UPDATE')
+               OR to_regclass('public.telemetry_replay_device_state') IS NULL
+               OR to_regclass('public.uq_telemetry_replay_seen_unwrapped') IS NULL
+               OR EXISTS (SELECT 1 FROM telemetry_replay_device_state)
+               OR EXISTS (
+                 SELECT 1 FROM (VALUES
+                   ('telemetry_replay_seen','unwrapped_serial'),
+                   ('telemetry_replay_seen','event_id'),
+                   ('telemetry_replay_device_state','device_id'),
+                   ('telemetry_replay_device_state','last_raw_serial'),
+                   ('telemetry_replay_device_state','high_water_unwrapped'),
+                   ('telemetry_replay_device_state','updated_at')
+                 ) required(table_name,column_name)
+                 WHERE NOT EXISTS (
+                   SELECT 1 FROM information_schema.columns actual
+                   WHERE actual.table_schema='public'
+                     AND actual.table_name=required.table_name
+                     AND actual.column_name=required.column_name
+                     AND actual.is_nullable='NO'
+                 )
+               ) THEN
+              RAISE EXCEPTION 'Stage76 terminal telemetry ACL/schema evidence failed';
+            END IF;
+          END
+          $stage76_ci_terminal$;
+          SQL
       - name: Run DB-backed integration suites
         run: dotnet test backend-dotnet.Tests/Opstrax.Tests.csproj --no-build --filter "FullyQualifiedName~Postgres|Category=Integration"
 
@@ -208,11 +372,28 @@ jobs:
 
   release-container-builds:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17@sha256:a426e44bac0b759c95894d68e1a0ac03ecc20b619f498a91aae373bf06d8508d
+        env:
+          POSTGRES_USER: zayra
+          POSTGRES_PASSWORD: zayra
+          POSTGRES_DB: opstrax_local
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U zayra -d opstrax_local"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      OPSTRAX_TEST_DB: "Host=127.0.0.1;Port=5433;Database=opstrax_local;Username=zayra;Password=zayra"
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '22.23.2'
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          dotnet-version: '8.0.x'
       - name: Verify launch-critical source and migrations are packaged
         run: |
           test -f .dockerignore
@@ -220,6 +401,7 @@ jobs:
           test -f backend-dotnet/Services/FleetProductionReadinessService.cs
           test -f backend-dotnet/Services/MfaChallengeConsumptionService.cs
           test -f frontend/src/auth/csrfTokenStore.ts
+          test -f database/migrations/2026_07_16_stage42_telemetry_gateways.sql
           test -f database/migrations/2026_07_30_customer_feedback_contract.sql
           test -f database/migrations/2026_07_30_stage49_mfa_challenge_one_time.sql
           test -f database/migrations/2026_07_30_stage50_fleet_production_contract.sql
@@ -249,6 +431,7 @@ jobs:
           test -f database/migrations/2026_08_02_stage73_hos_offboarding_null_fail_closed.sql
           test -f database/migrations/2026_08_02_stage74_retention_policy_production_contract.sql
           test -f database/migrations/2026_08_02_stage75_bounded_support_access.sql
+          test -f database/migrations/2026_08_11_stage76_telematics_security_hardening.sql
           test -f database/migrations/telematics/001_latest_position_provenance.sql
           test -f database/migrations/telematics/002_device_lifecycle.sql
           test -f database/migrations/telematics/003_canonical_telemetry_timeseries.sql
@@ -306,6 +489,7 @@ jobs:
           PG_CONNECTION: postgresql://ci:ci@postgres/ci
           PG_CONNECTION_APP: postgresql://opstrax_app:app-ci-only@postgres/ci
           PG_CONNECTION_SYSTEM: postgresql://opstrax_system:system-ci-only@postgres/ci
+          RETENTION_WORKER_ENABLED: "true"
           DATA_PROTECTION_CERTIFICATE_BASE64: Y2ktY29tcG9zZS1vbmx5
           DATA_PROTECTION_CERTIFICATE_PASSWORD: ci-compose-only
         run: docker compose config --quiet
@@ -318,6 +502,24 @@ jobs:
           fi
       - name: Build production API container
         run: docker build --file backend-dotnet/Dockerfile --tag opstrax-api:ci .
+      - name: Verify production API migration payload
+        run: |
+          api_container="$(docker create opstrax-api:ci)"
+          cleanup() {
+            docker rm -f "$api_container" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          mkdir -p "$RUNNER_TEMP/api-migrations"
+          docker cp "$api_container:/app/Migrations/2026_07_16_stage42_telemetry_gateways.sql" \
+            "$RUNNER_TEMP/api-migrations/2026_07_16_stage42_telemetry_gateways.sql"
+          docker cp "$api_container:/app/Migrations/2026_08_11_stage76_telematics_security_hardening.sql" \
+            "$RUNNER_TEMP/api-migrations/2026_08_11_stage76_telematics_security_hardening.sql"
+          cmp database/migrations/2026_07_16_stage42_telemetry_gateways.sql \
+            "$RUNNER_TEMP/api-migrations/2026_07_16_stage42_telemetry_gateways.sql"
+          cmp database/migrations/2026_08_11_stage76_telematics_security_hardening.sql \
+            "$RUNNER_TEMP/api-migrations/2026_08_11_stage76_telematics_security_hardening.sql"
+          cleanup
+          trap - EXIT
       - name: Test and audit Telematics gateway solution
         run: |
           dotnet restore telematics/Opstrax.Telematics.sln
@@ -374,7 +576,7 @@ jobs:
             --image api=opstrax-api:ci \
             --image frontend=opstrax-frontend:ci \
             --image gateway=opstrax-telematics-gateway:ci
-          test "$(awk -F '\t' '$1==\"commit_sha\" {print $2}' artifacts/release-provenance/candidate.tsv)" = "$GITHUB_SHA"
+          test "$(awk -F '\t' '$1=="commit_sha" {print $2}' artifacts/release-provenance/candidate.tsv)" = "$GITHUB_SHA"
           test "$(find artifacts/release-provenance/sboms -type f -name '*.cyclonedx.json' | wc -l)" = "3"
           if awk -F '\t' 'NR>1 && $5=="NOT_EVIDENCED" {missing=1} END {exit !missing}' artifacts/release-provenance/images.tsv; then
             echo "Local image IDs and SBOMs captured; registry RepoDigests remain a deployment/publish gate." >> "$GITHUB_STEP_SUMMARY"
@@ -408,6 +610,9 @@ jobs:
       - frontend-build
       - node-backend-build
       - demo-node-events-check
+      - mobile-build-test
+      - launch-tooling-tests
+      - playwright-public-tests
       - dotnet-build-test
       - dotnet-integration-tests
       - production-shaped-release-rehearsal
@@ -421,6 +626,9 @@ jobs:
           FRONTEND_RESULT: ${{ needs.frontend-build.result }}
           NODE_RESULT: ${{ needs.node-backend-build.result }}
           EVENTS_RESULT: ${{ needs.demo-node-events-check.result }}
+          MOBILE_RESULT: ${{ needs.mobile-build-test.result }}
+          LAUNCH_TOOLING_RESULT: ${{ needs.launch-tooling-tests.result }}
+          PLAYWRIGHT_RESULT: ${{ needs.playwright-public-tests.result }}
           DOTNET_RESULT: ${{ needs.dotnet-build-test.result }}
           INTEGRATION_RESULT: ${{ needs.dotnet-integration-tests.result }}
           REHEARSAL_RESULT: ${{ needs.production-shaped-release-rehearsal.result }}
@@ -432,6 +640,9 @@ jobs:
             printf 'frontend-build\t%s\n' "$FRONTEND_RESULT"
             printf 'node-backend-build\t%s\n' "$NODE_RESULT"
             printf 'demo-node-events-check\t%s\n' "$EVENTS_RESULT"
+            printf 'mobile-build-test\t%s\n' "$MOBILE_RESULT"
+            printf 'launch-tooling-tests\t%s\n' "$LAUNCH_TOOLING_RESULT"
+            printf 'playwright-public-tests\t%s\n' "$PLAYWRIGHT_RESULT"
             printf 'dotnet-build-test\t%s\n' "$DOTNET_RESULT"
             printf 'dotnet-integration-tests\t%s\n' "$INTEGRATION_RESULT"
             printf 'production-shaped-release-rehearsal\t%s\n' "$REHEARSAL_RESULT"
@@ -463,7 +674,7 @@ jobs:
         if: ${{ always() && steps.gates.outputs.all_success == 'true' }}
         run: |
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(awk -F '\t' '$1==\"commit_sha\" {print $2}' artifacts/exact-sha-release/release-provenance/candidate.tsv)" = "$GITHUB_SHA"
+          test "$(awk -F '\t' '$1=="commit_sha" {print $2}' artifacts/exact-sha-release/release-provenance/candidate.tsv)" = "$GITHUB_SHA"
           cp artifacts/mandatory-gate-results/mandatory-ci-gates.tsv artifacts/exact-sha-release/
           tools/validate-mandatory-ci-gates.sh --require-success artifacts/exact-sha-release/mandatory-ci-gates.tsv
           find artifacts/exact-sha-release -type f -print | LC_ALL=C sort | xargs sha256sum > artifacts/exact-sha-release-index.sha256

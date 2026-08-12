@@ -37,6 +37,14 @@ export type MobileSessionEnvelope = {
   expiresAt?: string;
 };
 
+export type MfaChallenge = {
+  mfaRequired: true;
+  challengeToken: string;
+  email: string;
+};
+
+export type LoginResult = MobileSession | MobileSessionEnvelope | MfaChallenge;
+
 export type WorkspaceRole =
   | "driverOperator"
   | "fieldWorker"
@@ -62,4 +70,3 @@ export type WorkflowSummary = {
   safety: JsonRecord | null;
   maintenance: JsonRecord | null;
 };
-

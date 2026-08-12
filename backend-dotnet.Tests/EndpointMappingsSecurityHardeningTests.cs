@@ -69,8 +69,8 @@ public sealed class EndpointMappingsSecurityHardeningTests
         Assert.Contains("credential_match_count", ingest, StringComparison.Ordinal);
         Assert.Contains("credentialSlot == \"current\"", ingest, StringComparison.Ordinal);
         Assert.Contains("credentialSlot == \"previous\"", ingest, StringComparison.Ordinal);
-        AssertOrdered(ingest, "TryParseObservedAt", "db.RunInSystemScopeAsync");
-        AssertOrdered(ingest, "db.RunInSystemScopeAsync", "INSERT INTO telemetry_nonces");
+        AssertOrdered(ingest, "TryParseObservedAt", "db.RunInSystemTransactionAsync");
+        AssertOrdered(ingest, "db.RunInSystemTransactionAsync", "INSERT INTO telemetry_nonces");
         AssertOrdered(ingest, "INSERT INTO telemetry_nonces", "INSERT INTO location_events");
         Assert.Contains("ON CONFLICT DO NOTHING RETURNING id", ingest, StringComparison.Ordinal);
         Assert.DoesNotContain("skip HMAC", ingest, StringComparison.OrdinalIgnoreCase);

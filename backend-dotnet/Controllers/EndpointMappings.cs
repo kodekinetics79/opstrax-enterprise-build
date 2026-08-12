@@ -187,9 +187,9 @@ public static partial class EndpointMappings
         app.MapGet("/api/telemetry/positions", TelemetryPositions);
         // Historical breadcrumb trail for a vehicle over a time window (replay).
         app.MapGet("/api/telemetry/breadcrumbs", TelemetryBreadcrumbs);
-        // GT06/PT40-style GPS tracker ingest — authenticated trusted-gateway forwarding.
-        // For hardware trackers (Concox/Jimi PT40 etc.) that POST their location to a
-        // configurable server URL. Resolves the device by IMEI and lands it on the map.
+        // Gateway-normalized GPS ingest — authenticated trusted-gateway forwarding.
+        // This HTTP route is NOT a raw GT06/J1939/MQTT listener: a separately operated,
+        // protocol-aware gateway must decode hardware frames and sign normalized fixes.
         app.MapPost("/api/telemetry/gps-ingest", GpsTrackerIngest);
         // Observability counters — RBAC gated
         app.MapGet("/api/telemetry/metrics", TelemetryMetrics);
@@ -209,6 +209,7 @@ public static partial class EndpointMappings
         app.MapGet("/api/telemetry/devices/{id:long}", TelemetryDeviceDetail);
         app.MapPost("/api/telemetry/gateways", TelemetryGatewayProvision);
         app.MapGet("/api/telemetry/gateways", TelemetryGatewayList);
+        app.MapPost("/api/telemetry/gateways/{id:long}/rotate-secret", TelemetryGatewayRotateSecret);
         app.MapPost("/api/telemetry/gateways/{id:long}/revoke", TelemetryGatewayRevoke);
         app.MapPost("/api/telemetry/devices/provision", TelemetryDeviceProvision);
         app.MapPost("/api/telemetry/devices/{id:long}/rotate-secret", TelemetryDeviceRotateSecret);
@@ -850,7 +851,9 @@ public static partial class EndpointMappings
         app.MapPost("/api/integrations", CreateIntegration);
         app.MapPut("/api/integrations/{id:long}", UpdateIntegration);
         app.MapDelete("/api/integrations/{id:long}", RemoveIntegration);
-        app.MapPost("/api/integrations/{id:long}/connect", (HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) => SetIntegrationStatus(http, id, "Connected", "integration.connected", db, audit, ct));
+        // "Connect" performs the same real provider handshake as test-connection; no route
+        // may assert Connected based only on a button click.
+        app.MapPost("/api/integrations/{id:long}/connect", IntegrationTestConnection);
         app.MapPost("/api/integrations/{id:long}/disconnect", (HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) => SetIntegrationStatus(http, id, "Disconnected", "integration.disconnected", db, audit, ct));
         app.MapPost("/api/integrations/{id:long}/sync", IntegrationSync);
         app.MapPost("/api/integrations/{id:long}/configure", ConfigureIntegration);
@@ -4126,8 +4129,12 @@ public static partial class EndpointMappings
                      SUM(CASE WHEN v.status IN ('Available','Active','On Route','Idle') THEN 1 ELSE 0 END) active_units,
                      SUM(CASE WHEN v.risk_score >= 70 THEN 1 ELSE 0 END) high_risk_units,
                      (SELECT COUNT(*) FROM location_events le2 INNER JOIN (SELECT vehicle_id, MAX(id) max_id FROM location_events WHERE company_id=@companyId GROUP BY vehicle_id) latest ON le2.id=latest.max_id WHERE le2.company_id=@companyId AND le2.speed_mph > 65) speed_alerts,
-                     ROUND(AVG(v.data_quality_score),1) telemetry_quality,
-                     ROUND(AVG(v.readiness_score),1) fleet_readiness
+                     ROUND(AVG(v.data_quality_score) FILTER (
+                         WHERE LOWER(COALESCE(v.device_status,'')) NOT IN ('','unknown','unavailable')
+                            OR LOWER(COALESCE(v.camera_status,'')) NOT IN ('','unknown','unavailable')),1) telemetry_quality,
+                     ROUND(AVG(v.readiness_score) FILTER (
+                         WHERE LOWER(COALESCE(v.device_status,'')) NOT IN ('','unknown','unavailable')
+                            OR LOWER(COALESCE(v.camera_status,'')) NOT IN ('','unknown','unavailable')),1) fleet_readiness
               FROM vehicles v WHERE v.deleted_at IS NULL AND v.company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId), ct: ct);
         var jobs = await db.QueryAsync(
             @"SELECT j.id, COALESCE(j.job_number,j.job_code) job_number, j.status, j.priority, j.sla_status, j.eta,
@@ -4247,7 +4254,10 @@ public static partial class EndpointMappings
         var (branchClause, branchId) = StrictBranchFilter(http, "v");
         return PagedRows(http, db,
             @"SELECT v.*, d.full_name assigned_driver,
-                     ROUND((v.readiness_score + v.data_quality_score + (100 - v.risk_score)) / 3, 1) fleet_readiness_score,
+                     CASE WHEN LOWER(COALESCE(v.device_status,'')) NOT IN ('','unknown','unavailable')
+                                OR LOWER(COALESCE(v.camera_status,'')) NOT IN ('','unknown','unavailable')
+                          THEN ROUND((v.readiness_score + v.data_quality_score + (100 - v.risk_score)) / 3, 1)
+                          ELSE NULL END fleet_readiness_score,
                      CASE WHEN v.risk_score >= 70 OR v.status IN ('Delayed','Maintenance') THEN 'High'
                           WHEN v.risk_score >= 40 OR v.camera_status <> 'Online' OR v.device_status <> 'Online' THEN 'Medium'
                           ELSE 'Low' END risk_heat_score,
@@ -4368,8 +4378,12 @@ public static partial class EndpointMappings
             @"SELECT COUNT(*) total,
                      SUM(CASE WHEN status IN ('Active','Available','On Route','At Stop','Idle') THEN 1 ELSE 0 END) active,
                      SUM(CASE WHEN status IN ('Delayed','Maintenance') OR risk_score >= 55 THEN 1 ELSE 0 END) at_risk,
-                     ROUND(AVG(readiness_score),1) fleet_readiness_score,
-                     ROUND(AVG(data_quality_score),1) data_completeness_score,
+                     ROUND(AVG(readiness_score) FILTER (
+                         WHERE LOWER(COALESCE(device_status,'')) NOT IN ('','unknown','unavailable')
+                            OR LOWER(COALESCE(camera_status,'')) NOT IN ('','unknown','unavailable')),1) fleet_readiness_score,
+                     ROUND(AVG(data_quality_score) FILTER (
+                         WHERE LOWER(COALESCE(device_status,'')) NOT IN ('','unknown','unavailable')
+                            OR LOWER(COALESCE(camera_status,'')) NOT IN ('','unknown','unavailable')),1) data_completeness_score,
                      ROUND(AVG(risk_score),1) average_risk_score,
                      SUM(CASE WHEN device_status <> 'Online' OR camera_status <> 'Online' THEN 1 ELSE 0 END) device_exceptions
               FROM vehicles v WHERE v.deleted_at IS NULL AND v.company_id=@cid" + branchClause,
@@ -5227,8 +5241,8 @@ public static partial class EndpointMappings
         long id;
         try
         {
-            id = await db.InsertWithSavepointAsync(@"INSERT INTO vehicles (company_id, branch_id, vehicle_code, type, make, model, year, vin, plate_number, status, odometer_miles, readiness_score, data_quality_score)
-                VALUES (@companyId, @branchId, @code, COALESCE(@type,'Truck'), @make, @model, @year, @vin, @plate, COALESCE(@status,'Active'), COALESCE(@odometer, 0), 92, 96)", c =>
+            id = await db.InsertWithSavepointAsync(@"INSERT INTO vehicles (company_id, branch_id, vehicle_code, type, make, model, year, vin, plate_number, status, odometer_miles, readiness_score, data_quality_score, device_status, camera_status)
+                VALUES (@companyId, @branchId, @code, COALESCE(@type,'Truck'), @make, @model, @year, @vin, @plate, COALESCE(@status,'Active'), COALESCE(@odometer, 0), 0, 0, 'Unknown', 'Unknown')", c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
                 c.Parameters.AddWithValue("@branchId", (object?)GetBranchId(http) ?? DBNull.Value);
@@ -8594,7 +8608,7 @@ public static partial class EndpointMappings
         if (IsBlank(Get(body, "eventType")) || IsBlank(Get(body, "severity"))) return Results.BadRequest(ApiResponse<object>.Fail("Dashcam event validation failed", ["Event type and severity are required."]));
         var companyId = GetCompanyId(http);
         var id = await db.InsertAsync(@"INSERT INTO dashcam_events (company_id,event_number,safety_event_id,event_type,title,severity,driver_id,vehicle_id,job_id,route_id,location_description,thumbnail_url,road_facing_clip_url,driver_facing_clip_url,ai_summary,ai_confidence,review_status,evidence_status,recommended_action,occurred_at)
-            VALUES (@companyId,@number,@safety,@type,@title,@severity,@driver,@vehicle,@job,@route,@location,'/placeholder/dashcam-thumb.jpg','/placeholder/road-facing.mp4','/placeholder/driver-facing.mp4',@summary,COALESCE(@confidence,85),COALESCE(@review,'Pending Review'),COALESCE(@evidence,'Not Packaged'),@action,COALESCE(@occurred,NOW()))", c => { c.Parameters.AddWithValue("@companyId", companyId); BindDashcam(c, body); }, ct);
+            VALUES (@companyId,@number,@safety,@type,@title,@severity,@driver,@vehicle,@job,@route,@location,NULL,NULL,NULL,@summary,COALESCE(@confidence,85),COALESCE(@review,'Pending Review'),COALESCE(@evidence,'Not Packaged'),@action,COALESCE(@occurred,NOW()))", c => { c.Parameters.AddWithValue("@companyId", companyId); BindDashcam(c, body); }, ct);
         await audit.LogAsync(http, "dashcam.event.created", "DashcamEvent", id, ct: ct);
         return Results.Created($"/api/dashcam/events/{id}", ApiResponse<object>.Ok(new { id }, "Dashcam event created"));
     }
@@ -8623,9 +8637,9 @@ public static partial class EndpointMappings
         var ev = await db.QuerySingleAsync("SELECT * FROM dashcam_events WHERE id=@id AND company_id=@companyId", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); }, ct);
         if (ev is null) return Results.NotFound(ApiResponse<object>.Fail("Dashcam event not found"));
         var packageId = await InsertEvidencePackage(http, db, null, ev["safetyEventId"], id, ev["driverId"], ev["vehicleId"], ev["jobId"], ct);
-        await db.ExecuteAsync("UPDATE dashcam_events SET evidence_status='Packaged' WHERE id=@id AND company_id=@companyId", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); }, ct);
+        await db.ExecuteAsync("UPDATE dashcam_events SET evidence_status='Package Draft' WHERE id=@id AND company_id=@companyId", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); }, ct);
         await audit.LogAsync(http, "dashcam.evidence_package.created", "DashcamEvent", id, ct: ct);
-        return Results.Ok(ApiResponse<object>.Ok(new { id = packageId }, "Evidence package created"));
+        return Results.Ok(ApiResponse<object>.Ok(new { id = packageId, mediaAvailable = false }, "Evidence package draft created; no media artifact was generated"));
     }
     private static async Task<IResult> DashcamCreateIncidentReport(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct)
     {
@@ -9001,7 +9015,14 @@ public static partial class EndpointMappings
         await audit.LogAsync(http, "evidence.package.updated", "EvidencePackage", id, ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id }, "Evidence package updated"));
     }
-    private static async Task<IResult> EvidenceExport(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) { await db.ExecuteAsync("UPDATE evidence_packages SET status='Export Ready', export_url=CONCAT('/exports/evidence-package-',@id,'.pdf') WHERE id=@id AND company_id=@companyId", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); }, ct); await audit.LogAsync(http, "evidence.package.export.generated", "EvidencePackage", id, ct: ct); return Results.Ok(ApiResponse<object>.Ok(new { id, exportUrl = $"/exports/evidence-package-{id}.pdf" }, "Export generated successfully")); }
+    private static async Task<IResult> EvidenceExport(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct)
+    {
+        var companyId = GetCompanyId(http);
+        var exists = await db.ScalarLongAsync("SELECT COUNT(*) FROM evidence_packages WHERE id=@id AND company_id=@companyId AND deleted_at IS NULL",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); }, ct: ct);
+        if (exists == 0) return Results.NotFound(ApiResponse<object>.Fail("Evidence package not found"));
+        return Results.Conflict(ApiResponse<object>.Fail("Evidence export generation is not configured; no file was created"));
+    }
     private static async Task<IResult> EvidenceLock(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) { await db.ExecuteAsync("UPDATE evidence_packages SET locked=TRUE, status='Locked' WHERE id=@id AND company_id=@companyId", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); }, ct); await audit.LogAsync(http, "evidence.package.locked", "EvidencePackage", id, ct: ct); return Results.Ok(ApiResponse<object>.Ok(new { id }, "Evidence package locked")); }
 
     private static async Task<IResult> AiAsk(HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
@@ -10358,7 +10379,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     private static string IntegrationSlug(string name) =>
         System.Text.RegularExpressions.Regex.Replace(name.ToLowerInvariant().Trim(), "[^a-z0-9]+", "-").Trim('-') is { Length: > 0 } s ? s : "custom";
 
-    private static async Task<IResult> CreateIntegration(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
+    private static async Task<IResult> CreateIntegration(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit,
+        Opstrax.Api.Services.Connectors.ConnectorRegistry connectors, CancellationToken ct)
     {
         if (IntegrationsManageGuard(http) is { } denied) return denied;
         if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
@@ -10371,35 +10393,38 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@k", key); }, ct) > 0)
             return Results.Conflict(ApiResponse<object>.Fail($"An integration with key '{key}' already exists"));
 
+        var protectedConfig = ProtectIntegrationConfig(body, connectors, null, merge: false);
         var id = await db.InsertAsync(
             @"INSERT INTO integrations
                   (company_id, provider_name, category, status, integration_key, description, logo,
                    sync_label, last_sync_at, related_systems_json, connected_to_json, managed_by,
                    scope, config_json, is_custom, updated_at)
-              VALUES (@cid, @name, @cat, COALESCE(@status,'Disconnected'), @key, @desc, @logo,
+              VALUES (@cid, @name, @cat, 'Disconnected', @key, @desc, @logo,
                    'Never', NULL, @related::jsonb, @connected::jsonb, COALESCE(@managed,'Operations'),
                    COALESCE(@scope,'tenant'), COALESCE(@config,'{}')::jsonb, true, NOW())",
-            c => { c.Parameters.AddWithValue("@cid", companyId); BindIntegration(c, body, name, key); }, ct);
+            c => { c.Parameters.AddWithValue("@cid", companyId); BindIntegration(c, body, name, key, protectedConfig); }, ct);
         await audit.LogAsync(http, "integration.created", "Integration", id,
             detailsJson: System.Text.Json.JsonSerializer.Serialize(new { key, name }), ct: ct);
         return await IntegrationDetail(http, id, db, ct);
     }
 
-    private static async Task<IResult> UpdateIntegration(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
+    private static async Task<IResult> UpdateIntegration(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit,
+        Opstrax.Api.Services.Connectors.ConnectorRegistry connectors, CancellationToken ct)
     {
         if (IntegrationsManageGuard(http) is { } denied) return denied;
         if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
         var companyId = GetCompanyId(http);
-        var exists = await db.ScalarLongAsync("SELECT COUNT(*) FROM integrations WHERE company_id=@cid AND id=@id",
+        var existing = await db.QuerySingleAsync("SELECT config_json FROM integrations WHERE company_id=@cid AND id=@id",
             c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); }, ct);
-        if (exists == 0) return Results.NotFound(ApiResponse<object>.Fail("Integration not found"));
+        if (existing is null) return Results.NotFound(ApiResponse<object>.Fail("Integration not found"));
+        var protectedConfig = ProtectIntegrationConfig(
+            body, connectors, existing.GetValueOrDefault("configJson"), merge: true);
 
         // COALESCE keeps any field the caller omits; JSON columns replace when provided.
         await db.ExecuteAsync(
             @"UPDATE integrations SET
                   provider_name = COALESCE(@name, provider_name),
                   category      = COALESCE(@cat, category),
-                  status        = COALESCE(@status, status),
                   description   = COALESCE(@desc, description),
                   logo          = COALESCE(@logo, logo),
                   managed_by    = COALESCE(@managed, managed_by),
@@ -10409,7 +10434,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                   config_json          = COALESCE(@config::jsonb, config_json),
                   updated_at = NOW()
               WHERE company_id=@cid AND id=@id",
-            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); BindIntegration(c, body, null, null); }, ct);
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); BindIntegration(c, body, null, null, protectedConfig); }, ct);
         await audit.LogAsync(http, "integration.updated", "Integration", id, ct: ct);
         return await IntegrationDetail(http, id, db, ct);
     }
@@ -10477,7 +10502,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         // Connectors that implement a real "sync" action (e.g. Samsara → live positions)
         // run the actual data pull. The tenant + last cursor are passed in the action body;
         // the returned nextCursor is persisted so the next sync is incremental. Connectors
-        // with no sync action fall back to the legacy status refresh.
+        // with no sync action return an honest unsupported result and never claim Connected.
         var storedConfig = Opstrax.Api.Services.Connectors.ConnectorRegistry.RedactConfig(row.GetValueOrDefault("configJson"));
         var cursor = storedConfig.TryGetValue("syncCursor", out var cv) ? cv?.ToString() : null;
         using var bodyDoc = System.Text.Json.JsonDocument.Parse(
@@ -10485,7 +10510,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var result = await connector.RunActionAsync("sync", config, bodyDoc.RootElement, ct);
 
         if (result.Message.Contains("not supported", StringComparison.OrdinalIgnoreCase))
-            return await SetIntegrationStatus(http, id, "Connected", "integration.synced", db, audit, ct);
+            return Results.Json(ApiResponse<object>.Fail("Connector sync is not supported"), statusCode: StatusCodes.Status422UnprocessableEntity);
 
         // Persist cursor + status from the real sync result.
         var nextCursor = result.Details?.GetValueOrDefault("nextCursor")?.ToString();
@@ -10514,13 +10539,17 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (IntegrationsManageGuard(http) is { } denied) return denied;
         if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
         var companyId = GetCompanyId(http);
-        // Encrypt sensitive keys (authToken/apiKey/…) BEFORE persisting so provider
-        // secrets never sit in the DB as plaintext. Merge over the stored config; move a
-        // disconnected connector to Pending once it has been configured.
-        var configJson = connectors.EncryptConfigForStorage(body);
+        var existing = await db.QuerySingleAsync(
+            "SELECT config_json FROM integrations WHERE company_id=@cid AND id=@id",
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); }, ct);
+        if (existing is null) return Results.NotFound(ApiResponse<object>.Fail("Integration not found"));
+        // Recursive merge preserves omitted/masked stored credentials and encrypts every
+        // changed sensitive leaf before persistence. Replace with the complete protected
+        // object; a shallow jsonb || merge would drop nested secrets.
+        var configJson = connectors.MergeConfigForStorage(body, existing.GetValueOrDefault("configJson"));
         var affected = await db.ExecuteAsync(
             @"UPDATE integrations SET
-                  config_json = COALESCE(config_json,'{}'::jsonb) || @config::jsonb,
+                  config_json = @config::jsonb,
                   status = CASE WHEN status='Disconnected' THEN 'Pending' ELSE status END,
                   updated_at = NOW()
               WHERE company_id=@cid AND id=@id",
@@ -10860,26 +10889,6 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         return null;
     }
 
-    // Returns the first active POLYGON geofence the point is OUTSIDE of (a breach), or
-    // null. polygon_json is an array of [lat,lng] vertices. Point-in-polygon uses the
-    // standard ray-casting (even-odd) test in C# — accurate for arbitrary simple polygons
-    // and avoids a PostGIS dependency.
-    private static async Task<Dictionary<string, object?>?> FindPolygonBreachAsync(
-        Database db, long companyId, long? branchId, double lat, double lng, CancellationToken ct)
-    {
-        var polys = await db.QueryAsync(
-            "SELECT id, name, polygon_json FROM geofences WHERE company_id=@cid AND status='Active' AND polygon_json IS NOT NULL AND (branch_id IS NULL OR branch_id=@branchId)",
-            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
-        foreach (var g in polys)
-        {
-            var verts = ParsePolygon(g.GetValueOrDefault("polygonJson"));
-            if (verts.Count < 3) continue;
-            if (!PointInPolygon(lat, lng, verts))
-                return new Dictionary<string, object?> { ["id"] = g.GetValueOrDefault("id"), ["name"] = g.GetValueOrDefault("name") };
-        }
-        return null;
-    }
-
     private static List<(double Lat, double Lng)> ParsePolygon(object? raw)
     {
         var result = new List<(double, double)>();
@@ -10904,29 +10913,33 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         return result;
     }
 
-    private static bool PointInPolygon(double lat, double lng, List<(double Lat, double Lng)> poly)
+    private static string? ProtectIntegrationConfig(
+        Dictionary<string, object?> body,
+        Opstrax.Api.Services.Connectors.ConnectorRegistry connectors,
+        object? storedConfig,
+        bool merge)
     {
-        bool inside = false;
-        for (int i = 0, j = poly.Count - 1; i < poly.Count; j = i++)
-        {
-            var (yi, xi) = (poly[i].Lat, poly[i].Lng);
-            var (yj, xj) = (poly[j].Lat, poly[j].Lng);
-            if (((yi > lat) != (yj > lat)) &&
-                (lng < (xj - xi) * (lat - yi) / ((yj - yi) == 0 ? 1e-12 : (yj - yi)) + xi))
-                inside = !inside;
-        }
-        return inside;
+        if (!body.TryGetValue("config", out var raw) || raw is null or DBNull) return null;
+        var config = raw is JsonElement element ? element : JsonSerializer.SerializeToElement(raw);
+        return merge
+            ? connectors.MergeConfigForStorage(config, storedConfig)
+            : connectors.EncryptConfigForStorage(config);
     }
 
-    private static void BindIntegration(NpgsqlCommand c, Dictionary<string, object?> body, string? nameOverride, string? keyOverride)
+    private static void BindIntegration(
+        NpgsqlCommand c,
+        Dictionary<string, object?> body,
+        string? nameOverride,
+        string? keyOverride,
+        string? protectedConfig)
     {
         object? Str(string k) => Get(body, k) is { } v && v is not DBNull ? v : DBNull.Value;
-        // JSON columns (relatedSystems/connectedTo/config): read the RAW JsonElement
+        // Non-secret JSON columns (relatedSystems/connectedTo): read the RAW JsonElement
         // from the body and emit its literal JSON text for the `::jsonb` cast. Using
         // Get() here was the bug — Get() turns an array/object JsonElement into its
         // JSON *string* (json.ToString()), and re-serializing that string with
         // JsonSerializer.Serialize double-encoded it into a jsonb string scalar, so
-        // relatedSystems/connectedTo/config always persisted empty.
+        // relatedSystems/connectedTo always persisted empty.
         object? Json(string k)
         {
             if (!body.TryGetValue(k, out var raw) || raw is null) return DBNull.Value;
@@ -10943,14 +10956,15 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         c.Parameters.AddWithValue("@name", (object?)nameOverride ?? Str("name"));
         c.Parameters.AddWithValue("@key", (object?)keyOverride ?? DBNull.Value);
         c.Parameters.AddWithValue("@cat", Str("category"));
-        c.Parameters.AddWithValue("@status", Str("status"));
         c.Parameters.AddWithValue("@desc", Str("description"));
         c.Parameters.AddWithValue("@logo", Str("logo"));
         c.Parameters.AddWithValue("@managed", Str("managedBy"));
         c.Parameters.AddWithValue("@scope", Str("scope"));
         c.Parameters.AddWithValue("@related", Json("relatedSystems"));
         c.Parameters.AddWithValue("@connected", Json("connectedTo"));
-        c.Parameters.AddWithValue("@config", Json("config"));
+        // Config must arrive only through ConnectorRegistry encryption/merge. Never bind
+        // caller JSON directly here, even for a custom connector.
+        c.Parameters.AddWithValue("@config", (object?)protectedConfig ?? DBNull.Value);
     }
 
     // ===== AGENTIC OPS COPILOT — approve / dismiss / list ==========================
@@ -11215,8 +11229,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 }
                 else
                 {
-                    await db.InsertWithSavepointAsync(@"INSERT INTO vehicles (company_id, branch_id, vehicle_code, type, make, model, year, vin, plate_number, status, odometer_miles, readiness_score, data_quality_score)
-                        VALUES (@companyId, @branchId, @code, COALESCE(@type,'Truck'), @make, @model, @year, @vin, @plate, COALESCE(@status,'Available'), COALESCE(@odometer, 0), 92, 96)", c =>
+                    await db.InsertWithSavepointAsync(@"INSERT INTO vehicles (company_id, branch_id, vehicle_code, type, make, model, year, vin, plate_number, status, odometer_miles, readiness_score, data_quality_score, device_status, camera_status)
+                        VALUES (@companyId, @branchId, @code, COALESCE(@type,'Truck'), @make, @model, @year, @vin, @plate, COALESCE(@status,'Available'), COALESCE(@odometer, 0), 0, 0, 'Unknown', 'Unknown')", c =>
                     {
                         c.Parameters.AddWithValue("@companyId", companyId);
                         c.Parameters.AddWithValue("@branchId", branchId ?? (object)DBNull.Value);
@@ -15498,6 +15512,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                    WHERE (e.api_key_hash = encode(sha256(@rawKey::bytea), 'hex')
                           OR (e.api_key_previous_hash = encode(sha256(@rawKey::bytea), 'hex')
                               AND e.api_key_previous_valid_until>NOW()))
+                     AND e.company_id IS NOT NULL AND e.company_id>0
                      AND e.deleted_at IS NULL
                    LIMIT 1",
                 c => c.Parameters.AddWithValue("@rawKey", rawKey), ct);
@@ -15509,7 +15524,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
         }
 
-        if (device is null || Convert.ToInt64(device.GetValueOrDefault("credentialMatchCount") ?? 0) != 1)
+        if (device is null
+            || Convert.ToInt64(device.GetValueOrDefault("credentialMatchCount") ?? 0) != 1
+            || !TryPositiveLong(device.GetValueOrDefault("companyId"), out var companyId))
         {
             System.Threading.Interlocked.Increment(ref _telemetryAuthFailed);
             System.Threading.Interlocked.Increment(ref _telemetryRejected);
@@ -15582,6 +15599,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             System.Threading.Interlocked.Increment(ref _telemetryRejected);
             return Results.Json(ApiResponse<object>.Fail("EventTime is malformed, older than 7 days, or more than 5 minutes in the future"), statusCode: 422);
         }
+        var (fixTelemetryStatus, fixRiskLevel) =
+            TelemetryFixFreshness.Classify(observedAt, DateTimeOffset.UtcNow);
 
         // 9. Coordinate and speed validation
         if (!TelemetryTicketHelper.IsCoordinateValid(body.Lat, body.Lng))
@@ -15598,21 +15617,19 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         }
 
         // 10. All binding from device record — body cannot override company/vehicle/driver
-        var companyId = device["companyId"] is { } cv && cv is not DBNull ? Convert.ToInt64(cv) : 1L;
         var vehicleId = device["vehicleId"] is { } vv && vv is not DBNull ? (long?)Convert.ToInt64(vv) : null;
         var driverId  = device["driverId"]  is { } dv && dv is not DBNull ? (long?)Convert.ToInt64(dv) : null;
         var vehicleBranchId = device["vehicleBranchId"] is { } bv && bv is not DBNull ? (long?)Convert.ToInt64(bv) : null;
 
-        // 11. Fetch tenant-configurable speed threshold (default 65 mph)
-        var speedThreshold = await db.ScalarDecimalAsync(
-            "SELECT threshold_value FROM telemetry_rules WHERE company_id=@cid AND rule_type='speeding' AND enabled=TRUE LIMIT 1",
-            c => c.Parameters.AddWithValue("@cid", companyId), ct) ?? 65m;
-
-        // 12. Reserve the nonce and persist the authoritative event/projection atomically.
+        // 11/12. Reserve the nonce and persist the authoritative event/projection atomically.
+        // The tenant rule must be read inside this system transaction: pre-auth native ingest
+        // has no tenant ticket on the application connection in production.
         // A failed write rolls the reservation back, allowing the legitimate retry.
         long eventId = 0;
         var duplicateNonce = false;
-        await db.RunInSystemScopeAsync(async () =>
+        var alertsCreated = 0;
+        var speedThreshold = 65m;
+        var telemetryCommitted = await db.RunInSystemTransactionAsync(async () =>
         {
         var nonceId = await db.ScalarLongAsync(
             "INSERT INTO telemetry_nonces (device_id, nonce) VALUES (@did, @nonce) ON CONFLICT DO NOTHING RETURNING id",
@@ -15620,8 +15637,12 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (nonceId == 0)
         {
             duplicateNonce = true;
-            return;
+            return false;
         }
+
+        speedThreshold = await db.ScalarDecimalAsync(
+            "SELECT threshold_value FROM telemetry_rules WHERE company_id=@cid AND rule_type='speeding' AND enabled=TRUE LIMIT 1",
+            c => c.Parameters.AddWithValue("@cid", companyId), ct) ?? 65m;
 
         eventId = await db.InsertAsync(
             @"INSERT INTO location_events
@@ -15659,7 +15680,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 c.Parameters.AddWithValue("@observedAt", observedAt);
             }, ct);
 
-        // 13. Upsert latest_vehicle_positions (one row per company+vehicle, O(1) via UNIQUE KEY)
+        // 13. Upsert latest_vehicle_positions (one row per company+vehicle, O(1) via UNIQUE KEY).
+        // Only an event that wins this monotonic projection may raise a current/open alert.
+        var latestAdvanced = false;
         if (vehicleId.HasValue)
         {
             // Additive provenance: native ELD HMAC ingest. Stamp source/device_fix_time/
@@ -15674,7 +15697,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 ? $", source='{TelemetryProvenance.SourceNativeEld}', device_fix_time=EXCLUDED.device_fix_time, normalized_at=NOW()"
                 : "";
 
-            await db.ExecuteAsync(
+            var latestRows = await db.ExecuteAsync(
                 $@"INSERT INTO latest_vehicle_positions
                     (company_id, vehicle_id, device_id, driver_id, lat, lng, speed_mph, heading,
                      accuracy_meters, engine_status, fuel_level, odometer_miles, battery_voltage,
@@ -15719,31 +15742,30 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                     c.Parameters.AddWithValue("@correlationId", body.CorrelationId ?? (object)DBNull.Value);
                     c.Parameters.AddWithValue("@causationId", body.CausationId ?? (object)DBNull.Value);
                     c.Parameters.AddWithValue("@sourceChannel", body.SourceChannel ?? "device");
-                    c.Parameters.AddWithValue("@telemetryStatus", "healthy");
-                    c.Parameters.AddWithValue("@riskLevel", "low");
+                    c.Parameters.AddWithValue("@telemetryStatus", fixTelemetryStatus);
+                    c.Parameters.AddWithValue("@riskLevel", fixRiskLevel);
                     c.Parameters.AddWithValue("@alertCount", 0);
                     c.Parameters.AddWithValue("@openAlertCount", 0);
-                    c.Parameters.AddWithValue("@nextAction", "No action required");
-                    c.Parameters.AddWithValue("@summaryJson", JsonSerializer.Serialize(new { vehicleId, companyId, status = "healthy" }));
+                    c.Parameters.AddWithValue("@nextAction",
+                        fixTelemetryStatus == "healthy" ? "No action required" : "Review buffered device fix");
+                    c.Parameters.AddWithValue("@summaryJson", JsonSerializer.Serialize(new
+                    {
+                        vehicleId,
+                        companyId,
+                        status = fixTelemetryStatus
+                    }));
                     if (hasProv) c.Parameters.AddWithValue("@deviceFixTime", deviceFixTime);
                 }, ct);
+            latestAdvanced = latestRows > 0;
         }
-        });
-
-        if (duplicateNonce)
-        {
-            System.Threading.Interlocked.Increment(ref _telemetryRejectedReplay);
-            System.Threading.Interlocked.Increment(ref _telemetryRejected);
-            return Results.Json(ApiResponse<object>.Fail("Duplicate nonce — replay detected"), statusCode: 409);
-        }
-
-        // 14. Heartbeat
+        // 14. Heartbeat is part of the accepted-fix transaction. A projection/alert
+        // failure must not leave a device looking online while its nonce is burned.
         await db.ExecuteAsync(
             "UPDATE eld_devices SET last_seen_at=NOW() WHERE id=@id",
             c => c.Parameters.AddWithValue("@id", deviceId), ct);
 
         // 16. Alert: speeding (ingest-time, uses tenant threshold, no duplicate open alert)
-        if (vehicleId.HasValue && body.SpeedMph > speedThreshold)
+        if (vehicleId.HasValue && latestAdvanced && body.SpeedMph > speedThreshold)
         {
             var openSpd = await db.ScalarLongAsync(
                 "SELECT COUNT(*) FROM telemetry_alerts WHERE company_id=@cid AND vehicle_id=@vid AND alert_type='speeding' AND status='Open'",
@@ -15765,7 +15787,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                         c.Parameters.AddWithValue("@msg",  $"Vehicle {body.SpeedMph:F0} mph exceeds {speedThreshold:F0} mph threshold");
                         c.Parameters.AddWithValue("@eid",  eventId);
                     }, ct);
-                System.Threading.Interlocked.Increment(ref _alertsGenerated);
+                alertsCreated++;
 
                 var recommendation = ai.CreateRecommendation(
                     companyId.ToString(CultureInfo.InvariantCulture),
@@ -15793,60 +15815,40 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             }
         }
 
-        // 17. Alert: geofence breach (best-effort; requires MySQL 5.7.6+, no duplicate open alert per geofence)
-        if (vehicleId.HasValue)
+        // 17. Alert: geofence breach. source_event_id always points to the tenant-bound
+        // location event (never a geofence id), so downstream safety evidence cannot
+        // correlate an alert to an unrelated row.
+        if (vehicleId.HasValue && latestAdvanced)
         {
             try
             {
-                // CIRCLE geofences — great-circle (Haversine) distance in METRES, pure SQL
-                // (Postgres has no MySQL ST_Distance_Sphere/POINT). Earth radius 6371000 m.
-                // A row is returned when the vehicle is OUTSIDE the circle. Only circle
-                // geofences (polygon_json IS NULL); polygons are checked separately below.
-                var breached = await db.QuerySingleAsync(
-                    @"SELECT g.id, g.name FROM geofences g
-                      WHERE g.company_id=@cid AND g.status='Active' AND g.polygon_json IS NULL
-                        AND (g.branch_id IS NULL OR g.branch_id=@branchId)
-                        AND g.center_lat IS NOT NULL AND g.center_lng IS NOT NULL AND g.radius_meters IS NOT NULL
-                        AND (2 * 6371000 * ASIN(SQRT(
-                              POWER(SIN(RADIANS(@lat - g.center_lat) / 2), 2)
-                              + COS(RADIANS(g.center_lat)) * COS(RADIANS(@lat))
-                                * POWER(SIN(RADIANS(@lng - g.center_lng) / 2), 2)
-                            ))) > g.radius_meters
-                      LIMIT 1",
-                    c =>
-                    {
-                        c.Parameters.AddWithValue("@cid", companyId);
-                        c.Parameters.AddWithValue("@branchId", (object?)vehicleBranchId ?? DBNull.Value);
-                        c.Parameters.AddWithValue("@lat", (double)body.Lat);
-                        c.Parameters.AddWithValue("@lng", (double)body.Lng);
-                    }, ct);
-
-                // POLYGON geofences — a vehicle OUTSIDE a polygon geofence is a breach.
-                // Point-in-polygon (ray casting) is done in C# for correctness/clarity.
-                if (breached is null)
-                    breached = await FindPolygonBreachAsync(db, companyId, vehicleBranchId, (double)body.Lat, (double)body.Lng, ct);
+                // Authorized-area set semantics: inside any valid scoped circle/polygon means
+                // authorized; only outside all valid fences produces a breach.
+                var breached = await GeofenceEvaluator.FindAuthorizedAreaBreachAsync(
+                    db, companyId, vehicleBranchId, (double)body.Lat, (double)body.Lng, ct);
                 if (breached is not null)
                 {
                     var gfId   = Convert.ToInt64(breached["id"]);
                     var gfName = breached["name"]?.ToString() ?? "Unknown geofence";
+                    var geofenceMessage = $"Vehicle outside geofence: {gfName}";
                     var dupGf  = await db.ScalarLongAsync(
-                        "SELECT COUNT(*) FROM telemetry_alerts WHERE company_id=@cid AND vehicle_id=@vid AND alert_type='geofence_breach' AND source_event_id=@gid AND status='Open'",
-                        c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@vid", vehicleId.Value); c.Parameters.AddWithValue("@gid", gfId); }, ct);
+                        "SELECT COUNT(*) FROM telemetry_alerts WHERE company_id=@cid AND vehicle_id=@vid AND alert_type='geofence_breach' AND message=@msg AND status='Open'",
+                        c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@vid", vehicleId.Value); c.Parameters.AddWithValue("@msg", geofenceMessage); }, ct);
                     if (dupGf == 0)
                     {
                         var alertId = await db.InsertAsync(
                             @"INSERT INTO telemetry_alerts (company_id, vehicle_id, device_id, alert_type, severity, message, source_event_id, status)
-                              VALUES (@cid, @vid, @did, 'geofence_breach', 'High', @msg, @gid, 'Open')
+                              VALUES (@cid, @vid, @did, 'geofence_breach', 'High', @msg, @eventId, 'Open')
                               RETURNING id",
                             c =>
                             {
                                 c.Parameters.AddWithValue("@cid",  companyId);
                                 c.Parameters.AddWithValue("@vid",  vehicleId.Value);
                                 c.Parameters.AddWithValue("@did",  deviceId);
-                                c.Parameters.AddWithValue("@msg",  $"Vehicle outside geofence: {gfName}");
-                                c.Parameters.AddWithValue("@gid",  gfId);
+                                c.Parameters.AddWithValue("@msg", geofenceMessage);
+                                c.Parameters.AddWithValue("@eventId", eventId);
                             }, ct);
-                        System.Threading.Interlocked.Increment(ref _alertsGenerated);
+                        alertsCreated++;
 
                         var recommendation = ai.CreateRecommendation(
                             companyId.ToString(CultureInfo.InvariantCulture),
@@ -15859,7 +15861,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                             JsonSerializer.Serialize(new { reason = "outside authorized geofence", geofenceId = gfId, geofenceName = gfName }),
                             JsonSerializer.Serialize(new { action = "review_geofence_breach", geofenceId = gfId, vehicleId, deviceId }),
                             "high",
-                            gfId.ToString(CultureInfo.InvariantCulture),
+                            eventId.ToString(CultureInfo.InvariantCulture),
                             ActorTypes.ApiKey,
                             deviceId.ToString(CultureInfo.InvariantCulture));
 
@@ -15874,12 +15876,26 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                     }
                 }
             }
-            catch { /* ST_Distance_Sphere not available; geofence alerts skipped */ }
+            catch (JsonException) { /* malformed legacy polygon: no alert is fabricated */ }
         }
+
+        return true;
+        }, ct);
+
+        if (!telemetryCommitted || duplicateNonce)
+        {
+            System.Threading.Interlocked.Increment(ref _telemetryRejectedReplay);
+            System.Threading.Interlocked.Increment(ref _telemetryRejected);
+            return Results.Json(ApiResponse<object>.Fail("Duplicate nonce — replay detected"), statusCode: 409);
+        }
+
+        if (alertsCreated > 0)
+            System.Threading.Interlocked.Add(ref _alertsGenerated, alertsCreated);
 
         if (vehicleId.HasValue)
         {
-            await telemetry.RefreshVehicleAsync(companyId, vehicleId.Value, ct);
+            await RefreshTelemetryLiveStateBestEffortAsync(
+                http, telemetry, companyId, vehicleId.Value, "native", ct);
         }
 
         System.Threading.Interlocked.Increment(ref _telemetryAccepted);
@@ -16135,7 +16151,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     // H3 — provision a per-gateway credential bound to the caller's tenant. Returns the HMAC secret
     // ONCE (never stored in the clear; persisted envelope-encrypted). The gateway then signs gps-ingest
     // with this secret and sends X-Gateway-Id, and may only submit for devices in this tenant.
-    private static async Task<IResult> TelemetryGatewayProvision(HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
+    private static async Task<IResult> TelemetryGatewayProvision(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
         if (RequirePermission(http, "telemetry.devices.manage") is { } denied) return denied;
         if (GetBranchId(http) is not null) return Results.Forbid();
@@ -16145,21 +16161,25 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             return Results.BadRequest(ApiResponse<object>.Fail("gatewayId is required"));
         var name = body.TryGetValue("name", out var n) ? n?.ToString() : null;
         var pii = http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>();
-        // Refuse to mint a gateway secret unless envelope encryption is actually configured — otherwise
-        // Encrypt() passes the plaintext through and we would persist a live HMAC secret in the clear.
-        if (!pii.Enabled)
-            return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
         var secret = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
-        var encrypted = pii.Encrypt(secret);
-        if (string.IsNullOrWhiteSpace(encrypted))
+        // Use the same envelope-prefix contract as gateway/device rotation. PiiProtectionService
+        // intentionally permits plaintext for some legacy PII, but live HMAC material never may.
+        var encrypted = DeviceHmacSecretProtection.EncryptForStorage(pii, secret);
+        if (encrypted is null)
             return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
         try
         {
-            var id = await db.InsertAsync(
-                @"INSERT INTO telemetry_gateways (gateway_id, company_id, gateway_name, secret_encrypted, status)
-                  VALUES (@g, @c, @n, @s, 'active') RETURNING id",
-                c => { c.Parameters.AddWithValue("@g", gatewayId); c.Parameters.AddWithValue("@c", companyId);
-                       c.Parameters.AddWithValue("@n", (object?)name ?? DBNull.Value); c.Parameters.AddWithValue("@s", encrypted!); }, ct);
+            // Secret-bearing columns are system-only at the database ACL layer. The user
+            // permission and tenant are validated above; the privileged write remains scoped
+            // to that immutable company id.
+            var id = await db.RunInSystemTransactionAsync(
+                () => db.InsertAsync(
+                    @"INSERT INTO telemetry_gateways (gateway_id, company_id, gateway_name, secret_encrypted, status)
+                      VALUES (@g, @c, @n, @s, 'active') RETURNING id",
+                    c => { c.Parameters.AddWithValue("@g", gatewayId); c.Parameters.AddWithValue("@c", companyId);
+                           c.Parameters.AddWithValue("@n", (object?)name ?? DBNull.Value); c.Parameters.AddWithValue("@s", encrypted); }, ct), ct);
+            await audit.LogAsync(http, "telemetry.gateway.provisioned", "TelemetryGateway", id,
+                JsonSerializer.Serialize(new { gatewayId }), ct);
             return Results.Ok(ApiResponse<object>.Ok(new { id, gatewayId, secret }, "Gateway provisioned — copy the secret now, it is shown only once"));
         }
         catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505")
@@ -16178,27 +16198,59 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         return Results.Ok(ApiResponse<object>.Ok(rows));
     }
 
-    private static async Task<IResult> TelemetryGatewayRevoke(HttpContext http, long id, Database db, CancellationToken ct)
+    private static async Task<IResult> TelemetryGatewayRotateSecret(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct)
+    {
+        if (RequirePermission(http, "telemetry.devices.manage") is { } denied) return denied;
+        if (GetBranchId(http) is not null) return Results.Forbid();
+        var companyId = GetCompanyId(http);
+        var pii = http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>();
+        var secret = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+        var encrypted = DeviceHmacSecretProtection.EncryptForStorage(pii, secret);
+        if (encrypted is null) return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+
+        var affected = await db.RunInSystemTransactionAsync(
+            () => db.ExecuteAsync(
+                @"UPDATE telemetry_gateways
+                  SET secret_encrypted=@secret, updated_at=NOW()
+                  WHERE id=@id AND company_id=@companyId AND status='active'",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@secret", encrypted);
+                    c.Parameters.AddWithValue("@id", id);
+                    c.Parameters.AddWithValue("@companyId", companyId);
+                }, ct), ct);
+        if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Active gateway not found"));
+
+        await audit.LogAsync(http, "telemetry.gateway.secret.rotated", "TelemetryGateway", id, null, ct);
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            id,
+            secret,
+            note = "The previous gateway secret is invalid immediately. Store this replacement securely; it will not be shown again."
+        }, "Gateway secret rotated"));
+    }
+
+    private static async Task<IResult> TelemetryGatewayRevoke(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct)
     {
         if (RequirePermission(http, "telemetry.devices.manage") is { } denied) return denied;
         if (GetBranchId(http) is not null) return Results.Forbid();
         var rows = await db.ExecuteAsync("UPDATE telemetry_gateways SET status='revoked', updated_at=NOW() WHERE id=@id AND company_id=@c",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@c", GetCompanyId(http)); }, ct);
         if (rows == 0) return Results.NotFound(ApiResponse<object>.Fail("Gateway not found"));
+        await audit.LogAsync(http, "telemetry.gateway.revoked", "TelemetryGateway", id, null, ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id, status = "revoked" }, "Gateway revoked"));
     }
 
-    // Trusted-gateway GPS ingest for hardware trackers (GT06/Concox/Jimi PT40-class).
-    // The field device talks its vendor protocol to a separately operated gateway; the
-    // gateway authenticates here with HMAC. IMEI is only a provisioned lookup key and is
-    // never accepted as authentication by itself. Accepts common field aliases and lands the
-    // fix on the live map — the same latest_vehicle_positions/location_events tables the
-    // map reads. Tolerant of the field-name variety across tracker firmwares/forwarders.
+    // Normalized GPS ingest from a separately operated protocol gateway. This endpoint
+    // does not decode or claim native GT06/J1939/MQTT support. The gateway authenticates
+    // the normalized JSON with HMAC; IMEI is only a provisioned lookup key and is never
+    // accepted as authentication by itself.
     //
     // Minimal payload: { "imei": "862464068456321", "lat": 34.05, "lng": -118.24 }
     // Aliases accepted: latitude/lng/longitude, speed/speedKmh/speedMph, heading/course/
     // bearing, alt/altitude, ts/timestamp/gpsTime, fuel, odometer.
-    private static async Task<IResult> GpsTrackerIngest(HttpContext http, System.Text.Json.JsonElement body, Database db, IConfiguration config, AuditService audit, CancellationToken ct)
+    private static async Task<IResult> GpsTrackerIngest(HttpContext http, System.Text.Json.JsonElement body, Database db, IConfiguration config,
+        AuditService audit, TelemetryLiveStateService telemetry, CancellationToken ct)
     {
         // Per-gateway credentials are mandatory. There is deliberately no shared-secret fallback:
         // omitting X-Gateway-Id can never select a fleet-wide credential or bypass tenant binding.
@@ -16220,11 +16272,21 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (!protection.Enabled)
             return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
 
+        // Raw/gateway parity is all-or-nothing in Production. Refuse the route before
+        // credential lookup when the replay, history, projection, lifecycle, alert, or
+        // rule topology is incomplete; otherwise a signed fix could create a misleading
+        // partial live state.
+        if (isProduction && !await GpsGatewayProjectionTopologyReadyAsync(db, ct))
+        {
+            logger.LogError("Gateway telemetry projection topology is incomplete; ingest failed closed.");
+            return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+        }
+
         Dictionary<string, object?>? gw;
         try
         {
             gw = await db.QuerySingleInSystemScopeAsync(
-                "SELECT company_id, secret_encrypted, status FROM telemetry_gateways WHERE gateway_id=@g LIMIT 1",
+                "SELECT company_id, secret_encrypted, status FROM telemetry_gateways WHERE gateway_id=@g AND company_id>0 LIMIT 1",
                 c => c.Parameters.AddWithValue("@g", gatewayIdHeader), ct);
         }
         catch (Npgsql.PostgresException ex) when (ex.SqlState is PostgresErrorCodes.UndefinedTable or PostgresErrorCodes.UndefinedColumn)
@@ -16296,9 +16358,13 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         // Resolve the device by IMEI (or by device_serial == imei, so a serial-registered
         // device also works). Binds company/vehicle from the record — never from the body.
         var device = await db.QuerySingleInSystemScopeAsync(
-            @"SELECT id, company_id, vehicle_id, driver_id, status
-              FROM eld_devices
-              WHERE (imei=@imei OR device_serial=@imei) AND deleted_at IS NULL
+            @"SELECT e.id, e.company_id, e.vehicle_id, e.driver_id, e.status,
+                     v.branch_id AS vehicle_branch_id
+              FROM eld_devices e
+              LEFT JOIN vehicles v
+                ON v.id=e.vehicle_id AND v.company_id=e.company_id AND v.deleted_at IS NULL
+              WHERE (e.imei=@imei OR e.device_serial=@imei)
+                AND e.company_id IS NOT NULL AND e.company_id>0 AND e.deleted_at IS NULL
               LIMIT 1",
             c => c.Parameters.AddWithValue("@imei", imei), ct);
         if (device is null)
@@ -16324,6 +16390,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
         long? vehicleId = device["vehicleId"] is null or DBNull ? null : Convert.ToInt64(device["vehicleId"]);
         long? driverId  = device["driverId"]  is null or DBNull ? null : Convert.ToInt64(device["driverId"]);
+        long? vehicleBranchId = device["vehicleBranchId"] is null or DBNull ? null : Convert.ToInt64(device["vehicleBranchId"]);
 
         // Speed: accept mph directly, or convert km/h. Heading from several aliases.
         var speedMph = Num("speedMph", "speed_mph");
@@ -16341,6 +16408,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (!TryParseTrackerTimestamp(eventTimeRaw, out var eventTime) ||
             eventTime < DateTimeOffset.UtcNow.AddDays(-30) || eventTime > DateTimeOffset.UtcNow.AddMinutes(5))
             return Results.BadRequest(ApiResponse<object>.Fail("device timestamp is invalid or outside the accepted window"));
+        var (gatewayFixTelemetryStatus, gatewayFixRiskLevel) =
+            TelemetryFixFreshness.Classify(eventTime, DateTimeOffset.UtcNow);
 
         // Additive provenance for the trusted-gateway path. Stamp source='gateway'
         // plus the wire protocol/provider the forwarder reported (when present) ONLY
@@ -16375,14 +16444,16 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             return Results.Conflict(ApiResponse<object>.Fail("Duplicate gateway submission — replay detected"));
         }
 
-        // The durable reserve below runs inside this system-scope transaction, so a write failure
-        // rolls the reservation back with it — provided Rls:EnforceTenantContext is ON (the prod
-        // invariant this whole handler's write atomicity already depends on). The Absent (in-memory)
-        // path can't join the tx, so if the writes throw we compensate by releasing that reservation.
+        // The durable reserve below runs inside an explicit system transaction in every
+        // environment, so replay/history/latest/alerts/heartbeats commit or roll back together.
+        // The Absent (in-memory) path cannot join the DB transaction, so on failure it is
+        // compensated by releasing that reservation.
         var durableReplayDuplicate = false;
+        var gatewayAlertsCreated = 0;
+        var gatewayWriteCommitted = false;
         try
         {
-        await db.RunInSystemScopeAsync(async () =>
+        gatewayWriteCommitted = await db.RunInSystemTransactionAsync(async () =>
         {
             // Durable reservation, atomic with the writes below. A duplicate skips the writes so a
             // replay never lands a row; a DB error here throws and aborts the whole transaction
@@ -16392,7 +16463,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                     db, replayGatewayId, canonicalSig, timestamp, deviceId, companyId, ct))
             {
                 durableReplayDuplicate = true;
-                return;
+                return false;
             }
 
             var eventId = await db.InsertAsync(
@@ -16420,13 +16491,21 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                     c.Parameters.AddWithValue("@observedAt", eventTime.UtcDateTime);
                 }, ct);
 
+            // History is retained for a novel old fix, but only the event that advances the
+            // monotonic current-position projection may create current/open alerts.
+            var gatewayLatestAdvanced = vehicleId is not null &&
+                await UpsertGatewayLatestPositionAsync(
+                    db, companyId, vehicleId.Value, deviceId, driverId, lat.Value, lng.Value,
+                    speedMph, heading, engine, fuel, odo, eventTime, eventId, hasProv,
+                    provider, protocol, gatewayFixTelemetryStatus, gatewayFixRiskLevel, ct) > 0;
+
             // C2 — device-reported harsh-driving / crash / SOS event. Normalize the reported token to the
             // canonical alert vocabulary and raise a telemetry_alert linked to this fix; the safety
             // background service converts it into a safety_event (Harsh Braking / Crash / ...) so it lands
             // on the safety dashboard and deducts the driver score. Magnitude (g-force) is kept in the
             // message. Unknown/absent tokens do nothing (a plain position fix is unaffected).
             var harshType = NormalizeHarshEvent(Str("harshEvent", "harsh_event", "event", "alarm", "alarmType"));
-            if (harshType is not null)
+            if (gatewayLatestAdvanced && harshType is not null)
             {
                 var mag = Num("magnitude", "gForce", "g_force", "g", "severityValue");
                 var harshSeverity = harshType is "crash" or "sos" ? "Critical" : "High";
@@ -16445,52 +16524,69 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                         c.Parameters.AddWithValue("@msg", mag is { } m ? $"Device-reported {harshType} (magnitude {m:0.##})" : $"Device-reported {harshType}");
                         c.Parameters.AddWithValue("@src", eventId);
                     }, ct);
+                gatewayAlertsCreated++;
             }
 
-            if (vehicleId is not null)
+            // Speed-rule parity with native HMAC ingest. The alert is linked to this
+            // tenant's location event and deduplicated against an existing open alert.
+            if (vehicleId is not null && gatewayLatestAdvanced)
             {
-                var provCols = hasProv ? ", source, provider, protocol, device_fix_time, gateway_received_at, normalized_at" : "";
-                var provVals = hasProv ? $", '{TelemetryProvenance.SourceGateway}', @provider, @protocol, @eventTime, NOW(), NOW()" : "";
-                var provUpd  = hasProv
-                    ? $", source='{TelemetryProvenance.SourceGateway}', provider=EXCLUDED.provider, protocol=EXCLUDED.protocol, device_fix_time=EXCLUDED.device_fix_time, gateway_received_at=EXCLUDED.gateway_received_at, normalized_at=NOW()"
-                    : "";
-
-                await db.ExecuteAsync(
-                    $@"INSERT INTO latest_vehicle_positions
-                        (company_id, vehicle_id, device_id, driver_id, lat, lng, speed_mph, heading,
-                         engine_status, fuel_level, odometer_miles, event_time, received_at, event_count,
-                         source_event_id, source_channel, telemetry_status, risk_level, updated_at{provCols})
-                      VALUES (@cid, @vid, @did, @drid, @lat, @lng, @spd, @hdg, @eng, @fuel, @odo, @eventTime, NOW(), 1,
-                              @eid, 'trusted-gateway', 'healthy', 'low', NOW(){provVals})
-                      ON CONFLICT (company_id, vehicle_id) DO UPDATE SET
-                        device_id=EXCLUDED.device_id, lat=EXCLUDED.lat, lng=EXCLUDED.lng,
-                        speed_mph=EXCLUDED.speed_mph, heading=EXCLUDED.heading,
-                        engine_status=EXCLUDED.engine_status, fuel_level=EXCLUDED.fuel_level,
-                        odometer_miles=EXCLUDED.odometer_miles, event_time=EXCLUDED.event_time, received_at=NOW(),
-                        event_count=latest_vehicle_positions.event_count+1, source_event_id=EXCLUDED.source_event_id,
-                        source_channel='trusted-gateway', telemetry_status='healthy', risk_level='low', updated_at=NOW(){provUpd}
-                      WHERE latest_vehicle_positions.event_time IS NULL OR latest_vehicle_positions.event_time <= EXCLUDED.event_time",
-                    c =>
-                    {
-                        c.Parameters.AddWithValue("@cid", companyId);
-                        c.Parameters.AddWithValue("@vid", vehicleId.Value);
-                        c.Parameters.AddWithValue("@did", deviceId);
-                        c.Parameters.AddWithValue("@drid", (object?)driverId ?? DBNull.Value);
-                        c.Parameters.AddWithValue("@lat", (decimal)lat.Value);
-                        c.Parameters.AddWithValue("@lng", (decimal)lng.Value);
-                        c.Parameters.AddWithValue("@spd", (decimal)(speedMph ?? 0));
-                        c.Parameters.AddWithValue("@hdg", (short)Math.Clamp((int)heading, 0, 359));
-                        c.Parameters.AddWithValue("@eng", engine);
-                        c.Parameters.AddWithValue("@fuel", (object?)(fuel is { } fv ? (decimal)fv : (object?)null) ?? DBNull.Value);
-                        c.Parameters.AddWithValue("@odo", (object?)(odo is { } ov ? (decimal)ov : (object?)null) ?? DBNull.Value);
-                        c.Parameters.AddWithValue("@eid", eventId);
-                        c.Parameters.AddWithValue("@eventTime", eventTime.UtcDateTime);
-                        if (hasProv)
+                var speedThreshold = await db.ScalarDecimalAsync(
+                    "SELECT threshold_value FROM telemetry_rules WHERE company_id=@cid AND rule_type='speeding' AND enabled=TRUE LIMIT 1",
+                    c => c.Parameters.AddWithValue("@cid", companyId), ct) ?? 65m;
+                if ((decimal)(speedMph ?? 0) > speedThreshold)
+                {
+                    var speedAlertId = await db.InsertAsync(
+                        @"INSERT INTO telemetry_alerts
+                            (company_id,vehicle_id,device_id,driver_id,alert_type,severity,message,source_event_id,status,source_channel,created_at)
+                          SELECT @cid,@vid,@did,@drid,'speeding',
+                                 COALESCE((SELECT severity FROM telemetry_rules WHERE company_id=@cid AND rule_type='speeding' AND enabled=TRUE LIMIT 1),'High'),
+                                 @msg,@eventId,'Open','trusted-gateway',NOW()
+                          WHERE NOT EXISTS (
+                            SELECT 1 FROM telemetry_alerts
+                            WHERE company_id=@cid AND vehicle_id=@vid AND alert_type='speeding' AND status='Open')
+                          RETURNING id",
+                        c =>
                         {
-                            c.Parameters.AddWithValue("@provider", (object?)provider ?? DBNull.Value);
-                            c.Parameters.AddWithValue("@protocol", (object?)protocol ?? DBNull.Value);
-                        }
-                    }, ct);
+                            c.Parameters.AddWithValue("@cid", companyId);
+                            c.Parameters.AddWithValue("@vid", vehicleId.Value);
+                            c.Parameters.AddWithValue("@did", deviceId);
+                            c.Parameters.AddWithValue("@drid", (object?)driverId ?? DBNull.Value);
+                            c.Parameters.AddWithValue("@msg", $"Vehicle {(speedMph ?? 0):F0} mph exceeds {speedThreshold:F0} mph threshold");
+                            c.Parameters.AddWithValue("@eventId", eventId);
+                        }, ct);
+                    if (speedAlertId > 0) gatewayAlertsCreated++;
+                }
+
+                // Authorized-area set semantics match native HMAC and raw GT06 projection:
+                // inside any valid scoped fence is authorized; outside all is a breach.
+                // Evidence correlation remains this tenant's location event, not a fence id.
+                var breached = await GeofenceEvaluator.FindAuthorizedAreaBreachAsync(
+                    db, companyId, vehicleBranchId, lat.Value, lng.Value, ct);
+                if (breached is not null)
+                {
+                    var fenceName = breached.GetValueOrDefault("name")?.ToString() ?? "Unknown geofence";
+                    var message = $"Vehicle outside geofence: {fenceName}";
+                    var geofenceAlertId = await db.InsertAsync(
+                        @"INSERT INTO telemetry_alerts
+                            (company_id,vehicle_id,device_id,driver_id,alert_type,severity,message,source_event_id,status,source_channel,created_at)
+                          SELECT @cid,@vid,@did,@drid,'geofence_breach','High',@msg,@eventId,'Open','trusted-gateway',NOW()
+                          WHERE NOT EXISTS (
+                            SELECT 1 FROM telemetry_alerts
+                            WHERE company_id=@cid AND vehicle_id=@vid AND alert_type='geofence_breach'
+                              AND message=@msg AND status='Open')
+                          RETURNING id",
+                        c =>
+                        {
+                            c.Parameters.AddWithValue("@cid", companyId);
+                            c.Parameters.AddWithValue("@vid", vehicleId.Value);
+                            c.Parameters.AddWithValue("@did", deviceId);
+                            c.Parameters.AddWithValue("@drid", (object?)driverId ?? DBNull.Value);
+                            c.Parameters.AddWithValue("@msg", message);
+                            c.Parameters.AddWithValue("@eventId", eventId);
+                        }, ct);
+                    if (geofenceAlertId > 0) gatewayAlertsCreated++;
+                }
             }
 
             // A valid signed fix is the activation proof. Never activate suspended or
@@ -16520,6 +16616,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                     c.Parameters.AddWithValue("@gatewayId", replayGatewayId);
                     c.Parameters.AddWithValue("@companyId", companyId);
                 }, ct);
+            return true;
         }, ct);
         }
         catch
@@ -16534,13 +16631,20 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
         // The durable reservation ran inside the transaction and found this signature already
         // present: the transaction committed no fix (writes were skipped). Reject as a replay.
-        if (durableReplayDuplicate)
+        if (!gatewayWriteCommitted || durableReplayDuplicate)
         {
             System.Threading.Interlocked.Increment(ref _telemetryRejectedReplay);
             System.Threading.Interlocked.Increment(ref _telemetryRejected);
-            await audit.LogAsync(http, "telemetry.gps.replay_rejected", "EldDevice", deviceId, "gateway-replay", ct);
+            logger.LogWarning("Duplicate signed gateway telemetry submission rejected for gateway {GatewayId}", replayGatewayId);
             return Results.Conflict(ApiResponse<object>.Fail("Duplicate gateway submission — replay detected"));
         }
+
+        if (gatewayAlertsCreated > 0)
+            System.Threading.Interlocked.Add(ref _alertsGenerated, gatewayAlertsCreated);
+        System.Threading.Interlocked.Increment(ref _telemetryAccepted);
+        if (vehicleId is not null)
+            await RefreshTelemetryLiveStateBestEffortAsync(
+                http, telemetry, companyId, vehicleId.Value, "trusted-gateway", ct);
 
         return Results.Ok(ApiResponse<object>.Ok(new
         {
@@ -16548,6 +16652,105 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             mapped = vehicleId is not null,
             eventTime = eventTime.ToString("O")
         }, "GPS fix recorded"));
+    }
+
+    // The database transaction is the acceptance boundary. Live-state cache refresh is a
+    // derived, best-effort projection and must never turn a committed event into a 500 whose
+    // retry can only be rejected by the durable replay guard. Keep logging value-free: neither
+    // payloads, signatures, credentials, nor provider exception messages belong in this path.
+    private static async Task RefreshTelemetryLiveStateBestEffortAsync(
+        HttpContext http,
+        TelemetryLiveStateService telemetry,
+        long companyId,
+        long vehicleId,
+        string ingress,
+        CancellationToken ct)
+    {
+        try
+        {
+            await telemetry.RefreshVehicleAsync(companyId, vehicleId, ct);
+        }
+        catch
+        {
+            var logger = http.RequestServices.GetRequiredService<ILoggerFactory>()
+                .CreateLogger("Opstrax.Telemetry.LiveStateRefresh");
+            logger.LogWarning(
+                "Post-commit live-state refresh failed for accepted {Ingress} telemetry; the durable event remains committed.",
+                ingress);
+        }
+    }
+
+    private static Task<int> UpsertGatewayLatestPositionAsync(
+        Database db,
+        long companyId,
+        long vehicleId,
+        long deviceId,
+        long? driverId,
+        double lat,
+        double lng,
+        double? speedMph,
+        double heading,
+        string engine,
+        double? fuel,
+        double? odometer,
+        DateTimeOffset eventTime,
+        long sourceEventId,
+        bool hasProvenance,
+        string? provider,
+        string? protocol,
+        string telemetryStatus,
+        string riskLevel,
+        CancellationToken ct)
+    {
+        var provCols = hasProvenance
+            ? ", source, provider, protocol, device_fix_time, gateway_received_at, normalized_at"
+            : "";
+        var provVals = hasProvenance
+            ? $", '{TelemetryProvenance.SourceGateway}', @provider, @protocol, @eventTime, NOW(), NOW()"
+            : "";
+        var provUpd = hasProvenance
+            ? $", source='{TelemetryProvenance.SourceGateway}', provider=EXCLUDED.provider, protocol=EXCLUDED.protocol, device_fix_time=EXCLUDED.device_fix_time, gateway_received_at=EXCLUDED.gateway_received_at, normalized_at=NOW()"
+            : "";
+
+        return db.ExecuteAsync(
+            $@"INSERT INTO latest_vehicle_positions
+                (company_id, vehicle_id, device_id, driver_id, lat, lng, speed_mph, heading,
+                 engine_status, fuel_level, odometer_miles, event_time, received_at, event_count,
+                 source_event_id, source_channel, telemetry_status, risk_level, updated_at{provCols})
+              VALUES (@cid, @vid, @did, @drid, @lat, @lng, @spd, @hdg, @eng, @fuel, @odo, @eventTime, NOW(), 1,
+                      @eid, 'trusted-gateway', @telemetryStatus, @riskLevel, NOW(){provVals})
+              ON CONFLICT (company_id, vehicle_id) DO UPDATE SET
+                device_id=EXCLUDED.device_id, lat=EXCLUDED.lat, lng=EXCLUDED.lng,
+                speed_mph=EXCLUDED.speed_mph, heading=EXCLUDED.heading,
+                engine_status=EXCLUDED.engine_status, fuel_level=EXCLUDED.fuel_level,
+                odometer_miles=EXCLUDED.odometer_miles, event_time=EXCLUDED.event_time, received_at=NOW(),
+                event_count=latest_vehicle_positions.event_count+1, source_event_id=EXCLUDED.source_event_id,
+                source_channel='trusted-gateway', telemetry_status=EXCLUDED.telemetry_status,
+                risk_level=EXCLUDED.risk_level, updated_at=NOW(){provUpd}
+              WHERE latest_vehicle_positions.event_time IS NULL OR latest_vehicle_positions.event_time <= EXCLUDED.event_time",
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid", companyId);
+                c.Parameters.AddWithValue("@vid", vehicleId);
+                c.Parameters.AddWithValue("@did", deviceId);
+                c.Parameters.AddWithValue("@drid", (object?)driverId ?? DBNull.Value);
+                c.Parameters.AddWithValue("@lat", (decimal)lat);
+                c.Parameters.AddWithValue("@lng", (decimal)lng);
+                c.Parameters.AddWithValue("@spd", (decimal)(speedMph ?? 0));
+                c.Parameters.AddWithValue("@hdg", (short)Math.Clamp((int)heading, 0, 359));
+                c.Parameters.AddWithValue("@eng", engine);
+                c.Parameters.AddWithValue("@fuel", fuel is { } fv ? (object)(decimal)fv : DBNull.Value);
+                c.Parameters.AddWithValue("@odo", odometer is { } ov ? (object)(decimal)ov : DBNull.Value);
+                c.Parameters.AddWithValue("@eid", sourceEventId);
+                c.Parameters.AddWithValue("@eventTime", eventTime.UtcDateTime);
+                c.Parameters.AddWithValue("@telemetryStatus", telemetryStatus);
+                c.Parameters.AddWithValue("@riskLevel", riskLevel);
+                if (hasProvenance)
+                {
+                    c.Parameters.AddWithValue("@provider", (object?)provider ?? DBNull.Value);
+                    c.Parameters.AddWithValue("@protocol", (object?)protocol ?? DBNull.Value);
+                }
+            }, ct);
     }
 
     internal static bool TryParseTrackerTimestamp(string raw, out DateTimeOffset value)
@@ -16567,6 +16770,45 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
         return DateTimeOffset.TryParse(raw, CultureInfo.InvariantCulture,
             DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out value);
+    }
+
+    internal static async Task<bool> GpsGatewayProjectionTopologyReadyAsync(Database db, CancellationToken ct)
+    {
+        try
+        {
+            var row = await db.QuerySingleInSystemScopeAsync(
+                """
+                WITH required(table_name,column_name) AS (VALUES
+                  ('telemetry_gateways','secret_encrypted'),
+                  ('gps_gateway_replay','signature'),
+                  ('eld_devices','last_heartbeat_at'),
+                  ('location_events','observed_at'),
+                  ('location_events','normalized_at'),
+                  ('latest_vehicle_positions','source_event_id'),
+                  ('latest_vehicle_positions','source_channel'),
+                  ('telemetry_alerts','source_event_id'),
+                  ('telemetry_alerts','source_channel'),
+                  ('telemetry_rules','threshold_value'),
+                  ('geofences','branch_id'),
+                  ('geofences','polygon_json')
+                )
+                SELECT NOT EXISTS (
+                  SELECT 1 FROM required r
+                  LEFT JOIN information_schema.columns c
+                    ON c.table_schema='public'
+                   AND c.table_name=r.table_name
+                   AND c.column_name=r.column_name
+                  WHERE c.column_name IS NULL
+                ) AS ready
+                """, ct: ct);
+            return row?.GetValueOrDefault("ready") is true;
+        }
+        catch
+        {
+            // A metadata probe failure is indistinguishable from an unavailable
+            // topology for an ingress route; callers fail closed with 503.
+            return false;
+        }
     }
 
     // ── GET /api/telemetry/metrics ────────────────────────────────────────────────
@@ -16813,7 +17055,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         long deviceId;
         try
         {
-            deviceId = await db.InsertAsync(
+            deviceId = await db.RunInSystemTransactionAsync(
+                () => db.InsertAsync(
                 @"INSERT INTO eld_devices
                     (company_id, branch_id, device_serial, imei, device_model, provider, vehicle_id, driver_id,
                      firmware_version, notes, api_key_hash, hmac_secret, hmac_secret_encrypted,
@@ -16836,7 +17079,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                     c.Parameters.AddWithValue("@notes",    body.Notes          ?? (object)DBNull.Value);
                     c.Parameters.AddWithValue("@rawKey",   rawApiKey);
                     c.Parameters.AddWithValue("@hmacEncrypted", encryptedHmacSecret);
-                }, ct);
+                }, ct), ct);
         }
         catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505")
         {
@@ -16876,7 +17119,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var configuration = http.RequestServices.GetRequiredService<IConfiguration>();
         var graceMinutes = DeviceHmacSecretProtection.RotationGraceMinutes(configuration);
 
-        var affected = await db.ExecuteAsync(
+        var affected = await db.RunInSystemTransactionAsync(
+            () => db.ExecuteAsync(
             @"UPDATE eld_devices
               SET api_key_previous_hash=CASE WHEN @graceMinutes > 0 THEN api_key_hash ELSE NULL END,
                   api_key_previous_valid_until=CASE WHEN @graceMinutes > 0 THEN NOW() + make_interval(mins => @graceMinutes) ELSE NULL END,
@@ -16900,7 +17144,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 c.Parameters.AddWithValue("@hmacEncrypted", encryptedHmacSecret);
                 c.Parameters.AddWithValue("@graceMinutes", graceMinutes);
                 c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
-            }, ct);
+            }, ct), ct);
 
         if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Device not found"));
         await audit.LogAsync(http, "device.secret.rotated", "EldDevice", id, null, ct);
@@ -16923,7 +17167,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (denied is not null) return denied;
         var companyId = GetCompanyId(http);
         var branchId = GetBranchId(http);
-        var affected = await db.ExecuteAsync(
+        var affected = await db.RunInSystemTransactionAsync(
+            () => db.ExecuteAsync(
             @"UPDATE eld_devices SET status='Revoked', revoked_at=NOW(),
                   credential_revoked_reason='operator_revoke', api_key_hash=NULL,
                   hmac_secret=NULL, hmac_secret_encrypted=NULL,
@@ -16932,7 +17177,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                   updated_at=NOW()
               WHERE id=@id AND company_id=@cid AND deleted_at IS NULL
                 AND (@branchId::BIGINT IS NULL OR branch_id=@branchId)",
-            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct), ct);
         if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Device not found"));
         await audit.LogAsync(http, "device.revoked", "EldDevice", id, null, ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id }, "Device revoked — all future ingest from this device will be rejected"));
@@ -18459,51 +18704,113 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     {
         if (RequirePermission(http, "maintenance:view") is { } denied) return denied;
         var companyId = GetCompanyId(http);
+        var branchId = GetBranchId(http);
 
         var kpis = await db.QuerySingleAsync(
             @"SELECT
-                (SELECT COUNT(*) FROM vehicles v WHERE v.company_id=@cid AND v.out_of_service=TRUE AND v.deleted_at IS NULL) vehicles_out_of_service,
-                (SELECT COUNT(*) FROM vehicles v WHERE v.company_id=@cid AND v.availability_status='in_maintenance' AND v.deleted_at IS NULL) vehicles_in_maintenance,
-                (SELECT COUNT(*) FROM dvir_defects dd JOIN dvir_reports dr ON dr.id=dd.dvir_report_id WHERE dr.company_id=@cid AND dd.status NOT IN ('resolved','Resolved') AND dd.out_of_service=TRUE) critical_open_defects,
-                (SELECT COUNT(*) FROM dvir_defects dd JOIN dvir_reports dr ON dr.id=dd.dvir_report_id WHERE dr.company_id=@cid AND dd.status NOT IN ('resolved','Resolved')) total_open_defects,
-                (SELECT COUNT(*) FROM work_orders wo WHERE wo.company_id=@cid AND wo.status NOT IN ('Completed','Cancelled','completed','cancelled') AND wo.deleted_at IS NULL) open_work_orders,
-                (SELECT COUNT(*) FROM maintenance_items mi WHERE mi.company_id=@cid AND (mi.status='Overdue' OR mi.due_date < CURRENT_DATE) AND mi.deleted_at IS NULL) overdue_pm,
-                (SELECT COUNT(*) FROM maintenance_items mi WHERE mi.company_id=@cid AND mi.due_date BETWEEN CURRENT_DATE AND CURRENT_DATE + 14 * INTERVAL '1 day' AND mi.deleted_at IS NULL) pm_due_14d,
-                (SELECT COUNT(*) FROM fault_codes fc WHERE fc.company_id=@cid AND fc.status='active') active_fault_codes,
-                (SELECT COUNT(*) FROM dvir_reports dr WHERE dr.company_id=@cid AND dr.inspection_status='defect_found') uninspected_defect_reports,
-                ROUND(100 * (SELECT COUNT(*) FROM vehicles v2 WHERE v2.company_id=@cid AND v2.availability_status='available' AND v2.deleted_at IS NULL)
-                    / NULLIF((SELECT COUNT(*) FROM vehicles v3 WHERE v3.company_id=@cid AND v3.deleted_at IS NULL),0), 1) fleet_availability_pct",
-            c => c.Parameters.AddWithValue("@cid", companyId), ct) ?? new Dictionary<string, object?>();
+                (SELECT COUNT(*) FROM vehicles v
+                  WHERE v.company_id=@cid AND v.out_of_service=TRUE AND v.deleted_at IS NULL
+                    AND (@branchId::bigint IS NULL OR v.branch_id=@branchId)) vehicles_out_of_service,
+                (SELECT COUNT(*) FROM vehicles v
+                  WHERE v.company_id=@cid AND v.availability_status='in_maintenance' AND v.deleted_at IS NULL
+                    AND (@branchId::bigint IS NULL OR v.branch_id=@branchId)) vehicles_in_maintenance,
+                (SELECT COUNT(*) FROM dvir_defects dd
+                  JOIN dvir_reports dr ON dr.id=dd.dvir_report_id AND dr.company_id=dd.company_id
+                  JOIN vehicles v ON v.id=dr.vehicle_id AND v.company_id=dr.company_id AND v.deleted_at IS NULL
+                  WHERE dr.company_id=@cid AND dd.status NOT IN ('resolved','Resolved') AND dd.out_of_service=TRUE
+                    AND (@branchId::bigint IS NULL OR v.branch_id=@branchId)) critical_open_defects,
+                (SELECT COUNT(*) FROM dvir_defects dd
+                  JOIN dvir_reports dr ON dr.id=dd.dvir_report_id AND dr.company_id=dd.company_id
+                  JOIN vehicles v ON v.id=dr.vehicle_id AND v.company_id=dr.company_id AND v.deleted_at IS NULL
+                  WHERE dr.company_id=@cid AND dd.status NOT IN ('resolved','Resolved')
+                    AND (@branchId::bigint IS NULL OR v.branch_id=@branchId)) total_open_defects,
+                (SELECT COUNT(*) FROM work_orders wo
+                  LEFT JOIN vehicles v ON v.id=wo.vehicle_id AND v.company_id=wo.company_id AND v.deleted_at IS NULL
+                  LEFT JOIN assets a ON a.id=wo.asset_id AND a.company_id=wo.company_id AND a.deleted_at IS NULL
+                  LEFT JOIN vehicles av ON av.id=a.assigned_vehicle_id AND av.company_id=a.company_id AND av.deleted_at IS NULL
+                  WHERE wo.company_id=@cid AND wo.status NOT IN ('Completed','Cancelled','completed','cancelled') AND wo.deleted_at IS NULL
+                    AND (@branchId::bigint IS NULL OR COALESCE(v.branch_id,av.branch_id)=@branchId)) open_work_orders,
+                (SELECT COUNT(*) FROM maintenance_items mi
+                  LEFT JOIN vehicles v ON v.id=mi.vehicle_id AND v.company_id=mi.company_id AND v.deleted_at IS NULL
+                  LEFT JOIN assets a ON a.id=mi.asset_id AND a.company_id=mi.company_id AND a.deleted_at IS NULL
+                  LEFT JOIN vehicles av ON av.id=a.assigned_vehicle_id AND av.company_id=a.company_id AND av.deleted_at IS NULL
+                  WHERE mi.company_id=@cid AND (mi.status='Overdue' OR mi.due_date < CURRENT_DATE) AND mi.deleted_at IS NULL
+                    AND (@branchId::bigint IS NULL OR COALESCE(v.branch_id,av.branch_id)=@branchId)) overdue_pm,
+                (SELECT COUNT(*) FROM maintenance_items mi
+                  LEFT JOIN vehicles v ON v.id=mi.vehicle_id AND v.company_id=mi.company_id AND v.deleted_at IS NULL
+                  LEFT JOIN assets a ON a.id=mi.asset_id AND a.company_id=mi.company_id AND a.deleted_at IS NULL
+                  LEFT JOIN vehicles av ON av.id=a.assigned_vehicle_id AND av.company_id=a.company_id AND av.deleted_at IS NULL
+                  WHERE mi.company_id=@cid AND mi.due_date BETWEEN CURRENT_DATE AND CURRENT_DATE + 14 * INTERVAL '1 day' AND mi.deleted_at IS NULL
+                    AND (@branchId::bigint IS NULL OR COALESCE(v.branch_id,av.branch_id)=@branchId)) pm_due_14d,
+                (SELECT COUNT(*) FROM fault_codes fc
+                  JOIN vehicles v ON v.id=fc.vehicle_id AND v.company_id=fc.company_id AND v.deleted_at IS NULL
+                  WHERE fc.company_id=@cid AND fc.status='active'
+                    AND (@branchId::bigint IS NULL OR v.branch_id=@branchId)) active_fault_codes,
+                (SELECT COUNT(*) FROM dvir_reports dr
+                  JOIN vehicles v ON v.id=dr.vehicle_id AND v.company_id=dr.company_id AND v.deleted_at IS NULL
+                  WHERE dr.company_id=@cid AND dr.inspection_status='defect_found'
+                    AND (@branchId::bigint IS NULL OR v.branch_id=@branchId)) uninspected_defect_reports,
+                ROUND(100 * (SELECT COUNT(*) FROM vehicles v2
+                    WHERE v2.company_id=@cid AND v2.availability_status='available' AND v2.deleted_at IS NULL
+                      AND (@branchId::bigint IS NULL OR v2.branch_id=@branchId))
+                    / NULLIF((SELECT COUNT(*) FROM vehicles v3
+                        WHERE v3.company_id=@cid AND v3.deleted_at IS NULL
+                          AND (@branchId::bigint IS NULL OR v3.branch_id=@branchId)),0), 1) fleet_availability_pct",
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid", companyId);
+                c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+            }, ct) ?? new Dictionary<string, object?>();
 
         var openDefects = await db.QueryAsync(
             @"SELECT dd.*, dr.vehicle_id, v.vehicle_code, d.full_name driver_name,
                      dr.submitted_at, dr.inspection_type
               FROM dvir_defects dd
-              JOIN dvir_reports dr ON dr.id=dd.dvir_report_id
-              LEFT JOIN vehicles v ON v.id=dr.vehicle_id
-              LEFT JOIN drivers d ON d.id=dr.driver_id
+              JOIN dvir_reports dr ON dr.id=dd.dvir_report_id AND dr.company_id=dd.company_id
+              JOIN vehicles v ON v.id=dr.vehicle_id AND v.company_id=dr.company_id AND v.deleted_at IS NULL
+              LEFT JOIN drivers d ON d.id=dr.driver_id AND d.company_id=dr.company_id AND d.deleted_at IS NULL
               WHERE dr.company_id=@cid AND dd.status NOT IN ('resolved','Resolved')
+                AND (@branchId::bigint IS NULL OR v.branch_id=@branchId)
               ORDER BY dd.out_of_service DESC, ARRAY_POSITION(ARRAY['Critical','Major','Minor'], dd.severity), dd.created_at ASC
               LIMIT 20",
-            c => c.Parameters.AddWithValue("@cid", companyId), ct);
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid", companyId);
+                c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+            }, ct);
 
         var duePm = await db.QueryAsync(
-            @"SELECT mi.*, v.vehicle_code
-              FROM maintenance_items mi LEFT JOIN vehicles v ON v.id=mi.vehicle_id
+            @"SELECT mi.*, COALESCE(v.vehicle_code,av.vehicle_code) vehicle_code
+              FROM maintenance_items mi
+              LEFT JOIN vehicles v ON v.id=mi.vehicle_id AND v.company_id=mi.company_id AND v.deleted_at IS NULL
+              LEFT JOIN assets a ON a.id=mi.asset_id AND a.company_id=mi.company_id AND a.deleted_at IS NULL
+              LEFT JOIN vehicles av ON av.id=a.assigned_vehicle_id AND av.company_id=a.company_id AND av.deleted_at IS NULL
               WHERE mi.company_id=@cid AND mi.deleted_at IS NULL
                 AND (mi.status='Overdue' OR mi.due_date <= CURRENT_DATE + 14 * INTERVAL '1 day')
+                AND (@branchId::bigint IS NULL OR COALESCE(v.branch_id,av.branch_id)=@branchId)
               ORDER BY ARRAY_POSITION(ARRAY['Overdue','Open'], mi.status), mi.due_date ASC LIMIT 10",
-            c => c.Parameters.AddWithValue("@cid", companyId), ct);
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid", companyId);
+                c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+            }, ct);
 
         var recentWos = await db.QueryAsync(
-            @"SELECT wo.*, v.vehicle_code, u.full_name assigned_to_name
+            @"SELECT wo.*, COALESCE(v.vehicle_code,av.vehicle_code) vehicle_code, u.full_name assigned_to_name
               FROM work_orders wo
-              LEFT JOIN vehicles v ON v.id=wo.vehicle_id
-              LEFT JOIN users u ON u.id=wo.assigned_to_user_id
+              LEFT JOIN vehicles v ON v.id=wo.vehicle_id AND v.company_id=wo.company_id AND v.deleted_at IS NULL
+              LEFT JOIN assets a ON a.id=wo.asset_id AND a.company_id=wo.company_id AND a.deleted_at IS NULL
+              LEFT JOIN vehicles av ON av.id=a.assigned_vehicle_id AND av.company_id=a.company_id AND av.deleted_at IS NULL
+              LEFT JOIN users u ON u.id=wo.assigned_to_user_id AND u.company_id=wo.company_id
               WHERE wo.company_id=@cid AND wo.deleted_at IS NULL
+                AND (@branchId::bigint IS NULL OR COALESCE(v.branch_id,av.branch_id)=@branchId)
               ORDER BY ARRAY_POSITION(ARRAY['in_progress','In Progress','waiting_parts','Waiting Parts','open','Open'], wo.status), wo.created_date DESC
               LIMIT 10",
-            c => c.Parameters.AddWithValue("@cid", companyId), ct);
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid", companyId);
+                c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+            }, ct);
 
         var insights = BuildMaintenanceInsights(kpis, openDefects, duePm);
 
@@ -18522,6 +18829,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     {
         if (RequirePermission(http, "maintenance:view") is { } denied) return denied;
         var companyId = GetCompanyId(http);
+        var branchId  = GetBranchId(http);
         var status    = http.Request.Query["status"].FirstOrDefault();
         var vehicleId = http.Request.Query["vehicleId"].FirstOrDefault();
         var limit     = int.TryParse(http.Request.Query["limit"].FirstOrDefault(), out var l) ? Math.Min(l, 100) : 50;
@@ -18875,56 +19183,27 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         return Results.Ok(ApiResponse<object>.Ok(new { id, status = "Acknowledged", rowVersion = expectedVersion.Value + 1 }, "Defect acknowledged"));
     }
 
-    // POST /api/maintenance/defects/{id}/resolve — resolve defect + trigger vehicle availability check
-    private static async Task<IResult> MaintDefectResolve(long id, HttpContext http, MaintNoteBody body,
-        Database db, AuditService audit, CancellationToken ct)
-    {
-        if (RequirePermission(http, "maintenance:close") is { } denied) return denied;
-        var companyId = GetCompanyId(http);
-        var userId    = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
-
-        // Postgres UPDATE...FROM (not MySQL UPDATE...JOIN); scope by the defect's own
-        // company_id and confirm the parent report belongs to the same tenant.
-        var rows = await db.ExecuteAsync(
-            @"UPDATE dvir_defects dd
-              SET status='resolved', resolved_at=NOW(), resolved_by=@uid, updated_at=NOW()
-              FROM dvir_reports dr
-              WHERE dr.id=dd.dvir_report_id
-                AND dd.id=@id AND dd.company_id=@cid AND dr.company_id=@cid
-                AND dd.status NOT IN ('resolved','rejected')",
-            c =>
-            {
-                c.Parameters.AddWithValue("@id",  id);
-                c.Parameters.AddWithValue("@cid", companyId);
-                c.Parameters.AddWithValue("@uid", userId);
-            }, ct);
-
-        if (rows == 0) return Results.BadRequest(ApiResponse<object>.Fail("Defect not found or already resolved"));
-
-        // Re-evaluate vehicle availability (may restore if no remaining critical defects).
-        await Services.MaintenanceBackgroundService.UpdateVehicleAvailabilityAsync(db, ct);
-
-        await audit.LogAsync(http, "defect.resolved", "DvirDefect", id, body.Notes, ct);
-        return Results.Ok(ApiResponse<object>.Ok(new { id, status = "resolved" }, "Defect resolved — vehicle availability updated"));
-    }
-
     // GET /api/maintenance/work-orders
     private static async Task<IResult> MaintWorkOrdersList(HttpContext http, Database db, CancellationToken ct)
     {
         if (RequirePermission(http, "maintenance:view") is { } denied) return denied;
         var companyId = GetCompanyId(http);
+        var branchId  = GetBranchId(http);
         var status    = http.Request.Query["status"].FirstOrDefault();
         var vehicleId = http.Request.Query["vehicleId"].FirstOrDefault();
         var limit     = int.TryParse(http.Request.Query["limit"].FirstOrDefault(), out var l) ? Math.Min(l, 100) : 50;
 
         var rows = await db.QueryAsync(
             @"SELECT wo.*, COALESCE(wo.work_order_number, wo.work_order_code) wo_number,
-                     v.vehicle_code, u.full_name assigned_to_name
+                     COALESCE(v.vehicle_code,av.vehicle_code) vehicle_code, u.full_name assigned_to_name
               FROM work_orders wo
-              LEFT JOIN vehicles v ON v.id=wo.vehicle_id
-              LEFT JOIN users u ON u.id=wo.assigned_to_user_id
+              LEFT JOIN vehicles v ON v.id=wo.vehicle_id AND v.company_id=wo.company_id AND v.deleted_at IS NULL
+              LEFT JOIN assets a ON a.id=wo.asset_id AND a.company_id=wo.company_id AND a.deleted_at IS NULL
+              LEFT JOIN vehicles av ON av.id=a.assigned_vehicle_id AND av.company_id=a.company_id AND av.deleted_at IS NULL
+              LEFT JOIN users u ON u.id=wo.assigned_to_user_id AND u.company_id=wo.company_id
               WHERE wo.company_id=@cid
                 AND wo.deleted_at IS NULL
+                AND (@branchId::bigint IS NULL OR COALESCE(v.branch_id,av.branch_id)=@branchId)
                 AND (@status::TEXT IS NULL OR wo.status=@status::TEXT)
                 AND (@vid::TEXT IS NULL OR wo.vehicle_id=@vid::BIGINT)
               ORDER BY ARRAY_POSITION(ARRAY['in_progress','In Progress','open','Open','assigned','Assigned'], wo.status), wo.created_date DESC
@@ -18932,6 +19211,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             c =>
             {
                 c.Parameters.AddWithValue("@cid",    companyId);
+                c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
                 c.Parameters.AddWithValue("@status", string.IsNullOrEmpty(status)    ? (object)DBNull.Value : status);
                 c.Parameters.AddWithValue("@vid",    string.IsNullOrEmpty(vehicleId) ? (object)DBNull.Value : vehicleId);
                 c.Parameters.AddWithValue("@limit",  limit);
@@ -18946,36 +19226,55 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     {
         if (RequirePermission(http, "maintenance:manage") is { } denied) return denied;
         var companyId = GetCompanyId(http);
+        var branchId = GetBranchId(http);
 
         if (body.VehicleId <= 0) return Results.BadRequest(ApiResponse<object>.Fail("vehicleId is required"));
+        var title = body.Title?.Trim();
+        var serviceType = body.ServiceType?.Trim();
+        var description = body.Description?.Trim();
+        if (string.IsNullOrWhiteSpace(title) || title.Length > 220)
+            return Results.BadRequest(ApiResponse<object>.Fail("title is required and must be 220 characters or fewer"));
+        if (string.IsNullOrWhiteSpace(serviceType) || serviceType.Length > 120)
+            return Results.BadRequest(ApiResponse<object>.Fail("serviceType is required and must be 120 characters or fewer"));
+        if (description?.Length > 2000)
+            return Results.BadRequest(ApiResponse<object>.Fail("description must be 2000 characters or fewer"));
+        var priority = new[] { "Low", "Medium", "High", "Critical" }
+            .FirstOrDefault(value => string.Equals(value, body.Priority?.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (priority is null)
+            return Results.BadRequest(ApiResponse<object>.Fail("priority must be Low, Medium, High, or Critical"));
+        if (body.EstimatedCost is null or < 0)
+            return Results.BadRequest(ApiResponse<object>.Fail("estimatedCost is required and must be zero or greater"));
+        if (string.IsNullOrWhiteSpace(body.ScheduledAt) ||
+            !DateOnly.TryParseExact(body.ScheduledAt.Trim(), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var dueDate))
+            return Results.BadRequest(ApiResponse<object>.Fail("scheduledAt is required in YYYY-MM-DD format"));
 
         var vehicleExists = await db.ScalarLongAsync(
-            "SELECT COUNT(*) FROM vehicles WHERE id=@id AND company_id=@cid AND deleted_at IS NULL",
+            @"SELECT COUNT(*) FROM vehicles
+              WHERE id=@id AND company_id=@cid AND deleted_at IS NULL
+                AND (@branchId::bigint IS NULL OR branch_id=@branchId)",
             c =>
             {
                 c.Parameters.AddWithValue("@id",  body.VehicleId);
                 c.Parameters.AddWithValue("@cid", companyId);
+                c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
             }, ct);
-        if (vehicleExists == 0) return Results.BadRequest(ApiResponse<object>.Fail("Vehicle not found in tenant"));
+        if (vehicleExists == 0) return Results.NotFound(ApiResponse<object>.Fail("Vehicle not found in the authorized branch"));
 
         // Prevent duplicate open WO for same vehicle+service.
-        if (!string.IsNullOrEmpty(body.ServiceType))
-        {
-            var dupWo = await db.ScalarLongAsync(
-                @"SELECT COUNT(*) FROM work_orders
-                  WHERE company_id=@cid AND vehicle_id=@vid
-                    AND issue_type=@stype AND status NOT IN ('Completed','Cancelled','completed','cancelled')
-                    AND deleted_at IS NULL",
-                c =>
-                {
-                    c.Parameters.AddWithValue("@cid",   companyId);
-                    c.Parameters.AddWithValue("@vid",   body.VehicleId);
-                    c.Parameters.AddWithValue("@stype", body.ServiceType);
-                }, ct);
-            if (dupWo > 0) return Results.Conflict(ApiResponse<object>.Fail($"Open work order already exists for {body.ServiceType} on this vehicle"));
-        }
+        var dupWo = await db.ScalarLongAsync(
+            @"SELECT COUNT(*) FROM work_orders
+              WHERE company_id=@cid AND vehicle_id=@vid
+                AND LOWER(issue_type)=LOWER(@stype) AND status NOT IN ('Completed','Cancelled','completed','cancelled')
+                AND deleted_at IS NULL",
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid",   companyId);
+                c.Parameters.AddWithValue("@vid",   body.VehicleId);
+                c.Parameters.AddWithValue("@stype", serviceType);
+            }, ct);
+        if (dupWo > 0) return Results.Conflict(ApiResponse<object>.Fail($"Open work order already exists for {serviceType} on this vehicle"));
 
-        var woCode = $"WO-{companyId}-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
+        var woCode = $"WO-{companyId}-{Guid.NewGuid():N}";
         var woId   = await db.InsertAsync(
             @"INSERT INTO work_orders
                 (company_id, vehicle_id, work_order_code, work_order_number,
@@ -18989,15 +19288,15 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 c.Parameters.AddWithValue("@cid",   companyId);
                 c.Parameters.AddWithValue("@vid",   body.VehicleId);
                 c.Parameters.AddWithValue("@code",  woCode);
-                c.Parameters.AddWithValue("@title", body.Title ?? body.ServiceType ?? "Work Order");
-                c.Parameters.AddWithValue("@stype", body.ServiceType ?? (object)DBNull.Value);
-                c.Parameters.AddWithValue("@desc",  body.Description ?? (object)DBNull.Value);
-                c.Parameters.AddWithValue("@pri",   body.Priority ?? "Medium");
-                c.Parameters.AddWithValue("@cost",  body.EstimatedCost ?? (object)DBNull.Value);
-                c.Parameters.AddWithValue("@due",   body.ScheduledAt ?? (object)DBNull.Value);
+                c.Parameters.AddWithValue("@title", title);
+                c.Parameters.AddWithValue("@stype", serviceType);
+                c.Parameters.AddWithValue("@desc",  string.IsNullOrWhiteSpace(description) ? (object)DBNull.Value : description);
+                c.Parameters.AddWithValue("@pri",   priority);
+                c.Parameters.AddWithValue("@cost",  body.EstimatedCost.Value);
+                c.Parameters.AddWithValue("@due",   dueDate);
             }, ct);
 
-        await audit.LogAsync(http, "work_order.created", "WorkOrder", woId, $"vehicle:{body.VehicleId} type:{body.ServiceType}", ct);
+        await audit.LogAsync(http, "work_order.created", "WorkOrder", woId, $"vehicle:{body.VehicleId} type:{serviceType}", ct);
         return Results.Created($"/api/maintenance/work-orders/{woId}",
             ApiResponse<object>.Ok(new { id = woId, workOrderCode = woCode }, "Work order created"));
     }
@@ -19008,18 +19307,45 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     {
         if (RequirePermission(http, "maintenance:manage") is { } denied) return denied;
         var companyId = GetCompanyId(http);
+        var branchId = GetBranchId(http);
+        if (body.AssignedToUserId <= 0)
+            return Results.BadRequest(ApiResponse<object>.Fail("assignedToUserId is required"));
+
+        var assigneeExists = await db.ScalarLongAsync(
+            @"SELECT COUNT(*) FROM users u
+              WHERE u.id=@uid AND u.company_id=@cid AND LOWER(COALESCE(u.status,''))='active'
+                AND (@branchId::bigint IS NULL OR u.branch_id=@branchId)",
+            c =>
+            {
+                c.Parameters.AddWithValue("@uid", body.AssignedToUserId);
+                c.Parameters.AddWithValue("@cid", companyId);
+                c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+            }, ct);
+        if (assigneeExists == 0)
+            return Results.NotFound(ApiResponse<object>.Fail("Active assignee not found in the authorized tenant and branch"));
 
         var rows = await db.ExecuteAsync(
-            @"UPDATE work_orders
+            @"WITH scoped_work_order AS (
+                SELECT wo.id
+                FROM work_orders wo
+                LEFT JOIN vehicles v ON v.id=wo.vehicle_id AND v.company_id=wo.company_id AND v.deleted_at IS NULL
+                LEFT JOIN assets a ON a.id=wo.asset_id AND a.company_id=wo.company_id AND a.deleted_at IS NULL
+                LEFT JOIN vehicles av ON av.id=a.assigned_vehicle_id AND av.company_id=a.company_id AND av.deleted_at IS NULL
+                WHERE wo.id=@id AND wo.company_id=@cid
+                  AND wo.status NOT IN ('Completed','Cancelled','completed','cancelled')
+                  AND wo.deleted_at IS NULL
+                  AND (@branchId::bigint IS NULL OR COALESCE(v.branch_id,av.branch_id)=@branchId)
+              )
+              UPDATE work_orders wo
               SET status='assigned', assigned_to_user_id=@uid, assigned_at=NOW()
-              WHERE id=@id AND company_id=@cid
-                AND status NOT IN ('Completed','Cancelled','completed','cancelled')
-                AND deleted_at IS NULL",
+              FROM scoped_work_order scoped
+              WHERE wo.id=scoped.id",
             c =>
             {
                 c.Parameters.AddWithValue("@id",  id);
                 c.Parameters.AddWithValue("@cid", companyId);
-                c.Parameters.AddWithValue("@uid", body.AssignedToUserId > 0 ? body.AssignedToUserId : (object)DBNull.Value);
+                c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+                c.Parameters.AddWithValue("@uid", body.AssignedToUserId);
             }, ct);
 
         if (rows == 0) return Results.BadRequest(ApiResponse<object>.Fail("Work order not found or already closed"));
@@ -19033,19 +19359,43 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     {
         if (RequirePermission(http, "maintenance:close") is { } denied) return denied;
         var companyId = GetCompanyId(http);
+        var branchId = GetBranchId(http);
+        var completionNotes = body.Notes?.Trim();
+        if (body.ActualCost is null or < 0)
+            return Results.BadRequest(ApiResponse<object>.Fail("actualCost is required and must be zero or greater"));
+        if (string.IsNullOrWhiteSpace(completionNotes) || completionNotes.Length < 3)
+            return Results.BadRequest(ApiResponse<object>.Fail("service notes must be at least 3 characters"));
+        if (completionNotes.Length > 2000)
+            return Results.BadRequest(ApiResponse<object>.Fail("service notes must be 2000 characters or fewer"));
 
         var rows = await db.ExecuteAsync(
-            @"UPDATE work_orders
+            @"WITH scoped_work_order AS (
+                SELECT wo.id
+                FROM work_orders wo
+                LEFT JOIN vehicles v ON v.id=wo.vehicle_id AND v.company_id=wo.company_id AND v.deleted_at IS NULL
+                LEFT JOIN assets a ON a.id=wo.asset_id AND a.company_id=wo.company_id AND a.deleted_at IS NULL
+                LEFT JOIN vehicles av ON av.id=a.assigned_vehicle_id AND av.company_id=a.company_id AND av.deleted_at IS NULL
+                WHERE wo.id=@id AND wo.company_id=@cid
+                  AND wo.status NOT IN ('Completed','Cancelled','completed','cancelled')
+                  AND wo.deleted_at IS NULL
+                  AND (@branchId::bigint IS NULL OR COALESCE(v.branch_id,av.branch_id)=@branchId)
+              )
+              UPDATE work_orders wo
               SET status='Completed', completed_at=NOW(),
-                  actual_cost=COALESCE(@cost, estimated_cost)
-              WHERE id=@id AND company_id=@cid
-                AND status NOT IN ('Completed','Cancelled','completed','cancelled')
-                AND deleted_at IS NULL",
+                  actual_cost=@cost,
+                  notes=CASE
+                    WHEN NULLIF(notes, '') IS NULL THEN @notes
+                    ELSE notes || E'\n' || @notes
+                  END
+              FROM scoped_work_order scoped
+              WHERE wo.id=scoped.id",
             c =>
             {
                 c.Parameters.AddWithValue("@id",   id);
                 c.Parameters.AddWithValue("@cid",  companyId);
-                c.Parameters.AddWithValue("@cost", body.ActualCost ?? (object)DBNull.Value);
+                c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+                c.Parameters.AddWithValue("@cost", body.ActualCost.Value);
+                c.Parameters.AddWithValue("@notes", completionNotes);
             }, ct);
 
         if (rows == 0) return Results.BadRequest(ApiResponse<object>.Fail("Work order not found or already closed"));
@@ -19056,7 +19406,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         // Attempt to restore vehicle availability if no remaining blockers.
         await Services.MaintenanceBackgroundService.UpdateVehicleAvailabilityAsync(db, ct);
 
-        await audit.LogAsync(http, "work_order.completed", "WorkOrder", id, $"cost:{body.ActualCost}", ct);
+        await audit.LogAsync(http, "work_order.completed", "WorkOrder", id,
+            System.Text.Json.JsonSerializer.Serialize(new { actualCost = body.ActualCost.Value, notes = completionNotes }), ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id, status = "completed" }, "Work order completed — vehicle availability re-evaluated"));
     }
 
@@ -19328,8 +19679,12 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                                      WHERE id=@fault AND company_id=@cid;
                                    UPDATE vehicles v SET out_of_service=FALSE,availability_status='available'
                                      WHERE v.id=@vehicle AND v.company_id=@cid
-                                       AND NOT EXISTS (SELECT 1 FROM diagnostic_holds dh WHERE dh.company_id=@cid AND dh.vehicle_id=v.id AND dh.status IN ('active','acknowledged'))
-                                       AND NOT EXISTS (SELECT 1 FROM dvir_defects dd WHERE dd.company_id=@cid AND dd.vehicle_id=v.id AND dd.out_of_service=TRUE AND dd.status NOT IN ('resolved','Resolved','rejected'));",
+                                       AND NOT EXISTS (SELECT 1 FROM diagnostic_holds dh WHERE dh.company_id=v.company_id AND dh.vehicle_id=v.id AND dh.status IN ('active','acknowledged'))
+                                       AND NOT EXISTS (SELECT 1 FROM dvir_defects dd WHERE dd.company_id=v.company_id AND dd.vehicle_id=v.id AND dd.out_of_service=TRUE AND dd.status NOT IN ('resolved','rejected','Resolved','Rejected'))
+                                       AND NOT EXISTS (SELECT 1 FROM dvir_reports dr WHERE dr.company_id=v.company_id AND dr.vehicle_id=v.id AND dr.deleted_at IS NULL AND dr.defects_found>0
+                                           AND (COALESCE(dr.repair_certification_status,'')<>'Certified' OR dr.driver_repair_acknowledged_at IS NULL OR COALESCE(dr.safe_to_operate,FALSE)=FALSE))
+                                       AND NOT EXISTS (SELECT 1 FROM work_orders wo WHERE wo.company_id=v.company_id AND wo.vehicle_id=v.id AND wo.deleted_at IS NULL
+                                           AND wo.status IN ('in_progress','waiting_parts','In Progress','Waiting Parts'));",
                                 connection, transaction);
                             release.Parameters.AddWithValue("@observed", observedAt);
                             release.Parameters.AddWithValue("@cid", companyId);
@@ -19529,11 +19884,16 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                      WHERE id=@fault AND company_id=@cid AND diagnostic_hold_id=@hold;
                    UPDATE vehicles v SET out_of_service=FALSE,availability_status='available'
                      WHERE v.id=@vehicle AND v.company_id=@cid
-                       AND NOT EXISTS (SELECT 1 FROM diagnostic_holds dh WHERE dh.company_id=@cid AND dh.vehicle_id=v.id AND dh.status IN ('active','acknowledged'))
-                       AND NOT EXISTS (SELECT 1 FROM dvir_defects dd WHERE dd.company_id=@cid AND dd.vehicle_id=v.id AND dd.out_of_service=TRUE AND dd.status NOT IN ('resolved','Resolved','rejected'));",
+                       AND NOT EXISTS (SELECT 1 FROM diagnostic_holds dh WHERE dh.company_id=v.company_id AND dh.vehicle_id=v.id AND dh.status IN ('active','acknowledged'))
+                       AND NOT EXISTS (SELECT 1 FROM dvir_defects dd WHERE dd.company_id=v.company_id AND dd.vehicle_id=v.id AND dd.out_of_service=TRUE AND dd.status NOT IN ('resolved','rejected','Resolved','Rejected'))
+                       AND NOT EXISTS (SELECT 1 FROM dvir_reports dr WHERE dr.company_id=v.company_id AND dr.vehicle_id=v.id AND dr.deleted_at IS NULL AND dr.defects_found>0
+                           AND (COALESCE(dr.repair_certification_status,'')<>'Certified' OR dr.driver_repair_acknowledged_at IS NULL OR COALESCE(dr.safe_to_operate,FALSE)=FALSE))
+                       AND NOT EXISTS (SELECT 1 FROM work_orders wo WHERE wo.company_id=v.company_id AND wo.vehicle_id=v.id AND wo.deleted_at IS NULL
+                           AND wo.status IN ('in_progress','waiting_parts','In Progress','Waiting Parts'));",
                 connection, transaction);
             release.Parameters.AddWithValue("@fault", (object?)faultId ?? DBNull.Value);
-            release.Parameters.AddWithValue("@hold", id); release.Parameters.AddWithValue("@vehicle", vehicleId);
+            release.Parameters.AddWithValue("@hold", id);
+            release.Parameters.AddWithValue("@vehicle", vehicleId);
             release.Parameters.AddWithValue("@cid", companyId);
             await release.ExecuteNonQueryAsync(ct);
             return true;
@@ -19632,7 +19992,6 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
     private sealed record MaintAssignBody(long AssignedToUserId);
     private sealed record MaintCompleteBody(decimal? ActualCost, string? Notes);
-    private sealed record MaintNoteBody(string? Notes);
     private sealed record MaintPmRuleBody(
         string? RuleName = null,
         string? TriggerType = "mileage",
@@ -19751,9 +20110,25 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 c.Parameters.AddWithValue("@cid", companyId);
             }, ct);
 
+        // Artifact reads follow the already-authorized assignment and tenant. Joining
+        // through both parents prevents a proof or artifact identifier from crossing
+        // assignment boundaries even if a caller guesses it.
+        var proofArtifacts = await db.QueryAsync(
+            @"SELECT pa.*
+              FROM dispatch_proof_artifacts pa
+              JOIN dispatch_proofs p ON p.id=pa.proof_id AND p.company_id=pa.company_id
+              JOIN dispatch_assignments da ON da.id=p.assignment_id AND da.company_id=p.company_id
+              WHERE da.id=@id AND da.company_id=@cid
+              ORDER BY pa.created_at DESC",
+            c =>
+            {
+                c.Parameters.AddWithValue("@id",  id);
+                c.Parameters.AddWithValue("@cid", companyId);
+            }, ct);
+
         var auditTrail = await AuditTrail(db, "DispatchAssignment", id, companyId, ct);
 
-        return Results.Ok(ApiResponse<object>.Ok(new { assignment, exceptions, proofs, auditTrail }));
+        return Results.Ok(ApiResponse<object>.Ok(new { assignment, exceptions, proofs, proofArtifacts, auditTrail }));
     }
 
     // POST /api/dispatch/assignments — create assignment with eligibility gate
@@ -22192,6 +22567,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 artifact.Reference.Length > 2048 || artifact.ContentType?.Length > 120 || artifact.Size is < 0)
                 return Results.BadRequest(ApiResponse<object>.Fail("Proof artifact metadata is invalid"));
         }
+        if (proofType == "delivery" && string.IsNullOrWhiteSpace(evidenceHash) && (body.Artifacts?.Length ?? 0) == 0)
+            return Results.BadRequest(ApiResponse<object>.Fail("Delivery proof requires a photo, signature, or evidence reference"));
 
         return await db.RunInTenantTransactionAsync(companyId, async () =>
         {

@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import * as SecureStore from "expo-secure-store";
 import { SECURE_WORKSPACE_JOB_KEY } from "@/config";
+import { useSession } from "@/auth/SessionProvider";
 
 type WorkflowContextValue = {
   selectedJobId: number | null;
@@ -15,13 +16,22 @@ type WorkflowContextValue = {
 const WorkflowContext = createContext<WorkflowContextValue | null>(null);
 
 export function WorkflowProvider({ children }: { children: React.ReactNode }) {
+  const { session } = useSession();
   const [selectedJobId, setSelectedJobIdState] = useState<number | null>(null);
   const [selectedJobInput, setSelectedJobInput] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
 
+  const storageKey = session
+    ? `${SECURE_WORKSPACE_JOB_KEY}:${String(session.company.id ?? session.company.code)}:${String(session.user.id)}`
+    : null;
+
   useEffect(() => {
+    let active = true;
     void (async () => {
-      const stored = await SecureStore.getItemAsync(SECURE_WORKSPACE_JOB_KEY);
+      const stored = storageKey ? await SecureStore.getItemAsync(storageKey) : null;
+      if (!active) return;
+      setSelectedJobIdState(null);
+      setSelectedJobInput("");
       if (stored) {
         const parsed = Number.parseInt(stored, 10);
         if (Number.isFinite(parsed) && parsed > 0) {
@@ -30,13 +40,16 @@ export function WorkflowProvider({ children }: { children: React.ReactNode }) {
         }
       }
     })();
-  }, []);
+    return () => {
+      active = false;
+    };
+  }, [storageKey]);
 
   const setSelectedJobId = useCallback((value: number | null) => {
     setSelectedJobIdState(value);
     setSelectedJobInput(value ? String(value) : "");
-    void SecureStore.setItemAsync(SECURE_WORKSPACE_JOB_KEY, value ? String(value) : "");
-  }, []);
+    if (storageKey) void SecureStore.setItemAsync(storageKey, value ? String(value) : "");
+  }, [storageKey]);
 
   const applySelectedJob = useCallback(() => {
     const parsed = Number.parseInt(selectedJobInput, 10);

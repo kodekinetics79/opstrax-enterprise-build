@@ -4,7 +4,7 @@ set -euo pipefail
 : "${OPSTRAX_TEST_DB_HOST:=127.0.0.1}"
 : "${OPSTRAX_TEST_DB_PORT:=59955}"
 : "${OPSTRAX_TEST_DB_USER:=zayra}"
-: "${OPSTRAX_TEST_DB_PASSWORD:=zayra}"
+: "${OPSTRAX_TEST_DB_PASSWORD:?Set OPSTRAX_TEST_DB_PASSWORD for the disposable test database}"
 
 audit_db="opstrax_predeploy_clean_${$}"
 case "$audit_db" in
@@ -102,8 +102,11 @@ psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_02_stag
 psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_02_stage73_hos_offboarding_null_fail_closed.sql
 # Prove the Production retention ledger is owner-repairable after schema drift.
 psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -c 'DROP TABLE data_retention_policies'
-# Use the real runner so Stage74 recreates the table and the terminal Stage58
-# reconciliation restores its FORCE-RLS policies and restricted-role grants.
+# Simulate a ledgered Stage42 schema loss too. The owner runner must recreate the credential
+# registry before terminal Stage58/76 restore its policies and secret-column boundary.
+psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -c 'DROP TABLE telemetry_gateways'
+# Use the real runner so Stage42/74 recreate their tables and the terminal Stage58
+# reconciliation restores FORCE-RLS policies and restricted-role grants.
 ./tools/apply-neon-predeploy-migrations.sh >"$log_dir/pass3.log" 2>&1
 psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q <<'SQL'
 SET ROLE opstrax_system;
@@ -132,10 +135,16 @@ fi
 
 terminal_line=$(grep -n "Applying terminal Stage58/59 security reconciliation" "$log_dir/pass1.log" | cut -d: -f1)
 coverage_line=$(grep -n "Post-check: production-wide tenant RLS coverage" "$log_dir/pass1.log" | cut -d: -f1)
+stage67_line=$(grep -n "Reapplying Stage67 least-privilege device credential boundary" "$log_dir/pass1.log" | cut -d: -f1)
+stage76_line=$(grep -n "Applying terminal Stage76 telemetry" "$log_dir/pass1.log" | cut -d: -f1)
 test -n "$terminal_line" && test -n "$coverage_line" && test "$terminal_line" -lt "$coverage_line"
+test -n "$stage67_line" && test -n "$stage76_line" && test "$stage67_line" -lt "$stage76_line"
+grep -q "applying 2026_07_16_stage42_telemetry_gateways" "$log_dir/pass1.log"
 grep -q "Tenant RLS coverage: .* in-scope tables verified" "$log_dir/pass1.log"
-grep -q "Existing Stage58/59 deployment reconciled without restoring legacy GUC policies" "$log_dir/pass2.log"
-grep -q "Existing Stage58/59 deployment reconciled without restoring legacy GUC policies" "$log_dir/pass3.log"
+grep -q "Existing Stage58/59/67/76 deployment reconciled with Stage76 terminal" "$log_dir/pass2.log"
+grep -q "Applying terminal Stage76 telemetry" "$log_dir/pass2.log"
+grep -q "Existing Stage58/59/67/76 deployment reconciled with Stage76 terminal" "$log_dir/pass3.log"
+grep -q "Applying terminal Stage76 telemetry" "$log_dir/pass3.log"
 
 psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q <<'SQL'
 DO $clean_chain$
@@ -143,7 +152,21 @@ DECLARE
   bad_tables text[];
 BEGIN
   IF EXISTS (
+    SELECT 1
+    FROM pg_default_acl defaults
+    LEFT JOIN pg_namespace namespace ON namespace.oid=defaults.defaclnamespace
+    CROSS JOIN LATERAL aclexplode(defaults.defaclacl) privilege
+    LEFT JOIN pg_roles grantee ON grantee.oid=privilege.grantee
+    WHERE (defaults.defaclnamespace=0 OR namespace.nspname='public')
+      AND defaults.defaclobjtype IN ('r','S')
+      AND (privilege.grantee=0 OR grantee.rolname IN ('opstrax_app','opstrax_system'))
+  ) THEN
+    RAISE EXCEPTION 'Clean-chain Stage76 global/public default ACL boundary is unsafe';
+  END IF;
+
+  IF EXISTS (
     SELECT 1 FROM (VALUES
+      ('2026_07_16_stage42_telemetry_gateways'),
       ('2026_07_31_stage58_nonforgeable_tenant_ticket'),
       ('2026_07_22_stage47_detention_recovery'),
       ('2026_07_31_stage59_data_protection_key_ring'),
@@ -168,10 +191,15 @@ BEGIN
       ('2026_08_02_stage72_hos_offboarding_immutability_reconciliation'),
       ('2026_08_02_stage73_hos_offboarding_null_fail_closed'),
       ('2026_08_02_stage74_retention_policy_production_contract'),
-      ('2026_08_02_stage75_bounded_support_access')) required(version)
+      ('2026_08_02_stage75_bounded_support_access'),
+      ('2026_08_11_stage76_telematics_security_hardening')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN
     RAISE EXCEPTION 'Clean-chain target ledgers are missing or duplicated';
+  END IF;
+
+  IF to_regclass('public.telemetry_gateways') IS NULL THEN
+    RAISE EXCEPTION 'Stage42 telemetry gateway owner schema is missing from the clean chain';
   END IF;
 
   IF NOT EXISTS (
@@ -333,7 +361,10 @@ BEGIN
      OR has_table_privilege('opstrax_app','demo_fixture_versions','INSERT')
      OR has_table_privilege('opstrax_app','demo_fixture_versions','UPDATE')
      OR has_table_privilege('opstrax_app','demo_fixture_versions','DELETE')
-     OR NOT has_table_privilege('opstrax_system','demo_fixture_versions','SELECT,INSERT,UPDATE,DELETE') THEN
+     OR NOT has_table_privilege('opstrax_system','demo_fixture_versions','SELECT')
+     OR NOT has_table_privilege('opstrax_system','demo_fixture_versions','INSERT')
+     OR NOT has_table_privilege('opstrax_system','demo_fixture_versions','UPDATE')
+     OR NOT has_table_privilege('opstrax_system','demo_fixture_versions','DELETE') THEN
     RAISE EXCEPTION 'Clean-chain fixture provenance grants are unsafe or incomplete';
   END IF;
 
@@ -346,8 +377,13 @@ BEGIN
      OR NOT has_table_privilege('opstrax_system','telemetry_stream_ticket_nonces','UPDATE')
      OR NOT has_table_privilege('opstrax_system','telemetry_stream_ticket_nonces','DELETE')
      OR has_table_privilege('opstrax_system','telemetry_stream_ticket_nonces','TRUNCATE,REFERENCES,TRIGGER')
-     OR NOT has_table_privilege('opstrax_system','telemetry_store_forward','SELECT,INSERT,UPDATE,DELETE')
-     OR NOT has_table_privilege('opstrax_system','telemetry_gateway_rejections','SELECT,INSERT,DELETE') THEN
+     OR NOT has_table_privilege('opstrax_system','telemetry_store_forward','SELECT')
+     OR NOT has_table_privilege('opstrax_system','telemetry_store_forward','INSERT')
+     OR NOT has_table_privilege('opstrax_system','telemetry_store_forward','UPDATE')
+     OR NOT has_table_privilege('opstrax_system','telemetry_store_forward','DELETE')
+     OR NOT has_table_privilege('opstrax_system','telemetry_gateway_rejections','SELECT')
+     OR NOT has_table_privilege('opstrax_system','telemetry_gateway_rejections','INSERT')
+     OR NOT has_table_privilege('opstrax_system','telemetry_gateway_rejections','DELETE') THEN
     RAISE EXCEPTION 'Clean-chain Telematics infrastructure-ledger grants are unsafe or incomplete';
   END IF;
 
@@ -368,13 +404,129 @@ BEGIN
     RAISE EXCEPTION 'Stage66 did not safely reconcile the legacy stream-ticket nonce identity';
   END IF;
 
-  IF has_column_privilege('opstrax_app','eld_devices','api_key_hash','SELECT')
+  IF has_table_privilege('opstrax_app','eld_devices','SELECT')
+     OR has_column_privilege('opstrax_app','eld_devices','api_key_hash','SELECT')
      OR has_column_privilege('opstrax_app','eld_devices','api_key_previous_hash','SELECT')
      OR has_column_privilege('opstrax_app','eld_devices','hmac_secret','SELECT')
      OR has_column_privilege('opstrax_app','eld_devices','hmac_secret_encrypted','SELECT')
      OR has_column_privilege('opstrax_app','eld_devices','hmac_previous_secret_encrypted','SELECT')
-     OR NOT has_column_privilege('opstrax_app','eld_devices','device_serial','SELECT') THEN
+     OR NOT has_column_privilege('opstrax_app','eld_devices','device_serial','SELECT')
+     OR NOT has_column_privilege('opstrax_app','eld_devices','malfunction_resolved_at','UPDATE')
+     OR NOT has_column_privilege('opstrax_app','eld_devices','malfunction_resolved_by','UPDATE')
+     OR NOT has_column_privilege('opstrax_app','eld_devices','resolution_evidence','UPDATE')
+     OR NOT has_column_privilege('opstrax_app','eld_devices','row_version','UPDATE')
+     OR has_column_privilege('opstrax_app','eld_devices','company_id','UPDATE')
+     OR has_column_privilege('opstrax_app','eld_devices','id','UPDATE')
+     OR has_column_privilege('opstrax_app','eld_devices','api_key_hash','UPDATE')
+     OR has_column_privilege('opstrax_app','eld_devices','hmac_secret_encrypted','UPDATE') THEN
     RAISE EXCEPTION 'Clean-chain device credential column grants are unsafe or incomplete';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM (VALUES
+      ('opstrax_app','eld_devices','SELECT',FALSE),
+      ('opstrax_app','eld_devices','INSERT',FALSE),
+      ('opstrax_app','eld_devices','UPDATE',FALSE),
+      ('opstrax_app','eld_devices','DELETE',FALSE),
+      ('opstrax_app','telemetry_gateways','SELECT',FALSE),
+      ('opstrax_app','telemetry_gateways','INSERT',FALSE),
+      ('opstrax_app','telemetry_gateways','UPDATE',FALSE),
+      ('opstrax_app','telemetry_gateways','DELETE',FALSE),
+      ('opstrax_app','telemetry_stream_ticket_nonces','SELECT',FALSE),
+      ('opstrax_app','telemetry_stream_ticket_nonces','INSERT',TRUE),
+      ('opstrax_app','telemetry_stream_ticket_nonces','UPDATE',FALSE),
+      ('opstrax_app','telemetry_stream_ticket_nonces','DELETE',FALSE),
+      ('opstrax_app','telemetry_replay_seen','SELECT',FALSE),
+      ('opstrax_app','telemetry_replay_seen','INSERT',FALSE),
+      ('opstrax_app','telemetry_replay_seen','UPDATE',FALSE),
+      ('opstrax_app','telemetry_replay_seen','DELETE',FALSE),
+      ('opstrax_app','telemetry_replay_device_state','SELECT',FALSE),
+      ('opstrax_app','telemetry_replay_device_state','INSERT',FALSE),
+      ('opstrax_app','telemetry_replay_device_state','UPDATE',FALSE),
+      ('opstrax_app','telemetry_replay_device_state','DELETE',FALSE),
+      ('opstrax_app','canonical_telemetry_events','SELECT',FALSE),
+      ('opstrax_app','canonical_telemetry_events','INSERT',FALSE),
+      ('opstrax_app','canonical_telemetry_events','UPDATE',FALSE),
+      ('opstrax_app','canonical_telemetry_events','DELETE',FALSE),
+      ('opstrax_system','telemetry_nonces','SELECT',TRUE),
+      ('opstrax_system','telemetry_nonces','INSERT',TRUE),
+      ('opstrax_system','telemetry_nonces','UPDATE',FALSE),
+      ('opstrax_system','telemetry_nonces','DELETE',TRUE),
+      ('opstrax_system','gps_gateway_replay','SELECT',TRUE),
+      ('opstrax_system','gps_gateway_replay','INSERT',TRUE),
+      ('opstrax_system','gps_gateway_replay','UPDATE',FALSE),
+      ('opstrax_system','gps_gateway_replay','DELETE',TRUE),
+      ('opstrax_system','telemetry_gateway_rejections','SELECT',TRUE),
+      ('opstrax_system','telemetry_gateway_rejections','INSERT',TRUE),
+      ('opstrax_system','telemetry_gateway_rejections','UPDATE',FALSE),
+      ('opstrax_system','telemetry_gateway_rejections','DELETE',TRUE),
+      ('opstrax_system','telemetry_replay_seen','SELECT',TRUE),
+      ('opstrax_system','telemetry_replay_seen','INSERT',TRUE),
+      ('opstrax_system','telemetry_replay_seen','UPDATE',FALSE),
+      ('opstrax_system','telemetry_replay_seen','DELETE',TRUE),
+      ('opstrax_system','telemetry_replay_device_state','SELECT',TRUE),
+      ('opstrax_system','telemetry_replay_device_state','INSERT',TRUE),
+      ('opstrax_system','telemetry_replay_device_state','UPDATE',TRUE),
+      ('opstrax_system','telemetry_replay_device_state','DELETE',FALSE),
+      ('opstrax_system','telemetry_projection_inbox','SELECT',TRUE),
+      ('opstrax_system','telemetry_projection_inbox','INSERT',TRUE),
+      ('opstrax_system','telemetry_projection_inbox','UPDATE',FALSE),
+      ('opstrax_system','telemetry_projection_inbox','DELETE',TRUE),
+      ('opstrax_system','canonical_telemetry_events','SELECT',TRUE),
+      ('opstrax_system','canonical_telemetry_events','INSERT',TRUE),
+      ('opstrax_system','canonical_telemetry_events','UPDATE',FALSE),
+      ('opstrax_system','canonical_telemetry_events','DELETE',TRUE)
+    ) expected(role_name,table_name,privilege_name,allowed)
+    WHERE has_table_privilege(
+      expected.role_name::name,
+      'public.'||expected.table_name,
+      expected.privilege_name
+    )<>expected.allowed
+  ) OR has_table_privilege('opstrax_app','telemetry_gateways','SELECT,INSERT,UPDATE,DELETE')
+     OR has_any_column_privilege('opstrax_app','telemetry_replay_seen','SELECT,INSERT,UPDATE,REFERENCES')
+     OR has_any_column_privilege('opstrax_app','telemetry_replay_device_state','SELECT,INSERT,UPDATE,REFERENCES')
+     OR has_any_column_privilege('opstrax_app','canonical_telemetry_events','SELECT,INSERT,UPDATE,REFERENCES')
+     OR NOT has_column_privilege('opstrax_app','telemetry_gateways','gateway_id','SELECT')
+     OR has_column_privilege('opstrax_app','telemetry_gateways','secret_encrypted','SELECT')
+     OR NOT has_column_privilege('opstrax_app','telemetry_gateways','status','UPDATE')
+     OR has_column_privilege('opstrax_app','telemetry_gateways','secret_encrypted','UPDATE') THEN
+    RAISE EXCEPTION 'Clean-chain Stage76 exact telemetry runtime ACL matrix is unsafe';
+  END IF;
+
+  IF to_regclass('public.telemetry_replay_device_state') IS NULL
+     OR NOT EXISTS (
+       SELECT 1 FROM pg_constraint
+       WHERE conname='uq_telemetry_replay_seen_unwrapped'
+         AND conrelid='public.telemetry_replay_seen'::regclass
+         AND contype='u'
+         AND pg_get_constraintdef(oid)='UNIQUE (device_id, unwrapped_serial, content_hash)'
+     ) OR EXISTS (
+       SELECT 1 FROM (VALUES
+         ('telemetry_replay_seen','unwrapped_serial'),
+         ('telemetry_replay_seen','event_id'),
+         ('telemetry_replay_device_state','device_id'),
+         ('telemetry_replay_device_state','last_raw_serial'),
+         ('telemetry_replay_device_state','high_water_unwrapped'),
+         ('telemetry_replay_device_state','updated_at')
+       ) required(table_name,column_name)
+       WHERE NOT EXISTS (
+         SELECT 1 FROM information_schema.columns actual
+         WHERE actual.table_schema='public'
+           AND actual.table_name=required.table_name
+           AND actual.column_name=required.column_name
+           AND actual.is_nullable='NO'
+       )
+     ) OR EXISTS (SELECT 1 FROM telemetry_replay_device_state)
+     OR has_sequence_privilege('opstrax_app','telemetry_replay_seen_id_seq','USAGE,SELECT,UPDATE')
+     OR NOT has_sequence_privilege('opstrax_system','telemetry_replay_seen_id_seq','USAGE')
+     OR NOT has_sequence_privilege('opstrax_system','telemetry_replay_seen_id_seq','SELECT')
+     OR has_sequence_privilege('opstrax_system','telemetry_replay_seen_id_seq','UPDATE')
+     OR has_sequence_privilege('opstrax_app','canonical_telemetry_events_id_seq','USAGE,SELECT,UPDATE')
+     OR NOT has_sequence_privilege('opstrax_system','canonical_telemetry_events_id_seq','USAGE')
+     OR NOT has_sequence_privilege('opstrax_system','canonical_telemetry_events_id_seq','SELECT')
+     OR has_sequence_privilege('opstrax_system','canonical_telemetry_events_id_seq','UPDATE') THEN
+    RAISE EXCEPTION 'Clean-chain Stage76 replay generation schema/sequence boundary is unsafe';
   END IF;
 
   IF to_regprocedure('public.stage65_hos_day_lock_key(bigint,bigint,date,bigint)') IS NULL
@@ -451,4 +603,4 @@ END
 $clean_chain$;
 SQL
 
-echo "Predeploy clean-chain regression passed (fresh Stage19/20/22 baseline + runner twice + terminal policy checks)."
+echo "Predeploy clean-chain regression passed (fresh Stage19/20/22 baseline + Stage76-terminal runner replays + policy/ACL checks)."

@@ -69,12 +69,11 @@ public sealed class PlatformImpersonationTransportContractTests
     {
         var auth = Read("backend-dotnet", "Controllers", "EndpointMappings.cs");
         var shell = Read("frontend", "src", "layouts", "AppShell.tsx");
-        var settings = Read("backend-dotnet", "appsettings.json");
+        var policy = Read("backend-dotnet", "Services", "PlatformImpersonationPolicy.cs");
         Assert.Contains("supportAccess = hasSupportAccess", auth, StringComparison.Ordinal);
         Assert.Contains("support-access-banner", shell, StringComparison.Ordinal);
         Assert.Contains("Read-only Platform support session", shell, StringComparison.Ordinal);
-        Assert.Contains("\"PlatformImpersonation\"", settings, StringComparison.Ordinal);
-        Assert.Contains("\"Enabled\": false", settings, StringComparison.Ordinal);
+        Assert.Contains("GetValue(\"PlatformImpersonation:Enabled\", false)", policy, StringComparison.Ordinal);
     }
 }
 

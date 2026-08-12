@@ -38,6 +38,7 @@ public sealed class RetentionEnforcementTests
     }
 
     [Fact]
+    [Trait("Category", "Integration")]
     public async Task Purge_DeletesOnlyExpiredRowsForTheSelectedTenant_AndPropagatesSchemaFailure()
     {
         var table = "retention_worker_test_" + Guid.NewGuid().ToString("N");
