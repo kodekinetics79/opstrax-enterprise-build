@@ -108,3 +108,30 @@ The first resource created there is `opstrax-staging-api` (`https://opstrax-stag
 This packaging gap is defect `STG-001`. Regression coverage now requires both production API Dockerfiles to package Stage42 and Stage76, and the root Dockerfile is corrected on this branch. The service must not be redeployed until the corrected exact head passes CI. No database connection, credential, migration, staging traffic, or production access occurred during discovery.
 
 Neon provisioning is deferred by operator direction. Therefore PostgreSQL, migrator, API/embedded workers, gateway, seeding, authenticated browser journeys, data/load/recovery tests, and backup/restore remain **BLOCKED**. The isolated Render service is an unconfigured resource shell, not a deployed or healthy component.
+
+### Corrected-head evidence and resource inventory
+
+- Corrected candidate: `4a35a97a5a725cd713330d1b112564303f4ffb79`.
+- Exact-head CI: [run 31599015556](https://github.com/kodekinetics79/opstrax-enterprise-build/actions/runs/31599015556), **11/11 jobs passed**.
+- Render boundary: isolated empty workspace `opstrax`; production-linked Render workspaces were excluded.
+- Render API shell: `opstrax-staging-api`, service `srv-d9u6qnajobas73ef2590`, URL `https://opstrax-staging-api.onrender.com`, free plan, auto-deploy off. No successful deployment or runtime environment is configured.
+- Vercel boundary: new project `opstrax-staging-certification`, project `prj_eSx1C33oCP4iZjg71mT3zP2E0GZS`; the existing OpsTrax production project was excluded.
+- Vercel frontend: preview deployment `dpl_5df7QYzgoFCawY89zeRKm5gUHMmK`, URL `https://opstrax-staging-certification-c1le9wcs5-kode-kinetics-projects.vercel.app`, READY and access-protected. It was built from a clean archive of `4a35a97a5a725cd713330d1b112564303f4ffb79` with only the isolated API hostname configured. An initial deployment incorrectly labeled by Vercel as `production` inside this staging-only project was removed; no production OpsTrax project or resource was changed.
+- Registry publication: BLOCKED. Local API and gateway images built, but GHCR rejected both uploads before publication because the authenticated token lacks package-write scope. Credential scope was not broadened.
+- Gateway resource: BLOCKED on immutable image publication plus database identity. Render public web services are HTTP-facing; public PT40/GT06 TCP exposure also needs an explicitly supported isolated ingress topology.
+- Migrator: BLOCKED on Neon. It is an out-of-band one-off execution of `tools/apply-neon-predeploy-migrations.sh`, not a long-running service.
+- Background workers: BLOCKED on Neon. The critical workers are hosted in the API process at this candidate; there is no separate worker executable to deploy.
+- Cache/queue: not required by the current runtime topology; PostgreSQL outbox/inbox provides durable dispatch semantics.
+- Object storage: BLOCKED. Certification requires a new staging-only S3-compatible bucket; local Render storage is ephemeral and was not accepted.
+
+### Defect ledger
+
+| ID | Finding | Evidence | Regression/fix | State |
+| --- | --- | --- | --- | --- |
+| STG-001 | Repository-root API image omitted Stage42 and terminal Stage76 migrations | Cancelled Render build `dep-d9u6qnqjobas73ef25p0`; root Dockerfile inspection | `ReleaseProvenanceContractTests` now requires both migrations in both API Dockerfiles; corrected root image built and both payloads matched source byte-for-byte | FIXED at `4a35a97a5a725cd713330d1b112564303f4ffb79`; CI 11/11 |
+
+### Cost boundary
+
+Current incremental resource cost is estimated at **$0 before quota overages**: the Render API shell uses the Free instance type and the Vercel deployment is a protected static preview within the existing team. This is not a viable cost basis for the complete certification: Render Free services spin down, have ephemeral filesystems, cannot receive private-network traffic, and do not support one-off jobs; these constraints preclude reliable soak, failure-recovery, migrator, and durable-upload evidence. See the official [Render Free limitations](https://render.com/docs/free).
+
+For planning, Vercel Pro is listed at $20/month with usage credit; Neon lists a $0 Free plan and a typical Launch workload near $15/month, with usage-based compute/storage. See official [Vercel pricing](https://vercel.com/pricing) and [Neon pricing](https://neon.com/pricing). The final staging estimate remains **BLOCKED** until the operator chooses Render instance types, Neon plan/autoscaling bounds, an S3-compatible bucket, retention, and observability. No paid plan or purchase was initiated.
