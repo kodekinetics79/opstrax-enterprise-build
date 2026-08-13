@@ -47,4 +47,15 @@ for (const field of ["vinExceptionType", "alternateIdentifier", "plateJurisdicti
 assert.match(vehiclesPage, /approved alternate identity kind/, "VIN-less vehicles must be client-validated against governed identity requirements");
 assert.match(vehiclesPage, /label: "Alternate identity"/, "Vehicle detail must render the governed alternate identity");
 
+const driverPage = readFileSync(resolve(root, "src/pages/driver/DriverAssignmentPage.tsx"), "utf8");
+for (const [status, label] of [
+  ["en_route_pickup", "Start Route to Pickup"],
+  ["arrived_pickup", "Mark Arrived at Pickup"],
+  ["loaded", "Mark Loaded"],
+  ["in_transit", "Mark In Transit"],
+  ["arrived_delivery", "Mark Arrived at Delivery"],
+]) {
+  assert.match(driverPage, new RegExp(`${status}:\\s+"${label}"`), `${status} must describe the transition it executes`);
+}
+
 console.log("device installation frontend contract: ok");

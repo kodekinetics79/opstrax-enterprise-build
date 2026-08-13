@@ -45,12 +45,12 @@ function SignaturePad({ onCapture, disabled }: { onCapture: (blob: Blob) => void
 
 const STATUS_LABELS: Record<string, string> = {
   assigned:         "Accept Assignment",
-  accepted:         "Start Pre-trip DVIR → Mark En Route",
-  en_route_pickup:  "Mark Arrived at Pickup",
-  arrived_pickup:   "Mark Loaded",
-  loaded:           "Mark In Transit",
-  in_transit:       "Mark Arrived at Delivery",
-  arrived_delivery: "Submit Delivery Proof",
+  accepted:         "Accept Assignment",
+  en_route_pickup:  "Start Route to Pickup",
+  arrived_pickup:   "Mark Arrived at Pickup",
+  loaded:           "Mark Loaded",
+  in_transit:       "Mark In Transit",
+  arrived_delivery: "Mark Arrived at Delivery",
   exception:        "Resume or Cancel",
 };
 
