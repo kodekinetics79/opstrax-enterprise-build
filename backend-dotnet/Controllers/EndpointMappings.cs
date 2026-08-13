@@ -219,6 +219,8 @@ public static partial class EndpointMappings
         app.MapPost("/api/telemetry/devices/{id:long}/assign", TelemetryDeviceAssign);
         app.MapGet("/api/telemetry/devices/{id:long}/installations", DeviceInstallationHistory);
         app.MapPost("/api/telemetry/devices/{id:long}/installations", DeviceInstallationCreate);
+        app.MapGet("/api/telemetry/devices/{id:long}/installations/{installationId:long}/evidence", DeviceInstallationEvidenceList);
+        app.MapPost("/api/telemetry/devices/{id:long}/installations/{installationId:long}/evidence", DeviceInstallationEvidenceCreate);
         app.MapPost("/api/telemetry/devices/{id:long}/installations/{installationId:long}/commission", DeviceInstallationCommission);
         app.MapPost("/api/telemetry/devices/{id:long}/installations/{installationId:long}/remove", DeviceInstallationRemove);
         app.MapPost("/api/telemetry/devices/{id:long}/installations/transfer", DeviceInstallationTransfer);
@@ -15536,7 +15538,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         // Hardware GPS-tracker IMEI (GT06/Concox/PT40-class). Optional — ELD units that
         // authenticate by device_serial + HMAC leave it null. When present it is the key the
         // trusted gateway resolves the device by, so it is globally unique (ux_eld_devices_imei).
-        string? Imei = null
+        string? Imei = null,
+        string? DeviceCategory = null
     );
 
     private sealed record DeviceAssignBody(long? VehicleId, long? DriverId);
@@ -17249,7 +17252,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var companyId = GetCompanyId(http);
         var branchId = GetBranchId(http);
         var devices = await db.QueryAsync(
-            @"SELECT e.id, e.device_serial, e.imei, e.device_model, e.provider, e.status,
+            @"SELECT e.id, e.device_serial, e.imei, e.device_category, e.device_model, e.provider, e.status,
                      current_install.vehicle_id, active_dispatch.driver_id, e.firmware_version,
                      e.last_seen_at, e.revoked_at, e.created_at, e.row_version,
                      current_install.id current_installation_id,
@@ -17288,7 +17291,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var companyId = GetCompanyId(http);
         var branchId = GetBranchId(http);
         var device = await db.QuerySingleAsync(
-            @"SELECT e.id, e.device_serial, e.imei, e.device_model, e.provider, e.status,
+            @"SELECT e.id, e.device_serial, e.imei, e.device_category, e.device_model, e.provider, e.status,
                      current_install.vehicle_id, active_dispatch.driver_id, e.firmware_version, e.notes,
                      e.last_seen_at, e.revoked_at, e.created_at, e.row_version,
                      current_install.id current_installation_id,
@@ -17331,6 +17334,13 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
               FROM device_state_transitions WHERE company_id=@cid AND device_id=@id
               ORDER BY occurred_at DESC,id DESC LIMIT 100",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+        var installationEvidence = await db.QueryAsync(
+            @"SELECT e.id,e.installation_id,e.evidence_type,e.object_key,e.sha256,e.captured_at,e.captured_by
+                FROM device_installation_evidence e
+                JOIN device_installations i ON i.id=e.installation_id AND i.company_id=e.company_id
+               WHERE e.company_id=@cid AND i.device_id=@id
+               ORDER BY e.captured_at DESC,e.id DESC",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
         var current = history.FirstOrDefault(row =>
             row.GetValueOrDefault("effectiveTo") is null or DBNull &&
             row.GetValueOrDefault("status")?.ToString() is "Installed" or "Verified");
@@ -17339,6 +17349,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             device,
             currentInstallation = current,
             installationHistory = history,
+            installationEvidence,
             assignmentHistory = transitions
         }, "Device"));
     }
@@ -17354,6 +17365,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         // 400 rather than a Postgres 23502 surfaced as a 500.
         if (string.IsNullOrWhiteSpace(body.DeviceSerial))
             return Results.BadRequest(ApiResponse<object>.Fail("deviceSerial is required"));
+        if (Clean(body.DeviceCategory) is not { } requestedCategory || !InstallationRoles.Contains(requestedCategory))
+            return Results.BadRequest(ApiResponse<object>.Fail("deviceCategory is required and must be a supported hardware role"));
+        var deviceCategory = NormalizeInstallationRole(requestedCategory);
         var serial = body.DeviceSerial.Trim().ToUpperInvariant();
         if (serial.Length is < 4 or > 120 ||
             !System.Text.RegularExpressions.Regex.IsMatch(serial, "^[A-Z0-9][A-Z0-9._:/-]*$"))
@@ -17401,13 +17415,13 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                     c => { c.Parameters.AddWithValue("@serial", serial); c.Parameters.AddWithValue("@imei", (object?)imei ?? DBNull.Value); }, ct);
                 if (collision > 0)
                     throw new InvalidOperationException("device_identity_conflict");
-                return await db.InsertAsync(
+                var createdDeviceId = await db.InsertAsync(
                 @"INSERT INTO eld_devices
-                    (company_id, branch_id, device_serial, imei, device_model, provider, vehicle_id, driver_id,
+                    (company_id, branch_id, device_serial, imei, device_category, device_model, provider, vehicle_id, driver_id,
                      firmware_version, notes, api_key_hash, hmac_secret, hmac_secret_encrypted,
                      hmac_key_version, hmac_rotated_at, credential_revoked_reason, status, created_at)
                   VALUES
-                    (@cid, @branch, @serial, @imei, @model, @provider, @vid, @did, @fw, @notes,
+                    (@cid, @branch, @serial, @imei, @category, @model, @provider, @vid, @did, @fw, @notes,
                      encode(sha256(@rawKey::bytea), 'hex'), NULL, @hmacEncrypted,
                      1, NOW(), NULL, 'Active', NOW())",
                 c =>
@@ -17416,6 +17430,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                     c.Parameters.AddWithValue("@branch",   (object?)deviceBranchId ?? DBNull.Value);
                     c.Parameters.AddWithValue("@serial",   serial);
                     c.Parameters.AddWithValue("@imei",     (object?)imei        ?? DBNull.Value);
+                    c.Parameters.AddWithValue("@category", deviceCategory);
                     c.Parameters.AddWithValue("@model",    body.DeviceModel    ?? (object)DBNull.Value);
                     c.Parameters.AddWithValue("@provider", body.Provider       ?? (object)DBNull.Value);
                     c.Parameters.AddWithValue("@vid",      DBNull.Value);
@@ -17425,6 +17440,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                     c.Parameters.AddWithValue("@rawKey",   rawApiKey);
                     c.Parameters.AddWithValue("@hmacEncrypted", encryptedHmacSecret);
                 }, ct);
+                await audit.LogAsync(http, "device.provisioned", "EldDevice", createdDeviceId,
+                    imei is null ? $"serial:{serial}" : $"serial:{serial};imei:{imei}", ct);
+                return createdDeviceId;
                 }, ct);
         }
         catch (InvalidOperationException ex) when (ex.Message == "device_identity_conflict")
@@ -17439,12 +17457,13 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             return Results.Conflict(ApiResponse<object>.Fail($"{field} already registered"));
         }
 
-        await audit.LogAsync(http, "device.provisioned", "EldDevice", deviceId,
-            imei is null ? $"serial:{serial}" : $"serial:{serial};imei:{imei}", ct);
+        http.Response.Headers.CacheControl = "no-store";
+        http.Response.Headers.Pragma = "no-cache";
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             id           = deviceId,
             deviceSerial = serial,
+            deviceCategory,
             apiKey       = rawApiKey,
             hmacSecret   = rawHmacSec,
             note         = "Store these credentials securely — they will not be shown again."
@@ -17469,8 +17488,10 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var configuration = http.RequestServices.GetRequiredService<IConfiguration>();
         var graceMinutes = DeviceHmacSecretProtection.RotationGraceMinutes(configuration);
 
-        var affected = await db.RunInSystemTransactionAsync(
-            () => db.ExecuteAsync(
+        var rotated = await db.RunInSystemTransactionAsync(
+            async () =>
+            {
+            var row = await db.QuerySingleAsync(
             @"UPDATE eld_devices
               SET api_key_previous_hash=CASE WHEN @graceMinutes > 0 THEN api_key_hash ELSE NULL END,
                   api_key_previous_valid_until=CASE WHEN @graceMinutes > 0 THEN NOW() + make_interval(mins => @graceMinutes) ELSE NULL END,
@@ -17483,9 +17504,13 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                   END,
                   hmac_secret_encrypted=@hmacEncrypted, hmac_secret=NULL,
                   hmac_key_version=COALESCE(hmac_key_version,0)+1,
-                  hmac_rotated_at=NOW(), credential_revoked_reason=NULL, updated_at=NOW()
+                  hmac_rotated_at=NOW(), credential_revoked_reason=NULL, updated_at=NOW(),
+                  row_version=row_version+1
               WHERE id=@id AND company_id=@cid AND deleted_at IS NULL
-                AND (@branchId::BIGINT IS NULL OR branch_id=@branchId)",
+                AND revoked_at IS NULL AND status<>'Revoked'
+                AND (@branchId::BIGINT IS NULL OR branch_id=@branchId)
+              RETURNING hmac_key_version,row_version,status,hmac_rotated_at,
+                        api_key_previous_valid_until previous_credentials_valid_until",
             c =>
             {
                 c.Parameters.AddWithValue("@id",     id);
@@ -17494,16 +17519,25 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 c.Parameters.AddWithValue("@hmacEncrypted", encryptedHmacSecret);
                 c.Parameters.AddWithValue("@graceMinutes", graceMinutes);
                 c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
-            }, ct), ct);
+            }, ct);
+            if (row is not null)
+                await audit.LogAsync(http, "device.secret.rotated", "EldDevice", id, null, ct);
+            return row;
+            }, ct);
 
-        if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Device not found"));
-        await audit.LogAsync(http, "device.secret.rotated", "EldDevice", id, null, ct);
+        if (rotated is null) return Results.NotFound(ApiResponse<object>.Fail("Active device not found; revoked credentials cannot be rotated"));
+        http.Response.Headers.CacheControl = "no-store";
+        http.Response.Headers.Pragma = "no-cache";
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             id,
             apiKey     = newApiKey,
             hmacSecret = newHmacSec,
-            previousCredentialsValidUntil = graceMinutes > 0 ? DateTimeOffset.UtcNow.AddMinutes(graceMinutes) : (DateTimeOffset?)null,
+            hmacKeyVersion = rotated["hmacKeyVersion"],
+            rowVersion = rotated["rowVersion"],
+            rotatedAt = rotated["hmacRotatedAt"],
+            previousCredentialsValidUntil = rotated["previousCredentialsValidUntil"] is DBNull
+                ? null : rotated["previousCredentialsValidUntil"],
             note       = graceMinutes > 0
                 ? "Previous credential pair remains valid only during the configured rotation grace window."
                 : "Old credentials are immediately invalid. Store new credentials securely."
@@ -17540,12 +17574,32 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (denied is not null) return denied;
         var companyId = GetCompanyId(http);
         var branchId = GetBranchId(http);
-        var affected = await db.ExecuteAsync(
-            "UPDATE eld_devices SET status='Suspended', updated_at=NOW() WHERE id=@id AND company_id=@cid AND deleted_at IS NULL AND (@branchId::BIGINT IS NULL OR branch_id=@branchId)",
-            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
-        if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Device not found"));
-        await audit.LogAsync(http, "device.suspended", "EldDevice", id, null, ct);
-        return Results.Ok(ApiResponse<object>.Ok(new { id }, "Device suspended"));
+        var actorId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+        return await db.RunInTenantTransactionAsync(companyId, async () =>
+        {
+            var current = await db.QuerySingleAsync(
+                @"SELECT status,device_state,row_version,branch_id,revoked_at FROM eld_devices
+                   WHERE id=@id AND company_id=@cid AND deleted_at IS NULL
+                     AND (@branchId::BIGINT IS NULL OR branch_id=@branchId) FOR UPDATE",
+                c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
+            if (current is null) return Results.NotFound(ApiResponse<object>.Fail("Device not found"));
+            if (current["revokedAt"] is not (null or DBNull) ||
+                string.Equals(current["status"]?.ToString(), "Revoked", StringComparison.OrdinalIgnoreCase))
+                return Results.Conflict(ApiResponse<object>.Fail("Revoked devices cannot be suspended"));
+            if (string.Equals(current["status"]?.ToString(), "Suspended", StringComparison.OrdinalIgnoreCase))
+                return Results.Ok(ApiResponse<object>.Ok(new { id, status = "Suspended", deviceState = "Suspended", rowVersion = current["rowVersion"], idempotentReplay = true }, "Device already suspended"));
+            var updated = await db.QuerySingleAsync(
+                @"UPDATE eld_devices SET status='Suspended',device_state='Suspended',updated_at=NOW(),row_version=row_version+1
+                   WHERE id=@id AND company_id=@cid AND status<>'Revoked'
+                   RETURNING status,device_state,row_version,updated_at",
+                c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+            if (updated is null) return Results.Conflict(ApiResponse<object>.Fail("Device state changed; refresh and retry"));
+            await AppendDeviceTransitionAsync(db, companyId,
+                current["branchId"] is null or DBNull ? null : Convert.ToInt64(current["branchId"]), id,
+                current["deviceState"]?.ToString(), "Suspended", actorId, "operator_suspend", null, http.TraceIdentifier, ct);
+            await audit.LogAsync(http, "device.suspended", "EldDevice", id, null, ct);
+            return Results.Ok(ApiResponse<object>.Ok(new { id, status = updated["status"], deviceState = updated["deviceState"], rowVersion = updated["rowVersion"], updatedAt = updated["updatedAt"] }, "Device suspended"));
+        }, ct);
     }
 
     // ── POST /api/devices/{id}/activate ──────────────────────────────────────────
@@ -17555,12 +17609,38 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (denied is not null) return denied;
         var companyId = GetCompanyId(http);
         var branchId = GetBranchId(http);
-        var affected = await db.ExecuteAsync(
-            "UPDATE eld_devices SET status='Active', updated_at=NOW() WHERE id=@id AND company_id=@cid AND deleted_at IS NULL AND status='Suspended' AND (@branchId::BIGINT IS NULL OR branch_id=@branchId)",
-            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
-        if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Device not found or not in Suspended state"));
-        await audit.LogAsync(http, "device.activated", "EldDevice", id, null, ct);
-        return Results.Ok(ApiResponse<object>.Ok(new { id }, "Device activated"));
+        var actorId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+        return await db.RunInTenantTransactionAsync(companyId, async () =>
+        {
+            var current = await db.QuerySingleAsync(
+                @"SELECT status,device_state,row_version,branch_id,revoked_at FROM eld_devices
+                   WHERE id=@id AND company_id=@cid AND deleted_at IS NULL
+                     AND (@branchId::BIGINT IS NULL OR branch_id=@branchId) FOR UPDATE",
+                c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
+            if (current is null) return Results.NotFound(ApiResponse<object>.Fail("Device not found"));
+            if (current["revokedAt"] is not (null or DBNull) ||
+                string.Equals(current["status"]?.ToString(), "Revoked", StringComparison.OrdinalIgnoreCase))
+                return Results.Conflict(ApiResponse<object>.Fail("Revoked devices cannot be activated"));
+            if (string.Equals(current["status"]?.ToString(), "Active", StringComparison.OrdinalIgnoreCase))
+                return Results.Ok(ApiResponse<object>.Ok(new { id, status = "Active", deviceState = current["deviceState"], rowVersion = current["rowVersion"], idempotentReplay = true }, "Device already active"));
+            if (!string.Equals(current["status"]?.ToString(), "Suspended", StringComparison.OrdinalIgnoreCase))
+                return Results.Conflict(ApiResponse<object>.Fail("Only a suspended device can be activated"));
+            var updated = await db.QuerySingleAsync(
+                @"UPDATE eld_devices d SET status='Active',device_state=CASE
+                       WHEN EXISTS (SELECT 1 FROM device_installations i WHERE i.company_id=d.company_id AND i.device_id=d.id AND i.status='Verified' AND i.effective_to IS NULL) THEN 'Verified'
+                       WHEN EXISTS (SELECT 1 FROM device_installations i WHERE i.company_id=d.company_id AND i.device_id=d.id AND i.status='Installed' AND i.effective_to IS NULL) THEN 'Installed'
+                       ELSE 'Registered' END,
+                       updated_at=NOW(),row_version=row_version+1
+                   WHERE d.id=@id AND d.company_id=@cid AND d.status='Suspended'
+                   RETURNING status,device_state,row_version,updated_at",
+                c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+            if (updated is null) return Results.Conflict(ApiResponse<object>.Fail("Device state changed; refresh and retry"));
+            await AppendDeviceTransitionAsync(db, companyId,
+                current["branchId"] is null or DBNull ? null : Convert.ToInt64(current["branchId"]), id,
+                "Suspended", updated["deviceState"]?.ToString() ?? "Registered", actorId, "operator_activate", null, http.TraceIdentifier, ct);
+            await audit.LogAsync(http, "device.activated", "EldDevice", id, null, ct);
+            return Results.Ok(ApiResponse<object>.Ok(new { id, status = updated["status"], deviceState = updated["deviceState"], rowVersion = updated["rowVersion"], updatedAt = updated["updatedAt"] }, "Device activated"));
+        }, ct);
     }
 
     // ── POST /api/devices/{id}/assign ─────────────────────────────────────────────

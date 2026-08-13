@@ -8,10 +8,12 @@
   "scripts": {
     "test:guard": "node --test guard/*.test.mjs",
     "test:list": "playwright test --list",
+    "test:inventory": "inventory_file=${RUNNER_TEMP:-/tmp}/opstrax-playwright-inventory.json; playwright test --list --reporter=json > $inventory_file && node scripts/assert-test-inventory.mjs $inventory_file",
     "test:public": "playwright test --project=public-chromium",
     "test:local": "playwright test --project=public-chromium",
     "test:staging:readonly": "E2E_TARGET_ENV=staging playwright test --grep @readonly",
-    "test:staging:mutations": "E2E_TARGET_ENV=staging playwright test --project=staging-mutations"
+    "test:staging:mutations": "E2E_TARGET_ENV=staging playwright test --project=staging-mutations",
+    "test:staging:iot": "E2E_TARGET_ENV=staging playwright test --project=staging-iot-lifecycle"
   },
   "devDependencies": {
     "@playwright/test": "1.62.1"

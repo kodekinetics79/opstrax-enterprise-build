@@ -52,11 +52,19 @@ public sealed class FleetIdentityBackboneContractTests
         var endpoint = Read("backend-dotnet", "Controllers", "EndpointMappings.cs");
         var provision = Block(endpoint, "private static async Task<IResult> DeviceProvision(", "private static async Task<IResult> DeviceRotateSecret(");
         Assert.Contains("firmware_version, notes, api_key_hash", provision, StringComparison.Ordinal);
+        Assert.Contains("deviceCategory is required", provision, StringComparison.Ordinal);
+        Assert.Contains("@category", provision, StringComparison.Ordinal);
 
         var runner = Read("tools", "apply-neon-predeploy-migrations.sh");
         Assert.Contains("('eld_devices','notes')", runner, StringComparison.Ordinal);
         Assert.Contains("('location_events','battery_voltage')", runner, StringComparison.Ordinal);
         Assert.Contains("('latest_vehicle_positions','address')", runner, StringComparison.Ordinal);
+
+        var rotation = Block(endpoint, "private static async Task<IResult> DeviceRotateSecret(", "private static async Task<IResult> DeviceRevoke(");
+        Assert.Contains("revoked_at IS NULL", rotation, StringComparison.Ordinal);
+        Assert.Contains("row_version=row_version+1", rotation, StringComparison.Ordinal);
+        Assert.Contains("CacheControl = \"no-store\"", rotation, StringComparison.Ordinal);
+        Assert.DoesNotContain("api_key_hash = newApiKey", rotation, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -154,6 +162,7 @@ public sealed class FleetIdentityBackboneContractTests
         var lifecycle = Read("backend-dotnet", "Controllers", "FleetIdentityEndpoints.cs");
         var registry = Read("telematics", "src", "Opstrax.Telematics.Gateway", "Identity", "PostgresDeviceRegistry.cs");
         Assert.Contains("/api/telemetry/installation-quarantine/{id:long}/resolve", routes, StringComparison.Ordinal);
+        Assert.Contains("/api/telemetry/devices/{id:long}/installations/{installationId:long}/evidence", routes, StringComparison.Ordinal);
         Assert.Contains("has_unresolved_quarantine", routes, StringComparison.Ordinal);
         Assert.Contains("Device identity is quarantined", routes, StringComparison.Ordinal);
         Assert.Contains("InstallationHasEventAtOrAfterAsync", lifecycle, StringComparison.Ordinal);
@@ -162,6 +171,11 @@ public sealed class FleetIdentityBackboneContractTests
         Assert.Contains("resolution_notes", lifecycle, StringComparison.Ordinal);
         Assert.Contains("Duplicate serial quarantine requires a corrected serial", lifecycle, StringComparison.Ordinal);
         Assert.Contains("Corrected IMEI must contain exactly 15 digits", lifecycle, StringComparison.Ordinal);
+        Assert.Contains("device.installation.evidence.created", lifecycle, StringComparison.Ordinal);
+        Assert.Contains("objectKey must be a relative governed-storage key", lifecycle, StringComparison.Ordinal);
+        Assert.Contains("Commissioning requires a persisted authenticated telemetry event", lifecycle, StringComparison.Ordinal);
+        Assert.Contains("'location-event:'||id::TEXT", lifecycle, StringComparison.Ordinal);
+        Assert.Contains("'canonical-telemetry:'||id::TEXT", lifecycle, StringComparison.Ordinal);
     }
 
     [Fact]

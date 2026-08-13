@@ -1,0 +1,147 @@
+name: OpsTrax staging IoT certification
+
+on:
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact 40-character commit deployed to API and UI
+        required: true
+        type: string
+      ui_base_url:
+        description: Isolated HTTPS Vercel staging URL
+        required: true
+        type: string
+      api_base_url:
+        description: Isolated HTTPS Render API origin (no path prefix)
+        required: true
+        type: string
+      source_vehicle_id:
+        description: Disposable source vehicle ID in the primary staging tenant
+        required: true
+        type: string
+      target_vehicle_id:
+        description: Different disposable target vehicle ID in the primary staging tenant
+        required: true
+        type: string
+      device_role:
+        description: Installed hardware role (GPS, ELD, Dashcam, OBD-II, etc.)
+        required: true
+        type: string
+      device_category:
+        description: Registered hardware category (GPS, ELD, Dashcam, OBD-II, etc.)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-iot-certification
+  cancel-in-progress: false
+
+jobs:
+  certify-real-iot-lifecycle:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.label.name == 'certify-staging-iot' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    timeout-minutes: 20
+    env:
+      CANDIDATE_SHA: ${{ inputs.candidate_sha || github.event.pull_request.head.sha }}
+      CERT_UI_BASE_URL: ${{ inputs.ui_base_url || vars.E2E_STAGING_UI_BASE_URL }}
+      CERT_API_BASE_URL: ${{ inputs.api_base_url || vars.E2E_STAGING_API_BASE_URL }}
+      CERT_SOURCE_VEHICLE_ID: ${{ inputs.source_vehicle_id || vars.E2E_IOT_SOURCE_VEHICLE_ID }}
+      CERT_TARGET_VEHICLE_ID: ${{ inputs.target_vehicle_id || vars.E2E_IOT_TARGET_VEHICLE_ID }}
+      CERT_DEVICE_CATEGORY: ${{ inputs.device_category || vars.E2E_IOT_DEVICE_CATEGORY }}
+      CERT_DEVICE_ROLE: ${{ inputs.device_role || vars.E2E_IOT_DEVICE_ROLE }}
+    steps:
+      - name: Validate exact candidate input
+        run: |
+          if ! printf '%s' "$CANDIDATE_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo 'candidate_sha must be an exact lowercase 40-character commit SHA' >&2
+            exit 1
+          fi
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22.23.2'
+      - name: Require deployed API readiness and exact build identity
+        env:
+          API_BASE_URL: ${{ env.CERT_API_BASE_URL }}
+        run: |
+          node - <<'NODE'
+          const api = process.env.API_BASE_URL;
+          const expected = process.env.CANDIDATE_SHA;
+          const parsed = new URL(api);
+          if (parsed.protocol !== 'https:' || parsed.pathname !== '/' || parsed.username || parsed.password) {
+            throw new Error('api_base_url must be an HTTPS API origin without credentials or a path prefix');
+          }
+          for (const route of ['/health/live', '/health/ready']) {
+            const response = await fetch(`${parsed.origin}${route}`);
+            const body = await response.json();
+            if (response.status !== 200) throw new Error(`${route} returned HTTP ${response.status}`);
+            if (body.version !== expected) throw new Error(`${route} reports ${body.version}, expected exact SHA ${expected}`);
+          }
+          NODE
+      - name: Install pinned Playwright runtime
+        env:
+          npm_config_cache: ${{ runner.temp }}/npm-cache
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium
+        working-directory: tests/e2e
+      - name: Materialize short-lived persona states without logging them
+        env:
+          TENANT_STATE_B64: ${{ secrets.E2E_TENANT_AUTH_STATE_B64 }}
+          CROSS_TENANT_STATE_B64: ${{ secrets.E2E_CROSS_TENANT_AUTH_STATE_B64 }}
+        run: |
+          umask 077
+          test -n "$TENANT_STATE_B64"
+          test -n "$CROSS_TENANT_STATE_B64"
+          printf '%s' "$TENANT_STATE_B64" | base64 --decode > "$RUNNER_TEMP/tenant.json"
+          printf '%s' "$CROSS_TENANT_STATE_B64" | base64 --decode > "$RUNNER_TEMP/cross-tenant.json"
+          node -e 'for (const p of process.argv.slice(1)) JSON.parse(require("fs").readFileSync(p,"utf8"))' "$RUNNER_TEMP/tenant.json" "$RUNNER_TEMP/cross-tenant.json"
+      - name: Execute real authenticated IoT lifecycle
+        env:
+          E2E_TARGET_ENV: staging
+          E2E_UI_BASE_URL: ${{ env.CERT_UI_BASE_URL }}
+          E2E_API_BASE_URL: ${{ env.CERT_API_BASE_URL }}
+          E2E_PRODUCTION_HOSTS: opstrax.vercel.app,osptrax-fleet-management.onrender.com
+          E2E_ALLOW_STAGING_MUTATIONS: 'true'
+          E2E_DISPOSABLE_TENANT_ACK: I_UNDERSTAND_THIS_WRITES_TEST_DATA
+          E2E_CANARY_VEHICLE_ID: ${{ env.CERT_SOURCE_VEHICLE_ID }}
+          E2E_IOT_LIFECYCLE_ACK: I_UNDERSTAND_THIS_PROVISIONS_AND_REVOKES_A_REAL_DEVICE
+          E2E_IOT_SOURCE_VEHICLE_ID: ${{ env.CERT_SOURCE_VEHICLE_ID }}
+          E2E_IOT_TARGET_VEHICLE_ID: ${{ env.CERT_TARGET_VEHICLE_ID }}
+          E2E_IOT_DEVICE_CATEGORY: ${{ env.CERT_DEVICE_CATEGORY }}
+          E2E_IOT_DEVICE_ROLE: ${{ env.CERT_DEVICE_ROLE }}
+          E2E_TENANT_AUTH_STATE: ${{ runner.temp }}/tenant.json
+          E2E_CROSS_TENANT_AUTH_STATE: ${{ runner.temp }}/cross-tenant.json
+        run: |
+          export E2E_STAGING_HOSTS="$(node -e 'process.stdout.write([new URL(process.argv[1]).hostname,new URL(process.argv[2]).hostname].join(","))' "$E2E_UI_BASE_URL" "$E2E_API_BASE_URL")"
+          ./node_modules/.bin/playwright test --project=staging-iot-lifecycle --reporter=json > "$RUNNER_TEMP/iot-results.json"
+          node scripts/assert-execution.mjs "$RUNNER_TEMP/iot-results.json" 1
+        working-directory: tests/e2e
+      - name: Upload redacted certification evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: staging-iot-certification-${{ env.CANDIDATE_SHA }}
+          path: |
+            tests/e2e/test-results/**/iot-lifecycle-redacted-evidence.json
+            ${{ runner.temp }}/iot-results.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Destroy short-lived persona files
+        if: ${{ always() }}
+        run: |
+          for state in "$RUNNER_TEMP/tenant.json" "$RUNNER_TEMP/cross-tenant.json"; do
+            if [ -f "$state" ]; then
+              truncate -s 0 "$state"
+              rm -f "$state"
+            fi
+          done

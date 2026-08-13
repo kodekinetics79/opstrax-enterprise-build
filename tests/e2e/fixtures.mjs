@@ -1,12 +1,13 @@
 import { test as base, expect } from "@playwright/test";
 import { apiRequestMatchesTarget, assertRuntimeSignalsHealthy, assertStagingAuthConfigured } from "./lib/signals.mjs";
-import { assertRequestAllowed, authStateFor, mutationGate, resolveTarget } from "./lib/target.mjs";
+import { assertRequestAllowed, authStateFor, iotLifecycleGate, mutationGate, resolveTarget } from "./lib/target.mjs";
 
 const target = resolveTarget(process.env);
 
 export const test = base.extend({
   target: [target, { scope: "worker" }],
   mutationGate: [mutationGate(target, process.env), { scope: "worker" }],
+  iotLifecycleGate: [iotLifecycleGate(target, process.env), { scope: "worker" }],
   storageState: async ({ workerStorageState }, use) => use(workerStorageState),
   workerStorageState: [async ({}, use, workerInfo) => {
     const role = String(workerInfo.project.metadata?.role || "anonymous");

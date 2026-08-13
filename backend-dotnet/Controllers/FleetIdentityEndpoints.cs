@@ -9,7 +9,7 @@ public static partial class EndpointMappings
 {
     private sealed record DeviceInstallationCreateBody(
         long VehicleId,
-        string DeviceRole = "GPS",
+        string DeviceRole,
         bool IsPrimary = true,
         DateTimeOffset? EffectiveFrom = null,
         string? InstallationLocation = null,
@@ -33,7 +33,7 @@ public static partial class EndpointMappings
         long? CurrentInstallationId,
         string RemovalReason,
         string AssignmentReason,
-        string DeviceRole = "GPS",
+        string DeviceRole,
         bool IsPrimary = true,
         DateTimeOffset? EffectiveAt = null,
         string? InstallationLocation = null,
@@ -47,9 +47,21 @@ public static partial class EndpointMappings
         string? CorrectedDeviceSerial = null,
         string? CorrectedImei = null);
 
+    private sealed record DeviceInstallationEvidenceBody(
+        string EvidenceType,
+        string ObjectKey,
+        string Sha256,
+        DateTimeOffset? CapturedAt = null);
+
     private static readonly HashSet<string> InstallationRoles = new(StringComparer.OrdinalIgnoreCase)
     {
         "GPS", "ELD", "Dashcam", "OBD-II", "J1939/CAN", "Temperature", "Fuel", "Tire", "BLE Gateway", "Other"
+    };
+
+    private static readonly HashSet<string> InstallationEvidenceTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "installation-photo", "serial-label", "wiring-photo", "technician-checklist",
+        "commissioning-report", "removal-photo"
     };
 
     private static async Task<IResult> DeviceInstallationHistory(
@@ -74,23 +86,132 @@ public static partial class EndpointMappings
               WHERE i.company_id=@cid AND i.device_id=@did
               ORDER BY i.effective_from DESC,i.id DESC",
             c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@did", id); }, ct);
+        var evidence = await db.QueryAsync(
+            @"SELECT e.id,e.installation_id,e.evidence_type,e.object_key,e.sha256,e.captured_at,e.captured_by
+                FROM device_installation_evidence e
+                JOIN device_installations i ON i.id=e.installation_id AND i.company_id=e.company_id
+               WHERE e.company_id=@cid AND i.device_id=@did
+               ORDER BY e.captured_at DESC,e.id DESC",
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@did", id); }, ct);
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             currentInstallation = rows.FirstOrDefault(row =>
                 row.GetValueOrDefault("effectiveTo") is null or DBNull &&
                 row.GetValueOrDefault("status")?.ToString() is "Installed" or "Verified"),
-            installationHistory = rows
+            installationHistory = rows,
+            installationEvidence = evidence
         }, "Device installations"));
+    }
+
+    private static async Task<IResult> DeviceInstallationEvidenceList(
+        HttpContext http, long id, long installationId, Database db, CancellationToken ct)
+    {
+        if (RequirePermission(http, "telemetry.devices.read") is { } denied) return denied;
+        var companyId = GetCompanyId(http);
+        var branchId = GetBranchId(http);
+        if (await InstallationVisibleAsync(db, companyId, branchId, id, installationId, ct) == 0)
+            return Results.NotFound(ApiResponse<object>.Fail("Installation not found"));
+        var rows = await db.QueryAsync(
+            @"SELECT id,installation_id,evidence_type,object_key,sha256,captured_at,captured_by
+                FROM device_installation_evidence
+               WHERE company_id=@cid AND installation_id=@iid
+               ORDER BY captured_at DESC,id DESC",
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@iid", installationId); }, ct);
+        return Results.Ok(ApiResponse<object>.Ok(rows, "Installation evidence"));
+    }
+
+    private static async Task<IResult> DeviceInstallationEvidenceCreate(
+        HttpContext http, long id, long installationId, DeviceInstallationEvidenceBody body,
+        Database db, AuditService audit, CancellationToken ct)
+    {
+        if (RequirePermission(http, "telemetry.devices.manage") is { } denied) return denied;
+        var evidenceType = Clean(body.EvidenceType)?.ToLowerInvariant();
+        var objectKey = Clean(body.ObjectKey);
+        var sha256 = Clean(body.Sha256)?.ToLowerInvariant();
+        if (evidenceType is null || !InstallationEvidenceTypes.Contains(evidenceType))
+            return Results.BadRequest(ApiResponse<object>.Fail("Unsupported installation evidence type"));
+        if (objectKey is null || objectKey.Length > 1024 || objectKey.StartsWith('/') || objectKey.Contains('\\') ||
+            objectKey.Contains("..", StringComparison.Ordinal) ||
+            objectKey.Contains("%2e", StringComparison.OrdinalIgnoreCase) ||
+            Uri.TryCreate(objectKey, UriKind.Absolute, out _))
+            return Results.BadRequest(ApiResponse<object>.Fail("objectKey must be a relative governed-storage key"));
+        if (sha256 is null || sha256.Length != 64 || !sha256.All(Uri.IsHexDigit))
+            return Results.BadRequest(ApiResponse<object>.Fail("sha256 must contain exactly 64 hexadecimal characters"));
+        var capturedAt = body.CapturedAt?.ToUniversalTime() ?? DateTimeOffset.UtcNow;
+        if (capturedAt > DateTimeOffset.UtcNow.AddMinutes(5))
+            return Results.BadRequest(ApiResponse<object>.Fail("Evidence capture time cannot be in the future"));
+
+        var companyId = GetCompanyId(http);
+        var branchId = GetBranchId(http);
+        var actorId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+        return await db.RunInTenantTransactionAsync(companyId, async () =>
+        {
+            await LockInstallationIdentityAsync(db, companyId, id, null, ct);
+            var installation = await db.QuerySingleAsync(
+                @"SELECT i.id,i.branch_id,i.effective_from,i.effective_to
+                    FROM device_installations i
+                    JOIN eld_devices d ON d.id=i.device_id AND d.company_id=i.company_id
+                   WHERE i.id=@iid AND i.device_id=@did AND i.company_id=@cid
+                     AND (@branch::BIGINT IS NULL OR d.branch_id=@branch)
+                   FOR SHARE OF i",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@iid", installationId); c.Parameters.AddWithValue("@did", id);
+                    c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branch", (object?)branchId ?? DBNull.Value);
+                }, ct);
+            if (installation is null) return Results.NotFound(ApiResponse<object>.Fail("Installation not found"));
+            var effectiveFrom = new DateTimeOffset(Convert.ToDateTime(installation["effectiveFrom"]).ToUniversalTime());
+            if (capturedAt < effectiveFrom)
+                return Results.BadRequest(ApiResponse<object>.Fail("Evidence capture time cannot predate the installation"));
+            if (evidenceType == "removal-photo" && installation["effectiveTo"] is (null or DBNull))
+                return Results.Conflict(ApiResponse<object>.Fail("Removal evidence can only be attached after the installation is removed"));
+
+            var existing = await db.QuerySingleAsync(
+                @"SELECT id,installation_id,evidence_type,object_key,sha256,captured_at,captured_by
+                    FROM device_installation_evidence
+                   WHERE company_id=@cid AND installation_id=@iid AND evidence_type=@type AND sha256=@sha
+                   ORDER BY id LIMIT 1",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@iid", installationId);
+                    c.Parameters.AddWithValue("@type", evidenceType); c.Parameters.AddWithValue("@sha", sha256);
+                }, ct);
+            if (existing is not null)
+                return Results.Ok(ApiResponse<object>.Ok(existing, "Installation evidence already recorded"));
+
+            var evidenceId = await db.InsertAsync(
+                @"INSERT INTO device_installation_evidence
+                    (company_id,branch_id,installation_id,evidence_type,object_key,sha256,captured_at,captured_by)
+                  VALUES (@cid,@branch,@iid,@type,@key,@sha,@captured,@actor)",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@cid", companyId);
+                    c.Parameters.AddWithValue("@branch", installation["branchId"] ?? DBNull.Value);
+                    c.Parameters.AddWithValue("@iid", installationId); c.Parameters.AddWithValue("@type", evidenceType);
+                    c.Parameters.AddWithValue("@key", objectKey); c.Parameters.AddWithValue("@sha", sha256);
+                    c.Parameters.AddWithValue("@captured", capturedAt);
+                    c.Parameters.AddWithValue("@actor", actorId > 0 ? actorId : DBNull.Value);
+                }, ct);
+            await audit.LogAsync(http, "device.installation.evidence.created", "DeviceInstallation", installationId,
+                System.Text.Json.JsonSerializer.Serialize(new { deviceId = id, evidenceId, evidenceType, sha256 }), ct);
+            return Results.Created($"/api/telemetry/devices/{id}/installations/{installationId}/evidence/{evidenceId}",
+                ApiResponse<object>.Ok(new { id = evidenceId, installationId, evidenceType, objectKey, sha256, capturedAt }));
+        }, ct);
     }
 
     private static async Task<IResult> DeviceInstallationCreate(
         HttpContext http, long id, DeviceInstallationCreateBody body, Database db, AuditService audit, CancellationToken ct)
     {
         if (RequirePermission(http, "telemetry.devices.manage") is { } denied) return denied;
-        if (!InstallationRoles.Contains(body.DeviceRole.Trim()))
+        if (Clean(body.DeviceRole) is not { } requestedRole || !InstallationRoles.Contains(requestedRole))
             return Results.BadRequest(ApiResponse<object>.Fail("Unsupported device role"));
-        if (body.OdometerAtInstallation is < 0)
-            return Results.BadRequest(ApiResponse<object>.Fail("Installation odometer cannot be negative"));
+        if (body.OdometerAtInstallation is < 0 or > 9_999_999_999.99m)
+            return Results.BadRequest(ApiResponse<object>.Fail("Installation odometer is outside the supported range"));
+        if (!ValidLength(body.InstallationLocation, 160) || !ValidLength(body.CommissioningMethod, 80) ||
+            !ValidLength(body.AssignmentReason, 500) || !ValidLength(body.IdempotencyKey, 120))
+            return Results.BadRequest(ApiResponse<object>.Fail("Installation metadata exceeds its supported length"));
+        if (Clean(body.AssignmentReason) is not { Length: >= 4 })
+            return Results.BadRequest(ApiResponse<object>.Fail("Assignment reason must contain at least 4 characters"));
         var effectiveFrom = body.EffectiveFrom?.ToUniversalTime() ?? DateTimeOffset.UtcNow;
         if (effectiveFrom > DateTimeOffset.UtcNow)
             return Results.BadRequest(ApiResponse<object>.Fail("Installation effective time cannot be in the future"));
@@ -183,28 +304,50 @@ public static partial class EndpointMappings
             return Results.BadRequest(ApiResponse<object>.Fail("Commissioning result must be Passed or Failed"));
         if (body.ExpectedRowVersion is null or <= 0)
             return Results.BadRequest(ApiResponse<object>.Fail("expectedRowVersion is required for commissioning"));
+        if (!ValidLength(body.VerificationReference, 500) ||
+            (result == "failed" && Clean(body.VerificationReference) is not { Length: >= 8 }))
+            return Results.BadRequest(ApiResponse<object>.Fail("Failed commissioning requires a failure reference of 8 to 500 characters"));
         var companyId = GetCompanyId(http);
         var actorId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
         return await db.RunInTenantTransactionAsync(companyId, async () =>
         {
-            var affected = await db.ExecuteAsync(
+            Dictionary<string, object?>? telemetryProof = null;
+            if (result == "passed")
+            {
+                telemetryProof = await db.QuerySingleAsync(
+                    @"SELECT proof_reference,event_time FROM (
+                          SELECT 'location-event:'||id::TEXT proof_reference,event_time
+                            FROM location_events
+                           WHERE company_id=@cid AND installation_id=@iid
+                          UNION ALL
+                          SELECT 'canonical-telemetry:'||id::TEXT proof_reference,event_time
+                            FROM canonical_telemetry_events
+                           WHERE company_id=@cid AND installation_id=@iid
+                       ) proof ORDER BY event_time DESC LIMIT 1",
+                    c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@iid", installationId); }, ct);
+                if (telemetryProof is null)
+                    return Results.Conflict(ApiResponse<object>.Fail("Commissioning requires a persisted authenticated telemetry event from this installation"));
+            }
+            var proofReference = telemetryProof?["proofReference"]?.ToString() ?? Clean(body.VerificationReference);
+            var updated = await db.QuerySingleAsync(
                 @"UPDATE device_installations
                   SET status=CASE WHEN @passed THEN 'Verified' ELSE 'Failed' END,
                       commissioning_result=CASE WHEN @passed THEN 'Passed' ELSE 'Failed' END,
-                      verification_reference=COALESCE(@reference,verification_reference),
+                      verification_reference=@reference,
                       failure_reason=CASE WHEN @passed THEN NULL ELSE COALESCE(@reference,'Commissioning failed') END,
                       updated_at=NOW(),row_version=row_version+1
                   WHERE id=@iid AND device_id=@did AND company_id=@cid AND effective_to IS NULL
                     AND status='Installed' AND row_version=@version
-                    AND (NOT @passed OR activation_verified_at IS NOT NULL)",
+                    AND (NOT @passed OR activation_verified_at IS NOT NULL)
+                  RETURNING status,commissioning_result,verification_reference,activation_verified_at,row_version,updated_at",
                 c =>
                 {
                     c.Parameters.AddWithValue("@iid", installationId); c.Parameters.AddWithValue("@did", id);
                     c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@passed", result == "passed");
-                    c.Parameters.AddWithValue("@reference", (object?)Clean(body.VerificationReference) ?? DBNull.Value);
+                    c.Parameters.AddWithValue("@reference", (object?)proofReference ?? DBNull.Value);
                     c.Parameters.AddWithValue("@version", (object?)body.ExpectedRowVersion ?? DBNull.Value);
                 }, ct);
-            if (affected == 0)
+            if (updated is null)
                 return Results.Conflict(ApiResponse<object>.Fail(result == "passed"
                     ? "Commissioning requires the expected row version and an authenticated device heartbeat"
                     : "Installation not found, closed, or changed"));
@@ -216,8 +359,16 @@ public static partial class EndpointMappings
                 result == "passed" ? "Verified" : "Quarantined", actorId, "commissioning", body.VerificationReference,
                 http.TraceIdentifier, ct);
             await audit.LogAsync(http, "device.installation.commissioned", "DeviceInstallation", installationId,
-                System.Text.Json.JsonSerializer.Serialize(new { deviceId = id, result }), ct);
-            return Results.Ok(ApiResponse<object>.Ok(new { id = installationId, status = result == "passed" ? "Verified" : "Failed" }));
+                System.Text.Json.JsonSerializer.Serialize(new { deviceId = id, result, proofReference, operatorReference = Clean(body.VerificationReference) }), ct);
+            return Results.Ok(ApiResponse<object>.Ok(new
+            {
+                id = installationId,
+                status = updated["status"],
+                commissioningResult = updated["commissioningResult"],
+                verificationReference = updated["verificationReference"],
+                activationVerifiedAt = updated["activationVerifiedAt"],
+                rowVersion = updated["rowVersion"]
+            }));
         }, ct);
     }
 
@@ -228,6 +379,8 @@ public static partial class EndpointMappings
         if (RequirePermission(http, "telemetry.devices.manage") is { } denied) return denied;
         if (string.IsNullOrWhiteSpace(body.RemovalReason))
             return Results.BadRequest(ApiResponse<object>.Fail("Removal reason is required"));
+        if (Clean(body.RemovalReason) is not { Length: >= 4 } || !ValidLength(body.RemovalReason, 500))
+            return Results.BadRequest(ApiResponse<object>.Fail("Removal reason must contain 4 to 500 characters"));
         if (body.ExpectedRowVersion is null or <= 0)
             return Results.BadRequest(ApiResponse<object>.Fail("expectedRowVersion is required for removal"));
         var effectiveTo = body.EffectiveTo?.ToUniversalTime() ?? DateTimeOffset.UtcNow;
@@ -274,8 +427,15 @@ public static partial class EndpointMappings
         if (RequirePermission(http, "telemetry.devices.manage") is { } denied) return denied;
         if (string.IsNullOrWhiteSpace(body.RemovalReason) || string.IsNullOrWhiteSpace(body.AssignmentReason))
             return Results.BadRequest(ApiResponse<object>.Fail("Removal and assignment reasons are required"));
-        if (!InstallationRoles.Contains(body.DeviceRole.Trim()))
+        if (Clean(body.RemovalReason) is not { Length: >= 4 } || !ValidLength(body.RemovalReason, 500) ||
+            Clean(body.AssignmentReason) is not { Length: >= 4 } || !ValidLength(body.AssignmentReason, 500))
+            return Results.BadRequest(ApiResponse<object>.Fail("Removal and assignment reasons must contain 4 to 500 characters"));
+        if (Clean(body.DeviceRole) is not { } requestedRole || !InstallationRoles.Contains(requestedRole))
             return Results.BadRequest(ApiResponse<object>.Fail("Unsupported device role"));
+        if (body.OdometerAtInstallation is < 0 or > 9_999_999_999.99m ||
+            !ValidLength(body.InstallationLocation, 160) || !ValidLength(body.CommissioningMethod, 80) ||
+            !ValidLength(body.IdempotencyKey, 120))
+            return Results.BadRequest(ApiResponse<object>.Fail("Transfer installation metadata is invalid"));
         if (body.CurrentInstallationId is null or <= 0 || body.ExpectedRowVersion is null or <= 0)
             return Results.BadRequest(ApiResponse<object>.Fail("currentInstallationId and expectedRowVersion are required for transfer"));
         var companyId = GetCompanyId(http);
@@ -373,6 +533,19 @@ public static partial class EndpointMappings
     private static Task<long> DeviceVisibleAsync(Database db, long companyId, long? branchId, long deviceId, CancellationToken ct) =>
         db.ScalarLongAsync("SELECT COUNT(*) FROM eld_devices WHERE id=@id AND company_id=@cid AND deleted_at IS NULL AND (@branch::bigint IS NULL OR branch_id=@branch)",
             c => { c.Parameters.AddWithValue("@id", deviceId); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branch", (object?)branchId ?? DBNull.Value); }, ct);
+
+    private static Task<long> InstallationVisibleAsync(
+        Database db, long companyId, long? branchId, long deviceId, long installationId, CancellationToken ct) =>
+        db.ScalarLongAsync(
+            @"SELECT COUNT(*) FROM device_installations i
+                JOIN eld_devices d ON d.id=i.device_id AND d.company_id=i.company_id
+               WHERE i.id=@iid AND i.device_id=@did AND i.company_id=@cid
+                 AND d.deleted_at IS NULL AND (@branch::BIGINT IS NULL OR d.branch_id=@branch)",
+            c =>
+            {
+                c.Parameters.AddWithValue("@iid", installationId); c.Parameters.AddWithValue("@did", deviceId);
+                c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branch", (object?)branchId ?? DBNull.Value);
+            }, ct);
 
     private static Task<long> VehicleVisibleAsync(Database db, long companyId, long? branchId, long vehicleId, CancellationToken ct) =>
         db.ScalarLongAsync("SELECT COUNT(*) FROM vehicles WHERE id=@id AND company_id=@cid AND deleted_at IS NULL AND (@branch::bigint IS NULL OR branch_id=@branch)",
@@ -581,6 +754,11 @@ public static partial class EndpointMappings
 
     private static string NormalizeInstallationRole(string role) => InstallationRoles.First(candidate => candidate.Equals(role.Trim(), StringComparison.OrdinalIgnoreCase));
     private static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    private static bool ValidLength(string? value, int maximum)
+    {
+        var cleaned = Clean(value);
+        return cleaned is null || cleaned.Length <= maximum;
+    }
     private static Guid CorrelationUuid(string value)
     {
         if (Guid.TryParse(value,out var parsed)) return parsed;

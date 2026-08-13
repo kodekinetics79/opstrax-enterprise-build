@@ -147,7 +147,7 @@ jobs:
         run: npm run test:guard
         working-directory: tests/e2e
       - name: Compile and enumerate all Playwright journeys
-        run: npm run test:list
+        run: npm run test:inventory
         working-directory: tests/e2e
       - name: Install pinned Playwright Chromium
         run: npx playwright install --with-deps chromium

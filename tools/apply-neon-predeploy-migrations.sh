@@ -77,6 +77,11 @@ fi
 command -v psql >/dev/null || { echo "ERROR: psql not found. brew install libpq (or run via docker exec)." >&2; exit 1; }
 
 MIGRATIONS=(
+  # The dated migrations are additive overlays. A genuinely empty Neon database
+  # must first receive the canonical 001 predecessor that owns core tables such
+  # as jobs, trips, users, vehicles and eld_devices. Without this bootstrap the
+  # old runner reached Stage 6 and failed at ALTER TABLE jobs.
+  ../init/001_schema
   # A clean protected database never runs owner-capable runtime schema services.
   # Package the complete pre-RLS foundation explicitly before the security cutover.
   2026_06_27_stage5_p0b1a_foundation
@@ -152,6 +157,9 @@ stage58_already_applied=$(psql "$NEON_PG_URI" -tA -c "SELECT CASE WHEN to_regcla
 for m in "${MIGRATIONS[@]}"; do
   f="database/migrations/$m.sql"
   ledger_version="$m"
+  if [ "$m" = "../init/001_schema" ]; then
+    ledger_version="database_init_001_schema"
+  fi
   case "$m" in
     telematics/*) ledger_version="telematics_$(basename "$m")" ;;
   esac

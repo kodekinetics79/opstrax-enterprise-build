@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { apiRequestMatchesTarget, assertRuntimeSignalsHealthy, assertStagingAuthConfigured, isAllowedRequestFailure } from "../lib/signals.mjs";
-import { assertRequestAllowed, authStateFor, mutationGate, resolveTarget } from "../lib/target.mjs";
+import { assertRequestAllowed, authStateFor, iotLifecycleGate, mutationGate, resolveTarget } from "../lib/target.mjs";
 
 const base = {
   E2E_TARGET_ENV: "staging",
@@ -110,6 +110,36 @@ test("mutation gate requires explicit membership for both staging hosts", () => 
   });
   assert.equal(gated.enabled, false);
   assert.match(gated.reasons.join(" "), /not both in E2E_STAGING_HOSTS/);
+});
+
+test("IoT lifecycle gate requires two vehicles, an explicit role, a second tenant, and destructive acknowledgement", () => {
+  const target = resolveTarget(base);
+  const common = {
+    ...base,
+    E2E_ALLOW_STAGING_MUTATIONS: "true",
+    E2E_DISPOSABLE_TENANT_ACK: "I_UNDERSTAND_THIS_WRITES_TEST_DATA",
+    E2E_TENANT_AUTH_STATE: "playwright/.auth/tenant.json",
+    E2E_CANARY_VEHICLE_ID: "42",
+    E2E_IOT_LIFECYCLE_ACK: "I_UNDERSTAND_THIS_PROVISIONS_AND_REVOKES_A_REAL_DEVICE",
+    E2E_IOT_SOURCE_VEHICLE_ID: "42",
+    E2E_IOT_TARGET_VEHICLE_ID: "43",
+    E2E_IOT_DEVICE_CATEGORY: "GPS",
+    E2E_IOT_DEVICE_ROLE: "GPS",
+  };
+  assert.match(iotLifecycleGate(target, common).reasons.join(" "), /cross-tenant auth state/i);
+  const gated = iotLifecycleGate(target, {
+    ...common,
+    E2E_IOT_TARGET_VEHICLE_ID: "42",
+    E2E_CROSS_TENANT_AUTH_STATE: "/definitely/missing/other.json",
+  });
+  assert.match(gated.reasons.join(" "), /must differ/i);
+  assert.match(gated.reasons.join(" "), /file is missing/i);
+  const roleMismatch = iotLifecycleGate(target, {
+    ...common,
+    E2E_IOT_DEVICE_CATEGORY: "Dashcam",
+    E2E_CROSS_TENANT_AUTH_STATE: "/definitely/missing/other.json",
+  });
+  assert.match(roleMismatch.reasons.join(" "), /category and installation role must match/i);
 });
 
 test("auth-state paths are absent unless the configured file exists", () => {

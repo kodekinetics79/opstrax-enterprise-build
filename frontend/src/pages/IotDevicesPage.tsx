@@ -10,7 +10,6 @@ import {
   Copy,
   Cpu,
   Download,
-  FileUp,
   KeyRound,
   PlugZap,
   Plus,
@@ -23,7 +22,6 @@ import {
   Trash2,
   Truck,
   WifiOff,
-  Wrench,
   X,
 } from "lucide-react";
 import { useNavigate } from "react-router";
@@ -34,8 +32,12 @@ import { vehiclesApi } from "@/services/vehiclesApi";
 import {
   telematicsService,
   type DeviceCommandRecord,
+  type DeviceCommissioningInput,
+  type DeviceCredentialRotationResult,
   type DeviceDetailRecord,
   type DeviceIdentityQuarantineRecord,
+  type DeviceInstallationInput,
+  type DeviceInstallationRemovalInput,
   type DeviceProvisionResult,
 } from "@/services/telematicsService";
 import type { AnyRecord } from "@/types";
@@ -53,19 +55,61 @@ type DeviceTab =
   | "data-health"
   | "providers";
 
-type FirmwareFormState = {
-  targetVersion: string;
-  scheduledFor: string;
+type InstallationFormState = {
+  vehicleId: string;
+  deviceRole: string;
+  primaryDesignation: "" | "primary" | "secondary";
+  effectiveAt: string;
+  installationLocation: string;
+  odometerAtInstallation: string;
+  commissioningMethod: string;
+  assignmentReason: string;
+  removalReason: string;
 };
 
+type RemovalFormState = {
+  effectiveTo: string;
+  removalReason: string;
+};
+
+type CommissioningFormState = {
+  result: "" | DeviceCommissioningInput["result"];
+  verificationReference: string;
+};
+
+const INSTALLATION_ROLES = ["GPS", "ELD", "Dashcam", "OBD-II", "J1939/CAN", "Temperature", "Fuel", "Tire", "BLE Gateway", "Other"];
+
+const defaultInstallationForm: InstallationFormState = {
+  vehicleId: "",
+  deviceRole: "",
+  primaryDesignation: "",
+  effectiveAt: "",
+  installationLocation: "",
+  odometerAtInstallation: "",
+  commissioningMethod: "",
+  assignmentReason: "",
+  removalReason: "",
+};
+
+const defaultRemovalForm: RemovalFormState = { effectiveTo: "", removalReason: "" };
+const defaultCommissioningForm: CommissioningFormState = { result: "", verificationReference: "" };
+
+function toUtcIso(localDateTime: string, field: string) {
+  const parsed = new Date(localDateTime);
+  if (!localDateTime || Number.isNaN(parsed.getTime())) throw new Error(`Enter a valid ${field}.`);
+  return parsed.toISOString();
+}
+
 // Minimal, honest inputs for INITIATING A CONNECTION (the Render/Vercel model).
-// The device serial is the real key the backend provisions credentials against.
+// The device serial is the real key and the governed hardware category is required;
+// the product must not infer GPS merely because a device is connected here.
 // IMEI is collected too (optional): hardware GPS trackers (GT06/Concox/PT40-class)
 // are resolved by IMEI at the trusted-gateway ingest, so onboarding one end-to-end
 // needs it. SIM/firmware/power/compliance remain out of the connection handshake.
 type ConnectFormState = {
   serialNumber: string;
   imei: string;
+  deviceCategory: string;
   provider: string;
   deviceModel: string;
 };
@@ -73,6 +117,7 @@ type ConnectFormState = {
 const defaultConnectForm: ConnectFormState = {
   serialNumber: "",
   imei: "",
+  deviceCategory: "",
   provider: "",
   deviceModel: "",
 };
@@ -144,34 +189,34 @@ function buildActionContracts(
     canUpdate,
     canDelete,
     canAssign,
-    canDiagnostics,
+    canManageLifecycle,
     canRecover,
-    canFirmware,
     onAssign,
     onUnassign,
     onArchive,
     onMarkInstalled,
-    onRunDiagnostics,
     onRefresh,
-    onScheduleFirmware,
     onFlagAttention,
     onResolve,
+    onSuspend,
+    onActivate,
+    onRotateSecret,
   }: {
     canUpdate: boolean;
     canDelete: boolean;
     canAssign: boolean;
-    canDiagnostics: boolean;
+    canManageLifecycle: boolean;
     canRecover: boolean;
-    canFirmware: boolean;
     onAssign: () => void;
     onUnassign: () => void;
     onArchive: () => void;
     onMarkInstalled: () => void;
-    onRunDiagnostics: () => void;
     onRefresh: () => void;
-    onScheduleFirmware: () => void;
     onFlagAttention: () => void;
     onResolve: () => void;
+    onSuspend: () => void;
+    onActivate: () => void;
+    onRotateSecret: () => void;
   },
 ) {
   // Recovery actions gate on the device's REAL ELD status, not the derived
@@ -198,7 +243,7 @@ function buildActionContracts(
       label: hasCurrentVehicle ? "Transfer" : "Install",
       icon: <ArrowRightLeft className="h-4 w-4" />,
       state: canAssign ? "ready" : "permission-blocked",
-      reason: canAssign ? "Permission is available." : "Requires TELEMATICS_DEVICES_ASSIGN.",
+      reason: canAssign ? "Governed installation permission is available." : "Requires device assignment plus TELEMETRY_DEVICES_MANAGE.",
       onClick: onAssign,
     },
     {
@@ -207,7 +252,7 @@ function buildActionContracts(
       icon: <Truck className="h-4 w-4" />,
       state: !canAssign ? "permission-blocked" : hasCurrentVehicle ? "ready" : "state-blocked",
       reason: !canAssign
-        ? "Requires TELEMATICS_DEVICES_ASSIGN."
+        ? "Requires device assignment plus TELEMETRY_DEVICES_MANAGE."
         : hasCurrentVehicle
           ? "Ready."
           : "No active vehicle assignment to remove.",
@@ -215,7 +260,7 @@ function buildActionContracts(
     },
     {
       key: "install",
-      label: "Verify installation",
+      label: "Record commissioning",
       icon: <CheckCircle2 className="h-4 w-4" />,
       state: !canAssign
         ? "permission-blocked"
@@ -223,31 +268,21 @@ function buildActionContracts(
           ? "state-blocked"
           : /verified/i.test(device.installStatus)
             ? "state-blocked"
-            : !device.installationActivationVerifiedAt
+            : device.currentInstallationRowVersion == null
               ? "state-blocked"
-              : device.currentInstallationRowVersion == null
-                ? "state-blocked"
             : "ready",
       reason: !canAssign
-        ? "Requires TELEMATICS_DEVICES_ASSIGN."
+        ? "Requires device assignment plus TELEMETRY_DEVICES_MANAGE."
         : !hasCurrentVehicle
           ? "Install the device on a vehicle first."
           : /verified/i.test(device.installStatus)
             ? "The current installation is already verified."
-            : !device.installationActivationVerifiedAt
-              ? "An authenticated device heartbeat must verify activation before commissioning."
-              : device.currentInstallationRowVersion == null
-                ? "Reload the device to obtain the installation row version before commissioning."
-                : "Commission the current installation with a verified result.",
+            : device.currentInstallationRowVersion == null
+              ? "Reload the device to obtain the installation row version before commissioning."
+              : device.installationActivationVerifiedAt
+                ? "Record the observed Passed or Failed result with evidence."
+                : "Record a Failed result now; Passed remains gated by an authenticated device heartbeat.",
       onClick: onMarkInstalled,
-    },
-    {
-      key: "diagnostics",
-      label: "On-demand diagnostics unavailable",
-      icon: <Wrench className="h-4 w-4" />,
-      state: "unsupported",
-      reason: "Diagnostic run endpoint is not connected in this pilot; DTC evidence is read-only.",
-      onClick: onRunDiagnostics,
     },
     {
       key: "refresh",
@@ -258,14 +293,34 @@ function buildActionContracts(
       onClick: onRefresh,
     },
     {
-      key: "firmware",
-      label: canFirmware ? "OTA unavailable" : "OTA unavailable",
-      icon: <FileUp className="h-4 w-4" />,
-      state: canFirmware ? "unsupported" : "permission-blocked",
-      reason: canFirmware
-        ? "Firmware scheduling endpoint is not connected in this pilot."
-        : "Requires TELEMATICS_DEVICES_FIRMWARE to reach firmware controls.",
-      onClick: onScheduleFirmware,
+      key: "device-state",
+      label: /suspended/.test(eldStatus) ? "Activate device" : "Suspend device",
+      icon: <ShieldCheck className="h-4 w-4" />,
+      state: !canManageLifecycle
+        ? "permission-blocked"
+        : /suspended/.test(eldStatus) || /active|diagnostic|malfunction/.test(eldStatus)
+          ? "ready"
+          : "state-blocked",
+      reason: !canManageLifecycle
+        ? "Requires TELEMETRY_DEVICES_MANAGE."
+        : /suspended/.test(eldStatus)
+          ? "Activate the suspended device through the persisted lifecycle endpoint."
+          : /active|diagnostic|malfunction/.test(eldStatus)
+            ? "Suspend ingestion for this device without deleting its history."
+            : `Suspend/activate is unavailable while the device is ${device.eldStatus || "in this state"}.`,
+      onClick: /suspended/.test(eldStatus) ? onActivate : onSuspend,
+    },
+    {
+      key: "rotate-secret",
+      label: "Rotate credentials",
+      icon: <KeyRound className="h-4 w-4" />,
+      state: canManageLifecycle && !/revoked|retired/.test(eldStatus) ? "ready" : canManageLifecycle ? "state-blocked" : "permission-blocked",
+      reason: !canManageLifecycle
+        ? "Requires TELEMETRY_DEVICES_MANAGE."
+        : /revoked|retired/.test(eldStatus)
+          ? "Credentials cannot be rotated for a revoked or retired device."
+          : "Generates a replacement API key and HMAC secret that are shown only once.",
+      onClick: onRotateSecret,
     },
     {
       key: inRecovery ? "resolve" : "needs-attention",
@@ -330,6 +385,8 @@ export function IotDevicesPage() {
   const canDelete = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_DELETE);
   const canAssign = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_ASSIGN);
   const canDiagnostics = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_DIAGNOSTICS);
+  const canManageDeviceLifecycle = hasPermission(PERMISSIONS.TELEMETRY_DEVICES_MANAGE);
+  const canGovernInstallations = canAssign && canManageDeviceLifecycle;
   // Recovery (mark/resolve malfunction) is gated server-side on
   // compliance:update | compliance:manage | telematics:manage — NOT maintenance:manage,
   // which the broader DIAGNOSTICS alias set includes. Gate the UI on the compliance set so
@@ -337,7 +394,6 @@ export function IotDevicesPage() {
   // telematics:manage admin without any compliance grant sees a disabled button rather than
   // a 403 — the safe failure direction.)
   const canRecover = hasPermission(PERMISSIONS.COMPLIANCE_UPDATE);
-  const canFirmware = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_FIRMWARE);
   const canExport = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_EXPORT);
   const canManageProviders = hasPermission(PERMISSIONS.TELEMATICS_PROVIDERS_MANAGE);
 
@@ -351,9 +407,12 @@ export function IotDevicesPage() {
   // Populated ONLY by a real provisionDevice() response.
   const [provisionResult, setProvisionResult] = useState<DeviceProvisionResult | null>(null);
   const [assignTarget, setAssignTarget] = useState<DeviceCommandRecord | null>(null);
-  const [assignVehicleId, setAssignVehicleId] = useState("");
-  const [firmwareTarget, setFirmwareTarget] = useState<DeviceCommandRecord | null>(null);
-  const [firmwareForm, setFirmwareForm] = useState<FirmwareFormState>({ targetVersion: "", scheduledFor: "" });
+  const [installationForm, setInstallationForm] = useState<InstallationFormState>(defaultInstallationForm);
+  const [removalTarget, setRemovalTarget] = useState<DeviceCommandRecord | null>(null);
+  const [removalForm, setRemovalForm] = useState<RemovalFormState>(defaultRemovalForm);
+  const [commissionTarget, setCommissionTarget] = useState<DeviceCommandRecord | null>(null);
+  const [commissioningForm, setCommissioningForm] = useState<CommissioningFormState>(defaultCommissioningForm);
+  const [rotatedCredentials, setRotatedCredentials] = useState<DeviceCredentialRotationResult | null>(null);
   const [attentionTarget, setAttentionTarget] = useState<DeviceCommandRecord | null>(null);
   const [attentionNotes, setAttentionNotes] = useState("");
   const [quarantineTarget, setQuarantineTarget] = useState<DeviceIdentityQuarantineRecord | null>(null);
@@ -390,6 +449,7 @@ export function IotDevicesPage() {
       telematicsService.provisionDevice({
         serialNumber: payload.serialNumber.trim(),
         imei: payload.imei.trim(),
+        deviceCategory: payload.deviceCategory,
         provider: payload.provider.trim(),
         deviceName: payload.deviceModel.trim() || payload.serialNumber.trim(),
         deviceType: payload.deviceModel.trim() || "Device",
@@ -411,43 +471,29 @@ export function IotDevicesPage() {
     },
   });
   const assignMut = useMutation({
-    mutationFn: ({ deviceId, vehicleId }: { deviceId: string | number; vehicleId: string }) => telematicsService.assignDeviceToVehicle(deviceId, vehicleId),
+    mutationFn: ({ deviceId, input }: { deviceId: string | number; input: DeviceInstallationInput }) => telematicsService.assignDeviceToVehicle(deviceId, input),
     onSuccess: async () => {
       setAssignTarget(null);
-      setAssignVehicleId("");
+      setInstallationForm(defaultInstallationForm);
       setNotice("Device installation updated successfully.");
       await refreshAll();
     },
   });
-  // Some device operations have no persistence endpoint in the current backend, so
-  // the service returns { success:false, reason }. We surface that HONESTLY rather
-  // than claiming a success the backend never performed. When (and only when) a real
-  // endpoint is added and the service starts returning success, the same handler
-  // shows the confirmation. `okNotice`/`failNotice` are the truthful messages.
-  const noticeFromResult = (
-    result: unknown,
-    okNotice: string,
-    failNotice: string,
-  ) => {
-    const ok = !(result && typeof result === "object" && "success" in result && (result as { success?: boolean }).success === false);
-    if (ok) {
-      setNotice(okNotice);
-    } else {
-      const reason = (result as { reason?: string }).reason;
-      setNotice(reason ? `${failNotice} (${reason})` : failNotice);
-    }
-  };
   const unassignMut = useMutation({
-    mutationFn: (deviceId: string | number) => telematicsService.unassignDevice(deviceId),
-    onSuccess: async (result) => {
-      noticeFromResult(result, "Device installation removed successfully.", "Installation removal was not completed.");
+    mutationFn: ({ deviceId, input }: { deviceId: string | number; input: DeviceInstallationRemovalInput }) => telematicsService.unassignDevice(deviceId, input),
+    onSuccess: async () => {
+      setRemovalTarget(null);
+      setRemovalForm(defaultRemovalForm);
+      setNotice("Device installation removed successfully.");
       await refreshAll();
     },
   });
   const installMut = useMutation({
-    mutationFn: (deviceId: string | number) => telematicsService.markInstalled(deviceId),
-    onSuccess: async (result) => {
-      noticeFromResult(result, "Installation verified successfully.", "Installation verification was not completed.");
+    mutationFn: ({ deviceId, input }: { deviceId: string | number; input: DeviceCommissioningInput }) => telematicsService.markInstalled(deviceId, input),
+    onSuccess: async () => {
+      setCommissionTarget(null);
+      setCommissioningForm(defaultCommissioningForm);
+      setNotice("Commissioning result recorded successfully.");
       await refreshAll();
     },
   });
@@ -465,39 +511,38 @@ export function IotDevicesPage() {
       await refreshAll();
     },
   });
-  const lifecycleError = assignMut.error ?? unassignMut.error ?? installMut.error;
+  const refreshMut = useMutation({
+    mutationFn: (deviceId: string | number) => telematicsService.refreshDeviceStatus(deviceId),
+    onSuccess: async () => {
+      setNotice("Device status refreshed.");
+      await refreshAll();
+    },
+  });
+  const suspendMut = useMutation({
+    mutationFn: (deviceId: string | number) => telematicsService.suspendDevice(deviceId),
+    onSuccess: async () => { setNotice("Device suspended. New ingestion is blocked until activation."); await refreshAll(); },
+  });
+  const activateMut = useMutation({
+    mutationFn: (deviceId: string | number) => telematicsService.activateDevice(deviceId),
+    onSuccess: async () => { setNotice("Device activated."); await refreshAll(); },
+  });
+  const rotateSecretMut = useMutation({
+    mutationFn: (deviceId: string | number) => telematicsService.rotateDeviceSecret(deviceId),
+    onSuccess: (result) => setRotatedCredentials(result),
+  });
+  const lifecycleError = assignMut.error ?? unassignMut.error ?? installMut.error ?? suspendMut.error ?? activateMut.error ?? rotateSecretMut.error;
   const clearLifecycleError = () => {
     assignMut.reset();
     unassignMut.reset();
     installMut.reset();
+    suspendMut.reset();
+    activateMut.reset();
+    rotateSecretMut.reset();
   };
-  const diagnosticsMut = useMutation({
-    mutationFn: (deviceId: string | number) => telematicsService.runDeviceDiagnostics(deviceId),
-    onSuccess: async (result) => {
-      noticeFromResult(result, "Diagnostics completed.", "On-demand diagnostics are not available for this device yet.");
-      await refreshAll();
-    },
-  });
-  const refreshMut = useMutation({
-    mutationFn: (deviceId: string | number) => telematicsService.refreshDeviceStatus(deviceId),
-    onSuccess: async (result) => {
-      noticeFromResult(result, "Device status refreshed.", "Manual status refresh is not available for this device yet.");
-      await refreshAll();
-    },
-  });
-  const firmwareMut = useMutation({
-    mutationFn: ({ id, payload }: { id: string | number; payload: FirmwareFormState }) => telematicsService.scheduleFirmwareUpdate(id, payload),
-    onSuccess: async (result) => {
-      setFirmwareTarget(null);
-      setFirmwareForm({ targetVersion: "", scheduledFor: "" });
-      noticeFromResult(result, "Firmware update scheduled.", "Firmware scheduling is not available for this device yet.");
-      await refreshAll();
-    },
-  });
   const providerSyncMut = useMutation({
     mutationFn: (providerId: string | number) => telematicsService.syncProvider(providerId),
-    onSuccess: async (result) => {
-      noticeFromResult(result, "Provider sync completed.", "Provider sync is not available yet.");
+    onSuccess: async () => {
+      setNotice("Provider sync completed.");
       await refreshAll();
     },
   });
@@ -528,6 +573,7 @@ export function IotDevicesPage() {
         const haystack = [
           row.deviceName,
           row.deviceType,
+          row.deviceCategory,
           row.provider,
           row.serialNumber,
           row.identifier,
@@ -560,6 +606,11 @@ export function IotDevicesPage() {
   const openConnect = () => {
     setConnectForm(defaultConnectForm);
     setConnectOpen(true);
+  };
+
+  const openInstallation = (device: DeviceCommandRecord) => {
+    setAssignTarget(device);
+    setInstallationForm(defaultInstallationForm);
   };
 
   // Close the pairing panel and land the user on the freshly connected device.
@@ -677,8 +728,8 @@ export function IotDevicesPage() {
                       <td className="px-4 py-3">
                         <button
                           className="btn-primary py-2 text-xs"
-                          disabled={!canAssign}
-                          title={actionTitle(canAssign, "Review evidence and resolve this quarantined identity.")}
+                          disabled={!canGovernInstallations}
+                          title={actionTitle(canGovernInstallations, "Review evidence and resolve this quarantined identity.")}
                           onClick={() => {
                             setQuarantineTarget(row);
                             setQuarantineResolution({ resolutionNotes: "", correctedDeviceSerial: row.deviceSerial ?? "", correctedImei: row.imei ?? "" });
@@ -754,7 +805,7 @@ export function IotDevicesPage() {
                     <td className="px-4 py-3">
                       <button className="text-left" onClick={() => setSelectedId(row.id)}>
                         <p className="font-semibold text-slate-900">{row.deviceName}</p>
-                        <p className="text-xs text-slate-400">{row.deviceType} · {row.serialNumber || row.identifier}</p>
+                        <p className="text-xs text-slate-400">{row.deviceCategory} · {row.deviceType} · {row.serialNumber || row.identifier}</p>
                       </button>
                     </td>
                     <td className="px-4 py-3 text-slate-700">{row.provider}</td>
@@ -792,10 +843,9 @@ export function IotDevicesPage() {
                           <div className="absolute right-0 z-50 mt-1 w-48 rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
                             <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50" onClick={() => { setSelectedId(row.id); setOpenMenuId(null); }}>View Details</button>
                             <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-400" disabled title="Device metadata is read-only until a PATCH contract is available.">Metadata read-only</button>
-                            {canAssign && <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50" onClick={() => { setAssignTarget(row); setAssignVehicleId(""); setOpenMenuId(null); }}>{row.assignedVehicleId ? "Transfer installation" : "Install on vehicle"}</button>}
+                            {canGovernInstallations && <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50" onClick={() => { openInstallation(row); setOpenMenuId(null); }}>{row.assignedVehicleId ? "Transfer installation" : "Install on vehicle"}</button>}
                             {canDiagnostics && <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50" onClick={() => { navigate("/obd-j1939"); setOpenMenuId(null); }}>View Diagnostics</button>}
                             <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50" onClick={() => { refreshMut.mutate(row.id); setOpenMenuId(null); }}>Refresh Status</button>
-                            {canFirmware && <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-400" disabled title="OTA scheduling is not connected in this pilot.">Firmware scheduling unavailable</button>}
                             {canDelete && <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50" onClick={() => { if (window.confirm(`Archive ${row.deviceName}?`)) { archiveMut.mutate(row.id); } setOpenMenuId(null); }}>Archive Device</button>}
                           </div>
                         )}
@@ -827,30 +877,28 @@ export function IotDevicesPage() {
 	                    ? buildActionContracts(selectedRecord, {
 	                      canUpdate,
 	                      canDelete,
-	                      canAssign,
-	                      canDiagnostics,
+	                      canAssign: canGovernInstallations,
+	                      canManageLifecycle: canManageDeviceLifecycle,
 	                      canRecover,
-	                      canFirmware,
-	                      onAssign: () => {
-	                        if (selectedRecord) {
-	                          setAssignTarget(selectedRecord);
-	                          setAssignVehicleId("");
-	                        }
+	                      onAssign: () => openInstallation(selectedRecord),
+	                      onUnassign: () => {
+	                        if (!canGovernInstallations) return;
+	                        setRemovalTarget(selectedRecord);
+	                        setRemovalForm(defaultRemovalForm);
 	                      },
-	                      onUnassign: () => canAssign && unassignMut.mutate(selectedRecord.id),
 	                      onArchive: () => canDelete && window.confirm(`Archive ${selectedRecord.deviceName}?`) && archiveMut.mutate(selectedRecord.id),
-	                      onMarkInstalled: () => canAssign && installMut.mutate(selectedRecord.id),
-	                      onRunDiagnostics: () => canDiagnostics && diagnosticsMut.mutate(selectedRecord.id),
-	                      onRefresh: () => selectedRecord && void refreshMut.mutate(selectedRecord.id),
-	                      onScheduleFirmware: () => {
-	                        if (selectedRecord) {
-	                          setFirmwareTarget(selectedRecord);
-	                          setFirmwareForm({ targetVersion: selectedRecord.targetFirmwareVersion, scheduledFor: "" });
-	                        }
+	                      onMarkInstalled: () => {
+	                        if (!canGovernInstallations) return;
+	                        setCommissionTarget(selectedRecord);
+	                        setCommissioningForm(defaultCommissioningForm);
 	                      },
+	                      onRefresh: () => selectedRecord && void refreshMut.mutate(selectedRecord.id),
 	                      onFlagAttention: () => canRecover && setAttentionTarget(selectedRecord),
 	                      onResolve: () =>
 	                        canRecover && resolveMut.mutate({ id: selectedRecord.id, rowVersion: selectedRecord.rowVersion }),
+	                      onSuspend: () => canManageDeviceLifecycle && window.confirm(`Suspend ${selectedRecord.deviceName}? New device ingestion will be blocked.`) && suspendMut.mutate(selectedRecord.id),
+	                      onActivate: () => canManageDeviceLifecycle && activateMut.mutate(selectedRecord.id),
+	                      onRotateSecret: () => canManageDeviceLifecycle && window.confirm(`Rotate credentials for ${selectedRecord.deviceName}? The replacement secrets will be shown only once.`) && rotateSecretMut.mutate(selectedRecord.id),
 	                    })
 	                    : []
 	                }
@@ -883,48 +931,141 @@ export function IotDevicesPage() {
       {assignTarget ? (
         <ModalForm
           title={`${assignTarget.assignedVehicleId ? "Transfer" : "Install"} ${assignTarget.deviceName}`}
-          onClose={() => setAssignTarget(null)}
+          onClose={() => { setAssignTarget(null); setInstallationForm(defaultInstallationForm); assignMut.reset(); }}
           onSubmit={(event) => {
             event.preventDefault();
-            assignMut.mutate({ deviceId: assignTarget.id, vehicleId: assignVehicleId });
+            const odometerText = installationForm.odometerAtInstallation.trim();
+            const odometer = odometerText ? Number(odometerText) : null;
+            if (odometerText && (!Number.isFinite(odometer) || Number(odometer) < 0)) return;
+            assignMut.mutate({
+              deviceId: assignTarget.id,
+              input: {
+                vehicleId: installationForm.vehicleId,
+                deviceRole: installationForm.deviceRole,
+                isPrimary: installationForm.primaryDesignation === "primary",
+                effectiveAt: toUtcIso(installationForm.effectiveAt, assignTarget.assignedVehicleId ? "transfer effective time" : "installation effective time"),
+                installationLocation: installationForm.installationLocation,
+                odometerAtInstallation: odometer,
+                commissioningMethod: installationForm.commissioningMethod,
+                assignmentReason: installationForm.assignmentReason,
+                removalReason: assignTarget.assignedVehicleId ? installationForm.removalReason : undefined,
+              },
+            });
           }}
           submitLabel={assignTarget.assignedVehicleId ? "Transfer Device" : "Install Device"}
           busy={assignMut.isPending}
           error={assignMut.error instanceof Error ? assignMut.error.message : null}
         >
-          <FormField label="Vehicle">
-            <select className="field w-full" value={assignVehicleId} onChange={(event) => setAssignVehicleId(event.target.value)} required>
-              <option value="">Select a vehicle</option>
-              {vehicleOptions.map((vehicle) => (
-                <option
-                  key={String(vehicle.id ?? vehicle.vehicleId)}
-                  value={String(vehicle.id ?? vehicle.vehicleId)}
-                  disabled={String(vehicle.id ?? vehicle.vehicleId) === assignTarget.assignedVehicleId}
-                >
-                  {String(vehicle.vehicleCode ?? vehicle.vehicleId)} · {String(vehicle.status ?? "Fleet asset")}
-                </option>
-              ))}
-            </select>
-          </FormField>
+          <p className="mb-4 rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-800">
+            This creates effective-dated installation history. Enter the observed facts; OpsTrax will not infer the role, primary designation, time, location, odometer, method, or reasons.
+          </p>
+          <div className="grid gap-4 md:grid-cols-2">
+            <FormField label="Vehicle (required)">
+              <select className="field w-full" value={installationForm.vehicleId} onChange={(event) => setInstallationForm((form) => ({ ...form, vehicleId: event.target.value }))} required>
+                <option value="">Select a vehicle</option>
+                {vehicleOptions.map((vehicle) => (
+                  <option key={String(vehicle.id ?? vehicle.vehicleId)} value={String(vehicle.id ?? vehicle.vehicleId)} disabled={String(vehicle.id ?? vehicle.vehicleId) === assignTarget.assignedVehicleId}>
+                    {String(vehicle.vehicleCode ?? vehicle.vehicleId)} · {String(vehicle.status ?? "Fleet asset")}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+            <FormField label="Device role (required)">
+              <select className="field w-full" value={installationForm.deviceRole} onChange={(event) => setInstallationForm((form) => ({ ...form, deviceRole: event.target.value }))} required>
+                <option value="">Select the installed role</option>
+                {INSTALLATION_ROLES.map((role) => <option key={role} value={role}>{role}</option>)}
+              </select>
+            </FormField>
+            <FormField label="Vehicle role designation (required)">
+              <select className="field w-full" value={installationForm.primaryDesignation} onChange={(event) => setInstallationForm((form) => ({ ...form, primaryDesignation: event.target.value as InstallationFormState["primaryDesignation"] }))} required>
+                <option value="">Select primary or secondary</option>
+                <option value="primary">Primary for this role</option>
+                <option value="secondary">Secondary for this role</option>
+              </select>
+            </FormField>
+            <FormField label={`${assignTarget.assignedVehicleId ? "Transfer" : "Installation"} effective time (required)`}>
+              <input className="field w-full" type="datetime-local" value={installationForm.effectiveAt} onChange={(event) => setInstallationForm((form) => ({ ...form, effectiveAt: event.target.value }))} required />
+            </FormField>
+            <FormField label="Installation location (required)">
+              <input className="field w-full" maxLength={160} value={installationForm.installationLocation} onChange={(event) => setInstallationForm((form) => ({ ...form, installationLocation: event.target.value }))} placeholder="Bay, depot, or service location" required />
+            </FormField>
+            <FormField label="Odometer at installation (required)">
+              <input className="field w-full" type="number" min="0" step="0.1" value={installationForm.odometerAtInstallation} onChange={(event) => setInstallationForm((form) => ({ ...form, odometerAtInstallation: event.target.value }))} required />
+            </FormField>
+            <FormField label="Commissioning method (required)">
+              <input className="field w-full" maxLength={80} value={installationForm.commissioningMethod} onChange={(event) => setInstallationForm((form) => ({ ...form, commissioningMethod: event.target.value }))} placeholder="e.g. authenticated heartbeat + GNSS fix" required />
+            </FormField>
+            <FormField label="Assignment reason (required)">
+              <input className="field w-full" minLength={4} maxLength={500} value={installationForm.assignmentReason} onChange={(event) => setInstallationForm((form) => ({ ...form, assignmentReason: event.target.value }))} required />
+            </FormField>
+            {assignTarget.assignedVehicleId ? (
+              <FormField label="Prior installation removal reason (required)">
+                <input className="field w-full" minLength={4} maxLength={500} value={installationForm.removalReason} onChange={(event) => setInstallationForm((form) => ({ ...form, removalReason: event.target.value }))} required />
+              </FormField>
+            ) : null}
+          </div>
         </ModalForm>
       ) : null}
 
-      {firmwareTarget ? (
+      {removalTarget ? (
         <ModalForm
-          title={`Schedule firmware for ${firmwareTarget.deviceName}`}
-          onClose={() => setFirmwareTarget(null)}
+          title={`Remove ${removalTarget.deviceName} installation`}
+          onClose={() => { setRemovalTarget(null); setRemovalForm(defaultRemovalForm); unassignMut.reset(); }}
           onSubmit={(event) => {
             event.preventDefault();
-            firmwareMut.mutate({ id: firmwareTarget.id, payload: firmwareForm });
+            unassignMut.mutate({
+              deviceId: removalTarget.id,
+              input: {
+                effectiveTo: toUtcIso(removalForm.effectiveTo, "removal effective time"),
+                removalReason: removalForm.removalReason,
+              },
+            });
           }}
-          submitLabel="Schedule Update"
-          busy={firmwareMut.isPending}
+          submitLabel="Record Removal"
+          busy={unassignMut.isPending}
+          error={unassignMut.error instanceof Error ? unassignMut.error.message : null}
         >
           <div className="grid gap-4 md:grid-cols-2">
-            <FormField label="Target Version"><input className="field w-full" value={firmwareForm.targetVersion} onChange={(event) => setFirmwareForm((form) => ({ ...form, targetVersion: event.target.value }))} required /></FormField>
-            <FormField label="Scheduled For"><input className="field w-full" type="datetime-local" value={firmwareForm.scheduledFor} onChange={(event) => setFirmwareForm((form) => ({ ...form, scheduledFor: event.target.value }))} required /></FormField>
+            <FormField label="Removal effective time (required)"><input className="field w-full" type="datetime-local" value={removalForm.effectiveTo} onChange={(event) => setRemovalForm((form) => ({ ...form, effectiveTo: event.target.value }))} required /></FormField>
+            <FormField label="Removal reason (required)"><input className="field w-full" minLength={4} maxLength={500} value={removalForm.removalReason} onChange={(event) => setRemovalForm((form) => ({ ...form, removalReason: event.target.value }))} required /></FormField>
           </div>
         </ModalForm>
+      ) : null}
+
+      {commissionTarget ? (
+        <ModalForm
+          title={`Commission ${commissionTarget.deviceName}`}
+          onClose={() => { setCommissionTarget(null); setCommissioningForm(defaultCommissioningForm); installMut.reset(); }}
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!commissioningForm.result) return;
+            installMut.mutate({
+              deviceId: commissionTarget.id,
+              input: { result: commissioningForm.result, verificationReference: commissioningForm.verificationReference },
+            });
+          }}
+          submitLabel="Record Commissioning Result"
+          busy={installMut.isPending}
+          error={installMut.error instanceof Error ? installMut.error.message : null}
+        >
+          <p className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+            Select the result actually observed. Passed requires an authenticated device heartbeat; no result is selected automatically.
+          </p>
+          <div className="grid gap-4 md:grid-cols-2">
+            <FormField label="Observed result (required)">
+              <select className="field w-full" value={commissioningForm.result} onChange={(event) => setCommissioningForm((form) => ({ ...form, result: event.target.value as DeviceCommissioningInput["result"] }))} required>
+                <option value="">Select Passed or Failed</option>
+                <option value="Failed">Failed</option>
+                <option value="Passed">Passed</option>
+              </select>
+            </FormField>
+            <FormField label="Evidence / failure reference (required)"><input className="field w-full" maxLength={500} value={commissioningForm.verificationReference} onChange={(event) => setCommissioningForm((form) => ({ ...form, verificationReference: event.target.value }))} placeholder="Work order, test report, or failure details" required /></FormField>
+          </div>
+        </ModalForm>
+      ) : null}
+
+      {rotatedCredentials ? (
+        <RotatedCredentialsDialog credentials={rotatedCredentials} onDone={() => { setRotatedCredentials(null); rotateSecretMut.reset(); }} />
       ) : null}
 
       {attentionTarget ? (
@@ -1011,7 +1152,7 @@ function DeviceDetailDrawer({
       <div className="mt-3 flex flex-wrap items-start justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold text-white">{device.deviceName}</h2>
-          <p className="mt-1 text-sm text-slate-400">{device.deviceType} · {device.provider} · {device.serialNumber || device.identifier}</p>
+          <p className="mt-1 text-sm text-slate-400">{device.deviceCategory} · {device.deviceType} · {device.provider} · {device.serialNumber || device.identifier}</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <StatusBadge status={device.connectionStatus} />
@@ -1051,6 +1192,7 @@ function DeviceDetailDrawer({
       <div className="mt-6 grid gap-4 lg:grid-cols-3">
         <InfoBlock title="Overview" items={[
           ["Device name", device.deviceName],
+          ["Hardware category", device.deviceCategory],
           ["Type", device.deviceType],
           ["Provider", device.provider],
           ["Serial", device.serialNumber],
@@ -1204,13 +1346,9 @@ function DeviceDetailDrawer({
       </div>
 
       <div className="mt-6 grid gap-4 xl:grid-cols-2">
-        <PanelSection title="Firmware History">
-          {/* No OTA/firmware-schedule endpoint exists — always empty until one is added. */}
-          <TimelineList rows={detail.firmwareUpdates.map((row) => ({
-            title: `${cell(row.currentVersion)} → ${cell(row.targetVersion)}`,
-            subtitle: cell(row.status),
-            meta: cell(row.scheduledFor) === "—" ? "" : String(row.scheduledFor),
-          }))} emptyText="No firmware history available." />
+        <PanelSection title="Reported Firmware (read-only)">
+          <MiniGrid rows={[["Current reported version", cell(device.firmwareVersion)]]} />
+          <p className="mt-3 text-sm text-slate-400">OTA scheduling and firmware history are not connected. No firmware operation is available from this page.</p>
         </PanelSection>
         <PanelSection title="Installation History">
           {detail.currentInstallation ? (
@@ -1222,11 +1360,25 @@ function DeviceDetailDrawer({
                 </div>
                 <StatusBadge status={detail.currentInstallation.installStatus} />
               </div>
+              <div className="mt-3 grid gap-2 text-xs text-emerald-50 md:grid-cols-2">
+                <span>Role: {detail.currentInstallation.deviceRole || "—"} · {detail.currentInstallation.isPrimary ? "Primary" : "Secondary"}</span>
+                <span>Location: {detail.currentInstallation.installationLocation || "—"}</span>
+                <span>Odometer: {detail.currentInstallation.odometerAtInstallation || "—"}</span>
+                <span>Method: {detail.currentInstallation.commissioningMethod || "—"}</span>
+                <span>Result: {detail.currentInstallation.commissioningResult || "Pending"}</span>
+                <span>Evidence: {detail.currentInstallation.verificationReference || "—"}</span>
+              </div>
             </div>
           ) : null}
           <TimelineList rows={detail.installations.map((installation) => ({
             title: installation.vehicleCode || `Vehicle ${installation.vehicleId || "—"}`,
-            subtitle: `${installation.installStatus}${installation.deviceRole ? ` · ${installation.deviceRole}` : ""}`,
+            subtitle: [
+              installation.installStatus,
+              installation.deviceRole,
+              installation.isPrimary ? "Primary" : "Secondary",
+              installation.assignmentReason,
+              installation.removalReason,
+            ].filter(Boolean).join(" · "),
             meta: installation.installedAt
               ? `${installation.installedAt}${installation.removedAt ? ` → ${installation.removedAt}` : " → current"}`
               : "",
@@ -1238,8 +1390,8 @@ function DeviceDetailDrawer({
 }
 
 // ── STEP 1: Register connection ─────────────────────────────────────────────
-// Minimal, honest form. Serial is the ONLY required field (the real key the
-// backend provisions credentials against). IMEI is optional but is what a hardware
+// Minimal, honest form. Serial and hardware category are required by the
+// backend provisioning contract. IMEI is optional but is what a hardware
 // GPS tracker is resolved by at ingest, so it is collected for GT06/PT40-class units.
 // Provider and model/name are optional. Installation is a separate governed step. SIM/firmware/power/
 // compliance remain out of the connection handshake.
@@ -1258,7 +1410,7 @@ function ConnectDeviceDialog({
   busy: boolean;
   error?: string | null;
 }) {
-  const serialValid = form.serialNumber.trim().length > 0;
+  const serialValid = form.serialNumber.trim().length > 0 && form.deviceCategory.trim().length > 0;
   return (
     <div className="fixed inset-0 z-[60] grid place-items-center bg-black/60 p-4" role="dialog" aria-modal="true" aria-labelledby="connect-device-title">
       <form
@@ -1300,6 +1452,18 @@ function ConnectDeviceDialog({
               inputMode="numeric"
               aria-label="Device IMEI, optional, for hardware GPS trackers"
             />
+          </FormField>
+          <FormField label="Hardware category (required)">
+            <select
+              className="field w-full"
+              value={form.deviceCategory}
+              onChange={(event) => onChange({ ...form, deviceCategory: event.target.value })}
+              aria-label="Governed hardware category, required"
+              required
+            >
+              <option value="">Select the hardware category</option>
+              {INSTALLATION_ROLES.map((role) => <option key={role} value={role}>{role}</option>)}
+            </select>
           </FormField>
           <FormField label="Provider">
             <input
@@ -1456,6 +1620,39 @@ function DeviceCredentialsDialog({
           <button type="button" className="btn-primary" onClick={onDone}>
             {connected ? "Done" : "Close and finish later"}
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RotatedCredentialsDialog({
+  credentials,
+  onDone,
+}: {
+  credentials: DeviceCredentialRotationResult;
+  onDone: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[70] grid place-items-center bg-black/60 p-4" role="dialog" aria-modal="true" aria-labelledby="rotated-credentials-title">
+      <div className="panel max-h-[90vh] w-full max-w-2xl overflow-y-auto p-6">
+        <div className="flex items-start gap-3">
+          <div className="grid h-11 w-11 place-items-center rounded-2xl border border-amber-200 bg-amber-50 text-amber-700 shadow-inner"><KeyRound className="h-5 w-5" /></div>
+          <div>
+            <h2 id="rotated-credentials-title" className="text-2xl font-semibold text-slate-900">Replacement credentials</h2>
+            <p className="mt-1 text-sm text-slate-500">Device {credentials.deviceId}. These values exist only in this dialog and are cleared when you close it.</p>
+          </div>
+        </div>
+        <div className="mt-5 rounded-2xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800" role="alert">
+          {credentials.note || "Store the replacement credentials securely; they will not be shown again."}
+          {credentials.previousCredentialsValidUntil ? ` Previous credentials expire at ${new Date(credentials.previousCredentialsValidUntil).toLocaleString()}.` : " Previous credentials are no longer valid."}
+        </div>
+        <div className="mt-5 space-y-4">
+          <CopyField label="Replacement API Key" value={credentials.apiKey} secret />
+          <CopyField label="Replacement HMAC Secret" value={credentials.hmacSecret} secret />
+        </div>
+        <div className="mt-6 flex justify-end">
+          <button type="button" className="btn-primary" onClick={onDone}>I stored these credentials</button>
         </div>
       </div>
     </div>

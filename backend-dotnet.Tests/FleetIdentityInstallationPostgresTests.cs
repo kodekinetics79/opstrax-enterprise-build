@@ -270,6 +270,179 @@ public sealed class FleetIdentityInstallationPostgresTests
     }
 
     [Fact]
+    public async Task InstallationEvidenceApiIsTypedTenantScopedAppendOnlyAndIdempotent()
+    {
+        var db = Db();
+        var companyId = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + Random.Shared.Next(4_000_000,4_900_000);
+        var otherCompanyId = companyId + 1;
+        await Company(db,companyId,"EVIDENCE-API-A");
+        await Company(db,otherCompanyId,"EVIDENCE-API-B");
+        try
+        {
+            var branch = await Branch(db,companyId,"EVIDENCE-API-A");
+            var otherBranch = await Branch(db,otherCompanyId,"EVIDENCE-API-B");
+            var vehicle = await Vehicle(db,companyId,branch,$"EVIDENCE-API-A-{companyId}",vin:"1HGCM82633A004352");
+            var otherVehicle = await Vehicle(db,otherCompanyId,otherBranch,$"EVIDENCE-API-B-{companyId}",alternate:$"EVIDENCE-API-{companyId}");
+            var device = await Device(db,companyId,$"EVIDENCE-API-DEVICE-A-{companyId}");
+            var otherDevice = await Device(db,otherCompanyId,$"EVIDENCE-API-DEVICE-B-{companyId}");
+            var installation = await RemovedInstallation(db,companyId,branch,device,vehicle,DateTimeOffset.UtcNow.AddHours(-2),DateTimeOffset.UtcNow.AddHours(-1));
+            var otherInstallation = await RemovedInstallation(db,otherCompanyId,otherBranch,otherDevice,otherVehicle,DateTimeOffset.UtcNow.AddHours(-2),DateTimeOffset.UtcNow.AddHours(-1));
+            var sha = new string('a',64);
+            var body = Body("DeviceInstallationEvidenceBody","removal-photo","fleet/installations/removal.jpg",sha,(DateTimeOffset?)DateTimeOffset.UtcNow.AddHours(-1));
+
+            var created = await Invoke("DeviceInstallationEvidenceCreate",Principal(companyId,42),device,installation,body,db,new AuditService(db),CancellationToken.None);
+            Assert.Equal(StatusCodes.Status201Created,Status(created));
+            var replay = await Invoke("DeviceInstallationEvidenceCreate",Principal(companyId,42),device,installation,body,db,new AuditService(db),CancellationToken.None);
+            Assert.Equal(StatusCodes.Status200OK,Status(replay));
+            Assert.Equal(1,await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM device_installation_evidence WHERE company_id=@c AND installation_id=@i",
+                c => { c.Parameters.AddWithValue("@c",companyId); c.Parameters.AddWithValue("@i",installation); }));
+
+            var badHash = await Invoke("DeviceInstallationEvidenceCreate",Principal(companyId,42),device,installation,
+                Body("DeviceInstallationEvidenceBody","removal-photo","fleet/installations/removal.jpg","not-a-hash",(DateTimeOffset?)DateTimeOffset.UtcNow),
+                db,new AuditService(db),CancellationToken.None);
+            Assert.Equal(StatusCodes.Status400BadRequest,Status(badHash));
+            var externalUrl = await Invoke("DeviceInstallationEvidenceCreate",Principal(companyId,42),device,installation,
+                Body("DeviceInstallationEvidenceBody","removal-photo","https://untrusted.example/evidence",sha,(DateTimeOffset?)DateTimeOffset.UtcNow),
+                db,new AuditService(db),CancellationToken.None);
+            Assert.Equal(StatusCodes.Status400BadRequest,Status(externalUrl));
+
+            var crossTenantCreate = await Invoke("DeviceInstallationEvidenceCreate",Principal(companyId,42),otherDevice,otherInstallation,body,db,new AuditService(db),CancellationToken.None);
+            Assert.Equal(StatusCodes.Status404NotFound,Status(crossTenantCreate));
+            var crossTenantRead = await Invoke("DeviceInstallationEvidenceList",Principal(companyId,42),otherDevice,otherInstallation,db,CancellationToken.None);
+            Assert.Equal(StatusCodes.Status404NotFound,Status(crossTenantRead));
+            var readOnlyCreate = await Invoke("DeviceInstallationEvidenceCreate",Principal(companyId,42,new[] { "telemetry.devices.read" }),device,installation,body,db,new AuditService(db),CancellationToken.None);
+            Assert.Equal(StatusCodes.Status403Forbidden,Status(readOnlyCreate));
+        }
+        finally
+        {
+            foreach (var company in new[] { companyId,otherCompanyId })
+            foreach (var sql in new[]
+            {
+                "DELETE FROM audit_logs WHERE company_id=@c","DELETE FROM device_installation_evidence WHERE company_id=@c",
+                "DELETE FROM device_installations WHERE company_id=@c","DELETE FROM eld_devices WHERE company_id=@c",
+                "DELETE FROM vehicles WHERE company_id=@c","DELETE FROM branches WHERE company_id=@c",
+                "DELETE FROM companies WHERE id=@c"
+            }) await db.ExecuteAsync(sql,c => c.Parameters.AddWithValue("@c",company));
+        }
+    }
+
+    [Fact]
+    public async Task CommissioningPassRequiresPersistedTelemetryProofAndExpectedVersion()
+    {
+        var db = Db();
+        var companyId = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + Random.Shared.Next(5_000_000,5_900_000);
+        await Company(db,companyId,"COMMISSION");
+        try
+        {
+            var branch = await Branch(db,companyId,"COMMISSION");
+            var vehicle = await Vehicle(db,companyId,branch,$"COMMISSION-{companyId}",vin:"1HGCM82633A004352");
+            var device = await Device(db,companyId,$"COMMISSION-DEVICE-{companyId}");
+            var created = await Invoke("DeviceInstallationCreate",Principal(companyId,42),device,
+                Body("DeviceInstallationCreateBody",vehicle,"GPS",true,(DateTimeOffset?)DateTimeOffset.UtcNow.AddMinutes(-2),
+                    "cab",100m,"authenticated-heartbeat","commissioning test",$"commission-{Guid.NewGuid():N}"),
+                db,new AuditService(db),CancellationToken.None);
+            Assert.Equal(StatusCodes.Status201Created,Status(created));
+            var installation = await db.ScalarLongAsync(
+                "SELECT id FROM device_installations WHERE company_id=@c AND device_id=@d AND effective_to IS NULL",
+                c => { c.Parameters.AddWithValue("@c",companyId); c.Parameters.AddWithValue("@d",device); });
+
+            var withoutTelemetry = await Invoke("DeviceInstallationCommission",Principal(companyId,42),device,installation,
+                Body("DeviceInstallationCommissionBody","passed","operator assertion",(int?)1),
+                db,new AuditService(db),CancellationToken.None);
+            Assert.Equal(StatusCodes.Status409Conflict,Status(withoutTelemetry));
+
+            await db.ExecuteAsync(
+                "UPDATE device_installations SET activation_verified_at=NOW() WHERE id=@i",
+                c => c.Parameters.AddWithValue("@i",installation));
+            var eventId = await db.InsertAsync(
+                @"INSERT INTO location_events(company_id,vehicle_id,device_id,installation_id,lat,lng,event_time)
+                  VALUES (@c,@v,@d,@i,38.7500000,-77.5500000,NOW())",
+                c => { c.Parameters.AddWithValue("@c",companyId); c.Parameters.AddWithValue("@v",vehicle); c.Parameters.AddWithValue("@d",device); c.Parameters.AddWithValue("@i",installation); });
+            var commissioned = await Invoke("DeviceInstallationCommission",Principal(companyId,42),device,installation,
+                Body("DeviceInstallationCommissionBody","passed","operator assertion",(int?)1),
+                db,new AuditService(db),CancellationToken.None);
+            Assert.Equal(StatusCodes.Status200OK,Status(commissioned));
+            var row = await db.QuerySingleAsync(
+                "SELECT status,commissioning_result,verification_reference,row_version FROM device_installations WHERE id=@i",
+                c => c.Parameters.AddWithValue("@i",installation));
+            Assert.NotNull(row);
+            Assert.Equal("Verified",row!["status"]);
+            Assert.Equal("Passed",row["commissioningResult"]);
+            Assert.Equal($"location-event:{eventId}",row["verificationReference"]);
+            Assert.Equal(2,Convert.ToInt32(row["rowVersion"]));
+
+            var staleReplay = await Invoke("DeviceInstallationCommission",Principal(companyId,42),device,installation,
+                Body("DeviceInstallationCommissionBody","passed","operator assertion",(int?)1),
+                db,new AuditService(db),CancellationToken.None);
+            Assert.Equal(StatusCodes.Status409Conflict,Status(staleReplay));
+        }
+        finally
+        {
+            foreach (var sql in new[]
+            {
+                "DELETE FROM audit_logs WHERE company_id=@c","DELETE FROM location_events WHERE company_id=@c",
+                "DELETE FROM device_state_transitions WHERE company_id=@c","DELETE FROM device_installations WHERE company_id=@c",
+                "DELETE FROM eld_devices WHERE company_id=@c","DELETE FROM vehicles WHERE company_id=@c",
+                "DELETE FROM branches WHERE company_id=@c","DELETE FROM companies WHERE id=@c"
+            }) await db.ExecuteAsync(sql,c => c.Parameters.AddWithValue("@c",companyId));
+        }
+    }
+
+    [Fact]
+    public async Task DeviceSuspendAndActivateAreTenantScopedIdempotentAndAudited()
+    {
+        var db = Db();
+        var companyId = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + Random.Shared.Next(6_000_000,6_900_000);
+        var otherCompanyId = companyId + 1;
+        await Company(db,companyId,"STATE-A");
+        await Company(db,otherCompanyId,"STATE-B");
+        try
+        {
+            var device = await Device(db,companyId,$"STATE-A-{companyId}");
+            var otherDevice = await Device(db,otherCompanyId,$"STATE-B-{companyId}");
+            var suspend = await Invoke("DeviceSuspend",Principal(companyId,42),device,db,new AuditService(db),CancellationToken.None);
+            Assert.Equal(StatusCodes.Status200OK,Status(suspend));
+            var suspendReplay = await Invoke("DeviceSuspend",Principal(companyId,42),device,db,new AuditService(db),CancellationToken.None);
+            Assert.Equal(StatusCodes.Status200OK,Status(suspendReplay));
+            Assert.Equal(1,await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM device_state_transitions WHERE company_id=@c AND device_id=@d AND to_state='Suspended'",
+                c => { c.Parameters.AddWithValue("@c",companyId); c.Parameters.AddWithValue("@d",device); }));
+
+            var activate = await Invoke("DeviceActivate",Principal(companyId,42),device,db,new AuditService(db),CancellationToken.None);
+            Assert.Equal(StatusCodes.Status200OK,Status(activate));
+            var activateReplay = await Invoke("DeviceActivate",Principal(companyId,42),device,db,new AuditService(db),CancellationToken.None);
+            Assert.Equal(StatusCodes.Status200OK,Status(activateReplay));
+            var state = await db.QuerySingleAsync("SELECT status,device_state,row_version FROM eld_devices WHERE id=@d",
+                c => c.Parameters.AddWithValue("@d",device));
+            Assert.NotNull(state);
+            Assert.Equal("Active",state!["status"]);
+            Assert.Equal("Registered",state["deviceState"]);
+            Assert.Equal(3,Convert.ToInt32(state["rowVersion"]));
+            Assert.Equal(2,await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM device_state_transitions WHERE company_id=@c AND device_id=@d",
+                c => { c.Parameters.AddWithValue("@c",companyId); c.Parameters.AddWithValue("@d",device); }));
+            Assert.Equal(2,await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM audit_logs WHERE company_id=@c AND entity_id=@d AND action_name IN ('device.suspended','device.activated')",
+                c => { c.Parameters.AddWithValue("@c",companyId); c.Parameters.AddWithValue("@d",device); }));
+
+            var crossTenant = await Invoke("DeviceSuspend",Principal(companyId,42),otherDevice,db,new AuditService(db),CancellationToken.None);
+            Assert.Equal(StatusCodes.Status404NotFound,Status(crossTenant));
+            var readOnly = await Invoke("DeviceSuspend",Principal(companyId,42,new[] { "telemetry.devices.read" }),device,db,new AuditService(db),CancellationToken.None);
+            Assert.Equal(StatusCodes.Status403Forbidden,Status(readOnly));
+        }
+        finally
+        {
+            foreach (var company in new[] { companyId,otherCompanyId })
+            foreach (var sql in new[]
+            {
+                "DELETE FROM audit_logs WHERE company_id=@c","DELETE FROM device_state_transitions WHERE company_id=@c",
+                "DELETE FROM eld_devices WHERE company_id=@c","DELETE FROM companies WHERE id=@c"
+            }) await db.ExecuteAsync(sql,c => c.Parameters.AddWithValue("@c",company));
+        }
+    }
+
+    [Fact]
     public async Task ApplicationRoleCannotUpdateCompatibilityVehicleOrDriverProjection()
     {
         var db = Db();
@@ -309,13 +482,13 @@ public sealed class FleetIdentityInstallationPostgresTests
         c => { c.Parameters.AddWithValue("@c",company); c.Parameters.AddWithValue("@d",device); });
     private static Database Db() => new(new ConfigurationBuilder().AddInMemoryCollection(
         new Dictionary<string,string?> { ["ConnectionStrings:DefaultConnection"] = TestDb.ConnectionString }).Build());
-    private static DefaultHttpContext Principal(long companyId,long userId)
+    private static DefaultHttpContext Principal(long companyId,long userId,string[]? permissions=null)
     {
         var http = new DefaultHttpContext { TraceIdentifier=$"install-{Guid.NewGuid():N}" };
         http.Items[EndpointMappings.AuthCompanyIdItemKey]=companyId;
         http.Items[EndpointMappings.AuthUserIdItemKey]=userId;
         http.Items[EndpointMappings.AuthRoleItemKey]="CompanyAdmin";
-        http.Items[EndpointMappings.AuthPermissionsItemKey]=new[] { "telemetry.devices.manage","telemetry.devices.read" };
+        http.Items[EndpointMappings.AuthPermissionsItemKey]=permissions ?? new[] { "telemetry.devices.manage","telemetry.devices.read" };
         return http;
     }
     private static object Body(string name,params object?[] args)

@@ -1,10 +1,11 @@
 import { defineConfig, devices } from "@playwright/test";
 import { loadLocalEnv } from "./lib/env.mjs";
-import { mutationGate, resolveTarget } from "./lib/target.mjs";
+import { iotLifecycleGate, mutationGate, resolveTarget } from "./lib/target.mjs";
 
 loadLocalEnv();
 const target = resolveTarget(process.env);
 const gate = mutationGate(target, process.env);
+const iotGate = iotLifecycleGate(target, process.env);
 
 function roleProject(name, file, role) {
   return {
@@ -39,6 +40,18 @@ if (!target.isProduction) {
       ...roleProject("staging-mutations", "**/staging.mutations.spec.mjs", "tenant"),
       workers: 1,
       metadata: { role: "tenant", targetEnvironment: target.environment, mutationGate: gate.enabled },
+    },
+    {
+      ...roleProject("staging-iot-lifecycle", "**/staging.iot-lifecycle.spec.mjs", "tenant"),
+      workers: 1,
+      use: {
+        ...devices["Desktop Chrome"],
+        // Provisioning returns credentials exactly once and device ingest carries
+        // those credentials in headers. Never persist them in a Playwright trace.
+        trace: "off",
+        video: "off",
+      },
+      metadata: { role: "tenant", targetEnvironment: target.environment, mutationGate: iotGate.enabled },
     },
   );
 }
