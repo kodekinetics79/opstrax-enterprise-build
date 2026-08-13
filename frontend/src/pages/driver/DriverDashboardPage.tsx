@@ -94,7 +94,9 @@ export function DriverDashboardPage() {
   const assignmentStatus = assignment ? String(assignment["assignmentStatus"] ?? "") : "";
   const signedSafePretrip = assignment?.["latestPretripSafeToOperate"] === true &&
     String(assignment?.["latestPretripDriverSignatureStatus"] ?? "").toLowerCase() === "signed";
-  const vehicleConfirmed = assignment?.["vehicleConfirmedAt"] != null;
+  const vehicleConfirmed = assignment?.["vehicleConfirmedAt"] != null &&
+    assignment?.["vehicleConfirmedByDriverId"] != null &&
+    String(assignment["vehicleConfirmedByDriverId"]) === String(driver["id"]);
   const nextAction = assignmentStatus === "accepted" && !vehicleConfirmed
     ? { label: "Verify assigned vehicle", sublabel: "Exact vehicle confirmation is required before departure" }
     : assignmentStatus === "accepted" && signedSafePretrip
