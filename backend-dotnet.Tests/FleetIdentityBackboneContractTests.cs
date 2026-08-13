@@ -82,6 +82,17 @@ public sealed class FleetIdentityBackboneContractTests
         Assert.Contains("vehicleConfirmed", driverPage, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void DvirTemplateCreationPersistsTenantScopedChecklistItemsAtomically()
+    {
+        var source = Read("backend-dotnet", "Controllers", "DvirHosEndpoints.cs");
+        var create = Block(source, "private static async Task<IResult> CreateDvirTemplatePilot(", "private static async Task<IResult> UpdateDvirTemplatePilot(");
+        Assert.Contains("One to 50 checklist items are required", create, StringComparison.Ordinal);
+        Assert.Contains("RunInTenantTransactionAsync", create, StringComparison.Ordinal);
+        Assert.Contains("INSERT INTO inspection_checklist_items", create, StringComparison.Ordinal);
+        Assert.Contains("checklistItemCount", create, StringComparison.Ordinal);
+    }
+
     private static string Read(params string[] parts)
     {
         var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../"));
