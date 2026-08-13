@@ -165,6 +165,33 @@ public sealed class FleetIdentityDriverPostgresTests
             await db.ExecuteAsync("DELETE FROM dvir_reports WHERE id=@id AND company_id=@c",
                 c => { c.Parameters.AddWithValue("@id", newerUnsafeDvirId); c.Parameters.AddWithValue("@c", companyId); });
 
+            var maintenanceHttp = Principal(companyId, branchId, userId);
+            maintenanceHttp.Items[EndpointMappings.AuthPermissionsItemKey] = new[] { "maintenance:create" };
+            var alternateReportNumber = $"DVIR-ALT-{companyId}";
+            await using (var routeBlocker = new NpgsqlConnection(TestDb.ConnectionString))
+            {
+                await routeBlocker.OpenAsync();
+                await using var routeBlockerTx = await routeBlocker.BeginTransactionAsync();
+                await using (var lockCommand = new NpgsqlCommand(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(@key,0))", routeBlocker, routeBlockerTx))
+                {
+                    lockCommand.Parameters.AddWithValue("@key", $"fleet-departure-safety:{companyId}:{vehicleId}:{driverId}");
+                    await lockCommand.ExecuteNonQueryAsync();
+                }
+                var alternateRouteCreate = Invoke("CreateDvirReportPilot", maintenanceHttp,
+                    new Dictionary<string, object?>
+                    {
+                        ["driverId"] = driverId, ["vehicleId"] = vehicleId,
+                        ["reportNumber"] = alternateReportNumber, ["inspectionType"] = "pre_trip"
+                    }, db, audit, CancellationToken.None);
+                await Task.Delay(150);
+                Assert.False(alternateRouteCreate.IsCompleted, "The alternate DVIR route must share the departure safety lock");
+                await routeBlockerTx.CommitAsync();
+                Assert.Equal(StatusCodes.Status201Created, Status(await alternateRouteCreate));
+            }
+            await db.ExecuteAsync("DELETE FROM dvir_reports WHERE company_id=@c AND report_number=@number",
+                c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@number", alternateReportNumber); });
+
             await using (var blocker = new NpgsqlConnection(TestDb.ConnectionString))
             {
                 await blocker.OpenAsync();

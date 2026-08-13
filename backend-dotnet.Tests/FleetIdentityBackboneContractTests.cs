@@ -67,7 +67,7 @@ public sealed class FleetIdentityBackboneContractTests
         Assert.Contains("Confirm the exact assigned vehicle before departure", status, StringComparison.Ordinal);
         Assert.Contains("vehicle_out_of_service", status, StringComparison.Ordinal);
         Assert.Contains("FOR UPDATE OF da,v", status, StringComparison.Ordinal);
-        Assert.Contains("fleet-departure-safety", status, StringComparison.Ordinal);
+        Assert.Contains("AcquireDvirDepartureSafetyLockAsync", status, StringComparison.Ordinal);
         Assert.Contains("assigned vehicle is out of service", status, StringComparison.Ordinal);
         Assert.Contains("SELECT id,safe_to_operate,driver_signature_status", status, StringComparison.Ordinal);
         Assert.DoesNotContain("AND safe_to_operate=TRUE", status, StringComparison.Ordinal);
@@ -89,7 +89,12 @@ public sealed class FleetIdentityBackboneContractTests
         var inspection = Block(source, "private static async Task<IResult> MaintInspectionCreate(", "private static async Task<IResult> MaintInspectionCreateInTransaction(");
         Assert.Contains("RunInTenantTransactionAsync", inspection, StringComparison.Ordinal);
         var inspectionTransaction = Block(source, "private static async Task<IResult> MaintInspectionCreateInTransaction(", "// GET /api/maintenance/inspections/{id}");
-        Assert.Contains("fleet-departure-safety", inspectionTransaction, StringComparison.Ordinal);
+        Assert.Contains("AcquireDvirDepartureSafetyLockAsync", inspectionTransaction, StringComparison.Ordinal);
+        var dvirPilot = Read("backend-dotnet", "Controllers", "DvirHosEndpoints.cs");
+        Assert.Contains("AcquireDvirDepartureSafetyLockAsync", dvirPilot, StringComparison.Ordinal);
+        Assert.Contains("fleet-departure-safety", dvirPilot, StringComparison.Ordinal);
+        foreach (var mutation in new[] { "CreateDvirReportPilot", "DvirCertifyRepairPilot", "DvirDriverSignPilot", "DvirDriverAcknowledgeRepairPilot" })
+            Assert.Contains("AcquireDvirDepartureSafetyLockAsync", Block(dvirPilot, $"private static async Task<IResult> {mutation}(", "\n    private static"), StringComparison.Ordinal);
     }
 
     [Fact]

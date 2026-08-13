@@ -21,6 +21,24 @@ public static partial class EndpointMappings
     private static long PilotUserId(HttpContext http)
         => Convert.ToInt64(http.Items[AuthUserIdItemKey], CultureInfo.InvariantCulture);
 
+    private static Task<int> AcquireDvirDepartureSafetyLockAsync(
+        Database db, long companyId, long vehicleId, long driverId, CancellationToken ct)
+        => db.ExecuteAsync(
+            "SELECT pg_advisory_xact_lock(hashtextextended(@key,0))",
+            c => c.Parameters.AddWithValue("@key", $"fleet-departure-safety:{companyId}:{vehicleId}:{driverId}"), ct);
+
+    private static async Task<(long vehicleId, long driverId)?> ResolveDvirSafetyIdentityAsync(
+        Database db, long companyId, long reportId, CancellationToken ct)
+    {
+        var identity = await db.QuerySingleAsync(
+            "SELECT vehicle_id,driver_id FROM dvir_reports WHERE id=@id AND company_id=@cid AND deleted_at IS NULL",
+            c => { c.Parameters.AddWithValue("@id", reportId); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+        return identity is null
+            ? null
+            : (Convert.ToInt64(identity["vehicleId"], CultureInfo.InvariantCulture),
+               Convert.ToInt64(identity["driverId"], CultureInfo.InvariantCulture));
+    }
+
     private static string? PilotText(Dictionary<string, object?> body, string key, int maxLength = 500)
     {
         var value = Get(body, key);
@@ -335,6 +353,7 @@ public static partial class EndpointMappings
         {
             return await db.RunInTenantTransactionAsync<IResult>(companyId, async () =>
             {
+                await AcquireDvirDepartureSafetyLockAsync(db, companyId, vehicleId, driverId, ct);
                 if (!string.IsNullOrWhiteSpace(idempotencyKey))
                 {
                     var existing = await db.QuerySingleAsync(
@@ -471,6 +490,9 @@ public static partial class EndpointMappings
         var companyId = GetCompanyId(http);
         return await db.RunInTenantTransactionAsync<IResult>(companyId, async () =>
         {
+            var safetyIdentity = await ResolveDvirSafetyIdentityAsync(db, companyId, id, ct);
+            if (safetyIdentity is null) return Results.NotFound(ApiResponse<object>.Fail("DVIR report not found"));
+            await AcquireDvirDepartureSafetyLockAsync(db, companyId, safetyIdentity.Value.vehicleId, safetyIdentity.Value.driverId, ct);
             var report = await db.QuerySingleAsync(
                 @"SELECT mechanic_review_status,row_version FROM dvir_reports
                   WHERE id=@id AND company_id=@cid AND deleted_at IS NULL
@@ -509,6 +531,9 @@ public static partial class EndpointMappings
         var companyId = GetCompanyId(http);
         return await db.RunInTenantTransactionAsync<IResult>(companyId, async () =>
         {
+            var safetyIdentity = await ResolveDvirSafetyIdentityAsync(db, companyId, id, ct);
+            if (safetyIdentity is null) return Results.NotFound(ApiResponse<object>.Fail("DVIR report not found for the authenticated driver"));
+            await AcquireDvirDepartureSafetyLockAsync(db, companyId, safetyIdentity.Value.vehicleId, safetyIdentity.Value.driverId, ct);
             var report = await db.QuerySingleAsync(
                 @"SELECT defects_found,mechanic_review_status,repair_certification_status,row_version FROM dvir_reports
                   WHERE id=@id AND company_id=@cid AND deleted_at IS NULL
@@ -562,6 +587,9 @@ public static partial class EndpointMappings
         var companyId = GetCompanyId(http);
         return await db.RunInTenantTransactionAsync<IResult>(companyId, async () =>
         {
+            var safetyIdentity = await ResolveDvirSafetyIdentityAsync(db, companyId, id, ct);
+            if (safetyIdentity is null) return Results.NotFound(ApiResponse<object>.Fail("DVIR report not found for the authenticated driver"));
+            await AcquireDvirDepartureSafetyLockAsync(db, companyId, safetyIdentity.Value.vehicleId, safetyIdentity.Value.driverId, ct);
             var report = await db.QuerySingleAsync(
                 @"SELECT dr.report_number,dr.driver_id,dr.vehicle_id,dr.country_code,dr.inspection_type,
                          dr.inspection_status,dr.defects_found,dr.safe_to_operate,dr.submitted_at,dr.notes,
@@ -616,6 +644,9 @@ public static partial class EndpointMappings
         var companyId = GetCompanyId(http);
         return await db.RunInTenantTransactionAsync<IResult>(companyId, async () =>
         {
+            var safetyIdentity = await ResolveDvirSafetyIdentityAsync(db, companyId, id, ct);
+            if (safetyIdentity is null) return Results.NotFound(ApiResponse<object>.Fail("DVIR report not found for the authenticated driver"));
+            await AcquireDvirDepartureSafetyLockAsync(db, companyId, safetyIdentity.Value.vehicleId, safetyIdentity.Value.driverId, ct);
             var report = await db.QuerySingleAsync(
                 @"SELECT dr.id,dr.row_version,dr.repair_certification_status,dr.driver_repair_acknowledged_at
                   FROM dvir_reports dr JOIN drivers d ON d.id=dr.driver_id AND d.company_id=dr.company_id

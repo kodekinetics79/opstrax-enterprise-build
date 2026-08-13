@@ -19202,9 +19202,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         // Serialize every DVIR write with the departure safety decision for this exact
         // tenant/vehicle/driver tuple. Row locks cannot prevent a newer report insert
         // (a phantom), so both paths share this transaction-scoped advisory lock.
-        await db.ExecuteAsync(
-            "SELECT pg_advisory_xact_lock(hashtextextended(@key,0))",
-            c => c.Parameters.AddWithValue("@key", $"fleet-departure-safety:{companyId}:{body.VehicleId}:{body.DriverId}"), ct);
+        await AcquireDvirDepartureSafetyLockAsync(db, companyId, body.VehicleId, body.DriverId, ct);
         // Lock and validate both authoritative resources. A report cannot bind a tenant or
         // branch-local vehicle to a driver outside the same scope.
         var ownership = await db.QuerySingleAsync(
@@ -23059,9 +23057,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             if (candidateVehicleId <= 0)
                 return Results.NotFound(ApiResponse<object>.Fail("Assignment not found or does not belong to you"));
             departureVehicleId = candidateVehicleId;
-            await db.ExecuteAsync(
-                "SELECT pg_advisory_xact_lock(hashtextextended(@key,0))",
-                c => c.Parameters.AddWithValue("@key", $"fleet-departure-safety:{companyId}:{candidateVehicleId}:{driverId}"), ct);
+            await AcquireDvirDepartureSafetyLockAsync(db, companyId, candidateVehicleId, driverId, ct);
         }
 
         var current = await db.QuerySingleAsync(
