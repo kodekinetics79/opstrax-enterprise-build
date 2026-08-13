@@ -48,7 +48,8 @@ assert.match(vehiclesPage, /approved alternate identity kind/, "VIN-less vehicle
 assert.match(vehiclesPage, /label: "Alternate identity"/, "Vehicle detail must render the governed alternate identity");
 
 const driverPage = readFileSync(resolve(root, "src/pages/driver/DriverAssignmentPage.tsx"), "utf8");
-assert.match(driverPage, /s !== "accepted"/, "The canonical accept endpoint must be the only assignment acceptance action");
+assert.match(driverPage, /s !== "accepted" \|\| status === "exception"/, "Initial acceptance must use the canonical endpoint while exception recovery remains executable");
+assert.match(driverPage, /Resume Assignment/, "Accepted assignments must be able to resume from exception without a duplicate initial accept action");
 for (const [status, label] of [
   ["en_route_pickup", "Start Route to Pickup"],
   ["arrived_pickup", "Mark Arrived at Pickup"],

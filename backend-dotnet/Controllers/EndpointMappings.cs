@@ -22900,7 +22900,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var resumeStatus = NormalizeAssignmentStatus(row["previousStatus"]?.ToString() ?? "");
         var driverNextStatuses = new[] { "accepted","en_route_pickup","arrived_pickup","loaded","in_transit","arrived_delivery","exception" }
             .Where(s => IsValidDispatchTransition(currentStatus, s))
-            .Where(s => s != "accepted") // Acceptance has its own endpoint with notification side effects.
+            // Initial acceptance has its own endpoint with notification side effects. An
+            // exception may still resume to its recorded prior state of accepted.
+            .Where(s => s != "accepted" || currentStatus == "exception")
             .Where(s => currentStatus != "exception" || s == resumeStatus)
             .ToList();
 

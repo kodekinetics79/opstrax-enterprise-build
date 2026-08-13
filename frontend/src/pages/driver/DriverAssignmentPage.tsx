@@ -330,10 +330,10 @@ export function DriverAssignmentPage() {
       )}
 
       {/* Status advance buttons */}
-      {nextStatuses.filter(s => s !== "accepted" && s !== "exception" && s !== "cancelled")
+      {nextStatuses.filter(s => (s !== "accepted" || status === "exception") && s !== "exception" && s !== "cancelled")
         .filter(s => s !== "en_route_pickup" || (vehicleConfirmed && safePretripReady)).map((s) => {
         const isProofAction = s === "delivered" || (s === "in_transit" && status === "arrived_pickup");
-        const label = STATUS_LABELS[s] ?? `Mark ${s.replace(/_/g, " ")}`;
+        const label = status === "exception" && s === "accepted" ? "Resume Assignment" : STATUS_LABELS[s] ?? `Mark ${s.replace(/_/g, " ")}`;
 
         if (s === "delivered") {
           return (
