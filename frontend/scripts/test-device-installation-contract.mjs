@@ -50,6 +50,7 @@ assert.match(vehiclesPage, /label: "Alternate identity"/, "Vehicle detail must r
 const driverPage = readFileSync(resolve(root, "src/pages/driver/DriverAssignmentPage.tsx"), "utf8");
 assert.match(driverPage, /s !== "accepted" \|\| status === "exception"/, "Initial acceptance must use the canonical endpoint while exception recovery remains executable");
 assert.match(driverPage, /Resume Assignment/, "Accepted assignments must be able to resume from exception without a duplicate initial accept action");
+assert.match(driverPage, /s === "assigned" \|\| s === "accepted"/, "Pre-accept and post-accept exceptions must both expose the governed resume action");
 for (const [status, label] of [
   ["en_route_pickup", "Start Route to Pickup"],
   ["arrived_pickup", "Mark Arrived at Pickup"],

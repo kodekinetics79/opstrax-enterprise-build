@@ -59,6 +59,7 @@ public sealed class FleetIdentityBackboneContractTests
         Assert.Contains("customer.company_id=da.company_id", current, StringComparison.Ordinal);
         Assert.DoesNotContain("j.customer_name", current, StringComparison.Ordinal);
         Assert.Contains("s != \"accepted\" || currentStatus == \"exception\"", current, StringComparison.Ordinal);
+        Assert.Contains("new[] { \"assigned\",\"accepted\"", current, StringComparison.Ordinal);
         var confirm = Block(source, "private static async Task<IResult> DriverConfirmVehicle(", "private static async Task<IResult> DriverUpdateStatus(");
         Assert.Contains("FixedTimeEquals", confirm, StringComparison.Ordinal);
         Assert.Contains("vehicle_confirmed_by_driver_id", confirm, StringComparison.Ordinal);
@@ -82,6 +83,7 @@ public sealed class FleetIdentityBackboneContractTests
         Assert.Contains("Driver signature required before departure", driverPage, StringComparison.Ordinal);
         Assert.Contains("vehicleConfirmed", driverPage, StringComparison.Ordinal);
         Assert.Contains("s !== \"accepted\" || status === \"exception\"", driverPage, StringComparison.Ordinal);
+        Assert.Contains("s === \"assigned\" || s === \"accepted\"", driverPage, StringComparison.Ordinal);
         Assert.Contains("Resume Assignment", driverPage, StringComparison.Ordinal);
     }
 

@@ -22898,7 +22898,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         // Driver-safe allowed next statuses
         var currentStatus = NormalizeAssignmentStatus(row["assignmentStatus"]?.ToString() ?? "");
         var resumeStatus = NormalizeAssignmentStatus(row["previousStatus"]?.ToString() ?? "");
-        var driverNextStatuses = new[] { "accepted","en_route_pickup","arrived_pickup","loaded","in_transit","arrived_delivery","exception" }
+        var driverNextStatuses = new[] { "assigned","accepted","en_route_pickup","arrived_pickup","loaded","in_transit","arrived_delivery","exception" }
             .Where(s => IsValidDispatchTransition(currentStatus, s))
             // Initial acceptance has its own endpoint with notification side effects. An
             // exception may still resume to its recorded prior state of accepted.
