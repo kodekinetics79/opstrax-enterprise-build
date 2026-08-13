@@ -75,6 +75,34 @@ CREATE TABLE IF NOT EXISTS job_charges (
     updated_at TIMESTAMPTZ NULL
 );
 
+-- The supported 001 predecessor creates trips but not trip_stops. Runtime schema
+-- initialization is disabled in protected environments, so Stage 6 must install
+-- the canonical stop table before adding its address column and indexes below.
+-- Stage 51 repeats this CREATE TABLE defensively and remains idempotent.
+CREATE TABLE IF NOT EXISTS trip_stops (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    company_id BIGINT NOT NULL,
+    trip_id BIGINT NOT NULL,
+    route_stop_id BIGINT NULL,
+    stop_sequence INT NOT NULL DEFAULT 0,
+    stop_type VARCHAR(60) NOT NULL DEFAULT 'Delivery',
+    address VARCHAR(200) NULL,
+    lat DECIMAL(10,7) NULL,
+    lng DECIMAL(10,7) NULL,
+    planned_arrival_time TIMESTAMPTZ NULL,
+    planned_departure_time TIMESTAMPTZ NULL,
+    actual_arrival_time TIMESTAMPTZ NULL,
+    actual_departure_time TIMESTAMPTZ NULL,
+    time_window_start TIMESTAMPTZ NULL,
+    time_window_end TIMESTAMPTZ NULL,
+    status VARCHAR(40) NOT NULL DEFAULT 'pending',
+    arrival_delay_minutes INT NOT NULL DEFAULT 0,
+    deviation_flagged BOOLEAN NOT NULL DEFAULT false,
+    notes TEXT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_business_surface_profiles_company ON business_surface_profiles (company_id);
 CREATE INDEX IF NOT EXISTS idx_rate_cards_company_contract_status ON rate_cards (company_id, contract_id, status, effective_date DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_rate_cards_company_code ON rate_cards (company_id, rate_card_code);

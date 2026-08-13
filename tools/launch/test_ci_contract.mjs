@@ -72,6 +72,7 @@ test("protected clean database receives the complete pre-RLS runtime foundation"
   assert.match(stage77, /ADD COLUMN IF NOT EXISTS invite_token_hash/);
   assert.match(stage77, /ADD COLUMN IF NOT EXISTS mfa_secret/);
   assert.match(runner, /to_regclass\('public\.outbox_messages'\) IS NULL/);
+  assert.ok(runner.indexOf("2026_07_30_stage51_production_runtime_support") < runner.indexOf("2026_06_28_stage12a_telemetry_live_state"));
   const commercial = read("database/migrations/2026_06_29_stage18_commercial_foundation.sql");
   assert.match(commercial, /ADD COLUMN IF NOT EXISTS contract_number/);
   assert.match(commercial, /ALTER COLUMN contract_number SET NOT NULL/);
@@ -79,6 +80,9 @@ test("protected clean database receives the complete pre-RLS runtime foundation"
   assert.match(foundation, /ALTER TABLE ai_recommendations ADD COLUMN IF NOT EXISTS tenant_id/);
   assert.match(foundation, /SET company_id=COALESCE\(company_id, tenant_id\)/);
   assert.match(foundation, /ALTER TABLE ai_recommendations ALTER COLUMN tenant_id SET NOT NULL/);
+  const businessSpine = read("database/migrations/2026_06_28_stage6_p0b1b_business_spine.sql");
+  assert.match(businessSpine, /CREATE TABLE IF NOT EXISTS trip_stops/);
+  assert.ok(businessSpine.indexOf("CREATE TABLE IF NOT EXISTS trip_stops") < businessSpine.indexOf("ALTER TABLE trip_stops ADD COLUMN"));
 });
 
 test("clean chain and production rehearsal require Stage76 evidence", () => {

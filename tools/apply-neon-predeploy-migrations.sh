@@ -81,7 +81,6 @@ MIGRATIONS=(
   2026_06_28_stage6_p0b1b_business_spine
   2026_06_28_stage7a_revenue_readiness_schema_contract
   2026_06_28_stage8_finance_activation
-  2026_06_28_stage12a_telemetry_live_state
   2026_06_28_stage13b_safety_maintenance_foundation
   2026_06_29_stage18_commercial_foundation
   # Stage 20 MUST run first: it creates the restricted opstrax_app role that Stage 50's
@@ -102,6 +101,9 @@ MIGRATIONS=(
   2026_07_30_stage49_mfa_challenge_one_time
   2026_07_30_stage50_fleet_production_contract
   2026_07_30_stage51_production_runtime_support
+  # Stage12 enriches telemetry tables whose owner-safe definitions are installed
+  # by Stage51 on the supported protected predecessor.
+  2026_06_28_stage12a_telemetry_live_state
   2026_07_22_stage47_detention_recovery
   2026_07_30_stage52_fleet_identity_uniqueness
   2026_07_30_stage53_tenant_rls_reconciliation
