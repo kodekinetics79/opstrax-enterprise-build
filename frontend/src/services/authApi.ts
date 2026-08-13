@@ -40,10 +40,10 @@ export const authApi = {
     // generated a guaranteed 404 on every password login before the real request.
     try { await apiClient.get("/health/live"); } catch { /* warm-up only — never block login */ }
   },
-  login: async (usernameOrEmail: string, password: string): Promise<LoginResult> => {
+  login: async (usernameOrEmail: string, password: string, companyCode: string): Promise<LoginResult> => {
     const email = resolveEmail(usernameOrEmail);
     const response = await unwrap<LoginResult>(
-      apiClient.post("/api/auth/login", { email, password })
+      apiClient.post("/api/auth/login", { email, password, companyCode: companyCode.trim() })
     );
     if (!isMfaChallenge(response) && response.csrfToken) {
       setGlobalCsrfToken(response.csrfToken);
@@ -68,8 +68,11 @@ export const authApi = {
    * admin-provisioned `sso_connections` table is empty), so the UI simply reveals
    * the password field. Never reveals whether a *user* exists (enumeration-safe).
    */
-  ssoDiscover: async (email: string) =>
-    unwrap<SsoDiscovery>(apiClient.post("/api/auth/sso/discover", { email: resolveEmail(email) })),
+  ssoDiscover: async (email: string, companyCode: string) =>
+    unwrap<SsoDiscovery>(apiClient.post("/api/auth/sso/discover", {
+      email: resolveEmail(email),
+      companyCode: companyCode.trim(),
+    })),
   me: async () => unwrap<UserSession>(apiClient.get("/api/auth/me")),
   refresh: async () => unwrap<UserSession>(apiClient.post("/api/auth/refresh")),
   logout: async () => unwrap<{ loggedOut: boolean }>(apiClient.post("/api/auth/logout")),

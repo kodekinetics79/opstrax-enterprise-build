@@ -2716,7 +2716,8 @@ public static partial class EndpointMappings
         PasswordPolicyService passwordPolicy,
         CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password))
+        if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password) ||
+            string.IsNullOrWhiteSpace(request.CompanyCode))
             return InvalidCredentials();
 
         var user = await db.QuerySingleAsync(
@@ -2724,11 +2725,14 @@ public static partial class EndpointMappings
                      c.id company_id, c.name company_name, c.company_code, c.status company_status, c.country company_country, c.currency company_currency,
                      c.entitlement_policy_mode
               FROM users u JOIN companies c ON c.id = u.company_id
-              WHERE LOWER(u.email)=LOWER(@email) LIMIT 1
+              WHERE LOWER(u.email)=LOWER(@email)
+                AND LOWER(c.company_code)=LOWER(@companyCode)
+              LIMIT 1
               FOR SHARE OF u, c",
             cmd =>
             {
                 cmd.Parameters.AddWithValue("@email", request.Email);
+                cmd.Parameters.AddWithValue("@companyCode", request.CompanyCode.Trim());
             }, ct);
         if (user is null) return InvalidCredentials();
 
@@ -3482,9 +3486,11 @@ public static partial class EndpointMappings
             new { ssoConfigured = false, usePassword = true, connection = (object?)null }));
 
         var email = (request.Email ?? string.Empty).Trim().ToLowerInvariant();
+        var companyCode = (request.CompanyCode ?? string.Empty).Trim();
         // Cheap structural validation only; never reveals whether the address is real.
         var at = email.LastIndexOf('@');
-        if (email.Length is 0 or > 320 || at <= 0 || at == email.Length - 1)
+        if (email.Length is 0 or > 320 || companyCode.Length is 0 or > 100 ||
+            at <= 0 || at == email.Length - 1)
             return Password();
 
         var domain = email[(at + 1)..];
@@ -3505,17 +3511,23 @@ public static partial class EndpointMappings
         try
         {
             row = await db.QuerySingleAsync(
-                @"SELECT id, company_id, provider_type, display_name
-                  FROM sso_connections
-                  WHERE enabled = true
-                    AND domain_hints IS NOT NULL
+                @"SELECT sc.id, sc.company_id, sc.provider_type, sc.display_name
+                  FROM sso_connections sc
+                  JOIN companies c ON c.id = sc.company_id
+                  WHERE sc.enabled = true
+                    AND lower(c.company_code) = lower(@companyCode)
+                    AND sc.domain_hints IS NOT NULL
                     AND EXISTS (
-                      SELECT 1 FROM jsonb_array_elements_text(domain_hints) AS h(v)
+                      SELECT 1 FROM jsonb_array_elements_text(sc.domain_hints) AS h(v)
                       WHERE lower(trim(h.v)) = @d
                     )
-                  ORDER BY id
+                  ORDER BY sc.id
                   LIMIT 1",
-                cmd => cmd.Parameters.AddWithValue("@d", domain), ct);
+                cmd =>
+                {
+                    cmd.Parameters.AddWithValue("@d", domain);
+                    cmd.Parameters.AddWithValue("@companyCode", companyCode);
+                }, ct);
         }
         catch (Exception)
         {
@@ -13342,8 +13354,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         return Results.Ok(ApiResponse<object>.Ok(new { id, status }, $"Status updated to {status}"));
     }
 
-    private sealed record LoginRequest(string Email, string Password);
-    private sealed record SsoDiscoverRequest(string? Email);
+    private sealed record LoginRequest(string Email, string Password, string CompanyCode);
+    private sealed record SsoDiscoverRequest(string? Email, string? CompanyCode);
     private sealed record ForgotPasswordRequest(string? Email);
     private sealed record ResetPasswordRequest(string? Email, string? Token, string? NewPassword);
     private sealed record ToggleBody(bool Enabled);
@@ -22392,7 +22404,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var row = await db.QuerySingleAsync(
             @"SELECT da.id, da.assignment_status, da.planned_pickup_at, da.planned_delivery_at,
                      da.actual_pickup_at, da.actual_delivery_at, da.accepted_at,
-                     da.notes, da.exception_count, da.trip_id, da.previous_status,
+                     da.notes, da.exception_count, da.trip_id, da.vehicle_id, da.job_id, da.previous_status,
                      COALESCE(j.job_number, j.job_code) shipment_number,
                      j.pickup_address, j.dropoff_address, j.customer_name,
                      v.vehicle_code, v.out_of_service vehicle_oos,
