@@ -117,6 +117,77 @@ VALUES
 RESET ROLE;
 SQL
 
+# Prove both live contract write shapes converge on the same stored identity,
+# display title and expiry values. The transaction is rolled back so the clean
+# chain remains deterministic.
+psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q <<'SQL'
+BEGIN;
+DO $contract_compatibility$
+DECLARE
+  company bigint := (SELECT min(id) FROM companies);
+  customer bigint := (SELECT min(id) FROM customers);
+  legacy_id bigint;
+  modern_id bigint;
+BEGIN
+  INSERT INTO contracts
+    (company_id,customer_id,contract_code,title,rate_type,status,expiration_date)
+  VALUES
+    (company,customer,'STG18-LEGACY','Legacy probe','Per Mile','Active',DATE '2030-01-02')
+  RETURNING id INTO legacy_id;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM contracts
+    WHERE id=legacy_id
+      AND contract_number='STG18-LEGACY'
+      AND expiry_date=DATE '2030-01-02'
+  ) THEN
+    RAISE EXCEPTION 'Stage18 did not project the legacy contract write shape';
+  END IF;
+
+  INSERT INTO contracts
+    (company_id,customer_id,contract_number,rate_type,status,expiry_date)
+  VALUES
+    (company,customer,'STG18-MODERN','Per Mile','Active',DATE '2031-02-03')
+  RETURNING id INTO modern_id;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM contracts
+    WHERE id=modern_id
+      AND contract_code='STG18-MODERN'
+      AND title='STG18-MODERN'
+      AND expiration_date=DATE '2031-02-03'
+  ) THEN
+    RAISE EXCEPTION 'Stage18 did not project the modern contract write shape';
+  END IF;
+
+  UPDATE contracts
+  SET contract_number='STG18-MODERN-UPDATED', expiry_date=DATE '2032-03-04'
+  WHERE id=modern_id;
+  IF NOT EXISTS (
+    SELECT 1 FROM contracts
+    WHERE id=modern_id
+      AND contract_code='STG18-MODERN-UPDATED'
+      AND expiration_date=DATE '2032-03-04'
+  ) THEN
+    RAISE EXCEPTION 'Stage18 did not synchronize modern contract updates';
+  END IF;
+
+  UPDATE contracts
+  SET contract_code='STG18-LEGACY-UPDATED', expiration_date=DATE '2033-04-05'
+  WHERE id=legacy_id;
+  IF NOT EXISTS (
+    SELECT 1 FROM contracts
+    WHERE id=legacy_id
+      AND contract_number='STG18-LEGACY-UPDATED'
+      AND expiry_date=DATE '2033-04-05'
+  ) THEN
+    RAISE EXCEPTION 'Stage18 did not synchronize legacy contract updates';
+  END IF;
+END
+$contract_compatibility$;
+ROLLBACK;
+SQL
+
 # A bare app-role session has no signed tenant ticket. Even with INSERT granted,
 # FORCE RLS must reject an arbitrary audit_company_id instead of trusting input.
 if psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q <<'SQL'

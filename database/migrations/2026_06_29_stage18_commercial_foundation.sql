@@ -20,6 +20,56 @@ ALTER TABLE contracts ADD COLUMN IF NOT EXISTS notes TEXT NULL;
 ALTER TABLE contracts ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 ALTER TABLE contracts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NULL;
 
+-- Migration 001 and the commercial API use different names for the same
+-- contract identity and expiry fields. Both shapes remain active: revenue and
+-- demo-seed writers use the legacy columns while the authenticated contracts
+-- API uses the commercial columns. Keep them synchronized at the database
+-- boundary so either writer produces one truthful row.
+CREATE OR REPLACE FUNCTION stage18_sync_contract_compatibility()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $stage18_contract_sync$
+BEGIN
+  IF TG_OP = 'UPDATE' THEN
+    IF NEW.contract_number IS DISTINCT FROM OLD.contract_number
+       AND NULLIF(BTRIM(NEW.contract_number), '') IS NOT NULL THEN
+      NEW.contract_code := NEW.contract_number;
+    ELSIF NEW.contract_code IS DISTINCT FROM OLD.contract_code
+       AND NULLIF(BTRIM(NEW.contract_code), '') IS NOT NULL THEN
+      NEW.contract_number := NEW.contract_code;
+    END IF;
+
+    IF NEW.expiry_date IS DISTINCT FROM OLD.expiry_date THEN
+      NEW.expiration_date := NEW.expiry_date;
+    ELSIF NEW.expiration_date IS DISTINCT FROM OLD.expiration_date THEN
+      NEW.expiry_date := NEW.expiration_date;
+    END IF;
+  END IF;
+
+  NEW.contract_number := COALESCE(
+    NULLIF(BTRIM(NEW.contract_number), ''),
+    NULLIF(BTRIM(NEW.contract_code), '')
+  );
+  NEW.contract_code := COALESCE(
+    NULLIF(BTRIM(NEW.contract_code), ''),
+    NEW.contract_number
+  );
+  NEW.title := COALESCE(
+    NULLIF(BTRIM(NEW.title), ''),
+    NEW.contract_number,
+    NEW.contract_code
+  );
+  NEW.expiry_date := COALESCE(NEW.expiry_date, NEW.expiration_date);
+  NEW.expiration_date := COALESCE(NEW.expiration_date, NEW.expiry_date);
+  RETURN NEW;
+END
+$stage18_contract_sync$;
+
+DROP TRIGGER IF EXISTS trg_stage18_sync_contract_compatibility ON contracts;
+CREATE TRIGGER trg_stage18_sync_contract_compatibility
+BEFORE INSERT OR UPDATE ON contracts
+FOR EACH ROW EXECUTE FUNCTION stage18_sync_contract_compatibility();
+
 DO $reconcile_legacy_contracts$
 BEGIN
   IF EXISTS (SELECT 1 FROM information_schema.columns

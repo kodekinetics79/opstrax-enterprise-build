@@ -76,6 +76,13 @@ test("protected clean database receives the complete pre-RLS runtime foundation"
   const commercial = read("database/migrations/2026_06_29_stage18_commercial_foundation.sql");
   assert.match(commercial, /ADD COLUMN IF NOT EXISTS contract_number/);
   assert.match(commercial, /ALTER COLUMN contract_number SET NOT NULL/);
+  assert.match(commercial, /stage18_sync_contract_compatibility/);
+  assert.match(commercial, /NEW\.contract_code := NEW\.contract_number/);
+  assert.match(commercial, /NEW\.contract_number := NEW\.contract_code/);
+  assert.match(commercial, /NEW\.expiration_date := NEW\.expiry_date/);
+  assert.match(clean, /Stage18 did not project the legacy contract write shape/);
+  assert.match(clean, /Stage18 did not project the modern contract write shape/);
+  assert.match(clean, /Stage18 did not synchronize legacy contract updates/);
   const foundation = read("database/migrations/2026_06_27_stage5_p0b1a_foundation.sql");
   assert.match(foundation, /ALTER TABLE ai_recommendations ADD COLUMN IF NOT EXISTS tenant_id/);
   assert.match(foundation, /SET company_id=COALESCE\(company_id, tenant_id\)/);
