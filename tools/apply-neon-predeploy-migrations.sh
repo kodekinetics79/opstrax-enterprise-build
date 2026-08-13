@@ -361,7 +361,10 @@ BEGIN
        SELECT 1 FROM (VALUES
          ('device_installations','effective_from'),('device_installations','effective_to'),
          ('device_installations','device_role'),('device_installations','row_version'),
+         ('eld_devices','notes'),
          ('location_events','installation_id'),('location_events','assignment_id'),
+         ('location_events','battery_voltage'),
+         ('latest_vehicle_positions','address'),
          ('latest_vehicle_positions','installation_id'),('latest_vehicle_positions','assignment_id'),
          ('canonical_telemetry_events','installation_id'),('canonical_telemetry_events','assignment_id')
        ) required(table_name,column_name)

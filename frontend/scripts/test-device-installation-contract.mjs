@@ -32,12 +32,14 @@ assert.doesNotMatch(devicesPage, /Metadata edits were captured/, "Unsupported me
 assert.match(devicesPage, /Metadata read-only/, "Unsupported metadata must be labelled read-only");
 assert.match(devicesPage, /Installation History/, "The detail drawer must render installation history");
 assert.match(devicesPage, /Device lifecycle action failed/, "Lifecycle mutation failures must be rendered to the operator");
+assert.doesNotMatch(vehiclesPage, /withDeviceEvidence/, "Vehicle health must not overwrite the API-selected primary installation with an unordered client-side device join");
 assert.match(devicesPage, /authenticated device heartbeat must verify activation/, "Commissioning must expose its activation-evidence gate");
 assert.match(vehiclesPage, /if \(deviceId == null\) return "Unknown"/, "Vehicles without a current device must be Unknown");
 assert.match(vehiclesPage, /if \(lastSeen == null\) return "Disconnected"/, "Installed devices without live evidence must be Disconnected");
 assert.doesNotMatch(vehiclesPage, /telematicsService\.getDevices/, "Vehicle list health must not overwrite the backend-selected primary installation");
 assert.match(vehiclesPage, /scopeRowsForSession\("vehicles", pagedRows, session\)/, "Vehicle list health must consume the tenant-scoped authoritative vehicle response");
-assert.match(vehiclesPage, /detailEnvelope\?\.currentDevices/, "Vehicle detail health must consume authoritative current installations");
+assert.match(vehiclesPage, /const currentDevices = \(detail\?\.currentDevices/, "Vehicle detail must render authoritative current installations");
+assert.match(vehiclesPage, /selectedRecord = selectedDetailRecord/, "Vehicle health must retain the API-selected primary installation on detail refresh");
 assert.match(vehiclesPage, /15 \* 60_000/, "Device health freshness must use the service heartbeat window");
 for (const field of ["vinExceptionType", "alternateIdentifier", "plateJurisdiction", "vehicleClass"]) {
   assert.match(vehiclesPage, new RegExp(`key: "${field}"`), `${field} must be available in create/edit`);

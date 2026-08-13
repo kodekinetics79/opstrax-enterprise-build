@@ -22865,7 +22865,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                      da.actual_pickup_at, da.actual_delivery_at, da.accepted_at,
                      da.notes, da.exception_count, da.trip_id, da.previous_status,
                      COALESCE(j.job_number, j.job_code) shipment_number,
-                     j.pickup_address, j.dropoff_address, j.customer_name,
+                     j.pickup_address, j.dropoff_address, customer.name customer_name,
                      v.vehicle_code, RIGHT(NULLIF(v.vin,''),6) vehicle_vin_suffix,
                      v.out_of_service vehicle_oos,
                      da.vehicle_confirmed_at,da.vehicle_confirmation_method,
@@ -22876,6 +22876,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                      (SELECT COUNT(*) FROM dispatch_exceptions de WHERE de.assignment_id=da.id AND de.company_id=da.company_id AND de.status='open') open_exceptions
               FROM dispatch_assignments da
               LEFT JOIN jobs j ON j.id = da.job_id AND j.company_id=da.company_id
+              LEFT JOIN customers customer ON customer.id=j.customer_id AND customer.company_id=da.company_id
               LEFT JOIN vehicles v ON v.id = da.vehicle_id AND v.company_id=da.company_id
               LEFT JOIN LATERAL (
                 SELECT dr.id,dr.safe_to_operate,dr.driver_signature_status FROM dvir_reports dr

@@ -112,6 +112,10 @@ ALTER TABLE eld_devices ADD COLUMN IF NOT EXISTS sim_iccid VARCHAR(32) NULL;
 ALTER TABLE eld_devices ADD COLUMN IF NOT EXISTS sim_imsi VARCHAR(32) NULL;
 ALTER TABLE eld_devices ADD COLUMN IF NOT EXISTS commissioned_at TIMESTAMPTZ NULL;
 ALTER TABLE eld_devices ADD COLUMN IF NOT EXISTS retired_at TIMESTAMPTZ NULL;
+-- The provision API persists operator-entered registration notes. Stage29 added
+-- this column to some legacy databases, but it is not part of the protected
+-- owner chain; Stage80 must therefore reconcile it for clean and upgraded sites.
+ALTER TABLE eld_devices ADD COLUMN IF NOT EXISTS notes TEXT NULL;
 
 -- Normalized identifier conflicts are evidence, not a winner-selection problem. Hold
 -- every conflicting legacy record outside the active identity namespace, then enforce
@@ -359,6 +363,10 @@ CREATE INDEX IF NOT EXISTS idx_stage80_vehicle_installations
 ALTER TABLE location_events ADD COLUMN IF NOT EXISTS installation_id BIGINT NULL;
 ALTER TABLE location_events ADD COLUMN IF NOT EXISTS assignment_id BIGINT NULL;
 ALTER TABLE location_events ADD COLUMN IF NOT EXISTS trip_id BIGINT NULL;
+ALTER TABLE location_events ADD COLUMN IF NOT EXISTS battery_voltage NUMERIC(10, 3) NULL;
+-- TelemetryPositions always projects the reverse-geocode cache. Stage30 was a
+-- legacy optional migration, so the protected owner chain must reconcile it.
+ALTER TABLE latest_vehicle_positions ADD COLUMN IF NOT EXISTS address TEXT NULL;
 ALTER TABLE latest_vehicle_positions ADD COLUMN IF NOT EXISTS installation_id BIGINT NULL;
 ALTER TABLE latest_vehicle_positions ADD COLUMN IF NOT EXISTS assignment_id BIGINT NULL;
 ALTER TABLE latest_vehicle_positions ADD COLUMN IF NOT EXISTS trip_id BIGINT NULL;

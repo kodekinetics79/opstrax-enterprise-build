@@ -64,33 +64,6 @@ function hasRecentHeartbeat(iso: unknown): boolean {
   return !Number.isNaN(timestamp) && Date.now() - timestamp <= 15 * 60_000;
 }
 
-function withDeviceEvidence(row: AnyRecord, devices: AnyRecord[]): AnyRecord {
-  const vehicleId = String(row.id ?? g(row, "vehicleId", "vehicle_id") ?? "");
-  const installed = devices.filter((device) => {
-    const assignedVehicleId = g(device as AnyRecord, "assignedVehicleId", "vehicleId", "vehicle_id");
-    return assignedVehicleId == null || assignedVehicleId === "" || String(assignedVehicleId) === vehicleId;
-  });
-  const camera = installed.find((device) => /camera|dashcam/i.test(String(g(device as AnyRecord, "deviceRole", "device_role", "deviceType", "device_model") ?? "")));
-  const primary = installed.find((device) => device !== camera && Boolean(g(device as AnyRecord, "isPrimary", "is_primary")))
-    ?? installed.find((device) => device !== camera);
-  const evidence = (device: AnyRecord | undefined) => device ? {
-    id: g(device as AnyRecord, "id", "deviceId", "device_id"),
-    lastSeenAt: g(device as AnyRecord, "lastCheckIn", "lastSeenAt", "last_seen_at"),
-    status: g(device as AnyRecord, "connectionStatus", "deviceConnectionStatus", "device_connection_status"),
-  } : null;
-  const deviceEvidence = evidence(primary);
-  const cameraEvidence = evidence(camera);
-  return {
-    ...row,
-    currentDeviceId: deviceEvidence?.id ?? g(row, "currentDeviceId", "current_device_id"),
-    deviceLastSeenAt: deviceEvidence?.lastSeenAt ?? g(row, "deviceLastSeenAt", "device_last_seen_at"),
-    currentDeviceStatus: deviceEvidence?.status ?? g(row, "currentDeviceStatus", "current_device_status"),
-    currentCameraId: cameraEvidence?.id ?? g(row, "currentCameraId", "current_camera_id"),
-    cameraLastSeenAt: cameraEvidence?.lastSeenAt ?? g(row, "cameraLastSeenAt", "camera_last_seen_at"),
-    currentCameraStatus: cameraEvidence?.status ?? g(row, "currentCameraStatus", "current_camera_status"),
-  };
-}
-
 function hasReadinessEvidence(row: AnyRecord): boolean {
   return [vehicleDeviceStatus(row), vehicleCameraStatus(row)]
     .some((status) => status != null && !/^(unknown|unavailable|--)$/i.test(String(status).trim()));
@@ -243,7 +216,7 @@ export function VehiclesPage() {
   const detailEnvelope = detail.data as AnyRecord | undefined;
   const selectedDetailRecord = detailEnvelope?.record as AnyRecord | undefined;
   const selectedRecord = selectedDetailRecord
-    ? withDeviceEvidence(selectedDetailRecord, (detailEnvelope?.currentDevices as AnyRecord[]) ?? [])
+    ? selectedDetailRecord
     : rows.find((r) => String(r.id) === String(selectedId)) || null;
 
   return (
