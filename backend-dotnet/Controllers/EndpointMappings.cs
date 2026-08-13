@@ -23042,7 +23042,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
         // Driver-safe status set: only statuses a driver is permitted to set themselves
         var driverAllowedTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            { "accepted","en_route_pickup","arrived_pickup","loaded","in_transit","arrived_delivery","exception" };
+            { "assigned","accepted","en_route_pickup","arrived_pickup","loaded","in_transit","arrived_delivery","exception" };
         if (!driverAllowedTargets.Contains(to))
             return Results.UnprocessableEntity(ApiResponse<object>.Fail($"Drivers cannot set status '{to}'"));
 

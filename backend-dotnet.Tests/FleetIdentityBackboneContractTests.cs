@@ -68,6 +68,8 @@ public sealed class FleetIdentityBackboneContractTests
         Assert.Contains("safe_to_operate=TRUE", status, StringComparison.Ordinal);
         Assert.Contains("driver_signature_status", status, StringComparison.Ordinal);
         Assert.Contains("pretrip_dvir_id", status, StringComparison.Ordinal);
+        Assert.Contains("{ \"assigned\",\"accepted\"", status, StringComparison.Ordinal);
+        AssertOrdered(status, "if (from == \"exception\")", "driverAllowedTargets");
     }
 
     [Fact]
