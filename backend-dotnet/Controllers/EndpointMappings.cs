@@ -546,12 +546,13 @@ public static partial class EndpointMappings
             // covers much more than this one endpoint. Bucketed on the driver's user id,
             // so a partial rollout is a STABLE slice of drivers.
             // defaultOn:true — a tenant with no flag row must never lose POD upload.
-            // When off the driver app falls back to the text evidence reference, so
-            // delivery confirmation still works; it just loses the media.
+            // Delivery proof now requires a server-registered upload, so disabling this
+            // flag intentionally blocks driver-side delivery completion rather than
+            // falling back to an unverifiable client-supplied evidence reference.
             var podUserId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
             if (!await flags.IsEnabledAsync(companyId, "pod_media_capture", podUserId, defaultOn: true, ct))
                 return Results.Json(ApiResponse<object>.Fail("Feature turned off",
-                    "Photo/signature capture is currently switched off. Record the delivery using the evidence reference field."),
+                    "Photo/signature capture is currently switched off. Contact dispatch before completing delivery."),
                     statusCode: StatusCodes.Status403Forbidden);
 
             var driverId  = await GetDriverIdFromAuthAsync(http, db, ct);
@@ -564,7 +565,12 @@ public static partial class EndpointMappings
             var form = await http.Request.ReadFormAsync(ct);
             var file = form.Files["file"] ?? form.Files.FirstOrDefault();
             if (file is null || file.Length == 0) return Results.BadRequest(ApiResponse<object>.Fail("No file uploaded"));
-            var kind = form["kind"].FirstOrDefault() is { Length: > 0 } k ? k : "photo";
+            var kind = (form["kind"].FirstOrDefault() is { Length: > 0 } k ? k : "photo").Trim().ToLowerInvariant();
+            if (kind is not ("photo" or "signature"))
+                return Results.BadRequest(ApiResponse<object>.Fail("Evidence kind must be photo or signature"));
+            if (string.IsNullOrWhiteSpace(file.ContentType) ||
+                !file.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+                return Results.BadRequest(ApiResponse<object>.Fail("Proof evidence must be an image"));
 
             Opstrax.Api.Storage.FileStorageService.UploadResult stored;
             try
@@ -577,6 +583,28 @@ public static partial class EndpointMappings
                 LogSafeEndpointFailure(http, ex, "driver.proof.upload");
                 return Results.BadRequest(ApiResponse<object>.Fail("Upload rejected"));
             }
+
+            // Persist the upload's authoritative metadata only after durable storage
+            // succeeds. Proof submission never trusts a client-supplied objkey or its
+            // metadata; it locks and consumes this assignment-bound row instead.
+            var registered = await db.ExecuteAsync(
+                @"INSERT INTO dispatch_proof_uploads
+                    (company_id,assignment_id,driver_id,uploaded_by_user_id,kind,reference,content_type,size_bytes)
+                  VALUES (@cid,@aid,@did,@uid,@kind,@ref,@ctype,@size)
+                  ON CONFLICT (company_id,reference) DO NOTHING",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@cid", companyId);
+                    c.Parameters.AddWithValue("@aid", id);
+                    c.Parameters.AddWithValue("@did", driverId);
+                    c.Parameters.AddWithValue("@uid", podUserId);
+                    c.Parameters.AddWithValue("@kind", kind);
+                    c.Parameters.AddWithValue("@ref", stored.Reference);
+                    c.Parameters.AddWithValue("@ctype", stored.ContentType);
+                    c.Parameters.AddWithValue("@size", stored.Size);
+                }, ct);
+            if (registered != 1)
+                throw new InvalidOperationException("Durable proof upload could not be registered.");
 
             var resolved = await files.ResolveAsync(stored.Reference, TimeSpan.FromMinutes(15), ct);
             await audit.LogAsync(http, "driver.proof.artifact_uploaded", "DispatchAssignment", id,
@@ -22591,15 +22619,20 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             return Results.BadRequest(ApiResponse<object>.Fail("proof coordinates are invalid"));
         if ((body.Artifacts?.Length ?? 0) > 10)
             return Results.BadRequest(ApiResponse<object>.Fail("A proof can contain at most 10 artifacts"));
-        foreach (var artifact in body.Artifacts ?? [])
+        var requestedArtifacts = body.Artifacts ?? [];
+        foreach (var artifact in requestedArtifacts)
         {
             var kind = artifact.Kind?.Trim().ToLowerInvariant();
             if (kind is not ("photo" or "signature") || string.IsNullOrWhiteSpace(artifact.Reference) ||
                 artifact.Reference.Length > 2048 || artifact.ContentType?.Length > 120 || artifact.Size is < 0)
                 return Results.BadRequest(ApiResponse<object>.Fail("Proof artifact metadata is invalid"));
         }
-        if (proofType == "delivery" && string.IsNullOrWhiteSpace(evidenceHash) && (body.Artifacts?.Length ?? 0) == 0)
-            return Results.BadRequest(ApiResponse<object>.Fail("Delivery proof requires a photo, signature, or evidence reference"));
+        var requestedReferences = requestedArtifacts.Select(a => a.Reference!.Trim()).ToArray();
+        if (requestedReferences.Distinct(StringComparer.Ordinal).Count() != requestedReferences.Length)
+            return Results.BadRequest(ApiResponse<object>.Fail("A proof cannot reuse the same artifact more than once"));
+        if (proofType == "delivery" && requestedReferences.Length == 0)
+            return Results.BadRequest(ApiResponse<object>.Fail("Delivery proof requires a registered photo or signature upload"));
+        var userId = http.Items.TryGetValue(AuthUserIdItemKey, out var uid) && uid is not null ? Convert.ToInt64(uid) : 0L;
 
         return await db.RunInTenantTransactionAsync(companyId, async () =>
         {
@@ -22620,6 +22653,36 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                     c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@aid", id); c.Parameters.AddWithValue("@type", proofType); }, ct) > 0)
                 return Results.Conflict(ApiResponse<object>.Fail($"{proofType} proof has already been recorded"));
 
+            // Lock every requested registration before changing assignment state. The
+            // ownership tuple and unconsumed predicate reject fabricated, cross-driver,
+            // cross-assignment, and replayed references with one uniform response.
+            List<Dictionary<string, object?>> registeredArtifacts = requestedReferences.Length == 0
+                ? []
+                : await db.QueryAsync(
+                    @"SELECT id,kind,reference,content_type,size_bytes
+                      FROM dispatch_proof_uploads
+                      WHERE company_id=@cid AND assignment_id=@aid AND driver_id=@did AND uploaded_by_user_id=@uid
+                        AND consumed_at IS NULL AND reference=ANY(@refs)
+                      FOR UPDATE",
+                    c =>
+                    {
+                        c.Parameters.AddWithValue("@cid", companyId);
+                        c.Parameters.AddWithValue("@aid", id);
+                        c.Parameters.AddWithValue("@did", driverId);
+                        c.Parameters.AddWithValue("@uid", userId);
+                        c.Parameters.AddWithValue("@refs", requestedReferences);
+                    }, ct);
+            if (registeredArtifacts.Count != requestedReferences.Length)
+                return Results.BadRequest(ApiResponse<object>.Fail("One or more proof artifacts are invalid or no longer available"));
+            var registeredByReference = registeredArtifacts.ToDictionary(
+                row => row["reference"]!.ToString()!, StringComparer.Ordinal);
+            foreach (var requested in requestedArtifacts)
+            {
+                var registeredArtifact = registeredByReference[requested.Reference!.Trim()];
+                if (!string.Equals(registeredArtifact["kind"]?.ToString(), requested.Kind?.Trim(), StringComparison.OrdinalIgnoreCase))
+                    return Results.BadRequest(ApiResponse<object>.Fail("Proof artifact kind does not match the registered upload"));
+            }
+
             if (proofType == "delivery" &&
                 !await ApplyAssignmentTransitionAsync(db, companyId, id, "delivered", rawFrom, ct))
                 return Results.Conflict(ApiResponse<object>.Fail("Assignment changed while delivery proof was being recorded; refresh and retry"));
@@ -22633,7 +22696,6 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                     return Results.Conflict(ApiResponse<object>.Fail("Assignment changed while pickup proof was being recorded; refresh and retry"));
             }
 
-            var userId = http.Items.TryGetValue(AuthUserIdItemKey, out var uid) && uid is not null ? Convert.ToInt64(uid) : 0L;
             var proofId = await db.InsertAsync(
                 @"INSERT INTO dispatch_proofs
                     (company_id,assignment_id,proof_type,confirmed_at,confirmed_by_user_id,confirmed_by_driver_id,notes,evidence_hash,lat,lng)
@@ -22647,18 +22709,38 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                     c.Parameters.AddWithValue("@lat", body.Lat ?? (object)DBNull.Value); c.Parameters.AddWithValue("@lng", body.Lng ?? (object)DBNull.Value);
                 }, ct);
 
-            foreach (var artifact in body.Artifacts ?? [])
+            foreach (var reference in requestedReferences)
+            {
+                var artifact = registeredByReference[reference];
                 await db.ExecuteAsync(
                     @"INSERT INTO dispatch_proof_artifacts(company_id,proof_id,kind,reference,content_type,size_bytes)
                       VALUES (@cid,@pid,@kind,@ref,@ctype,@size)",
                     c =>
                     {
                         c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@pid", proofId);
-                        c.Parameters.AddWithValue("@kind", artifact.Kind!.Trim().ToLowerInvariant());
-                        c.Parameters.AddWithValue("@ref", artifact.Reference!.Trim());
-                        c.Parameters.AddWithValue("@ctype", (object?)artifact.ContentType ?? DBNull.Value);
-                        c.Parameters.AddWithValue("@size", (object?)artifact.Size ?? DBNull.Value);
+                        c.Parameters.AddWithValue("@kind", artifact["kind"]!.ToString()!);
+                        c.Parameters.AddWithValue("@ref", reference);
+                        c.Parameters.AddWithValue("@ctype", artifact["contentType"]!);
+                        c.Parameters.AddWithValue("@size", artifact["sizeBytes"]!);
                     }, ct);
+            }
+
+            if (registeredArtifacts.Count > 0)
+            {
+                var uploadIds = registeredArtifacts.Select(row => Convert.ToInt64(row["id"])).ToArray();
+                var consumed = await db.ExecuteAsync(
+                    @"UPDATE dispatch_proof_uploads
+                      SET consumed_at=NOW(),proof_id=@pid
+                      WHERE company_id=@cid AND id=ANY(@ids) AND consumed_at IS NULL",
+                    c =>
+                    {
+                        c.Parameters.AddWithValue("@pid", proofId);
+                        c.Parameters.AddWithValue("@cid", companyId);
+                        c.Parameters.AddWithValue("@ids", uploadIds);
+                    }, ct);
+                if (consumed != registeredArtifacts.Count)
+                    throw new InvalidOperationException("Proof artifact consumption lost its ownership lock.");
+            }
 
             await audit.LogAsync(http, "driver.proof.submitted", "DispatchAssignment", id,
                 $"{{\"proofId\":{proofId},\"type\":\"{proofType}\"}}", ct);

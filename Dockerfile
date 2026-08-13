@@ -40,6 +40,7 @@ COPY database/migrations/2026_08_11_stage76_telematics_security_hardening.sql da
 COPY database/migrations/2026_08_12_stage77_protected_role_bootstrap.sql database/migrations/
 COPY database/migrations/2026_08_13_stage78_country_profiles_runtime_contract.sql database/migrations/
 COPY database/migrations/2026_08_13_stage79_tenant_provisioning_runtime_contract.sql database/migrations/
+COPY database/migrations/2026_08_13_stage80_driver_proof_upload_binding.sql database/migrations/
 COPY database/migrations/telematics database/migrations/telematics
 RUN dotnet publish backend-dotnet/Opstrax.Api.csproj -c Release -o /app/publish --no-restore
 

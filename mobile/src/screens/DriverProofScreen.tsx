@@ -17,6 +17,21 @@ type CapturedAsset = {
   file?: Blob | null;
 };
 
+async function captureOptionalCoordinates(): Promise<{ lat: number; lng: number } | null> {
+  try {
+    const permission = await Location.requestForegroundPermissionsAsync();
+    if (!permission.granted) return null;
+
+    const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+    const lat = position.coords.latitude;
+    const lng = position.coords.longitude;
+    return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
+  } catch {
+    // Proof remains valid when device location is disabled, unavailable, or times out.
+    return null;
+  }
+}
+
 export function DriverProofScreen() {
   const { api } = useSession();
   const current = useAsyncResource(() => api.driverCurrentAssignment(), [api]);
@@ -61,16 +76,11 @@ export function DriverProofScreen() {
     if (!assignment?.id || !uploaded) return;
     setBusy(true);
     try {
-      let coords: { lat?: number; lng?: number } = {};
-      const permission = await Location.requestForegroundPermissionsAsync();
-      if (permission.granted) {
-        const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-        coords = { lat: position.coords.latitude, lng: position.coords.longitude };
-      }
+      const coordinates = await captureOptionalCoordinates();
       await api.submitDriverProof(assignment.id, {
         proofType,
         notes: notes.trim() || undefined,
-        ...coords,
+        ...(coordinates ?? {}),
         artifacts: [{
           kind: uploaded.kind,
           reference: uploaded.reference,

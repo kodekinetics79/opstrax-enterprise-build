@@ -53,6 +53,7 @@ function buildUrl(path: string) {
 }
 
 export function createMobileApiClient(access: SessionAccess) {
+  let refreshInFlight: Promise<boolean> | null = null;
   const rawRequest = async <T>(path: string, options: RequestOptions = {}, attempt = 0): Promise<T> => {
     const session = access.getSession();
     const method = options.method ?? "GET";
@@ -76,7 +77,10 @@ export function createMobileApiClient(access: SessionAccess) {
     }
 
     if (response.status === 401 && options.retryOn401 !== false && attempt === 0 && session?.token && !path.startsWith("/api/auth/")) {
-      const refreshed = await refreshSession(access);
+      refreshInFlight ??= refreshSession(access).finally(() => {
+        refreshInFlight = null;
+      });
+      const refreshed = await refreshInFlight;
       if (refreshed) {
         return rawRequest<T>(path, options, attempt + 1);
       }
@@ -220,17 +224,28 @@ async function refreshSession(access: SessionAccess) {
   const session = access.getSession();
   if (!session?.token) return false;
 
-  const response = await fetch(`${API_BASE_URL}/api/auth/refresh`, {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      Authorization: `Bearer ${session.token}`,
-      ...(session.csrfToken ? { "X-CSRF-Token": session.csrfToken } : {}),
-    },
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/api/auth/refresh`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${session.token}`,
+        ...(session.csrfToken ? { "X-CSRF-Token": session.csrfToken } : {}),
+      },
+      signal: controller.signal,
+    });
+  } catch {
+    // A timeout or network outage is not proof that the bearer session is invalid.
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
 
   if (!response.ok) {
-    access.setSession(null);
+    if ([400, 401, 403].includes(response.status)) access.setSession(null);
     return false;
   }
   const payload = await parseJson(response);
@@ -238,6 +253,7 @@ async function refreshSession(access: SessionAccess) {
     access.setSession(payload.data);
     return true;
   }
-  access.setSession(null);
+  // Preserve the local session on malformed/transient refresh responses; the
+  // original request still fails and the user can retry without forced logout.
   return false;
 }

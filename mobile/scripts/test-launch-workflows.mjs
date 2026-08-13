@@ -111,6 +111,10 @@ test("mobile data calls and routes are permission-gated", async () => {
   assert.match(workflow, /selectedJobId && canReadSiteAccess/);
   assert.match(telemetry, /canReadTelemetry \? api\.telemetrySummary\(\) : null/);
   assert.match(navigation, /const canWork/);
+  assert.match(navigation, /const isCustomerProofReader = directPermissions\.has\("customer_portal:view"\) && !hasProofWorkflowPermission/);
+  assert.match(navigation, /const canProof = !isCustomerProofReader && hasAnyPermission/);
+  const proofGate = navigation.slice(navigation.indexOf("const canProof"), navigation.indexOf("const canFleet"));
+  assert.doesNotMatch(proofGate, /customer_portal:view/);
 });
 
 test("proof actions expose lifecycle and evidence blockers instead of silent no-ops", async () => {

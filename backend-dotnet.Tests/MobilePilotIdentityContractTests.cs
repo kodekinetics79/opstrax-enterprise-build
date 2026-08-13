@@ -10,6 +10,11 @@ public sealed class MobilePilotIdentityContractTests
         Assert.Contains("LoginRequest(string Email, string Password, string CompanyCode)", endpoints, StringComparison.Ordinal);
         Assert.Contains("LOWER(c.company_code)=LOWER(@companyCode)", endpoints, StringComparison.Ordinal);
         Assert.Contains("cmd.Parameters.AddWithValue(\"@companyCode\", request.CompanyCode.Trim())", endpoints, StringComparison.Ordinal);
+
+        var migration = ReadSource("database", "migrations", "2026_08_13_stage79_tenant_provisioning_runtime_contract.sql");
+        Assert.Contains("GROUP BY company_id, lower(email)", migration, StringComparison.Ordinal);
+        Assert.Contains("HAVING count(*) > 1", migration, StringComparison.Ordinal);
+        Assert.DoesNotContain("count(DISTINCT company_id) > 1", migration, StringComparison.Ordinal);
     }
 
     [Fact]

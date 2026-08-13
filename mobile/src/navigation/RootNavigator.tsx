@@ -49,8 +49,9 @@ function DriverTabs() {
 }
 
 function OperationsTabs() {
-  const { hasPermission } = useSession();
+  const { session, hasPermission } = useSession();
   const hasAnyPermission = (...permissions: string[]) => permissions.some(hasPermission);
+  const directPermissions = new Set((session?.permissions ?? []).map((permission) => permission.trim().toLowerCase()));
   const canWork = hasAnyPermission(
     "dispatch.smart_assign.read", "dispatch.smart_assign.recommend", "dispatch.smart_assign.accept", "dispatch.smart_assign.reject",
     "operations.site_access.read", "operations.site_access.create", "operations.site_access.update",
@@ -58,9 +59,13 @@ function OperationsTabs() {
     "operations.warehouse_handover.read", "operations.warehouse_handover.create", "operations.warehouse_handover.update",
     "dispatch:view", "dispatch:manage",
   );
-  const canProof = hasAnyPermission(
+  const hasProofWorkflowPermission = directPermissions.has("*") || [
+    "operations.proof.create", "operations.proof.update", "operations.proof.submit", "operations.proof.validate",
+    "dispatch:view", "dispatch:manage",
+  ].some((permission) => directPermissions.has(permission));
+  const isCustomerProofReader = directPermissions.has("customer_portal:view") && !hasProofWorkflowPermission;
+  const canProof = !isCustomerProofReader && hasAnyPermission(
     "operations.proof.read", "operations.proof.create", "operations.proof.update", "operations.proof.submit", "operations.proof.validate",
-    "customer_portal:view",
   );
   const canFleet = hasAnyPermission(
     "telemetry.live_state.read", "telemetry.live-state.read", "telemetry.alerts.read", "telemetry:view",

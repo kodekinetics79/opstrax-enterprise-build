@@ -165,7 +165,7 @@ public static partial class EndpointMappings
 
     private static async Task<IResult> CreateSiteAccessRequirement(HttpContext http, long jobId, Dictionary<string, object?> body, Stage9OperationalFoundationService svc, AuditService audit, Database db, CancellationToken ct)
     {
-        var denied = RequireAnyDirectPermission(http, "operations.site_access.create", "job:update", "dispatch:manage", "driver:self");
+        var denied = RequireAnyDirectPermission(http, "operations.site_access.create", "job:update", "dispatch:manage");
         if (denied is not null) return denied;
         if (!await JobInAuthorizedScope(http, jobId, db, ct)) return Results.NotFound(ApiResponse<object>.Fail("Job not found"));
         var tripId = Long(body, "tripId");
@@ -179,7 +179,7 @@ public static partial class EndpointMappings
 
     private static async Task<IResult> PatchSiteAccessRequirement(HttpContext http, long id, Dictionary<string, object?> body, Stage9OperationalFoundationService svc, AuditService audit, Database db, CancellationToken ct)
     {
-        var denied = RequireAnyDirectPermission(http, "operations.site_access.update", "job:update", "dispatch:manage", "driver:self");
+        var denied = RequireAnyDirectPermission(http, "operations.site_access.update", "job:update", "dispatch:manage");
         if (denied is not null) return denied;
         if (!await EntityJobInAuthorizedScope(http, "site_access_requirements", id, db, ct))
             return Results.NotFound(ApiResponse<object>.Fail("Site access requirement not found"));
@@ -200,7 +200,7 @@ public static partial class EndpointMappings
 
     private static async Task<IResult> CreateAccessDocument(HttpContext http, long jobId, Dictionary<string, object?> body, Stage9OperationalFoundationService svc, AuditService audit, Database db, CancellationToken ct)
     {
-        var denied = RequireAnyDirectPermission(http, "operations.access_document.create", "dispatch:manage", "driver:self");
+        var denied = RequireAnyDirectPermission(http, "operations.access_document.create", "dispatch:manage");
         if (denied is not null) return denied;
         if (!await JobInAuthorizedScope(http, jobId, db, ct)) return Results.NotFound(ApiResponse<object>.Fail("Job not found"));
         var tripId = Long(body, "tripId");
@@ -220,7 +220,7 @@ public static partial class EndpointMappings
 
     private static async Task<IResult> PatchAccessDocumentStatus(HttpContext http, long id, Dictionary<string, object?> body, Stage9OperationalFoundationService svc, AuditService audit, Database db, CancellationToken ct)
     {
-        var denied = RequireAnyDirectPermission(http, "operations.access_document.update", "operations.access_document.verify", "dispatch:manage", "driver:self");
+        var denied = RequireAnyDirectPermission(http, "operations.access_document.update", "operations.access_document.verify", "dispatch:manage");
         if (denied is not null) return denied;
         if (!await EntityJobInAuthorizedScope(http, "access_documents", id, db, ct))
             return Results.NotFound(ApiResponse<object>.Fail("Access document not found"));
@@ -250,7 +250,7 @@ public static partial class EndpointMappings
 
     private static async Task<IResult> CreatePickupAuthorization(HttpContext http, long jobId, Dictionary<string, object?> body, Stage9OperationalFoundationService svc, AuditService audit, Database db, CancellationToken ct)
     {
-        var denied = RequireAnyDirectPermission(http, "operations.pickup_authorization.create", "dispatch:manage", "driver:self");
+        var denied = RequireAnyDirectPermission(http, "operations.pickup_authorization.create", "dispatch:manage");
         if (denied is not null) return denied;
         if (!await JobInAuthorizedScope(http, jobId, db, ct)) return Results.NotFound(ApiResponse<object>.Fail("Job not found"));
         var tripId = Long(body, "tripId");
@@ -267,7 +267,7 @@ public static partial class EndpointMappings
 
     private static async Task<IResult> PatchPickupAuthorization(HttpContext http, long id, Dictionary<string, object?> body, Stage9OperationalFoundationService svc, AuditService audit, Database db, CancellationToken ct)
     {
-        var denied = RequireAnyDirectPermission(http, "operations.pickup_authorization.update", "operations.pickup_authorization.verify", "dispatch:manage", "driver:self");
+        var denied = RequireAnyDirectPermission(http, "operations.pickup_authorization.update", "operations.pickup_authorization.verify", "dispatch:manage");
         if (denied is not null) return denied;
         if (!await EntityJobInAuthorizedScope(http, "pickup_authorizations", id, db, ct))
             return Results.NotFound(ApiResponse<object>.Fail("Pickup authorization not found"));
@@ -288,7 +288,7 @@ public static partial class EndpointMappings
 
     private static async Task<IResult> CreateWarehouseHandover(HttpContext http, long jobId, Dictionary<string, object?> body, Stage9OperationalFoundationService svc, AuditService audit, Database db, CancellationToken ct)
     {
-        var denied = RequireAnyDirectPermission(http, "operations.warehouse_handover.create", "dispatch:manage", "driver:self");
+        var denied = RequireAnyDirectPermission(http, "operations.warehouse_handover.create", "dispatch:manage");
         if (denied is not null) return denied;
         if (!await JobInAuthorizedScope(http, jobId, db, ct)) return Results.NotFound(ApiResponse<object>.Fail("Job not found"));
         var tripId = Long(body, "tripId");
@@ -305,7 +305,7 @@ public static partial class EndpointMappings
 
     private static async Task<IResult> PatchWarehouseHandover(HttpContext http, long id, Dictionary<string, object?> body, Stage9OperationalFoundationService svc, AuditService audit, Database db, CancellationToken ct)
     {
-        var denied = RequireAnyDirectPermission(http, "operations.warehouse_handover.update", "dispatch:manage", "driver:self");
+        var denied = RequireAnyDirectPermission(http, "operations.warehouse_handover.update", "dispatch:manage");
         if (denied is not null) return denied;
         if (!await EntityJobInAuthorizedScope(http, "warehouse_handovers", id, db, ct))
             return Results.NotFound(ApiResponse<object>.Fail("Warehouse handover not found"));
@@ -326,7 +326,7 @@ public static partial class EndpointMappings
 
     private static async Task<IResult> CreateProofPackage(HttpContext http, long jobId, Dictionary<string, object?> body, Stage9OperationalFoundationService svc, AuditService audit, Database db, CancellationToken ct)
     {
-        var denied = RequireAnyDirectPermission(http, "operations.proof.create", "dispatch:manage", "driver:self");
+        var denied = RequireAnyDirectPermission(http, "operations.proof.create", "dispatch:manage");
         if (denied is not null) return denied;
         if (!await JobInAuthorizedScope(http, jobId, db, ct)) return Results.NotFound(ApiResponse<object>.Fail("Job not found"));
         var proofType = Str(body, "proofType")?.Trim().ToLowerInvariant() ?? "proof_of_delivery";
@@ -359,7 +359,7 @@ public static partial class EndpointMappings
 
     private static async Task<IResult> PatchProofPackage(HttpContext http, long id, Dictionary<string, object?> body, Stage9OperationalFoundationService svc, AuditService audit, Database db, CancellationToken ct)
     {
-        var denied = RequireAnyDirectPermission(http, "operations.proof.update", "operations.proof.create", "dispatch:manage", "driver:self");
+        var denied = RequireAnyDirectPermission(http, "operations.proof.update", "operations.proof.create", "dispatch:manage");
         if (denied is not null) return denied;
         if (!await EntityJobInAuthorizedScope(http, "proof_packages", id, db, ct))
             return Results.NotFound(ApiResponse<object>.Fail("Proof package not found"));
@@ -371,7 +371,7 @@ public static partial class EndpointMappings
 
     private static async Task<IResult> SubmitProofPackage(HttpContext http, long id, Dictionary<string, object?> body, Stage9OperationalFoundationService svc, AuditService audit, Database db, CancellationToken ct)
     {
-        var denied = RequireAnyDirectPermission(http, "operations.proof.submit", "operations.proof.create", "dispatch:manage", "driver:self");
+        var denied = RequireAnyDirectPermission(http, "operations.proof.submit", "operations.proof.create", "dispatch:manage");
         if (denied is not null) return denied;
         if (!await EntityJobInAuthorizedScope(http, "proof_packages", id, db, ct))
             return Results.NotFound(ApiResponse<object>.Fail("Proof package not found"));
@@ -411,7 +411,7 @@ public static partial class EndpointMappings
 
     private static async Task<IResult> CreateProofArtifact(HttpContext http, long proofPackageId, Dictionary<string, object?> body, Stage9OperationalFoundationService svc, AuditService audit, Database db, CancellationToken ct)
     {
-        var denied = RequireAnyDirectPermission(http, "operations.proof_artifact.create", "operations.proof.create", "dispatch:manage", "driver:self");
+        var denied = RequireAnyDirectPermission(http, "operations.proof_artifact.create", "operations.proof.create", "dispatch:manage");
         if (denied is not null) return denied;
         if (!await EntityJobInAuthorizedScope(http, "proof_packages", proofPackageId, db, ct))
             return Results.NotFound(ApiResponse<object>.Fail("Proof package not found"));
