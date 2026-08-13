@@ -117,7 +117,7 @@ public class TenantOffboardingPostgresTests
             c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@did", driverId); });
 
         var vehicleId = await db.InsertAsync(
-            "INSERT INTO vehicles (company_id, vehicle_code, type, status) VALUES (@cid, @vc, 'Truck', 'Active') RETURNING id",
+            "INSERT INTO vehicles (company_id, vehicle_code, type, vin_exception_type, alternate_identifier, status) VALUES (@cid, @vc, 'Truck', 'legacy-fleet-identifier', @vc, 'Active') RETURNING id",
             c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@vc", $"VEH-{code}"); });
 
         var dwellId = await db.InsertAsync(

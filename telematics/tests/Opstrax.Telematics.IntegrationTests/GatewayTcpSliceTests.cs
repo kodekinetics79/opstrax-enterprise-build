@@ -41,6 +41,16 @@ public class GatewayTcpSliceTests
     private static readonly TimeSpan BusTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan SocketTimeout = TimeSpan.FromSeconds(5);
 
+    [Theory]
+    [InlineData("Production", true)]
+    [InlineData("production", true)]
+    [InlineData("Staging", true)]
+    [InlineData("staging", true)]
+    [InlineData("Development", false)]
+    [InlineData("Test", false)]
+    public void Protected_environment_wiring_includes_staging(string environment, bool expected) =>
+        Assert.Equal(expected, GatewayEnvironment.IsProtected(environment));
+
     // ── (a) + (b): the happy path, over a real socket ──────────────────────────
 
     [Fact]
@@ -1081,7 +1091,7 @@ public class GatewayTcpSliceTests
         public int Attempts => Volatile.Read(ref _attempts);
         public List<Guid> EventIds { get; } = new();
 
-        public Task<ProjectionOutcome> ApplyAsync(
+        public Task<ProjectionResult> ApplyAsync(
             CanonicalTelemetryEvent evt,
             CancellationToken cancellationToken = default)
         {

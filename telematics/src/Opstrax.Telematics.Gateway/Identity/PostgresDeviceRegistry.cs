@@ -50,11 +50,22 @@ internal sealed class PostgresDeviceRegistry(string platformSystemConnectionStri
         // serial form, but returns at most one policy. More than one matching device row is
         // ambiguous and therefore rejected below rather than guessed.
         const string sql = """
-            SELECT e.id, e.company_id, e.vehicle_id, e.status, e.device_state,
+            SELECT e.id, e.company_id, i.vehicle_id, e.status, e.device_state,
+                   i.installation_match_count,
                    p.auth_mode, p.credential_kind, p.credential_handle,
                    p.pinned_source_cidrs, p.pinned_sim_iccid, p.pinned_imsi,
                    p.require_replay_defense
               FROM eld_devices e
+              JOIN LATERAL (
+                    SELECT di.vehicle_id, COUNT(*) OVER() installation_match_count
+                      FROM device_installations di
+                     WHERE di.device_id=e.id AND di.company_id=e.company_id
+                       AND LOWER(BTRIM(di.status)) IN ('installed','verified')
+                       AND di.effective_from<=NOW()
+                       AND (di.effective_to IS NULL OR di.effective_to>NOW())
+                     ORDER BY di.effective_from DESC,di.id DESC
+                     LIMIT 1
+              ) i ON TRUE
               JOIN LATERAL (
                     SELECT t.auth_mode, t.credential_kind, t.credential_handle,
                            t.pinned_source_cidrs, t.pinned_sim_iccid, t.pinned_imsi,
@@ -66,6 +77,7 @@ internal sealed class PostgresDeviceRegistry(string platformSystemConnectionStri
               ) p ON TRUE
              WHERE e.deleted_at IS NULL
                AND e.company_id IS NOT NULL
+               AND e.vehicle_id IS NOT DISTINCT FROM i.vehicle_id
                AND ((@imei IS NOT NULL AND e.imei=@imei)
                  OR (@serial IS NOT NULL AND e.device_serial=@serial)
                  OR (@device_id IS NOT NULL AND (e.id::text=@device_id OR e.device_serial=@device_id)))
@@ -94,6 +106,8 @@ internal sealed class PostgresDeviceRegistry(string platformSystemConnectionStri
             return null;
 
         RegistryRow row = rows[0];
+        if (row.InstallationMatchCount != 1)
+            return null;
         DeviceLifecycleState lifecycle = MapLifecycle(row.Status, row.DeviceState);
         if (lifecycle is DeviceLifecycleState.Suspended or DeviceLifecycleState.Retired or DeviceLifecycleState.Quarantined)
         {
@@ -133,6 +147,7 @@ internal sealed class PostgresDeviceRegistry(string platformSystemConnectionStri
         reader.GetInt64(reader.GetOrdinal("id")),
         reader.GetInt64(reader.GetOrdinal("company_id")),
         reader.IsDBNull(reader.GetOrdinal("vehicle_id")) ? null : reader.GetInt64(reader.GetOrdinal("vehicle_id")),
+        reader.GetInt64(reader.GetOrdinal("installation_match_count")),
         reader.GetString(reader.GetOrdinal("status")),
         reader.IsDBNull(reader.GetOrdinal("device_state")) ? null : reader.GetString(reader.GetOrdinal("device_state")),
         reader.GetString(reader.GetOrdinal("auth_mode")),
@@ -203,6 +218,7 @@ internal sealed class PostgresDeviceRegistry(string platformSystemConnectionStri
         long Id,
         long CompanyId,
         long? VehicleId,
+        long InstallationMatchCount,
         string Status,
         string? DeviceState,
         string AuthMode,

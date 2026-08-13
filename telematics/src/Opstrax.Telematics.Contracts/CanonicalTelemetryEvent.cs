@@ -74,6 +74,14 @@ public sealed record CanonicalTelemetryEvent
     /// <summary>Vehicle the device was bound to at observation time, if any.</summary>
     public long? VehicleId { get; init; }
 
+    /// <summary>
+    /// Immutable installation interval that authorized the device-to-vehicle binding at
+    /// <see cref="OccurredAtDeviceUtc"/>. Null means the producer has not yet performed the
+    /// authoritative effective-time resolution; persistence must resolve and validate it before
+    /// accepting the event.
+    /// </summary>
+    public long? InstallationId { get; init; }
+
     // ── Provenance ─────────────────────────────────────────────────────────────
 
     /// <summary>Origin category of the event (device, vendor cloud, simulator, seed, …).</summary>

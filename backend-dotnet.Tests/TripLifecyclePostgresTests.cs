@@ -224,7 +224,7 @@ public sealed class TripLifecyclePostgresTests
             AssertStatus(await Invoke("TripStart", trip, http, db, audit, CancellationToken.None), StatusCodes.Status409Conflict);
 
             var otherVehicle = await db.InsertAsync(
-                "INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,status) VALUES (@c,@b,@code,'Truck','Available')",
+                "INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,vin_exception_type,alternate_identifier,status) VALUES (@c,@b,@code,'Truck','legacy-fleet-identifier',@code,'Available')",
                 c => { c.Parameters.AddWithValue("@c", seed.CompanyId); c.Parameters.AddWithValue("@b", seed.BranchId); c.Parameters.AddWithValue("@code", $"VEH-{Guid.NewGuid():N}"[..20]); });
             await db.ExecuteAsync("UPDATE routes SET status='Planned',assigned_vehicle_id=@v WHERE id=@id",
                 c => { c.Parameters.AddWithValue("@v", otherVehicle); c.Parameters.AddWithValue("@id", route); });
@@ -363,7 +363,7 @@ public sealed class TripLifecyclePostgresTests
             "INSERT INTO drivers(company_id,branch_id,driver_code,full_name,status) VALUES (@c,@b,@code,'Trip Test Driver','Available')",
             c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@b", branch); c.Parameters.AddWithValue("@code", $"DRV-{suffix}"); });
         var vehicle = await db.InsertAsync(
-            "INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,status) VALUES (@c,@b,@code,'Truck','Available')",
+            "INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,vin_exception_type,alternate_identifier,status) VALUES (@c,@b,@code,'Truck','legacy-fleet-identifier',@code,'Available')",
             c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@b", branch); c.Parameters.AddWithValue("@code", $"VEH-{suffix}"); });
         return new(company, branch, otherBranch, driver, vehicle);
     }

@@ -113,7 +113,7 @@ public sealed class FleetTmsWorkspaceConcurrencyTests
             if (canonical)
             {
                 await SeedCompany(db, companyId);
-                var vehicleId = await db.InsertAsync("INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,status) VALUES (@c,@b,'UNIT-813','Truck','Available')",
+                var vehicleId = await db.InsertAsync("INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,vin_exception_type,alternate_identifier,status) VALUES (@c,@b,'UNIT-813','Truck','legacy-fleet-identifier','UNIT-813','Available')",
                     c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchId); });
                 await db.ExecuteAsync("INSERT INTO fleet_tms_shipments(company_id,branch_id,shipment_number,status,vehicle_number) VALUES (@c,@b,'SHIP-813','InTransit','UNIT-813')",
                     c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchId); });
@@ -160,7 +160,7 @@ public sealed class FleetTmsWorkspaceConcurrencyTests
         await SeedCompany(db, companyId);
         await db.ExecuteAsync("INSERT INTO drivers(company_id,branch_id,driver_code,full_name,status) VALUES (@c,@b,@code,@name,'Available')",
             c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchId); c.Parameters.AddWithValue("@code", $"D-{companyId}"); c.Parameters.AddWithValue("@name", driver); });
-        await db.ExecuteAsync("INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,status) VALUES (@c,@b,@vehicle,'Truck','Available')",
+        await db.ExecuteAsync("INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,vin_exception_type,alternate_identifier,status) VALUES (@c,@b,@vehicle,'Truck','legacy-fleet-identifier',@vehicle,'Available')",
             c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchId); c.Parameters.AddWithValue("@vehicle", vehicle); });
     }
 

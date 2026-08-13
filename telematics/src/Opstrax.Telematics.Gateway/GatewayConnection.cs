@@ -636,24 +636,15 @@ internal sealed class GatewayConnection
             _publishChannel.Reader.ReadAllAsync(CancellationToken.None).ConfigureAwait(false))
         {
             CanonicalTelemetryEvent evt = pending.Event;
-            // Key and envelope scope both come from the event's REGISTRY-RESOLVED ownership.
-            string key = TelematicsEventKey.ForDevice(evt.TenantId, evt.CompanyId, evt.DeviceId);
-
-            var envelope = EventEnvelope<CanonicalTelemetryEvent>.Create(
-                tenantId: evt.TenantId,
-                companyId: evt.CompanyId,
-                payload: evt,
-                correlationId: evt.CorrelationId,
-                schemaVersion: evt.SchemaVersion,
-                occurredAt: evt.OccurredAtDeviceUtc) with { EventId = evt.EventId };
-
             // Idempotent live-map projection. Applied on the same single-reader pump so a device's
             // fixes fold into the snapshot in decode order; it is idempotent + monotonic, so a
             // store-and-forward replay of the SAME event after an outage is a safe no-op and can
             // never double-count or overwrite a fresher fix with a stale one.
             try
             {
-                await _projectionStore.ApplyAsync(evt, CancellationToken.None).ConfigureAwait(false);
+                ProjectionResult projection = await _projectionStore
+                    .ApplyAsync(evt, CancellationToken.None).ConfigureAwait(false);
+                evt = projection.Event;
             }
             catch (Exception ex)
             {
@@ -666,6 +657,18 @@ internal sealed class GatewayConnection
                     evt.DeviceId, evt.EventId);
                 continue;
             }
+
+            // The production projector replaces cached login-time vehicle ownership with the
+            // effective installation at device time. Build the canonical envelope only after that
+            // resolution so history, durable events, and downstream consumers agree.
+            string key = TelematicsEventKey.ForDevice(evt.TenantId, evt.CompanyId, evt.DeviceId);
+            var envelope = EventEnvelope<CanonicalTelemetryEvent>.Create(
+                tenantId: evt.TenantId,
+                companyId: evt.CompanyId,
+                payload: evt,
+                correlationId: evt.CorrelationId,
+                schemaVersion: evt.SchemaVersion,
+                occurredAt: evt.OccurredAtDeviceUtc) with { EventId = evt.EventId };
 
             try
             {

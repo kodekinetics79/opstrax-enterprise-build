@@ -157,7 +157,7 @@ public class DetentionApprovalPostgresTests
             "INSERT INTO customers (company_id, customer_code, name, contact_name, email) VALUES (@c, @code, 'DA Cust', 'AP', 'ap@x.example') RETURNING id",
             c => { c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@code", $"DAC-{Guid.NewGuid():N}".Substring(0, 14)); });
         var vid = await db.InsertAsync(
-            "INSERT INTO vehicles (company_id, vehicle_code, type) VALUES (@c, @code, 'truck') RETURNING id",
+            "INSERT INTO vehicles (company_id, vehicle_code, type, vin_exception_type, alternate_identifier) VALUES (@c, @code, 'truck', 'legacy-fleet-identifier', @code) RETURNING id",
             c => { c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@code", $"DAV-{Guid.NewGuid():N}".Substring(0, 12)); });
         var fenceId = await db.InsertAsync(
             @"INSERT INTO geofences (company_id, name, geofence_type, center_lat, center_lng, radius_meters, status, customer_id, site_role)

@@ -16,11 +16,11 @@ public sealed class DispatchPilotPostgresTests
     {
         var db = Db();
         var scope = new SeedData(987654321, 123, 124, 42, 1, 1, 1);
-        var normalBody = new object?[] { 1L, 1L, null, null, null, null, null, null, null, false };
+        var normalBody = new object?[] { 1L, 1L, null, null, null, null, null, null, null, false, null, null };
         Assert.Equal(StatusCodes.Status403Forbidden,
             Status(await InvokeCreate(Principal(scope, "dispatch:update"), normalBody, db)));
 
-        var overrideBody = new object?[] { 1L, 1L, null, null, null, null, null, null, "Supervisor approved", true };
+        var overrideBody = new object?[] { 1L, 1L, null, null, null, null, null, null, "Supervisor approved", true, null, null };
         Assert.Equal(StatusCodes.Status403Forbidden,
             Status(await InvokeCreate(Principal(scope, "dispatch:assign"), overrideBody, db)));
         Assert.Equal(StatusCodes.Status403Forbidden,
@@ -174,7 +174,7 @@ public sealed class DispatchPilotPostgresTests
         var other = await db.InsertAsync("INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,'OTHER','Other','Active')", c => c.Parameters.AddWithValue("@c", company));
         var user = await db.InsertAsync("INSERT INTO users(company_id,branch_id,full_name,email,role_name,status) VALUES (@c,@b,'Pilot Driver',@e,'Driver','Active')", c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@b", branch); c.Parameters.AddWithValue("@e", $"{suffix}@example.invalid"); });
         var driver = await db.InsertAsync("INSERT INTO drivers(company_id,branch_id,user_id,driver_code,full_name,status) VALUES (@c,@b,@u,@x,'Pilot Driver','Available')", c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@b", branch); c.Parameters.AddWithValue("@u", user); c.Parameters.AddWithValue("@x", $"D-{suffix}"); });
-        var vehicle = await db.InsertAsync("INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,status) VALUES (@c,@b,@x,'Truck','Available')", c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@b", branch); c.Parameters.AddWithValue("@x", $"V-{suffix}"); });
+        var vehicle = await db.InsertAsync("INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,vin_exception_type,alternate_identifier,status) VALUES (@c,@b,@x,'Truck','legacy-fleet-identifier',@x,'Available')", c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@b", branch); c.Parameters.AddWithValue("@x", $"V-{suffix}"); });
         var job = await db.InsertAsync("INSERT INTO jobs(company_id,branch_id,job_code,job_type,status) VALUES (@c,@b,@x,'Delivery','Assigned')", c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@b", branch); c.Parameters.AddWithValue("@x", $"J-{suffix}"); });
         return new(company, branch, other, user, driver, vehicle, job);
     }

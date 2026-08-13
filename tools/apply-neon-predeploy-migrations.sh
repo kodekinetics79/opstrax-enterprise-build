@@ -19,6 +19,7 @@
 #   stage24  compliance tenant scope (company_id columns + backfill)
 #   stage25  branches org hierarchy  (branches table, users.branch_id, …)
 #   stage26  platform control plane  (platform tables as migration)
+#   stage32  device IMEI identifier and ambiguity preflight
 #   2026-07-30 customer feedback contract (portal service columns + index)
 #   stage49  durable one-time MFA challenge consumption
 #   stage50  complete Fleet/market-pack production schema + RLS contract
@@ -52,6 +53,7 @@
 #   stage77  Protected-environment authorization reference bootstrap
 #   stage78  Protected-environment country-profile runtime contract
 #   stage79  Protected-environment tenant-provisioning runtime contract
+#   stage80  Effective-dated fleet identity backbone
 #
 # WHAT IT DELIBERATELY SKIPS
 #   stage19/20/22 (the broad Row-Level Security cutover). Stage49 itself is
@@ -96,6 +98,7 @@ MIGRATIONS=(
   2026_07_02_stage24_compliance_tenant_scope
   2026_07_02_stage25_branches_org_hierarchy
   2026_07_02_stage26_platform_control_plane
+  2026_07_11_stage32_device_imei
   # Required owner schema for per-gateway credentials. Stage76 intentionally fails closed when
   # this table is absent; do not rely on the runtime EnsureAsync path to materialize Production.
   2026_07_16_stage42_telemetry_gateways
@@ -138,6 +141,7 @@ MIGRATIONS=(
   2026_08_12_stage77_protected_role_bootstrap
   2026_08_13_stage78_country_profiles_runtime_contract
   2026_08_13_stage79_tenant_provisioning_runtime_contract
+  2026_08_14_stage80_fleet_identity_backbone
 )
 
 echo "Target host: $(printf '%s' "$NEON_PG_URI" | sed -E 's|.*@([^/:?]+).*|\1|')"
@@ -171,6 +175,7 @@ for m in "${MIGRATIONS[@]}"; do
     2026_06_28_stage12a_telemetry_live_state|\
     2026_06_28_stage13b_safety_maintenance_foundation|\
     2026_06_29_stage18_commercial_foundation|\
+    2026_07_11_stage32_device_imei|\
     2026_07_16_stage42_telemetry_gateways|\
     2026_07_30_stage53_tenant_rls_reconciliation|\
     2026_07_30_stage54_cold_chain_device_integrity|\
@@ -190,7 +195,8 @@ for m in "${MIGRATIONS[@]}"; do
     2026_08_02_stage75_bounded_support_access|\
     2026_08_12_stage77_protected_role_bootstrap|\
     2026_08_13_stage78_country_profiles_runtime_contract|\
-    2026_08_13_stage79_tenant_provisioning_runtime_contract) repair_migration=true ;;
+    2026_08_13_stage79_tenant_provisioning_runtime_contract|\
+    2026_08_14_stage80_fleet_identity_backbone) repair_migration=true ;;
   esac
   if [ "$applied" = "1" ] && [ "$repair_migration" = false ]; then
     echo "── $m: already applied (ledger) — skipping"
@@ -225,6 +231,7 @@ BEGIN
       ('2026_06_28_stage12a_telemetry_live_state'),
       ('2026_06_28_stage13b_safety_maintenance_foundation'),
       ('2026_06_29_stage18_commercial_foundation'),
+      ('2026_07_11_stage32_device_imei'),
       ('2026_07_16_stage42_telemetry_gateways'),
       ('2026_08_01_stage60_dispatch_trip_pilot'),
       ('2026_07_22_stage47_detention_recovery'),
@@ -251,7 +258,8 @@ BEGIN
       ('2026_08_02_stage75_bounded_support_access'),
       ('2026_08_12_stage77_protected_role_bootstrap'),
       ('2026_08_13_stage78_country_profiles_runtime_contract'),
-      ('2026_08_13_stage79_tenant_provisioning_runtime_contract')) required(version)
+      ('2026_08_13_stage79_tenant_provisioning_runtime_contract'),
+      ('2026_08_14_stage80_fleet_identity_backbone')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN RAISE EXCEPTION 'Required owner/pilot migration ledger missing or duplicated'; END IF;
   IF to_regclass('public.uq_ftms_dorders_company_number') IS NULL
@@ -344,6 +352,24 @@ BEGIN
        )
      ) THEN
     RAISE EXCEPTION 'Stage79 tenant-provisioning runtime contract is incomplete';
+  END IF;
+  IF to_regclass('public.device_installation_quarantine') IS NULL
+     OR to_regclass('public.ex_stage80_device_installation_period') IS NULL
+     OR to_regclass('public.uq_stage80_vehicle_primary_role') IS NULL
+     OR to_regprocedure('public.stage80_sync_device_vehicle_projection()') IS NULL
+     OR EXISTS (
+       SELECT 1 FROM (VALUES
+         ('device_installations','effective_from'),('device_installations','effective_to'),
+         ('device_installations','device_role'),('device_installations','row_version'),
+         ('location_events','installation_id'),('location_events','assignment_id'),
+         ('latest_vehicle_positions','installation_id'),('latest_vehicle_positions','assignment_id'),
+         ('canonical_telemetry_events','installation_id'),('canonical_telemetry_events','assignment_id')
+       ) required(table_name,column_name)
+       WHERE NOT EXISTS (SELECT 1 FROM information_schema.columns actual
+         WHERE actual.table_schema='public' AND actual.table_name=required.table_name
+           AND actual.column_name=required.column_name)
+     ) THEN
+    RAISE EXCEPTION 'Stage80 fleet identity backbone contract is incomplete';
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns

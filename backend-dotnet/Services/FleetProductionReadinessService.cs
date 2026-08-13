@@ -99,6 +99,7 @@ public sealed class FleetProductionReadinessService
                 Bool(row, "dataProtectionKeyRingMigrationApplied"),
                 Bool(row, "marketCatalogReady"),
                 Bool(row, "tenantProvisioningReady"),
+                Bool(row, "fleetIdentityReady"),
                 Bool(row, "indexesReady"),
                 startupGraceActive ? 0 : rawWorkerViolations,
                 rawWorkerViolations,
@@ -116,14 +117,14 @@ public sealed class FleetProductionReadinessService
                     "rlsViolations={Rls}; grantViolations={Grants}; tenantCoverageViolations={TenantRls}; " +
                     "tenantGrantViolations={TenantGrants}; defaultPrivilegeViolations={DefaultGrants}; runtimeRouteColumnViolations={RouteColumns}; runtimeRouteObjectViolations={RouteObjects}; fleetIntegrityObjectViolations={IntegrityObjects}; workforceContractViolations={WorkforceContract}; migrationApplied={Migration}; " +
                     "runtimeSupportMigrationApplied={RuntimeMigration}; tenantCoverageMigrationApplied={TenantMigration}; coldChainIntegrityMigrationApplied={ColdChainMigration}; runtimeRouteMigrationApplied={RouteMigration}; assetTypeIntegrityMigrationApplied={AssetMigration}; workforceScheduleIntegrityMigrationApplied={WorkforceMigration}; tenantTicketMigrationApplied={TicketMigration}; dataProtectionKeyRingMigrationApplied={KeyRingMigration}; marketCatalogReady={Catalog}; tenantProvisioningReady={Provisioning}; " +
-                    "indexesReady={Indexes}; criticalWorkerViolations={Workers}; rawCriticalWorkerViolations={RawWorkers}; missingCriticalWorkers={MissingWorkers}; staleCriticalWorkers={StaleWorkers}; failedCriticalWorkers={FailedWorkers}; workerStartupGraceActive={WorkerGrace}",
+                    "fleetIdentityReady={FleetIdentity}; indexesReady={Indexes}; criticalWorkerViolations={Workers}; rawCriticalWorkerViolations={RawWorkers}; missingCriticalWorkers={MissingWorkers}; staleCriticalWorkers={StaleWorkers}; failedCriticalWorkers={FailedWorkers}; workerStartupGraceActive={WorkerGrace}",
                     result.RoleRestricted, result.MissingTables, result.RlsViolations,
                     result.GrantViolations, result.TenantCoverageViolations, result.TenantGrantViolations,
                     result.DefaultPrivilegeViolations, result.RuntimeRouteColumnViolations, result.RuntimeRouteObjectViolations, result.FleetIntegrityObjectViolations, result.WorkforceContractViolations,
                     result.MigrationApplied, result.RuntimeSupportMigrationApplied,
                     result.TenantCoverageMigrationApplied, result.ColdChainIntegrityMigrationApplied,
                     result.RuntimeRouteMigrationApplied, result.AssetTypeIntegrityMigrationApplied, result.WorkforceScheduleIntegrityMigrationApplied, result.TenantTicketMigrationApplied, result.DataProtectionKeyRingMigrationApplied, result.MarketCatalogReady, result.TenantProvisioningReady,
-                    result.IndexesReady, result.CriticalWorkerViolations, result.RawCriticalWorkerViolations,
+                    result.FleetIdentityReady, result.IndexesReady, result.CriticalWorkerViolations, result.RawCriticalWorkerViolations,
                     result.MissingCriticalWorkers, result.StaleCriticalWorkers, result.FailedCriticalWorkers,
                     result.CriticalWorkerStartupGraceActive);
             }
@@ -175,6 +176,7 @@ public sealed class FleetProductionReadinessService
           ('scheduled_reports',true),('routes',true),('route_stops',true),('trips',true),('trip_stops',true),
           ('location_events',true),('latest_vehicle_positions',true),('telemetry_alerts',true),
           ('telemetry_rules',true),('telemetry_gateways',true),
+          ('device_installations',true),('device_installation_evidence',true),
           ('telemetry_nonces',false),('gps_gateway_replay',false),
           ('safety_events',true),('driver_safety_scores',true),('telemetry_live_asset_states',true),
           ('fleet_health_snapshots',true),('evidence_package_items',true),('vehicle_safety_scorecards',true),
@@ -192,7 +194,7 @@ public sealed class FleetProductionReadinessService
           ('telematics_device_trust_policy'),('telemetry_replay_seen'),
           ('telemetry_projection_inbox'),('raw_packets'),
           ('telemetry_store_forward'),('telemetry_gateway_rejections'),
-          ('canonical_telemetry_events')
+          ('canonical_telemetry_events'),('device_installation_quarantine')
         ), system_no_update(name) AS (VALUES
           ('telemetry_replay_seen'),('telemetry_projection_inbox'),('telemetry_gateway_rejections'),
           ('canonical_telemetry_events')
@@ -206,7 +208,8 @@ public sealed class FleetProductionReadinessService
           FROM pg_class c
           JOIN pg_namespace n ON n.oid=c.relnamespace
           WHERE n.nspname='public' AND c.relkind IN ('r','p')
-            AND c.relname NOT IN ('platform_invoices','gps_gateway_replay','platform_impersonation_sessions','roles','report_catalog')
+            AND c.relname NOT IN ('platform_invoices','gps_gateway_replay','platform_impersonation_sessions','roles','report_catalog',
+                                  'device_installation_quarantine')
             AND (c.relname='companies' OR EXISTS (
               SELECT 1 FROM information_schema.columns x
               WHERE x.table_schema='public' AND x.table_name=c.relname
@@ -723,6 +726,27 @@ public sealed class FleetProductionReadinessService
                AND actual.table_name=required.table_name
                AND actual.column_name=required.column_name
             ),false) AS tenant_provisioning_ready,
+          COALESCE((SELECT COUNT(*)=1 FROM schema_migrations WHERE version='2026_08_14_stage80_fleet_identity_backbone'),false)
+            AND to_regclass('public.ex_stage80_device_installation_period') IS NOT NULL
+            AND to_regclass('public.uq_stage80_vehicle_primary_role') IS NOT NULL
+            AND to_regprocedure('public.stage80_sync_device_vehicle_projection()') IS NOT NULL
+            AND COALESCE((SELECT COUNT(*)=10 FROM (VALUES
+              ('device_installations','effective_from'),('device_installations','effective_to'),
+              ('device_installations','device_role'),('device_installations','row_version'),
+              ('location_events','installation_id'),('location_events','assignment_id'),
+              ('latest_vehicle_positions','installation_id'),('latest_vehicle_positions','assignment_id'),
+              ('canonical_telemetry_events','installation_id'),('canonical_telemetry_events','assignment_id')
+            ) expected(table_name,column_name)
+            JOIN information_schema.columns actual ON actual.table_schema='public'
+              AND actual.table_name=expected.table_name AND actual.column_name=expected.column_name),false)
+            AND NOT has_table_privilege('opstrax_app','device_installation_quarantine','SELECT')
+            AND NOT has_table_privilege('opstrax_app','device_installation_quarantine','INSERT')
+            AND NOT has_table_privilege('opstrax_app','device_installation_quarantine','UPDATE')
+            AND NOT has_table_privilege('opstrax_app','device_installation_quarantine','DELETE')
+            AND has_table_privilege('opstrax_system','device_installation_quarantine','SELECT')
+            AND has_table_privilege('opstrax_system','device_installation_quarantine','INSERT')
+            AND has_table_privilege('opstrax_system','device_installation_quarantine','UPDATE')
+            AS fleet_identity_ready,
           to_regclass('public.uq_ftms_shipment_identity') IS NOT NULL
             AND to_regclass('public.uq_ftms_vehicle_identity') IS NOT NULL
             AND to_regclass('public.ux_ftms_assets_branch_tag_normalized') IS NOT NULL
@@ -796,6 +820,7 @@ public sealed record FleetProductionContractResult(
     bool DataProtectionKeyRingMigrationApplied,
     bool MarketCatalogReady,
     bool TenantProvisioningReady,
+    bool FleetIdentityReady,
     bool IndexesReady,
     int CriticalWorkerViolations,
     int RawCriticalWorkerViolations,
@@ -813,9 +838,9 @@ public sealed record FleetProductionContractResult(
                          && MigrationApplied && RuntimeSupportMigrationApplied && TenantCoverageMigrationApplied
                          && ColdChainIntegrityMigrationApplied && RuntimeRouteMigrationApplied && AssetTypeIntegrityMigrationApplied
                          && WorkforceScheduleIntegrityMigrationApplied && TenantTicketMigrationApplied && DataProtectionKeyRingMigrationApplied
-                         && MarketCatalogReady && TenantProvisioningReady && IndexesReady
+                         && MarketCatalogReady && TenantProvisioningReady && FleetIdentityReady && IndexesReady
                          && CriticalWorkerViolations == 0 && FailureCode is null;
 
     public static FleetProductionContractResult Failed(string code) =>
-        new(false, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, false, false, false, false, false, false, false, false, false, false, false, false, -1, -1, -1, -1, -1, false, 0, code);
+        new(false, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, false, false, false, false, false, false, false, false, false, false, false, false, false, -1, -1, -1, -1, -1, false, 0, code);
 }

@@ -636,7 +636,7 @@ public sealed class FleetSpecializedBranchTests
         {
             await db.ExecuteAsync("INSERT INTO companies(id,company_code,name,industry) OVERRIDING SYSTEM VALUE VALUES (@c,@code,'DVIR test','transport') ON CONFLICT DO NOTHING", c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@code", $"DVIR-{companyId}"); });
             await db.ExecuteAsync("INSERT INTO tenant_market_packs(company_id,pack_code,status) VALUES (@c,'canada_na','active') ON CONFLICT (company_id,pack_code) DO UPDATE SET status='active'", c => c.Parameters.AddWithValue("@c", companyId));
-            var vehicleId = await db.InsertAsync("INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,status,availability_status) VALUES (@c,@b,'DVIR-701','Truck','Available','available')", c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchId); });
+            var vehicleId = await db.InsertAsync("INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,vin_exception_type,alternate_identifier,status,availability_status) VALUES (@c,@b,'DVIR-701','Truck','legacy-fleet-identifier','DVIR-701','Available','available')", c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchId); });
             var defects = JsonSerializer.SerializeToElement(new[] { new { description = "Brake pressure below threshold", severity = "critical", repairRequired = true } });
             var created = Payload(await InvokeMarket("CreateVehicleInspection", Principal(companyId, branchId), new Dictionary<string, object?>
             {

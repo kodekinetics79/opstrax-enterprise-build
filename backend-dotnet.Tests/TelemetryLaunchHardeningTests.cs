@@ -132,7 +132,7 @@ public sealed class TelemetryLaunchHardeningTests
             publishPump,
             StringComparison.Ordinal);
         Assert.Contains("pending.Persisted.TrySetException(ex)", publishPump, StringComparison.Ordinal);
-        AssertOrdered(publishPump, "_projectionStore.ApplyAsync", "_backbone");
+        AssertOrdered(publishPump, ".ApplyAsync(evt", "_backbone");
         Assert.Contains("current_user<>'opstrax_system'", readiness, StringComparison.Ordinal);
         Assert.Contains("session_user<>'opstrax_system'", readiness, StringComparison.Ordinal);
         Assert.Contains("NOT role.rolsuper AND NOT role.rolbypassrls", readiness, StringComparison.Ordinal);

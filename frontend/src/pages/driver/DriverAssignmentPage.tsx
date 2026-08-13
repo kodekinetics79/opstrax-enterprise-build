@@ -90,6 +90,7 @@ export function DriverAssignmentPage() {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [messaging, setMessaging] = useState(false);
+  const [vehicleConfirmation, setVehicleConfirmation] = useState("");
 
   // Open (or create, once) the load-scoped conversation with dispatch and jump into it. Dedupes
   // against an existing open thread for this assignment so repeat taps never spawn duplicate threads.
@@ -158,6 +159,12 @@ export function DriverAssignmentPage() {
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["driver"] }),
   });
 
+  const confirmVehicleMut = useMutation({
+    mutationFn: ({ id, reference }: { id: number; reference: string }) =>
+      driverApi.confirmVehicle(id, "unit_suffix", reference),
+    onSuccess: () => { setVehicleConfirmation(""); void qc.invalidateQueries({ queryKey: ["driver"] }); },
+  });
+
   const statusMut = useMutation({
     mutationFn: ({ id, status }: { id: number; status: string }) =>
       driverApi.updateStatus(id, status),
@@ -223,6 +230,10 @@ export function DriverAssignmentPage() {
   const id = Number(assignment["id"]);
   const status = String(assignment["assignmentStatus"] ?? "");
   const openExceptions = Number(assignment["openExceptions"] ?? 0);
+  const vehicleConfirmed = Boolean(assignment["vehicleConfirmedAt"]);
+  const safePretripRecorded = Boolean(assignment["latestPretripSafeToOperate"]);
+  const safePretripReady = safePretripRecorded &&
+    String(assignment["latestPretripDriverSignatureStatus"] ?? "").toLowerCase() === "signed";
 
   return (
     <div className="space-y-4 p-4 pb-8">
@@ -277,6 +288,38 @@ export function DriverAssignmentPage() {
         </div>
       )}
 
+      {status === "accepted" && (
+        <section className="rounded-2xl border border-teal-200 bg-white p-4 space-y-3" aria-labelledby="vehicle-confirmation-title">
+          <div>
+            <p id="vehicle-confirmation-title" className="text-sm font-bold text-slate-900">Confirm assigned vehicle</p>
+            <p className="mt-1 text-sm text-slate-600">
+              Assigned unit: <strong>{String(assignment["vehicleCode"] ?? "Unavailable")}</strong>
+              {assignment["vehicleVinSuffix"] ? ` · VIN ending ${String(assignment["vehicleVinSuffix"])}` : ""}
+            </p>
+          </div>
+          {!vehicleConfirmed ? (
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-slate-600" htmlFor="vehicle-unit-suffix">Enter the final 4 characters of the unit number</label>
+              <input id="vehicle-unit-suffix" className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm uppercase"
+                value={vehicleConfirmation} maxLength={16} autoComplete="off"
+                onChange={(event) => setVehicleConfirmation(event.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, ""))} />
+              <button type="button" className="w-full rounded-xl bg-teal-600 py-3 text-sm font-bold text-white disabled:opacity-40"
+                disabled={vehicleConfirmation.length < 3 || confirmVehicleMut.isPending}
+                onClick={() => confirmVehicleMut.mutate({ id, reference: vehicleConfirmation })}>
+                {confirmVehicleMut.isPending ? "Verifying…" : "Verify assigned vehicle"}
+              </button>
+            </div>
+          ) : (
+            <p className="flex items-center gap-2 text-sm font-semibold text-teal-700"><CheckCircle className="h-4 w-4" /> Assigned vehicle verified</p>
+          )}
+          <div className="rounded-xl bg-slate-50 p-3 text-sm text-slate-600">
+            <p className="font-semibold">Pre-trip DVIR: {safePretripReady ? "Signed safe-to-operate inspection recorded" : safePretripRecorded ? "Driver signature required before departure" : "Required before departure"}</p>
+            {!safePretripReady && <button type="button" className="mt-2 font-bold text-teal-700 underline" onClick={() => navigate("/driver/dvir")}>Complete pre-trip DVIR</button>}
+          </div>
+          {confirmVehicleMut.isError && <p role="alert" className="text-sm text-red-700">{(confirmVehicleMut.error as Error)?.message}</p>}
+        </section>
+      )}
+
       {/* Primary action */}
       {status === "assigned" && (
         <ActionButton
@@ -287,7 +330,8 @@ export function DriverAssignmentPage() {
       )}
 
       {/* Status advance buttons */}
-      {nextStatuses.filter(s => s !== "exception" && s !== "cancelled").map((s) => {
+      {nextStatuses.filter(s => s !== "exception" && s !== "cancelled")
+        .filter(s => s !== "en_route_pickup" || (vehicleConfirmed && safePretripReady)).map((s) => {
         const isProofAction = s === "delivered" || (s === "in_transit" && status === "arrived_pickup");
         const label = STATUS_LABELS[s] ?? `Mark ${s.replace(/_/g, " ")}`;
 
@@ -351,10 +395,10 @@ export function DriverAssignmentPage() {
       )}
 
       {/* Error feedback */}
-      {(statusMut.isError || acceptMut.isError || exceptionMut.isError || proofMut.isError) && (
+      {(statusMut.isError || acceptMut.isError || confirmVehicleMut.isError || exceptionMut.isError || proofMut.isError) && (
         <div className="rounded-2xl border border-red-200 bg-red-50 p-4">
           <p className="text-sm font-medium text-red-700">
-            {((statusMut.error || acceptMut.error || exceptionMut.error || proofMut.error) as Error)?.message ?? "Action failed"}
+            {((statusMut.error || acceptMut.error || confirmVehicleMut.error || exceptionMut.error || proofMut.error) as Error)?.message ?? "Action failed"}
           </p>
         </div>
       )}

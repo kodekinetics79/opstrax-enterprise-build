@@ -121,6 +121,7 @@ BEGIN
       ('device_state_transitions',            TRUE,  TRUE, TRUE, FALSE,FALSE, TRUE,TRUE,TRUE,TRUE),
       ('device_installations',                TRUE,  TRUE, TRUE, TRUE, FALSE, TRUE,TRUE,TRUE,TRUE),
       ('device_installation_evidence',        TRUE,  TRUE, TRUE, FALSE,FALSE, TRUE,TRUE,TRUE,TRUE),
+      ('device_installation_quarantine',      TRUE,  FALSE,FALSE,FALSE,FALSE, TRUE,TRUE,TRUE,FALSE),
       ('device_channel_health',               TRUE,  TRUE, TRUE, TRUE, FALSE, TRUE,TRUE,TRUE,TRUE),
       ('telematics_device_commands',          TRUE,  TRUE, TRUE, TRUE, FALSE, TRUE,TRUE,TRUE,TRUE),
       ('telemetry_privacy_policies',          TRUE,  TRUE, TRUE, TRUE, FALSE, TRUE,TRUE,TRUE,TRUE),
