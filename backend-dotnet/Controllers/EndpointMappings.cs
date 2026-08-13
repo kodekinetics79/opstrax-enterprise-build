@@ -22634,9 +22634,12 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (RequirePermission(http, "escalation:manage") is { } denied) return denied;
         var companyId = GetCompanyId(http);
 
-        if (IsBlank(Get(body, "ruleName")))    return Results.BadRequest(ApiResponse<object>.Fail("ruleName is required"));
-        if (IsBlank(Get(body, "eventType")))   return Results.BadRequest(ApiResponse<object>.Fail("eventType is required"));
-        if (IsBlank(Get(body, "escalationAudience"))) return Results.BadRequest(ApiResponse<object>.Fail("escalationAudience is required"));
+        var ruleName = Get(body, "ruleName")?.ToString()?.Trim();
+        var eventType = Get(body, "eventType")?.ToString()?.Trim();
+        var escalationAudience = Get(body, "escalationAudience")?.ToString()?.Trim();
+        if (string.IsNullOrWhiteSpace(ruleName)) return Results.BadRequest(ApiResponse<object>.Fail("ruleName is required"));
+        if (string.IsNullOrWhiteSpace(eventType)) return Results.BadRequest(ApiResponse<object>.Fail("eventType is required"));
+        if (string.IsNullOrWhiteSpace(escalationAudience)) return Results.BadRequest(ApiResponse<object>.Fail("escalationAudience is required"));
 
         var id = await db.InsertAsync(
             @"INSERT INTO escalation_rules
@@ -22646,11 +22649,11 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             c =>
             {
                 c.Parameters.AddWithValue("@cid",     companyId);
-                c.Parameters.AddWithValue("@name",    Get(body, "ruleName"));
-                c.Parameters.AddWithValue("@evType",  Get(body, "eventType"));
+                c.Parameters.AddWithValue("@name",    ruleName);
+                c.Parameters.AddWithValue("@evType",  eventType);
                 c.Parameters.AddWithValue("@sev",     Get(body, "severity") ?? "Medium");
                 c.Parameters.AddWithValue("@initAud", Get(body, "initialAudience") ?? "dispatcher");
-                c.Parameters.AddWithValue("@escAud",  Get(body, "escalationAudience"));
+                c.Parameters.AddWithValue("@escAud",  escalationAudience);
                 c.Parameters.AddWithValue("@tte",     body.TryGetValue("timeToEscalateMinutes", out var t) && t is not null ? Convert.ToInt32(t) : 30);
                 c.Parameters.AddWithValue("@ri",      body.TryGetValue("repeatIntervalMinutes", out var ri) && ri is not null ? Convert.ToInt32(ri) : 60);
                 c.Parameters.AddWithValue("@maxR",    body.TryGetValue("maxRepeats", out var mr) && mr is not null ? Convert.ToInt32(mr) : 3);
