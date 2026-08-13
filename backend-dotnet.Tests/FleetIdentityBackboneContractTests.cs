@@ -66,6 +66,8 @@ public sealed class FleetIdentityBackboneContractTests
         var status = Block(source, "private static async Task<IResult> DriverUpdateStatus(", "private static async Task<IResult> DriverReportException(");
         Assert.Contains("Confirm the exact assigned vehicle before departure", status, StringComparison.Ordinal);
         Assert.Contains("vehicle_out_of_service", status, StringComparison.Ordinal);
+        Assert.Contains("FOR UPDATE OF da,v", status, StringComparison.Ordinal);
+        Assert.Contains("fleet-departure-safety", status, StringComparison.Ordinal);
         Assert.Contains("assigned vehicle is out of service", status, StringComparison.Ordinal);
         Assert.Contains("SELECT id,safe_to_operate,driver_signature_status", status, StringComparison.Ordinal);
         Assert.DoesNotContain("AND safe_to_operate=TRUE", status, StringComparison.Ordinal);
@@ -80,8 +82,14 @@ public sealed class FleetIdentityBackboneContractTests
         Assert.Contains("latest_pretrip_driver_signature_status", driverMe, StringComparison.Ordinal);
         Assert.Contains("vehicle_confirmed_at", driverMe, StringComparison.Ordinal);
         Assert.Contains("vehicle_confirmed_by_driver_id", driverMe, StringComparison.Ordinal);
+        Assert.Contains("da.vehicle_confirmed_by_driver_id", current, StringComparison.Ordinal);
+        Assert.Contains("assignment = row, driverId, driverNextStatuses", current, StringComparison.Ordinal);
         Assert.Contains("Verify the exact assigned vehicle", source, StringComparison.Ordinal);
         Assert.Contains("signed pre-trip DVIR are ready", source, StringComparison.Ordinal);
+        var inspection = Block(source, "private static async Task<IResult> MaintInspectionCreate(", "private static async Task<IResult> MaintInspectionCreateInTransaction(");
+        Assert.Contains("RunInTenantTransactionAsync", inspection, StringComparison.Ordinal);
+        var inspectionTransaction = Block(source, "private static async Task<IResult> MaintInspectionCreateInTransaction(", "// GET /api/maintenance/inspections/{id}");
+        Assert.Contains("fleet-departure-safety", inspectionTransaction, StringComparison.Ordinal);
     }
 
     [Fact]

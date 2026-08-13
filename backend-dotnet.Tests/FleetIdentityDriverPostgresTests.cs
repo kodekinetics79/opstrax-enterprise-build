@@ -2,6 +2,7 @@ using System.Reflection;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using Npgsql;
 using Opstrax.Api.Controllers;
 using Opstrax.Api.Data;
 using Opstrax.Api.Services;
@@ -163,6 +164,37 @@ public sealed class FleetIdentityDriverPostgresTests
             Assert.Equal(StatusCodes.Status409Conflict, Status(supersededSafeBlocked));
             await db.ExecuteAsync("DELETE FROM dvir_reports WHERE id=@id AND company_id=@c",
                 c => { c.Parameters.AddWithValue("@id", newerUnsafeDvirId); c.Parameters.AddWithValue("@c", companyId); });
+
+            await using (var blocker = new NpgsqlConnection(TestDb.ConnectionString))
+            {
+                await blocker.OpenAsync();
+                await using var blockerTx = await blocker.BeginTransactionAsync();
+                await using (var lockCommand = new NpgsqlCommand(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(@key,0))", blocker, blockerTx))
+                {
+                    lockCommand.Parameters.AddWithValue("@key", $"fleet-departure-safety:{companyId}:{vehicleId}:{driverId}");
+                    await lockCommand.ExecuteNonQueryAsync();
+                }
+
+                var concurrentDeparture = Invoke("DriverUpdateStatus", http, assignmentId,
+                    NestedBody("DriverStatusBody", "en_route_pickup", null), db, audit, CancellationToken.None);
+                await Task.Delay(150);
+                await using (var unsafeInsert = new NpgsqlCommand(
+                    @"INSERT INTO dvir_reports
+                        (company_id,branch_id,report_number,driver_id,vehicle_id,inspection_type,inspection_status,
+                         defects_found,safe_to_operate,driver_signature_status,submitted_at)
+                      VALUES (@c,@b,@number,@d,@v,'pre_trip','submitted',1,FALSE,'Signed',NOW()+INTERVAL '2 seconds')", blocker, blockerTx))
+                {
+                    unsafeInsert.Parameters.AddWithValue("@c", companyId); unsafeInsert.Parameters.AddWithValue("@b", branchId);
+                    unsafeInsert.Parameters.AddWithValue("@number", $"DVIR-CONCURRENT-UNSAFE-{companyId}");
+                    unsafeInsert.Parameters.AddWithValue("@d", driverId); unsafeInsert.Parameters.AddWithValue("@v", vehicleId);
+                    await unsafeInsert.ExecuteNonQueryAsync();
+                }
+                await blockerTx.CommitAsync();
+                Assert.Equal(StatusCodes.Status409Conflict, Status(await concurrentDeparture));
+            }
+            await db.ExecuteAsync("DELETE FROM dvir_reports WHERE company_id=@c AND report_number=@number",
+                c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@number", $"DVIR-CONCURRENT-UNSAFE-{companyId}"); });
 
             await db.ExecuteAsync("UPDATE vehicles SET out_of_service=TRUE WHERE id=@id AND company_id=@c",
                 c => { c.Parameters.AddWithValue("@id", vehicleId); c.Parameters.AddWithValue("@c", companyId); });

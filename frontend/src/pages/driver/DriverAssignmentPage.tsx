@@ -230,7 +230,9 @@ export function DriverAssignmentPage() {
   const id = Number(assignment["id"]);
   const status = String(assignment["assignmentStatus"] ?? "");
   const openExceptions = Number(assignment["openExceptions"] ?? 0);
-  const vehicleConfirmed = Boolean(assignment["vehicleConfirmedAt"]);
+  const vehicleConfirmed = assignment["vehicleConfirmedAt"] != null &&
+    assignment["vehicleConfirmedByDriverId"] != null &&
+    String(assignment["vehicleConfirmedByDriverId"]) === String(payload["driverId"]);
   const safePretripRecorded = Boolean(assignment["latestPretripSafeToOperate"]);
   const safePretripReady = safePretripRecorded &&
     String(assignment["latestPretripDriverSignatureStatus"] ?? "").toLowerCase() === "signed";

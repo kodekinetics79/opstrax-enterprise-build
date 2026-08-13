@@ -19185,12 +19185,26 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     private static async Task<IResult> MaintInspectionCreate(HttpContext http, MaintInspectionBody body,
         Database db, AuditService audit, NotificationService notif, CancellationToken ct)
     {
+        var companyId = GetCompanyId(http);
+        return await db.RunInTenantTransactionAsync(companyId,
+            () => MaintInspectionCreateInTransaction(http, body, db, audit, notif, ct), ct);
+    }
+
+    private static async Task<IResult> MaintInspectionCreateInTransaction(HttpContext http, MaintInspectionBody body,
+        Database db, AuditService audit, NotificationService notif, CancellationToken ct)
+    {
         if (RequirePermission(http, "maintenance:create") is { } denied) return denied;
         var companyId = GetCompanyId(http);
         var userId    = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
 
         if (body.VehicleId <= 0) return Results.BadRequest(ApiResponse<object>.Fail("vehicleId is required"));
         if (body.DriverId  <= 0) return Results.BadRequest(ApiResponse<object>.Fail("driverId is required"));
+        // Serialize every DVIR write with the departure safety decision for this exact
+        // tenant/vehicle/driver tuple. Row locks cannot prevent a newer report insert
+        // (a phantom), so both paths share this transaction-scoped advisory lock.
+        await db.ExecuteAsync(
+            "SELECT pg_advisory_xact_lock(hashtextextended(@key,0))",
+            c => c.Parameters.AddWithValue("@key", $"fleet-departure-safety:{companyId}:{body.VehicleId}:{body.DriverId}"), ct);
         // Lock and validate both authoritative resources. A report cannot bind a tenant or
         // branch-local vehicle to a driver outside the same scope.
         var ownership = await db.QuerySingleAsync(
@@ -22882,7 +22896,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                      j.pickup_address, j.dropoff_address, customer.name customer_name,
                      v.vehicle_code, RIGHT(NULLIF(v.vin,''),6) vehicle_vin_suffix,
                      v.out_of_service vehicle_oos,
-                     da.vehicle_confirmed_at,da.vehicle_confirmation_method,
+                     da.vehicle_confirmed_at,da.vehicle_confirmed_by_driver_id,da.vehicle_confirmation_method,
                      da.pretrip_dvir_id,da.operational_started_at,
                      latest_pretrip.id latest_pretrip_dvir_id,
                      latest_pretrip.safe_to_operate latest_pretrip_safe_to_operate,
@@ -22918,7 +22932,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             .Where(s => currentStatus != "exception" || s == resumeStatus)
             .ToList();
 
-        return Results.Ok(ApiResponse<object>.Ok(new { assignment = row, driverNextStatuses }));
+        return Results.Ok(ApiResponse<object>.Ok(new { assignment = row, driverId, driverNextStatuses }));
     }
 
     private static async Task<IResult> DriverAcceptAssignment(
@@ -23036,13 +23050,27 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (to == "delivered")
             return Results.Conflict(ApiResponse<object>.Fail("Delivery proof is required before an assignment can be delivered"));
 
+        long? departureVehicleId = null;
+        if (to == "en_route_pickup")
+        {
+            var candidateVehicleId = await db.ScalarLongAsync(
+                "SELECT vehicle_id FROM dispatch_assignments WHERE id=@id AND driver_id=@did AND company_id=@cid",
+                c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@did", driverId); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+            if (candidateVehicleId <= 0)
+                return Results.NotFound(ApiResponse<object>.Fail("Assignment not found or does not belong to you"));
+            departureVehicleId = candidateVehicleId;
+            await db.ExecuteAsync(
+                "SELECT pg_advisory_xact_lock(hashtextextended(@key,0))",
+                c => c.Parameters.AddWithValue("@key", $"fleet-departure-safety:{companyId}:{candidateVehicleId}:{driverId}"), ct);
+        }
+
         var current = await db.QuerySingleAsync(
-            @"SELECT assignment_status,previous_status,vehicle_id,trip_id,accepted_at,assigned_at,
+            @"SELECT da.assignment_status,da.previous_status,da.vehicle_id,da.trip_id,da.accepted_at,da.assigned_at,
                      vehicle_confirmed_at,vehicle_confirmed_by_driver_id,
-                     (SELECT v.out_of_service FROM vehicles v
-                       WHERE v.id=dispatch_assignments.vehicle_id AND v.company_id=dispatch_assignments.company_id
-                         AND v.deleted_at IS NULL) vehicle_out_of_service
-              FROM dispatch_assignments WHERE id=@id AND company_id=@cid FOR UPDATE",
+                     v.out_of_service vehicle_out_of_service
+              FROM dispatch_assignments da
+              JOIN vehicles v ON v.id=da.vehicle_id AND v.company_id=da.company_id AND v.deleted_at IS NULL
+              WHERE da.id=@id AND da.company_id=@cid FOR UPDATE OF da,v",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
         var rawFrom = current?["assignmentStatus"]?.ToString() ?? "";
         var from = NormalizeAssignmentStatus(rawFrom);
@@ -23064,6 +23092,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         long? pretripDvirId = null;
         if (from == "accepted" && to == "en_route_pickup")
         {
+            if (departureVehicleId != Convert.ToInt64(current!["vehicleId"]))
+                return Results.Conflict(ApiResponse<object>.Fail("The assigned vehicle changed; refresh and retry"));
             if (current?["vehicleConfirmedAt"] is null or DBNull ||
                 Convert.ToInt64(current["vehicleConfirmedByDriverId"]) != driverId)
                 return Results.Conflict(ApiResponse<object>.Fail("Confirm the exact assigned vehicle before departure"));

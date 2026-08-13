@@ -51,6 +51,8 @@ const driverPage = readFileSync(resolve(root, "src/pages/driver/DriverAssignment
 assert.match(driverPage, /s !== "accepted" \|\| status === "exception"/, "Initial acceptance must use the canonical endpoint while exception recovery remains executable");
 assert.match(driverPage, /Resume Assignment/, "Accepted assignments must be able to resume from exception without a duplicate initial accept action");
 assert.match(driverPage, /s === "assigned" \|\| s === "accepted"/, "Pre-accept and post-accept exceptions must both expose the governed resume action");
+assert.match(driverPage, /vehicleConfirmedByDriverId/, "Trip UI must consume the vehicle confirmer identity");
+assert.match(driverPage, /String\(assignment\["vehicleConfirmedByDriverId"\]\) === String\(payload\["driverId"\]\)/, "Trip UI must require confirmation by the authenticated driver");
 for (const [status, label] of [
   ["en_route_pickup", "Start Route to Pickup"],
   ["arrived_pickup", "Mark Arrived at Pickup"],
