@@ -273,6 +273,7 @@ BEGIN
       ('2026_08_02_stage74_retention_policy_production_contract'),
       ('2026_08_02_stage75_bounded_support_access'),
       ('2026_08_12_stage77_protected_role_bootstrap'),
+      ('2026_08_13_stage78_country_profiles_runtime_contract'),
       ('2026_08_11_stage76_telematics_security_hardening')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN
@@ -326,6 +327,7 @@ BEGIN
   END IF;
   IF to_regclass('public.outbox_messages') IS NULL
      OR to_regclass('public.inbox_messages') IS NULL
+     OR to_regclass('public.country_profiles') IS NULL
      OR EXISTS (
        SELECT 1 FROM (VALUES
          ('invite_token_hash'),('invite_expires_at'),('updated_at'),('mfa_secret')
@@ -338,6 +340,11 @@ BEGIN
        )
      ) THEN
     RAISE EXCEPTION 'Clean-chain protected runtime foundation schema is incomplete';
+  END IF;
+  IF (SELECT count(*) FROM country_profiles WHERE country_code IN ('US','CA','SA'))<>3
+     OR NOT EXISTS (SELECT 1 FROM country_profiles WHERE country_code='US' AND default_currency='USD')
+     OR NOT EXISTS (SELECT 1 FROM country_profiles WHERE country_code='SA' AND text_direction='rtl') THEN
+    RAISE EXCEPTION 'Clean-chain Stage78 country-profile runtime catalog is incomplete';
   END IF;
   IF NOT EXISTS (
        SELECT 1 FROM information_schema.columns

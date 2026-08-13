@@ -65,12 +65,18 @@ test("protected clean database receives the complete pre-RLS runtime foundation"
     "2026_06_28_stage12a_telemetry_live_state",
     "2026_06_28_stage13b_safety_maintenance_foundation",
     "2026_06_29_stage18_commercial_foundation",
+    "2026_08_13_stage78_country_profiles_runtime_contract",
   ]) {
     assert.match(runner, new RegExp(migration));
     assert.match(clean, new RegExp(migration));
   }
   assert.match(stage77, /ADD COLUMN IF NOT EXISTS invite_token_hash/);
   assert.match(stage77, /ADD COLUMN IF NOT EXISTS mfa_secret/);
+  const stage78 = read("database/migrations/2026_08_13_stage78_country_profiles_runtime_contract.sql");
+  assert.match(stage78, /CREATE TABLE IF NOT EXISTS country_profiles/);
+  assert.match(stage78, /'US','United States','USD'/);
+  assert.match(stage78, /'SA','Saudi Arabia','SAR'.*'rtl'/);
+  assert.match(runner, /Stage78 country-profile runtime catalog is incomplete/);
   assert.match(runner, /to_regclass\('public\.outbox_messages'\) IS NULL/);
   assert.ok(runner.indexOf("2026_07_30_stage51_production_runtime_support") < runner.indexOf("2026_06_28_stage12a_telemetry_live_state"));
   const commercial = read("database/migrations/2026_06_29_stage18_commercial_foundation.sql");

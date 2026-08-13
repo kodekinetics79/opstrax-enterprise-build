@@ -143,7 +143,7 @@ public sealed class FleetProductionReadinessService
         WITH critical_workers(service_name) AS (
           SELECT unnest(@criticalWorkers::text[])
         ), required(name, tenant_scoped) AS (VALUES
-          ('companies',true),('outbox_messages',true),('inbox_messages',true),('platform_admins',false),
+          ('companies',true),('outbox_messages',true),('inbox_messages',true),('platform_admins',false),('country_profiles',false),
           ('workforce_schedules',true),
           ('vehicles',true),('drivers',true),('vehicle_assignments',true),('dispatch_assignments',true),
           ('fleet_tms_shipments',true),('fleet_tms_shipment_stops',true),('fleet_tms_pods',true),
@@ -699,7 +699,10 @@ public sealed class FleetProductionReadinessService
           COALESCE((SELECT COUNT(*)=1 FROM schema_migrations WHERE version='2026_07_30_stage57_workforce_schedule_tenant_integrity'),false) AS workforce_schedule_integrity_migration_applied,
           COALESCE((SELECT COUNT(*)=1 FROM schema_migrations WHERE version='2026_07_31_stage58_nonforgeable_tenant_ticket'),false) AS tenant_ticket_migration_applied,
           COALESCE((SELECT COUNT(*)=1 FROM schema_migrations WHERE version='2026_07_31_stage59_data_protection_key_ring'),false) AS data_protection_key_ring_migration_applied,
-          COALESCE((SELECT COUNT(*)=2 FROM market_packs WHERE code IN ('canada_na','saudi_gcc') AND status='active'),false) AS market_catalog_ready,
+          COALESCE((SELECT COUNT(*)=2 FROM market_packs WHERE code IN ('canada_na','saudi_gcc') AND status='active'),false)
+            AND COALESCE((SELECT COUNT(*)=3 FROM country_profiles WHERE country_code IN ('US','CA','SA')),false)
+            AND COALESCE((SELECT BOOL_AND((country_code='US' AND default_currency='USD') OR (country_code='CA' AND default_currency='CAD') OR (country_code='SA' AND default_currency='SAR' AND text_direction='rtl')) FROM country_profiles WHERE country_code IN ('US','CA','SA')),false)
+            AND COALESCE((SELECT COUNT(*)=1 FROM schema_migrations WHERE version='2026_08_13_stage78_country_profiles_runtime_contract'),false) AS market_catalog_ready,
           to_regclass('public.uq_ftms_shipment_identity') IS NOT NULL
             AND to_regclass('public.uq_ftms_vehicle_identity') IS NOT NULL
             AND to_regclass('public.ux_ftms_assets_branch_tag_normalized') IS NOT NULL

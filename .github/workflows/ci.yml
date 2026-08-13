@@ -462,6 +462,7 @@ jobs:
           test -f database/migrations/2026_08_02_stage75_bounded_support_access.sql
           test -f database/migrations/2026_08_11_stage76_telematics_security_hardening.sql
           test -f database/migrations/2026_08_12_stage77_protected_role_bootstrap.sql
+          test -f database/migrations/2026_08_13_stage78_country_profiles_runtime_contract.sql
           test -f database/migrations/telematics/001_latest_position_provenance.sql
           test -f database/migrations/telematics/002_device_lifecycle.sql
           test -f database/migrations/telematics/003_canonical_telemetry_timeseries.sql
@@ -546,12 +547,16 @@ jobs:
             "$RUNNER_TEMP/api-migrations/2026_08_11_stage76_telematics_security_hardening.sql"
           docker cp "$api_container:/app/Migrations/2026_08_12_stage77_protected_role_bootstrap.sql" \
             "$RUNNER_TEMP/api-migrations/2026_08_12_stage77_protected_role_bootstrap.sql"
+          docker cp "$api_container:/app/Migrations/2026_08_13_stage78_country_profiles_runtime_contract.sql" \
+            "$RUNNER_TEMP/api-migrations/2026_08_13_stage78_country_profiles_runtime_contract.sql"
           cmp database/migrations/2026_07_16_stage42_telemetry_gateways.sql \
             "$RUNNER_TEMP/api-migrations/2026_07_16_stage42_telemetry_gateways.sql"
           cmp database/migrations/2026_08_11_stage76_telematics_security_hardening.sql \
             "$RUNNER_TEMP/api-migrations/2026_08_11_stage76_telematics_security_hardening.sql"
           cmp database/migrations/2026_08_12_stage77_protected_role_bootstrap.sql \
             "$RUNNER_TEMP/api-migrations/2026_08_12_stage77_protected_role_bootstrap.sql"
+          cmp database/migrations/2026_08_13_stage78_country_profiles_runtime_contract.sql \
+            "$RUNNER_TEMP/api-migrations/2026_08_13_stage78_country_profiles_runtime_contract.sql"
           cleanup
           trap - EXIT
       - name: Test and audit Telematics gateway solution
