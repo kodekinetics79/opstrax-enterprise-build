@@ -18,8 +18,8 @@ const serviceHistoryApi = () =>
       ...r,
       workOrderCode: r.workOrderCode ?? r.work_order_code ?? `WO-${String(r.id)}`,
       vehicleCode: r.vehicleCode ?? r.vehicle_code ?? "",
-      vendorName: r.vendorName ?? r.vendor_name ?? "Internal",
-      cost: Number(r.actualCost ?? r.actual_cost ?? r.estimatedCost ?? r.estimated_cost ?? 0),
+      vendorName: r.vendorName ?? r.vendor_name ?? null,
+      actualCost: r.actualCost ?? r.actual_cost ?? null,
       downtimeHours: Number(r.downtimeHours ?? r.downtime_hours ?? 0),
       completedAt: r.completedAt ?? r.completed_at ?? r.dueDate ?? r.due_date ?? "",
       issueType: r.issueType ?? r.issue_type ?? r.title ?? "",
@@ -36,9 +36,9 @@ const pmApi = () =>
     rows.map((r) => ({
       ...r,
       vehicleCode: r.vehicleCode ?? r.vehicle_code ?? "",
-      pmStatus: r.pmStatus ?? r.pm_status ?? "Scheduled",
-      daysUntilDue: Number(r.daysUntilDue ?? r.days_until_due ?? 30),
-      riskLevel: r.riskLevel ?? r.risk_level ?? "Medium",
+      pmStatus: r.pmStatus ?? r.pm_status ?? null,
+      daysUntilDue: r.daysUntilDue ?? r.days_until_due ?? null,
+      riskLevel: r.riskLevel ?? r.risk_level ?? null,
     }))
   );
 
@@ -59,6 +59,11 @@ function PmStatusBadge({ status }: { status: string }) {
     status === "Due Soon" ? "bg-amber-50 border-amber-200 text-amber-700" :
     "bg-teal-50 border-teal-200 text-teal-700";
   return <span className={`inline-flex text-xs px-2 py-0.5 rounded-full border font-medium ${cls}`}>{status}</span>;
+}
+
+function DataOriginBadge({ origin }: { origin: unknown }) {
+  if (origin === "seeded_synthetic_database") return <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-bold text-violet-700">Demo Data</span>;
+  return <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-bold text-slate-600">Unverified DB Record</span>;
 }
 
 /** Section wrapper: a claymorphic rail card with a small titled header. */
@@ -115,7 +120,8 @@ function ServiceHistoryTab() {
   const q = useQuery({ queryKey: ["service-history"], queryFn: serviceHistoryApi });
   const rows = (q.data ?? []) as AnyRecord[];
 
-  const totalCost = rows.reduce((s, r) => s + Number(r.cost ?? 0), 0);
+  const totalCost = rows.reduce((s, r) => s + (r.actualCost == null ? 0 : Number(r.actualCost)), 0);
+  const missingActualCost = rows.filter((r) => r.actualCost == null).length;
   const totalDowntime = rows.reduce((s, r) => s + Number(r.downtimeHours ?? 0), 0);
   const avgCost = rows.length ? totalCost / rows.length : 0;
 
@@ -123,9 +129,9 @@ function ServiceHistoryTab() {
   const vendorRollup = useMemo(() => {
     const map = new Map<string, { cost: number; downtime: number; count: number }>();
     for (const r of rows) {
-      const key = String(r.vendorName ?? "Internal");
+      const key = String(r.vendorName ?? "Unspecified");
       const cur = map.get(key) ?? { cost: 0, downtime: 0, count: 0 };
-      cur.cost += Number(r.cost ?? 0);
+      cur.cost += r.actualCost == null ? 0 : Number(r.actualCost);
       cur.downtime += Number(r.downtimeHours ?? 0);
       cur.count += 1;
       map.set(key, cur);
@@ -142,7 +148,7 @@ function ServiceHistoryTab() {
     <div className="fleet-console flex flex-col gap-4">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <KpiCard label="Completed Services" value={rows.length} />
-        <KpiCard label={`Total Cost (${currency})`} value={formatCurrency(totalCost, currency)} delta={`${formatCurrency(Math.round(avgCost), currency)} avg / order`} />
+        <KpiCard label={`Recorded Actual Cost (${currency})`} value={formatCurrency(totalCost, currency)} delta={missingActualCost ? `${missingActualCost} without actual cost` : `${formatCurrency(Math.round(avgCost), currency)} avg / order`} />
         <KpiCard label="Total Downtime" value={`${totalDowntime.toFixed(1)}h`} status={totalDowntime > 0 ? "Impact" : undefined} />
         <KpiCard label="Vendors Engaged" value={vendorRollup.length} />
       </div>
@@ -154,7 +160,7 @@ function ServiceHistoryTab() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-50">
-                    {["Work Order", "Vehicle", "Service Type", "Vendor", "Priority", "Cost", "Downtime", "Completed"].map((h) => (
+                    {["Work Order", "Vehicle", "Service Type", "Vendor", "Priority", "Cost", "Downtime", "Completed", "Origin"].map((h) => (
                       <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
                     ))}
                   </tr>
@@ -165,11 +171,12 @@ function ServiceHistoryTab() {
                       <td className="px-4 py-3 font-medium text-slate-900">{String(r.workOrderCode ?? "--")}</td>
                       <td className="px-4 py-3 text-slate-700">{String(r.vehicleCode ?? "—")}</td>
                       <td className="px-4 py-3 text-xs text-slate-600">{String(r.issueType ?? r.title ?? "—")}</td>
-                      <td className="px-4 py-3 text-xs text-slate-500">{String(r.vendorName ?? "Internal")}</td>
+                      <td className="px-4 py-3 text-xs text-slate-500">{String(r.vendorName ?? "—")}</td>
                       <td className="px-4 py-3"><PriorityBadge priority={String(r.priority ?? "Normal")} /></td>
-                      <td className="px-4 py-3 font-medium text-slate-700">{formatCurrency(Number(r.cost ?? 0), currency)}</td>
+                      <td className="px-4 py-3 font-medium text-slate-700">{r.actualCost == null ? "—" : formatCurrency(Number(r.actualCost), currency)}</td>
                       <td className="px-4 py-3 text-xs text-slate-600">{Number(r.downtimeHours ?? 0) > 0 ? `${String(r.downtimeHours)}h` : "—"}</td>
                       <td className="px-4 py-3 text-xs text-slate-500">{String(r.completedAt ?? "—")}</td>
+                      <td className="px-4 py-3"><DataOriginBadge origin={r.recordOrigin} /></td>
                     </tr>
                   ))}
                 </tbody>
@@ -259,7 +266,7 @@ function DowntimeTab() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-50">
-                    {["Work Order", "Vehicle", "Issue", "Priority", "Downtime Hrs", "Est. Cost", "Vendor", "Status"].map((h) => (
+                    {["Work Order", "Vehicle", "Issue", "Priority", "Downtime Hrs", "Est. Cost", "Vendor", "Status", "Origin"].map((h) => (
                       <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
                     ))}
                   </tr>
@@ -273,8 +280,9 @@ function DowntimeTab() {
                       <td className="px-4 py-3"><PriorityBadge priority={String(r.priority ?? "Normal")} /></td>
                       <td className="px-4 py-3 font-medium text-red-700">{String(r.downtimeHours ?? 0)}h</td>
                       <td className="px-4 py-3 text-slate-700 text-xs">{formatCurrency(Number(r.cost ?? 0), currency)}</td>
-                      <td className="px-4 py-3 text-xs text-slate-500">{String(r.vendorName ?? "Internal")}</td>
+                      <td className="px-4 py-3 text-xs text-slate-500">{String(r.vendorName ?? "—")}</td>
                       <td className="px-4 py-3 text-xs text-slate-600">{String(r.status ?? "—")}</td>
+                      <td className="px-4 py-3"><DataOriginBadge origin={r.recordOrigin} /></td>
                     </tr>
                   ))}
                 </tbody>
@@ -357,7 +365,7 @@ function PMScheduleTab() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-50">
-                    {["Service", "Vehicle", "Category", "PM Status", "Due Date", "Days Left", "Est. Cost", "Risk"].map((h) => (
+                    {["Service", "Vehicle", "Category", "PM Status", "Due Date", "Days Left", "Est. Cost", "Risk", "Origin"].map((h) => (
                       <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
                     ))}
                   </tr>
@@ -368,15 +376,16 @@ function PMScheduleTab() {
                       <td className="px-4 py-3 font-medium text-slate-900">{String(r.title ?? "--")}</td>
                       <td className="px-4 py-3 text-slate-700">{String(r.vehicleCode ?? "—")}</td>
                       <td className="px-4 py-3 text-xs text-slate-500">{String(r.category ?? "—")}</td>
-                      <td className="px-4 py-3"><PmStatusBadge status={String(r.pmStatus ?? "Scheduled")} /></td>
+                      <td className="px-4 py-3">{r.pmStatus == null ? "—" : <PmStatusBadge status={String(r.pmStatus)} />}</td>
                       <td className="px-4 py-3 text-xs text-slate-600">{String(r.dueDate ?? "—")}</td>
                       <td className="px-4 py-3">
                         <span className={`text-xs font-medium ${Number(r.daysUntilDue) < 0 ? "text-red-700" : Number(r.daysUntilDue) < 7 ? "text-amber-700" : "text-slate-600"}`}>
-                          {Number(r.daysUntilDue) < 0 ? `${Math.abs(Number(r.daysUntilDue))}d overdue` : `${String(r.daysUntilDue)}d`}
+                          {r.daysUntilDue == null ? "—" : Number(r.daysUntilDue) < 0 ? `${Math.abs(Number(r.daysUntilDue))}d overdue` : `${String(r.daysUntilDue)}d`}
                         </span>
                       </td>
                       <td className="px-4 py-3 text-xs text-slate-600">{formatCurrency(Number(r.estimatedCost ?? 0), currency)}</td>
-                      <td className="px-4 py-3"><PriorityBadge priority={String(r.riskLevel ?? "Low")} /></td>
+                      <td className="px-4 py-3">{r.riskLevel == null ? "—" : <PriorityBadge priority={String(r.riskLevel)} />}</td>
+                      <td className="px-4 py-3"><DataOriginBadge origin={r.recordOrigin} /></td>
                     </tr>
                   ))}
                 </tbody>

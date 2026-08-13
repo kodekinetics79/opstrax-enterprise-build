@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { Alert, View } from "react-native";
-import { ActionButton, EmptyState, Field, LoadingState, Panel, Pill, Row, Screen, SectionHeader } from "@/components/ui";
+import { ActionButton, EmptyState, ErrorState, Field, LoadingState, Panel, Pill, Row, Screen, SectionHeader } from "@/components/ui";
 import { useSession } from "@/auth/SessionProvider";
 import { useWorkflow } from "@/workflow/WorkflowContext";
 import { useAsyncResource } from "@/hooks/useAsyncResource";
@@ -24,15 +24,21 @@ function textOf(value: unknown) {
 export function WorkflowScreen() {
   const { api, hasPermission } = useSession();
   const { selectedJobId, bumpRefreshKey, refreshKey } = useWorkflow();
+  const hasAnyPermission = (...permissions: string[]) => permissions.some(hasPermission);
+  const canReadRecommendations = hasAnyPermission("dispatch.smart_assign.read", "dispatch.smart_assign.recommend", "dispatch.smart_assign.accept", "dispatch.smart_assign.reject");
+  const canReadSiteAccess = hasAnyPermission("operations.site_access.read", "operations.site_access.create", "operations.site_access.update", "dispatch:view", "dispatch:manage", "job.update");
+  const canReadPickup = hasAnyPermission("operations.pickup_authorization.read", "operations.pickup_authorization.create", "operations.pickup_authorization.update", "operations.pickup_authorization.verify", "dispatch:view", "dispatch:manage", "driver:self");
+  const canReadHandovers = hasAnyPermission("operations.warehouse_handover.read", "operations.warehouse_handover.create", "operations.warehouse_handover.update", "dispatch:view", "dispatch:manage", "driver:self");
+  const canReadProof = hasAnyPermission("operations.proof.read", "operations.proof.create", "operations.proof.update", "operations.proof.submit", "operations.proof.validate");
 
   const recommendations = useAsyncResource(
-    async () => (selectedJobId ? api.smartAssignmentRecommendations(selectedJobId) : []),
-    [api, selectedJobId, refreshKey],
+    async () => (selectedJobId && canReadRecommendations ? api.smartAssignmentRecommendations(selectedJobId) : null),
+    [api, selectedJobId, canReadRecommendations, refreshKey],
   );
-  const siteAccess = useAsyncResource(async () => (selectedJobId ? api.siteAccess(selectedJobId) : []), [api, selectedJobId, refreshKey]);
-  const pickupAuthorizations = useAsyncResource(async () => (selectedJobId ? api.pickupAuthorizations(selectedJobId) : []), [api, selectedJobId, refreshKey]);
-  const handovers = useAsyncResource(async () => (selectedJobId ? api.warehouseHandovers(selectedJobId) : []), [api, selectedJobId, refreshKey]);
-  const proofPackages = useAsyncResource(async () => (selectedJobId ? api.proofPackages(selectedJobId) : []), [api, selectedJobId, refreshKey]);
+  const siteAccess = useAsyncResource(async () => (selectedJobId && canReadSiteAccess ? api.siteAccess(selectedJobId) : null), [api, selectedJobId, canReadSiteAccess, refreshKey]);
+  const pickupAuthorizations = useAsyncResource(async () => (selectedJobId && canReadPickup ? api.pickupAuthorizations(selectedJobId) : null), [api, selectedJobId, canReadPickup, refreshKey]);
+  const handovers = useAsyncResource(async () => (selectedJobId && canReadHandovers ? api.warehouseHandovers(selectedJobId) : null), [api, selectedJobId, canReadHandovers, refreshKey]);
+  const proofPackages = useAsyncResource(async () => (selectedJobId && canReadProof ? api.proofPackages(selectedJobId) : null), [api, selectedJobId, canReadProof, refreshKey]);
 
   const latestRecommendation = useMemo(() => asArray(recommendations.data)[0] ?? null, [recommendations.data]);
   const latestSiteAccess = useMemo(() => asArray(siteAccess.data)[0] ?? null, [siteAccess.data]);
@@ -83,8 +89,13 @@ export function WorkflowScreen() {
         <>
           <Panel>
             <SectionHeader eyebrow="Smart assignment" title="Recommendation and acceptance state" description="AI remains recommendation-only. Accept/reject is only available when the backend permission exists." />
-            {recommendations.loading ? <LoadingState label="Loading recommendations..." /> : recommendations.error ? <EmptyState title="Recommendation error" body={recommendations.error} /> : null}
-            {latestRecommendation ? (
+            {!canReadRecommendations ? (
+              <EmptyState title="Recommendations not available" body="This authenticated session does not grant smart-assignment read access." />
+            ) : recommendations.loading ? (
+              <LoadingState label="Loading recommendations..." />
+            ) : recommendations.error ? (
+              <ErrorState title="Recommendation error" body={recommendations.error} onRetry={recommendations.refresh} />
+            ) : latestRecommendation ? (
               <View style={{ gap: 10 }}>
                 <Field label="Recommendation score" value={textOf(latestRecommendation.score ?? latestRecommendation.recommendation_score)} />
                 <Field label="Confidence" value={textOf(latestRecommendation.confidence ?? latestRecommendation.confidence_score)} />
@@ -100,16 +111,21 @@ export function WorkflowScreen() {
             )}
             {hasPermission("dispatch.smart_assign.accept") || hasPermission("dispatch.smart_assign.reject") ? (
               <Row>
-                {hasPermission("dispatch.smart_assign.accept") ? <ActionButton label="Accept" onPress={() => decideRecommendation("accept")} /> : null}
-                {hasPermission("dispatch.smart_assign.reject") ? <ActionButton label="Reject" onPress={() => decideRecommendation("reject")} variant="secondary" /> : null}
+                {hasPermission("dispatch.smart_assign.accept") ? <ActionButton label={latestRecommendation ? "Accept" : "Accept (no recommendation)"} onPress={() => decideRecommendation("accept")} disabled={!latestRecommendation} /> : null}
+                {hasPermission("dispatch.smart_assign.reject") ? <ActionButton label={latestRecommendation ? "Reject" : "Reject (no recommendation)"} onPress={() => decideRecommendation("reject")} disabled={!latestRecommendation} variant="secondary" /> : null}
               </Row>
             ) : null}
           </Panel>
 
           <Panel>
             <SectionHeader eyebrow="Site access" title="Gate pass, NOC, and access controls" description="This view keeps access blockers visible before validation or proof completion." />
-            {siteAccess.loading ? <LoadingState label="Loading site access..." /> : siteAccess.error ? <EmptyState title="Site access error" body={siteAccess.error} /> : null}
-            {latestSiteAccess ? (
+            {!canReadSiteAccess ? (
+              <EmptyState title="Site access not available" body="This authenticated session does not grant site-access read access." />
+            ) : siteAccess.loading ? (
+              <LoadingState label="Loading site access..." />
+            ) : siteAccess.error ? (
+              <ErrorState title="Site access error" body={siteAccess.error} onRetry={siteAccess.refresh} />
+            ) : latestSiteAccess ? (
               <View style={{ gap: 10 }}>
                 <Field label="Requirement type" value={textOf(latestSiteAccess.requirement_type ?? latestSiteAccess.requirementType)} />
                 <Field label="Status" value={textOf(latestSiteAccess.status)} />
@@ -124,8 +140,13 @@ export function WorkflowScreen() {
 
           <Panel>
             <SectionHeader eyebrow="Pickup authorization" title="Third-party handoff control" description="Pickup authorization remains explicit and tenant-scoped." />
-            {pickupAuthorizations.loading ? <LoadingState label="Loading pickup authorizations..." /> : pickupAuthorizations.error ? <EmptyState title="Pickup authorization error" body={pickupAuthorizations.error} /> : null}
-            {latestPickupAuthorization ? (
+            {!canReadPickup ? (
+              <EmptyState title="Pickup authorization not available" body="This authenticated session does not grant pickup-authorization read access." />
+            ) : pickupAuthorizations.loading ? (
+              <LoadingState label="Loading pickup authorizations..." />
+            ) : pickupAuthorizations.error ? (
+              <ErrorState title="Pickup authorization error" body={pickupAuthorizations.error} onRetry={pickupAuthorizations.refresh} />
+            ) : latestPickupAuthorization ? (
               <View style={{ gap: 10 }}>
                 <Field label="Authorization number" value={textOf(latestPickupAuthorization.authorization_no ?? latestPickupAuthorization.authorizationNumber)} />
                 <Field label="Third-party name" value={textOf(latestPickupAuthorization.third_party_name ?? latestPickupAuthorization.thirdPartyName)} />
@@ -140,8 +161,13 @@ export function WorkflowScreen() {
 
           <Panel>
             <SectionHeader eyebrow="Warehouse handover" title="Inbound / outbound handover state" description="Warehouse completion is visible here without introducing a full warehouse portal." />
-            {handovers.loading ? <LoadingState label="Loading handovers..." /> : handovers.error ? <EmptyState title="Warehouse handover error" body={handovers.error} /> : null}
-            {latestHandover ? (
+            {!canReadHandovers ? (
+              <EmptyState title="Warehouse handover not available" body="This authenticated session does not grant warehouse-handover read access." />
+            ) : handovers.loading ? (
+              <LoadingState label="Loading handovers..." />
+            ) : handovers.error ? (
+              <ErrorState title="Warehouse handover error" body={handovers.error} onRetry={handovers.refresh} />
+            ) : latestHandover ? (
               <View style={{ gap: 10 }}>
                 <Field label="Warehouse name" value={textOf(latestHandover.warehouse_name ?? latestHandover.warehouseName)} />
                 <Field label="Handover type" value={textOf(latestHandover.handover_type ?? latestHandover.handoverType)} />
@@ -156,8 +182,13 @@ export function WorkflowScreen() {
 
           <Panel>
             <SectionHeader eyebrow="Proof package" title="POD / proof of delivery" description="The mobile shell shows proof package state without auto-validating or issuing anything." />
-            {proofPackages.loading ? <LoadingState label="Loading proof packages..." /> : proofPackages.error ? <EmptyState title="Proof package error" body={proofPackages.error} /> : null}
-            {latestProofPackage ? (
+            {!canReadProof ? (
+              <EmptyState title="Proof package not available" body="This authenticated session does not grant proof-package read access." />
+            ) : proofPackages.loading ? (
+              <LoadingState label="Loading proof packages..." />
+            ) : proofPackages.error ? (
+              <ErrorState title="Proof package error" body={proofPackages.error} onRetry={proofPackages.refresh} />
+            ) : latestProofPackage ? (
               <View style={{ gap: 10 }}>
                 <Field label="Proof type" value={textOf(latestProofPackage.proof_type ?? latestProofPackage.proofType)} />
                 <Field label="Status" value={textOf(latestProofPackage.status)} />

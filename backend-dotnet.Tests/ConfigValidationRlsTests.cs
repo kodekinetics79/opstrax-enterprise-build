@@ -181,6 +181,79 @@ public sealed class ConfigValidationRlsTests
             i => i.Check == "legacy_device_hmac_read").Level);
     }
 
+    [Fact]
+    public void Validate_StagingUsesProtectedConfigurationGatesAndReportsStaging()
+    {
+        var values = BaseValues("Staging", "false");
+        values["DATA_PROTECTION_CERTIFICATE_BASE64"] = null;
+        values["DATA_PROTECTION_CERTIFICATE_PASSWORD"] = null;
+        values["Telemetry:GatewaySecret"] = new string('g', 40);
+        values["Platform:SuperAdminPassword"] = "Platform@12345";
+        values["DemoSeed:Enabled"] = "true";
+        values["Telemetry:Simulator:Enabled"] = "true";
+        values["RetentionWorker:Enabled"] = null;
+
+        var result = new ConfigValidationService(
+            new ConfigurationBuilder().AddInMemoryCollection(values).Build()).Validate();
+
+        foreach (var check in new[]
+                 {
+                     "tenant_rls_enforcement", "data_protection_key_ring",
+                     "legacy_telemetry_gateway_secret", "platform_superadmin_password",
+                     "demo_seed_data", "telemetry_simulator", "retention_worker"
+                 })
+        {
+            Assert.Equal("fail", Assert.Single(result.Issues, issue => issue.Check == check).Level);
+        }
+
+        var environment = Assert.Single(result.Issues, issue => issue.Check == "environment_mode");
+        Assert.Equal("pass", environment.Level);
+        Assert.Equal("Environment is Staging", environment.Message);
+        Assert.Throws<InvalidOperationException>(() =>
+            ConfigValidationService.EnsureStartupAllowed(result, isProtectedEnvironment: true));
+    }
+
+    [Fact]
+    public void Validate_StagingRlsRequiresExactSeparatedDatabaseIdentities()
+    {
+        var values = BaseValues("Staging", "true");
+        values["ConnectionStrings:DefaultConnection"] =
+            "Host=localhost;Database=opstrax;Username=database_owner;Password=shared-test";
+        values["ConnectionStrings:SystemConnection"] =
+            "Host=localhost;Database=opstrax;Username=database_owner;Password=shared-test";
+
+        var result = new ConfigValidationService(
+            new ConfigurationBuilder().AddInMemoryCollection(values).Build()).Validate();
+
+        Assert.Equal("fail", Assert.Single(result.Issues,
+            issue => issue.Check == "database_application_identity").Level);
+        Assert.Equal("fail", Assert.Single(result.Issues,
+            issue => issue.Check == "database_system_identity").Level);
+        Assert.Equal("fail", Assert.Single(result.Issues,
+            issue => issue.Check == "database_identity_separation").Level);
+    }
+
+    [Fact]
+    public void ProgramUsesOneProtectedEnvironmentPredicateForStartupAndReadiness()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "backend-dotnet", "Program.cs")))
+            directory = directory.Parent;
+
+        Assert.NotNull(directory);
+        var program = File.ReadAllText(Path.Combine(directory!.FullName, "backend-dotnet", "Program.cs"));
+
+        Assert.Contains("environment.IsProduction() || environment.IsStaging()", program, StringComparison.Ordinal);
+        Assert.Equal(1, program.Split(".IsProduction()", StringSplitOptions.None).Length - 1);
+        Assert.Equal(1, program.Split(".IsStaging()", StringSplitOptions.None).Length - 1);
+        Assert.Contains("if (IsProtectedEnvironment(builder.Environment))", program, StringComparison.Ordinal);
+        Assert.Contains("EnsureStartupAllowed(result, IsProtectedEnvironment(app.Environment))", program, StringComparison.Ordinal);
+        Assert.Contains("if (IsProtectedEnvironment(app.Environment) && app.Configuration.GetValue<bool>(\"Rls:EnforceTenantContext\"))", program, StringComparison.Ordinal);
+        Assert.Contains("!IsProtectedEnvironment(builder.Environment) || outboxDispatcherOptions.AllowProduction", program, StringComparison.Ordinal);
+        Assert.True(program.Split("if (IsProtectedEnvironment(environment) && dbOk", StringSplitOptions.None).Length - 1 >= 4);
+        Assert.True(program.Split("if (IsProtectedEnvironment(app.Environment) && rlsEnforced", StringSplitOptions.None).Length - 1 == 1);
+    }
+
     [Theory]
     [InlineData("4")]
     [InlineData("301")]
@@ -220,7 +293,7 @@ public sealed class ConfigValidationRlsTests
         var result = Validate("Production", null);
 
         var exception = Assert.Throws<InvalidOperationException>(
-            () => ConfigValidationService.EnsureStartupAllowed(result, isProduction: true));
+            () => ConfigValidationService.EnsureStartupAllowed(result, isProtectedEnvironment: true));
 
         Assert.Contains("Refusing to start", exception.Message, StringComparison.Ordinal);
     }
@@ -231,7 +304,7 @@ public sealed class ConfigValidationRlsTests
         var result = Validate("Production", "true");
 
         Assert.Equal(0, result.FailCount);
-        ConfigValidationService.EnsureStartupAllowed(result, isProduction: true);
+        ConfigValidationService.EnsureStartupAllowed(result, isProtectedEnvironment: true);
     }
 
     [Fact]
@@ -243,7 +316,7 @@ public sealed class ConfigValidationRlsTests
             WarnCount: 0,
             [new ConfigIssue("example", "fail", "Test failure")]);
 
-        ConfigValidationService.EnsureStartupAllowed(result, isProduction: false);
+        ConfigValidationService.EnsureStartupAllowed(result, isProtectedEnvironment: false);
     }
 
     private static ConfigCheckResult Validate(

@@ -33,6 +33,23 @@ public sealed class TelemetryLaunchHardeningTests
     }
 
     [Fact]
+    public void TrustedGatewayHarshAlertsUseCanonicalOpenStatusForLiveAndAcknowledgeContracts()
+    {
+        var endpoints = Read("backend-dotnet", "Controllers", "EndpointMappings.cs");
+        var gateway = Block(endpoints, "private static async Task<IResult> GpsTrackerIngest", "internal static bool TryParseTrackerTimestamp");
+        var alerts = Block(endpoints, "private static async Task<IResult> TelemetryAlerts", "// ── POST /api/telemetry/alerts/{id}/acknowledge");
+        var acknowledge = Block(endpoints, "private static async Task<IResult> TelemetryAlertAcknowledge", "// ── POST /api/telemetry/alerts/{id}/resolve");
+        var liveState = Read("backend-dotnet", "Services", "TelemetryLiveStateService.cs");
+
+        Assert.Contains("@src, 'Open', 'trusted-gateway'", gateway, StringComparison.Ordinal);
+        Assert.DoesNotContain("@src, 'open', 'trusted-gateway'", gateway, StringComparison.Ordinal);
+        Assert.Contains("?? \"Open\"", alerts, StringComparison.Ordinal);
+        Assert.Contains("ta.status=@status", alerts, StringComparison.Ordinal);
+        Assert.Contains("status='Open'", acknowledge, StringComparison.Ordinal);
+        Assert.Contains("ta.status='Open'", liveState, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void IngressUsesAuthorizedAreaSetAndTenantRuleInsideSystemTransaction()
     {
         var endpoints = Read("backend-dotnet", "Controllers", "EndpointMappings.cs");

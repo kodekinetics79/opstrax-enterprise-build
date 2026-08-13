@@ -3,7 +3,8 @@ import { expect } from "../fixtures.mjs";
 export async function expectAuthenticatedRoute(page, path, heading) {
   await page.goto(path, { waitUntil: "domcontentloaded" });
   await expect(page).not.toHaveURL(/\/(?:platform\/)?login(?:\?|$)/);
-  await expect(page.locator("body")).not.toContainText(/Unhandled exception|Something went wrong/i);
+  await expect(page.locator("body")).not.toContainText(/Unhandled exception|Something went wrong|Access denied|Forbidden/i);
+  await expect(page.locator("main").first()).toBeVisible();
   if (heading) await expect(page.getByRole("heading", { name: heading }).first()).toBeVisible();
 }
 

@@ -8,6 +8,7 @@ public sealed class ReleaseProvenanceContractTests
         foreach (var dockerfile in new[] { Read("Dockerfile"), Read("backend-dotnet", "Dockerfile") })
         foreach (var migration in new[]
         {
+            "2026_07_16_stage42_telemetry_gateways.sql",
             "2026_07_22_stage47_detention_recovery.sql",
             "2026_08_02_stage68_entitlement_policy_mode.sql",
             "2026_08_02_stage69_market_pack_control_hardening.sql",
@@ -17,6 +18,10 @@ public sealed class ReleaseProvenanceContractTests
             "2026_08_02_stage73_hos_offboarding_null_fail_closed.sql",
             "2026_08_02_stage74_retention_policy_production_contract.sql",
             "2026_08_02_stage75_bounded_support_access.sql",
+            "2026_08_11_stage76_telematics_security_hardening.sql",
+            "2026_08_12_stage77_protected_role_bootstrap.sql",
+            "2026_08_13_stage78_country_profiles_runtime_contract.sql",
+            "2026_08_13_stage79_tenant_provisioning_runtime_contract.sql",
         }) Assert.Contains(migration, dockerfile, StringComparison.Ordinal);
 
         var immutableEvidenceReconciliation = Read(
@@ -39,7 +44,9 @@ public sealed class ReleaseProvenanceContractTests
     {
         var workflow = Read(".github", "workflows", "ci.yml");
         Assert.Contains("exact-sha-release-evidence:", workflow, StringComparison.Ordinal);
-        Assert.Contains("opstrax-release-candidate-${{ github.sha }}", workflow, StringComparison.Ordinal);
+        Assert.Contains("CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}", workflow, StringComparison.Ordinal);
+        Assert.Contains("ref: ${{ env.CANDIDATE_SHA }}", workflow, StringComparison.Ordinal);
+        Assert.Contains("opstrax-release-candidate-${{ env.CANDIDATE_SHA }}", workflow, StringComparison.Ordinal);
         Assert.Contains("dotnet-integration-tests", workflow, StringComparison.Ordinal);
         Assert.Contains("production-shaped-release-rehearsal", workflow, StringComparison.Ordinal);
         Assert.Contains("release-container-builds", workflow, StringComparison.Ordinal);
@@ -53,8 +60,13 @@ public sealed class ReleaseProvenanceContractTests
         Assert.Contains("2026_08_02_stage73_hos_offboarding_null_fail_closed.sql", workflow, StringComparison.Ordinal);
         Assert.Contains("2026_08_02_stage74_retention_policy_production_contract.sql", workflow, StringComparison.Ordinal);
         Assert.Contains("2026_08_02_stage75_bounded_support_access.sql", workflow, StringComparison.Ordinal);
+        Assert.Contains("2026_08_12_stage77_protected_role_bootstrap.sql", workflow, StringComparison.Ordinal);
+        Assert.Contains("2026_08_13_stage78_country_profiles_runtime_contract.sql", workflow, StringComparison.Ordinal);
+        Assert.Contains("2026_08_13_stage79_tenant_provisioning_runtime_contract.sql", workflow, StringComparison.Ordinal);
         Assert.Contains("if: ${{ always() }}", workflow, StringComparison.Ordinal);
-        Assert.Contains("opstrax-mandatory-gates-${{ github.sha }}-${{ github.run_attempt }}", workflow, StringComparison.Ordinal);
+        Assert.Contains("opstrax-mandatory-gates-${{ env.CANDIDATE_SHA }}-${{ github.run_attempt }}", workflow, StringComparison.Ordinal);
+        Assert.DoesNotContain("opstrax-release-candidate-${{ github.sha }}", workflow, StringComparison.Ordinal);
+        Assert.DoesNotContain("git rev-parse HEAD)\" = \"$GITHUB_SHA\"", workflow, StringComparison.Ordinal);
         Assert.Contains("steps.gates.outputs.all_success == 'true'", workflow, StringComparison.Ordinal);
         Assert.Contains("validate-mandatory-ci-gates.sh --require-success", workflow, StringComparison.Ordinal);
         Assert.Contains("Enforce release evidence outcome", workflow, StringComparison.Ordinal);

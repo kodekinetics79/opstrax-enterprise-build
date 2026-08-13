@@ -105,6 +105,15 @@ psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -c 'DROP TABLE data_retention_policies
 # Simulate a ledgered Stage42 schema loss too. The owner runner must recreate the credential
 # registry before terminal Stage58/76 restore its policies and secret-column boundary.
 psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -c 'DROP TABLE telemetry_gateways'
+# Simulate a ledgered Stage79 tenant-provisioning schema loss. The repair migration
+# must restore all write-path dependencies before terminal Stage58 restores exact
+# non-forgeable policies and least-privilege grants.
+psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q <<'SQL'
+ALTER TABLE companies DROP COLUMN legal_name;
+ALTER TABLE tenant_subscriptions DROP COLUMN billing_cycle;
+DROP TABLE feature_flags;
+DROP TABLE password_reset_tokens;
+SQL
 # Use the real runner so Stage42/74 recreate their tables and the terminal Stage58
 # reconciliation restores FORCE-RLS policies and restricted-role grants.
 ./tools/apply-neon-predeploy-migrations.sh >"$log_dir/pass3.log" 2>&1
@@ -115,6 +124,77 @@ INSERT INTO telemetry_stream_ticket_nonces
 VALUES
   (repeat('b',64),1,NULL,2,NOW()+INTERVAL '90 seconds');
 RESET ROLE;
+SQL
+
+# Prove both live contract write shapes converge on the same stored identity,
+# display title and expiry values. The transaction is rolled back so the clean
+# chain remains deterministic.
+psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q <<'SQL'
+BEGIN;
+DO $contract_compatibility$
+DECLARE
+  company bigint := (SELECT min(id) FROM companies);
+  customer bigint := (SELECT min(id) FROM customers);
+  legacy_id bigint;
+  modern_id bigint;
+BEGIN
+  INSERT INTO contracts
+    (company_id,customer_id,contract_code,title,rate_type,status,expiration_date)
+  VALUES
+    (company,customer,'STG18-LEGACY','Legacy probe','Per Mile','Active',DATE '2030-01-02')
+  RETURNING id INTO legacy_id;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM contracts
+    WHERE id=legacy_id
+      AND contract_number='STG18-LEGACY'
+      AND expiry_date=DATE '2030-01-02'
+  ) THEN
+    RAISE EXCEPTION 'Stage18 did not project the legacy contract write shape';
+  END IF;
+
+  INSERT INTO contracts
+    (company_id,customer_id,contract_number,rate_type,status,expiry_date)
+  VALUES
+    (company,customer,'STG18-MODERN','Per Mile','Active',DATE '2031-02-03')
+  RETURNING id INTO modern_id;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM contracts
+    WHERE id=modern_id
+      AND contract_code='STG18-MODERN'
+      AND title='STG18-MODERN'
+      AND expiration_date=DATE '2031-02-03'
+  ) THEN
+    RAISE EXCEPTION 'Stage18 did not project the modern contract write shape';
+  END IF;
+
+  UPDATE contracts
+  SET contract_number='STG18-MODERN-UPDATED', expiry_date=DATE '2032-03-04'
+  WHERE id=modern_id;
+  IF NOT EXISTS (
+    SELECT 1 FROM contracts
+    WHERE id=modern_id
+      AND contract_code='STG18-MODERN-UPDATED'
+      AND expiration_date=DATE '2032-03-04'
+  ) THEN
+    RAISE EXCEPTION 'Stage18 did not synchronize modern contract updates';
+  END IF;
+
+  UPDATE contracts
+  SET contract_code='STG18-LEGACY-UPDATED', expiration_date=DATE '2033-04-05'
+  WHERE id=legacy_id;
+  IF NOT EXISTS (
+    SELECT 1 FROM contracts
+    WHERE id=legacy_id
+      AND contract_number='STG18-LEGACY-UPDATED'
+      AND expiry_date=DATE '2033-04-05'
+  ) THEN
+    RAISE EXCEPTION 'Stage18 did not synchronize legacy contract updates';
+  END IF;
+END
+$contract_compatibility$;
+ROLLBACK;
 SQL
 
 # A bare app-role session has no signed tenant ticket. Even with INSERT granted,
@@ -166,6 +246,15 @@ BEGIN
 
   IF EXISTS (
     SELECT 1 FROM (VALUES
+      ('2026_06_27_stage5_p0b1a_foundation'),
+      ('2026_06_28_stage5b_p0b1a2_persistence_hardening'),
+      ('2026_06_28_stage5d_p0b1a3_dispatcher'),
+      ('2026_06_28_stage6_p0b1b_business_spine'),
+      ('2026_06_28_stage7a_revenue_readiness_schema_contract'),
+      ('2026_06_28_stage8_finance_activation'),
+      ('2026_06_28_stage12a_telemetry_live_state'),
+      ('2026_06_28_stage13b_safety_maintenance_foundation'),
+      ('2026_06_29_stage18_commercial_foundation'),
       ('2026_07_16_stage42_telemetry_gateways'),
       ('2026_07_31_stage58_nonforgeable_tenant_ticket'),
       ('2026_07_22_stage47_detention_recovery'),
@@ -192,6 +281,9 @@ BEGIN
       ('2026_08_02_stage73_hos_offboarding_null_fail_closed'),
       ('2026_08_02_stage74_retention_policy_production_contract'),
       ('2026_08_02_stage75_bounded_support_access'),
+      ('2026_08_12_stage77_protected_role_bootstrap'),
+      ('2026_08_13_stage78_country_profiles_runtime_contract'),
+      ('2026_08_13_stage79_tenant_provisioning_runtime_contract'),
       ('2026_08_11_stage76_telematics_security_hardening')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN
@@ -211,6 +303,89 @@ BEGIN
       AND conname='ck_stage71_coaching_acknowledged_note_length'
   ) THEN
     RAISE EXCEPTION 'Stage71 coaching acknowledgement evidence contract is incomplete';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM (VALUES
+      ('Super Admin'),('Company Admin'),('Fleet Manager'),('Dispatcher'),('Driver'),
+      ('Mechanic'),('Safety Manager'),('Compliance Manager'),('Customer Service'),
+      ('Customer Portal User'),('Reseller / Partner Admin'),('Read-only Auditor'),
+      ('Operations Manager'),('Finance & Billing Manager'),('CRM & Sales Manager'),
+      ('Vendor Service Provider')
+    ) required(name)
+    WHERE NOT EXISTS (
+      SELECT 1 FROM roles role
+      WHERE role.company_id IS NULL AND role.is_system AND role.name=required.name
+    )
+  ) OR EXISTS (
+    SELECT 1 FROM (VALUES
+      ('platform_super_admin'),('sales_admin'),('marketing_admin'),('finance_admin'),
+      ('customer_success_admin'),('support_admin'),('product_admin'),
+      ('compliance_admin'),('readonly_executive')
+    ) required(role_key)
+    WHERE NOT EXISTS (SELECT 1 FROM platform_roles role WHERE role.role_key=required.role_key)
+  ) OR NOT EXISTS (
+    SELECT 1 FROM platform_role_permissions permission
+    JOIN platform_roles role ON role.id=permission.role_id
+    WHERE role.role_key='platform_super_admin' AND permission.permission_key='platform:*'
+  ) OR EXISTS (
+    SELECT 1 FROM platform_role_permissions permission
+    JOIN platform_roles role ON role.id=permission.role_id
+    WHERE role.role_key='support_admin' AND permission.permission_key='platform:impersonation:start'
+  ) THEN
+    RAISE EXCEPTION 'Clean-chain Stage77 authorization bootstrap is incomplete or unsafe';
+  END IF;
+  IF to_regclass('public.outbox_messages') IS NULL
+     OR to_regclass('public.inbox_messages') IS NULL
+     OR to_regclass('public.country_profiles') IS NULL
+     OR EXISTS (
+       SELECT 1 FROM (VALUES
+         ('invite_token_hash'),('invite_expires_at'),('updated_at'),('mfa_secret')
+       ) required(column_name)
+       WHERE NOT EXISTS (
+         SELECT 1 FROM information_schema.columns column_state
+         WHERE column_state.table_schema='public'
+           AND column_state.table_name='platform_admins'
+           AND column_state.column_name=required.column_name
+       )
+     ) THEN
+    RAISE EXCEPTION 'Clean-chain protected runtime foundation schema is incomplete';
+  END IF;
+  IF (SELECT count(*) FROM country_profiles WHERE country_code IN ('US','CA','SA'))<>3
+     OR NOT EXISTS (SELECT 1 FROM country_profiles WHERE country_code='US' AND default_currency='USD')
+     OR NOT EXISTS (SELECT 1 FROM country_profiles WHERE country_code='SA' AND text_direction='rtl') THEN
+    RAISE EXCEPTION 'Clean-chain Stage78 country-profile runtime catalog is incomplete';
+  END IF;
+  IF to_regclass('public.password_reset_tokens') IS NULL
+     OR to_regclass('public.feature_flags') IS NULL
+     OR to_regclass('public.ux_users_company_email_ci') IS NULL
+     OR EXISTS (
+       SELECT 1 FROM (VALUES
+         ('companies','legal_name'),('companies','website'),('companies','fleet_size'),
+         ('companies','tax_id'),('companies','primary_contact_name'),
+         ('companies','primary_contact_email'),('companies','primary_contact_phone'),
+         ('companies','billing_email'),('tenant_subscriptions','billing_cycle'),
+         ('feature_flags','environment'),('password_reset_tokens','token_hash')
+       ) required(table_name,column_name)
+       WHERE NOT EXISTS (
+         SELECT 1 FROM information_schema.columns actual
+         WHERE actual.table_schema='public'
+           AND actual.table_name=required.table_name
+           AND actual.column_name=required.column_name
+       )
+     ) THEN
+    RAISE EXCEPTION 'Clean-chain Stage79 tenant-provisioning contract is incomplete';
+  END IF;
+  IF NOT EXISTS (
+       SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='ai_recommendations'
+         AND column_name='tenant_id' AND data_type='bigint' AND is_nullable='NO'
+     ) OR NOT EXISTS (
+       SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='ai_recommendations'
+         AND column_name='company_id' AND data_type='bigint'
+     ) THEN
+    RAISE EXCEPTION 'Clean-chain ai_recommendations tenant compatibility is incomplete';
   END IF;
 
   IF to_regclass('public.data_retention_policies') IS NULL

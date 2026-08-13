@@ -98,6 +98,7 @@ public sealed class FleetProductionReadinessService
                 Bool(row, "tenantTicketMigrationApplied"),
                 Bool(row, "dataProtectionKeyRingMigrationApplied"),
                 Bool(row, "marketCatalogReady"),
+                Bool(row, "tenantProvisioningReady"),
                 Bool(row, "indexesReady"),
                 startupGraceActive ? 0 : rawWorkerViolations,
                 rawWorkerViolations,
@@ -114,14 +115,14 @@ public sealed class FleetProductionReadinessService
                     "Fleet production DB contract invalid: roleRestricted={Role}; missingTables={Missing}; " +
                     "rlsViolations={Rls}; grantViolations={Grants}; tenantCoverageViolations={TenantRls}; " +
                     "tenantGrantViolations={TenantGrants}; defaultPrivilegeViolations={DefaultGrants}; runtimeRouteColumnViolations={RouteColumns}; runtimeRouteObjectViolations={RouteObjects}; fleetIntegrityObjectViolations={IntegrityObjects}; workforceContractViolations={WorkforceContract}; migrationApplied={Migration}; " +
-                    "runtimeSupportMigrationApplied={RuntimeMigration}; tenantCoverageMigrationApplied={TenantMigration}; coldChainIntegrityMigrationApplied={ColdChainMigration}; runtimeRouteMigrationApplied={RouteMigration}; assetTypeIntegrityMigrationApplied={AssetMigration}; workforceScheduleIntegrityMigrationApplied={WorkforceMigration}; tenantTicketMigrationApplied={TicketMigration}; dataProtectionKeyRingMigrationApplied={KeyRingMigration}; marketCatalogReady={Catalog}; " +
+                    "runtimeSupportMigrationApplied={RuntimeMigration}; tenantCoverageMigrationApplied={TenantMigration}; coldChainIntegrityMigrationApplied={ColdChainMigration}; runtimeRouteMigrationApplied={RouteMigration}; assetTypeIntegrityMigrationApplied={AssetMigration}; workforceScheduleIntegrityMigrationApplied={WorkforceMigration}; tenantTicketMigrationApplied={TicketMigration}; dataProtectionKeyRingMigrationApplied={KeyRingMigration}; marketCatalogReady={Catalog}; tenantProvisioningReady={Provisioning}; " +
                     "indexesReady={Indexes}; criticalWorkerViolations={Workers}; rawCriticalWorkerViolations={RawWorkers}; missingCriticalWorkers={MissingWorkers}; staleCriticalWorkers={StaleWorkers}; failedCriticalWorkers={FailedWorkers}; workerStartupGraceActive={WorkerGrace}",
                     result.RoleRestricted, result.MissingTables, result.RlsViolations,
                     result.GrantViolations, result.TenantCoverageViolations, result.TenantGrantViolations,
                     result.DefaultPrivilegeViolations, result.RuntimeRouteColumnViolations, result.RuntimeRouteObjectViolations, result.FleetIntegrityObjectViolations, result.WorkforceContractViolations,
                     result.MigrationApplied, result.RuntimeSupportMigrationApplied,
                     result.TenantCoverageMigrationApplied, result.ColdChainIntegrityMigrationApplied,
-                    result.RuntimeRouteMigrationApplied, result.AssetTypeIntegrityMigrationApplied, result.WorkforceScheduleIntegrityMigrationApplied, result.TenantTicketMigrationApplied, result.DataProtectionKeyRingMigrationApplied, result.MarketCatalogReady,
+                    result.RuntimeRouteMigrationApplied, result.AssetTypeIntegrityMigrationApplied, result.WorkforceScheduleIntegrityMigrationApplied, result.TenantTicketMigrationApplied, result.DataProtectionKeyRingMigrationApplied, result.MarketCatalogReady, result.TenantProvisioningReady,
                     result.IndexesReady, result.CriticalWorkerViolations, result.RawCriticalWorkerViolations,
                     result.MissingCriticalWorkers, result.StaleCriticalWorkers, result.FailedCriticalWorkers,
                     result.CriticalWorkerStartupGraceActive);
@@ -143,7 +144,8 @@ public sealed class FleetProductionReadinessService
         WITH critical_workers(service_name) AS (
           SELECT unnest(@criticalWorkers::text[])
         ), required(name, tenant_scoped) AS (VALUES
-          ('companies',true),
+          ('companies',true),('outbox_messages',true),('inbox_messages',true),('platform_admins',false),('country_profiles',false),
+          ('password_reset_tokens',true),('feature_flags',true),
           ('workforce_schedules',true),
           ('vehicles',true),('drivers',true),('vehicle_assignments',true),('dispatch_assignments',true),
           ('fleet_tms_shipments',true),('fleet_tms_shipment_stops',true),('fleet_tms_pods',true),
@@ -308,6 +310,10 @@ public sealed class FleetProductionReadinessService
           ('location_events','causation_id','character varying(120)',false,'',''),
           ('location_events','client_generated_id','character varying(120)',false,'',''),
           ('location_events','idempotency_key','character varying(120)',false,'','')
+          ,('platform_admins','invite_token_hash','character varying(128)',false,'','')
+          ,('platform_admins','invite_expires_at','timestamp with time zone',false,'','')
+          ,('platform_admins','updated_at','timestamp with time zone',true,'now()','')
+          ,('platform_admins','mfa_secret','character varying(160)',false,'','')
         ), identity_indexes(name, table_name, key1, key2, predicate) AS (VALUES
           ('uq_vehicles_identity_code_normalized','vehicles','company_id','lower(btrim(vehicle_code::text))',''),
           ('uq_drivers_identity_code_normalized','drivers','company_id','lower(btrim(driver_code::text))',''),
@@ -695,7 +701,28 @@ public sealed class FleetProductionReadinessService
           COALESCE((SELECT COUNT(*)=1 FROM schema_migrations WHERE version='2026_07_30_stage57_workforce_schedule_tenant_integrity'),false) AS workforce_schedule_integrity_migration_applied,
           COALESCE((SELECT COUNT(*)=1 FROM schema_migrations WHERE version='2026_07_31_stage58_nonforgeable_tenant_ticket'),false) AS tenant_ticket_migration_applied,
           COALESCE((SELECT COUNT(*)=1 FROM schema_migrations WHERE version='2026_07_31_stage59_data_protection_key_ring'),false) AS data_protection_key_ring_migration_applied,
-          COALESCE((SELECT COUNT(*)=2 FROM market_packs WHERE code IN ('canada_na','saudi_gcc') AND status='active'),false) AS market_catalog_ready,
+          COALESCE((SELECT COUNT(*)=2 FROM market_packs WHERE code IN ('canada_na','saudi_gcc') AND status='active'),false)
+            AND COALESCE((SELECT COUNT(*)=3 FROM country_profiles WHERE country_code IN ('US','CA','SA')),false)
+            AND COALESCE((SELECT BOOL_AND((country_code='US' AND default_currency='USD') OR (country_code='CA' AND default_currency='CAD') OR (country_code='SA' AND default_currency='SAR' AND text_direction='rtl')) FROM country_profiles WHERE country_code IN ('US','CA','SA')),false)
+            AND COALESCE((SELECT COUNT(*)=1 FROM schema_migrations WHERE version='2026_08_13_stage78_country_profiles_runtime_contract'),false) AS market_catalog_ready,
+          COALESCE((SELECT COUNT(*)=1 FROM schema_migrations WHERE version='2026_08_13_stage79_tenant_provisioning_runtime_contract'),false)
+            AND to_regclass('public.password_reset_tokens') IS NOT NULL
+            AND to_regclass('public.feature_flags') IS NOT NULL
+            AND to_regclass('public.ux_users_company_email_ci') IS NOT NULL
+            AND COALESCE((
+              SELECT COUNT(*)=11
+              FROM (VALUES
+                ('companies','legal_name'),('companies','website'),('companies','fleet_size'),
+                ('companies','tax_id'),('companies','primary_contact_name'),
+                ('companies','primary_contact_email'),('companies','primary_contact_phone'),
+                ('companies','billing_email'),('tenant_subscriptions','billing_cycle'),
+                ('feature_flags','environment'),('password_reset_tokens','token_hash')
+              ) required(table_name,column_name)
+              JOIN information_schema.columns actual
+                ON actual.table_schema='public'
+               AND actual.table_name=required.table_name
+               AND actual.column_name=required.column_name
+            ),false) AS tenant_provisioning_ready,
           to_regclass('public.uq_ftms_shipment_identity') IS NOT NULL
             AND to_regclass('public.uq_ftms_vehicle_identity') IS NOT NULL
             AND to_regclass('public.ux_ftms_assets_branch_tag_normalized') IS NOT NULL
@@ -768,6 +795,7 @@ public sealed record FleetProductionContractResult(
     bool TenantTicketMigrationApplied,
     bool DataProtectionKeyRingMigrationApplied,
     bool MarketCatalogReady,
+    bool TenantProvisioningReady,
     bool IndexesReady,
     int CriticalWorkerViolations,
     int RawCriticalWorkerViolations,
@@ -785,9 +813,9 @@ public sealed record FleetProductionContractResult(
                          && MigrationApplied && RuntimeSupportMigrationApplied && TenantCoverageMigrationApplied
                          && ColdChainIntegrityMigrationApplied && RuntimeRouteMigrationApplied && AssetTypeIntegrityMigrationApplied
                          && WorkforceScheduleIntegrityMigrationApplied && TenantTicketMigrationApplied && DataProtectionKeyRingMigrationApplied
-                         && MarketCatalogReady && IndexesReady
+                         && MarketCatalogReady && TenantProvisioningReady && IndexesReady
                          && CriticalWorkerViolations == 0 && FailureCode is null;
 
     public static FleetProductionContractResult Failed(string code) =>
-        new(false, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, false, false, false, false, false, false, false, false, false, false, false, -1, -1, -1, -1, -1, false, 0, code);
+        new(false, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, false, false, false, false, false, false, false, false, false, false, false, false, -1, -1, -1, -1, -1, false, 0, code);
 }

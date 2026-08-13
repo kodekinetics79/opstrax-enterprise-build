@@ -43,7 +43,7 @@ export function SectionHeader({
     <View style={styles.sectionHeader}>
       <View style={{ flex: 1, gap: 4 }}>
         {eyebrow ? <Text style={styles.eyebrow}>{eyebrow}</Text> : null}
-        <Text style={styles.sectionTitle}>{title}</Text>
+        <Text accessibilityRole="header" style={styles.sectionTitle}>{title}</Text>
         {description ? <Text style={styles.sectionDescription}>{description}</Text> : null}
       </View>
       {right}
@@ -107,6 +107,8 @@ export function Input({
   secureTextEntry,
   keyboardType,
   autoCapitalize = "none",
+  autoComplete,
+  textContentType,
 }: {
   label: string;
   value: string;
@@ -115,6 +117,8 @@ export function Input({
   secureTextEntry?: boolean;
   keyboardType?: "default" | "email-address" | "numeric";
   autoCapitalize?: "none" | "sentences" | "words" | "characters";
+  autoComplete?: "email" | "password" | "one-time-code" | "off";
+  textContentType?: "emailAddress" | "password" | "oneTimeCode" | "none";
 }) {
   return (
     <View style={{ gap: 6 }}>
@@ -128,6 +132,8 @@ export function Input({
         secureTextEntry={secureTextEntry}
         keyboardType={keyboardType}
         autoCapitalize={autoCapitalize}
+        autoComplete={autoComplete}
+        textContentType={textContentType}
         style={styles.input}
       />
     </View>
@@ -143,18 +149,19 @@ export function EmptyState({ title, body }: { title: string; body: string }) {
   );
 }
 
-export function ErrorState({ title, body }: { title: string; body: string }) {
+export function ErrorState({ title, body, onRetry }: { title: string; body: string; onRetry?: () => void }) {
   return (
-    <View style={[styles.emptyState, { borderColor: colors.red + "66" }]}>
+    <View accessibilityRole="alert" accessibilityLiveRegion="assertive" style={[styles.emptyState, { borderColor: colors.red + "66" }]}>
       <Text style={[styles.emptyTitle, { color: colors.red }]}>{title}</Text>
       <Text style={styles.emptyBody}>{body}</Text>
+      {onRetry ? <ActionButton label="Retry" onPress={onRetry} variant="secondary" /> : null}
     </View>
   );
 }
 
 export function LoadingState({ label = "Loading..." }: { label?: string }) {
   return (
-    <View style={styles.loadingState}>
+    <View accessibilityLabel={label} accessibilityLiveRegion="polite" style={styles.loadingState}>
       <ActivityIndicator color={colors.teal} />
       <Text style={styles.loadingLabel}>{label}</Text>
     </View>

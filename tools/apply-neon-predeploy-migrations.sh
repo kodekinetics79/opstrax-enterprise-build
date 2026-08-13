@@ -49,6 +49,9 @@
 #   stage74  Production retention-policy schema contract
 #   stage75  Bounded support-access control plane
 #   stage76  FINAL telemetry default-deny/exact runtime ACL reconciliation
+#   stage77  Protected-environment authorization reference bootstrap
+#   stage78  Protected-environment country-profile runtime contract
+#   stage79  Protected-environment tenant-provisioning runtime contract
 #
 # WHAT IT DELIBERATELY SKIPS
 #   stage19/20/22 (the broad Row-Level Security cutover). Stage49 itself is
@@ -72,6 +75,16 @@ fi
 command -v psql >/dev/null || { echo "ERROR: psql not found. brew install libpq (or run via docker exec)." >&2; exit 1; }
 
 MIGRATIONS=(
+  # A clean protected database never runs owner-capable runtime schema services.
+  # Package the complete pre-RLS foundation explicitly before the security cutover.
+  2026_06_27_stage5_p0b1a_foundation
+  2026_06_28_stage5b_p0b1a2_persistence_hardening
+  2026_06_28_stage5d_p0b1a3_dispatcher
+  2026_06_28_stage6_p0b1b_business_spine
+  2026_06_28_stage7a_revenue_readiness_schema_contract
+  2026_06_28_stage8_finance_activation
+  2026_06_28_stage13b_safety_maintenance_foundation
+  2026_06_29_stage18_commercial_foundation
   # Stage 20 MUST run first: it creates the restricted opstrax_app role that Stage 50's
   # preflight hard-requires ("Stage 50 requires the restricted opstrax_app role"). It was
   # missing from this list, so a database that never had the role could not be migrated
@@ -90,6 +103,9 @@ MIGRATIONS=(
   2026_07_30_stage49_mfa_challenge_one_time
   2026_07_30_stage50_fleet_production_contract
   2026_07_30_stage51_production_runtime_support
+  # Stage12 enriches telemetry tables whose owner-safe definitions are installed
+  # by Stage51 on the supported protected predecessor.
+  2026_06_28_stage12a_telemetry_live_state
   2026_07_22_stage47_detention_recovery
   2026_07_30_stage52_fleet_identity_uniqueness
   2026_07_30_stage53_tenant_rls_reconciliation
@@ -119,6 +135,9 @@ MIGRATIONS=(
   2026_08_02_stage73_hos_offboarding_null_fail_closed
   2026_08_02_stage74_retention_policy_production_contract
   2026_08_02_stage75_bounded_support_access
+  2026_08_12_stage77_protected_role_bootstrap
+  2026_08_13_stage78_country_profiles_runtime_contract
+  2026_08_13_stage79_tenant_provisioning_runtime_contract
 )
 
 echo "Target host: $(printf '%s' "$NEON_PG_URI" | sed -E 's|.*@([^/:?]+).*|\1|')"
@@ -143,6 +162,15 @@ for m in "${MIGRATIONS[@]}"; do
   applied=$(psql "$NEON_PG_URI" -tA -c "SELECT COUNT(*) FROM schema_migrations WHERE version='$ledger_version'" 2>/dev/null || echo 0)
   repair_migration=false
   case "$m" in
+    2026_06_27_stage5_p0b1a_foundation|\
+    2026_06_28_stage5b_p0b1a2_persistence_hardening|\
+    2026_06_28_stage5d_p0b1a3_dispatcher|\
+    2026_06_28_stage6_p0b1b_business_spine|\
+    2026_06_28_stage7a_revenue_readiness_schema_contract|\
+    2026_06_28_stage8_finance_activation|\
+    2026_06_28_stage12a_telemetry_live_state|\
+    2026_06_28_stage13b_safety_maintenance_foundation|\
+    2026_06_29_stage18_commercial_foundation|\
     2026_07_16_stage42_telemetry_gateways|\
     2026_07_30_stage53_tenant_rls_reconciliation|\
     2026_07_30_stage54_cold_chain_device_integrity|\
@@ -159,7 +187,10 @@ for m in "${MIGRATIONS[@]}"; do
     2026_08_02_stage72_hos_offboarding_immutability_reconciliation|\
     2026_08_02_stage73_hos_offboarding_null_fail_closed|\
     2026_08_02_stage74_retention_policy_production_contract|\
-    2026_08_02_stage75_bounded_support_access) repair_migration=true ;;
+    2026_08_02_stage75_bounded_support_access|\
+    2026_08_12_stage77_protected_role_bootstrap|\
+    2026_08_13_stage78_country_profiles_runtime_contract|\
+    2026_08_13_stage79_tenant_provisioning_runtime_contract) repair_migration=true ;;
   esac
   if [ "$applied" = "1" ] && [ "$repair_migration" = false ]; then
     echo "── $m: already applied (ledger) — skipping"
@@ -185,6 +216,15 @@ DO $verify_pilot_wave$
 BEGIN
   IF EXISTS (
     SELECT 1 FROM (VALUES
+      ('2026_06_27_stage5_p0b1a_foundation'),
+      ('2026_06_28_stage5b_p0b1a2_persistence_hardening'),
+      ('2026_06_28_stage5d_p0b1a3_dispatcher'),
+      ('2026_06_28_stage6_p0b1b_business_spine'),
+      ('2026_06_28_stage7a_revenue_readiness_schema_contract'),
+      ('2026_06_28_stage8_finance_activation'),
+      ('2026_06_28_stage12a_telemetry_live_state'),
+      ('2026_06_28_stage13b_safety_maintenance_foundation'),
+      ('2026_06_29_stage18_commercial_foundation'),
       ('2026_07_16_stage42_telemetry_gateways'),
       ('2026_08_01_stage60_dispatch_trip_pilot'),
       ('2026_07_22_stage47_detention_recovery'),
@@ -208,7 +248,10 @@ BEGIN
       ('2026_08_02_stage72_hos_offboarding_immutability_reconciliation'),
       ('2026_08_02_stage73_hos_offboarding_null_fail_closed'),
       ('2026_08_02_stage74_retention_policy_production_contract'),
-      ('2026_08_02_stage75_bounded_support_access')) required(version)
+      ('2026_08_02_stage75_bounded_support_access'),
+      ('2026_08_12_stage77_protected_role_bootstrap'),
+      ('2026_08_13_stage78_country_profiles_runtime_contract'),
+      ('2026_08_13_stage79_tenant_provisioning_runtime_contract')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN RAISE EXCEPTION 'Required owner/pilot migration ledger missing or duplicated'; END IF;
   IF to_regclass('public.uq_ftms_dorders_company_number') IS NULL
@@ -230,6 +273,77 @@ BEGIN
      OR to_regclass('public.idx_telemetry_stream_ticket_expiry') IS NULL
      OR to_regclass('public.idx_telemetry_gateway_rejections_received') IS NULL THEN
     RAISE EXCEPTION 'Required owner/pilot schema and concurrency contract is incomplete';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM (VALUES
+      ('Super Admin'),('Company Admin'),('Fleet Manager'),('Dispatcher'),('Driver'),
+      ('Mechanic'),('Safety Manager'),('Compliance Manager'),('Customer Service'),
+      ('Customer Portal User'),('Reseller / Partner Admin'),('Read-only Auditor'),
+      ('Operations Manager'),('Finance & Billing Manager'),('CRM & Sales Manager'),
+      ('Vendor Service Provider')
+    ) required(name)
+    WHERE NOT EXISTS (
+      SELECT 1 FROM roles role
+      WHERE role.company_id IS NULL AND role.is_system AND role.name=required.name
+    )
+  ) OR EXISTS (
+    SELECT 1 FROM (VALUES
+      ('platform_super_admin'),('sales_admin'),('marketing_admin'),('finance_admin'),
+      ('customer_success_admin'),('support_admin'),('product_admin'),
+      ('compliance_admin'),('readonly_executive')
+    ) required(role_key)
+    WHERE NOT EXISTS (SELECT 1 FROM platform_roles role WHERE role.role_key=required.role_key)
+  ) OR NOT EXISTS (
+    SELECT 1 FROM platform_role_permissions permission
+    JOIN platform_roles role ON role.id=permission.role_id
+    WHERE role.role_key='platform_super_admin' AND permission.permission_key='platform:*'
+  ) OR EXISTS (
+    SELECT 1 FROM platform_role_permissions permission
+    JOIN platform_roles role ON role.id=permission.role_id
+    WHERE role.role_key='support_admin' AND permission.permission_key='platform:impersonation:start'
+  ) THEN
+    RAISE EXCEPTION 'Stage77 protected authorization reference bootstrap is incomplete or unsafe';
+  END IF;
+  IF to_regclass('public.outbox_messages') IS NULL
+     OR to_regclass('public.inbox_messages') IS NULL
+     OR to_regclass('public.country_profiles') IS NULL
+     OR EXISTS (
+       SELECT 1 FROM (VALUES
+         ('invite_token_hash'),('invite_expires_at'),('updated_at'),('mfa_secret')
+       ) required(column_name)
+       WHERE NOT EXISTS (
+         SELECT 1 FROM information_schema.columns column_state
+         WHERE column_state.table_schema='public'
+           AND column_state.table_name='platform_admins'
+           AND column_state.column_name=required.column_name
+       )
+     ) THEN
+    RAISE EXCEPTION 'Protected runtime foundation schema is incomplete';
+  END IF;
+  IF (SELECT count(*) FROM country_profiles WHERE country_code IN ('US','CA','SA'))<>3
+     OR NOT EXISTS (SELECT 1 FROM country_profiles WHERE country_code='US' AND default_currency='USD')
+     OR NOT EXISTS (SELECT 1 FROM country_profiles WHERE country_code='SA' AND text_direction='rtl') THEN
+    RAISE EXCEPTION 'Stage78 country-profile runtime catalog is incomplete';
+  END IF;
+  IF to_regclass('public.password_reset_tokens') IS NULL
+     OR to_regclass('public.feature_flags') IS NULL
+     OR to_regclass('public.ux_users_company_email_ci') IS NULL
+     OR EXISTS (
+       SELECT 1 FROM (VALUES
+         ('companies','legal_name'),('companies','website'),('companies','fleet_size'),
+         ('companies','tax_id'),('companies','primary_contact_name'),
+         ('companies','primary_contact_email'),('companies','primary_contact_phone'),
+         ('companies','billing_email'),('tenant_subscriptions','billing_cycle'),
+         ('feature_flags','environment'),('password_reset_tokens','token_hash')
+       ) required(table_name,column_name)
+       WHERE NOT EXISTS (
+         SELECT 1 FROM information_schema.columns actual
+         WHERE actual.table_schema='public'
+           AND actual.table_name=required.table_name
+           AND actual.column_name=required.column_name
+       )
+     ) THEN
+    RAISE EXCEPTION 'Stage79 tenant-provisioning runtime contract is incomplete';
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns

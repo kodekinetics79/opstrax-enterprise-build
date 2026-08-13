@@ -242,7 +242,7 @@ export default function App() {
         <Route path="/gps-tracking" element={<RequirePermission permission="telematics:gps:view"><TelematicsCommandPage kind="gps-tracking" /></RequirePermission>} />
         <Route path="/obd-j1939" element={<RequirePermission permission="telematics:diagnostics:view"><TelematicsCommandPage kind="obd-j1939" /></RequirePermission>} />
         <Route path="/sensor-health" element={<RequirePermission permission="telematics:sensors:view"><TelematicsCommandPage kind="sensor-health" /></RequirePermission>} />
-        <Route path="/cold-chain" element={<RequirePermission permission="telematics:sensors:view"><TelematicsCommandPage kind="cold-chain" /></RequirePermission>} />
+        <Route path="/cold-chain" element={<RequirePermission permission="fleet:view"><TelematicsCommandPage kind="cold-chain" /></RequirePermission>} />
         <Route path="/documents" element={<RequirePermission permission="fleet:view"><Batch3OperationsPage kind="documents" /></RequirePermission>} />
 
         {/* ── Dispatch / Transport Ops ── */}
