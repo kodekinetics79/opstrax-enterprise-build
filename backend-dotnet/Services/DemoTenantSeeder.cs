@@ -342,7 +342,7 @@ public sealed class DemoTenantSeeder(Database db, IConfiguration? config = null)
             // Keep this exactly aligned with RolePermissionDefaults["Driver"]. A user-level
             // safety:update or back-office read bypasses the authoritative Driver role
             // reconciler because user permissions are unioned after role permissions.
-            "[\"driver:self\",\"notifications:view\",\"messages:send\",\"maintenance:create\"]", ct);
+            "[\"driver:self\",\"notifications:view\",\"messages:send\"]", ct);
         await UpsertPilotUserAsync(companyId, southBranchId, $"dispatch{suffix}@meridian.demo",
             "Meridian Dispatcher", "Dispatcher",
             "[\"dashboard:view\",\"drivers:view\",\"vehicles:view\",\"shipments:view\",\"dispatch:view\",\"dispatch:create\",\"dispatch:assign\",\"dispatch:update\",\"alerts:view\",\"safety:view\"]", ct);
