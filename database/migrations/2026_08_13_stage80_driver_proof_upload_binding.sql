@@ -31,9 +31,30 @@ CREATE INDEX IF NOT EXISTS idx_dpu_proof ON dispatch_proof_uploads(proof_id);
 ALTER TABLE dispatch_proof_uploads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE dispatch_proof_uploads FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS tenant_isolation ON dispatch_proof_uploads;
-CREATE POLICY tenant_isolation ON dispatch_proof_uploads
-  USING (company_id = opstrax_security.current_tenant_id())
-  WITH CHECK (company_id = opstrax_security.current_tenant_id());
+DROP POLICY IF EXISTS platform_admin_bypass ON dispatch_proof_uploads;
+DROP POLICY IF EXISTS tenant_ticket_app ON dispatch_proof_uploads;
+DROP POLICY IF EXISTS system_control_plane ON dispatch_proof_uploads;
+DO $stage80_rls$
+BEGIN
+  IF to_regprocedure('opstrax_security.current_tenant_id()') IS NOT NULL THEN
+    CREATE POLICY tenant_ticket_app ON dispatch_proof_uploads FOR ALL TO opstrax_app
+      USING (company_id=(SELECT opstrax_security.current_tenant_id()))
+      WITH CHECK (company_id=(SELECT opstrax_security.current_tenant_id()));
+    CREATE POLICY system_control_plane ON dispatch_proof_uploads FOR ALL TO opstrax_system
+      USING (true) WITH CHECK (true);
+  ELSE
+    -- Clean-chain runners apply Stage58 after the runtime migrations. Keep this
+    -- table fail-closed and tenant scoped until that terminal reconciliation
+    -- replaces these legacy-GUC policies with signed tenant-ticket policies.
+    CREATE POLICY tenant_isolation ON dispatch_proof_uploads FOR ALL
+      USING (company_id=NULLIF(current_setting('app.current_tenant_id',true),'')::BIGINT)
+      WITH CHECK (company_id=NULLIF(current_setting('app.current_tenant_id',true),'')::BIGINT);
+    CREATE POLICY platform_admin_bypass ON dispatch_proof_uploads FOR ALL
+      USING (NULLIF(current_setting('app.platform_admin',true),'')='on')
+      WITH CHECK (NULLIF(current_setting('app.platform_admin',true),'')='on');
+  END IF;
+END
+$stage80_rls$;
 
 REVOKE ALL ON TABLE dispatch_proof_uploads FROM PUBLIC;
 REVOKE ALL ON SEQUENCE dispatch_proof_uploads_id_seq FROM PUBLIC;
