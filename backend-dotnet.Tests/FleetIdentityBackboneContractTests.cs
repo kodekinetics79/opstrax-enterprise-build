@@ -70,6 +70,10 @@ public sealed class FleetIdentityBackboneContractTests
         Assert.Contains("pretrip_dvir_id", status, StringComparison.Ordinal);
         Assert.Contains("{ \"assigned\",\"accepted\"", status, StringComparison.Ordinal);
         AssertOrdered(status, "if (from == \"exception\")", "driverAllowedTargets");
+        var driverMe = Block(source, "private static async Task<IResult> DriverMe(", "private static async Task<IResult> DriverAssignments(");
+        Assert.Contains("latest_pretrip_safe_to_operate", driverMe, StringComparison.Ordinal);
+        Assert.Contains("latest_pretrip_driver_signature_status", driverMe, StringComparison.Ordinal);
+        Assert.Contains("signed pre-trip DVIR are ready", source, StringComparison.Ordinal);
     }
 
     [Fact]

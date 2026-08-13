@@ -22768,12 +22768,23 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var currentAssignment = await db.QuerySingleAsync(
             @"SELECT da.id, da.assignment_status, da.planned_pickup_at, da.planned_delivery_at,
                      da.actual_pickup_at, da.exception_count,da.vehicle_id,da.trip_id,
+                     latest_pretrip.id latest_pretrip_dvir_id,
+                     latest_pretrip.safe_to_operate latest_pretrip_safe_to_operate,
+                     latest_pretrip.driver_signature_status latest_pretrip_driver_signature_status,
                      v.vehicle_code,
                      COALESCE(j.job_number, j.job_code) shipment_number,
                      j.pickup_address, j.dropoff_address
               FROM dispatch_assignments da
               LEFT JOIN jobs j ON j.id = da.job_id AND j.company_id=da.company_id
               LEFT JOIN vehicles v ON v.id=da.vehicle_id AND v.company_id=da.company_id
+              LEFT JOIN LATERAL (
+                SELECT dr.id,dr.safe_to_operate,dr.driver_signature_status FROM dvir_reports dr
+                WHERE dr.company_id=da.company_id AND dr.vehicle_id=da.vehicle_id AND dr.driver_id=da.driver_id
+                  AND LOWER(COALESCE(dr.inspection_type,'')) IN ('pre_trip','pre-trip')
+                  AND dr.submitted_at>=GREATEST(COALESCE(da.accepted_at,da.assigned_at),NOW()-INTERVAL '24 hours')
+                  AND (da.trip_id IS NULL OR dr.trip_id=da.trip_id)
+                ORDER BY dr.submitted_at DESC,dr.id DESC LIMIT 1
+              ) latest_pretrip ON TRUE
               WHERE da.driver_id=@did AND da.company_id=@cid
                 AND da.assignment_status NOT IN ('delivered','cancelled')
               ORDER BY da.created_at DESC LIMIT 1",
@@ -23498,7 +23509,13 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 break;
             case "accepted":
                 if (criticalDefects == 0 && !vehicleOos)
-                    guidance.Add(DriverInsight("action", "Assignment accepted. Complete pre-trip DVIR, then mark 'En Route to Pickup'."));
+                {
+                    var safePretripReady = assignment["latestPretripSafeToOperate"] is true &&
+                        string.Equals(assignment["latestPretripDriverSignatureStatus"]?.ToString(), "Signed", StringComparison.OrdinalIgnoreCase);
+                    guidance.Add(DriverInsight("action", safePretripReady
+                        ? "Assignment and signed pre-trip DVIR are ready. Start route to pickup when departing."
+                        : "Assignment accepted. Complete pre-trip DVIR, then mark 'En Route to Pickup'."));
+                }
                 break;
             case "en_route_pickup":
                 guidance.Add(DriverInsight("info", "En route to pickup. Mark 'Arrived at Pickup' when you reach the location."));

@@ -66,4 +66,8 @@ assert.match(dvirPage, /New checklist template/, "Fleet operators must be able t
 assert.match(dvirPage, /dvirApi\.createTemplate/, "Checklist template UI must persist through the real API");
 assert.match(dvirPage, /checklistItems:/, "Checklist template creation must submit its persisted item rows");
 
+const driverDashboard = readFileSync(resolve(root, "src/pages/driver/DriverDashboardPage.tsx"), "utf8");
+assert.match(driverDashboard, /latestPretripSafeToOperate/, "Driver home must consume the same signed pre-trip evidence as the trip page");
+assert.match(driverDashboard, /Start route to pickup/, "Driver home must not request a duplicate DVIR after signed safe evidence exists");
+
 console.log("device installation frontend contract: ok");

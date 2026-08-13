@@ -92,7 +92,11 @@ export function DriverDashboardPage() {
   const guidance    = (d["guidance"] as AnyRecord[]) ?? [];
 
   const assignmentStatus = assignment ? String(assignment["assignmentStatus"] ?? "") : "";
-  const nextAction = assignmentStatus ? NEXT_ACTION[assignmentStatus] ?? null : null;
+  const signedSafePretrip = assignment?.["latestPretripSafeToOperate"] === true &&
+    String(assignment?.["latestPretripDriverSignatureStatus"] ?? "").toLowerCase() === "signed";
+  const nextAction = assignmentStatus === "accepted" && signedSafePretrip
+    ? { label: "Start route to pickup", sublabel: "Vehicle and signed pre-trip inspection verified" }
+    : assignmentStatus ? NEXT_ACTION[assignmentStatus] ?? null : null;
 
   const hosHours = hos["remainingDriveHours"] != null ? Number(hos["remainingDriveHours"]) : null;
   const hosColor =
