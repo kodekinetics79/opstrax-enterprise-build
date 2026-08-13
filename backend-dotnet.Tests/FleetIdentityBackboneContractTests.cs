@@ -58,6 +58,7 @@ public sealed class FleetIdentityBackboneContractTests
         Assert.Contains("customer.name customer_name", current, StringComparison.Ordinal);
         Assert.Contains("customer.company_id=da.company_id", current, StringComparison.Ordinal);
         Assert.DoesNotContain("j.customer_name", current, StringComparison.Ordinal);
+        Assert.Contains("s != \"accepted\"", current, StringComparison.Ordinal);
         var confirm = Block(source, "private static async Task<IResult> DriverConfirmVehicle(", "private static async Task<IResult> DriverUpdateStatus(");
         Assert.Contains("FixedTimeEquals", confirm, StringComparison.Ordinal);
         Assert.Contains("vehicle_confirmed_by_driver_id", confirm, StringComparison.Ordinal);
@@ -80,6 +81,7 @@ public sealed class FleetIdentityBackboneContractTests
         Assert.Contains("latestPretripDriverSignatureStatus", driverPage, StringComparison.Ordinal);
         Assert.Contains("Driver signature required before departure", driverPage, StringComparison.Ordinal);
         Assert.Contains("vehicleConfirmed", driverPage, StringComparison.Ordinal);
+        Assert.Contains("s !== \"accepted\"", driverPage, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -91,6 +93,10 @@ public sealed class FleetIdentityBackboneContractTests
         Assert.Contains("RunInTenantTransactionAsync", create, StringComparison.Ordinal);
         Assert.Contains("INSERT INTO inspection_checklist_items", create, StringComparison.Ordinal);
         Assert.Contains("checklistItemCount", create, StringComparison.Ordinal);
+        var ui = Read("frontend", "src", "pages", "DvirInspectionsPage.tsx");
+        Assert.Contains("New checklist template", ui, StringComparison.Ordinal);
+        Assert.Contains("dvirApi.createTemplate", ui, StringComparison.Ordinal);
+        Assert.Contains("checklistItems:", ui, StringComparison.Ordinal);
     }
 
     private static string Read(params string[] parts)

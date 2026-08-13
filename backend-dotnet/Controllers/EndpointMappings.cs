@@ -15781,6 +15781,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         // transaction. Mutable device vehicle/driver projections are never trusted.
         long? vehicleId = null, driverId = null, vehicleBranchId = null;
         long? installationId = null, assignmentId = null, tripId = null;
+        var isCurrentInstallation = false;
 
         // 11/12. Reserve the nonce and persist the authoritative event/projection atomically.
         // The tenant rule must be read inside this system transaction: pre-auth native ingest
@@ -15805,6 +15806,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         tripId = identity.TripId;
         driverId = identity.DriverId;
         vehicleBranchId = identity.VehicleBranchId;
+        isCurrentInstallation = identity.IsCurrentInstallation;
         var nonceId = await db.ScalarLongAsync(
             "INSERT INTO telemetry_nonces (device_id, nonce) VALUES (@did, @nonce) ON CONFLICT DO NOTHING RETURNING id",
             c => { c.Parameters.AddWithValue("@did", deviceId); c.Parameters.AddWithValue("@nonce", xNonce); }, ct);
@@ -15859,7 +15861,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         // 13. Upsert latest_vehicle_positions (one row per company+vehicle, O(1) via UNIQUE KEY).
         // Only an event that wins this monotonic projection may raise a current/open alert.
         var latestAdvanced = false;
-        if (vehicleId.HasValue)
+        if (vehicleId.HasValue && isCurrentInstallation)
         {
             // Additive provenance: native ELD HMAC ingest. Stamp source/device_fix_time/
             // normalized_at ONLY when the columns exist (deploy-safe — production may
@@ -16702,7 +16704,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
             // History is retained for a novel old fix, but only the event that advances the
             // monotonic current-position projection may create current/open alerts.
-            var gatewayLatestAdvanced = vehicleId is not null &&
+            var gatewayLatestAdvanced = identity.IsCurrentInstallation && vehicleId is not null &&
                 await UpsertGatewayLatestPositionAsync(
                     db, companyId, vehicleId.Value, deviceId, installationId.Value, assignmentId, tripId, driverId, lat.Value, lng.Value,
                     speedMph, heading, engine, fuel, odo, eventTime, eventId, hasProv,
@@ -22898,6 +22900,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var resumeStatus = NormalizeAssignmentStatus(row["previousStatus"]?.ToString() ?? "");
         var driverNextStatuses = new[] { "accepted","en_route_pickup","arrived_pickup","loaded","in_transit","arrived_delivery","exception" }
             .Where(s => IsValidDispatchTransition(currentStatus, s))
+            .Where(s => s != "accepted") // Acceptance has its own endpoint with notification side effects.
             .Where(s => currentStatus != "exception" || s == resumeStatus)
             .ToList();
 

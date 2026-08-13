@@ -33,6 +33,22 @@ public sealed class TelemetryLaunchHardeningTests
     }
 
     [Fact]
+    public void DelayedTelemetryFromRemovedInstallationIsHistoryOnlyAcrossEveryIngress()
+    {
+        var endpoints = Read("backend-dotnet", "Controllers", "EndpointMappings.cs");
+        var native = Block(endpoints, "private static async Task<IResult> TelemetryIngest", "// ── GET /api/telemetry/stream");
+        var gateway = Block(endpoints, "private static async Task<IResult> GpsTrackerIngest", "internal static bool TryParseTrackerTimestamp");
+        var raw = Read("telematics", "src", "Opstrax.Telematics.Gateway", "Projection", "PostgresPositionProjectionStore.cs");
+
+        AssertOrdered(native, "isCurrentInstallation = identity.IsCurrentInstallation", "if (vehicleId.HasValue && isCurrentInstallation)");
+        Assert.Contains("identity.IsCurrentInstallation && vehicleId is not null", gateway, StringComparison.Ordinal);
+        AssertOrdered(gateway, "identity.IsCurrentInstallation && vehicleId is not null", "UpsertGatewayLatestPositionAsync");
+        var rawHistoricalGate = Block(raw, "// Delayed evidence remains attached", "// ── (b) monotonic snapshot");
+        Assert.Contains("if (!device.IsCurrentInstallation)", rawHistoricalGate, StringComparison.Ordinal);
+        Assert.Contains("ProjectionOutcome.StaleIgnored", rawHistoricalGate, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void TrustedGatewayHarshAlertsUseCanonicalOpenStatusForLiveAndAcknowledgeContracts()
     {
         var endpoints = Read("backend-dotnet", "Controllers", "EndpointMappings.cs");

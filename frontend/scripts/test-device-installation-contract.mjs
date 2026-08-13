@@ -48,6 +48,7 @@ assert.match(vehiclesPage, /approved alternate identity kind/, "VIN-less vehicle
 assert.match(vehiclesPage, /label: "Alternate identity"/, "Vehicle detail must render the governed alternate identity");
 
 const driverPage = readFileSync(resolve(root, "src/pages/driver/DriverAssignmentPage.tsx"), "utf8");
+assert.match(driverPage, /s !== "accepted"/, "The canonical accept endpoint must be the only assignment acceptance action");
 for (const [status, label] of [
   ["en_route_pickup", "Start Route to Pickup"],
   ["arrived_pickup", "Mark Arrived at Pickup"],
@@ -57,5 +58,10 @@ for (const [status, label] of [
 ]) {
   assert.match(driverPage, new RegExp(`${status}:\\s+"${label}"`), `${status} must describe the transition it executes`);
 }
+
+const dvirPage = readFileSync(resolve(root, "src/pages/DvirInspectionsPage.tsx"), "utf8");
+assert.match(dvirPage, /New checklist template/, "Fleet operators must be able to create the driver checklist prerequisite");
+assert.match(dvirPage, /dvirApi\.createTemplate/, "Checklist template UI must persist through the real API");
+assert.match(dvirPage, /checklistItems:/, "Checklist template creation must submit its persisted item rows");
 
 console.log("device installation frontend contract: ok");
