@@ -110,7 +110,7 @@ public class DemoTenantSeederPostgresTests
             Assert.Equal(1, await db.ScalarLongAsync("SELECT COUNT(*) FROM users WHERE company_id=@c AND role_name=@role AND status='Active'", c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@role", role); }));
         Assert.Equal(1, await db.ScalarLongAsync(
             @"SELECT COUNT(*) FROM users WHERE company_id=@c AND role_name='Driver'
-                AND permissions_json='[""driver:self"",""notifications:view"",""messages:send"",""maintenance:create""]'::jsonb
+                AND permissions_json='[""driver:self"",""notifications:view"",""messages:send""]'::jsonb
                 AND NOT permissions_json ?| ARRAY['safety:view','safety:update','compliance:view','shipments:view','drivers:view','vehicles:view']",
             c => c.Parameters.AddWithValue("@c", companyId)));
         Assert.Equal(1, await db.ScalarLongAsync(

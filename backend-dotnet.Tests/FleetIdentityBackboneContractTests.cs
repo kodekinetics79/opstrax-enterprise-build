@@ -10,6 +10,12 @@ public sealed class FleetIdentityBackboneContractTests
         Assert.Contains("duplicate_normalized_device_serial", sql, StringComparison.Ordinal);
         Assert.Contains("duplicate_normalized_imei", sql, StringComparison.Ordinal);
         Assert.Contains("ex_stage80_device_installation_period", sql, StringComparison.Ordinal);
+        Assert.Contains("ex_stage80_vehicle_primary_role_period", sql, StringComparison.Ordinal);
+        Assert.Contains("(LOWER(BTRIM(device_role))) WITH =", sql, StringComparison.Ordinal);
+        Assert.Contains("status IN ('Installed','Verified','Removed')", sql, StringComparison.Ordinal);
+        Assert.Contains("stage80_preserve_installation_history", sql, StringComparison.Ordinal);
+        Assert.Contains("stage80_preserve_installation_evidence", sql, StringComparison.Ordinal);
+        Assert.Contains("fk_stage80_evidence_installation", sql, StringComparison.Ordinal);
         Assert.Contains("installation_id BIGINT", sql, StringComparison.Ordinal);
         Assert.Contains("assignment_id BIGINT", sql, StringComparison.Ordinal);
         Assert.Contains("trip_id BIGINT", sql, StringComparison.Ordinal);
@@ -23,6 +29,21 @@ public sealed class FleetIdentityBackboneContractTests
         Assert.Contains("device_installation_quarantine", sql, StringComparison.Ordinal);
         Assert.Contains("GRANT SELECT,INSERT,UPDATE ON TABLE device_installation_quarantine TO opstrax_system", sql, StringComparison.Ordinal);
         Assert.Contains("GRANT USAGE,SELECT ON SEQUENCE device_installation_quarantine_id_seq TO opstrax_system", sql, StringComparison.Ordinal);
+        Assert.Contains("q.reason_code='ambiguous_device_identifier'", sql, StringComparison.Ordinal);
+        Assert.Contains("stage80_hold_ambiguous_device_identifier", sql, StringComparison.Ordinal);
+        Assert.Contains("NEW.device_state:='Quarantined'", sql, StringComparison.Ordinal);
+        Assert.Contains("MAX(history.effective_to)", sql, StringComparison.Ordinal);
+        Assert.Contains("i.effective_to IS NULL AND i.status IN ('Installed','Verified')", sql, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TerminalAclKeepsCompatibilityProjectionDatabaseOwned()
+    {
+        var sql = Read("database", "migrations", "2026_08_11_stage76_telematics_security_hardening.sql");
+        Assert.DoesNotContain("'provider','vehicle_id','driver_id'", sql, StringComparison.Ordinal);
+        Assert.Contains("has_column_privilege('opstrax_app','eld_devices','vehicle_id','UPDATE')", sql, StringComparison.Ordinal);
+        Assert.Contains("has_column_privilege('opstrax_app','eld_devices','driver_id','UPDATE')", sql, StringComparison.Ordinal);
+        Assert.Contains("SECURITY DEFINER", Read("database", "migrations", "2026_08_14_stage80_fleet_identity_backbone.sql"), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -90,6 +111,16 @@ public sealed class FleetIdentityBackboneContractTests
         Assert.Contains("RunInTenantTransactionAsync", inspection, StringComparison.Ordinal);
         var inspectionTransaction = Block(source, "private static async Task<IResult> MaintInspectionCreateInTransaction(", "// GET /api/maintenance/inspections/{id}");
         Assert.Contains("AcquireDvirDepartureSafetyLockAsync", inspectionTransaction, StringComparison.Ordinal);
+        Assert.Contains("isDriverSubmission = authenticatedDriverSubmission", inspectionTransaction, StringComparison.Ordinal);
+        Assert.Contains("template_id", inspectionTransaction, StringComparison.Ordinal);
+        Assert.Contains("checklist_item_id", inspectionTransaction, StringComparison.Ordinal);
+        var driverSubmit = Block(source, "private static async Task<IResult> DriverSubmitDvir(", "private static async Task<IResult> DriverCoachingTasks(");
+        Assert.Contains("Every required DVIR checklist item must be answered", driverSubmit, StringComparison.Ordinal);
+        Assert.Contains("Required DVIR checklist items must be answered pass or fail", driverSubmit, StringComparison.Ordinal);
+        Assert.Contains("DVIR contains an unknown or inactive checklist item", driverSubmit, StringComparison.Ordinal);
+        Assert.Contains("DuplicateItem", driverSubmit, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("vehicle_unit_suffix_length", current, StringComparison.Ordinal);
+        Assert.Contains("supplied.Length is < 1 or > 16", source, StringComparison.Ordinal);
         var dvirPilot = Read("backend-dotnet", "Controllers", "DvirHosEndpoints.cs");
         Assert.Contains("AcquireDvirDepartureSafetyLockAsync", dvirPilot, StringComparison.Ordinal);
         Assert.Contains("fleet-departure-safety", dvirPilot, StringComparison.Ordinal);
@@ -112,6 +143,25 @@ public sealed class FleetIdentityBackboneContractTests
         Assert.Contains("s !== \"accepted\" || status === \"exception\"", driverPage, StringComparison.Ordinal);
         Assert.Contains("s === \"assigned\" || s === \"accepted\"", driverPage, StringComparison.Ordinal);
         Assert.Contains("Resume Assignment", driverPage, StringComparison.Ordinal);
+        Assert.Contains("/api/telemetry/installation-quarantine", devices, StringComparison.Ordinal);
+        Assert.Contains("Identity Quarantine", Read("frontend", "src", "pages", "IotDevicesPage.tsx"), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void QuarantineAndHistoricalAttributionFailClosedAcrossIngressAndLifecycle()
+    {
+        var routes = Read("backend-dotnet", "Controllers", "EndpointMappings.cs");
+        var lifecycle = Read("backend-dotnet", "Controllers", "FleetIdentityEndpoints.cs");
+        var registry = Read("telematics", "src", "Opstrax.Telematics.Gateway", "Identity", "PostgresDeviceRegistry.cs");
+        Assert.Contains("/api/telemetry/installation-quarantine/{id:long}/resolve", routes, StringComparison.Ordinal);
+        Assert.Contains("has_unresolved_quarantine", routes, StringComparison.Ordinal);
+        Assert.Contains("Device identity is quarantined", routes, StringComparison.Ordinal);
+        Assert.Contains("InstallationHasEventAtOrAfterAsync", lifecycle, StringComparison.Ordinal);
+        Assert.Contains("cannot predate telemetry already attributed", lifecycle, StringComparison.Ordinal);
+        Assert.Contains("device_installation_quarantine", registry, StringComparison.Ordinal);
+        Assert.Contains("resolution_notes", lifecycle, StringComparison.Ordinal);
+        Assert.Contains("Duplicate serial quarantine requires a corrected serial", lifecycle, StringComparison.Ordinal);
+        Assert.Contains("Corrected IMEI must contain exactly 15 digits", lifecycle, StringComparison.Ordinal);
     }
 
     [Fact]

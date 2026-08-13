@@ -1,6 +1,7 @@
 using System.Reflection;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
+using Npgsql;
 using Opstrax.Api.Controllers;
 using Opstrax.Api.Data;
 using Opstrax.Api.Services;
@@ -180,6 +181,103 @@ public sealed class FleetIdentityInstallationPostgresTests
         }
     }
 
+    [Fact]
+    public async Task RemovedHistoryRetainsDeviceAndPrimaryVehicleRoleNonOverlap()
+    {
+        var db = Db();
+        var companyId = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + Random.Shared.Next(2_000_000,2_900_000);
+        await Company(db,companyId,"HISTORY");
+        try
+        {
+            var branch = await Branch(db,companyId,"HISTORY");
+            var vehicleA = await Vehicle(db,companyId,branch,$"HISTORY-A-{companyId}",vin:"1HGCM82633A004352");
+            var vehicleB = await Vehicle(db,companyId,branch,$"HISTORY-B-{companyId}",alternate:$"HISTORY-MFG-{companyId}");
+            var deviceA = await Device(db,companyId,$"HISTORY-DEVICE-A-{companyId}");
+            var deviceB = await Device(db,companyId,$"HISTORY-DEVICE-B-{companyId}");
+            var from = DateTimeOffset.UtcNow.AddDays(-10);
+            var to = DateTimeOffset.UtcNow.AddDays(-5);
+
+            var first = await RemovedInstallation(db,companyId,branch,deviceA,vehicleA,from,to);
+            var vehicleOverlap = await Assert.ThrowsAsync<PostgresException>(() =>
+                RemovedInstallation(db,companyId,branch,deviceB,vehicleA,from.AddDays(1),to.AddDays(-1),"gps"));
+            Assert.Equal(PostgresErrorCodes.ExclusionViolation,vehicleOverlap.SqlState);
+
+            var deviceOverlap = await Assert.ThrowsAsync<PostgresException>(() =>
+                RemovedInstallation(db,companyId,branch,deviceA,vehicleB,from.AddDays(1),to.AddDays(-1)));
+            Assert.Equal(PostgresErrorCodes.ExclusionViolation,deviceOverlap.SqlState);
+
+            var rewrite = await Assert.ThrowsAsync<PostgresException>(() => db.ExecuteAsync(
+                "UPDATE device_installations SET effective_from=effective_from-INTERVAL '1 day' WHERE id=@id",
+                c => c.Parameters.AddWithValue("@id",first)));
+            Assert.Equal(PostgresErrorCodes.ObjectNotInPrerequisiteState,rewrite.SqlState);
+        }
+        finally
+        {
+            foreach (var sql in new[]
+            {
+                "DELETE FROM device_installations WHERE company_id=@c","DELETE FROM eld_devices WHERE company_id=@c",
+                "DELETE FROM vehicles WHERE company_id=@c","DELETE FROM branches WHERE company_id=@c",
+                "DELETE FROM companies WHERE id=@c"
+            }) await db.ExecuteAsync(sql,c => c.Parameters.AddWithValue("@c",companyId));
+        }
+    }
+
+    [Fact]
+    public async Task EvidenceReferenceIsTenantCoherentAndAppendOnly()
+    {
+        var db = Db();
+        var companyId = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + Random.Shared.Next(3_000_000,3_900_000);
+        var otherCompanyId = companyId + 1;
+        await Company(db,companyId,"EVIDENCE-A");
+        await Company(db,otherCompanyId,"EVIDENCE-B");
+        try
+        {
+            var branchA = await Branch(db,companyId,"EVIDENCE-A");
+            var branchB = await Branch(db,otherCompanyId,"EVIDENCE-B");
+            var vehicleA = await Vehicle(db,companyId,branchA,$"EVIDENCE-A-{companyId}",vin:"1HGCM82633A004352");
+            var vehicleB = await Vehicle(db,otherCompanyId,branchB,$"EVIDENCE-B-{companyId}",alternate:$"EVIDENCE-MFG-{companyId}");
+            var deviceA = await Device(db,companyId,$"EVIDENCE-DEVICE-A-{companyId}");
+            var deviceB = await Device(db,otherCompanyId,$"EVIDENCE-DEVICE-B-{companyId}");
+            var from = DateTimeOffset.UtcNow.AddDays(-4);
+            var installationA = await RemovedInstallation(db,companyId,branchA,deviceA,vehicleA,from,from.AddDays(1));
+            var installationB = await RemovedInstallation(db,otherCompanyId,branchB,deviceB,vehicleB,from,from.AddDays(1));
+
+            var mismatch = await Assert.ThrowsAsync<PostgresException>(() => db.ExecuteAsync(
+                @"INSERT INTO device_installation_evidence(company_id,branch_id,installation_id,evidence_type,object_key,sha256)
+                  VALUES (@c,@b,@i,'photo','cross-tenant-proof',repeat('a',64))",
+                c => { c.Parameters.AddWithValue("@c",companyId); c.Parameters.AddWithValue("@b",branchA); c.Parameters.AddWithValue("@i",installationB); }));
+            Assert.Equal(PostgresErrorCodes.ForeignKeyViolation,mismatch.SqlState);
+
+            var evidenceId = await db.InsertAsync(
+                @"INSERT INTO device_installation_evidence(company_id,branch_id,installation_id,evidence_type,object_key,sha256)
+                  VALUES (@c,@b,@i,'photo','tenant-proof',repeat('b',64))",
+                c => { c.Parameters.AddWithValue("@c",companyId); c.Parameters.AddWithValue("@b",branchA); c.Parameters.AddWithValue("@i",installationA); });
+            var rewrite = await Assert.ThrowsAsync<PostgresException>(() => db.ExecuteAsync(
+                "UPDATE device_installation_evidence SET object_key='rewritten' WHERE id=@id",
+                c => c.Parameters.AddWithValue("@id",evidenceId)));
+            Assert.Equal(PostgresErrorCodes.ObjectNotInPrerequisiteState,rewrite.SqlState);
+        }
+        finally
+        {
+            foreach (var company in new[] { companyId,otherCompanyId })
+            foreach (var sql in new[]
+            {
+                "DELETE FROM device_installation_evidence WHERE company_id=@c","DELETE FROM device_installations WHERE company_id=@c",
+                "DELETE FROM eld_devices WHERE company_id=@c","DELETE FROM vehicles WHERE company_id=@c",
+                "DELETE FROM branches WHERE company_id=@c","DELETE FROM companies WHERE id=@c"
+            }) await db.ExecuteAsync(sql,c => c.Parameters.AddWithValue("@c",company));
+        }
+    }
+
+    [Fact]
+    public async Task ApplicationRoleCannotUpdateCompatibilityVehicleOrDriverProjection()
+    {
+        var db = Db();
+        Assert.Equal(0,await db.ScalarLongAsync("SELECT CASE WHEN has_column_privilege('opstrax_app','eld_devices','vehicle_id','UPDATE') THEN 1 ELSE 0 END"));
+        Assert.Equal(0,await db.ScalarLongAsync("SELECT CASE WHEN has_column_privilege('opstrax_app','eld_devices','driver_id','UPDATE') THEN 1 ELSE 0 END"));
+        Assert.Equal(1,await db.ScalarLongAsync("SELECT CASE WHEN has_column_privilege('opstrax_app','eld_devices','device_state','UPDATE') THEN 1 ELSE 0 END"));
+    }
+
     private static async Task Company(Database db,long id,string suffix) => await db.ExecuteAsync(
         "INSERT INTO companies(id,company_code,name,industry) OVERRIDING SYSTEM VALUE VALUES (@c,@code,@name,'transport')",
         c => { c.Parameters.AddWithValue("@c",id); c.Parameters.AddWithValue("@code",$"INSTALL-{id}-{suffix}"); c.Parameters.AddWithValue("@name",$"Installation tenant {suffix}"); });
@@ -198,8 +296,14 @@ public sealed class FleetIdentityInstallationPostgresTests
         });
     private static Task<long> Device(Database db,long company,string serial) => db.InsertAsync(
         @"INSERT INTO eld_devices(company_id,device_serial,status,device_state,api_key_hash,hmac_secret_encrypted,hmac_key_version,created_at)
-          VALUES (@c,@serial,'Active','Registered',repeat('a',64),repeat('b',32),1,NOW())",
+          VALUES (@c,@serial,'Active','Registered',encode(sha256(@serial::bytea),'hex'),repeat('b',32),1,NOW())",
         c => { c.Parameters.AddWithValue("@c",company); c.Parameters.AddWithValue("@serial",serial); });
+    private static Task<long> RemovedInstallation(Database db,long company,long branch,long device,long vehicle,DateTimeOffset from,DateTimeOffset to,string role="GPS") => db.InsertAsync(
+        @"INSERT INTO device_installations(company_id,branch_id,device_id,vehicle_id,status,device_role,is_primary,effective_from,effective_to,installed_at,removed_at,source)
+          VALUES (@c,@b,@d,@v,'Removed',@role,TRUE,@from,@to,@from,@to,'test')",
+        c => { c.Parameters.AddWithValue("@c",company); c.Parameters.AddWithValue("@b",branch); c.Parameters.AddWithValue("@d",device);
+               c.Parameters.AddWithValue("@v",vehicle); c.Parameters.AddWithValue("@from",from); c.Parameters.AddWithValue("@to",to);
+               c.Parameters.AddWithValue("@role",role); });
     private static Task<long> Count(Database db,long company,long device) => db.ScalarLongAsync(
         "SELECT COUNT(*) FROM device_installations WHERE company_id=@c AND device_id=@d",
         c => { c.Parameters.AddWithValue("@c",company); c.Parameters.AddWithValue("@d",device); });

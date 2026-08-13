@@ -118,7 +118,11 @@ test("auth-state paths are absent unless the configured file exists", () => {
 });
 
 test("runtime exceptions and 5xx responses fail every browser target", () => {
-  assert.doesNotThrow(() => assertRuntimeSignalsHealthy({ pageErrors: [], serverErrors: [] }));
+  assert.doesNotThrow(() => assertRuntimeSignalsHealthy({ consoleErrors: [], pageErrors: [], serverErrors: [] }));
+  assert.throws(
+    () => assertRuntimeSignalsHealthy({ consoleErrors: ["console exploded"], pageErrors: [], serverErrors: [] }),
+    /console emitted errors/,
+  );
   assert.throws(
     () => assertRuntimeSignalsHealthy({ pageErrors: ["render exploded"], serverErrors: [] }),
     /runtime errors/,

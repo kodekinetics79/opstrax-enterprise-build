@@ -77,6 +77,9 @@ internal sealed class PostgresDeviceRegistry(string platformSystemConnectionStri
               ) p ON TRUE
              WHERE e.deleted_at IS NULL
                AND e.company_id IS NOT NULL
+               AND NOT EXISTS (
+                    SELECT 1 FROM device_installation_quarantine q
+                     WHERE q.company_id=e.company_id AND q.device_id=e.id AND q.resolved_at IS NULL)
                AND e.vehicle_id IS NOT DISTINCT FROM i.vehicle_id
                AND ((@imei IS NOT NULL AND e.imei=@imei)
                  OR (@serial IS NOT NULL AND e.device_serial=@serial)

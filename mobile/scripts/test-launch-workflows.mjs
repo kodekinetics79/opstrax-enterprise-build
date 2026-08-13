@@ -27,6 +27,32 @@ test("proof and assignment controls invoke server mutations", async () => {
   assert.match(workflow, /rejectSmartAssignment/);
 });
 
+test("driver safety uses authenticated assignment identity and server-enforced departure gates", async () => {
+  const [client, screen, navigation] = await Promise.all([
+    source("src/api/client.ts"),
+    source("src/screens/DriverSafetyScreen.tsx"),
+    source("src/navigation/RootNavigator.tsx"),
+  ]);
+  assert.match(client, /currentDriverAssignment:[\s\S]*\/api\/driver\/assignments\/current/);
+  assert.match(client, /confirmDriverVehicle:[\s\S]*confirm-vehicle/);
+  assert.match(client, /submitDriverDvir:[\s\S]*Idempotency-Key/);
+  assert.match(client, /updateDriverAssignmentStatus:[\s\S]*\/status/);
+  assert.match(screen, /driverMe\(\)/);
+  assert.match(screen, /currentAssignment\.vehicleId/);
+  assert.doesNotMatch(screen, /vehicle id input/i);
+  assert.match(screen, /unit_suffix/);
+  assert.match(screen, /vin_suffix/);
+  assert.match(screen, /assignment\.vehicleUnitSuffixLength/);
+  assert.match(screen, /confirmationReference\.trim\(\)\.length !== confirmationLength/);
+  assert.match(screen, /Boolean\(item\.isRequired\) \? \[\] : \["na"\]/);
+  assert.match(screen, /DvirDriverAttestation/);
+  assert.match(screen, /attestationAccepted: true/);
+  assert.match(screen, /safePretripReady/);
+  assert.match(screen, /nextStatus === "en_route_pickup"/);
+  assert.match(navigation, /hasPermission\("driver:self"\)/);
+  assert.match(navigation, /canUseDriverSafety \? <Tabs\.Screen/);
+});
+
 test("mobile screens consume the actual nested API contracts", async () => {
   const [client, proof, telemetry] = await Promise.all([
     source("src/api/client.ts"),

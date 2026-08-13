@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -35,6 +35,7 @@ import {
   telematicsService,
   type DeviceCommandRecord,
   type DeviceDetailRecord,
+  type DeviceIdentityQuarantineRecord,
   type DeviceProvisionResult,
 } from "@/services/telematicsService";
 import type { AnyRecord } from "@/types";
@@ -47,6 +48,7 @@ type DeviceTab =
   | "firmware"
   | "provisioning"
   | "diagnostics"
+  | "quarantine"
   | "installations"
   | "data-health"
   | "providers";
@@ -83,6 +85,7 @@ const DEVICE_TABS: Array<{ key: DeviceTab; label: string }> = [
   { key: "firmware", label: "Firmware (read-only)" },
   { key: "provisioning", label: "Provisioning" },
   { key: "diagnostics", label: "Diagnostics" },
+  { key: "quarantine", label: "Identity Quarantine" },
   { key: "installations", label: "Installations" },
   { key: "data-health", label: "Data Health" },
   { key: "providers", label: "Provider Connections" },
@@ -99,6 +102,7 @@ function emptyStateForTab(tab: DeviceTab) {
   if (tab === "offline") return { title: "No offline devices", subtitle: "Every scoped device is checking in within the current monitoring window." };
   if (tab === "firmware") return { title: "Current version only", subtitle: "OTA scheduling and firmware history are not connected in this pilot. Current versions appear when devices report them." };
   if (tab === "providers") return { title: "No providers found", subtitle: "Integrations are pulled from your connected provider catalog." };
+  if (tab === "quarantine") return { title: "No unresolved identity conflicts", subtitle: "Every device and installation identity in this fleet is currently unambiguous." };
   return { title: "No devices found", subtitle: "Refine the search, switch tabs, or register a device for this fleet." };
 }
 
@@ -352,12 +356,19 @@ export function IotDevicesPage() {
   const [firmwareForm, setFirmwareForm] = useState<FirmwareFormState>({ targetVersion: "", scheduledFor: "" });
   const [attentionTarget, setAttentionTarget] = useState<DeviceCommandRecord | null>(null);
   const [attentionNotes, setAttentionNotes] = useState("");
+  const [quarantineTarget, setQuarantineTarget] = useState<DeviceIdentityQuarantineRecord | null>(null);
+  const [quarantineResolution, setQuarantineResolution] = useState({ resolutionNotes: "", correctedDeviceSerial: "", correctedImei: "" });
   const [openMenuId, setOpenMenuId] = useState<string | number | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   const devicesQ = useQuery({ queryKey: ["telematics", "devices"], queryFn: telematicsService.getDevices, staleTime: 20_000 });
   const providersQ = useQuery({ queryKey: ["telematics", "providers"], queryFn: telematicsService.getProviders, staleTime: 20_000 });
   const vehiclesQ = useQuery({ queryKey: ["vehicles", "list"], queryFn: vehiclesApi.list, staleTime: 20_000 });
+  const quarantineQ = useQuery({
+    queryKey: ["telematics", "identity-quarantine"],
+    queryFn: telematicsService.getIdentityQuarantine,
+    staleTime: 20_000,
+  });
   const detailQ = useQuery({
     queryKey: ["telematics", "device", selectedId],
     queryFn: () => telematicsService.getDeviceById(String(selectedId)),
@@ -437,6 +448,20 @@ export function IotDevicesPage() {
     mutationFn: (deviceId: string | number) => telematicsService.markInstalled(deviceId),
     onSuccess: async (result) => {
       noticeFromResult(result, "Installation verified successfully.", "Installation verification was not completed.");
+      await refreshAll();
+    },
+  });
+  const quarantineResolveMut = useMutation({
+    mutationFn: ({ id, payload }: { id: string | number; payload: typeof quarantineResolution }) =>
+      telematicsService.resolveIdentityQuarantine(id, {
+        resolutionNotes: payload.resolutionNotes.trim(),
+        correctedDeviceSerial: payload.correctedDeviceSerial.trim() || undefined,
+        correctedImei: payload.correctedImei.trim() || undefined,
+      }),
+    onSuccess: async () => {
+      setQuarantineTarget(null);
+      setQuarantineResolution({ resolutionNotes: "", correctedDeviceSerial: "", correctedImei: "" });
+      setNotice("Fleet identity quarantine resolved with retained audit evidence.");
       await refreshAll();
     },
   });
@@ -617,16 +642,56 @@ export function IotDevicesPage() {
               aria-label="Search devices by provider, serial, IMEI, vehicle, driver, or tenant"
             />
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2" role="tablist" aria-label="Device workspace views">
             {DEVICE_TABS.map((item) => (
-              <button key={item.key} className={tab === item.key ? "btn-primary py-2 text-xs" : "btn-ghost py-2 text-xs"} onClick={() => setTab(item.key)}>
+              <button key={item.key} role="tab" aria-selected={tab === item.key} className={tab === item.key ? "btn-primary py-2 text-xs" : "btn-ghost py-2 text-xs"} onClick={() => setTab(item.key)}>
                 {item.label}
               </button>
             ))}
           </div>
         </div>
 
-        {tab === "providers" ? (
+        {tab === "quarantine" ? (
+          quarantineQ.isLoading ? (
+            <LoadingState />
+          ) : quarantineQ.isError ? (
+            <ErrorState message="Unable to load fleet identity quarantine right now." />
+          ) : !(quarantineQ.data ?? []).length ? (
+            <EmptyState title={emptyState.title} subtitle={emptyState.subtitle} />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead><tr className="border-b border-slate-200">
+                  {["Detected", "Reason", "Device", "Vehicle", "State", "Resolution"].map((header) => (
+                    <th key={header} className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500">{header}</th>
+                  ))}
+                </tr></thead>
+                <tbody className="divide-y divide-slate-100">
+                  {(quarantineQ.data ?? []).map((row) => (
+                    <tr key={String(row.id)}>
+                      <td className="px-4 py-3 text-slate-600">{row.detectedAt ? new Date(row.detectedAt).toLocaleString() : "—"}</td>
+                      <td className="px-4 py-3"><StatusBadge status={row.reasonCode.replaceAll("_", " ")} /></td>
+                      <td className="px-4 py-3 text-slate-700">{row.deviceSerial || "Unlabeled device"}<div className="text-xs text-slate-500">{row.imei || "No IMEI"}</div></td>
+                      <td className="px-4 py-3 text-slate-700">{row.vehicleCode || "Unlabeled vehicle"}</td>
+                      <td className="px-4 py-3"><StatusBadge status={row.deviceState || "Quarantined"} /></td>
+                      <td className="px-4 py-3">
+                        <button
+                          className="btn-primary py-2 text-xs"
+                          disabled={!canAssign}
+                          title={actionTitle(canAssign, "Review evidence and resolve this quarantined identity.")}
+                          onClick={() => {
+                            setQuarantineTarget(row);
+                            setQuarantineResolution({ resolutionNotes: "", correctedDeviceSerial: row.deviceSerial ?? "", correctedImei: row.imei ?? "" });
+                          }}
+                        >Resolve conflict</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        ) : tab === "providers" ? (
           providersQ.isLoading ? (
             <LoadingState />
           ) : providersQ.isError ? (
@@ -880,6 +945,36 @@ export function IotDevicesPage() {
           <FormField label="Recovery Notes">
             <textarea className="field h-24 w-full resize-none" value={attentionNotes} onChange={(event) => setAttentionNotes(event.target.value)} required />
           </FormField>
+        </ModalForm>
+      ) : null}
+
+      {quarantineTarget ? (
+        <ModalForm
+          title={`Resolve ${quarantineTarget.deviceSerial || quarantineTarget.reasonCode.replaceAll("_", " ")}`}
+          onClose={() => { setQuarantineTarget(null); quarantineResolveMut.reset(); }}
+          onSubmit={(event) => {
+            event.preventDefault();
+            quarantineResolveMut.mutate({ id: quarantineTarget.id, payload: quarantineResolution });
+          }}
+          submitLabel="Resolve with audit evidence"
+          busy={quarantineResolveMut.isPending}
+          error={quarantineResolveMut.error instanceof Error ? quarantineResolveMut.error.message : null}
+        >
+          <p className="rounded-xl border border-amber-300/30 bg-amber-500/10 p-3 text-sm text-amber-100">
+            The quarantine record and original evidence are retained. Identifier conflicts require a corrected serial or IMEI; installation conflicts are released for a new governed installation.
+          </p>
+          <InfoBlock title="Governed conflict evidence" items={[
+            ["Reason", quarantineTarget.reasonCode.replaceAll("_", " ")],
+            ["Device", quarantineTarget.deviceSerial || "Unlabeled device"],
+            ["Vehicle", quarantineTarget.vehicleCode || "Unlabeled vehicle"],
+            ["Detected", quarantineTarget.detectedAt ? new Date(quarantineTarget.detectedAt).toLocaleString() : "Unavailable"],
+            ["Evidence", quarantineTarget.evidenceJson ? JSON.stringify(quarantineTarget.evidenceJson) : "No additional evidence supplied"],
+          ]} />
+          <div className="grid gap-4 md:grid-cols-2">
+            <FormField label="Corrected device serial"><input className="field w-full" value={quarantineResolution.correctedDeviceSerial} onChange={(event) => setQuarantineResolution((value) => ({ ...value, correctedDeviceSerial: event.target.value }))} /></FormField>
+            <FormField label="Corrected IMEI"><input className="field w-full" value={quarantineResolution.correctedImei} onChange={(event) => setQuarantineResolution((value) => ({ ...value, correctedImei: event.target.value }))} /></FormField>
+          </div>
+          <FormField label="Resolution notes"><textarea className="field h-28 w-full resize-none" minLength={8} maxLength={2000} required value={quarantineResolution.resolutionNotes} onChange={(event) => setQuarantineResolution((value) => ({ ...value, resolutionNotes: event.target.value }))} /></FormField>
         </ModalForm>
       ) : null}
     </div>
@@ -1495,12 +1590,36 @@ function ModalForm({
   busy: boolean;
   error?: string | null;
 }) {
+  const titleId = useId();
+  const dialogRef = useRef<HTMLFormElement>(null);
+  const closeButton = useRef<HTMLButtonElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  useEffect(() => {
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    closeButton.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onCloseRef.current();
+      if (event.key === "Tab") {
+        const focusable = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ) ?? []);
+        if (!focusable.length) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => { window.removeEventListener("keydown", onKeyDown); previouslyFocused?.focus(); };
+  }, []);
   return (
-    <div className="fixed inset-0 z-[60] grid place-items-center bg-black/60 p-4">
-      <form className="panel max-h-[90vh] w-full max-w-4xl overflow-y-auto p-6" onSubmit={onSubmit}>
+    <div className="fixed inset-0 z-[60] grid place-items-center bg-black/60 p-4" role="presentation">
+      <form ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} className="panel max-h-[90vh] w-full max-w-4xl overflow-y-auto p-6" onSubmit={onSubmit}>
         <div className="flex items-center justify-between">
-          <h2 className="text-2xl font-semibold text-slate-900">{title}</h2>
-          <button type="button" className="icon-btn" onClick={onClose}><X className="h-4 w-4" /></button>
+          <h2 id={titleId} className="text-2xl font-semibold text-slate-900">{title}</h2>
+          <button ref={closeButton} type="button" className="icon-btn" aria-label={`Close ${title}`} onClick={onClose}><X className="h-4 w-4" /></button>
         </div>
         <div className="mt-6">{children}</div>
         {error ? <div role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div> : null}

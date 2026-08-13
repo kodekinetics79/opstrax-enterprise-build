@@ -266,6 +266,20 @@ export type DeviceProvisionResult = {
   ingestUrl: string;
 };
 
+export type DeviceIdentityQuarantineRecord = {
+  id: string | number;
+  deviceId?: string | number | null;
+  vehicleId?: string | number | null;
+  installationId?: string | number | null;
+  reasonCode: string;
+  evidenceJson?: AnyRecord;
+  detectedAt?: string;
+  deviceSerial?: string;
+  imei?: string;
+  deviceState?: string;
+  vehicleCode?: string;
+};
+
 export type TelematicsClusterRecord = {
   id: string;
   deviceId: string | number;
@@ -1060,6 +1074,20 @@ async function loadScopedDevices(session: UserSession | null): Promise<DeviceCom
 }
 
 export const telematicsService = {
+  async getIdentityQuarantine(): Promise<DeviceIdentityQuarantineRecord[]> {
+    const rows = await unwrap<AnyRecord[]>(apiClient.get("/api/telemetry/installation-quarantine"));
+    return rows.map((row) => normalizeKeys(row) as DeviceIdentityQuarantineRecord);
+  },
+
+  async resolveIdentityQuarantine(
+    id: string | number,
+    payload: { resolutionNotes: string; correctedDeviceSerial?: string; correctedImei?: string },
+  ) {
+    const session = getSession();
+    ensureManagementAccess(session);
+    return unwrap<AnyRecord>(apiClient.post(`/api/telemetry/installation-quarantine/${id}/resolve`, payload));
+  },
+
   async getDevices(): Promise<DeviceCommandRecord[]> {
     const session = getSession();
     return loadScopedDevices(session);

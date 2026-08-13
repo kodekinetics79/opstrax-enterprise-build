@@ -177,6 +177,12 @@ ALTER TABLE device_installations ADD COLUMN IF NOT EXISTS correlation_id VARCHAR
 ALTER TABLE device_installations ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(120) NULL;
 ALTER TABLE device_installations ADD COLUMN IF NOT EXISTS row_version INT NOT NULL DEFAULT 1;
 
+-- A reapply must be able to reconcile newly discovered legacy conflicts before
+-- restoring the runtime immutability guards below.
+DROP TRIGGER IF EXISTS trg_stage80_preserve_installation_history ON device_installations;
+DROP TRIGGER IF EXISTS trg_stage80_preserve_installation_evidence ON device_installation_evidence;
+DROP TRIGGER IF EXISTS trg_stage80_sync_device_vehicle_projection ON device_installations;
+
 UPDATE device_installations
 SET effective_from=COALESCE(effective_from,installed_at,created_at),
     effective_to=COALESCE(effective_to,removed_at),
@@ -214,8 +220,8 @@ JOIN device_installations other
   ON other.company_id=i.company_id AND other.vehicle_id=i.vehicle_id AND other.id<>i.id
  AND LOWER(other.device_role)=LOWER(i.device_role) AND other.is_primary AND i.is_primary
  AND tstzrange(other.effective_from,other.effective_to,'[)') && i.effective_period
-WHERE i.status IN ('Installed','Verified','Active')
-  AND other.status IN ('Installed','Verified','Active')
+WHERE i.status IN ('Installed','Verified','Removed','Active')
+  AND other.status IN ('Installed','Verified','Removed','Active')
 ON CONFLICT DO NOTHING;
 
 INSERT INTO device_installation_quarantine
@@ -239,15 +245,15 @@ FROM device_installations i
 JOIN device_installations other
   ON other.company_id=i.company_id AND other.device_id=i.device_id AND other.id<>i.id
  AND tstzrange(other.effective_from,other.effective_to,'[)') && i.effective_period
-WHERE i.status IN ('Installed','Verified','Active')
-  AND other.status IN ('Installed','Verified','Active')
+WHERE i.status IN ('Installed','Verified','Removed','Active')
+  AND other.status IN ('Installed','Verified','Removed','Active')
 ON CONFLICT DO NOTHING;
 
 UPDATE device_installations i
 SET status='Quarantined',updated_at=NOW(),failure_reason=COALESCE(failure_reason,q.reason_code)
 FROM device_installation_quarantine q
 WHERE q.installation_id=i.id AND q.resolved_at IS NULL
-  AND i.status IN ('Installed','Verified','Active');
+  AND i.status IN ('Installed','Verified','Removed','Active');
 
 -- Detect cross-column namespace ambiguity. IMEI/serial are lookup identifiers, never
 -- credentials; an identifier must still resolve exactly one inventory row.
@@ -257,9 +263,61 @@ SELECT d.company_id,d.id,d.vehicle_id,NULL,'ambiguous_device_identifier',
        jsonb_build_object('deviceId',d.id,'serial',d.device_serial,'imei',d.imei,'conflictsWith',other.id)
 FROM eld_devices d JOIN eld_devices other ON other.id<>d.id
 WHERE d.deleted_at IS NULL AND other.deleted_at IS NULL
-  AND ((NULLIF(BTRIM(d.imei),'') IS NOT NULL AND LOWER(BTRIM(d.imei))=LOWER(BTRIM(other.device_serial)))
-    OR (NULLIF(BTRIM(d.device_serial),'') IS NOT NULL AND LOWER(BTRIM(d.device_serial))=LOWER(BTRIM(other.imei))))
+  AND ((NULLIF(REGEXP_REPLACE(d.imei,'[^0-9]','','g'),'') IS NOT NULL
+        AND REGEXP_REPLACE(d.imei,'[^0-9]','','g')=UPPER(BTRIM(other.device_serial)))
+    OR (NULLIF(BTRIM(d.device_serial),'') IS NOT NULL
+        AND UPPER(BTRIM(d.device_serial))=REGEXP_REPLACE(other.imei,'[^0-9]','','g')))
 ON CONFLICT DO NOTHING;
+
+-- Cross-column serial/IMEI collisions are an authorization ambiguity, not merely a
+-- reporting concern.  Put every affected inventory row on a database-enforced hold;
+-- neither native nor gateway ingest accepts a Quarantined device.
+UPDATE eld_devices d SET device_state='Quarantined',updated_at=NOW()
+WHERE d.deleted_at IS NULL AND EXISTS (
+  SELECT 1 FROM device_installation_quarantine q
+  WHERE q.device_id=d.id AND q.resolved_at IS NULL
+    AND q.reason_code='ambiguous_device_identifier'
+);
+
+-- Keep the namespace safe after migration too. A newly registered or renamed
+-- serial/IMEI that collides in either column is persisted only on quarantine so
+-- operators retain the submitted evidence without making lookup ambiguous.
+CREATE OR REPLACE FUNCTION stage80_hold_ambiguous_device_identifier()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+DECLARE conflict RECORD;
+BEGIN
+  SELECT other.id,other.company_id,other.vehicle_id,other.device_serial,other.imei
+    INTO conflict
+  FROM eld_devices other
+  WHERE other.id<>NEW.id AND other.deleted_at IS NULL
+    AND (
+      UPPER(BTRIM(other.device_serial))=UPPER(BTRIM(NEW.device_serial))
+      OR (NULLIF(REGEXP_REPLACE(NEW.imei,'[^0-9]','','g'),'') IS NOT NULL
+          AND REGEXP_REPLACE(other.imei,'[^0-9]','','g')=REGEXP_REPLACE(NEW.imei,'[^0-9]','','g'))
+      OR (NULLIF(REGEXP_REPLACE(NEW.imei,'[^0-9]','','g'),'') IS NOT NULL
+          AND UPPER(BTRIM(other.device_serial))=REGEXP_REPLACE(NEW.imei,'[^0-9]','','g'))
+      OR (NULLIF(REGEXP_REPLACE(other.imei,'[^0-9]','','g'),'') IS NOT NULL
+          AND REGEXP_REPLACE(other.imei,'[^0-9]','','g')=UPPER(BTRIM(NEW.device_serial)))
+    )
+  ORDER BY other.id LIMIT 1;
+  IF FOUND THEN
+    UPDATE eld_devices SET device_state='Quarantined',updated_at=NOW() WHERE id=conflict.id;
+    INSERT INTO device_installation_quarantine
+      (company_id,device_id,vehicle_id,reason_code,evidence_json)
+    VALUES
+      (conflict.company_id,conflict.id,conflict.vehicle_id,'ambiguous_device_identifier',
+       jsonb_build_object('deviceId',conflict.id,'serial',conflict.device_serial,'imei',conflict.imei,'conflictsWith',NEW.id)),
+      (NEW.company_id,NEW.id,NEW.vehicle_id,'ambiguous_device_identifier',
+       jsonb_build_object('deviceId',NEW.id,'serial',NEW.device_serial,'imei',NEW.imei,'conflictsWith',conflict.id))
+    ON CONFLICT DO NOTHING;
+    NEW.device_state:='Quarantined';
+  END IF;
+  RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS trg_stage80_hold_ambiguous_device_identifier ON eld_devices;
+CREATE TRIGGER trg_stage80_hold_ambiguous_device_identifier
+BEFORE INSERT OR UPDATE OF device_serial,imei ON eld_devices
+FOR EACH ROW EXECUTE FUNCTION stage80_hold_ambiguous_device_identifier();
 
 -- Backfill only unambiguous, tenant-coherent mutable pointers. The source and
 -- commissioning result make their lower assurance explicit.
@@ -269,13 +327,22 @@ INSERT INTO device_installations
    assignment_reason,source,correlation_id,idempotency_key)
 SELECT e.company_id,COALESCE(e.branch_id,v.branch_id),e.id,e.vehicle_id,'Installed',
        COALESCE(NULLIF(e.device_category,''),'GPS'),TRUE,
-       COALESCE(e.updated_at,e.created_at,NOW()),COALESCE(e.updated_at,e.created_at,NOW()),
+       GREATEST(COALESCE(e.updated_at,e.created_at,NOW()),
+                COALESCE((SELECT MAX(history.effective_to) FROM device_installations history
+                          WHERE history.company_id=e.company_id AND history.device_id=e.id),'-infinity'::timestamptz)),
+       GREATEST(COALESCE(e.updated_at,e.created_at,NOW()),
+                COALESCE((SELECT MAX(history.effective_to) FROM device_installations history
+                          WHERE history.company_id=e.company_id AND history.device_id=e.id),'-infinity'::timestamptz)),
        'legacy_backfill','unverified','Legacy mutable device/vehicle projection','legacy_backfill',
        'stage80-legacy-'||e.id::text,'stage80-legacy-'||e.id::text
 FROM eld_devices e
 JOIN vehicles v ON v.id=e.vehicle_id AND v.company_id=e.company_id AND v.deleted_at IS NULL
 WHERE e.vehicle_id IS NOT NULL AND e.company_id IS NOT NULL AND e.deleted_at IS NULL
-  AND NOT EXISTS (SELECT 1 FROM device_installations i WHERE i.device_id=e.id)
+  AND NOT EXISTS (
+    SELECT 1 FROM device_installations i
+    WHERE i.company_id=e.company_id AND i.device_id=e.id
+      AND i.effective_to IS NULL AND i.status IN ('Installed','Verified')
+  )
   AND NOT EXISTS (SELECT 1 FROM device_installation_quarantine q
                   WHERE q.device_id=e.id AND q.resolved_at IS NULL)
 ON CONFLICT DO NOTHING;
@@ -292,6 +359,9 @@ ALTER TABLE device_installations ADD CONSTRAINT fk_stage80_installation_device
 ALTER TABLE device_installations DROP CONSTRAINT IF EXISTS fk_stage80_installation_vehicle;
 ALTER TABLE device_installations ADD CONSTRAINT fk_stage80_installation_vehicle
   FOREIGN KEY (company_id,vehicle_id) REFERENCES vehicles(company_id,id) NOT VALID;
+ALTER TABLE device_installation_evidence DROP CONSTRAINT IF EXISTS fk_stage80_evidence_installation;
+ALTER TABLE device_installation_evidence ADD CONSTRAINT fk_stage80_evidence_installation
+  FOREIGN KEY (company_id,installation_id) REFERENCES device_installations(company_id,id) NOT VALID;
 ALTER TABLE device_installations DROP CONSTRAINT IF EXISTS ck_stage80_installation_status;
 ALTER TABLE device_installations ADD CONSTRAINT ck_stage80_installation_status CHECK
   (status IN ('Provisioned','Installed','Verified','Removed','Failed','Quarantined')) NOT VALID;
@@ -323,8 +393,15 @@ ALTER TABLE device_state_transitions ADD CONSTRAINT ck_dst_states CHECK (
 
 CREATE OR REPLACE FUNCTION stage80_enforce_installation_scope()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
-DECLARE device_branch BIGINT; vehicle_branch BIGINT;
+DECLARE device_branch BIGINT; vehicle_branch BIGINT; normalized_role TEXT;
 BEGIN
+  SELECT role INTO normalized_role
+  FROM unnest(ARRAY['GPS','ELD','Dashcam','OBD-II','J1939/CAN','Temperature','Fuel','Tire','BLE Gateway','Other']) role
+  WHERE LOWER(role)=LOWER(BTRIM(NEW.device_role)) LIMIT 1;
+  IF normalized_role IS NULL THEN
+    RAISE EXCEPTION 'unsupported installation device role' USING ERRCODE='23514';
+  END IF;
+  NEW.device_role:=normalized_role;
   SELECT branch_id INTO device_branch FROM eld_devices
    WHERE id=NEW.device_id AND company_id=NEW.company_id AND deleted_at IS NULL;
   IF NOT FOUND THEN
@@ -348,10 +425,66 @@ CREATE TRIGGER trg_stage80_enforce_installation_scope
 BEFORE INSERT OR UPDATE OF company_id,branch_id,device_id,vehicle_id ON device_installations
 FOR EACH ROW EXECUTE FUNCTION stage80_enforce_installation_scope();
 
+-- Installation identity and closed history are evidence. Lifecycle operations may
+-- commission an open row or close it once, but may never retarget/re-date it or
+-- rewrite a previously closed period.
+CREATE OR REPLACE FUNCTION stage80_preserve_installation_history()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP='DELETE' THEN
+    IF session_user IN ('opstrax_app','opstrax_system') THEN
+      RAISE EXCEPTION 'installation history cannot be deleted by a runtime identity' USING ERRCODE='55000';
+    END IF;
+    RETURN OLD;
+  END IF;
+  IF NEW.company_id IS DISTINCT FROM OLD.company_id
+     OR NEW.branch_id IS DISTINCT FROM OLD.branch_id
+     OR NEW.device_id IS DISTINCT FROM OLD.device_id
+     OR NEW.vehicle_id IS DISTINCT FROM OLD.vehicle_id
+     OR NEW.device_role IS DISTINCT FROM OLD.device_role
+     OR NEW.is_primary IS DISTINCT FROM OLD.is_primary
+     OR NEW.effective_from IS DISTINCT FROM OLD.effective_from
+     OR NEW.installed_at IS DISTINCT FROM OLD.installed_at
+     OR NEW.installer_user_id IS DISTINCT FROM OLD.installer_user_id
+     OR NEW.installed_by IS DISTINCT FROM OLD.installed_by
+     OR NEW.source IS DISTINCT FROM OLD.source
+     OR NEW.correlation_id IS DISTINCT FROM OLD.correlation_id
+     OR NEW.idempotency_key IS DISTINCT FROM OLD.idempotency_key
+     OR NEW.replaced_installation_id IS DISTINCT FROM OLD.replaced_installation_id
+     OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+    RAISE EXCEPTION 'installation identity and effective start are immutable' USING ERRCODE='55000';
+  END IF;
+  IF OLD.effective_to IS NOT NULL AND NEW IS DISTINCT FROM OLD THEN
+    RAISE EXCEPTION 'closed installation history is immutable' USING ERRCODE='55000';
+  END IF;
+  RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS trg_stage80_preserve_installation_history ON device_installations;
+CREATE TRIGGER trg_stage80_preserve_installation_history
+BEFORE UPDATE OR DELETE ON device_installations
+FOR EACH ROW EXECUTE FUNCTION stage80_preserve_installation_history();
+
+CREATE OR REPLACE FUNCTION stage80_preserve_installation_evidence()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP='DELETE' AND session_user NOT IN ('opstrax_app','opstrax_system') THEN
+    RETURN OLD;
+  END IF;
+  RAISE EXCEPTION 'device installation evidence is append-only' USING ERRCODE='55000';
+END $$;
+DROP TRIGGER IF EXISTS trg_stage80_preserve_installation_evidence ON device_installation_evidence;
+CREATE TRIGGER trg_stage80_preserve_installation_evidence
+BEFORE UPDATE OR DELETE ON device_installation_evidence
+FOR EACH ROW EXECUTE FUNCTION stage80_preserve_installation_evidence();
+
 ALTER TABLE device_installations DROP CONSTRAINT IF EXISTS ex_stage80_device_installation_period;
 ALTER TABLE device_installations ADD CONSTRAINT ex_stage80_device_installation_period
   EXCLUDE USING gist (company_id WITH =,device_id WITH =,effective_period WITH &&)
-  WHERE (status IN ('Installed','Verified'));
+  WHERE (status IN ('Installed','Verified','Removed'));
+ALTER TABLE device_installations DROP CONSTRAINT IF EXISTS ex_stage80_vehicle_primary_role_period;
+ALTER TABLE device_installations ADD CONSTRAINT ex_stage80_vehicle_primary_role_period
+  EXCLUDE USING gist (company_id WITH =,vehicle_id WITH =,(LOWER(BTRIM(device_role))) WITH =,effective_period WITH &&)
+  WHERE (status IN ('Installed','Verified','Removed') AND is_primary);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_stage80_vehicle_primary_role
   ON device_installations(company_id,vehicle_id,device_role)
   WHERE effective_to IS NULL AND status IN ('Installed','Verified') AND is_primary;
@@ -391,9 +524,41 @@ ALTER TABLE dispatch_assignments ADD COLUMN IF NOT EXISTS supersedes_assignment_
 ALTER TABLE dispatch_assignments ADD COLUMN IF NOT EXISTS driver_change_reason VARCHAR(500) NULL;
 ALTER TABLE assignment_confirmations ADD COLUMN IF NOT EXISTS dispatch_assignment_id BIGINT NULL;
 ALTER TABLE dvir_reports ADD COLUMN IF NOT EXISTS trip_id BIGINT NULL;
+ALTER TABLE dvir_reports ADD COLUMN IF NOT EXISTS template_id BIGINT NULL;
 ALTER TABLE dvir_reports ADD COLUMN IF NOT EXISTS signature_hash VARCHAR(64) NULL;
 ALTER TABLE dvir_reports ADD COLUMN IF NOT EXISTS odometer_miles DECIMAL(12,2) NULL;
 ALTER TABLE dvir_reports ADD COLUMN IF NOT EXISTS engine_hours DECIMAL(12,2) NULL;
+CREATE TABLE IF NOT EXISTS dvir_inspection_results (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  company_id BIGINT NOT NULL,
+  dvir_report_id BIGINT NOT NULL,
+  item_category VARCHAR(120) NOT NULL,
+  item_name VARCHAR(220) NOT NULL,
+  result VARCHAR(40) NOT NULL DEFAULT 'pass',
+  severity VARCHAR(40) NOT NULL DEFAULT 'minor',
+  notes TEXT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+ALTER TABLE dvir_inspection_results ADD COLUMN IF NOT EXISTS checklist_item_id BIGINT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_stage80_dvir_templates_company_id_id
+  ON dvir_templates(company_id,id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_stage80_inspection_items_company_id_id
+  ON inspection_checklist_items(company_id,id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_stage80_dvir_reports_company_id_id
+  ON dvir_reports(company_id,id);
+ALTER TABLE dvir_reports DROP CONSTRAINT IF EXISTS fk_stage80_dvir_report_template_scope;
+ALTER TABLE dvir_reports ADD CONSTRAINT fk_stage80_dvir_report_template_scope
+  FOREIGN KEY(company_id,template_id) REFERENCES dvir_templates(company_id,id) NOT VALID;
+ALTER TABLE dvir_reports VALIDATE CONSTRAINT fk_stage80_dvir_report_template_scope;
+ALTER TABLE dvir_inspection_results DROP CONSTRAINT IF EXISTS fk_stage80_dvir_result_item_scope;
+ALTER TABLE dvir_inspection_results ADD CONSTRAINT fk_stage80_dvir_result_item_scope
+  FOREIGN KEY(company_id,checklist_item_id) REFERENCES inspection_checklist_items(company_id,id) NOT VALID;
+ALTER TABLE dvir_inspection_results VALIDATE CONSTRAINT fk_stage80_dvir_result_item_scope;
+ALTER TABLE dvir_inspection_results DROP CONSTRAINT IF EXISTS fk_stage80_dvir_result_report_scope;
+ALTER TABLE dvir_inspection_results ADD CONSTRAINT fk_stage80_dvir_result_report_scope
+  FOREIGN KEY(company_id,dvir_report_id) REFERENCES dvir_reports(company_id,id) NOT VALID;
+ALTER TABLE dvir_inspection_results VALIDATE CONSTRAINT fk_stage80_dvir_result_report_scope;
 ALTER TABLE dispatch_assignments DROP CONSTRAINT IF EXISTS ck_stage80_vehicle_confirmation_method;
 ALTER TABLE dispatch_assignments ADD CONSTRAINT ck_stage80_vehicle_confirmation_method CHECK
   (vehicle_confirmation_method IS NULL OR vehicle_confirmation_method IN ('unit_suffix','vin_suffix','qr','nfc')) NOT VALID;
@@ -403,7 +568,8 @@ CREATE INDEX IF NOT EXISTS idx_stage80_dispatch_assignment_lineage
 -- A compatibility projection cannot be independently edited. This trigger derives it
 -- from the authoritative open installation after every governed ledger mutation.
 CREATE OR REPLACE FUNCTION stage80_sync_device_vehicle_projection()
-RETURNS TRIGGER LANGUAGE plpgsql AS $$
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER
+SET search_path=pg_catalog,public AS $$
 DECLARE target_device BIGINT; target_company BIGINT; projected_vehicle BIGINT;
 BEGIN
   target_device:=COALESCE(NEW.device_id,OLD.device_id);
@@ -415,6 +581,15 @@ BEGIN
   UPDATE eld_devices SET vehicle_id=projected_vehicle,driver_id=NULL,updated_at=NOW()
    WHERE id=target_device AND company_id=target_company;
   RETURN COALESCE(NEW,OLD);
+END $$;
+REVOKE ALL ON FUNCTION stage80_sync_device_vehicle_projection() FROM PUBLIC;
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_app') THEN
+    REVOKE ALL ON FUNCTION stage80_sync_device_vehicle_projection() FROM opstrax_app;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_system') THEN
+    REVOKE ALL ON FUNCTION stage80_sync_device_vehicle_projection() FROM opstrax_system;
+  END IF;
 END $$;
 DROP TRIGGER IF EXISTS trg_stage80_sync_device_vehicle_projection ON device_installations;
 CREATE TRIGGER trg_stage80_sync_device_vehicle_projection

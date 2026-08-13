@@ -42,6 +42,11 @@ public static partial class EndpointMappings
         int? ExpectedRowVersion = null,
         string? IdempotencyKey = null);
 
+    private sealed record DeviceInstallationQuarantineResolveBody(
+        string ResolutionNotes,
+        string? CorrectedDeviceSerial = null,
+        string? CorrectedImei = null);
+
     private static readonly HashSet<string> InstallationRoles = new(StringComparer.OrdinalIgnoreCase)
     {
         "GPS", "ELD", "Dashcam", "OBD-II", "J1939/CAN", "Temperature", "Fuel", "Tire", "BLE Gateway", "Other"
@@ -151,8 +156,8 @@ public static partial class EndpointMappings
                         c.Parameters.AddWithValue("@idempotency", (object?)Clean(body.IdempotencyKey) ?? DBNull.Value);
                     }, ct);
                 await db.ExecuteAsync(
-                    "UPDATE eld_devices SET device_state='Installed',vehicle_id=@vid,driver_id=NULL,updated_at=NOW() WHERE company_id=@cid AND id=@did",
-                    c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@did", id); c.Parameters.AddWithValue("@vid", body.VehicleId); }, ct);
+                    "UPDATE eld_devices SET device_state='Installed',updated_at=NOW() WHERE company_id=@cid AND id=@did",
+                    c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@did", id); }, ct);
                 await AppendDeviceTransitionAsync(db, companyId, installationBranchId, id,
                     resources["deviceState"]?.ToString(), "Installed", actorId,
                     "installation_created", body.AssignmentReason, http.TraceIdentifier, ct);
@@ -233,6 +238,9 @@ public static partial class EndpointMappings
         return await db.RunInTenantTransactionAsync(companyId, async () =>
         {
             await LockInstallationIdentityAsync(db, companyId, id, null, ct);
+            if (await InstallationHasEventAtOrAfterAsync(db, companyId, installationId, effectiveTo, ct) != 0)
+                return Results.Conflict(ApiResponse<object>.Fail(
+                    "Removal cannot predate telemetry already attributed to this installation; use the current time or an append-only correction workflow"));
             var affected = await db.ExecuteAsync(
                 @"UPDATE device_installations
                   SET status='Removed',effective_to=@effective,removed_at=@effective,removed_by=@actor,
@@ -319,6 +327,9 @@ public static partial class EndpointMappings
                     return Results.BadRequest(ApiResponse<object>.Fail("Transfer time must follow the current installation start"));
 
                 var priorId = Convert.ToInt64(prior["id"]);
+                if (await InstallationHasEventAtOrAfterAsync(db, companyId, priorId, effectiveAt, ct) != 0)
+                    return Results.Conflict(ApiResponse<object>.Fail(
+                        "Transfer cannot predate telemetry already attributed to the current installation; use the current time or an append-only correction workflow"));
                 await db.ExecuteAsync(
                     @"UPDATE device_installations SET status='Removed',effective_to=@at,removed_at=@at,removed_by=@actor,
                          removal_reason=@reason,updated_at=NOW(),row_version=row_version+1 WHERE id=@id",
@@ -344,8 +355,8 @@ public static partial class EndpointMappings
                         c.Parameters.AddWithValue("@idempotency", (object?)Clean(body.IdempotencyKey) ?? DBNull.Value); c.Parameters.AddWithValue("@prior", priorId);
                     }, ct);
                 await db.ExecuteAsync(
-                    "UPDATE eld_devices SET device_state='Installed',vehicle_id=@vid,driver_id=NULL,updated_at=NOW() WHERE company_id=@cid AND id=@did",
-                    c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@did", id); c.Parameters.AddWithValue("@vid", body.VehicleId); }, ct);
+                    "UPDATE eld_devices SET device_state='Installed',updated_at=NOW() WHERE company_id=@cid AND id=@did",
+                    c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@did", id); }, ct);
                 await AppendDeviceTransitionAsync(db, companyId, installationBranchId, id, "Installed", "Installed", actorId,
                     "installation_transferred", $"{body.RemovalReason}; {body.AssignmentReason}", http.TraceIdentifier, ct);
                 await audit.LogAsync(http, "device.installation.transferred", "DeviceInstallation", newId,
@@ -366,6 +377,160 @@ public static partial class EndpointMappings
     private static Task<long> VehicleVisibleAsync(Database db, long companyId, long? branchId, long vehicleId, CancellationToken ct) =>
         db.ScalarLongAsync("SELECT COUNT(*) FROM vehicles WHERE id=@id AND company_id=@cid AND deleted_at IS NULL AND (@branch::bigint IS NULL OR branch_id=@branch)",
             c => { c.Parameters.AddWithValue("@id", vehicleId); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branch", (object?)branchId ?? DBNull.Value); }, ct);
+
+    private static Task<long> InstallationHasEventAtOrAfterAsync(
+        Database db, long companyId, long installationId, DateTimeOffset effectiveTo, CancellationToken ct) =>
+        db.ScalarLongAsync(
+            @"SELECT CASE WHEN EXISTS (
+                   SELECT 1 FROM location_events
+                    WHERE company_id=@cid AND installation_id=@iid AND event_time>=@effective
+                 ) OR EXISTS (
+                   SELECT 1 FROM canonical_telemetry_events
+                    WHERE company_id=@cid AND installation_id=@iid AND event_time>=@effective
+                 ) THEN 1 ELSE 0 END",
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid", companyId);
+                c.Parameters.AddWithValue("@iid", installationId);
+                c.Parameters.AddWithValue("@effective", effectiveTo);
+            }, ct);
+
+    private static async Task<IResult> DeviceInstallationQuarantineList(
+        HttpContext http, Database db, CancellationToken ct)
+    {
+        if (RequirePermission(http, "telemetry.devices.read") is { } denied) return denied;
+        var companyId = GetCompanyId(http);
+        var branchId = GetBranchId(http);
+        var rows = await db.RunInSystemScopeAsync(() => db.QueryAsync(
+            @"SELECT q.id,q.device_id,q.vehicle_id,q.installation_id,q.reason_code,q.evidence_json,
+                     q.detected_at,q.resolved_at,q.resolved_by,q.resolution_notes,
+                     d.device_serial,d.imei,d.device_state,v.vehicle_code
+                FROM device_installation_quarantine q
+                LEFT JOIN eld_devices d ON d.id=q.device_id AND d.company_id=q.company_id
+                LEFT JOIN vehicles v ON v.id=q.vehicle_id AND v.company_id=q.company_id
+               WHERE q.company_id=@cid AND q.resolved_at IS NULL
+                 AND (@branch::BIGINT IS NULL OR d.branch_id=@branch OR v.branch_id=@branch)
+               ORDER BY q.detected_at,q.id",
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid", companyId);
+                c.Parameters.AddWithValue("@branch", (object?)branchId ?? DBNull.Value);
+            }, ct), ct);
+        return Results.Ok(ApiResponse<object>.Ok(rows, "Unresolved fleet identity quarantine"));
+    }
+
+    private static async Task<IResult> DeviceInstallationQuarantineResolve(
+        HttpContext http, long id, DeviceInstallationQuarantineResolveBody body,
+        Database db, AuditService audit, CancellationToken ct)
+    {
+        if (RequirePermission(http, "telemetry.devices.manage") is { } denied) return denied;
+        var notes = Clean(body.ResolutionNotes);
+        if (notes is null || notes.Length < 8 || notes.Length > 2000)
+            return Results.BadRequest(ApiResponse<object>.Fail("Resolution notes must contain 8 to 2000 characters"));
+        var serial = Clean(body.CorrectedDeviceSerial);
+        var imei = Clean(body.CorrectedImei);
+        if (serial is not null && (serial.Length < 4 || serial.Length > 120 ||
+            !serial.All(ch => char.IsLetterOrDigit(ch) || ch is '-' or '_' or '.' or ':')))
+            return Results.BadRequest(ApiResponse<object>.Fail("Corrected serial must be 4 to 120 letters, numbers, dashes, underscores, periods, or colons"));
+        if (imei is not null && (imei.Length != 15 || !imei.All(char.IsDigit)))
+            return Results.BadRequest(ApiResponse<object>.Fail("Corrected IMEI must contain exactly 15 digits"));
+        var companyId = GetCompanyId(http);
+        var branchId = GetBranchId(http);
+        var actorId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+
+        try
+        {
+            return await db.RunInSystemTransactionAsync<IResult>(async () =>
+            {
+                var row = await db.QuerySingleAsync(
+                    @"SELECT q.id,q.device_id,q.installation_id,q.reason_code,d.branch_id
+                        FROM device_installation_quarantine q
+                        LEFT JOIN eld_devices d ON d.id=q.device_id AND d.company_id=q.company_id
+                        LEFT JOIN vehicles v ON v.id=q.vehicle_id AND v.company_id=q.company_id
+                       WHERE q.id=@id AND q.company_id=@cid AND q.resolved_at IS NULL
+                         AND (@branch::BIGINT IS NULL OR d.branch_id=@branch OR v.branch_id=@branch)
+                       FOR UPDATE OF q",
+                    c =>
+                    {
+                        c.Parameters.AddWithValue("@id", id);
+                        c.Parameters.AddWithValue("@cid", companyId);
+                        c.Parameters.AddWithValue("@branch", (object?)branchId ?? DBNull.Value);
+                    }, ct);
+                if (row is null) return Results.NotFound(ApiResponse<object>.Fail("Unresolved quarantine record not found"));
+                var reasonCode = row["reasonCode"]?.ToString() ?? "";
+                var deviceId = row["deviceId"] is null or DBNull ? (long?)null : Convert.ToInt64(row["deviceId"]);
+
+                var needsSerialCorrection = string.Equals(reasonCode, "duplicate_normalized_device_serial", StringComparison.Ordinal);
+                var needsImeiCorrection = string.Equals(reasonCode, "duplicate_normalized_imei", StringComparison.Ordinal);
+                var needsIdentifierCorrection = needsSerialCorrection || needsImeiCorrection ||
+                    string.Equals(reasonCode, "ambiguous_device_identifier", StringComparison.Ordinal);
+                if (needsIdentifierCorrection)
+                {
+                    if (deviceId is null || (serial is null && imei is null) ||
+                        (needsSerialCorrection && serial is null) || (needsImeiCorrection && imei is null))
+                        return Results.BadRequest(ApiResponse<object>.Fail(
+                            needsSerialCorrection ? "Duplicate serial quarantine requires a corrected serial" :
+                            needsImeiCorrection ? "Duplicate IMEI quarantine requires a corrected IMEI" :
+                            "Identifier ambiguity requires a corrected serial or IMEI"));
+                    var conflicts = await db.ScalarLongAsync(
+                        @"SELECT COUNT(*) FROM eld_devices other
+                           WHERE other.id<>@did AND other.deleted_at IS NULL
+                             AND ((@serial::TEXT IS NOT NULL AND
+                                   (LOWER(BTRIM(other.device_serial))=LOWER(BTRIM(@serial)) OR LOWER(BTRIM(other.imei))=LOWER(BTRIM(@serial))))
+                               OR (@imei::TEXT IS NOT NULL AND
+                                   (LOWER(BTRIM(other.imei))=LOWER(BTRIM(@imei)) OR LOWER(BTRIM(other.device_serial))=LOWER(BTRIM(@imei)))))",
+                        c =>
+                        {
+                            c.Parameters.AddWithValue("@did", deviceId.Value);
+                            c.Parameters.AddWithValue("@serial", (object?)serial ?? DBNull.Value);
+                            c.Parameters.AddWithValue("@imei", (object?)imei ?? DBNull.Value);
+                        }, ct);
+                    if (conflicts != 0)
+                        return Results.Conflict(ApiResponse<object>.Fail("Corrected identifiers still conflict with another registered device"));
+                    await db.ExecuteAsync(
+                        @"UPDATE eld_devices SET device_serial=COALESCE(@serial,device_serial),imei=COALESCE(@imei,imei),updated_at=NOW()
+                           WHERE id=@did AND company_id=@cid",
+                        c =>
+                        {
+                            c.Parameters.AddWithValue("@serial", (object?)serial ?? DBNull.Value);
+                            c.Parameters.AddWithValue("@imei", (object?)imei ?? DBNull.Value);
+                            c.Parameters.AddWithValue("@did", deviceId.Value);
+                            c.Parameters.AddWithValue("@cid", companyId);
+                        }, ct);
+                }
+
+                await db.ExecuteAsync(
+                    @"UPDATE device_installation_quarantine
+                         SET resolved_at=NOW(),resolved_by=@actor,resolution_notes=@notes
+                       WHERE id=@id AND company_id=@cid AND resolved_at IS NULL",
+                    c =>
+                    {
+                        c.Parameters.AddWithValue("@actor", actorId > 0 ? actorId : DBNull.Value);
+                        c.Parameters.AddWithValue("@notes", notes);
+                        c.Parameters.AddWithValue("@id", id);
+                        c.Parameters.AddWithValue("@cid", companyId);
+                    }, ct);
+                if (deviceId is { } resolvedDeviceId)
+                {
+                    await db.ExecuteAsync(
+                        @"UPDATE eld_devices d SET device_state=CASE
+                              WHEN EXISTS (SELECT 1 FROM device_installations i WHERE i.company_id=d.company_id AND i.device_id=d.id AND i.status='Verified' AND i.effective_to IS NULL) THEN 'Verified'
+                              WHEN EXISTS (SELECT 1 FROM device_installations i WHERE i.company_id=d.company_id AND i.device_id=d.id AND i.status='Installed' AND i.effective_to IS NULL) THEN 'Installed'
+                              ELSE 'Registered' END,updated_at=NOW()
+                           WHERE d.id=@did AND d.company_id=@cid AND d.device_state='Quarantined'
+                             AND NOT EXISTS (SELECT 1 FROM device_installation_quarantine q WHERE q.company_id=d.company_id AND q.device_id=d.id AND q.resolved_at IS NULL)",
+                        c => { c.Parameters.AddWithValue("@did", resolvedDeviceId); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+                }
+                await audit.LogAsync(http, "device.installation.quarantine.resolved", "DeviceInstallationQuarantine", id,
+                    System.Text.Json.JsonSerializer.Serialize(new { reasonCode, deviceId, correctedSerial = serial is not null, correctedImei = imei is not null, notes }), ct);
+                return Results.Ok(ApiResponse<object>.Ok(new { id, reasonCode, resolved = true }, "Fleet identity quarantine resolved"));
+            }, ct);
+        }
+        catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.UniqueViolation or PostgresErrorCodes.CheckViolation)
+        {
+            return Results.Conflict(ApiResponse<object>.Fail("Corrected device identity conflicts with the governed registry"));
+        }
+    }
 
     private static Task<Dictionary<string, object?>?> LoadInstallationResourcesAsync(
         Database db,long companyId,long? authorizedBranchId,long deviceId,long vehicleId,CancellationToken ct) =>

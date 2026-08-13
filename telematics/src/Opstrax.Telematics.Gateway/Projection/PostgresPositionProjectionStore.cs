@@ -81,6 +81,9 @@ internal sealed class PostgresPositionProjectionStore : IPositionProjectionStore
         {
             VehicleId = device.VehicleId,
             InstallationId = device.InstallationId,
+            AssignmentId = device.AssignmentId,
+            TripId = device.TripId,
+            DriverId = device.DriverId,
         };
 
         // ── (a) idempotent inbox insert ─────────────────────────────────────────
@@ -219,10 +222,8 @@ internal sealed class PostgresPositionProjectionStore : IPositionProjectionStore
                      WHERE candidate.company_id=device.company_id
                        AND candidate.vehicle_id=event_installation.vehicle_id
                        AND candidate.assigned_at<=@device_fix_time
-                       AND (COALESCE(candidate.cancelled_at,candidate.completed_at,
-                                     candidate.actual_delivery_at) IS NULL
-                            OR COALESCE(candidate.cancelled_at,candidate.completed_at,
-                                        candidate.actual_delivery_at)>@device_fix_time)
+                       AND COALESCE(LEAST(candidate.actual_delivery_at,candidate.completed_at,
+                                          candidate.cancelled_at),'infinity'::timestamptz)>@device_fix_time
                      ORDER BY candidate.assigned_at DESC,candidate.id DESC
                      LIMIT 1
               ) assignment ON TRUE

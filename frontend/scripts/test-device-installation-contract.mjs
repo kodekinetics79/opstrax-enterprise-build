@@ -19,6 +19,8 @@ assert.match(service, /\/installations\/\$\{current\.id\}\/remove/, "Removal mus
 assert.match(service, /expectedRowVersion: current\.rowVersion/, "Removal must send optimistic concurrency state");
 assert.match(service, /idempotencyKey: installationMutationKey\(deviceId\)/, "Installation must be idempotent");
 assert.match(service, /\/installations\/transfer/, "Transfer must use the atomic transfer endpoint");
+assert.match(service, /\/api\/telemetry\/installation-quarantine/, "Identity conflicts must use the governed quarantine API");
+assert.match(service, /resolveIdentityQuarantine/, "Operators must have a supported quarantine resolution mutation");
 assert.match(service, /result: "Passed"/, "Commissioning must send the canonical successful result");
 assert.match(service, /activationVerifiedAt: row\.activation_verified_at/, "Activation heartbeat evidence must be mapped from the installation contract");
 assert.match(service, /if \(!current\.activationVerifiedAt\)/, "Commissioning must reject installations without activation evidence");
@@ -32,6 +34,8 @@ assert.doesNotMatch(devicesPage, /Metadata edits were captured/, "Unsupported me
 assert.match(devicesPage, /Metadata read-only/, "Unsupported metadata must be labelled read-only");
 assert.match(devicesPage, /Installation History/, "The detail drawer must render installation history");
 assert.match(devicesPage, /Device lifecycle action failed/, "Lifecycle mutation failures must be rendered to the operator");
+assert.match(devicesPage, /Identity Quarantine/, "Identity quarantine must be visible without manual database identifiers");
+assert.match(devicesPage, /Resolve with audit evidence/, "Quarantine resolution must retain an explicit evidence workflow");
 assert.doesNotMatch(vehiclesPage, /withDeviceEvidence/, "Vehicle health must not overwrite the API-selected primary installation with an unordered client-side device join");
 assert.match(devicesPage, /authenticated device heartbeat must verify activation/, "Commissioning must expose its activation-evidence gate");
 assert.match(vehiclesPage, /if \(deviceId == null\) return "Unknown"/, "Vehicles without a current device must be Unknown");

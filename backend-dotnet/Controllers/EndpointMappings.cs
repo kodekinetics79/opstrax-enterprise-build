@@ -222,6 +222,8 @@ public static partial class EndpointMappings
         app.MapPost("/api/telemetry/devices/{id:long}/installations/{installationId:long}/commission", DeviceInstallationCommission);
         app.MapPost("/api/telemetry/devices/{id:long}/installations/{installationId:long}/remove", DeviceInstallationRemove);
         app.MapPost("/api/telemetry/devices/{id:long}/installations/transfer", DeviceInstallationTransfer);
+        app.MapGet("/api/telemetry/installation-quarantine", DeviceInstallationQuarantineList);
+        app.MapPost("/api/telemetry/installation-quarantine/{id:long}/resolve", DeviceInstallationQuarantineResolve);
         app.MapGet("/api/devices", DeviceList);
         app.MapGet("/api/devices/{id:long}", DeviceDetail);
         app.MapPost("/api/devices/provision", DeviceProvision);
@@ -1019,7 +1021,7 @@ public static partial class EndpointMappings
         app.MapGet("/api/maintenance/inspections",              MaintInspectionsList);
         app.MapPost("/api/maintenance/inspections",
             (HttpContext http, MaintInspectionBody body, Database db, AuditService audit, NotificationService notif, CancellationToken ct) =>
-            MaintInspectionCreate(http, body, db, audit, notif, ct));
+            MaintInspectionCreate(http, body, db, audit, notif, authenticatedDriverSubmission: false, ct: ct));
         app.MapGet("/api/maintenance/inspections/{id:long}",    MaintInspectionDetail);
         app.MapPost("/api/maintenance/inspections/{id:long}/review", DvirMechanicReviewPilot);
         app.MapGet("/api/maintenance/defects",                  MaintDefectsList);
@@ -2146,13 +2148,13 @@ public static partial class EndpointMappings
         ["Dispatcher"]               = ["dashboard:view","vehicles:view","drivers:view","shipments:view","shipments:create","shipments:update","shipments:export","dispatch:view","dispatch:create","dispatch:update","dispatch:assign","dispatch:cancel","carriers:view","fuel:view","alerts:view","alerts:acknowledge","customers:view","reports:view","notifications:view","messages:send"],
         // The Driver role is PORTAL-ONLY and isolated: a driver's token carries only what the
         // mobile driver portal (/driver/*, all gated driver:self) actually needs — self service,
-        // in-app messaging with dispatch, their notifications, and maintenance:create (a narrow
-        // WRITE the DVIR submit needs, since DriverSubmitDvir delegates to MaintInspectionCreate).
+        // in-app messaging with dispatch, and their notifications. DVIR submission is authorized
+        // by the dedicated driver route and does not grant access to back-office maintenance writes.
         // It deliberately grants NO back-office READS (dispatch/shipments/vehicles/drivers/safety/
         // compliance), so a driver can never pull tenant operational data even by calling an admin
         // API directly. Driver is an AUTHORITATIVE role in RolePermissionReconciler, so this list
         // is the exact grant set — stray grants are revoked, keeping the portal genuinely isolated.
-        ["Driver"]                   = ["driver:self","notifications:view","messages:send","maintenance:create"],
+        ["Driver"]                   = ["driver:self","notifications:view","messages:send"],
         ["Safety Manager"]           = ["dashboard:view","safety:view","safety:create","safety:update","safety:review","safety:evidence:view","safety:evidence:export","alerts:view","alerts:acknowledge","alerts:close","compliance:view","compliance:update","compliance:export","reports:view","notifications:view"],
         ["Maintenance Manager"]      = ["dashboard:view","vehicles:view","maintenance:view","maintenance:create","maintenance:update","maintenance:close","alerts:view","alerts:acknowledge","alerts:close","compliance:view","reports:view","notifications:view"],
         ["Customer"]                 = ["shipments:view","customer_portal:view","alerts:view"],
@@ -15662,11 +15664,13 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         try
         {
             device = await db.QuerySingleInSystemScopeAsync(
-                $@"SELECT e.id, e.company_id, e.vehicle_id, e.driver_id, e.status, e.device_serial,
+                   $@"SELECT e.id, e.company_id, e.vehicle_id, e.driver_id, e.status, e.device_state, e.device_serial,
                           e.hmac_secret_encrypted, e.hmac_key_version,
                           e.hmac_previous_secret_encrypted, e.hmac_previous_valid_until,
                           CASE WHEN e.api_key_hash=encode(sha256(@rawKey::bytea), 'hex') THEN 'current' ELSE 'previous' END credential_slot,
                           COUNT(*) OVER() credential_match_count,
+                          EXISTS (SELECT 1 FROM device_installation_quarantine q
+                                   WHERE q.company_id=e.company_id AND q.device_id=e.id AND q.resolved_at IS NULL) has_unresolved_quarantine,
                           v.branch_id vehicle_branch_id{legacyProjection}
                    FROM eld_devices e
                    LEFT JOIN vehicles v ON v.id=e.vehicle_id AND v.company_id=e.company_id AND v.deleted_at IS NULL
@@ -15699,6 +15703,12 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         {
             System.Threading.Interlocked.Increment(ref _telemetryRejected);
             return Results.Json(ApiResponse<object>.Fail("Device is not active"), statusCode: 403);
+        }
+        if (Convert.ToBoolean(device.GetValueOrDefault("hasUnresolvedQuarantine") ?? false) ||
+            string.Equals(device.GetValueOrDefault("deviceState")?.ToString(), "Quarantined", StringComparison.OrdinalIgnoreCase))
+        {
+            System.Threading.Interlocked.Increment(ref _telemetryRejected);
+            return Results.Json(ApiResponse<object>.Fail("Device identity is quarantined"), statusCode: 403);
         }
 
         var deviceId = Convert.ToInt64(device["id"]);
@@ -16557,7 +16567,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         // Resolve the device by IMEI (or by device_serial == imei, so a serial-registered
         // device also works). Binds company/vehicle from the record — never from the body.
         var device = await db.QuerySingleInSystemScopeAsync(
-            @"SELECT e.id,e.company_id,e.status,COUNT(*) OVER() identity_match_count
+            @"SELECT e.id,e.company_id,e.status,e.device_state,COUNT(*) OVER() identity_match_count,
+                     EXISTS (SELECT 1 FROM device_installation_quarantine q
+                              WHERE q.company_id=e.company_id AND q.device_id=e.id AND q.resolved_at IS NULL) has_unresolved_quarantine
               FROM eld_devices e
               WHERE (e.imei=@imei OR e.device_serial=@imei)
                 AND e.company_id IS NOT NULL AND e.company_id>0 AND e.deleted_at IS NULL
@@ -16568,6 +16580,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var devStatus = device.GetValueOrDefault("status")?.ToString() ?? "";
         if (devStatus.Trim().ToLowerInvariant() is not ("active" or "provisioning" or "pending"))
             return Results.Json(ApiResponse<object>.Fail("Device is not enabled for telemetry"), statusCode: 403);
+        if (Convert.ToBoolean(device.GetValueOrDefault("hasUnresolvedQuarantine") ?? false) ||
+            string.Equals(device.GetValueOrDefault("deviceState")?.ToString(), "Quarantined", StringComparison.OrdinalIgnoreCase))
+            return Results.Json(ApiResponse<object>.Fail("Device identity is quarantined"), statusCode: 403);
 
         var deviceId  = Convert.ToInt64(device["id"]);
         var companyId = Convert.ToInt64(device["companyId"]);
@@ -19183,17 +19198,22 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
     // POST /api/maintenance/inspections — submit a DVIR with checklist results
     private static async Task<IResult> MaintInspectionCreate(HttpContext http, MaintInspectionBody body,
-        Database db, AuditService audit, NotificationService notif, CancellationToken ct)
+        Database db, AuditService audit, NotificationService notif, bool authenticatedDriverSubmission, CancellationToken ct)
     {
         var companyId = GetCompanyId(http);
         return await db.RunInTenantTransactionAsync(companyId,
-            () => MaintInspectionCreateInTransaction(http, body, db, audit, notif, ct), ct);
+            () => MaintInspectionCreateInTransaction(http, body, db, audit, notif, authenticatedDriverSubmission, ct), ct);
     }
 
     private static async Task<IResult> MaintInspectionCreateInTransaction(HttpContext http, MaintInspectionBody body,
-        Database db, AuditService audit, NotificationService notif, CancellationToken ct)
+        Database db, AuditService audit, NotificationService notif, bool authenticatedDriverSubmission, CancellationToken ct)
     {
-        if (RequirePermission(http, "maintenance:create") is { } denied) return denied;
+        if (authenticatedDriverSubmission)
+        {
+            if (RequirePermission(http, "driver:self") is { } denied) return denied;
+        }
+        else if (RequirePermission(http, "maintenance:create") is { } denied) return denied;
+        var isDriverSubmission = authenticatedDriverSubmission;
         var companyId = GetCompanyId(http);
         var userId    = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
 
@@ -19226,13 +19246,13 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             return Results.BadRequest(ApiResponse<object>.Fail("Idempotency key cannot exceed 100 characters"));
         var requestHash = PilotSha256(new
         {
-            body.DriverId, body.VehicleId, body.TripId,
+            body.DriverId, body.VehicleId, body.TripId, body.TemplateId,
             inspectionType = body.InspectionType?.Trim().ToLowerInvariant() ?? "pre_trip",
             body.OdometerMiles, body.EngineHours, notes = body.Notes?.Trim(),
             driverAttestation = body.Attestation?.Trim(), body.AttestationAccepted,
             checklistItems = body.ChecklistItems?.Select(item => new
             {
-                category = item.Category?.Trim(), itemName = item.ItemName?.Trim(),
+                item.ChecklistItemId, category = item.Category?.Trim(), itemName = item.ItemName?.Trim(),
                 result = item.Result?.Trim().ToLowerInvariant(), severity = item.Severity?.Trim().ToLowerInvariant(),
                 notes = item.Notes?.Trim()
             }).ToArray() ?? []
@@ -19265,11 +19285,11 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         {
             reportId = await db.InsertAsync(
             @"INSERT INTO dvir_reports
-                (company_id, branch_id, report_number, idempotency_key, idempotency_request_hash, driver_id, vehicle_id, trip_id,
+                (company_id, branch_id, report_number, idempotency_key, idempotency_request_hash, driver_id, vehicle_id, trip_id, template_id,
                  inspection_type, inspection_status, defects_found, safe_to_operate,
                  driver_signature_status,signature_attestation_text,signature_hash,signed_at,signed_by,
                  odometer_miles,engine_hours,notes,submitted_at)
-              VALUES (@cid, @branchId, @rnum, @idempotencyKey, @requestHash, @did, @vid, @tid,
+              VALUES (@cid, @branchId, @rnum, @idempotencyKey, @requestHash, @did, @vid, @tid, @templateId,
                       @itype, @status, @defects, @safe,
                       @signatureStatus,@signatureAttestation,@signatureHash,@signedAt,@signedBy,
                       @odo,@hrs,@notes,NOW())",
@@ -19283,11 +19303,11 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 c.Parameters.AddWithValue("@did",     body.DriverId);
                 c.Parameters.AddWithValue("@vid",     body.VehicleId);
                 c.Parameters.AddWithValue("@tid",     body.TripId ?? (object)DBNull.Value);
+                c.Parameters.AddWithValue("@templateId", body.TemplateId ?? (object)DBNull.Value);
                 c.Parameters.AddWithValue("@itype",   body.InspectionType ?? "pre_trip");
                 c.Parameters.AddWithValue("@status",  status);
                 c.Parameters.AddWithValue("@defects", body.ChecklistItems?.Count(i => i.Result == "fail") ?? 0);
                 c.Parameters.AddWithValue("@safe",    !hasCritical);
-                var isDriverSubmission = string.Equals(http.Items[AuthRoleItemKey]?.ToString(), "Driver", StringComparison.OrdinalIgnoreCase);
                 c.Parameters.AddWithValue("@signatureStatus", isDriverSubmission ? "Signed" : "Pending");
                 c.Parameters.AddWithValue("@signatureAttestation", isDriverSubmission ? DvirDriverAttestation : DBNull.Value);
                 c.Parameters.AddWithValue("@signatureHash", isDriverSubmission
@@ -19317,12 +19337,13 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             {
                 await db.InsertAsync(
                     @"INSERT INTO dvir_inspection_results
-                        (company_id, dvir_report_id, item_category, item_name, result, severity, notes)
-                      VALUES (@cid, @rid, @cat, @name, @result, @sev, @notes)",
+                        (company_id, dvir_report_id, checklist_item_id, item_category, item_name, result, severity, notes)
+                      VALUES (@cid, @rid, @itemId, @cat, @name, @result, @sev, @notes)",
                     c =>
                     {
                         c.Parameters.AddWithValue("@cid",    companyId);
                         c.Parameters.AddWithValue("@rid",    reportId);
+                        c.Parameters.AddWithValue("@itemId", item.ChecklistItemId ?? (object)DBNull.Value);
                         c.Parameters.AddWithValue("@cat",    item.Category ?? "general");
                         c.Parameters.AddWithValue("@name",   item.ItemName ?? "Inspection item");
                         c.Parameters.AddWithValue("@result", item.Result ?? "pass");
@@ -19828,12 +19849,14 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             return Results.Json(ApiResponse<object>.Fail("X-Nonce must contain 16 to 128 characters"), statusCode: 422);
 
         var device = await db.QuerySingleInSystemScopeAsync(
-            @"SELECT d.id, d.company_id, d.vehicle_id, d.driver_id, d.device_serial, d.status,
+            @"SELECT d.id, d.company_id, d.vehicle_id, d.driver_id, d.device_serial, d.status,d.device_state,
                      d.branch_id device_branch_id, d.hmac_secret_encrypted,
                      d.hmac_previous_secret_encrypted, d.hmac_previous_valid_until,
                      v.branch_id vehicle_branch_id, dr.id authorized_driver_id,
                      (encode(sha256(@key::bytea), 'hex') = d.api_key_hash) matches_current_api_key,
-                     COUNT(*) OVER() credential_match_count
+                     COUNT(*) OVER() credential_match_count,
+                     EXISTS (SELECT 1 FROM device_installation_quarantine q
+                              WHERE q.company_id=d.company_id AND q.device_id=d.id AND q.resolved_at IS NULL) has_unresolved_quarantine
               FROM eld_devices d
               LEFT JOIN vehicles v ON v.id=d.vehicle_id AND v.company_id=d.company_id AND v.deleted_at IS NULL
               LEFT JOIN drivers dr ON dr.id=COALESCE(d.driver_id,v.assigned_driver_id)
@@ -19849,6 +19872,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             return Results.Unauthorized();
         if (!string.Equals(device["status"]?.ToString(), "Active", StringComparison.OrdinalIgnoreCase))
             return Results.StatusCode(403);
+        if (Convert.ToBoolean(device.GetValueOrDefault("hasUnresolvedQuarantine") ?? false) ||
+            string.Equals(device.GetValueOrDefault("deviceState")?.ToString(), "Quarantined", StringComparison.OrdinalIgnoreCase))
+            return Results.Json(ApiResponse<object>.Fail("Device identity is quarantined"), statusCode: 403);
 
         var pii = http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>();
         var previousValidUntil = device.GetValueOrDefault("hmacPreviousValidUntil") switch
@@ -20300,6 +20326,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         long VehicleId,
         long DriverId,
         long? TripId = null,
+        long? TemplateId = null,
         string? InspectionType = "pre_trip",
         decimal? OdometerMiles = null,
         decimal? EngineHours = null,
@@ -20309,6 +20336,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         string? Attestation = null);
 
     private sealed record MaintChecklistItemBody(
+        long? ChecklistItemId,
         string? Category,
         string? ItemName,
         string? Result,
@@ -22895,7 +22923,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                      da.notes, da.exception_count, da.trip_id, da.previous_status,
                      COALESCE(j.job_number, j.job_code) shipment_number,
                      j.pickup_address, j.dropoff_address, customer.name customer_name,
-                     v.vehicle_code, RIGHT(NULLIF(v.vin,''),6) vehicle_vin_suffix,
+                     v.vehicle_code,
+                     LEAST(4,LENGTH(NULLIF(BTRIM(v.vehicle_code),''))) vehicle_unit_suffix_length,
+                     RIGHT(NULLIF(v.vin,''),6) vehicle_vin_suffix,
                      v.out_of_service vehicle_oos,
                      da.vehicle_confirmed_at,da.vehicle_confirmed_by_driver_id,da.vehicle_confirmation_method,
                      da.pretrip_dvir_id,da.operational_started_at,
@@ -22981,7 +23011,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             return Results.BadRequest(ApiResponse<object>.Fail(
                 "method must be unit_suffix or vin_suffix; QR/NFC require a configured signed-tag registry"));
         var supplied = body.Reference?.Trim().ToUpperInvariant() ?? "";
-        if (supplied.Length is < 3 or > 16 || !System.Text.RegularExpressions.Regex.IsMatch(supplied,"^[A-Z0-9-]+$"))
+        if (supplied.Length is < 1 or > 16 || !System.Text.RegularExpressions.Regex.IsMatch(supplied,"^[A-Z0-9-]+$"))
             return Results.BadRequest(ApiResponse<object>.Fail("confirmation reference is invalid"));
 
         return await db.RunInTenantTransactionAsync(companyId, async () =>
@@ -23315,7 +23345,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
               ORDER BY inspection_type, template_name",
             c => c.Parameters.AddWithValue("@cid", companyId), ct);
         var items = await db.QueryAsync(
-            @"SELECT ci.template_id, ci.item_category, ci.item_label AS item_name, ci.sort_order, ci.required AS is_required
+            @"SELECT ci.id,ci.template_id, ci.item_category, ci.item_label AS item_name, ci.sort_order, ci.required AS is_required
               FROM inspection_checklist_items ci
               JOIN dvir_templates t ON t.id = ci.template_id AND t.company_id=@cid
               ORDER BY ci.template_id, ci.sort_order",
@@ -23344,6 +23374,60 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (body.VehicleId <= 0) return Results.BadRequest(ApiResponse<object>.Fail("vehicleId is required"));
         if (!body.AttestationAccepted || !string.Equals(body.Attestation?.Trim(), DvirDriverAttestation, StringComparison.Ordinal))
             return Results.BadRequest(ApiResponse<object>.Fail("The exact driver DVIR attestation and explicit acceptance are required"));
+        if (body.TemplateId is null or <= 0)
+            return Results.BadRequest(ApiResponse<object>.Fail("An active tenant DVIR template is required"));
+
+        var template = await db.QuerySingleAsync(
+            @"SELECT id,inspection_type FROM dvir_templates
+              WHERE id=@id AND company_id=@cid AND status='Active' LIMIT 1",
+            c => { c.Parameters.AddWithValue("@id", body.TemplateId.Value); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+        if (template is null)
+            return Results.BadRequest(ApiResponse<object>.Fail("The selected DVIR template is not active for this tenant"));
+        var templateType = template["inspectionType"]?.ToString()?.Trim().ToLowerInvariant() ?? "";
+        var requestedType = body.InspectionType?.Trim().ToLowerInvariant() ?? "pre_trip";
+        if (!string.Equals(templateType.Replace('-', '_'), requestedType.Replace('-', '_'), StringComparison.Ordinal))
+            return Results.BadRequest(ApiResponse<object>.Fail("DVIR inspection type does not match the selected template"));
+
+        var governedItems = await db.QueryAsync(
+            @"SELECT id,item_category,item_label,required FROM inspection_checklist_items
+              WHERE company_id=@cid AND template_id=@tid AND status='Active' ORDER BY sort_order,id",
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@tid", body.TemplateId.Value); }, ct);
+        if (governedItems.Count == 0)
+            return Results.Conflict(ApiResponse<object>.Fail("The selected DVIR template has no active checklist items"));
+        var submitted = body.ChecklistItems ?? [];
+        if (submitted.Count == 0 || submitted.Any(item => item.ChecklistItemId is null or <= 0))
+            return Results.BadRequest(ApiResponse<object>.Fail("Every DVIR answer must identify its governed checklist item"));
+        var duplicateItem = submitted.GroupBy(item => item.ChecklistItemId!.Value).Any(group => group.Count() != 1);
+        if (duplicateItem)
+            return Results.BadRequest(ApiResponse<object>.Fail("DVIR checklist answers cannot contain duplicate items"));
+        var governedById = governedItems.ToDictionary(item => Convert.ToInt64(item["id"]));
+        if (submitted.Any(item => !governedById.ContainsKey(item.ChecklistItemId!.Value)))
+            return Results.BadRequest(ApiResponse<object>.Fail("DVIR contains an unknown or inactive checklist item"));
+        var submittedIds = submitted.Select(item => item.ChecklistItemId!.Value).ToHashSet();
+        if (governedItems.Any(item => Convert.ToBoolean(item["required"]) && !submittedIds.Contains(Convert.ToInt64(item["id"]))))
+            return Results.BadRequest(ApiResponse<object>.Fail("Every required DVIR checklist item must be answered"));
+        if (submitted.Any(item => item.Result?.Trim().ToLowerInvariant() is not ("pass" or "fail" or "na")))
+            return Results.BadRequest(ApiResponse<object>.Fail("DVIR results must be pass, fail, or na"));
+        if (submitted.Any(item =>
+            Convert.ToBoolean(governedById[item.ChecklistItemId!.Value]["required"]) &&
+            string.Equals(item.Result?.Trim(), "na", StringComparison.OrdinalIgnoreCase)))
+            return Results.BadRequest(ApiResponse<object>.Fail("Required DVIR checklist items must be answered pass or fail"));
+        if (submitted.Any(item => string.Equals(item.Result?.Trim(), "fail", StringComparison.OrdinalIgnoreCase) &&
+            item.Severity?.Trim().ToLowerInvariant() is not ("minor" or "major" or "critical")))
+            return Results.BadRequest(ApiResponse<object>.Fail("Every failed DVIR item requires minor, major, or critical severity"));
+
+        var normalizedChecklist = submitted.Select(item =>
+        {
+            var governed = governedById[item.ChecklistItemId!.Value];
+            var result = item.Result!.Trim().ToLowerInvariant();
+            return new MaintChecklistItemBody(
+                item.ChecklistItemId,
+                governed["itemCategory"]?.ToString() ?? "general",
+                governed["itemLabel"]?.ToString() ?? "Inspection item",
+                result,
+                result == "fail" ? item.Severity!.Trim().ToLowerInvariant() : "minor",
+                item.Notes?.Trim());
+        }).ToList();
 
         // A driver may inspect only their assigned vehicle or a vehicle on one of their
         // active dispatch assignments. Tenant membership alone is not authorization: it
@@ -23361,12 +23445,12 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (vehicleExists == 0) return Results.Forbid();
 
         // Override payload driverId with session-derived driver identity — never trust payload
-        var secureBody = body with { DriverId = driverId };
+        var secureBody = body with { DriverId = driverId, ChecklistItems = normalizedChecklist };
         // The report, checklist, defect/OOS interlock, audit row, and notification outbox
         // are a single idempotent unit. A failure after report insertion must roll back so
         // the same idempotency key can be safely retried instead of replaying a partial DVIR.
         return await db.RunInTenantTransactionAsync(companyId,
-            () => MaintInspectionCreate(http, secureBody, db, audit, notif, ct), ct);
+            () => MaintInspectionCreate(http, secureBody, db, audit, notif, authenticatedDriverSubmission: true, ct: ct), ct);
     }
 
     private static async Task<IResult> DriverCoachingTasks(HttpContext http, Database db, CancellationToken ct)

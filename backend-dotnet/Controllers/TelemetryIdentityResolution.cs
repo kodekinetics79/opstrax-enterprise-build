@@ -53,7 +53,7 @@ public static partial class EndpointMappings
             @"SELECT id,trip_id,driver_id
               FROM dispatch_assignments
               WHERE company_id=@cid AND vehicle_id=@vid AND assigned_at<=@at
-                AND COALESCE(actual_delivery_at,completed_at,cancelled_at,'infinity'::timestamptz)>@at
+                AND COALESCE(LEAST(actual_delivery_at,completed_at,cancelled_at),'infinity'::timestamptz)>@at
                 AND (assignment_status NOT IN ('delivered','cancelled')
                      OR actual_delivery_at IS NOT NULL OR completed_at IS NOT NULL OR cancelled_at IS NOT NULL)
               ORDER BY assigned_at DESC,id DESC LIMIT 2",
