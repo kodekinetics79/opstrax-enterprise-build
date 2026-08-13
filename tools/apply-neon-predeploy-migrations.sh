@@ -51,6 +51,7 @@
 #   stage76  FINAL telemetry default-deny/exact runtime ACL reconciliation
 #   stage77  Protected-environment authorization reference bootstrap
 #   stage78  Protected-environment country-profile runtime contract
+#   stage79  Protected-environment tenant-provisioning runtime contract
 #
 # WHAT IT DELIBERATELY SKIPS
 #   stage19/20/22 (the broad Row-Level Security cutover). Stage49 itself is
@@ -136,6 +137,7 @@ MIGRATIONS=(
   2026_08_02_stage75_bounded_support_access
   2026_08_12_stage77_protected_role_bootstrap
   2026_08_13_stage78_country_profiles_runtime_contract
+  2026_08_13_stage79_tenant_provisioning_runtime_contract
 )
 
 echo "Target host: $(printf '%s' "$NEON_PG_URI" | sed -E 's|.*@([^/:?]+).*|\1|')"
@@ -187,7 +189,8 @@ for m in "${MIGRATIONS[@]}"; do
     2026_08_02_stage74_retention_policy_production_contract|\
     2026_08_02_stage75_bounded_support_access|\
     2026_08_12_stage77_protected_role_bootstrap|\
-    2026_08_13_stage78_country_profiles_runtime_contract) repair_migration=true ;;
+    2026_08_13_stage78_country_profiles_runtime_contract|\
+    2026_08_13_stage79_tenant_provisioning_runtime_contract) repair_migration=true ;;
   esac
   if [ "$applied" = "1" ] && [ "$repair_migration" = false ]; then
     echo "── $m: already applied (ledger) — skipping"
@@ -247,7 +250,8 @@ BEGIN
       ('2026_08_02_stage74_retention_policy_production_contract'),
       ('2026_08_02_stage75_bounded_support_access'),
       ('2026_08_12_stage77_protected_role_bootstrap'),
-      ('2026_08_13_stage78_country_profiles_runtime_contract')) required(version)
+      ('2026_08_13_stage78_country_profiles_runtime_contract'),
+      ('2026_08_13_stage79_tenant_provisioning_runtime_contract')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN RAISE EXCEPTION 'Required owner/pilot migration ledger missing or duplicated'; END IF;
   IF to_regclass('public.uq_ftms_dorders_company_number') IS NULL
@@ -320,6 +324,26 @@ BEGIN
      OR NOT EXISTS (SELECT 1 FROM country_profiles WHERE country_code='US' AND default_currency='USD')
      OR NOT EXISTS (SELECT 1 FROM country_profiles WHERE country_code='SA' AND text_direction='rtl') THEN
     RAISE EXCEPTION 'Stage78 country-profile runtime catalog is incomplete';
+  END IF;
+  IF to_regclass('public.password_reset_tokens') IS NULL
+     OR to_regclass('public.feature_flags') IS NULL
+     OR to_regclass('public.ux_users_company_email_ci') IS NULL
+     OR EXISTS (
+       SELECT 1 FROM (VALUES
+         ('companies','legal_name'),('companies','website'),('companies','fleet_size'),
+         ('companies','tax_id'),('companies','primary_contact_name'),
+         ('companies','primary_contact_email'),('companies','primary_contact_phone'),
+         ('companies','billing_email'),('tenant_subscriptions','billing_cycle'),
+         ('feature_flags','environment'),('password_reset_tokens','token_hash')
+       ) required(table_name,column_name)
+       WHERE NOT EXISTS (
+         SELECT 1 FROM information_schema.columns actual
+         WHERE actual.table_schema='public'
+           AND actual.table_name=required.table_name
+           AND actual.column_name=required.column_name
+       )
+     ) THEN
+    RAISE EXCEPTION 'Stage79 tenant-provisioning runtime contract is incomplete';
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns

@@ -105,6 +105,15 @@ psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -c 'DROP TABLE data_retention_policies
 # Simulate a ledgered Stage42 schema loss too. The owner runner must recreate the credential
 # registry before terminal Stage58/76 restore its policies and secret-column boundary.
 psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -c 'DROP TABLE telemetry_gateways'
+# Simulate a ledgered Stage79 tenant-provisioning schema loss. The repair migration
+# must restore all write-path dependencies before terminal Stage58 restores exact
+# non-forgeable policies and least-privilege grants.
+psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q <<'SQL'
+ALTER TABLE companies DROP COLUMN legal_name;
+ALTER TABLE tenant_subscriptions DROP COLUMN billing_cycle;
+DROP TABLE feature_flags;
+DROP TABLE password_reset_tokens;
+SQL
 # Use the real runner so Stage42/74 recreate their tables and the terminal Stage58
 # reconciliation restores FORCE-RLS policies and restricted-role grants.
 ./tools/apply-neon-predeploy-migrations.sh >"$log_dir/pass3.log" 2>&1
@@ -274,6 +283,7 @@ BEGIN
       ('2026_08_02_stage75_bounded_support_access'),
       ('2026_08_12_stage77_protected_role_bootstrap'),
       ('2026_08_13_stage78_country_profiles_runtime_contract'),
+      ('2026_08_13_stage79_tenant_provisioning_runtime_contract'),
       ('2026_08_11_stage76_telematics_security_hardening')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN
@@ -345,6 +355,26 @@ BEGIN
      OR NOT EXISTS (SELECT 1 FROM country_profiles WHERE country_code='US' AND default_currency='USD')
      OR NOT EXISTS (SELECT 1 FROM country_profiles WHERE country_code='SA' AND text_direction='rtl') THEN
     RAISE EXCEPTION 'Clean-chain Stage78 country-profile runtime catalog is incomplete';
+  END IF;
+  IF to_regclass('public.password_reset_tokens') IS NULL
+     OR to_regclass('public.feature_flags') IS NULL
+     OR to_regclass('public.ux_users_company_email_ci') IS NULL
+     OR EXISTS (
+       SELECT 1 FROM (VALUES
+         ('companies','legal_name'),('companies','website'),('companies','fleet_size'),
+         ('companies','tax_id'),('companies','primary_contact_name'),
+         ('companies','primary_contact_email'),('companies','primary_contact_phone'),
+         ('companies','billing_email'),('tenant_subscriptions','billing_cycle'),
+         ('feature_flags','environment'),('password_reset_tokens','token_hash')
+       ) required(table_name,column_name)
+       WHERE NOT EXISTS (
+         SELECT 1 FROM information_schema.columns actual
+         WHERE actual.table_schema='public'
+           AND actual.table_name=required.table_name
+           AND actual.column_name=required.column_name
+       )
+     ) THEN
+    RAISE EXCEPTION 'Clean-chain Stage79 tenant-provisioning contract is incomplete';
   END IF;
   IF NOT EXISTS (
        SELECT 1 FROM information_schema.columns
