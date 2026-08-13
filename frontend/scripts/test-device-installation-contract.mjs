@@ -68,6 +68,8 @@ assert.match(dvirPage, /checklistItems:/, "Checklist template creation must subm
 
 const driverDashboard = readFileSync(resolve(root, "src/pages/driver/DriverDashboardPage.tsx"), "utf8");
 assert.match(driverDashboard, /latestPretripSafeToOperate/, "Driver home must consume the same signed pre-trip evidence as the trip page");
+assert.match(driverDashboard, /vehicleConfirmedAt/, "Driver home must consume exact-vehicle confirmation before declaring departure ready");
+assert.match(driverDashboard, /Verify assigned vehicle/, "Driver home must distinguish missing vehicle confirmation from missing DVIR evidence");
 assert.match(driverDashboard, /Start route to pickup/, "Driver home must not request a duplicate DVIR after signed safe evidence exists");
 
 console.log("device installation frontend contract: ok");

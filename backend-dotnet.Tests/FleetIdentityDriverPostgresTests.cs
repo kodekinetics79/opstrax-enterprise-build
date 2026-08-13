@@ -147,6 +147,31 @@ public sealed class FleetIdentityDriverPostgresTests
                     c.Parameters.AddWithValue("@number", $"DVIR-{companyId}"); c.Parameters.AddWithValue("@d", driverId);
                     c.Parameters.AddWithValue("@v", vehicleId);
                 });
+            var newerUnsafeDvirId = await db.InsertAsync(
+                @"INSERT INTO dvir_reports
+                    (company_id,branch_id,report_number,driver_id,vehicle_id,inspection_type,inspection_status,
+                     defects_found,safe_to_operate,driver_signature_status,submitted_at)
+                  VALUES (@c,@b,@number,@d,@v,'pre_trip','submitted',1,FALSE,'Signed',NOW()+INTERVAL '1 second') RETURNING id",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchId);
+                    c.Parameters.AddWithValue("@number", $"DVIR-UNSAFE-{companyId}"); c.Parameters.AddWithValue("@d", driverId);
+                    c.Parameters.AddWithValue("@v", vehicleId);
+                });
+            var supersededSafeBlocked = await Invoke("DriverUpdateStatus", http, assignmentId,
+                NestedBody("DriverStatusBody", "en_route_pickup", null), db, audit, CancellationToken.None);
+            Assert.Equal(StatusCodes.Status409Conflict, Status(supersededSafeBlocked));
+            await db.ExecuteAsync("DELETE FROM dvir_reports WHERE id=@id AND company_id=@c",
+                c => { c.Parameters.AddWithValue("@id", newerUnsafeDvirId); c.Parameters.AddWithValue("@c", companyId); });
+
+            await db.ExecuteAsync("UPDATE vehicles SET out_of_service=TRUE WHERE id=@id AND company_id=@c",
+                c => { c.Parameters.AddWithValue("@id", vehicleId); c.Parameters.AddWithValue("@c", companyId); });
+            var outOfServiceBlocked = await Invoke("DriverUpdateStatus", http, assignmentId,
+                NestedBody("DriverStatusBody", "en_route_pickup", null), db, audit, CancellationToken.None);
+            Assert.Equal(StatusCodes.Status409Conflict, Status(outOfServiceBlocked));
+            await db.ExecuteAsync("UPDATE vehicles SET out_of_service=FALSE WHERE id=@id AND company_id=@c",
+                c => { c.Parameters.AddWithValue("@id", vehicleId); c.Parameters.AddWithValue("@c", companyId); });
+
             var departed = await Invoke("DriverUpdateStatus", http, assignmentId,
                 NestedBody("DriverStatusBody", "en_route_pickup", null), db, audit, CancellationToken.None);
             Assert.Equal(StatusCodes.Status200OK, Status(departed));

@@ -65,14 +65,22 @@ public sealed class FleetIdentityBackboneContractTests
         Assert.Contains("vehicle_confirmed_by_driver_id", confirm, StringComparison.Ordinal);
         var status = Block(source, "private static async Task<IResult> DriverUpdateStatus(", "private static async Task<IResult> DriverReportException(");
         Assert.Contains("Confirm the exact assigned vehicle before departure", status, StringComparison.Ordinal);
-        Assert.Contains("safe_to_operate=TRUE", status, StringComparison.Ordinal);
-        Assert.Contains("driver_signature_status", status, StringComparison.Ordinal);
+        Assert.Contains("vehicle_out_of_service", status, StringComparison.Ordinal);
+        Assert.Contains("assigned vehicle is out of service", status, StringComparison.Ordinal);
+        Assert.Contains("SELECT id,safe_to_operate,driver_signature_status", status, StringComparison.Ordinal);
+        Assert.DoesNotContain("AND safe_to_operate=TRUE", status, StringComparison.Ordinal);
+        Assert.Contains("latestPretripIsSafe", status, StringComparison.Ordinal);
+        Assert.Contains("latestPretripIsSigned", status, StringComparison.Ordinal);
+        Assert.Contains("latest pre-trip DVIR must be safe to operate and signed", status, StringComparison.Ordinal);
         Assert.Contains("pretrip_dvir_id", status, StringComparison.Ordinal);
         Assert.Contains("{ \"assigned\",\"accepted\"", status, StringComparison.Ordinal);
         AssertOrdered(status, "if (from == \"exception\")", "driverAllowedTargets");
         var driverMe = Block(source, "private static async Task<IResult> DriverMe(", "private static async Task<IResult> DriverAssignments(");
         Assert.Contains("latest_pretrip_safe_to_operate", driverMe, StringComparison.Ordinal);
         Assert.Contains("latest_pretrip_driver_signature_status", driverMe, StringComparison.Ordinal);
+        Assert.Contains("vehicle_confirmed_at", driverMe, StringComparison.Ordinal);
+        Assert.Contains("vehicle_confirmed_by_driver_id", driverMe, StringComparison.Ordinal);
+        Assert.Contains("Verify the exact assigned vehicle", source, StringComparison.Ordinal);
         Assert.Contains("signed pre-trip DVIR are ready", source, StringComparison.Ordinal);
     }
 

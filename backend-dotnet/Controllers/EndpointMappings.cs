@@ -22768,6 +22768,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var currentAssignment = await db.QuerySingleAsync(
             @"SELECT da.id, da.assignment_status, da.planned_pickup_at, da.planned_delivery_at,
                      da.actual_pickup_at, da.exception_count,da.vehicle_id,da.trip_id,
+                     da.vehicle_confirmed_at,da.vehicle_confirmed_by_driver_id,
                      latest_pretrip.id latest_pretrip_dvir_id,
                      latest_pretrip.safe_to_operate latest_pretrip_safe_to_operate,
                      latest_pretrip.driver_signature_status latest_pretrip_driver_signature_status,
@@ -23037,7 +23038,10 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
         var current = await db.QuerySingleAsync(
             @"SELECT assignment_status,previous_status,vehicle_id,trip_id,accepted_at,assigned_at,
-                     vehicle_confirmed_at,vehicle_confirmed_by_driver_id
+                     vehicle_confirmed_at,vehicle_confirmed_by_driver_id,
+                     (SELECT v.out_of_service FROM vehicles v
+                       WHERE v.id=dispatch_assignments.vehicle_id AND v.company_id=dispatch_assignments.company_id
+                         AND v.deleted_at IS NULL) vehicle_out_of_service
               FROM dispatch_assignments WHERE id=@id AND company_id=@cid FOR UPDATE",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
         var rawFrom = current?["assignmentStatus"]?.ToString() ?? "";
@@ -23063,12 +23067,12 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             if (current?["vehicleConfirmedAt"] is null or DBNull ||
                 Convert.ToInt64(current["vehicleConfirmedByDriverId"]) != driverId)
                 return Results.Conflict(ApiResponse<object>.Fail("Confirm the exact assigned vehicle before departure"));
+            if (current["vehicleOutOfService"] is not null and not DBNull && Convert.ToBoolean(current["vehicleOutOfService"]))
+                return Results.Conflict(ApiResponse<object>.Fail("The assigned vehicle is out of service and cannot depart"));
             var pretrip = await db.QuerySingleAsync(
-                @"SELECT id FROM dvir_reports
+                @"SELECT id,safe_to_operate,driver_signature_status FROM dvir_reports
                   WHERE company_id=@companyId AND vehicle_id=@vehicleId AND driver_id=@driverId
                     AND LOWER(COALESCE(inspection_type,'')) IN ('pre_trip','pre-trip')
-                    AND safe_to_operate=TRUE
-                    AND LOWER(COALESCE(driver_signature_status,''))='signed'
                     AND submitted_at>=GREATEST(COALESCE(@acceptedAt,@assignedAt),NOW()-INTERVAL '24 hours')
                     AND (@tripId::BIGINT IS NULL OR trip_id=@tripId)
                   ORDER BY submitted_at DESC,id DESC LIMIT 1 FOR UPDATE",
@@ -23084,6 +23088,11 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             if (pretrip is null)
                 return Results.Conflict(ApiResponse<object>.Fail(
                     "A current safe-to-operate pre-trip DVIR for this assignment is required before departure"));
+            var latestPretripIsSafe = pretrip["safeToOperate"] is not null and not DBNull && Convert.ToBoolean(pretrip["safeToOperate"]);
+            var latestPretripIsSigned = string.Equals(pretrip["driverSignatureStatus"]?.ToString(), "Signed", StringComparison.OrdinalIgnoreCase);
+            if (!latestPretripIsSafe || !latestPretripIsSigned)
+                return Results.Conflict(ApiResponse<object>.Fail(
+                    "The latest pre-trip DVIR must be safe to operate and signed before departure"));
             pretripDvirId = Convert.ToInt64(pretrip["id"]);
         }
 
@@ -23510,9 +23519,14 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             case "accepted":
                 if (criticalDefects == 0 && !vehicleOos)
                 {
+                    var vehicleConfirmed = assignment["vehicleConfirmedAt"] is not null and not DBNull &&
+                        assignment["vehicleConfirmedByDriverId"] is not null and not DBNull &&
+                        Convert.ToInt64(assignment["vehicleConfirmedByDriverId"]) == Convert.ToInt64(driver["id"]);
                     var safePretripReady = assignment["latestPretripSafeToOperate"] is true &&
                         string.Equals(assignment["latestPretripDriverSignatureStatus"]?.ToString(), "Signed", StringComparison.OrdinalIgnoreCase);
-                    guidance.Add(DriverInsight("action", safePretripReady
+                    guidance.Add(DriverInsight("action", !vehicleConfirmed
+                        ? "Assignment accepted. Verify the exact assigned vehicle before departure."
+                        : safePretripReady
                         ? "Assignment and signed pre-trip DVIR are ready. Start route to pickup when departing."
                         : "Assignment accepted. Complete pre-trip DVIR, then mark 'En Route to Pickup'."));
                 }
