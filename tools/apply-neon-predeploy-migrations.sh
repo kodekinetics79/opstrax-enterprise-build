@@ -473,9 +473,12 @@ BEGIN
        OR NOT has_table_privilege('opstrax_system',table_name,'INSERT')
        OR NOT has_table_privilege('opstrax_system',table_name,'UPDATE')
        OR NOT has_table_privilege('opstrax_system',table_name,'DELETE')
+  -- Stage58 is intentionally applied after this owner-integrity checkpoint. Stage80
+  -- must establish the three control-plane policies itself; the terminal check below
+  -- separately requires all six policies after Stage58 adds tenant_ticket_app.
   ) OR (SELECT COUNT(*) FROM pg_policies WHERE schemaname='public'
           AND tablename IN ('usage_events','usage_counters','tenant_contract_overrides')
-          AND policyname IN ('tenant_ticket_app','system_control_plane'))<>6) THEN
+          AND policyname='system_control_plane')<>3) THEN
     RAISE EXCEPTION 'Stage80 revenue/market catalog ACL and tenant-RLS contract is incomplete';
   END IF;
   IF NOT EXISTS (
