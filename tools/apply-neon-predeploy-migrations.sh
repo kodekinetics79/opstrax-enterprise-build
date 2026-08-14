@@ -543,6 +543,7 @@ $verify$;
 SQL
 echo "customer_feedback: 6/6 columns + ix_customer_feedback_company_customer"
 echo "Post-check: durable one-time MFA challenge ledger…"
+if [ "$stage58_already_applied" != "1" ]; then
 psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 <<'SQL'
 DO $verify$
 DECLARE
@@ -611,7 +612,11 @@ END
 $verify$;
 SQL
 echo "mfa_login_challenge_consumptions: digest + indexes + FORCE RLS + policies + runtime grants verified"
+else
+  echo "MFA replay: terminal Stage58 policy contract already active — legacy pre-terminal policy check skipped"
+fi
 echo "Post-check: complete Fleet production schema/RLS contract…"
+if [ "$stage58_already_applied" != "1" ]; then
 psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 <<'SQL'
 DO $verify$
 DECLARE
@@ -746,7 +751,11 @@ END
 $verify$;
 SQL
 echo "Fleet: 58 route-contract tables + market catalog + RLS/FORCE/policies/grants/indexes verified"
+else
+  echo "Fleet production: terminal Stage58 policy contract already active — legacy pre-terminal policy check skipped"
+fi
 echo "Post-check: production runtime worker support…"
+if [ "$stage58_already_applied" != "1" ]; then
 psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 <<'SQL'
 DO $verify$
 DECLARE
@@ -826,6 +835,9 @@ END
 $verify$;
 SQL
 echo "Runtime support: worker tables + RLS/FORCE/policies/grants/columns verified"
+else
+  echo "runtime worker: terminal Stage58 policy contract already active — legacy pre-terminal policy check skipped"
+fi
 echo "Post-check: Fleet master identity uniqueness…"
 psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 <<'SQL'
 DO $verify$
@@ -880,6 +892,7 @@ psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f "$terminal_file"
 psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_07_31_stage59_data_protection_key_ring.sql
 
 echo "Post-check: production-wide tenant RLS coverage…"
+if [ "$stage58_already_applied" != "1" ]; then
 psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 <<'SQL'
 DO $verify$
 DECLARE
@@ -1002,6 +1015,9 @@ tenant_rls_count=$(psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -tA -c "
       WHERE c.table_schema='public' AND c.table_name=cls.relname
         AND c.column_name IN ('company_id','tenant_id') AND c.data_type='bigint'))")
 echo "Tenant RLS coverage: ${tenant_rls_count} in-scope tables verified"
+else
+  echo "tenant RLS: terminal Stage58 policy contract already active — legacy pre-terminal policy check skipped"
+fi
 echo "Post-check: Fleet cold-chain/runtime-route/asset/workforce integrity contracts…"
 psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 <<'SQL'
 DO $verify$
