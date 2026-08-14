@@ -1037,7 +1037,7 @@ function toColdChainClusterRecord(
     deviceHealthAvailable: false,
     protocolType: "SENSOR",
     positionAvailable: false,
-    positionSource: "Cold-chain reading",
+    positionSource: lastPingAt ? "Cold-chain reading" : "No reading evidence",
     positionProvider: device.sourceChannel ? String(device.sourceChannel) : "Cold-chain service",
     positionAccuracy: "Not reported",
     positionConfidence: "Not reported",

@@ -123,8 +123,13 @@ test("IoT lifecycle gate requires two vehicles, an explicit role, a second tenan
     E2E_IOT_LIFECYCLE_ACK: "I_UNDERSTAND_THIS_PROVISIONS_AND_REVOKES_A_REAL_DEVICE",
     E2E_IOT_SOURCE_VEHICLE_ID: "42",
     E2E_IOT_TARGET_VEHICLE_ID: "43",
+    E2E_IOT_OOS_VEHICLE_ID: "48",
     E2E_IOT_DEVICE_CATEGORY: "GPS",
     E2E_IOT_DEVICE_ROLE: "GPS",
+    E2E_IOT_DRIVER_ID: "44",
+    E2E_IOT_JOB_ID: "45",
+    E2E_IOT_ROUTE_ID: "46",
+    E2E_IOT_TRIP_ID: "47",
   };
   assert.match(iotLifecycleGate(target, common).reasons.join(" "), /cross-tenant auth state/i);
   const gated = iotLifecycleGate(target, {

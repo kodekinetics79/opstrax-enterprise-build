@@ -190,11 +190,11 @@ for m in "${MIGRATIONS[@]}"; do
         AND to_regclass('public.file_storage_metadata') IS NOT NULL
         AND EXISTS (
           SELECT 1 FROM pg_constraint
-          WHERE conrelid='public.drivers'::regclass AND conname='fk_drivers_vehicle'
+          WHERE conrelid=to_regclass('public.drivers') AND conname='fk_drivers_vehicle'
         )
         AND EXISTS (
           SELECT 1 FROM pg_constraint
-          WHERE conrelid='public.vehicles'::regclass AND conname='fk_vehicles_driver'
+          WHERE conrelid=to_regclass('public.vehicles') AND conname='fk_vehicles_driver'
         )
       THEN 1 ELSE 0 END")
     if [ "$predecessor_materialized" = "1" ]; then
@@ -395,6 +395,12 @@ BEGIN
      OR to_regclass('public.ex_stage80_device_installation_period') IS NULL
      OR to_regclass('public.uq_stage80_vehicle_primary_role') IS NULL
      OR to_regprocedure('public.stage80_sync_device_vehicle_projection()') IS NULL
+     OR to_regclass('public.module_packages') IS NULL
+     OR to_regclass('public.usage_meters') IS NULL
+     OR to_regclass('public.usage_events') IS NULL
+     OR to_regclass('public.usage_counters') IS NULL
+     OR to_regclass('public.pricing_rules') IS NULL
+     OR to_regclass('public.tenant_contract_overrides') IS NULL
      OR EXISTS (
        SELECT 1 FROM (VALUES
          ('device_installations','effective_from'),('device_installations','effective_to'),
@@ -402,15 +408,75 @@ BEGIN
          ('eld_devices','notes'),
          ('location_events','installation_id'),('location_events','assignment_id'),
          ('location_events','battery_voltage'),
+         ('location_events','engine_status'),
          ('latest_vehicle_positions','address'),
+         ('latest_vehicle_positions','battery_voltage'),
          ('latest_vehicle_positions','installation_id'),('latest_vehicle_positions','assignment_id'),
+         ('fleet_tms_temperature_devices','last_reported_temperature_celsius'),
+         ('fleet_tms_temperature_devices','battery_percent'),
+         ('fleet_tms_temperature_devices','last_ping_at_utc'),
+         ('fleet_tms_temperature_alerts','measured_humidity'),
+         ('fleet_tms_temperature_alerts','humidity_threshold_min'),
+         ('fleet_tms_temperature_alerts','humidity_threshold_max'),
+         ('customers','sla_health_score'),('customers','delivery_experience_score'),
+         ('customers','risk_score'),('customers','health_state'),('customers','health_computed_at'),
+         ('module_packages','package_key'),('module_packages','module_keys'),
+         ('module_packages','base_price_cents'),('usage_meters','meter_key'),
+         ('usage_meters','period'),('usage_events','company_id'),
+         ('usage_events','meter_key'),('usage_events','period_key'),
+         ('usage_counters','company_id'),('usage_counters','meter_key'),
+         ('usage_counters','period_key'),('pricing_rules','package_id'),
+         ('pricing_rules','meter_key'),('tenant_contract_overrides','company_id'),
+         ('tenant_contract_overrides','meter_key'),
          ('canonical_telemetry_events','installation_id'),('canonical_telemetry_events','assignment_id')
        ) required(table_name,column_name)
        WHERE NOT EXISTS (SELECT 1 FROM information_schema.columns actual
          WHERE actual.table_schema='public' AND actual.table_name=required.table_name
            AND actual.column_name=required.column_name)
-     ) THEN
+  ) THEN
     RAISE EXCEPTION 'Stage80 fleet identity backbone contract is incomplete';
+  END IF;
+  IF (SELECT COUNT(*) FROM pg_roles WHERE rolname IN ('opstrax_app','opstrax_system'))=2 AND (
+  EXISTS (
+    SELECT 1 FROM (VALUES ('module_packages'),('usage_meters'),('pricing_rules')) refs(table_name)
+    WHERE NOT has_table_privilege('opstrax_app',table_name,'SELECT')
+       OR has_table_privilege('opstrax_app',table_name,'INSERT')
+       OR has_table_privilege('opstrax_app',table_name,'UPDATE')
+       OR has_table_privilege('opstrax_app',table_name,'DELETE')
+       OR NOT has_table_privilege('opstrax_system',table_name,'SELECT')
+       OR NOT has_table_privilege('opstrax_system',table_name,'INSERT')
+       OR NOT has_table_privilege('opstrax_system',table_name,'UPDATE')
+       OR NOT has_table_privilege('opstrax_system',table_name,'DELETE')
+  ) OR EXISTS (
+    SELECT 1 FROM (VALUES ('module_packages_id_seq'),('usage_meters_id_seq'),('pricing_rules_id_seq')) refs(sequence_name)
+    WHERE has_sequence_privilege('opstrax_app',sequence_name,'USAGE')
+       OR NOT has_sequence_privilege('opstrax_system',sequence_name,'USAGE')
+  ) OR NOT COALESCE((SELECT c.relrowsecurity AND c.relforcerowsecurity
+                       FROM pg_class c WHERE c.oid=to_regclass('public.usage_events')),false)
+       OR NOT has_table_privilege('opstrax_app','usage_events','SELECT')
+       OR NOT has_table_privilege('opstrax_app','usage_events','INSERT')
+       OR has_table_privilege('opstrax_app','usage_events','UPDATE')
+       OR has_table_privilege('opstrax_app','usage_events','DELETE')
+       OR NOT has_table_privilege('opstrax_system','usage_events','SELECT')
+       OR NOT has_table_privilege('opstrax_system','usage_events','INSERT')
+       OR NOT has_table_privilege('opstrax_system','usage_events','UPDATE')
+       OR NOT has_table_privilege('opstrax_system','usage_events','DELETE')
+  OR EXISTS (
+    SELECT 1 FROM (VALUES ('usage_counters'),('tenant_contract_overrides')) tenant_tables(table_name)
+    JOIN pg_class c ON c.oid=to_regclass('public.'||tenant_tables.table_name)
+    WHERE NOT c.relrowsecurity OR NOT c.relforcerowsecurity
+       OR NOT has_table_privilege('opstrax_app',table_name,'SELECT')
+       OR NOT has_table_privilege('opstrax_app',table_name,'INSERT')
+       OR NOT has_table_privilege('opstrax_app',table_name,'UPDATE')
+       OR NOT has_table_privilege('opstrax_app',table_name,'DELETE')
+       OR NOT has_table_privilege('opstrax_system',table_name,'SELECT')
+       OR NOT has_table_privilege('opstrax_system',table_name,'INSERT')
+       OR NOT has_table_privilege('opstrax_system',table_name,'UPDATE')
+       OR NOT has_table_privilege('opstrax_system',table_name,'DELETE')
+  ) OR (SELECT COUNT(*) FROM pg_policies WHERE schemaname='public'
+          AND tablename IN ('usage_events','usage_counters','tenant_contract_overrides')
+          AND policyname IN ('tenant_ticket_app','system_control_plane'))<>6) THEN
+    RAISE EXCEPTION 'Stage80 revenue/market catalog ACL and tenant-RLS contract is incomplete';
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns
@@ -927,6 +993,7 @@ BEGIN
     ('authorization_decision_logs',true,false,false),
     ('companies',false,true,false),
     ('audit_logs',true,false,false),
+    ('usage_events',true,false,false),
     ('compliance_evidence',true,false,false),
     ('fleet_tms_shipment_events',true,false,false),
     ('fleet_tms_cold_chain_event_log',true,false,false),
@@ -1252,6 +1319,47 @@ BEGIN
      OR has_column_privilege('opstrax_app','eld_devices','hmac_secret_encrypted','SELECT')
      OR NOT has_column_privilege('opstrax_app','eld_devices','device_serial','SELECT') THEN
     RAISE EXCEPTION 'Stage76 is not the effective terminal telemetry boundary';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM (VALUES ('module_packages'),('usage_meters'),('pricing_rules')) refs(table_name)
+    WHERE NOT has_table_privilege('opstrax_app',table_name,'SELECT')
+       OR has_table_privilege('opstrax_app',table_name,'INSERT')
+       OR has_table_privilege('opstrax_app',table_name,'UPDATE')
+       OR has_table_privilege('opstrax_app',table_name,'DELETE')
+       OR NOT has_table_privilege('opstrax_system',table_name,'SELECT')
+       OR NOT has_table_privilege('opstrax_system',table_name,'INSERT')
+       OR NOT has_table_privilege('opstrax_system',table_name,'UPDATE')
+       OR NOT has_table_privilege('opstrax_system',table_name,'DELETE')
+  ) OR EXISTS (
+    SELECT 1 FROM (VALUES ('module_packages_id_seq'),('usage_meters_id_seq'),('pricing_rules_id_seq')) refs(sequence_name)
+    WHERE has_sequence_privilege('opstrax_app',sequence_name,'USAGE')
+       OR NOT has_sequence_privilege('opstrax_system',sequence_name,'USAGE')
+  ) OR NOT COALESCE((SELECT c.relrowsecurity AND c.relforcerowsecurity
+                       FROM pg_class c WHERE c.oid=to_regclass('public.usage_events')),false)
+       OR NOT has_table_privilege('opstrax_app','usage_events','SELECT')
+       OR NOT has_table_privilege('opstrax_app','usage_events','INSERT')
+       OR has_table_privilege('opstrax_app','usage_events','UPDATE')
+       OR has_table_privilege('opstrax_app','usage_events','DELETE')
+       OR NOT has_table_privilege('opstrax_system','usage_events','SELECT')
+       OR NOT has_table_privilege('opstrax_system','usage_events','INSERT')
+       OR NOT has_table_privilege('opstrax_system','usage_events','UPDATE')
+       OR NOT has_table_privilege('opstrax_system','usage_events','DELETE')
+  OR EXISTS (
+    SELECT 1 FROM (VALUES ('usage_counters'),('tenant_contract_overrides')) tenant_tables(table_name)
+    JOIN pg_class c ON c.oid=to_regclass('public.'||tenant_tables.table_name)
+    WHERE NOT c.relrowsecurity OR NOT c.relforcerowsecurity
+       OR NOT has_table_privilege('opstrax_app',table_name,'SELECT')
+       OR NOT has_table_privilege('opstrax_app',table_name,'INSERT')
+       OR NOT has_table_privilege('opstrax_app',table_name,'UPDATE')
+       OR NOT has_table_privilege('opstrax_app',table_name,'DELETE')
+       OR NOT has_table_privilege('opstrax_system',table_name,'SELECT')
+       OR NOT has_table_privilege('opstrax_system',table_name,'INSERT')
+       OR NOT has_table_privilege('opstrax_system',table_name,'UPDATE')
+       OR NOT has_table_privilege('opstrax_system',table_name,'DELETE')
+  ) OR (SELECT COUNT(*) FROM pg_policies WHERE schemaname='public'
+          AND tablename IN ('usage_events','usage_counters','tenant_contract_overrides')
+          AND policyname IN ('tenant_ticket_app','system_control_plane'))<>6 THEN
+    RAISE EXCEPTION 'Stage80 revenue/market catalog ACL and tenant-RLS contract is not terminally reconciled';
   END IF;
 END
 $verify_stage76_terminal$;

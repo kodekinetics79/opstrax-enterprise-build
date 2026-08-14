@@ -7,6 +7,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const service = readFileSync(resolve(root, "src/services/telematicsService.ts"), "utf8");
 const devicesPage = readFileSync(resolve(root, "src/pages/IotDevicesPage.tsx"), "utf8");
 const vehiclesPage = readFileSync(resolve(root, "src/pages/VehiclesPage.tsx"), "utf8");
+const coldChainPage = readFileSync(resolve(root, "src/pages/FleetColdChainPage.tsx"), "utf8");
 
 assert.match(service, /imei: String\(row\.imei \?\? ""\)/, "IMEI must be mapped from the live device row");
 assert.match(service, /deviceCategory: String\(row\.device_category \?\? "Unknown"\)/, "Governed hardware category must be mapped from the live device row");
@@ -65,6 +66,10 @@ assert.doesNotMatch(devicesPage, /Metadata edits were captured/, "Unsupported me
 assert.match(devicesPage, /Metadata read-only/, "Unsupported metadata must be labelled read-only");
 assert.match(devicesPage, /Installation History/, "The detail drawer must render installation history");
 assert.match(devicesPage, /Device lifecycle action failed/, "Lifecycle mutation failures must be rendered to the operator");
+assert.match(devicesPage, /\{ key: "archived", label: "Archived" \}/, "Archived devices must remain available in an explicit lifecycle view");
+assert.doesNotMatch(devicesPage, /\.filter\(\(row\) => row\.lifecycleStatus !== "Archived"\)/, "Archived records must not be silently removed before lifecycle filtering");
+assert.match(devicesPage, /const managedCount = activeDevices\.length/, "Managed device totals must exclude archived inventory");
+assert.match(devicesPage, /\["Lifecycle", device\.lifecycleStatus\]/, "Device detail must render lifecycle status");
 assert.match(devicesPage, /Identity Quarantine/, "Identity quarantine must be visible without manual database identifiers");
 assert.match(devicesPage, /Resolve with audit evidence/, "Quarantine resolution must retain an explicit evidence workflow");
 assert.doesNotMatch(vehiclesPage, /withDeviceEvidence/, "Vehicle health must not overwrite the API-selected primary installation with an unordered client-side device join");
@@ -81,6 +86,14 @@ for (const field of ["vinExceptionType", "alternateIdentifier", "plateJurisdicti
 }
 assert.match(vehiclesPage, /approved alternate identity kind/, "VIN-less vehicles must be client-validated against governed identity requirements");
 assert.match(vehiclesPage, /label: "Alternate identity"/, "Vehicle detail must render the governed alternate identity");
+
+assert.match(coldChainPage, /source: 'Manual'/, "Operator-entered cold-chain observations must be persisted with Manual provenance");
+assert.match(coldChainPage, /sourceChannel: 'Operator console'/, "Operator-entered observations must identify their source channel");
+assert.doesNotMatch(coldChainPage, /humidityPercent:\s*51/, "Cold-chain observations must not fabricate humidity");
+assert.doesNotMatch(coldChainPage, /status:\s*'Normal'/, "The client must not fabricate a normal policy result");
+assert.doesNotMatch(coldChainPage, /Manual telemetry sample created|Reviewed by operations/, "Audit evidence must not be replaced with invented notes");
+assert.match(coldChainPage, /No reading/, "Devices without reported temperature evidence must render an honest empty value");
+assert.match(coldChainPage, /Never reported/, "Devices without a reported timestamp must not be presented as live");
 
 const driverPage = readFileSync(resolve(root, "src/pages/driver/DriverAssignmentPage.tsx"), "utf8");
 assert.match(driverPage, /s !== "accepted" \|\| status === "exception"/, "Initial acceptance must use the canonical endpoint while exception recovery remains executable");

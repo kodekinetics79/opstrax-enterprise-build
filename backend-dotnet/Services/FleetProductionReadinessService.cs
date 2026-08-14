@@ -218,6 +218,7 @@ public sealed class FleetProductionReadinessService
           ('authorization_decision_logs',true,false,false),
           ('companies',false,true,false),
           ('audit_logs',true,false,false),
+          ('usage_events',true,false,false),
           ('compliance_evidence',true,false,false),
           ('fleet_tms_shipment_events',true,false,false),
           ('fleet_tms_cold_chain_event_log',true,false,false),
@@ -307,6 +308,21 @@ public sealed class FleetProductionReadinessService
           ('latest_vehicle_positions','confidence','numeric(4,3)',false,'',''),
           ('latest_vehicle_positions','trust_score','numeric(4,3)',false,'',''),
           ('latest_vehicle_positions','quality_flags','jsonb',false,'',''),
+          ('latest_vehicle_positions','battery_voltage','numeric(6,2)',false,'',''),
+          ('latest_vehicle_positions','address','text',false,'',''),
+          ('fleet_tms_temperature_devices','last_reported_temperature_celsius','numeric(6,2)',false,'',''),
+          ('fleet_tms_temperature_devices','battery_percent','numeric(6,2)',false,'',''),
+          ('fleet_tms_temperature_devices','last_ping_at_utc','timestamp with time zone',false,'',''),
+          ('fleet_tms_temperature_alerts','threshold_min','numeric(6,2)',false,'',''),
+          ('fleet_tms_temperature_alerts','threshold_max','numeric(6,2)',false,'',''),
+          ('fleet_tms_temperature_alerts','measured_humidity','numeric(6,2)',false,'',''),
+          ('fleet_tms_temperature_alerts','humidity_threshold_min','numeric(6,2)',false,'',''),
+          ('fleet_tms_temperature_alerts','humidity_threshold_max','numeric(6,2)',false,'',''),
+          ('customers','sla_health_score','numeric(6,2)',false,'',''),
+          ('customers','delivery_experience_score','numeric(6,2)',false,'',''),
+          ('customers','risk_score','numeric(6,2)',false,'',''),
+          ('customers','health_state','character varying(32)',false,'',''),
+          ('customers','health_computed_at','timestamp with time zone',false,'',''),
           ('location_events','source','character varying(40)',true,'''device''::character varying',''),
           ('location_events','nonce','character varying(128)',false,'',''),
           ('location_events','source_channel','character varying(40)',false,'',''),
@@ -708,6 +724,64 @@ public sealed class FleetProductionReadinessService
           COALESCE((SELECT COUNT(*)=2 FROM market_packs WHERE code IN ('canada_na','saudi_gcc') AND status='active'),false)
             AND COALESCE((SELECT COUNT(*)=3 FROM country_profiles WHERE country_code IN ('US','CA','SA')),false)
             AND COALESCE((SELECT BOOL_AND((country_code='US' AND default_currency='USD') OR (country_code='CA' AND default_currency='CAD') OR (country_code='SA' AND default_currency='SAR' AND text_direction='rtl')) FROM country_profiles WHERE country_code IN ('US','CA','SA')),false)
+            AND to_regclass('public.module_packages') IS NOT NULL
+            AND to_regclass('public.usage_meters') IS NOT NULL
+            AND to_regclass('public.usage_events') IS NOT NULL
+            AND to_regclass('public.usage_counters') IS NOT NULL
+            AND to_regclass('public.pricing_rules') IS NOT NULL
+            AND to_regclass('public.tenant_contract_overrides') IS NOT NULL
+            AND COALESCE((SELECT COUNT(*)=15 FROM (VALUES
+              ('module_packages','package_key'),('module_packages','module_keys'),
+              ('module_packages','base_price_cents'),('usage_meters','meter_key'),
+              ('usage_meters','period'),('usage_events','company_id'),
+              ('usage_events','meter_key'),('usage_events','period_key'),
+              ('usage_counters','company_id'),('usage_counters','meter_key'),
+              ('usage_counters','period_key'),('pricing_rules','package_id'),
+              ('pricing_rules','meter_key'),('tenant_contract_overrides','company_id'),
+              ('tenant_contract_overrides','meter_key')
+            ) expected(table_name,column_name)
+            JOIN information_schema.columns actual ON actual.table_schema='public'
+              AND actual.table_name=expected.table_name AND actual.column_name=expected.column_name),false)
+            AND COALESCE((SELECT BOOL_AND(
+              has_table_privilege('opstrax_app',table_name,'SELECT')
+              AND NOT has_table_privilege('opstrax_app',table_name,'INSERT')
+              AND NOT has_table_privilege('opstrax_app',table_name,'UPDATE')
+              AND NOT has_table_privilege('opstrax_app',table_name,'DELETE')
+              AND has_table_privilege('opstrax_system',table_name,'SELECT')
+              AND has_table_privilege('opstrax_system',table_name,'INSERT')
+              AND has_table_privilege('opstrax_system',table_name,'UPDATE')
+              AND has_table_privilege('opstrax_system',table_name,'DELETE')
+            ) FROM (VALUES ('module_packages'),('usage_meters'),('pricing_rules')) refs(table_name)),false)
+            AND COALESCE((SELECT BOOL_AND(
+              NOT has_sequence_privilege('opstrax_app',sequence_name,'USAGE')
+              AND has_sequence_privilege('opstrax_system',sequence_name,'USAGE')
+            ) FROM (VALUES ('module_packages_id_seq'),('usage_meters_id_seq'),('pricing_rules_id_seq')) refs(sequence_name)),false)
+            AND COALESCE((SELECT COUNT(*)=3 AND BOOL_AND(c.relrowsecurity AND c.relforcerowsecurity)
+              FROM pg_class c WHERE c.oid IN (
+                to_regclass('public.usage_events'),to_regclass('public.usage_counters'),
+                to_regclass('public.tenant_contract_overrides'))),false)
+            AND COALESCE((SELECT COUNT(*)=6 FROM pg_policies
+              WHERE schemaname='public'
+                AND tablename IN ('usage_events','usage_counters','tenant_contract_overrides')
+                AND policyname IN ('tenant_ticket_app','system_control_plane')),false)
+            AND has_table_privilege('opstrax_app','usage_events','SELECT')
+            AND has_table_privilege('opstrax_app','usage_events','INSERT')
+            AND NOT has_table_privilege('opstrax_app','usage_events','UPDATE')
+            AND NOT has_table_privilege('opstrax_app','usage_events','DELETE')
+            AND has_table_privilege('opstrax_system','usage_events','SELECT')
+            AND has_table_privilege('opstrax_system','usage_events','INSERT')
+            AND has_table_privilege('opstrax_system','usage_events','UPDATE')
+            AND has_table_privilege('opstrax_system','usage_events','DELETE')
+            AND COALESCE((SELECT BOOL_AND(
+              has_table_privilege('opstrax_app',table_name,'SELECT')
+              AND has_table_privilege('opstrax_app',table_name,'INSERT')
+              AND has_table_privilege('opstrax_app',table_name,'UPDATE')
+              AND has_table_privilege('opstrax_app',table_name,'DELETE')
+              AND has_table_privilege('opstrax_system',table_name,'SELECT')
+              AND has_table_privilege('opstrax_system',table_name,'INSERT')
+              AND has_table_privilege('opstrax_system',table_name,'UPDATE')
+              AND has_table_privilege('opstrax_system',table_name,'DELETE')
+            ) FROM (VALUES ('usage_counters'),('tenant_contract_overrides')) tenant_tables(table_name)),false)
             AND COALESCE((SELECT COUNT(*)=1 FROM schema_migrations WHERE version='2026_08_13_stage78_country_profiles_runtime_contract'),false) AS market_catalog_ready,
           COALESCE((SELECT COUNT(*)=1 FROM schema_migrations WHERE version='2026_08_13_stage79_tenant_provisioning_runtime_contract'),false)
             AND to_regclass('public.password_reset_tokens') IS NOT NULL
@@ -731,10 +805,12 @@ public sealed class FleetProductionReadinessService
             AND to_regclass('public.ex_stage80_device_installation_period') IS NOT NULL
             AND to_regclass('public.uq_stage80_vehicle_primary_role') IS NOT NULL
             AND to_regprocedure('public.stage80_sync_device_vehicle_projection()') IS NOT NULL
-            AND COALESCE((SELECT COUNT(*)=10 FROM (VALUES
+            AND COALESCE((SELECT COUNT(*)=13 FROM (VALUES
               ('device_installations','effective_from'),('device_installations','effective_to'),
               ('device_installations','device_role'),('device_installations','row_version'),
               ('location_events','installation_id'),('location_events','assignment_id'),
+              ('location_events','engine_status'),
+              ('latest_vehicle_positions','battery_voltage'),('latest_vehicle_positions','address'),
               ('latest_vehicle_positions','installation_id'),('latest_vehicle_positions','assignment_id'),
               ('canonical_telemetry_events','installation_id'),('canonical_telemetry_events','assignment_id')
             ) expected(table_name,column_name)

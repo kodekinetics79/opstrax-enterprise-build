@@ -114,8 +114,12 @@ export function iotLifecycleGate(target, env = process.env) {
   }
   if (!/^\d+$/.test(env.E2E_IOT_SOURCE_VEHICLE_ID || "")) reasons.push("numeric IoT source vehicle id is absent");
   if (!/^\d+$/.test(env.E2E_IOT_TARGET_VEHICLE_ID || "")) reasons.push("numeric IoT target vehicle id is absent");
+  if (!/^\d+$/.test(env.E2E_IOT_OOS_VEHICLE_ID || "")) reasons.push("numeric IoT out-of-service vehicle id is absent");
   if (env.E2E_IOT_SOURCE_VEHICLE_ID === env.E2E_IOT_TARGET_VEHICLE_ID) {
     reasons.push("IoT source and target vehicles must differ");
+  }
+  if ([env.E2E_IOT_SOURCE_VEHICLE_ID, env.E2E_IOT_TARGET_VEHICLE_ID].includes(env.E2E_IOT_OOS_VEHICLE_ID)) {
+    reasons.push("IoT out-of-service vehicle must differ from source and target vehicles");
   }
   const category = env.E2E_IOT_DEVICE_CATEGORY?.trim().toLowerCase();
   const role = env.E2E_IOT_DEVICE_ROLE?.trim().toLowerCase();
@@ -126,6 +130,12 @@ export function iotLifecycleGate(target, env = process.env) {
   else if (!fs.existsSync(path.resolve(env.E2E_CROSS_TENANT_AUTH_STATE.trim()))) {
     reasons.push("cross-tenant auth state file is missing");
   }
+  if (!nonBlank(env.E2E_DRIVER_AUTH_STATE)) reasons.push("driver auth state is absent");
+  else if (!fs.existsSync(path.resolve(env.E2E_DRIVER_AUTH_STATE.trim()))) reasons.push("driver auth state file is missing");
+  for (const [key, label] of [
+    ["E2E_IOT_DRIVER_ID", "driver"], ["E2E_IOT_JOB_ID", "job"],
+    ["E2E_IOT_ROUTE_ID", "route"], ["E2E_IOT_TRIP_ID", "trip"],
+  ]) if (!/^\d+$/.test(env[key] || "")) reasons.push(`numeric IoT ${label} id is absent`);
   return Object.freeze({ enabled: reasons.length === 0, reasons });
 }
 

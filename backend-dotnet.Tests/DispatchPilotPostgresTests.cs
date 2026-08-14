@@ -125,6 +125,62 @@ public sealed class DispatchPilotPostgresTests
         finally { await Cleanup(db, seed.CompanyId); }
     }
 
+    [Fact]
+    public async Task CreateAssignment_BindsOnlyCurrentRouteTrip_WhenTerminalHistoryExists()
+    {
+        var db = Db();
+        await new FoundationSchemaService(db).EnsureAsync();
+        await new Batch2SchemaService(db).EnsureAsync();
+        await new DispatchSchemaService(db, NullLogger<DispatchSchemaService>.Instance).EnsureAsync();
+        var seed = await Seed(db);
+        try
+        {
+            await db.ExecuteAsync("UPDATE drivers SET safety_score=90 WHERE id=@id",
+                c => c.Parameters.AddWithValue("@id", seed.DriverId));
+            var route = await db.InsertAsync(
+                @"INSERT INTO routes(company_id,route_code,name,status,assigned_vehicle_id,assigned_driver_id)
+                  VALUES (@c,@code,'Governed route','Active',@v,@d)",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@c", seed.CompanyId);
+                    c.Parameters.AddWithValue("@code", $"R-{Guid.NewGuid():N}"[..20]);
+                    c.Parameters.AddWithValue("@v", seed.VehicleId);
+                    c.Parameters.AddWithValue("@d", seed.DriverId);
+                });
+            var historical = await db.InsertAsync(
+                @"INSERT INTO trips(company_id,vehicle_id,driver_id,route_id,job_id,status,trip_ref,planned_start_time)
+                  VALUES (@c,@v,@d,@r,@j,'completed',@ref,NOW()-INTERVAL '2 days')",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@c", seed.CompanyId); c.Parameters.AddWithValue("@v", seed.VehicleId);
+                    c.Parameters.AddWithValue("@d", seed.DriverId); c.Parameters.AddWithValue("@r", route);
+                    c.Parameters.AddWithValue("@j", seed.JobId); c.Parameters.AddWithValue("@ref", $"TRP-H-{Guid.NewGuid():N}"[..24]);
+                });
+            var current = await db.InsertAsync(
+                @"INSERT INTO trips(company_id,vehicle_id,driver_id,route_id,job_id,status,trip_ref,planned_start_time)
+                  VALUES (@c,@v,@d,@r,@j,'planned',@ref,NOW())",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@c", seed.CompanyId); c.Parameters.AddWithValue("@v", seed.VehicleId);
+                    c.Parameters.AddWithValue("@d", seed.DriverId); c.Parameters.AddWithValue("@r", route);
+                    c.Parameters.AddWithValue("@j", seed.JobId); c.Parameters.AddWithValue("@ref", $"TRP-C-{Guid.NewGuid():N}"[..24]);
+                });
+
+            var body = new object?[] { seed.VehicleId, seed.DriverId, null, route, null, null, null, null, null, false, null, null };
+            var result = await InvokeCreate(Principal(seed, "dispatch:assign"), body, db);
+
+            Assert.Equal(StatusCodes.Status201Created, Status(result));
+            var assignment = await db.QuerySingleAsync(
+                "SELECT trip_id,job_id FROM dispatch_assignments WHERE company_id=@c AND route_id=@r",
+                c => { c.Parameters.AddWithValue("@c", seed.CompanyId); c.Parameters.AddWithValue("@r", route); });
+            Assert.NotNull(assignment);
+            Assert.Equal(current, Convert.ToInt64(assignment!["tripId"]));
+            Assert.Equal(seed.JobId, Convert.ToInt64(assignment["jobId"]));
+            Assert.NotEqual(historical, Convert.ToInt64(assignment["tripId"]));
+        }
+        finally { await Cleanup(db, seed.CompanyId); }
+    }
+
     private static async Task<IResult> Invoke(string name, params object[] args)
     {
         var method = typeof(EndpointMappings).GetMethod(name, BindingFlags.NonPublic | BindingFlags.Static)!;
@@ -190,7 +246,7 @@ public sealed class DispatchPilotPostgresTests
 
     private static async Task Cleanup(Database db, long company)
     {
-        foreach (var sql in new[] { "DELETE FROM dispatch_proof_artifacts WHERE company_id=@c", "DELETE FROM dispatch_proofs WHERE company_id=@c", "DELETE FROM dispatch_exceptions WHERE company_id=@c", "DELETE FROM audit_logs WHERE company_id=@c", "DELETE FROM outbox_messages WHERE tenant_id=@c", "DELETE FROM dispatch_assignments WHERE company_id=@c", "DELETE FROM jobs WHERE company_id=@c", "DELETE FROM vehicles WHERE company_id=@c", "DELETE FROM drivers WHERE company_id=@c", "DELETE FROM users WHERE company_id=@c", "DELETE FROM branches WHERE company_id=@c", "DELETE FROM companies WHERE id=@c" })
+        foreach (var sql in new[] { "DELETE FROM dispatch_proof_artifacts WHERE company_id=@c", "DELETE FROM dispatch_proofs WHERE company_id=@c", "DELETE FROM dispatch_exceptions WHERE company_id=@c", "DELETE FROM audit_logs WHERE company_id=@c", "DELETE FROM outbox_messages WHERE tenant_id=@c", "DELETE FROM dispatch_assignments WHERE company_id=@c", "DELETE FROM trips WHERE company_id=@c", "DELETE FROM route_stops WHERE route_id IN (SELECT id FROM routes WHERE company_id=@c)", "DELETE FROM routes WHERE company_id=@c", "DELETE FROM jobs WHERE company_id=@c", "DELETE FROM vehicles WHERE company_id=@c", "DELETE FROM drivers WHERE company_id=@c", "DELETE FROM users WHERE company_id=@c", "DELETE FROM branches WHERE company_id=@c", "DELETE FROM companies WHERE id=@c" })
             await db.ExecuteAsync(sql, c => c.Parameters.AddWithValue("@c", company));
     }
 

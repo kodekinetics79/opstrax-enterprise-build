@@ -21,7 +21,12 @@ public sealed class FleetIdentityBackboneContractTests
         Assert.Contains("trip_id BIGINT", sql, StringComparison.Ordinal);
         Assert.Contains("ALTER TABLE eld_devices ADD COLUMN IF NOT EXISTS notes TEXT NULL", sql, StringComparison.Ordinal);
         Assert.Contains("ALTER TABLE location_events ADD COLUMN IF NOT EXISTS battery_voltage NUMERIC(10, 3) NULL", sql, StringComparison.Ordinal);
+        Assert.Contains("ALTER TABLE location_events ADD COLUMN IF NOT EXISTS engine_status VARCHAR(40) NULL", sql, StringComparison.Ordinal);
         Assert.Contains("ALTER TABLE latest_vehicle_positions ADD COLUMN IF NOT EXISTS address TEXT NULL", sql, StringComparison.Ordinal);
+        Assert.Contains("ALTER TABLE latest_vehicle_positions ADD COLUMN IF NOT EXISTS battery_voltage NUMERIC(6, 2) NULL", sql, StringComparison.Ordinal);
+        Assert.Contains("ALTER COLUMN last_reported_temperature_celsius DROP NOT NULL", sql, StringComparison.Ordinal);
+        Assert.Contains("ADD COLUMN IF NOT EXISTS measured_humidity NUMERIC(6, 2) NULL", sql, StringComparison.Ordinal);
+        Assert.Contains("ALTER TABLE customers ADD COLUMN IF NOT EXISTS health_computed_at TIMESTAMPTZ NULL", sql, StringComparison.Ordinal);
         Assert.Contains("vehicle_confirmed_at", sql, StringComparison.Ordinal);
         Assert.Contains("pretrip_dvir_id", sql, StringComparison.Ordinal);
         Assert.Contains("assigned_by_user_id", sql, StringComparison.Ordinal);
@@ -58,7 +63,9 @@ public sealed class FleetIdentityBackboneContractTests
         var runner = Read("tools", "apply-neon-predeploy-migrations.sh");
         Assert.Contains("('eld_devices','notes')", runner, StringComparison.Ordinal);
         Assert.Contains("('location_events','battery_voltage')", runner, StringComparison.Ordinal);
+        Assert.Contains("('location_events','engine_status')", runner, StringComparison.Ordinal);
         Assert.Contains("('latest_vehicle_positions','address')", runner, StringComparison.Ordinal);
+        Assert.Contains("('latest_vehicle_positions','battery_voltage')", runner, StringComparison.Ordinal);
 
         var rotation = Block(endpoint, "private static async Task<IResult> DeviceRotateSecret(", "private static async Task<IResult> DeviceRevoke(");
         Assert.Contains("revoked_at IS NULL", rotation, StringComparison.Ordinal);

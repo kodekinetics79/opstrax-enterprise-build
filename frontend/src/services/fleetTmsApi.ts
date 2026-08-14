@@ -668,7 +668,7 @@ export interface RfidEvent {
   notes: string;
 }
 
-interface ColdChainSummaryResponse {
+export interface ColdChainSummaryResponse {
   generatedAtUtc: string;
   summary: {
     activeDevices: number;

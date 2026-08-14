@@ -497,9 +497,16 @@ ALTER TABLE location_events ADD COLUMN IF NOT EXISTS installation_id BIGINT NULL
 ALTER TABLE location_events ADD COLUMN IF NOT EXISTS assignment_id BIGINT NULL;
 ALTER TABLE location_events ADD COLUMN IF NOT EXISTS trip_id BIGINT NULL;
 ALTER TABLE location_events ADD COLUMN IF NOT EXISTS battery_voltage NUMERIC(10, 3) NULL;
+-- Breadcrumb replay projects the observed engine state. This was previously owned
+-- only by optional startup schema mutation and failed on a migration-only database.
+ALTER TABLE location_events ADD COLUMN IF NOT EXISTS engine_status VARCHAR(40) NULL;
 -- TelemetryPositions always projects the reverse-geocode cache. Stage30 was a
 -- legacy optional migration, so the protected owner chain must reconcile it.
 ALTER TABLE latest_vehicle_positions ADD COLUMN IF NOT EXISTS address TEXT NULL;
+-- The same route also projects and the ingest path writes battery voltage.
+-- Stage29 was optional on predecessor databases, so Stage80 must own this
+-- runtime column rather than allowing every GPS/OBD/sensor view to fail at once.
+ALTER TABLE latest_vehicle_positions ADD COLUMN IF NOT EXISTS battery_voltage NUMERIC(6, 2) NULL;
 ALTER TABLE latest_vehicle_positions ADD COLUMN IF NOT EXISTS installation_id BIGINT NULL;
 ALTER TABLE latest_vehicle_positions ADD COLUMN IF NOT EXISTS assignment_id BIGINT NULL;
 ALTER TABLE latest_vehicle_positions ADD COLUMN IF NOT EXISTS trip_id BIGINT NULL;
@@ -509,6 +516,219 @@ ALTER TABLE telemetry_alerts ADD COLUMN IF NOT EXISTS trip_id BIGINT NULL;
 ALTER TABLE canonical_telemetry_events ADD COLUMN IF NOT EXISTS installation_id BIGINT NULL;
 ALTER TABLE canonical_telemetry_events ADD COLUMN IF NOT EXISTS assignment_id BIGINT NULL;
 ALTER TABLE canonical_telemetry_events ADD COLUMN IF NOT EXISTS trip_id BIGINT NULL;
+
+-- Device registration is inventory metadata, not a telemetry observation.
+-- Preserve existing measurements, but stop manufacturing 0 C / 0% / a check-in
+-- timestamp for newly registered cold-chain devices. One-sided policy bounds
+-- are valid, so alert thresholds must also be nullable.
+ALTER TABLE fleet_tms_temperature_devices
+  ALTER COLUMN last_reported_temperature_celsius DROP DEFAULT,
+  ALTER COLUMN last_reported_temperature_celsius DROP NOT NULL,
+  ALTER COLUMN battery_percent DROP DEFAULT,
+  ALTER COLUMN battery_percent DROP NOT NULL,
+  ALTER COLUMN last_ping_at_utc DROP DEFAULT;
+ALTER TABLE fleet_tms_temperature_alerts
+  ALTER COLUMN threshold_min DROP DEFAULT,
+  ALTER COLUMN threshold_min DROP NOT NULL,
+  ALTER COLUMN threshold_max DROP DEFAULT,
+  ALTER COLUMN threshold_max DROP NOT NULL,
+  ADD COLUMN IF NOT EXISTS measured_humidity NUMERIC(6, 2) NULL,
+  ADD COLUMN IF NOT EXISTS humidity_threshold_min NUMERIC(6, 2) NULL,
+  ADD COLUMN IF NOT EXISTS humidity_threshold_max NUMERIC(6, 2) NULL;
+
+-- The protected migration chain must own the customer-health columns used by
+-- GET /api/customers; startup schema services are disabled for restricted roles.
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS sla_health_score NUMERIC(6, 2) NULL;
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS delivery_experience_score NUMERIC(6, 2) NULL;
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS risk_score NUMERIC(6, 2) NULL;
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS health_state VARCHAR(32) NULL;
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS health_computed_at TIMESTAMPTZ NULL;
+ALTER TABLE customers
+  ALTER COLUMN sla_health_score DROP DEFAULT,
+  ALTER COLUMN sla_health_score DROP NOT NULL,
+  ALTER COLUMN delivery_experience_score DROP DEFAULT,
+  ALTER COLUMN delivery_experience_score DROP NOT NULL,
+  ALTER COLUMN risk_score DROP DEFAULT,
+  ALTER COLUMN risk_score DROP NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_customers_health_computed ON customers(company_id,health_computed_at);
+
+-- Revenue/market catalog dependencies were previously created only by
+-- RevenueSchemaService. Protected environments intentionally skip runtime DDL, so
+-- MarketPackSchemaService failed before it could seed the governed catalog.
+CREATE TABLE IF NOT EXISTS module_packages (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  package_key VARCHAR(80) NOT NULL UNIQUE,
+  name VARCHAR(160) NOT NULL,
+  description VARCHAR(400) NULL,
+  category VARCHAR(40) NOT NULL DEFAULT 'fleet',
+  module_keys JSONB NOT NULL,
+  is_core BOOLEAN NOT NULL DEFAULT false,
+  base_price_cents BIGINT NOT NULL DEFAULT 0,
+  sort_order INT NOT NULL DEFAULT 100,
+  active BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS usage_meters (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  meter_key VARCHAR(80) NOT NULL UNIQUE,
+  name VARCHAR(160) NOT NULL,
+  unit VARCHAR(40) NOT NULL DEFAULT 'count',
+  aggregation VARCHAR(20) NOT NULL DEFAULT 'sum',
+  period VARCHAR(20) NOT NULL DEFAULT 'monthly',
+  module_key VARCHAR(80) NULL,
+  active BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS usage_events (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  company_id BIGINT NOT NULL,
+  meter_key VARCHAR(80) NOT NULL,
+  quantity NUMERIC(18,4) NOT NULL DEFAULT 1,
+  reference VARCHAR(160) NULL,
+  actor VARCHAR(160) NULL,
+  period_key VARCHAR(20) NOT NULL,
+  occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_usage_events_company_meter ON usage_events(company_id,meter_key,period_key);
+CREATE TABLE IF NOT EXISTS usage_counters (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  company_id BIGINT NOT NULL,
+  meter_key VARCHAR(80) NOT NULL,
+  period_key VARCHAR(20) NOT NULL,
+  value NUMERIC(18,4) NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(company_id,meter_key,period_key)
+);
+CREATE TABLE IF NOT EXISTS pricing_rules (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  package_id BIGINT NULL REFERENCES packages(id) ON DELETE CASCADE,
+  meter_key VARCHAR(80) NOT NULL,
+  included_quantity NUMERIC(18,4) NOT NULL DEFAULT 0,
+  unit_price_cents BIGINT NOT NULL DEFAULT 0,
+  currency VARCHAR(8) NOT NULL DEFAULT 'USD',
+  overage_allowed BOOLEAN NOT NULL DEFAULT true,
+  active BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(package_id,meter_key)
+);
+CREATE TABLE IF NOT EXISTS tenant_contract_overrides (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  company_id BIGINT NOT NULL REFERENCES companies(id),
+  meter_key VARCHAR(80) NULL,
+  included_quantity NUMERIC(18,4) NULL,
+  unit_price_cents BIGINT NULL,
+  flat_discount_cents BIGINT NULL,
+  note VARCHAR(400) NULL,
+  updated_by VARCHAR(220) NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(company_id,meter_key)
+);
+
+ALTER TABLE module_packages
+  ADD COLUMN IF NOT EXISTS package_key VARCHAR(80),
+  ADD COLUMN IF NOT EXISTS name VARCHAR(160),
+  ADD COLUMN IF NOT EXISTS description VARCHAR(400) NULL,
+  ADD COLUMN IF NOT EXISTS category VARCHAR(40) NOT NULL DEFAULT 'fleet',
+  ADD COLUMN IF NOT EXISTS module_keys JSONB,
+  ADD COLUMN IF NOT EXISTS is_core BOOLEAN NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS base_price_cents BIGINT NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS sort_order INT NOT NULL DEFAULT 100,
+  ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT true,
+  ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE module_packages
+  ALTER COLUMN package_key SET NOT NULL,
+  ALTER COLUMN name SET NOT NULL,
+  ALTER COLUMN module_keys SET NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_stage80_module_packages_key ON module_packages(package_key);
+ALTER TABLE usage_meters
+  ADD COLUMN IF NOT EXISTS meter_key VARCHAR(80),
+  ADD COLUMN IF NOT EXISTS name VARCHAR(160),
+  ADD COLUMN IF NOT EXISTS unit VARCHAR(40) NOT NULL DEFAULT 'count',
+  ADD COLUMN IF NOT EXISTS aggregation VARCHAR(20) NOT NULL DEFAULT 'sum',
+  ADD COLUMN IF NOT EXISTS period VARCHAR(20) NOT NULL DEFAULT 'monthly',
+  ADD COLUMN IF NOT EXISTS module_key VARCHAR(80) NULL,
+  ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT true,
+  ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE usage_meters
+  ALTER COLUMN meter_key SET NOT NULL,
+  ALTER COLUMN name SET NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_stage80_usage_meters_key ON usage_meters(meter_key);
+
+INSERT INTO module_packages(package_key,name,category,module_keys,is_core,base_price_cents,sort_order)
+VALUES
+  ('canada_na_compliance','Canada / North America Compliance','market','["market.canada_na"]'::jsonb,false,49900,200),
+  ('saudi_gcc_compliance','Saudi / GCC Compliance','market','["market.saudi_gcc"]'::jsonb,false,49900,200)
+ON CONFLICT(package_key) DO UPDATE SET
+  name=EXCLUDED.name,category=EXCLUDED.category,module_keys=EXCLUDED.module_keys,
+  is_core=EXCLUDED.is_core,base_price_cents=EXCLUDED.base_price_cents,sort_order=EXCLUDED.sort_order;
+INSERT INTO usage_meters(meter_key,name,unit,aggregation,period,module_key)
+VALUES
+  ('compliance_documents.count','Compliance documents','count','sum','lifetime','compliance.documents'),
+  ('compliance_expiry_alerts.monthly','Compliance expiry alerts / month','count','sum','monthly','compliance.documents'),
+  ('inspection_records.monthly','Inspection records / month','count','sum','monthly','compliance.documents')
+ON CONFLICT(meter_key) DO UPDATE SET
+  name=EXCLUDED.name,unit=EXCLUDED.unit,aggregation=EXCLUDED.aggregation,
+  period=EXCLUDED.period,module_key=EXCLUDED.module_key;
+
+-- Establish the least-privilege boundary immediately; the runner re-applies Stage58
+-- after Stage80 as the canonical whole-schema reconciliation and Stage76 remains
+-- terminal. Catalogs are app-read-only. Tenant ledgers require a signed tenant ticket.
+REVOKE ALL ON TABLE module_packages,usage_meters,pricing_rules FROM PUBLIC;
+REVOKE ALL ON SEQUENCE module_packages_id_seq,usage_meters_id_seq,pricing_rules_id_seq FROM PUBLIC;
+
+ALTER TABLE usage_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE usage_events FORCE ROW LEVEL SECURITY;
+ALTER TABLE usage_counters ENABLE ROW LEVEL SECURITY;
+ALTER TABLE usage_counters FORCE ROW LEVEL SECURITY;
+ALTER TABLE tenant_contract_overrides ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tenant_contract_overrides FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_ticket_app ON usage_events;
+DROP POLICY IF EXISTS system_control_plane ON usage_events;
+DROP POLICY IF EXISTS tenant_ticket_app ON usage_counters;
+DROP POLICY IF EXISTS system_control_plane ON usage_counters;
+DROP POLICY IF EXISTS tenant_ticket_app ON tenant_contract_overrides;
+DROP POLICY IF EXISTS system_control_plane ON tenant_contract_overrides;
+REVOKE ALL ON TABLE usage_events,usage_counters,tenant_contract_overrides FROM PUBLIC;
+REVOKE ALL ON SEQUENCE usage_events_id_seq,usage_counters_id_seq,tenant_contract_overrides_id_seq FROM PUBLIC;
+DO $stage80_revenue_acl$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_app') THEN
+    REVOKE ALL ON TABLE module_packages,usage_meters,pricing_rules FROM opstrax_app;
+    REVOKE ALL ON SEQUENCE module_packages_id_seq,usage_meters_id_seq,pricing_rules_id_seq FROM opstrax_app;
+    GRANT SELECT ON TABLE module_packages,usage_meters,pricing_rules TO opstrax_app;
+    REVOKE ALL ON TABLE usage_events,usage_counters,tenant_contract_overrides FROM opstrax_app;
+    REVOKE ALL ON SEQUENCE usage_events_id_seq,usage_counters_id_seq,tenant_contract_overrides_id_seq FROM opstrax_app;
+    GRANT SELECT,INSERT ON TABLE usage_events TO opstrax_app;
+    GRANT SELECT,INSERT,UPDATE,DELETE ON TABLE usage_counters,tenant_contract_overrides TO opstrax_app;
+    GRANT USAGE,SELECT ON SEQUENCE usage_events_id_seq,usage_counters_id_seq,tenant_contract_overrides_id_seq TO opstrax_app;
+    IF to_regprocedure('opstrax_security.current_tenant_id()') IS NOT NULL THEN
+      EXECUTE 'CREATE POLICY tenant_ticket_app ON usage_events FOR ALL TO opstrax_app '
+        || 'USING(company_id=(SELECT opstrax_security.current_tenant_id())) '
+        || 'WITH CHECK(company_id=(SELECT opstrax_security.current_tenant_id()))';
+      EXECUTE 'CREATE POLICY tenant_ticket_app ON usage_counters FOR ALL TO opstrax_app '
+        || 'USING(company_id=(SELECT opstrax_security.current_tenant_id())) '
+        || 'WITH CHECK(company_id=(SELECT opstrax_security.current_tenant_id()))';
+      EXECUTE 'CREATE POLICY tenant_ticket_app ON tenant_contract_overrides FOR ALL TO opstrax_app '
+        || 'USING(company_id=(SELECT opstrax_security.current_tenant_id())) '
+        || 'WITH CHECK(company_id=(SELECT opstrax_security.current_tenant_id()))';
+    END IF;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_system') THEN
+    REVOKE ALL ON TABLE module_packages,usage_meters,pricing_rules FROM opstrax_system;
+    REVOKE ALL ON SEQUENCE module_packages_id_seq,usage_meters_id_seq,pricing_rules_id_seq FROM opstrax_system;
+    GRANT SELECT,INSERT,UPDATE,DELETE ON TABLE module_packages,usage_meters,pricing_rules TO opstrax_system;
+    GRANT USAGE,SELECT ON SEQUENCE module_packages_id_seq,usage_meters_id_seq,pricing_rules_id_seq TO opstrax_system;
+    REVOKE ALL ON TABLE usage_events,usage_counters,tenant_contract_overrides FROM opstrax_system;
+    REVOKE ALL ON SEQUENCE usage_events_id_seq,usage_counters_id_seq,tenant_contract_overrides_id_seq FROM opstrax_system;
+    GRANT SELECT,INSERT,UPDATE,DELETE ON TABLE usage_events TO opstrax_system;
+    GRANT SELECT,INSERT,UPDATE,DELETE ON TABLE usage_counters,tenant_contract_overrides TO opstrax_system;
+    GRANT USAGE,SELECT ON SEQUENCE usage_events_id_seq,usage_counters_id_seq,tenant_contract_overrides_id_seq TO opstrax_system;
+    CREATE POLICY system_control_plane ON usage_events FOR ALL TO opstrax_system USING(true) WITH CHECK(true);
+    CREATE POLICY system_control_plane ON usage_counters FOR ALL TO opstrax_system USING(true) WITH CHECK(true);
+    CREATE POLICY system_control_plane ON tenant_contract_overrides FOR ALL TO opstrax_system USING(true) WITH CHECK(true);
+  END IF;
+END
+$stage80_revenue_acl$;
 
 -- A driver may accept an assignment before reaching the vehicle, but departure is
 -- governed by explicit vehicle confirmation and a current pre-trip DVIR. These columns
@@ -565,8 +785,20 @@ ALTER TABLE dispatch_assignments ADD CONSTRAINT ck_stage80_vehicle_confirmation_
 CREATE INDEX IF NOT EXISTS idx_stage80_dispatch_assignment_lineage
   ON dispatch_assignments(company_id,supersedes_assignment_id) WHERE supersedes_assignment_id IS NOT NULL;
 
+-- A route retains completed/cancelled trip history, but may have only one current
+-- operational trip. The former all-history uniqueness prevented legitimate reuse and
+-- made dispatch lineage resolution fail as soon as a route had history.
+DROP INDEX IF EXISTS ux_trips_route;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_trips_current_route
+  ON trips(company_id,route_id)
+  WHERE route_id IS NOT NULL AND LOWER(COALESCE(status,'')) IN ('planned','active','exception');
+
 -- A compatibility projection cannot be independently edited. This trigger derives it
 -- from the authoritative open installation after every governed ledger mutation.
+-- Use the mutation statement's database timestamp, not transaction_timestamp()/NOW().
+-- Request middleware opens the tenant transaction before endpoint execution, so a
+-- legitimate effective time captured later in that request can be newer than NOW()
+-- even though it is already effective when the INSERT statement reaches PostgreSQL.
 CREATE OR REPLACE FUNCTION stage80_sync_device_vehicle_projection()
 RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER
 SET search_path=pg_catalog,public AS $$
@@ -576,7 +808,7 @@ BEGIN
   target_company:=COALESCE(NEW.company_id,OLD.company_id);
   SELECT vehicle_id INTO projected_vehicle FROM device_installations
    WHERE company_id=target_company AND device_id=target_device
-     AND effective_from<=NOW() AND effective_to IS NULL AND status IN ('Installed','Verified')
+     AND effective_from<=statement_timestamp() AND effective_to IS NULL AND status IN ('Installed','Verified')
    ORDER BY effective_from DESC,id DESC LIMIT 1;
   UPDATE eld_devices SET vehicle_id=projected_vehicle,driver_id=NULL,updated_at=NOW()
    WHERE id=target_device AND company_id=target_company;
@@ -600,7 +832,7 @@ WITH current_install AS (
   SELECT DISTINCT ON (i.company_id,i.device_id)
     i.company_id,i.device_id,i.vehicle_id
   FROM device_installations i
-  WHERE i.effective_from<=NOW() AND i.effective_to IS NULL AND i.status IN ('Installed','Verified')
+  WHERE i.effective_from<=statement_timestamp() AND i.effective_to IS NULL AND i.status IN ('Installed','Verified')
   ORDER BY i.company_id,i.device_id,i.effective_from DESC,i.id DESC
 )
 UPDATE eld_devices e
@@ -612,7 +844,7 @@ UPDATE eld_devices e SET vehicle_id=NULL,driver_id=NULL,updated_at=NOW()
 WHERE e.deleted_at IS NULL AND e.vehicle_id IS NOT NULL
   AND NOT EXISTS (
     SELECT 1 FROM device_installations i WHERE i.company_id=e.company_id AND i.device_id=e.id
-      AND i.effective_from<=NOW() AND i.effective_to IS NULL AND i.status IN ('Installed','Verified')
+      AND i.effective_from<=statement_timestamp() AND i.effective_to IS NULL AND i.status IN ('Installed','Verified')
   );
 
 REVOKE ALL ON TABLE device_installation_quarantine FROM PUBLIC;

@@ -272,16 +272,19 @@ public sealed class FleetTmsColdChainFoundationService(Database db)
         var policy = await ResolvePolicyAsync(companyId, effectiveBranchId, zone, shipmentId, vehicleNumber, req, ct);
         var effectiveMin = policy?.MinCelsius ?? (zone is null ? null : DN(zone, "minCelsius"));
         var effectiveMax = policy?.MaxCelsius ?? (zone is null ? null : DN(zone, "maxCelsius"));
-        var status = string.IsNullOrWhiteSpace(req.Status) ? "Normal" : req.Status.Trim();
-        var isBreach = effectiveMin.HasValue && req.TemperatureCelsius < effectiveMin.Value
+        var effectiveHumidityMin = policy?.HumidityMinPercent;
+        var effectiveHumidityMax = policy?.HumidityMaxPercent;
+        var isTemperatureBreach = effectiveMin.HasValue && req.TemperatureCelsius < effectiveMin.Value
             || effectiveMax.HasValue && req.TemperatureCelsius > effectiveMax.Value;
-        if (isBreach)
-        {
-            status = "Breach";
-        }
+        var isHumidityBreach = req.HumidityPercent.HasValue &&
+            (effectiveHumidityMin.HasValue && req.HumidityPercent.Value < effectiveHumidityMin.Value
+             || effectiveHumidityMax.HasValue && req.HumidityPercent.Value > effectiveHumidityMax.Value);
+        var isBreach = isTemperatureBreach || isHumidityBreach;
+        var status = isBreach ? "Breach" : "Normal";
 
         var readingId = await PersistTemperatureFlowAsync(companyId, effectiveBranchId, shipmentId, zoneId,
-            req, status, policy, effectiveMin, effectiveMax, isBreach, ct);
+            req, status, policy, effectiveMin, effectiveMax, effectiveHumidityMin, effectiveHumidityMax,
+            isTemperatureBreach, isHumidityBreach, ct);
 
         var row = await db.QuerySingleAsync(
             @"SELECT *
@@ -299,8 +302,16 @@ public sealed class FleetTmsColdChainFoundationService(Database db)
 
     private async Task<long> PersistTemperatureFlowAsync(long companyId, long? branchId, long? shipmentId, long? zoneId,
         TemperatureReadingRequest req, string status, ColdChainPolicyRecord? policy, decimal? effectiveMin,
-        decimal? effectiveMax, bool isBreach, CancellationToken ct)
+        decimal? effectiveMax, decimal? effectiveHumidityMin, decimal? effectiveHumidityMax,
+        bool isTemperatureBreach, bool isHumidityBreach, CancellationToken ct)
     {
+        var isBreach = isTemperatureBreach || isHumidityBreach;
+        var alertType = (isTemperatureBreach, isHumidityBreach) switch
+        {
+            (true, true) => "TemperatureAndHumidityBreach",
+            (true, false) => "TemperatureBreach",
+            _ => "HumidityBreach",
+        };
         return await db.WithTransactionAsync(async (connection, transaction) =>
         {
             await using var lockDevice = new NpgsqlCommand(@"
@@ -343,7 +354,6 @@ WHERE company_id=@companyId AND branch_id IS NOT DISTINCT FROM @branchId AND ide
 
             await using (var updateDevice = new NpgsqlCommand(@"
 UPDATE fleet_tms_temperature_devices SET last_reported_temperature_celsius=@temp,
- battery_percent=CASE WHEN battery_percent <= 1 THEN 98 ELSE battery_percent END,
  last_ping_at_utc=NOW(), shipment_id=COALESCE(@shipment,shipment_id), zone_id=COALESCE(@zone,zone_id),
  source_channel=COALESCE(@sourceChannel,source_channel), client_generated_id=COALESCE(@clientGeneratedId,client_generated_id),
  correlation_id=COALESCE(@correlationId,correlation_id),
@@ -359,17 +369,22 @@ WHERE id=@device AND company_id=@companyId AND branch_id IS NOT DISTINCT FROM @b
                 await using var alert = new NpgsqlCommand(@"
 INSERT INTO fleet_tms_temperature_alerts
  (company_id,branch_id,device_id,shipment_id,reading_id,alert_type,severity,status,threshold_min,threshold_max,
-  measured_temperature,triggered_at_utc,notes,source_channel,client_generated_id,idempotency_key,correlation_id,causation_id,
+  measured_temperature,measured_humidity,humidity_threshold_min,humidity_threshold_max,triggered_at_utc,
+  notes,source_channel,client_generated_id,idempotency_key,correlation_id,causation_id,
   metadata_json,applied_policy_code,applied_policy_scope)
-VALUES (@companyId,@branchId,@device,@shipment,@reading,'TemperatureBreach',@severity,'Open',@min,@max,@temp,NOW(),
- 'Breach auto-generated from live temperature reading.',@sourceChannel,@clientGeneratedId,@idempotencyKey,@correlationId,@causationId,
+VALUES (@companyId,@branchId,@device,@shipment,@reading,@alertType,@severity,'Open',@min,@max,@temp,@humidity,@humidityMin,@humidityMax,NOW(),
+ 'Breach derived from the persisted cold-chain policy.',@sourceChannel,@clientGeneratedId,@idempotencyKey,@correlationId,@causationId,
  @metadata::jsonb,@policyCode,@policyScope)
 ON CONFLICT DO NOTHING", connection, transaction);
                 BindFlowParameters(alert, companyId, branchId, shipmentId, zoneId, req);
                 alert.Parameters.AddWithValue("@reading", readingId);
+                alert.Parameters.AddWithValue("@alertType", alertType);
                 alert.Parameters.AddWithValue("@severity", policy?.Severity ?? (req.TemperatureCelsius > (effectiveMax ?? req.TemperatureCelsius) + 2 ? "Critical" : "High"));
                 alert.Parameters.AddWithValue("@min", (object?)effectiveMin ?? DBNull.Value);
                 alert.Parameters.AddWithValue("@max", (object?)effectiveMax ?? DBNull.Value);
+                alert.Parameters.AddWithValue("@humidity", (object?)req.HumidityPercent ?? DBNull.Value);
+                alert.Parameters.AddWithValue("@humidityMin", (object?)effectiveHumidityMin ?? DBNull.Value);
+                alert.Parameters.AddWithValue("@humidityMax", (object?)effectiveHumidityMax ?? DBNull.Value);
                 alert.Parameters.AddWithValue("@policyCode", (object?)policy?.PolicyCode ?? DBNull.Value);
                 alert.Parameters.AddWithValue("@policyScope", (object?)policy?.ScopeType ?? DBNull.Value);
                 await alert.ExecuteNonQueryAsync(ct);
@@ -378,8 +393,10 @@ ON CONFLICT DO NOTHING", connection, transaction);
             await InsertFlowEvent(connection, transaction, companyId, branchId, "cold_chain.temperature_reading.recorded", readingId,
                 new { readingId, req.DeviceId, shipmentId, zoneId, req.TemperatureCelsius, req.HumidityPercent, status, policyCode=policy?.PolicyCode, policyScope=policy?.ScopeType, breach=isBreach }, req, ct);
             if (isBreach)
-                await InsertFlowEvent(connection, transaction, companyId, branchId, "cold_chain.temperature_breach.detected", readingId,
-                    new { readingId, req.DeviceId, shipmentId, zoneId, req.TemperatureCelsius, effectiveMin, effectiveMax, policyCode=policy?.PolicyCode, policyScope=policy?.ScopeType }, req, ct);
+                await InsertFlowEvent(connection, transaction, companyId, branchId, "cold_chain.condition_breach.detected", readingId,
+                    new { readingId, req.DeviceId, shipmentId, zoneId, req.TemperatureCelsius, req.HumidityPercent,
+                        effectiveMin, effectiveMax, effectiveHumidityMin, effectiveHumidityMax, alertType,
+                        policyCode=policy?.PolicyCode, policyScope=policy?.ScopeType }, req, ct);
             return readingId;
         }, ct);
     }
@@ -407,7 +424,7 @@ ON CONFLICT DO NOTHING", connection, transaction);
         command.Parameters.AddWithValue("@humidity", (object?)req.HumidityPercent ?? DBNull.Value);
         command.Parameters.AddWithValue("@lat", (object?)req.Latitude ?? DBNull.Value);
         command.Parameters.AddWithValue("@lng", (object?)req.Longitude ?? DBNull.Value);
-        command.Parameters.AddWithValue("@source", string.IsNullOrWhiteSpace(req.Source) ? "Sensor" : req.Source.Trim());
+        command.Parameters.AddWithValue("@source", NormalizeReadingSource(req.Source));
         command.Parameters.AddWithValue("@status", status);
         command.Parameters.AddWithValue("@notes", req.Notes?.Trim() ?? string.Empty);
         command.Parameters.AddWithValue("@policyCode", (object?)policy?.PolicyCode ?? DBNull.Value);
@@ -415,6 +432,15 @@ ON CONFLICT DO NOTHING", connection, transaction);
         command.Parameters.AddWithValue("@policyMin", (object?)effectiveMin ?? DBNull.Value);
         command.Parameters.AddWithValue("@policyMax", (object?)effectiveMax ?? DBNull.Value);
     }
+
+    internal static string NormalizeReadingSource(string? source) => source?.Trim().ToLowerInvariant() switch
+    {
+        null or "" or "sensor" => "Sensor",
+        "gateway" => "Gateway",
+        "manual" => "Manual",
+        "import" => "Import",
+        _ => throw new InvalidOperationException("Reading source is invalid."),
+    };
 
     private static async Task InsertFlowEvent(NpgsqlConnection connection, NpgsqlTransaction transaction, long companyId, long? branchId,
         string eventType, long readingId, object payload, TemperatureReadingRequest req, CancellationToken ct)

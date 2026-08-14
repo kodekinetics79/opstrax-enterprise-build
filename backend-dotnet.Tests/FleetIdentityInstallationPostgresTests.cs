@@ -182,6 +182,74 @@ public sealed class FleetIdentityInstallationPostgresTests
     }
 
     [Fact]
+    public async Task CompatibilityProjectionUsesMutationTimeWhenTransferStartsAfterTransaction()
+    {
+        var db = Db();
+        var companyId = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + Random.Shared.Next(900_000, 990_000);
+        await Company(db, companyId, "PROJECTION-CLOCK");
+        try
+        {
+            var branch = await Branch(db, companyId, "PROJECTION-CLOCK");
+            var vehicleA = await Vehicle(db, companyId, branch, $"CLOCK-A-{companyId}", alternate: $"CLOCK-MFG-{companyId}-A");
+            var vehicleB = await Vehicle(db, companyId, branch, $"CLOCK-B-{companyId}", alternate: $"CLOCK-MFG-{companyId}-B");
+            var deviceId = await Device(db, companyId, $"CLOCK-SERIAL-{companyId}");
+            var firstId = await db.InsertAsync(
+                @"INSERT INTO device_installations
+                    (company_id,branch_id,device_id,vehicle_id,status,device_role,is_primary,effective_from,installed_at,source)
+                  VALUES (@c,@b,@d,@v,'Installed','GPS',TRUE,NOW()-INTERVAL '1 hour',NOW()-INTERVAL '1 hour','test')",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branch);
+                    c.Parameters.AddWithValue("@d", deviceId); c.Parameters.AddWithValue("@v", vehicleA);
+                });
+            Assert.Equal(vehicleA, await db.ScalarLongAsync("SELECT vehicle_id FROM eld_devices WHERE id=@d",
+                c => c.Parameters.AddWithValue("@d", deviceId)));
+
+            await using var connection = await db.OpenAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            await using (var establishTransactionTime = new NpgsqlCommand("SELECT transaction_timestamp()", connection, transaction))
+                await establishTransactionTime.ExecuteScalarAsync();
+            DateTimeOffset effectiveAt;
+            await using (var effectiveClock = new NpgsqlCommand("SELECT clock_timestamp() FROM pg_sleep(0.02)", connection, transaction))
+                effectiveAt = new DateTimeOffset(((DateTime)(await effectiveClock.ExecuteScalarAsync())!).ToUniversalTime());
+
+            await using (var closePrior = new NpgsqlCommand(
+                "UPDATE device_installations SET status='Removed',effective_to=@at,removed_at=@at WHERE id=@id", connection, transaction))
+            {
+                closePrior.Parameters.AddWithValue("@at", effectiveAt);
+                closePrior.Parameters.AddWithValue("@id", firstId);
+                await closePrior.ExecuteNonQueryAsync();
+            }
+            await using (var insertCurrent = new NpgsqlCommand(
+                @"INSERT INTO device_installations
+                    (company_id,branch_id,device_id,vehicle_id,status,device_role,is_primary,effective_from,installed_at,source,replaced_installation_id)
+                  VALUES (@c,@b,@d,@v,'Installed','GPS',TRUE,@at,@at,'test',@prior)", connection, transaction))
+            {
+                insertCurrent.Parameters.AddWithValue("@c", companyId); insertCurrent.Parameters.AddWithValue("@b", branch);
+                insertCurrent.Parameters.AddWithValue("@d", deviceId); insertCurrent.Parameters.AddWithValue("@v", vehicleB);
+                insertCurrent.Parameters.AddWithValue("@at", effectiveAt); insertCurrent.Parameters.AddWithValue("@prior", firstId);
+                await insertCurrent.ExecuteNonQueryAsync();
+            }
+            await using (var projection = new NpgsqlCommand("SELECT vehicle_id FROM eld_devices WHERE id=@d", connection, transaction))
+            {
+                projection.Parameters.AddWithValue("@d", deviceId);
+                Assert.Equal(vehicleB, Convert.ToInt64(await projection.ExecuteScalarAsync()));
+            }
+            await transaction.CommitAsync();
+        }
+        finally
+        {
+            foreach (var sql in new[]
+            {
+                "DELETE FROM audit_logs WHERE company_id=@c", "DELETE FROM device_state_transitions WHERE company_id=@c",
+                "DELETE FROM device_installations WHERE company_id=@c", "DELETE FROM eld_devices WHERE company_id=@c",
+                "DELETE FROM vehicles WHERE company_id=@c", "DELETE FROM branches WHERE company_id=@c",
+                "DELETE FROM companies WHERE id=@c"
+            }) await db.ExecuteAsync(sql, c => c.Parameters.AddWithValue("@c", companyId));
+        }
+    }
+
+    [Fact]
     public async Task RemovedHistoryRetainsDeviceAndPrimaryVehicleRoleNonOverlap()
     {
         var db = Db();

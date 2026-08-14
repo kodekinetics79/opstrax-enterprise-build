@@ -4199,7 +4199,7 @@ public static partial class EndpointMappings
               ORDER BY created_at DESC LIMIT 12", c => c.Parameters.AddWithValue("@companyId", companyId), ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new
         {
-            status = "Live Simulation",
+            status = "Current operational snapshot",
             generatedAt = DateTime.UtcNow,
             kpis,
             entities,
@@ -4210,21 +4210,6 @@ public static partial class EndpointMappings
             diagnostics,
             safetyVideo,
             actionQueue,
-            replay = new
-            {
-                window = "Last 4 hours",
-                available = true,
-                description = "Trip replay placeholder with GPS trail, speed, route, geofence and video event overlays."
-            },
-            competitorGapAnalysis = new[]
-            {
-                new { capability = "Live map and asset context", status = "Matched and extended", opstraxAdvantage = "Vehicle, driver, job, SLA, telemetry quality and camera health appear in the same command surface." },
-                new { capability = "Geofences and alerts", status = "Matched", opstraxAdvantage = "Risk zones, event feed and action queue are joined to dispatch/ETA workflows." },
-                new { capability = "Video safety context", status = "Extended", opstraxAdvantage = "Dashcam evidence, exoneration and evidence package workflows are surfaced from Control Tower." },
-                new { capability = "Rules/diagnostics", status = "Extended placeholder", opstraxAdvantage = "Device/camera/data-quality health and maintenance/safety actions are visible without leaving operations." },
-                new { capability = "Customer SLA operations", status = "Differentiated", opstraxAdvantage = "Live map is tied directly to ETA updates, SLA risk and customer communication queues." }
-            },
-            filters = new[] { "Vehicles", "Jobs", "Geofences", "Incidents", "Maintenance Risk", "Delayed" }
         }));
     }
 
@@ -16313,9 +16298,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var stride = total > limit ? (int)Math.Ceiling((double)total / limit) : 1;
 
         var points = await db.QueryAsync(
-            @"SELECT lat, lng, speed_mph, heading, engine_status, event_time, source, address
+            @"SELECT id, assignment_id, trip_id, driver_id, lat, lng, speed_mph, heading, engine_status, event_time, source, address
               FROM (
-                SELECT lat, lng, speed_mph, heading, engine_status, event_time, source,
+                SELECT id, assignment_id, trip_id, driver_id, lat, lng, speed_mph, heading, engine_status, event_time, source,
                        NULL::text address,
                        ROW_NUMBER() OVER (ORDER BY event_time ASC) rn
                 FROM location_events
@@ -20247,7 +20232,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (RequirePermission(http, "maintenance:view") is { } denied) return denied;
         var status = http.Request.Query["status"].FirstOrDefault();
         var rows = await db.QueryAsync(
-            @"SELECT dh.*,v.vehicle_code,fc.code,fc.description fault_description,fc.status fault_status
+            @"SELECT dh.*,v.vehicle_code,fc.code,fc.description fault_description,fc.status fault_status,
+                     fc.protocol fault_protocol,fc.canonical_identity fault_canonical_identity,
+                     fc.source_event_id fault_source_event_id,fc.last_source_event_id fault_last_source_event_id
               FROM diagnostic_holds dh
               JOIN vehicles v ON v.id=dh.vehicle_id AND v.company_id=dh.company_id
               LEFT JOIN fault_codes fc ON fc.id=dh.fault_code_id AND fc.company_id=dh.company_id
@@ -20666,7 +20653,38 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 overrideRequired = true,
             }, statusCode: StatusCodes.Status422UnprocessableEntity);
 
-        if (body.JobId.HasValue)
+        long? governedTripId = null;
+        long? governedTripJobId = null;
+        if (body.RouteId.HasValue)
+        {
+            var routeOwned = await db.QuerySingleAsync(
+                @"SELECT r.id,
+                         current_trip.trip_id,
+                         current_trip.trip_job_id,
+                         current_trip.trip_count
+                  FROM routes r
+                  LEFT JOIN LATERAL (
+                      SELECT MIN(t.id) trip_id, MIN(t.job_id) trip_job_id, COUNT(*) trip_count
+                      FROM trips t
+                      WHERE t.company_id=r.company_id AND t.route_id=r.id
+                        AND LOWER(COALESCE(t.status,'')) IN ('planned','active','exception')
+                  ) current_trip ON TRUE
+                  WHERE r.id=@id AND r.company_id=@cid AND r.deleted_at IS NULL
+                  AND (r.assigned_vehicle_id IS NULL OR r.assigned_vehicle_id=@vehicleId)
+                  AND (@branchId::BIGINT IS NULL OR r.assigned_vehicle_id IS NULL OR EXISTS (
+                      SELECT 1 FROM vehicles v_scope WHERE v_scope.id=r.assigned_vehicle_id
+                        AND v_scope.company_id=r.company_id AND v_scope.branch_id=@branchId AND v_scope.deleted_at IS NULL))",
+                c => { c.Parameters.AddWithValue("@id", body.RouteId.Value); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@vehicleId", body.VehicleId); c.Parameters.AddWithValue("@branchId", assignmentBranchId ?? (object)DBNull.Value); }, ct);
+            if (routeOwned is null) return Results.BadRequest(ApiResponse<object>.Fail("Route not found in authorized branch"));
+            if (Convert.ToInt64(routeOwned["tripCount"] ?? 0) > 1)
+                return Results.Conflict(ApiResponse<object>.Fail("Route has ambiguous trip lineage"));
+            governedTripId = routeOwned["tripId"] is null or DBNull ? null : Convert.ToInt64(routeOwned["tripId"]);
+            governedTripJobId = routeOwned["tripJobId"] is null or DBNull ? null : Convert.ToInt64(routeOwned["tripJobId"]);
+            if (body.JobId.HasValue && governedTripJobId.HasValue && body.JobId != governedTripJobId)
+                return Results.Conflict(ApiResponse<object>.Fail("Job does not match the route trip lineage"));
+        }
+        var effectiveJobId = body.JobId ?? governedTripJobId;
+        if (effectiveJobId.HasValue)
         {
             var jobOwned = await db.ScalarLongAsync(
                 @"SELECT COUNT(*) FROM jobs j WHERE j.id=@id AND j.company_id=@cid AND j.deleted_at IS NULL
@@ -20675,19 +20693,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                   AND NOT EXISTS (SELECT 1 FROM dispatch_assignments active
                                   WHERE active.company_id=j.company_id AND active.job_id=j.id
                                     AND active.assignment_status NOT IN ('delivered','cancelled'))",
-                c => { c.Parameters.AddWithValue("@id", body.JobId.Value); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", assignmentBranchId ?? (object)DBNull.Value); }, ct);
+                c => { c.Parameters.AddWithValue("@id", effectiveJobId.Value); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", assignmentBranchId ?? (object)DBNull.Value); }, ct);
             if (jobOwned == 0) return Results.Conflict(ApiResponse<object>.Fail("Job is unavailable, outside the assignment branch, completed, cancelled, or already actively assigned"));
-        }
-        if (body.RouteId.HasValue)
-        {
-            var routeOwned = await db.ScalarLongAsync(
-                @"SELECT COUNT(*) FROM routes r WHERE r.id=@id AND r.company_id=@cid AND r.deleted_at IS NULL
-                  AND (r.assigned_vehicle_id IS NULL OR r.assigned_vehicle_id=@vehicleId)
-                  AND (@branchId::BIGINT IS NULL OR r.assigned_vehicle_id IS NULL OR EXISTS (
-                      SELECT 1 FROM vehicles v_scope WHERE v_scope.id=r.assigned_vehicle_id
-                        AND v_scope.company_id=r.company_id AND v_scope.branch_id=@branchId AND v_scope.deleted_at IS NULL))",
-                c => { c.Parameters.AddWithValue("@id", body.RouteId.Value); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@vehicleId", body.VehicleId); c.Parameters.AddWithValue("@branchId", assignmentBranchId ?? (object)DBNull.Value); }, ct);
-            if (routeOwned == 0) return Results.BadRequest(ApiResponse<object>.Fail("Route not found in authorized branch"));
         }
         if (body.TrailerId.HasValue)
             return Results.BadRequest(ApiResponse<object>.Fail("trailerId is not supported by the current fleet asset schema"));
@@ -20719,13 +20726,13 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
         var assignId = await db.InsertAsync(
             @"INSERT INTO dispatch_assignments
-                (company_id, branch_id, job_id, vehicle_id, driver_id, route_id, trailer_id,
+                (company_id, branch_id, job_id, vehicle_id, driver_id, route_id, trip_id, trailer_id,
                  assignment_status, status, match_score,
                  planned_pickup_at, planned_delivery_at,
                  assigned_by_user_id, notes, override_reason,
                  safety_overridden, hos_overridden, eligibility_json,
                  assigned_at, acceptance_due_at)
-              VALUES (@cid, @branchId, @jid, @vid, @did, @rid, @tid,
+              VALUES (@cid, @branchId, @jid, @vid, @did, @rid, @tripId, @tid,
                       'assigned', 'Assigned', @score,
                       @pickup, @delivery,
                       @uid, @notes, @override,
@@ -20735,10 +20742,11 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             {
                 c.Parameters.AddWithValue("@cid",       companyId);
                 c.Parameters.AddWithValue("@branchId", assignmentBranchId ?? (object)DBNull.Value);
-                c.Parameters.AddWithValue("@jid",       body.JobId ?? (object)DBNull.Value);
+                c.Parameters.AddWithValue("@jid",       effectiveJobId ?? (object)DBNull.Value);
                 c.Parameters.AddWithValue("@vid",       body.VehicleId);
                 c.Parameters.AddWithValue("@did",       body.DriverId);
                 c.Parameters.AddWithValue("@rid",       body.RouteId    ?? (object)DBNull.Value);
+                c.Parameters.AddWithValue("@tripId",    governedTripId ?? (object)DBNull.Value);
                 c.Parameters.AddWithValue("@tid",       body.TrailerId  ?? (object)DBNull.Value);
                 c.Parameters.AddWithValue("@score",     elig.MatchScore);
                 c.Parameters.AddWithValue("@pickup",    plannedPickup   ?? (object)DBNull.Value);
@@ -20752,7 +20760,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             }, ct);
 
         // If job_id provided, update job status.
-        if (body.JobId.HasValue)
+        if (effectiveJobId.HasValue)
         {
             await db.ExecuteAsync(
                 "UPDATE jobs SET status='Assigned', assigned_driver_id=@did, assigned_vehicle_id=@vid WHERE id=@jid AND company_id=@cid",
@@ -20760,7 +20768,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 {
                     c.Parameters.AddWithValue("@did", body.DriverId);
                     c.Parameters.AddWithValue("@vid", body.VehicleId);
-                    c.Parameters.AddWithValue("@jid", body.JobId.Value);
+                    c.Parameters.AddWithValue("@jid", effectiveJobId.Value);
                     c.Parameters.AddWithValue("@cid", companyId);
                 }, ct);
         }

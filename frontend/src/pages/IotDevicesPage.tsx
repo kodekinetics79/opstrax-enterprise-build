@@ -44,6 +44,7 @@ import type { AnyRecord } from "@/types";
 
 type DeviceTab =
   | "all"
+  | "archived"
   | "unassigned"
   | "offline"
   | "attention"
@@ -124,6 +125,7 @@ const defaultConnectForm: ConnectFormState = {
 
 const DEVICE_TABS: Array<{ key: DeviceTab; label: string }> = [
   { key: "all", label: "All Devices" },
+  { key: "archived", label: "Archived" },
   { key: "unassigned", label: "Unassigned" },
   { key: "offline", label: "Offline" },
   { key: "attention", label: "Needs Attention" },
@@ -144,6 +146,7 @@ function downloadCsv(filename: string, body: string) {
 }
 
 function emptyStateForTab(tab: DeviceTab) {
+  if (tab === "archived") return { title: "No archived devices", subtitle: "Revoked and retired devices remain visible here with their lifecycle history." };
   if (tab === "offline") return { title: "No offline devices", subtitle: "Every scoped device is checking in within the current monitoring window." };
   if (tab === "firmware") return { title: "Current version only", subtitle: "OTA scheduling and firmware history are not connected in this pilot. Current versions appear when devices report them." };
   if (tab === "providers") return { title: "No providers found", subtitle: "Integrations are pulled from your connected provider catalog." };
@@ -152,6 +155,9 @@ function emptyStateForTab(tab: DeviceTab) {
 }
 
 function activeTabCount(tab: DeviceTab, row: DeviceCommandRecord) {
+  const archived = row.lifecycleStatus === "Archived" || /revoked|retired/i.test(String(row.eldStatus));
+  if (tab === "archived") return archived;
+  if (archived) return false;
   if (tab === "all") return true;
   if (tab === "unassigned") return !row.assignedVehicleCode;
   if (tab === "offline") return /offline/i.test(row.connectionStatus);
@@ -225,6 +231,7 @@ function buildActionContracts(
   // Active-but-stale device offer "Resolve" -> 409, and left "Needs Attention" perpetually
   // disabled. inRecovery drives Resolve; markEligible drives Needs Attention.
   const eldStatus = String(device.eldStatus ?? "").toLowerCase();
+  const archived = device.lifecycleStatus === "Archived" || /revoked|retired/.test(eldStatus);
   const inRecovery = /malfunction|diagnostic/.test(eldStatus);
   const markEligible = /active|diagnostic/.test(eldStatus);
   const hasCurrentVehicle = Boolean(device.assignedVehicleCode && device.assignedVehicleCode !== "Unassigned");
@@ -242,16 +249,18 @@ function buildActionContracts(
       key: "assign",
       label: hasCurrentVehicle ? "Transfer" : "Install",
       icon: <ArrowRightLeft className="h-4 w-4" />,
-      state: canAssign ? "ready" : "permission-blocked",
-      reason: canAssign ? "Governed installation permission is available." : "Requires device assignment plus TELEMETRY_DEVICES_MANAGE.",
+      state: archived ? "state-blocked" : canAssign ? "ready" : "permission-blocked",
+      reason: archived ? "Archived devices cannot be installed or transferred." : canAssign ? "Governed installation permission is available." : "Requires device assignment plus TELEMETRY_DEVICES_MANAGE.",
       onClick: onAssign,
     },
     {
       key: "unassign",
       label: "Remove installation",
       icon: <Truck className="h-4 w-4" />,
-      state: !canAssign ? "permission-blocked" : hasCurrentVehicle ? "ready" : "state-blocked",
-      reason: !canAssign
+      state: archived ? "state-blocked" : !canAssign ? "permission-blocked" : hasCurrentVehicle ? "ready" : "state-blocked",
+      reason: archived
+        ? "Archived device installation history is read-only."
+        : !canAssign
         ? "Requires device assignment plus TELEMETRY_DEVICES_MANAGE."
         : hasCurrentVehicle
           ? "Ready."
@@ -262,7 +271,9 @@ function buildActionContracts(
       key: "install",
       label: "Record commissioning",
       icon: <CheckCircle2 className="h-4 w-4" />,
-      state: !canAssign
+      state: archived
+        ? "state-blocked"
+        : !canAssign
         ? "permission-blocked"
         : !hasCurrentVehicle
           ? "state-blocked"
@@ -271,7 +282,9 @@ function buildActionContracts(
             : device.currentInstallationRowVersion == null
               ? "state-blocked"
             : "ready",
-      reason: !canAssign
+      reason: archived
+        ? "Archived devices cannot be commissioned."
+        : !canAssign
         ? "Requires device assignment plus TELEMETRY_DEVICES_MANAGE."
         : !hasCurrentVehicle
           ? "Install the device on a vehicle first."
@@ -296,12 +309,16 @@ function buildActionContracts(
       key: "device-state",
       label: /suspended/.test(eldStatus) ? "Activate device" : "Suspend device",
       icon: <ShieldCheck className="h-4 w-4" />,
-      state: !canManageLifecycle
+      state: archived
+        ? "state-blocked"
+        : !canManageLifecycle
         ? "permission-blocked"
         : /suspended/.test(eldStatus) || /active|diagnostic|malfunction/.test(eldStatus)
           ? "ready"
           : "state-blocked",
-      reason: !canManageLifecycle
+      reason: archived
+        ? "Archived devices cannot be suspended or activated."
+        : !canManageLifecycle
         ? "Requires TELEMETRY_DEVICES_MANAGE."
         : /suspended/.test(eldStatus)
           ? "Activate the suspended device through the persisted lifecycle endpoint."
@@ -326,8 +343,10 @@ function buildActionContracts(
       key: inRecovery ? "resolve" : "needs-attention",
       label: inRecovery ? "Resolve" : "Needs Attention",
       icon: inRecovery ? <ShieldCheck className="h-4 w-4" /> : <Activity className="h-4 w-4" />,
-      state: !canRecover ? "permission-blocked" : inRecovery || markEligible ? "ready" : "state-blocked",
-      reason: !canRecover
+      state: archived ? "state-blocked" : !canRecover ? "permission-blocked" : inRecovery || markEligible ? "ready" : "state-blocked",
+      reason: archived
+        ? "Archived devices cannot enter or leave recovery."
+        : !canRecover
         ? "Requires a compliance (compliance:update / compliance:manage) or telematics:manage permission."
         : inRecovery
           ? "Device is in recovery (Malfunction/Diagnostic) — resolve is available."
@@ -340,8 +359,8 @@ function buildActionContracts(
       key: "archive",
       label: "Archive",
       icon: <Trash2 className="h-4 w-4" />,
-      state: canDelete ? "ready" : "permission-blocked",
-      reason: canDelete ? "Permission and revoke route available." : "Requires TELEMATICS_DEVICES_DELETE.",
+      state: archived ? "state-blocked" : canDelete ? "ready" : "permission-blocked",
+      reason: archived ? "This device is already archived." : canDelete ? "Permission and revoke route available." : "Requires TELEMATICS_DEVICES_DELETE.",
       onClick: onArchive,
     },
   ];
@@ -567,7 +586,6 @@ export function IotDevicesPage() {
   const deviceRows = useMemo(() => {
     const query = search.trim().toLowerCase();
     return (devicesQ.data ?? [])
-      .filter((row) => row.lifecycleStatus !== "Archived")
       .filter((row) => activeTabCount(tab, row))
       .filter((row) => {
         const haystack = [
@@ -592,10 +610,12 @@ export function IotDevicesPage() {
 
   const selectedRecord = detailQ.data?.device ?? deviceRows.find((row) => String(row.id) === String(selectedId)) ?? null;
 
-  const offlineCount = (devicesQ.data ?? []).filter((row) => /offline/i.test(row.connectionStatus)).length;
-  const attentionCount = (devicesQ.data ?? []).filter((row) => /attention|offline/i.test(row.connectionStatus) || row.openAlertCount > 0).length;
-  const measuredHealth = (devicesQ.data ?? []).filter((row) => row.dataHealthAvailable);
-  const managedCount = (devicesQ.data ?? []).length;
+  const activeDevices = (devicesQ.data ?? []).filter((row) => activeTabCount("all", row));
+  const archivedCount = (devicesQ.data ?? []).filter((row) => activeTabCount("archived", row)).length;
+  const offlineCount = activeDevices.filter((row) => /offline/i.test(row.connectionStatus)).length;
+  const attentionCount = activeDevices.filter((row) => /attention|offline/i.test(row.connectionStatus) || row.openAlertCount > 0).length;
+  const measuredHealth = activeDevices.filter((row) => row.dataHealthAvailable);
+  const managedCount = activeDevices.length;
   const avgHealth = measuredHealth.length
     ? Math.round(measuredHealth.reduce((sum, row) => sum + Number(row.dataHealthScore), 0) / measuredHealth.length)
     : null;
@@ -675,12 +695,12 @@ export function IotDevicesPage() {
       ) : null}
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiCard label="Managed Devices" value={managedCount} status={managedCount ? "Active" : "Pending"} icon={<RadioTower className="h-4 w-4" />} />
+        <KpiCard label="Active Managed Devices" value={managedCount} status={managedCount ? "Active" : "Pending"} icon={<RadioTower className="h-4 w-4" />} />
         <KpiCard label="Offline" value={offlineCount} status={!managedCount ? "Pending" : offlineCount ? "Critical" : "Healthy"} icon={<WifiOff className="h-4 w-4" />} />
         <KpiCard label="Needs Attention" value={attentionCount} status={!managedCount ? "Pending" : attentionCount ? "Watch" : "Healthy"} icon={<Activity className="h-4 w-4" />} />
         <KpiCard label="Average Data Health" value={avgHealth == null ? "Unknown" : `${avgHealth}%`} status={avgHealth == null ? "Pending" : avgHealth >= 85 ? "Healthy" : avgHealth >= 70 ? "Watch" : "Critical"} icon={<Cpu className="h-4 w-4" />} />
       </div>
-      <p className="text-xs text-slate-500">Data health is a derived signal score: stale check-in, revoked/malfunction state, open telemetry alerts, and active faults reduce the score. Devices without any such evidence remain Unknown.</p>
+      <p className="text-xs text-slate-500">Data health is a derived signal score for active devices: stale check-in, malfunction state, open telemetry alerts, and active faults reduce the score. Devices without evidence remain Unknown. <button type="button" className="font-semibold text-teal-700 hover:underline" onClick={() => setTab("archived")}>{archivedCount} archived</button> devices are retained separately.</p>
 
       <div className="panel space-y-4 p-4">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
@@ -794,7 +814,7 @@ export function IotDevicesPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-200">
-                  {["Device", "Provider", "Identifier", "Vehicle", "Driver", "Firmware", "Check-in", "Connection", "Power", "Signal", "Health", "Install", "Compliance", "Support", "Actions"].map((header) => (
+                  {["Device", "Provider", "Identifier", "Vehicle", "Driver", "Firmware", "Check-in", "Connection", "Lifecycle", "Power", "Signal", "Health", "Install", "Compliance", "Support", "Actions"].map((header) => (
                     <th key={header} className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500">{header}</th>
                   ))}
                 </tr>
@@ -821,6 +841,7 @@ export function IotDevicesPage() {
                     </td>
                     <td className="px-4 py-3 text-xs text-slate-400">{row.lastCheckIn}</td>
                     <td className="px-4 py-3"><StatusBadge status={row.connectionStatus} /></td>
+                    <td className="px-4 py-3"><StatusBadge status={row.lifecycleStatus} />{row.archivedAt ? <div className="mt-1 text-xs text-slate-500">{new Date(row.archivedAt).toLocaleString()}</div> : null}</td>
                     <td className="px-4 py-3 text-slate-700">{row.powerStatus}</td>
                     <td className="px-4 py-3"><RiskBadge risk={row.signalStrength} /></td>
                     <td className="px-4 py-3 text-slate-700">{row.dataHealthAvailable ? `${row.dataHealthScore}%` : "Unknown"}</td>
@@ -843,10 +864,10 @@ export function IotDevicesPage() {
                           <div className="absolute right-0 z-50 mt-1 w-48 rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
                             <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50" onClick={() => { setSelectedId(row.id); setOpenMenuId(null); }}>View Details</button>
                             <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-400" disabled title="Device metadata is read-only until a PATCH contract is available.">Metadata read-only</button>
-                            {canGovernInstallations && <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50" onClick={() => { openInstallation(row); setOpenMenuId(null); }}>{row.assignedVehicleId ? "Transfer installation" : "Install on vehicle"}</button>}
+                            {row.lifecycleStatus !== "Archived" && canGovernInstallations && <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50" onClick={() => { openInstallation(row); setOpenMenuId(null); }}>{row.assignedVehicleId ? "Transfer installation" : "Install on vehicle"}</button>}
                             {canDiagnostics && <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50" onClick={() => { navigate("/obd-j1939"); setOpenMenuId(null); }}>View Diagnostics</button>}
                             <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50" onClick={() => { refreshMut.mutate(row.id); setOpenMenuId(null); }}>Refresh Status</button>
-                            {canDelete && <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50" onClick={() => { if (window.confirm(`Archive ${row.deviceName}?`)) { archiveMut.mutate(row.id); } setOpenMenuId(null); }}>Archive Device</button>}
+                            {row.lifecycleStatus !== "Archived" && canDelete && <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50" onClick={() => { if (window.confirm(`Archive ${row.deviceName}?`)) { archiveMut.mutate(row.id); } setOpenMenuId(null); }}>Archive Device</button>}
                           </div>
                         )}
                       </div>
@@ -862,7 +883,7 @@ export function IotDevicesPage() {
       {selectedId ? (
         <div className="fixed inset-0 z-50 flex justify-end bg-black/55 backdrop-blur-sm" onClick={() => setSelectedId(null)}>
           <aside className="h-full w-full max-w-5xl overflow-y-auto border-l border-white/[0.09] bg-slate-950 p-6 shadow-2xl" onClick={(event) => event.stopPropagation()}>
-            <button className="float-right icon-btn" onClick={() => setSelectedId(null)}><X className="h-4 w-4" /></button>
+            <button className="float-right icon-btn" aria-label="Close device details" onClick={() => setSelectedId(null)}><X className="h-4 w-4" /></button>
             {detailQ.isLoading ? (
               <LoadingState />
             ) : detailQ.isError || !detailQ.data ? (
@@ -1156,6 +1177,7 @@ function DeviceDetailDrawer({
         </div>
         <div className="flex flex-wrap gap-2">
           <StatusBadge status={device.connectionStatus} />
+          <StatusBadge status={device.lifecycleStatus} />
           <RiskBadge risk={device.signalStrength} />
           <StatusBadge status={device.installStatus} />
         </div>
@@ -1198,6 +1220,9 @@ function DeviceDetailDrawer({
           ["Serial", device.serialNumber],
           ["IMEI", device.imei],
           ["Tenant", device.tenantName],
+          ["Lifecycle", device.lifecycleStatus],
+          ["Device state", device.eldStatus || "Unavailable"],
+          ["Archived at", device.archivedAt ? new Date(device.archivedAt).toLocaleString() : "Not archived"],
         ]} />
         <InfoBlock title="Assignment" items={[
           ["Vehicle", device.assignedVehicleCode || "Unassigned"],

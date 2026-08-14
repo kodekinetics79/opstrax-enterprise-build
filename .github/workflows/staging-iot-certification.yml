@@ -25,6 +25,26 @@ on:
         description: Different disposable target vehicle ID in the primary staging tenant
         required: true
         type: string
+      oos_vehicle_id:
+        description: Disposable staging vehicle governed out of service for the dispatch denial proof
+        required: true
+        type: string
+      driver_id:
+        description: Disposable staging driver represented by E2E_DRIVER_AUTH_STATE_B64
+        required: true
+        type: string
+      job_id:
+        description: Unassigned staging job with a governed customer
+        required: true
+        type: string
+      route_id:
+        description: Active staging route for the target vehicle and driver
+        required: true
+        type: string
+      trip_id:
+        description: Planned trip generated for route_id
+        required: true
+        type: string
       device_role:
         description: Installed hardware role (GPS, ELD, Dashcam, OBD-II, etc.)
         required: true
@@ -53,6 +73,11 @@ jobs:
       CERT_API_BASE_URL: ${{ inputs.api_base_url || vars.E2E_STAGING_API_BASE_URL }}
       CERT_SOURCE_VEHICLE_ID: ${{ inputs.source_vehicle_id || vars.E2E_IOT_SOURCE_VEHICLE_ID }}
       CERT_TARGET_VEHICLE_ID: ${{ inputs.target_vehicle_id || vars.E2E_IOT_TARGET_VEHICLE_ID }}
+      CERT_OOS_VEHICLE_ID: ${{ inputs.oos_vehicle_id || vars.E2E_IOT_OOS_VEHICLE_ID }}
+      CERT_DRIVER_ID: ${{ inputs.driver_id || vars.E2E_IOT_DRIVER_ID }}
+      CERT_JOB_ID: ${{ inputs.job_id || vars.E2E_IOT_JOB_ID }}
+      CERT_ROUTE_ID: ${{ inputs.route_id || vars.E2E_IOT_ROUTE_ID }}
+      CERT_TRIP_ID: ${{ inputs.trip_id || vars.E2E_IOT_TRIP_ID }}
       CERT_DEVICE_CATEGORY: ${{ inputs.device_category || vars.E2E_IOT_DEVICE_CATEGORY }}
       CERT_DEVICE_ROLE: ${{ inputs.device_role || vars.E2E_IOT_DEVICE_ROLE }}
     steps:
@@ -69,7 +94,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '22.23.2'
-      - name: Require deployed API readiness and exact build identity
+      - name: Require deployed API deep health and exact build identity
         env:
           API_BASE_URL: ${{ env.CERT_API_BASE_URL }}
         run: |
@@ -80,12 +105,99 @@ jobs:
           if (parsed.protocol !== 'https:' || parsed.pathname !== '/' || parsed.username || parsed.password) {
             throw new Error('api_base_url must be an HTTPS API origin without credentials or a path prefix');
           }
-          for (const route of ['/health/live', '/health/ready']) {
+          const health = {};
+          for (const route of ['/health/live', '/health/ready', '/health/deep']) {
             const response = await fetch(`${parsed.origin}${route}`);
             const body = await response.json();
             if (response.status !== 200) throw new Error(`${route} returned HTTP ${response.status}`);
             if (body.version !== expected) throw new Error(`${route} reports ${body.version}, expected exact SHA ${expected}`);
+            if (String(body.environment).toLowerCase() !== 'staging') {
+              throw new Error(`${route} reports environment ${body.environment}; protected Staging is required`);
+            }
+            health[route] = body;
           }
+          if (health['/health/live'].status !== 'alive') throw new Error('/health/live is not alive');
+          if (health['/health/ready'].status !== 'ready') throw new Error('/health/ready is not ready');
+          if (health['/health/deep'].status !== 'healthy') throw new Error('/health/deep is not healthy');
+
+          for (const route of ['/health/ready', '/health/deep']) {
+            const checks = health[route].checks || {};
+            if (checks.database?.status !== 'connected') throw new Error(`${route} database is not connected`);
+            if (checks.config?.failures !== 0) throw new Error(`${route} has configuration failures`);
+            if (checks.data_protection_key_ring?.status !== 'ready') throw new Error(`${route} data-protection key ring is not ready`);
+            const fleet = checks.fleet_production_contract;
+            if (fleet?.status !== 'ready' || fleet.role_restricted !== true) {
+              throw new Error(`${route} does not prove a restricted, ready fleet production contract`);
+            }
+            for (const field of [
+              'missing_tables', 'rls_violations', 'grant_violations', 'tenant_coverage_violations',
+              'tenant_grant_violations', 'default_privilege_violations',
+              'runtime_route_column_violations', 'runtime_route_object_violations',
+              'fleet_integrity_object_violations', 'workforce_contract_violations',
+              'critical_worker_violations', 'raw_critical_worker_violations',
+              'missing_critical_workers', 'stale_critical_workers', 'failed_critical_workers',
+            ]) {
+              if (fleet[field] !== 0) throw new Error(`${route} fleet contract ${field}=${fleet[field]}; expected 0`);
+            }
+            for (const field of [
+              'migration_applied', 'runtime_support_migration_applied', 'tenant_coverage_migration_applied',
+              'cold_chain_integrity_migration_applied', 'runtime_route_migration_applied',
+              'asset_type_integrity_migration_applied', 'workforce_schedule_integrity_migration_applied',
+              'tenant_ticket_migration_applied', 'data_protection_key_ring_migration_applied',
+              'market_catalog_ready', 'tenant_provisioning_ready', 'indexes_ready',
+            ]) {
+              if (fleet[field] !== true) throw new Error(`${route} fleet contract ${field} is not true`);
+            }
+          }
+          const deepChecks = health['/health/deep'].checks;
+          if (deepChecks.critical_worker_contract?.status !== 'healthy'
+              || deepChecks.critical_worker_contract?.heartbeat_ledger_readable !== true
+              || deepChecks.critical_worker_contract?.startup_grace_active !== false) {
+            throw new Error('/health/deep does not prove healthy steady-state critical workers');
+          }
+          const critical = (deepChecks.services || []).filter((service) => service.expected_critical === true);
+          if (critical.length !== deepChecks.critical_worker_contract.expected_count
+              || critical.some((service) => service.status !== 'healthy')) {
+            throw new Error('/health/deep does not prove every expected critical worker healthy');
+          }
+          NODE
+      - name: Require deployed UI provenance
+        env:
+          UI_BASE_URL: ${{ env.CERT_UI_BASE_URL }}
+          API_BASE_URL: ${{ env.CERT_API_BASE_URL }}
+        run: |
+          node - <<'NODE'
+          const ui = new URL(process.env.UI_BASE_URL);
+          const api = new URL(process.env.API_BASE_URL);
+          if (ui.protocol !== 'https:' || ui.pathname !== '/' || ui.username || ui.password) {
+            throw new Error('ui_base_url must be an HTTPS UI origin without credentials or a path prefix');
+          }
+          const response = await fetch(ui.origin, { redirect: 'follow' });
+          if (!response.ok) throw new Error(`UI root returned HTTP ${response.status}`);
+          const html = await response.text();
+          const pending = [...html.matchAll(/(?:src|href)=["']([^"']+\.js(?:\?[^"']*)?)["']/gi)]
+            .map((match) => new URL(match[1], ui.origin).href);
+          const seen = new Set();
+          let deployed = '';
+          while (pending.length && seen.size < 200) {
+            const assetUrl = pending.shift();
+            if (seen.has(assetUrl) || new URL(assetUrl).origin !== ui.origin) continue;
+            seen.add(assetUrl);
+            const assetResponse = await fetch(assetUrl);
+            if (!assetResponse.ok) throw new Error(`UI asset ${assetUrl} returned HTTP ${assetResponse.status}`);
+            const source = await assetResponse.text();
+            deployed += `\n${source}`;
+            for (const match of source.matchAll(/(?:from\s*|import\s*\()?['"](\.?\.?\/[^'"]+\.js)['"]/g)) {
+              pending.push(new URL(match[1], assetUrl).href);
+            }
+          }
+          if (!deployed.includes(process.env.CANDIDATE_SHA)) {
+            throw new Error(`UI assets do not expose exact candidate SHA ${process.env.CANDIDATE_SHA}`);
+          }
+          if (!deployed.includes(api.origin)) {
+            throw new Error(`UI assets do not expose configured API origin ${api.origin}`);
+          }
+          if (!/staging/i.test(deployed)) throw new Error('UI assets do not expose the Staging environment');
           NODE
       - name: Install pinned Playwright runtime
         env:
@@ -97,14 +209,51 @@ jobs:
       - name: Materialize short-lived persona states without logging them
         env:
           TENANT_STATE_B64: ${{ secrets.E2E_TENANT_AUTH_STATE_B64 }}
+          DRIVER_STATE_B64: ${{ secrets.E2E_DRIVER_AUTH_STATE_B64 }}
+          CUSTOMER_STATE_B64: ${{ secrets.E2E_CUSTOMER_AUTH_STATE_B64 }}
+          PLATFORM_STATE_B64: ${{ secrets.E2E_PLATFORM_AUTH_STATE_B64 }}
           CROSS_TENANT_STATE_B64: ${{ secrets.E2E_CROSS_TENANT_AUTH_STATE_B64 }}
         run: |
           umask 077
           test -n "$TENANT_STATE_B64"
+          test -n "$DRIVER_STATE_B64"
+          test -n "$CUSTOMER_STATE_B64"
+          test -n "$PLATFORM_STATE_B64"
           test -n "$CROSS_TENANT_STATE_B64"
           printf '%s' "$TENANT_STATE_B64" | base64 --decode > "$RUNNER_TEMP/tenant.json"
+          printf '%s' "$DRIVER_STATE_B64" | base64 --decode > "$RUNNER_TEMP/driver.json"
+          printf '%s' "$CUSTOMER_STATE_B64" | base64 --decode > "$RUNNER_TEMP/customer.json"
+          printf '%s' "$PLATFORM_STATE_B64" | base64 --decode > "$RUNNER_TEMP/platform.json"
           printf '%s' "$CROSS_TENANT_STATE_B64" | base64 --decode > "$RUNNER_TEMP/cross-tenant.json"
-          node -e 'for (const p of process.argv.slice(1)) JSON.parse(require("fs").readFileSync(p,"utf8"))' "$RUNNER_TEMP/tenant.json" "$RUNNER_TEMP/cross-tenant.json"
+          node -e 'for (const p of process.argv.slice(1)) JSON.parse(require("fs").readFileSync(p,"utf8"))' "$RUNNER_TEMP/tenant.json" "$RUNNER_TEMP/driver.json" "$RUNNER_TEMP/customer.json" "$RUNNER_TEMP/platform.json" "$RUNNER_TEMP/cross-tenant.json"
+      - name: Verify source guards and exact 50-test discovery inventory
+        env:
+          E2E_TARGET_ENV: staging
+          E2E_UI_BASE_URL: ${{ env.CERT_UI_BASE_URL }}
+          E2E_API_BASE_URL: ${{ env.CERT_API_BASE_URL }}
+        run: |
+          export E2E_STAGING_HOSTS="$(node -e 'process.stdout.write([new URL(process.argv[1]).hostname,new URL(process.argv[2]).hostname].join(","))' "$E2E_UI_BASE_URL" "$E2E_API_BASE_URL")"
+          npm run test:guard
+          npm run test:inventory
+        working-directory: tests/e2e
+      - name: Execute original 49 browser journeys with no skips or retries
+        env:
+          E2E_TARGET_ENV: staging
+          E2E_UI_BASE_URL: ${{ env.CERT_UI_BASE_URL }}
+          E2E_API_BASE_URL: ${{ env.CERT_API_BASE_URL }}
+          E2E_PRODUCTION_HOSTS: opstrax.vercel.app,osptrax-fleet-management.onrender.com
+          E2E_ALLOW_STAGING_MUTATIONS: 'true'
+          E2E_DISPOSABLE_TENANT_ACK: I_UNDERSTAND_THIS_WRITES_TEST_DATA
+          E2E_CANARY_VEHICLE_ID: ${{ env.CERT_SOURCE_VEHICLE_ID }}
+          E2E_TENANT_AUTH_STATE: ${{ runner.temp }}/tenant.json
+          E2E_DRIVER_AUTH_STATE: ${{ runner.temp }}/driver.json
+          E2E_CUSTOMER_AUTH_STATE: ${{ runner.temp }}/customer.json
+          E2E_PLATFORM_AUTH_STATE: ${{ runner.temp }}/platform.json
+        run: |
+          export E2E_STAGING_HOSTS="$(node -e 'process.stdout.write([new URL(process.argv[1]).hostname,new URL(process.argv[2]).hostname].join(","))' "$E2E_UI_BASE_URL" "$E2E_API_BASE_URL")"
+          ./node_modules/.bin/playwright test --project=public-chromium --project=tenant-readonly --project=driver-readonly --project=customer-readonly --project=platform-readonly --project=staging-mutations --reporter=json > "$RUNNER_TEMP/original-49-results.json"
+          node scripts/assert-execution.mjs "$RUNNER_TEMP/original-49-results.json" 49
+        working-directory: tests/e2e
       - name: Execute real authenticated IoT lifecycle
         env:
           E2E_TARGET_ENV: staging
@@ -117,9 +266,15 @@ jobs:
           E2E_IOT_LIFECYCLE_ACK: I_UNDERSTAND_THIS_PROVISIONS_AND_REVOKES_A_REAL_DEVICE
           E2E_IOT_SOURCE_VEHICLE_ID: ${{ env.CERT_SOURCE_VEHICLE_ID }}
           E2E_IOT_TARGET_VEHICLE_ID: ${{ env.CERT_TARGET_VEHICLE_ID }}
+          E2E_IOT_OOS_VEHICLE_ID: ${{ env.CERT_OOS_VEHICLE_ID }}
+          E2E_IOT_DRIVER_ID: ${{ env.CERT_DRIVER_ID }}
+          E2E_IOT_JOB_ID: ${{ env.CERT_JOB_ID }}
+          E2E_IOT_ROUTE_ID: ${{ env.CERT_ROUTE_ID }}
+          E2E_IOT_TRIP_ID: ${{ env.CERT_TRIP_ID }}
           E2E_IOT_DEVICE_CATEGORY: ${{ env.CERT_DEVICE_CATEGORY }}
           E2E_IOT_DEVICE_ROLE: ${{ env.CERT_DEVICE_ROLE }}
           E2E_TENANT_AUTH_STATE: ${{ runner.temp }}/tenant.json
+          E2E_DRIVER_AUTH_STATE: ${{ runner.temp }}/driver.json
           E2E_CROSS_TENANT_AUTH_STATE: ${{ runner.temp }}/cross-tenant.json
         run: |
           export E2E_STAGING_HOSTS="$(node -e 'process.stdout.write([new URL(process.argv[1]).hostname,new URL(process.argv[2]).hostname].join(","))' "$E2E_UI_BASE_URL" "$E2E_API_BASE_URL")"
@@ -133,13 +288,14 @@ jobs:
           name: staging-iot-certification-${{ env.CANDIDATE_SHA }}
           path: |
             tests/e2e/test-results/**/iot-lifecycle-redacted-evidence.json
+            ${{ runner.temp }}/original-49-results.json
             ${{ runner.temp }}/iot-results.json
           if-no-files-found: error
           retention-days: 30
       - name: Destroy short-lived persona files
         if: ${{ always() }}
         run: |
-          for state in "$RUNNER_TEMP/tenant.json" "$RUNNER_TEMP/cross-tenant.json"; do
+          for state in "$RUNNER_TEMP/tenant.json" "$RUNNER_TEMP/driver.json" "$RUNNER_TEMP/customer.json" "$RUNNER_TEMP/platform.json" "$RUNNER_TEMP/cross-tenant.json"; do
             if [ -f "$state" ]; then
               truncate -s 0 "$state"
               rm -f "$state"

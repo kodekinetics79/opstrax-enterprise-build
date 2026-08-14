@@ -377,6 +377,22 @@ BEGIN
 END
 $stage76_verify$;
 
+-- Raw metering events are append-only evidence. Stage58's generic tenant-table
+-- reconciliation grants CRUD, so the terminal boundary must narrow this table back
+-- to app SELECT/INSERT. The system control plane retains CRUD for governed repair and
+-- retention, while tenant runtime identities may never rewrite or erase usage evidence.
+DO $stage76_usage_event_immutability$
+BEGIN
+  IF to_regclass('public.usage_events') IS NOT NULL THEN
+    REVOKE ALL ON TABLE usage_events FROM PUBLIC,opstrax_app,opstrax_system;
+    REVOKE ALL ON SEQUENCE usage_events_id_seq FROM PUBLIC,opstrax_app,opstrax_system;
+    GRANT SELECT,INSERT ON TABLE usage_events TO opstrax_app;
+    GRANT SELECT,INSERT,UPDATE,DELETE ON TABLE usage_events TO opstrax_system;
+    GRANT USAGE,SELECT ON SEQUENCE usage_events_id_seq TO opstrax_app,opstrax_system;
+  END IF;
+END
+$stage76_usage_event_immutability$;
+
 INSERT INTO schema_migrations(version,description)
 VALUES ('2026_08_11_stage76_telematics_security_hardening',
         'Terminal telemetry projection topology and exact default-deny runtime grants')

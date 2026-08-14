@@ -125,11 +125,21 @@ test("authenticated device lifecycle preserves temporal vehicle identity and ten
   const crossTenantStatePath = path.resolve(process.env.E2E_CROSS_TENANT_AUTH_STATE);
   const crossTenantState = JSON.parse(fs.readFileSync(crossTenantStatePath, "utf8"));
   const crossTenantSession = sessionFromStorageState(crossTenantState);
+  const driverStatePath = path.resolve(process.env.E2E_DRIVER_AUTH_STATE);
+  const driverState = JSON.parse(fs.readFileSync(driverStatePath, "utf8"));
+  const driverSession = sessionFromStorageState(driverState);
   expect(String(authHeaders(crossTenantSession)["X-Opstrax-Tenant-Id"]))
     .not.toBe(String(authHeaders(tenantSession)["X-Opstrax-Tenant-Id"]));
+  expect(String(authHeaders(driverSession)["X-Opstrax-Tenant-Id"]))
+    .toBe(String(authHeaders(tenantSession)["X-Opstrax-Tenant-Id"]));
 
   const sourceVehicleId = Number(process.env.E2E_IOT_SOURCE_VEHICLE_ID);
   const targetVehicleId = Number(process.env.E2E_IOT_TARGET_VEHICLE_ID);
+  const oosVehicleId = Number(process.env.E2E_IOT_OOS_VEHICLE_ID);
+  const driverId = Number(process.env.E2E_IOT_DRIVER_ID);
+  const jobId = Number(process.env.E2E_IOT_JOB_ID);
+  const routeId = Number(process.env.E2E_IOT_ROUTE_ID);
+  const tripId = Number(process.env.E2E_IOT_TRIP_ID);
   const deviceCategory = process.env.E2E_IOT_DEVICE_CATEGORY.trim();
   const deviceRole = process.env.E2E_IOT_DEVICE_ROLE.trim();
   const serial = `${(process.env.E2E_TEST_PREFIX || "QA-E2E").replace(/[^A-Za-z0-9-]/g, "-")}-${runId}-IOT`
@@ -148,11 +158,20 @@ test("authenticated device lifecycle preserves temporal vehicle identity and ten
     storageState: crossTenantState,
     extraHTTPHeaders: { Origin: target.uiBaseUrl },
   });
+  const driverContext = await playwrightRequest.newContext({
+    baseURL: target.apiBaseUrl,
+    storageState: driverState,
+    extraHTTPHeaders: { Origin: target.uiBaseUrl },
+  });
 
   let deviceId;
   let credentials;
   let revoked = false;
-  const evidence = { runId, serial, deviceCategory, deviceRole, sourceVehicleId, targetVehicleId };
+  let assignmentId;
+  const evidence = {
+    runId, serial, deviceCategory, deviceRole, sourceVehicleId, targetVehicleId,
+    driverId, jobId, routeId, tripId, oosVehicleId,
+  };
 
   try {
     const provision = await api(page.request, target, "/api/telemetry/devices/provision", tenantSession, {
@@ -322,6 +341,139 @@ test("authenticated device lifecycle preserves temporal vehicle identity and ten
     );
     const targetInstallationId = Number(transfer.id);
 
+    // The certification fixture is deliberately external and governed: the workflow
+    // supplies a real customer job, route-derived trip, and the exact driver persona.
+    // These assertions fail closed if staging fixture lineage is incomplete.
+    const job = expectOk(
+      await api(page.request, target, `/api/jobs/${jobId}`, tenantSession),
+      200,
+      "read governed customer job",
+    );
+    expect(Number(job.record?.customerId), "job must identify a governed customer").toBeGreaterThan(0);
+    expect(Number(job.record?.routeId), "job must identify the certified route").toBe(routeId);
+
+    const trip = expectOk(
+      await api(page.request, target, `/api/trips/${tripId}`, tenantSession),
+      200,
+      "read route-derived trip",
+    );
+    expect(Number(trip.trip?.routeId)).toBe(routeId);
+    expect(Number(trip.trip?.vehicleId)).toBe(targetVehicleId);
+    expect(Number(trip.trip?.driverId)).toBe(driverId);
+    expect(Number(trip.trip?.jobId), "trip must retain customer-job lineage").toBe(jobId);
+
+    const driverMe = expectOk(
+      await api(driverContext, target, "/api/driver/me", driverSession),
+      200,
+      "resolve authenticated staging driver",
+    );
+    expect(Number(driverMe.driver?.id ?? driverMe.id), "driver persona must match workflow driver id").toBe(driverId);
+
+    const oosDispatch = await api(page.request, target, "/api/dispatch/assignments", tenantSession, {
+      method: "POST",
+      data: { vehicleId: oosVehicleId, driverId, notes: `OOS denial certification ${runId}` },
+    });
+    expect(oosDispatch.response.status(), "governed out-of-service vehicle must never dispatch").toBe(422);
+    expect(String(oosDispatch.body?.message || "")).toMatch(/out of service/i);
+
+    const assignment = expectOk(
+      await api(page.request, target, "/api/dispatch/assignments", tenantSession, {
+        method: "POST",
+        data: {
+          vehicleId: targetVehicleId,
+          driverId,
+          jobId,
+          routeId,
+          notes: `IoT enterprise certification ${runId}`,
+        },
+      }),
+      201,
+      "create governed dispatch assignment",
+    );
+    assignmentId = Number(assignment.id);
+
+    expectOk(
+      await api(driverContext, target, `/api/driver/assignments/${assignmentId}/accept`, driverSession, { method: "POST", data: {} }),
+      200,
+      "driver accepts assignment",
+    );
+    let currentAssignment = expectOk(
+      await api(driverContext, target, "/api/driver/assignments/current", driverSession),
+      200,
+      "read driver assignment linkage",
+    ).assignment;
+    expect(Number(currentAssignment.id)).toBe(assignmentId);
+    expect(Number(currentAssignment.tripId), "dispatch assignment must retain trip lineage").toBe(tripId);
+    expect(String(currentAssignment.customerName || "").trim(), "assignment must expose customer linkage").not.toBe("");
+    expect(currentAssignment.vehicleOos, "certification vehicle must begin serviceable").toBe(false);
+
+    const vehicleCode = String(currentAssignment.vehicleCode || "").trim().toUpperCase();
+    expect(vehicleCode.length, "assigned vehicle needs a governed unit number").toBeGreaterThan(0);
+    expectOk(
+      await api(driverContext, target, `/api/driver/assignments/${assignmentId}/confirm-vehicle`, driverSession, {
+        method: "POST",
+        data: { method: "unit_suffix", reference: vehicleCode.slice(-Math.min(4, vehicleCode.length)) },
+      }),
+      200,
+      "driver confirms exact assigned vehicle",
+    );
+
+    const departureWithoutDvir = await api(
+      driverContext,
+      target,
+      `/api/driver/assignments/${assignmentId}/status`,
+      driverSession,
+      { method: "POST", data: { status: "en_route_pickup" } },
+    );
+    expect(departureWithoutDvir.response.status(), "departure must be blocked without signed safe pre-trip DVIR").toBe(409);
+    expect(String(departureWithoutDvir.body?.message || "")).toMatch(/pre-trip DVIR/i);
+
+    const templates = expectOk(
+      await api(driverContext, target, "/api/driver/dvir/templates", driverSession),
+      200,
+      "read governed DVIR templates",
+    );
+    const pretripTemplate = templates.find((candidate) =>
+      String(candidate.inspectionType || "").replace("-", "_").toLowerCase() === "pre_trip");
+    expect(pretripTemplate, "tenant needs an active pre-trip DVIR template").toBeTruthy();
+    const governedItems = pretripTemplate.items || [];
+    expect(governedItems.length, "pre-trip template needs governed checklist items").toBeGreaterThan(0);
+    const dvir = expectOk(
+      await api(driverContext, target, "/api/driver/dvir", driverSession, {
+        method: "POST",
+        data: {
+          vehicleId: targetVehicleId,
+          driverId,
+          tripId,
+          templateId: Number(pretripTemplate.id),
+          inspectionType: "pre_trip",
+          attestationAccepted: true,
+          attestation: "I certify that this DVIR is true and correct and that I completed this inspection.",
+          notes: `Safe pre-trip certification ${runId}`,
+          checklistItems: governedItems.map((item) => ({
+            checklistItemId: Number(item.id), result: "pass", severity: "minor",
+          })),
+        },
+      }),
+      201,
+      "submit signed safe pre-trip DVIR",
+    );
+    expect(dvir.hasCritical).toBe(false);
+    const departure = expectOk(
+      await api(driverContext, target, `/api/driver/assignments/${assignmentId}/status`, driverSession, {
+        method: "POST", data: { status: "en_route_pickup" },
+      }),
+      200,
+      "depart after vehicle confirmation and safe DVIR",
+    );
+    expect(Number(departure.pretripDvirId)).toBe(Number(dvir.id));
+
+    const alertsBeforeDelayed = expectOk(
+      await api(page.request, target, "/api/telemetry/alerts?status=All", tenantSession),
+      200,
+      "capture delayed alert baseline",
+    );
+
     targetFixAt = new Date();
     const targetTelemetry = expectOk(
       await ingest(page.request, target, credentials, {
@@ -369,7 +521,7 @@ test("authenticated device lifecycle preserves temporal vehicle identity and ten
 
     delayedOldFixAt = new Date(firstFixAt.getTime() + 1);
     expect(delayedOldFixAt.getTime()).toBeLessThan(transferAt.getTime());
-    expectOk(
+    const delayedTelemetry = expectOk(
       await ingest(page.request, target, credentials, {
         lat: delayedCoordinates.lat,
         lng: delayedCoordinates.lng,
@@ -397,6 +549,7 @@ test("authenticated device lifecycle preserves temporal vehicle identity and ten
     expect(Number(targetPosition?.lat)).toBeCloseTo(targetCoordinates.lat, 5);
     expect(Number(targetPosition?.lng)).toBeCloseTo(targetCoordinates.lng, 5);
     expect(Number(targetPosition?.deviceId)).toBe(deviceId);
+    expect(Number(targetPosition?.driverId), "current telemetry must retain event-time driver lineage").toBe(driverId);
 
     const breadcrumbs = expectOk(
       await api(
@@ -412,6 +565,29 @@ test("authenticated device lifecycle preserves temporal vehicle identity and ten
       Math.abs(Number(point.lat) - delayedCoordinates.lat) < 0.00001
       && Math.abs(Number(point.lng) - delayedCoordinates.lng) < 0.00001),
     "delayed point must remain in the former vehicle's history").toBe(true);
+
+    const targetBreadcrumbs = expectOk(
+      await api(page.request, target,
+        `/api/telemetry/breadcrumbs?vehicleId=${targetVehicleId}&from=${encodeURIComponent(transferAt.toISOString())}&to=${encodeURIComponent(new Date().toISOString())}&limit=2000`,
+        tenantSession),
+      200,
+      "read target event lineage",
+    );
+    const targetPoint = targetBreadcrumbs.points.find((point) => Number(point.id) === Number(targetTelemetry.id));
+    expect(Number(targetPoint?.assignmentId), "telemetry evidence must expose event-time assignment lineage").toBe(assignmentId);
+    expect(Number(targetPoint?.tripId), "telemetry evidence must expose event-time trip lineage").toBe(tripId);
+    expect(Number(targetPoint?.driverId), "telemetry evidence must expose event-time driver lineage").toBe(driverId);
+
+    const alertsAfterDelayed = expectOk(
+      await api(page.request, target, "/api/telemetry/alerts?status=All", tenantSession),
+      200,
+      "verify delayed event creates no current alert",
+    );
+    const priorAlertIds = new Set(alertsBeforeDelayed.map((alert) => String(alert.id)));
+    expect(alertsAfterDelayed.filter((alert) => !priorAlertIds.has(String(alert.id)))
+      .some((alert) => Number(alert.sourceEventId) === Number(delayedTelemetry.id)),
+    "delayed historical event must not create a current/open alert").toBe(false);
+    evidence.delayedEventCreatedNoCurrentAlert = true;
 
     detail = expectOk(
       await api(page.request, target, `/api/telemetry/devices/${deviceId}`, tenantSession),
@@ -498,7 +674,18 @@ test("authenticated device lifecycle preserves temporal vehicle identity and ten
         // from the labeled disposable device in the staging tenant.
       }
     }
+    if (assignmentId) {
+      try {
+        await api(page.request, target, `/api/dispatch/assignments/${assignmentId}/cancel`, tenantSession, {
+          method: "POST", data: { notes: `Certification cleanup ${runId}` },
+        });
+      } catch {
+        // Preserve the primary assertion. The disposable fixture and run id make
+        // any cleanup failure independently discoverable by staging operators.
+      }
+    }
     credentials = undefined;
+    await driverContext.dispose();
     await crossTenantContext.dispose();
   }
 });

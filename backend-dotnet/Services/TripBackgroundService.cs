@@ -106,6 +106,7 @@ public sealed class TripBackgroundService(
             @"SELECT r.id, r.company_id, r.assigned_vehicle_id, r.assigned_driver_id,
                      r.planned_start, r.planned_end, r.route_name, r.status,
                      r.estimated_distance, r.estimated_duration_minutes,
+                     CASE WHEN COUNT(DISTINCT rs.job_id)=1 THEN MIN(rs.job_id) END job_id,
                      rs_first.address AS origin,
                      rs_last.address  AS destination,
                      COUNT(rs.id)     AS total_stops
@@ -128,6 +129,7 @@ public sealed class TripBackgroundService(
             var companyId = Convert.ToInt64(route["companyId"]);
             var vehicleId = Convert.ToInt64(route["assignedVehicleId"]);
             var driverId  = route["assignedDriverId"] is null ? (long?)null : Convert.ToInt64(route["assignedDriverId"]);
+            var jobId = route["jobId"] is null or DBNull ? (long?)null : Convert.ToInt64(route["jobId"]);
 
             // Serialize creation per tenant+route across worker instances. The whole
             // cycle runs in one system transaction, so this lock covers check+insert+seed.
@@ -153,11 +155,11 @@ public sealed class TripBackgroundService(
 
             var tripId = await db.InsertAsync(
                 @"INSERT INTO trips
-                    (company_id, driver_id, vehicle_id, route_id,
+                    (company_id, driver_id, vehicle_id, route_id, job_id,
                      status, planned_start_time, planned_end_time,
                      origin, destination,
                      planned_distance_miles, planned_duration_minutes, total_planned_stops)
-                  VALUES (@cid, @did, @vid, @rid,
+                  VALUES (@cid, @did, @vid, @rid, @jid,
                           'planned', @pstart, @pend,
                           @origin, @dest,
                           @pdist, @pdur, @tstops)",
@@ -167,6 +169,7 @@ public sealed class TripBackgroundService(
                     c.Parameters.AddWithValue("@did",    (object?)driverId ?? DBNull.Value);
                     c.Parameters.AddWithValue("@vid",    vehicleId);
                     c.Parameters.AddWithValue("@rid",    routeId);
+                    c.Parameters.AddWithValue("@jid",    (object?)jobId ?? DBNull.Value);
                     c.Parameters.AddWithValue("@pstart", route["plannedStart"] ?? (object)DBNull.Value);
                     c.Parameters.AddWithValue("@pend",   route["plannedEnd"]   ?? (object)DBNull.Value);
                     c.Parameters.AddWithValue("@origin", route["origin"]       ?? (object)DBNull.Value);
