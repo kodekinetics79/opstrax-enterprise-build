@@ -117,31 +117,8 @@ CREATE TABLE IF NOT EXISTS vehicles (
   CONSTRAINT fk_vehicles_company FOREIGN KEY (company_id) REFERENCES companies(id)
 );
 
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conrelid = 'drivers'::regclass
-          AND conname = 'fk_drivers_vehicle'
-    ) THEN
-        ALTER TABLE drivers
-            ADD CONSTRAINT fk_drivers_vehicle
-            FOREIGN KEY (assigned_vehicle_id) REFERENCES vehicles(id);
-    END IF;
-
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conrelid = 'vehicles'::regclass
-          AND conname = 'fk_vehicles_driver'
-    ) THEN
-        ALTER TABLE vehicles
-            ADD CONSTRAINT fk_vehicles_driver
-            FOREIGN KEY (assigned_driver_id) REFERENCES drivers(id);
-    END IF;
-END
-$$;
+ALTER TABLE drivers ADD CONSTRAINT fk_drivers_vehicle FOREIGN KEY (assigned_vehicle_id) REFERENCES vehicles(id);
+ALTER TABLE vehicles ADD CONSTRAINT fk_vehicles_driver FOREIGN KEY (assigned_driver_id) REFERENCES drivers(id);
 CREATE INDEX IF NOT EXISTS idx_users_branch ON users (branch_id) WHERE branch_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_drivers_branch ON drivers (branch_id) WHERE branch_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_vehicles_branch ON vehicles (branch_id) WHERE branch_id IS NOT NULL;
