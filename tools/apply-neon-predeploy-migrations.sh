@@ -172,6 +172,36 @@ for m in "${MIGRATIONS[@]}"; do
   fi
   # Skip if already registered in the ledger (ledger may not exist before stage23 — treat as not applied).
   applied=$(psql "$NEON_PG_URI" -tA -c "SELECT COUNT(*) FROM schema_migrations WHERE version='$ledger_version'" 2>/dev/null || echo 0)
+  # Some established environments and production-shaped tests predate Stage23's
+  # ledger but already contain the complete canonical predecessor. Replaying
+  # 001_schema.sql there is unsafe because its two circular foreign keys are
+  # intentionally one-time bootstrap statements. Recognize the materialized
+  # predecessor from both ends of the file plus those exact constraints; Stage23
+  # then records database_init_001_schema in the authoritative ledger. A genuinely
+  # empty Neon database fails this probe and still receives 001_schema.sql.
+  if [ "$m" = "../init/001_schema" ] && [ "$applied" != "1" ]; then
+    predecessor_materialized=$(psql "$NEON_PG_URI" -tA -v ON_ERROR_STOP=1 -c "
+      SELECT CASE WHEN
+        to_regclass('public.companies') IS NOT NULL
+        AND to_regclass('public.drivers') IS NOT NULL
+        AND to_regclass('public.vehicles') IS NOT NULL
+        AND to_regclass('public.jobs') IS NOT NULL
+        AND to_regclass('public.eld_devices') IS NOT NULL
+        AND to_regclass('public.file_storage_metadata') IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conrelid='public.drivers'::regclass AND conname='fk_drivers_vehicle'
+        )
+        AND EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conrelid='public.vehicles'::regclass AND conname='fk_vehicles_driver'
+        )
+      THEN 1 ELSE 0 END")
+    if [ "$predecessor_materialized" = "1" ]; then
+      echo "── $m: canonical predecessor already materialized — Stage23 will ledger it"
+      continue
+    fi
+  fi
   repair_migration=false
   case "$m" in
     2026_06_27_stage5_p0b1a_foundation|\
