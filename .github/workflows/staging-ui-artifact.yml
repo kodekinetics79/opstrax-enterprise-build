@@ -1,0 +1,48 @@
+name: OpsTrax isolated staging UI artifact
+
+on:
+  push:
+    branches: [staging-certification-979c142]
+
+permissions:
+  contents: read
+
+jobs:
+  build-exact-candidate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: 979c142b3b0b228e7c84b88a37c2eacb66b76d38
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.23.2'
+      - name: Verify immutable source
+        run: test "$(git rev-parse HEAD)" = "979c142b3b0b228e7c84b88a37c2eacb66b76d38"
+      - name: Install frontend dependencies
+        run: npm ci --no-audit --no-fund
+        working-directory: frontend
+      - name: Build exact candidate for isolated staging
+        env:
+          VITE_API_BASE_URL: https://opstrax-staging-api.onrender.com
+          VITE_DEPLOYMENT_SHA: 979c142b3b0b228e7c84b88a37c2eacb66b76d38
+          VITE_APP_ENVIRONMENT: staging-certification
+        run: npm run build
+        working-directory: frontend
+      - name: Add deployment provenance and browser CORS probe
+        run: |
+          cat > frontend/dist/build-info.json <<'JSON'
+          {"sha":"979c142b3b0b228e7c84b88a37c2eacb66b76d38","apiBaseUrl":"https://opstrax-staging-api.onrender.com","environment":"staging-certification"}
+          JSON
+          cat > frontend/dist/cors-cert.html <<'HTML'
+          <!doctype html><meta charset="utf-8"><title>OpsTrax CORS certification</title><pre id="result">CHECKING</pre><script>fetch('https://opstrax-staging-api.onrender.com/health/ready',{credentials:'include'}).then(async r=>{const b=await r.json();document.getElementById('result').textContent=(r.ok&&b.version==='979c142b3b0b228e7c84b88a37c2eacb66b76d38'?'PASS':'FAIL')+' '+r.status+' '+JSON.stringify(b)}).catch(e=>document.getElementById('result').textContent='FAIL '+e.name+' '+e.message)</script>
+          HTML
+          cp vercel.json frontend/dist/vercel-source.json
+      - name: Upload exact staging UI bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: opstrax-staging-ui-979c142
+          path: frontend/dist
+          if-no-files-found: error
+          retention-days: 3
