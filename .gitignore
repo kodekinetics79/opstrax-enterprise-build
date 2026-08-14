@@ -41,3 +41,4 @@ tests/load/results/
 tools/launch/.env.local
 tools/launch/generated/
 tools/telematics/captures/
+opstrax-test
