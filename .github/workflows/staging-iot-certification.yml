@@ -91,6 +91,12 @@ jobs:
         with:
           ref: ${{ env.CANDIDATE_SHA }}
           persist-credentials: false
+      - name: Apply owner migrations and terminal security reconciliation
+        env:
+          NEON_PG_URI: ${{ secrets.NEON_PG_URI }}
+        run: |
+          test -n "$NEON_PG_URI"
+          tools/apply-neon-predeploy-migrations.sh
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '22.23.2'
