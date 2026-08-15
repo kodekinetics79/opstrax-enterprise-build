@@ -600,8 +600,11 @@ export function AlertsCenterPage() {
       ) : null}
 
       <header className="panel relative overflow-hidden border border-slate-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,.98),rgba(243,248,253,.96))] p-4 shadow-sm">
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-[3px] bg-[linear-gradient(90deg,rgba(37,99,235,.95),rgba(13,148,136,.95),rgba(124,58,237,.7))]" />
-        <div className="pointer-events-none absolute -right-16 -top-14 h-36 w-36 rounded-full bg-sky-200/30 blur-3xl" />
+        {/* `absolute!` (forced) because `.panel > *` sets position:relative on every direct
+            child for z-index stacking, which otherwise demotes these decorative layers back
+            into normal flow and pushes the real header content down by their full height. */}
+        <div className="pointer-events-none absolute! inset-x-0 top-0 h-[3px] bg-[linear-gradient(90deg,rgba(37,99,235,.95),rgba(13,148,136,.95),rgba(124,58,237,.7))]" />
+        <div className="pointer-events-none absolute! -right-16 -top-14 h-36 w-36 rounded-full bg-sky-200/30 blur-3xl" />
         <div className="relative grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_0.85fr] lg:items-start">
           <div className="min-w-0">
             <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-white/90 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700 shadow-sm">
@@ -735,7 +738,7 @@ export function AlertsCenterPage() {
               type="button"
               onClick={() => setSeverityFilter(severity)}
               className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] transition ${
-                severityFilter === severity ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-white"
+                severityFilter === severity ? "border-teal-600 bg-teal-600 text-white" : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-white"
               }`}
             >
               {severity}

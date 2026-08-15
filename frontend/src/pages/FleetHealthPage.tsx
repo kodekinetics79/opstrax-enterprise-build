@@ -878,7 +878,11 @@ function FilterBar({
   ];
 
   const chipBase = "px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors cursor-pointer";
-  const chipActive = "bg-slate-900 text-white border-slate-900";
+  // teal, not slate-900: a global "legacy dark surfaces -> white" CSS rule forces any
+  // bg-slate-900 element's background to white, which left this active chip's white
+  // text on a white background (invisible). teal-600 isn't caught by that rule and
+  // matches the active-tab color used elsewhere in the app.
+  const chipActive = "bg-teal-600 text-white border-teal-600 shadow-sm";
   const chipInactive = "bg-white text-slate-600 border-slate-200 hover:border-slate-400";
 
   return (

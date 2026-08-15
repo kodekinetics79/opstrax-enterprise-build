@@ -227,7 +227,7 @@ export function FleetColdChainPage() {
             <h1 className="text-3xl font-black tracking-tight text-slate-950">The local API is not reachable yet.</h1>
             <p className="max-w-2xl text-slate-600">{error}</p>
             <div className="flex flex-wrap gap-3">
-              <button type="button" onClick={() => window.location.reload()} className="rounded-full bg-slate-950 px-4 py-2.5 text-sm font-bold text-white">
+              <button type="button" onClick={() => window.location.reload()} className="rounded-full bg-slate-800 px-4 py-2.5 text-sm font-bold text-white">
                 Retry
               </button>
               <Link to="/fleet-workspace" className="rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700">
@@ -262,7 +262,7 @@ export function FleetColdChainPage() {
 
   return (
     <main className="fleet-console text-slate-900">
-      <section className="relative mx-auto flex w-full max-w-7xl flex-col gap-3">
+      <section className="relative mx-auto flex w-full flex-col gap-3">
         <ConsoleRail
           eyebrow="Fleet · Cold Chain"
           icon={<FlaskConical className="h-3.5 w-3.5 text-teal-700" />}
@@ -370,7 +370,7 @@ export function FleetColdChainPage() {
                           <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Battery</p>
                           <p className="font-bold text-slate-900">{device.batteryPercent.toFixed(0)}%</p>
                         </div>
-                        <button onClick={() => logReading(device.id)} disabled={!canManageFleet} title={canManageFleet ? undefined : 'Requires fleet manage permission'} className="rounded-full bg-slate-950 px-3 py-2 text-xs font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
+                        <button onClick={() => logReading(device.id)} disabled={!canManageFleet} title={canManageFleet ? undefined : 'Requires fleet manage permission'} className="rounded-full bg-slate-800 px-3 py-2 text-xs font-bold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
                           Log reading
                         </button>
                       </div>
@@ -449,7 +449,7 @@ export function FleetColdChainPage() {
                     <p className="mt-2 text-sm text-slate-600">Measured {alert.measuredTemperature.toFixed(1)}°C against {alert.thresholdMin.toFixed(1)}°C to {alert.thresholdMax.toFixed(1)}°C.</p>
                     <div className="mt-3 flex items-center justify-between gap-3">
                       <input value={form.alertNotes} onChange={(e) => setForm((current) => ({ ...current, alertNotes: e.target.value }))} placeholder="Resolution notes" className="min-w-0 flex-1 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm outline-none" />
-                      <button onClick={() => resolveAlert(alert.id)} disabled={!canManageFleet} title={canManageFleet ? undefined : 'Requires fleet manage permission'} className="rounded-full bg-slate-950 px-3 py-2 text-xs font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
+                      <button onClick={() => resolveAlert(alert.id)} disabled={!canManageFleet} title={canManageFleet ? undefined : 'Requires fleet manage permission'} className="rounded-full bg-slate-800 px-3 py-2 text-xs font-bold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
                         Resolve
                       </button>
                     </div>
