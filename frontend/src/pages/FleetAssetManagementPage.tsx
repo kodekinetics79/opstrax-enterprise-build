@@ -237,7 +237,7 @@ export function FleetAssetManagementPage() {
 
   return (
     <main className="fleet-console text-slate-900">
-      <section className="relative mx-auto flex w-full max-w-7xl flex-col gap-3">
+      <section className="relative mx-auto flex w-full flex-col gap-3">
         <ConsoleRail
           eyebrow="Fleet · Returnable Assets"
           icon={<Boxes className="h-3.5 w-3.5 text-teal-700" />}
@@ -360,7 +360,7 @@ export function FleetAssetManagementPage() {
                 <input value={forms.scanValue} onChange={(e) => { setForms((current) => ({ ...current, scanValue: e.target.value })); if (actionMessage) setActionMessage(''); }} placeholder="Scan value / tag" className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400" />
                 <textarea value={forms.scanNotes} onChange={(e) => setForms((current) => ({ ...current, scanNotes: e.target.value }))} rows={3} placeholder="Scan notes" className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400" />
                 {actionMessage && <p className="text-sm font-medium text-rose-600" role="alert">{actionMessage}</p>}
-                <button onClick={scan} disabled={!canManageFleet || !forms.scanValue.trim()} title={canManageFleet ? undefined : 'Requires fleet manage permission'} className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
+                <button onClick={scan} disabled={!canManageFleet || !forms.scanValue.trim()} title={canManageFleet ? undefined : 'Requires fleet manage permission'} className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-800 px-4 py-3 font-bold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
                   <Barcode className="h-4 w-4" />
                   Capture barcode scan
                 </button>
