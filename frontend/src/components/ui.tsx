@@ -133,7 +133,7 @@ export function PageHeader({
   title: string; eyebrow?: string; description: string; actions?: ReactNode; footer?: ReactNode;
 }) {
   return (
-    <div className="liquid-glass relative overflow-hidden px-5 py-6 lg:px-6">
+    <div className="liquid-glass relative shrink-0 overflow-hidden px-5 py-6 lg:px-6">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(45,212,191,.12),transparent_34%),radial-gradient(circle_at_bottom_left,rgba(37,99,235,.08),transparent_30%),linear-gradient(180deg,rgba(255,255,255,.3),transparent_28%)]" />
       <div className="relative flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
         <div className="max-w-3xl">
@@ -146,8 +146,11 @@ export function PageHeader({
           <h1 className="mt-3 text-[31px] font-black tracking-tight text-slate-950 md:text-[40px]">{title}</h1>
           <p className="mt-2.5 max-w-3xl text-[14px] leading-7 text-slate-500">{description}</p>
         </div>
+        {/* Plain flex row, not a second card: each action (btn-primary/btn-secondary/status
+            pill) already carries its own complete chrome, so wrapping them in another
+            bordered/shadowed pill just doubled the card look for a single button. */}
         {actions && (
-          <div className="flex shrink-0 flex-wrap items-center gap-2.5 rounded-[22px] border border-slate-200/80 bg-white/85 p-2.5 shadow-sm backdrop-blur">
+          <div className="flex shrink-0 flex-wrap items-center gap-2.5">
             {actions}
           </div>
         )}

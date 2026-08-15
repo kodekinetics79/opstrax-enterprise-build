@@ -745,7 +745,10 @@ export function LiveMapPage() {
             <div className="relative mt-3">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <input
-                className="field pl-10"
+                // pl-10! (forced): `.field`'s own padding shorthand otherwise wins over the
+                // plain pl-10 utility and collapses the left inset, so the icon sits on top
+                // of the placeholder text instead of beside it.
+                className="field pl-10!"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Vehicle code, driver, status…"
