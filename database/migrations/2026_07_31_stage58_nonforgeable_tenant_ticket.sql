@@ -438,6 +438,7 @@ BEGIN
   -- Existing append/read-only and evidence contracts remain least privilege.
   FOR rec IN SELECT * FROM (VALUES
     ('authorization_decision_logs',true,false,false),('audit_logs',true,false,false),
+    ('usage_events',true,false,false),
     ('compliance_evidence',true,false,false),
     ('fleet_tms_shipment_events',true,false,false),('fleet_tms_cold_chain_event_log',true,false,false),
     ('fleet_tms_asset_events',true,false,false),('fleet_tms_barcode_scan_events',true,false,false),
@@ -929,6 +930,7 @@ BEGIN
   END IF;
   IF EXISTS(SELECT 1 FROM (VALUES
       ('compliance_evidence',true,false,false),
+      ('usage_events',true,false,false),
       ('tenant_market_packs',false,false,false),
       ('tenant_entitlements',false,false,false),('demo_fixture_versions',false,false,false),
       ('tenant_subscriptions',false,false,false)

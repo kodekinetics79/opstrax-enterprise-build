@@ -133,16 +133,30 @@ public sealed class PostgresProductionDurabilityTests
                 deleted_at timestamptz NULL);
             CREATE TABLE eld_devices(
                 id bigint PRIMARY KEY, company_id bigint NOT NULL, vehicle_id bigint NULL,
-                driver_id bigint NULL, deleted_at timestamptz NULL,
+                driver_id bigint NULL, status text NOT NULL DEFAULT 'Active',
+                device_state text NULL, deleted_at timestamptz NULL,
                 last_seen_at timestamptz NULL, last_heartbeat_at timestamptz NULL,
                 updated_at timestamptz NULL);
+            CREATE TABLE device_installations(
+                id bigint PRIMARY KEY, company_id bigint NOT NULL,device_id bigint NOT NULL,
+                vehicle_id bigint NULL,status text NOT NULL,effective_from timestamptz NOT NULL,
+                effective_to timestamptz NULL);
+            CREATE TABLE device_installation_quarantine(
+                id bigint PRIMARY KEY,company_id bigint NOT NULL,device_id bigint NULL,
+                resolved_at timestamptz NULL);
+            CREATE TABLE dispatch_assignments(
+                id bigint PRIMARY KEY,company_id bigint NOT NULL,vehicle_id bigint NULL,
+                driver_id bigint NULL,trip_id bigint NULL,assigned_at timestamptz NOT NULL,
+                cancelled_at timestamptz NULL,completed_at timestamptz NULL,
+                actual_delivery_at timestamptz NULL);
             CREATE TABLE telemetry_projection_inbox(
                 event_id uuid PRIMARY KEY, correlation_id uuid NOT NULL, tenant_id uuid NOT NULL,
                 company_id bigint NOT NULL, device_id text NULL, vehicle_id bigint NULL,
                 device_fix_time timestamptz NOT NULL, schema_version int NOT NULL);
             CREATE TABLE location_events(
                 id bigserial PRIMARY KEY, company_id bigint NOT NULL, vehicle_id bigint NULL,
-                device_id bigint NULL, driver_id bigint NULL, lat numeric NOT NULL, lng numeric NOT NULL,
+                device_id bigint NULL, driver_id bigint NULL, installation_id bigint NULL,
+                assignment_id bigint NULL,trip_id bigint NULL,lat numeric NOT NULL,lng numeric NOT NULL,
                 speed_mph numeric NOT NULL, heading smallint NULL, event_type text NOT NULL,
                 engine_status text NULL, fuel_level numeric NULL, odometer_miles numeric NULL,
                 source text NULL, source_channel text NULL, idempotency_key text NULL,
@@ -151,7 +165,8 @@ public sealed class PostgresProductionDurabilityTests
                 UNIQUE(company_id,idempotency_key));
             CREATE TABLE latest_vehicle_positions(
                 id bigserial PRIMARY KEY, company_id bigint NOT NULL, vehicle_id bigint NOT NULL,
-                device_id bigint NULL, driver_id bigint NULL, lat numeric NOT NULL, lng numeric NOT NULL,
+                device_id bigint NULL, driver_id bigint NULL,installation_id bigint NULL,
+                assignment_id bigint NULL,trip_id bigint NULL,lat numeric NOT NULL,lng numeric NOT NULL,
                 speed_mph numeric NOT NULL, heading smallint NOT NULL, engine_status text NULL,
                 fuel_level numeric NULL, odometer_miles numeric NULL, source text NULL,
                 provider text NULL, protocol text NULL, adapter_version text NULL,
@@ -171,11 +186,14 @@ public sealed class PostgresProductionDurabilityTests
                 center_lng numeric NULL, radius_meters int NULL, polygon_json jsonb NULL);
             CREATE TABLE telemetry_alerts(
                 id bigserial PRIMARY KEY, company_id bigint NOT NULL, vehicle_id bigint NULL,
-                device_id bigint NULL, driver_id bigint NULL, alert_type text NOT NULL,
+                device_id bigint NULL, driver_id bigint NULL,installation_id bigint NULL,
+                assignment_id bigint NULL,trip_id bigint NULL,alert_type text NOT NULL,
                 severity text NOT NULL, message text NOT NULL, source_event_id bigint NULL,
                 status text NOT NULL, source_channel text NULL, created_at timestamptz NOT NULL);
             INSERT INTO vehicles VALUES(501,11,71,NULL);
             INSERT INTO eld_devices(id,company_id,vehicle_id,driver_id) VALUES(101,11,501,301);
+            INSERT INTO device_installations VALUES(1001,11,101,501,'Installed',now()-interval '1 day',NULL);
+            INSERT INTO dispatch_assignments VALUES(2001,11,501,311,3001,now()-interval '1 day',NULL,NULL,NULL);
             INSERT INTO telemetry_rules(company_id,rule_type,threshold_value,severity,enabled)
               VALUES(11,'speeding',50,'High',TRUE);
             INSERT INTO geofences(company_id,name,status,center_lat,center_lng,radius_meters)
@@ -207,11 +225,24 @@ public sealed class PostgresProductionDurabilityTests
         };
         var projector = new PostgresPositionProjectionStore(database.ScopedConnectionString);
 
-        Assert.Equal(ProjectionOutcome.Applied, await projector.ApplyAsync(evt));
-        Assert.Equal(ProjectionOutcome.DuplicateIgnored, await projector.ApplyAsync(evt));
+        ProjectionResult applied = await projector.ApplyAsync(evt);
+        Assert.Equal(ProjectionOutcome.Applied, applied.Outcome);
+        Assert.Equal(1001, applied.Event.InstallationId);
+        Assert.Equal(2001, applied.Event.AssignmentId);
+        Assert.Equal(3001, applied.Event.TripId);
+        Assert.Equal(311, applied.Event.DriverId);
+        ProjectionResult duplicate = await projector.ApplyAsync(evt);
+        Assert.Equal(ProjectionOutcome.DuplicateIgnored, duplicate.Outcome);
+        Assert.Equal(2001, duplicate.Event.AssignmentId);
+        Assert.Equal(3001, duplicate.Event.TripId);
+        Assert.Equal(311, duplicate.Event.DriverId);
 
         Assert.Equal(1, await database.ScalarLongAsync("SELECT count(*) FROM location_events"));
+        Assert.Equal(1, await database.ScalarLongAsync(
+            "SELECT count(*) FROM location_events WHERE installation_id=1001 AND assignment_id=2001 AND trip_id=3001 AND driver_id=311"));
         Assert.Equal(1, await database.ScalarLongAsync("SELECT event_count FROM latest_vehicle_positions"));
+        Assert.Equal(1, await database.ScalarLongAsync(
+            "SELECT count(*) FROM latest_vehicle_positions WHERE installation_id=1001 AND assignment_id=2001 AND trip_id=3001 AND driver_id=311"));
         Assert.Equal(2, await database.ScalarLongAsync("SELECT count(*) FROM telemetry_alerts"));
         Assert.Equal(2, await database.ScalarLongAsync(
             "SELECT count(*) FROM telemetry_alerts a JOIN location_events e ON e.id=a.source_event_id AND e.company_id=a.company_id"));
@@ -229,7 +260,7 @@ public sealed class PostgresProductionDurabilityTests
             ReceivedAtGatewayUtc = fixTime.AddMinutes(2),
             NormalizedAtUtc = fixTime.AddMinutes(2).AddSeconds(1),
         };
-        Assert.Equal(ProjectionOutcome.StaleIgnored, await projector.ApplyAsync(outOfOrder));
+        Assert.Equal(ProjectionOutcome.StaleIgnored, (await projector.ApplyAsync(outOfOrder)).Outcome);
         Assert.Equal(2, await database.ScalarLongAsync("SELECT count(*) FROM location_events"));
         Assert.Equal(1, await database.ScalarLongAsync("SELECT event_count FROM latest_vehicle_positions"));
         Assert.Equal(0, await database.ScalarLongAsync("SELECT count(*) FROM telemetry_alerts WHERE status='Open'"));
@@ -239,6 +270,8 @@ public sealed class PostgresProductionDurabilityTests
         await database.ExecuteAsync("""
             INSERT INTO vehicles VALUES(502,11,71,NULL);
             INSERT INTO eld_devices(id,company_id,vehicle_id,driver_id) VALUES(102,11,502,302);
+            INSERT INTO device_installations VALUES(1002,11,102,502,'Verified',now()-interval '1 day',NULL);
+            INSERT INTO dispatch_assignments VALUES(2002,11,502,312,3002,now()-interval '1 day',NULL,NULL,NULL);
             INSERT INTO geofences(company_id,name,status,center_lat,center_lng,radius_meters)
               VALUES(11,'Alternate Yard','Active',35.05,-119.24,500);
             """);
@@ -250,7 +283,7 @@ public sealed class PostgresProductionDurabilityTests
             VehicleId = 502,
             Location = new GeoPoint(35.05, -119.24, SpeedKph: 20, HeadingDeg: 90),
         };
-        Assert.Equal(ProjectionOutcome.Applied, await projector.ApplyAsync(insideAlternateYard));
+        Assert.Equal(ProjectionOutcome.Applied, (await projector.ApplyAsync(insideAlternateYard)).Outcome);
         Assert.Equal(0, await database.ScalarLongAsync(
             "SELECT count(*) FROM telemetry_alerts WHERE vehicle_id=502 AND alert_type='geofence_breach'"));
 
@@ -263,9 +296,52 @@ public sealed class PostgresProductionDurabilityTests
             NormalizedAtUtc = fixTime.AddMinutes(1).AddSeconds(2),
             Location = null,
         };
-        Assert.Equal(ProjectionOutcome.NoLocation, await projector.ApplyAsync(heartbeat));
+        Assert.Equal(ProjectionOutcome.NoLocation, (await projector.ApplyAsync(heartbeat)).Outcome);
         Assert.Equal(3, await database.ScalarLongAsync("SELECT count(*) FROM location_events"));
         Assert.Equal(4, await database.ScalarLongAsync("SELECT count(*) FROM telemetry_projection_inbox"));
+
+        // A reconnected device may deliver historical evidence from its prior installation. It is
+        // attributed by device time, but cannot update the live projection for that ended binding.
+        await database.ExecuteAsync("""
+            INSERT INTO vehicles VALUES(500,11,71,NULL);
+            INSERT INTO device_installations VALUES
+              (1000,11,101,500,'Removed',now()-interval '4 days',now()-interval '1 day');
+            INSERT INTO dispatch_assignments VALUES
+              (2000,11,500,310,3000,now()-interval '4 days',NULL,now()-interval '1 day',NULL);
+            """);
+        var historical = evt with
+        {
+            EventId = Guid.NewGuid(),
+            CorrelationId = Guid.NewGuid(),
+            OccurredAtDeviceUtc = DateTime.UtcNow.AddDays(-2),
+            ReceivedAtGatewayUtc = DateTime.UtcNow,
+            NormalizedAtUtc = DateTime.UtcNow,
+        };
+        ProjectionResult historicalProjection = await projector.ApplyAsync(historical);
+        Assert.Equal(ProjectionOutcome.StaleIgnored, historicalProjection.Outcome);
+        Assert.Equal(1000, historicalProjection.Event.InstallationId);
+        Assert.Equal(500, historicalProjection.Event.VehicleId);
+        Assert.Equal(2000, historicalProjection.Event.AssignmentId);
+        Assert.Equal(3000, historicalProjection.Event.TripId);
+        Assert.Equal(310, historicalProjection.Event.DriverId);
+        Assert.Equal(1, await database.ScalarLongAsync(
+            "SELECT count(*) FROM location_events WHERE installation_id=1000 AND vehicle_id=500 AND assignment_id=2000 AND trip_id=3000 AND driver_id=310"));
+
+        // Authorization is checked before the inbox/replay no-op. A cached session therefore
+        // cannot keep writing after revocation or after its current binding changes.
+        await database.ExecuteAsync("UPDATE eld_devices SET status='Revoked' WHERE id=101");
+        var afterRevocation = evt with { EventId = Guid.NewGuid(), CorrelationId = Guid.NewGuid() };
+        await Assert.ThrowsAsync<InvalidOperationException>(() => projector.ApplyAsync(afterRevocation));
+        await database.ExecuteAsync("UPDATE eld_devices SET status='Active',device_state='Quarantined' WHERE id=101");
+        var afterQuarantine = evt with { EventId = Guid.NewGuid(), CorrelationId = Guid.NewGuid() };
+        await Assert.ThrowsAsync<InvalidOperationException>(() => projector.ApplyAsync(afterQuarantine));
+        await database.ExecuteAsync("""
+            UPDATE eld_devices SET status='Active',device_state='Online',vehicle_id=502 WHERE id=101;
+            UPDATE device_installations SET effective_to=now() WHERE id=1001;
+            INSERT INTO device_installations VALUES(1003,11,101,502,'Installed',now(),NULL);
+            """);
+        var staleSession = evt with { EventId = Guid.NewGuid(), CorrelationId = Guid.NewGuid() };
+        await Assert.ThrowsAsync<InvalidOperationException>(() => projector.ApplyAsync(staleSession));
     }
 
     [Fact]
@@ -282,12 +358,22 @@ public sealed class PostgresProductionDurabilityTests
                 credential_handle text NULL, pinned_source_cidrs text[] NULL,
                 pinned_sim_iccid text NULL, pinned_imsi text NULL,
                 require_replay_defense boolean NOT NULL);
+            CREATE TABLE device_installations(
+                id bigint PRIMARY KEY,company_id bigint NOT NULL,device_id bigint NOT NULL,
+                vehicle_id bigint NULL,status text NOT NULL,effective_from timestamptz NOT NULL,
+                effective_to timestamptz NULL);
+            CREATE TABLE device_installation_quarantine(
+                id bigint PRIMARY KEY,company_id bigint NOT NULL,device_id bigint NULL,
+                resolved_at timestamptz NULL);
             INSERT INTO eld_devices VALUES
                 (101,11,501,'Active','Online','serial-a','111111111111111',NULL),
                 (202,22,502,'Active','Online','serial-b','222222222222222',NULL);
             INSERT INTO telematics_device_trust_policy VALUES
                 ('101','ImeiAllowlistOnly','None',NULL,NULL,NULL,NULL,true),
                 ('202','ImeiAllowlistOnly','None',NULL,NULL,NULL,NULL,true);
+            INSERT INTO device_installations VALUES
+                (1001,11,101,501,'Installed',now()-interval '1 day',NULL),
+                (2002,22,202,502,'Verified',now()-interval '1 day',NULL);
             """);
 
         var restartedRegistry = new PostgresDeviceRegistry(database.ScopedConnectionString);
@@ -298,6 +384,12 @@ public sealed class PostgresProductionDurabilityTests
         Assert.Equal(501, companyA?.Owner.VehicleId);
         Assert.Equal(22, companyB?.Owner.CompanyId);
         Assert.NotEqual(companyA?.Owner.TenantId, companyB?.Owner.TenantId);
+
+        await database.ExecuteAsync(
+            "INSERT INTO device_installations VALUES(1002,11,101,501,'Verified',now()-interval '1 hour',NULL)");
+        Assert.Null(await restartedRegistry.ResolveTrustAsync(
+            new DeviceIdentityRef(Imei: "111111111111111")));
+        await database.ExecuteAsync("DELETE FROM device_installations WHERE id=1002");
 
         await database.ExecuteAsync(
             "UPDATE eld_devices SET imei='111111111111111' WHERE id=202");
@@ -333,13 +425,21 @@ public sealed class PostgresProductionDurabilityTests
         var envelope = Assert.IsType<EventEnvelope<CanonicalTelemetryEvent>>(lease.Entry.Envelope);
         Assert.Equal(eventId, envelope.EventId);
         Assert.Equal(11, envelope.CompanyId);
+        Assert.Equal(1001, envelope.Payload.InstallationId);
+        Assert.Equal(2001, envelope.Payload.AssignmentId);
+        Assert.Equal(3001, envelope.Payload.TripId);
+        Assert.Equal(311, envelope.Payload.DriverId);
 
         await restartedProcess.AbandonAsync(lease, "simulated downstream failure");
         var recoveredProcess = new PostgresStoreAndForwardBuffer(database.ScopedConnectionString, key);
         StoreAndForwardLease retry = Assert.IsType<StoreAndForwardLease>(
             await recoveredProcess.TryAcquireAsync());
-        Assert.Equal(eventId,
-            Assert.IsType<EventEnvelope<CanonicalTelemetryEvent>>(retry.Entry.Envelope).EventId);
+        var retriedEnvelope = Assert.IsType<EventEnvelope<CanonicalTelemetryEvent>>(retry.Entry.Envelope);
+        Assert.Equal(eventId, retriedEnvelope.EventId);
+        Assert.Equal(1001, retriedEnvelope.Payload.InstallationId);
+        Assert.Equal(2001, retriedEnvelope.Payload.AssignmentId);
+        Assert.Equal(3001, retriedEnvelope.Payload.TripId);
+        Assert.Equal(311, retriedEnvelope.Payload.DriverId);
         await recoveredProcess.CompleteAsync(retry);
 
         Assert.Equal(0, await database.ScalarLongAsync("SELECT count(*) FROM telemetry_store_forward"));
@@ -416,6 +516,44 @@ public sealed class PostgresProductionDurabilityTests
         Assert.Contains("registry-resolved tenant ownership", unownedError.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task CanonicalBackbone_PersistsEventTimeLineageIdempotentlyAcrossRetry()
+    {
+        await using var database = await IsolatedSchema.CreateAsync();
+        await database.ExecuteAsync("""
+            CREATE TABLE canonical_telemetry_events(
+                id bigserial PRIMARY KEY, company_id bigint NOT NULL, vehicle_id bigint NULL,
+                device_id bigint NULL, installation_id bigint NULL, assignment_id bigint NULL,
+                trip_id bigint NULL, driver_id bigint NULL, correlation_id uuid NOT NULL,
+                event_type text NOT NULL, lat numeric NULL, lng numeric NULL,
+                speed_mph numeric NULL, heading numeric NULL, source text NOT NULL,
+                provider text NULL, protocol text NULL, adapter_version text NULL,
+                confidence numeric NULL, trust_score numeric NULL, quality_flags jsonb NULL,
+                payload jsonb NOT NULL, device_fix_time timestamptz NOT NULL,
+                gateway_received_at timestamptz NOT NULL, event_time timestamptz NOT NULL);
+            """);
+
+        Guid eventId = Guid.NewGuid();
+        StoreAndForwardEntry entry = Entry(eventId, "101", 11);
+        var envelope = Assert.IsType<EventEnvelope<CanonicalTelemetryEvent>>(entry.Envelope);
+        var backbone = new PostgresEventBackbone(database.ScopedConnectionString);
+        string authoritativeKey = TelematicsEventKey.ForDevice(
+            envelope.Payload.TenantId, envelope.Payload.CompanyId, envelope.Payload.DeviceId);
+
+        await backbone.PublishAsync(TelematicsTopics.TelemetryNormalized, authoritativeKey, envelope);
+        await backbone.PublishAsync(TelematicsTopics.TelemetryNormalized, authoritativeKey, envelope);
+
+        Assert.Equal(1, await database.ScalarLongAsync("SELECT count(*) FROM canonical_telemetry_events"));
+        Assert.Equal(1, await database.ScalarLongAsync("""
+            SELECT count(*) FROM canonical_telemetry_events
+             WHERE installation_id=1001 AND assignment_id=2001 AND trip_id=3001 AND driver_id=311
+               AND payload->'Event'->>'InstallationId'='1001'
+               AND payload->'Event'->>'AssignmentId'='2001'
+               AND payload->'Event'->>'TripId'='3001'
+               AND payload->'Event'->>'DriverId'='311'
+            """));
+    }
+
     private static StoreAndForwardEntry Entry(Guid eventId, string deviceId, long companyId)
     {
         Guid tenant = Guid.NewGuid();
@@ -425,6 +563,8 @@ public sealed class PostgresProductionDurabilityTests
             SchemaVersion = 1, EventId = eventId, CorrelationId = eventId,
             OccurredAtDeviceUtc = now, ReceivedAtGatewayUtc = now, NormalizedAtUtc = now,
             TenantId = tenant, CompanyId = companyId, DeviceId = deviceId,
+            VehicleId = 501, InstallationId = 1001, AssignmentId = 2001,
+            TripId = 3001, DriverId = 311,
             Source = TelemetrySource.DirectDevice, Transport = Transport.Tcp,
             ProtocolName = "GT06", AdapterName = "GT06", AdapterVersion = "1.0.0",
         };

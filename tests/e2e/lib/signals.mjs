@@ -23,10 +23,14 @@ export function apiRequestMatchesTarget(requestUrl, apiBaseUrl) {
 }
 
 export function assertRuntimeSignalsHealthy(signals) {
+  const consoleErrors = signals.consoleErrors ?? [];
   const pageErrors = signals.pageErrors ?? [];
   const serverErrors = signals.serverErrors ?? [];
   const apiTargetMismatches = signals.apiTargetMismatches ?? [];
   const failedRequests = signals.failedRequests ?? [];
+  if (consoleErrors.length > 0) {
+    throw new Error(`Browser console emitted errors: ${JSON.stringify(consoleErrors)}`);
+  }
   if (pageErrors.length > 0) {
     throw new Error(`Browser page emitted runtime errors: ${JSON.stringify(pageErrors)}`);
   }

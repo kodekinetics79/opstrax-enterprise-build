@@ -4,6 +4,7 @@ import type { ApiEnvelope, JsonRecord, LoginResult, MobileSession } from "@/type
 type RequestOptions = {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: JsonRecord | unknown;
+  headers?: HeadersInit;
   retryOn401?: boolean;
 };
 
@@ -46,7 +47,7 @@ export function createMobileApiClient(access: SessionAccess) {
   const rawRequest = async <T>(path: string, options: RequestOptions = {}, attempt = 0): Promise<T> => {
     const session = access.getSession();
     const method = options.method ?? "GET";
-    const headers = withSessionHeaders({}, session, method, session?.csrfToken);
+    const headers = withSessionHeaders(options.headers ?? {}, session, method, session?.csrfToken);
     const body = options.body === undefined ? undefined : JSON.stringify(options.body);
     if (body !== undefined) headers.set("Content-Type", "application/json");
 
@@ -105,6 +106,21 @@ export function createMobileApiClient(access: SessionAccess) {
     me: () => rawRequest<MobileSession>("/api/auth/me", { method: "GET" }),
     refresh: () => rawRequest<MobileSession>("/api/auth/refresh", { method: "POST" }),
     logout: () => rawRequest<{ loggedOut: boolean }>("/api/auth/logout", { method: "POST", retryOn401: false }),
+    driverMe: () => request.get<JsonRecord>("/api/driver/me"),
+    currentDriverAssignment: () => request.get<JsonRecord>("/api/driver/assignments/current"),
+    acceptDriverAssignment: (assignmentId: number | string) =>
+      request.post<JsonRecord>(`/api/driver/assignments/${assignmentId}/accept`, {}),
+    confirmDriverVehicle: (assignmentId: number | string, method: "unit_suffix" | "vin_suffix", reference: string) =>
+      request.post<JsonRecord>(`/api/driver/assignments/${assignmentId}/confirm-vehicle`, { method, reference }),
+    updateDriverAssignmentStatus: (assignmentId: number | string, status: string) =>
+      request.post<JsonRecord>(`/api/driver/assignments/${assignmentId}/status`, { status }),
+    driverDvirTemplates: () => request.get<JsonRecord[]>("/api/driver/dvir/templates"),
+    submitDriverDvir: (body: JsonRecord, idempotencyKey: string) =>
+      rawRequest<JsonRecord>("/api/driver/dvir", {
+        method: "POST",
+        body,
+        headers: { "Idempotency-Key": idempotencyKey },
+      }),
     jobs: () => request.get<JsonRecord[]>("/api/jobs"),
     executionSummary: (jobId: number | string) => request.get<JsonRecord>(`/api/operations/jobs/${jobId}/execution-summary`),
     smartAssignmentRecommendations: (jobId: number | string) => request.get<{ items: JsonRecord[] }>(`/api/jobs/${jobId}/smart-assign/recommendations`),

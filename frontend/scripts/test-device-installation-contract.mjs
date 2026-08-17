@@ -1,0 +1,127 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const service = readFileSync(resolve(root, "src/services/telematicsService.ts"), "utf8");
+const devicesPage = readFileSync(resolve(root, "src/pages/IotDevicesPage.tsx"), "utf8");
+const vehiclesPage = readFileSync(resolve(root, "src/pages/VehiclesPage.tsx"), "utf8");
+const coldChainPage = readFileSync(resolve(root, "src/pages/FleetColdChainPage.tsx"), "utf8");
+
+assert.match(service, /imei: String\(row\.imei \?\? ""\)/, "IMEI must be mapped from the live device row");
+assert.match(service, /deviceCategory: String\(row\.device_category \?\? "Unknown"\)/, "Governed hardware category must be mapped from the live device row");
+assert.doesNotMatch(service, /imei:\s*""/, "Device mapping must not erase IMEI readback");
+assert.match(service, /detail\.current_installation/, "Device detail must consume the current installation");
+assert.match(service, /detail\.installation_history/, "Device detail must consume installation history");
+assert.match(service, /detail\.assignment_history/, "Device detail must consume assignment history");
+assert.match(service, /function deviceRowFromDetail/, "Single-device readbacks must unwrap the nested detail envelope");
+assert.match(service, /const created = deviceRowFromDetail/, "Provision readback must preserve the returned device identity fields");
+assert.match(service, /\/installations\/\$\{current\.id\}\/remove/, "Removal must use the installation endpoint");
+assert.match(service, /expectedRowVersion: current\.rowVersion/, "Removal must send optimistic concurrency state");
+assert.match(service, /idempotencyKey: installationMutationKey\(deviceId\)/, "Installation must be idempotent");
+assert.match(service, /\/installations\/transfer/, "Transfer must use the atomic transfer endpoint");
+assert.match(service, /\/api\/telemetry\/installation-quarantine/, "Identity conflicts must use the governed quarantine API");
+assert.match(service, /resolveIdentityQuarantine/, "Operators must have a supported quarantine resolution mutation");
+assert.doesNotMatch(service, /result:\s*"Passed"\s*,/, "Commissioning must never hardcode a successful result");
+assert.match(service, /result: input\.result/, "Commissioning must send the operator-observed result");
+assert.match(service, /verificationReference,/, "Commissioning must send the operator-entered evidence reference");
+assert.match(service, /activationVerifiedAt: row\.activation_verified_at/, "Activation heartbeat evidence must be mapped from the installation contract");
+for (const field of ["odometer_at_installation", "commissioning_method", "commissioning_result", "verification_reference", "removal_reason"]) {
+  assert.match(service, new RegExp(`row\\.${field}`), `${field} must be mapped back into installation history`);
+}
+assert.match(service, /input\.result === "Passed" && !current\.activationVerifiedAt/, "Only Passed commissioning must require activation evidence");
+assert.match(service, /expectedRowVersion: current\.rowVersion/, "Commissioning must send installation concurrency state");
+assert.doesNotMatch(service, /deviceRole:\s*"GPS"/, "Installation must not hardcode the device role");
+assert.doesNotMatch(service, /isPrimary:\s*true/, "Installation must not hardcode primary status");
+assert.match(service, /deviceRole: input\.deviceRole\.trim\(\)/, "Installation must send the operator-selected role");
+assert.match(service, /isPrimary: input\.isPrimary/, "Installation must send the operator-selected primary designation");
+for (const field of ["effectiveAt", "installationLocation", "odometerAtInstallation", "commissioningMethod", "assignmentReason", "removalReason"]) {
+  assert.match(service, new RegExp(`input\\.${field}`), `${field} must come from operator input`);
+}
+assert.doesNotMatch(service, /Removed by fleet operator|Transferred to another vehicle|Operator installation/, "Installation reasons must not be generic hardcoded claims");
+assert.match(service, /\/api\/telemetry\/devices\/\$\{deviceId\}\/suspend/, "Device suspension must use the persisted backend endpoint");
+assert.match(service, /\/api\/telemetry\/devices\/\$\{deviceId\}\/activate/, "Device activation must use the persisted backend endpoint");
+assert.match(service, /\/api\/telemetry\/devices\/\$\{deviceId\}\/rotate-secret/, "Credential rotation must use the one-time backend contract");
+const provisionRequest = service.match(/apiClient\.post\("\/api\/telemetry\/devices\/provision", \{[\s\S]*?\}\)\)/)?.[0] ?? "";
+assert.ok(provisionRequest, "Provision request contract must remain identifiable");
+assert.doesNotMatch(provisionRequest, /vehicleId|driverId/, "Provisioning must never bind a vehicle or driver");
+assert.match(provisionRequest, /deviceCategory,/, "Provisioning must send the explicitly selected governed hardware category");
+const connectForm = devicesPage.match(/type ConnectFormState = \{[\s\S]*?\};/)?.[0] ?? "";
+assert.doesNotMatch(connectForm, /assignedVehicleId|vehicleId/, "Connection form must not combine provisioning with installation");
+assert.match(connectForm, /deviceCategory: string/, "Connection form must collect a governed hardware category");
+assert.match(devicesPage, /Hardware category \(required\)/, "Device onboarding must require a governed hardware category selector");
+assert.match(devicesPage, /form\.deviceCategory\.trim\(\)\.length > 0/, "Device connection must be blocked until category is selected");
+for (const label of ["Device role (required)", "Vehicle role designation (required)", "Installation location (required)", "Odometer at installation (required)", "Commissioning method (required)", "Assignment reason (required)", "Observed result (required)", "Evidence / failure reference (required)"]) {
+  assert.match(devicesPage, new RegExp(label.replace(/[()]/g, "\\$&")), `${label} must be collected explicitly`);
+}
+assert.match(devicesPage, /defaultCommissioningForm:[^=]*= \{ result: ""/, "Commissioning must require an explicit result rather than defaulting a claim");
+assert.doesNotMatch(devicesPage, /defaultCommissioningForm:[^=]*= \{ result: "(?:Passed|Failed)"/, "Commissioning must not default either outcome");
+assert.match(devicesPage, /Replacement credentials/, "Rotated secrets must be shown through an explicit one-time dialog");
+assert.match(devicesPage, /setRotatedCredentials\(null\)/, "One-time rotated secrets must be cleared when the dialog closes");
+assert.doesNotMatch(devicesPage, /Schedule firmware for/, "Unsupported OTA scheduling must not be presented as an operational form");
+assert.doesNotMatch(devicesPage, /onRunDiagnostics|diagnosticsMut/, "Unsupported on-demand diagnostics must not be presented as an operational action");
+assert.match(devicesPage, /OTA scheduling and firmware history are not connected/, "Unsupported OTA must be labelled explicitly as read-only");
+assert.doesNotMatch(devicesPage, /Metadata edits were captured/, "Unsupported metadata must not report success");
+assert.match(devicesPage, /Metadata read-only/, "Unsupported metadata must be labelled read-only");
+assert.match(devicesPage, /Installation History/, "The detail drawer must render installation history");
+assert.match(devicesPage, /Device lifecycle action failed/, "Lifecycle mutation failures must be rendered to the operator");
+assert.match(devicesPage, /\{ key: "archived", label: "Archived" \}/, "Archived devices must remain available in an explicit lifecycle view");
+assert.doesNotMatch(devicesPage, /\.filter\(\(row\) => row\.lifecycleStatus !== "Archived"\)/, "Archived records must not be silently removed before lifecycle filtering");
+assert.match(devicesPage, /const managedCount = activeDevices\.length/, "Managed device totals must exclude archived inventory");
+assert.match(devicesPage, /\["Lifecycle", device\.lifecycleStatus\]/, "Device detail must render lifecycle status");
+assert.match(devicesPage, /Identity Quarantine/, "Identity quarantine must be visible without manual database identifiers");
+assert.match(devicesPage, /Resolve with audit evidence/, "Quarantine resolution must retain an explicit evidence workflow");
+assert.doesNotMatch(vehiclesPage, /withDeviceEvidence/, "Vehicle health must not overwrite the API-selected primary installation with an unordered client-side device join");
+assert.match(devicesPage, /Passed remains gated by an authenticated device heartbeat/, "Commissioning must expose its activation-evidence gate");
+assert.match(vehiclesPage, /if \(deviceId == null\) return "Unknown"/, "Vehicles without a current device must be Unknown");
+assert.match(vehiclesPage, /if \(lastSeen == null\) return "Disconnected"/, "Installed devices without live evidence must be Disconnected");
+assert.doesNotMatch(vehiclesPage, /telematicsService\.getDevices/, "Vehicle list health must not overwrite the backend-selected primary installation");
+assert.match(vehiclesPage, /scopeRowsForSession\("vehicles", pagedRows, session\)/, "Vehicle list health must consume the tenant-scoped authoritative vehicle response");
+assert.match(vehiclesPage, /const currentDevices = \(detail\?\.currentDevices/, "Vehicle detail must render authoritative current installations");
+assert.match(vehiclesPage, /selectedRecord = selectedDetailRecord/, "Vehicle health must retain the API-selected primary installation on detail refresh");
+assert.match(vehiclesPage, /15 \* 60_000/, "Device health freshness must use the service heartbeat window");
+for (const field of ["vinExceptionType", "alternateIdentifier", "plateJurisdiction", "vehicleClass"]) {
+  assert.match(vehiclesPage, new RegExp(`key: "${field}"`), `${field} must be available in create/edit`);
+}
+assert.match(vehiclesPage, /approved alternate identity kind/, "VIN-less vehicles must be client-validated against governed identity requirements");
+assert.match(vehiclesPage, /label: "Alternate identity"/, "Vehicle detail must render the governed alternate identity");
+
+assert.match(coldChainPage, /source: 'Manual'/, "Operator-entered cold-chain observations must be persisted with Manual provenance");
+assert.match(coldChainPage, /sourceChannel: 'Operator console'/, "Operator-entered observations must identify their source channel");
+assert.doesNotMatch(coldChainPage, /humidityPercent:\s*51/, "Cold-chain observations must not fabricate humidity");
+assert.doesNotMatch(coldChainPage, /status:\s*'Normal'/, "The client must not fabricate a normal policy result");
+assert.doesNotMatch(coldChainPage, /Manual telemetry sample created|Reviewed by operations/, "Audit evidence must not be replaced with invented notes");
+assert.match(coldChainPage, /No reading/, "Devices without reported temperature evidence must render an honest empty value");
+assert.match(coldChainPage, /Never reported/, "Devices without a reported timestamp must not be presented as live");
+
+const driverPage = readFileSync(resolve(root, "src/pages/driver/DriverAssignmentPage.tsx"), "utf8");
+assert.match(driverPage, /s !== "accepted" \|\| status === "exception"/, "Initial acceptance must use the canonical endpoint while exception recovery remains executable");
+assert.match(driverPage, /Resume Assignment/, "Accepted assignments must be able to resume from exception without a duplicate initial accept action");
+assert.match(driverPage, /s === "assigned" \|\| s === "accepted"/, "Pre-accept and post-accept exceptions must both expose the governed resume action");
+assert.match(driverPage, /vehicleConfirmedByDriverId/, "Trip UI must consume the vehicle confirmer identity");
+assert.match(driverPage, /String\(assignment\["vehicleConfirmedByDriverId"\]\) === String\(payload\["driverId"\]\)/, "Trip UI must require confirmation by the authenticated driver");
+for (const [status, label] of [
+  ["en_route_pickup", "Start Route to Pickup"],
+  ["arrived_pickup", "Mark Arrived at Pickup"],
+  ["loaded", "Mark Loaded"],
+  ["in_transit", "Mark In Transit"],
+  ["arrived_delivery", "Mark Arrived at Delivery"],
+]) {
+  assert.match(driverPage, new RegExp(`${status}:\\s+"${label}"`), `${status} must describe the transition it executes`);
+}
+
+const dvirPage = readFileSync(resolve(root, "src/pages/DvirInspectionsPage.tsx"), "utf8");
+assert.match(dvirPage, /New checklist template/, "Fleet operators must be able to create the driver checklist prerequisite");
+assert.match(dvirPage, /dvirApi\.createTemplate/, "Checklist template UI must persist through the real API");
+assert.match(dvirPage, /checklistItems:/, "Checklist template creation must submit its persisted item rows");
+
+const driverDashboard = readFileSync(resolve(root, "src/pages/driver/DriverDashboardPage.tsx"), "utf8");
+assert.match(driverDashboard, /latestPretripSafeToOperate/, "Driver home must consume the same signed pre-trip evidence as the trip page");
+assert.match(driverDashboard, /vehicleConfirmedAt/, "Driver home must consume exact-vehicle confirmation before declaring departure ready");
+assert.match(driverDashboard, /vehicleConfirmedByDriverId/, "Driver home must require confirmation by the authenticated driver");
+assert.match(driverDashboard, /String\(assignment\["vehicleConfirmedByDriverId"\]\) === String\(driver\["id"\]\)/, "Driver home confirmation must match the authenticated driver identity");
+assert.match(driverDashboard, /Verify assigned vehicle/, "Driver home must distinguish missing vehicle confirmation from missing DVIR evidence");
+assert.match(driverDashboard, /Start route to pickup/, "Driver home must not request a duplicate DVIR after signed safe evidence exists");
+
+console.log("device installation frontend contract: ok");

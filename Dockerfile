@@ -6,6 +6,7 @@ RUN dotnet restore backend-dotnet/Opstrax.Api.csproj
 COPY backend-dotnet/ backend-dotnet/
 COPY telematics/src/Opstrax.Telematics.Protocols.J1939/ telematics/src/Opstrax.Telematics.Protocols.J1939/
 COPY database/init/001_schema.sql database/init/001_schema.sql
+COPY database/migrations/2026_07_11_stage32_device_imei.sql database/migrations/
 COPY database/migrations/2026_07_16_stage42_telemetry_gateways.sql database/migrations/
 COPY database/migrations/2026_07_30_customer_feedback_contract.sql database/migrations/
 COPY database/migrations/2026_07_30_stage49_mfa_challenge_one_time.sql database/migrations/
@@ -40,6 +41,7 @@ COPY database/migrations/2026_08_11_stage76_telematics_security_hardening.sql da
 COPY database/migrations/2026_08_12_stage77_protected_role_bootstrap.sql database/migrations/
 COPY database/migrations/2026_08_13_stage78_country_profiles_runtime_contract.sql database/migrations/
 COPY database/migrations/2026_08_13_stage79_tenant_provisioning_runtime_contract.sql database/migrations/
+COPY database/migrations/2026_08_14_stage80_fleet_identity_backbone.sql database/migrations/
 COPY database/migrations/telematics database/migrations/telematics
 RUN dotnet publish backend-dotnet/Opstrax.Api.csproj -c Release -o /app/publish --no-restore
 

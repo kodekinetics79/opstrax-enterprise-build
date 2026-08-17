@@ -24,11 +24,11 @@ internal sealed class InMemoryPositionProjectionStore : IPositionProjectionStore
     private readonly Dictionary<(long CompanyId, long VehicleId), CanonicalTelemetryEvent> _latest = new();
 
     /// <inheritdoc />
-    public Task<ProjectionOutcome> ApplyAsync(CanonicalTelemetryEvent evt, CancellationToken cancellationToken = default)
+    public Task<ProjectionResult> ApplyAsync(CanonicalTelemetryEvent evt, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(evt);
         cancellationToken.ThrowIfCancellationRequested();
-        return Task.FromResult(Apply(evt));
+        return Task.FromResult(new ProjectionResult(Apply(evt), evt));
     }
 
     /// <summary>Synchronous core, exposed for deterministic tests.</summary>

@@ -41,7 +41,7 @@ public sealed class CrossModuleFleetPilotPostgresTests
                 "INSERT INTO drivers(company_id,branch_id,user_id,driver_code,full_name,status,safety_score,readiness_score,compliance_score) VALUES (@c,@b,@u,@code,'Pilot Driver','Available',95,95,95)",
                 c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@b", branch); c.Parameters.AddWithValue("@u", user); c.Parameters.AddWithValue("@code", $"DRV-{suffix}"); });
             var vehicle = await db.InsertAsync(
-                "INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,status,availability_status,out_of_service,readiness_score,risk_score) VALUES (@c,@b,@code,'Truck','Available','available',false,95,5)",
+                "INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,vin_exception_type,alternate_identifier,status,availability_status,out_of_service,readiness_score,risk_score) VALUES (@c,@b,@code,'Truck','legacy-fleet-identifier',@code,'Available','available',false,95,5)",
                 c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@b", branch); c.Parameters.AddWithValue("@code", $"VEH-{suffix}"); });
             await db.ExecuteAsync(
                 "INSERT INTO hos_records(company_id,driver_id,shift_date,remaining_drive_hours,remaining_shift_hours,hos_status) VALUES (@c,@d,CURRENT_DATE,8,8,'On Duty')",

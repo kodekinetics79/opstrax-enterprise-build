@@ -10,6 +10,9 @@ const AUTH_KEYS = [
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
 const VALID_ENVIRONMENTS = new Set(["local", "staging", "production"]);
+const IOT_HARDWARE_ROLES = new Set([
+  "gps", "eld", "dashcam", "obd-ii", "j1939/can", "temperature", "fuel", "tire", "ble gateway", "other",
+]);
 
 function nonBlank(value) {
   return typeof value === "string" && value.trim().length > 0;
@@ -100,6 +103,39 @@ export function mutationGate(target, env = process.env) {
   if (env.E2E_DISPOSABLE_TENANT_ACK !== "I_UNDERSTAND_THIS_WRITES_TEST_DATA") reasons.push("disposable-tenant acknowledgement is absent");
   if (!nonBlank(env.E2E_TENANT_AUTH_STATE)) reasons.push("tenant auth state is absent");
   if (!/^\d+$/.test(env.E2E_CANARY_VEHICLE_ID || "")) reasons.push("numeric canary vehicle id is absent");
+  return Object.freeze({ enabled: reasons.length === 0, reasons });
+}
+
+export function iotLifecycleGate(target, env = process.env) {
+  const base = mutationGate(target, env);
+  const reasons = [...base.reasons];
+  if (env.E2E_IOT_LIFECYCLE_ACK !== "I_UNDERSTAND_THIS_PROVISIONS_AND_REVOKES_A_REAL_DEVICE") {
+    reasons.push("IoT lifecycle acknowledgement is absent");
+  }
+  if (!/^\d+$/.test(env.E2E_IOT_SOURCE_VEHICLE_ID || "")) reasons.push("numeric IoT source vehicle id is absent");
+  if (!/^\d+$/.test(env.E2E_IOT_TARGET_VEHICLE_ID || "")) reasons.push("numeric IoT target vehicle id is absent");
+  if (!/^\d+$/.test(env.E2E_IOT_OOS_VEHICLE_ID || "")) reasons.push("numeric IoT out-of-service vehicle id is absent");
+  if (env.E2E_IOT_SOURCE_VEHICLE_ID === env.E2E_IOT_TARGET_VEHICLE_ID) {
+    reasons.push("IoT source and target vehicles must differ");
+  }
+  if ([env.E2E_IOT_SOURCE_VEHICLE_ID, env.E2E_IOT_TARGET_VEHICLE_ID].includes(env.E2E_IOT_OOS_VEHICLE_ID)) {
+    reasons.push("IoT out-of-service vehicle must differ from source and target vehicles");
+  }
+  const category = env.E2E_IOT_DEVICE_CATEGORY?.trim().toLowerCase();
+  const role = env.E2E_IOT_DEVICE_ROLE?.trim().toLowerCase();
+  if (!category || !IOT_HARDWARE_ROLES.has(category)) reasons.push("IoT device category is absent or unsupported");
+  if (!role || !IOT_HARDWARE_ROLES.has(role)) reasons.push("IoT installation role is absent or unsupported");
+  if (category && role && category !== role) reasons.push("IoT device category and installation role must match");
+  if (!nonBlank(env.E2E_CROSS_TENANT_AUTH_STATE)) reasons.push("cross-tenant auth state is absent");
+  else if (!fs.existsSync(path.resolve(env.E2E_CROSS_TENANT_AUTH_STATE.trim()))) {
+    reasons.push("cross-tenant auth state file is missing");
+  }
+  if (!nonBlank(env.E2E_DRIVER_AUTH_STATE)) reasons.push("driver auth state is absent");
+  else if (!fs.existsSync(path.resolve(env.E2E_DRIVER_AUTH_STATE.trim()))) reasons.push("driver auth state file is missing");
+  for (const [key, label] of [
+    ["E2E_IOT_DRIVER_ID", "driver"], ["E2E_IOT_JOB_ID", "job"],
+    ["E2E_IOT_ROUTE_ID", "route"], ["E2E_IOT_TRIP_ID", "trip"],
+  ]) if (!/^\d+$/.test(env[key] || "")) reasons.push(`numeric IoT ${label} id is absent`);
   return Object.freeze({ enabled: reasons.length === 0, reasons });
 }
 

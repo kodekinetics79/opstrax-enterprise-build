@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 
 -- Backfill the known migration history as the baseline (idempotent).
 INSERT INTO schema_migrations (version, description) VALUES
+    ('database_init_001_schema',                         'Canonical clean-database predecessor'),
     ('2026_06_27_stage5_p0b1a_foundation',              'Foundation schema'),
     ('2026_06_28_stage5b_p0b1a2_persistence_hardening', 'Persistence hardening'),
     ('2026_06_28_stage5d_p0b1a3_dispatcher',            'Dispatcher'),

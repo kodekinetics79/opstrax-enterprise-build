@@ -44,15 +44,15 @@ public class DriverPermissionTests
     }
 
     // The Driver role is PORTAL-ONLY and isolated. Every /api/driver/* endpoint (assignments,
-    // DVIR, coaching, HOS, earnings) gates on driver:self, and the DVIR submit needs the narrow
-    // maintenance:create WRITE — nothing else. A driver must NOT carry back-office READ keys, so a
+    // DVIR, coaching, HOS, earnings) gates on driver:self. The dedicated driver DVIR route does not
+    // grant the back-office maintenance:create capability. A driver must NOT carry back-office keys, so a
     // driver token can never pull tenant operational data even by hitting an admin API directly.
     [Fact]
     public void Driver_Is_Portal_Isolated_No_BackOffice_Reads()
     {
         var perms = EndpointMappings.RolePermissionDefaults["Driver"];
         Assert.Contains("driver:self", perms);          // the portal gate
-        Assert.Contains("maintenance:create", perms);   // DVIR submit (write only)
+        Assert.DoesNotContain("maintenance:create", perms);
         foreach (var backOfficeRead in new[] { "dispatch:view", "shipments:view", "vehicles:view",
                                                "drivers:view", "safety:view", "compliance:view",
                                                "alerts:view", "dashboard:view" })

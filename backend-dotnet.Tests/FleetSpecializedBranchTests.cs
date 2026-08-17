@@ -188,6 +188,62 @@ public sealed class FleetSpecializedBranchTests
     }
 
     [Fact]
+    public async Task ColdChain_RegistrationAndGovernedReadingsNeverManufactureTelemetryOrTrustCallerStatus()
+    {
+        var db = Db();
+        await new FleetTmsColdChainSchemaService(db, NullLogger<FleetTmsColdChainSchemaService>.Instance).EnsureAsync();
+        await new FleetTmsColdChainFoundationSchemaService(db).EnsureAsync();
+        var companyId = 883_800L + Random.Shared.Next(1, 90);
+        const long branchId = 219;
+        try
+        {
+            var zoneId = await db.InsertAsync(@"INSERT INTO fleet_tms_temperature_zones
+                (company_id,branch_id,code,name,min_celsius,max_celsius)
+                VALUES (@c,NULL,'GOVERNED','Governed chilled',2,8)",
+                c => c.Parameters.AddWithValue("@c", companyId));
+            var registration = new TemperatureDeviceRequest(
+                "EVIDENCE-DEVICE", "Evidence device", zoneId, null, "TRUCK-E", "Active",
+                null, null, null, null, "Manual", null, "registration-evidence", "registration-correlation", null, "{}");
+            var created = await Invoke("CreateDevice", Principal(companyId, branchId), registration, db, CancellationToken.None);
+            Assert.Equal(StatusCodes.Status200OK, Assert.IsAssignableFrom<IStatusCodeHttpResult>(created).StatusCode);
+            var deviceId = Payload(created).RootElement.GetProperty("data").GetProperty("id").GetInt64();
+            var device = await db.QuerySingleAsync(@"SELECT last_reported_temperature_celsius,battery_percent,last_ping_at_utc
+                FROM fleet_tms_temperature_devices WHERE id=@id", c => c.Parameters.AddWithValue("@id", deviceId));
+            Assert.NotNull(device);
+            Assert.True(device!["lastReportedTemperatureCelsius"] is null or DBNull);
+            Assert.True(device["batteryPercent"] is null or DBNull);
+            Assert.True(device["lastPingAtUtc"] is null or DBNull);
+
+            var service = new FleetTmsColdChainFoundationService(db);
+            await service.UpsertPolicyAsync(companyId, branchId, "GOVERNED-POLICY", "device", deviceId.ToString(),
+                2, 8, 30, 80, "Critical", true, "Active", "Manual", null, null, null, null, "{}", null);
+
+            var claimedBreach = await service.RecordTemperatureReadingAsync(companyId, branchId,
+                new TemperatureReadingRequest(deviceId, null, zoneId, 4, 50, null, null, "gateway", "Breach", null,
+                    "Gateway", null, "governed-normal", "corr-normal", null, "{}"));
+            Assert.Equal("Normal", claimedBreach["status"]?.ToString());
+            Assert.Equal("Gateway", claimedBreach["source"]?.ToString());
+
+            var concealedBreach = await service.RecordTemperatureReadingAsync(companyId, branchId,
+                new TemperatureReadingRequest(deviceId, null, zoneId, 4, 90, null, null, "Sensor", "Normal", null,
+                    "Sensor", null, "governed-humidity", "corr-humidity", null, "{}"));
+            Assert.Equal("Breach", concealedBreach["status"]?.ToString());
+            var alert = await db.QuerySingleAsync(@"SELECT alert_type,measured_humidity,humidity_threshold_min,humidity_threshold_max
+                FROM fleet_tms_temperature_alerts WHERE reading_id=@id",
+                c => c.Parameters.AddWithValue("@id", Convert.ToInt64(concealedBreach["id"])));
+            Assert.Equal("HumidityBreach", alert!["alertType"]?.ToString());
+            Assert.Equal(90m, Convert.ToDecimal(alert["measuredHumidity"]));
+            Assert.Equal(30m, Convert.ToDecimal(alert["humidityThresholdMin"]));
+            Assert.Equal(80m, Convert.ToDecimal(alert["humidityThresholdMax"]));
+        }
+        finally
+        {
+            foreach (var table in new[] { "fleet_tms_cold_chain_event_log", "fleet_tms_temperature_alerts", "fleet_tms_temperature_readings", "fleet_tms_cold_chain_policies", "fleet_tms_temperature_devices", "fleet_tms_temperature_zones" })
+                await db.ExecuteAsync($"DELETE FROM {table} WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", companyId));
+        }
+    }
+
+    [Fact]
     public async Task ColdChain_PolicyTwentyWayIdempotencyRaceReturnsOriginalResourceWithout500()
     {
         var db = Db();
@@ -636,7 +692,7 @@ public sealed class FleetSpecializedBranchTests
         {
             await db.ExecuteAsync("INSERT INTO companies(id,company_code,name,industry) OVERRIDING SYSTEM VALUE VALUES (@c,@code,'DVIR test','transport') ON CONFLICT DO NOTHING", c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@code", $"DVIR-{companyId}"); });
             await db.ExecuteAsync("INSERT INTO tenant_market_packs(company_id,pack_code,status) VALUES (@c,'canada_na','active') ON CONFLICT (company_id,pack_code) DO UPDATE SET status='active'", c => c.Parameters.AddWithValue("@c", companyId));
-            var vehicleId = await db.InsertAsync("INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,status,availability_status) VALUES (@c,@b,'DVIR-701','Truck','Available','available')", c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchId); });
+            var vehicleId = await db.InsertAsync("INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,vin_exception_type,alternate_identifier,status,availability_status) VALUES (@c,@b,'DVIR-701','Truck','legacy-fleet-identifier','DVIR-701','Available','available')", c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchId); });
             var defects = JsonSerializer.SerializeToElement(new[] { new { description = "Brake pressure below threshold", severity = "critical", repairRequired = true } });
             var created = Payload(await InvokeMarket("CreateVehicleInspection", Principal(companyId, branchId), new Dictionary<string, object?>
             {

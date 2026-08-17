@@ -12,6 +12,7 @@ import { downloadServerExport } from "@/services/fleetDomainApi";
 import { useHasPermission } from "@/hooks/usePermission";
 import { useAuth } from "@/hooks/useAuth";
 import { scopeRowsForSession } from "@/auth/accessScope";
+import { PERMISSIONS } from "@/auth/rbacConfig";
 import { labelize, LoadingState, ErrorState, EmptyState } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
@@ -38,8 +39,33 @@ function isMoving(row: AnyRecord): boolean {
   return num(g(row, "speedMph", "speed_mph")) > 1;
 }
 
+function vehicleDeviceStatus(row: AnyRecord): string {
+  const deviceId = g(row, "currentDeviceId", "current_device_id", "installedDeviceId", "installed_device_id");
+  if (deviceId == null) return "Unknown";
+  const lastSeen = g(row, "deviceLastSeenAt", "device_last_seen_at", "currentDeviceLastSeenAt", "current_device_last_seen_at");
+  if (lastSeen == null) return "Disconnected";
+  const reported = String(g(row, "currentDeviceStatus", "current_device_status", "deviceConnectionStatus", "device_connection_status") ?? "");
+  if (/revoked|suspend|offline|malfunction|fault/i.test(reported)) return reported || "Disconnected";
+  return hasRecentHeartbeat(lastSeen) ? "Online" : "Disconnected";
+}
+
+function vehicleCameraStatus(row: AnyRecord): string {
+  const cameraId = g(row, "currentCameraId", "current_camera_id", "installedCameraId", "installed_camera_id");
+  if (cameraId == null) return "Unknown";
+  const lastSeen = g(row, "cameraLastSeenAt", "camera_last_seen_at", "currentCameraLastSeenAt", "current_camera_last_seen_at");
+  if (lastSeen == null) return "Disconnected";
+  const reported = String(g(row, "currentCameraStatus", "current_camera_status") ?? "");
+  if (/revoked|suspend|offline|fault|not recording/i.test(reported)) return reported || "Disconnected";
+  return hasRecentHeartbeat(lastSeen) ? "Recording" : "Disconnected";
+}
+
+function hasRecentHeartbeat(iso: unknown): boolean {
+  const timestamp = Date.parse(String(iso ?? ""));
+  return !Number.isNaN(timestamp) && Date.now() - timestamp <= 15 * 60_000;
+}
+
 function hasReadinessEvidence(row: AnyRecord): boolean {
-  return [g(row, "deviceStatus", "device_status"), g(row, "cameraStatus", "camera_status")]
+  return [vehicleDeviceStatus(row), vehicleCameraStatus(row)]
     .some((status) => status != null && !/^(unknown|unavailable|--)$/i.test(String(status).trim()));
 }
 
@@ -77,7 +103,11 @@ const FIELDS: VehicleField[] = [
   { key: "year", label: "Year", type: "number" },
   { key: "odometerMiles", label: "Odometer (mi)", type: "number" },
   { key: "vin", label: "VIN" },
+  { key: "vinExceptionType", label: "Alternate identity kind", type: "select", options: ["manufacturer-serial-number", "government-registration-number", "legacy-fleet-identifier"] },
+  { key: "alternateIdentifier", label: "Alternate identifier" },
   { key: "plateNumber", label: "Plate number" },
+  { key: "plateJurisdiction", label: "Plate jurisdiction" },
+  { key: "vehicleClass", label: "Vehicle class", type: "select", options: ["Class 1", "Class 2", "Class 3", "Class 4", "Class 5", "Class 6", "Class 7", "Class 8"] },
   { key: "status", label: "Status", type: "select", options: ["Available", "On Route", "At Stop", "Idle", "Delayed", "Maintenance"] },
 ] as const;
 
@@ -125,8 +155,9 @@ export function VehiclesPage() {
     refetchInterval: selectedId != null ? 20_000 : false,
   });
   const drivers = useQuery({ queryKey: ["drivers", "assign-pool"], queryFn: driversApi.list, enabled: canAssign });
-
-  const rows = useMemo(() => scopeRowsForSession("vehicles", pagedRows, session), [pagedRows, session]);
+  const rows = useMemo(() => {
+    return scopeRowsForSession("vehicles", pagedRows, session);
+  }, [pagedRows, session]);
 
   // Status filter operates on the current server page (search is already applied
   // server-side across the whole fleet).
@@ -153,7 +184,7 @@ export function VehiclesPage() {
   const moving = rows.filter(isMoving).length;
   const atRisk = num(g(sum, "atRisk", "at_risk")) || rows.filter((r) => riskTier(r) === "High").length;
   const deviceEx = num(g(sum, "deviceExceptions", "device_exceptions")) ||
-    rows.filter((r) => !/online/i.test(String(g(r, "deviceStatus", "device_status") ?? "Unknown")) || !/online/i.test(String(g(r, "cameraStatus", "camera_status") ?? "Unknown"))).length;
+    rows.filter((r) => !/online/i.test(vehicleDeviceStatus(r)) || !/online|recording/i.test(vehicleCameraStatus(r))).length;
 
   const save = useMutation({
     mutationFn: (p: AnyRecord) => (p.id && !isCreating ? vehiclesApi.update(String(p.id), p) : vehiclesApi.create(p)),
@@ -182,7 +213,11 @@ export function VehiclesPage() {
   if (list.isLoading) return <LoadingState />;
   if (list.isError) return <ErrorState message={list.error instanceof Error ? list.error.message : "Unable to load vehicles."} />;
 
-  const selectedRecord = (detail.data?.record as AnyRecord) || rows.find((r) => String(r.id) === String(selectedId)) || null;
+  const detailEnvelope = detail.data as AnyRecord | undefined;
+  const selectedDetailRecord = detailEnvelope?.record as AnyRecord | undefined;
+  const selectedRecord = selectedDetailRecord
+    ? selectedDetailRecord
+    : rows.find((r) => String(r.id) === String(selectedId)) || null;
 
   return (
     <div className="fleet-console flex h-full min-h-0 flex-col gap-3">
@@ -324,8 +359,8 @@ export function VehiclesPage() {
                         <td className="hidden px-4 py-3 text-slate-600 md:table-cell">{String(g(row, "assignedDriver", "assigned_driver", "driverName") ?? "—")}</td>
                         <td className="hidden px-4 py-3 xl:table-cell">
                           <div className="flex items-center gap-3">
-                          <HealthDot ok={/online/i.test(String(g(row, "deviceStatus", "device_status") ?? "Unknown"))} icon={<Cpu className="h-3.5 w-3.5" />} />
-                          <HealthDot ok={/online|recording/i.test(String(g(row, "cameraStatus", "camera_status") ?? "Unknown"))} icon={<Camera className="h-3.5 w-3.5" />} />
+                          <HealthDot status={vehicleDeviceStatus(row)} icon={<Cpu className="h-3.5 w-3.5" />} />
+                          <HealthDot status={vehicleCameraStatus(row)} icon={<Camera className="h-3.5 w-3.5" />} />
                           </div>
                         </td>
                         <td className="px-4 py-3 text-right">
@@ -446,8 +481,10 @@ function Meter({ value }: { value: number | null }) {
   );
 }
 
-function HealthDot({ ok, icon }: { ok: boolean; icon: React.ReactNode }) {
-  return <span className={`inline-flex items-center ${ok ? "text-emerald-500" : "text-amber-500"}`} title={ok ? "Online" : "Attention"}>{icon}</span>;
+function HealthDot({ status, icon }: { status: string; icon: React.ReactNode }) {
+  const healthy = /online|recording/i.test(status);
+  const unknown = /unknown/i.test(status);
+  return <span className={`inline-flex items-center ${healthy ? "text-emerald-500" : unknown ? "text-slate-400" : "text-amber-500"}`} title={status}>{icon}</span>;
 }
 
 /* ------------------------------------------------------------------ lifecycle band */
@@ -506,6 +543,8 @@ function VehicleDrawer({ record, detail, loading, canUpdate, canDelete, canAssig
   const recs = (detail?.recommendations as AnyRecord[]) || [];
   const activeJobs = (detail?.activeJobs as AnyRecord[]) || [];
   const replayTrail = (detail?.replayTrail as AnyRecord[]) || [];
+  const currentDevices = (detail?.currentDevices as AnyRecord[]) || [];
+  const installationHistory = (detail?.installationHistory as AnyRecord[]) || [];
   const speed = num(g(record, "speedMph", "speed_mph"));
   const fresh = freshness(g(record, "lastSeenAt", "last_seen_at"));
   const hasGps = g(record, "lat") != null && g(record, "lng") != null;
@@ -515,8 +554,14 @@ function VehicleDrawer({ record, detail, loading, canUpdate, canDelete, canAssig
     { label: "Driver", value: String(g(record, "assignedDriver", "assigned_driver", "driverName") ?? "Unassigned"), route: "/drivers" },
     { label: "Odometer", value: `${num(g(record, "odometerMiles", "odometer_miles")).toLocaleString()} mi` },
     { label: "Year", value: String(g(record, "year") ?? "—") },
-    { label: "Device", value: String(g(record, "deviceStatus", "device_status") ?? "—") },
-    { label: "Camera", value: String(g(record, "cameraStatus", "camera_status") ?? "—") },
+    { label: "Device", value: vehicleDeviceStatus(record) },
+    { label: "Camera", value: vehicleCameraStatus(record) },
+    { label: "VIN", value: String(g(record, "vin") ?? "—") },
+    { label: "Alternate identity", value: g(record, "alternateIdentifier", "alternate_identifier")
+      ? `${String(g(record, "alternateIdentifier", "alternate_identifier"))} (${String(g(record, "vinExceptionType", "vin_exception_type") ?? "governed exception")})`
+      : "—" },
+    { label: "Plate jurisdiction", value: String(g(record, "plateJurisdiction", "plate_jurisdiction") ?? "—") },
+    { label: "Vehicle class", value: String(g(record, "vehicleClass", "vehicle_class") ?? "—") },
   ];
 
   return (
@@ -584,6 +629,28 @@ function VehicleDrawer({ record, detail, loading, canUpdate, canDelete, canAssig
               </button>
             ))}
           </div>
+
+          <DrawerSection title="Installed devices" icon={<Cpu className="h-4 w-4" />} count={currentDevices.length} loading={loading}>
+            {currentDevices.length ? (
+              <div className="space-y-2">
+                {currentDevices.map((device, i) => (
+                  <button key={String(g(device, "installationId", "installation_id") ?? i)} type="button"
+                    onClick={() => onNavigate("/iot-devices")} className="deck-alert flex w-full items-center gap-3 px-3 py-2.5 text-left">
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13px] font-bold text-slate-800">{String(g(device, "deviceSerial", "device_serial") ?? "Registered device")}</span>
+                      <span className="text-[11px] font-semibold text-slate-400">{String(g(device, "deviceRole", "device_role") ?? "Device")} · {String(g(device, "status") ?? "Unknown")}</span>
+                    </span>
+                    <span className="text-[10px] font-bold text-slate-500">{g(device, "lastSeenAt", "last_seen_at") ? fmt(g(device, "lastSeenAt", "last_seen_at")) : "Never seen"}</span>
+                    <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-300" />
+                  </button>
+                ))}
+              </div>
+            ) : <EmptyLine text="No authoritative device installation exists for this vehicle." />}
+          </DrawerSection>
+
+          <DrawerTable title="Device installation history" icon={<Radio className="h-4 w-4" />}
+            rows={installationHistory} cols={["deviceSerial", "deviceRole", "status", "effectiveFrom", "effectiveTo"]}
+            loading={loading} onEmpty="No device installation history recorded." />
 
           {/* AI recommendation — from live detail envelope, not fabricated */}
           {recs.length > 0 && (
@@ -781,6 +848,20 @@ function VehicleFormModal({ title, initial, saving, serverError, onClose, onSave
       } else {
         payload[field.key] = raw;
       }
+    }
+
+    const vin = String(payload.vin ?? "").trim();
+    const alternateKind = String(payload.vinExceptionType ?? "").trim();
+    const alternateIdentifier = String(payload.alternateIdentifier ?? "").trim();
+    if (!vin && !alternateKind) nextErrors.push("Choose an approved alternate identity kind when the vehicle has no VIN.");
+    if (!vin && !alternateIdentifier) nextErrors.push("Alternate identifier is required when the vehicle has no VIN.");
+    if (!vin && alternateIdentifier && (alternateIdentifier.length < 4 || alternateIdentifier.length > 64)) {
+      nextErrors.push("Alternate identifier must contain 4 to 64 characters.");
+    }
+    if (vin) {
+      payload.vin = vin.toUpperCase();
+      payload.vinExceptionType = undefined;
+      payload.alternateIdentifier = undefined;
     }
 
     if (nextErrors.length > 0) {

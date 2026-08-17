@@ -14,7 +14,7 @@ export const ROLE_MODELS: RoleModel[] = [
     role: "driverOperator",
     title: "Driver / Operator",
     subtitle: "Field execution, proof capture, and weak-network safe submits.",
-    routeFamilies: ["Dashboard", "Workflows", "Proof", "Telemetry"],
+    routeFamilies: ["Dashboard", "Driver Safety", "Workflows", "Proof", "Telemetry"],
     permissions: ["operations.proof.read", "operations.proof.submit", "operations.execution_summary.read"],
     hiddenData: ["Internal cost", "admin controls", "cross-tenant records"],
   },
@@ -97,4 +97,3 @@ export function classifyRole(role: string | null | undefined): WorkspaceRole {
   if (value.includes("safety") || value.includes("maintenance")) return "safetyMaintenance";
   return "general";
 }
-

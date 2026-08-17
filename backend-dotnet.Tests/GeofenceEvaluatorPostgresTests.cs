@@ -71,7 +71,7 @@ public class GeofenceEvaluatorPostgresTests
             c => c.Parameters.AddWithValue("@code", $"BGE-{Guid.NewGuid():N}"[..14]));
         var a = await db.InsertAsync("INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,'A','A','Active') RETURNING id", c => c.Parameters.AddWithValue("@c", cid));
         var b = await db.InsertAsync("INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,'B','B','Active') RETURNING id", c => c.Parameters.AddWithValue("@c", cid));
-        var vid = await db.InsertAsync("INSERT INTO vehicles(company_id,branch_id,vehicle_code,type) VALUES (@c,@b,@code,'truck') RETURNING id",
+        var vid = await db.InsertAsync("INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,vin_exception_type,alternate_identifier) VALUES (@c,@b,@code,'truck','legacy-fleet-identifier',@code) RETURNING id",
             c => { c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@b", b); c.Parameters.AddWithValue("@code", $"BV-{Guid.NewGuid():N}"[..12]); });
         var gid = await db.InsertAsync(
             "INSERT INTO geofences(company_id,branch_id,name,geofence_type,center_lat,center_lng,radius_meters,status) VALUES (@c,@a,'A Yard','Circle',34,-118,500,'Active') RETURNING id",
@@ -117,7 +117,7 @@ public class GeofenceEvaluatorPostgresTests
         var cid = await db.InsertAsync("INSERT INTO companies (company_code, name, industry) VALUES (@code, 'Geo Co', 'logistics') RETURNING id",
             c => c.Parameters.AddWithValue("@code", $"GEO-{Guid.NewGuid():N}".Substring(0, 14)));
         var vid = await db.InsertAsync(
-            "INSERT INTO vehicles (company_id, vehicle_code, type) VALUES (@c, @code, 'truck') RETURNING id",
+            "INSERT INTO vehicles (company_id, vehicle_code, type, vin_exception_type, alternate_identifier) VALUES (@c, @code, 'truck', 'legacy-fleet-identifier', @code) RETURNING id",
             c => { c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@code", $"GV-{Guid.NewGuid():N}".Substring(0, 12)); });
         var gid = await db.InsertAsync(
             @"INSERT INTO geofences (company_id, name, geofence_type, center_lat, center_lng, radius_meters, status)

@@ -73,6 +73,20 @@ export type TelematicsInstallationSeedRecord = {
   installStatus: string;
   installerName: string;
   installedAt: string | null;
+  removedAt?: string | null;
+  vehicleId?: string;
+  vehicleCode?: string;
+  deviceRole?: string;
+  isPrimary?: boolean;
+  rowVersion?: number;
+  activationVerifiedAt?: string | null;
+  installationLocation?: string;
+  odometerAtInstallation?: string;
+  commissioningMethod?: string;
+  commissioningResult?: string;
+  verificationReference?: string;
+  assignmentReason?: string;
+  removalReason?: string;
   checklist: Array<{ item: string; status: string }>;
 };
 
@@ -111,6 +125,7 @@ export type DeviceCommandRecord = {
   deviceId: string;
   deviceName: string;
   deviceType: string;
+  deviceCategory: string;
   provider: string;
   providerCode: string;
   serialNumber: string;
@@ -135,6 +150,10 @@ export type DeviceCommandRecord = {
   dataHealthScore: number;
   dataHealthAvailable: boolean;
   installStatus: string;
+  currentInstallationId?: string;
+  currentInstallationRowVersion?: number;
+  installationActivationVerifiedAt?: string | null;
+  deviceRole?: string;
   complianceStatus: string;
   warrantyStatus: string;
   supportStatus: string;
@@ -174,6 +193,11 @@ function normalizeKeys<T extends AnyRecord>(row: T): T {
     if (snake !== key && out[snake] === undefined) out[snake] = value;
   }
   return out as T;
+}
+
+function deviceRowFromDetail(payload: AnyRecord): AnyRecord {
+  const detail = normalizeKeys(payload);
+  return normalizeKeys((detail.device ?? detail.record ?? detail) as AnyRecord);
 }
 
 function parseRowVersion(value: unknown): number | undefined {
@@ -224,6 +248,7 @@ export type DeviceDetailRecord = {
   healthEvents: TelematicsHealthSeedRecord[];
   firmwareUpdates: TelematicsFirmwareSeedRecord[];
   diagnostics: TelematicsDiagnosticSeedRecord[];
+  currentInstallation: TelematicsInstallationSeedRecord | null;
   installations: TelematicsInstallationSeedRecord[];
   sensorReadings: TelematicsSensorSeedRecord[];
   providers: TelematicsProviderSeedRecord[];
@@ -245,6 +270,50 @@ export type DeviceProvisionResult = {
   device: DeviceCommandRecord;
   credentials: DeviceConnectionCredentials;
   ingestUrl: string;
+};
+
+export type DeviceInstallationInput = {
+  vehicleId: string | number;
+  deviceRole: string;
+  isPrimary: boolean;
+  effectiveAt: string;
+  installationLocation: string;
+  odometerAtInstallation: number | null;
+  commissioningMethod: string;
+  assignmentReason: string;
+  removalReason?: string;
+};
+
+export type DeviceInstallationRemovalInput = {
+  effectiveTo: string;
+  removalReason: string;
+};
+
+export type DeviceCommissioningInput = {
+  result: "Passed" | "Failed";
+  verificationReference: string;
+};
+
+export type DeviceCredentialRotationResult = {
+  deviceId: string;
+  apiKey: string;
+  hmacSecret: string;
+  previousCredentialsValidUntil: string | null;
+  note: string;
+};
+
+export type DeviceIdentityQuarantineRecord = {
+  id: string | number;
+  deviceId?: string | number | null;
+  vehicleId?: string | number | null;
+  installationId?: string | number | null;
+  reasonCode: string;
+  evidenceJson?: AnyRecord;
+  detectedAt?: string;
+  deviceSerial?: string;
+  imei?: string;
+  deviceState?: string;
+  vehicleCode?: string;
 };
 
 export type TelematicsClusterRecord = {
@@ -438,6 +507,11 @@ function mapDeviceRow(
   const connectionStatus = deriveConnectionStatus(signals);
   const healthScore = deriveHealthScore(signals);
   const healthAvailable = signals.hasCheckedIn || secondsSincePing != null || revoked || openAlerts > 0 || activeFaults > 0;
+  const hasExplicitInstallationContract = Object.hasOwn(row, "current_installation_id") ||
+    Object.hasOwn(row, "current_installation_status") || Object.hasOwn(row, "installation_status");
+  const hasCurrentInstallation = hasExplicitInstallationContract
+    ? row.current_installation_id != null || /installed|verified/i.test(String(row.current_installation_status ?? row.installation_status ?? ""))
+    : row.vehicle_id != null;
 
   const firmware = row.firmware_version == null ? "Unknown" : String(row.firmware_version);
 
@@ -446,18 +520,18 @@ function mapDeviceRow(
     rowVersion: parseRowVersion(row.row_version),
     deviceId: serial,
     deviceName: String(row.device_model ?? serial ?? "Telematics device"),
-    deviceType: String(row.device_model ?? "ELD device"),
+    deviceType: String(row.device_model ?? row.device_category ?? "Unknown device"),
+    deviceCategory: String(row.device_category ?? "Unknown"),
     provider: String(row.provider ?? "Unknown"),
     // No provider registry endpoint — derive a stable code from the real provider name.
     providerCode: String(row.provider ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-"),
     serialNumber: serial,
-    // No IMEI in the device contract — show honest empty rather than a fake identifier.
     identifier: serial,
-    imei: "",
+    imei: String(row.imei ?? ""),
     simNumber: "",
-    assignedVehicleId: row.vehicle_id == null ? "" : String(row.vehicle_id),
-    vehicleId: row.vehicle_id == null ? "" : String(row.vehicle_id),
-    assignedVehicleCode: String(row.vehicle_code ?? ""),
+    assignedVehicleId: hasCurrentInstallation && row.vehicle_id != null ? String(row.vehicle_id) : "",
+    vehicleId: hasCurrentInstallation && row.vehicle_id != null ? String(row.vehicle_id) : "",
+    assignedVehicleCode: hasCurrentInstallation ? String(row.vehicle_code ?? "") : "",
     assignedDriverId: row.driver_id == null ? "" : String(row.driver_id),
     driverId: row.driver_id == null ? "" : String(row.driver_id),
     assignedDriverName: String(row.driver_name ?? ""),
@@ -476,8 +550,11 @@ function mapDeviceRow(
     signalStrength: "—",
     dataHealthScore: healthScore,
     dataHealthAvailable: healthAvailable,
-    // No installation table — the raw device status is the closest honest signal.
-    installStatus: String(row.status ?? "Unknown"),
+    installStatus: String(row.current_installation_status ?? row.installation_status ?? "Unknown"),
+    currentInstallationId: row.current_installation_id == null ? undefined : String(row.current_installation_id),
+    currentInstallationRowVersion: parseRowVersion(row.current_installation_row_version ?? row.installation_row_version),
+    installationActivationVerifiedAt: row.activation_verified_at == null ? null : String(row.activation_verified_at),
+    deviceRole: String(row.current_installation_role ?? row.device_role ?? ""),
     complianceStatus: "Not assessed",
     warrantyStatus: "—",
     supportStatus: "—",
@@ -493,6 +570,46 @@ function mapDeviceRow(
     maintenanceStatus: activeFaults > 0 ? `${activeFaults} active fault${activeFaults === 1 ? "" : "s"}` : "—",
     complianceSummary: "Not assessed",
   };
+}
+
+function mapInstallationRow(rawRow: AnyRecord, tenantId: number): TelematicsInstallationSeedRecord {
+  const row = normalizeKeys(rawRow);
+  return {
+    id: String(row.id ?? row.installation_id ?? ""),
+    deviceId: (row.device_id as string | number | undefined) ?? "",
+    tenantId,
+    installStatus: String(row.status ?? row.installation_status ?? "Unknown"),
+    installerName: String(row.installer_name ?? row.installed_by_name ?? ""),
+    installedAt: row.effective_from != null
+      ? String(row.effective_from)
+      : row.installed_at != null
+        ? String(row.installed_at)
+        : null,
+    removedAt: row.effective_to != null
+      ? String(row.effective_to)
+      : row.removed_at != null
+        ? String(row.removed_at)
+        : null,
+    vehicleId: row.vehicle_id == null ? "" : String(row.vehicle_id),
+    vehicleCode: String(row.vehicle_code ?? ""),
+    deviceRole: String(row.device_role ?? ""),
+    isPrimary: Boolean(row.is_primary),
+    rowVersion: parseRowVersion(row.row_version),
+    activationVerifiedAt: row.activation_verified_at == null ? null : String(row.activation_verified_at),
+    installationLocation: String(row.installation_location ?? ""),
+    odometerAtInstallation: row.odometer_at_installation == null ? "" : String(row.odometer_at_installation),
+    commissioningMethod: String(row.commissioning_method ?? ""),
+    commissioningResult: String(row.commissioning_result ?? ""),
+    verificationReference: String(row.verification_reference ?? ""),
+    assignmentReason: String(row.assignment_reason ?? ""),
+    removalReason: String(row.removal_reason ?? ""),
+    checklist: Array.isArray(row.checklist) ? row.checklist as Array<{ item: string; status: string }> : [],
+  };
+}
+
+function installationMutationKey(deviceId: string | number) {
+  const uuid = globalThis.crypto?.randomUUID?.();
+  return uuid ? `device-${deviceId}-${uuid}` : `device-${deviceId}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 // Group active fault codes by device SERIAL (fault_codes.device_id is the serial string).
@@ -920,7 +1037,7 @@ function toColdChainClusterRecord(
     deviceHealthAvailable: false,
     protocolType: "SENSOR",
     positionAvailable: false,
-    positionSource: "Cold-chain reading",
+    positionSource: lastPingAt ? "Cold-chain reading" : "No reading evidence",
     positionProvider: device.sourceChannel ? String(device.sourceChannel) : "Cold-chain service",
     positionAccuracy: "Not reported",
     positionConfidence: "Not reported",
@@ -999,6 +1116,20 @@ async function loadScopedDevices(session: UserSession | null): Promise<DeviceCom
 }
 
 export const telematicsService = {
+  async getIdentityQuarantine(): Promise<DeviceIdentityQuarantineRecord[]> {
+    const rows = await unwrap<AnyRecord[]>(apiClient.get("/api/telemetry/installation-quarantine"));
+    return rows.map((row) => normalizeKeys(row) as DeviceIdentityQuarantineRecord);
+  },
+
+  async resolveIdentityQuarantine(
+    id: string | number,
+    payload: { resolutionNotes: string; correctedDeviceSerial?: string; correctedImei?: string },
+  ) {
+    const session = getSession();
+    ensureManagementAccess(session);
+    return unwrap<AnyRecord>(apiClient.post(`/api/telemetry/installation-quarantine/${id}/resolve`, payload));
+  },
+
   async getDevices(): Promise<DeviceCommandRecord[]> {
     const session = getSession();
     return loadScopedDevices(session);
@@ -1007,7 +1138,7 @@ export const telematicsService = {
   async getDeviceById(id: string | number): Promise<DeviceDetailRecord> {
     const session = getSession();
     // Real single-device read + the cross-feeds needed to populate the detail drawer.
-    const [row, faults, alerts, positions] = await Promise.all([
+    const [detailPayload, faults, alerts, positions] = await Promise.all([
       unwrap<AnyRecord>(apiClient.get(`/api/telemetry/devices/${id}`)),
       fetchActiveFaultsIfAuthorized(session),
       canReadEntitledFeed(session, "telemetry.alerts.read", "telematics")
@@ -1016,9 +1147,40 @@ export const telematicsService = {
       fetchPositions(),
     ]);
 
+    const detail = normalizeKeys(detailPayload);
+    // The detail route remains backward-compatible: device inventory fields stay at
+    // the top level while installation/current/history are added alongside them.
+    // Accept nested record/device shapes too so the UI survives envelope evolution.
+    const row = normalizeKeys((detail.device ?? detail.record ?? detail) as AnyRecord);
+    const tenantId = getTenantId(session);
+    const installationRows = Array.isArray(detail.installation_history)
+      ? detail.installation_history as AnyRecord[]
+      : Array.isArray(detail.installations)
+        ? detail.installations as AnyRecord[]
+        : [];
+    const installations = installationRows.map((installation) => mapInstallationRow(installation, tenantId));
+    const currentInstallation = detail.current_installation && typeof detail.current_installation === "object"
+      ? mapInstallationRow(detail.current_installation as AnyRecord, tenantId)
+      : installations.find((installation) =>
+          installation.removedAt == null && /installed|verified/i.test(installation.installStatus),
+        ) ?? null;
+
     const faultCounts = countFaultsBySerial(faults);
     const openAlertCounts = countAlertsBySerial(alerts);
-    const device = mapDeviceRow(row, faultCounts, openAlertCounts, session);
+    const mappedDevice = mapDeviceRow(row, faultCounts, openAlertCounts, session);
+    const device = currentInstallation
+      ? {
+          ...mappedDevice,
+          assignedVehicleId: currentInstallation.vehicleId || mappedDevice.assignedVehicleId,
+          vehicleId: currentInstallation.vehicleId || mappedDevice.vehicleId,
+          assignedVehicleCode: currentInstallation.vehicleCode || mappedDevice.assignedVehicleCode,
+          installStatus: currentInstallation.installStatus,
+          currentInstallationId: currentInstallation.id,
+          currentInstallationRowVersion: currentInstallation.rowVersion,
+          installationActivationVerifiedAt: currentInstallation.activationVerifiedAt,
+          deviceRole: currentInstallation.deviceRole || mappedDevice.deviceRole,
+        }
+      : { ...mappedDevice, installStatus: "Not installed" };
 
     // Enforce portal scoping on the single-device read too.
     const [scoped] = scopeDevicesForSession([device], session);
@@ -1080,14 +1242,15 @@ export const telematicsService = {
       telemetry,
       healthEvents,
       diagnostics,
-      // No live source for these sub-lists in the verified contract — return [] rather
-      // than fabricate. The UI already renders honest empty states for each.
       firmwareUpdates: [], // no OTA/firmware-schedule endpoint
-      installations: [], // no installation-records endpoint
+      currentInstallation,
+      installations,
       sensorReadings: [], // no standalone sensor-reading endpoint
       providers: await buildProviderAuditForDevice(scoped),
       auditLog: [], // no device audit-log endpoint
-      assignmentHistory: [], // no assignment-history endpoint
+      assignmentHistory: Array.isArray(detail.assignment_history)
+        ? (detail.assignment_history as AnyRecord[]).map(normalizeKeys)
+        : [],
     };
   },
 
@@ -1153,20 +1316,21 @@ export const telematicsService = {
     const imei = String(payload.imei ?? "").trim();
     const serial = String(payload.serialNumber ?? payload.identifier ?? imei ?? "").trim();
     if (!serial) throw new Error("A device serial or IMEI is required to establish a connection.");
+    const deviceCategory = String(payload.deviceCategory ?? "").trim();
+    if (!deviceCategory) throw new Error("Select the governed hardware category for this device.");
     // POST /api/telemetry/devices/provision -> {id, deviceSerial, apiKey, hmacSecret, note}
     const provisioned = await unwrap<AnyRecord>(apiClient.post("/api/telemetry/devices/provision", {
       deviceSerial: serial,
       imei: imei || null,
+      deviceCategory,
       deviceModel: payload.deviceName ?? payload.deviceType ?? "Device",
       provider: payload.provider ?? "",
-      vehicleId: payload.assignedVehicleId ?? payload.vehicleId ?? null,
-      driverId: payload.assignedDriverId ?? payload.driverId ?? null,
       firmwareVersion: payload.firmwareVersion ?? "",
       notes: payload.notes ?? "",
     }));
 
     // Re-read the freshly provisioned device so the returned record is fully live.
-    const created = await unwrap<AnyRecord>(apiClient.get(`/api/telemetry/devices/${provisioned.id}`));
+    const created = deviceRowFromDetail(await unwrap<AnyRecord>(apiClient.get(`/api/telemetry/devices/${provisioned.id}`)));
     const device = mapDeviceRow(created, new Map(), new Map(), session);
     return {
       device,
@@ -1193,7 +1357,7 @@ export const telematicsService = {
   // (last_seen_at set / a live position exists). Drives the "Waiting for first
   // heartbeat…" → "Connected" pairing state in the connect dialog.
   async getDeviceConnectionState(deviceId: string | number): Promise<{ connected: boolean; lastSeenAt: string | null; status: string }> {
-    const row = normalizeKeys(await unwrap<AnyRecord>(apiClient.get(`/api/telemetry/devices/${deviceId}`)));
+    const row = deviceRowFromDetail(await unwrap<AnyRecord>(apiClient.get(`/api/telemetry/devices/${deviceId}`)));
     const lastSeenAt = row.last_seen_at ? String(row.last_seen_at) : null;
     const status = String(row.status ?? "Unknown");
     // Connected once the device has checked in at least once and is not revoked/suspended.
@@ -1201,23 +1365,48 @@ export const telematicsService = {
     return { connected, lastSeenAt, status };
   },
 
-  async assignDeviceToVehicle(deviceId: string | number, vehicleId: string | number): Promise<DeviceCommandRecord> {
+  async assignDeviceToVehicle(deviceId: string | number, input: DeviceInstallationInput): Promise<DeviceCommandRecord> {
     const session = getSession();
     ensureManagementAccess(session);
-    // POST /api/telemetry/devices/{id}/assign {vehicleId, driverId}
-    const numericVehicleId = toNumericId(vehicleId);
+    const numericVehicleId = toNumericId(input.vehicleId);
     if (numericVehicleId == null) throw new Error("Select a valid vehicle to assign this device.");
-    // Backend SETs driver_id with no COALESCE, so a vehicle-only re-assign would otherwise
-    // silently clear the device's existing driver. Read the current driver first and pass it
-    // through unchanged.
-    const current = await unwrap<AnyRecord>(apiClient.get(`/api/telemetry/devices/${deviceId}`));
-    const currentDriverId = toNumericId(current.driver_id);
-    await unwrap<AnyRecord>(apiClient.post(`/api/telemetry/devices/${deviceId}/assign`, {
+    const effectiveAt = String(input.effectiveAt ?? "").trim();
+    if (!effectiveAt || Number.isNaN(Date.parse(effectiveAt))) throw new Error("Enter a valid installation effective time.");
+    if (!String(input.deviceRole ?? "").trim()) throw new Error("Select the device role for this installation.");
+    if (!String(input.assignmentReason ?? "").trim()) throw new Error("Enter the assignment reason.");
+    const detail = await this.getDeviceById(deviceId);
+    const current = detail.currentInstallation;
+    if (current?.vehicleId === String(numericVehicleId)) {
+      throw new Error("Select a different vehicle to transfer this installation.");
+    }
+
+    const installation = {
       vehicleId: numericVehicleId,
-      driverId: currentDriverId,
-    }));
-    const updated = await unwrap<AnyRecord>(apiClient.get(`/api/telemetry/devices/${deviceId}`));
-    return mapDeviceRow(updated, new Map(), new Map(), session);
+      deviceRole: input.deviceRole.trim(),
+      isPrimary: input.isPrimary,
+      installationLocation: input.installationLocation.trim() || null,
+      odometerAtInstallation: input.odometerAtInstallation,
+      commissioningMethod: input.commissioningMethod.trim() || null,
+      assignmentReason: input.assignmentReason.trim(),
+      idempotencyKey: installationMutationKey(deviceId),
+    };
+    if (current) {
+      if (current.rowVersion == null) throw new Error("Unable to transfer device: installation row version is not available.");
+      if (!String(input.removalReason ?? "").trim()) throw new Error("Enter the reason for removing the prior installation.");
+      await unwrap<AnyRecord>(apiClient.post(`/api/telemetry/devices/${deviceId}/installations/transfer`, {
+        ...installation,
+        effectiveAt,
+        currentInstallationId: toNumericId(current.id),
+        expectedRowVersion: current.rowVersion,
+        removalReason: input.removalReason!.trim(),
+      }));
+    } else {
+      await unwrap<AnyRecord>(apiClient.post(`/api/telemetry/devices/${deviceId}/installations`, {
+        ...installation,
+        effectiveFrom: effectiveAt,
+      }));
+    }
+    return (await this.getDeviceById(deviceId)).device;
   },
 
   async markDeviceAttention(
@@ -1236,7 +1425,7 @@ export const telematicsService = {
       malfunctionCode: payload.malfunctionCode,
       malfunctionDescription: payload.malfunctionDescription,
     }));
-    const updated = await unwrap<AnyRecord>(apiClient.get(`/api/telemetry/devices/${deviceId}`));
+    const updated = deviceRowFromDetail(await unwrap<AnyRecord>(apiClient.get(`/api/telemetry/devices/${deviceId}`)));
     return mapDeviceRow(updated, new Map(), new Map(), session);
   },
 
@@ -1254,7 +1443,7 @@ export const telematicsService = {
       rowVersion: currentVersion,
       resolutionEvidence: String(evidence).slice(0, 2000),
     }));
-    const updated = await unwrap<AnyRecord>(apiClient.get(`/api/telemetry/devices/${deviceId}`));
+    const updated = deviceRowFromDetail(await unwrap<AnyRecord>(apiClient.get(`/api/telemetry/devices/${deviceId}`)));
     return mapDeviceRow(updated, new Map(), new Map(), session);
   },
 
@@ -1266,78 +1455,81 @@ export const telematicsService = {
     return { success: true };
   },
 
-  async updateDevice(id: string | number, payload: DeviceMutationPayload): Promise<DeviceCommandRecord> {
+  async unassignDevice(deviceId: string | number, input: DeviceInstallationRemovalInput) {
     const session = getSession();
     ensureManagementAccess(session);
-    // No general device-update endpoint exists; the closest real mutation is re-assign
-    // (vehicle/driver). Apply it when the payload changes assignment, then re-read.
-    if (payload.assignedVehicleId != null || payload.vehicleId != null || payload.assignedDriverId != null) {
-      await unwrap<AnyRecord>(apiClient.post(`/api/telemetry/devices/${id}/assign`, {
-        vehicleId: toNumericId(payload.assignedVehicleId ?? payload.vehicleId),
-        driverId: toNumericId(payload.assignedDriverId ?? payload.driverId),
-      }));
-    }
-    // TODO: no endpoint persists deviceName/type/provider/firmware edits; those fields
-    // are ignored rather than mutated into fake local state.
-    const updated = await unwrap<AnyRecord>(apiClient.get(`/api/telemetry/devices/${id}`));
-    return mapDeviceRow(updated, new Map(), new Map(), session);
-  },
-
-  // ── Mutations with NO backend endpoint — honest no-ops (no seed mutation) ───────────
-
-  async unassignDevice(deviceId: string | number) {
-    const session = getSession();
-    ensureManagementAccess(session);
-    // POST /api/telemetry/devices/{id}/assign with nulls is the real unassign flow.
-    await unwrap<AnyRecord>(apiClient.post(`/api/telemetry/devices/${deviceId}/assign`, {
-      vehicleId: null,
-      driverId: null,
+    const effectiveTo = String(input.effectiveTo ?? "").trim();
+    const removalReason = String(input.removalReason ?? "").trim();
+    if (!effectiveTo || Number.isNaN(Date.parse(effectiveTo))) throw new Error("Enter a valid removal effective time.");
+    if (!removalReason) throw new Error("Enter the installation removal reason.");
+    const detail = await this.getDeviceById(deviceId);
+    const current = detail.currentInstallation;
+    if (!current) throw new Error("This device has no active installation to remove.");
+    if (current.rowVersion == null) throw new Error("Unable to remove installation: row version is not available.");
+    await unwrap<AnyRecord>(apiClient.post(`/api/telemetry/devices/${deviceId}/installations/${current.id}/remove`, {
+      removalReason,
+      effectiveTo,
+      expectedRowVersion: current.rowVersion,
     }));
-    const updated = await unwrap<AnyRecord>(apiClient.get(`/api/telemetry/devices/${deviceId}`));
-    return mapDeviceRow(updated, new Map(), new Map(), session);
+    return (await this.getDeviceById(deviceId)).device;
   },
 
-  async markInstalled(deviceId: string | number) {
+  async markInstalled(deviceId: string | number, input: DeviceCommissioningInput) {
     const session = getSession();
     ensureManagementAccess(session);
-    // No installation-tracking endpoint exists.
-    // TODO: wire to a real installation-status endpoint when available.
-    void deviceId;
-    return { success: false, reason: "not supported" as const };
+    const verificationReference = String(input.verificationReference ?? "").trim();
+    if (input.result !== "Passed" && input.result !== "Failed") throw new Error("Select the observed commissioning result.");
+    if (!verificationReference) throw new Error("Enter the commissioning evidence or failure reference.");
+    const detail = await this.getDeviceById(deviceId);
+    const current = detail.currentInstallation;
+    if (!current) throw new Error("Install this device on a vehicle before commissioning it.");
+    if (input.result === "Passed" && !current.activationVerifiedAt) {
+      throw new Error("Commissioning requires an authenticated device heartbeat that verifies activation.");
+    }
+    if (current.rowVersion == null) {
+      throw new Error("Unable to commission installation: row version is not available. Reload the device and try again.");
+    }
+    await unwrap<AnyRecord>(apiClient.post(`/api/telemetry/devices/${deviceId}/installations/${current.id}/commission`, {
+      result: input.result,
+      verificationReference,
+      expectedRowVersion: current.rowVersion,
+    }));
+    return (await this.getDeviceById(deviceId)).device;
   },
 
-  async runDeviceDiagnostics(deviceId: string | number) {
+  async suspendDevice(deviceId: string | number): Promise<DeviceCommandRecord> {
     const session = getSession();
     ensureManagementAccess(session);
-    // No on-demand diagnostics-run endpoint; fault codes are read via /maintenance/fault-codes.
-    // TODO: wire to a real diagnostics-trigger endpoint when available.
-    void deviceId;
-    return { success: false, reason: "not supported" as const };
+    await unwrap<AnyRecord>(apiClient.post(`/api/telemetry/devices/${deviceId}/suspend`, {}));
+    return (await this.getDeviceById(deviceId)).device;
+  },
+
+  async activateDevice(deviceId: string | number): Promise<DeviceCommandRecord> {
+    const session = getSession();
+    ensureManagementAccess(session);
+    await unwrap<AnyRecord>(apiClient.post(`/api/telemetry/devices/${deviceId}/activate`, {}));
+    return (await this.getDeviceById(deviceId)).device;
+  },
+
+  async rotateDeviceSecret(deviceId: string | number): Promise<DeviceCredentialRotationResult> {
+    const session = getSession();
+    ensureManagementAccess(session);
+    const result = normalizeKeys(await unwrap<AnyRecord>(apiClient.post(`/api/telemetry/devices/${deviceId}/rotate-secret`, {})));
+    return {
+      deviceId: String(result.id ?? deviceId),
+      apiKey: String(result.api_key ?? ""),
+      hmacSecret: String(result.hmac_secret ?? ""),
+      previousCredentialsValidUntil: result.previous_credentials_valid_until == null
+        ? null
+        : String(result.previous_credentials_valid_until),
+      note: String(result.note ?? "Store the replacement credentials securely; they will not be shown again."),
+    };
   },
 
   async refreshDeviceStatus(deviceId: string | number) {
     const session = getSession();
-    const updated = await unwrap<AnyRecord>(apiClient.get(`/api/telemetry/devices/${deviceId}`));
+    const updated = deviceRowFromDetail(await unwrap<AnyRecord>(apiClient.get(`/api/telemetry/devices/${deviceId}`)));
     return mapDeviceRow(updated, new Map(), new Map(), session);
-  },
-
-  async scheduleFirmwareUpdate(deviceId: string | number, _payload: DeviceMutationPayload) {
-    const session = getSession();
-    ensureManagementAccess(session);
-    // No OTA/firmware-schedule endpoint exists.
-    // TODO: wire to a real firmware-schedule endpoint when available.
-    void deviceId;
-    return { success: false, reason: "not supported" as const };
-  },
-
-  async acknowledgeTelematicsIssue(deviceId: string | number, _note: string) {
-    const session = getSession();
-    ensureManagementAccess(session);
-    // Alerts are acknowledged per-alert (POST /api/telemetry/alerts/{id}/acknowledge),
-    // not per-device. There is no device-level acknowledge, so this is a no-op.
-    // TODO: acknowledge the specific alert id via the alerts endpoint from the caller.
-    void deviceId;
-    return { success: false, reason: "not supported" as const };
   },
 
   async createMaintenanceTask(deviceId: string | number, note: string) {
@@ -1347,7 +1539,7 @@ export const telematicsService = {
     // persists the task via maintenanceApi.create. Here we resolve the real device so
     // the returned title/note reference the actual unit (no fabricated data). The task
     // itself is created against the real maintenance API downstream.
-    const device = normalizeKeys(await unwrap<AnyRecord>(apiClient.get(`/api/telemetry/devices/${deviceId}`)));
+    const device = deviceRowFromDetail(await unwrap<AnyRecord>(apiClient.get(`/api/telemetry/devices/${deviceId}`)));
     const label = String(device.vehicle_code ?? device.device_serial ?? deviceId);
     return {
       success: true as const,

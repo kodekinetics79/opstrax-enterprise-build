@@ -48,19 +48,19 @@ string? platformRegistryDb =
     builder.Configuration.GetConnectionString("PlatformRegistry")
     ?? builder.Configuration["Gateway:RegistryConnectionString"];
 string? protectedQueueKey = builder.Configuration["Gateway:StoreForwardEncryptionKey"];
-bool production = builder.Environment.IsProduction();
+bool protectedEnvironment = GatewayEnvironment.IsProtected(builder.Environment.EnvironmentName);
 
-if (production)
+if (protectedEnvironment)
 {
     if (string.IsNullOrWhiteSpace(platformRegistryDb))
         throw new InvalidOperationException(
-            "Production requires ConnectionStrings:PlatformRegistry (or Gateway:RegistryConnectionString).");
+            "Production and Staging require ConnectionStrings:PlatformRegistry (or Gateway:RegistryConnectionString).");
     if (string.IsNullOrWhiteSpace(telematicsDb))
         throw new InvalidOperationException(
-            "Production requires ConnectionStrings:Telematics (or Gateway:PostgresConnectionString).");
+            "Production and Staging require ConnectionStrings:Telematics (or Gateway:PostgresConnectionString).");
     if (!TryReadKey32(protectedQueueKey, out byte[] queueKey))
         throw new InvalidOperationException(
-            "Production requires Gateway:StoreForwardEncryptionKey as a base64-encoded 32-byte key.");
+            "Production and Staging require Gateway:StoreForwardEncryptionKey as a base64-encoded 32-byte key.");
 
     builder.Services.AddSingleton<IDeviceRegistry>(_ => new PostgresDeviceRegistry(platformRegistryDb));
     builder.Services.AddSingleton<ITelemetryReplayGuard>(_ =>
@@ -95,13 +95,13 @@ builder.Services.AddHostedService<TcpGatewayService>();
 
 IHost host = builder.Build();
 
-if (!production)
+if (!protectedEnvironment)
 {
     host.Services.GetRequiredService<ILoggerFactory>()
         .CreateLogger("Opstrax.Telematics.Gateway.Startup")
         .LogWarning(
             "Development/test gateway: seeded ownership and PROCESS-LOCAL, NON-DURABLE " +
-            "event/replay/projection/store-forward implementations are active. Production refuses " +
+            "event/replay/projection/store-forward implementations are active. Protected environments refuse " +
             "to start unless all durable registry, ledger and encryption settings are supplied.");
 }
 
@@ -138,6 +138,13 @@ static bool TryReadKey32(string? configured, out byte[] key)
 /// </summary>
 public partial class Program
 {
+}
+
+internal static class GatewayEnvironment
+{
+    internal static bool IsProtected(string? environmentName) =>
+        string.Equals(environmentName, Environments.Production, StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(environmentName, Environments.Staging, StringComparison.OrdinalIgnoreCase);
 }
 
 /// <summary>

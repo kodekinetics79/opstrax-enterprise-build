@@ -325,6 +325,81 @@ public class Stage9PostgresTests
         finally { await CleanupTenantAsync(db, companyId); }
     }
 
+    [Fact]
+    public async Task Stage9_SmartAssignmentAcceptance_CreatesOneTenantScopedCanonicalDispatchAndAudit()
+    {
+        var db = CreateDatabase();
+        var companyId = NextCompanyId();
+        var ambient = new AmbientCorrelationContext();
+        var service = new Stage9OperationalFoundationService(db,
+            new PostgresAiFoundationService(db, ambient), new PostgresApprovalWorkflowService(db, ambient),
+            new PostgresDomainEventPublisher(db, ambient), new InMemoryIdempotencyService(), ambient);
+        try
+        {
+            await new Stage9SchemaService(db).EnsureAsync();
+            await db.ExecuteAsync(
+                "INSERT INTO companies(id,company_code,name,industry) OVERRIDING SYSTEM VALUE VALUES (@c,@code,'Fleet identity test','transport')",
+                c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@code", $"FI-{companyId}"); });
+            var branchId = await db.InsertAsync(
+                "INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,@code,'Identity branch','Active')",
+                c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@code", $"BR-{companyId}"); });
+            var driverId = await db.InsertAsync(
+                "INSERT INTO drivers(company_id,branch_id,driver_code,full_name,status) VALUES (@c,@b,@code,'Identity Driver','Available')",
+                c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchId); c.Parameters.AddWithValue("@code", $"DRV-{companyId}"); });
+            var vehicleId = await db.InsertAsync(
+                @"INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,vin,status,availability_status,out_of_service)
+                  VALUES (@c,@b,@code,'Truck','1HGCM82633A004352','Available','available',FALSE)",
+                c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchId); c.Parameters.AddWithValue("@code", $"UNIT-{companyId}"); });
+            var jobId = await db.InsertAsync(
+                "INSERT INTO jobs(company_id,branch_id,job_code,job_type,status) VALUES (@c,@b,@code,'Delivery','Unassigned')",
+                c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchId); c.Parameters.AddWithValue("@code", $"JOB-{companyId}"); });
+
+            using var scope = AmbientCorrelationContext.Begin($"fleet-identity-{Guid.NewGuid():N}", null, null,
+                companyId.ToString(), ActorTypes.TenantUser, "42");
+            var recommendation = await service.RecommendSmartAssignmentAsync(companyId, jobId, null,
+                new()
+                {
+                    ["recommendedDriverId"] = driverId,
+                    ["recommendedVehicleId"] = vehicleId,
+                    ["score"] = .95m,
+                    ["confidenceScore"] = .95m,
+                    ["riskLevel"] = "low",
+                }, "api", "fleet-identity", $"fleet-identity-{Guid.NewGuid():N}");
+            Assert.NotNull(recommendation);
+            var accepted = await service.AcceptSmartAssignmentAsync(companyId,
+                Convert.ToInt64(recommendation!["id"]), new());
+            Assert.True(accepted.Success, accepted.Message);
+
+            var assignment = await db.QuerySingleAsync(
+                @"SELECT da.id,da.driver_id,da.vehicle_id,da.job_id,da.assignment_status
+                  FROM dispatch_assignments da WHERE da.company_id=@c AND da.job_id=@j",
+                c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@j", jobId); });
+            Assert.NotNull(assignment);
+            Assert.Equal(driverId, Convert.ToInt64(assignment!["driverId"]));
+            Assert.Equal(vehicleId, Convert.ToInt64(assignment["vehicleId"]));
+            Assert.Equal("assigned", assignment["assignmentStatus"]);
+            Assert.Equal(1, await db.ScalarLongAsync(
+                @"SELECT COUNT(*) FROM assignment_confirmations ac
+                  JOIN dispatch_assignments da ON da.id=ac.dispatch_assignment_id AND da.company_id=ac.company_id
+                  WHERE ac.company_id=@c AND ac.recommendation_id=@r",
+                c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@r", Convert.ToInt64(recommendation["id"])); }));
+            Assert.Equal(1, await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM audit_logs WHERE company_id=@c AND action_name='dispatch.assignment.created' AND entity_id=@id",
+                c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@id", Convert.ToInt64(assignment["id"])); }));
+
+            var second = await service.RecommendSmartAssignmentAsync(companyId, null, null,
+                new() { ["recommendedDriverId"] = driverId, ["recommendedVehicleId"] = vehicleId, ["score"] = .95m, ["riskLevel"] = "low" },
+                "api", "fleet-identity-conflict", $"fleet-identity-{Guid.NewGuid():N}");
+            var rejectedConflict = await service.AcceptSmartAssignmentAsync(companyId, Convert.ToInt64(second!["id"]), new());
+            Assert.False(rejectedConflict.Success);
+            Assert.Contains("already actively assigned", rejectedConflict.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(1, await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM dispatch_assignments WHERE company_id=@c AND assignment_status NOT IN ('delivered','cancelled')",
+                c => c.Parameters.AddWithValue("@c", companyId)));
+        }
+        finally { await CleanupTenantAsync(db, companyId); }
+    }
+
     private static Database CreateDatabase()
     {
         var config = new ConfigurationBuilder()
@@ -367,5 +442,12 @@ public class Stage9PostgresTests
         await db.ExecuteAsync("DELETE FROM assignment_confirmations WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
         await db.ExecuteAsync("DELETE FROM smart_assignment_recommendations WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
         await db.ExecuteAsync("DELETE FROM documents WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
+        await db.ExecuteAsync("DELETE FROM audit_logs WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
+        await db.ExecuteAsync("DELETE FROM dispatch_assignments WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
+        await db.ExecuteAsync("DELETE FROM jobs WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
+        await db.ExecuteAsync("DELETE FROM drivers WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
+        await db.ExecuteAsync("DELETE FROM vehicles WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
+        await db.ExecuteAsync("DELETE FROM branches WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
+        await db.ExecuteAsync("DELETE FROM companies WHERE id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
     }
 }

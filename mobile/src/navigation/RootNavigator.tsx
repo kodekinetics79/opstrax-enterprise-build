@@ -8,6 +8,7 @@ import { WorkflowScreen } from "@/screens/WorkflowScreen";
 import { ProofScreen } from "@/screens/ProofScreen";
 import { TelemetryScreen } from "@/screens/TelemetryScreen";
 import { SettingsScreen } from "@/screens/SettingsScreen";
+import { DriverSafetyScreen } from "@/screens/DriverSafetyScreen";
 import { useSession } from "@/auth/SessionProvider";
 import { colors } from "@/components/ui";
 
@@ -30,6 +31,7 @@ function AppTabs() {
     "telemetry.live_state.read", "telemetry.live-state.read", "telemetry.alerts.read", "dashboard:view", "map:view",
     "fleet:view", "telematics:gps:view", "safety:view", "maintenance:view",
   );
+  const canUseDriverSafety = hasPermission("driver:self");
 
   return (
     <Tabs.Navigator
@@ -43,6 +45,7 @@ function AppTabs() {
       }}
     >
       <Tabs.Screen name="Dashboard" component={DashboardScreen} options={{ title: roleModel.title, tabBarLabel: "Dashboard" }} />
+      {canUseDriverSafety ? <Tabs.Screen name="DriverSafety" component={DriverSafetyScreen} options={{ title: "Driver safety", tabBarLabel: "Safety" }} /> : null}
       {canUseWorkflows ? <Tabs.Screen name="Workflows" component={WorkflowScreen} options={{ title: "Workflows", tabBarLabel: "Work" }} /> : null}
       {canUseProof ? <Tabs.Screen name="Proof" component={ProofScreen} options={{ title: "Proof", tabBarLabel: "Proof" }} /> : null}
       {canUseFleetHealth ? <Tabs.Screen name="Telemetry" component={TelemetryScreen} options={{ title: "Telemetry", tabBarLabel: "Telemetry" }} /> : null}

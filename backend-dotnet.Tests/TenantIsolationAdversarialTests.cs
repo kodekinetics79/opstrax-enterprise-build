@@ -70,10 +70,10 @@ public sealed class TenantIsolationAdversarialTests
             "private static async Task<IResult> DeviceAssign(",
             "// ═══════════════════════════════════════════════════════════════════════════");
 
-        AssertOrdered(assign, "ValidateDeviceAssignmentAsync", "UPDATE eld_devices");
-        Assert.Contains("WHERE id=@id AND company_id=@cid AND deleted_at IS NULL", assign, StringComparison.Ordinal);
-        Assert.Contains("FROM vehicles WHERE id=@id AND company_id=@cid AND deleted_at IS NULL", assign, StringComparison.Ordinal);
-        Assert.Contains("FROM drivers WHERE id=@id AND company_id=@cid AND deleted_at IS NULL", assign, StringComparison.Ordinal);
+        Assert.Contains("Direct device assignment is retired", assign, StringComparison.Ordinal);
+        Assert.Contains("installation create, transfer, or remove endpoints", assign, StringComparison.Ordinal);
+        Assert.Contains("StatusCodes.Status410Gone", assign, StringComparison.Ordinal);
+        Assert.DoesNotContain("UPDATE eld_devices", assign, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -92,12 +92,14 @@ public sealed class TenantIsolationAdversarialTests
         // Replay defense is now the durable, cross-instance guard (TEL-P1-REPLAY-005), not the old
         // process-local in-memory cache. The reservation is scoped to the resolved device/tenant.
         Assert.Contains("GpsGatewayReplayGuard.TryReserveDurableAsync", ingest, StringComparison.Ordinal);
-        Assert.Contains("isProduction && replayAvail != GpsGatewayReplayGuard.Availability.Present", ingest, StringComparison.Ordinal);
+        Assert.Contains("isProtectedEnvironment && replayAvail != GpsGatewayReplayGuard.Availability.Present", ingest, StringComparison.Ordinal);
         Assert.Contains("var companyId = Convert.ToInt64(device[\"companyId\"]);", ingest, StringComparison.Ordinal);
-        Assert.Contains("device[\"vehicleId\"]", ingest, StringComparison.Ordinal);
+        Assert.Contains("ResolveTelemetryIdentityAsync", ingest, StringComparison.Ordinal);
+        Assert.Contains("vehicleId = identity.VehicleId", ingest, StringComparison.Ordinal);
+        Assert.Contains("installationId = identity.InstallationId", ingest, StringComparison.Ordinal);
         Assert.DoesNotContain("Str(\"companyId\"", ingest, StringComparison.Ordinal);
         Assert.DoesNotContain("Str(\"vehicleId\"", ingest, StringComparison.Ordinal);
-        Assert.Contains("(company_id, vehicle_id, device_id, driver_id", ingest, StringComparison.Ordinal);
+        Assert.Contains("(company_id, vehicle_id, device_id,installation_id,assignment_id,trip_id,driver_id", ingest, StringComparison.Ordinal);
     }
 
     [Fact]
