@@ -28,32 +28,35 @@ const MODULES: Record<DispatchMode, {
   accent: string;
   summary: string;
 }> = {
+  // Teal/cyan/emerald family throughout, matching the rest of the app (blue/indigo/sky as
+  // the DOMINANT accent was this page's own invention -- every sibling module uses teal as
+  // the brand hue with cyan/emerald as secondary notes, same as btn-primary's own gradient).
   dispatch: {
     label: 'Dispatch Command Center',
     title: 'Logistics command',
     subtitle: 'Order intake, route movement, recovery actions and proof state across the operation.',
-    accent: 'from-blue-600 via-sky-500 to-cyan-400',
+    accent: 'from-teal-600 via-cyan-500 to-emerald-400',
     summary: '',
   },
   orders: {
     label: 'Jobs & Orders',
     title: 'Orders pipeline',
     subtitle: 'Who ordered, current priority, dispatch state and promised times for every open order.',
-    accent: 'from-indigo-600 via-blue-500 to-cyan-400',
+    accent: 'from-emerald-600 via-teal-500 to-cyan-400',
     summary: '',
   },
   routes: {
     label: 'Route Planning',
     title: 'Delivery routes',
     subtitle: 'Stop density, load, driver and completion state per active route.',
-    accent: 'from-sky-600 via-cyan-500 to-teal-400',
+    accent: 'from-cyan-600 via-teal-500 to-emerald-400',
     summary: '',
   },
   delivery: {
     label: 'Last Mile Delivery',
     title: 'Last mile stops',
     subtitle: 'Live delivery state, attempts, reschedules and recipient proof per stop.',
-    accent: 'from-cyan-600 via-sky-500 to-blue-400',
+    accent: 'from-teal-500 via-emerald-500 to-cyan-400',
     summary: '',
   },
 };
@@ -684,18 +687,18 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
 
         <div className="relative z-10 mx-auto flex min-h-[100svh] w-full max-w-[1600px] flex-col px-4 py-3 sm:px-6 lg:px-8 lg:py-4">
           <div className="mb-4 flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3 rounded-[22px] border border-white/80 bg-white/74 px-4 py-3 shadow-[0_18px_40px_rgba(37,99,235,0.08)] backdrop-blur-xl dark:border-white/[0.08] dark:bg-white/[0.04]">
-              <div className="rounded-[18px] bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.45),transparent_45%),linear-gradient(160deg,rgba(29,78,216,0.98),rgba(8,47,122,0.98))] p-1.5 shadow-[0_12px_24px_rgba(37,99,235,0.22)]">
+            <div className="flex items-center gap-3 rounded-[22px] border border-white/80 bg-white/74 px-4 py-3 shadow-[0_18px_40px_rgba(13,148,136,0.08)] backdrop-blur-xl dark:border-white/[0.08] dark:bg-white/[0.04]">
+              <div className="rounded-[18px] bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.45),transparent_45%),linear-gradient(160deg,rgba(15,118,110,0.98),rgba(19,78,74,0.98))] p-1.5 shadow-[0_12px_24px_rgba(13,148,136,0.22)]">
                 <span className="text-sm font-black tracking-tight text-white">OpsTrax</span>
               </div>
               <div className="h-9 w-px bg-slate-300/60" />
               <div>
-                <p className="text-[10px] font-bold tracking-[0.28em] uppercase text-blue-500/70">Dispatch & Delivery</p>
+                <p className="text-[10px] font-bold tracking-[0.28em] uppercase text-teal-600/70">Dispatch & Delivery</p>
                 <p className="text-[11px] text-slate-500">{config.label}</p>
               </div>
             </div>
 
-            <nav aria-label="Logistics workspace views" className="hidden items-center gap-2 rounded-full border border-white/70 bg-white/72 p-1 shadow-[0_14px_30px_rgba(37,99,235,0.05)] backdrop-blur-xl md:flex dark:border-white/[0.08] dark:bg-white/[0.04]">
+            <nav aria-label="Logistics workspace views" className="hidden items-center gap-2 rounded-full border border-white/70 bg-white/72 p-1 shadow-[0_14px_30px_rgba(13,148,136,0.05)] backdrop-blur-xl md:flex dark:border-white/[0.08] dark:bg-white/[0.04]">
               {MODE_ORDER.map((item) => {
                 const active = item === mode;
                 return (
@@ -706,7 +709,10 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
                     onClick={() => setMode(item)}
                     className={`rounded-full px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] transition ${
                       active
-                        ? 'bg-slate-950 text-white shadow-lg dark:bg-white dark:text-slate-950'
+                        // bg-slate-800, not -950: a global "legacy dark surfaces -> light" CSS
+                        // rule forces bg-slate-950 to a white background, which left this
+                        // active tab's white text invisible against its own now-white pill.
+                        ? 'bg-slate-800 text-white shadow-lg dark:bg-white dark:text-slate-950'
                         : 'text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-white/[0.05]'
                     }`}
                   >
@@ -749,9 +755,9 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
           )}
 
           <section className="grid flex-1 gap-4 lg:grid-cols-[1.05fr_0.95fr]">
-            <div className="rounded-[32px] border border-white/75 bg-[linear-gradient(160deg,rgba(251,253,255,0.92),rgba(239,245,255,0.74))] p-5 shadow-[0_24px_80px_rgba(37,99,235,0.12)] backdrop-blur-3xl dark:border-white/[0.08] dark:bg-[linear-gradient(160deg,rgba(11,18,34,0.96),rgba(7,12,24,0.92))]">
+            <div className="rounded-[32px] border border-white/75 bg-[linear-gradient(160deg,rgba(251,253,255,0.92),rgba(239,245,255,0.74))] p-5 shadow-[0_24px_80px_rgba(13,148,136,0.12)] backdrop-blur-3xl dark:border-white/[0.08] dark:bg-[linear-gradient(160deg,rgba(11,18,34,0.96),rgba(7,12,24,0.92))]">
               <div className="flex flex-wrap items-center gap-2">
-                <span className={`inline-flex items-center gap-2 rounded-full border border-blue-300/30 bg-white/78 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.24em] text-blue-600 shadow-sm backdrop-blur`}>
+                <span className={`inline-flex items-center gap-2 rounded-full border border-teal-300/30 bg-white/78 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.24em] text-teal-700 shadow-sm backdrop-blur`}>
                   <span className="live-dot h-1.5 w-1.5" />
                   Logistics
                 </span>
@@ -819,7 +825,7 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
                   Array.from({ length: 4 }).map((_, index) => (
                     <div
                       key={index}
-                      className="rounded-[24px] border border-white/80 bg-white/78 p-4 shadow-[0_12px_26px_rgba(37,99,235,0.05)] backdrop-blur-xl dark:border-white/[0.06] dark:bg-white/[0.04]"
+                      className="rounded-[24px] border border-white/80 bg-white/78 p-4 shadow-[0_12px_26px_rgba(13,148,136,0.05)] backdrop-blur-xl dark:border-white/[0.06] dark:bg-white/[0.04]"
                     >
                       <div className="space-y-3">
                         <div className="h-3 w-20 animate-pulse rounded bg-slate-200/80 dark:bg-white/10" />
@@ -832,11 +838,11 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
                   stats.map((stat) => (
                     <div
                       key={stat.label}
-                      className="rounded-[24px] border border-white/80 bg-white/78 p-4 shadow-[0_12px_26px_rgba(37,99,235,0.05)] backdrop-blur-xl dark:border-white/[0.06] dark:bg-white/[0.04]"
+                      className="rounded-[24px] border border-white/80 bg-white/78 p-4 shadow-[0_12px_26px_rgba(13,148,136,0.05)] backdrop-blur-xl dark:border-white/[0.06] dark:bg-white/[0.04]"
                     >
                       <div className="flex items-center justify-between">
                         <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400">{stat.label}</p>
-                        <stat.icon className="h-4 w-4 text-blue-500/70" />
+                        <stat.icon className="h-4 w-4 text-teal-600/70" />
                       </div>
                       <p className="mt-2 text-[28px] font-black tracking-tight text-slate-950 dark:text-white">{stat.value}</p>
                       <p className="mt-1 text-[12px] text-slate-500 dark:text-slate-500">{stat.hint}</p>
@@ -846,7 +852,7 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
               </div>
 
               <div className="mt-4 grid gap-4 xl:grid-cols-[1.25fr_0.75fr]">
-                <div className="rounded-[28px] border border-white/80 bg-white/74 p-4 shadow-[0_18px_40px_rgba(37,99,235,0.06)] backdrop-blur-xl dark:border-white/[0.06] dark:bg-white/[0.04]">
+                <div className="rounded-[28px] border border-white/80 bg-white/74 p-4 shadow-[0_18px_40px_rgba(13,148,136,0.06)] backdrop-blur-xl dark:border-white/[0.06] dark:bg-white/[0.04]">
                   <div className="mb-4 grid gap-3 lg:grid-cols-3">
                     {commandSignals.map((signal) => (
                       <div key={signal.label} className="rounded-[22px] border border-slate-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.92),rgba(244,248,255,0.84))] p-3.5 dark:border-white/10 dark:bg-white/[0.03]">
@@ -897,9 +903,9 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
                   )}
                 </div>
 
-                <div className="rounded-[28px] border border-white/80 bg-white/74 p-4 shadow-[0_18px_40px_rgba(37,99,235,0.06)] backdrop-blur-xl dark:border-white/[0.06] dark:bg-white/[0.04]">
+                <div className="rounded-[28px] border border-white/80 bg-white/74 p-4 shadow-[0_18px_40px_rgba(13,148,136,0.06)] backdrop-blur-xl dark:border-white/[0.06] dark:bg-white/[0.04]">
                   <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-400">Operational cues</p>
-                  <div className="mt-3 rounded-[22px] border border-slate-200/70 bg-[linear-gradient(135deg,rgba(19,30,56,0.96),rgba(31,87,184,0.86))] p-4 text-white shadow-[0_18px_40px_rgba(37,99,235,0.18)]">
+                  <div className="mt-3 rounded-[22px] border border-slate-200/70 bg-[linear-gradient(135deg,rgba(19,30,56,0.96),rgba(13,148,136,0.86))] p-4 text-white shadow-[0_18px_40px_rgba(13,148,136,0.18)]">
                     <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/60">Executive readout</p>
                     <p className="mt-2 text-[16px] font-black leading-snug">{mode === 'delivery' ? 'Protect the customer moment.' : mode === 'routes' ? 'Shape the day before it shapes you.' : 'Keep service promises commercially safe.'}</p>
                     <p className="mt-2 text-[12px] leading-relaxed text-white/78">{actionNarrative}</p>
@@ -928,7 +934,7 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
                   <div className="mt-4 rounded-2xl border border-slate-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.88),rgba(245,249,255,0.78))] p-4 dark:border-white/10 dark:bg-[linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.02))]">
                     <div className="flex items-center justify-between">
                       <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-400">Recent records</p>
-                      <ArrowRight className="h-4 w-4 text-blue-500/70" />
+                      <ArrowRight className="h-4 w-4 text-teal-600/70" />
                     </div>
                     <div className="mt-3 space-y-2">
                       {liveRecordRows.map((item) => (
@@ -949,7 +955,7 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
                             {item.status}
                           </span>
                           {item.onClick ? (
-                            <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-blue-500/80">
+                            <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-teal-600/80">
                               {item.actionLabel}
                               <ChevronRight className="h-4 w-4 shrink-0 text-slate-300" />
                             </span>
@@ -964,53 +970,57 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
               </div>
             </div>
 
-            <div className="rounded-[32px] border border-white/75 bg-[linear-gradient(180deg,rgba(12,18,34,0.96),rgba(7,12,24,0.92))] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.32)] backdrop-blur-3xl">
+            {/* Was a near-black panel (rgba(12,18,34)/(7,12,24)) with white-on-dark text
+                throughout -- its own bespoke dark theme, not the app's light "fc-console"
+                look every sibling module (Vehicles, Cold Chain, Assets) actually uses.
+                Recolored to match: light glass card, dark text, slate-toned inset cards. */}
+            <div className="rounded-[32px] border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(240,253,250,0.82))] p-5 shadow-[0_24px_80px_rgba(15,23,42,0.08)] backdrop-blur-3xl">
               <div className="flex items-center justify-between gap-3">
-                <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.22em] text-white/70">
+                <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-600">
                   {config.label}
                 </div>
 
               </div>
 
               <div className="mt-5">
-                <h2 className="text-[28px] font-black leading-tight text-white xl:text-[34px]">
+                <h2 className="text-[28px] font-black leading-tight text-slate-950 xl:text-[34px]">
                   Route intelligence and intake
                 </h2>
-                <p className="mt-3 max-w-xl text-[14px] leading-relaxed text-slate-300/80">
+                <p className="mt-3 max-w-xl text-[14px] leading-relaxed text-slate-500">
                   Route status, order intake and last-mile visibility for the current tenant.
                 </p>
               </div>
 
               <div className="mt-6 grid gap-3">
-                <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+                <div className="rounded-[24px] border border-slate-200 bg-white p-4">
                   <div className="flex items-center justify-between">
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/50">Route intelligence</p>
-                    <MapPinned className="h-4 w-4 text-cyan-300/80" />
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-500">Route intelligence</p>
+                    <MapPinned className="h-4 w-4 text-cyan-600" />
                   </div>
                   <div className="mt-3 space-y-3">
                     {routes.slice(0, 3).map((route) => (
-                      <div key={route.id} className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+                      <div key={route.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
                         <div className="flex items-center justify-between gap-3">
                           <div>
-                            <p className="text-[12px] font-bold text-white">{route.routeCode}</p>
-                            <p className="text-[11px] text-slate-400">{route.driverName} · {route.vehicleNumber}</p>
+                            <p className="text-[12px] font-bold text-slate-900">{route.routeCode}</p>
+                            <p className="text-[11px] text-slate-500">{route.driverName} · {route.vehicleNumber}</p>
                           </div>
-                          <span className="text-[10px] font-bold text-cyan-300">{route.completionPercent.toFixed(1)}%</span>
+                          <span className="text-[10px] font-bold text-cyan-700">{route.completionPercent.toFixed(1)}%</span>
                         </div>
-                        <div className="mt-2 h-1.5 rounded-full bg-white/10">
-                          <div className="h-1.5 rounded-full bg-gradient-to-r from-cyan-400 via-sky-400 to-blue-500" style={{ width: `${Math.min(100, route.completionPercent)}%` }} />
+                        <div className="mt-2 h-1.5 rounded-full bg-slate-200">
+                          <div className="h-1.5 rounded-full bg-gradient-to-r from-cyan-400 via-teal-400 to-emerald-500" style={{ width: `${Math.min(100, route.completionPercent)}%` }} />
                         </div>
                       </div>
                     ))}
                   </div>
                 </div>
 
-                <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+                <div className="rounded-[24px] border border-slate-200 bg-white p-4">
                   <div className="flex items-center justify-between">
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/50">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-500">
                       {mode === 'orders' ? 'Create job or order' : mode === 'routes' ? 'Create route' : mode === 'delivery' ? 'Delivery exception notes' : 'Create dispatch order'}
                     </p>
-                    <Package className="h-4 w-4 text-sky-300/80" />
+                    <Package className="h-4 w-4 text-cyan-600" />
                   </div>
                   <div className="mt-3 space-y-3">
                     {(mode === 'dispatch' || mode === 'orders') && (canCreate || (editingOrderId && canUpdate) ? (
@@ -1025,13 +1035,13 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
                           <DarkField label="Item count" type="number" min="1" max="100000" value={orderForm.itemCount} onChange={(value) => setOrderForm((current) => ({ ...current, itemCount: value }))} required />
                           <DarkField label="Order value" type="number" min="0" step="0.01" value={orderForm.orderValue} onChange={(value) => setOrderForm((current) => ({ ...current, orderValue: value }))} />
                         </div>
-                        <label className="block text-[11px] font-semibold text-white/70">Priority
-                          <select value={orderForm.priority} onChange={(event) => setOrderForm((current) => ({ ...current, priority: event.target.value }))} className="mt-1 w-full rounded-2xl border border-white/10 bg-slate-900 px-3 py-2.5 text-sm text-white">
+                        <label className="block text-[11px] font-semibold text-slate-600">Priority
+                          <select value={orderForm.priority} onChange={(event) => setOrderForm((current) => ({ ...current, priority: event.target.value }))} className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900">
                             {['Low', 'Normal', 'High', 'Critical'].map((priority) => <option key={priority}>{priority}</option>)}
                           </select>
                         </label>
-                        <label className="block text-[11px] font-semibold text-white/70">Assigned route
-                          <select value={orderForm.routeCode} onChange={(event) => selectOrderRoute(event.target.value)} className="mt-1 w-full rounded-2xl border border-white/10 bg-slate-900 px-3 py-2.5 text-sm text-white">
+                        <label className="block text-[11px] font-semibold text-slate-600">Assigned route
+                          <select value={orderForm.routeCode} onChange={(event) => selectOrderRoute(event.target.value)} className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900">
                             <option value="">Unassigned</option>
                             {routes.filter((route) => !terminalRoute(route.status)).map((route) => <option key={route.id} value={route.routeCode}>{route.routeCode} · {route.status}</option>)}
                           </select>
@@ -1041,12 +1051,12 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
                           <DarkField label="Vehicle number" value={orderForm.vehicleNumber} onChange={(value) => setOrderForm((current) => ({ ...current, vehicleNumber: value }))} />
                         </div>
                         <DarkField label="Promised time" type="datetime-local" value={orderForm.promisedAtUtc} onChange={(value) => setOrderForm((current) => ({ ...current, promisedAtUtc: value }))} />
-                        <label className="block text-[11px] font-semibold text-white/70">Dispatch notes
-                          <textarea value={orderForm.dispatchNotes} onChange={(event) => setOrderForm((current) => ({ ...current, dispatchNotes: event.target.value }))} rows={2} className="mt-1 w-full rounded-2xl border border-white/10 bg-white/[0.05] px-3 py-2.5 text-sm text-white outline-none" />
+                        <label className="block text-[11px] font-semibold text-slate-600">Dispatch notes
+                          <textarea value={orderForm.dispatchNotes} onChange={(event) => setOrderForm((current) => ({ ...current, dispatchNotes: event.target.value }))} rows={2} className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-teal-400" />
                         </label>
                         <div className="flex gap-2">
-                          {editingOrderId && <button type="button" onClick={resetOrderForm} className="rounded-2xl border border-white/15 px-4 py-3 text-xs font-bold text-white">Cancel</button>}
-                          <button type="button" onClick={handleCreateOrder} disabled={creating} className="inline-flex flex-1 items-center justify-center rounded-2xl bg-gradient-to-r from-blue-600 via-sky-500 to-cyan-400 px-4 py-3 text-[12px] font-bold text-white disabled:opacity-60">
+                          {editingOrderId && <button type="button" onClick={resetOrderForm} className="rounded-2xl border border-slate-200 px-4 py-3 text-xs font-bold text-slate-700 hover:bg-slate-50">Cancel</button>}
+                          <button type="button" onClick={handleCreateOrder} disabled={creating} className="inline-flex flex-1 items-center justify-center rounded-2xl bg-gradient-to-r from-teal-600 via-teal-500 to-blue-600 px-4 py-3 text-[12px] font-bold text-white disabled:opacity-60">
                             {creating ? 'Saving...' : editingOrderId ? 'Save order' : 'Create order'}
                           </button>
                         </div>
@@ -1071,12 +1081,12 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
                           <DarkField label="Planned date" type="date" value={routeForm.plannedForDate} onChange={(value) => setRouteForm((current) => ({ ...current, plannedForDate: value }))} />
                           <DarkField label="Departure time" type="datetime-local" value={routeForm.departureTimeUtc} onChange={(value) => setRouteForm((current) => ({ ...current, departureTimeUtc: value }))} />
                         </div>
-                        <label className="block text-[11px] font-semibold text-white/70">Route notes
-                          <textarea value={routeForm.notes} onChange={(event) => setRouteForm((current) => ({ ...current, notes: event.target.value }))} rows={2} className="mt-1 w-full rounded-2xl border border-white/10 bg-white/[0.05] px-3 py-2.5 text-sm text-white outline-none" />
+                        <label className="block text-[11px] font-semibold text-slate-600">Route notes
+                          <textarea value={routeForm.notes} onChange={(event) => setRouteForm((current) => ({ ...current, notes: event.target.value }))} rows={2} className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-teal-400" />
                         </label>
                         <div className="flex gap-2">
-                          {editingRouteId && <button type="button" onClick={resetRouteForm} className="rounded-2xl border border-white/15 px-4 py-3 text-xs font-bold text-white">Cancel</button>}
-                          <button type="button" onClick={handleCreateRoute} disabled={creating} className="inline-flex flex-1 items-center justify-center rounded-2xl bg-gradient-to-r from-sky-600 via-cyan-500 to-teal-400 px-4 py-3 text-[12px] font-bold text-white disabled:opacity-60">
+                          {editingRouteId && <button type="button" onClick={resetRouteForm} className="rounded-2xl border border-slate-200 px-4 py-3 text-xs font-bold text-slate-700 hover:bg-slate-50">Cancel</button>}
+                          <button type="button" onClick={handleCreateRoute} disabled={creating} className="inline-flex flex-1 items-center justify-center rounded-2xl bg-gradient-to-r from-teal-600 via-teal-500 to-blue-600 px-4 py-3 text-[12px] font-bold text-white disabled:opacity-60">
                             {creating ? 'Saving...' : editingRouteId ? 'Save route' : 'Create route'}
                           </button>
                         </div>
@@ -1084,11 +1094,11 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
                     ) : <ReadOnlyMessage />)}
                     {mode === 'delivery' && (canUpdate || canDeliver ? (
                       <>
-                        <p className="text-[11px] leading-relaxed text-white/55">Enter real delivery evidence before selecting an action. A recipient is required for Deliver; a reason is required for Attempt; a reason and future ETA are required for Reschedule.</p>
+                        <p className="text-[11px] leading-relaxed text-slate-500">Enter real delivery evidence before selecting an action. A recipient is required for Deliver; a reason is required for Attempt; a reason and future ETA are required for Reschedule.</p>
                         <DarkField label="Actual recipient name" value={lastMileForm.recipientName} onChange={(value) => setLastMileForm((current) => ({ ...current, recipientName: value }))} />
                         <DarkField label="Signature / evidence reference (required for Deliver)" value={lastMileForm.evidenceReference} onChange={(value) => setLastMileForm((current) => ({ ...current, evidenceReference: value }))} />
-                        <label className="block text-[11px] font-semibold text-white/70">Attempt or reschedule reason
-                          <textarea value={lastMileForm.exceptionReason} onChange={(event) => setLastMileForm((current) => ({ ...current, exceptionReason: event.target.value }))} rows={3} className="mt-1 w-full rounded-2xl border border-white/10 bg-white/[0.05] px-3 py-2.5 text-sm text-white outline-none" />
+                        <label className="block text-[11px] font-semibold text-slate-600">Attempt or reschedule reason
+                          <textarea value={lastMileForm.exceptionReason} onChange={(event) => setLastMileForm((current) => ({ ...current, exceptionReason: event.target.value }))} rows={3} className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-teal-400" />
                         </label>
                         <DarkField label="Next ETA" type="datetime-local" value={lastMileForm.nextEtaUtc} onChange={(value) => setLastMileForm((current) => ({ ...current, nextEtaUtc: value }))} />
                         <div className="grid grid-cols-2 gap-2">
@@ -1100,12 +1110,12 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
                   </div>
                 </div>
 
-                <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+                <div className="rounded-[24px] border border-slate-200 bg-white p-4">
                   <div className="flex items-center justify-between">
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/50">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-500">
                       {mode === 'routes' ? 'Stops on selected route' : 'Last-mile visibility'}
                     </p>
-                    <Truck className="h-4 w-4 text-sky-300/80" />
+                    <Truck className="h-4 w-4 text-cyan-600" />
                   </div>
                   <div className="mt-3 space-y-2">
                     {mode === 'delivery' && routes.length > 0 && (
@@ -1119,8 +1129,8 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
                               onClick={() => setSelectedRouteId(route.id)}
                               className={`rounded-full px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] transition ${
                                 active
-                                  ? 'bg-cyan-400 text-slate-950 shadow-[0_10px_24px_rgba(34,211,238,0.18)]'
-                                  : 'border border-white/10 bg-white/[0.04] text-white/65 hover:bg-white/[0.08]'
+                                  ? 'bg-cyan-500 text-white shadow-[0_10px_24px_rgba(8,145,178,0.22)]'
+                                  : 'border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100'
                               }`}
                             >
                               {route.routeCode}
@@ -1130,18 +1140,18 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
                       </div>
                     )}
                     {mode === 'delivery' && selectedRoute && (
-                      <p className="mb-3 text-[10px] uppercase tracking-[0.18em] text-white/45">
+                      <p className="mb-3 text-[10px] uppercase tracking-[0.18em] text-slate-400">
                         Showing stops for {selectedRoute.routeCode} · {selectedRoute.driverName || 'Assigned driver pending'}
                       </p>
                     )}
                     {visibleStops.slice(0, 4).map((stop) => (
-                      <div key={stop.id} className="rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2.5">
+                      <div key={stop.id} className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5">
                         <div className="flex items-center justify-between gap-3">
                           <div className="min-w-0">
-                            <p className="truncate text-[12px] font-bold text-white">{stop.customerName}</p>
-                            <p className="truncate text-[10px] text-slate-400">{stop.addressLine}</p>
+                            <p className="truncate text-[12px] font-bold text-slate-900">{stop.customerName}</p>
+                            <p className="truncate text-[10px] text-slate-500">{stop.addressLine}</p>
                           </div>
-                          <span className="rounded-full border border-white/10 px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.18em] text-white/65">
+                          <span className="rounded-full border border-slate-200 bg-white px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.18em] text-slate-600">
                             {stop.status}
                           </span>
                         </div>
@@ -1151,16 +1161,16 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
                 </div>
               </div>
 
-              <div className="mt-6 rounded-[26px] border border-white/10 bg-white/[0.04] p-4">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/70">Related modules</p>
+              <div className="mt-6 rounded-[26px] border border-slate-200 bg-slate-50 p-4">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-600">Related modules</p>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <Link to="/dispatch" className="rounded-full border border-white/15 px-3 py-1.5 text-[11px] font-semibold text-white/80 transition hover:bg-white/10">Dispatch board</Link>
-                  <Link to="/route-plans" className="rounded-full border border-white/15 px-3 py-1.5 text-[11px] font-semibold text-white/80 transition hover:bg-white/10">Route plans</Link>
-                  <Link to="/last-mile-delivery" className="rounded-full border border-white/15 px-3 py-1.5 text-[11px] font-semibold text-white/80 transition hover:bg-white/10">Last mile</Link>
-                  <Link to="/jobs" className="rounded-full border border-white/15 px-3 py-1.5 text-[11px] font-semibold text-white/80 transition hover:bg-white/10">Jobs board</Link>
-                  <Link to="/trips" className="rounded-full border border-white/15 px-3 py-1.5 text-[11px] font-semibold text-white/80 transition hover:bg-white/10">Trips</Link>
-                  <Link to="/operations/proof-center" className="rounded-full border border-white/15 px-3 py-1.5 text-[11px] font-semibold text-white/80 transition hover:bg-white/10">Proof center</Link>
-                  <Link to="/finance/billing" className="rounded-full border border-white/15 px-3 py-1.5 text-[11px] font-semibold text-white/80 transition hover:bg-white/10">Billing</Link>
+                  <Link to="/dispatch" className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-700 transition hover:border-teal-300 hover:text-teal-700">Dispatch board</Link>
+                  <Link to="/route-plans" className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-700 transition hover:border-teal-300 hover:text-teal-700">Route plans</Link>
+                  <Link to="/last-mile-delivery" className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-700 transition hover:border-teal-300 hover:text-teal-700">Last mile</Link>
+                  <Link to="/jobs" className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-700 transition hover:border-teal-300 hover:text-teal-700">Jobs board</Link>
+                  <Link to="/trips" className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-700 transition hover:border-teal-300 hover:text-teal-700">Trips</Link>
+                  <Link to="/operations/proof-center" className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-700 transition hover:border-teal-300 hover:text-teal-700">Proof center</Link>
+                  <Link to="/finance/billing" className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-700 transition hover:border-teal-300 hover:text-teal-700">Billing</Link>
                 </div>
               </div>
             </div>
@@ -1174,7 +1184,7 @@ export function DispatchWorkspacePage({ mode: initialMode = 'dispatch' }: { mode
 function ActionOrderCard({ order, onDispatch, onEdit, saving, canAssign, canUpdate }: { order: LogisticsOrder; onDispatch: () => void; onEdit: () => void; saving: boolean; canAssign: boolean; canUpdate: boolean }) {
   const dispatchable = order.status === 'Queued' && Boolean(order.routeCode?.trim() && order.driverName?.trim() && order.vehicleNumber?.trim());
   return (
-    <div className="rounded-[24px] border border-slate-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.92),rgba(245,248,255,0.78))] p-4 shadow-[0_10px_24px_rgba(37,99,235,0.05)] dark:border-white/10 dark:bg-white/[0.04]">
+    <div className="rounded-[24px] border border-slate-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.92),rgba(245,248,255,0.78))] p-4 shadow-[0_10px_24px_rgba(13,148,136,0.05)] dark:border-white/10 dark:bg-white/[0.04]">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-[12px] font-black tracking-tight text-slate-950 dark:text-white">{order.orderNumber}</p>
@@ -1199,7 +1209,7 @@ function ActionOrderCard({ order, onDispatch, onEdit, saving, canAssign, canUpda
       {(canAssign || canUpdate) && !terminalOrder(order.status) && (
         <div className={`mt-4 grid gap-2 ${canAssign && canUpdate ? 'grid-cols-2' : 'grid-cols-1'}`}>
           {canUpdate && <button type="button" onClick={onEdit} disabled={saving} className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs font-bold text-slate-700 disabled:opacity-50 dark:border-white/10 dark:bg-white/[0.05] dark:text-white"><Pencil className="h-3.5 w-3.5" /> Edit</button>}
-          {canAssign && <button type="button" onClick={dispatchable ? onDispatch : onEdit} disabled={saving || order.status !== 'Queued'} title={!dispatchable && order.status === 'Queued' ? 'Complete route, driver, and vehicle assignment first' : undefined} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-blue-600 via-sky-500 to-cyan-400 px-4 py-3 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">
+          {canAssign && <button type="button" onClick={dispatchable ? onDispatch : onEdit} disabled={saving || order.status !== 'Queued'} title={!dispatchable && order.status === 'Queued' ? 'Complete route, driver, and vehicle assignment first' : undefined} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-teal-600 via-teal-500 to-blue-600 px-4 py-3 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">
             {saving ? 'Dispatching...' : dispatchable ? 'Dispatch' : 'Complete assignment'} <ArrowRight className="h-4 w-4" />
           </button>}
         </div>
@@ -1211,7 +1221,7 @@ function ActionOrderCard({ order, onDispatch, onEdit, saving, canAssign, canUpda
 function ActionRouteCard({ route, onAdvance, onInspect, onEdit, saving, canUpdate }: { route: LogisticsRoute; onAdvance: () => void; onInspect: () => void; onEdit: () => void; saving: boolean; canUpdate: boolean }) {
   const canProgress = canUpdate && ['Ready', 'Active', 'Delayed'].includes(route.status) && route.plannedStops > route.completedStops;
   return (
-    <div className="rounded-[24px] border border-slate-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.92),rgba(245,248,255,0.78))] p-4 shadow-[0_10px_24px_rgba(37,99,235,0.05)] dark:border-white/10 dark:bg-white/[0.04]">
+    <div className="rounded-[24px] border border-slate-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.92),rgba(245,248,255,0.78))] p-4 shadow-[0_10px_24px_rgba(13,148,136,0.05)] dark:border-white/10 dark:bg-white/[0.04]">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-[12px] font-black tracking-tight text-slate-950 dark:text-white">{route.routeCode}</p>
@@ -1235,7 +1245,7 @@ function ActionRouteCard({ route, onAdvance, onInspect, onEdit, saving, canUpdat
         <button
           type="button"
           onClick={onInspect}
-          className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-200/70 bg-white px-4 py-3 text-[12px] font-bold text-slate-700 transition hover:border-sky-300 hover:text-sky-700 dark:border-white/10 dark:bg-white/[0.05] dark:text-white"
+          className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-200/70 bg-white px-4 py-3 text-[12px] font-bold text-slate-700 transition hover:border-teal-300 hover:text-teal-700 dark:border-white/10 dark:bg-white/[0.05] dark:text-white"
         >
           Inspect stops
         </button>
@@ -1244,7 +1254,7 @@ function ActionRouteCard({ route, onAdvance, onInspect, onEdit, saving, canUpdat
           type="button"
           onClick={onAdvance}
           disabled={saving || !canProgress}
-          className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-sky-600 via-cyan-500 to-teal-400 px-4 py-3 text-[12px] font-bold text-white shadow-[0_14px_30px_rgba(47,107,255,0.26)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
+          className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-teal-600 via-teal-500 to-blue-600 px-4 py-3 text-[12px] font-bold text-white shadow-[0_14px_30px_rgba(13,148,136,0.26)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {saving ? 'Advancing...' : 'Advance route'}
           <ArrowRight className="h-4 w-4" />
@@ -1257,7 +1267,7 @@ function ActionRouteCard({ route, onAdvance, onInspect, onEdit, saving, canUpdat
 function ActionStopCard({ stop, onConfirm, onAttempt, onReschedule, saving, canUpdate, canDeliver }: { stop: LogisticsStop; onConfirm: () => void; onAttempt: () => void; onReschedule: () => void; saving: boolean; canUpdate: boolean; canDeliver: boolean }) {
   const terminal = terminalStop(stop.status);
   return (
-    <div className="rounded-[24px] border border-slate-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.92),rgba(245,248,255,0.78))] p-4 shadow-[0_10px_24px_rgba(37,99,235,0.05)] dark:border-white/10 dark:bg-white/[0.04]">
+    <div className="rounded-[24px] border border-slate-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.92),rgba(245,248,255,0.78))] p-4 shadow-[0_10px_24px_rgba(13,148,136,0.05)] dark:border-white/10 dark:bg-white/[0.04]">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-[12px] font-black tracking-tight text-slate-950 dark:text-white">{stop.customerName}</p>
@@ -1292,7 +1302,7 @@ function ActionStopCard({ stop, onConfirm, onAttempt, onReschedule, saving, canU
           type="button"
           onClick={onReschedule}
           disabled={saving}
-          className="inline-flex w-full items-center justify-center rounded-2xl border border-slate-200/70 bg-white px-3 py-3 text-[11px] font-bold text-slate-700 transition hover:border-sky-300 disabled:opacity-60 dark:border-white/10 dark:bg-white/[0.05] dark:text-white"
+          className="inline-flex w-full items-center justify-center rounded-2xl border border-slate-200/70 bg-white px-3 py-3 text-[11px] font-bold text-slate-700 transition hover:border-teal-300 disabled:opacity-60 dark:border-white/10 dark:bg-white/[0.05] dark:text-white"
         >
           Reschedule
         </button>}
@@ -1300,7 +1310,7 @@ function ActionStopCard({ stop, onConfirm, onAttempt, onReschedule, saving, canU
           type="button"
           onClick={onConfirm}
           disabled={saving}
-          className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-500 to-cyan-400 px-3 py-3 text-[11px] font-bold text-white shadow-[0_14px_30px_rgba(47,107,255,0.22)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
+          className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-500 to-cyan-400 px-3 py-3 text-[11px] font-bold text-white shadow-[0_14px_30px_rgba(13,148,136,0.22)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {saving ? 'Saving...' : 'Deliver'}
         </button>}
@@ -1311,13 +1321,13 @@ function ActionStopCard({ stop, onConfirm, onAttempt, onReschedule, saving, canU
 
 function DarkField({ label, value, onChange, type = 'text', min, max, step, required = false, disabled = false }: { label: string; value: string; onChange: (value: string) => void; type?: string; min?: string; max?: string; step?: string; required?: boolean; disabled?: boolean }) {
   return (
-    <label className="block text-[11px] font-semibold text-white/70">
+    <label className="block text-[11px] font-semibold text-slate-600">
       {label}{required ? ' *' : ''}
-      <input type={type} min={min} max={max} step={step} required={required} disabled={disabled} value={value} onChange={(event) => onChange(event.target.value)} className="mt-1 w-full rounded-2xl border border-white/10 bg-white/[0.05] px-3 py-2.5 text-sm text-white outline-none disabled:cursor-not-allowed disabled:opacity-55" />
+      <input type={type} min={min} max={max} step={step} required={required} disabled={disabled} value={value} onChange={(event) => onChange(event.target.value)} className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-teal-400 disabled:cursor-not-allowed disabled:opacity-55" />
     </label>
   );
 }
 
 function ReadOnlyMessage() {
-  return <p className="rounded-2xl border border-white/10 bg-white/[0.04] p-3 text-xs leading-relaxed text-white/65">This is a read-only view. Ask an administrator for the required dispatch create or update permission to change records.</p>;
+  return <p className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-xs leading-relaxed text-slate-500">This is a read-only view. Ask an administrator for the required dispatch create or update permission to change records.</p>;
 }

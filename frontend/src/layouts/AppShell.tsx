@@ -366,6 +366,12 @@ export function AppShell() {
   }, [location.pathname, normalizedSidebarQuery, visibleSections]);
 
   const experience = useMemo(() => getExperienceProfile(location.pathname, currentPageTitle), [location.pathname, currentPageTitle]);
+  // These pages render their own full header (eyebrow + title + live-data subtitle + actions)
+  // with the SAME title WorkspaceExperience would show above it, plus a generic description
+  // that adds nothing the page's own subtitle doesn't already say better -- e.g. "Cold Chain
+  // Monitor" appearing twice in a row, once generic and once with real device/alert counts.
+  // Suppress the shell banner here rather than genericize the page's richer one.
+  const suppressWorkspaceExperience = /^\/(fleet-cold-chain|fleet-assets|fleet-compliance)/.test(location.pathname);
 
   // close mobile sidebar & notif panel on route change
   useEffect(() => {
@@ -776,14 +782,16 @@ export function AppShell() {
               Read-only Platform support session · tenant changes are blocked · reference {session.supportAccess.grantRef}
             </div>
           )}
-          <div className="mx-auto w-full max-w-[1800px] shrink-0 px-4 pt-4 md:px-6">
-            <WorkspaceExperience
-              pageTitle={currentPageTitle}
-              clientOutcome={experience.clientOutcome}
-              maintenanceOutcome={experience.maintenanceOutcome}
-              shortcuts={experience.shortcuts}
-            />
-          </div>
+          {!suppressWorkspaceExperience && (
+            <div className="mx-auto w-full max-w-[1800px] shrink-0 px-4 pt-4 md:px-6">
+              <WorkspaceExperience
+                pageTitle={currentPageTitle}
+                clientOutcome={experience.clientOutcome}
+                maintenanceOutcome={experience.maintenanceOutcome}
+                shortcuts={experience.shortcuts}
+              />
+            </div>
+          )}
 
           {/* ── Content ── */}
           <main className="mx-auto flex w-full min-h-0 max-w-[1800px] flex-1 flex-col px-4 py-6 md:px-6">

@@ -1,5 +1,17 @@
 @import "tailwindcss";
 
+/* This app has no dark-mode toggle and never adds a `.dark` class anywhere -- but Tailwind's
+   default `dark:` variant follows the OS/browser's prefers-color-scheme automatically. That
+   made every `dark:*` utility scattered across the codebase (leftovers from an abandoned
+   dark-mode pass) silently activate for any user with system dark mode on, e.g. turning the
+   Logistics Workspace's "Route intelligence" panel and others solid black/near-black even
+   though the light-mode classes right next to them were already correctly fixed. Scoping
+   `dark:` to an explicit `.dark` ancestor -- which nothing in this app ever sets -- makes
+   those classes permanently inert instead of quietly re-breaking pages per-visitor based on
+   their OS setting.
+   Docs: https://tailwindcss.com/docs/dark-mode#toggling-dark-mode-manually */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* ============================================================
    OPSTRAX ENTERPRISE DESIGN SYSTEM  v4.0
    Light-Enterprise · Clean Shadows · Modern Hierarchy
@@ -127,6 +139,17 @@
 
 /* ---------- BASE ---------- */
 *, *::before, *::after { box-sizing: border-box; }
+
+/* Native <button> has no pointer cursor by default in any browser (only <a href> does) --
+   most buttons across the app already get one via .btn-primary/.btn-secondary/.btn-ghost's
+   own `cursor: pointer`, but plenty of custom-styled buttons (tabs, chips, icon buttons)
+   never opted into those classes and were silently left with the default arrow cursor. */
+button:not(:disabled), [role="button"]:not([aria-disabled="true"]) {
+  cursor: pointer;
+}
+button:disabled, [role="button"][aria-disabled="true"] {
+  cursor: not-allowed;
+}
 
 body {
   margin: 0;

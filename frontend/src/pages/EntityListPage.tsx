@@ -395,7 +395,7 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
       <div className="panel flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="relative max-w-xl flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
-          <input value={search} onChange={(event) => setSearch(event.target.value)} className="field pl-10" placeholder={`Search ${cfg.title.toLowerCase()}...`} />
+          <input value={search} onChange={(event) => setSearch(event.target.value)} className="field pl-10!" placeholder={`Search ${cfg.title.toLowerCase()}...`} />
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {kind === "drivers" && triageFilter ? (

@@ -132,7 +132,7 @@ export function DvirInspectionsPage() {
       </div>
 
       <div className="panel flex flex-wrap gap-3 p-3">
-        <label className="relative min-w-[240px] flex-1"><span className="sr-only">Search DVIR reports</span><Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" /><input className="field h-9 pl-9" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search report, vehicle, driver…" /></label>
+        <label className="relative min-w-[240px] flex-1"><span className="sr-only">Search DVIR reports</span><Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" /><input className="field h-9 pl-9!" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search report, vehicle, driver…" /></label>
         <label><span className="sr-only">Filter by status</span><select className="field h-9 min-w-40 py-0" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>{["All", "Submitted", "Repair Required", "Reviewed", "Certified"].map((item) => <option key={item}>{item}</option>)}</select></label>
       </div>
 

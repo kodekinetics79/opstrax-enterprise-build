@@ -394,7 +394,9 @@ export function DataTable({
         <div className="relative max-w-xs flex-1">
           <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
           <input
-            className="field h-9 py-0 pl-9 pr-3 text-sm"
+            // pl-9! (forced): `.field`'s own padding shorthand otherwise wins over the plain
+            // pl-9 utility, collapsing the left inset so the icon sits on top of the text.
+            className="field h-9 py-0 pl-9! pr-3 text-sm"
             placeholder="Search records..."
             aria-label="Search records"
             value={search}

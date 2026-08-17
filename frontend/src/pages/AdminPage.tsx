@@ -636,7 +636,7 @@ export function AdminPage() {
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative flex-1 min-w-[220px]">
               <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
-              <input className="field w-full pl-9" placeholder="Search users..." value={search} onChange={(e) => { setSearch(e.target.value); setUserPage(1); }} />
+              <input className="field w-full pl-9!" placeholder="Search users..." value={search} onChange={(e) => { setSearch(e.target.value); setUserPage(1); }} />
             </div>
             <select className="field" value={roleFilter} onChange={(e) => { setRoleFilter(e.target.value); setUserPage(1); }}>
               <option value="">All roles</option>

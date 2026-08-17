@@ -293,13 +293,16 @@ export function JobsPage() {
         </>}
       />
 
-      {/* Ops intelligence bar — derived from live data, one-click triage */}
-      <div className="anim-fade-up flex flex-col gap-3 overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-900 to-slate-800 p-4 text-white sm:flex-row sm:items-center sm:justify-between">
+      {/* Ops intelligence bar — derived from live data, one-click triage.
+          Light card (teal-tinted icon badge, dark text), matching the rest of the app's
+          "fc-console" panels (Vehicles, Cold Chain, Fleet Compliance) instead of a solid
+          dark fill -- a dark bar here was the odd one out, not the app's actual theme. */}
+      <div className="anim-fade-up flex flex-col gap-3 overflow-hidden rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3">
-          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white/10"><Sparkles className="h-5 w-5 text-teal-300" /></span>
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-teal-50"><Sparkles className="h-5 w-5 text-teal-600" /></span>
           <div>
-            <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-teal-300">Live operations signal</p>
-            <p className="mt-0.5 text-sm font-medium text-slate-100">
+            <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-teal-700">Live operations signal</p>
+            <p className="mt-0.5 text-sm font-medium text-slate-600">
               {slaRisk + proofPending + unassigned === 0
                 ? surface === "active-shipments"
                   ? "Active shipment execution is stable — no immediate SLA, proof, or assignment exceptions."
@@ -347,7 +350,9 @@ export function JobsPage() {
       <div className="panel flex flex-col gap-3 p-3.5 lg:flex-row lg:items-center">
         <div className="relative flex-1 lg:max-w-md">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <input className="field h-10 pl-9" aria-label="Search shipments" value={query} onChange={(e) => { setQuery(e.target.value); setJobsOffset(0); }} placeholder="Search jobs, customers, drivers, addresses..." />
+          {/* pl-9! (forced): `.field`'s own padding shorthand otherwise wins over the plain
+              pl-9 utility, collapsing the left inset so the icon sits on top of the text. */}
+          <input className="field h-10 pl-9!" aria-label="Search shipments" value={query} onChange={(e) => { setQuery(e.target.value); setJobsOffset(0); }} placeholder="Search jobs, customers, drivers, addresses..." />
         </div>
         <select className="field h-10 lg:max-w-[180px]" aria-label="Filter by priority" value={priority} onChange={(e) => setPriority(e.target.value)}>
           <option value="All">All priorities</option><option>Low</option><option>Normal</option><option>High</option><option>Critical</option>

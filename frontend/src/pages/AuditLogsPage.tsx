@@ -268,7 +268,7 @@ export function AuditLogsPage() {
             <div className="relative flex-1 min-w-[180px]">
               <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
               <input
-                className="field w-full pl-9 text-sm"
+                className="field w-full pl-9! text-sm"
                 placeholder="Search actor, entity, action…"
                 value={search}
                 onChange={(e) => onSearchChange(e.target.value)}

@@ -10,6 +10,7 @@ import {
 } from "@/hooks/useBatch6";
 import { useI18n } from "@/i18n";
 import { EmptyState, ErrorState, LoadingState, exportCsv } from "@/components/ui";
+import { ConsoleNav, ConsoleRail } from "@/components/console";
 import { useHasPermission } from "@/hooks/usePermission";
 import { useDialogFocus } from "@/hooks/useDialogFocus";
 import { useSingleFlight } from "@/hooks/useSingleFlight";
@@ -19,18 +20,15 @@ import { formatDate, formatDateTime, formatMinutesAsClock } from "@/utils/format
 
 type TabId = "drivers" | "logs" | "eld" | "ai";
 
-const TABS: { id: TabId; label: string }[] = [
-  { id: "drivers", label: "Driver Clocks" },
-  { id: "logs",    label: "HOS Logs" },
-  { id: "eld",     label: "ELD Devices" },
-  { id: "ai",      label: "Recommendations" },
+// { key, label, description } to match ConsoleNav's shape (the same segmented-pill nav
+// Vehicles/Fleet Compliance use), so this page's tabs look and behave the same way instead
+// of a bespoke underline tab bar.
+const TABS: { key: TabId; label: string; description: string }[] = [
+  { key: "drivers", label: "Driver Clocks",    description: "Live HOS remaining time per driver" },
+  { key: "logs",    label: "HOS Logs",         description: "Duty-status history and certification" },
+  { key: "eld",     label: "ELD Devices",      description: "Device sync, status and malfunction actions" },
+  { key: "ai",      label: "Recommendations",  description: "AI-surfaced HOS and ELD actions" },
 ];
-
-const CLOCK_STATUS_COLOR: Record<string, string> = {
-  OK:        "text-emerald-700",
-  Warning:   "text-amber-700",
-  Violation: "text-red-700",
-};
 
 const ELD_STATUS_COLOR: Record<string, string> = {
   Active:      "text-emerald-700",
@@ -122,15 +120,18 @@ export function HosEldPage() {
 
   return (
     <div className="fleet-console flex h-full flex-col gap-3 overflow-y-auto">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-extrabold text-slate-900 flex items-center gap-2">
-            <Clock className="h-5 w-5 text-amber-600" />{t("hos_eld")}
-          </h1>
-          <p className="text-xs text-slate-500 mt-0.5">Hours of service monitoring, driver clocks, ELD device tracking</p>
-        </div>
-      </div>
+      {/* Header — ConsoleRail, matching Vehicles/Cold Chain/Fleet Compliance instead of a
+          bespoke plain <h1>, with the same live-count subtitle convention those pages use. */}
+      <ConsoleRail
+        eyebrow="Compliance · HOS/ELD"
+        icon={<Clock className="h-3.5 w-3.5 text-teal-700" />}
+        title={t("hos_eld")}
+        meta={<>
+          <span className="font-bold text-slate-700 tabular-nums">{drivers.length}</span> drivers tracked ·{" "}
+          <span className={`font-bold tabular-nums ${violationCount > 0 ? "text-red-600" : "text-emerald-600"}`}>{violationCount}</span> HOS violations ·{" "}
+          <span className={`font-bold tabular-nums ${eldMalfCount > 0 ? "text-red-600" : "text-emerald-600"}`}>{eldMalfCount}</span> ELD malfunctions
+        </>}
+      />
 
       <Disclaimer />
 
@@ -151,12 +152,14 @@ export function HosEldPage() {
       {/* KPI strip */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {[
-          { label: "HOS OK",          value: okCount,        color: "text-emerald-700", icon: CheckCircle },
-          { label: "HOS Warning",     value: warningCount,   color: "text-amber-700",   icon: AlertTriangle },
-          { label: "HOS Violation",   value: violationCount, color: violationCount > 0 ? "text-red-700" : "text-slate-500",   icon: AlertTriangle },
-          { label: "ELD Malfunction", value: eldMalfCount,   color: eldMalfCount   > 0 ? "text-red-700" : "text-slate-500",   icon: WifiOff },
+          { label: "HOS OK",          value: okCount,        color: "text-emerald-700", icon: CheckCircle,    tone: "fc-clay-emerald" },
+          { label: "HOS Warning",     value: warningCount,   color: "text-amber-700",   icon: AlertTriangle,  tone: "fc-clay-amber" },
+          { label: "HOS Violation",   value: violationCount, color: violationCount > 0 ? "text-red-700" : "text-slate-500",   icon: AlertTriangle, tone: "fc-clay-red" },
+          { label: "ELD Malfunction", value: eldMalfCount,   color: eldMalfCount   > 0 ? "text-red-700" : "text-slate-500",   icon: WifiOff,        tone: "fc-clay-red" },
         ].map(kpi => (
-          <div key={kpi.label} className="fc-clay fc-clay-teal p-4">
+          // Tone now matches each metric's own severity instead of every tile using the
+          // same teal regardless of meaning, so Violation/Malfunction actually stand out.
+          <div key={kpi.label} className={`fc-clay ${kpi.tone} p-4`}>
             <div className="mb-1 flex items-center justify-between">
               <p className="text-[11px] font-bold uppercase tracking-wide text-slate-600">{kpi.label}</p>
               <span className="fc-blob"><kpi.icon className={`h-4 w-4 ${kpi.color}`} /></span>
@@ -166,23 +169,9 @@ export function HosEldPage() {
         ))}
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-0.5 border-b border-slate-200 overflow-x-auto pb-0" role="tablist" aria-label="HOS and ELD views">
-        {TABS.map(t2 => (
-          <button
-            key={t2.id}
-            type="button"
-            role="tab"
-            aria-selected={tab === t2.id}
-            onClick={() => setTab(t2.id)}
-            className={`px-3 py-2 text-[12px] font-semibold whitespace-nowrap transition-colors border-b-2 -mb-px ${
-              tab === t2.id ? "border-amber-500 text-amber-700" : "border-transparent text-slate-500 hover:text-slate-700"
-            }`}
-          >
-            {t2.label}
-          </button>
-        ))}
-      </div>
+      {/* Tabs — same ConsoleNav segmented pill nav Vehicles/Fleet Compliance use, instead
+          of a bespoke underline tab bar. */}
+      <ConsoleNav sections={TABS} active={tab} onSelect={setTab} />
 
       {/* Driver Clocks */}
       {tab === "drivers" && (
@@ -196,18 +185,23 @@ export function HosEldPage() {
             const shiftRem = minutes(d.shiftTimeRemainingMinutes);
             const cycleRem = minutes(d.cycleTimeRemainingMinutes);
             const st       = String(d.status ?? "Unavailable");
-            const stColor  = CLOCK_STATUS_COLOR[st] ?? "text-slate-500";
+            const stBorder = st === "Violation" ? "border-l-red-500" : st === "Warning" ? "border-l-amber-500" : "border-l-emerald-500";
+            const stDotBg  = st === "Violation" ? "bg-red-100 text-red-700" : st === "Warning" ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700";
+            const initials = String(d.driverName ?? "?").trim().split(/\s+/).map(p => p[0]).slice(0, 2).join("").toUpperCase();
 
             return (
-              <div key={String(d.id)} className="panel space-y-3 cursor-pointer hover:border-amber-300 transition-colors" role="button" tabIndex={0} aria-label={`Open HOS clock for ${String(d.driverName ?? "driver")}`} onClick={() => setDrawer(d)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setDrawer(d); } }}>
-                <div className="flex items-start justify-between">
-                  <div>
-                    <p className="font-semibold text-slate-900">{String(d.driverName)}</p>
-                    <p className="text-[11px] text-slate-500">{String(d.driverCode)} · {String(d.cycleType)}</p>
+              <div key={String(d.id)} className={`panel space-y-3 p-4 cursor-pointer border-l-4 ${stBorder} transition-colors hover:shadow-md`} role="button" tabIndex={0} aria-label={`Open HOS clock for ${String(d.driverName ?? "driver")}`} onClick={() => setDrawer(d)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setDrawer(d); } }}>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-start gap-2.5">
+                    <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-teal-50 text-[11px] font-bold text-teal-700">{initials}</span>
+                    <div>
+                      <p className="font-semibold text-slate-900">{String(d.driverName)}</p>
+                      <p className="text-[11px] text-slate-500">{String(d.driverCode)} · {String(d.cycleType)}</p>
+                    </div>
                   </div>
-                  <div className="flex flex-col items-end gap-1">
+                  <div className="flex flex-col items-end gap-1.5">
                     <CountryBadge code={String(d.countryCode)} />
-                    <span className={`text-xs font-bold ${stColor}`}>{st}</span>
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${stDotBg}`}>{st}</span>
                   </div>
                 </div>
                 {!!d.hosWarning && (
@@ -242,8 +236,9 @@ export function HosEldPage() {
           <ErrorState message={(logsQ.error as Error)?.message} onRetry={() => void logsQ.refetch()} />
         ) : logs.length === 0 ? (
           <EmptyState title="No HOS logs available" subtitle="No persisted duty-status segments are available for your authorized branch." />
-        ) : <div className="panel overflow-auto">
-          <div className="mb-3 flex justify-end">
+        ) : <div className="panel p-5 overflow-auto">
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <p className="section-title flex items-center gap-2"><Clock className="h-3.5 w-3.5 text-teal-600" />Duty-status history</p>
             <button type="button" className="btn-ghost h-9 gap-1.5 px-3 text-xs" onClick={() => exportCsv("hos-logs", logs)}>
               <Download className="h-3.5 w-3.5" /> Export visible logs
             </button>
@@ -305,7 +300,8 @@ export function HosEldPage() {
             <span className="font-bold text-amber-800">ELD Notice: </span>
             OpsTrax is not a certified ELD. This table shows third-party ELD device status as reported by the connected provider. FMCSA-registered ELD certification is the responsibility of the ELD provider.
           </div>
-          <div className="panel overflow-auto">
+          <div className="panel p-5 overflow-auto">
+            <p className="section-title mb-3 flex items-center gap-2"><Cpu className="h-3.5 w-3.5 text-teal-600" />Connected devices</p>
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-200 text-left">
@@ -388,10 +384,12 @@ export function HosEldPage() {
           <ErrorState message={(aiQ.error as Error)?.message} onRetry={() => void aiQ.refetch()} />
         ) : aiRecs.length === 0 ? (
           <EmptyState title="No recommendations available" subtitle="No persisted HOS/ELD recommendations are available for this tenant." />
-        ) : <div className="panel space-y-3">
+        ) : <div className="panel p-5 space-y-3">
           <p className="section-title flex items-center gap-2"><Zap className="h-3.5 w-3.5 text-violet-600" />HOS / ELD Recommendations</p>
-          {aiRecs.map((rec, i) => (
-            <div key={i} className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-1.5">
+          {aiRecs.map((rec, i) => {
+            const prioBorder = String(rec.priority) === "Critical" ? "border-l-red-500" : String(rec.priority) === "High" ? "border-l-amber-500" : "border-l-sky-500";
+            return (
+            <div key={i} className={`rounded-xl border border-slate-200 border-l-4 ${prioBorder} bg-slate-50 p-4 space-y-1.5`}>
               <div className="flex items-start justify-between gap-2">
                 <p className="text-sm font-semibold text-slate-900">{String(rec.title)}</p>
                 <span className={`rounded border px-1.5 py-0.5 text-[10px] font-bold uppercase ${
@@ -407,22 +405,23 @@ export function HosEldPage() {
                 </p>
               )}
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
-      {/* Driver clock drawer — intentional dark context */}
+      {/* Driver clock drawer */}
       {drawer && tab === "drivers" && (
         <div className="fixed inset-0 z-50 flex justify-end anim-fade-in">
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setDrawer(null)} />
-          <aside ref={clockDialogRef} className="anim-slide-left relative z-10 w-full max-w-sm overflow-y-auto bg-slate-900 border-s border-white/[0.09] p-5 shadow-2xl" role="dialog" aria-modal="true" aria-label="Driver HOS clock details">
+          <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={() => setDrawer(null)} />
+          <aside ref={clockDialogRef} className="anim-slide-left relative z-10 w-full max-w-sm overflow-y-auto border-s border-slate-200 bg-white p-5 shadow-2xl" role="dialog" aria-modal="true" aria-label="Driver HOS clock details">
             <div className="flex items-center justify-between mb-4">
-              <p className="font-semibold text-white flex items-center gap-2"><Clock className="h-4 w-4 text-amber-400" />HOS Clock</p>
+              <p className="font-semibold text-slate-900 flex items-center gap-2"><Clock className="h-4 w-4 text-teal-600" />HOS Clock</p>
               <button type="button" aria-label="Close" className="icon-btn" onClick={() => setDrawer(null)}><X className="h-4 w-4" /></button>
             </div>
             <div className="space-y-3 text-sm">
               <div>
-                <p className="text-base font-bold text-white">{String(drawer.driverName)}</p>
+                <p className="text-base font-bold text-slate-900">{String(drawer.driverName)}</p>
                 <p className="text-xs text-slate-500">{String(drawer.driverCode)} · {String(drawer.cycleType)}</p>
               </div>
               <CountryBadge code={String(drawer.countryCode)} />
@@ -433,13 +432,13 @@ export function HosEldPage() {
                 { label: "Profile",         value: drawer.profileName },
                 { label: "Status",          value: drawer.status },
               ].map(r => (
-                <div key={r.label} className="flex justify-between border-b border-white/[0.05] pb-2">
+                <div key={r.label} className="flex justify-between border-b border-slate-100 pb-2">
                   <span className="text-slate-500">{r.label}</span>
-                  <span className={`font-semibold ${String(drawer.status) === "Violation" ? "text-red-400" : String(drawer.status) === "Warning" ? "text-amber-400" : "text-white"}`}>{String(r.value ?? "—")}</span>
+                  <span className={`font-semibold ${String(drawer.status) === "Violation" ? "text-red-600" : String(drawer.status) === "Warning" ? "text-amber-600" : "text-slate-900"}`}>{String(r.value ?? "—")}</span>
                 </div>
               ))}
               {!!drawer.hosWarning && (
-                <div className="rounded bg-amber-400/10 border border-amber-400/20 px-3 py-2 text-xs text-amber-300">
+                <div className="rounded bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-700">
                   <AlertTriangle className="h-3 w-3 inline-block mr-1" />{String(drawer.hosWarning)}
                 </div>
               )}
@@ -448,25 +447,25 @@ export function HosEldPage() {
         </div>
       )}
 
-      {/* ELD malfunction modal — intentional dark context */}
+      {/* ELD malfunction modal */}
       {malfForm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center anim-fade-in">
-          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setMalfForm(null)} />
-          <div ref={malfunctionDialogRef} className="relative z-10 w-full max-w-sm rounded-2xl border border-white/[0.09] bg-slate-900 p-5 shadow-2xl space-y-4" role="dialog" aria-modal="true" aria-label="Mark ELD malfunction">
+          <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={() => setMalfForm(null)} />
+          <div ref={malfunctionDialogRef} className="panel relative z-10 w-full max-w-sm p-6 space-y-4" role="dialog" aria-modal="true" aria-label="Mark ELD malfunction">
             <div className="flex items-center justify-between">
-              <p className="font-semibold text-white flex items-center gap-2"><Cpu className="h-4 w-4 text-red-400" />Mark ELD Malfunction</p>
+              <p className="font-semibold text-slate-900 flex items-center gap-2"><Cpu className="h-4 w-4 text-red-600" />Mark ELD Malfunction</p>
               <button type="button" aria-label="Close" className="icon-btn" onClick={() => setMalfForm(null)}><X className="h-4 w-4" /></button>
             </div>
             <div className="space-y-3">
               <div>
-                <label className="block text-xs text-slate-400 mb-1">Malfunction Code</label>
+                <label className="block text-xs font-medium text-slate-700 mb-1">Malfunction Code</label>
                 <input className="field w-full" placeholder="e.g. P1, S1, E1" value={malfForm.code} onChange={e => setMalfForm(f => f ? { ...f, code: e.target.value } : f)} />
               </div>
               <div>
-                <label className="block text-xs text-slate-400 mb-1">Description</label>
+                <label className="block text-xs font-medium text-slate-700 mb-1">Description</label>
                 <textarea className="field w-full h-20 resize-none" placeholder="Describe the malfunction..." value={malfForm.desc} onChange={e => setMalfForm(f => f ? { ...f, desc: e.target.value } : f)} />
               </div>
-              <div className="rounded border border-amber-400/20 bg-amber-400/5 p-2 text-[11px] text-amber-200/70">
+              <div className="rounded border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-700">
                 Follow the carrier&apos;s applicable jurisdiction and connected ELD provider procedure. In U.S. FMCSA operations, this generally includes documenting the malfunction and maintaining required records by an allowed alternate method until resolved.
               </div>
             </div>
@@ -475,7 +474,7 @@ export function HosEldPage() {
               <button
                 type="button"
                 disabled={!malfForm.code.trim() || !malfForm.desc.trim() || markMalfMut.isPending}
-                className="flex-1 rounded-lg bg-red-500/80 hover:bg-red-500 text-white text-sm font-semibold py-2 transition"
+                className="flex-1 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-semibold py-2 transition"
                 onClick={() => {
                   void markSingleFlight(() => markMalfMut.mutateAsync({ id: malfForm.id, body: { rowVersion: malfForm.rowVersion, malfunctionCode: malfForm.code.trim(), malfunctionDescription: malfForm.desc.trim() } }).then(() => {
                     setActionMessage({ kind: "success", text: "ELD malfunction recorded." }); setMalfForm(null);
@@ -493,14 +492,14 @@ export function HosEldPage() {
       )}
       {resolveForm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center anim-fade-in">
-          <button type="button" className="absolute inset-0 bg-black/70 backdrop-blur-sm" aria-label="Close resolution dialog" onClick={() => setResolveForm(null)} />
-          <div ref={resolutionDialogRef} className="relative z-10 w-full max-w-md rounded-2xl border border-white/[0.09] bg-slate-900 p-5 shadow-2xl space-y-4" role="dialog" aria-modal="true" aria-label="Resolve ELD malfunction">
+          <button type="button" className="absolute inset-0 bg-black/30 backdrop-blur-sm" aria-label="Close resolution dialog" onClick={() => setResolveForm(null)} />
+          <div ref={resolutionDialogRef} className="panel relative z-10 w-full max-w-md p-6 space-y-4" role="dialog" aria-modal="true" aria-label="Resolve ELD malfunction">
             <div className="flex items-center justify-between">
-              <p className="font-semibold text-white flex items-center gap-2"><Cpu className="h-4 w-4 text-emerald-400" />{resolveForm.status === "Diagnostic" ? "Verify ELD Recovery" : "Resolve ELD Malfunction"}</p>
+              <p className="font-semibold text-slate-900 flex items-center gap-2"><Cpu className="h-4 w-4 text-emerald-600" />{resolveForm.status === "Diagnostic" ? "Verify ELD Recovery" : "Resolve ELD Malfunction"}</p>
               <button type="button" aria-label="Close" className="icon-btn" onClick={() => setResolveForm(null)}><X className="h-4 w-4" /></button>
             </div>
-            <label className="block"><span className="mb-1 block text-xs text-slate-300">Operational verification evidence</span><textarea className="field min-h-28 w-full" maxLength={2000} value={resolveForm.evidence} onChange={(event) => setResolveForm((current) => current ? { ...current, evidence: event.target.value } : current)} placeholder="Describe the diagnostic check, provider confirmation, test drive, or other evidence…" /></label>
-            <p className="text-[11px] leading-5 text-amber-200/80">Evidence is retained with the malfunction history. The device returns to Active only with valid provisioned credentials and a healthy provider sync within the last 15 minutes; otherwise it remains Diagnostic.</p>
+            <label className="block"><span className="mb-1 block text-xs font-medium text-slate-700">Operational verification evidence</span><textarea className="field min-h-28 w-full" maxLength={2000} value={resolveForm.evidence} onChange={(event) => setResolveForm((current) => current ? { ...current, evidence: event.target.value } : current)} placeholder="Describe the diagnostic check, provider confirmation, test drive, or other evidence…" /></label>
+            <p className="text-[11px] leading-5 text-amber-700">Evidence is retained with the malfunction history. The device returns to Active only with valid provisioned credentials and a healthy provider sync within the last 15 minutes; otherwise it remains Diagnostic.</p>
             <div className="flex gap-2"><button type="button" className="btn-ghost flex-1" onClick={() => setResolveForm(null)}>Cancel</button><button type="button" className="btn-primary flex-1" disabled={!resolveForm.evidence.trim() || resolveMalfMut.isPending} onClick={() => { void resolveSingleFlight(() => resolveMalfMut.mutateAsync({ id: resolveForm.id, body: { rowVersion: resolveForm.rowVersion, resolutionEvidence: resolveForm.evidence.trim() } }).then((data) => {
               setActionMessage({ kind: "success", text: `Resolution recorded. Device status: ${String((data as AnyRecord).status ?? "Diagnostic")}.` }); setResolveForm(null);
             }).catch((error) => {

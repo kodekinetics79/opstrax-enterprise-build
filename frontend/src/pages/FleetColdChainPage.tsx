@@ -240,7 +240,7 @@ export function FleetColdChainPage() {
     }
     return (
       <main className="min-h-screen bg-[linear-gradient(135deg,_#f8fbff_0%,_#e8f2ff_50%,_#eff6ff_100%)] px-6 py-8 text-slate-900">
-        <div className="mx-auto grid w-full max-w-7xl gap-6 lg:grid-cols-[1.15fr_0.85fr]">
+        <div className="mx-auto grid w-full gap-6 lg:grid-cols-[1.15fr_0.85fr]">
           <section className="space-y-4 rounded-[30px] border border-white/80 bg-white/70 p-6 shadow-xl backdrop-blur">
             <div className="h-3 w-40 animate-pulse rounded-full bg-slate-200" />
             <div className="h-14 w-3/4 animate-pulse rounded-3xl bg-slate-200/80" />

@@ -455,7 +455,7 @@ export function FleetUtilizationPage() {
                   type="button"
                   onClick={() => setStatusFilter(option)}
                   className={`rounded-xl px-3 py-2 text-xs font-semibold transition ${
-                    statusFilter === option ? "bg-slate-900 text-white" : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                    statusFilter === option ? "bg-teal-600 text-white" : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
                   }`}
                 >
                   {option}

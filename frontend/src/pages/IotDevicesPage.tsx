@@ -646,7 +646,7 @@ export function IotDevicesPage() {
           <div className="relative xl:min-w-[360px]">
             <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
             <input
-              className="field w-full pl-9"
+              className="field w-full pl-9!"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               aria-label="Search devices by provider, serial, IMEI, vehicle, driver, or tenant"

@@ -108,7 +108,11 @@ export function ActiveShipmentsPage() {
 
   return (
     <main className="fleet-console space-y-4" aria-labelledby="active-shipments-title">
-      <header className="overflow-hidden rounded-[28px] border border-slate-200 bg-gradient-to-br from-slate-950 via-slate-900 to-teal-950 p-5 text-white shadow-xl sm:p-7">
+      {/* from-slate-950/via-slate-900/to-teal-950: via-slate-900 is caught by a global
+          "legacy dark surfaces -> light" override that zeroes its gradient stop, which
+          rendered this header fading from solid navy at the top to white/invisible text by
+          the bottom. from-slate-800/to-teal-900 aren't touched by that override. */}
+      <header className="overflow-hidden rounded-[28px] border border-slate-200 bg-gradient-to-br from-slate-800 to-teal-900 p-5 text-white shadow-xl sm:p-7">
         <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
           <div className="max-w-3xl">
             <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-teal-300/20 bg-teal-300/10 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.2em] text-teal-200">
@@ -154,7 +158,7 @@ export function ActiveShipmentsPage() {
       <section className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm" aria-label="Active shipment filters">
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
           <label className="text-xs font-bold text-slate-600 xl:col-span-2">Search active shipments
-            <span className="relative mt-1 block"><Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-slate-400" aria-hidden /><input value={searchInput} onChange={(event) => setSearchInput(event.target.value)} maxLength={120} placeholder="Shipment, customer, lane, driver, vehicle, route" className="field min-h-11 w-full pl-9" /></span>
+            <span className="relative mt-1 block"><Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-slate-400" aria-hidden /><input value={searchInput} onChange={(event) => setSearchInput(event.target.value)} maxLength={120} placeholder="Shipment, customer, lane, driver, vehicle, route" className="field min-h-11 w-full pl-9!" /></span>
           </label>
           <Filter label="Lifecycle" value={lifecycle} options={['All', ...ACTIVE_LIFECYCLES]} onChange={(value) => changeFilter(setLifecycle, value)} />
           <Filter label="SLA / ETA risk" value={risk} options={['All', 'Breached', 'AtRisk', 'NoEta', 'OnTrack']} onChange={(value) => changeFilter(setRisk, value)} />
