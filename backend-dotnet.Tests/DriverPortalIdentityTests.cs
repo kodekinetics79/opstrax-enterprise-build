@@ -45,9 +45,9 @@ public class RolePermissionReconcilerPostgresTests
 
         // driver:self gates all ~20 /api/driver/* routes.
         Assert.Contains("driver:self", effective);
-        // DVIR submit delegates to MaintInspectionCreate, which requires maintenance:create.
-        // Without it a driver could reach the DVIR form and still be denied on submit.
-        Assert.Contains("maintenance:create", effective);
+        // DVIR submit is authorized only by the dedicated driver:self route. Granting the
+        // back-office permission would let a driver call the generic maintenance endpoint.
+        Assert.DoesNotContain("maintenance:create", effective);
         // The "New Assignment" push is worthless if the driver cannot open their alerts.
         Assert.Contains("notifications:view", effective);
     }

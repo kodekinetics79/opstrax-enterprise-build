@@ -83,8 +83,8 @@ public class MaintenancePmBaselinePostgresTests
             "INSERT INTO companies (company_code, name, industry) VALUES (@code, 'PM Co', 'logistics') RETURNING id",
             c => c.Parameters.AddWithValue("@code", $"PM-{Guid.NewGuid():N}".Substring(0, 15)));
         var vid = await db.InsertAsync(
-            @"INSERT INTO vehicles (company_id, vehicle_code, type, odometer_miles, engine_hours)
-              VALUES (@cid, @code, 'reefer', 50000, @hrs) RETURNING id",
+            @"INSERT INTO vehicles (company_id, vehicle_code, type, vin_exception_type, alternate_identifier, odometer_miles, engine_hours)
+              VALUES (@cid, @code, 'reefer', 'legacy-fleet-identifier', @code, 50000, @hrs) RETURNING id",
             c => { c.Parameters.AddWithValue("@cid", cid); c.Parameters.AddWithValue("@code", $"V-{Guid.NewGuid():N}".Substring(0, 12)); c.Parameters.AddWithValue("@hrs", engineHours); });
         return (cid, vid);
     }

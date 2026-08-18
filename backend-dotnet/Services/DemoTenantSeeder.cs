@@ -342,7 +342,7 @@ public sealed class DemoTenantSeeder(Database db, IConfiguration? config = null)
             // Keep this exactly aligned with RolePermissionDefaults["Driver"]. A user-level
             // safety:update or back-office read bypasses the authoritative Driver role
             // reconciler because user permissions are unioned after role permissions.
-            "[\"driver:self\",\"notifications:view\",\"messages:send\",\"maintenance:create\"]", ct);
+            "[\"driver:self\",\"notifications:view\",\"messages:send\"]", ct);
         await UpsertPilotUserAsync(companyId, southBranchId, $"dispatch{suffix}@meridian.demo",
             "Meridian Dispatcher", "Dispatcher",
             "[\"dashboard:view\",\"drivers:view\",\"vehicles:view\",\"shipments:view\",\"dispatch:view\",\"dispatch:create\",\"dispatch:assign\",\"dispatch:update\",\"alerts:view\",\"safety:view\"]", ct);
@@ -688,10 +688,29 @@ public sealed class DemoTenantSeeder(Database db, IConfiguration? config = null)
             c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@code", code); c.Parameters.AddWithValue("@name", name); c.Parameters.AddWithValue("@email", $"{code.ToLowerInvariant()}@meridian.example"); c.Parameters.AddWithValue("@lic", $"VA-{code}"); c.Parameters.AddWithValue("@status", status); }, ct);
 
     private async Task<long> SeedVehicleAsync(long companyId, string code, string type, string status, CancellationToken ct)
-        => await db.InsertAsync(
-            @"INSERT INTO vehicles (company_id, vehicle_code, type, make, model, year, status, odometer_miles, readiness_score, risk_score)
-              VALUES (@companyId, @code, @type, 'Freightliner', 'Cascadia', 2022, @status, 82000, 93, 11)",
-            c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@code", code); c.Parameters.AddWithValue("@type", type); c.Parameters.AddWithValue("@status", status); }, ct);
+    {
+        var governedIdentityAvailable = await db.ScalarLongAsync(
+            @"SELECT COUNT(*) FROM information_schema.columns
+              WHERE table_schema=current_schema() AND table_name='vehicles'
+                AND column_name IN ('vin_exception_type','alternate_identifier')",
+            ct: ct) == 2;
+        var sql = governedIdentityAvailable
+            ? @"INSERT INTO vehicles
+                (company_id, vehicle_code, type, make, model, year, vin_exception_type, alternate_identifier,
+                 status, odometer_miles, readiness_score, risk_score)
+              VALUES (@companyId, @code, @type, 'Freightliner', 'Cascadia', 2022,
+                      'legacy-fleet-identifier', @alternate, @status, 82000, 93, 11)"
+            : @"INSERT INTO vehicles
+                (company_id, vehicle_code, type, make, model, year, status, odometer_miles, readiness_score, risk_score)
+              VALUES (@companyId, @code, @type, 'Freightliner', 'Cascadia', 2022,
+                      @status, 82000, 93, 11)";
+        return await db.InsertAsync(sql, c =>
+        {
+            c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@code", code);
+            c.Parameters.AddWithValue("@alternate", $"DEMO-{code}"); c.Parameters.AddWithValue("@type", type);
+            c.Parameters.AddWithValue("@status", status);
+        }, ct);
+    }
 
     private async Task<long> SeedJobAsync(long companyId, long customerId, long contractId, long rateCardId, string jobCode, string status, CancellationToken ct)
         => await db.InsertAsync(

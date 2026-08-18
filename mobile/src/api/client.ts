@@ -13,8 +13,8 @@ import type {
 type RequestOptions = {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: JsonRecord | unknown;
-  retryOn401?: boolean;
   headers?: HeadersInit;
+  retryOn401?: boolean;
 };
 
 type SessionAccess = {

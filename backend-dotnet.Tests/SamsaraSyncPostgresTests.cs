@@ -20,7 +20,7 @@ public sealed class SamsaraSyncPostgresTests
             "INSERT INTO companies(company_code,name,industry) VALUES(@code,'Samsara replay test','Transportation') RETURNING id",
             c => c.Parameters.AddWithValue("@code", $"SAM-{suffix[..10]}"));
         var vehicleId = await db.InsertAsync(
-            "INSERT INTO vehicles(company_id,vehicle_code,type) VALUES(@cid,@code,'truck') RETURNING id",
+            "INSERT INTO vehicles(company_id,vehicle_code,type,vin_exception_type,alternate_identifier) VALUES(@cid,@code,'truck','legacy-fleet-identifier',@code) RETURNING id",
             c =>
             {
                 c.Parameters.AddWithValue("@cid", companyId);

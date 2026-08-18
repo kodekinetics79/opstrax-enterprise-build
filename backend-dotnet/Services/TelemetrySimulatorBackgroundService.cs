@@ -17,7 +17,10 @@ namespace Opstrax.Api.Services;
 //
 // Gated by config so it never runs in a real deployment:
 //   Telemetry:Simulator:Enabled          (bool,   default false)
-//   Telemetry:Simulator:IntervalSeconds  (int,    default 4)
+//   Telemetry:Simulator:IntervalSeconds  (int,    default 30 — the demo fleet is ~900
+//                                          vehicles, so a fast tick writes hundreds of MB
+//                                          per hour; raise the rate only on a DB with room)
+//   Telemetry:Simulator:RetentionMinutes (int,    default 20 — breadcrumb window)
 //   Telemetry:Simulator:SpeedMultiplier  (double, default 20  — exaggerates ground
 //                                          distance so motion is visible at city zoom)
 public sealed class TelemetrySimulatorBackgroundService(
@@ -37,14 +40,16 @@ public sealed class TelemetrySimulatorBackgroundService(
             return;
         }
 
-        var intervalSeconds = Math.Clamp(config.GetValue("Telemetry:Simulator:IntervalSeconds", 4), 2, 60);
+        var intervalSeconds = Math.Clamp(config.GetValue("Telemetry:Simulator:IntervalSeconds", 30), 2, 60);
         var speedMultiplier = config.GetValue("Telemetry:Simulator:SpeedMultiplier", 20.0);
+        var retentionMinutes = Math.Clamp(config.GetValue("Telemetry:Simulator:RetentionMinutes", 20), 5, 240);
         var interval = TimeSpan.FromSeconds(intervalSeconds);
 
         // Let schema migrations / position seed settle first.
         await Task.Delay(TimeSpan.FromSeconds(20), stoppingToken).ContinueWith(_ => { }, stoppingToken);
 
-        logger.LogInformation("{Svc} started — tick {Interval}s, speed x{Mult}", SvcName, intervalSeconds, speedMultiplier);
+        logger.LogInformation("{Svc} started — tick {Interval}s, speed x{Mult}, breadcrumb retention {Retention}m",
+            SvcName, intervalSeconds, speedMultiplier, retentionMinutes);
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -60,7 +65,7 @@ public sealed class TelemetrySimulatorBackgroundService(
                     var tickDb = tickScope.ServiceProvider.GetRequiredService<Database>();
                     await tickDb.RunInSystemScopeAsync(async () =>
                     {
-                        moved = await TickAsync(intervalSeconds, speedMultiplier, stoppingToken);
+                        moved = await TickAsync(intervalSeconds, speedMultiplier, retentionMinutes, stoppingToken);
                     }, stoppingToken);
                 }
                 sw.Stop();
@@ -79,7 +84,7 @@ public sealed class TelemetrySimulatorBackgroundService(
         }
     }
 
-    private async Task<int> TickAsync(int dtSeconds, double speedMultiplier, CancellationToken ct)
+    private async Task<int> TickAsync(int dtSeconds, double speedMultiplier, int retentionMinutes, CancellationToken ct)
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<Database>();
@@ -169,7 +174,7 @@ public sealed class TelemetrySimulatorBackgroundService(
               WHERE engine_status IN ('Moving','Idle') AND received_at > NOW() - INTERVAL '10 seconds';
 
               DELETE FROM location_events
-              WHERE source='simulator' AND event_time < NOW() - INTERVAL '2 hours';
+              WHERE source='simulator' AND event_time < NOW() - (@retentionMinutes || ' minutes')::interval;
 
               -- Refresh the derived live-state that GPS Tracking, OBD/J1939 and Device
               -- Health read (telemetry_live_asset_states). Done in-batch (system scope) so
@@ -217,6 +222,7 @@ public sealed class TelemetrySimulatorBackgroundService(
             {
                 c.Parameters.AddWithValue("@dt", dtSeconds);
                 c.Parameters.AddWithValue("@mult", speedMultiplier);
+                c.Parameters.AddWithValue("@retentionMinutes", retentionMinutes);
             }, ct);
 
         return affected;

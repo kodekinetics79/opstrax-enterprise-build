@@ -33,6 +33,8 @@ jobs:
         working-directory: frontend
       - run: npm run lint -- --max-warnings=0
         working-directory: frontend
+      - run: npm run test:contracts
+        working-directory: frontend
       - run: npm run build
         working-directory: frontend
 
@@ -145,7 +147,7 @@ jobs:
         run: npm run test:guard
         working-directory: tests/e2e
       - name: Compile and enumerate all Playwright journeys
-        run: npm run test:list
+        run: npm run test:inventory
         working-directory: tests/e2e
       - name: Install pinned Playwright Chromium
         run: npx playwright install --with-deps chromium
@@ -465,6 +467,7 @@ jobs:
           test -f database/migrations/2026_08_13_stage78_country_profiles_runtime_contract.sql
           test -f database/migrations/2026_08_13_stage79_tenant_provisioning_runtime_contract.sql
           test -f database/migrations/2026_08_13_stage80_driver_proof_upload_binding.sql
+          test -f database/migrations/2026_08_14_stage80_fleet_identity_backbone.sql
           test -f database/migrations/telematics/001_latest_position_provenance.sql
           test -f database/migrations/telematics/002_device_lifecycle.sql
           test -f database/migrations/telematics/003_canonical_telemetry_timeseries.sql
@@ -555,6 +558,8 @@ jobs:
             "$RUNNER_TEMP/api-migrations/2026_08_13_stage79_tenant_provisioning_runtime_contract.sql"
           docker cp "$api_container:/app/Migrations/2026_08_13_stage80_driver_proof_upload_binding.sql" \
             "$RUNNER_TEMP/api-migrations/2026_08_13_stage80_driver_proof_upload_binding.sql"
+          docker cp "$api_container:/app/Migrations/2026_08_14_stage80_fleet_identity_backbone.sql" \
+            "$RUNNER_TEMP/api-migrations/2026_08_14_stage80_fleet_identity_backbone.sql"
           cmp database/migrations/2026_07_16_stage42_telemetry_gateways.sql \
             "$RUNNER_TEMP/api-migrations/2026_07_16_stage42_telemetry_gateways.sql"
           cmp database/migrations/2026_08_11_stage76_telematics_security_hardening.sql \
@@ -567,6 +572,8 @@ jobs:
             "$RUNNER_TEMP/api-migrations/2026_08_13_stage79_tenant_provisioning_runtime_contract.sql"
           cmp database/migrations/2026_08_13_stage80_driver_proof_upload_binding.sql \
             "$RUNNER_TEMP/api-migrations/2026_08_13_stage80_driver_proof_upload_binding.sql"
+          cmp database/migrations/2026_08_14_stage80_fleet_identity_backbone.sql \
+            "$RUNNER_TEMP/api-migrations/2026_08_14_stage80_fleet_identity_backbone.sql"
           cleanup
           trap - EXIT
       - name: Test and audit Telematics gateway solution

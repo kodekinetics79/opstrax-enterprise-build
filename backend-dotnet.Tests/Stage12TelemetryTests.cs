@@ -50,8 +50,18 @@ public class Stage12TelemetryTests
             Assert.NotNull(summary["riskRules"]);
             Assert.NotNull(summary["alerts"]);
             Assert.NotNull(summary["recommendations"]);
+            Assert.False(summary.ContainsKey("error"), summary.GetValueOrDefault("errorDetail")?.ToString());
             Assert.False(summary.ContainsKey("mobileReadiness"));
             Assert.True(entities.Count >= 0);
+
+            var alerts = (IReadOnlyList<Dictionary<string, object?>>)summary["alerts"]!;
+            Assert.Contains(alerts, alert =>
+                alert["alertType"]?.ToString() == "speeding"
+                && alert["status"]?.ToString() == "Open");
+            var recommendations = (IReadOnlyList<Dictionary<string, object?>>)summary["recommendations"]!;
+            Assert.Contains(recommendations, recommendation =>
+                recommendation["recommendationType"]?.ToString() == "telemetry.speeding"
+                && recommendation["title"]?.ToString() == "Speeding review");
 
             var kpis = (Dictionary<string, object?>)summary["kpis"]!;
             Assert.True(Convert.ToInt64(kpis["liveUnits"]) >= 0);

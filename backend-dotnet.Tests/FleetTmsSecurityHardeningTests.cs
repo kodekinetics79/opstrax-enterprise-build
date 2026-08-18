@@ -1,4 +1,5 @@
 using Opstrax.Api.Controllers;
+using Opstrax.Api.Services;
 
 namespace Opstrax.Tests;
 
@@ -51,6 +52,36 @@ public sealed class FleetTmsSecurityHardeningTests
         Assert.Contains("Latitude", FleetTmsColdChainEndpoints.ValidateReadingRequest(latitude), StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Longitude", FleetTmsColdChainEndpoints.ValidateReadingRequest(longitude), StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Humidity", FleetTmsColdChainEndpoints.ValidateReadingRequest(humidity), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("source", FleetTmsColdChainEndpoints.ValidateReadingRequest(Reading() with { Source = "Invented" }), StringComparison.OrdinalIgnoreCase);
+        Assert.Null(FleetTmsColdChainEndpoints.ValidateReadingRequest(Reading() with { Source = "Gateway" }));
+    }
+
+    [Fact]
+    public void ReadingSourceIsCanonicalAndUnknownSourcesFailClosed()
+    {
+        Assert.Equal("Sensor", FleetTmsColdChainFoundationService.NormalizeReadingSource(null));
+        Assert.Equal("Gateway", FleetTmsColdChainFoundationService.NormalizeReadingSource(" gateway "));
+        Assert.Throws<InvalidOperationException>(() => FleetTmsColdChainFoundationService.NormalizeReadingSource("estimated"));
+    }
+
+    [Fact]
+    public void ColdChainRuntimeDoesNotTrustCallerStatusOrManufactureBatteryEvidence()
+    {
+        var source = ReadSource("backend-dotnet", "Services", "FleetTmsColdChainFoundationService.cs");
+        Assert.Contains("var status = isBreach ? \"Breach\" : \"Normal\"", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("string.IsNullOrWhiteSpace(req.Status)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("THEN 98", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("battery_percent=", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DeviceRegistrationKeepsUnobservedTelemetryNull()
+    {
+        var endpoints = ReadSource("backend-dotnet", "Controllers", "FleetTmsColdChainEndpoints.cs");
+        Assert.Contains("(object?)req.LastReportedTemperatureCelsius ?? DBNull.Value", endpoints, StringComparison.Ordinal);
+        Assert.Contains("(object?)req.BatteryPercent ?? DBNull.Value", endpoints, StringComparison.Ordinal);
+        Assert.Contains("(object?)req.LastPingAtUtc ?? DBNull.Value", endpoints, StringComparison.Ordinal);
+        Assert.DoesNotContain("req.BatteryPercent ?? 0m", endpoints, StringComparison.Ordinal);
     }
 
     [Fact]

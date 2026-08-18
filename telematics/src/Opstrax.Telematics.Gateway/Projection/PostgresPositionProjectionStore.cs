@@ -53,7 +53,7 @@ internal sealed class PostgresPositionProjectionStore : IPositionProjectionStore
     }
 
     /// <inheritdoc />
-    public async Task<ProjectionOutcome> ApplyAsync(CanonicalTelemetryEvent evt, CancellationToken cancellationToken = default)
+    public async Task<ProjectionResult> ApplyAsync(CanonicalTelemetryEvent evt, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(evt);
         if (evt.CompanyId <= 0)
@@ -71,17 +71,31 @@ internal sealed class PostgresPositionProjectionStore : IPositionProjectionStore
         if (!long.TryParse(evt.DeviceId, NumberStyles.None, CultureInfo.InvariantCulture, out long deviceId) || deviceId <= 0)
             throw new InvalidOperationException("The production projector requires a numeric registry device id.");
 
+        // Revalidate authorization before even acknowledging an already-seen event. Revocation or
+        // reassignment must invalidate the cached TCP session, including duplicate retries.
+        DeviceContext device = await ResolveDeviceContextAsync(connection, tx, evt, deviceId, cancellationToken)
+            .ConfigureAwait(false);
+        if (evt.InstallationId is { } assertedInstallationId && assertedInstallationId != device.InstallationId)
+            throw new InvalidOperationException("Canonical installation provenance does not match the authoritative effective interval.");
+        CanonicalTelemetryEvent authoritativeEvent = evt with
+        {
+            VehicleId = device.VehicleId,
+            InstallationId = device.InstallationId,
+            AssignmentId = device.AssignmentId,
+            TripId = device.TripId,
+            DriverId = device.DriverId,
+        };
+
         // ── (a) idempotent inbox insert ─────────────────────────────────────────
-        int inboxRows = await InsertInboxAsync(connection, tx, evt, cancellationToken).ConfigureAwait(false);
+        int inboxRows = await InsertInboxAsync(
+            connection, tx, evt, device.VehicleId, cancellationToken).ConfigureAwait(false);
         if (inboxRows == 0)
         {
             // Already projected once — commit the (empty) transaction and no-op the snapshot.
             await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
-            return ProjectionOutcome.DuplicateIgnored;
+            return new ProjectionResult(ProjectionOutcome.DuplicateIgnored, authoritativeEvent);
         }
 
-        DeviceContext device = await ResolveDeviceContextAsync(connection, tx, evt, deviceId, cancellationToken)
-            .ConfigureAwait(false);
         await UpdateHeartbeatAsync(connection, tx, evt, deviceId, cancellationToken).ConfigureAwait(false);
 
         // The event is now recorded as seen. Heartbeat-only frames still update device health but
@@ -89,37 +103,54 @@ internal sealed class PostgresPositionProjectionStore : IPositionProjectionStore
         if (evt.Location is null)
         {
             await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
-            return ProjectionOutcome.NoLocation;
+            return new ProjectionResult(ProjectionOutcome.NoLocation, authoritativeEvent);
         }
 
         long historyEventId = await InsertLocationHistoryAsync(
-            connection, tx, evt, deviceId, device.DriverId, cancellationToken).ConfigureAwait(false);
+            connection, tx, evt, deviceId, device, cancellationToken).ConfigureAwait(false);
 
-        if (evt.VehicleId is not { } vehicleId)
+        if (device.VehicleId is not { } vehicleId)
         {
             await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
-            return ProjectionOutcome.NoVehicle;
+            return new ProjectionResult(ProjectionOutcome.NoVehicle, authoritativeEvent);
+        }
+
+        // Delayed evidence remains attached to its historical installation, but it must never
+        // mutate a live view or open an alert after that installation has ended.
+        if (!device.IsCurrentInstallation)
+        {
+            await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return new ProjectionResult(ProjectionOutcome.StaleIgnored, authoritativeEvent);
         }
 
         // ── (b) monotonic snapshot + current-alert parity ────────────────────────
         int upsertRows = await UpsertLatestPositionAsync(
-                connection, tx, evt, vehicleId, deviceId, device.DriverId, historyEventId, cancellationToken)
+                connection, tx, evt, vehicleId, deviceId, device, historyEventId, cancellationToken)
             .ConfigureAwait(false);
         // Novel out-of-order history is retained, but it cannot fabricate a current/open
         // speeding or geofence alert after losing the authoritative latest-position race.
         if (upsertRows > 0)
-            await ProjectAlertsAsync(connection, tx, evt, vehicleId, deviceId, device.DriverId,
-                device.VehicleBranchId, historyEventId, cancellationToken).ConfigureAwait(false);
+            await ProjectAlertsAsync(connection, tx, evt, vehicleId, deviceId, device,
+                historyEventId, cancellationToken).ConfigureAwait(false);
 
         await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
 
         // Zero rows means the WHERE guard rejected an older fix. Because the seen-set gate above
         // already removed exact duplicates, history and any novel evidence remain durable while the
         // current live snapshot and its open-alert view remain monotonic.
-        return upsertRows == 0 ? ProjectionOutcome.StaleIgnored : ProjectionOutcome.Applied;
+        return new ProjectionResult(
+            upsertRows == 0 ? ProjectionOutcome.StaleIgnored : ProjectionOutcome.Applied,
+            authoritativeEvent);
     }
 
-    private sealed record DeviceContext(long? DriverId, long? VehicleBranchId);
+    private sealed record DeviceContext(
+        long InstallationId,
+        long? VehicleId,
+        long? DriverId,
+        long? AssignmentId,
+        long? TripId,
+        long? VehicleBranchId,
+        bool IsCurrentInstallation);
 
     private static async Task<DeviceContext> ResolveDeviceContextAsync(
         NpgsqlConnection connection,
@@ -128,26 +159,107 @@ internal sealed class PostgresPositionProjectionStore : IPositionProjectionStore
         long deviceId,
         CancellationToken ct)
     {
+        long? lockedVehicleId;
+        await using (var lockCommand = new NpgsqlCommand(
+            """
+            SELECT vehicle_id
+              FROM eld_devices
+             WHERE id=@device_id AND company_id=@company_id AND deleted_at IS NULL
+               AND LOWER(BTRIM(status))='active'
+               AND LOWER(BTRIM(COALESCE(device_state,''))) NOT IN
+                   ('suspended','quarantined','lost','decommissioning','decommissioned','retired')
+             FOR UPDATE;
+            """, connection, tx))
+        {
+            lockCommand.Parameters.AddWithValue("device_id", deviceId);
+            lockCommand.Parameters.AddWithValue("company_id", evt.CompanyId);
+            await using var locked = await lockCommand.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            if (!await locked.ReadAsync(ct).ConfigureAwait(false))
+                throw new InvalidOperationException("The device is no longer active for telemetry ingestion.");
+            lockedVehicleId = locked.IsDBNull(0) ? null : locked.GetInt64(0);
+        }
+        if (lockedVehicleId != evt.VehicleId)
+            throw new InvalidOperationException("The device session binding changed before telemetry projection.");
+
         const string sql = """
-            SELECT e.driver_id, v.branch_id
-              FROM eld_devices e
-              LEFT JOIN vehicles v
-                ON v.id=e.vehicle_id AND v.company_id=e.company_id AND v.deleted_at IS NULL
-             WHERE e.id=@device_id AND e.company_id=@company_id AND e.deleted_at IS NULL
-               AND (@vehicle_id::bigint IS NULL OR e.vehicle_id=@vehicle_id)
-             LIMIT 1;
+            SELECT event_installation.id installation_id,
+                   event_installation.vehicle_id,
+                   assignment.driver_id,assignment.assignment_id,assignment.trip_id,
+                   vehicle.branch_id,
+                   event_installation.id=current_installation.id is_current_installation,
+                   event_installation.match_count event_installation_match_count,
+                   current_installation.match_count current_installation_match_count,
+                   assignment.match_count assignment_match_count
+              FROM eld_devices device
+              JOIN LATERAL (
+                    SELECT installation.id,installation.vehicle_id,COUNT(*) OVER() match_count
+                      FROM device_installations installation
+                     WHERE installation.device_id=device.id
+                       AND installation.company_id=device.company_id
+                       AND (LOWER(BTRIM(installation.status)) IN ('installed','verified')
+                            OR (LOWER(BTRIM(installation.status))='removed'
+                                AND installation.effective_to IS NOT NULL))
+                       AND installation.effective_from<=@device_fix_time
+                       AND (installation.effective_to IS NULL OR installation.effective_to>@device_fix_time)
+                     ORDER BY installation.effective_from DESC,installation.id DESC
+                     LIMIT 1
+              ) event_installation ON TRUE
+              JOIN LATERAL (
+                    SELECT installation.id,installation.vehicle_id,COUNT(*) OVER() match_count
+                      FROM device_installations installation
+                     WHERE installation.device_id=device.id
+                       AND installation.company_id=device.company_id
+                       AND LOWER(BTRIM(installation.status)) IN ('installed','verified')
+                       AND installation.effective_from<=NOW()
+                       AND (installation.effective_to IS NULL OR installation.effective_to>NOW())
+                     ORDER BY installation.effective_from DESC,installation.id DESC
+                     LIMIT 1
+              ) current_installation ON TRUE
+              LEFT JOIN LATERAL (
+                    SELECT candidate.id assignment_id,candidate.driver_id,candidate.trip_id,
+                           COUNT(*) OVER() match_count
+                      FROM dispatch_assignments candidate
+                     WHERE candidate.company_id=device.company_id
+                       AND candidate.vehicle_id=event_installation.vehicle_id
+                       AND candidate.assigned_at<=@device_fix_time
+                       AND COALESCE(LEAST(candidate.actual_delivery_at,candidate.completed_at,
+                                          candidate.cancelled_at),'infinity'::timestamptz)>@device_fix_time
+                     ORDER BY candidate.assigned_at DESC,candidate.id DESC
+                     LIMIT 1
+              ) assignment ON TRUE
+              LEFT JOIN vehicles vehicle
+                ON vehicle.id=event_installation.vehicle_id
+               AND vehicle.company_id=device.company_id AND vehicle.deleted_at IS NULL
+             WHERE device.id=@device_id AND device.company_id=@company_id
+               AND device.deleted_at IS NULL AND LOWER(BTRIM(device.status))='active'
+               AND LOWER(BTRIM(COALESCE(device.device_state,''))) NOT IN
+                   ('suspended','quarantined','lost','decommissioning','decommissioned','retired')
+               AND device.vehicle_id IS NOT DISTINCT FROM @session_vehicle_id
+               AND current_installation.vehicle_id IS NOT DISTINCT FROM device.vehicle_id;
             """;
         await using var command = new NpgsqlCommand(sql, connection, tx);
         command.Parameters.AddWithValue("device_id", deviceId);
         command.Parameters.AddWithValue("company_id", evt.CompanyId);
-        command.Parameters.Add(new NpgsqlParameter("vehicle_id", NpgsqlDbType.Bigint)
+        command.Parameters.AddWithValue("device_fix_time", Utc(evt.OccurredAtDeviceUtc));
+        command.Parameters.Add(new NpgsqlParameter("session_vehicle_id", NpgsqlDbType.Bigint)
             { Value = (object?)evt.VehicleId ?? DBNull.Value });
         await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
         if (!await reader.ReadAsync(ct).ConfigureAwait(false))
-            throw new InvalidOperationException("The registry ownership changed before telemetry projection.");
+            throw new InvalidOperationException("The device lifecycle, session binding, or effective installation changed before telemetry projection.");
+        if (reader.GetInt64(reader.GetOrdinal("event_installation_match_count")) != 1 ||
+            reader.GetInt64(reader.GetOrdinal("current_installation_match_count")) != 1)
+            throw new InvalidOperationException("Device installation intervals are ambiguous; telemetry attribution failed closed.");
+        int assignmentCountOrdinal = reader.GetOrdinal("assignment_match_count");
+        if (!reader.IsDBNull(assignmentCountOrdinal) && reader.GetInt64(assignmentCountOrdinal) != 1)
+            throw new InvalidOperationException("Dispatch assignment intervals are ambiguous; telemetry attribution failed closed.");
         return new DeviceContext(
-            reader.IsDBNull(0) ? null : reader.GetInt64(0),
-            reader.IsDBNull(1) ? null : reader.GetInt64(1));
+            reader.GetInt64(reader.GetOrdinal("installation_id")),
+            reader.IsDBNull(reader.GetOrdinal("vehicle_id")) ? null : reader.GetInt64(reader.GetOrdinal("vehicle_id")),
+            reader.IsDBNull(reader.GetOrdinal("driver_id")) ? null : reader.GetInt64(reader.GetOrdinal("driver_id")),
+            reader.IsDBNull(reader.GetOrdinal("assignment_id")) ? null : reader.GetInt64(reader.GetOrdinal("assignment_id")),
+            reader.IsDBNull(reader.GetOrdinal("trip_id")) ? null : reader.GetInt64(reader.GetOrdinal("trip_id")),
+            reader.IsDBNull(reader.GetOrdinal("branch_id")) ? null : reader.GetInt64(reader.GetOrdinal("branch_id")),
+            reader.GetBoolean(reader.GetOrdinal("is_current_installation")));
     }
 
     private static async Task UpdateHeartbeatAsync(
@@ -164,7 +276,10 @@ internal sealed class PostgresPositionProjectionStore : IPositionProjectionStore
                    last_heartbeat_at=CASE WHEN last_heartbeat_at IS NULL OR last_heartbeat_at<@received_at
                                           THEN @received_at ELSE last_heartbeat_at END,
                    updated_at=NOW()
-             WHERE id=@device_id AND company_id=@company_id AND deleted_at IS NULL;
+             WHERE id=@device_id AND company_id=@company_id AND deleted_at IS NULL
+               AND LOWER(BTRIM(status))='active'
+               AND LOWER(BTRIM(COALESCE(device_state,''))) NOT IN
+                   ('suspended','quarantined','lost','decommissioning','decommissioned','retired');
             """;
         await using var command = new NpgsqlCommand(sql, connection, tx);
         command.Parameters.AddWithValue("received_at", Utc(evt.ReceivedAtGatewayUtc));
@@ -179,24 +294,31 @@ internal sealed class PostgresPositionProjectionStore : IPositionProjectionStore
         NpgsqlTransaction tx,
         CanonicalTelemetryEvent evt,
         long deviceId,
-        long? driverId,
+        DeviceContext context,
         CancellationToken ct)
     {
         GeoPointValues geo = ReadGeo(evt.Location!.Value);
         const string sql = """
             INSERT INTO location_events
-                (company_id,vehicle_id,device_id,driver_id,lat,lng,speed_mph,heading,
+                (company_id,vehicle_id,device_id,driver_id,installation_id,assignment_id,trip_id,
+                 lat,lng,speed_mph,heading,
                  event_type,engine_status,fuel_level,odometer_miles,source,source_channel,
                  idempotency_key,observed_at,normalized_at,event_time,received_at)
             VALUES
-                (@company_id,@vehicle_id,@device_id,@driver_id,@lat,@lng,@speed_mph,@heading,
+                (@company_id,@vehicle_id,@device_id,@driver_id,@installation_id,@assignment_id,@trip_id,
+                 @lat,@lng,@speed_mph,@heading,
                  'ping',@engine_status,@fuel_level,@odometer_miles,'gps-tracker','raw-gt06',
                  @idempotency_key,@device_fix_time,@normalized_at,@device_fix_time,@received_at)
             ON CONFLICT DO NOTHING
             RETURNING id;
             """;
         await using var command = new NpgsqlCommand(sql, connection, tx);
-        AddCommonProjectionParameters(command, evt, deviceId, driverId, geo);
+        AddCommonProjectionParameters(command, evt, deviceId, context.VehicleId, context.DriverId, geo);
+        command.Parameters.AddWithValue("installation_id", context.InstallationId);
+        command.Parameters.Add(new NpgsqlParameter("assignment_id", NpgsqlDbType.Bigint)
+            { Value = (object?)context.AssignmentId ?? DBNull.Value });
+        command.Parameters.Add(new NpgsqlParameter("trip_id", NpgsqlDbType.Bigint)
+            { Value = (object?)context.TripId ?? DBNull.Value });
         command.Parameters.AddWithValue("idempotency_key", $"gt06:{evt.EventId:D}");
         object? inserted = await command.ExecuteScalarAsync(ct).ConfigureAwait(false);
         if (inserted is null or DBNull)
@@ -214,7 +336,11 @@ internal sealed class PostgresPositionProjectionStore : IPositionProjectionStore
     }
 
     private static async Task<int> InsertInboxAsync(
-        NpgsqlConnection connection, NpgsqlTransaction tx, CanonicalTelemetryEvent evt, CancellationToken ct)
+        NpgsqlConnection connection,
+        NpgsqlTransaction tx,
+        CanonicalTelemetryEvent evt,
+        long? vehicleId,
+        CancellationToken ct)
     {
         const string sql = """
             INSERT INTO telemetry_projection_inbox
@@ -232,7 +358,7 @@ internal sealed class PostgresPositionProjectionStore : IPositionProjectionStore
         cmd.Parameters.Add(new NpgsqlParameter("tenant_id", NpgsqlDbType.Uuid) { Value = evt.TenantId });
         cmd.Parameters.Add(new NpgsqlParameter("company_id", NpgsqlDbType.Bigint) { Value = evt.CompanyId });
         cmd.Parameters.Add(new NpgsqlParameter("device_id", NpgsqlDbType.Text) { Value = (object?)evt.DeviceId ?? DBNull.Value });
-        cmd.Parameters.Add(new NpgsqlParameter("vehicle_id", NpgsqlDbType.Bigint) { Value = (object?)evt.VehicleId ?? DBNull.Value });
+        cmd.Parameters.Add(new NpgsqlParameter("vehicle_id", NpgsqlDbType.Bigint) { Value = (object?)vehicleId ?? DBNull.Value });
         cmd.Parameters.Add(new NpgsqlParameter("device_fix_time", NpgsqlDbType.TimestampTz) { Value = Utc(evt.OccurredAtDeviceUtc) });
         cmd.Parameters.Add(new NpgsqlParameter("schema_version", NpgsqlDbType.Integer) { Value = evt.SchemaVersion });
 
@@ -245,7 +371,7 @@ internal sealed class PostgresPositionProjectionStore : IPositionProjectionStore
         CanonicalTelemetryEvent evt,
         long vehicleId,
         long deviceId,
-        long? driverId,
+        DeviceContext context,
         long sourceEventId,
         CancellationToken ct)
     {
@@ -253,14 +379,16 @@ internal sealed class PostgresPositionProjectionStore : IPositionProjectionStore
         // 004 migration. The clean UUID correlation anchor lives on the inbox row.
         const string sql = """
             INSERT INTO latest_vehicle_positions
-                (company_id, vehicle_id, device_id, driver_id, lat, lng, speed_mph, heading,
+                (company_id, vehicle_id, device_id, driver_id, installation_id, assignment_id, trip_id,
+                 lat, lng, speed_mph, heading,
                  engine_status, fuel_level, odometer_miles,
                  source, provider, protocol, adapter_version, confidence, trust_score,
                  quality_flags, device_fix_time, gateway_received_at, normalized_at,
                  event_time, received_at, event_count, source_event_id, source_channel,
                  telemetry_status, risk_level, updated_at)
             VALUES
-                (@company_id, @vehicle_id, @device_id, @driver_id, @lat, @lng, @speed_mph, @heading,
+                (@company_id, @vehicle_id, @device_id, @driver_id, @installation_id, @assignment_id, @trip_id,
+                 @lat, @lng, @speed_mph, @heading,
                  @engine_status, @fuel_level, @odometer_miles,
                  @source, @provider, @protocol, @adapter_version, @confidence, @trust_score,
                  @quality_flags::jsonb, @device_fix_time, @gateway_received_at, @normalized_at,
@@ -268,6 +396,8 @@ internal sealed class PostgresPositionProjectionStore : IPositionProjectionStore
                  @telemetry_status, @risk_level, NOW())
             ON CONFLICT (company_id, vehicle_id) DO UPDATE SET
                 device_id = EXCLUDED.device_id, driver_id = EXCLUDED.driver_id,
+                installation_id = EXCLUDED.installation_id,
+                assignment_id = EXCLUDED.assignment_id, trip_id = EXCLUDED.trip_id,
                 lat = EXCLUDED.lat, lng = EXCLUDED.lng,
                 speed_mph = EXCLUDED.speed_mph, heading = EXCLUDED.heading,
                 engine_status = EXCLUDED.engine_status, fuel_level = EXCLUDED.fuel_level,
@@ -298,7 +428,10 @@ internal sealed class PostgresPositionProjectionStore : IPositionProjectionStore
         cmd.Parameters.Add(new NpgsqlParameter("company_id", NpgsqlDbType.Bigint) { Value = evt.CompanyId });
         cmd.Parameters.Add(new NpgsqlParameter("vehicle_id", NpgsqlDbType.Bigint) { Value = vehicleId });
         cmd.Parameters.Add(new NpgsqlParameter("device_id", NpgsqlDbType.Bigint) { Value = deviceId });
-        cmd.Parameters.Add(new NpgsqlParameter("driver_id", NpgsqlDbType.Bigint) { Value = (object?)driverId ?? DBNull.Value });
+        cmd.Parameters.Add(new NpgsqlParameter("driver_id", NpgsqlDbType.Bigint) { Value = (object?)context.DriverId ?? DBNull.Value });
+        cmd.Parameters.AddWithValue("installation_id", context.InstallationId);
+        cmd.Parameters.Add(new NpgsqlParameter("assignment_id", NpgsqlDbType.Bigint) { Value = (object?)context.AssignmentId ?? DBNull.Value });
+        cmd.Parameters.Add(new NpgsqlParameter("trip_id", NpgsqlDbType.Bigint) { Value = (object?)context.TripId ?? DBNull.Value });
         cmd.Parameters.Add(new NpgsqlParameter("lat", NpgsqlDbType.Numeric) { Value = geo.Lat });
         cmd.Parameters.Add(new NpgsqlParameter("lng", NpgsqlDbType.Numeric) { Value = geo.Lng });
         cmd.Parameters.Add(new NpgsqlParameter("speed_mph", NpgsqlDbType.Numeric) { Value = geo.SpeedMph });
@@ -344,8 +477,7 @@ internal sealed class PostgresPositionProjectionStore : IPositionProjectionStore
         CanonicalTelemetryEvent evt,
         long vehicleId,
         long deviceId,
-        long? driverId,
-        long? vehicleBranchId,
+        DeviceContext context,
         long sourceEventId,
         CancellationToken ct)
     {
@@ -356,9 +488,9 @@ internal sealed class PostgresPositionProjectionStore : IPositionProjectionStore
         {
             const string speedSql = """
                 INSERT INTO telemetry_alerts
-                    (company_id,vehicle_id,device_id,driver_id,alert_type,severity,message,
-                     source_event_id,status,source_channel,created_at)
-                SELECT @company_id,@vehicle_id,@device_id,@driver_id,'speeding',
+                    (company_id,vehicle_id,device_id,driver_id,installation_id,assignment_id,trip_id,
+                     alert_type,severity,message,source_event_id,status,source_channel,created_at)
+                SELECT @company_id,@vehicle_id,@device_id,@driver_id,@installation_id,@assignment_id,@trip_id,'speeding',
                        COALESCE((SELECT severity FROM telemetry_rules
                                   WHERE company_id=@company_id AND rule_type='speeding' AND enabled=TRUE LIMIT 1),'High'),
                        @message,@source_event_id,'Open','raw-gt06',NOW()
@@ -368,20 +500,20 @@ internal sealed class PostgresPositionProjectionStore : IPositionProjectionStore
                           AND alert_type='speeding' AND status='Open');
                 """;
             await using var speed = new NpgsqlCommand(speedSql, connection, tx);
-            AddAlertIdentityParameters(speed, evt.CompanyId, vehicleId, deviceId, driverId, sourceEventId);
+            AddAlertIdentityParameters(speed, evt.CompanyId, vehicleId, deviceId, context, sourceEventId);
             speed.Parameters.AddWithValue("message", $"Vehicle {geo.SpeedMph:F0} mph exceeds {speedThreshold:F0} mph threshold");
             await speed.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
         }
 
         GeofenceBreach? breach = await FindGeofenceBreachAsync(
-            connection, tx, evt.CompanyId, vehicleBranchId, geo.Lat, geo.Lng, ct).ConfigureAwait(false);
+            connection, tx, evt.CompanyId, context.VehicleBranchId, geo.Lat, geo.Lng, ct).ConfigureAwait(false);
         if (breach is null) return;
 
         const string geofenceSql = """
             INSERT INTO telemetry_alerts
-                (company_id,vehicle_id,device_id,driver_id,alert_type,severity,message,
-                 source_event_id,status,source_channel,created_at)
-            SELECT @company_id,@vehicle_id,@device_id,@driver_id,'geofence_breach','High',
+                (company_id,vehicle_id,device_id,driver_id,installation_id,assignment_id,trip_id,
+                 alert_type,severity,message,source_event_id,status,source_channel,created_at)
+            SELECT @company_id,@vehicle_id,@device_id,@driver_id,@installation_id,@assignment_id,@trip_id,'geofence_breach','High',
                    @message,@source_event_id,'Open','raw-gt06',NOW()
              WHERE NOT EXISTS (
                    SELECT 1 FROM telemetry_alerts
@@ -389,7 +521,7 @@ internal sealed class PostgresPositionProjectionStore : IPositionProjectionStore
                       AND alert_type='geofence_breach' AND message=@message AND status='Open');
             """;
         await using var geofence = new NpgsqlCommand(geofenceSql, connection, tx);
-        AddAlertIdentityParameters(geofence, evt.CompanyId, vehicleId, deviceId, driverId, sourceEventId);
+        AddAlertIdentityParameters(geofence, evt.CompanyId, vehicleId, deviceId, context, sourceEventId);
         geofence.Parameters.AddWithValue("message", $"Vehicle outside geofence: {breach.Name}");
         await geofence.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
     }
@@ -471,12 +603,13 @@ internal sealed class PostgresPositionProjectionStore : IPositionProjectionStore
         NpgsqlCommand command,
         CanonicalTelemetryEvent evt,
         long deviceId,
+        long? vehicleId,
         long? driverId,
         GeoPointValues geo)
     {
         command.Parameters.AddWithValue("company_id", evt.CompanyId);
         command.Parameters.Add(new NpgsqlParameter("vehicle_id", NpgsqlDbType.Bigint)
-            { Value = (object?)evt.VehicleId ?? DBNull.Value });
+            { Value = (object?)vehicleId ?? DBNull.Value });
         command.Parameters.AddWithValue("device_id", deviceId);
         command.Parameters.Add(new NpgsqlParameter("driver_id", NpgsqlDbType.Bigint)
             { Value = (object?)driverId ?? DBNull.Value });
@@ -500,14 +633,19 @@ internal sealed class PostgresPositionProjectionStore : IPositionProjectionStore
         long companyId,
         long vehicleId,
         long deviceId,
-        long? driverId,
+        DeviceContext context,
         long sourceEventId)
     {
         command.Parameters.AddWithValue("company_id", companyId);
         command.Parameters.AddWithValue("vehicle_id", vehicleId);
         command.Parameters.AddWithValue("device_id", deviceId);
         command.Parameters.Add(new NpgsqlParameter("driver_id", NpgsqlDbType.Bigint)
-            { Value = (object?)driverId ?? DBNull.Value });
+            { Value = (object?)context.DriverId ?? DBNull.Value });
+        command.Parameters.AddWithValue("installation_id", context.InstallationId);
+        command.Parameters.Add(new NpgsqlParameter("assignment_id", NpgsqlDbType.Bigint)
+            { Value = (object?)context.AssignmentId ?? DBNull.Value });
+        command.Parameters.Add(new NpgsqlParameter("trip_id", NpgsqlDbType.Bigint)
+            { Value = (object?)context.TripId ?? DBNull.Value });
         command.Parameters.AddWithValue("source_event_id", sourceEventId);
     }
 

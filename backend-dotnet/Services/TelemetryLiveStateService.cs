@@ -264,19 +264,22 @@ public sealed class TelemetryLiveStateService(Database db)
                 c => c.Parameters.AddWithValue("@cid", companyId), ct);
             var recommendations = await db.QueryAsync(
                 @"SELECT id,
-                         module_key AS recommendation_type,
+                         recommendation_type,
                          title,
-                         COALESCE(body, description) AS summary,
-                         score AS confidence_score,
-                         score AS urgency_score,
-                         COALESCE(priority, 'medium') AS risk_level,
+                         COALESCE(NULLIF(body, ''), NULLIF(summary, ''), title) AS summary,
+                         confidence_score,
+                         urgency_score,
+                         risk_level,
                          status,
-                         correlation_id AS source_event_id,
-                         action_label AS actor_type,
-                         action_type AS actor_id,
-                         NULL::timestamptz AS created_at
+                         source_event_id,
+                         actor_type,
+                         actor_id,
+                         created_at
                   FROM ai_recommendations
-                  WHERE company_id=@tenantId AND (module_key LIKE 'telemetry.%' OR module_key IN ('control-tower', 'command-center', 'dispatch'))
+                  WHERE company_id=@tenantId
+                    AND (recommendation_type LIKE 'telemetry.%'
+                         OR module_key LIKE 'telemetry.%'
+                         OR module_key IN ('control-tower', 'command-center', 'dispatch'))
                   ORDER BY id DESC
                   LIMIT 12",
                 c => c.Parameters.AddWithValue("@tenantId", companyId), ct);

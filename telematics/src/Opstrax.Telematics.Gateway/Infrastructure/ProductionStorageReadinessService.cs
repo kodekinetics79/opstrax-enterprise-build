@@ -33,10 +33,11 @@ internal sealed class ProductionStorageReadinessService(
             connectionString,
             """
             WITH required_tables(name) AS (VALUES
-                ('eld_devices'),('telematics_device_trust_policy')
+                ('eld_devices'),('telematics_device_trust_policy'),('device_installations')
             ), required_privileges(table_name,privilege) AS (VALUES
                 ('eld_devices','SELECT'),
-                ('telematics_device_trust_policy','SELECT')
+                ('telematics_device_trust_policy','SELECT'),
+                ('device_installations','SELECT')
             ), missing AS (
                 SELECT name AS item FROM required_tables WHERE to_regclass(name) IS NULL
                 UNION ALL
@@ -61,6 +62,13 @@ internal sealed class ProductionStorageReadinessService(
                     SELECT 1 FROM information_schema.columns
                      WHERE table_schema=current_schema() AND table_name='eld_devices'
                        AND column_name='hmac_key_version')
+                UNION ALL
+                SELECT 'device_installations.' || required.column_name
+                  FROM (VALUES ('effective_from'),('effective_to'),('status')) required(column_name)
+                 WHERE NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                     WHERE table_schema=current_schema() AND table_name='device_installations'
+                       AND column_name=required.column_name)
             )
             SELECT COALESCE(string_agg(item,',' ORDER BY item),'') FROM missing
             """,
@@ -77,12 +85,14 @@ internal sealed class ProductionStorageReadinessService(
                 ('canonical_telemetry_events'),('telemetry_store_forward'),
                 ('telemetry_gateway_rejections'),('eld_devices'),('vehicles'),
                 ('location_events'),('latest_vehicle_positions'),('telemetry_alerts'),
-                ('telemetry_rules'),('geofences')
+                ('telemetry_rules'),('geofences'),('device_installations'),
+                ('dispatch_assignments')
             ), required_columns(table_name,column_name) AS (VALUES
                 ('telemetry_replay_seen','unwrapped_serial'),
                 ('telemetry_replay_seen','event_id'),
                 ('telemetry_replay_device_state','last_raw_serial'),
                 ('telemetry_replay_device_state','high_water_unwrapped'),
+                ('canonical_telemetry_events','installation_id'),
                 ('eld_devices','last_seen_at'),('eld_devices','last_heartbeat_at'),
                 ('eld_devices','updated_at'),('location_events','device_id'),
                 ('location_events','driver_id'),('location_events','engine_status'),
@@ -90,12 +100,23 @@ internal sealed class ProductionStorageReadinessService(
                 ('location_events','source'),('location_events','source_channel'),
                 ('location_events','idempotency_key'),('location_events','observed_at'),
                 ('location_events','normalized_at'),('location_events','received_at'),
+                ('location_events','installation_id'),('location_events','assignment_id'),
+                ('location_events','trip_id'),
+                ('device_installations','effective_from'),('device_installations','effective_to'),
+                ('device_installations','status'),
+                ('dispatch_assignments','assigned_at'),('dispatch_assignments','cancelled_at'),
+                ('dispatch_assignments','completed_at'),('dispatch_assignments','actual_delivery_at'),
+                ('dispatch_assignments','trip_id'),
                 ('latest_vehicle_positions','source_event_id'),
+                ('latest_vehicle_positions','installation_id'),
+                ('latest_vehicle_positions','assignment_id'),('latest_vehicle_positions','trip_id'),
                 ('latest_vehicle_positions','source_channel'),
                 ('latest_vehicle_positions','telemetry_status'),
                 ('latest_vehicle_positions','risk_level'),
                 ('latest_vehicle_positions','device_fix_time'),
                 ('telemetry_alerts','source_event_id'),
+                ('telemetry_alerts','installation_id'),('telemetry_alerts','assignment_id'),
+                ('telemetry_alerts','trip_id'),
                 ('telemetry_alerts','source_channel'),
                 ('telemetry_rules','threshold_value'),('geofences','branch_id'),
                 ('geofences','polygon_json')
@@ -114,7 +135,8 @@ internal sealed class ProductionStorageReadinessService(
                 ('latest_vehicle_positions','SELECT'),('latest_vehicle_positions','INSERT'),
                 ('latest_vehicle_positions','UPDATE'),
                 ('telemetry_alerts','SELECT'),('telemetry_alerts','INSERT'),
-                ('telemetry_rules','SELECT'),('geofences','SELECT')
+                ('telemetry_rules','SELECT'),('geofences','SELECT'),
+                ('device_installations','SELECT'),('dispatch_assignments','SELECT')
             ), required_sequences(name) AS (VALUES
                 ('telemetry_replay_seen_id_seq'),('canonical_telemetry_events_id_seq'),
                 ('telemetry_store_forward_id_seq'),('telemetry_gateway_rejections_id_seq'),

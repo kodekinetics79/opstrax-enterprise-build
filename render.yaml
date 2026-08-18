@@ -39,6 +39,12 @@ services:
         sync: false
       - key: Telemetry__GatewaySecret
         sync: false
+      # MUST stay "false" here. ConfigValidationService treats an enabled simulator
+      # as a CRITICAL failure in any protected environment (Production or Staging)
+      # and aborts startup: protected environments accept authenticated device or
+      # provider fixes only. Setting this true crash-loops the service.
+      # For live telematics use a real provider feed (docs/TELEMATICS_INTEGRATION.md
+      # option A); the simulator is for Development only.
       - key: Telemetry__Simulator__Enabled
         value: "false"
       - key: Sse__TicketKey

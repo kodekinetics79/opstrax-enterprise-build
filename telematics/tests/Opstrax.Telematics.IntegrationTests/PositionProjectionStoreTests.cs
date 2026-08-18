@@ -56,8 +56,8 @@ public class PositionProjectionStoreTests
         Guid id = Guid.NewGuid();
         var evt = Fix(id, T0);
 
-        ProjectionOutcome first = await store.ApplyAsync(evt);
-        ProjectionOutcome second = await store.ApplyAsync(evt);
+        ProjectionOutcome first = (await store.ApplyAsync(evt)).Outcome;
+        ProjectionOutcome second = (await store.ApplyAsync(evt)).Outcome;
 
         Assert.Equal(ProjectionOutcome.Applied, first);
         Assert.Equal(ProjectionOutcome.DuplicateIgnored, second);
@@ -77,9 +77,9 @@ public class PositionProjectionStoreTests
         var newer = Fix(Guid.NewGuid(), T0.AddMinutes(5), lat: 24.9, lng: 46.9);
         var older = Fix(Guid.NewGuid(), T0, lat: 24.1, lng: 46.1);
 
-        Assert.Equal(ProjectionOutcome.Applied, await store.ApplyAsync(newer));
+        Assert.Equal(ProjectionOutcome.Applied, (await store.ApplyAsync(newer)).Outcome);
         // The older fix arrives late (e.g. a delayed store-and-forward replay). It must not win.
-        Assert.Equal(ProjectionOutcome.StaleIgnored, await store.ApplyAsync(older));
+        Assert.Equal(ProjectionOutcome.StaleIgnored, (await store.ApplyAsync(older)).Outcome);
 
         CanonicalTelemetryEvent? latest = store.Latest(Company, Vehicle);
         Assert.NotNull(latest);
@@ -98,8 +98,8 @@ public class PositionProjectionStoreTests
         var older = Fix(Guid.NewGuid(), T0);
         var newer = Fix(Guid.NewGuid(), T0.AddMinutes(1));
 
-        Assert.Equal(ProjectionOutcome.Applied, await store.ApplyAsync(older));
-        Assert.Equal(ProjectionOutcome.Applied, await store.ApplyAsync(newer));
+        Assert.Equal(ProjectionOutcome.Applied, (await store.ApplyAsync(older)).Outcome);
+        Assert.Equal(ProjectionOutcome.Applied, (await store.ApplyAsync(newer)).Outcome);
 
         Assert.Equal(newer.EventId, store.Latest(Company, Vehicle)!.EventId);
     }
@@ -114,8 +114,8 @@ public class PositionProjectionStoreTests
         var a = Fix(Guid.NewGuid(), T0, lat: 1, lng: 1);
         var b = Fix(Guid.NewGuid(), T0, lat: 2, lng: 2);
 
-        Assert.Equal(ProjectionOutcome.Applied, await store.ApplyAsync(a));
-        Assert.Equal(ProjectionOutcome.Applied, await store.ApplyAsync(b));
+        Assert.Equal(ProjectionOutcome.Applied, (await store.ApplyAsync(a)).Outcome);
+        Assert.Equal(ProjectionOutcome.Applied, (await store.ApplyAsync(b)).Outcome);
 
         Assert.Equal(b.EventId, store.Latest(Company, Vehicle)!.EventId);
     }
@@ -126,12 +126,12 @@ public class PositionProjectionStoreTests
         var store = new InMemoryPositionProjectionStore();
         var heartbeat = Fix(Guid.NewGuid(), T0) with { Location = null };
 
-        Assert.Equal(ProjectionOutcome.NoLocation, await store.ApplyAsync(heartbeat));
+        Assert.Equal(ProjectionOutcome.NoLocation, (await store.ApplyAsync(heartbeat)).Outcome);
         Assert.Null(store.Latest(Company, Vehicle));
         Assert.Equal(1, store.SeenCount);
 
         // A redelivery of the same positionless event is still a duplicate no-op.
-        Assert.Equal(ProjectionOutcome.DuplicateIgnored, await store.ApplyAsync(heartbeat));
+        Assert.Equal(ProjectionOutcome.DuplicateIgnored, (await store.ApplyAsync(heartbeat)).Outcome);
     }
 
     [Fact]
@@ -140,7 +140,7 @@ public class PositionProjectionStoreTests
         var store = new InMemoryPositionProjectionStore();
         var unbound = Fix(Guid.NewGuid(), T0, vehicleId: null);
 
-        Assert.Equal(ProjectionOutcome.NoVehicle, await store.ApplyAsync(unbound));
+        Assert.Equal(ProjectionOutcome.NoVehicle, (await store.ApplyAsync(unbound)).Outcome);
         Assert.Null(store.Latest(Company, Vehicle));
         Assert.Equal(1, store.SeenCount);
     }

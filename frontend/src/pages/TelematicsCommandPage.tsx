@@ -81,7 +81,7 @@ const configs: Record<TelematicsKind, ClusterConfig> = {
   "cold-chain": {
     eyebrow: "Telematics & IoT",
     title: "Cold Chain Telemetry",
-    description: "Live cold-chain device readings, configured zone thresholds, battery, shipment linkage, freshness, and breach posture.",
+    description: "Reported cold-chain readings, configured zone thresholds, battery, shipment linkage, freshness, and breach posture. Freshness is based on the last reported timestamp.",
     columns: ["vehicleCode", "deviceName", "sensorType", "latestReading", "expectedRange", "sensorStatus", "signalStrength", "powerStatus", "calibrationStatus", "alertStatus"],
     emptyTitle: "No cold-chain telemetry found",
     emptySubtitle: "No cold-chain sensors are visible for this tenant and filter set.",
@@ -306,6 +306,7 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
             <button className="btn-primary" onClick={() => navigate("/iot-devices")}>
               <Truck className="h-4 w-4" /> Open Device Command
             </button>
+            {kind === "cold-chain" ? <button className="btn-ghost" onClick={() => navigate("/fleet-cold-chain")}><Thermometer className="h-4 w-4" /> Cold Chain Monitor</button> : null}
           </>
         }
       />
@@ -313,7 +314,13 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
       {notice ? (
         <div className="panel flex items-center justify-between gap-4 border border-emerald-400/20 bg-emerald-500/10 p-4 text-sm text-emerald-100">
           <span>{notice}</span>
-          <button className="icon-btn" onClick={() => setNotice(null)}><X className="h-4 w-4" /></button>
+          <button className="icon-btn" aria-label="Dismiss action message" onClick={() => setNotice(null)}><X className="h-4 w-4" /></button>
+        </div>
+      ) : null}
+
+      {refreshMut.isError || maintenanceMut.isError ? (
+        <div role="alert" className="panel border border-rose-300 bg-rose-50 p-4 text-sm text-rose-800">
+          {refreshMut.error instanceof Error ? refreshMut.error.message : maintenanceMut.error instanceof Error ? maintenanceMut.error.message : "The requested action was not completed."}
         </div>
       ) : null}
 
@@ -375,8 +382,10 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
           ) : (
             // No devices reported any live telemetry for this tenant yet.
             <EmptyState
-              title="No live telemetry yet"
-              subtitle={`No ${config.title.toLowerCase()} is streaming for this tenant. Provision or activate a device to see live data here.`}
+              title={kind === "cold-chain" ? "No reported cold-chain readings yet" : "No live telemetry yet"}
+              subtitle={kind === "cold-chain"
+                ? "No cold-chain device with a reported timestamp is visible for this tenant. Open Cold Chain Monitor to register devices or enter a clearly marked manual observation."
+                : `No ${config.title.toLowerCase()} is streaming for this tenant. Provision or activate a device to see live data here.`}
             />
           )
         ) : (
@@ -453,7 +462,7 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
       {selectedRecord ? (
         <div className="fixed inset-0 z-50 flex justify-end bg-black/55 backdrop-blur-sm" onClick={() => setSelected(null)}>
           <aside className="h-full w-full max-w-5xl overflow-y-auto border-l border-white/[0.09] bg-slate-950 p-6 shadow-2xl" onClick={(event) => event.stopPropagation()}>
-            <button className="float-right icon-btn" onClick={() => setSelected(null)}><X className="h-4 w-4" /></button>
+            <button className="float-right icon-btn" aria-label="Close telematics details" onClick={() => setSelected(null)}><X className="h-4 w-4" /></button>
             {detailQ.isLoading ? (
               <LoadingState />
             ) : detailQ.isError || !detailQ.data ? (

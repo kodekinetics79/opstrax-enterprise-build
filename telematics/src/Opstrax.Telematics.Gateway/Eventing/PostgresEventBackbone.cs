@@ -99,12 +99,14 @@ internal sealed class PostgresEventBackbone(string systemConnectionString) : IEv
         });
         const string sql = """
             INSERT INTO canonical_telemetry_events
-                (company_id, vehicle_id, device_id, correlation_id, event_type,
+                (company_id, vehicle_id, device_id, installation_id, assignment_id, trip_id,
+                 driver_id, correlation_id, event_type,
                  lat, lng, speed_mph, heading, source, provider, protocol,
                  adapter_version, confidence, trust_score, quality_flags, payload,
                  device_fix_time, gateway_received_at, event_time)
             VALUES
-                (@company_id, @vehicle_id, @device_id, @correlation_id, @event_type,
+                (@company_id, @vehicle_id, @device_id, @installation_id, @assignment_id, @trip_id,
+                 @driver_id, @correlation_id, @event_type,
                  @lat, @lng, @speed_mph, @heading, @source, @provider, @protocol,
                  @adapter_version, @confidence, @trust_score, @quality_flags::jsonb, @payload::jsonb,
                  @device_fix_time, @gateway_received_at, @event_time);
@@ -113,6 +115,10 @@ internal sealed class PostgresEventBackbone(string systemConnectionString) : IEv
         command.Parameters.AddWithValue("company_id", evt.CompanyId);
         command.Parameters.AddWithValue("vehicle_id", (object?)evt.VehicleId ?? DBNull.Value);
         command.Parameters.AddWithValue("device_id", long.TryParse(evt.DeviceId, out long deviceId) ? deviceId : DBNull.Value);
+        command.Parameters.AddWithValue("installation_id", (object?)evt.InstallationId ?? DBNull.Value);
+        command.Parameters.AddWithValue("assignment_id", (object?)evt.AssignmentId ?? DBNull.Value);
+        command.Parameters.AddWithValue("trip_id", (object?)evt.TripId ?? DBNull.Value);
+        command.Parameters.AddWithValue("driver_id", (object?)evt.DriverId ?? DBNull.Value);
         command.Parameters.AddWithValue("correlation_id", evt.CorrelationId);
         command.Parameters.AddWithValue("event_type", evt.Location is null ? "device.heartbeat" : "location.updated");
         command.Parameters.AddWithValue("lat", (object?)evt.Location?.Lat ?? DBNull.Value);

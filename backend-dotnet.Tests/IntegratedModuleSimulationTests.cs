@@ -90,7 +90,12 @@ public class IntegratedModuleSimulationTests
             var mobileReadyActions = stage9Summary["mobile_ready_actions"] as IEnumerable<object>;
             Assert.NotEmpty(mobileReadyActions ?? Array.Empty<object>());
 
-            Assert.NotEmpty((IEnumerable<Dictionary<string, object?>>)telemetrySummary["alerts"]!);
+            Assert.False(telemetrySummary.ContainsKey("error"), telemetrySummary.GetValueOrDefault("errorDetail")?.ToString());
+            Assert.Contains(
+                (IEnumerable<Dictionary<string, object?>>)telemetrySummary["alerts"]!,
+                alert => alert["alertType"]?.ToString() == "speeding"
+                         && alert["status"]?.ToString() == "Open"
+                         && Convert.ToInt64(alert["sourceEventId"]) == 90001);
             Assert.True((bool)safetySummary["foundation_ready"]!);
             Assert.Contains("fleet_health_summary", safetySummary.Keys);
             Assert.Contains("next_best_actions", safetySummary.Keys);
