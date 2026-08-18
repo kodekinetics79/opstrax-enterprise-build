@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import axios from "axios";
-import { ArrowRight, Loader2, ShieldCheck } from "lucide-react";
+import { ArrowRight, Eye, EyeOff, Loader2, ShieldCheck } from "lucide-react";
 import { OpsTraxLogo } from "@/components/OpsTraxLogo";
 import { usePlatformAuth } from "@/hooks/usePlatformAuth";
 import { platformApi } from "@/services/platformApi";
@@ -13,8 +13,18 @@ export function PlatformLoginPage() {
   const [password, setPassword] = useState("");
   const [mfaCode, setMfaCode] = useState("");
   const [mfaRequired, setMfaRequired] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [capsLock, setCapsLock] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // A platform password is long and pasted, so the two ways it silently fails —
+  // Caps Lock and copied surrounding whitespace — are invisible behind a masked
+  // field and both surface as the deliberately generic "Invalid credentials".
+  const trackCapsLock = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (typeof e.getModifierState === "function") setCapsLock(e.getModifierState("CapsLock"));
+  };
+  const hasEdgeWhitespace = password !== password.trim() && password.length > 0;
 
   const loginWith = async (nextEmail: string, nextPassword: string) => {
     setError(null);
@@ -133,17 +143,42 @@ export function PlatformLoginPage() {
                 className="field border-slate-700 bg-slate-900/70 text-slate-100 placeholder:text-slate-500 focus:border-teal-400"
               />
             </label>
-            <label className="block">
-              <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-500">Password</span>
-              <input
-                type="password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Enter password"
-                className="field border-slate-700 bg-slate-900/70 text-slate-100 placeholder:text-slate-500 focus:border-teal-400"
-              />
-            </label>
+            <div>
+              <label htmlFor="platform-password" className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-500">Password</label>
+              <div className="relative">
+                <input
+                  id="platform-password"
+                  type={showPassword ? "text" : "password"}
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  onKeyUp={trackCapsLock}
+                  onKeyDown={trackCapsLock}
+                  onBlur={() => setCapsLock(false)}
+                  autoComplete="current-password"
+                  placeholder="Enter password"
+                  className="field border-slate-700 bg-slate-900/70 pr-11 text-slate-100 placeholder:text-slate-500 focus:border-teal-400"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  aria-pressed={showPassword}
+                  aria-controls="platform-password"
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-lg p-2 text-slate-400 transition hover:bg-slate-800/70 hover:text-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-400"
+                >
+                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+              {capsLock && (
+                <p className="mt-1.5 text-xs text-amber-300">Caps Lock is on.</p>
+              )}
+              {hasEdgeWhitespace && (
+                <p className="mt-1.5 text-xs text-amber-300">
+                  This password starts or ends with a space — a pasted credential often carries one.
+                </p>
+              )}
+            </div>
             {mfaRequired && (
               <label className="block">
                 <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-500">Authenticator code</span>

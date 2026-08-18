@@ -105,20 +105,33 @@ services:
       # Allowed frontend origin(s) for CORS — set to the deployed Vercel URL.
       - key: Cors__AllowedOrigins
         sync: false
-      # Bootstrap Platform Admin credential. MUST be set explicitly in production —
-      # ConfigValidationService fails /health/deep if unset or left at the default.
+      # Bootstrap Platform Admin credential, and the DECLARED DESIRED STATE for that
+      # identity. MUST be set explicitly in production — ConfigValidationService fails
+      # /health/deep if unset or left at the default.
+      #
+      # PlatformSuperAdminReconciler reconciles these into the database on EVERY boot
+      # (see backend-dotnet/Services/PlatformSuperAdminReconciler.cs): it creates the
+      # account if the email is absent, repairs anything that blocks sign-in (disabled,
+      # pending invite, missing super-admin role), and applies the password whenever the
+      # declared credential is not already the one in force. So the fix for "Platform
+      # Admin rejects my credentials" is simply: set these two, redeploy. No flag needed.
+      # A later self-service password change is NOT overwritten, because the reconciler
+      # only rewrites the password when these values actually change.
       - key: PLATFORM_SUPERADMIN_EMAIL
         sync: false
       - key: PLATFORM_SUPERADMIN_PASSWORD
         sync: false
-      # Break-glass recovery ONLY. The super admin is seeded once; rotating the
-      # password above never re-reaches the DB on its own. Set this to "true",
-      # redeploy, sign in with PLATFORM_SUPERADMIN_EMAIL/PASSWORD, then set it back
-      # to "false" (or remove it) — PlatformSuperAdminReconciler reconciles the
-      # stored hash from env on boot only while it is armed. Leaving it "true" would
-      # overwrite any later self-service password change on the next deploy.
+      # FORCE override for the one case the above cannot detect: the env credential is
+      # unchanged but the password was changed inside the app and forgotten. Set to
+      # "true", redeploy, sign in, then set it back to "false" — while armed it re-applies
+      # the env password on every boot, overwriting any in-app change.
       - key: PLATFORM_SUPERADMIN_RESET
         value: "false"
+      # Opt OUT of env reconciliation entirely ("off"/"never") — only for a deployment
+      # that wants the database to be the sole owner of the bootstrap password. Leaving
+      # this unset keeps the self-healing behaviour that prevents permanent lockout.
+      # - key: PLATFORM_SUPERADMIN_SYNC
+      #   value: "off"
       - key: DemoSeed__Enabled
         value: "false"
       - key: DemoSeed__Password
