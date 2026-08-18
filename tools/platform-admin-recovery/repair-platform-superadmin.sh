@@ -29,11 +29,50 @@ set -euo pipefail
 : "${PLATFORM_PASSWORD:?set PLATFORM_PASSWORD to the password to install}"
 APPLY="${APPLY:-0}"
 
+# Catch a pasted placeholder before anything else — otherwise it surfaces as a confusing
+# password-policy or connection failure instead of "you left the angle brackets in".
+for var in PG_URL PLATFORM_EMAIL PLATFORM_PASSWORD; do
+  case "${!var}" in
+    *"<"*|*">"*)
+      echo "ERROR: $var still contains a placeholder: ${!var}" >&2
+      echo "Replace it with the real value. The angle brackets are not part of it." >&2
+      exit 1 ;;
+  esac
+done
+
+# Render stores the connection in .NET/Npgsql form (Host=...;Username=...;Password=...),
+# which psql cannot parse. Accept that form too and convert, so whatever you copy works.
+case "$PG_URL" in
+  postgres://*|postgresql://*) ;;
+  *Host=*|*host=*)
+    PG_URL="$(PG_URL="$PG_URL" python3 -c '
+import os, urllib.parse
+parts = {}
+for chunk in os.environ["PG_URL"].split(";"):
+    if "=" in chunk:
+        k, _, v = chunk.partition("=")
+        parts[k.strip().lower().replace(" ", "")] = v.strip()
+user = parts.get("username", parts.get("userid", parts.get("user", "")))
+password = parts.get("password", "")
+sslmode = parts.get("sslmode", "require").lower().replace(" ", "")
+sslmode = {"require": "require", "verifyfull": "verify-full", "verifyca": "verify-ca",
+           "prefer": "prefer", "disable": "disable"}.get(sslmode, "require")
+netloc = urllib.parse.quote(user, safe="")
+if password:
+    netloc += ":" + urllib.parse.quote(password, safe="")
+print("postgresql://%s@%s:%s/%s?sslmode=%s" % (
+    netloc, parts.get("host", "localhost"), parts.get("port", "5432"),
+    parts.get("database", parts.get("dbname", "postgres")), sslmode))
+')"
+    echo "Converted the .NET-style connection string to a psql URL." ;;
+esac
+
 # Same floor the API enforces — refuse to install a credential the app would reject.
 if [ "${#PLATFORM_PASSWORD}" -lt 12 ] \
    || ! printf '%s' "$PLATFORM_PASSWORD" | grep -q '[A-Za-z]' \
    || ! printf '%s' "$PLATFORM_PASSWORD" | grep -q '[0-9]'; then
   echo "ERROR: password must be at least 12 characters and contain a letter and a digit." >&2
+  echo "Supplied length: ${#PLATFORM_PASSWORD}." >&2
   exit 1
 fi
 
