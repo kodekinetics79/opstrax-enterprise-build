@@ -39,12 +39,14 @@ services:
         sync: false
       - key: Telemetry__GatewaySecret
         sync: false
-      # Demo telemetry producer. No external provider account or hardware is wired,
-      # so this is the only thing writing live positions/diagnostics. It self-prunes
-      # its own breadcrumbs older than 2h, keeping location_events bounded.
-      # Turn back to "false" when a real provider feed (Samsara/Motive/Geotab) lands.
+      # MUST stay "false" here. ConfigValidationService treats an enabled simulator
+      # as a CRITICAL failure in any protected environment (Production or Staging)
+      # and aborts startup: protected environments accept authenticated device or
+      # provider fixes only. Setting this true crash-loops the service.
+      # For live telematics use a real provider feed (docs/TELEMATICS_INTEGRATION.md
+      # option A); the simulator is for Development only.
       - key: Telemetry__Simulator__Enabled
-        value: "true"
+        value: "false"
       - key: Sse__TicketKey
         sync: false
       # Production startup fails closed unless tenant context is applied to every
