@@ -69,7 +69,9 @@ public sealed class EnterpriseJourneyHardeningTests
 
         Assert.Contains("Delivery cannot be closed until", page);
         Assert.Contains("does not queue proof offline", page);
-        Assert.Contains("proofType == \"delivery\" && string.IsNullOrWhiteSpace(evidenceHash)", endpoint);
+        Assert.Contains("proofType == \"delivery\" && requestedReferences.Length == 0", endpoint);
+        Assert.Contains("FROM dispatch_proof_uploads", endpoint);
+        Assert.Contains("AND consumed_at IS NULL AND reference=ANY(@refs)", endpoint);
         Assert.Contains("JOIN dispatch_proofs p ON p.id=pa.proof_id AND p.company_id=pa.company_id", endpoint);
         Assert.Contains("JOIN dispatch_assignments da ON da.id=p.assignment_id AND da.company_id=p.company_id", endpoint);
         Assert.Contains("new { assignment, exceptions, proofs, proofArtifacts, auditTrail }", endpoint);

@@ -146,6 +146,7 @@ MIGRATIONS=(
   2026_08_12_stage77_protected_role_bootstrap
   2026_08_13_stage78_country_profiles_runtime_contract
   2026_08_13_stage79_tenant_provisioning_runtime_contract
+  2026_08_13_stage80_driver_proof_upload_binding
   2026_08_14_stage80_fleet_identity_backbone
 )
 

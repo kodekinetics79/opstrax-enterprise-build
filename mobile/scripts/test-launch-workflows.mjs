@@ -16,7 +16,19 @@ test("MFA challenge is completed before a mobile session is stored", async () =>
   assert.match(login, /Verify code/);
 });
 
-test("proof and assignment controls invoke server mutations", async () => {
+test("driver proof and assignment controls invoke identity-scoped server mutations", async () => {
+  const [proof, trip] = await Promise.all([
+    source("src/screens/DriverProofScreen.tsx"),
+    source("src/screens/DriverTripScreen.tsx"),
+  ]);
+  assert.match(proof, /uploadDriverProofArtifact/);
+  assert.match(proof, /submitDriverProof/);
+  assert.match(proof, /requestForegroundPermissionsAsync/);
+  assert.match(trip, /updateDriverAssignmentStatus/);
+  assert.match(trip, /reportDriverException/);
+});
+
+test("operations proof and assignment controls invoke server mutations", async () => {
   const [proof, workflow] = await Promise.all([
     source("src/screens/ProofScreen.tsx"),
     source("src/screens/WorkflowScreen.tsx"),
@@ -27,30 +39,16 @@ test("proof and assignment controls invoke server mutations", async () => {
   assert.match(workflow, /rejectSmartAssignment/);
 });
 
-test("driver safety uses authenticated assignment identity and server-enforced departure gates", async () => {
-  const [client, screen, navigation] = await Promise.all([
+test("driver compliance consumes real HOS and idempotent DVIR contracts", async () => {
+  const [client, compliance] = await Promise.all([
     source("src/api/client.ts"),
-    source("src/screens/DriverSafetyScreen.tsx"),
-    source("src/navigation/RootNavigator.tsx"),
+    source("src/screens/DriverComplianceScreen.tsx"),
   ]);
-  assert.match(client, /currentDriverAssignment:[\s\S]*\/api\/driver\/assignments\/current/);
-  assert.match(client, /confirmDriverVehicle:[\s\S]*confirm-vehicle/);
-  assert.match(client, /submitDriverDvir:[\s\S]*Idempotency-Key/);
-  assert.match(client, /updateDriverAssignmentStatus:[\s\S]*\/status/);
-  assert.match(screen, /driverMe\(\)/);
-  assert.match(screen, /currentAssignment\.vehicleId/);
-  assert.doesNotMatch(screen, /vehicle id input/i);
-  assert.match(screen, /unit_suffix/);
-  assert.match(screen, /vin_suffix/);
-  assert.match(screen, /assignment\.vehicleUnitSuffixLength/);
-  assert.match(screen, /confirmationReference\.trim\(\)\.length !== confirmationLength/);
-  assert.match(screen, /Boolean\(item\.isRequired\) \? \[\] : \["na"\]/);
-  assert.match(screen, /DvirDriverAttestation/);
-  assert.match(screen, /attestationAccepted: true/);
-  assert.match(screen, /safePretripReady/);
-  assert.match(screen, /nextStatus === "en_route_pickup"/);
-  assert.match(navigation, /hasPermission\("driver:self"\)/);
-  assert.match(navigation, /canUseDriverSafety \? <Tabs\.Screen/);
+  assert.match(client, /Idempotency-Key/);
+  assert.match(client, /\/api\/driver\/dvir/);
+  assert.match(compliance, /driverHos/);
+  assert.match(compliance, /submitDriverDvir/);
+  assert.match(compliance, /ATTESTATION/);
 });
 
 test("mobile screens consume the actual nested API contracts", async () => {
@@ -68,15 +66,29 @@ test("mobile screens consume the actual nested API contracts", async () => {
   assert.match(telemetry, /fleetSafetyScore/);
 });
 
-test("mobile navigation and persisted job selection are identity scoped", async () => {
-  const [navigation, workflow] = await Promise.all([
+test("mobile navigation, login, and persisted state are tenant and identity scoped", async () => {
+  const [navigation, login, workflow] = await Promise.all([
     source("src/navigation/RootNavigator.tsx"),
+    source("src/screens/LoginScreen.tsx"),
     source("src/workflow/WorkflowContext.tsx"),
   ]);
-  assert.match(navigation, /canUseProof \? <Tabs\.Screen/);
-  assert.match(navigation, /canUseFleetHealth \? <Tabs\.Screen/);
+  assert.match(navigation, /directPermissions\.has\("driver:self"\)/);
+  assert.match(login, /Organization code/);
+  assert.match(login, /login\(email, password, companyCode\)/);
+  assert.match(navigation, /canProof \? <Tabs\.Screen/);
+  assert.match(navigation, /canFleet \? <Tabs\.Screen/);
   assert.match(workflow, /session\.company\.id/);
   assert.match(workflow, /session\.user\.id/);
+});
+
+test("manual object identifiers and fake offline success are not exposed", async () => {
+  const [dashboard, settings] = await Promise.all([
+    source("src/screens/DashboardScreen.tsx"),
+    source("src/screens/SettingsScreen.tsx"),
+  ]);
+  assert.doesNotMatch(dashboard, /Enter a real job id/);
+  assert.match(dashboard, /Manual database-ID entry is intentionally unavailable/);
+  assert.match(settings, /Live mutations require a connection/);
 });
 
 test("telemetry backend error payloads cannot render as zero-valued live truth", async () => {
@@ -94,12 +106,15 @@ test("mobile data calls and routes are permission-gated", async () => {
     source("src/screens/TelemetryScreen.tsx"),
     source("src/navigation/RootNavigator.tsx"),
   ]);
-  assert.match(dashboard, /canReadJobs \? api\.jobs\(\) : null/);
-  assert.match(dashboard, /selectedJobId && canReadSummary/);
+  assert.match(dashboard, /canReadJobs \? api\.jobs\(\) : \[\]/);
   assert.match(workflow, /selectedJobId && canReadRecommendations/);
   assert.match(workflow, /selectedJobId && canReadSiteAccess/);
   assert.match(telemetry, /canReadTelemetry \? api\.telemetrySummary\(\) : null/);
-  assert.match(navigation, /const canUseWorkflows/);
+  assert.match(navigation, /const canWork/);
+  assert.match(navigation, /const isCustomerProofReader = directPermissions\.has\("customer_portal:view"\) && !hasProofWorkflowPermission/);
+  assert.match(navigation, /const canProof = !isCustomerProofReader && hasAnyPermission/);
+  const proofGate = navigation.slice(navigation.indexOf("const canProof"), navigation.indexOf("const canFleet"));
+  assert.doesNotMatch(proofGate, /customer_portal:view/);
 });
 
 test("proof actions expose lifecycle and evidence blockers instead of silent no-ops", async () => {

@@ -24,7 +24,7 @@ function getLoginErrorMessage(error: unknown): string {
 
   const status = error.response?.status;
   if (status === 401) {
-    return "The email or password was not recognized. Please verify your credentials and try again.";
+    return "The organization code, email, or password was not recognized. Please verify your credentials and try again.";
   }
   if (status === 403) {
     return "Security verification did not complete. Refresh the page and try signing in again.";
@@ -458,9 +458,11 @@ const TRUST_SIGNALS = [
 export function LoginPage() {
   const { setSession } = useAuth();
   const navigate = useNavigate();
+  const [companyCode, setCompanyCode] = useState("");
   const [email, setEmail]           = useState("");
   const [password, setPassword]     = useState("");
   const [showPassword, setShowPass] = useState(false);
+  const [companyCodeError, setCompanyCodeError] = useState("");
   const [emailError, setEmailError] = useState("");
   // Identifier-first: "identify" collects the email; "authenticate" reveals the
   // password field OR the SSO button depending on the domain's SSO config; "mfa"
@@ -476,7 +478,8 @@ export function LoginPage() {
   // Resolve whether the email's domain routes to SSO. Fails OPEN to the password
   // field so a discovery outage never blocks a password login.
   const identify = useMutation({
-    mutationFn: async (e: string) => authApi.ssoDiscover(e),
+    mutationFn: async ({ email: e, companyCode: code }: { email: string; companyCode: string }) =>
+      authApi.ssoDiscover(e, code),
     onSuccess: (result) => {
       setSsoConn(result.ssoConfigured && result.connection ? result.connection : null);
       setStep("authenticate");
@@ -488,9 +491,9 @@ export function LoginPage() {
   });
 
   const login = useMutation({
-    mutationFn: async ({ email: e, password: p }: { email: string; password: string }) => {
+    mutationFn: async ({ email: e, password: p, companyCode: code }: { email: string; password: string; companyCode: string }) => {
       await authApi.bootstrap();
-      return authApi.login(e, p);
+      return authApi.login(e, p, code);
     },
     onSuccess: (result) => {
       if (isMfaChallenge(result)) {
@@ -552,10 +555,13 @@ export function LoginPage() {
   }, [step]);
 
   const continueWithEmail = () => {
+    const code = companyCode.trim();
     const value = email.trim();
+    if (!code) { setCompanyCodeError("Enter your organization code."); return; }
+    setCompanyCodeError("");
     if (!EMAIL_RE.test(value)) { setEmailError("Enter a valid work email address."); return; }
     setEmailError("");
-    identify.mutate(value);
+    identify.mutate({ email: value, companyCode: code });
   };
 
   const editEmail = () => {
@@ -579,7 +585,9 @@ export function LoginPage() {
     if (step === "identify") { continueWithEmail(); return; }
     if (step === "mfa") { if (mfaCode.trim()) mfaVerify.mutate(mfaCode.trim()); return; }
     if (ssoConn) { goToSso(); return; }
-    if (email.trim() && password) login.mutate({ email: email.trim(), password });
+    if (companyCode.trim() && email.trim() && password) {
+      login.mutate({ companyCode: companyCode.trim(), email: email.trim(), password });
+    }
   };
 
   const identifying = identify.isPending;
@@ -728,7 +736,7 @@ export function LoginPage() {
                 <h2 className="mt-2 text-2xl font-bold text-slate-950">Sign in</h2>
                 <p className="mt-1.5 text-sm leading-6 text-slate-500">
                   {step === "identify"
-                    ? "Enter your work email to continue."
+                    ? "Enter your organization code and work email to continue."
                     : step === "mfa"
                       ? "Enter the 6-digit code from your authenticator app."
                       : ssoConn
@@ -761,24 +769,44 @@ export function LoginPage() {
               <form onSubmit={submit} className="space-y-4" noValidate>
                 {/* Identity: editable email (step 1) → read-only chip (step 2) */}
                 {step === "identify" ? (
-                  <div>
-                    <label htmlFor="login-email" className="mb-1.5 block text-sm font-medium text-slate-700">Work email</label>
-                    <input
-                      id="login-email" type="email" inputMode="email" value={email}
-                      onChange={(e) => { setEmail(e.target.value); if (emailError) setEmailError(""); }}
-                      autoComplete="username" autoFocus placeholder="you@company.com"
-                      aria-invalid={emailError ? true : undefined}
-                      aria-describedby={emailError ? "login-email-error" : undefined}
-                      className="login2-field" />
-                    {emailError && (
-                      <p id="login-email-error" role="alert" className="mt-1.5 text-xs font-medium text-red-600">{emailError}</p>
-                    )}
-                  </div>
+                  <>
+                    <div>
+                      <label htmlFor="login-company-code" className="mb-1.5 block text-sm font-medium text-slate-700">Organization code</label>
+                      <input
+                        id="login-company-code" value={companyCode}
+                        onChange={(e) => { setCompanyCode(e.target.value); if (companyCodeError) setCompanyCodeError(""); }}
+                        autoComplete="off" autoFocus placeholder="Your tenant code"
+                        aria-invalid={companyCodeError ? true : undefined}
+                        aria-describedby={companyCodeError ? "login-company-code-error" : "login-company-code-help"}
+                        className="login2-field" />
+                      {companyCodeError ? (
+                        <p id="login-company-code-error" role="alert" className="mt-1.5 text-xs font-medium text-red-600">{companyCodeError}</p>
+                      ) : (
+                        <p id="login-company-code-help" className="mt-1.5 text-xs text-slate-500">Provided by your OpsTrax administrator.</p>
+                      )}
+                    </div>
+                    <div>
+                      <label htmlFor="login-email" className="mb-1.5 block text-sm font-medium text-slate-700">Work email</label>
+                      <input
+                        id="login-email" type="email" inputMode="email" value={email}
+                        onChange={(e) => { setEmail(e.target.value); if (emailError) setEmailError(""); }}
+                        autoComplete="username" placeholder="you@company.com"
+                        aria-invalid={emailError ? true : undefined}
+                        aria-describedby={emailError ? "login-email-error" : undefined}
+                        className="login2-field" />
+                      {emailError && (
+                        <p id="login-email-error" role="alert" className="mt-1.5 text-xs font-medium text-red-600">{emailError}</p>
+                      )}
+                    </div>
+                  </>
                 ) : (
                   <div className="login2-idchip">
                     <span className="flex min-w-0 items-center gap-2">
-                      <ShieldCheck className="h-4 w-4 shrink-0 text-teal-600" aria-hidden="true" />
-                      <span className="truncate text-sm font-medium text-slate-700">{email.trim()}</span>
+                      <Building2 className="h-4 w-4 shrink-0 text-teal-600" aria-hidden="true" />
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-medium text-slate-700">{email.trim()}</span>
+                        <span className="block truncate text-[11px] text-slate-500">Organization {companyCode.trim()}</span>
+                      </span>
                     </span>
                     <button type="button" onClick={editEmail}
                       className="shrink-0 text-xs font-semibold text-teal-700 transition hover:text-teal-600 focus-visible:outline-2 focus-visible:outline-teal-600">
@@ -839,7 +867,7 @@ export function LoginPage() {
                 {!(ssoConn && step === "authenticate") && (
                   <button type="submit" className="login2-cta"
                     disabled={
-                      step === "identify" ? (identifying || !email.trim())
+                      step === "identify" ? (identifying || !companyCode.trim() || !email.trim())
                         : step === "mfa" ? (mfaVerify.isPending || mfaCode.trim().length !== 6)
                           : (login.isPending || !password)
                     }>

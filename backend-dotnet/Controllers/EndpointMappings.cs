@@ -561,12 +561,13 @@ public static partial class EndpointMappings
             // covers much more than this one endpoint. Bucketed on the driver's user id,
             // so a partial rollout is a STABLE slice of drivers.
             // defaultOn:true — a tenant with no flag row must never lose POD upload.
-            // When off the driver app falls back to the text evidence reference, so
-            // delivery confirmation still works; it just loses the media.
+            // Delivery proof now requires a server-registered upload, so disabling this
+            // flag intentionally blocks driver-side delivery completion rather than
+            // falling back to an unverifiable client-supplied evidence reference.
             var podUserId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
             if (!await flags.IsEnabledAsync(companyId, "pod_media_capture", podUserId, defaultOn: true, ct))
                 return Results.Json(ApiResponse<object>.Fail("Feature turned off",
-                    "Photo/signature capture is currently switched off. Record the delivery using the evidence reference field."),
+                    "Photo/signature capture is currently switched off. Contact dispatch before completing delivery."),
                     statusCode: StatusCodes.Status403Forbidden);
 
             var driverId  = await GetDriverIdFromAuthAsync(http, db, ct);
@@ -579,7 +580,12 @@ public static partial class EndpointMappings
             var form = await http.Request.ReadFormAsync(ct);
             var file = form.Files["file"] ?? form.Files.FirstOrDefault();
             if (file is null || file.Length == 0) return Results.BadRequest(ApiResponse<object>.Fail("No file uploaded"));
-            var kind = form["kind"].FirstOrDefault() is { Length: > 0 } k ? k : "photo";
+            var kind = (form["kind"].FirstOrDefault() is { Length: > 0 } k ? k : "photo").Trim().ToLowerInvariant();
+            if (kind is not ("photo" or "signature"))
+                return Results.BadRequest(ApiResponse<object>.Fail("Evidence kind must be photo or signature"));
+            if (string.IsNullOrWhiteSpace(file.ContentType) ||
+                !file.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+                return Results.BadRequest(ApiResponse<object>.Fail("Proof evidence must be an image"));
 
             Opstrax.Api.Storage.FileStorageService.UploadResult stored;
             try
@@ -592,6 +598,28 @@ public static partial class EndpointMappings
                 LogSafeEndpointFailure(http, ex, "driver.proof.upload");
                 return Results.BadRequest(ApiResponse<object>.Fail("Upload rejected"));
             }
+
+            // Persist the upload's authoritative metadata only after durable storage
+            // succeeds. Proof submission never trusts a client-supplied objkey or its
+            // metadata; it locks and consumes this assignment-bound row instead.
+            var registered = await db.ExecuteAsync(
+                @"INSERT INTO dispatch_proof_uploads
+                    (company_id,assignment_id,driver_id,uploaded_by_user_id,kind,reference,content_type,size_bytes)
+                  VALUES (@cid,@aid,@did,@uid,@kind,@ref,@ctype,@size)
+                  ON CONFLICT (company_id,reference) DO NOTHING",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@cid", companyId);
+                    c.Parameters.AddWithValue("@aid", id);
+                    c.Parameters.AddWithValue("@did", driverId);
+                    c.Parameters.AddWithValue("@uid", podUserId);
+                    c.Parameters.AddWithValue("@kind", kind);
+                    c.Parameters.AddWithValue("@ref", stored.Reference);
+                    c.Parameters.AddWithValue("@ctype", stored.ContentType);
+                    c.Parameters.AddWithValue("@size", stored.Size);
+                }, ct);
+            if (registered != 1)
+                throw new InvalidOperationException("Durable proof upload could not be registered.");
 
             var resolved = await files.ResolveAsync(stored.Reference, TimeSpan.FromMinutes(15), ct);
             await audit.LogAsync(http, "driver.proof.artifact_uploaded", "DispatchAssignment", id,
@@ -2731,7 +2759,8 @@ public static partial class EndpointMappings
         PasswordPolicyService passwordPolicy,
         CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password))
+        if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password) ||
+            string.IsNullOrWhiteSpace(request.CompanyCode))
             return InvalidCredentials();
 
         var user = await db.QuerySingleAsync(
@@ -2739,11 +2768,14 @@ public static partial class EndpointMappings
                      c.id company_id, c.name company_name, c.company_code, c.status company_status, c.country company_country, c.currency company_currency,
                      c.entitlement_policy_mode
               FROM users u JOIN companies c ON c.id = u.company_id
-              WHERE LOWER(u.email)=LOWER(@email) LIMIT 1
+              WHERE LOWER(u.email)=LOWER(@email)
+                AND LOWER(c.company_code)=LOWER(@companyCode)
+              LIMIT 1
               FOR SHARE OF u, c",
             cmd =>
             {
                 cmd.Parameters.AddWithValue("@email", request.Email);
+                cmd.Parameters.AddWithValue("@companyCode", request.CompanyCode.Trim());
             }, ct);
         if (user is null) return InvalidCredentials();
 
@@ -3497,9 +3529,11 @@ public static partial class EndpointMappings
             new { ssoConfigured = false, usePassword = true, connection = (object?)null }));
 
         var email = (request.Email ?? string.Empty).Trim().ToLowerInvariant();
+        var companyCode = (request.CompanyCode ?? string.Empty).Trim();
         // Cheap structural validation only; never reveals whether the address is real.
         var at = email.LastIndexOf('@');
-        if (email.Length is 0 or > 320 || at <= 0 || at == email.Length - 1)
+        if (email.Length is 0 or > 320 || companyCode.Length is 0 or > 100 ||
+            at <= 0 || at == email.Length - 1)
             return Password();
 
         var domain = email[(at + 1)..];
@@ -3520,17 +3554,23 @@ public static partial class EndpointMappings
         try
         {
             row = await db.QuerySingleAsync(
-                @"SELECT id, company_id, provider_type, display_name
-                  FROM sso_connections
-                  WHERE enabled = true
-                    AND domain_hints IS NOT NULL
+                @"SELECT sc.id, sc.company_id, sc.provider_type, sc.display_name
+                  FROM sso_connections sc
+                  JOIN companies c ON c.id = sc.company_id
+                  WHERE sc.enabled = true
+                    AND lower(c.company_code) = lower(@companyCode)
+                    AND sc.domain_hints IS NOT NULL
                     AND EXISTS (
-                      SELECT 1 FROM jsonb_array_elements_text(domain_hints) AS h(v)
+                      SELECT 1 FROM jsonb_array_elements_text(sc.domain_hints) AS h(v)
                       WHERE lower(trim(h.v)) = @d
                     )
-                  ORDER BY id
+                  ORDER BY sc.id
                   LIMIT 1",
-                cmd => cmd.Parameters.AddWithValue("@d", domain), ct);
+                cmd =>
+                {
+                    cmd.Parameters.AddWithValue("@d", domain);
+                    cmd.Parameters.AddWithValue("@companyCode", companyCode);
+                }, ct);
         }
         catch (Exception)
         {
@@ -13478,8 +13518,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         return Results.Ok(ApiResponse<object>.Ok(new { id, status }, $"Status updated to {status}"));
     }
 
-    private sealed record LoginRequest(string Email, string Password);
-    private sealed record SsoDiscoverRequest(string? Email);
+    private sealed record LoginRequest(string Email, string Password, string CompanyCode);
+    private sealed record SsoDiscoverRequest(string? Email, string? CompanyCode);
     private sealed record ForgotPasswordRequest(string? Email);
     private sealed record ResetPasswordRequest(string? Email, string? Token, string? NewPassword);
     private sealed record ToggleBody(bool Enabled);
@@ -23008,7 +23048,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var row = await db.QuerySingleAsync(
             @"SELECT da.id, da.assignment_status, da.planned_pickup_at, da.planned_delivery_at,
                      da.actual_pickup_at, da.actual_delivery_at, da.accepted_at,
-                     da.notes, da.exception_count, da.trip_id, da.previous_status,
+                     da.notes, da.exception_count, da.trip_id, da.vehicle_id, da.job_id, da.previous_status,
                      COALESCE(j.job_number, j.job_code) shipment_number,
                      j.pickup_address, j.dropoff_address, customer.name customer_name,
                      v.vehicle_code,
@@ -23342,15 +23382,20 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             return Results.BadRequest(ApiResponse<object>.Fail("proof coordinates are invalid"));
         if ((body.Artifacts?.Length ?? 0) > 10)
             return Results.BadRequest(ApiResponse<object>.Fail("A proof can contain at most 10 artifacts"));
-        foreach (var artifact in body.Artifacts ?? [])
+        var requestedArtifacts = body.Artifacts ?? [];
+        foreach (var artifact in requestedArtifacts)
         {
             var kind = artifact.Kind?.Trim().ToLowerInvariant();
             if (kind is not ("photo" or "signature") || string.IsNullOrWhiteSpace(artifact.Reference) ||
                 artifact.Reference.Length > 2048 || artifact.ContentType?.Length > 120 || artifact.Size is < 0)
                 return Results.BadRequest(ApiResponse<object>.Fail("Proof artifact metadata is invalid"));
         }
-        if (proofType == "delivery" && string.IsNullOrWhiteSpace(evidenceHash) && (body.Artifacts?.Length ?? 0) == 0)
-            return Results.BadRequest(ApiResponse<object>.Fail("Delivery proof requires a photo, signature, or evidence reference"));
+        var requestedReferences = requestedArtifacts.Select(a => a.Reference!.Trim()).ToArray();
+        if (requestedReferences.Distinct(StringComparer.Ordinal).Count() != requestedReferences.Length)
+            return Results.BadRequest(ApiResponse<object>.Fail("A proof cannot reuse the same artifact more than once"));
+        if (proofType == "delivery" && requestedReferences.Length == 0)
+            return Results.BadRequest(ApiResponse<object>.Fail("Delivery proof requires a registered photo or signature upload"));
+        var userId = http.Items.TryGetValue(AuthUserIdItemKey, out var uid) && uid is not null ? Convert.ToInt64(uid) : 0L;
 
         return await db.RunInTenantTransactionAsync(companyId, async () =>
         {
@@ -23371,6 +23416,36 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                     c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@aid", id); c.Parameters.AddWithValue("@type", proofType); }, ct) > 0)
                 return Results.Conflict(ApiResponse<object>.Fail($"{proofType} proof has already been recorded"));
 
+            // Lock every requested registration before changing assignment state. The
+            // ownership tuple and unconsumed predicate reject fabricated, cross-driver,
+            // cross-assignment, and replayed references with one uniform response.
+            List<Dictionary<string, object?>> registeredArtifacts = requestedReferences.Length == 0
+                ? []
+                : await db.QueryAsync(
+                    @"SELECT id,kind,reference,content_type,size_bytes
+                      FROM dispatch_proof_uploads
+                      WHERE company_id=@cid AND assignment_id=@aid AND driver_id=@did AND uploaded_by_user_id=@uid
+                        AND consumed_at IS NULL AND reference=ANY(@refs)
+                      FOR UPDATE",
+                    c =>
+                    {
+                        c.Parameters.AddWithValue("@cid", companyId);
+                        c.Parameters.AddWithValue("@aid", id);
+                        c.Parameters.AddWithValue("@did", driverId);
+                        c.Parameters.AddWithValue("@uid", userId);
+                        c.Parameters.AddWithValue("@refs", requestedReferences);
+                    }, ct);
+            if (registeredArtifacts.Count != requestedReferences.Length)
+                return Results.BadRequest(ApiResponse<object>.Fail("One or more proof artifacts are invalid or no longer available"));
+            var registeredByReference = registeredArtifacts.ToDictionary(
+                row => row["reference"]!.ToString()!, StringComparer.Ordinal);
+            foreach (var requested in requestedArtifacts)
+            {
+                var registeredArtifact = registeredByReference[requested.Reference!.Trim()];
+                if (!string.Equals(registeredArtifact["kind"]?.ToString(), requested.Kind?.Trim(), StringComparison.OrdinalIgnoreCase))
+                    return Results.BadRequest(ApiResponse<object>.Fail("Proof artifact kind does not match the registered upload"));
+            }
+
             if (proofType == "delivery" &&
                 !await ApplyAssignmentTransitionAsync(db, companyId, id, "delivered", rawFrom, ct))
                 return Results.Conflict(ApiResponse<object>.Fail("Assignment changed while delivery proof was being recorded; refresh and retry"));
@@ -23384,7 +23459,6 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                     return Results.Conflict(ApiResponse<object>.Fail("Assignment changed while pickup proof was being recorded; refresh and retry"));
             }
 
-            var userId = http.Items.TryGetValue(AuthUserIdItemKey, out var uid) && uid is not null ? Convert.ToInt64(uid) : 0L;
             var proofId = await db.InsertAsync(
                 @"INSERT INTO dispatch_proofs
                     (company_id,assignment_id,proof_type,confirmed_at,confirmed_by_user_id,confirmed_by_driver_id,notes,evidence_hash,lat,lng)
@@ -23398,18 +23472,38 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                     c.Parameters.AddWithValue("@lat", body.Lat ?? (object)DBNull.Value); c.Parameters.AddWithValue("@lng", body.Lng ?? (object)DBNull.Value);
                 }, ct);
 
-            foreach (var artifact in body.Artifacts ?? [])
+            foreach (var reference in requestedReferences)
+            {
+                var artifact = registeredByReference[reference];
                 await db.ExecuteAsync(
                     @"INSERT INTO dispatch_proof_artifacts(company_id,proof_id,kind,reference,content_type,size_bytes)
                       VALUES (@cid,@pid,@kind,@ref,@ctype,@size)",
                     c =>
                     {
                         c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@pid", proofId);
-                        c.Parameters.AddWithValue("@kind", artifact.Kind!.Trim().ToLowerInvariant());
-                        c.Parameters.AddWithValue("@ref", artifact.Reference!.Trim());
-                        c.Parameters.AddWithValue("@ctype", (object?)artifact.ContentType ?? DBNull.Value);
-                        c.Parameters.AddWithValue("@size", (object?)artifact.Size ?? DBNull.Value);
+                        c.Parameters.AddWithValue("@kind", artifact["kind"]!.ToString()!);
+                        c.Parameters.AddWithValue("@ref", reference);
+                        c.Parameters.AddWithValue("@ctype", artifact["contentType"]!);
+                        c.Parameters.AddWithValue("@size", artifact["sizeBytes"]!);
                     }, ct);
+            }
+
+            if (registeredArtifacts.Count > 0)
+            {
+                var uploadIds = registeredArtifacts.Select(row => Convert.ToInt64(row["id"])).ToArray();
+                var consumed = await db.ExecuteAsync(
+                    @"UPDATE dispatch_proof_uploads
+                      SET consumed_at=NOW(),proof_id=@pid
+                      WHERE company_id=@cid AND id=ANY(@ids) AND consumed_at IS NULL",
+                    c =>
+                    {
+                        c.Parameters.AddWithValue("@pid", proofId);
+                        c.Parameters.AddWithValue("@cid", companyId);
+                        c.Parameters.AddWithValue("@ids", uploadIds);
+                    }, ct);
+                if (consumed != registeredArtifacts.Count)
+                    throw new InvalidOperationException("Proof artifact consumption lost its ownership lock.");
+            }
 
             await audit.LogAsync(http, "driver.proof.submitted", "DispatchAssignment", id,
                 $"{{\"proofId\":{proofId},\"type\":\"{proofType}\"}}", ct);

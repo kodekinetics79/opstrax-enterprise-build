@@ -466,6 +466,7 @@ jobs:
           test -f database/migrations/2026_08_12_stage77_protected_role_bootstrap.sql
           test -f database/migrations/2026_08_13_stage78_country_profiles_runtime_contract.sql
           test -f database/migrations/2026_08_13_stage79_tenant_provisioning_runtime_contract.sql
+          test -f database/migrations/2026_08_13_stage80_driver_proof_upload_binding.sql
           test -f database/migrations/2026_08_14_stage80_fleet_identity_backbone.sql
           test -f database/migrations/telematics/001_latest_position_provenance.sql
           test -f database/migrations/telematics/002_device_lifecycle.sql
@@ -555,6 +556,8 @@ jobs:
             "$RUNNER_TEMP/api-migrations/2026_08_13_stage78_country_profiles_runtime_contract.sql"
           docker cp "$api_container:/app/Migrations/2026_08_13_stage79_tenant_provisioning_runtime_contract.sql" \
             "$RUNNER_TEMP/api-migrations/2026_08_13_stage79_tenant_provisioning_runtime_contract.sql"
+          docker cp "$api_container:/app/Migrations/2026_08_13_stage80_driver_proof_upload_binding.sql" \
+            "$RUNNER_TEMP/api-migrations/2026_08_13_stage80_driver_proof_upload_binding.sql"
           docker cp "$api_container:/app/Migrations/2026_08_14_stage80_fleet_identity_backbone.sql" \
             "$RUNNER_TEMP/api-migrations/2026_08_14_stage80_fleet_identity_backbone.sql"
           cmp database/migrations/2026_07_16_stage42_telemetry_gateways.sql \
@@ -567,6 +570,8 @@ jobs:
             "$RUNNER_TEMP/api-migrations/2026_08_13_stage78_country_profiles_runtime_contract.sql"
           cmp database/migrations/2026_08_13_stage79_tenant_provisioning_runtime_contract.sql \
             "$RUNNER_TEMP/api-migrations/2026_08_13_stage79_tenant_provisioning_runtime_contract.sql"
+          cmp database/migrations/2026_08_13_stage80_driver_proof_upload_binding.sql \
+            "$RUNNER_TEMP/api-migrations/2026_08_13_stage80_driver_proof_upload_binding.sql"
           cmp database/migrations/2026_08_14_stage80_fleet_identity_backbone.sql \
             "$RUNNER_TEMP/api-migrations/2026_08_14_stage80_fleet_identity_backbone.sql"
           cleanup

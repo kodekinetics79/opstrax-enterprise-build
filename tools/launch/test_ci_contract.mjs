@@ -165,6 +165,7 @@ test("release API image contains the required gateway and terminal migrations", 
     "2026_07_16_stage42_telemetry_gateways.sql",
     "2026_08_11_stage76_telematics_security_hardening.sql",
     "2026_08_12_stage77_protected_role_bootstrap.sql",
+    "2026_08_13_stage80_driver_proof_upload_binding.sql",
   ]) {
     assert.match(dockerfile, new RegExp(`COPY database/migrations/${migration} database/migrations/`));
     assert.match(release, new RegExp(`test -f database/migrations/${migration}`));

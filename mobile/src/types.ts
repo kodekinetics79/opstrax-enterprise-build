@@ -28,8 +28,12 @@ export type MobileSession = {
     name: string;
     code: string;
     id?: number | string;
+    country?: string;
+    currency?: string;
   };
   permissions: string[];
+  entitlements?: Record<string, boolean>;
+  entitlementPolicyMode?: string;
 };
 
 export type MobileSessionEnvelope = {
@@ -69,4 +73,57 @@ export type WorkflowSummary = {
   telemetry: JsonRecord | null;
   safety: JsonRecord | null;
   maintenance: JsonRecord | null;
+};
+
+export type DriverAssignment = JsonRecord & {
+  id: number | string;
+  assignmentStatus?: string;
+  shipmentNumber?: string;
+  customerName?: string;
+  pickupAddress?: string;
+  dropoffAddress?: string;
+  plannedPickupAt?: string;
+  plannedDeliveryAt?: string;
+  vehicleCode?: string;
+  vehicleOos?: boolean;
+  openExceptions?: number;
+};
+
+export type DriverCurrentAssignment = {
+  assignment?: DriverAssignment;
+  driverNextStatuses?: string[];
+};
+
+export type DriverProfile = {
+  driver?: JsonRecord & {
+    id?: number | string;
+    fullName?: string;
+    status?: string;
+    vehicleId?: number | string;
+    vehicleCode?: string;
+    vehicleOos?: boolean;
+    vehicleAvailabilityStatus?: string;
+  };
+  currentAssignment?: DriverAssignment;
+  vehicleBlocking?: {
+    criticalDefects?: number;
+    blocked?: boolean;
+    reason?: string | null;
+  };
+  hos?: {
+    dataAvailable?: boolean;
+    remainingDriveHours?: number;
+    remainingShiftHours?: number;
+    hosStatus?: string;
+  };
+  coaching?: { pendingCount?: number };
+  guidance?: { level?: string; message?: string; type?: string }[];
+};
+
+export type DriverProofArtifact = {
+  kind: "photo" | "signature";
+  reference: string;
+  contentType?: string;
+  size?: number;
+  previewUrl?: string;
 };

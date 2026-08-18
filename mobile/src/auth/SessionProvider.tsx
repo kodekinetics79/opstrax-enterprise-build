@@ -15,7 +15,7 @@ type SessionContextValue = {
   normalizedRole: ReturnType<typeof classifyRole>;
   hasPermission: (permission: string) => boolean;
   api: ReturnType<typeof createMobileApiClient>;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string, companyCode: string) => Promise<void>;
   verifyMfa: (code: string) => Promise<void>;
   cancelMfa: () => void;
   logout: () => Promise<void>;
@@ -59,7 +59,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     if (!next) {
       void SecureStore.deleteItemAsync(SECURE_SESSION_KEY);
     } else {
-      void SecureStore.setItemAsync(SECURE_SESSION_KEY, JSON.stringify(next));
+      void SecureStore.setItemAsync(SECURE_SESSION_KEY, JSON.stringify(next), {
+        keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+      });
     }
   };
 
@@ -107,9 +109,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     })();
   }, [api]);
 
-  const login = useCallback(async (email: string, password: string) => {
+  const login = useCallback(async (email: string, password: string, companyCode: string) => {
     setAuthError(null);
-    const next = await api.login(email.trim(), password);
+    const next = await api.login(email.trim(), password, companyCode);
     if ("mfaRequired" in next && next.mfaRequired === true) {
       setMfaChallenge(next);
       return;
@@ -132,12 +134,15 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const cancelMfa = useCallback(() => setMfaChallenge(null), []);
 
   const logout = useCallback(async () => {
+    await SecureStore.deleteItemAsync(SECURE_SESSION_KEY);
+    setSessionState(null);
+    setMfaChallenge(null);
     try {
       await api.logout();
     } catch {
       // Local logout must still clear the session even if the server is unavailable.
     } finally {
-      setSession(null);
+      sessionRef.current = null;
     }
   }, [api]);
 
