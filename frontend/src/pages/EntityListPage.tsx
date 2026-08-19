@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { tokens, chart } from "@/styles/tokens";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Activity, AlertTriangle, Bot, ClipboardCheck, Download, Edit3, FileDown, FileText, Plus, Save, Search, Sparkles, Target, Trash2, Upload, UserCheck, X } from "lucide-react";
-import { useNavigate } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 import { AiInsightCard, DataTable, EmptyState, ErrorState, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, exportCsv, labelize } from "@/components/ui";
 import { DriverIntelligenceBoard, triageOf, type Triage } from "@/components/DriverIntelligenceBoard";
@@ -229,6 +229,10 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<AnyRecord | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  // Deep link from a module Overview ("New driver" etc.) straight into the create
+  // form. Single-add lives on the roster, but users look for it on Overview, which
+  // otherwise shows only the bulk Template/Import/Export actions.
+  const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const hasPermission = useHasPermission();
   const { session } = useAuth();
@@ -237,6 +241,16 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
   const queryClient = useQueryClient();
   const permissions = permissionMatrix(kind);
   const canCreate = hasPermission(permissions.create);
+
+  useEffect(() => {
+    if (searchParams.get("new") !== "1") return;
+    const next = new URLSearchParams(searchParams);
+    next.delete("new");
+    setSearchParams(next, { replace: true });
+    if (!canCreate || !cfg.api.create) return;
+    setIsCreating(true);
+    setEditing({ ...cfg.defaults });
+  }, [searchParams, setSearchParams, canCreate, cfg]);
   const canUpdate = hasPermission(permissions.update);
   const canDelete = hasPermission(permissions.delete);
   const canAssign = hasPermission(permissions.assign);

@@ -1,7 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router";
-import { ArrowRight, Boxes, ClipboardList, Gauge, ShieldAlert, Sparkles, Truck, Wrench } from "lucide-react";
+import {
+  ArrowRight,
+  Boxes,
+  ClipboardList,
+  Gauge,
+  Plus,
+  ShieldAlert,
+  Sparkles,
+  Truck,
+  Wrench,
+} from "lucide-react";
 import { LoadingState, ErrorState, KpiCard, EmptyState, DataTable, StatusBadge } from "@/components/ui";
 import { EntityImportExport } from "@/components/EntityImportExport";
 import { vehiclesApi } from "@/services/vehiclesApi";
@@ -128,6 +138,14 @@ export function VehiclesModulePage() {
             canImport={hasPermission("fleet:manage")}
             canExport={hasPermission("vehicles:view")}
           />
+          {/* Single-add sat only on the roster tab, so the Overview offered bulk import
+              but no way to add one record — users reasonably concluded it was missing.
+              Deep-links into the roster's existing create form rather than duplicating it. */}
+          <button type="button" disabled={!hasPermission("vehicles:create")}
+            title={hasPermission("vehicles:create") ? undefined : "You do not have permission to perform this action."}
+            onClick={() => navigate("/vehicles/roster?new=1")} className="btn-ghost h-10">
+            <Plus className="h-4 w-4" /> New vehicle
+          </button>
           <button type="button" onClick={() => navigate("/vehicles/roster")} className="btn-primary h-10">
             Open roster <ArrowRight className="h-4 w-4" />
           </button>
