@@ -66,10 +66,21 @@ function markerColor(freshness: FreshnessBucket | null, risk: string, status: st
   if (freshness === "offline") return freshnessColor("offline");
   if (freshness === "stale" || (freshness == null && isStale)) return freshnessColor("stale");
   if (freshness == null || (!deviceStatus && !cameraStatus)) return "#64748b";
-  const deviceOnline = Boolean(deviceStatus && /online|recording/i.test(deviceStatus));
-  const cameraOnline = Boolean(cameraStatus && /online|recording/i.test(cameraStatus));
-  if (!deviceOnline && !cameraOnline) return "#ef4444";
-  if (!deviceOnline || !cameraOnline) return "#f59e0b";
+  // A status is only informative if it actually reports something. The live-state query
+  // supplies no device/camera columns, so callers pass the placeholder "--"; treating
+  // that as "offline" painted every marker of a healthy, live-streaming fleet red.
+  // Unknown means unknown: gate only on channels that truly reported, otherwise fall
+  // through to the risk/freshness/motion colouring below.
+  const known = (value?: string) =>
+    Boolean(value && value.trim() && !/^[-–—]+$/.test(value.trim()));
+  const reported = [
+    known(deviceStatus) ? /online|recording/i.test(deviceStatus!) : null,
+    known(cameraStatus) ? /online|recording/i.test(cameraStatus!) : null,
+  ].filter((v): v is boolean => v !== null);
+  if (reported.length > 0) {
+    if (reported.every((v) => !v)) return "#ef4444";
+    if (reported.some((v) => !v)) return "#f59e0b";
+  }
   if (/high|critical/i.test(risk)) return "#ef4444";
   if (/medium|warning/i.test(risk)) return "#f59e0b";
   if (freshness === "delayed") return freshnessColor("delayed"); // aging fix

@@ -1,7 +1,6 @@
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Camera,
   CheckCircle,
   Gauge,
   History,
@@ -62,9 +61,14 @@ type ReplaySpeed = (typeof REPLAY_SPEEDS)[number];
 type BreadcrumbPoint = {
   lat: number;
   lng: number;
+  // Database.ToCamel camel-cases every column, so the API sends speedMph/eventTime.
+  // The snake_case-only declaration made both read undefined for every replay point.
+  speedMph?: number | null;
   speed_mph?: number | null;
   heading?: number | null;
+  engineStatus?: string | null;
   engine_status?: string | null;
+  eventTime?: string | null;
   event_time?: string | null;
   source?: string | null;
 };
@@ -534,10 +538,16 @@ export function LiveMapPage() {
           <div className="flex flex-wrap items-center justify-between gap-x-5 gap-y-2">
             <h2 className="section-title">Live Operations Map</h2>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs font-semibold text-slate-400">
-              <MetaStat icon={<Satellite className="h-3.5 w-3.5 text-teal-500" />} value={String(kpis.onlineDevices ?? "--")} label="devices" />
-              <MetaStat icon={<Camera className="h-3.5 w-3.5 text-violet-500" />} value={String(kpis.onlineCameras ?? "--")} label="cameras" />
-              <MetaStat icon={<Gauge className="h-3.5 w-3.5 text-blue-500" />} value={String(kpis.telemetryQuality ?? "--")} label="quality" />
-              <MetaStat icon={<ShieldAlert className="h-3.5 w-3.5 text-amber-500" />} value={String(kpis.speedAlerts ?? "--")} label="speed alerts" />
+              {/* Bound to keys BuildKpis actually emits. The previous four
+                  (onlineDevices/onlineCameras/telemetryQuality/speedAlerts) are produced
+                  by no endpoint, so this header read "-- -- -- --" permanently. The
+                  camera stat is dropped rather than rebound: vehicles.camera_status
+                  defaults to 'Online' and is never recomputed, so any camera figure
+                  would be fabricated. */}
+              <MetaStat icon={<Satellite className="h-3.5 w-3.5 text-teal-500" />} value={String(kpis.registeredDevices ?? "--")} label="devices" />
+              <MetaStat icon={<Wifi className="h-3.5 w-3.5 text-violet-500" />} value={String(kpis.connectedUnits ?? "--")} label="connected" />
+              <MetaStat icon={<Gauge className="h-3.5 w-3.5 text-blue-500" />} value={kpis.liveCoverage != null ? `${kpis.liveCoverage}%` : "--"} label="live" />
+              <MetaStat icon={<ShieldAlert className="h-3.5 w-3.5 text-amber-500" />} value={String(kpis.openAlerts ?? "--")} label="open alerts" />
             </div>
           </div>
 
@@ -827,8 +837,9 @@ function ReplayPanel({
   onRetry: () => void;
 }) {
   const hasTrail = totalPoints > 0;
-  const speedMph = currentPoint?.speed_mph != null && Number.isFinite(Number(currentPoint.speed_mph))
-    ? Number(currentPoint.speed_mph)
+  const pointSpeed = currentPoint?.speedMph ?? currentPoint?.speed_mph;
+  const speedMph = pointSpeed != null && Number.isFinite(Number(pointSpeed))
+    ? Number(pointSpeed)
     : null;
   return (
     <div className="pointer-events-auto absolute inset-x-3 bottom-3 z-[500] rounded-2xl border border-amber-300 bg-white/95 p-3 shadow-xl backdrop-blur sm:inset-x-4 sm:bottom-4 sm:p-4">
@@ -905,7 +916,7 @@ function ReplayPanel({
           <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs font-medium text-slate-500">
             <span className="tabular-nums text-slate-700">point {index + 1} / {totalPoints}</span>
             <span>·</span>
-            <span>{formatClock(currentPoint?.event_time)}</span>
+            <span>{formatClock(currentPoint?.eventTime ?? currentPoint?.event_time)}</span>
             <span>·</span>
             <span className="inline-flex items-center gap-1 text-teal-600"><Navigation className="h-3 w-3" />{speedMph == null ? "speed unavailable" : `${Math.round(speedMph)} mph`}</span>
           </div>
