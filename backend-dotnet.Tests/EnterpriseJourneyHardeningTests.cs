@@ -102,7 +102,18 @@ public sealed class EnterpriseJourneyHardeningTests
         Assert.Contains("Retry telemetry snapshot", map);
         Assert.Contains("if (!hasFreshnessAge) return \"Unknown\"", map);
         Assert.Contains("live|fresh|online|healthy|delayed", map);
-        Assert.Contains("kpis.onlineDevices ?? \"--\"", map);
+        // A KPI tile must render "--" when the API omits the value, never a fabricated
+        // number. The KEYS changed -- onlineDevices/onlineCameras/telemetryQuality/
+        // speedAlerts are emitted by no endpoint, so that header read "-- -- -- --"
+        // permanently -- but the honesty requirement is unchanged, and is now asserted
+        // across all four tiles instead of one.
+        Assert.Contains("kpis.registeredDevices ?? \"--\"", map);
+        Assert.Contains("kpis.connectedUnits ?? \"--\"", map);
+        Assert.Contains("kpis.openAlerts ?? \"--\"", map);
+        Assert.Contains("kpis.liveCoverage != null ?", map);
+        // The camera tile is deliberately absent: vehicles.camera_status defaults to
+        // 'Online' and is never recomputed, so any camera figure would be invented.
+        Assert.DoesNotContain("kpis.onlineCameras", map);
         Assert.Contains("s === \"healthy\"", monitor);
         Assert.Contains("Unknown telemetry", monitor);
         Assert.Contains("Alert state unknown", wall);
