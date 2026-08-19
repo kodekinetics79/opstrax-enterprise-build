@@ -3799,7 +3799,9 @@ public static partial class EndpointMappings
                 var frontend = (Environment.GetEnvironmentVariable("FRONTEND_PUBLIC_URL")
                     ?? Environment.GetEnvironmentVariable("PUBLIC_APP_URL") ?? "").TrimEnd('/');
                 var link = $"{frontend}/reset-password?email={Uri.EscapeDataString(email)}&token={Uri.EscapeDataString(rawToken)}";
-                var sent = frontend.Length > 0 && await PlatformMailService.TrySendAsync(email, "Reset your OpsTrax password",
+                var mailService = http.RequestServices?.GetService<PlatformMailService>();
+                var sent = frontend.Length > 0 && mailService is not null
+                    && await mailService.TrySendAsync(email, "Reset your OpsTrax password",
                     $"Hello {user["fullName"]},\n\nUse this one-time link within 30 minutes to reset your OpsTrax password:\n{link}\n\nIf you did not request this, you can ignore this message.", ct);
                 await db.ExecuteAsync(
                     @"INSERT INTO security_events (company_id,user_id,event_type,severity,source_ip_truncated,user_agent_hash,success,safe_message,metadata_json)

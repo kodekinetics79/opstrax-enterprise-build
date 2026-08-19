@@ -253,7 +253,11 @@ builder.Services.AddSingleton<TenantApiSchemaService>();
 // Platform Admin — global SaaS business control plane (separate from tenant admin)
 builder.Services.AddSingleton<PlatformSchemaService>();
 // Operator-editable platform configuration (SMTP today) — DB-first with an env fallback, so
-// mail can be switched on from the console instead of requiring a redeploy.
+// mail can be switched on from the console instead of requiring a redeploy. Singleton to match
+// Database/PiiProtectionService, and because the outbox dispatcher (a singleton) resolves the
+// mail service to deliver detention notices.
+builder.Services.AddSingleton<PlatformSettingsService>();
+builder.Services.AddSingleton<PlatformMailService>();
 // Country profiles — platform-managed market/localization defaults + tenant cascade
 builder.Services.AddSingleton<CountryProfileSchemaService>();
 builder.Services.AddScoped<CountryProfileService>();
@@ -471,6 +475,7 @@ using (var scope = app.Services.CreateScope())
     await RunSchemaStep(app, "Security",          () => scope.ServiceProvider.GetRequiredService<SecuritySchemaService>().EnsureAsync());
     await RunSchemaStep(app, "TenantApi",         () => scope.ServiceProvider.GetRequiredService<TenantApiSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Platform",          () => scope.ServiceProvider.GetRequiredService<PlatformSchemaService>().EnsureAsync());
+    await RunSchemaStep(app, "PlatformSettings",  () => scope.ServiceProvider.GetRequiredService<PlatformSettingsService>().EnsureSchemaAsync());
     await RunSchemaStep(app, "CountryProfiles",    () => scope.ServiceProvider.GetRequiredService<CountryProfileSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Zatca",              () => scope.ServiceProvider.GetRequiredService<ZatcaSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Revenue",           () => scope.ServiceProvider.GetRequiredService<RevenueSchemaService>().EnsureAsync());

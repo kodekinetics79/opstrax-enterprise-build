@@ -13,6 +13,7 @@ import { PlatformAuditPage } from "./PlatformAuditPage";
 import { PlatformSupportAccessPage } from "./PlatformSupportAccessPage";
 import { PlatformCommercialOpsPage } from "./PlatformCommercialOpsPage";
 import { PlatformOperatorsPage } from "./PlatformOperatorsPage";
+import { PlatformEmailSettingsPage } from "./PlatformEmailSettingsPage";
 import { PlatformAcceptInvitePage } from "./PlatformAcceptInvitePage";
 import { PlatformAccountPage } from "./PlatformAccountPage";
 
@@ -51,6 +52,7 @@ export default function PlatformApp() {
           <Route path="audit" element={<Guard permission="platform:audit:view"><PlatformAuditPage /></Guard>} />
           <Route path="support-access" element={<Guard permission="platform:tenants:view"><PlatformSupportAccessPage /></Guard>} />
           <Route path="operators" element={<Guard permission="platform:admins:view"><PlatformOperatorsPage /></Guard>} />
+          <Route path="settings/email" element={<Guard permission="platform:settings:manage"><PlatformEmailSettingsPage /></Guard>} />
           {/* Self-service: every signed-in admin can manage their own account. */}
           <Route path="account" element={<Guard permission="platform:dashboard:view"><PlatformAccountPage /></Guard>} />
         </Route>
