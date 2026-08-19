@@ -9,7 +9,7 @@ namespace Opstrax.Api.Services;
 // 'logged' -> 'sent' (or 'failed'). Fail-soft: with SMTP unconfigured the notice stays 'logged' —
 // the evidence bundle already discloses delivery_status honestly. Delivery-status-guarded, so
 // at-least-once outbox redelivery never double-sends.
-public sealed class DetentionWarningNotificationHandler(Database db) : IOutboxMessageHandler
+public sealed class DetentionWarningNotificationHandler(Database db, PlatformMailService mail) : IOutboxMessageHandler
 {
     public string EventType => "detention.dwell.warning";
 
@@ -25,9 +25,9 @@ public sealed class DetentionWarningNotificationHandler(Database db) : IOutboxMe
         if (notice is null) return;   // already delivered (or no notice) — idempotent no-op
 
         var to = notice["recipientAddress"]?.ToString();
-        if (string.IsNullOrWhiteSpace(to) || !PlatformMailService.IsConfigured) return;   // stays 'logged'
+        if (string.IsNullOrWhiteSpace(to) || !await mail.IsConfiguredAsync(ct)) return;   // stays 'logged'
 
-        var sent = await PlatformMailService.TrySendAsync(
+        var sent = await mail.TrySendAsync(
             to, "Detention notice — free time expiring", notice["bodySnapshot"]?.ToString() ?? "", ct);
 
         await db.ExecuteAsync(

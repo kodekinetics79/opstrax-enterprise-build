@@ -114,6 +114,9 @@ public static class PlatformEndpoints
 
         // ── Platform operator management (list/invite/role/status/sessions) ──────
         PlatformAdminEndpoints.Map(app);
+
+        // ── Platform settings (outbound email / SMTP) ───────────────────────────
+        PlatformSettingsEndpoints.Map(app);
     }
 
     // ════════════════════════════════════════════════════════════════════════════
@@ -901,7 +904,8 @@ public static class PlatformEndpoints
             var invite = await CreateAdminInviteAsync(http, db, companyId, adminEmail!, Str(body, "adminName") ?? "Tenant Admin", ct);
             adminInvite = invite.Status == AdminInviteStatus.CrossTenantConflict
                 ? new { email = adminEmail, sent = false, invited = false, error = "That email already belongs to another tenant; the tenant was created without an admin invite. Re-issue the invite with a different admin email." }
-                : new { email = adminEmail, sent = invite.EmailSent, invited = true, error = (string?)null };
+                : new { email = adminEmail, sent = invite.EmailSent, invited = true, error = (string?)null,
+                        activationUrl = invite.ActivationUrl, activationToken = invite.ActivationToken };
         }
 
         // Give the new tenant the standard flag set (seeded enabled — these are kill
@@ -1254,8 +1258,18 @@ public static class PlatformEndpoints
                 statusCode: StatusCodes.Status409Conflict);
         }
 
+        // The token is deliberately absent from the audit row — only whether mail went out.
         await AuditAsync(db, principal!, http, "tenant.admin_invite.reset", "Tenant", id, id, new { adminEmail, emailSent = invite.EmailSent }, ct);
-        return Results.Ok(ApiResponse<object>.Ok(new { id, adminEmail, emailSent = invite.EmailSent }, "Admin invite reset"));
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            id,
+            adminEmail,
+            emailSent = invite.EmailSent,
+            activationUrl = invite.ActivationUrl,
+            activationToken = invite.ActivationToken,
+        }, invite.EmailSent
+            ? "Activation email sent"
+            : "Invite created — email was not sent, so deliver the activation link below"));
     }
 
     internal static async Task<IResult> TenantRevokeSessions(long id, HttpContext http, Database db, CancellationToken ct)
@@ -2283,7 +2297,12 @@ public static class PlatformEndpoints
     // Result of a tenant-admin invite attempt. CrossTenantConflict means the email is
     // bound to a DIFFERENT company and was REFUSED (never relocated); the caller decides
     // how to surface that. EmailSent reports whether the accept link actually went out.
-    internal sealed record AdminInviteResult(AdminInviteStatus Status, bool EmailSent, string? ConflictCompanyId);
+    internal sealed record AdminInviteResult(
+        AdminInviteStatus Status, bool EmailSent, string? ConflictCompanyId,
+        // The one-time activation link. Returned to the operator so an invite is deliverable
+        // by hand when SMTP is not configured or delivery fails — without it, an invited admin
+        // stays Pending with nothing to accept.
+        string? ActivationUrl = null, string? ActivationToken = null);
 
     // Tenant-admin onboarding invite. Mirrors the platform-operator invite in
     // PlatformAdminEndpoints: a single-use, hashed-at-rest token with a 7-day expiry is
@@ -2377,7 +2396,26 @@ public static class PlatformEndpoints
             }, ct);
 
         var emailSent = await TrySendTenantInviteEmailAsync(http, normEmail, name, rawToken, ct);
-        return new AdminInviteResult(AdminInviteStatus.Sent, emailSent, null);
+        var activationUrl = await BuildTenantActivationUrlAsync(http, normEmail, rawToken, ct);
+        return new AdminInviteResult(AdminInviteStatus.Sent, emailSent, null, activationUrl, rawToken);
+    }
+
+    // The tenant-app activation link an invited admin opens to set their password. Resolves the
+    // tenant base URL from platform settings first, then FRONTEND_PUBLIC_URL / PUBLIC_APP_URL.
+    // Null only when no tenant URL is configured anywhere — the caller still returns the raw
+    // token so the invite is never a dead end. Resolved defensively: link building is auxiliary
+    // to tenant creation, so an absent service provider degrades to the environment defaults
+    // rather than failing the whole request.
+    private static async Task<string?> BuildTenantActivationUrlAsync(
+        HttpContext http, string email, string rawToken, CancellationToken ct)
+    {
+        var settings = http.RequestServices?.GetService<PlatformSettingsService>();
+        var baseUrl = settings is not null
+            ? await settings.GetTenantAppUrlAsync(ct)
+            : (Environment.GetEnvironmentVariable("FRONTEND_PUBLIC_URL")
+               ?? Environment.GetEnvironmentVariable("PUBLIC_APP_URL"))?.TrimEnd('/');
+        if (string.IsNullOrWhiteSpace(baseUrl)) return null;
+        return $"{baseUrl}/reset-password?email={Uri.EscapeDataString(email)}&token={Uri.EscapeDataString(rawToken)}&welcome=1";
     }
 
     private static string InviteRequestIpHash(HttpContext http) =>
@@ -2393,12 +2431,14 @@ public static class PlatformEndpoints
     private static async Task<bool> TrySendTenantInviteEmailAsync(
         HttpContext http, string email, string fullName, string rawToken, CancellationToken ct)
     {
-        var baseUrl = (Environment.GetEnvironmentVariable("FRONTEND_PUBLIC_URL")
-            ?? Environment.GetEnvironmentVariable("PUBLIC_APP_URL") ?? "").TrimEnd('/');
-        if (string.IsNullOrWhiteSpace(baseUrl)) return false;
+        var link = await BuildTenantActivationUrlAsync(http, email, rawToken, ct);
+        if (string.IsNullOrWhiteSpace(link)) return false;
 
-        var link = $"{baseUrl}/reset-password?email={Uri.EscapeDataString(email)}&token={Uri.EscapeDataString(rawToken)}&welcome=1";
-        return await PlatformMailService.TrySendAsync(
+        // No mail service resolvable ⇒ treat exactly like "SMTP not configured": no send,
+        // no throw, and the caller still returns the activation link.
+        var mail = http.RequestServices?.GetService<PlatformMailService>();
+        if (mail is null) return false;
+        return await mail.TrySendAsync(
             email,
             "OpsTrax — set up your administrator account",
             $"""

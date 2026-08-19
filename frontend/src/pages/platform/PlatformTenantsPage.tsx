@@ -26,6 +26,46 @@ const GATED_MODULES: GatedModule[] = [
   { key: "integrations",    label: "Integrations",    blurb: "Third-party connectors, provider sync, tests and external actions" },
 ];
 
+// The one-time activation artifact for an invited tenant administrator. Shown whenever an
+// invite is issued: when SMTP delivered it this is the backup copy, and when it did not, this
+// is the ONLY way the invited person can ever set a password. Previously the API returned
+// neither the link nor the token, so an invite with email unconfigured left the user Pending
+// with nothing to send them.
+function ActivationLinkPanel({ email, url, token, emailSent, onDismiss }: {
+  email: string; url?: string; token?: string; emailSent: boolean; onDismiss: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  if (!url && !token) return null;
+  return (
+    <div className={`rounded-[14px] border p-4 ${emailSent ? "border-emerald-200 bg-emerald-50" : "border-amber-200 bg-amber-50"}`}>
+      <p className={`text-sm font-bold ${emailSent ? "text-emerald-800" : "text-amber-800"}`}>
+        {emailSent ? `Activation email sent to ${email}` : "Activation link — deliver this manually"}
+      </p>
+      <p className={`mt-1 text-xs leading-5 ${emailSent ? "text-emerald-700" : "text-amber-700"}`}>
+        {emailSent
+          ? "The link below is your backup copy. It is valid for 7 days and is shown only once."
+          : `Email is not configured, so nothing was sent to ${email}. Give them this link — it is valid for 7 days and is shown only once.`}
+      </p>
+      {url ? (
+        <div className="mt-3 flex items-center gap-2">
+          <code className="min-w-0 flex-1 truncate rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700">{url}</code>
+          <PButton variant="ghost" onClick={() => { void navigator.clipboard.writeText(url).then(() => setCopied(true)); }}>
+            {copied ? "Copied" : "Copy"}
+          </PButton>
+        </div>
+      ) : (
+        <p className="mt-3 text-xs leading-5 text-amber-800">
+          No tenant application URL is configured, so a full link cannot be built. Set one under
+          Email &amp; SMTP → Application URLs, then re-issue the invite.
+        </p>
+      )}
+      <div className="mt-3 flex justify-end">
+        <PButton variant="ghost" onClick={onDismiss}>Dismiss</PButton>
+      </div>
+    </div>
+  );
+}
+
 export function PlatformTenantsPage() {
   const qc = useQueryClient();
   const { can } = usePlatformAuth();
@@ -562,6 +602,12 @@ function TenantDetailDrawer({ id, packages, canManage, canOffboard, canEntitleme
     } finally { setResetBusyId(null); }
   };
 
+  // Holds the one-time activation artifact returned by the last invite so it can be copied.
+  // Cleared explicitly by the operator, never on reload — losing it would mean re-issuing the
+  // invite just to get the link back.
+  const [issuedInvite, setIssuedInvite] = useState<
+    { email: string; url?: string; token?: string; emailSent: boolean } | null>(null);
+
   const act = async (fn: () => Promise<unknown>, done?: string) => {
     setBusy(true); setNotice(null);
     try { await fn(); reload(); if (done) setNotice(done); }
@@ -827,11 +873,24 @@ function TenantDetailDrawer({ id, packages, canManage, canOffboard, canEntitleme
                 />
                 <PButton
                   disabled={busy || !inviteEmail.includes("@")}
-                  onClick={() => act(() => platformApi.resetInvite(id, { adminEmail: inviteEmail }), "Admin invite sent/reset")}
+                  onClick={() => act(async () => {
+                    const res = await platformApi.resetInvite(id, { adminEmail: inviteEmail }) as AnyRecord;
+                    setIssuedInvite({
+                      email: inviteEmail,
+                      url: res?.activationUrl ? String(res.activationUrl) : undefined,
+                      token: res?.activationToken ? String(res.activationToken) : undefined,
+                      emailSent: res?.emailSent === true,
+                    });
+                  })}
                 >
                   Invite / Reset admin
                 </PButton>
               </div>
+              {issuedInvite && (
+                <div className="mt-3">
+                  <ActivationLinkPanel {...issuedInvite} onDismiss={() => setIssuedInvite(null)} />
+                </div>
+              )}
               <div className="mt-2">
                 <PButton variant="ghost" disabled={busy} onClick={() => setConfirm("revoke")}>
                   Revoke all tenant sessions

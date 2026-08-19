@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import {
   LayoutDashboard, Building2, Package, Receipt, HeartPulse, ScrollText, LogOut, Gauge, BriefcaseBusiness, Activity, UserCog, KeyRound, Menu, X,
+ Mail,
 } from "lucide-react";
 import { OpsTraxLogo } from "@/components/OpsTraxLogo";
 import { usePlatformAuth } from "@/hooks/usePlatformAuth";
@@ -20,6 +21,7 @@ const NAV: NavItem[] = [
   { to: "/platform/reliability", label: "Reliability Center", icon: Activity, permission: "platform:health:view" },
   { to: "/platform/audit", label: "Security & Audit", icon: ScrollText, permission: "platform:audit:view" },
   { to: "/platform/operators", label: "Operators", icon: UserCog, permission: "platform:admins:view" },
+  { to: "/platform/settings/email", label: "Email & SMTP", icon: Mail, permission: "platform:settings:manage" },
   // Self-service — every signed-in admin holds dashboard:view, so this is always visible.
   { to: "/platform/account", label: "My Account", icon: KeyRound, permission: "platform:dashboard:view" },
 ];

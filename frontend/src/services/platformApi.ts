@@ -112,6 +112,18 @@ export const platformApi = {
   updateOwnProfile: (body: { fullName?: string; email?: string }) =>
     unwrap<AnyRecord>(platformClient.patch("/api/platform/auth/profile", body)),
 
+  // Platform settings — outbound email (SMTP) and public app URLs. The SMTP password is
+  // write-only: the server never returns it, so `passwordSet` is what the form renders.
+  emailSettings: () => unwrap<AnyRecord>(platformClient.get("/api/platform/settings/email")),
+  saveEmailSettings: (body: {
+    host?: string; port?: number; username?: string; password?: string;
+    fromAddress?: string; fromName?: string; enableSsl?: boolean;
+  }) => unwrap<AnyRecord>(platformClient.put("/api/platform/settings/email", body)),
+  sendTestEmail: (to: string) => unwrap<AnyRecord>(platformClient.post("/api/platform/settings/email/test", { to })),
+  appUrlSettings: () => unwrap<AnyRecord>(platformClient.get("/api/platform/settings/urls")),
+  saveAppUrlSettings: (body: { tenantAppUrl?: string; platformAppUrl?: string }) =>
+    unwrap<AnyRecord>(platformClient.put("/api/platform/settings/urls", body)),
+
   // Command Center
   commandCenter: () => unwrap<AnyRecord>(platformClient.get("/api/platform/command-center/summary")),
   commercialOps: () => unwrap<AnyRecord>(platformClient.get("/api/platform/commercial-ops/summary")),

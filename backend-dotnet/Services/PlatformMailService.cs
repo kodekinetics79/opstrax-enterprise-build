@@ -4,46 +4,108 @@ using System.Net.Mail;
 namespace Opstrax.Api.Services;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Minimal SMTP delivery for platform operator invites. Environment-configured
-// (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM) so it works the same
-// way as the other platform bootstrap settings and needs no DI plumbing.
-// When SMTP is not configured every send returns false and callers fall back
-// to the one-time invite link — email is an enhancement, never a dependency.
+// Outbound SMTP delivery for platform + tenant onboarding mail (operator invites,
+// tenant admin activation, password resets, detention warnings).
+//
+// Configuration resolves DB-first, environment-second:
+//   platform_settings (smtp.host / port / user / password / from / from_name / ssl)
+//   → SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS / SMTP_FROM
+//
+// The DB layer is what makes mail configurable from the Platform Admin console; the
+// env layer keeps every existing Render deployment working with no change. Delivery
+// stays best-effort: when SMTP is unconfigured or a send fails, callers fall back to
+// the one-time invite link, so email is an enhancement and never a hard dependency.
 // ─────────────────────────────────────────────────────────────────────────────
-public static class PlatformMailService
+public sealed class PlatformMailService(PlatformSettingsService settings, ILogger<PlatformMailService> logger)
 {
-    public static bool IsConfigured =>
-        !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SMTP_HOST")) &&
-        !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SMTP_FROM"));
+    public const string HostKey     = "smtp.host";
+    public const string PortKey     = "smtp.port";
+    public const string UserKey     = "smtp.username";
+    public const string PasswordKey = "smtp.password";
+    public const string FromKey     = "smtp.from_address";
+    public const string FromNameKey = "smtp.from_name";
+    public const string SslKey      = "smtp.enable_ssl";
 
-    public static async Task<bool> TrySendAsync(string to, string subject, string textBody, CancellationToken ct = default)
+    public sealed record SmtpConfig(
+        string? Host, int Port, string? Username, string? Password,
+        string? FromAddress, string? FromName, bool EnableSsl)
     {
-        if (!IsConfigured) return false;
+        /// <summary>A host and a from-address are the minimum a send needs.</summary>
+        public bool IsUsable => !string.IsNullOrWhiteSpace(Host) && !string.IsNullOrWhiteSpace(FromAddress);
+    }
+
+    public async Task<SmtpConfig> ResolveAsync(CancellationToken ct = default)
+    {
+        var host = await settings.GetAsync(HostKey, "SMTP_HOST", ct);
+        var portText = await settings.GetAsync(PortKey, "SMTP_PORT", ct);
+        var user = await settings.GetAsync(UserKey, "SMTP_USER", ct);
+        var password = await settings.GetAsync(PasswordKey, "SMTP_PASS", ct);
+        var from = await settings.GetAsync(FromKey, "SMTP_FROM", ct);
+        var fromName = await settings.GetAsync(FromNameKey, "SMTP_FROM_NAME", ct);
+        var sslText = await settings.GetAsync(SslKey, "SMTP_ENABLE_SSL", ct);
+
+        var port = int.TryParse(portText, out var p) && p > 0 ? p : 587;
+        // Implicit-TLS submission (465) is the one common port where STARTTLS negotiation must
+        // not be attempted; everything else defaults to on unless explicitly disabled.
+        var enableSsl = sslText is null
+            ? port != 465
+            : !(sslText.Equals("false", StringComparison.OrdinalIgnoreCase) || sslText == "0");
+
+        return new SmtpConfig(host, port, user, password, from, fromName ?? "OpsTrax", enableSsl);
+    }
+
+    public async Task<bool> IsConfiguredAsync(CancellationToken ct = default)
+        => (await ResolveAsync(ct)).IsUsable;
+
+    /// <summary>Best-effort send. Returns false (never throws) when unconfigured or delivery fails.</summary>
+    public async Task<bool> TrySendAsync(string to, string subject, string textBody, CancellationToken ct = default)
+    {
+        var (ok, _) = await SendAsync(to, subject, textBody, ct);
+        return ok;
+    }
+
+    /// <summary>
+    /// Send, returning the failure reason as well. The console's "send test email" needs the
+    /// actual SMTP error — "it didn't work" is not a diagnosis an operator can act on.
+    /// </summary>
+    public async Task<(bool Sent, string? Error)> SendAsync(string to, string subject, string textBody, CancellationToken ct = default)
+    {
+        var config = await ResolveAsync(ct);
+        if (!config.IsUsable)
+            return (false, "SMTP is not configured — set at least a host and a from address.");
+
         try
         {
-            var host = Environment.GetEnvironmentVariable("SMTP_HOST")!;
-            var port = int.TryParse(Environment.GetEnvironmentVariable("SMTP_PORT"), out var p) ? p : 587;
-            var user = Environment.GetEnvironmentVariable("SMTP_USER");
-            var pass = Environment.GetEnvironmentVariable("SMTP_PASS");
-            var from = Environment.GetEnvironmentVariable("SMTP_FROM")!;
-
-            using var client = new SmtpClient(host, port)
+            using var client = new SmtpClient(config.Host, config.Port)
             {
-                EnableSsl = true,
+                EnableSsl = config.EnableSsl,
                 DeliveryMethod = SmtpDeliveryMethod.Network,
             };
-            if (!string.IsNullOrWhiteSpace(user))
-                client.Credentials = new NetworkCredential(user, pass ?? "");
+            if (!string.IsNullOrWhiteSpace(config.Username))
+                client.Credentials = new NetworkCredential(config.Username, config.Password ?? "");
 
-            using var message = new MailMessage(from, to, subject, textBody);
+            using var message = new MailMessage
+            {
+                From = string.IsNullOrWhiteSpace(config.FromName)
+                    ? new MailAddress(config.FromAddress!)
+                    : new MailAddress(config.FromAddress!, config.FromName),
+                Subject = subject,
+                Body = textBody,
+                IsBodyHtml = false,
+            };
+            message.To.Add(to);
+
             await client.SendMailAsync(message, ct);
-            return true;
+            return (true, null);
         }
-        catch
+        catch (Exception ex)
         {
-            // Delivery is best-effort: the caller still returns the one-time link,
-            // and the audit trail records whether the email went out.
-            return false;
+            // Never log the credential; the message and status are what an operator needs.
+            var reason = ex is SmtpException smtp ? $"{smtp.StatusCode}: {smtp.Message}" : ex.Message;
+            logger.LogWarning(new EventId(0, "platform_mail_send_failed"),
+                "SMTP delivery to {Recipient} failed via {Host}:{Port} — {Reason}",
+                to, config.Host, config.Port, reason);
+            return (false, reason);
         }
     }
 }
