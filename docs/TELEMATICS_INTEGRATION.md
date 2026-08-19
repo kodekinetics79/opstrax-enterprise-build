@@ -28,7 +28,15 @@ The platform HAS the ingest plumbing already:
 - `POST /api/telemetry/gps-ingest` — trusted protocol-gateway forwarding for
   PT40/GT06-class trackers. It sends `X-Gateway-Timestamp` (Unix seconds) and
   `X-Gateway-Signature` (hex HMAC-SHA256 of `<timestamp>.<raw-json>`) using
-  `Telemetry__GatewaySecret`; IMEI is only a provisioned lookup key, never a credential.
+  the **per-gateway** secret issued by `POST /api/telemetry/gateways`, identifying
+  itself with `X-Gateway-Id`; IMEI is only a provisioned lookup key, never a credential.
+
+  > **Do not set `Telemetry__GatewaySecret`.** The fleet-wide secret was removed — a
+  > headerless fallback would be a cross-tenant skeleton key. Its mere presence is now
+  > a `fail` in Staging/Production (`ConfigValidationService`,
+  > `legacy_telemetry_gateway_secret`), and since `EnsureStartupAllowed` throws on any
+  > failure, populating that variable **stops the API booting**. Gateway credentials are
+  > tenant-bound encrypted rows in `telemetry_gateways`.
   Freshness/replay checks, globally unique IMEI registration, tenant-bound device/vehicle
   resolution, timestamp bounds, and ordered latest-position updates are enforced.
 - SSE stream (`/api/telemetry/stream` via short-lived ticket), positions snapshot,
