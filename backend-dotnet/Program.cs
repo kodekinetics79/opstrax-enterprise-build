@@ -252,6 +252,8 @@ builder.Services.AddSingleton<SecuritySchemaService>();
 builder.Services.AddSingleton<TenantApiSchemaService>();
 // Platform Admin — global SaaS business control plane (separate from tenant admin)
 builder.Services.AddSingleton<PlatformSchemaService>();
+// Operator-editable platform configuration (SMTP today) — DB-first with an env fallback, so
+// mail can be switched on from the console instead of requiring a redeploy.
 // Country profiles — platform-managed market/localization defaults + tenant cascade
 builder.Services.AddSingleton<CountryProfileSchemaService>();
 builder.Services.AddScoped<CountryProfileService>();
@@ -264,6 +266,8 @@ builder.Services.AddSingleton<IZatcaComplianceGateway, PendingOnboardingZatcaGat
 builder.Services.AddScoped<ZatcaService>();
 // Revenue foundation — module-package catalog, usage meters/events, pricing, overrides
 builder.Services.AddSingleton<RevenueSchemaService>();
+builder.Services.AddSingleton<PlatformBillingSchemaService>();
+builder.Services.AddScoped<PlatformBillingService>();
 builder.Services.AddScoped<EntitlementService>();
 builder.Services.AddScoped<FeatureFlagService>();
 builder.Services.AddSingleton<RolePermissionReconciler>();
@@ -471,6 +475,8 @@ using (var scope = app.Services.CreateScope())
     await RunSchemaStep(app, "Zatca",              () => scope.ServiceProvider.GetRequiredService<ZatcaSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Revenue",           () => scope.ServiceProvider.GetRequiredService<RevenueSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "MarketPacks",        () => scope.ServiceProvider.GetRequiredService<MarketPackSchemaService>().EnsureAsync());
+    // After Revenue + MarketPacks: itemization references their meters and packs.
+    await RunSchemaStep(app, "PlatformBilling",    () => scope.ServiceProvider.GetRequiredService<PlatformBillingSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "FleetTms",           () => scope.ServiceProvider.GetRequiredService<FleetTmsSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "FleetTmsColdChain",  () => scope.ServiceProvider.GetRequiredService<FleetTmsColdChainSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "FleetTmsColdChainFoundation", () => scope.ServiceProvider.GetRequiredService<FleetTmsColdChainFoundationSchemaService>().EnsureAsync());
@@ -1271,6 +1277,7 @@ app.MapFleetTmsColdChainEndpoints();
 app.MapFleetTmsLogisticsEndpoints();
 app.MapActiveShipmentsEndpoints();
 app.MapRevenueEndpoints();
+app.MapPlatformBillingEndpoints();
 app.MapRevenueReadinessEndpoints();
 app.MapRatingEndpoints();
 app.MapSettlementEndpoints();

@@ -97,6 +97,38 @@ export function formatMoney(cents: number | undefined | null, currency = "USD"):
   return new Intl.NumberFormat("en-US", { style: "currency", currency, maximumFractionDigits: 0 }).format(value);
 }
 
+// Currencies whose ISO 4217 exponent is not 2. Amounts are stored in the minor
+// unit, so JPY 5000 is ¥5,000 (not ¥50.00) and KWD 5000 is 5.000 KWD.
+const MINOR_UNIT_OVERRIDES: Record<string, number> = {
+  JPY: 0, KRW: 0, CLP: 0, ISK: 0, VND: 0, XOF: 0, XAF: 0,
+  KWD: 3, BHD: 3, OMR: 3, JOD: 3, TND: 3, IQD: 3, LYD: 3,
+};
+
+export function minorUnits(currency?: string | null): number {
+  return MINOR_UNIT_OVERRIDES[String(currency ?? "USD").toUpperCase()] ?? 2;
+}
+
+// Exact money for invoice surfaces — an invoice that rounds its own lines to
+// whole units cannot be reconciled against what the customer was actually charged.
+export function formatAmount(cents: number | undefined | null, currency = "USD"): string {
+  const digits = minorUnits(currency);
+  const value = (Number(cents) || 0) / 10 ** digits;
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency", currency,
+      minimumFractionDigits: digits, maximumFractionDigits: digits,
+    }).format(value);
+  } catch {
+    // Unknown ISO code — still show the number rather than throwing away the line.
+    return `${value.toFixed(digits)} ${currency}`;
+  }
+}
+
+export function formatRate(rate: number | undefined | null): string {
+  const n = Number(rate) || 0;
+  return n === 0 ? "0%" : `${(n * 100).toFixed(n * 100 % 1 === 0 ? 0 : 2)}%`;
+}
+
 export const platformApi = {
   // Auth
   login: (email: string, password: string, mfaCode?: string) =>
@@ -125,10 +157,23 @@ export const platformApi = {
   assignPackage: (id: number, body: AnyRecord) => unwrap<AnyRecord>(platformClient.post(`/api/platform/tenants/${id}/assign-package`, body)),
   resetInvite: (id: number, body: AnyRecord) => unwrap<AnyRecord>(platformClient.post(`/api/platform/tenants/${id}/reset-admin-invite`, body)),
   revokeSessions: (id: number) => unwrap<AnyRecord>(platformClient.post(`/api/platform/tenants/${id}/revoke-sessions`)),
+
+  // Break-glass support access — bounded, reason-captured, dual-audited.
+  supportAccess: () => unwrap<AnyRecord>(platformClient.get("/api/platform/support-access")),
+  startSupportAccess: (id: number, body: { targetUserId: number; reason: string; minutes: number }) =>
+    unwrap<AnyRecord>(platformClient.post(`/api/platform/tenants/${id}/impersonate`, body)),
+  endSupportAccess: (grantId: number) =>
+    unwrap<AnyRecord>(platformClient.post(`/api/platform/impersonation/${grantId}/end`)),
   deleteTenant: (id: number, confirm: string) => unwrap<AnyRecord>(platformClient.delete(`/api/platform/tenants/${id}`, { data: { confirm } })),
   bulkTenants: (body: AnyRecord) => unwrap<AnyRecord>(platformClient.post("/api/platform/tenants/bulk", body)),
   // Tenant user directory + platform-initiated password reset (returns a one-time password)
-  tenantUsers: (id: number) => unwrap<AnyRecord[]>(platformClient.get(`/api/platform/tenants/${id}/users`)),
+  tenantUsers: (id: number) => unwrap<AnyRecord>(platformClient.get(`/api/platform/tenants/${id}/users`)),
+  createTenantUser: (id: number, body: { email: string; fullName: string; roleName: string }) =>
+    unwrap<AnyRecord>(platformClient.post(`/api/platform/tenants/${id}/users`, body)),
+  updateTenantUser: (id: number, userId: number, body: AnyRecord) =>
+    unwrap<AnyRecord>(platformClient.put(`/api/platform/tenants/${id}/users/${userId}`, body)),
+  resendTenantUserInvite: (id: number, userId: number) =>
+    unwrap<AnyRecord>(platformClient.post(`/api/platform/tenants/${id}/users/${userId}/resend-invite`)),
   resetTenantUserPassword: (id: number, userId: number) =>
     unwrap<AnyRecord>(platformClient.post(`/api/platform/tenants/${id}/users/${userId}/reset-password`)),
   captureTenantControlSnapshot: (id: number) =>
@@ -159,7 +204,10 @@ export const platformApi = {
 
   // Customer success + audit + roles
   health: () => unwrap<AnyRecord[]>(platformClient.get("/api/platform/health")),
-  audit: () => unwrap<AnyRecord[]>(platformClient.get("/api/platform/audit")),
+  audit: (params?: AnyRecord) => unwrap<AnyRecord>(platformClient.get("/api/platform/audit", { params })),
+  // Returns the raw CSV body so the caller can hand the browser a download.
+  auditExportCsv: (params?: AnyRecord) =>
+    platformClient.get("/api/platform/audit/export.csv", { params, responseType: "blob" }).then((r) => r.data as Blob),
   roles: () => unwrap<AnyRecord[]>(platformClient.get("/api/platform/roles")),
 
   // Platform operators (admin self-management — see PlatformAdminEndpoints.cs)
@@ -204,4 +252,42 @@ export const platformApi = {
   tenantMarketPacks: (id: number) => unwrap<AnyRecord>(platformClient.get(`/api/platform/opstrax/tenants/${id}/market-packs`)),
   setTenantMarketPack: (id: number, body: AnyRecord) => unwrap<AnyRecord>(platformClient.put(`/api/platform/opstrax/tenants/${id}/market-packs`, body)),
   complianceUsage: (id: number) => unwrap<AnyRecord>(platformClient.get(`/api/platform/opstrax/tenants/${id}/compliance-usage`)),
+  deleteOverride: (id: number, meterKey: string) =>
+    unwrap<AnyRecord>(platformClient.delete(`/api/platform/opstrax/tenants/${id}/overrides/${encodeURIComponent(meterKey)}`)),
+
+  // Itemized invoicing — document lifecycle
+  invoice: (id: number) => unwrap<AnyRecord>(platformClient.get(`/api/platform/invoices/${id}`)),
+  previewInvoice: (body: AnyRecord) => unwrap<AnyRecord>(platformClient.post("/api/platform/invoices/preview", body)),
+  generateInvoice: (body: AnyRecord) => unwrap<AnyRecord>(platformClient.post("/api/platform/invoices/generate", body)),
+  replaceInvoiceLines: (id: number, lines: AnyRecord[]) =>
+    unwrap<AnyRecord>(platformClient.put(`/api/platform/invoices/${id}/lines`, { lines })),
+  issueInvoice: (id: number) => unwrap<AnyRecord>(platformClient.post(`/api/platform/invoices/${id}/issue`)),
+  voidInvoice: (id: number, reason: string) =>
+    unwrap<AnyRecord>(platformClient.post(`/api/platform/invoices/${id}/void`, { reason })),
+  creditNote: (id: number, reason: string) =>
+    unwrap<AnyRecord>(platformClient.post(`/api/platform/invoices/${id}/credit-note`, { reason })),
+
+  // Per-tenant commercial terms
+  billingPlan: (id: number) => unwrap<AnyRecord>(platformClient.get(`/api/platform/tenants/${id}/billing-plan`)),
+  setBillingPlanItem: (id: number, body: AnyRecord) =>
+    unwrap<AnyRecord>(platformClient.put(`/api/platform/tenants/${id}/billing-plan`, body)),
+  deleteBillingPlanItem: (id: number, featureKey: string) =>
+    unwrap<AnyRecord>(platformClient.delete(`/api/platform/tenants/${id}/billing-plan/${encodeURIComponent(featureKey)}`)),
+  tenantTaxContext: (id: number) => unwrap<AnyRecord>(platformClient.get(`/api/platform/tenants/${id}/tax-context`)),
+
+  // Tax configuration
+  taxRegistrations: () => unwrap<AnyRecord[]>(platformClient.get("/api/platform/tax/registrations")),
+  setTaxRegistration: (country: string, body: AnyRecord) =>
+    unwrap<AnyRecord>(platformClient.put(`/api/platform/tax/registrations/${country}`, body)),
+  taxRules: () => unwrap<AnyRecord[]>(platformClient.get("/api/platform/tax/rules")),
+  setTaxRule: (body: AnyRecord) => unwrap<AnyRecord>(platformClient.put("/api/platform/tax/rules", body)),
+  deleteTaxRule: (ruleKey: string) =>
+    unwrap<AnyRecord>(platformClient.delete(`/api/platform/tax/rules/${encodeURIComponent(ruleKey)}`)),
+
+  // Billing readiness + batch run
+  billingReadiness: () => unwrap<AnyRecord>(platformClient.get("/api/platform/billing/readiness")),
+  generateInvoiceBatch: (body: AnyRecord) => unwrap<AnyRecord>(platformClient.post("/api/platform/invoices/generate-batch", body)),
+
+  // Revenue cockpit
+  revenueSummary: () => unwrap<AnyRecord>(platformClient.get("/api/platform/revenue/summary")),
 };

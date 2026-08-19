@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Building2, Search } from "lucide-react";
 import type { AnyRecord } from "@/types";
-import { platformApi, formatMoney } from "@/services/platformApi";
+import { platformApi, formatMoney, formatAmount, minorUnits } from "@/services/platformApi";
 import { usePlatformAuth } from "@/hooks/usePlatformAuth";
 import {
   PHeader, PCard, PBadge, PButton, PField, PInput, PSelect, PLoading, PError, PEmpty, PDrawer, PConfirm,
@@ -548,10 +548,14 @@ function TenantDetailDrawer({ id, packages, canManage, canOffboard, canEntitleme
 
   // Tenant user directory + platform-initiated password reset.
   const usersQ = useQuery({ queryKey: ["platform", "tenant", id, "users"], queryFn: () => platformApi.tenantUsers(id) });
-  const tenantUsers = (usersQ.data ?? []) as AnyRecord[];
+  const tenantUsers = ((usersQ.data as AnyRecord)?.users ?? []) as AnyRecord[];
+  const assignableRoles = ((usersQ.data as AnyRecord)?.roles ?? []) as AnyRecord[];
+  const reloadUsers = () => qc.invalidateQueries({ queryKey: ["platform", "tenant", id, "users"] });
   const [resetBusyId, setResetBusyId] = useState<number | null>(null);
   const [tempPw, setTempPw] = useState<AnyRecord | null>(null);
   const [copied, setCopied] = useState(false);
+  const [editingUserId, setEditingUserId] = useState<number | null>(null);
+  const [addUserOpen, setAddUserOpen] = useState(false);
 
   const resetUserPassword = async (userId: number) => {
     setResetBusyId(userId); setNotice(null); setTempPw(null); setCopied(false);
@@ -717,9 +721,22 @@ function TenantDetailDrawer({ id, packages, canManage, canOffboard, canEntitleme
             </section>
           )}
 
-          {/* Tenant users — directory + platform-initiated password reset (no SMTP needed) */}
+          {/* Tenant users — full 360 administration. A platform operator can correct a
+              sign-in email, change a role, disable an account, hand over a temporary
+              password or re-arm an invite, without anyone inside the tenant needing to
+              be able to log in first. */}
           <section>
-            <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-400">Tenant users</h3>
+            <div className="mb-2 flex items-center justify-between">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                Tenant users &amp; access
+              </h3>
+              {canManage && (
+                <PButton variant="ghost" onClick={() => { setAddUserOpen((v) => !v); setEditingUserId(null); }}>
+                  {addUserOpen ? "Cancel" : "Add user"}
+                </PButton>
+              )}
+            </div>
+
             {tempPw && (
               <div className="mb-3 rounded-xl border border-amber-300 bg-amber-50 p-3">
                 <p className="text-xs font-bold text-amber-800">Temporary password — shown only once</p>
@@ -732,27 +749,73 @@ function TenantDetailDrawer({ id, packages, canManage, canOffboard, canEntitleme
                 </div>
               </div>
             )}
+
+            {addUserOpen && canManage && (
+              <AddTenantUserForm
+                tenantId={id}
+                roles={assignableRoles}
+                onDone={(result, msg) => {
+                  setAddUserOpen(false);
+                  setTempPw(result); setCopied(false);
+                  setNotice(msg);
+                  reloadUsers(); reload();
+                }}
+              />
+            )}
+
             {usersQ.isLoading ? <p className="text-xs text-slate-500">Loading users…</p>
               : tenantUsers.length === 0 ? <p className="text-xs text-slate-500">No users in this tenant yet.</p>
               : (
                 <div className="space-y-2">
                   {tenantUsers.map((u) => (
-                    <div key={String(u.id)} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2.5">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-slate-800">{String(u.fullName ?? "—")}</p>
-                        <p className="truncate text-[11px] text-slate-500">{String(u.email ?? "")} · {String(u.roleName ?? "—")} · {String(u.status ?? "")}</p>
+                    <div key={String(u.id)} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium text-slate-800">
+                            {String(u.fullName ?? "—")}
+                            {isAdminRole(String(u.roleName ?? "")) && (
+                              <span className="ml-2 rounded bg-teal-50 px-1.5 py-0.5 text-[10px] font-bold uppercase text-teal-700">Admin</span>
+                            )}
+                          </p>
+                          <p className="truncate text-[11px] text-slate-500">
+                            {String(u.email ?? "")} · {String(u.roleName ?? "—")} · {String(u.status ?? "")}
+                            {Number(u.activeSessions ?? 0) > 0 && ` · ${Number(u.activeSessions)} live session${Number(u.activeSessions) === 1 ? "" : "s"}`}
+                            {u.hasPassword === false && " · no password set"}
+                          </p>
+                        </div>
+                        {canManage && (
+                          <div className="flex shrink-0 gap-1">
+                            <PButton
+                              variant="ghost"
+                              onClick={() => { setEditingUserId(editingUserId === Number(u.id) ? null : Number(u.id)); setAddUserOpen(false); }}
+                            >
+                              {editingUserId === Number(u.id) ? "Close" : "Edit"}
+                            </PButton>
+                            <PButton variant="ghost" disabled={busy || resetBusyId === Number(u.id)}
+                              onClick={() => resetUserPassword(Number(u.id))}>
+                              {resetBusyId === Number(u.id) ? "Resetting…" : "Reset password"}
+                            </PButton>
+                          </div>
+                        )}
                       </div>
-                      {canManage && (
-                        <PButton variant="ghost" disabled={busy || resetBusyId === Number(u.id)}
-                          onClick={() => resetUserPassword(Number(u.id))}>
-                          {resetBusyId === Number(u.id) ? "Resetting…" : "Reset password"}
-                        </PButton>
+
+                      {canManage && editingUserId === Number(u.id) && (
+                        <EditTenantUserForm
+                          tenantId={id}
+                          user={u}
+                          roles={assignableRoles}
+                          onDone={(msg) => { setEditingUserId(null); setNotice(msg); reloadUsers(); reload(); }}
+                          onInviteSent={(msg) => setNotice(msg)}
+                        />
                       )}
                     </div>
                   ))}
                 </div>
               )}
           </section>
+
+          {/* Commercial terms — what this tenant is actually charged, feature by feature */}
+          <TenantBillingPlanSection tenantId={id} canManage={canManage} onNotice={setNotice} />
 
           {canManage && (
             <section>
@@ -981,5 +1044,376 @@ function Info({ label, value }: { label: string; value: string }) {
       <p className="text-[10px] uppercase tracking-wider text-slate-500">{label}</p>
       <p className="mt-0.5 text-sm font-medium text-slate-800">{value}</p>
     </div>
+  );
+}
+
+// Roles carrying tenant-wide authority — mirrors PlatformEndpoints.TenantAdminRoles.
+// Used only for labelling here; the server enforces the last-admin guard.
+const TENANT_ADMIN_ROLES = ["company admin", "super admin", "reseller / partner admin"];
+
+function isAdminRole(roleName: string) {
+  return TENANT_ADMIN_ROLES.includes(roleName.trim().toLowerCase());
+}
+
+function AddTenantUserForm({ tenantId, roles, onDone }: {
+  tenantId: number;
+  roles: AnyRecord[];
+  onDone: (result: AnyRecord, message: string) => void;
+}) {
+  const [form, setForm] = useState({ fullName: "", email: "", roleName: "Company Admin" });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const valid = form.fullName.trim() !== "" && isEmail(form.email.trim());
+
+  const submit = async () => {
+    setBusy(true); setErr(null);
+    try {
+      const res = await platformApi.createTenantUser(tenantId, {
+        fullName: form.fullName.trim(),
+        email: form.email.trim(),
+        roleName: form.roleName,
+      });
+      onDone(res, `${form.email.trim()} created — copy the temporary password now`);
+    } catch (e) { setErr(e instanceof Error ? e.message : "Could not create the user"); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+      <p className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">New user</p>
+      {err && <p className="mb-2 text-xs font-medium text-red-600">{err}</p>}
+      <div className="space-y-3">
+        <PField label="Full name">
+          <PInput value={form.fullName} onChange={(e) => setForm({ ...form, fullName: e.target.value })} placeholder="Jane Doe" />
+        </PField>
+        <div className="grid grid-cols-2 gap-3">
+          <PField label="Email (sign-in address)">
+            <PInput type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="jane@acme.com" />
+          </PField>
+          <PField label="Role">
+            <PSelect value={form.roleName} onChange={(e) => setForm({ ...form, roleName: e.target.value })}>
+              {roles.map((r) => <option key={String(r.name)} value={String(r.name)}>{String(r.name)}</option>)}
+            </PSelect>
+          </PField>
+        </div>
+        <p className="text-[11px] text-slate-500">
+          The account is created active with a one-time password shown once here — so a locked-out customer can be
+          recovered on the call, without waiting on SMTP.
+        </p>
+        <PButton disabled={busy || !valid} onClick={submit}>{busy ? "Creating…" : "Create user"}</PButton>
+      </div>
+    </div>
+  );
+}
+
+function EditTenantUserForm({ tenantId, user, roles, onDone, onInviteSent }: {
+  tenantId: number;
+  user: AnyRecord;
+  roles: AnyRecord[];
+  onDone: (message: string) => void;
+  onInviteSent: (message: string) => void;
+}) {
+  const currentEmail = String(user.email ?? "");
+  const [form, setForm] = useState({
+    fullName: String(user.fullName ?? ""),
+    email: currentEmail,
+    roleName: String(user.roleName ?? ""),
+    status: String(user.status ?? "Active"),
+  });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const emailChanged = form.email.trim().toLowerCase() !== currentEmail.toLowerCase();
+  const valid = form.fullName.trim() !== "" && isEmail(form.email.trim());
+
+  const save = async () => {
+    setBusy(true); setErr(null);
+    try {
+      const res = await platformApi.updateTenantUser(tenantId, Number(user.id), {
+        fullName: form.fullName.trim(),
+        email: form.email.trim(),
+        roleName: form.roleName,
+        status: form.status,
+      });
+      const revoked = Number(res?.sessionsRevoked ?? 0);
+      onDone(revoked > 0
+        ? `User updated — ${revoked} active session${revoked === 1 ? "" : "s"} revoked`
+        : "User updated");
+    } catch (e) { setErr(e instanceof Error ? e.message : "Could not update the user"); }
+    finally { setBusy(false); }
+  };
+
+  const resendInvite = async () => {
+    setBusy(true); setErr(null);
+    try {
+      const res = await platformApi.resendTenantUserInvite(tenantId, Number(user.id));
+      onInviteSent(res?.emailSent
+        ? `Set-password invite emailed to ${String(res.email)}`
+        : "Invite re-armed, but no email was sent — SMTP or the tenant public URL is not configured");
+    } catch (e) { setErr(e instanceof Error ? e.message : "Could not re-send the invite"); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div className="mt-3 space-y-3 border-t border-slate-200 pt-3">
+      {err && <p className="text-xs font-medium text-red-600">{err}</p>}
+      <PField label="Full name">
+        <PInput value={form.fullName} onChange={(e) => setForm({ ...form, fullName: e.target.value })} />
+      </PField>
+      <PField label="Email (sign-in address)">
+        <PInput type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+      </PField>
+      {emailChanged && (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-800">
+          This is the address they sign in with. Saving signs them out everywhere; their password is unchanged.
+        </p>
+      )}
+      <div className="grid grid-cols-2 gap-3">
+        <PField label="Role">
+          <PSelect value={form.roleName} onChange={(e) => setForm({ ...form, roleName: e.target.value })}>
+            {!roles.some((r) => String(r.name) === form.roleName) && <option value={form.roleName}>{form.roleName}</option>}
+            {roles.map((r) => <option key={String(r.name)} value={String(r.name)}>{String(r.name)}</option>)}
+          </PSelect>
+        </PField>
+        <PField label="Status">
+          <PSelect value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
+            <option value="Active">Active</option>
+            <option value="Disabled">Disabled</option>
+            <option value="Pending">Pending (awaiting set-password)</option>
+          </PSelect>
+        </PField>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <PButton disabled={busy || !valid} onClick={save}>{busy ? "Saving…" : "Save user"}</PButton>
+        <PButton variant="ghost" disabled={busy} onClick={resendInvite}>Re-send set-password invite</PButton>
+      </div>
+    </div>
+  );
+}
+
+// ── Per-feature commercial terms ─────────────────────────────────────────────
+// This is the flexible half of billing: any feature can be free for one customer,
+// a flat fee for another, and billed per event for a third. A feature with no term
+// here simply follows its package default.
+
+const CHARGE_MODEL_HELP: Record<string, string> = {
+  free: "Granted at no charge — appears on the invoice at zero so the giveaway is visible",
+  included: "Bundled in the subscription base price — no separate line",
+  flat: "Fixed recurring amount per billing interval",
+  per_seat: "Unit price × active users above the included allowance",
+  per_unit: "Unit price × metered usage above the included allowance (event based)",
+  tiered: "Graduated tiers — each band prices only the quantity inside it",
+  one_time: "Charged once, in the period its effective date falls in",
+};
+
+const EMPTY_PLAN_FORM = {
+  featureKey: "", featureLabel: "", chargeModel: "flat", meterKey: "",
+  unitPrice: "0", includedQuantity: "0", flatPrice: "0", minimum: "", cap: "", note: "",
+};
+
+function TenantBillingPlanSection({ tenantId, canManage, onNotice }: {
+  tenantId: number; canManage: boolean; onNotice: (msg: string) => void;
+}) {
+  const qc = useQueryClient();
+  const { data, isLoading } = useQuery({
+    queryKey: ["platform", "tenant", tenantId, "billing-plan"],
+    queryFn: () => platformApi.billingPlan(tenantId),
+  });
+  const [form, setForm] = useState({ ...EMPTY_PLAN_FORM });
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const items = ((data as AnyRecord)?.items ?? []) as AnyRecord[];
+  const catalog = ((data as AnyRecord)?.catalog ?? {}) as AnyRecord;
+  const meters = (catalog.meters ?? []) as AnyRecord[];
+  const modules = (catalog.modules ?? []) as AnyRecord[];
+  const marketPacks = (catalog.marketPacks ?? []) as AnyRecord[];
+  const currency = String((data as AnyRecord)?.currency ?? "USD");
+  const scale = 10 ** minorUnits(currency);
+  const usesMeter = form.chargeModel === "per_unit" || form.chargeModel === "tiered";
+
+  const reload = () => qc.invalidateQueries({ queryKey: ["platform", "tenant", tenantId, "billing-plan"] });
+
+  const save = async () => {
+    setBusy(true); setErr(null);
+    try {
+      await platformApi.setBillingPlanItem(tenantId, {
+        featureKey: form.featureKey.trim(),
+        featureLabel: form.featureLabel.trim() || undefined,
+        chargeModel: form.chargeModel,
+        meterKey: usesMeter ? form.meterKey : undefined,
+        unitPriceCents: Math.round((Number(form.unitPrice) || 0) * scale),
+        includedQuantity: Number(form.includedQuantity) || 0,
+        flatPriceCents: Math.round((Number(form.flatPrice) || 0) * scale),
+        minimumCents: form.minimum === "" ? undefined : Math.round(Number(form.minimum) * scale),
+        capCents: form.cap === "" ? undefined : Math.round(Number(form.cap) * scale),
+        note: form.note.trim() || undefined,
+      });
+      setForm({ ...EMPTY_PLAN_FORM });
+      setOpen(false);
+      onNotice(`Billing term saved for ${form.featureKey.trim()}`);
+      reload();
+    } catch (e) { setErr(e instanceof Error ? e.message : "Could not save the term"); }
+    finally { setBusy(false); }
+  };
+
+  const remove = async (featureKey: string) => {
+    setBusy(true); setErr(null);
+    try {
+      await platformApi.deleteBillingPlanItem(tenantId, featureKey);
+      onNotice(`${featureKey} removed — it falls back to its package default`);
+      reload();
+    } catch (e) { setErr(e instanceof Error ? e.message : "Could not remove the term"); }
+    finally { setBusy(false); }
+  };
+
+  const describe = (i: AnyRecord) => {
+    const model = String(i.chargeModel);
+    const unit = formatAmount(Number(i.unitPriceCents ?? 0), currency);
+    const flat = formatAmount(Number(i.flatPriceCents ?? 0), currency);
+    const incl = Number(i.includedQuantity ?? 0);
+    switch (model) {
+      case "free": return "Free of charge";
+      case "included": return "Bundled in the subscription";
+      case "flat": return `${flat} per ${String(i.billingInterval ?? "monthly")}`;
+      case "per_seat": return `${unit} per seat${incl > 0 ? ` after ${incl} included` : ""}`;
+      case "per_unit": return `${unit} per ${String(i.meterKey ?? "event")}${incl > 0 ? ` after ${incl} included` : ""}`;
+      case "tiered": return `Tiered on ${String(i.meterKey ?? "usage")}`;
+      case "one_time": return `${flat} once`;
+      default: return model;
+    }
+  };
+
+  return (
+    <section>
+      <div className="mb-2 flex items-center justify-between">
+        <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">Billing plan — per feature</h3>
+        {canManage && (
+          <PButton variant="ghost" onClick={() => { setOpen((v) => !v); setErr(null); }}>
+            {open ? "Cancel" : "Add term"}
+          </PButton>
+        )}
+      </div>
+      <p className="mb-3 text-[11px] leading-5 text-slate-500">
+        Anything listed here overrides the package default for this tenant only. A feature can be free, a flat fee,
+        priced per seat, billed per event against a meter, or tiered — with an optional floor and cap.
+      </p>
+
+      {err && <p className="mb-2 text-xs font-medium text-red-600">{err}</p>}
+
+      {open && canManage && (
+        <div className="mb-3 space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+          <div className="grid grid-cols-2 gap-3">
+            <PField label="Feature key">
+              <PInput
+                list={`feature-catalog-${tenantId}`}
+                value={form.featureKey}
+                onChange={(e) => setForm({ ...form, featureKey: e.target.value })}
+                placeholder="fleet.dispatch"
+              />
+              <datalist id={`feature-catalog-${tenantId}`}>
+                {modules.map((m) => <option key={String(m.key)} value={String(m.key)} />)}
+                {marketPacks.map((m) => <option key={String(m.key)} value={`market_pack.${String(m.key)}`}>{String(m.label)}</option>)}
+              </datalist>
+            </PField>
+            <PField label="Label on the invoice">
+              <PInput value={form.featureLabel} onChange={(e) => setForm({ ...form, featureLabel: e.target.value })} placeholder="Dispatch module" />
+            </PField>
+          </div>
+
+          <PField label="Charge model">
+            <PSelect value={form.chargeModel} onChange={(e) => setForm({ ...form, chargeModel: e.target.value })}>
+              {Object.keys(CHARGE_MODEL_HELP).map((m) => <option key={m} value={m}>{m.replace(/_/g, " ")}</option>)}
+            </PSelect>
+          </PField>
+          <p className="text-[11px] text-slate-500">{CHARGE_MODEL_HELP[form.chargeModel]}</p>
+
+          {usesMeter && (
+            <PField label="Meter (what the usage is counted from)">
+              <PSelect value={form.meterKey} onChange={(e) => setForm({ ...form, meterKey: e.target.value })}>
+                <option value="">— Select meter —</option>
+                {meters.map((m) => <option key={String(m.key)} value={String(m.key)}>{String(m.label)} ({String(m.key)})</option>)}
+              </PSelect>
+            </PField>
+          )}
+
+          <div className="grid grid-cols-3 gap-3">
+            {(form.chargeModel === "flat" || form.chargeModel === "one_time") ? (
+              <PField label={`Amount (${currency})`}>
+                <PInput type="number" min={0} step="any" value={form.flatPrice} onChange={(e) => setForm({ ...form, flatPrice: e.target.value })} />
+              </PField>
+            ) : (
+              <PField label={`Unit price (${currency})`}>
+                <PInput type="number" min={0} step="any" value={form.unitPrice}
+                        disabled={form.chargeModel === "free" || form.chargeModel === "included"}
+                        onChange={(e) => setForm({ ...form, unitPrice: e.target.value })} />
+              </PField>
+            )}
+            <PField label="Included quantity">
+              <PInput type="number" min={0} step="any" value={form.includedQuantity}
+                      disabled={form.chargeModel === "free" || form.chargeModel === "included" || form.chargeModel === "flat" || form.chargeModel === "one_time"}
+                      onChange={(e) => setForm({ ...form, includedQuantity: e.target.value })} />
+            </PField>
+            <PField label={`Cap (${currency})`}>
+              <PInput type="number" min={0} step="any" value={form.cap} placeholder="none"
+                      onChange={(e) => setForm({ ...form, cap: e.target.value })} />
+            </PField>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <PField label={`Minimum charge (${currency})`}>
+              <PInput type="number" min={0} step="any" value={form.minimum} placeholder="none"
+                      onChange={(e) => setForm({ ...form, minimum: e.target.value })} />
+            </PField>
+            <PField label="Note (why this term exists)">
+              <PInput value={form.note} maxLength={400} onChange={(e) => setForm({ ...form, note: e.target.value })}
+                      placeholder="e.g. Waived for the 2026 pilot per signed order" />
+            </PField>
+          </div>
+
+          <PButton
+            disabled={busy || !form.featureKey.trim() || (usesMeter && !form.meterKey)}
+            onClick={save}
+          >
+            {busy ? "Saving…" : "Save term"}
+          </PButton>
+        </div>
+      )}
+
+      {isLoading ? <p className="text-xs text-slate-500">Loading billing plan…</p>
+        : items.length === 0 ? (
+          <p className="text-xs text-slate-500">
+            No per-feature terms — this tenant is billed entirely on its package and active market packs.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {items.map((i) => (
+              <div key={String(i.featureKey)} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2.5">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-slate-800">
+                    {String(i.featureLabel ?? i.featureKey)}
+                    {String(i.chargeModel) === "free" && (
+                      <span className="ml-2 rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold uppercase text-emerald-700">Free</span>
+                    )}
+                    {!i.active && (
+                      <span className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-slate-500">Inactive</span>
+                    )}
+                  </p>
+                  <p className="truncate text-[11px] text-slate-500">
+                    <span className="font-mono">{String(i.featureKey)}</span> · {describe(i)}
+                    {i.capCents != null && ` · capped at ${formatAmount(Number(i.capCents), currency)}`}
+                    {i.note ? ` · ${String(i.note)}` : ""}
+                  </p>
+                </div>
+                {canManage && (
+                  <PButton variant="ghost" disabled={busy} onClick={() => remove(String(i.featureKey))}>Remove</PButton>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+    </section>
   );
 }
