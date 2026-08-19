@@ -665,7 +665,7 @@ public sealed class PlatformBillingService(Database db)
                     c.Parameters.AddWithValue("@src", l.Source);
                     c.Parameters.AddWithValue("@fk", (object?)l.FeatureKey ?? DBNull.Value);
                     c.Parameters.AddWithValue("@mk", (object?)l.MeterKey ?? DBNull.Value);
-                    c.Parameters.AddWithValue("@desc", Truncate(l.Description, 400));
+                    c.Parameters.AddWithValue("@desc", Truncate(l.Description, 400) ?? "");
                     c.Parameters.AddWithValue("@model", l.ChargeModel);
                     c.Parameters.AddWithValue("@qty", l.Quantity);
                     c.Parameters.AddWithValue("@unit", (object?)l.Unit ?? DBNull.Value);

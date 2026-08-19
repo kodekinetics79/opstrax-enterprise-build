@@ -521,7 +521,7 @@ public sealed class PlatformBillingItemizationPostgresTests
 
         var january = new DateOnly(DateTime.UtcNow.Year, 1, 1);
         var onCycle = await billing.BuildDraftAsync(companyId, january, january.AddMonths(1).AddDays(-1));
-        var baseLine = Assert.Single(onCycle.Lines.Where(l => l.FeatureKey == "subscription.base"));
+        var baseLine = Assert.Single(onCycle.Lines, l => l.FeatureKey == "subscription.base");
         Assert.Equal(49900, baseLine.NetAmountCents);
         Assert.Contains("annual term", baseLine.Description);
     }

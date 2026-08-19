@@ -168,7 +168,12 @@ public static class PlatformBillingEndpoints
         await PlatformEndpoints.AuditAsync(db, principal!, http, "invoice.lines.replaced", "Invoice", id, companyId,
             new { lines = lines.Count, total = lines.Sum(l => l.TotalCents) }, ct);
 
-        return Results.Ok(ApiResponse<object>.Ok(await billing.GetAsync(id, ct), "Invoice lines updated"));
+        // Same contract as InvoiceGet: the document is the response, and a vanished invoice
+        // is a 404 rather than a success envelope wrapping null.
+        var updated = await billing.GetAsync(id, ct);
+        return updated is null
+            ? Results.Json(ApiResponse<object>.Fail("Not found"), statusCode: StatusCodes.Status404NotFound)
+            : Results.Ok(ApiResponse<object>.Ok(updated, "Invoice lines updated"));
     }
 
     private static async Task<IResult> InvoiceIssue(long id, HttpContext http, Database db, PlatformBillingService billing, CancellationToken ct)
