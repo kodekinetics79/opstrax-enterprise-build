@@ -5,7 +5,7 @@ import {
   MapPin, Navigation, Plus, Save, Search, ShieldAlert, Sparkles, Trash2, TrendingUp,
   Truck, UserCheck, Video, Wrench, X, Radio,
 } from "lucide-react";
-import { useNavigate } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 import { vehiclesApi } from "@/services/vehiclesApi";
 import { driversApi } from "@/services/driversApi";
 import { downloadServerExport } from "@/services/fleetDomainApi";
@@ -132,6 +132,11 @@ export function VehiclesPage() {
   const [selectedId, setSelectedId] = useState<string | number | null>(null);
   const [editing, setEditing] = useState<AnyRecord | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  // Single-add lives here on the roster, but users look for it on the module
+  // Overview, which only showed the bulk Template/Import/Export actions. The
+  // Overview button deep-links to ?new=1 so "add one vehicle" is reachable from
+  // where people actually look, without duplicating the form.
+  const [searchParams, setSearchParams] = useSearchParams();
   const [exportError, setExportError] = useState<string | null>(null);
   const [offset, setOffset] = useState(0);
   const PAGE_SIZE = 50;
@@ -185,6 +190,16 @@ export function VehiclesPage() {
   const atRisk = num(g(sum, "atRisk", "at_risk")) || rows.filter((r) => riskTier(r) === "High").length;
   const deviceEx = num(g(sum, "deviceExceptions", "device_exceptions")) ||
     rows.filter((r) => !/online/i.test(vehicleDeviceStatus(r)) || !/online|recording/i.test(vehicleCameraStatus(r))).length;
+
+  useEffect(() => {
+    if (searchParams.get("new") !== "1") return;
+    const next = new URLSearchParams(searchParams);
+    next.delete("new");
+    setSearchParams(next, { replace: true });
+    if (!canCreate) return;
+    setIsCreating(true);
+    setEditing({ type: "Truck", status: "Available" });
+  }, [searchParams, setSearchParams, canCreate]);
 
   const save = useMutation({
     mutationFn: (p: AnyRecord) => (p.id && !isCreating ? vehiclesApi.update(String(p.id), p) : vehiclesApi.create(p)),
