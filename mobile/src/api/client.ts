@@ -163,6 +163,14 @@ export function createMobileApiClient(access: SessionAccess) {
     driverCurrentAssignment: () => request.get<DriverCurrentAssignment>("/api/driver/assignments/current"),
     acceptDriverAssignment: (assignmentId: number | string) =>
       request.post<JsonRecord>(`/api/driver/assignments/${assignmentId}/accept`, {}),
+    // Departure is gated on the driver proving they are at the right unit. Without this the
+    // backend 409s en_route_pickup and a mobile-only driver has no way past 'accepted'.
+    confirmDriverVehicle: (
+      assignmentId: number | string,
+      reference: string,
+      method: "unit_suffix" | "vin_suffix" = "unit_suffix",
+    ) =>
+      request.post<JsonRecord>(`/api/driver/assignments/${assignmentId}/confirm-vehicle`, { method, reference }),
     updateDriverAssignmentStatus: (assignmentId: number | string, status: string, notes?: string) =>
       request.post<JsonRecord>(`/api/driver/assignments/${assignmentId}/status`, { status, notes }),
     reportDriverException: (

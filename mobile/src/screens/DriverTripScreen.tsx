@@ -15,7 +15,13 @@ export function DriverTripScreen() {
   const [exceptionType, setExceptionType] = useState("route_blocked");
   const [exceptionNotes, setExceptionNotes] = useState("");
   const [busy, setBusy] = useState(false);
+  const [vehicleRef, setVehicleRef] = useState("");
   const assignment = current.data?.assignment;
+  // Departure is gated server-side on vehicle confirmation: the backend lists
+  // en_route_pickup in driverNextStatuses as soon as the load is accepted, but 409s the
+  // transition until confirm-vehicle has run. Mirror the web gate so the button is only
+  // offered once it will actually succeed.
+  const vehicleConfirmed = Boolean(assignment?.vehicleConfirmedAt);
 
   const openMaps = async (address?: string) => {
     if (!address) return;
@@ -43,6 +49,21 @@ export function DriverTripScreen() {
         })(),
       },
     ]);
+  };
+
+  const confirmVehicle = async () => {
+    if (!assignment?.id) return;
+    setBusy(true);
+    try {
+      await api.confirmDriverVehicle(assignment.id, vehicleRef.trim().toUpperCase());
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setVehicleRef("");
+      current.refresh();
+    } catch (error) {
+      Alert.alert("Vehicle not confirmed", error instanceof Error ? error.message : "The reference did not match the assigned unit.");
+    } finally {
+      setBusy(false);
+    }
   };
 
   const reportException = async () => {
@@ -90,9 +111,25 @@ export function DriverTripScreen() {
 
           <Panel>
             <SectionHeader eyebrow="Progress" title="Update live status" description="Delivery completion is never a status button; it requires proof on the Proof tab." />
+            {!vehicleConfirmed && current.data?.driverNextStatuses?.includes("en_route_pickup") ? (
+              <View style={{ gap: 10, marginBottom: 12 }}>
+                <Field label="Assigned unit" value={textOf(assignment?.vehicleCode, "Unavailable")} />
+                <Input
+                  label="Confirm the final characters of the unit number"
+                  value={vehicleRef}
+                  onChangeText={(text: string) => setVehicleRef(text.toUpperCase().replace(/[^A-Z0-9-]/g, ""))}
+                  placeholder="e.g. 4821"
+                  autoCapitalize="characters"
+                />
+                <ActionButton label={busy ? "Verifying…" : "Verify assigned vehicle"} onPress={() => void confirmVehicle()} disabled={busy || vehicleRef.trim().length < 3} />
+              </View>
+            ) : null}
             {current.data?.driverNextStatuses?.length ? (
               <View style={{ gap: 10 }}>
-                {current.data.driverNextStatuses.filter((status) => status !== "exception").map((status) => (
+                {current.data.driverNextStatuses
+                  .filter((status) => status !== "exception")
+                  .filter((status) => status !== "en_route_pickup" || vehicleConfirmed)
+                  .map((status) => (
                   <ActionButton key={status} label={`Mark ${titleCase(status)}`} onPress={() => transition(status)} disabled={busy} />
                 ))}
               </View>
