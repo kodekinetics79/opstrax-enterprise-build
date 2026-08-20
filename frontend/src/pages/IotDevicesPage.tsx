@@ -1339,9 +1339,10 @@ function DeviceDetailDrawer({
       <div className="mt-6 grid gap-4 xl:grid-cols-2">
         <PanelSection title="Assignment History">
           <TimelineList rows={detail.assignmentHistory.map((row) => ({
-            title: cell(row.status) === "—" ? "Assignment" : String(row.status),
-            subtitle: `${cell(row.vehicleCode ?? row.vehicle_code)} · ${cell(row.driverName ?? row.driver_name)}`,
-            meta: cell(row.assignedAt ?? row.assigned_at) === "—" ? "" : String(row.assignedAt ?? row.assigned_at),
+            id: String(row.id ?? ""),
+            title: `${cell(row.fromState)} → ${cell(row.toState)}`,
+            subtitle: cell(row.reason) !== "—" ? cell(row.reason) : cell(row.reasonCode),
+            meta: cell(row.occurredAt) === "—" ? "" : String(row.occurredAt),
           }))} emptyText="No assignment history available for this device." />
         </PanelSection>
         <PanelSection title="Health Timeline">
@@ -1885,7 +1886,7 @@ function MiniGrid({ rows }: { rows: Array<[string, string]> }) {
   );
 }
 
-function TimelineList({ rows, emptyText }: { rows: Array<{ title: string; subtitle: string; meta: string }>; emptyText: string }) {
+function TimelineList({ rows, emptyText }: { rows: Array<{ id?: string; title: string; subtitle: string; meta: string }>; emptyText: string }) {
   if (!rows.length) {
     return <p className="text-sm text-slate-400">{emptyText}</p>;
   }
@@ -1893,7 +1894,7 @@ function TimelineList({ rows, emptyText }: { rows: Array<{ title: string; subtit
   return (
     <div className="flex h-full flex-col gap-3 overflow-y-auto">
       {rows.map((row) => (
-        <div key={`${row.title}-${row.meta}`} className="rounded-xl border border-white/[0.06] bg-black/10 p-3">
+        <div key={row.id || `${row.title}-${row.meta}`} className="rounded-xl border border-white/[0.06] bg-black/10 p-3">
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="font-medium text-white">{row.title}</p>

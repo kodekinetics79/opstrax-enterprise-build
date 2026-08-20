@@ -118,7 +118,8 @@ public sealed class MaintenanceSchemaService(Database db)
             result VARCHAR(40) NOT NULL DEFAULT 'pass',
             severity VARCHAR(40) NOT NULL DEFAULT 'minor',
             notes TEXT NULL,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            checklist_item_id BIGINT NULL
         )",
 
         // Fault codes ingested from OBD/J1939/OEM device telemetry.

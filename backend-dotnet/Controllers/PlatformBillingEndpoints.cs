@@ -731,7 +731,8 @@ public static class PlatformBillingEndpoints
             c => { if (explicitIds.Count > 0) c.Parameters.AddWithValue("@ids", explicitIds.ToArray()); }, ct);
 
         var results = new List<object>();
-        long generated = 0, skipped = 0, failed = 0, totalBilled = 0;
+        var totalBilledByCurrency = new Dictionary<string, long>();
+        long generated = 0, skipped = 0, failed = 0;
 
         foreach (var row in candidates)
         {
@@ -765,7 +766,8 @@ public static class PlatformBillingEndpoints
                 if (issue) number = await billing.IssueAsync(invoiceId, principal!.Email, ct);
 
                 generated++;
-                totalBilled += draft.TotalCents;
+                var draftCurrency = draft.Tax.Currency;
+                totalBilledByCurrency[draftCurrency] = totalBilledByCurrency.GetValueOrDefault(draftCurrency) + draft.TotalCents;
                 results.Add(new
                 {
                     companyId, tenant = name, outcome = issue ? "issued" : "drafted",
@@ -786,11 +788,18 @@ public static class PlatformBillingEndpoints
             }
         }
 
+        // Per currency, same reasoning as RevenueSummary below: summing across
+        // currencies into one number is meaningless, and their minor units differ besides.
+        var byCurrency = totalBilledByCurrency
+            .OrderBy(kv => kv.Key)
+            .Select(kv => new { currency = kv.Key, totalCents = kv.Value })
+            .ToList();
+
         await PlatformEndpoints.AuditAsync(db, principal!, http, "invoice.batch.generated", "Invoice", null, null,
-            new { period = periodKey, issue, generated, skipped, failed, totalBilled }, ct);
+            new { period = periodKey, issue, generated, skipped, failed, byCurrency }, ct);
 
         return Results.Ok(ApiResponse<object>.Ok(
-            new { period = periodKey, generated, skipped, failed, totalBilledCents = totalBilled, results },
+            new { period = periodKey, generated, skipped, failed, byCurrency, results },
             $"{generated} {(issue ? "issued" : "drafted")}, {skipped} skipped{(failed > 0 ? $", {failed} failed" : "")}"));
     }
 

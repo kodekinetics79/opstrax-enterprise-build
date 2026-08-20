@@ -123,11 +123,11 @@ export function PlatformBillingPage() {
       />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <PKpi label="Collected" value={formatMoney(head.collected, primaryCurrency)} tone="good"
+        <PKpi label="Collected" value={formatAmount(head.collected, primaryCurrency)} tone="good"
               sub={multiCurrency ? `${primaryCurrency} · other currencies listed below` : primaryCurrency} />
-        <PKpi label="Outstanding" value={formatMoney(head.outstanding, primaryCurrency)}
+        <PKpi label="Outstanding" value={formatAmount(head.outstanding, primaryCurrency)}
               tone={head.outstanding > 0 ? "warn" : "default"} sub={primaryCurrency} />
-        <PKpi label="Tax billed" value={formatMoney(head.tax, primaryCurrency)}
+        <PKpi label="Tax billed" value={formatAmount(head.tax, primaryCurrency)}
               sub="VAT / GST across issued documents" />
         <PKpi label="Documents" value={rows.length} sub={draftCount > 0 ? `${draftCount} draft${draftCount === 1 ? "" : "s"} awaiting issue` : "all issued"} />
       </div>

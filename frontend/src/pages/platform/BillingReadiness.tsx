@@ -61,7 +61,14 @@ export function BillingReadiness({ canManage, packages, onOpenTaxSetup, onNotice
   const runBatch = async (issue: boolean) => {
     await run(async () => {
       const res = await platformApi.generateInvoiceBatch({ issue }) as AnyRecord;
-      onNotice(`${res.generated} ${issue ? "issued" : "drafted"} · ${res.skipped} skipped${Number(res.failed ?? 0) > 0 ? ` · ${res.failed} failed` : ""} · ${formatAmount(Number(res.totalBilledCents ?? 0), "USD")} billed`);
+      // The batch run reports money grouped by currency — a single total would be
+      // meaningless across tenants billing in different currencies, and formatting one
+      // sum as USD silently misstated every non-USD run.
+      const byCurrency = Array.isArray(res.byCurrency) ? (res.byCurrency as AnyRecord[]) : [];
+      const billed = byCurrency.length
+        ? byCurrency.map((entry) => formatAmount(Number(entry.totalCents ?? 0), String(entry.currency ?? "USD"))).join(" + ")
+        : "nothing";
+      onNotice(`${res.generated} ${issue ? "issued" : "drafted"} · ${res.skipped} skipped${Number(res.failed ?? 0) > 0 ? ` · ${res.failed} failed` : ""} · ${billed} billed`);
     }, "Billing run complete");
   };
 
