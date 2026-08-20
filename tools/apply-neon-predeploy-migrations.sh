@@ -148,6 +148,7 @@ MIGRATIONS=(
   2026_08_13_stage79_tenant_provisioning_runtime_contract
   2026_08_13_stage80_driver_proof_upload_binding
   2026_08_14_stage80_fleet_identity_backbone
+  2026_08_20_stage81_customer_eta_secure_token
 )
 
 echo "Target host: $(printf '%s' "$NEON_PG_URI" | sed -E 's|.*@([^/:?]+).*|\1|')"
