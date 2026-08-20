@@ -10,6 +10,7 @@ import { PlatformBillingPage } from "./PlatformBillingPage";
 import { PlatformHealthPage } from "./PlatformHealthPage";
 import { PlatformReliabilityPage } from "./PlatformReliabilityPage";
 import { PlatformAuditPage } from "./PlatformAuditPage";
+import { PlatformSupportAccessPage } from "./PlatformSupportAccessPage";
 import { PlatformCommercialOpsPage } from "./PlatformCommercialOpsPage";
 import { PlatformOperatorsPage } from "./PlatformOperatorsPage";
 import { PlatformEmailSettingsPage } from "./PlatformEmailSettingsPage";
@@ -49,6 +50,7 @@ export default function PlatformApp() {
           <Route path="health" element={<Guard permission="platform:health:view"><PlatformHealthPage /></Guard>} />
           <Route path="reliability" element={<Guard permission="platform:health:view"><PlatformReliabilityPage /></Guard>} />
           <Route path="audit" element={<Guard permission="platform:audit:view"><PlatformAuditPage /></Guard>} />
+          <Route path="support-access" element={<Guard permission="platform:tenants:view"><PlatformSupportAccessPage /></Guard>} />
           <Route path="operators" element={<Guard permission="platform:admins:view"><PlatformOperatorsPage /></Guard>} />
           <Route path="settings/email" element={<Guard permission="platform:settings:manage"><PlatformEmailSettingsPage /></Guard>} />
           {/* Self-service: every signed-in admin can manage their own account. */}

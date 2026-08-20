@@ -20,6 +20,7 @@ const NAV: NavItem[] = [
   { to: "/platform/health", label: "Customer Success", icon: HeartPulse, permission: "platform:health:view" },
   { to: "/platform/reliability", label: "Reliability Center", icon: Activity, permission: "platform:health:view" },
   { to: "/platform/audit", label: "Security & Audit", icon: ScrollText, permission: "platform:audit:view" },
+  { to: "/platform/support-access", label: "Support Access", icon: KeyRound, permission: "platform:tenants:view" },
   { to: "/platform/operators", label: "Operators", icon: UserCog, permission: "platform:admins:view" },
   { to: "/platform/settings/email", label: "Email & SMTP", icon: Mail, permission: "platform:settings:manage" },
   // Self-service — every signed-in admin holds dashboard:view, so this is always visible.

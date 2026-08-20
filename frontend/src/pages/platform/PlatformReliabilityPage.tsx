@@ -89,6 +89,7 @@ export function PlatformReliabilityPage() {
   const slo = (d.slo ?? {}) as AnyRecord;
   const components = (d.components ?? []) as AnyRecord[];
   const slos = (slo.slos ?? []) as AnyRecord[];
+  const burn = (slo.burnRate ?? d.burnRate) as AnyRecord | undefined;
   const topFailing = (d.topFailingEndpoints ?? []) as AnyRecord[];
   const openIncidents = (d.openIncidents ?? []) as AnyRecord[];
   const tenants = (d.affectedTenants ?? []) as AnyRecord[];
@@ -116,7 +117,11 @@ export function PlatformReliabilityPage() {
       {/* Deploy + uptime + config KPIs */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <PKpi label="Deploy version" value={String(d.deploymentVersion ?? "—")} sub={String(d.environment ?? "")} />
-        <PKpi label="Uptime" value={fmtUptime(Number(d.uptimeSeconds))} sub={`started ${rel(String(d.startedAtUtc))}`} />
+        <PKpi
+          label="Process uptime"
+          value={fmtUptime(Number(d.uptimeSeconds))}
+          sub={`since last restart · ${rel(String(d.startedAtUtc))}`}
+        />
         <PKpi
           label="Config"
           value={String(d.configStatus ?? "—")}
@@ -160,6 +165,20 @@ export function PlatformReliabilityPage() {
         <h3 className="mb-4 text-sm font-black uppercase tracking-[0.2em] text-slate-500">
           SLOs · error-budget burn — <span className={tone(String(slo.overallStatus)) === "bad" ? "text-red-500" : tone(String(slo.overallStatus)) === "warn" ? "text-amber-500" : "text-emerald-500"}>{String(slo.overallStatus ?? "—")}</span>
         </h3>
+
+        {burn && (
+          <div className={`mb-4 flex flex-wrap items-center gap-x-6 gap-y-1 rounded-[14px] border px-4 py-3 text-sm ${
+            String(burn.severity) === "critical" ? "border-red-200 bg-red-50 text-red-800"
+            : String(burn.severity) === "warning" ? "border-amber-200 bg-amber-50 text-amber-800"
+            : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}>
+            <span className="font-bold uppercase tracking-wider text-[11px]">Error-budget burn</span>
+            <span><strong>{Number(burn.burnRate ?? 0).toFixed(2)}×</strong> the sustainable rate</span>
+            <span>severity <strong>{String(burn.severity ?? "—")}</strong></span>
+            {burn.recommendedAction ? (
+              <span>recommended action <strong>{String(burn.recommendedAction).replace(/_/g, " ")}</strong></span>
+            ) : null}
+          </div>
+        )}
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -167,6 +186,7 @@ export function PlatformReliabilityPage() {
                 <th className="pb-2 pr-4">Objective</th>
                 <th className="pb-2 pr-4">Target</th>
                 <th className="pb-2 pr-4">Actual</th>
+                <th className="pb-2 pr-4">Samples</th>
                 <th className="pb-2 pr-4">Budget burn</th>
                 <th className="pb-2">Status</th>
               </tr>
@@ -177,6 +197,15 @@ export function PlatformReliabilityPage() {
                   <td className="py-2 pr-4 font-medium">{String(s.name)}</td>
                   <td className="py-2 pr-4">{String(s.target)} {String(s.unit)}</td>
                   <td className="py-2 pr-4">{s.actual === null || s.actual === undefined ? "—" : `${s.actual} ${s.unit}`}</td>
+                  <td className="py-2 pr-4 text-xs text-slate-500">
+                    {s.sampleCount === null || s.sampleCount === undefined
+                      ? "—"
+                      : Number(s.sampleCount) === 0
+                        ? <span className="text-slate-400">no data</span>
+                        : Number(s.sampleCount) < 100
+                          ? <span className="text-amber-600" title="Too few samples to be meaningful">{Number(s.sampleCount)} · thin</span>
+                          : Number(s.sampleCount).toLocaleString()}
+                  </td>
                   <td className="py-2 pr-4">
                     {s.status === "unknown" || s.status === "defined" ? "—" : (
                       <span className="inline-flex items-center gap-2">
@@ -293,7 +322,11 @@ export function PlatformReliabilityPage() {
       {/* Alert rules (toggle) */}
       {showRules && (
         <PCard className="p-5">
-          <h3 className="mb-4 text-sm font-black uppercase tracking-[0.2em] text-slate-500">Alert rules</h3>
+          <h3 className="text-sm font-black uppercase tracking-[0.2em] text-slate-500">Alert rule definitions</h3>
+          <p className="mb-4 mt-1 text-xs leading-5 text-amber-700">
+            These are the agreed thresholds, not live monitors — nothing evaluates them yet and none of them will fire on
+            their own. Until an evaluator and a notification channel are wired, detection depends on someone opening this page.
+          </p>
           <div className="space-y-2">
             {alertRules.map((r) => (
               <div key={String(r.id)} className="flex items-start justify-between gap-4 rounded-[12px] border border-slate-200 bg-white/70 p-3">
