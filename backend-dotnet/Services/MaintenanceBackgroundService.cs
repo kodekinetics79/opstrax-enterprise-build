@@ -18,6 +18,11 @@ public sealed class MaintenanceBackgroundService(
     : BackgroundService
 {
     private static readonly TimeSpan Interval = TimeSpan.FromMinutes(15);
+    // Readiness marks a critical worker stale after CriticalWorkerFreshness (10 min).
+    // This cycle only needs to run every 15 minutes, so the idle wait must still emit a
+    // heartbeat on the shared cadence — otherwise the worker is reported stale for ~5 of
+    // every 15 minutes even while perfectly healthy. Mirrors RetentionEnforcementBackgroundService.
+    private static readonly TimeSpan IdleHeartbeatInterval = TimeSpan.FromMinutes(5);
     private const string SvcName = "MaintenanceBackgroundService";
 
     protected override async Task ExecuteAsync(CancellationToken ct)
@@ -45,7 +50,19 @@ public sealed class MaintenanceBackgroundService(
                 log.LogError(ex, "{Svc} cycle failed", SvcName);
                 await tracker.FailAsync(runId, SvcName, ex, (int)sw.ElapsedMilliseconds, ct);
             }
-            await Task.Delay(Interval, ct);
+            await WaitWithHeartbeatAsync(Interval, ct);
+        }
+    }
+
+    private async Task WaitWithHeartbeatAsync(TimeSpan delay, CancellationToken ct)
+    {
+        var remaining = delay;
+        while (remaining > TimeSpan.Zero)
+        {
+            var slice = remaining < IdleHeartbeatInterval ? remaining : IdleHeartbeatInterval;
+            await Task.Delay(slice, ct);
+            remaining -= slice;
+            await tracker.PulseAsync(SvcName, ct);
         }
     }
 

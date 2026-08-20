@@ -676,6 +676,30 @@ ON CONFLICT(meter_key) DO UPDATE SET
 REVOKE ALL ON TABLE module_packages,usage_meters,pricing_rules FROM PUBLIC;
 REVOKE ALL ON SEQUENCE module_packages_id_seq,usage_meters_id_seq,pricing_rules_id_seq FROM PUBLIC;
 
+-- device_installation_quarantine holds ambiguous device-identity holds written by the
+-- Stage80 trigger. Access is control-plane only (opstrax_system), and the app deliberately
+-- receives no table grants. It still needs the standard tenant policy pair: it carries
+-- company_id, so the production tenant-coverage contract requires both policies, and
+-- without tenant_ticket_app any future GRANT to opstrax_app would expose it cross-tenant.
+-- The policy is inert while no grant exists, and correct the moment one is added.
+ALTER TABLE device_installation_quarantine ENABLE ROW LEVEL SECURITY;
+ALTER TABLE device_installation_quarantine FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_ticket_app ON device_installation_quarantine;
+DROP POLICY IF EXISTS system_control_plane ON device_installation_quarantine;
+DO $stage80_quarantine_acl$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_app')
+     AND to_regprocedure('opstrax_security.current_tenant_id()') IS NOT NULL THEN
+    EXECUTE 'CREATE POLICY tenant_ticket_app ON device_installation_quarantine FOR ALL TO opstrax_app '
+      || 'USING(company_id=(SELECT opstrax_security.current_tenant_id())) '
+      || 'WITH CHECK(company_id=(SELECT opstrax_security.current_tenant_id()))';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_system') THEN
+    CREATE POLICY system_control_plane ON device_installation_quarantine FOR ALL TO opstrax_system USING(true) WITH CHECK(true);
+  END IF;
+END
+$stage80_quarantine_acl$;
+
 ALTER TABLE usage_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE usage_events FORCE ROW LEVEL SECURITY;
 ALTER TABLE usage_counters ENABLE ROW LEVEL SECURITY;
