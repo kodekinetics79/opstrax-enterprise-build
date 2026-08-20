@@ -71,6 +71,11 @@ public static class VehicleIdentityPolicy
         if (normalized.Any(character => !IsAlternateIdentityCharacter(character)))
             return VehicleIdentityValidationResult.Invalid(
                 "alternate_value_characters", "Alternate vehicle identity contains unsupported characters.");
+        // Mirrors the DB check constraint (`^[A-Z0-9][A-Z0-9._/-]*$`), which requires the
+        // first character to be alphanumeric; punctuation is only permitted after it.
+        if (!IsAsciiLetterOrDigit(normalized[0]))
+            return VehicleIdentityValidationResult.Invalid(
+                "alternate_value_leading_character", "Alternate vehicle identity must start with a letter or digit.");
 
         // A 17-character alphanumeric token is VIN-shaped, including tokens containing I/O/Q.
         // Reject it from this explicitly non-VIN channel whether its VIN check digit is valid or

@@ -711,9 +711,14 @@ public static partial class EndpointMappings
                      COALESCE(c.name, CONCAT('Entity-',cm.entity_id)) entity_name,
                      cm.revenue_estimate, cm.fuel_cost, cm.driver_cost, cm.maintenance_cost,
                      cm.overhead_cost, cm.total_cost, cm.gross_margin, cm.gross_margin_percent,
-                     cm.risk_score, cm.status, cm.created_at
+                     cm.risk_score, cm.status, cm.created_at,
+                     -- cost_margin_records carries no per-record currency column, so the
+                     -- tenant's configured currency is the honest source. Without this the
+                     -- profitability tiles rendered every amount as 'Unknown'.
+                     COALESCE(co.currency,'USD') currency
               FROM cost_margin_records cm
               LEFT JOIN customers c ON c.id=cm.customer_id
+              LEFT JOIN companies co ON co.id=cm.company_id
               WHERE cm.company_id=@cid
               ORDER BY cm.gross_margin_percent DESC LIMIT 50",
             c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
@@ -986,7 +991,7 @@ public static partial class EndpointMappings
             @"SELECT wo.id, wo.work_order_code, wo.title, wo.priority, wo.status,
                      wo.due_date, wo.estimated_cost, wo.actual_cost, COALESCE(wo.downtime_hours,0) downtime_hours,
                      v.vehicle_code, d.full_name driver_name,
-                     COALESCE(wo.vendor_name,'Internal') vendor_name,
+                     wo.vendor_name,
                      COALESCE(wo.issue_type, wo.title) issue_type,
                      COALESCE(wo.completed_at, wo.due_date) completed_at,
                      CASE WHEN wo.work_order_code LIKE 'WO-B3-%%'
@@ -1008,7 +1013,7 @@ public static partial class EndpointMappings
             @"SELECT wo.id, wo.work_order_code, wo.title, COALESCE(wo.downtime_hours,0) downtime_hours,
                      wo.priority, wo.status, wo.due_date,
                      wo.estimated_cost cost, v.vehicle_code,
-                     COALESCE(wo.vendor_name,'Internal') vendor_name,
+                     wo.vendor_name,
                      CASE WHEN wo.work_order_code LIKE 'WO-B3-%%'
                                OR wo.title LIKE 'Batch 3 work order %%'
                                OR COALESCE(wo.notes,'') ILIKE '%%Batch 3%%'

@@ -247,7 +247,8 @@ LIMIT 100",
 SELECT d.id, d.device_code, d.name, d.zone_id, z.code zone_code, z.name zone_name,
        d.shipment_id, s.shipment_number, d.vehicle_number, d.status,
        d.last_reported_temperature_celsius, d.battery_percent, d.last_ping_at_utc, d.notes,
-       d.source_channel, d.client_generated_id, d.correlation_id, d.causation_id, d.metadata_json
+       d.source_channel, d.client_generated_id, d.correlation_id, d.causation_id, d.metadata_json,
+       d.created_at_utc, d.updated_at_utc, d.idempotency_key
 FROM fleet_tms_temperature_devices d
 LEFT JOIN fleet_tms_temperature_zones z ON z.id=d.zone_id
 LEFT JOIN fleet_tms_shipments s ON s.id=d.shipment_id

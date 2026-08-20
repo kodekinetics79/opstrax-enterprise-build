@@ -1,10 +1,20 @@
 import { useCallback, useEffect, useState } from "react";
+import axios from "axios";
 import { AlertTriangle, CheckCircle2, Link2, Mail, Send } from "lucide-react";
 import { PHeader, PCard, PButton, PField, PInput, PLoading, PError } from "./ui";
 import { platformApi } from "@/services/platformApi";
 import { usePlatformAuth } from "@/hooks/usePlatformAuth";
 
 type Banner = { tone: "ok" | "error"; text: string };
+
+// Surfaces the server's real rejection reason (e.g. why SMTP failed) instead of axios's
+// generic "Request failed with status code 400". Mirrors the pattern in LoginPage.tsx.
+function getErrorMessage(err: unknown, fallback: string): string {
+  const serverMessage = axios.isAxiosError(err)
+    ? (err.response?.data?.message ?? err.response?.data?.errors?.[0])
+    : undefined;
+  return serverMessage ? String(serverMessage) : err instanceof Error ? err.message : fallback;
+}
 
 // Where the current value comes from, so an operator is never left wondering why an
 // edit "didn't stick" — environment values are live but not editable from here.
@@ -62,7 +72,7 @@ export function PlatformEmailSettingsPage() {
       setUrlSource(urls.tenantUrlSource as string | undefined);
       setTestTo((prev) => prev || session?.admin.email || "");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load email settings");
+      setError(getErrorMessage(e, "Failed to load email settings"));
     } finally {
       setLoading(false);
     }
@@ -89,7 +99,7 @@ export function PlatformEmailSettingsPage() {
       setBanner({ tone: "ok", text: "Email settings saved. Send a test message to confirm delivery." });
       await load();
     } catch (e) {
-      setBanner({ tone: "error", text: e instanceof Error ? e.message : "Save failed" });
+      setBanner({ tone: "error", text: getErrorMessage(e, "Save failed") });
     } finally {
       setSaving(false);
     }
@@ -103,7 +113,7 @@ export function PlatformEmailSettingsPage() {
       setBanner({ tone: "ok", text: "Application URLs saved." });
       await load();
     } catch (e) {
-      setBanner({ tone: "error", text: e instanceof Error ? e.message : "Save failed" });
+      setBanner({ tone: "error", text: getErrorMessage(e, "Save failed") });
     } finally {
       setSavingUrls(false);
     }
@@ -117,7 +127,7 @@ export function PlatformEmailSettingsPage() {
       setBanner({ tone: "ok", text: `Test email sent to ${res.to ?? testTo}. Check the inbox (and spam).` });
     } catch (e) {
       // The server returns the real SMTP failure — surfacing it is the whole point of a test.
-      setBanner({ tone: "error", text: e instanceof Error ? e.message : "Test send failed" });
+      setBanner({ tone: "error", text: getErrorMessage(e, "Test send failed") });
     } finally {
       setTesting(false);
     }
