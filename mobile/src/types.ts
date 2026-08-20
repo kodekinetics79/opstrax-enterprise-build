@@ -86,6 +86,8 @@ export type DriverAssignment = JsonRecord & {
   plannedDeliveryAt?: string;
   vehicleCode?: string;
   vehicleOos?: boolean;
+  vehicleConfirmedAt?: string | null;
+  vehicleVinSuffix?: string;
   openExceptions?: number;
 };
 

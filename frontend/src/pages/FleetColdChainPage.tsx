@@ -3,7 +3,7 @@ import { Link } from 'react-router';
 import { BellRing, BatteryCharging, FlaskConical, Gauge, Layers3, RadioTower, Thermometer, Truck } from 'lucide-react';
 import { ClayStat, ConsoleRail } from '@/components/console';
 import { notifyApiError } from '@/services/fleetTmsApi';
-import { fleetApi, fleetColdChainApi, type ColdChainEvent, type ColdChainSummaryResponse, type TemperatureAlert, type TemperatureDevice } from '@/services/fleetTmsApi';
+import { fleetApi, fleetColdChainApi, type ColdChainEvent, type ColdChainReport, type ColdChainSummaryResponse, type TemperatureAlert, type TemperatureDevice } from '@/services/fleetTmsApi';
 import { useHasPermission } from '@/hooks/usePermission';
 
 function formatMeasurement(value: unknown, digits: number, suffix: string, empty: string) {
@@ -24,6 +24,10 @@ export function FleetColdChainPage() {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  // The cold-chain report endpoint is deliberately read-only (it computes a projection
+  // and never writes fleet_tms_cold_chain_reports), so the result only exists in this
+  // response. Hold it here and render it rather than claiming it was persisted.
+  const [computedReport, setComputedReport] = useState<ColdChainReport | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [shipmentWarning, setShipmentWarning] = useState<string | null>(null);
   const [selectedReadingDeviceId, setSelectedReadingDeviceId] = useState('');
@@ -200,8 +204,9 @@ export function FleetColdChainPage() {
   const generateReport = async (shipmentId: string) => {
     if (!canManageFleet) return;
     try {
-      await fleetColdChainApi.report(shipmentId);
-      setNotice('Shipment compliance report generated from persisted readings.');
+      const report = await fleetColdChainApi.report(shipmentId);
+      setComputedReport(report);
+      setNotice('Compliance report computed from persisted readings. It is shown below and is not stored.');
       await refresh();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'The compliance report was not generated.');
@@ -560,7 +565,22 @@ export function FleetColdChainPage() {
                       </div>
                     ))}
                   </div>
-                ) : <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-500">No compliance reports have been generated.</div>}
+                ) : null}
+                {computedReport ? (
+                  <div className="border-t border-slate-200 pt-4">
+                    <p className="mb-3 text-xs font-bold uppercase tracking-[0.2em] text-slate-500">Computed report (not stored)</p>
+                    <div className="mb-2 rounded-2xl border border-slate-200 bg-white p-4 text-sm">
+                      <div className="flex justify-between gap-3"><strong>{computedReport.shipmentNumber || 'Shipment report'}</strong><span>{computedReport.compliancePercent}% compliant</span></div>
+                      <p className="mt-1 text-slate-500">{computedReport.totalReadings} readings · {computedReport.breachCount} breaches · computed {computedReport.generatedAtUtc ? new Date(computedReport.generatedAtUtc).toLocaleString() : 'just now'}</p>
+                      <p className="mt-1 text-slate-500">Observed range {formatMeasurement(computedReport.minTemperatureCelsius, 1, '°C', 'unavailable')} to {formatMeasurement(computedReport.maxTemperatureCelsius, 1, '°C', 'unavailable')}</p>
+                      {computedReport.notes ? <p className="mt-1 text-slate-500">{computedReport.notes}</p> : null}
+                      <details className="mt-2 text-xs text-slate-500"><summary className="cursor-pointer font-semibold">Report evidence</summary><p className="mt-1 break-all">{computedReport.summaryJson || 'No summary payload reported'}</p></details>
+                    </div>
+                  </div>
+                ) : null}
+                {!summary.reports.length && !computedReport ? (
+                  <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-500">Compliance reports are computed on demand from persisted readings; none has been computed in this session.</div>
+                ) : null}
               </div>
             </section>
           </aside>
