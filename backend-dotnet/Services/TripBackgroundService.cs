@@ -46,11 +46,16 @@ public sealed class TripBackgroundService(
             var runId = await tracker.BeginAsync(SvcName, ct);
             try
             {
+                // The append-only run row and readiness heartbeat are separate. Commit
+                // liveness before this database-wide cycle so a genuine long first run
+                // does not become stale immediately after startup grace expires.
+                await ReportProgressAsync(runId, ct);
+
                 // Cross-tenant worker (all-company routes, filtered by company_id):
                 // run the whole tick under the platform-admin bypass scope.
                 await db.RunInSystemTransactionAsync(async () =>
                 {
-                    await RunCycleAsync(ct);
+                    await RunCycleAsync(runId, ct);
                     return true;
                 }, ct);
                 sw.Stop();
@@ -66,7 +71,15 @@ public sealed class TripBackgroundService(
         }
     }
 
-    private async Task RunCycleAsync(CancellationToken ct)
+    // Tracker updates use their own system transaction and therefore commit outside
+    // the long trip transaction, remaining visible to readiness probes mid-cycle.
+    private async Task ReportProgressAsync(long runId, CancellationToken ct)
+    {
+        await tracker.HeartbeatAsync(SvcName, runId, ct);
+        await tracker.PulseAsync(SvcName, ct);
+    }
+
+    private async Task RunCycleAsync(long runId, CancellationToken ct)
     {
         // One database-wide cycle at a time. The advisory transaction lock is held by
         // ExecuteAsync's system transaction and makes overlapping service instances a
@@ -82,21 +95,27 @@ public sealed class TripBackgroundService(
 
         // Step 1 — upsert trips for every active route with an assigned vehicle.
         await CreateTripsFromActiveRoutesAsync(ct);
+        await ReportProgressAsync(runId, ct);
 
         // Step 2 — bind unassigned location_events to their active trip.
         await BindLocationEventsAsync(ct);
+        await ReportProgressAsync(runId, ct);
 
         // Step 3 — detect stop completion by proximity.
         await DetectStopCompletionsAsync(ct);
+        await ReportProgressAsync(runId, ct);
 
         // Step 4 — close trips first so final compliance counts every unfinished stop.
         await CloseFinalizedTripsAsync(ct);
+        await ReportProgressAsync(runId, ct);
 
         // Step 5 — compute compliance scores for active and just-completed trips.
         await ComputeComplianceAsync(ct);
+        await ReportProgressAsync(runId, ct);
 
         // Step 6 — generate route_deviation safety events for still-active trips.
         await GenerateDeviationAlertsAsync(ct);
+        await ReportProgressAsync(runId, ct);
     }
 
     // ── Step 1: Create trips ──────────────────────────────────────────────────────
