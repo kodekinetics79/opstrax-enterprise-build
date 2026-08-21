@@ -1,11 +1,103 @@
 import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { AlertTriangle, CheckCircle2, Link2, Mail, Send } from "lucide-react";
-import { PHeader, PCard, PButton, PField, PInput, PLoading, PError } from "./ui";
+import { PHeader, PCard, PButton, PField, PInput, PSelect, PLoading, PError } from "./ui";
 import { platformApi } from "@/services/platformApi";
 import { usePlatformAuth } from "@/hooks/usePlatformAuth";
 
 type Banner = { tone: "ok" | "error"; text: string };
+
+// SMTP presets for the common providers, so configuring mail is normally just
+// "pick provider, paste credentials". Every entry uses port 587 with STARTTLS —
+// deliberately: the server sends via .NET SmtpClient, which does NOT support
+// implicit TLS on 465, and all of these providers accept 587. Host/port stay
+// editable after selection, and Custom leaves everything open, so an unlisted
+// provider is never blocked.
+type SmtpPreset = {
+  key: string;
+  label: string;
+  host: string;
+  port: number;
+  /** Username the provider mandates (e.g. SendGrid's literal "apikey"), auto-filled. */
+  fixedUsername?: string;
+  /** Matches every regional/alternate host this provider uses, so a stored
+   *  eu-west-1 SES host or smtp.eu.mailgun.org is recognized as this provider AND
+   *  survives re-selecting the preset without being reset to the default host. */
+  hostPattern?: RegExp;
+  usernamePlaceholder: string;
+  passwordPlaceholder: string;
+  note: string;
+};
+
+const SMTP_PRESETS: SmtpPreset[] = [
+  {
+    key: "gmail", label: "Gmail / Google Workspace", host: "smtp.gmail.com", port: 587,
+    usernamePlaceholder: "you@yourdomain.com", passwordPlaceholder: "16-character App Password",
+    note: "Requires an App Password (Google Account → Security → 2-Step Verification → App passwords). Your normal Google password will not work.",
+  },
+  {
+    key: "microsoft365", label: "Microsoft 365 / Outlook", host: "smtp.office365.com", port: 587,
+    usernamePlaceholder: "you@yourdomain.com", passwordPlaceholder: "Mailbox password",
+    note: "The mailbox must have SMTP AUTH enabled (Microsoft 365 admin → user → Mail → Manage email apps → Authenticated SMTP). Note: Microsoft is retiring password-based SMTP AUTH — it is disabled by default from January 2027, so plan to move to a dedicated sending provider.",
+  },
+  {
+    key: "sendgrid", label: "SendGrid", host: "smtp.sendgrid.net", port: 587,
+    fixedUsername: "apikey",
+    usernamePlaceholder: "apikey", passwordPlaceholder: "SendGrid API key (SG.…)",
+    note: "Username is the literal word \"apikey\" (already filled in). The password is an API key with Mail Send permission.",
+  },
+  {
+    key: "ses", label: "Amazon SES", host: "email-smtp.us-east-1.amazonaws.com", port: 587,
+    hostPattern: /^email-smtp\.[a-z0-9-]+\.amazonaws\.com$/,
+    usernamePlaceholder: "SES SMTP username (AKIA…)", passwordPlaceholder: "SES SMTP password",
+    note: "Adjust the region in the host if your SES identity is not in us-east-1. Use SMTP credentials from the SES console (not plain IAM keys), and note the from address must be a verified identity.",
+  },
+  {
+    key: "mailgun", label: "Mailgun", host: "smtp.mailgun.org", port: 587,
+    hostPattern: /^smtp(\.eu)?\.mailgun\.org$/,
+    usernamePlaceholder: "postmaster@mg.yourdomain.com", passwordPlaceholder: "SMTP password",
+    note: "Use the SMTP credentials from Mailgun → Sending → Domain settings. EU-hosted domains use smtp.eu.mailgun.org — edit the host if so.",
+  },
+  {
+    key: "brevo", label: "Brevo (Sendinblue)", host: "smtp-relay.brevo.com", port: 587,
+    usernamePlaceholder: "SMTP login from Brevo", passwordPlaceholder: "SMTP key (xsmtpsib-…)",
+    note: "Use the SMTP key from Brevo → SMTP & API — not your account password.",
+  },
+  {
+    key: "postmark", label: "Postmark", host: "smtp.postmarkapp.com", port: 587,
+    usernamePlaceholder: "Server API token", passwordPlaceholder: "Server API token (same value)",
+    note: "Postmark uses the Server API token as BOTH the username and the password.",
+  },
+  {
+    key: "zoho", label: "Zoho Mail", host: "smtp.zoho.com", port: 587,
+    hostPattern: /^smtp\.zoho\.(com|eu|in)$/,
+    usernamePlaceholder: "you@yourdomain.com", passwordPlaceholder: "Password or app password",
+    note: "Accounts on Zoho's EU or IN data centers use smtp.zoho.eu / smtp.zoho.in — edit the host if so. With 2FA enabled, use an app-specific password.",
+  },
+  {
+    key: "resend", label: "Resend", host: "smtp.resend.com", port: 587,
+    fixedUsername: "resend",
+    usernamePlaceholder: "resend", passwordPlaceholder: "Resend API key (re_…)",
+    note: "Username is the literal word \"resend\" (already filled in). The password is an API key.",
+  },
+  {
+    key: "custom", label: "Custom / other", host: "", port: 587,
+    usernamePlaceholder: "SMTP username", passwordPlaceholder: "SMTP password or API key",
+    note: "",
+  },
+];
+
+/** Whether a configured host belongs to this preset's provider (regional hosts included). */
+function hostMatchesPreset(preset: SmtpPreset, host: string): boolean {
+  const trimmed = host.trim().toLowerCase();
+  if (preset.key === "custom" || !trimmed) return false;
+  return preset.hostPattern ? preset.hostPattern.test(trimmed) : preset.host === trimmed;
+}
+
+/** The preset whose host matches what is configured, so reopening the page shows the right provider. */
+function presetForHost(host: string): SmtpPreset {
+  return SMTP_PRESETS.find((p) => hostMatchesPreset(p, host)) ?? SMTP_PRESETS[SMTP_PRESETS.length - 1];
+}
 
 // Surfaces the server's real rejection reason (e.g. why SMTP failed) instead of axios's
 // generic "Request failed with status code 400". Mirrors the pattern in LoginPage.tsx.
@@ -43,6 +135,8 @@ export function PlatformEmailSettingsPage() {
   const [enableSsl, setEnableSsl] = useState(true);
   const [configured, setConfigured] = useState(false);
   const [canStorePassword, setCanStorePassword] = useState(true);
+  const [storageAvailable, setStorageAvailable] = useState(true);
+  const [provider, setProvider] = useState("custom");
   const [source, setSource] = useState<string | undefined>();
 
   const [tenantAppUrl, setTenantAppUrl] = useState("");
@@ -66,6 +160,8 @@ export function PlatformEmailSettingsPage() {
       setEnableSsl(email.enableSsl !== false);
       setConfigured(email.configured === true);
       setCanStorePassword(email.canStorePassword !== false);
+      setStorageAvailable(email.storageAvailable !== false);
+      setProvider(presetForHost(String(email.host ?? "")).key);
       setSource(email.source as string | undefined);
       setTenantAppUrl(String(urls.tenantAppUrl ?? ""));
       setPlatformAppUrl(String(urls.platformAppUrl ?? ""));
@@ -79,6 +175,32 @@ export function PlatformEmailSettingsPage() {
   }, [session?.admin.email]);
 
   useEffect(() => { void load(); }, [load]);
+
+  const activePreset = SMTP_PRESETS.find((p) => p.key === provider) ?? SMTP_PRESETS[SMTP_PRESETS.length - 1];
+
+  const applyPreset = (key: string) => {
+    setProvider(key);
+    const preset = SMTP_PRESETS.find((p) => p.key === key);
+    if (!preset) return;
+    if (preset.key === "custom") {
+      // A stranded provider literal is always wrong on a custom relay.
+      if (username === "apikey" || username === "resend") setUsername("");
+      return;
+    }
+    // A host already belonging to this provider (any region) is a deliberate edit —
+    // e.g. eu-west-1 SES or smtp.eu.mailgun.org. Flipping through the dropdown to read
+    // another provider's note and coming back must NOT reset it to the default region,
+    // nor stomp a tuned port/TLS setting.
+    if (!hostMatchesPreset(preset, host)) {
+      setHost(preset.host);
+      setPort(String(preset.port));
+      setEnableSsl(true);
+    }
+    // Only write the username when the provider mandates a literal value; a
+    // typed-in mailbox name must survive switching between providers.
+    if (preset.fixedUsername) setUsername(preset.fixedUsername);
+    else if (username === "apikey" || username === "resend") setUsername("");
+  };
 
   const save = async () => {
     setSaving(true);
@@ -154,6 +276,18 @@ export function PlatformEmailSettingsPage() {
         </div>
       )}
 
+      {!storageAvailable && (
+        <div className="flex items-start gap-2 rounded-[14px] border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            Settings storage is not provisioned on this deployment, so values cannot be saved from the console
+            yet — apply <code className="rounded bg-red-100 px-1">database/migrations/2026_08_21_stage83_platform_settings.sql</code> to
+            the database (or redeploy so the API can create the table). Environment-variable configuration
+            (<code className="rounded bg-red-100 px-1">SMTP_*</code>) still works in the meantime.
+          </span>
+        </div>
+      )}
+
       {!configured && (
         <div className="flex items-start gap-2 rounded-[14px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -170,15 +304,30 @@ export function PlatformEmailSettingsPage() {
           <h2 className="text-sm font-bold text-slate-900">SMTP server</h2>
         </div>
 
+        <div className="mb-4">
+          <PField label="Provider">
+            <PSelect value={provider} onChange={(e) => applyPreset(e.target.value)}>
+              {SMTP_PRESETS.map((preset) => (
+                <option key={preset.key} value={preset.key}>{preset.label}</option>
+              ))}
+            </PSelect>
+          </PField>
+          {activePreset.note && (
+            <p className="mt-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-800">
+              {activePreset.note}
+            </p>
+          )}
+        </div>
+
         <div className="grid gap-4 sm:grid-cols-2">
           <PField label="Host">
-            <PInput value={host} onChange={(e) => setHost(e.target.value)} placeholder="smtp.sendgrid.net" autoComplete="off" />
+            <PInput value={host} onChange={(e) => setHost(e.target.value)} placeholder="smtp.example.com" autoComplete="off" />
           </PField>
           <PField label="Port">
             <PInput value={port} onChange={(e) => setPort(e.target.value.replace(/\D/g, ""))} placeholder="587" inputMode="numeric" />
           </PField>
           <PField label="Username">
-            <PInput value={username} onChange={(e) => setUsername(e.target.value)} placeholder="apikey" autoComplete="off" />
+            <PInput value={username} onChange={(e) => setUsername(e.target.value)} placeholder={activePreset.usernamePlaceholder} autoComplete="off" />
           </PField>
           <PField label={passwordSet ? "Password (leave blank to keep current)" : "Password"}>
             <PInput
@@ -189,7 +338,7 @@ export function PlatformEmailSettingsPage() {
               placeholder={
                 !canStorePassword
                   ? "Unavailable — see note below"
-                  : passwordSet ? "stored — leave blank to keep" : "SMTP password or API key"
+                  : passwordSet ? "stored — leave blank to keep" : activePreset.passwordPlaceholder
               }
               autoComplete="new-password"
             />
@@ -220,8 +369,8 @@ export function PlatformEmailSettingsPage() {
         </p>
 
         <div className="mt-4 flex flex-wrap items-center gap-2">
-          <PButton variant="primary" onClick={() => void save()} disabled={saving}>
-            {saving ? "Saving" : "Save settings"}
+          <PButton variant="primary" onClick={() => void save()} disabled={saving || !storageAvailable}>
+            {!storageAvailable ? "Storage not provisioned" : saving ? "Saving" : "Save settings"}
           </PButton>
         </div>
       </PCard>
@@ -268,8 +417,8 @@ export function PlatformEmailSettingsPage() {
           <SourceNote source={urlSource} />
         </p>
         <div className="mt-4">
-          <PButton variant="primary" onClick={() => void saveUrls()} disabled={savingUrls}>
-            {savingUrls ? "Saving" : "Save URLs"}
+          <PButton variant="primary" onClick={() => void saveUrls()} disabled={savingUrls || !storageAvailable}>
+            {!storageAvailable ? "Storage not provisioned" : savingUrls ? "Saving" : "Save URLs"}
           </PButton>
         </div>
       </PCard>
