@@ -132,7 +132,22 @@ public static class PlatformSettingsEndpoints
         return Results.Ok(ApiResponse<object>.Ok(new { configured = config.IsUsable }, "Email settings saved"));
     }
 
-    private sealed record EmailTestRequest(string? To);
+    // Optional inline settings let the console test EXACTLY what is typed in the form,
+    // BEFORE anything is saved — so a wrong password never has to be persisted to be found.
+    private sealed record EmailTestRequest(
+        string? To, string? Host, int? Port, string? Username, string? Password,
+        string? FromAddress, string? FromName, bool? EnableSsl);
+
+    /// <summary>
+    /// Whether a test may fall back to the STORED secret when the form's password box is
+    /// empty ("stored — leave blank to keep"). Only when the target server AND username are
+    /// unchanged: replaying the stored credential against a different host would let anyone
+    /// with settings access exfiltrate the secret by pointing "Host" at a server they run.
+    /// </summary>
+    internal static bool MayReuseStoredSecret(string? storedHost, string? storedUser, string? requestHost, string? requestUser) =>
+        !string.IsNullOrWhiteSpace(storedHost)
+        && string.Equals(storedHost.Trim(), requestHost?.Trim(), StringComparison.OrdinalIgnoreCase)
+        && string.Equals((storedUser ?? "").Trim(), (requestUser ?? "").Trim(), StringComparison.OrdinalIgnoreCase);
 
     private static async Task<IResult> EmailSettingsTest(
         HttpContext http, EmailTestRequest request, Database db, PlatformMailService mail, CancellationToken ct)
@@ -145,7 +160,34 @@ public static class PlatformSettingsEndpoints
             return Results.Json(ApiResponse<object>.Fail("Validation failed", "A valid recipient email is required"),
                 statusCode: StatusCodes.Status400BadRequest);
 
-        var (sent, failure) = await mail.SendAsync(
+        // No inline settings → behave as before: test what is stored/env-configured.
+        if (string.IsNullOrWhiteSpace(request.Host))
+            return await RunTestSendAsync(http, db, mail, principal!, await mail.ResolveAsync(ct), to, inline: false, ct);
+
+        var stored = await mail.ResolveAsync(ct);
+        var password = request.Password;
+        if (string.IsNullOrEmpty(password) && MayReuseStoredSecret(stored.Host, stored.Username, request.Host, request.Username))
+            password = stored.Password;
+
+        var port = request.Port is > 0 and <= 65535 ? request.Port.Value : 587;
+        var config = new PlatformMailService.SmtpConfig(
+            request.Host!.Trim(), port, request.Username?.Trim(), password,
+            request.FromAddress?.Trim(), string.IsNullOrWhiteSpace(request.FromName) ? "OpsTrax" : request.FromName!.Trim(),
+            request.EnableSsl ?? port != 465);
+
+        if (!config.IsUsable)
+            return Results.Json(ApiResponse<object>.Fail("Validation failed", "A host and a from address are required to test"),
+                statusCode: StatusCodes.Status400BadRequest);
+
+        return await RunTestSendAsync(http, db, mail, principal!, config, to, inline: true, ct);
+    }
+
+    private static async Task<IResult> RunTestSendAsync(
+        HttpContext http, Database db, PlatformMailService mail, PlatformEndpoints.PlatformPrincipal principal,
+        PlatformMailService.SmtpConfig config, string to, bool inline, CancellationToken ct)
+    {
+        var (sent, failure) = await mail.SendWithConfigAsync(
+            config,
             to,
             "OpsTrax — SMTP test message",
             $"""
@@ -154,17 +196,20 @@ public static class PlatformSettingsEndpoints
             If you received it, outbound email is working and tenant administrators
             will receive their activation invites.
 
-            Sent by: {principal!.Email}
+            Sent by: {principal.Email}
             """,
             ct);
 
-        await PlatformEndpoints.AuditAsync(db, principal!, http, "platform.settings.email.test", "PlatformSettings", null, null,
-            new { to, sent, failure }, ct);
+        // inline=true means "credentials as typed in the form, not yet saved" — recorded so the
+        // audit trail distinguishes a pre-save probe from a test of the live configuration.
+        await PlatformEndpoints.AuditAsync(db, principal, http, "platform.settings.email.test", "PlatformSettings", null, null,
+            new { to, sent, failure, inline, host = config.Host, port = config.Port }, ct);
 
         // The SMTP failure reason is returned deliberately: without it the operator cannot tell
         // a wrong password from a blocked port from an unverified sender address.
         return sent
-            ? Results.Ok(ApiResponse<object>.Ok(new { sent = true, to }, $"Test email sent to {to}"))
+            ? Results.Ok(ApiResponse<object>.Ok(new { sent = true, to },
+                inline ? $"Test email sent to {to} — these settings work; save them to make them live" : $"Test email sent to {to}"))
             : Results.Json(ApiResponse<object>.Fail("Test email failed", failure ?? "Unknown SMTP error"),
                 statusCode: StatusCodes.Status400BadRequest);
     }
