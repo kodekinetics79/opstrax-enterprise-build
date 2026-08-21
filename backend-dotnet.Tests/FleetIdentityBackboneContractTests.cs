@@ -167,6 +167,7 @@ public sealed class FleetIdentityBackboneContractTests
     {
         var routes = Read("backend-dotnet", "Controllers", "EndpointMappings.cs");
         var lifecycle = Read("backend-dotnet", "Controllers", "FleetIdentityEndpoints.cs");
+        var devices = Read("frontend", "src", "services", "telematicsService.ts");
         var registry = Read("telematics", "src", "Opstrax.Telematics.Gateway", "Identity", "PostgresDeviceRegistry.cs");
         Assert.Contains("/api/telemetry/installation-quarantine/{id:long}/resolve", routes, StringComparison.Ordinal);
         Assert.Contains("/api/telemetry/devices/{id:long}/installations/{installationId:long}/evidence", routes, StringComparison.Ordinal);
@@ -183,6 +184,15 @@ public sealed class FleetIdentityBackboneContractTests
         Assert.Contains("Commissioning requires a persisted authenticated telemetry event", lifecycle, StringComparison.Ordinal);
         Assert.Contains("'location-event:'||id::TEXT", lifecycle, StringComparison.Ordinal);
         Assert.Contains("'canonical-telemetry:'||id::TEXT", lifecycle, StringComparison.Ordinal);
+        var commission = Block(lifecycle, "private static async Task<IResult> DeviceInstallationCommission(", "private static async Task<IResult> DeviceInstallationRemove(");
+        Assert.Contains("RunInSystemTransactionAsync<IResult>", commission, StringComparison.Ordinal);
+        Assert.Contains("company_id=@cid", commission, StringComparison.Ordinal);
+        var deviceList = Block(routes, "private static async Task<IResult> DeviceList(", "private static async Task<IResult> DeviceDetail(");
+        var deviceDetail = Block(routes, "private static async Task<IResult> DeviceDetail(", "private static async Task<IResult> DeviceProvision(");
+        Assert.Contains("e.device_state", deviceList, StringComparison.Ordinal);
+        Assert.Contains("e.device_state", deviceDetail, StringComparison.Ordinal);
+        Assert.Contains("deviceState: String(row.device_state ?? \"Unknown\")", devices, StringComparison.Ordinal);
+        Assert.Contains("[\"Device state\", device.deviceState || \"Unavailable\"]", Read("frontend", "src", "pages", "IotDevicesPage.tsx"), StringComparison.Ordinal);
     }
 
     [Fact]

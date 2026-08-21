@@ -76,6 +76,27 @@ public sealed class TelemetryCredentialHardeningTests
             StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void TerminalMigration_RemovesPlaintextConstraintAndRequiresEncryptedHmac()
+    {
+        var migration = ReadRepositoryFile(
+            "database",
+            "migrations",
+            "2026_08_20_stage82_telematics_device_credential_constraint.sql");
+        var startup = ReadRepositoryFile("backend-dotnet", "Services", "TelemetrySchemaService.cs");
+        var readiness = ReadRepositoryFile("backend-dotnet", "Services", "FleetProductionReadinessService.cs");
+
+        Assert.Contains("DROP CONSTRAINT IF EXISTS ck_eld_devices_active_credentials", migration, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("DROP CONSTRAINT IF EXISTS ck_stage66_eld_active_credentials", migration, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("hmac_secret IS NULL", migration, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("hmac_secret_encrypted IS NOT NULL", migration, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("hmac_key_version > 0", migration, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("VALIDATE CONSTRAINT ck_eld_devices_active_credentials", migration, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("hmac_secret IS NULL", startup, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("2026_08_20_stage82_telematics_device_credential_constraint", readiness, StringComparison.Ordinal);
+        Assert.Contains("pg_get_constraintdef", readiness, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static string ReadRepositoryFile(params string[] parts)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

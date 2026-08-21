@@ -23,6 +23,9 @@ public sealed class ReleaseProvenanceContractTests
             "2026_08_13_stage78_country_profiles_runtime_contract.sql",
             "2026_08_13_stage79_tenant_provisioning_runtime_contract.sql",
             "2026_08_14_stage80_fleet_identity_backbone.sql",
+            "2026_08_18_stage81_platform_billing_itemization.sql",
+            "2026_08_20_stage81_customer_eta_secure_token.sql",
+            "2026_08_20_stage82_telematics_device_credential_constraint.sql",
         }) Assert.Contains(migration, dockerfile, StringComparison.Ordinal);
 
         var immutableEvidenceReconciliation = Read(
@@ -65,6 +68,7 @@ public sealed class ReleaseProvenanceContractTests
         Assert.Contains("2026_08_13_stage78_country_profiles_runtime_contract.sql", workflow, StringComparison.Ordinal);
         Assert.Contains("2026_08_13_stage79_tenant_provisioning_runtime_contract.sql", workflow, StringComparison.Ordinal);
         Assert.Contains("2026_08_14_stage80_fleet_identity_backbone.sql", workflow, StringComparison.Ordinal);
+        Assert.Contains("2026_08_20_stage82_telematics_device_credential_constraint.sql", workflow, StringComparison.Ordinal);
         Assert.Contains("if: ${{ always() }}", workflow, StringComparison.Ordinal);
         Assert.Contains("opstrax-mandatory-gates-${{ env.CANDIDATE_SHA }}-${{ github.run_attempt }}", workflow, StringComparison.Ordinal);
         Assert.DoesNotContain("opstrax-release-candidate-${{ github.sha }}", workflow, StringComparison.Ordinal);

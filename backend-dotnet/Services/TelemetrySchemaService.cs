@@ -311,7 +311,9 @@ public sealed class TelemetrySchemaService(Database db)
         @"ALTER TABLE eld_devices ADD CONSTRAINT ck_eld_devices_active_credentials CHECK (
             LOWER(status) <> 'active' OR (
               api_key_hash IS NOT NULL AND api_key_hash ~ '^[0-9a-fA-F]{64}$'
+              AND hmac_secret IS NULL
               AND hmac_secret_encrypted IS NOT NULL AND length(btrim(hmac_secret_encrypted)) >= 24
+              AND hmac_key_version > 0
               AND revoked_at IS NULL
             )) NOT VALID",
     ];

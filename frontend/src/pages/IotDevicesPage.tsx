@@ -1221,7 +1221,7 @@ function DeviceDetailDrawer({
           ["IMEI", device.imei],
           ["Tenant", device.tenantName],
           ["Lifecycle", device.lifecycleStatus],
-          ["Device state", device.eldStatus || "Unavailable"],
+          ["Device state", device.deviceState || "Unavailable"],
           ["Archived at", device.archivedAt ? new Date(device.archivedAt).toLocaleString() : "Not archived"],
         ]} />
         <InfoBlock title="Assignment" items={[

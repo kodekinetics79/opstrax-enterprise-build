@@ -309,7 +309,12 @@ public static partial class EndpointMappings
             return Results.BadRequest(ApiResponse<object>.Fail("Failed commissioning requires a failure reference of 8 to 500 characters"));
         var companyId = GetCompanyId(http);
         var actorId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
-        return await db.RunInTenantTransactionAsync(companyId, async () =>
+        // Commissioning proof spans location_events and the system-owned canonical
+        // telemetry ledger. The runtime app role is intentionally denied direct
+        // access to canonical_telemetry_events, so use the system transaction just
+        // like installation creation does. Every query below remains explicitly
+        // constrained by company_id/device_id/installation_id.
+        return await db.RunInSystemTransactionAsync<IResult>(async () =>
         {
             Dictionary<string, object?>? telemetryProof = null;
             if (result == "passed")

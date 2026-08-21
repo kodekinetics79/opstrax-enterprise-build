@@ -17316,7 +17316,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var companyId = GetCompanyId(http);
         var branchId = GetBranchId(http);
         var devices = await db.QueryAsync(
-            @"SELECT e.id, e.device_serial, e.imei, e.device_category, e.device_model, e.provider, e.status,
+            @"SELECT e.id, e.device_serial, e.imei, e.device_category, e.device_model, e.provider, e.status, e.device_state,
                      current_install.vehicle_id, active_dispatch.driver_id, e.firmware_version,
                      e.last_seen_at, e.revoked_at, e.created_at, e.row_version,
                      current_install.id current_installation_id,
@@ -17355,7 +17355,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var companyId = GetCompanyId(http);
         var branchId = GetBranchId(http);
         var device = await db.QuerySingleAsync(
-            @"SELECT e.id, e.device_serial, e.imei, e.device_category, e.device_model, e.provider, e.status,
+            @"SELECT e.id, e.device_serial, e.imei, e.device_category, e.device_model, e.provider, e.status, e.device_state,
                      current_install.vehicle_id, active_dispatch.driver_id, e.firmware_version, e.notes,
                      e.last_seen_at, e.revoked_at, e.created_at, e.row_version,
                      current_install.id current_installation_id,
