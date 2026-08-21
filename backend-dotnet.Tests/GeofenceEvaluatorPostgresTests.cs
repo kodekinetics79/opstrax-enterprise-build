@@ -11,6 +11,49 @@ namespace Opstrax.Tests;
 public class GeofenceEvaluatorPostgresTests
 {
     [Fact]
+    public async Task Accepted_Position_Burst_Preserves_Transitions_And_Alert_Lifecycle()
+    {
+        var db = CreateDatabase();
+        var (cid, vid, gid) = await SeedAsync(db);
+        try
+        {
+            var outside1 = DateTimeOffset.UtcNow.AddMinutes(-3);
+            var inside = outside1.AddMinutes(1);
+            var outside2 = inside.AddMinutes(1);
+
+            var firstBreach = await GeofenceEvaluator.ProjectPositionAsync(
+                db, cid, null, vid, 34.25, -118.50, outside1);
+            Assert.NotNull(firstBreach);
+            Assert.Equal(0, await CountAsync(db, cid, gid, vid, "Entry"));
+
+            await db.ExecuteAsync(
+                @"INSERT INTO telemetry_alerts(company_id,vehicle_id,alert_type,severity,message,status)
+                  VALUES (@c,@v,'geofence_breach','High','Vehicle outside geofence: Depot','Open')",
+                c => { c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@v", vid); });
+
+            var authorized = await GeofenceEvaluator.ProjectPositionAsync(
+                db, cid, null, vid, 34.05, -118.24, inside);
+            Assert.Null(authorized);
+            Assert.Equal(1, await CountAsync(db, cid, gid, vid, "Entry"));
+            Assert.Equal(1, await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM telemetry_alerts WHERE company_id=@c AND vehicle_id=@v AND status='Resolved' AND resolved_by='system:geofence-reentry'",
+                c => { c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@v", vid); }));
+
+            var secondBreach = await GeofenceEvaluator.ProjectPositionAsync(
+                db, cid, null, vid, 34.25, -118.50, outside2);
+            Assert.NotNull(secondBreach);
+            Assert.Equal(1, await CountAsync(db, cid, gid, vid, "Exit"));
+
+            var times = await db.QueryAsync(
+                "SELECT event_time FROM geofence_events WHERE company_id=@c AND geofence_id=@g AND vehicle_id=@v ORDER BY event_time",
+                c => { c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@g", gid); c.Parameters.AddWithValue("@v", vid); });
+            Assert.Equal(inside.UtcDateTime, Convert.ToDateTime(times[0]["eventTime"]).ToUniversalTime(), TimeSpan.FromMilliseconds(1));
+            Assert.Equal(outside2.UtcDateTime, Convert.ToDateTime(times[1]["eventTime"]).ToUniversalTime(), TimeSpan.FromMilliseconds(1));
+        }
+        finally { await CleanupAsync(db, cid, vid, gid); }
+    }
+
+    [Fact]
     public async Task Vehicle_Entering_Then_Leaving_A_Zone_Emits_One_Entry_Then_One_Exit()
     {
         var db = CreateDatabase();

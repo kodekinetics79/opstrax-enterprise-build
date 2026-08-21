@@ -197,8 +197,9 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
 
         // Same authorized-area set semantics as native HMAC and gateway ingest: a point
         // inside any valid scoped fence is authorized; only outside all is a breach.
-        var breached = await GeofenceEvaluator.FindAuthorizedAreaBreachAsync(
-            db, companyId, vehicleBranchId, reading.Lat, reading.Lng, ct);
+        var breached = await GeofenceEvaluator.ProjectPositionAsync(
+            db, companyId, vehicleBranchId, vehicleId,
+            reading.Lat, reading.Lng, new DateTimeOffset(reading.EventTime.ToUniversalTime()), ct);
 
         if (breached is null) return;
         var fenceName = breached.GetValueOrDefault("name")?.ToString() ?? "Unknown geofence";

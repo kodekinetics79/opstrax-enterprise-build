@@ -16058,8 +16058,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             {
                 // Authorized-area set semantics: inside any valid scoped circle/polygon means
                 // authorized; only outside all valid fences produces a breach.
-                var breached = await GeofenceEvaluator.FindAuthorizedAreaBreachAsync(
-                    db, companyId, vehicleBranchId, (double)body.Lat, (double)body.Lng, ct);
+                var breached = await GeofenceEvaluator.ProjectPositionAsync(
+                    db, companyId, vehicleBranchId, vehicleId.Value,
+                    (double)body.Lat, (double)body.Lng, observedAt, ct);
                 if (breached is not null)
                 {
                     var gfId   = Convert.ToInt64(breached["id"]);
@@ -16860,8 +16861,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 // Authorized-area set semantics match native HMAC and raw GT06 projection:
                 // inside any valid scoped fence is authorized; outside all is a breach.
                 // Evidence correlation remains this tenant's location event, not a fence id.
-                var breached = await GeofenceEvaluator.FindAuthorizedAreaBreachAsync(
-                    db, companyId, vehicleBranchId, lat.Value, lng.Value, ct);
+                var breached = await GeofenceEvaluator.ProjectPositionAsync(
+                    db, companyId, vehicleBranchId, vehicleId.Value,
+                    lat.Value, lng.Value, eventTime, ct);
                 if (breached is not null)
                 {
                     var fenceName = breached.GetValueOrDefault("name")?.ToString() ?? "Unknown geofence";

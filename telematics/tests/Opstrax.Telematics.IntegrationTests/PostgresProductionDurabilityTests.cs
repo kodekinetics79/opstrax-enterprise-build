@@ -184,12 +184,16 @@ public sealed class PostgresProductionDurabilityTests
                 id bigserial PRIMARY KEY, company_id bigint NOT NULL, branch_id bigint NULL,
                 name text NOT NULL, status text NOT NULL, center_lat numeric NULL,
                 center_lng numeric NULL, radius_meters int NULL, polygon_json jsonb NULL);
+            CREATE TABLE geofence_events(
+                id bigserial PRIMARY KEY, company_id bigint NOT NULL, geofence_id bigint NOT NULL,
+                vehicle_id bigint NOT NULL, event_type text NOT NULL, event_time timestamptz NOT NULL);
             CREATE TABLE telemetry_alerts(
                 id bigserial PRIMARY KEY, company_id bigint NOT NULL, vehicle_id bigint NULL,
                 device_id bigint NULL, driver_id bigint NULL,installation_id bigint NULL,
                 assignment_id bigint NULL,trip_id bigint NULL,alert_type text NOT NULL,
                 severity text NOT NULL, message text NOT NULL, source_event_id bigint NULL,
-                status text NOT NULL, source_channel text NULL, created_at timestamptz NOT NULL);
+                status text NOT NULL, source_channel text NULL, created_at timestamptz NOT NULL,
+                resolved_at timestamptz NULL,resolved_by text NULL,updated_at timestamptz NULL);
             INSERT INTO vehicles VALUES(501,11,71,NULL);
             INSERT INTO eld_devices(id,company_id,vehicle_id,driver_id) VALUES(101,11,501,301);
             INSERT INTO device_installations VALUES(1001,11,101,501,'Installed',now()-interval '1 day',NULL);
