@@ -308,7 +308,10 @@ public sealed class TripLifecyclePostgresTests
     private static async Task InvokeWorker(TripBackgroundService worker, string methodName)
     {
         var method = typeof(TripBackgroundService).GetMethod(methodName, BindingFlags.NonPublic | BindingFlags.Instance)!;
-        try { await (Task)method.Invoke(worker, new object[] { CancellationToken.None })!; }
+        var args = methodName == "RunCycleAsync"
+            ? new object[] { -1L, CancellationToken.None }
+            : new object[] { CancellationToken.None };
+        try { await (Task)method.Invoke(worker, args)!; }
         catch (TargetInvocationException ex) when (ex.InnerException is not null)
         { System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerException).Throw(); throw; }
     }

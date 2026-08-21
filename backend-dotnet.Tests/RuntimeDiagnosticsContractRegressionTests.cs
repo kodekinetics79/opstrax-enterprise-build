@@ -9,8 +9,10 @@ public sealed class RuntimeDiagnosticsContractRegressionTests
         var frontend = File.ReadAllText(Path.Combine(root, "frontend", "src", "services", "runtimeDiagnostics.ts"));
         var program = File.ReadAllText(Path.Combine(root, "backend-dotnet", "Program.cs"));
 
-        Assert.Contains("workerContract.status).toLowerCase() === \"healthy\"", frontend, StringComparison.Ordinal);
+        Assert.Contains("workerContractStatus === \"healthy\"", frontend, StringComparison.Ordinal);
         Assert.DoesNotContain("workerContract.status).toLowerCase() === \"valid\"", frontend, StringComparison.Ordinal);
+        Assert.Contains("workerContractStatus === \"starting\"", frontend, StringComparison.Ordinal);
+        Assert.Contains("state = \"Starting\"", frontend, StringComparison.Ordinal);
         Assert.Contains("startupGraceActive ? \"starting\" : \"healthy\"", program, StringComparison.Ordinal);
     }
 
