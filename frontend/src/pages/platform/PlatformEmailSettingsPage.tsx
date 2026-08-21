@@ -256,8 +256,20 @@ export function PlatformEmailSettingsPage() {
     setTesting(true);
     setBanner(null);
     try {
-      const res = await platformApi.sendTestEmail(testTo.trim());
-      setBanner({ tone: "ok", text: `Test email sent to ${res.to ?? testTo}. Check the inbox (and spam).` });
+      // Test what is IN THE FORM, not what happens to be saved — so wrong credentials are
+      // caught before they are persisted. An empty password box falls back to the stored
+      // secret only when host+username are unchanged (the server enforces the same rule).
+      const res = await platformApi.sendTestEmail({
+        to: testTo.trim(),
+        host: host.trim(),
+        port: Number(port) || 587,
+        username: username.trim(),
+        password: password || undefined,
+        fromAddress: fromAddress.trim(),
+        fromName: fromName.trim(),
+        enableSsl,
+      });
+      setBanner({ tone: "ok", text: `Test email sent to ${res.to ?? testTo}. Check the inbox (and spam). These exact settings work — save them to make them live.` });
     } catch (e) {
       // The server returns the real SMTP failure — surfacing it is the whole point of a test.
       setBanner({ tone: "error", text: getErrorMessage(e, "Test send failed") });
@@ -392,8 +404,9 @@ export function PlatformEmailSettingsPage() {
           <h2 className="text-sm font-bold text-slate-900">Send a test message</h2>
         </div>
         <p className="mb-3 text-xs leading-5 text-slate-500">
-          Delivers a real message through the settings above. Any SMTP rejection is shown verbatim so you can tell a
-          wrong password from a blocked port or an unverified sender.
+          Delivers a real message using the values in the form above — before you save them, so a wrong
+          password never has to be stored to be discovered. Any SMTP rejection is shown verbatim so you can
+          tell a wrong password from a blocked port or an unverified sender.
         </p>
         <div className="flex flex-wrap items-end gap-3">
           <div className="min-w-[260px] flex-1">
@@ -401,7 +414,7 @@ export function PlatformEmailSettingsPage() {
               <PInput value={testTo} onChange={(e) => setTestTo(e.target.value)} placeholder="you@yourdomain.com" />
             </PField>
           </div>
-          <PButton onClick={() => void sendTest()} disabled={testing || !configured}>
+          <PButton onClick={() => void sendTest()} disabled={testing || !host.trim() || !fromAddress.trim()}>
             {testing ? "Sending" : "Send test"}
           </PButton>
         </div>

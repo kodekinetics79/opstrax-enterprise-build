@@ -228,4 +228,30 @@ public class PlatformEmailSettingsTests
         Assert.False(sent);
         Assert.Contains("not configured", error);
     }
+
+    // ── Test-before-save: when may the stored secret be replayed? ────────────────
+    // The pre-save test falls back to the stored password only when the target server
+    // AND username are unchanged — otherwise anyone with settings access could point
+    // "Host" at a server they control and harvest the stored credential.
+    [Fact]
+    public void Stored_Secret_Reusable_When_Host_And_User_Unchanged()
+        => Assert.True(Opstrax.Api.Controllers.PlatformSettingsEndpoints.MayReuseStoredSecret(
+            "smtp.example.com", "info@k.com", "smtp.example.com", "info@k.com"));
+
+    [Fact]
+    public void Stored_Secret_Reuse_Is_Case_And_Whitespace_Insensitive()
+        => Assert.True(Opstrax.Api.Controllers.PlatformSettingsEndpoints.MayReuseStoredSecret(
+            "SMTP.Example.com", "Info@K.com", "  smtp.example.com ", "info@k.com "));
+
+    [Theory]
+    [InlineData("smtp.evil.example", "info@k.com")]   // different host = credential exfil vector
+    [InlineData("smtp.example.com", "other@k.com")]   // different account on the same host
+    public void Stored_Secret_Not_Reusable_When_Target_Changes(string reqHost, string reqUser)
+        => Assert.False(Opstrax.Api.Controllers.PlatformSettingsEndpoints.MayReuseStoredSecret(
+            "smtp.example.com", "info@k.com", reqHost, reqUser));
+
+    [Fact]
+    public void Stored_Secret_Not_Reusable_When_Nothing_Is_Stored()
+        => Assert.False(Opstrax.Api.Controllers.PlatformSettingsEndpoints.MayReuseStoredSecret(
+            null, null, "smtp.example.com", "info@k.com"));
 }

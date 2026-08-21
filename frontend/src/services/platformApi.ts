@@ -151,7 +151,12 @@ export const platformApi = {
     host?: string; port?: number; username?: string; password?: string;
     fromAddress?: string; fromName?: string; enableSsl?: boolean;
   }) => unwrap<AnyRecord>(platformClient.put("/api/platform/settings/email", body)),
-  sendTestEmail: (to: string) => unwrap<AnyRecord>(platformClient.post("/api/platform/settings/email/test", { to })),
+  // Passing the form's current values tests them BEFORE saving; with only `to`,
+  // the stored/live configuration is tested instead.
+  sendTestEmail: (body: {
+    to: string; host?: string; port?: number; username?: string; password?: string;
+    fromAddress?: string; fromName?: string; enableSsl?: boolean;
+  }) => unwrap<AnyRecord>(platformClient.post("/api/platform/settings/email/test", body)),
   appUrlSettings: () => unwrap<AnyRecord>(platformClient.get("/api/platform/settings/urls")),
   saveAppUrlSettings: (body: { tenantAppUrl?: string; platformAppUrl?: string }) =>
     unwrap<AnyRecord>(platformClient.put("/api/platform/settings/urls", body)),

@@ -69,8 +69,21 @@ public sealed class PlatformMailService(PlatformSettingsService settings, ILogge
     /// actual SMTP error — "it didn't work" is not a diagnosis an operator can act on.
     /// </summary>
     public async Task<(bool Sent, string? Error)> SendAsync(string to, string subject, string textBody, CancellationToken ct = default)
+        => await SendWithConfigAsync(await ResolveAsync(ct), to, subject, textBody, ct);
+
+    // How long one SMTP conversation may take before the attempt is reported as a timeout.
+    // SmtpClient.Timeout is ignored on the async path, so an unreachable or filtered server
+    // would otherwise hang ~100s — longer than the console's HTTP timeout, which is exactly
+    // how a "send test" click can appear to vanish. 20s is generous for a healthy relay.
+    private static readonly TimeSpan SendTimeout = TimeSpan.FromSeconds(20);
+
+    /// <summary>
+    /// Send using an explicit configuration instead of the stored/env one. This is what lets
+    /// the console TEST credentials as typed, before anything is persisted.
+    /// </summary>
+    public async Task<(bool Sent, string? Error)> SendWithConfigAsync(
+        SmtpConfig config, string to, string subject, string textBody, CancellationToken ct = default)
     {
-        var config = await ResolveAsync(ct);
         if (!config.IsUsable)
             return (false, "SMTP is not configured — set at least a host and a from address.");
 
@@ -95,7 +108,17 @@ public sealed class PlatformMailService(PlatformSettingsService settings, ILogge
             };
             message.To.Add(to);
 
-            await client.SendMailAsync(message, ct);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(SendTimeout);
+            try
+            {
+                await client.SendMailAsync(message, timeout.Token);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                return (false, $"Timed out after {SendTimeout.TotalSeconds:0}s connecting to {config.Host}:{config.Port} — " +
+                               "the server is unreachable from this deployment or the port is filtered.");
+            }
             return (true, null);
         }
         catch (Exception ex)
