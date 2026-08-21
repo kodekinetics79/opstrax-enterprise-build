@@ -93,6 +93,7 @@ public sealed class TelemetryCredentialHardeningTests
         Assert.Contains("hmac_key_version > 0", migration, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("VALIDATE CONSTRAINT ck_eld_devices_active_credentials", migration, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("hmac_secret IS NULL", startup, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("VALIDATE CONSTRAINT ck_eld_devices_active_credentials", startup, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("2026_08_20_stage82_telematics_device_credential_constraint", readiness, StringComparison.Ordinal);
         Assert.Contains("pg_get_constraintdef", readiness, StringComparison.OrdinalIgnoreCase);
     }

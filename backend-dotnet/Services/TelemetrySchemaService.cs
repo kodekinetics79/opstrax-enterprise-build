@@ -316,5 +316,9 @@ public sealed class TelemetrySchemaService(Database db)
               AND hmac_key_version > 0
               AND revoked_at IS NULL
             )) NOT VALID",
+        // The quarantine immediately above removes every violating active row, so
+        // validation must complete before startup can advertise fleet readiness.
+        // Leaving the replacement NOT VALID silently undid Stage 82 on every boot.
+        "ALTER TABLE eld_devices VALIDATE CONSTRAINT ck_eld_devices_active_credentials",
     ];
 }
