@@ -27,7 +27,9 @@ public class Stage12TelemetryTests
             await schema.EnsureAsync();
             await SeedTelemetryAsync(db, companyId, vehicleId, driverId, staleMinutes: 2, speedMph: 78m);
 
-            await liveState.RefreshVehicleAsync(companyId, vehicleId);
+            // Exercise the company-level worker path. Database rows are normalized to
+            // camelCase, so this also guards the vehicleId projection used by scheduled refreshes.
+            await liveState.RefreshCompanyAsync(companyId);
             _ = ai.CreateRecommendation(
                 companyId.ToString(),
                 "telemetry.speeding",
