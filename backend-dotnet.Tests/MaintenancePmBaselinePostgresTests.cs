@@ -67,7 +67,7 @@ public class MaintenancePmBaselinePostgresTests
             NullLogger<MaintenanceBackgroundService>.Instance,
             provider.GetRequiredService<ServiceRunTracker>());
         var m = typeof(MaintenanceBackgroundService).GetMethod("EvaluatePmRulesAsync", BindingFlags.NonPublic | BindingFlags.Instance)!;
-        await (Task)m.Invoke(svc, new object[] { CancellationToken.None })!;
+        await (Task)m.Invoke(svc, new object[] { -1L, CancellationToken.None })!;
     }
 
     private static async Task<long> OpenItemsAsync(Database db, long cid, long vid, string serviceType) =>
