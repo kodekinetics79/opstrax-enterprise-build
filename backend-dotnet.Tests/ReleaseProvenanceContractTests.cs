@@ -28,6 +28,10 @@ public sealed class ReleaseProvenanceContractTests
             "2026_08_20_stage82_telematics_device_credential_constraint.sql",
         }) Assert.Contains(migration, dockerfile, StringComparison.Ordinal);
 
+        var customerEtaMigration = Read(
+            "database", "migrations", "2026_08_20_stage81_customer_eta_secure_token.sql");
+        Assert.Contains("ADD COLUMN IF NOT EXISTS public_status", customerEtaMigration, StringComparison.OrdinalIgnoreCase);
+
         var immutableEvidenceReconciliation = Read(
             "database", "migrations", "2026_08_02_stage72_hos_offboarding_immutability_reconciliation.sql");
         Assert.Contains("stage65_guard_hos_certification_snapshot", immutableEvidenceReconciliation, StringComparison.Ordinal);

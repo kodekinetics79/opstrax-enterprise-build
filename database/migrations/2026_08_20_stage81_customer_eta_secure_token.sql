@@ -16,6 +16,13 @@
 
 BEGIN;
 
+-- The base SQL predecessor names this concept `status`; protected databases that
+-- previously ran Batch2SchemaService already have `public_status`. Make the owner
+-- migration self-contained for clean/predecessor-only databases instead of relying
+-- on a runtime schema initializer that protected environments intentionally skip.
+ALTER TABLE customer_eta_links
+  ADD COLUMN IF NOT EXISTS public_status VARCHAR(80) NOT NULL DEFAULT 'Active';
+
 ALTER TABLE customer_eta_links ADD COLUMN IF NOT EXISTS secure_token VARCHAR(80) NULL;
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_customer_eta_links_secure_token
