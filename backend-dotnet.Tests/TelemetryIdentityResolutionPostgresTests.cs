@@ -93,26 +93,23 @@ public sealed class TelemetryIdentityResolutionPostgresTests
             // be exercised, then restore it immediately -- mirroring how
             // FleetIdentityInstallationPostgresTests/DetentionApprovalPostgresTests temporarily lift a
             // database guard to build a fixture and always restore it in a finally block.
-            await db.ExecuteAsync("ALTER TABLE device_installations DROP CONSTRAINT ex_stage80_device_installation_period");
-            object? result;
+            object? result = new object();
             try
             {
-                await Installation(db, companyId, branch, deviceId, vehicleB, attributionTime.AddHours(-1));
-                result = await ResolveIdentity(db, companyId, deviceId, attributionTime);
+                await db.RunInSystemTransactionAsync<object?>(async () =>
+                {
+                    await db.ExecuteAsync("ALTER TABLE device_installations DROP CONSTRAINT ex_stage80_device_installation_period");
+                    await Installation(db, companyId, branch, deviceId, vehicleB, attributionTime.AddHours(-1));
+                    result = await ResolveIdentity(db, companyId, deviceId, attributionTime);
+
+                    // Roll back both the corrupt row and the DDL atomically. No other
+                    // connection can observe a committed database without the guard.
+                    throw new RollbackCorruptInstallationFixtureException();
+                });
             }
-            finally
+            catch (RollbackCorruptInstallationFixtureException)
             {
-                // Remove the deliberately corrupt overlap before recreating the
-                // exclusion constraint. PostgreSQL validates all existing rows
-                // when ADD CONSTRAINT runs, so restoring first would necessarily
-                // fail and leave the shared integration database unprotected.
-                await db.ExecuteAsync(
-                    "DELETE FROM device_installations WHERE company_id=@c",
-                    c => c.Parameters.AddWithValue("@c", companyId));
-                await db.ExecuteAsync(
-                    @"ALTER TABLE device_installations ADD CONSTRAINT ex_stage80_device_installation_period
-                      EXCLUDE USING gist (company_id WITH =,device_id WITH =,effective_period WITH &&)
-                      WHERE (status IN ('Installed','Verified','Removed'))");
+                // Expected sentinel used solely to force transaction rollback.
             }
 
             Assert.Null(result);
@@ -267,4 +264,6 @@ public sealed class TelemetryIdentityResolutionPostgresTests
     // TelemetryIdentityContext's positional-record properties are public get accessors even though the
     // record type itself is private, so plain reflection (no NonPublic flag) reads them back fine.
     private static object? Field(object? record, string name) => record?.GetType().GetProperty(name)?.GetValue(record);
+
+    private sealed class RollbackCorruptInstallationFixtureException : Exception;
 }
