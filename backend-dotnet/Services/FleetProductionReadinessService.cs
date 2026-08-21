@@ -802,6 +802,22 @@ public sealed class FleetProductionReadinessService
                AND actual.column_name=required.column_name
             ),false) AS tenant_provisioning_ready,
           COALESCE((SELECT COUNT(*)=1 FROM schema_migrations WHERE version='2026_08_14_stage80_fleet_identity_backbone'),false)
+            AND COALESCE((SELECT COUNT(*)=1 FROM schema_migrations
+              WHERE version='2026_08_20_stage82_telematics_device_credential_constraint'),false)
+            AND COALESCE((SELECT COUNT(*)=1 AND BOOL_AND(
+              c.convalidated
+              AND pg_get_constraintdef(c.oid,true) LIKE '%hmac_secret IS NULL%'
+              AND pg_get_constraintdef(c.oid,true) LIKE '%hmac_secret_encrypted IS NOT NULL%'
+              AND pg_get_constraintdef(c.oid,true) LIKE '%hmac_key_version > 0%'
+            ) FROM pg_constraint c
+              WHERE c.conrelid=to_regclass('public.eld_devices')
+                AND c.conname='ck_eld_devices_active_credentials'),false)
+            AND NOT EXISTS (
+              SELECT 1 FROM pg_constraint c
+              WHERE c.conrelid=to_regclass('public.eld_devices')
+                AND c.contype='c'
+                AND pg_get_constraintdef(c.oid,true) LIKE '%hmac_secret IS NOT NULL%'
+            )
             AND to_regclass('public.ex_stage80_device_installation_period') IS NOT NULL
             AND to_regclass('public.uq_stage80_vehicle_primary_role') IS NOT NULL
             AND to_regprocedure('public.stage80_sync_device_vehicle_projection()') IS NOT NULL

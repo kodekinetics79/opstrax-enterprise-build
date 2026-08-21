@@ -158,6 +158,10 @@ export type DeviceCommandRecord = {
   warrantyStatus: string;
   supportStatus: string;
   lifecycleStatus: string;
+  // Governed installation/commissioning state from eld_devices.device_state.
+  // This is distinct from lifecycle status: an Active device can still be
+  // Provisioned, Installed, Verified, Suspended, or Quarantined.
+  deviceState: string;
   // The raw eld_devices.status (Active / Diagnostic / Malfunction / Provisioning / …).
   // Recovery actions gate on THIS, not the derived connectionStatus, to match the
   // backend mark/resolve-malfunction status contract.
@@ -559,6 +563,7 @@ function mapDeviceRow(
     warrantyStatus: "—",
     supportStatus: "—",
     lifecycleStatus: revoked ? "Archived" : String(row.status ?? "Unknown"),
+    deviceState: String(row.device_state ?? "Unknown"),
     eldStatus: String(row.status ?? "Unknown"),
     archivedAt: row.revoked_at ? String(row.revoked_at) : null,
     // Cross-links: only real fault/alert counts are honest here.

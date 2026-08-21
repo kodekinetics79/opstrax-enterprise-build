@@ -43,6 +43,9 @@ COPY database/migrations/2026_08_13_stage78_country_profiles_runtime_contract.sq
 COPY database/migrations/2026_08_13_stage79_tenant_provisioning_runtime_contract.sql database/migrations/
 COPY database/migrations/2026_08_13_stage80_driver_proof_upload_binding.sql database/migrations/
 COPY database/migrations/2026_08_14_stage80_fleet_identity_backbone.sql database/migrations/
+COPY database/migrations/2026_08_18_stage81_platform_billing_itemization.sql database/migrations/
+COPY database/migrations/2026_08_20_stage81_customer_eta_secure_token.sql database/migrations/
+COPY database/migrations/2026_08_20_stage82_telematics_device_credential_constraint.sql database/migrations/
 COPY database/migrations/telematics database/migrations/telematics
 RUN dotnet publish backend-dotnet/Opstrax.Api.csproj -c Release -o /app/publish --no-restore
 
