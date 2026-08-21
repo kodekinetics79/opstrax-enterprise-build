@@ -9,6 +9,7 @@ using Opstrax.Api.Services;
 namespace Opstrax.Tests;
 
 [Trait("Category", "Integration")]
+[Collection("fleet-identity-schema")]
 public sealed class FleetIdentityInstallationPostgresTests
 {
     [Fact]

@@ -12,6 +12,7 @@ namespace Opstrax.Tests;
 // as its non-generic base, and the record's public (but unnameable outside the class) properties are
 // read back through reflection too.
 [Trait("Category", "Integration")]
+[Collection("fleet-identity-schema")]
 public sealed class TelemetryIdentityResolutionPostgresTests
 {
     [Fact]

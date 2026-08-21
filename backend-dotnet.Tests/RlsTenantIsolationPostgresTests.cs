@@ -8,6 +8,7 @@ namespace Opstrax.Tests;
 
 // Live Stage58 acceptance. Every data assertion runs as the real restricted runtime
 // identities; the owner is used only to seed and clean uniquely-marked test records.
+[Collection("fleet-identity-schema")]
 public sealed class RlsTenantIsolationPostgresTests
 {
     private static Database OwnerDb() => CreateDb(TestDb.ConnectionString, false);
