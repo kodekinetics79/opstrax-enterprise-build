@@ -3,7 +3,7 @@ import { API_BASE_URL, apiClient } from "./apiClient";
 
 type AnyRecord = Record<string, unknown>;
 
-export type RuntimeState = "Live" | "Staging" | "Demo Data" | "Stale" | "Disconnected" | "Unavailable";
+export type RuntimeState = "Live" | "Starting" | "Staging" | "Demo Data" | "Stale" | "Disconnected" | "Unavailable";
 
 export interface RuntimeDiagnostics {
   state: RuntimeState;
@@ -49,15 +49,20 @@ export function evaluateRuntimeTruth(readyValue: unknown, deepValue: unknown): R
   const services = serviceRows(deep);
   const telemetryWorker = services.find((item) => String(item.name) === "TelemetryBackgroundService");
   const criticalServices = services.filter((item) => item.expected_critical === true);
+  const workerContractStatus = String(workerContract.status).toLowerCase();
 
   const apiReady = String(ready.status).toLowerCase() === "ready";
   const databaseReady = String(database.status).toLowerCase() === "connected";
   const productionApi = String(ready.environment).toLowerCase() === "production";
   const databaseContractReady = !productionApi || String(fleetContract.status).toLowerCase() === "ready";
   const criticalWorkersFresh =
-    String(workerContract.status).toLowerCase() === "healthy" &&
+    workerContractStatus === "healthy" &&
     criticalServices.length > 0 &&
     criticalServices.every((item) => String(item.status).toLowerCase() === "healthy");
+  const criticalWorkersStarting =
+    workerContractStatus === "starting" &&
+    criticalServices.length > 0 &&
+    criticalServices.every((item) => ["healthy", "starting"].includes(String(item.status).toLowerCase()));
   const telemetryFresh =
     Boolean(telemetryWorker) &&
     String(telemetryWorker?.status).toLowerCase() === "healthy" &&
@@ -72,6 +77,7 @@ export function evaluateRuntimeTruth(readyValue: unknown, deepValue: unknown): R
   if (demo) state = "Demo Data";
   else if (verifiedLive && staging) state = "Staging";
   else if (verifiedLive) state = "Live";
+  else if (apiReady && databaseReady && databaseContractReady && deepHealthy && criticalWorkersStarting) state = "Starting";
   else if (!databaseReady) state = "Disconnected";
   else if (!criticalWorkersFresh || !telemetryFresh) state = "Stale";
 
