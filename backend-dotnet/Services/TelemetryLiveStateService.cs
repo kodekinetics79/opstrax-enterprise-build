@@ -25,6 +25,9 @@ public sealed class TelemetryLiveStateService(Database db)
         var alertCount = row.TryGetValue("alertCount", out var alertRaw) && alertRaw is not null
             ? Convert.ToInt32(alertRaw, CultureInfo.InvariantCulture)
             : 0;
+        var openAlertSeverity = row.TryGetValue("openAlertSeverity", out var alertSeverityRaw)
+            ? alertSeverityRaw?.ToString() ?? string.Empty
+            : string.Empty;
         var speedMph = row.TryGetValue("speedMph", out var speedRaw) && speedRaw is not null
             ? Convert.ToDecimal(speedRaw, CultureInfo.InvariantCulture)
             : 0m;
@@ -40,7 +43,10 @@ public sealed class TelemetryLiveStateService(Database db)
                     : "healthy";
         var riskLevel = staleSeconds > (long)staleThreshold
             ? "high"
-            : openAlerts > 2 || speedMph > speedThreshold
+            : string.Equals(openAlertSeverity, "Critical", StringComparison.OrdinalIgnoreCase)
+                ? "high"
+                : string.Equals(openAlertSeverity, "High", StringComparison.OrdinalIgnoreCase)
+                  || openAlerts > 2 || speedMph > speedThreshold
                 ? "medium"
                 : "low";
         var nextAction = telemetryStatus switch
@@ -59,6 +65,7 @@ public sealed class TelemetryLiveStateService(Database db)
             riskLevel,
             alertCount,
             openAlerts,
+            openAlertSeverity,
             staleSeconds,
             nextAction,
             lastAlertType = row.TryGetValue("lastAlertType", out var lastAlertRaw) ? lastAlertRaw?.ToString() : null,
@@ -130,6 +137,34 @@ public sealed class TelemetryLiveStateService(Database db)
                 c.Parameters.AddWithValue("@correlationId", Value(row, "correlationId", "correlation_id") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@causationId", Value(row, "causationId", "causation_id") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@sourceChannel", Value(row, "sourceChannel", "source_channel") ?? "device");
+                c.Parameters.AddWithValue("@nextAction", nextAction);
+                c.Parameters.AddWithValue("@summary", summary);
+            }, ct);
+
+        // Keep the position projection's operator-facing alert fields in sync with the
+        // authoritative telemetry_alerts ledger. Native ingest advances the position before
+        // it creates or resolves alerts, so the zero-valued placeholders written with the fix
+        // otherwise survive even though telemetry_live_asset_states has already been refreshed.
+        // GPS Tracking reads latest_vehicle_positions directly; mirroring the derived fields
+        // here prevents it from reporting "Clear" beside a real open alert.
+        await db.ExecuteAsync(
+            @"UPDATE latest_vehicle_positions
+              SET telemetry_status=@telemetryStatus,
+                  risk_level=@riskLevel,
+                  alert_count=@alertCount,
+                  open_alert_count=@openAlertCount,
+                  next_action=@nextAction,
+                  summary_json=COALESCE(@summary::jsonb, '{}'::jsonb),
+                  updated_at=NOW()
+              WHERE company_id=@companyId AND vehicle_id=@vehicleId",
+            c =>
+            {
+                c.Parameters.AddWithValue("@companyId", companyId);
+                c.Parameters.AddWithValue("@vehicleId", vehicleId);
+                c.Parameters.AddWithValue("@telemetryStatus", telemetryStatus);
+                c.Parameters.AddWithValue("@riskLevel", riskLevel);
+                c.Parameters.AddWithValue("@alertCount", alertCount);
+                c.Parameters.AddWithValue("@openAlertCount", openAlerts);
                 c.Parameters.AddWithValue("@nextAction", nextAction);
                 c.Parameters.AddWithValue("@summary", summary);
             }, ct);
@@ -336,6 +371,10 @@ public sealed class TelemetryLiveStateService(Database db)
                      v.readiness_score, v.data_quality_score,
                      COALESCE((SELECT COUNT(*) FROM telemetry_alerts ta WHERE ta.company_id=@cid AND ta.vehicle_id=@vid), 0) alert_count,
                      COALESCE((SELECT COUNT(*) FROM telemetry_alerts ta WHERE ta.company_id=@cid AND ta.vehicle_id=@vid AND ta.status='Open'), 0) open_alert_count,
+                     COALESCE((SELECT ta.severity FROM telemetry_alerts ta
+                               WHERE ta.company_id=@cid AND ta.vehicle_id=@vid AND ta.status='Open'
+                               ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Warning','Info'],ta.severity),ta.created_at DESC
+                               LIMIT 1), '') open_alert_severity,
                      COALESCE((SELECT ta.alert_type FROM telemetry_alerts ta WHERE ta.company_id=@cid AND ta.vehicle_id=@vid ORDER BY ta.created_at DESC LIMIT 1), 'clear') last_alert_type,
                      EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT stale_seconds
               FROM latest_vehicle_positions lvp
