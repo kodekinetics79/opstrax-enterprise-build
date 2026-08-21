@@ -94,19 +94,27 @@ public sealed class TelemetryIdentityResolutionPostgresTests
             // FleetIdentityInstallationPostgresTests/DetentionApprovalPostgresTests temporarily lift a
             // database guard to build a fixture and always restore it in a finally block.
             await db.ExecuteAsync("ALTER TABLE device_installations DROP CONSTRAINT ex_stage80_device_installation_period");
+            object? result;
             try
             {
                 await Installation(db, companyId, branch, deviceId, vehicleB, attributionTime.AddHours(-1));
+                result = await ResolveIdentity(db, companyId, deviceId, attributionTime);
             }
             finally
             {
+                // Remove the deliberately corrupt overlap before recreating the
+                // exclusion constraint. PostgreSQL validates all existing rows
+                // when ADD CONSTRAINT runs, so restoring first would necessarily
+                // fail and leave the shared integration database unprotected.
+                await db.ExecuteAsync(
+                    "DELETE FROM device_installations WHERE company_id=@c",
+                    c => c.Parameters.AddWithValue("@c", companyId));
                 await db.ExecuteAsync(
                     @"ALTER TABLE device_installations ADD CONSTRAINT ex_stage80_device_installation_period
                       EXCLUDE USING gist (company_id WITH =,device_id WITH =,effective_period WITH &&)
                       WHERE (status IN ('Installed','Verified','Removed'))");
             }
 
-            var result = await ResolveIdentity(db, companyId, deviceId, attributionTime);
             Assert.Null(result);
         }
         finally
