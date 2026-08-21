@@ -58,6 +58,20 @@ public class Stage12TelemetryTests
             Assert.Contains(alerts, alert =>
                 alert["alertType"]?.ToString() == "speeding"
                 && alert["status"]?.ToString() == "Open");
+            var positionProjection = await db.QuerySingleAsync(
+                @"SELECT alert_count,open_alert_count,telemetry_status,risk_level,next_action
+                  FROM latest_vehicle_positions WHERE company_id=@cid AND vehicle_id=@vid",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@cid", companyId);
+                    c.Parameters.AddWithValue("@vid", vehicleId);
+                });
+            Assert.NotNull(positionProjection);
+            Assert.Equal(1, Convert.ToInt32(positionProjection!["alertCount"]));
+            Assert.Equal(1, Convert.ToInt32(positionProjection["openAlertCount"]));
+            Assert.Equal("watch", positionProjection["telemetryStatus"]?.ToString());
+            Assert.Equal("medium", positionProjection["riskLevel"]?.ToString());
+            Assert.Contains("alert", positionProjection["nextAction"]?.ToString() ?? string.Empty, StringComparison.OrdinalIgnoreCase);
             var recommendations = (IReadOnlyList<Dictionary<string, object?>>)summary["recommendations"]!;
             Assert.Contains(recommendations, recommendation =>
                 recommendation["recommendationType"]?.ToString() == "telemetry.speeding"
@@ -167,7 +181,7 @@ public class Stage12TelemetryTests
                 (@companyId, @vehicleId, @deviceId, @driverId, 33.1000000, -97.1000000, @speedMph, 180,
                  5.0, 'Running', 78.5, 220123.4, 12.6, NOW() - (@staleMinutes || ' minutes')::interval,
                  NOW() - (@staleMinutes || ' minutes')::interval, 4, 1001, 'stale',
-                 'high', 1, 1, 'Check device heartbeat and field power', '{}'::jsonb, NOW())",
+                 'high', 0, 0, 'No action required', '{}'::jsonb, NOW())",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);

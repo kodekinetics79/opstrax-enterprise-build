@@ -63,6 +63,8 @@ public sealed class TelemetryLaunchHardeningTests
         Assert.Contains("ta.status=@status", alerts, StringComparison.Ordinal);
         Assert.Contains("status='Open'", acknowledge, StringComparison.Ordinal);
         Assert.Contains("ta.status='Open'", liveState, StringComparison.Ordinal);
+        Assert.Contains("UPDATE latest_vehicle_positions", liveState, StringComparison.Ordinal);
+        Assert.Contains("open_alert_count=@openAlertCount", liveState, StringComparison.Ordinal);
     }
 
     [Fact]
