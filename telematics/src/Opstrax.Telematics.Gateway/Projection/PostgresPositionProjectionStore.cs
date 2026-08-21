@@ -505,8 +505,9 @@ internal sealed class PostgresPositionProjectionStore : IPositionProjectionStore
             await speed.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
         }
 
-        GeofenceBreach? breach = await FindGeofenceBreachAsync(
-            connection, tx, evt.CompanyId, context.VehicleBranchId, geo.Lat, geo.Lng, ct).ConfigureAwait(false);
+        GeofenceBreach? breach = await ProjectGeofenceAsync(
+            connection, tx, evt.CompanyId, context.VehicleBranchId, vehicleId,
+            geo.Lat, geo.Lng, evt.OccurredAtDeviceUtc, ct).ConfigureAwait(false);
         if (breach is null) return;
 
         const string geofenceSql = """
@@ -542,13 +543,23 @@ internal sealed class PostgresPositionProjectionStore : IPositionProjectionStore
 
     private sealed record GeofenceBreach(long Id, string Name);
 
-    private static async Task<GeofenceBreach?> FindGeofenceBreachAsync(
+    private sealed record GeofenceDefinition(
+        long Id,
+        string Name,
+        double? CenterLat,
+        double? CenterLng,
+        double? RadiusMeters,
+        string? PolygonJson);
+
+    private static async Task<GeofenceBreach?> ProjectGeofenceAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction tx,
         long companyId,
         long? vehicleBranchId,
+        long vehicleId,
         decimal lat,
         decimal lng,
+        DateTime deviceFixTime,
         CancellationToken ct)
     {
         // Membership semantics are "inside any authorized active fence". Selecting the first
@@ -566,37 +577,98 @@ internal sealed class PostgresPositionProjectionStore : IPositionProjectionStore
         command.Parameters.AddWithValue("company_id", companyId);
         command.Parameters.Add(new NpgsqlParameter("branch_id", NpgsqlDbType.Bigint)
             { Value = (object?)vehicleBranchId ?? DBNull.Value });
-        await using var fences = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        var definitions = new List<GeofenceDefinition>();
+        await using (var fences = await command.ExecuteReaderAsync(ct).ConfigureAwait(false))
+        {
+            while (await fences.ReadAsync(ct).ConfigureAwait(false))
+            {
+                definitions.Add(new GeofenceDefinition(
+                    fences.GetInt64(0),
+                    fences.GetString(1),
+                    fences.IsDBNull(2) ? null : Convert.ToDouble(fences.GetValue(2), CultureInfo.InvariantCulture),
+                    fences.IsDBNull(3) ? null : Convert.ToDouble(fences.GetValue(3), CultureInfo.InvariantCulture),
+                    fences.IsDBNull(4) ? null : Convert.ToDouble(fences.GetValue(4), CultureInfo.InvariantCulture),
+                    fences.IsDBNull(5) ? null : fences.GetString(5)));
+            }
+        }
+
+        const string stateSql = """
+            SELECT DISTINCT ON (geofence_id) geofence_id,event_type
+              FROM geofence_events
+             WHERE company_id=@company_id AND vehicle_id=@vehicle_id
+             ORDER BY geofence_id,event_time DESC,id DESC;
+            """;
+        var lastEvents = new Dictionary<long, string>();
+        await using (var state = new NpgsqlCommand(stateSql, connection, tx))
+        {
+            state.Parameters.AddWithValue("company_id", companyId);
+            state.Parameters.AddWithValue("vehicle_id", vehicleId);
+            await using var rows = await state.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            while (await rows.ReadAsync(ct).ConfigureAwait(false))
+                lastEvents[rows.GetInt64(0)] = rows.GetString(1);
+        }
+
         GeofenceBreach? firstValidFence = null;
-        while (await fences.ReadAsync(ct).ConfigureAwait(false))
+        bool insideAny = false;
+        foreach (GeofenceDefinition fence in definitions)
         {
             bool valid = false;
             bool inside = false;
-            if (!fences.IsDBNull(5))
+            if (fence.PolygonJson is not null)
             {
-                IReadOnlyList<(double Lat, double Lng)>? ring = ParsePolygon(fences.GetString(5));
+                IReadOnlyList<(double Lat, double Lng)>? ring = ParsePolygon(fence.PolygonJson);
                 if (ring is not null)
                 {
                     valid = true;
                     inside = PointInPolygon((double)lat, (double)lng, ring);
                 }
             }
-            else if (!fences.IsDBNull(2) && !fences.IsDBNull(3) && !fences.IsDBNull(4))
+            else if (fence.CenterLat is not null && fence.CenterLng is not null && fence.RadiusMeters is > 0)
             {
                 valid = true;
                 inside = DistanceMeters(
                     (double)lat,
                     (double)lng,
-                    Convert.ToDouble(fences.GetValue(2), CultureInfo.InvariantCulture),
-                    Convert.ToDouble(fences.GetValue(3), CultureInfo.InvariantCulture))
-                    <= Convert.ToDouble(fences.GetValue(4), CultureInfo.InvariantCulture);
+                    fence.CenterLat.Value,
+                    fence.CenterLng.Value)
+                    <= fence.RadiusMeters.Value;
             }
 
             if (!valid) continue;
-            firstValidFence ??= new GeofenceBreach(fences.GetInt64(0), fences.GetString(1));
-            if (inside) return null;
+            firstValidFence ??= new GeofenceBreach(fence.Id, fence.Name);
+            lastEvents.TryGetValue(fence.Id, out string? lastEvent);
+            string? transition = inside && lastEvent != "Entry"
+                ? "Entry"
+                : !inside && lastEvent == "Entry" ? "Exit" : null;
+            if (transition is not null)
+            {
+                await using var insertEvent = new NpgsqlCommand(
+                    "INSERT INTO geofence_events(company_id,geofence_id,vehicle_id,event_type,event_time) VALUES (@company_id,@geofence_id,@vehicle_id,@event_type,@event_time)",
+                    connection, tx);
+                insertEvent.Parameters.AddWithValue("company_id", companyId);
+                insertEvent.Parameters.AddWithValue("geofence_id", fence.Id);
+                insertEvent.Parameters.AddWithValue("vehicle_id", vehicleId);
+                insertEvent.Parameters.AddWithValue("event_type", transition);
+                insertEvent.Parameters.Add(new NpgsqlParameter("event_time", NpgsqlDbType.TimestampTz)
+                    { Value = Utc(deviceFixTime) });
+                await insertEvent.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            }
+            insideAny |= inside;
         }
-        return firstValidFence;
+
+        if (firstValidFence is null || !insideAny) return firstValidFence;
+
+        await using var resolve = new NpgsqlCommand(
+            """
+            UPDATE telemetry_alerts
+               SET status='Resolved',resolved_at=NOW(),resolved_by='system:geofence-reentry',updated_at=NOW()
+             WHERE company_id=@company_id AND vehicle_id=@vehicle_id
+               AND alert_type='geofence_breach' AND status IN ('Open','Acknowledged');
+            """, connection, tx);
+        resolve.Parameters.AddWithValue("company_id", companyId);
+        resolve.Parameters.AddWithValue("vehicle_id", vehicleId);
+        await resolve.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        return null;
     }
 
     private static void AddCommonProjectionParameters(

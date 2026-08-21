@@ -24,7 +24,7 @@ public sealed class TelemetryLaunchHardeningTests
         var raw = Read("telematics", "src", "Opstrax.Telematics.Gateway", "Projection", "PostgresPositionProjectionStore.cs");
 
         AssertOrdered(native, "var latestRows = await db.ExecuteAsync", "if (vehicleId.HasValue && latestAdvanced && body.SpeedMph");
-        AssertOrdered(native, "latestAdvanced = latestRows > 0", "GeofenceEvaluator.FindAuthorizedAreaBreachAsync");
+        AssertOrdered(native, "latestAdvanced = latestRows > 0", "GeofenceEvaluator.ProjectPositionAsync");
         AssertOrdered(gateway, "UpsertGatewayLatestPositionAsync", "if (gatewayLatestAdvanced && harshType is not null)");
         Assert.Contains("if (vehicleId is not null && gatewayLatestAdvanced)", gateway, StringComparison.Ordinal);
         AssertOrdered(samsara, "if (projected > 0)", "await ProjectAlertsAsync");
@@ -78,8 +78,8 @@ public sealed class TelemetryLaunchHardeningTests
         Assert.DoesNotContain(": 1L", native, StringComparison.Ordinal);
         Assert.Contains("inside any valid circle or polygon is authorized", geofence, StringComparison.Ordinal);
         Assert.Contains("if (isInside) return null", geofence, StringComparison.Ordinal);
-        Assert.Equal(2, Count(endpoints, "GeofenceEvaluator.FindAuthorizedAreaBreachAsync"));
-        Assert.Contains("GeofenceEvaluator.FindAuthorizedAreaBreachAsync", Read("backend-dotnet", "Services", "Connectors", "SamsaraSync.cs"), StringComparison.Ordinal);
+        Assert.Equal(2, Count(endpoints, "GeofenceEvaluator.ProjectPositionAsync"));
+        Assert.Contains("GeofenceEvaluator.ProjectPositionAsync", Read("backend-dotnet", "Services", "Connectors", "SamsaraSync.cs"), StringComparison.Ordinal);
     }
 
     [Fact]
