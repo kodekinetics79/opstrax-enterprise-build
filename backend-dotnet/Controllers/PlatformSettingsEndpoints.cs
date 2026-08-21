@@ -58,6 +58,10 @@ public static class PlatformSettingsEndpoints
             // False when no PII data key is configured, so the console can say WHY the password
             // field is unavailable instead of surfacing a save failure.
             canStorePassword = settings.EncryptionAvailable,
+            // False when platform_settings does not exist on this deployment (schema-init is
+            // skipped in production; the stage83 migration provisions it). The console disables
+            // Save and explains, instead of letting every save die as an opaque 500.
+            storageAvailable = await settings.IsStorageAvailableAsync(ct),
             // Tells the operator whether they are looking at console-managed values or the
             // deployment's environment variables — otherwise "why won't my edit stick?".
             source = storedInDb ? "database" : config.IsUsable ? "environment" : "unset",
@@ -93,24 +97,32 @@ public static class PlatformSettingsEndpoints
                 statusCode: StatusCodes.Status400BadRequest);
 
         var actor = principal!.Email;
-        await settings.SetAsync(PlatformMailService.HostKey, host, isSecret: false, actor, ct);
-        await settings.SetAsync(PlatformMailService.PortKey, request.Port?.ToString(), isSecret: false, actor, ct);
-        await settings.SetAsync(PlatformMailService.UserKey, request.Username?.Trim(), isSecret: false, actor, ct);
-        await settings.SetAsync(PlatformMailService.FromKey, fromAddress, isSecret: false, actor, ct);
-        await settings.SetAsync(PlatformMailService.FromNameKey, request.FromName?.Trim(), isSecret: false, actor, ct);
-        await settings.SetAsync(PlatformMailService.SslKey, request.EnableSsl?.ToString().ToLowerInvariant(), isSecret: false, actor, ct);
-
-        // Empty password = "leave what is stored alone", so editing the host does not require
-        // re-typing the credential. Clearing it is an explicit action on the client.
-        if (!string.IsNullOrEmpty(request.Password))
+        try
         {
-            // Fail closed: an SMTP credential is never worth writing to the database in the clear.
-            if (!settings.EncryptionAvailable)
-                return Results.Json(ApiResponse<object>.Fail("Cannot store the SMTP password",
-                        "Secret storage needs the PII data key (DATA_ENCRYPTION_KEY, or Pii__DataKey). Configure it, or supply the password " +
-                        "through the SMTP_PASS environment variable instead — the other settings above were saved."),
-                    statusCode: StatusCodes.Status400BadRequest);
-            await settings.SetAsync(PlatformMailService.PasswordKey, request.Password, isSecret: true, actor, ct);
+            await settings.SetAsync(PlatformMailService.HostKey, host, isSecret: false, actor, ct);
+            await settings.SetAsync(PlatformMailService.PortKey, request.Port?.ToString(), isSecret: false, actor, ct);
+            await settings.SetAsync(PlatformMailService.UserKey, request.Username?.Trim(), isSecret: false, actor, ct);
+            await settings.SetAsync(PlatformMailService.FromKey, fromAddress, isSecret: false, actor, ct);
+            await settings.SetAsync(PlatformMailService.FromNameKey, request.FromName?.Trim(), isSecret: false, actor, ct);
+            await settings.SetAsync(PlatformMailService.SslKey, request.EnableSsl?.ToString().ToLowerInvariant(), isSecret: false, actor, ct);
+
+            // Empty password = "leave what is stored alone", so editing the host does not require
+            // re-typing the credential. Clearing it is an explicit action on the client.
+            if (!string.IsNullOrEmpty(request.Password))
+            {
+                // Fail closed: an SMTP credential is never worth writing to the database in the clear.
+                if (!settings.EncryptionAvailable)
+                    return Results.Json(ApiResponse<object>.Fail("Cannot store the SMTP password",
+                            "Secret storage needs the PII data key (DATA_ENCRYPTION_KEY, or Pii__DataKey). Configure it, or supply the password " +
+                            "through the SMTP_PASS environment variable instead — the other settings above were saved."),
+                        statusCode: StatusCodes.Status400BadRequest);
+                await settings.SetAsync(PlatformMailService.PasswordKey, request.Password, isSecret: true, actor, ct);
+            }
+        }
+        catch (PlatformSettingsUnavailableException ex)
+        {
+            return Results.Json(ApiResponse<object>.Fail("Settings storage is not provisioned", ex.Message),
+                statusCode: StatusCodes.Status503ServiceUnavailable);
         }
 
         var config = await mail.ResolveAsync(ct);
@@ -199,8 +211,16 @@ public static class PlatformSettingsEndpoints
         }
 
         var actor = principal!.Email;
-        await settings.SetAsync(PlatformSettingsService.TenantAppUrlKey, request.TenantAppUrl?.Trim().TrimEnd('/'), isSecret: false, actor, ct);
-        await settings.SetAsync(PlatformSettingsService.PlatformAppUrlKey, request.PlatformAppUrl?.Trim().TrimEnd('/'), isSecret: false, actor, ct);
+        try
+        {
+            await settings.SetAsync(PlatformSettingsService.TenantAppUrlKey, request.TenantAppUrl?.Trim().TrimEnd('/'), isSecret: false, actor, ct);
+            await settings.SetAsync(PlatformSettingsService.PlatformAppUrlKey, request.PlatformAppUrl?.Trim().TrimEnd('/'), isSecret: false, actor, ct);
+        }
+        catch (PlatformSettingsUnavailableException ex)
+        {
+            return Results.Json(ApiResponse<object>.Fail("Settings storage is not provisioned", ex.Message),
+                statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
 
         await PlatformEndpoints.AuditAsync(db, principal!, http, "platform.settings.urls.updated", "PlatformSettings", null, null,
             new { request.TenantAppUrl, request.PlatformAppUrl }, ct);

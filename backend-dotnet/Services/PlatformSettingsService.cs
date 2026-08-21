@@ -4,6 +4,17 @@ using Opstrax.Api.Security;
 namespace Opstrax.Api.Services;
 
 /// <summary>
+/// Thrown when a write needs the platform_settings table and it does not exist on this
+/// deployment. Callers turn this into an actionable "apply the migration" response —
+/// distinctly NOT a generic 500.
+/// </summary>
+public sealed class PlatformSettingsUnavailableException() : InvalidOperationException(
+    "Platform settings storage is not provisioned on this deployment. Apply " +
+    "database/migrations/2026_08_21_stage83_platform_settings.sql to the database " +
+    "(or redeploy once the system identity is allowed to create tables). " +
+    "Environment-variable configuration continues to work in the meantime.");
+
+/// <summary>
 /// Durable, operator-editable platform configuration — the settings a platform admin must be
 /// able to change from the console without a redeploy.
 ///
@@ -26,12 +37,49 @@ namespace Opstrax.Api.Services;
 /// </summary>
 public sealed class PlatformSettingsService(Database db, PiiProtectionService pii)
 {
+    // Whether platform_settings exists. Under RLS enforcement every /api/platform/*
+    // request runs inside ONE shared transaction; a statement that throws (42P01 on a
+    // missing table) ABORTS that transaction, so every later statement in the request —
+    // including ones far outside this service — fails with 25P02. A try/catch around the
+    // query is NOT enough: the damage is transactional, not exceptional. So reads must
+    // never issue a query that can fail. to_regclass never throws; once the table is seen
+    // the answer is cached forever (tables do not un-exist), so steady-state overhead is nil.
+    private volatile bool _tableKnownToExist;
+
+    private async Task<bool> StorageAvailableAsync(CancellationToken ct)
+    {
+        if (_tableKnownToExist) return true;
+        // Deliberately NO catch: a catalog read is infallible in a healthy session, so any
+        // exception here (cancellation, broken connection, an already-aborted transaction)
+        // is a transient infrastructure failure — NOT "the table is missing". Swallowing it
+        // would misdiagnose a hiccup as "storage not provisioned" and tell the operator to
+        // re-apply a migration that is already applied. False (no exception, zero rows) is
+        // the only signal that genuinely means the table does not exist.
+        var exists = await db.ScalarLongAsync(
+            "SELECT COUNT(*) FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace " +
+            "WHERE n.nspname='public' AND c.relname='platform_settings' AND c.relkind='r'", ct: ct) > 0;
+        if (exists) _tableKnownToExist = true;
+        return exists;
+    }
+
+    /// <summary>True when the settings table exists on this deployment (console shows a
+    /// provisioning warning and the save endpoints refuse cleanly when it does not).</summary>
+    public Task<bool> IsStorageAvailableAsync(CancellationToken ct = default) => StorageAvailableAsync(ct);
+
     /// <summary>
     /// Creates the settings table if absent. DML-safe to call repeatedly; invoked from the
     /// platform schema step alongside the other control-plane tables.
     /// </summary>
     public async Task EnsureSchemaAsync(CancellationToken ct = default)
     {
+        // Probe before any DDL. CREATE TABLE IF NOT EXISTS checks CREATE-on-schema BEFORE
+        // its if-not-exists short-circuit, and the production system identity is validated
+        // to NOT hold that privilege — so on a migrated database an unconditional CREATE
+        // would throw 42501 on every boot and log a false "apply the migration" warning.
+        // Probing first keeps the warning meaningful (it fires only when the table is
+        // genuinely absent) and warms the availability cache on healthy deployments.
+        if (await StorageAvailableAsync(ct)) return;
+
         await db.ExecuteAsync("""
             CREATE TABLE IF NOT EXISTS platform_settings (
                 setting_key   VARCHAR(120)  NOT NULL PRIMARY KEY,
@@ -41,6 +89,7 @@ public sealed class PlatformSettingsService(Database db, PiiProtectionService pi
                 updated_at    TIMESTAMPTZ   NOT NULL DEFAULT NOW()
             )
             """, ct: ct);
+        _tableKnownToExist = true;
     }
 
     /// <summary>
@@ -50,7 +99,7 @@ public sealed class PlatformSettingsService(Database db, PiiProtectionService pi
     public async Task<string?> GetAsync(string key, string? envVar = null, CancellationToken ct = default)
     {
         string? stored = null;
-        try
+        if (await StorageAvailableAsync(ct))
         {
             var row = await db.QuerySingleAsync(
                 "SELECT setting_value, is_secret FROM platform_settings WHERE setting_key=@k",
@@ -61,11 +110,6 @@ public sealed class PlatformSettingsService(Database db, PiiProtectionService pi
                 stored = row["isSecret"] is true ? pii.Decrypt(raw) : raw;
             }
         }
-        catch
-        {
-            // A missing table (schema step skipped under a restricted role) must degrade to the
-            // environment rather than break the caller — mail config is not worth a 500.
-        }
 
         if (!string.IsNullOrWhiteSpace(stored)) return stored;
         var fromEnv = envVar is null ? null : Environment.GetEnvironmentVariable(envVar);
@@ -75,13 +119,10 @@ public sealed class PlatformSettingsService(Database db, PiiProtectionService pi
     /// <summary>True when the key has a value stored in the database (as opposed to env).</summary>
     public async Task<bool> HasStoredAsync(string key, CancellationToken ct = default)
     {
-        try
-        {
-            return await db.ScalarLongAsync(
-                "SELECT COUNT(*) FROM platform_settings WHERE setting_key=@k AND COALESCE(setting_value,'') <> ''",
-                c => c.Parameters.AddWithValue("@k", key), ct) > 0;
-        }
-        catch { return false; }
+        if (!await StorageAvailableAsync(ct)) return false;
+        return await db.ScalarLongAsync(
+            "SELECT COUNT(*) FROM platform_settings WHERE setting_key=@k AND COALESCE(setting_value,'') <> ''",
+            c => c.Parameters.AddWithValue("@k", key), ct) > 0;
     }
 
     /// <summary>
@@ -106,6 +147,10 @@ public sealed class PlatformSettingsService(Database db, PiiProtectionService pi
         if (isSecret && !string.IsNullOrWhiteSpace(value) && !EncryptionAvailable)
             throw new InvalidOperationException(
                 $"Refusing to store '{key}' unencrypted: no PII data key is configured.");
+
+        // Probe first: a 42P01 here would abort the request's shared transaction and turn
+        // every later statement into a confusing 25P02 — fail with the actionable story instead.
+        if (!await StorageAvailableAsync(ct)) throw new PlatformSettingsUnavailableException();
 
         if (string.IsNullOrWhiteSpace(value))
         {
@@ -158,15 +203,12 @@ public sealed class PlatformSettingsService(Database db, PiiProtectionService pi
     /// <summary>When the key was last written in-app, for "who changed this" in the console.</summary>
     public async Task<(string? By, DateTimeOffset? At)> LastUpdatedAsync(string key, CancellationToken ct = default)
     {
-        try
-        {
-            var row = await db.QuerySingleAsync(
-                "SELECT updated_by, updated_at FROM platform_settings WHERE setting_key=@k",
-                c => c.Parameters.AddWithValue("@k", key), ct);
-            if (row is null) return (null, null);
-            var at = row["updatedAt"] is DateTime dt ? new DateTimeOffset(dt, TimeSpan.Zero) : (DateTimeOffset?)null;
-            return (row["updatedBy"]?.ToString(), at);
-        }
-        catch { return (null, null); }
+        if (!await StorageAvailableAsync(ct)) return (null, null);
+        var row = await db.QuerySingleAsync(
+            "SELECT updated_by, updated_at FROM platform_settings WHERE setting_key=@k",
+            c => c.Parameters.AddWithValue("@k", key), ct);
+        if (row is null) return (null, null);
+        var at = row["updatedAt"] is DateTime dt ? new DateTimeOffset(dt, TimeSpan.Zero) : (DateTimeOffset?)null;
+        return (row["updatedBy"]?.ToString(), at);
     }
 }

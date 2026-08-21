@@ -475,7 +475,6 @@ using (var scope = app.Services.CreateScope())
     await RunSchemaStep(app, "Security",          () => scope.ServiceProvider.GetRequiredService<SecuritySchemaService>().EnsureAsync());
     await RunSchemaStep(app, "TenantApi",         () => scope.ServiceProvider.GetRequiredService<TenantApiSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Platform",          () => scope.ServiceProvider.GetRequiredService<PlatformSchemaService>().EnsureAsync());
-    await RunSchemaStep(app, "PlatformSettings",  () => scope.ServiceProvider.GetRequiredService<PlatformSettingsService>().EnsureSchemaAsync());
     await RunSchemaStep(app, "CountryProfiles",    () => scope.ServiceProvider.GetRequiredService<CountryProfileSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Zatca",              () => scope.ServiceProvider.GetRequiredService<ZatcaSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Revenue",           () => scope.ServiceProvider.GetRequiredService<RevenueSchemaService>().EnsureAsync());
@@ -524,6 +523,31 @@ using (var scope = app.Services.CreateScope())
 {
     var platformAdminReconciler = scope.ServiceProvider.GetRequiredService<PlatformSuperAdminReconciler>();
     await platformAdminReconciler.ReconcileAsync();
+}
+
+// platform_settings (operator-editable SMTP + app URLs) must exist even where the
+// schema-init gate is skipped (production: restricted role, RLS enforced, owner applies
+// migrations out-of-band). CREATE TABLE IF NOT EXISTS is DML-adjacent enough to attempt
+// under the system identity: where that identity may create tables this self-heals; where
+// it may not, the failure is swallowed after a loud log and the console degrades to
+// env-only configuration with save disabled — the operator applies stage83 out-of-band.
+// (Skipping this entirely was the 2026-08-21 incident: the Email & SMTP page loaded from
+// env fallback but every save 500'd against the missing table.)
+using (var scope = app.Services.CreateScope())
+{
+    var settingsDb = scope.ServiceProvider.GetRequiredService<Database>();
+    var platformSettings = scope.ServiceProvider.GetRequiredService<PlatformSettingsService>();
+    try
+    {
+        await settingsDb.RunInSystemScopeAsync(() => platformSettings.EnsureSchemaAsync());
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning(ex,
+            "platform_settings bootstrap failed — the system identity cannot create the table. " +
+            "Apply database/migrations/2026_08_21_stage83_platform_settings.sql as the owner; " +
+            "until then Email & SMTP settings are environment-only and console saves are refused cleanly.");
+    }
 }
 
 // Request telemetry runs FIRST: it establishes the trace_id / correlation_id for
