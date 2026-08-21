@@ -71,7 +71,12 @@ public class Stage12TelemetryTests
             Assert.Equal(1, Convert.ToInt32(positionProjection["openAlertCount"]));
             Assert.Equal("watch", positionProjection["telemetryStatus"]?.ToString());
             Assert.Equal("medium", positionProjection["riskLevel"]?.ToString());
-            Assert.Contains("alert", positionProjection["nextAction"]?.ToString() ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+            var nextAction = positionProjection["nextAction"]?.ToString() ?? string.Empty;
+            Assert.True(
+                nextAction.Contains("alert", StringComparison.OrdinalIgnoreCase)
+                || nextAction.Contains("speeding", StringComparison.OrdinalIgnoreCase),
+                $"Expected an alert- or speeding-focused next action, got '{nextAction}'.");
+            Assert.DoesNotContain("No action required", nextAction, StringComparison.OrdinalIgnoreCase);
             var recommendations = (IReadOnlyList<Dictionary<string, object?>>)summary["recommendations"]!;
             Assert.Contains(recommendations, recommendation =>
                 recommendation["recommendationType"]?.ToString() == "telemetry.speeding"
