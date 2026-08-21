@@ -178,7 +178,8 @@ public sealed class TelemetryLiveStateService(Database db)
 
         foreach (var row in vehicleIds)
         {
-            if (row.TryGetValue("vehicle_id", out var vehicleIdRaw) && vehicleIdRaw is not null)
+            var vehicleIdRaw = Value(row, "vehicleId", "vehicle_id");
+            if (vehicleIdRaw is not null)
             {
                 await RefreshVehicleAsync(companyId, Convert.ToInt64(vehicleIdRaw, CultureInfo.InvariantCulture), ct);
             }
