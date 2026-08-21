@@ -75,6 +75,17 @@ const SMTP_PRESETS: SmtpPreset[] = [
     note: "Accounts on Zoho's EU or IN data centers use smtp.zoho.eu / smtp.zoho.in — edit the host if so. With 2FA enabled, use an app-specific password.",
   },
   {
+    key: "godaddy", label: "GoDaddy Workspace Email", host: "smtpout.secureserver.net", port: 587,
+    hostPattern: /^smtpout(\.(europe|asia))?\.secureserver\.net$/,
+    usernamePlaceholder: "you@yourdomain.com", passwordPlaceholder: "Mailbox password",
+    note: "For classic GoDaddy Workspace Email — username is the full email address. GoDaddy's newer Professional Email is powered by Titan (use the Titan preset), and Microsoft 365 from GoDaddy uses the Microsoft 365 preset.",
+  },
+  {
+    key: "titan", label: "Titan Mail", host: "smtp.titan.email", port: 587,
+    usernamePlaceholder: "you@yourdomain.com", passwordPlaceholder: "Mailbox password",
+    note: "Username is the full email address, and the from address must match that mailbox exactly — Titan rejects mismatched senders. Third-party app access must be enabled on the account (and with 2FA on, use an app password). Also the right preset for GoDaddy Professional Email, which Titan powers.",
+  },
+  {
     key: "resend", label: "Resend", host: "smtp.resend.com", port: 587,
     fixedUsername: "resend",
     usernamePlaceholder: "resend", passwordPlaceholder: "Resend API key (re_…)",
