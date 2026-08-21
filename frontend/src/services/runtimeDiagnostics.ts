@@ -55,7 +55,7 @@ export function evaluateRuntimeTruth(readyValue: unknown, deepValue: unknown): R
   const productionApi = String(ready.environment).toLowerCase() === "production";
   const databaseContractReady = !productionApi || String(fleetContract.status).toLowerCase() === "ready";
   const criticalWorkersFresh =
-    String(workerContract.status).toLowerCase() === "valid" &&
+    String(workerContract.status).toLowerCase() === "healthy" &&
     criticalServices.length > 0 &&
     criticalServices.every((item) => String(item.status).toLowerCase() === "healthy");
   const telemetryFresh =
