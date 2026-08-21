@@ -20,6 +20,7 @@ public sealed class SafetyBackgroundService(
 {
     private static readonly TimeSpan Interval = TimeSpan.FromMinutes(5);
     private const string SvcName = "SafetyBackgroundService";
+    internal const int ProgressHeartbeatBatchSize = 50;
 
     // Severity → default score impact (deducted from 100)
     private static readonly Dictionary<string, decimal> SeverityWeights = new(StringComparer.OrdinalIgnoreCase)
@@ -58,6 +59,11 @@ public sealed class SafetyBackgroundService(
             var runId = await tracker.BeginAsync(SvcName, stoppingToken);
             try
             {
+                // BeginAsync records the append-only run ledger. Readiness is driven by
+                // service_heartbeats, so publish an independently committed liveness
+                // pulse before starting the potentially long cross-tenant cycle.
+                await ReportProgressAsync(runId, stoppingToken);
+
                 // Cross-tenant worker (all-company telemetry/safety, filtered by company_id):
                 // run the whole tick under the platform-admin bypass scope.
                 using (var tickScope = scopeFactory.CreateScope())
@@ -66,11 +72,14 @@ public sealed class SafetyBackgroundService(
                     await tickDb.RunInSystemScopeAsync(async () =>
                     {
                         await ProcessTelemetryAlertsAsync(stoppingToken);
+                        await ReportProgressAsync(runId, stoppingToken);
                         await GeofenceEvaluator.EvaluateAsync(tickDb, stoppingToken);
                         await DetentionService.DetectAsync(tickDb, stoppingToken);
+                        await ReportProgressAsync(runId, stoppingToken);
                         await DetectRepeatedSpeedingAsync(stoppingToken);
-                        await RecomputeDriverScoresAsync(stoppingToken);
+                        await RecomputeDriverScoresAsync(runId, stoppingToken);
                         await RefreshFleetHealthSnapshotsAsync(stoppingToken);
+                        await ReportProgressAsync(runId, stoppingToken);
                     }, stoppingToken);
                 }
                 sw.Stop();
@@ -87,6 +96,15 @@ public sealed class SafetyBackgroundService(
             try { await Task.Delay(Interval, stoppingToken); }
             catch (OperationCanceledException) { break; }
         }
+    }
+
+    // ServiceRunTracker opens its own system scope for each call, so these updates
+    // commit independently of the long safety-cycle transaction and are visible to
+    // readiness probes while genuine scoring work is still in progress.
+    private async Task ReportProgressAsync(long runId, CancellationToken ct)
+    {
+        await tracker.HeartbeatAsync(SvcName, runId, ct);
+        await tracker.PulseAsync(SvcName, ct);
     }
 
     // Converts new telemetry_alerts into safety_events.
@@ -251,7 +269,7 @@ public sealed class SafetyBackgroundService(
     }
 
     // Recomputes driver_safety_scores for all drivers with safety events in the last 90 days.
-    private async Task RecomputeDriverScoresAsync(CancellationToken ct)
+    private async Task RecomputeDriverScoresAsync(long runId, CancellationToken ct)
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<Database>();
@@ -261,6 +279,7 @@ public sealed class SafetyBackgroundService(
             @"SELECT company_id,id driver_id FROM drivers WHERE deleted_at IS NULL",
             ct: ct);
 
+        var processed = 0;
         foreach (var row in drivers)
         {
             var companyId = Convert.ToInt64(row["companyId"]);
@@ -294,6 +313,10 @@ public sealed class SafetyBackgroundService(
                     c.Parameters.AddWithValue("@e90",  events90d);
                     c.Parameters.Add(new NpgsqlParameter("@bd", NpgsqlTypes.NpgsqlDbType.Jsonb) { Value = breakdown30d });
                 }, ct);
+
+            processed++;
+            if (processed % ProgressHeartbeatBatchSize == 0)
+                await ReportProgressAsync(runId, ct);
         }
     }
 
