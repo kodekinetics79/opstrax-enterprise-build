@@ -1423,8 +1423,10 @@ aside.bg-slate-900 [class*="divide-white/"] > * + * {
 
 /* ---------- CONTROL TOWER: LIGHT ENTERPRISE CONTROL ROOM ---------- */
 .control-tower {
-  margin: -8px;
-  padding: 18px;
+  /* No negative margin: the full-bleed backdrop ate main's gutter and was the element
+     seen riding off-screen whenever anything inside overflowed horizontally. */
+  margin: 0;
+  padding: 16px;
   border-radius: 18px;
   background:
     linear-gradient(rgba(37,99,235,.035) 1px, transparent 1px),
@@ -1460,15 +1462,6 @@ aside.bg-slate-900 [class*="divide-white/"] > * + * {
   color: #0f172a;
 }
 
-.control-tower > div:first-child {
-  border-color: rgba(203,213,225,.9);
-}
-
-.control-tower > div:first-child h1 {
-  color: #0f172a;
-}
-
-.control-tower > div:first-child p,
 .control-tower .panel .text-slate-400,
 .control-tower .panel .text-slate-300 {
   color: #64748b;
