@@ -66,20 +66,31 @@ CREATE INDEX IF NOT EXISTS idx_se_user ON public.security_events(user_id);
 
 ALTER TABLE public.security_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.security_events FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS tenant_ticket_app ON public.security_events;
-CREATE POLICY tenant_ticket_app ON public.security_events
-  AS PERMISSIVE FOR ALL TO opstrax_app
-  USING (company_id=(SELECT opstrax_security.current_tenant_id()))
-  WITH CHECK (company_id=(SELECT opstrax_security.current_tenant_id()));
-DROP POLICY IF EXISTS system_control_plane ON public.security_events;
-CREATE POLICY system_control_plane ON public.security_events
-  AS PERMISSIVE FOR ALL TO opstrax_system
-  USING (true) WITH CHECK (true);
-
-REVOKE ALL ON TABLE public.security_events FROM opstrax_app;
-GRANT SELECT,INSERT ON TABLE public.security_events TO opstrax_app;
-GRANT SELECT,INSERT,UPDATE,DELETE ON TABLE public.security_events TO opstrax_system;
-GRANT USAGE,SELECT ON SEQUENCE public.security_events_id_seq TO opstrax_app,opstrax_system;
+-- Policy/grant enrolment is guarded (stage65 pattern): on a fresh database the
+-- opstrax_security schema (stage58) may not exist yet; the RLS reconciliation
+-- pass enrolls these tables once the security cutover has run.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_app')
+     AND to_regprocedure('opstrax_security.current_tenant_id()') IS NOT NULL THEN
+    DROP POLICY IF EXISTS tenant_ticket_app ON public.security_events;
+    CREATE POLICY tenant_ticket_app ON public.security_events
+      AS PERMISSIVE FOR ALL TO opstrax_app
+      USING (company_id=(SELECT opstrax_security.current_tenant_id()))
+      WITH CHECK (company_id=(SELECT opstrax_security.current_tenant_id()));
+    REVOKE ALL ON TABLE public.security_events FROM opstrax_app;
+    GRANT SELECT,INSERT ON TABLE public.security_events TO opstrax_app;
+    GRANT USAGE,SELECT ON SEQUENCE public.security_events_id_seq TO opstrax_app;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_system') THEN
+    DROP POLICY IF EXISTS system_control_plane ON public.security_events;
+    CREATE POLICY system_control_plane ON public.security_events
+      AS PERMISSIVE FOR ALL TO opstrax_system
+      USING (true) WITH CHECK (true);
+    GRANT SELECT,INSERT,UPDATE,DELETE ON TABLE public.security_events TO opstrax_system;
+    GRANT USAGE,SELECT ON SEQUENCE public.security_events_id_seq TO opstrax_system;
+  END IF;
+END $$;
 
 DO $stage83_fk$
 BEGIN
@@ -100,21 +111,30 @@ ALTER TABLE public.company_security_settings
 ALTER TABLE public.company_security_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.company_security_settings FORCE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS tenant_ticket_app ON public.company_security_settings;
-CREATE POLICY tenant_ticket_app ON public.company_security_settings
-  AS PERMISSIVE FOR ALL TO opstrax_app
-  USING (company_id=(SELECT opstrax_security.current_tenant_id()))
-  WITH CHECK (company_id=(SELECT opstrax_security.current_tenant_id()));
-
-DROP POLICY IF EXISTS system_control_plane ON public.company_security_settings;
-CREATE POLICY system_control_plane ON public.company_security_settings
-  AS PERMISSIVE FOR ALL TO opstrax_system
-  USING (true) WITH CHECK (true);
-
-REVOKE ALL ON TABLE public.company_security_settings FROM opstrax_app;
-GRANT SELECT,INSERT,UPDATE ON TABLE public.company_security_settings TO opstrax_app;
-GRANT SELECT,INSERT,UPDATE,DELETE ON TABLE public.company_security_settings TO opstrax_system;
-GRANT USAGE,SELECT ON SEQUENCE public.company_security_settings_id_seq TO opstrax_app,opstrax_system;
+-- Guarded like the security_events block above: fresh databases may not have the
+-- opstrax_security schema (stage58) yet.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_app')
+     AND to_regprocedure('opstrax_security.current_tenant_id()') IS NOT NULL THEN
+    DROP POLICY IF EXISTS tenant_ticket_app ON public.company_security_settings;
+    CREATE POLICY tenant_ticket_app ON public.company_security_settings
+      AS PERMISSIVE FOR ALL TO opstrax_app
+      USING (company_id=(SELECT opstrax_security.current_tenant_id()))
+      WITH CHECK (company_id=(SELECT opstrax_security.current_tenant_id()));
+    REVOKE ALL ON TABLE public.company_security_settings FROM opstrax_app;
+    GRANT SELECT,INSERT,UPDATE ON TABLE public.company_security_settings TO opstrax_app;
+    GRANT USAGE,SELECT ON SEQUENCE public.company_security_settings_id_seq TO opstrax_app;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_system') THEN
+    DROP POLICY IF EXISTS system_control_plane ON public.company_security_settings;
+    CREATE POLICY system_control_plane ON public.company_security_settings
+      AS PERMISSIVE FOR ALL TO opstrax_system
+      USING (true) WITH CHECK (true);
+    GRANT SELECT,INSERT,UPDATE,DELETE ON TABLE public.company_security_settings TO opstrax_system;
+    GRANT USAGE,SELECT ON SEQUENCE public.company_security_settings_id_seq TO opstrax_system;
+  END IF;
+END $$;
 
 INSERT INTO public.schema_migrations(version,description)
 VALUES (

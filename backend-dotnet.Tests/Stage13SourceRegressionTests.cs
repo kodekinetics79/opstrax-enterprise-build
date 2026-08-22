@@ -62,13 +62,19 @@ public class Stage13SourceRegressionTests
     }
 
     [Fact]
-    public void CommandCenterPage_ShowsLiveBridgeStrip()
+    public void CommandCenterPage_ShowsLiveDomainHealthBand()
     {
         var page = ReadSource("frontend", "src", "pages", "CommandCenterPage.tsx");
 
-        Assert.Contains("Safety Bridge", page);
-        Assert.Contains("Maintenance Bridge", page);
-        Assert.Contains("Fleet Health Bridge", page);
+        // The bridge strip became the consolidated Domain Health band in the
+        // dashboard redesign; the contract is unchanged — the page must render
+        // live safety / maintenance / fleet-health data from the three feeds.
+        Assert.Contains("safetyApi.dashboard", page);
+        Assert.Contains("maintenanceApi.dashboard", page);
+        Assert.Contains("fleetHealthApi.summary", page);
+        Assert.Contains("DomainColumn", page);
+        Assert.Contains("Fleet Health", page);
+        Assert.Contains("Maintenance", page);
     }
 
     [Fact]

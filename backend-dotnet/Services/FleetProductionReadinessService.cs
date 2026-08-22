@@ -146,6 +146,9 @@ public sealed class FleetProductionReadinessService
           SELECT unnest(@criticalWorkers::text[])
         ), required(name, tenant_scoped) AS (VALUES
           ('companies',true),('outbox_messages',true),('inbox_messages',true),('platform_admins',false),('country_profiles',false),
+          ('company_security_settings',true),
+          ('security_events',true),
+          ('driver_offline_queue',true),('hos_records',true),
           ('password_reset_tokens',true),('feature_flags',true),
           ('workforce_schedules',true),
           ('vehicles',true),('drivers',true),('vehicle_assignments',true),('dispatch_assignments',true),
@@ -265,6 +268,12 @@ public sealed class FleetProductionReadinessService
         ), runtime_route_columns(table_name,column_name,data_type,not_null,column_default,identity_kind) AS (VALUES
           ('companies','country','character varying(2)',false,'',''),
           ('companies','currency','character varying(8)',false,'',''),
+          ('users','failed_login_attempts','integer',true,'0',''),
+          ('users','locked_until','timestamp with time zone',false,'',''),
+          ('users','force_password_change','boolean',true,'false',''),
+          ('users','password_changed_at','timestamp with time zone',false,'',''),
+          ('drivers','user_id','bigint',false,'',''),
+          ('coaching_tasks','acknowledged_note','text',false,'',''),
           ('authorization_decision_logs','id','bigint',true,'','a'),
           ('authorization_decision_logs','tenant_id','bigint',true,'',''),
           ('authorization_decision_logs','actor_type','character varying(40)',true,'',''),

@@ -781,20 +781,27 @@ export function AppShell() {
         {/* ── Body: fills the space under the fixed header. Pages that want a
             fixed-viewport layout render a `flex h-full flex-col` root and let their
             own data region scroll; simpler pages just scroll this container. ── */}
-        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+        {/* overflow-x-clip (not hidden): truly forbids sideways scroll so no page can push
+            the shell off-screen; scrollbar-gutter keeps width stable across load states so
+            charts measured before the scrollbar appears never lock in a too-wide layout. */}
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-clip scrollbar-gutter-stable">
           {session?.supportAccess?.active && (
             <div className="shrink-0 border-b border-amber-300 bg-amber-50 px-4 py-2 text-center text-sm font-semibold text-amber-950" role="status" data-testid="support-access-banner">
               Read-only Platform support session · tenant changes are blocked · reference {session.supportAccess.grantRef}
             </div>
           )}
-          <div className="mx-auto w-full max-w-[1800px] shrink-0 px-4 pt-4 md:px-6">
-            <WorkspaceExperience
-              pageTitle={currentPageTitle}
-              clientOutcome={experience.clientOutcome}
-              maintenanceOutcome={experience.maintenanceOutcome}
-              shortcuts={experience.shortcuts}
-            />
-          </div>
+          {/* The dashboard renders its own status strip; a second title/shortcut band there
+              costs ~90px of first-viewport space and duplicates the sidebar nav. */}
+          {location.pathname !== "/command-center" && (
+            <div className="mx-auto w-full max-w-[1800px] shrink-0 px-4 pt-4 md:px-6">
+              <WorkspaceExperience
+                pageTitle={currentPageTitle}
+                clientOutcome={experience.clientOutcome}
+                maintenanceOutcome={experience.maintenanceOutcome}
+                shortcuts={experience.shortcuts}
+              />
+            </div>
+          )}
 
           {/* ── Content ── */}
           <main className="mx-auto flex w-full min-h-0 max-w-[1800px] flex-1 flex-col px-4 py-6 md:px-6">

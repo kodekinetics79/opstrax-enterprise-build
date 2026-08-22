@@ -97,6 +97,9 @@ jwt_key=$(openssl rand -base64 64 | tr -d '\n')
 data_key=$(openssl rand -base64 32 | tr -d '\n')
 sse_key=$(openssl rand -base64 48 | tr -d '\n')
 platform_password=$(openssl rand -base64 24 | tr -d '\n')
+# /health/deep and /metrics are gated (security review): probes must present the
+# configured diagnostics key via the X-Diagnostics-Key header.
+diagnostics_key=$(openssl rand -base64 32 | tr -d '\n')
 
 rehearsal_stage="candidate restore and build"
 dotnet restore backend-dotnet.Tests/Opstrax.Tests.csproj \
@@ -119,6 +122,7 @@ dotnet build backend-dotnet.Tests/Opstrax.Tests.csproj --no-restore --verbosity 
     DATA_ENCRYPTION_KEY="$data_key" \
     Telemetry__SseTicketKey="$sse_key" \
     PLATFORM_SUPERADMIN_PASSWORD="$platform_password" \
+    DIAGNOSTICS_KEY="$diagnostics_key" \
     DemoSeed__Enabled=false \
     ENABLE_FLEET_DEMO_SEED=false \
     Telemetry__Simulator__Enabled=false \
@@ -144,7 +148,7 @@ done
 curl -fsS "$live_url" >"$rehearsal_tmp/live.json"
 for _ in $(seq 1 150); do
   curl -sS "$ready_url" >"$rehearsal_tmp/ready.json"
-  curl -sS "$deep_url" >"$rehearsal_tmp/deep.json"
+  curl -sS -H "X-Diagnostics-Key: $diagnostics_key" "$deep_url" >"$rehearsal_tmp/deep.json"
   if jq -e '.status=="ready"' "$rehearsal_tmp/ready.json" >/dev/null 2>&1 \
     && jq -e '.checks.critical_worker_contract.status=="healthy"' "$rehearsal_tmp/deep.json" >/dev/null 2>&1; then
     break
