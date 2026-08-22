@@ -36,7 +36,6 @@ public class Stage15SourceRegressionTests
         var app = ReadSource("frontend", "src", "App.tsx");
         var modules = ReadSource("frontend", "src", "modules", "moduleConfig.ts");
         var shell = ReadSource("frontend", "src", "layouts", "AppShell.tsx");
-        var dashboard = ReadSource("frontend", "src", "pages", "CommandCenterPage.tsx");
 
         Assert.Contains("const TripsPage = lazy(() => import(\"@/pages/TripsPage\")", app);
         Assert.Contains("path=\"/trips\"", app);
@@ -46,9 +45,10 @@ public class Stage15SourceRegressionTests
         Assert.Contains("route: \"/trips\"", modules);
         Assert.Contains("title: \"Trips\"", modules);
 
+        // Trips stays first-class via routes, moduleConfig, and the sidebar nav.
+        // The dashboard's duplicate shortcuts card was deleted in the redesign,
+        // so the page itself no longer carries a /trips button.
         Assert.Contains("\"trips\"", shell);
-        Assert.Contains("Trips", dashboard);
-        Assert.Contains("/trips", dashboard);
     }
 }
 

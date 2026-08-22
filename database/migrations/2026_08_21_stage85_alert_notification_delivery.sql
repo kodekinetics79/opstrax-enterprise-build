@@ -55,17 +55,30 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_outbox_alert_notification
 -- ── RLS enrolment — tenant-scoped delivery ledger (stage84 boilerplate) ──────
 ALTER TABLE public.alert_notification_deliveries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.alert_notification_deliveries FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS tenant_ticket_app ON public.alert_notification_deliveries;
-CREATE POLICY tenant_ticket_app ON public.alert_notification_deliveries
-  AS PERMISSIVE FOR ALL TO opstrax_app
-  USING (company_id=(SELECT opstrax_security.current_tenant_id()))
-  WITH CHECK (company_id=(SELECT opstrax_security.current_tenant_id()));
-DROP POLICY IF EXISTS system_control_plane ON public.alert_notification_deliveries;
-CREATE POLICY system_control_plane ON public.alert_notification_deliveries
-  AS PERMISSIVE FOR ALL TO opstrax_system USING (true) WITH CHECK (true);
-REVOKE ALL ON TABLE public.alert_notification_deliveries FROM opstrax_app;
-GRANT SELECT,INSERT,UPDATE,DELETE ON TABLE public.alert_notification_deliveries TO opstrax_app,opstrax_system;
-GRANT USAGE,SELECT ON SEQUENCE public.alert_notification_deliveries_id_seq TO opstrax_app,opstrax_system;
+-- Policy/grant enrolment is guarded (stage65 pattern): on a fresh database the
+-- opstrax_security schema (stage58) may not exist yet; the RLS reconciliation
+-- pass enrolls this table once the security cutover has run.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_app')
+     AND to_regprocedure('opstrax_security.current_tenant_id()') IS NOT NULL THEN
+    DROP POLICY IF EXISTS tenant_ticket_app ON public.alert_notification_deliveries;
+    CREATE POLICY tenant_ticket_app ON public.alert_notification_deliveries
+      AS PERMISSIVE FOR ALL TO opstrax_app
+      USING (company_id=(SELECT opstrax_security.current_tenant_id()))
+      WITH CHECK (company_id=(SELECT opstrax_security.current_tenant_id()));
+    REVOKE ALL ON TABLE public.alert_notification_deliveries FROM opstrax_app;
+    GRANT SELECT,INSERT,UPDATE,DELETE ON TABLE public.alert_notification_deliveries TO opstrax_app;
+    GRANT USAGE,SELECT ON SEQUENCE public.alert_notification_deliveries_id_seq TO opstrax_app;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_system') THEN
+    DROP POLICY IF EXISTS system_control_plane ON public.alert_notification_deliveries;
+    CREATE POLICY system_control_plane ON public.alert_notification_deliveries
+      AS PERMISSIVE FOR ALL TO opstrax_system USING (true) WITH CHECK (true);
+    GRANT SELECT,INSERT,UPDATE,DELETE ON TABLE public.alert_notification_deliveries TO opstrax_system;
+    GRANT USAGE,SELECT ON SEQUENCE public.alert_notification_deliveries_id_seq TO opstrax_system;
+  END IF;
+END $$;
 
 INSERT INTO public.schema_migrations(version,description)
 VALUES ('2026_08_21_stage85_alert_notification_delivery',
