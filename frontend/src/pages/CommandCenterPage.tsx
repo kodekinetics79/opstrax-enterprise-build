@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import { useNavigate } from "react-router";
 import {
-  Area, AreaChart, Bar, BarChart, Cell, Pie, PieChart,
+  Area, AreaChart, Bar, BarChart, Cell, ComposedChart, Line, Pie, PieChart,
   ResponsiveContainer, Tooltip,
 } from "recharts";
 import { exportCsv } from "@/components/ui";
@@ -328,6 +328,9 @@ export function CommandCenterPage() {
       </div>
 
       {/* ── Domain Health: safety | maintenance | fleet health ── */}
+      {/* Each column leads with a chart over measured data (the safety feed already
+          ships a 30-day daily trend; counts render as scaled bars) so the band reads
+          at a glance instead of as label:value rows. */}
       <section className="grid min-w-0 gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-3 sm:gap-0 sm:divide-x sm:divide-slate-100">
         <DomainColumn
           title="Safety"
@@ -336,12 +339,22 @@ export function CommandCenterPage() {
           error={safetyBridge.isError}
           onOpen={() => navigate("/safety")}
           headline={metricLine("Fleet safety score", safetyBridge.data?.fleetSafetyScore, "%")}
-          lines={[
-            metricLine("Open safety events", safetyBridge.data?.openEvents),
-            metricLine("Open coaching tasks", safetyBridge.data?.openCoachingTasks),
-            metricLine("Overdue coaching", safetyBridge.data?.overdueCoachingTasks),
-          ]}
-        />
+        >
+          <SafetyTrendChart rows={safetyBridge.data?.trend as AnyRecord[] | undefined} />
+          {(() => {
+            const openEvents = asNum(safetyBridge.data?.openEvents);
+            const openCoaching = asNum(safetyBridge.data?.openCoachingTasks);
+            const overdueCoaching = asNum(safetyBridge.data?.overdueCoachingTasks);
+            const max = Math.max(openEvents ?? 0, openCoaching ?? 0, overdueCoaching ?? 0, 1);
+            return (
+              <div className="mt-3 space-y-2">
+                <MiniBar label="Open safety events" value={openEvents} max={max} color={chart.sky600} />
+                <MiniBar label="Open coaching tasks" value={openCoaching} max={max} color={chart.sky600} />
+                <MiniBar label="Overdue coaching" value={overdueCoaching} max={max} color={chart.amber600} />
+              </div>
+            );
+          })()}
+        </DomainColumn>
         <DomainColumn
           title="Maintenance"
           icon={Wrench}
@@ -349,12 +362,29 @@ export function CommandCenterPage() {
           error={maintenanceBridge.isError}
           onOpen={() => navigate("/maintenance")}
           headline={metricLine("Fleet availability", maintenanceKpis.fleetAvailabilityPct, "%", fleetTotal === 0 ? "No vehicles yet" : "Not yet measured")}
-          lines={[
-            metricLine("Open work orders", maintenanceKpis.openWorkOrders),
-            metricLine("Critical open defects", maintenanceKpis.criticalOpenDefects),
-            metricLine("Overdue PM", maintenanceKpis.overduePm),
-          ]}
-        />
+        >
+          {(() => {
+            const availability = asNum(maintenanceKpis.fleetAvailabilityPct);
+            const openWo = asNum(maintenanceKpis.openWorkOrders);
+            const critical = asNum(maintenanceKpis.criticalOpenDefects);
+            const overduePm = asNum(maintenanceKpis.overduePm);
+            const max = Math.max(openWo ?? 0, critical ?? 0, overduePm ?? 0, 1);
+            return (
+              <>
+                {availability != null && (
+                  <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100" title={`Fleet availability: ${availability}%`}>
+                    <div className="h-full rounded-full" style={{ width: `${Math.min(100, Math.max(availability, 0))}%`, background: chart.teal600 }} />
+                  </div>
+                )}
+                <div className="mt-3 space-y-2">
+                  <MiniBar label="Open work orders" value={openWo} max={max} color={chart.sky600} />
+                  <MiniBar label="Critical open defects" value={critical} max={max} color={chart.red600} />
+                  <MiniBar label="Overdue PM" value={overduePm} max={max} color={chart.amber600} />
+                </div>
+              </>
+            );
+          })()}
+        </DomainColumn>
         <DomainColumn
           title="Fleet Health"
           icon={Truck}
@@ -362,12 +392,23 @@ export function CommandCenterPage() {
           error={fleetHealthBridge.isError}
           onOpen={() => navigate("/fleet-health")}
           headline={metricLine("Fleet health score", fleetHealthBridge.data?.fleetHealthScore, "%")}
-          lines={[
-            metricLine("Dispatch-ready vehicles", fleetHealthBridge.data?.dispatchReadyVehicles, "", fleetTotal === 0 ? "No vehicles yet" : "Not yet measured"),
-            metricLine("Out of service", fleetHealthBridge.data?.oosVehicles, "", fleetTotal === 0 ? "No vehicles yet" : "Not yet measured"),
-            metricLine("Critical blockers", fleetHealthBridge.data?.criticalDefectVehicles, "", fleetTotal === 0 ? "No vehicles yet" : "Not yet measured"),
-          ]}
-        />
+        >
+          {(() => {
+            const absent = fleetTotal === 0 ? "No vehicles yet" : "Not yet measured";
+            const ready = asNum(fleetHealthBridge.data?.dispatchReadyVehicles);
+            const oos = asNum(fleetHealthBridge.data?.oosVehicles);
+            const blocked = asNum(fleetHealthBridge.data?.criticalDefectVehicles);
+            // Bars scale against the whole fleet so ready-vs-blocked reads instantly.
+            const max = Math.max(asNum(fleetHealthBridge.data?.totalVehicles) ?? fleetTotal, 1);
+            return (
+              <div className="mt-3 space-y-2">
+                <MiniBar label={`Dispatch-ready of ${max}`} value={ready} max={max} color={chart.emerald600} absentReason={absent} />
+                <MiniBar label="Out of service" value={oos} max={max} color={chart.amber600} absentReason={absent} />
+                <MiniBar label="Critical blockers" value={blocked} max={max} color={chart.red600} absentReason={absent} />
+              </div>
+            );
+          })()}
+        </DomainColumn>
       </section>
 
       {/* ── Trends: review material, below the fold ────────── */}
@@ -399,7 +440,7 @@ function TrendCard({ title, unit, color, type, data, prefix = "" }: {
       ) : (
         <>
           <p className="mt-1.5 text-2xl font-bold leading-none text-slate-900 tabular-nums">{fmt(total)}</p>
-          <div className="mt-2 h-14 w-full min-w-0">
+          <div className="mt-2 h-20 w-full min-w-0">
             <ResponsiveContainer width="100%" height="100%">
               {type === "bar" ? (
                 <BarChart data={data} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
@@ -427,14 +468,14 @@ function TrendCard({ title, unit, color, type, data, prefix = "" }: {
 }
 
 /* ── Domain health column ────────────────────────────────── */
-function DomainColumn({ title, icon: Icon, loading, error, onOpen, headline, lines }: {
+function DomainColumn({ title, icon: Icon, loading, error, onOpen, headline, children }: {
   title: string;
   icon: LucideIcon;
   loading: boolean;
   error: boolean;
   onOpen: () => void;
   headline: { label: string; value: string; note: string | null };
-  lines: { label: string; value: string; note: string | null }[];
+  children: ReactNode;
 }) {
   return (
     <div className="min-w-0 sm:px-4 sm:first:pl-0 sm:last:pr-0">
@@ -455,16 +496,82 @@ function DomainColumn({ title, icon: Icon, loading, error, onOpen, headline, lin
             <p className={`text-2xl font-bold leading-none tabular-nums ${headline.value === "—" ? "text-slate-900/60" : "text-slate-900"}`}>{headline.value}</p>
             <p className="mt-1 text-[11px] font-medium text-slate-400">{headline.note ?? headline.label}</p>
           </div>
-          <div className="mt-3 space-y-1.5">
-            {lines.map(line => (
-              <div key={line.label} className="flex items-baseline justify-between gap-2">
-                <span className="truncate text-xs font-medium text-slate-500">{line.label}</span>
-                <span className="shrink-0 text-sm font-bold text-slate-900 tabular-nums" title={line.note ?? undefined}>{line.value}</span>
-              </div>
-            ))}
-          </div>
+          {children}
         </>
       )}
+    </div>
+  );
+}
+
+/* Coerce a JSON value to a measured number; absence stays null (never a default). */
+function asNum(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+/* ── Count bar: magnitude at a glance, honest about absence ── */
+function MiniBar({ label, value, max, color, absentReason = "Not yet measured" }: {
+  label: string; value: number | null; max: number; color: string; absentReason?: string;
+}) {
+  const measured = value != null;
+  const pct = measured && max > 0 ? Math.min(100, (value / max) * 100) : 0;
+  return (
+    <div title={measured ? `${label}: ${value}` : `${label}: ${absentReason}`}>
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="truncate text-xs font-medium text-slate-500">{label}</span>
+        <span className={`shrink-0 text-sm font-bold tabular-nums ${measured ? "text-slate-900" : "text-slate-900/50"}`}>
+          {measured ? value : "—"}
+        </span>
+      </div>
+      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-100">
+        {measured && value > 0 && (
+          <div className="h-full rounded-full" style={{ width: `${Math.max(pct, 3)}%`, background: color }} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── Safety 30-day trend: events/day area + critical line ── */
+/* Gap days render as measured zeros: safety_events is the ledger, so a day with
+   no rows is a day with no events — not missing data. */
+function SafetyTrendChart({ rows }: { rows: AnyRecord[] | undefined }) {
+  if (!Array.isArray(rows)) return null;
+  const byDay = new Map<string, { events: number; critical: number }>();
+  for (const r of rows) {
+    const key = String(r.eventDate ?? "").slice(0, 10);
+    if (key) byDay.set(key, { events: Number(r.eventCount ?? 0), critical: Number(r.criticalCount ?? 0) });
+  }
+  const series: { d: string; events: number; critical: number }[] = [];
+  const now = new Date();
+  for (let i = 29; i >= 0; i--) {
+    const dt = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+    const key = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+    const hit = byDay.get(key);
+    series.push({ d: key.slice(5), events: hit?.events ?? 0, critical: hit?.critical ?? 0 });
+  }
+  return (
+    <div className="mt-2">
+      <div className="flex items-center gap-3 text-[10px] font-semibold text-slate-500">
+        <span className="inline-flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full" style={{ background: chart.sky600 }} /> Events / day · 30d</span>
+        <span className="inline-flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full" style={{ background: chart.red600 }} /> Critical</span>
+      </div>
+      <div className="mt-1 h-16 w-full min-w-0">
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart data={series} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
+            <defs>
+              <linearGradient id="grad-safety-events" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={chart.sky600} stopOpacity={0.25} />
+                <stop offset="100%" stopColor={chart.sky600} stopOpacity={0} />
+              </linearGradient>
+            </defs>
+            <Tooltip contentStyle={tipStyle} itemStyle={{ color: chart.slate700 }} labelStyle={{ color: chart.slate500, fontSize: 10 }} />
+            <Area type="monotone" dataKey="events" name="Events" stroke={chart.sky600} strokeWidth={2} fill="url(#grad-safety-events)" dot={false} />
+            <Line type="monotone" dataKey="critical" name="Critical" stroke={chart.red600} strokeWidth={1.5} dot={false} />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
     </div>
   );
 }
