@@ -136,6 +136,13 @@ export const PERMISSIONS = {
   BILLING_VIEW: "billing:view",
   BILLING_MANAGE: "billing:manage",
 
+  // Finance sub-domains. The API folds tax/settlement/revrec/invoice permissions
+  // into finance:view / finance:manage (EndpointMappings.cs ~2648-2674); without
+  // the same folding here the CLIENT hid four /finance/* routes from a Finance &
+  // Billing Manager that the server would have allowed.
+  FINANCE_VIEW: "finance:view",
+  FINANCE_MANAGE: "finance:manage",
+
   // P9 — Platform operations (admin/engineering access only)
   OPS_VIEW: "ops:view",
 } as const;
@@ -279,8 +286,30 @@ const PERMISSION_GROUPS: Record<Permission, string[]> = {
   [P.FUEL_VIEW]: ["fuel.view", "fuel:view", "fleet.fuel.view", "fleet.view", "fleet:view"],
   [P.FUEL_MANAGE]: ["fuel.manage", "fuel:manage", "fleet.fuel.manage", "fleet.manage", "fleet:manage"],
 
-  [P.BILLING_VIEW]: ["billing.view", "billing:view", "fleet.billing.view", "reports.view", "reports:view"],
+  [P.BILLING_VIEW]: ["billing.view", "billing:view", "billing.read", "fleet.billing.view", "reports.view", "reports:view"],
   [P.BILLING_MANAGE]: ["billing.manage", "billing:manage", "fleet.billing.manage"],
+
+  // Mirrors the server's fold exactly — read-side sub-permissions resolve to
+  // finance:view/billing:view, write-side to finance:manage/billing:manage.
+  [P.FINANCE_VIEW]: [
+    "finance.view", "finance:view", "billing.view", "billing:view",
+    "tax.read", "tax.view", "billing.read",
+    "settlement.read", "settlement.view",
+    "revrec.read", "revrec.view",
+    "finance.invoice.read", "finance.invoice.view",
+    "finance.invoice_draft.read", "finance.invoice_draft.view",
+    "charge.read", "charge.view", "contract.read", "rate_card.read",
+  ],
+  [P.FINANCE_MANAGE]: [
+    "finance.manage", "finance:manage", "billing.manage", "billing:manage",
+    "tax.create", "tax.update", "tax.manage", "tax.publish",
+    "settlement.create", "settlement.update", "settlement.generate", "settlement.manage",
+    "settlement.approve", "settlement.pay",
+    "revrec.create", "revrec.update", "revrec.manage", "revrec.period.close",
+    "finance.invoice.issue", "finance.invoice.approve", "finance.invoice.payment.record",
+    "finance.invoice_draft.create", "finance.invoice_draft.update", "finance.invoice_draft.manage",
+    "finance.job.ready_to_bill",
+  ],
 
   [P.OPS_VIEW]: ["ops.view", "ops:view", "platform.ops:view"],
 } satisfies Record<Permission, string[]>;
@@ -484,6 +513,12 @@ export const ROLE_PERMISSIONS = {
     P.REPORTS_VIEW,
     P.REPORTS_EXPORT,
     P.SETTINGS_VIEW,
+    // Matches the seeded role in stage77_protected_role_bootstrap.sql, which
+    // grants finance:view/finance:manage and fuel:view/fuel:manage.
+    P.FINANCE_VIEW,
+    P.FINANCE_MANAGE,
+    P.FUEL_VIEW,
+    P.FUEL_MANAGE,
   ],
   crm_sales_manager: [
     P.CUSTOMERS_VIEW,
