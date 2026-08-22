@@ -48,13 +48,26 @@ function serviceStatus(state: string | undefined, isError: boolean): { label: st
   return { label: "Partially degraded — monitored automatically", dot: "bg-amber-400", text: "text-amber-700" };
 }
 
+// Chip tone for the subscription status. Trial is a deliberate amber — it should
+// read as "temporary", not as an error and not as a settled state.
+function licenseStatusTone(status: string): string {
+  const s = status.toLowerCase();
+  if (s === "active") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (s === "trial") return "border-amber-200 bg-amber-50 text-amber-700";
+  if (s === "suspended" || s === "cancelled" || s === "canceled" || s === "expired")
+    return "border-red-200 bg-red-50 text-red-700";
+  return "border-slate-200 bg-slate-50 text-slate-600";
+}
+
 export function AboutPage() {
   const { data: platformRaw } = useQuery({ queryKey: ["about-platform"], queryFn: aboutApi.platform, staleTime: 300_000 });
+  const { data: licenseRaw } = useQuery({ queryKey: ["about-license"], queryFn: aboutApi.license, staleTime: 300_000 });
   const runtimeQuery = useRuntimeDiagnostics();
   const { session } = useAuth();
   const [copied, setCopied] = useState(false);
 
   const platform = platformRaw as AnyRecord | undefined;
+  const license = licenseRaw as AnyRecord | undefined;
   const support = platform?.support as AnyRecord | undefined;
   const company = (session?.company ?? {}) as AnyRecord;
 
@@ -119,15 +132,61 @@ export function AboutPage() {
       {/* ── Licensed to + Service status ── */}
       <div className="grid gap-6 lg:grid-cols-2">
         <div className="panel p-5">
-          <div className="mb-3 flex items-center gap-2">
-            <Building2 className="h-4 w-4 text-slate-500" />
-            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Licensed to</p>
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <Building2 className="h-4 w-4 text-slate-500" />
+              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Licensed to</p>
+            </div>
+            {typeof license?.status === "string" && license.status && (
+              <span className={`rounded-full border px-2.5 py-0.5 text-xs font-bold capitalize ${licenseStatusTone(String(license.status))}`}>
+                {String(license.status)}
+              </span>
+            )}
           </div>
           <p className="text-lg font-bold text-slate-900">{String(company.name ?? "—")}</p>
           <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-sm text-slate-600">
             {company.id != null && <span>Org ID: <span className="font-semibold">{String(company.id)}</span></span>}
-            {plan && <span>Plan: <span className="font-semibold">{plan}</span></span>}
+            {(license?.plan ?? plan) && <span>Plan: <span className="font-semibold">{String(license?.plan ?? plan)}</span></span>}
+            {license?.billingCycle != null && <span>Billing: <span className="font-semibold capitalize">{String(license.billingCycle)}</span></span>}
           </div>
+
+          {/* Seats — usage bar only when a real limit exists; never a made-up quota */}
+          {license?.seatsUsed != null && (
+            <div className="mt-3">
+              <p className="text-sm text-slate-600">
+                <span className="font-semibold text-slate-800">{String(license.seatsUsed)}</span>
+                {license.seatLimit != null ? ` of ${String(license.seatLimit)} seats in use` : " active seats in use"}
+              </p>
+              {license.seatLimit != null && Number(license.seatLimit) > 0 && (
+                <div className="mt-1.5 h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-slate-100">
+                  <div
+                    className={`h-full rounded-full ${Number(license.seatsUsed) >= Number(license.seatLimit) ? "bg-amber-400" : "bg-teal-500"}`}
+                    style={{ width: `${Math.min(100, (Number(license.seatsUsed) / Number(license.seatLimit)) * 100)}%` }}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Trial countdown / contract term — only from real dates */}
+          {(() => {
+            const trialEnds = license?.trialEndsAt ? new Date(String(license.trialEndsAt)) : null;
+            const contractEnd = license?.contractEnd ? new Date(String(license.contractEnd)) : null;
+            const isTrial = String(license?.status ?? "").toLowerCase() === "trial";
+            if (isTrial && trialEnds && !Number.isNaN(trialEnds.getTime())) {
+              const daysLeft = Math.ceil((trialEnds.getTime() - Date.now()) / 86_400_000);
+              return (
+                <p className={`mt-3 text-sm font-semibold ${daysLeft <= 0 ? "text-red-600" : daysLeft <= 7 ? "text-amber-600" : "text-slate-600"}`}>
+                  {daysLeft <= 0
+                    ? `Trial ended ${trialEnds.toLocaleDateString()} — contact support to continue`
+                    : `Trial ends ${trialEnds.toLocaleDateString()} (${daysLeft} day${daysLeft === 1 ? "" : "s"} left)`}
+                </p>
+              );
+            }
+            if (contractEnd && !Number.isNaN(contractEnd.getTime()))
+              return <p className="mt-3 text-sm text-slate-600">Contract runs through <span className="font-semibold">{contractEnd.toLocaleDateString()}</span></p>;
+            return null;
+          })()}
         </div>
 
         <div className="panel p-5">

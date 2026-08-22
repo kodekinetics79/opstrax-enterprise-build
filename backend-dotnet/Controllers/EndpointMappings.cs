@@ -2119,6 +2119,7 @@ public static partial class EndpointMappings
         // ===== ABOUT / PLATFORM =====================================================
         app.MapGet("/api/about/platform", AboutPlatform);
         app.MapGet("/api/about/health-summary", AboutHealthSummary);
+        app.MapGet("/api/about/license", AboutLicense);
 
         MapDedicatedModule(app, "route-planning");
         MapDedicatedModule(app, "fuel-idling");
@@ -15565,6 +15566,51 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             databaseStatus = dbStatus,
             version        = asm is null ? "Enterprise" : $"Enterprise {asm.Major}.{asm.Minor}.{asm.Build}",
         }, "Health summary"));
+    }
+
+    // Tenant-facing license/subscription summary for the About page. Commercial state
+    // lives in the platform control plane (tenant_subscriptions is system-identity-only
+    // under RLS), so that read runs in system scope keyed STRICTLY by the session's
+    // company — never by client input. Only customer-appropriate fields leave the API:
+    // plan name, status, seats, trial/contract dates. MRR, pricing and account/support
+    // ownership stay operator-side.
+    private static async Task<IResult> AboutLicense(HttpContext http, Database db, CancellationToken ct)
+    {
+        var companyId = GetCompanyId(http);
+
+        var seatsUsed = await db.ScalarLongAsync(
+            "SELECT COUNT(*) FROM users WHERE company_id=@cid AND status='Active'",
+            c => c.Parameters.AddWithValue("@cid", companyId), ct);
+
+        Dictionary<string, object?>? sub = null;
+        try
+        {
+            sub = await db.QuerySingleInSystemScopeAsync(
+                @"SELECT ts.status, ts.seat_limit, ts.billing_cycle, ts.trial_ends_at,
+                         ts.contract_start, ts.contract_end, p.name AS plan_name
+                  FROM tenant_subscriptions ts
+                  LEFT JOIN packages p ON p.id = ts.package_id
+                  WHERE ts.company_id = @cid
+                  LIMIT 1",
+                c => c.Parameters.AddWithValue("@cid", companyId), ct);
+        }
+        catch
+        {
+            // Control-plane tables may be absent on older deployments — the About page
+            // then renders without subscription detail rather than erroring.
+        }
+
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            seatsUsed,
+            plan          = sub?["planName"]?.ToString(),
+            status        = sub?["status"]?.ToString(),
+            seatLimit     = sub?["seatLimit"] is { } sl ? Convert.ToInt32(sl) : (int?)null,
+            billingCycle  = sub?["billingCycle"]?.ToString(),
+            trialEndsAt   = sub?["trialEndsAt"] is DateTime te ? te : (DateTime?)null,
+            contractStart = sub?["contractStart"] is DateTime cs ? cs : (DateTime?)null,
+            contractEnd   = sub?["contractEnd"] is DateTime ce ? ce : (DateTime?)null,
+        }, "License summary"));
     }
 
     // ── Telemetry observability counters ─────────────────────────────────────────
