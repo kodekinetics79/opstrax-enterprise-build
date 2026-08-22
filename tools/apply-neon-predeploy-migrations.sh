@@ -150,6 +150,9 @@ MIGRATIONS=(
   2026_08_14_stage80_fleet_identity_backbone
   2026_08_20_stage81_customer_eta_secure_token
   2026_08_20_stage82_telematics_device_credential_constraint
+  2026_08_21_stage83_company_security_settings_runtime_contract
+  2026_08_21_stage84_driver_hos_runtime_contract
+  2026_08_21_stage85_alert_notification_delivery
 )
 
 echo "Target host: $(printf '%s' "$NEON_PG_URI" | sed -E 's|.*@([^/:?]+).*|\1|')"
@@ -237,7 +240,9 @@ for m in "${MIGRATIONS[@]}"; do
     2026_08_12_stage77_protected_role_bootstrap|\
     2026_08_13_stage78_country_profiles_runtime_contract|\
     2026_08_13_stage79_tenant_provisioning_runtime_contract|\
-    2026_08_14_stage80_fleet_identity_backbone) repair_migration=true ;;
+    2026_08_14_stage80_fleet_identity_backbone|\
+    2026_08_21_stage83_company_security_settings_runtime_contract|\
+    2026_08_21_stage84_driver_hos_runtime_contract) repair_migration=true ;;
   esac
   if [ "$applied" = "1" ] && [ "$repair_migration" = false ]; then
     echo "── $m: already applied (ledger) — skipping"

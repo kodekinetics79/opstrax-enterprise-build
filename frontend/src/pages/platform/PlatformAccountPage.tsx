@@ -2,7 +2,7 @@ import { useState } from "react";
 import { KeyRound, ShieldCheck, UserCog } from "lucide-react";
 import { platformApi } from "@/services/platformApi";
 import { usePlatformAuth } from "@/hooks/usePlatformAuth";
-import { PHeader, PCard, PButton, PField, PInput } from "./ui";
+import { PHeader, PCard, PButton, PField, PInput, PPasswordInput } from "./ui";
 
 // Self-service account management for ANY platform admin — no second admin needed.
 // Both actions hit /api/platform/auth/* which only ever touch the caller's own row.
@@ -96,13 +96,13 @@ export function PlatformAccountPage() {
           </div>
           <div className="space-y-4">
             <PField label="Current password">
-              <PInput type="password" autoComplete="current-password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} />
+              <PPasswordInput autoComplete="current-password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} />
             </PField>
             <PField label="New password (min 12 characters)">
-              <PInput type="password" autoComplete="new-password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
+              <PPasswordInput autoComplete="new-password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
             </PField>
             <PField label="Confirm new password">
-              <PInput type="password" autoComplete="new-password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} />
+              <PPasswordInput autoComplete="new-password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} />
             </PField>
 
             {pwTooShort && <p className="text-xs font-medium text-amber-600">New password must be at least 12 characters.</p>}

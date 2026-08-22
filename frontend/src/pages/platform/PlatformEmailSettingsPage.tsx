@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { AlertTriangle, CheckCircle2, Link2, Mail, Send } from "lucide-react";
-import { PHeader, PCard, PButton, PField, PInput, PSelect, PLoading, PError } from "./ui";
+import { PHeader, PCard, PButton, PField, PInput, PPasswordInput, PSelect, PLoading, PError } from "./ui";
 import { platformApi } from "@/services/platformApi";
 import { usePlatformAuth } from "@/hooks/usePlatformAuth";
 
@@ -353,8 +353,7 @@ export function PlatformEmailSettingsPage() {
             <PInput value={username} onChange={(e) => setUsername(e.target.value)} placeholder={activePreset.usernamePlaceholder} autoComplete="off" />
           </PField>
           <PField label={passwordSet ? "Password (leave blank to keep current)" : "Password"}>
-            <PInput
-              type="password"
+            <PPasswordInput
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               disabled={!canStorePassword}

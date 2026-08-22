@@ -274,6 +274,16 @@ public sealed class TelemetrySchemaService(Database db)
           SELECT DISTINCT company_id, 'stale_device', 900, 'Warning', true
           FROM eld_devices WHERE company_id IS NOT NULL AND company_id > 0
           ON CONFLICT DO NOTHING",
+        // Excessive-idling window in minutes (OperationalAlertDetectionService)
+        @"INSERT INTO telemetry_rules (company_id, rule_type, threshold_value, severity, enabled)
+          SELECT DISTINCT company_id, 'idling', 15, 'Warning', true
+          FROM eld_devices WHERE company_id IS NOT NULL AND company_id > 0
+          ON CONFLICT DO NOTHING",
+        // Fuel-level drop (percentage points inside 45 min) that counts as an anomaly
+        @"INSERT INTO telemetry_rules (company_id, rule_type, threshold_value, severity, enabled)
+          SELECT DISTINCT company_id, 'fuel_drop_pct', 20, 'High', true
+          FROM eld_devices WHERE company_id IS NOT NULL AND company_id > 0
+          ON CONFLICT DO NOTHING",
     ];
 
     private static readonly string[] CredentialHardening =

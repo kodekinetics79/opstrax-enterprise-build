@@ -3777,7 +3777,7 @@ public static partial class EndpointMappings
         if (email.Length is > 0 and <= 320)
         {
             var user = await db.QuerySingleAsync(
-                @"SELECT u.id, u.company_id, u.email, u.full_name
+                @"SELECT u.id, u.company_id, u.email, u.full_name, c.company_code
                   FROM users u JOIN companies c ON c.id=u.company_id
                   WHERE LOWER(u.email)=@email AND u.status='Active'
                     AND LOWER(COALESCE(c.status,'active')) NOT IN ('suspended','cancelled','canceled','disabled')
@@ -3805,9 +3805,16 @@ public static partial class EndpointMappings
                     ?? Environment.GetEnvironmentVariable("PUBLIC_APP_URL") ?? "").TrimEnd('/');
                 var link = $"{frontend}/reset-password?email={Uri.EscapeDataString(email)}&token={Uri.EscapeDataString(rawToken)}";
                 var mailService = http.RequestServices?.GetService<PlatformMailService>();
+                // Include the sign-in coordinates: the login form needs the organization
+                // code, and a user resetting a forgotten password has often forgotten
+                // (or never received) that code too.
+                var orgCode = user["companyCode"]?.ToString();
                 var sent = frontend.Length > 0 && mailService is not null
                     && await mailService.TrySendAsync(email, "Reset your OpsTrax password",
-                    $"Hello {user["fullName"]},\n\nUse this one-time link within 30 minutes to reset your OpsTrax password:\n{link}\n\nIf you did not request this, you can ignore this message.", ct);
+                    $"Hello {user["fullName"]},\n\nUse this one-time link within 30 minutes to reset your OpsTrax password:\n{link}\n\n" +
+                    $"After resetting, sign in at {frontend}/login with:\n" +
+                    (string.IsNullOrWhiteSpace(orgCode) ? "" : $"  Organization code: {orgCode}\n") +
+                    $"  Email:             {email}\n\nIf you did not request this, you can ignore this message.", ct);
                 await db.ExecuteAsync(
                     @"INSERT INTO security_events (company_id,user_id,event_type,severity,source_ip_truncated,user_agent_hash,success,safe_message,metadata_json)
                       VALUES (@cid,@uid,'password.reset.requested','info',NULL,@ua,true,'Password reset requested',jsonb_build_object('emailSent',@sent))",
@@ -4017,25 +4024,47 @@ public static partial class EndpointMappings
     // (kpis, fleetStatus, exceptions, briefItems, priorityActions, charts).
     private static async Task<IResult> CommandCenterSummary(HttpContext http, Database db, CancellationToken ct)
     {
+        if (RequirePermission(http, "dashboard:view") is { } denied) return denied;
         var cid = GetCompanyId(http);
-        void Bind(NpgsqlCommand c) => c.Parameters.AddWithValue("@cid", cid);
+        var branchId = GetBranchId(http);
+        // Branch scoping must match the maintenance/safety/fleet-health feeds rendered on the
+        // same page — a branch user seeing branch-filtered availability next to unfiltered
+        // fleet counts reads as "No data" on one card and a full fleet on the next.
+        void Bind(NpgsqlCommand c)
+        {
+            c.Parameters.AddWithValue("@cid", cid);
+            c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+        }
+        // For tables with no branch_id column (ai_insights, expenses): company scope only.
+        void BindCid(NpgsqlCommand c) => c.Parameters.AddWithValue("@cid", cid);
+        // jobs, vehicles, and safety_events all carry branch_id
+        const string BranchScope = " AND (@branchId::bigint IS NULL OR branch_id=@branchId)";
 
         // ── Live operational KPIs ───────────────────────────────────────────────
-        var activeJobs    = await db.ScalarLongAsync("SELECT COUNT(*) FROM jobs WHERE company_id=@cid AND deleted_at IS NULL AND status NOT IN ('Completed','Unassigned','Cancelled')", Bind, ct);
-        var slaExceptions = await db.ScalarLongAsync("SELECT COUNT(*) FROM jobs WHERE company_id=@cid AND deleted_at IS NULL AND (sla_status='At Risk' OR status IN ('Delayed','At Risk'))", Bind, ct);
-        var delayed       = await db.ScalarLongAsync("SELECT COUNT(*) FROM jobs WHERE company_id=@cid AND deleted_at IS NULL AND status='Delayed'", Bind, ct);
-        var overdue       = await db.ScalarLongAsync("SELECT COUNT(*) FROM jobs WHERE company_id=@cid AND deleted_at IS NULL AND assigned_vehicle_id IS NULL AND scheduled_start < NOW()", Bind, ct);
-        var fleetOnRoad   = await db.ScalarLongAsync("SELECT COUNT(*) FROM vehicles WHERE company_id=@cid AND deleted_at IS NULL AND device_status='Online' AND status IN ('On Route','En Route','Driving','Active','Idle','At Stop','Delayed')", Bind, ct);
-        var safety24h     = await db.ScalarLongAsync("SELECT COUNT(*) FROM safety_events WHERE company_id=@cid AND deleted_at IS NULL AND COALESCE(occurred_at,event_time,created_at) > NOW()-INTERVAL '24 hours'", Bind, ct);
-        var maintCount    = await db.ScalarLongAsync("SELECT COUNT(*) FROM vehicles WHERE company_id=@cid AND deleted_at IS NULL AND (out_of_service OR status='Maintenance')", Bind, ct);
+        var activeJobs    = await db.ScalarLongAsync("SELECT COUNT(*) FROM jobs WHERE company_id=@cid AND deleted_at IS NULL AND status NOT IN ('Completed','Unassigned','Cancelled')" + BranchScope, Bind, ct);
+        var slaExceptions = await db.ScalarLongAsync("SELECT COUNT(*) FROM jobs WHERE company_id=@cid AND deleted_at IS NULL AND (sla_status='At Risk' OR status IN ('Delayed','At Risk'))" + BranchScope, Bind, ct);
+        var delayed       = await db.ScalarLongAsync("SELECT COUNT(*) FROM jobs WHERE company_id=@cid AND deleted_at IS NULL AND status='Delayed'" + BranchScope, Bind, ct);
+        var overdue       = await db.ScalarLongAsync("SELECT COUNT(*) FROM jobs WHERE company_id=@cid AND deleted_at IS NULL AND assigned_vehicle_id IS NULL AND scheduled_start < NOW()" + BranchScope, Bind, ct);
+        var fleetOnRoad   = await db.ScalarLongAsync("SELECT COUNT(*) FROM vehicles WHERE company_id=@cid AND deleted_at IS NULL AND device_status='Online' AND status IN ('On Route','En Route','Driving','Active','Idle','At Stop','Delayed')" + BranchScope, Bind, ct);
+        var safety24h     = await db.ScalarLongAsync("SELECT COUNT(*) FROM safety_events WHERE company_id=@cid AND deleted_at IS NULL AND COALESCE(occurred_at,event_time,created_at) > NOW()-INTERVAL '24 hours'" + BranchScope, Bind, ct);
+        var maintCount    = await db.ScalarLongAsync("SELECT COUNT(*) FROM vehicles WHERE company_id=@cid AND deleted_at IS NULL AND (out_of_service OR status='Maintenance')" + BranchScope, Bind, ct);
+        var totalFleet    = await db.ScalarLongAsync("SELECT COUNT(*) FROM vehicles WHERE company_id=@cid AND deleted_at IS NULL" + BranchScope, Bind, ct);
+        var openAlerts    = await db.ScalarLongAsync("SELECT COUNT(*) FROM ai_insights WHERE company_id=@cid AND status='Open'", BindCid, ct);
+        var activeAssignments = await db.ScalarLongAsync(
+            @"SELECT COUNT(*) FROM dispatch_assignments da
+              WHERE da.company_id=@cid AND da.assignment_status NOT IN ('delivered','cancelled')
+                AND (@branchId::bigint IS NULL OR EXISTS (SELECT 1 FROM jobs j WHERE j.id=da.job_id AND j.company_id=da.company_id AND j.branch_id=@branchId))", Bind, ct);
+        var openIncidents = await db.ScalarLongAsync("SELECT COUNT(*) FROM safety_events WHERE company_id=@cid AND deleted_at IS NULL AND review_status NOT IN ('Resolved','Acknowledged','Reviewed','resolved','acknowledged','reviewed')" + BranchScope, Bind, ct);
 
+        // Hero slate per the metrics review board: verdict-adjacent workload counts, every
+        // one a live COUNT — measured zeros render as calm zeros client-side.
         var kpis = new object[]
         {
-            new { label = "Active Shipments",    value = activeJobs,    valueText = activeJobs.ToString(),    status = activeJobs    > 0 ? "Active"   : "Idle" },
-            new { label = "SLA Exceptions",      value = slaExceptions, valueText = slaExceptions.ToString(), status = slaExceptions > 0 ? "Risk"     : "On Track" },
-            new { label = "Overdue Assignments", value = overdue,       valueText = overdue.ToString(),       status = overdue       > 0 ? "Critical" : "Clear" },
-            new { label = "Fleet On Road",       value = fleetOnRoad,   valueText = fleetOnRoad.ToString(),   status = "Active" },
-            new { label = "Safety Events (24h)", value = safety24h,     valueText = safety24h.ToString(),     status = safety24h     > 3 ? "Warning"  : "Active" },
+            new { label = "Active Jobs",          value = activeJobs,        valueText = activeJobs.ToString(),        status = activeJobs        > 0 ? "Active"    : "Idle" },
+            new { label = "Open Alerts",          value = openAlerts,        valueText = openAlerts.ToString(),        status = openAlerts        > 0 ? "Attention" : "Clear" },
+            new { label = "Dispatch Assignments", value = activeAssignments, valueText = activeAssignments.ToString(), status = activeAssignments > 0 ? "Active"    : "Idle" },
+            new { label = "Vehicles in Fleet",    value = totalFleet,        valueText = totalFleet.ToString(),        status = "" },
+            new { label = "Open Incidents",       value = openIncidents,     valueText = openIncidents.ToString(),     status = openIncidents     > 0 ? "Review"    : "Clear" },
         };
 
         // ── Fleet status mix (drives the four fleet chips) ──────────────────────
@@ -4045,7 +4074,7 @@ public static partial class EndpointMappings
                 SUM(CASE WHEN device_status='Online' AND status IN ('Idle','At Stop') THEN 1 ELSE 0 END) idling,
                 SUM(CASE WHEN device_status='Online' AND status IN ('Available','Parked','Standby','Maintenance') THEN 1 ELSE 0 END) parked,
                 SUM(CASE WHEN device_status<>'Online' THEN 1 ELSE 0 END) offline
-              FROM vehicles WHERE company_id=@cid AND deleted_at IS NULL", Bind, ct);
+              FROM vehicles WHERE company_id=@cid AND deleted_at IS NULL" + BranchScope, Bind, ct);
         long FsVal(string k) => fs != null && fs.TryGetValue(k, out var v) && v != null ? Convert.ToInt64(v) : 0;
         var offline = FsVal("offline");
         var fleetStatus = new { driving = FsVal("driving"), idling = FsVal("idling"), parked = FsVal("parked"), offline };
@@ -4064,6 +4093,7 @@ public static partial class EndpointMappings
                 LEFT JOIN vehicles v ON v.id=j.assigned_vehicle_id
                 LEFT JOIN drivers d ON d.id=j.assigned_driver_id
                 WHERE j.company_id=@cid AND j.deleted_at IS NULL AND (j.status='Delayed' OR j.sla_status='At Risk')
+                  AND (@branchId::bigint IS NULL OR j.branch_id=@branchId)
                 ORDER BY COALESCE(v.vehicle_code, j.job_code),
                          CASE WHEN j.status='Delayed' THEN 0 ELSE 1 END,
                          COALESCE(j.updated_at, j.created_at) DESC
@@ -4074,6 +4104,7 @@ public static partial class EndpointMappings
                        '/work-orders' action_route, 'Create WO' action_label, v.created_at ts, 1 ord
                 FROM vehicles v LEFT JOIN drivers d ON d.id=v.assigned_driver_id
                 WHERE v.company_id=@cid AND v.deleted_at IS NULL AND (v.out_of_service OR v.status='Maintenance')
+                  AND (@branchId::bigint IS NULL OR v.branch_id=@branchId)
               ), sf AS (
                 SELECT CASE WHEN se.severity='Critical' THEN 'Critical' ELSE 'Warning' END severity,
                        v.vehicle_code vehicle, d.full_name driver, COALESCE(NULLIF(se.event_type,''),'Safety event') event,
@@ -4084,6 +4115,7 @@ public static partial class EndpointMappings
                 LEFT JOIN drivers d ON d.id=se.driver_id
                 WHERE se.company_id=@cid AND se.deleted_at IS NULL AND se.severity IN ('Critical','High')
                   AND COALESCE(se.occurred_at, se.event_time, se.created_at) > NOW()-INTERVAL '48 hours'
+                  AND (@branchId::bigint IS NULL OR se.branch_id=@branchId)
               ), ranked AS (
                 SELECT *, ROW_NUMBER() OVER (PARTITION BY ord ORDER BY ts DESC) rn
                 FROM (SELECT * FROM ex UNION ALL SELECT * FROM ev UNION ALL SELECT * FROM sf) u
@@ -4135,23 +4167,23 @@ public static partial class EndpointMappings
         if (priorityActions.Count == 0) priorityActions.Add(new { title = "Fleet operating within normal parameters", detail = "No priority interventions required right now", entityRoute = "/vehicles" });
 
         // ── Live trend series (7-point) ─────────────────────────────────────────
-        // Throughput: scheduled jobs by weekday (Mon→Sun) — always fully populated.
+        // Throughput: jobs scheduled in the CURRENT ISO week by weekday (Mon→Sun) — the
+        // card is labeled "this week", so the query must not count all time.
         var weeklyJobs = (await db.QueryAsync(
             @"SELECT COUNT(j.id) v FROM generate_series(0,6) g
               LEFT JOIN jobs j ON (EXTRACT(ISODOW FROM j.scheduled_start)-1)=g AND j.company_id=@cid AND j.deleted_at IS NULL
+                AND j.scheduled_start >= date_trunc('week', NOW()) AND j.scheduled_start < date_trunc('week', NOW()) + INTERVAL '7 days'
+                AND (@branchId::bigint IS NULL OR j.branch_id=@branchId)
               GROUP BY g ORDER BY g", Bind, ct)).Select(r => Convert.ToDecimal(r["v"] ?? 0)).ToArray();
-        // Cost leakage: unapproved/anomalous spend = daily expenses + fuel anomaly losses.
+        // Cost leakage: daily logged expenses only. The former fuel-anomaly addend is
+        // dropped — its only writer is the gated demo seed, so it was a dead term for real
+        // tenants implying detection coverage that does not exist. (expenses has no branch.)
         var costLeakage = (await db.QueryAsync(
             @"SELECT
-                COALESCE((SELECT SUM(e.amount) FROM expenses e WHERE e.company_id=@cid AND e.expense_date=(CURRENT_DATE - g)),0)
-              + COALESCE((SELECT SUM(f.estimated_loss) FROM fuel_anomalies f WHERE f.company_id=@cid AND f.created_at::date=(CURRENT_DATE - g)),0) v
-              FROM generate_series(6,0,-1) g ORDER BY g DESC", Bind, ct)).Select(r => Convert.ToDecimal(r["v"] ?? 0)).ToArray();
-        // Safety: fleet composite score over the last 7 recorded periods.
-        var safetyScore = (await db.QueryAsync(
-            @"SELECT fleet_safety_score v FROM (
-                SELECT fleet_safety_score, COALESCE(trend_date, period_start) d
-                FROM safety_trends WHERE company_id=@cid ORDER BY d DESC LIMIT 7
-              ) t ORDER BY d ASC", Bind, ct)).Select(r => Convert.ToDecimal(r["v"] ?? 0)).ToArray();
+                COALESCE((SELECT SUM(e.amount) FROM expenses e WHERE e.company_id=@cid AND e.expense_date=(CURRENT_DATE - g)),0) v
+              FROM generate_series(6,0,-1) g ORDER BY g DESC", BindCid, ct)).Select(r => Convert.ToDecimal(r["v"] ?? 0)).ToArray();
+        // The safety-trends table has no production writer (demo seed only) — that series
+        // is intentionally absent from this payload until a real aggregation job exists.
 
         var totalVehicles = fleetStatus.driving + fleetStatus.idling + fleetStatus.parked + offline;
         var readinessPct = totalVehicles > 0 ? (int)Math.Round((fleetStatus.driving + fleetStatus.idling) * 100.0 / totalVehicles) : 0;
@@ -4172,7 +4204,7 @@ public static partial class EndpointMappings
             exceptions,
             briefItems,
             priorityActions,
-            charts = new { weeklyJobs, costLeakage, safetyScore },
+            charts = new { weeklyJobs, costLeakage },
         }));
     }
 
@@ -15509,31 +15541,29 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
     private static async Task<IResult> AboutHealthSummary(IHostEnvironment env, Database db, CancellationToken ct)
     {
-        long moduleCount;
+        // Tenant-facing coarse status ONLY. This endpoint used to run a
+        // COUNT over information_schema.tables and return it as "N tables",
+        // plus environment names — security review classified both as internal
+        // data leaking to tenant users (schema-scale fingerprinting). Tenants
+        // get connected/degraded and a version; operators use /health/deep.
         string dbStatus;
         try
         {
-            moduleCount = await db.ScalarLongAsync("SELECT COUNT(DISTINCT table_name) FROM information_schema.tables WHERE table_schema=current_schema()", ct: ct);
-            dbStatus    = "Connected";
+            await db.ScalarLongAsync("SELECT 1", ct: ct);
+            dbStatus = "Connected";
         }
         catch
         {
-            moduleCount = 0;
-            dbStatus    = "Degraded";
+            dbStatus = "Degraded";
         }
 
         var asm = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             // apiStatus is truthful by construction — this API produced the response.
-            apiStatus        = "Connected",
-            databaseStatus   = dbStatus,
-            // The Node side service has no health probe wired here; say so rather
-            // than fabricate a "Connected" claim.
-            nodeEventsStatus = "Not monitored",
-            moduleCount      = moduleCount > 0 ? $"{moduleCount} tables" : "—",
-            version          = asm is null ? "Enterprise" : $"Enterprise {asm.Major}.{asm.Minor}.{asm.Build}",
-            environment      = env.EnvironmentName
+            apiStatus      = "Connected",
+            databaseStatus = dbStatus,
+            version        = asm is null ? "Enterprise" : $"Enterprise {asm.Major}.{asm.Minor}.{asm.Build}",
         }, "Health summary"));
     }
 
@@ -18616,7 +18646,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         // Average fleet safety score (30d)
         var avgScore = await db.ScalarDecimalAsync(
             "SELECT AVG(dss.score_30d) FROM driver_safety_scores dss JOIN drivers d ON d.id=dss.driver_id AND d.company_id=dss.company_id WHERE dss.company_id=@cid" + (GetBranchId(http) is null ? string.Empty : " AND d.branch_id=@branchId"),
-            c => { c.Parameters.AddWithValue("@cid", companyId); if (GetBranchId(http) is { } branchId) c.Parameters.AddWithValue("@branchId", branchId); }, ct) ?? 100m;
+            c => { c.Parameters.AddWithValue("@cid", companyId); if (GetBranchId(http) is { } branchId) c.Parameters.AddWithValue("@branchId", branchId); }, ct);
 
         // Open coaching tasks
         var openCoaching = await db.ScalarLongAsync(
@@ -18653,7 +18683,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var c0 = counts ?? new Dictionary<string, object?>();
         return Results.Ok(ApiResponse<object>.Ok(new
         {
-            fleetSafetyScore     = Math.Round(avgScore, 1),
+            // Null when no driver has a 30d score yet — never a fabricated perfect 100.
+            fleetSafetyScore     = avgScore is { } measuredScore ? Math.Round(measuredScore, 1) : (decimal?)null,
             totalEvents          = c0.GetValueOrDefault("totalEvents") ?? 0,
             openEvents           = c0.GetValueOrDefault("openEvents") ?? 0,
             criticalOpen         = c0.GetValueOrDefault("criticalOpen") ?? 0,
@@ -25672,16 +25703,19 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     {
         if (RequirePermission(http, "dashboard:view") is { } denied) return denied;
         var cid = GetCompanyId(http);
+        var branchId = GetBranchId(http);
 
         var row = await db.QuerySingleAsync(@"
             SELECT
               -- Vehicle readiness
               (SELECT COUNT(*) FROM vehicles v
-               WHERE v.company_id=@cid AND v.deleted_at IS NULL) total_vehicles,
+               WHERE v.company_id=@cid AND v.deleted_at IS NULL
+                 AND (@branchId::bigint IS NULL OR v.branch_id=@branchId)) total_vehicles,
 
               (SELECT COUNT(*) FROM vehicles v
                WHERE v.company_id=@cid AND v.deleted_at IS NULL
                  AND v.status='Active'
+                 AND (@branchId::bigint IS NULL OR v.branch_id=@branchId)
                  AND NOT EXISTS (
                    SELECT 1 FROM dvir_defects dd
                    JOIN dvir_reports dr ON dr.id=dd.dvir_report_id
@@ -25693,6 +25727,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
               (SELECT COUNT(*) FROM vehicles v
                WHERE v.company_id=@cid AND v.deleted_at IS NULL
+                 AND (@branchId::bigint IS NULL OR v.branch_id=@branchId)
                  AND v.status='Out of Service') oos_vehicles,
 
               (SELECT COUNT(DISTINCT dr.vehicle_id)
@@ -25700,81 +25735,112 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                JOIN dvir_reports dr ON dr.id=dd.dvir_report_id
                WHERE dd.company_id=@cid AND dr.vehicle_id IS NOT NULL
                  AND dr.safe_to_operate=FALSE
-                 AND dd.status NOT IN ('resolved','Resolved')) critical_defect_vehicles,
+                 AND dd.status NOT IN ('resolved','Resolved')
+                 AND (@branchId::bigint IS NULL OR EXISTS (
+                   SELECT 1 FROM vehicles vb WHERE vb.id=dr.vehicle_id
+                     AND vb.company_id=dd.company_id AND vb.branch_id=@branchId))) critical_defect_vehicles,
 
               (SELECT COUNT(DISTINCT wo.vehicle_id)
                FROM work_orders wo
                WHERE wo.company_id=@cid AND wo.vehicle_id IS NOT NULL
                  AND wo.status NOT IN ('Completed','Cancelled')
-                 AND wo.deleted_at IS NULL) open_wo_vehicles,
+                 AND wo.deleted_at IS NULL
+                 AND (@branchId::bigint IS NULL OR EXISTS (
+                   SELECT 1 FROM vehicles vb WHERE vb.id=wo.vehicle_id
+                     AND vb.company_id=wo.company_id AND vb.branch_id=@branchId))) open_wo_vehicles,
 
               (SELECT COUNT(DISTINCT mi.vehicle_id)
                FROM maintenance_items mi
                WHERE mi.company_id=@cid AND mi.deleted_at IS NULL
                  AND (mi.status='Overdue'
-                   OR (mi.due_date IS NOT NULL AND mi.due_date < CURRENT_DATE))) overdue_pm_vehicles,
+                   OR (mi.due_date IS NOT NULL AND mi.due_date < CURRENT_DATE))
+                 AND (@branchId::bigint IS NULL OR EXISTS (
+                   SELECT 1 FROM vehicles vb WHERE vb.id=mi.vehicle_id
+                     AND vb.company_id=mi.company_id AND vb.branch_id=@branchId))) overdue_pm_vehicles,
 
               (SELECT COUNT(*) FROM vehicles v
                WHERE v.company_id=@cid AND v.deleted_at IS NULL
+                 AND (@branchId::bigint IS NULL OR v.branch_id=@branchId)
                  AND v.device_status='Offline') stale_device_vehicles,
 
-              (SELECT ROUND(AVG(COALESCE(v.readiness_score,50)),1)
+              -- AVG ignores NULL readiness rows; an unmeasured fleet yields NULL, never a default
+              (SELECT ROUND(AVG(v.readiness_score),1)
                FROM vehicles v
-               WHERE v.company_id=@cid AND v.deleted_at IS NULL) avg_fleet_readiness,
+               WHERE v.company_id=@cid AND v.deleted_at IS NULL
+                 AND (@branchId::bigint IS NULL OR v.branch_id=@branchId)) avg_fleet_readiness,
 
               -- Driver safety
               (SELECT COUNT(*) FROM drivers d
                WHERE d.company_id=@cid AND d.deleted_at IS NULL
+                 AND (@branchId::bigint IS NULL OR d.branch_id=@branchId)
                  AND d.status='Active') total_active_drivers,
 
               (SELECT COUNT(*) FROM drivers d
                WHERE d.company_id=@cid AND d.deleted_at IS NULL
                  AND d.status='Active'
-                 AND COALESCE(d.safety_score,100) < 75) below_safety_threshold,
+                 AND (@branchId::bigint IS NULL OR d.branch_id=@branchId)
+                 AND d.safety_score < 75) below_safety_threshold,
 
               (SELECT COUNT(DISTINCT se.driver_id)
                FROM safety_events se
                WHERE se.company_id=@cid AND se.driver_id IS NOT NULL
                  AND se.review_status NOT IN
                    ('Resolved','Acknowledged','resolved','acknowledged')
+                 AND (@branchId::bigint IS NULL OR se.branch_id=@branchId)
                  AND se.deleted_at IS NULL) open_event_drivers,
 
               (SELECT COUNT(*) FROM coaching_tasks ct
                WHERE ct.company_id=@cid AND ct.deleted_at IS NULL
                  AND ct.status NOT IN ('Completed','Cancelled','Driver Acknowledged')
+                 AND (@branchId::bigint IS NULL OR EXISTS (
+                   SELECT 1 FROM drivers db WHERE db.id=ct.driver_id
+                     AND db.company_id=ct.company_id AND db.branch_id=@branchId))
                  AND ct.due_at IS NOT NULL AND ct.due_at < NOW()) overdue_coaching_count,
 
-              (SELECT ROUND(AVG(COALESCE(d.safety_score,100)),1)
+              (SELECT ROUND(AVG(d.safety_score),1)
                FROM drivers d
                WHERE d.company_id=@cid AND d.deleted_at IS NULL
+                 AND (@branchId::bigint IS NULL OR d.branch_id=@branchId)
                  AND d.status='Active') avg_safety_score,
 
               -- Dispatch exceptions (from dispatch_assignments flagged as exceptions)
               (SELECT COUNT(*) FROM dispatch_assignments da
                WHERE da.company_id=@cid
+                 AND (@branchId::bigint IS NULL OR EXISTS (
+                   SELECT 1 FROM jobs j WHERE j.id=da.job_id
+                     AND j.company_id=da.company_id AND j.branch_id=@branchId))
                  AND da.status IN ('Exception','Cancelled','Failed')) open_dispatch_exceptions
 
             FROM (SELECT 1) _dual",
-            c => c.Parameters.AddWithValue("@cid", cid), ct);
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid", cid);
+                c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+            }, ct);
 
         if (row is null)
             return Results.Ok(ApiResponse<object>.Ok(
-                new { fleetHealthScore = 0 }, "No fleet data available"));
+                new { fleetHealthScore = (double?)null }, "No fleet data available"));
 
-        static double ToDouble(object? v, double fallback = 0) =>
-            v is not null and not DBNull ? Convert.ToDouble(v) : fallback;
+        // Row dictionary keys are ToCamel'd by Database (total_vehicles → totalVehicles);
+        // snake_case lookups here silently miss and serialize null.
+        static double? ToNullableDouble(object? v) =>
+            v is not null and not DBNull ? Convert.ToDouble(v) : null;
         static long ToLong(object? v) =>
             v is not null and not DBNull ? Convert.ToInt64(v) : 0L;
 
-        var avgReadiness = ToDouble(row.GetValueOrDefault("avg_fleet_readiness"), 50);
-        var avgSafety    = ToDouble(row.GetValueOrDefault("avg_safety_score"), 100);
-        var fleetHealthScore = Math.Round(avgReadiness * 0.6 + avgSafety * 0.4, 1);
+        var avgReadiness = ToNullableDouble(row.GetValueOrDefault("avgFleetReadiness"));
+        var avgSafety    = ToNullableDouble(row.GetValueOrDefault("avgSafetyScore"));
+        // Composite only when both inputs are genuinely measured; otherwise null, never a default.
+        double? fleetHealthScore = avgReadiness is double r && avgSafety is double s
+            ? Math.Round(r * 0.6 + s * 0.4, 1)
+            : null;
 
         // Rule-based system insights derived entirely from real aggregated data.
         var insights = new List<object>();
 
-        var oosCount      = ToLong(row.GetValueOrDefault("oos_vehicles"));
-        var critDefVeh    = ToLong(row.GetValueOrDefault("critical_defect_vehicles"));
+        var oosCount      = ToLong(row.GetValueOrDefault("oosVehicles"));
+        var critDefVeh    = ToLong(row.GetValueOrDefault("criticalDefectVehicles"));
         var blockingCount = Math.Max(oosCount, critDefVeh);
         if (blockingCount > 0)
             insights.Add(new
@@ -25785,7 +25851,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 dataSource = "vehicles.out_of_service + dvir_defects.out_of_service",
             });
 
-        var overduePm = ToLong(row.GetValueOrDefault("overdue_pm_vehicles"));
+        var overduePm = ToLong(row.GetValueOrDefault("overduePmVehicles"));
         if (overduePm > 0)
             insights.Add(new
             {
@@ -25795,7 +25861,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 dataSource = "maintenance_items.due_date + maintenance_items.status",
             });
 
-        var belowSafety = ToLong(row.GetValueOrDefault("below_safety_threshold"));
+        var belowSafety = ToLong(row.GetValueOrDefault("belowSafetyThreshold"));
         if (belowSafety > 0)
             insights.Add(new
             {
@@ -25805,7 +25871,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 dataSource = "drivers.safety_score",
             });
 
-        var overdueCoaching = ToLong(row.GetValueOrDefault("overdue_coaching_count"));
+        var overdueCoaching = ToLong(row.GetValueOrDefault("overdueCoachingCount"));
         if (overdueCoaching > 0)
             insights.Add(new
             {
@@ -25815,7 +25881,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 dataSource = "coaching_tasks.due_at + coaching_tasks.status",
             });
 
-        var openExceptions = ToLong(row.GetValueOrDefault("open_dispatch_exceptions"));
+        var openExceptions = ToLong(row.GetValueOrDefault("openDispatchExceptions"));
         if (openExceptions > 0)
             insights.Add(new
             {
@@ -25839,18 +25905,18 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             fleetHealthScore,
             avgFleetReadiness         = avgReadiness,
             avgSafetyScore            = avgSafety,
-            totalVehicles             = row.GetValueOrDefault("total_vehicles"),
-            dispatchReadyVehicles     = row.GetValueOrDefault("dispatch_ready_vehicles"),
-            oosVehicles               = row.GetValueOrDefault("oos_vehicles"),
-            criticalDefectVehicles    = row.GetValueOrDefault("critical_defect_vehicles"),
-            openWoVehicles            = row.GetValueOrDefault("open_wo_vehicles"),
-            overduePmVehicles         = row.GetValueOrDefault("overdue_pm_vehicles"),
-            staleDeviceVehicles       = row.GetValueOrDefault("stale_device_vehicles"),
-            totalActiveDrivers        = row.GetValueOrDefault("total_active_drivers"),
-            belowSafetyThreshold      = row.GetValueOrDefault("below_safety_threshold"),
-            openSafetyEventDrivers    = row.GetValueOrDefault("open_event_drivers"),
-            overdueCoachingCount      = row.GetValueOrDefault("overdue_coaching_count"),
-            openDispatchExceptions    = row.GetValueOrDefault("open_dispatch_exceptions"),
+            totalVehicles             = row.GetValueOrDefault("totalVehicles"),
+            dispatchReadyVehicles     = row.GetValueOrDefault("dispatchReadyVehicles"),
+            oosVehicles               = row.GetValueOrDefault("oosVehicles"),
+            criticalDefectVehicles    = row.GetValueOrDefault("criticalDefectVehicles"),
+            openWoVehicles            = row.GetValueOrDefault("openWoVehicles"),
+            overduePmVehicles         = row.GetValueOrDefault("overduePmVehicles"),
+            staleDeviceVehicles       = row.GetValueOrDefault("staleDeviceVehicles"),
+            totalActiveDrivers        = row.GetValueOrDefault("totalActiveDrivers"),
+            belowSafetyThreshold      = row.GetValueOrDefault("belowSafetyThreshold"),
+            openSafetyEventDrivers    = row.GetValueOrDefault("openEventDrivers"),
+            overdueCoachingCount      = row.GetValueOrDefault("overdueCoachingCount"),
+            openDispatchExceptions    = row.GetValueOrDefault("openDispatchExceptions"),
             insightType               = "System Fleet Insight",
             systemInsights            = insights,
         }, "Fleet health summary"));

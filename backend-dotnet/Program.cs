@@ -220,6 +220,8 @@ builder.Services.AddSingleton<CreditNoteService>();
 builder.Services.AddSingleton<IOutboxMessageHandler, CreditNoteIssuedGeneralLedgerHandler>();
 // Detention: real email delivery for the pre-expiry 'meter running' notice.
 builder.Services.AddSingleton<IOutboxMessageHandler, DetentionWarningNotificationHandler>();
+// Alert notifications: email/SMS fan-out per user_notification_prefs (Settings → Notifications).
+builder.Services.AddSingleton<IOutboxMessageHandler, AlertNotificationDeliveryHandler>();
 builder.Services.AddSingleton<FinancialConfigService>();
 builder.Services.AddSingleton<CommercialFoundationService>();
 builder.Services.AddSingleton<RevenueReadinessService>();
@@ -306,6 +308,12 @@ builder.Services.AddHostedService<ConnectorSyncBackgroundService>();
 builder.Services.AddHostedService<TripBackgroundService>();
 builder.Services.AddHostedService<MaintenanceBackgroundService>();
 builder.Services.AddHostedService<EscalationBackgroundService>();
+// Bridges telemetry_alerts into the notification spine: in-app fan-out per user prefs +
+// outbox enqueue for the email/SMS delivery handler.
+builder.Services.AddHostedService<AlertNotificationBridgeService>();
+// Derives hos_violation / maintenance_due / sla_breach / fuel_anomaly / idling alerts
+// from their source tables — the generators behind the notification-prefs matrix rows.
+builder.Services.AddHostedService<OperationalAlertDetectionService>();
 // Agentic Ops Copilot — reasons over open dispatch exceptions and proposes actions.
 builder.Services.AddHostedService<AgenticOpsBackgroundService>();
 builder.Services.AddHostedService<ScheduledReportBackgroundService>();
@@ -1082,12 +1090,50 @@ static async Task<IResult> ReadinessAsync(
 app.MapGet("/ready",        (Database db, ConfigValidationService cfg, FleetProductionReadinessService fleet, DataProtectionReadinessService dp, IWebHostEnvironment env, CancellationToken ct) => ReadinessAsync(db, cfg, fleet, dp, env, ct));
 app.MapGet("/health/ready", (Database db, ConfigValidationService cfg, FleetProductionReadinessService fleet, DataProtectionReadinessService dp, IWebHostEnvironment env, CancellationToken ct) => ReadinessAsync(db, cfg, fleet, dp, env, ct));
 
+// ── Diagnostics gate ─────────────────────────────────────────────────────────
+// /health/deep and /metrics live OUTSIDE the /api session middleware (probes must
+// stay unauthenticated), which historically left them fully public. Security
+// review: /health/deep discloses the worker roster, migration state and RLS
+// violation lists — an architecture map — and /metrics allows tenant-activity
+// inference. Both now require either a valid session bearer (the SPA already
+// sends one) or an X-Diagnostics-Key matching the DIAGNOSTICS_KEY env var (for
+// monitoring agents and rehearsal scripts). /health, /health/live and
+// /health/ready remain public for load-balancer probes.
+async Task<bool> DiagnosticsAuthorizedAsync(HttpContext http, Database db, CancellationToken ct)
+{
+    var configuredKey = Environment.GetEnvironmentVariable("DIAGNOSTICS_KEY");
+    var presentedKey = http.Request.Headers["X-Diagnostics-Key"].ToString();
+    if (!string.IsNullOrWhiteSpace(configuredKey) && !string.IsNullOrWhiteSpace(presentedKey)
+        && System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(
+            System.Text.Encoding.UTF8.GetBytes(configuredKey), System.Text.Encoding.UTF8.GetBytes(presentedKey)))
+        return true;
+
+    var auth = http.Request.Headers.Authorization.ToString();
+    if (!auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)) return false;
+    var token = auth["Bearer ".Length..].Trim();
+    if (string.IsNullOrWhiteSpace(token)) return false;
+
+    const string sessionSql =
+        @"SELECT s.user_id FROM user_sessions s
+          JOIN users u ON u.id = s.user_id AND u.company_id = s.company_id
+          WHERE s.session_token=@token AND s.expires_at > NOW() AND u.status='Active' LIMIT 1";
+    var session = rlsEnforceTenantContext
+        ? await db.QuerySingleInSystemScopeAsync(sessionSql, c => c.Parameters.AddWithValue("@token", token), ct)
+        : await db.QuerySingleAsync(sessionSql, c => c.Parameters.AddWithValue("@token", token), ct);
+    return session is not null;
+}
+
 // Prometheus scrape target — any external monitor (Grafana Agent, Datadog,
 // UptimeRobot-with-metrics) can alert on 5xx rate / p95 / DB failures within 60s.
-app.MapGet("/metrics", (Opstrax.Api.Observability.ApiMetricsService m) =>
-    Results.Text(m.ToPrometheus(), "text/plain; version=0.0.4"));
+// Scrapers authenticate with the X-Diagnostics-Key header.
+app.MapGet("/metrics", async (HttpContext http, Database db, Opstrax.Api.Observability.ApiMetricsService m, CancellationToken ct) =>
+    await DiagnosticsAuthorizedAsync(http, db, ct)
+        ? Results.Text(m.ToPrometheus(), "text/plain; version=0.0.4")
+        : Results.Json(ApiResponse<object>.Fail("Unauthorized", "Metrics require an authenticated session or diagnostics key"),
+            statusCode: StatusCodes.Status401Unauthorized));
 
 app.MapGet("/health/deep", async (
+    HttpContext http,
     Database db,
     ConfigValidationService configValidator,
     FleetProductionReadinessService fleetContract,
@@ -1095,6 +1141,10 @@ app.MapGet("/health/deep", async (
     IWebHostEnvironment environment,
     CancellationToken ct) =>
 {
+    if (!await DiagnosticsAuthorizedAsync(http, db, ct))
+        return Results.Json(ApiResponse<object>.Fail("Unauthorized", "Deep diagnostics require an authenticated session or diagnostics key"),
+            statusCode: StatusCodes.Status401Unauthorized);
+
     var checks   = new Dictionary<string, object>();
     var dbOk     = false;
     var dbLatMs  = -1;

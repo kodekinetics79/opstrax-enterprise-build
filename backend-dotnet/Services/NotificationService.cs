@@ -23,7 +23,8 @@ public sealed class NotificationService(Database db)
         string channel = "in_app",
         int priority = 5,
         string? dedupeKey = null,
-        TimeSpan? suppressionWindow = null)
+        TimeSpan? suppressionWindow = null,
+        IReadOnlyCollection<long>? targetUserIds = null)
     {
         // Deduplication check
         if (!string.IsNullOrWhiteSpace(dedupeKey))
@@ -70,7 +71,14 @@ public sealed class NotificationService(Database db)
             }, ct);
 
         // Resolve recipients
-        if (targetUserId.HasValue)
+        if (targetUserIds is { Count: > 0 })
+        {
+            // Explicit recipient list — the caller has already evaluated who should see this
+            // (e.g. per-user notification-prefs fan-out), so no audience/role resolution here.
+            foreach (var uid in targetUserIds.Distinct())
+                await InsertRecipientAsync(notifId, companyId, uid, null, null, channel, ct);
+        }
+        else if (targetUserId.HasValue)
         {
             await InsertRecipientAsync(notifId, companyId, targetUserId.Value, null, null, channel, ct);
         }

@@ -1,5 +1,5 @@
-import { type ReactNode } from "react";
-import { Loader2 } from "lucide-react";
+import { useState, type InputHTMLAttributes, type ReactNode } from "react";
+import { Eye, EyeOff, Loader2 } from "lucide-react";
 
 // Dark, executive-grade primitives for the Platform Admin control plane.
 // Kept separate from the tenant app's light ui.tsx so the two surfaces never
@@ -114,6 +114,36 @@ export function PInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
       {...props}
       className="w-full rounded-[14px] border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 outline-none shadow-sm focus:border-teal-400 focus:ring-2 focus:ring-teal-400/15"
     />
+  );
+}
+
+/* PInput's password variant with a show/hide (eye) toggle. Reveals the TYPED
+   value only — stored secrets (e.g. the saved SMTP password) are write-only on
+   the API and are never echoed back for display. `inputClassName` lets dark
+   surfaces (accept-invite) restyle the field while keeping the toggle. */
+export function PPasswordInput({
+  inputClassName,
+  wrapperClassName = "",
+  ...props
+}: InputHTMLAttributes<HTMLInputElement> & { inputClassName?: string; wrapperClassName?: string }) {
+  const [show, setShow] = useState(false);
+  return (
+    <div className={`relative ${wrapperClassName}`.trim()}>
+      <input
+        {...props}
+        type={show ? "text" : "password"}
+        className={`${inputClassName ?? "rounded-[14px] border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 shadow-sm focus:border-teal-400 focus:ring-2 focus:ring-teal-400/15"} w-full pr-11 outline-none`}
+      />
+      <button
+        type="button"
+        onClick={() => setShow((s) => !s)}
+        aria-label={show ? "Hide password" : "Show password"}
+        aria-pressed={show}
+        className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-slate-400 hover:text-teal-500"
+      >
+        {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+      </button>
+    </div>
   );
 }
 

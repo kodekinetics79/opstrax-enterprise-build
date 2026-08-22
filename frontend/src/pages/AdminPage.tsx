@@ -23,7 +23,7 @@ import { useAuditExportRequests, useAuditLogs, useCreateAuditExport } from "@/ho
 import { useLocalizationSettings, useUpdateLocaleSettings } from "@/hooks/useBatch6";
 import { adminApi } from "@/services/adminApi";
 import { PERMISSIONS } from "@/auth/rbacConfig";
-import { EmptyState, ErrorState, LoadingState, PageHeader, StatusBadge } from "@/components/ui";
+import { EmptyState, ErrorState, LoadingState, PageHeader, PasswordInput, StatusBadge } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
 type AdminTab = "dashboard" | "users" | "roles" | "permissions" | "access" | "settings" | "audit";
@@ -1195,7 +1195,7 @@ export function AdminPage() {
               {userModal === "create" ? (
                 <div>
                   <label className="label">Password (optional)</label>
-                  <input className="field w-full" type="password" value={String(userForm.password ?? "")} onChange={(e) => setUserForm((f) => ({ ...f, password: e.target.value }))} placeholder="Set initial password" />
+                  <PasswordInput value={String(userForm.password ?? "")} onChange={(e) => setUserForm((f) => ({ ...f, password: e.target.value }))} placeholder="Set initial password" />
                   <p className="mt-1 text-xs text-slate-500">Leave blank to invite: you'll get a one-time activation link to share.</p>
                 </div>
               ) : (

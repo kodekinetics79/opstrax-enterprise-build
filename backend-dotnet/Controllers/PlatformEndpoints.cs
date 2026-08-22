@@ -1652,7 +1652,7 @@ public static class PlatformEndpoints
                 c.Parameters.AddWithValue("@ip", InviteRequestIpHash(http));
             }, ct);
 
-        var emailSent = await TrySendTenantInviteEmailAsync(http, email, fullName, rawToken, ct);
+        var emailSent = await TrySendTenantInviteEmailAsync(http, id, email, fullName, rawToken, ct);
 
         await AuditAsync(db, principal!, http, "tenant.user.invite_resent", "User", userId, id,
             new { email, emailSent }, ct);
@@ -2840,7 +2840,7 @@ public static class PlatformEndpoints
                 c.Parameters.AddWithValue("@ip", InviteRequestIpHash(http));
             }, ct);
 
-        var emailSent = await TrySendTenantInviteEmailAsync(http, normEmail, name, rawToken, ct);
+        var emailSent = await TrySendTenantInviteEmailAsync(http, companyId, normEmail, name, rawToken, ct);
         var activationUrl = await BuildTenantActivationUrlAsync(http, normEmail, rawToken, ct);
         return new AdminInviteResult(AdminInviteStatus.Sent, emailSent, null, activationUrl, rawToken);
     }
@@ -2874,7 +2874,7 @@ public static class PlatformEndpoints
     // PUBLIC_APP_URL) is used, exactly like ForgotPassword. Returns false when no tenant
     // base URL or SMTP is configured — the caller reports that truthfully.
     private static async Task<bool> TrySendTenantInviteEmailAsync(
-        HttpContext http, string email, string fullName, string rawToken, CancellationToken ct)
+        HttpContext http, long companyId, string email, string fullName, string rawToken, CancellationToken ct)
     {
         var link = await BuildTenantActivationUrlAsync(http, email, rawToken, ct);
         if (string.IsNullOrWhiteSpace(link)) return false;
@@ -2883,16 +2883,39 @@ public static class PlatformEndpoints
         // no throw, and the caller still returns the activation link.
         var mail = http.RequestServices?.GetService<PlatformMailService>();
         if (mail is null) return false;
+
+        // The sign-in form requires the ORGANIZATION CODE alongside email + password, and
+        // this email is the only thing an invited user receives — without the code here
+        // they finish activation and then cannot log in at all.
+        string? companyCode = null, companyName = null;
+        var db = http.RequestServices?.GetService<Database>();
+        if (db is not null)
+        {
+            var company = await db.QuerySingleAsync(
+                "SELECT company_code, name FROM companies WHERE id=@id LIMIT 1",
+                c => c.Parameters.AddWithValue("@id", companyId), ct);
+            companyCode = company?["companyCode"]?.ToString();
+            companyName = company?["name"]?.ToString();
+        }
+        var loginUrl = link[..link.IndexOf("/reset-password", StringComparison.OrdinalIgnoreCase)] + "/login";
+
         return await mail.TrySendAsync(
             email,
-            "OpsTrax — set up your administrator account",
+            "OpsTrax — set up your account",
             $"""
             Hello {fullName},
 
-            An OpsTrax administrator account has been created for you.
+            An OpsTrax account has been created for you{(string.IsNullOrWhiteSpace(companyName) ? "" : $" at {companyName}")}.
 
-            Set your password using this single-use link (valid for 7 days):
+            1) Set your password using this single-use link (valid for 7 days):
             {link}
+
+            2) Then sign in at {loginUrl} with:
+               Organization code: {(string.IsNullOrWhiteSpace(companyCode) ? "(ask your administrator)" : companyCode)}
+               Email:             {email}
+               Password:          the one you just set
+
+            Keep the organization code handy — the sign-in form asks for it every time.
 
             If you did not expect this, ignore this email and report it to your
             administrator.

@@ -104,7 +104,10 @@ public sealed class TwilioConnector(IHttpClientFactory httpFactory, ILogger<Twil
     public async Task<ConnectorResult> RunActionAsync(
         string action, IReadOnlyDictionary<string, string?> config, JsonElement? body, CancellationToken ct)
     {
-        if (!string.Equals(action, "send-test", StringComparison.OrdinalIgnoreCase))
+        // 'send-test' is the operator console's connectivity check (falls back to a canned body);
+        // 'send' is real product delivery (alert notifications) and requires an explicit body.
+        var isTest = string.Equals(action, "send-test", StringComparison.OrdinalIgnoreCase);
+        if (!isTest && !string.Equals(action, "send", StringComparison.OrdinalIgnoreCase))
             return ConnectorResult.Fail($"Action '{action}' is not supported by Twilio SMS.");
 
         var sid = config.GetValueOrDefault("accountSid");
@@ -112,12 +115,13 @@ public sealed class TwilioConnector(IHttpClientFactory httpFactory, ILogger<Twil
         var from = config.GetValueOrDefault("fromNumber");
         var to = body.HasValue && body.Value.TryGetProperty("to", out var t) ? t.GetString() : null;
         var text = (body.HasValue && body.Value.TryGetProperty("body", out var b) ? b.GetString() : null)
-                   ?? "OpsTrax test message — your Twilio connector is live.";
+                   ?? (isTest ? "OpsTrax test message — your Twilio connector is live." : null);
 
         if (string.IsNullOrWhiteSpace(sid) || string.IsNullOrWhiteSpace(token))
             return ConnectorResult.Fail("Missing Twilio credentials.");
-        if (string.IsNullOrWhiteSpace(from)) return ConnectorResult.Fail("Set a fromNumber in Configure to send a test SMS.");
-        if (string.IsNullOrWhiteSpace(to)) return ConnectorResult.Fail("Provide a 'to' number to send the test SMS.");
+        if (string.IsNullOrWhiteSpace(from)) return ConnectorResult.Fail("Set a fromNumber in Configure to send an SMS.");
+        if (string.IsNullOrWhiteSpace(to)) return ConnectorResult.Fail("Provide a 'to' number for the SMS.");
+        if (string.IsNullOrWhiteSpace(text)) return ConnectorResult.Fail("Provide a 'body' for the SMS.");
 
         try
         {
@@ -131,7 +135,7 @@ public sealed class TwilioConnector(IHttpClientFactory httpFactory, ILogger<Twil
             using var resp = await client.SendAsync(req, ct);
             var payload = await resp.Content.ReadAsStringAsync(ct);
             if (resp.IsSuccessStatusCode)
-                return ConnectorResult.Ok($"Test SMS accepted by Twilio for {to}.");
+                return ConnectorResult.Ok(isTest ? $"Test SMS accepted by Twilio for {to}." : $"SMS accepted by Twilio for {to}.");
             return ConnectorResult.Fail($"Twilio rejected the message ({(int)resp.StatusCode}): {payload}");
         }
         catch (Exception ex)

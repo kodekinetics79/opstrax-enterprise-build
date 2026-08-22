@@ -1,9 +1,9 @@
 import { cloneElement, isValidElement, useEffect, useId, useMemo, useRef, useState } from "react";
-import type { ButtonHTMLAttributes, HTMLAttributes, ReactElement, ReactNode } from "react";
+import type { ButtonHTMLAttributes, HTMLAttributes, InputHTMLAttributes, ReactElement, ReactNode } from "react";
 import {
   AlertTriangle, ArrowDownRight, ArrowUpRight,
   ChevronUp, ChevronDown as ChevronDownIcon,
-  Loader2, Search,
+  Eye, EyeOff, Loader2, Search,
   Sparkles, TrendingUp, X,
 } from "lucide-react";
 import type { AnyRecord } from "@/types";
@@ -120,6 +120,32 @@ export function FormField({
       ) : hint ? (
         <p id={messageId} className="text-xs text-slate-500">{hint}</p>
       ) : null}
+    </div>
+  );
+}
+
+/* Password input with a show/hide (eye) toggle — every password field must let
+   the person typing verify what they typed. The toggle reveals the TYPED value
+   only; secrets stored server-side (e.g. the SMTP credential) are never echoed
+   back by the API, so there is nothing stored to reveal here. */
+export function PasswordInput({
+  className = "field",
+  wrapperClassName = "",
+  ...props
+}: InputHTMLAttributes<HTMLInputElement> & { wrapperClassName?: string }) {
+  const [show, setShow] = useState(false);
+  return (
+    <div className={`relative ${wrapperClassName}`.trim()}>
+      <input {...props} type={show ? "text" : "password"} className={`${className} w-full pr-10`} />
+      <button
+        type="button"
+        onClick={() => setShow((s) => !s)}
+        aria-label={show ? "Hide password" : "Show password"}
+        aria-pressed={show}
+        className="absolute inset-y-0 right-0 flex w-10 items-center justify-center text-slate-400 hover:text-teal-600"
+      >
+        {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+      </button>
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { KeyRound, ShieldCheck } from "lucide-react";
+import { PasswordInput } from "@/components/ui";
 import { authApi } from "@/services/authApi";
 
 // Self-service password change for ANY signed-in tenant user — including customer
@@ -39,17 +40,17 @@ export function ChangePasswordCard({ className = "" }: { className?: string }) {
       <div className="grid gap-4 sm:max-w-md">
         <label>
           <span className="field-label">Current password</span>
-          <input type="password" autoComplete="current-password" className="field mt-1"
+          <PasswordInput autoComplete="current-password" wrapperClassName="mt-1"
             value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} />
         </label>
         <label>
           <span className="field-label">New password (min 8 characters)</span>
-          <input type="password" autoComplete="new-password" className="field mt-1"
+          <PasswordInput autoComplete="new-password" wrapperClassName="mt-1"
             value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
         </label>
         <label>
           <span className="field-label">Confirm new password</span>
-          <input type="password" autoComplete="new-password" className="field mt-1"
+          <PasswordInput autoComplete="new-password" wrapperClassName="mt-1"
             value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} />
         </label>
 
