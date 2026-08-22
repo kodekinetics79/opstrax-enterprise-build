@@ -1,0 +1,19 @@
+# OpsTrax device edge — IMEI allowlist
+#
+# One identifier per line. Blank lines and '#' comments are ignored, and anything after
+# whitespace on a line is treated as a comment, so an inline note is fine. Separators in the
+# identifier itself (spaces, hyphens) are stripped, so a value pasted from a shipping manifest
+# matches a device that reports bare digits.
+#
+# Re-read automatically when the file's modification time changes (Gateway:Edge:Allowlist:
+# ReloadInterval, default 15s) — commissioning a device does not need a restart.
+#
+# FAIL-CLOSED, BOTH WAYS:
+#   - an empty allowlist admits nothing;
+#   - a missing or unreadable file admits nothing, and does NOT fall back to the last good
+#     contents. Deleting a device's line is therefore a real revocation, not a suggestion.
+#
+# This is admission control, not authentication. An IMEI is a self-asserted, spoofable bearer
+# identifier; OpsTrax still resolves the device and enforces tenant scoping on every fix.
+
+862464068456321   # PT40-Q, serial 4C4000067803 — Khalid pilot, tractor 118

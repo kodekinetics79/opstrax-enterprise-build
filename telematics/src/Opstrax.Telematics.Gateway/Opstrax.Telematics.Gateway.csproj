@@ -26,6 +26,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Opstrax.Telematics.Contracts\Opstrax.Telematics.Contracts.csproj" />
     <ProjectReference Include="..\Opstrax.Telematics.Protocols.Gt06\Opstrax.Telematics.Protocols.Gt06.csproj" />
+    <ProjectReference Include="..\Opstrax.Telematics.Protocols.PacificTrack\Opstrax.Telematics.Protocols.PacificTrack.csproj" />
   </ItemGroup>
 
   <ItemGroup>

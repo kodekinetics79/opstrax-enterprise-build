@@ -1,0 +1,81 @@
+# OpsTrax Telematics Gateway — public TCP device edge.
+#
+# Install to /etc/systemd/system/opstrax-telematics-gateway.service
+#   systemctl daemon-reload
+#   systemctl enable --now opstrax-telematics-gateway
+#
+# This unit assumes the HTTPS forwarding topology (Gateway:Edge:Egress = Https): the process
+# holds NO database credentials, only a per-gateway HMAC secret. The hardening below is written
+# for a host that every scanner on the internet can reach.
+
+[Unit]
+Description=OpsTrax Telematics Gateway (public TCP device edge)
+Documentation=file:/opt/opstrax/deploy/README.md
+After=network-online.target time-sync.target
+Wants=network-online.target
+# The HMAC timestamp must land within +/-300s of OpsTrax or every request is rejected as
+# unauthorized. Starting before the clock is disciplined produces a confusing wave of 401s.
+Requires=time-sync.target
+
+[Service]
+Type=notify
+NotifyAccess=all
+User=opstrax
+Group=opstrax
+WorkingDirectory=/opt/opstrax/gateway
+ExecStart=/usr/bin/dotnet /opt/opstrax/gateway/Opstrax.Telematics.Gateway.dll
+
+Environment=DOTNET_ENVIRONMENT=Production
+Environment=DOTNET_gcServer=0
+# The gateway secret lives here, mode 0600, root:opstrax. Keeping it out of the unit file means
+# it never appears in `systemctl cat`, `systemd-analyze dump`, or a config repo.
+EnvironmentFile=/etc/opstrax/gateway.env
+
+Restart=always
+RestartSec=5
+# A crash loop must not mask itself as "running": after 5 failures in 60s, stop and stay stopped
+# so the alert fires and the outbox stops being written by a half-broken process.
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+# ── Hardening ─────────────────────────────────────────────────────────────────
+# The threat model is a remote attacker who has found a bug in the framing loop. Everything
+# below limits what that gets them.
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=no
+RemoveIPC=yes
+# IPv4/IPv6 for trackers and the HTTPS forward; UNIX for the runtime's own plumbing. Nothing else.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# The only writable path: the store-and-forward outbox. It MUST be persistent storage — a tmpfs
+# here silently turns store-and-forward into drop-on-reboot.
+ReadWritePaths=/var/lib/opstrax-gateway
+
+# ── Resource bounds ───────────────────────────────────────────────────────────
+# Gateway:MaxConnections defaults to 1024; one socket per tracker plus runtime overhead.
+LimitNOFILE=8192
+MemoryMax=512M
+TasksMax=512
+
+[Install]
+WantedBy=multi-user.target

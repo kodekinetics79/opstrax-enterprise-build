@@ -3,6 +3,7 @@ WORKDIR /src
 
 COPY telematics/src/Opstrax.Telematics.Contracts/Opstrax.Telematics.Contracts.csproj telematics/src/Opstrax.Telematics.Contracts/
 COPY telematics/src/Opstrax.Telematics.Protocols.Gt06/Opstrax.Telematics.Protocols.Gt06.csproj telematics/src/Opstrax.Telematics.Protocols.Gt06/
+COPY telematics/src/Opstrax.Telematics.Protocols.PacificTrack/Opstrax.Telematics.Protocols.PacificTrack.csproj telematics/src/Opstrax.Telematics.Protocols.PacificTrack/
 COPY telematics/src/Opstrax.Telematics.Gateway/Opstrax.Telematics.Gateway.csproj telematics/src/Opstrax.Telematics.Gateway/
 RUN dotnet restore telematics/src/Opstrax.Telematics.Gateway/Opstrax.Telematics.Gateway.csproj
 
