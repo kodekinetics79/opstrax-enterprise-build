@@ -1,0 +1,76 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="1f598786-dbe5-427a-b814-56e29d10af8c" name="@Mac 2026-08-22 14:44:20" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-08-22T14:44:20.9135430-04:00" queuing="2026-08-22T14:44:20.9135430-04:00" start="2026-08-22T14:44:19.8849360-04:00" finish="2026-08-22T14:44:20.9164650-04:00" />
+  <TestSettings name="default" id="cc608a94-ed6e-45ea-9985-d772fe0b3b9a">
+    <Deployment runDeploymentRoot="_Mac_2026-08-22_14_44_20" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="c0b0447b-5552-4145-b508-2eb7b59a07e5" testId="d515d8d4-784e-97c6-4d23-02ccfe34976d" testName="Opstrax.Telematics.IntegrationTests.PostgresProductionDurabilityTests.Registry_ResolvesOnlyExactOwner_AndRejectsAmbiguousCrossTenantIdentity" computerName="Mac" duration="00:00:00.1604614" startTime="2026-08-22T14:44:20.3500130-04:00" endTime="2026-08-22T14:44:20.5146290-04:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="c0b0447b-5552-4145-b508-2eb7b59a07e5" />
+    <UnitTestResult executionId="9983ba13-5a41-4bae-b6a2-05f8c3ce9ab6" testId="df568da1-837c-ba42-d948-80e70c07136e" testName="Opstrax.Telematics.IntegrationTests.PostgresProductionDurabilityTests.RawGt06Projection_IsAtomicAndReplaySafeAcrossHistoryLatestHeartbeatAndAlerts" computerName="Mac" duration="00:00:00.0801526" startTime="2026-08-22T14:44:20.7143670-04:00" endTime="2026-08-22T14:44:20.7945820-04:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="9983ba13-5a41-4bae-b6a2-05f8c3ce9ab6" />
+    <UnitTestResult executionId="d3d544ea-9cf0-4f98-b811-3ec1491c4555" testId="970ec3e9-9b6c-b968-ff5e-c63cfa7d773d" testName="Opstrax.Telematics.IntegrationTests.PostgresProductionDurabilityTests.DurableReplay_ConcurrentDuplicatesConvergeOnOneStoredEventIdentityAcrossInstances" computerName="Mac" duration="00:00:00.0927102" startTime="2026-08-22T14:44:20.5208770-04:00" endTime="2026-08-22T14:44:20.6135130-04:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="d3d544ea-9cf0-4f98-b811-3ec1491c4555" />
+    <UnitTestResult executionId="ad6e8d2a-a346-4e1c-b4f1-179be631da69" testId="1222175d-c41b-2782-72ac-61f8c00a0e17" testName="Opstrax.Telematics.IntegrationTests.PostgresProductionDurabilityTests.CanonicalBackbone_PersistsEventTimeLineageIdempotentlyAcrossRetry" computerName="Mac" duration="00:00:00.0207071" startTime="2026-08-22T14:44:20.8396450-04:00" endTime="2026-08-22T14:44:20.8603850-04:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="ad6e8d2a-a346-4e1c-b4f1-179be631da69" />
+    <UnitTestResult executionId="32d77263-9ca3-4112-b9e1-e6a5677df8f6" testId="e5ed13a2-727b-f390-13f7-8b80efd7bef7" testName="Opstrax.Telematics.IntegrationTests.PostgresProductionDurabilityTests.StoreForward_SurvivesRestart_ReleasesFailureLease_AndEncryptsPayload" computerName="Mac" duration="00:00:00.0776263" startTime="2026-08-22T14:44:20.6136530-04:00" endTime="2026-08-22T14:44:20.6913810-04:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="32d77263-9ca3-4112-b9e1-e6a5677df8f6" />
+    <UnitTestResult executionId="8bac14b4-bd17-4dd5-bfa6-eeb839f6af3a" testId="87567f7e-05a4-6c00-2162-eab977974c59" testName="Opstrax.Telematics.IntegrationTests.PostgresProductionDurabilityTests.DurableReplay_UnwrapsGt06GenerationsAndBootstrapsAboveIncompleteLegacyHistory" computerName="Mac" duration="00:00:00.0447732" startTime="2026-08-22T14:44:20.7947100-04:00" endTime="2026-08-22T14:44:20.8395270-04:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="8bac14b4-bd17-4dd5-bfa6-eeb839f6af3a" />
+    <UnitTestResult executionId="06855839-d072-4bc6-a5ac-3afca2a1511b" testId="043d1e7e-1805-1122-f95b-5086d3b0f960" testName="Opstrax.Telematics.IntegrationTests.PostgresProductionDurabilityTests.CanonicalBackbone_RejectsCrossTenantEnvelopeBeforeDatabaseAccess" computerName="Mac" duration="00:00:00.0050202" startTime="2026-08-22T14:44:20.5195640-04:00" endTime="2026-08-22T14:44:20.5205760-04:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="06855839-d072-4bc6-a5ac-3afca2a1511b" />
+    <UnitTestResult executionId="acd6ec2c-b05b-4f0f-ac80-fe435069ef4a" testId="08b484de-540d-9ee4-6d96-11b3c1b0ba12" testName="Opstrax.Telematics.IntegrationTests.PostgresProductionDurabilityTests.RejectionLedger_IsIdempotent_AndPersistsOnlyMaskedMetadata" computerName="Mac" duration="00:00:00.0226862" startTime="2026-08-22T14:44:20.6915350-04:00" endTime="2026-08-22T14:44:20.7142410-04:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="acd6ec2c-b05b-4f0f-ac80-fe435069ef4a" />
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="Opstrax.Telematics.IntegrationTests.PostgresProductionDurabilityTests.CanonicalBackbone_PersistsEventTimeLineageIdempotentlyAcrossRetry" storage="/users/zackkhan/downloads/opstrax-enterprise-build-fixed-nginx/telematics/tests/opstrax.telematics.integrationtests/bin/release/net8.0/opstrax.telematics.integrationtests.dll" id="1222175d-c41b-2782-72ac-61f8c00a0e17">
+      <Execution id="ad6e8d2a-a346-4e1c-b4f1-179be631da69" />
+      <TestMethod codeBase="/Users/zackkhan/Downloads/opstrax-enterprise-build-fixed-nginx/telematics/tests/Opstrax.Telematics.IntegrationTests/bin/Release/net8.0/Opstrax.Telematics.IntegrationTests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Opstrax.Telematics.IntegrationTests.PostgresProductionDurabilityTests" name="CanonicalBackbone_PersistsEventTimeLineageIdempotentlyAcrossRetry" />
+    </UnitTest>
+    <UnitTest name="Opstrax.Telematics.IntegrationTests.PostgresProductionDurabilityTests.RejectionLedger_IsIdempotent_AndPersistsOnlyMaskedMetadata" storage="/users/zackkhan/downloads/opstrax-enterprise-build-fixed-nginx/telematics/tests/opstrax.telematics.integrationtests/bin/release/net8.0/opstrax.telematics.integrationtests.dll" id="08b484de-540d-9ee4-6d96-11b3c1b0ba12">
+      <Execution id="acd6ec2c-b05b-4f0f-ac80-fe435069ef4a" />
+      <TestMethod codeBase="/Users/zackkhan/Downloads/opstrax-enterprise-build-fixed-nginx/telematics/tests/Opstrax.Telematics.IntegrationTests/bin/Release/net8.0/Opstrax.Telematics.IntegrationTests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Opstrax.Telematics.IntegrationTests.PostgresProductionDurabilityTests" name="RejectionLedger_IsIdempotent_AndPersistsOnlyMaskedMetadata" />
+    </UnitTest>
+    <UnitTest name="Opstrax.Telematics.IntegrationTests.PostgresProductionDurabilityTests.StoreForward_SurvivesRestart_ReleasesFailureLease_AndEncryptsPayload" storage="/users/zackkhan/downloads/opstrax-enterprise-build-fixed-nginx/telematics/tests/opstrax.telematics.integrationtests/bin/release/net8.0/opstrax.telematics.integrationtests.dll" id="e5ed13a2-727b-f390-13f7-8b80efd7bef7">
+      <Execution id="32d77263-9ca3-4112-b9e1-e6a5677df8f6" />
+      <TestMethod codeBase="/Users/zackkhan/Downloads/opstrax-enterprise-build-fixed-nginx/telematics/tests/Opstrax.Telematics.IntegrationTests/bin/Release/net8.0/Opstrax.Telematics.IntegrationTests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Opstrax.Telematics.IntegrationTests.PostgresProductionDurabilityTests" name="StoreForward_SurvivesRestart_ReleasesFailureLease_AndEncryptsPayload" />
+    </UnitTest>
+    <UnitTest name="Opstrax.Telematics.IntegrationTests.PostgresProductionDurabilityTests.DurableReplay_ConcurrentDuplicatesConvergeOnOneStoredEventIdentityAcrossInstances" storage="/users/zackkhan/downloads/opstrax-enterprise-build-fixed-nginx/telematics/tests/opstrax.telematics.integrationtests/bin/release/net8.0/opstrax.telematics.integrationtests.dll" id="970ec3e9-9b6c-b968-ff5e-c63cfa7d773d">
+      <Execution id="d3d544ea-9cf0-4f98-b811-3ec1491c4555" />
+      <TestMethod codeBase="/Users/zackkhan/Downloads/opstrax-enterprise-build-fixed-nginx/telematics/tests/Opstrax.Telematics.IntegrationTests/bin/Release/net8.0/Opstrax.Telematics.IntegrationTests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Opstrax.Telematics.IntegrationTests.PostgresProductionDurabilityTests" name="DurableReplay_ConcurrentDuplicatesConvergeOnOneStoredEventIdentityAcrossInstances" />
+    </UnitTest>
+    <UnitTest name="Opstrax.Telematics.IntegrationTests.PostgresProductionDurabilityTests.DurableReplay_UnwrapsGt06GenerationsAndBootstrapsAboveIncompleteLegacyHistory" storage="/users/zackkhan/downloads/opstrax-enterprise-build-fixed-nginx/telematics/tests/opstrax.telematics.integrationtests/bin/release/net8.0/opstrax.telematics.integrationtests.dll" id="87567f7e-05a4-6c00-2162-eab977974c59">
+      <Execution id="8bac14b4-bd17-4dd5-bfa6-eeb839f6af3a" />
+      <TestMethod codeBase="/Users/zackkhan/Downloads/opstrax-enterprise-build-fixed-nginx/telematics/tests/Opstrax.Telematics.IntegrationTests/bin/Release/net8.0/Opstrax.Telematics.IntegrationTests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Opstrax.Telematics.IntegrationTests.PostgresProductionDurabilityTests" name="DurableReplay_UnwrapsGt06GenerationsAndBootstrapsAboveIncompleteLegacyHistory" />
+    </UnitTest>
+    <UnitTest name="Opstrax.Telematics.IntegrationTests.PostgresProductionDurabilityTests.RawGt06Projection_IsAtomicAndReplaySafeAcrossHistoryLatestHeartbeatAndAlerts" storage="/users/zackkhan/downloads/opstrax-enterprise-build-fixed-nginx/telematics/tests/opstrax.telematics.integrationtests/bin/release/net8.0/opstrax.telematics.integrationtests.dll" id="df568da1-837c-ba42-d948-80e70c07136e">
+      <Execution id="9983ba13-5a41-4bae-b6a2-05f8c3ce9ab6" />
+      <TestMethod codeBase="/Users/zackkhan/Downloads/opstrax-enterprise-build-fixed-nginx/telematics/tests/Opstrax.Telematics.IntegrationTests/bin/Release/net8.0/Opstrax.Telematics.IntegrationTests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Opstrax.Telematics.IntegrationTests.PostgresProductionDurabilityTests" name="RawGt06Projection_IsAtomicAndReplaySafeAcrossHistoryLatestHeartbeatAndAlerts" />
+    </UnitTest>
+    <UnitTest name="Opstrax.Telematics.IntegrationTests.PostgresProductionDurabilityTests.Registry_ResolvesOnlyExactOwner_AndRejectsAmbiguousCrossTenantIdentity" storage="/users/zackkhan/downloads/opstrax-enterprise-build-fixed-nginx/telematics/tests/opstrax.telematics.integrationtests/bin/release/net8.0/opstrax.telematics.integrationtests.dll" id="d515d8d4-784e-97c6-4d23-02ccfe34976d">
+      <Execution id="c0b0447b-5552-4145-b508-2eb7b59a07e5" />
+      <TestMethod codeBase="/Users/zackkhan/Downloads/opstrax-enterprise-build-fixed-nginx/telematics/tests/Opstrax.Telematics.IntegrationTests/bin/Release/net8.0/Opstrax.Telematics.IntegrationTests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Opstrax.Telematics.IntegrationTests.PostgresProductionDurabilityTests" name="Registry_ResolvesOnlyExactOwner_AndRejectsAmbiguousCrossTenantIdentity" />
+    </UnitTest>
+    <UnitTest name="Opstrax.Telematics.IntegrationTests.PostgresProductionDurabilityTests.CanonicalBackbone_RejectsCrossTenantEnvelopeBeforeDatabaseAccess" storage="/users/zackkhan/downloads/opstrax-enterprise-build-fixed-nginx/telematics/tests/opstrax.telematics.integrationtests/bin/release/net8.0/opstrax.telematics.integrationtests.dll" id="043d1e7e-1805-1122-f95b-5086d3b0f960">
+      <Execution id="06855839-d072-4bc6-a5ac-3afca2a1511b" />
+      <TestMethod codeBase="/Users/zackkhan/Downloads/opstrax-enterprise-build-fixed-nginx/telematics/tests/Opstrax.Telematics.IntegrationTests/bin/Release/net8.0/Opstrax.Telematics.IntegrationTests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Opstrax.Telematics.IntegrationTests.PostgresProductionDurabilityTests" name="CanonicalBackbone_RejectsCrossTenantEnvelopeBeforeDatabaseAccess" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="d515d8d4-784e-97c6-4d23-02ccfe34976d" executionId="c0b0447b-5552-4145-b508-2eb7b59a07e5" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="df568da1-837c-ba42-d948-80e70c07136e" executionId="9983ba13-5a41-4bae-b6a2-05f8c3ce9ab6" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="970ec3e9-9b6c-b968-ff5e-c63cfa7d773d" executionId="d3d544ea-9cf0-4f98-b811-3ec1491c4555" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="1222175d-c41b-2782-72ac-61f8c00a0e17" executionId="ad6e8d2a-a346-4e1c-b4f1-179be631da69" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="e5ed13a2-727b-f390-13f7-8b80efd7bef7" executionId="32d77263-9ca3-4112-b9e1-e6a5677df8f6" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="87567f7e-05a4-6c00-2162-eab977974c59" executionId="8bac14b4-bd17-4dd5-bfa6-eeb839f6af3a" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="043d1e7e-1805-1122-f95b-5086d3b0f960" executionId="06855839-d072-4bc6-a5ac-3afca2a1511b" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="08b484de-540d-9ee4-6d96-11b3c1b0ba12" executionId="acd6ec2c-b05b-4f0f-ac80-fe435069ef4a" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Completed">
+    <Counters total="8" executed="8" passed="8" failed="0" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 8.0.27)
+[xUnit.net 00:00:00.04]   Discovering: Opstrax.Telematics.IntegrationTests
+[xUnit.net 00:00:00.08]   Discovered:  Opstrax.Telematics.IntegrationTests
+[xUnit.net 00:00:00.09]   Starting:    Opstrax.Telematics.IntegrationTests
+[xUnit.net 00:00:00.62]   Finished:    Opstrax.Telematics.IntegrationTests
+</StdOut>
+    </Output>
+  </ResultSummary>
+</TestRun>
