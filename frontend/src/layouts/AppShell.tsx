@@ -58,6 +58,17 @@ const NAV_SECTIONS = [
     items: ["customers"],
   },
   {
+    // moduleConfig has always declared a "Financials" group, but this nav never
+    // carried a Finance section — so every one of these ten modules was
+    // unreachable from the sidebar despite being routed and permission-gated.
+    label: "Finance",
+    color: "text-emerald-600",
+    items: [
+      "invoices", "ar-aging", "payments", "billing-consolidation", "tax-config",
+      "revenue-recognition", "driver-pay", "expenses", "fuel-idling", "profitability",
+    ],
+  },
+  {
     label: "Reports",
     color: "text-purple-600",
     items: ["reports-analytics", "predictive-analytics", "sla-kpi", "carbon-tracking"],

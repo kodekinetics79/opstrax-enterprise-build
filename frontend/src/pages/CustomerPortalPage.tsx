@@ -1,14 +1,27 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FileText, Truck, Camera, MessageSquare, Send, AlertTriangle } from "lucide-react";
+import { FileText, Truck, Camera, MessageSquare, Send, AlertTriangle, Printer, X } from "lucide-react";
 import { PageHeader, KpiCard, StatusBadge, DataTable, EmptyState, LoadingState } from "@/components/ui";
 import { ChangePasswordCard } from "@/components/ChangePasswordCard";
 import { portalApi } from "@/services/portalApi";
 import type { AnyRecord } from "@/types";
 
+// ISO 4217 exponents that are not 2. A three-decimal Gulf currency printed to two
+// places misstates the invoice a customer is being asked to pay.
+const MINOR_UNITS: Record<string, number> = {
+  JPY: 0, KRW: 0, CLP: 0, ISK: 0, VND: 0,
+  KWD: 3, BHD: 3, OMR: 3, JOD: 3, TND: 3,
+};
+
 function money(value: unknown, currency = "USD") {
+  const digits = MINOR_UNITS[String(currency).toUpperCase()] ?? 2;
   const n = Number(value ?? 0);
-  return `${currency === "USD" ? "$" : currency + " "}${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return `${currency === "USD" ? "$" : currency + " "}${n.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
+}
+
+function day(value: unknown) {
+  const raw = String(value ?? "").slice(0, 10);
+  return raw || "—";
 }
 
 function ErrorPanel({ message }: { message?: string }) {
@@ -26,6 +39,7 @@ function ErrorPanel({ message }: { message?: string }) {
 export function CustomerPortalPage() {
   const qc = useQueryClient();
   const [selectedJob, setSelectedJob] = useState<AnyRecord | null>(null);
+  const [openInvoiceId, setOpenInvoiceId] = useState<string | null>(null);
   const [rating, setRating] = useState("");
   const [subject, setSubject] = useState("");
   const [comment, setComment] = useState("");
@@ -83,7 +97,13 @@ export function CustomerPortalPage() {
           invoices.length === 0 ? <EmptyState title="No invoices yet" subtitle="Invoices will appear here once your shipments are billed." /> :
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
             {invoices.map((inv, i) => (
-              <div key={i} className="panel p-4">
+              <button
+                key={String(inv.id ?? i)}
+                type="button"
+                onClick={() => inv.id && setOpenInvoiceId(String(inv.id))}
+                disabled={!inv.id}
+                className="panel p-4 text-left transition hover:border-teal-300 hover:shadow-md disabled:cursor-default"
+              >
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Invoice</p>
@@ -95,7 +115,8 @@ export function CustomerPortalPage() {
                   <div><p className="text-slate-400 text-xs">Total</p><p className="font-semibold text-slate-900">{money(inv.total, String(inv.currency ?? "USD"))}</p></div>
                   <div><p className="text-slate-400 text-xs">Balance Due</p><p className="font-semibold text-slate-900">{money(inv.balanceDue, String(inv.currency ?? "USD"))}</p></div>
                 </div>
-              </div>
+                {inv.id ? <p className="mt-3 text-xs font-semibold text-teal-700">View invoice &rarr;</p> : null}
+              </button>
             ))}
           </div>}
       </section>
@@ -182,10 +203,168 @@ export function CustomerPortalPage() {
       </section>
 
       {/* Account & security — self-service, no email/SMTP required */}
-      <section className="space-y-3">
+      <section className="space-y-3 print:hidden">
         <h2 className="section-title">Account &amp; security</h2>
         <ChangePasswordCard />
       </section>
+
+      {openInvoiceId && (
+        <InvoiceDocument invoiceId={openInvoiceId} onClose={() => setOpenInvoiceId(null)} />
+      )}
+    </div>
+  );
+}
+
+// The invoice as the CUSTOMER sees it: both parties with their tax registration
+// numbers, the priced lines, and the tax summary by rate their AP team reconciles
+// against. Printing uses the browser with a print stylesheet — the same approach
+// the detention evidence page already ships, and the only PDF path in the product.
+function InvoiceDocument({ invoiceId, onClose }: { invoiceId: string; onClose: () => void }) {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["portal", "invoice", invoiceId],
+    queryFn: () => portalApi.invoice(invoiceId),
+  });
+
+  const inv = (data ?? {}) as AnyRecord;
+  const cur = String(inv.currency ?? "USD");
+  const lines = (inv.lines ?? []) as AnyRecord[];
+  const taxRows = (inv.taxBreakdown ?? []) as AnyRecord[];
+  const payments = (inv.payments ?? []) as AnyRecord[];
+  const taxLabel = String(inv.sellerTaxRegime ?? "").toLowerCase() === "gst" ? "GST" : "VAT";
+
+  return (
+    <div
+      className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50 p-4 print:static print:bg-white print:p-0"
+      onClick={onClose}
+    >
+      <div
+        className="mx-auto max-w-3xl rounded-2xl bg-white p-6 shadow-2xl print:max-w-none print:rounded-none print:shadow-none"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-4 flex items-center justify-between print:hidden">
+          <h2 className="text-lg font-bold text-slate-900">Invoice</h2>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => window.print()}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              <Printer className="h-4 w-4" /> Print / save PDF
+            </button>
+            <button type="button" onClick={onClose} aria-label="Close" className="rounded-lg border border-slate-300 p-1.5 text-slate-500 hover:bg-slate-50">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+
+        {isLoading ? <LoadingState /> : error ? <ErrorPanel message={(error as Error)?.message} /> : (
+          <>
+            <div className="flex items-start justify-between border-b-2 border-slate-900 pb-4">
+              <div>
+                <p className="text-xl font-black tracking-tight text-slate-900">{String(inv.sellerName ?? "")}</p>
+                <p className="text-xs text-slate-500">
+                  {inv.sellerTaxRegistrationNo
+                    ? `${taxLabel} No. ${String(inv.sellerTaxRegistrationNo)}`
+                    : `No ${taxLabel} registration on file`}
+                </p>
+              </div>
+              <div className="text-right">
+                <p className="text-sm font-black uppercase tracking-widest text-slate-900">{taxLabel} Invoice</p>
+                <p className="font-mono text-sm font-bold text-slate-700">{String(inv.invoiceNumber ?? "")}</p>
+              </div>
+            </div>
+
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Billed to</p>
+                <p className="font-semibold text-slate-900">{String(inv.customerName ?? "")}</p>
+                <p className="text-xs text-slate-500">
+                  {inv.customerTaxId ? `${taxLabel} No. ${String(inv.customerTaxId)}` : "No tax registration recorded"}
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div><p className="text-slate-400">Issued</p><p className="font-semibold text-slate-800">{day(inv.issuedAt)}</p></div>
+                <div><p className="text-slate-400">Due</p><p className="font-semibold text-slate-800">{day(inv.dueAt)}</p></div>
+                <div><p className="text-slate-400">Place of supply</p><p className="font-semibold text-slate-800">{String(inv.placeOfSupply ?? "—")}</p></div>
+                <div><p className="text-slate-400">Status</p><p className="font-semibold text-slate-800">{String(inv.arStatus ?? "")}</p></div>
+              </div>
+            </div>
+
+            <table className="mt-5 w-full text-left text-xs">
+              <thead className="border-b border-slate-300 text-[10px] uppercase tracking-wider text-slate-500">
+                <tr>
+                  <th className="pb-2">Description</th>
+                  <th className="pb-2 text-right">Qty</th>
+                  <th className="pb-2 text-right">Rate</th>
+                  <th className="pb-2 text-right">Amount</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {lines.length === 0 ? (
+                  <tr><td colSpan={4} className="py-3 text-slate-400">No line detail recorded on this invoice.</td></tr>
+                ) : lines.map((l, i) => (
+                  <tr key={i}>
+                    <td className="py-2 pr-2 text-slate-800">
+                      {String(l.description ?? "")}
+                      {l.chargeCode ? <span className="ml-1.5 font-mono text-[10px] text-slate-400">{String(l.chargeCode)}</span> : null}
+                    </td>
+                    <td className="py-2 text-right text-slate-600">
+                      {Number(l.quantity ?? 0).toLocaleString()}{l.unit ? ` ${String(l.unit)}` : ""}
+                    </td>
+                    <td className="py-2 text-right text-slate-600">{money(l.unitRate, cur)}</td>
+                    <td className="py-2 text-right font-semibold text-slate-900">{money(l.amount, cur)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <div className="mt-4 ml-auto w-full max-w-xs space-y-1 text-sm">
+              <div className="flex justify-between text-slate-600"><span>Net</span><span>{money(inv.subtotal, cur)}</span></div>
+              <div className="flex justify-between text-slate-600"><span>{taxLabel}</span><span>{money(inv.taxTotal, cur)}</span></div>
+              <div className="flex justify-between border-t-2 border-slate-900 pt-1 text-base font-black text-slate-900">
+                <span>Total</span><span>{money(inv.total, cur)}</span>
+              </div>
+              <div className="flex justify-between text-slate-600"><span>Paid</span><span>{money(inv.amountPaid, cur)}</span></div>
+              <div className="flex justify-between font-bold text-slate-900"><span>Balance due</span><span>{money(inv.balanceDue, cur)}</span></div>
+            </div>
+
+            {taxRows.length > 0 && (
+              <div className="mt-5">
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">{taxLabel} summary</p>
+                <table className="mt-2 w-full text-left text-xs">
+                  <thead className="border-b border-slate-200 text-[10px] uppercase tracking-wider text-slate-500">
+                    <tr><th className="pb-1">Code</th><th className="pb-1">Rate</th><th className="pb-1 text-right">Taxable</th><th className="pb-1 text-right">{taxLabel}</th></tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {taxRows.map((t, i) => (
+                      <tr key={i}>
+                        <td className="py-1.5 font-mono text-slate-700">{String(t.taxCode ?? "—")}</td>
+                        <td className="py-1.5 text-slate-600">{(Number(t.rate ?? 0) * 100).toFixed(2)}%</td>
+                        <td className="py-1.5 text-right text-slate-600">{money(t.taxableAmount, cur)}</td>
+                        <td className="py-1.5 text-right font-semibold text-slate-900">{money(t.taxAmount, cur)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {payments.length > 0 && (
+              <div className="mt-5">
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Payments received</p>
+                <ul className="mt-1 space-y-1 text-xs text-slate-600">
+                  {payments.map((pm, i) => (
+                    <li key={i} className="flex justify-between">
+                      <span>{day(pm.receivedAt)} · {String(pm.paymentMethod ?? "")} {String(pm.paymentReference ?? "")}</span>
+                      <span className="font-semibold text-slate-800">{money(pm.amount, cur)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }

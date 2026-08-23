@@ -14,6 +14,7 @@ public static class CustomerPortalEndpoints
     public static void MapCustomerPortalEndpoints(this WebApplication app)
     {
         app.MapGet("/api/portal/invoices", PortalInvoices);
+        app.MapGet("/api/portal/invoices/{invoiceId:guid}", PortalInvoiceDetail);
         app.MapGet("/api/portal/jobs", PortalJobs);
         app.MapGet("/api/portal/jobs/{jobId:long}", PortalJobDetail);
         app.MapGet("/api/portal/jobs/{jobId:long}/proofs", PortalJobProofs);
@@ -48,6 +49,18 @@ public static class CustomerPortalEndpoints
         if (denied is not null) return denied;
         var invoices = await svc.GetOwnInvoicesAsync(companyId, customerId, ct);
         return Results.Ok(ApiResponse<object>.Ok(new { items = invoices }));
+    }
+
+    private static async Task<IResult> PortalInvoiceDetail(Guid invoiceId, HttpContext http, CustomerPortalService svc, CancellationToken ct)
+    {
+        var (companyId, customerId, denied) = await ResolvePrincipalAsync(http, svc, ct);
+        if (denied is not null) return denied;
+        var invoice = await svc.GetOwnInvoiceDetailAsync(companyId, customerId, invoiceId, ct);
+        // 404 for "not yours" as well as "not found" — never confirm that an invoice
+        // belonging to another customer exists.
+        return invoice is null
+            ? Results.Json(ApiResponse<object>.Fail("Not found"), statusCode: StatusCodes.Status404NotFound)
+            : Results.Ok(ApiResponse<object>.Ok(invoice));
     }
 
     private static async Task<IResult> PortalJobs(HttpContext http, CustomerPortalService svc, CancellationToken ct)
