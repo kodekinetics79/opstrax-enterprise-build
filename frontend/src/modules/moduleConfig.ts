@@ -120,7 +120,14 @@ export const modules: ModuleConfig[] = [
   { key: "dvir-inspections",  title: "DVIR",               route: "/dvir-inspections",  group: "Safety & Compliance", description: "Driver vehicle inspection reports, defects, signatures and mechanic review.", accent: "teal",   requiredPermission: "maintenance.view", requiredEntitlement: "maintenance" },
   { key: "hos-eld",           title: "HOS / ELD",          route: "/hos-eld",           group: "Safety & Compliance", description: "Hours of service, ELD sync, violation risk and driver duty status.", accent: "amber",  requiredPermission: "compliance.view", requiredEntitlement: "compliance" },
   { key: "traffic-violations",title: "Traffic Violations", route: "/traffic-violations",group: "Safety & Compliance", description: "Speeding, phone use, seatbelt, red-light and route violation watch.", accent: "red",    requiredPermission: "safety.view", requiredEntitlement: "safety" },
-  { key: "evidence-packages", title: "Evidence Packages",  route: "/evidence-packages", group: "Safety & Compliance", description: "Video, GPS, speed, DVIR, documents and chain-of-custody bundles.", accent: "blue",   requiredPermission: "safety.view", requiredEntitlement: "safety" },
+  // ROUND-2 FIX — the nav gate must EQUAL the route gate. /evidence-graphs guards
+  // safety:evidence:view, but this entry asked only for safety.view, and the alias closure
+  // is not transitive through the route's token: a session can satisfy safety.view (e.g.
+  // via fuel:view's group carrying fleet:view, which merges into the safety group) and
+  // still fail safety:evidence:view. That is 11 role × nav dead ends across the real role
+  // catalogue — the seeded Finance & Billing Manager and Customer Service among them saw
+  // "Evidence Packages" in the sidebar and got PermissionDenied on click.
+  { key: "evidence-packages", title: "Evidence Packages",  route: "/evidence-packages", group: "Safety & Compliance", description: "Video, GPS, speed, DVIR, documents and chain-of-custody bundles.", accent: "blue",   requiredPermission: "safety:evidence:view", requiredEntitlement: "safety" },
 
   { key: "work-orders",            title: "Work Orders",           route: "/work-orders",            group: "Maintenance", description: "Repair execution, priority, vendor, labor, parts and cost approval.", accent: "amber",  requiredPermission: "maintenance.view", requiredEntitlement: "maintenance" },
   { key: "maintenance-center",     title: "Maintenance Center",    route: "/maintenance",            group: "Maintenance", description: "Maintenance command, defects, work orders and fleet readiness.", accent: "amber", requiredPermission: "maintenance.view", requiredEntitlement: "maintenance" },
@@ -139,14 +146,23 @@ export const modules: ModuleConfig[] = [
   { key: "driver-pay",   title: "Driver Pay",        route: "/finance/settlements", group: "Financials", description: "Generate, approve and pay driver settlement statements.", accent: "green",  requiredPermission: "settlement.read" },
   { key: "revenue-recognition", title: "Revenue Recognition", route: "/finance/revenue-recognition", group: "Financials", description: "Recognized revenue and accounting period close.", accent: "purple", requiredPermission: "revrec.read" },
 
-  { key: "user-management", title: "Users & Roles",  route: "/user-management", group: "Governance", description: "Users, tenants, roles, permissions and access posture.", accent: "blue",   requiredPermission: "users.manage" },
-  { key: "audit-logs",      title: "Audit Logs",     route: "/audit-logs",      group: "Governance", description: "Immutable activity record across users, dispatch, safety, operations and billing.", accent: "amber",  requiredPermission: "reports.manage" },
+  // Governance nav gates MUST mirror their route guards exactly (App.tsx). /user-management
+  // is a DIRECT-match governance route, so the nav gate is direct too — a semantic
+  // users.manage gate advertised the item to holders the direct guard then denied.
+  { key: "user-management", title: "Users & Roles",  route: "/user-management", group: "Governance", description: "Users, tenants, roles, permissions and access posture.", accent: "blue",   requiredPermission: "users:view", permissionMatch: "direct" },
+  // audit:view, NOT reports.manage: /audit-logs is guarded by audit:view and the
+  // reports.manage → audit:view alias was (correctly) severed, so Dispatcher, Fleet
+  // Manager and Safety Manager saw this item and hit a PermissionDenied dead end.
+  { key: "audit-logs",      title: "Audit Logs",     route: "/audit-logs",      group: "Governance", description: "Immutable activity record across users, dispatch, safety, operations and billing.", accent: "amber",  requiredPermission: "audit:view" },
   { key: "integrations",    title: "Integrations",   route: "/integrations",    group: "Governance", description: "Live connector hub for ERP, accounting, telematics, fuel cards, maps, messaging, WMS and compliance integrations.", accent: "teal",   requiredPermission: "telematics:providers:manage", requiredEntitlement: "integrations" },
 
   { key: "carbon-tracking",   title: "Carbon Tracking",     route: "/carbon-tracking",   group: "Intelligence",        description: "Fleet CO₂ emissions, sustainability KPIs, reduction targets and carbon intensity per shipment.", accent: "green",  requiredPermission: "reports.view" },
   { key: "digital-forms",    title: "Digital Forms",       route: "/digital-forms",     group: "Safety & Compliance", description: "Pre-trip, post-trip, incident, delivery and compliance digital form templates and submissions.", accent: "blue",   requiredPermission: "safety.view" },
   { key: "alert-rules",      title: "Alert Rules",         route: "/alert-rules",       group: "Governance",          description: "Configure speed, idling, geofence, HOS, maintenance and safety alert thresholds with notification channels.", accent: "red",    requiredPermission: "alerts.view" },
-  { key: "driver-messaging", title: "Driver Messaging",    route: "/driver-messaging",  group: "Transport Operations", description: "Send dispatch instructions, safety alerts and broadcast announcements to drivers via in-app and SMS.", accent: "teal",  requiredPermission: "dispatch.view" },
+  // /driver-messaging redirects to /messages, which is guarded by messages:send — not
+  // dispatch.view. Gating the nav on dispatch.view showed it to every dispatch-capable
+  // role and denied the ones without the messaging grant.
+  { key: "driver-messaging", title: "Driver Messaging",    route: "/driver-messaging",  group: "Transport Operations", description: "Send dispatch instructions, safety alerts and broadcast announcements to drivers via in-app and SMS.", accent: "teal",  requiredPermission: "messages:send" },
   { key: "workforce", title: "Workforce Management", route: "/workforce", group: "Transport Operations", description: "Driver shift scheduling calendar, availability tracking, HOS compliance indicators and automated roster optimisation.", accent: "teal", requiredPermission: "dispatch.view" },
 
   { key: "feature-flags",        title: "Feature Flags",       route: "/feature-flags",        group: "Governance",   description: "Kill switches and gradual rollouts. Turning a flag off blocks its API (403) and hides it in the UI — no deploy.", accent: "purple", requiredPermission: "users.manage" },
