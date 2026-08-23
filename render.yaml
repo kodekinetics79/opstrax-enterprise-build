@@ -35,10 +35,12 @@ services:
         sync: false
       - key: Jwt__Key
         sync: false
-      - key: Telemetry__DeviceSecret
-        sync: false
-      - key: Telemetry__GatewaySecret
-        sync: false
+      # The legacy fleet-wide telemetry device/gateway secret env keys were REMOVED
+      # deliberately. The device one was never consumed by ingest, and the gateway one was
+      # retired as a cross-tenant skeleton key: ConfigValidationService treats its mere
+      # presence (any non-blank Telemetry:GatewaySecret value) as a CRITICAL failure in
+      # Production/Staging and refuses startup. Do not re-add either key. Gateway credentials
+      # are per-gateway encrypted rows provisioned via POST /api/telemetry/gateways.
       # MUST stay "false" here. ConfigValidationService treats an enabled simulator
       # as a CRITICAL failure in any protected environment (Production or Staging)
       # and aborts startup: protected environments accept authenticated device or

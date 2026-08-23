@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
 using Opstrax.Telematics.Gateway.Edge;
 using Opstrax.Telematics.Gateway.Forwarding;
@@ -237,6 +239,66 @@ public sealed class EdgeForwarderTests
 }
 
 /// <summary>
+/// Boots the REAL gateway executable — the same Program.cs composition production runs — to pin
+/// the fail-closed contracts that no unit seam can observe.
+/// </summary>
+public sealed class EdgeProtectedCompositionTests
+{
+    [Fact]
+    public async Task ProtectedHttpsEdge_WithoutOutboxEncryptionKey_RefusesToBoot()
+    {
+        string gatewayDll = Path.Combine(AppContext.BaseDirectory, "Opstrax.Telematics.Gateway.dll");
+        Assert.True(File.Exists(gatewayDll), $"gateway assembly not staged beside the tests: {gatewayDll}");
+
+        string outboxDirectory = Directory.CreateTempSubdirectory("opstrax-boot-").FullName;
+        var psi = new ProcessStartInfo
+        {
+            FileName = "dotnet",
+            WorkingDirectory = AppContext.BaseDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        psi.ArgumentList.Add(gatewayDll);
+
+        psi.Environment["DOTNET_ENVIRONMENT"] = "Production";
+        psi.Environment["Gateway__ListenAddress"] = "127.0.0.1";
+        psi.Environment["Gateway__ListenPort"] = "0";
+        psi.Environment["Gateway__Edge__Egress"] = "Https";
+        // Forwarding configuration valid on its own, so the ONLY missing prerequisite is the
+        // outbox encryption key. The 'secret' is a fixed test filler, not a credential.
+        psi.Environment["Gateway__Edge__Forward__BaseUrl"] = "https://opstrax.invalid";
+        psi.Environment["Gateway__Edge__Forward__GatewayId"] = "composition-test";
+        psi.Environment["Gateway__Edge__Forward__Secret"] = new string('x', 44);
+        psi.Environment["Gateway__Edge__Outbox__Path"] = outboxDirectory;
+        psi.Environment.Remove("Gateway__StoreForwardEncryptionKey");
+
+        using var process = Process.Start(psi)!;
+        Task<string> stdout = process.StandardOutput.ReadToEndAsync();
+        Task<string> stderr = process.StandardError.ReadToEndAsync();
+
+        bool exited = process.WaitForExit(60_000);
+        if (!exited)
+        {
+            try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
+        }
+
+        try
+        {
+            Assert.True(exited, "the protected Https edge kept running without an outbox encryption key");
+            Assert.NotEqual(0, process.ExitCode);
+
+            string diagnostics = await stdout + await stderr;
+            Assert.Contains("StoreForwardEncryptionKey", diagnostics);
+        }
+        finally
+        {
+            try { Directory.Delete(outboxDirectory, recursive: true); } catch (IOException) { }
+        }
+    }
+}
+
+/// <summary>
 /// Covers the durable outbox — the component that decides whether an OpsTrax outage is a delay or
 /// permanent data loss.
 /// </summary>
@@ -247,15 +309,23 @@ public sealed class EdgeOutboxTests : IDisposable
 
     private readonly EdgeMetrics _metrics = new();
 
-    private FileForwardOutbox Build(int maxEntries = 100, Func<DateTimeOffset>? clock = null) =>
+    // One stable key for the whole fixture: the restart-durability tests need the SAME key across
+    // outbox instances, exactly as a redeployed edge reuses the key in its environment file.
+    private static readonly byte[] OutboxKey =
+        Convert.FromBase64String("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=");
+
+    private FileForwardOutbox Build(
+        int maxEntries = 100, Func<DateTimeOffset>? clock = null, byte[]? key = null) =>
         new(new OutboxOptions { Path = _directory, MaxEntries = maxEntries },
-            _metrics, NullLogger.Instance, clock);
+            _metrics, NullLogger.Instance, key ?? OutboxKey, clock);
 
     [Fact]
     public async Task ParkedPayload_RoundTripsByteForByte()
     {
         // The HMAC covers these exact characters, so any transformation in storage would surface
-        // later as an intermittent 401 that is very hard to trace back to here.
+        // later as an intermittent 401 that is very hard to trace back to here. Asserted through
+        // the outbox API (enqueue -> peek), never by inspecting stored bytes: the file content is
+        // ciphertext, and the API is the only contract the drain service consumes.
         const string payload = """{"imei":"862464068456321","note":"quote \" backslash \\ unicode é"}""";
 
         FileForwardOutbox outbox = Build();
@@ -265,6 +335,93 @@ public sealed class EdgeOutboxTests : IDisposable
 
         Assert.Single(parked);
         Assert.Equal(payload, parked[0].PayloadJson);
+    }
+
+    [Fact]
+    public async Task PersistedBytes_RevealNoPlaintextCoordinateOrIdentifier()
+    {
+        // A parked fix is a person's location on the disk of an internet-facing box. Whatever the
+        // storage format claims, the raw bytes must reveal neither the identifier nor the
+        // coordinates — in any encoding an offline grep would try.
+        const string imei = "862464068456321";
+        const string latText = "38.9072";  // 4-dp decimal string forms of the coordinates
+        const string lngText = "77.0369";
+        const string payload =
+            """{"imei":"862464068456321","lat":38.9072,"lng":-77.0369,"gpsTime":"2026-08-21T12:00:00Z"}""";
+
+        FileForwardOutbox outbox = Build();
+        Assert.True(await outbox.EnqueueAsync(payload));
+
+        string[] files = Directory.GetFiles(_directory);
+        Assert.NotEmpty(files);
+
+        foreach (string file in files)
+        {
+            byte[] raw = File.ReadAllBytes(file);
+
+            foreach (string secret in new[] { imei, latText, lngText, payload })
+            {
+                Assert.False(
+                    ContainsSequence(raw, Encoding.UTF8.GetBytes(secret)),
+                    $"UTF-8 form of '{secret}' is readable in {Path.GetFileName(file)}");
+                Assert.False(
+                    ContainsSequence(raw, Encoding.Unicode.GetBytes(secret)),
+                    $"UTF-16LE form of '{secret}' is readable in {Path.GetFileName(file)}");
+            }
+
+            // Nor may the file parse as JSON at all — the old plaintext format was a JSON wrapper
+            // whose "payload" property held everything in the clear.
+            Assert.ThrowsAny<JsonException>(() => JsonDocument.Parse(raw));
+        }
+
+        // Confidentiality must not cost fidelity: the API still returns the exact characters.
+        IReadOnlyList<OutboxEntry> parked = await outbox.PeekAsync(10);
+        Assert.Equal(payload, Assert.Single(parked).PayloadJson);
+    }
+
+    [Fact]
+    public async Task EntryFiles_AreOwnerReadWriteOnly()
+    {
+        // POSIX-only property: UnixFileMode has no meaning on Windows, so the test is a no-op there.
+        if (OperatingSystem.IsWindows()) return;
+
+        FileForwardOutbox outbox = Build();
+        Assert.True(await outbox.EnqueueAsync("""{"imei":"862464068456321"}"""));
+
+        Assert.Equal(
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute,
+            File.GetUnixFileMode(_directory));
+
+        string entry = Assert.Single(Directory.GetFiles(_directory));
+        Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(entry));
+    }
+
+    [Fact]
+    public async Task WrongKey_CannotDecrypt_AndIsDiscardedAsCorrupt()
+    {
+        // Losing the key means losing the parked fixes — bounded, observable loss — and never
+        // means an outbox that silently blocks or a payload that half-decrypts.
+        FileForwardOutbox writer = Build();
+        Assert.True(await writer.EnqueueAsync("""{"imei":"862464068456321","lat":38.9072,"lng":-77.0369}"""));
+
+        byte[] wrongKey = RandomNumberGenerator.GetBytes(32);
+        FileForwardOutbox reader = Build(key: wrongKey);
+
+        Assert.Empty(await reader.PeekAsync(10));
+        Assert.Equal(1, _metrics.OutboxEntriesDiscarded);
+        Assert.Empty(Directory.GetFiles(_directory, "*.enc"));
+    }
+
+    private static bool ContainsSequence(byte[] haystack, byte[] needle)
+    {
+        if (needle.Length == 0 || haystack.Length < needle.Length) return false;
+
+        for (int i = 0; i <= haystack.Length - needle.Length; i++)
+        {
+            if (haystack.AsSpan(i, needle.Length).SequenceEqual(needle)) return true;
+        }
+
+        return false;
     }
 
     [Fact]
@@ -356,7 +513,7 @@ public sealed class EdgeOutboxTests : IDisposable
     {
         FileForwardOutbox outbox = Build();
         await outbox.EnqueueAsync("""{"good":true}""");
-        File.WriteAllText(Path.Combine(_directory, "00000000000000000000-000000000.json"), "not json at all");
+        File.WriteAllText(Path.Combine(_directory, "0000000000000000001-000000000.enc"), "not a sealed entry");
 
         IReadOnlyList<OutboxEntry> parked = await outbox.PeekAsync(10);
 
@@ -375,7 +532,7 @@ public sealed class EdgeOutboxTests : IDisposable
 
         Assert.Throws<InvalidOperationException>(() =>
             new FileForwardOutbox(
-                new OutboxOptions { Path = file, MaxEntries = 10 }, _metrics, NullLogger.Instance));
+                new OutboxOptions { Path = file, MaxEntries = 10 }, _metrics, NullLogger.Instance, OutboxKey));
     }
 
     public void Dispose()

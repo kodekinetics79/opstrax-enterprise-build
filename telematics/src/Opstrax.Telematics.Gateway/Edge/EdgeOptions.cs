@@ -122,6 +122,14 @@ public sealed class ForwardOptions
 }
 
 /// <summary>The durable on-disk queue that makes an OpsTrax outage a delay rather than data loss.</summary>
+/// <remarks>
+/// Entries are AES-256-GCM encrypted at rest. The key is deliberately <b>not</b> a property of
+/// this options object — options instances get logged, dumped, and bound from committed JSON,
+/// which is exactly where a key must never appear. It is read separately from
+/// <c>Gateway:StoreForwardEncryptionKey</c> (base64, 32 bytes), supplied via the gateway's
+/// environment file — never via command line, whose argv is world-readable. See
+/// <c>docs/telematics/security/OUTBOX_KEY_MANAGEMENT.md</c> for provisioning and rotation.
+/// </remarks>
 public sealed class OutboxOptions
 {
     /// <summary>
@@ -145,6 +153,14 @@ public sealed class OutboxOptions
 
     /// <summary>Entries older than this are discarded undelivered and counted. OpsTrax rejects fixes older than 30 days.</summary>
     public TimeSpan MaxAge { get; set; } = TimeSpan.FromDays(7);
+
+    /// <summary>
+    /// Version byte (1–255) stamped into every encrypted entry beside the format version,
+    /// identifying which <c>Gateway:StoreForwardEncryptionKey</c> sealed it. Bump it together
+    /// with the key when rotating, so entries written under the retiring key are attributable;
+    /// an entry the current key cannot open is discarded as corrupt (fail closed, bounded loss).
+    /// </summary>
+    public int EncryptionKeyVersion { get; set; } = 1;
 }
 
 /// <summary>Which protocol adapters the edge offers to inbound connections.</summary>

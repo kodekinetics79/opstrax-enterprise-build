@@ -35,8 +35,10 @@ services:
       DATA_PROTECTION_PREVIOUS_CERTIFICATE_PASSWORD: ${DATA_PROTECTION_PREVIOUS_CERTIFICATE_PASSWORD:-}
       Cors__AllowedOrigins: http://localhost:10000
       Jwt__Key: ${JWT_KEY}
-      Telemetry__DeviceSecret: ${TELEMETRY_DEVICE_SECRET}
-      Telemetry__GatewaySecret: ${TELEMETRY_GATEWAY_SECRET}
+      # The legacy fleet-wide telemetry device/gateway secret env entries were removed:
+      # the device one is dead config, and any non-blank Telemetry:GatewaySecret makes
+      # ConfigValidationService refuse startup in Production/Staging. Per-gateway
+      # credentials live encrypted in telemetry_gateways; do not re-add these keys.
       Telemetry__Simulator__Enabled: ${TELEMETRY_SIMULATOR_ENABLED:-false}
       RetentionWorker__Enabled: ${RETENTION_WORKER_ENABLED:?RETENTION_WORKER_ENABLED must be explicitly true in Production}
       Sse__TicketKey: ${SSE_TICKET_KEY}

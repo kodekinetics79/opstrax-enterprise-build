@@ -38,7 +38,14 @@ using Opstrax.Telematics.Protocols.PacificTrack;
 // registry, process-local replay state, in-memory backbone, or volatile outage buffer is
 // reachable from it.
 
-HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
+// DELIBERATELY built without the command-line configuration source (no `args`): every
+// configuration key — including Gateway:Edge:Forward:Secret and
+// Gateway:StoreForwardEncryptionKey — would otherwise be injectable via argv, and argv is
+// world-readable through /proc/<pid>/cmdline for the life of the process. Configuration comes
+// from appsettings*.json and environment variables only (systemd EnvironmentFile /
+// container environment), which are readable by root and the service user alone. The gateway
+// takes no legitimate command-line arguments, so nothing is lost by removing the source.
+HostApplicationBuilder builder = Host.CreateApplicationBuilder();
 
 GatewayOptions options =
     builder.Configuration.GetSection(GatewayOptions.SectionName).Get<GatewayOptions>()
@@ -58,8 +65,34 @@ builder.Services.AddTelematicsObservability(builder.Configuration);
 
 if (edge.Egress == EgressMode.Https)
 {
-    ConfigureForwardingEdge(builder, options, edge);
-    await RunAsync(builder).ConfigureAwait(false);
+    // The file outbox parks real vehicle fixes on the local disk of an internet-facing box, so
+    // it is AES-256-GCM encrypted unconditionally. Protected environments must supply the key
+    // explicitly — the same fail-closed contract as the Postgres store-and-forward buffer below.
+    // Outside protected environments a missing key falls back to an ephemeral random key: the
+    // on-disk format stays encrypted, but entries parked by a previous run are unreadable under
+    // the new key and are discarded as corrupt on the first drain.
+    bool protectedForwardingEdge = GatewayEnvironment.IsProtected(builder.Environment.EnvironmentName);
+    string? ephemeralKeyWarning = null;
+
+    if (!TryReadKey32(builder.Configuration["Gateway:StoreForwardEncryptionKey"], out byte[] outboxKey))
+    {
+        if (protectedForwardingEdge)
+            throw new InvalidOperationException(
+                "Production and Staging require Gateway:StoreForwardEncryptionKey as a base64-encoded " +
+                "32-byte key. The HTTPS edge writes undeliverable fixes to its on-disk outbox and refuses " +
+                "to store them in cleartext. Provision the key via the gateway's environment file " +
+                "(see docs/telematics/security/OUTBOX_KEY_MANAGEMENT.md), never via command line.");
+
+        outboxKey = System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
+        ephemeralKeyWarning =
+            "No Gateway:StoreForwardEncryptionKey is configured; the outbox is encrypted under an " +
+            "EPHEMERAL key. Fixes parked across a restart will be discarded as corrupt. Configure the " +
+            "key explicitly for durable store-and-forward. Protected environments refuse to start " +
+            "without it.";
+    }
+
+    ConfigureForwardingEdge(builder, options, edge, outboxKey);
+    await RunAsync(builder, ephemeralKeyWarning).ConfigureAwait(false);
     return;
 }
 
@@ -153,7 +186,8 @@ await RunAsync(
 //
 // Nothing registered here can reach a database. That is the security property the mode exists
 // for, and it is enforced by construction rather than by configuration discipline.
-static void ConfigureForwardingEdge(HostApplicationBuilder builder, GatewayOptions options, EdgeOptions edge)
+static void ConfigureForwardingEdge(
+    HostApplicationBuilder builder, GatewayOptions options, EdgeOptions edge, byte[] outboxKey)
 {
     // Refuse to boot on bad forwarding config. An edge that accepts tracker connections it can
     // never deliver looks healthy from outside while quietly filling its outbox.
@@ -170,10 +204,19 @@ static void ConfigureForwardingEdge(HostApplicationBuilder builder, GatewayOptio
         edge.Forward,
         sp.GetRequiredService<ILoggerFactory>().CreateLogger<HttpsOpstraxForwarder>()));
 
-    builder.Services.AddSingleton<IForwardOutbox>(sp => new FileForwardOutbox(
-        edge.Outbox,
-        sp.GetRequiredService<EdgeMetrics>(),
-        sp.GetRequiredService<ILoggerFactory>().CreateLogger<FileForwardOutbox>()));
+    builder.Services.AddSingleton<IForwardOutbox>(sp =>
+    {
+        var outbox = new FileForwardOutbox(
+            edge.Outbox,
+            sp.GetRequiredService<EdgeMetrics>(),
+            sp.GetRequiredService<ILoggerFactory>().CreateLogger<FileForwardOutbox>(),
+            outboxKey);
+
+        // The outbox owns a private copy of the key (zeroed on disposal); this composition-root
+        // copy is done — same zeroing discipline as the Postgres store-and-forward branch.
+        System.Security.Cryptography.CryptographicOperations.ZeroMemory(outboxKey);
+        return outbox;
+    });
 
     // Edge-local replay defence. It is deliberately in-process: OpsTrax owns the DURABLE ledger,
     // keyed on the canonical HMAC signature, and remains the authority across edge restarts and

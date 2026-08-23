@@ -1,12 +1,28 @@
-# OpsTrax device edge — IMEI allowlist
+# OpsTrax device edge — IMEI allowlist FORMAT REFERENCE (a template, not a working list).
 #
-# One identifier per line. Blank lines and '#' comments are ignored, and anything after
-# whitespace on a line is treated as a comment, so an inline note is fine. Separators in the
-# identifier itself (spaces, hyphens) are stripped, so a value pasted from a shipping manifest
-# matches a device that reports bare digits.
+# THIS FILE IS NEVER INSTALLED AUTOMATICALLY, and every placeholder below is deliberately
+# SYNTACTICALLY INADMISSIBLE: the gateway's parser accepts only digits plus separator
+# punctuation (space, tab, -, _, ., :), so the angle-bracketed placeholders can never be
+# admitted — even if this file is copied into service verbatim, it admits NOTHING.
+# Deployment tests pin that property (DeploymentHardeningContractTests).
 #
-# Re-read automatically when the file's modification time changes (Gateway:Edge:Allowlist:
-# ReloadInterval, default 15s) — commissioning a device does not need a restart.
+# FORMAT
+#   One identifier per line. Blank lines and '#' comments are ignored, and anything after
+#   whitespace on a line is treated as a comment, so an inline note is fine. Separators in the
+#   identifier itself (spaces, hyphens) are stripped, so a value pasted from a shipping manifest
+#   matches a device that reports bare digits.
+#
+#   Re-read automatically when the file's modification time changes (Gateway:Edge:Allowlist:
+#   ReloadInterval, default 15s) — commissioning a device does not need a restart.
+#
+# WHERE REAL VALUES COME FROM
+#   The IMEIs recorded when the devices were provisioned in OpsTrax (Fleet -> Devices, the
+#   eld_devices rows created via POST /api/telemetry/devices), or the shipping manifest for the
+#   physical units. Never copy an IMEI from documentation or an example.
+#
+# DO NOT LIST ALL-ZERO IDENTIFIERS (e.g. fifteen zeros): the parser treats ANY 8-20 digit line
+# as a real identifier, and faulted or factory-reset trackers self-report all-zero IMEIs — an
+# all-zero line would admit every such device at once.
 #
 # FAIL-CLOSED, BOTH WAYS:
 #   - an empty allowlist admits nothing;
@@ -16,4 +32,5 @@
 # This is admission control, not authentication. An IMEI is a self-asserted, spoofable bearer
 # identifier; OpsTrax still resolves the device and enforces tenant scoping on every fix.
 
-862464068456321   # PT40-Q, serial 4C4000067803 — Khalid pilot, tractor 118
+<IMEI-15-DIGITS>   # replace with the provisioned device's IMEI, e.g. one PT40-Q per line
+<IMEI-15-DIGITS>   # one line per provisioned device; delete unused placeholder lines

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using Microsoft.Extensions.Logging.Abstractions;
 using Opstrax.Telematics.Contracts.Adapters;
 using Opstrax.Telematics.Gateway;
@@ -314,7 +315,7 @@ public sealed class EdgeForwardingConnectionTests
                 directory = Directory.CreateTempSubdirectory("opstrax-edge-").FullName;
                 outbox = new FileForwardOutbox(
                     new OutboxOptions { Path = directory, MaxEntries = 100 },
-                    metrics, NullLogger.Instance);
+                    metrics, NullLogger.Instance, RandomNumberGenerator.GetBytes(32));
             }
 
             var factory = new ForwardingConnectionHandlerFactory(

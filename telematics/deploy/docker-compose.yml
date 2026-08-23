@@ -30,8 +30,16 @@ services:
       Gateway__Edge__Egress: "Https"
       Gateway__Edge__Forward__BaseUrl: "${OPSTRAX_BASE_URL:?set OPSTRAX_BASE_URL}"
       Gateway__Edge__Forward__GatewayId: "${OPSTRAX_GATEWAY_ID:?set OPSTRAX_GATEWAY_ID}"
-      # Supplied via the environment or an .env file beside this compose file. Never inline it.
+      # Supplied via the environment or an .env file beside this compose file. Never inline it,
+      # and never pass it on a command line — argv is world-readable via /proc.
       Gateway__Edge__Forward__Secret: "${OPSTRAX_GATEWAY_SECRET:?set OPSTRAX_GATEWAY_SECRET}"
+
+      # AES-256 key (base64, 32 bytes: `openssl rand -base64 32`) that encrypts the on-disk
+      # outbox. The gateway REFUSES TO BOOT in Production/Staging Https mode without it — parked
+      # fixes are real vehicle locations and are never stored in cleartext. Keep the same key
+      # across restarts or previously parked fixes are discarded as corrupt. See
+      # docs/telematics/security/OUTBOX_KEY_MANAGEMENT.md.
+      Gateway__StoreForwardEncryptionKey: "${OPSTRAX_OUTBOX_KEY:?set OPSTRAX_OUTBOX_KEY (base64 32-byte key, e.g. openssl rand -base64 32)}"
 
       Gateway__Edge__Allowlist__Path: "/etc/opstrax/imei-allowlist.txt"
       Gateway__Edge__Outbox__Path: "/var/lib/opstrax-gateway/outbox"
@@ -41,9 +49,15 @@ services:
 
     volumes:
       # Read-only: the edge never edits its own admission list. Edits on the host are picked up
-      # within ~15s without a restart. NOTE: relative paths here resolve against
-      # --project-directory (the repo root), not against this file.
-      - ./telematics/deploy/imei-allowlist.txt:/etc/opstrax/imei-allowlist.txt:ro
+      # within ~15s without a restart.
+      #
+      # BIND-MOUNT PITFALL, guarded here: if a bind-mount's host path does not exist, Docker
+      # silently creates it as an empty DIRECTORY — the gateway then fails closed ("allowlist
+      # unreadable", nothing admitted) with a confusing cause. The ${...:?} guard forces you to
+      # name the real, provisioned allowlist file on this host (e.g. /etc/opstrax/imei-allowlist.txt)
+      # before compose will start. Do NOT point it at the in-repo imei-allowlist.example.txt:
+      # that file is a format reference containing only inadmissible placeholders.
+      - "${OPSTRAX_IMEI_ALLOWLIST:?point OPSTRAX_IMEI_ALLOWLIST at the provisioned imei-allowlist.txt file on this host}:/etc/opstrax/imei-allowlist.txt:ro"
       # A NAMED VOLUME, not a tmpfs: this is the store-and-forward queue, and losing it on restart
       # converts an OpsTrax outage from a delay into data loss.
       - outbox:/var/lib/opstrax-gateway/outbox
