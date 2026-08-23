@@ -10,7 +10,7 @@ public sealed class CoreSchemaService(Database db, ILogger<CoreSchemaService> lo
         var path = ResolveSchemaPath();
         var sql = await File.ReadAllTextAsync(path, ct);
 
-        foreach (var statement in SplitStatements(sql))
+        foreach (var statement in SqlStatementSplitter.Split(sql))
         {
             try
             {
@@ -72,32 +72,4 @@ public sealed class CoreSchemaService(Database db, ILogger<CoreSchemaService> lo
         throw new FileNotFoundException("Core schema file database/init/001_schema.sql was not found.");
     }
 
-    private static IEnumerable<string> SplitStatements(string sql)
-    {
-        var start = 0;
-        var inSingleQuote = false;
-
-        for (var i = 0; i < sql.Length; i++)
-        {
-            if (sql[i] == '\'')
-            {
-                if (inSingleQuote && i + 1 < sql.Length && sql[i + 1] == '\'')
-                {
-                    i++;
-                    continue;
-                }
-
-                inSingleQuote = !inSingleQuote;
-            }
-            else if (sql[i] == ';' && !inSingleQuote)
-            {
-                var statement = sql[start..i].Trim();
-                if (statement.Length > 0) yield return statement;
-                start = i + 1;
-            }
-        }
-
-        var tail = sql[start..].Trim();
-        if (tail.Length > 0) yield return tail;
-    }
 }

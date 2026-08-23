@@ -111,6 +111,15 @@ MIGRATIONS=(
   2026_07_30_stage49_mfa_challenge_one_time
   2026_07_30_stage50_fleet_production_contract
   2026_07_30_stage51_production_runtime_support
+  # MUST follow stage51: it ALTERs latest_vehicle_positions, which stage51 creates.
+  # This array is a hand-maintained DEPENDENCY order, not a filename/date sort --
+  # stage30 is dated earlier but cannot run earlier.
+  # Adds geocoded_at/_lat/_lng, read AND written by
+  # POST /api/maps/reverse-geocode-positions (EndpointMappings.cs:11161-11179).
+  # While unenrolled the endpoint was a live 42703 in every protected environment,
+  # invisible to both schema guards (the parity test only sees SchemaService
+  # declarations; the orphan rule had no column dimension).
+  2026_07_09_stage30_position_address_cache
   # Stage12 enriches telemetry tables whose owner-safe definitions are installed
   # by Stage51 on the supported protected predecessor.
   2026_06_28_stage12a_telemetry_live_state
@@ -151,8 +160,33 @@ MIGRATIONS=(
   2026_08_20_stage81_customer_eta_secure_token
   2026_08_20_stage82_telematics_device_credential_constraint
   2026_08_21_stage83_company_security_settings_runtime_contract
+  # platform_settings is the operator SMTP/config store; protected environments never
+  # run PlatformSettingsService.EnsureSchemaAsync, so this file is its only creator.
+  2026_08_21_stage83_platform_settings
   2026_08_21_stage84_driver_hos_runtime_contract
   2026_08_21_stage85_alert_notification_delivery
+  # Stage86 ends the schema-service/migration split-brain for the runtime route
+  # columns (routes.sla_risk, work_orders/maintenance_items.asset_id,
+  # safety/dashcam event_number, audit_logs severity/module_key/action_type):
+  # protected environments skip the owner-capable Batch* schema services, so this
+  # file is the only path that materializes those columns there.
+  2026_08_22_stage86_runtime_route_column_contract
+  # Stage87 backfills users.role_id from role_name with the ResolveRoleRecord
+  # precedence (tenant-local role over global on a name collision).
+  2026_08_22_stage87_user_role_id_backfill
+  # Stage88 makes migrations the ONLY schema authority. Program.cs
+  # ShouldRunSchemaInitAsync skips EVERY runtime *SchemaService whenever the process
+  # is the restricted opstrax_app role under RLS enforcement — always true here — so
+  # 1,006 columns and 51 tables declared only in those services could never exist in
+  # a protected environment. Stage86 fixed 8 of them by hand and still left
+  # routes.efficiency_score, which sits in the same CASE expression as the
+  # routes.sla_risk it did enrol. This file is generated mechanically from all 48
+  # backend-dotnet/Services/*SchemaService.cs declaration lists, so the class cannot
+  # reopen one column at a time. It MUST run last: it creates tables that carry
+  # company_id and therefore enter FleetProductionReadinessService's dynamic
+  # tenant_scope, and it re-applies stage76's safe-column eld_devices grant over the
+  # column it adds there.
+  2026_08_22_stage88_runtime_schema_service_contract
 )
 
 echo "Target host: $(printf '%s' "$NEON_PG_URI" | sed -E 's|.*@([^/:?]+).*|\1|')"

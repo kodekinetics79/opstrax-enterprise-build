@@ -184,7 +184,22 @@ public sealed class FleetProductionReadinessService
           ('safety_events',true),('driver_safety_scores',true),('telemetry_live_asset_states',true),
           ('fleet_health_snapshots',true),('evidence_package_items',true),('vehicle_safety_scorecards',true),
           ('ai_recommendations',true),('maintenance_pm_rules',true),('maintenance_items',true),
-          ('integrations',true),('geofences',true),('dispatch_exceptions',true)
+          ('integrations',true),('geofences',true),('dispatch_exceptions',true),
+          -- Stage88 runtime schema-service contract. Every table below was declared ONLY by an
+          -- owner-capable *SchemaService, which Program.cs skips in a protected environment, so
+          -- none of them could ever exist there while readiness stayed green and the endpoints
+          -- selecting them returned 42P01 (/api/settings/api-keys is the proven case). Enrolling
+          -- them here turns that failure class RED on /health/ready instead of shipping 500s.
+          ('alert_rules',true),('alert_follow_up_tasks',true),
+          ('customer_visibility',true),('dispatch_eligibility_config',true),
+          ('journal_entries',true),
+          ('messaging_conversations',true),('messaging_messages',true),
+          ('platform_invoice_lines',false),('tenant_billing_plan_items',true),
+          ('platform_tax_registrations',false),('platform_tax_rules',false),
+          ('safety_coaching_tasks',true),('sso_connections',true),
+          ('access_reviews',true),('backup_verifications',true),
+          ('tenant_api_keys',true),('tenant_webhook_settings',true),
+          ('company_profile',true),('user_notification_prefs',true)
         ), reference_tables(name) AS (VALUES
           ('fleet_tms_saudi_regions'),('market_packs'),('market_pack_features'),('market_address_schemas'),
           ('market_document_types'),('market_driver_requirements'),('market_vehicle_requirements'),
@@ -343,6 +358,137 @@ public sealed class FleetProductionReadinessService
           ,('platform_admins','invite_expires_at','timestamp with time zone',false,'','')
           ,('platform_admins','updated_at','timestamp with time zone',true,'now()','')
           ,('platform_admins','mfa_secret','character varying(160)',false,'','')
+          -- Stage86 runtime route column contract: previously created only by the
+          -- owner-capable Batch2/3/4/7 schema services, which protected environments
+          -- skip — readiness stayed green while the selecting endpoints returned 500 (42703).
+          ,('routes','sla_risk','character varying(60)',true,'''Low''::character varying','')
+          ,('work_orders','asset_id','bigint',false,'','')
+          ,('maintenance_items','asset_id','bigint',false,'','')
+          ,('safety_events','event_number','character varying(80)',false,'','')
+          ,('dashcam_events','event_number','character varying(80)',false,'','')
+          ,('audit_logs','severity','character varying(40)',true,'''Info''::character varying','')
+          ,('audit_logs','module_key','character varying(100)',false,'','')
+          ,('audit_logs','action_type','character varying(80)',true,'''update''::character varying','')
+          -- Stage88 runtime schema-service contract — the CORE JOURNEY columns.
+          -- Declared only by the owner-capable Batch*/Maintenance/Telemetry schema services
+          -- that Program.cs skips under RLS enforcement, so a protected environment could
+          -- never have them: /api/routes 500'd on efficiency_score while stage86 enrolled
+          -- routes.sla_risk from the SAME CASE expression. Every string below was read back
+          -- with format_type(a.atttypid,a.atttypmod) / attnotnull / pg_get_expr(d.adbin,d.adrelid)
+          -- from a freshly rebuilt migration-pure database — a paraphrase here makes
+          -- /health/ready permanently RED and render.yaml withholds traffic.
+          ,('routes','cost_estimate','numeric(12,2)',false,'','')
+          ,('routes','efficiency_score','numeric(6,2)',true,'85','')
+          ,('routes','notes','text',false,'','')
+          ,('routes','optimization_mode','character varying(80)',true,'''Balanced''::character varying','')
+          ,('routes','region','character varying(120)',false,'','')
+          ,('routes','route_type','character varying(80)',true,'''Delivery''::character varying','')
+          ,('routes','total_stops','integer',true,'0','')
+          ,('routes','updated_at','timestamp with time zone',false,'','')
+          ,('work_orders','actual_cost','numeric(12,2)',false,'','')
+          ,('work_orders','approved_cost','numeric(12,2)',false,'','')
+          ,('work_orders','assigned_at','timestamp with time zone',false,'','')
+          ,('work_orders','assigned_to_user_id','bigint',false,'','')
+          ,('work_orders','completed_at','timestamp with time zone',false,'','')
+          ,('work_orders','cost_approval_status','character varying(80)',true,'''Pending''::character varying','')
+          ,('work_orders','created_at','timestamp with time zone',true,'now()','')
+          ,('work_orders','created_date','timestamp with time zone',false,'','')
+          ,('work_orders','description','text',false,'','')
+          ,('work_orders','downtime_hours','numeric(8,2)',true,'0','')
+          ,('work_orders','dvir_report_id','bigint',false,'','')
+          ,('work_orders','issue_type','character varying(120)',false,'','')
+          ,('work_orders','maintenance_item_id','bigint',false,'','')
+          ,('work_orders','notes','text',false,'','')
+          ,('work_orders','recommended_action','character varying(240)',false,'','')
+          ,('work_orders','risk_score','numeric(6,2)',true,'35','')
+          ,('work_orders','started_at','timestamp with time zone',false,'','')
+          ,('work_orders','updated_at','timestamp with time zone',false,'','')
+          ,('work_orders','vendor_name','character varying(160)',false,'','')
+          ,('work_orders','work_order_number','character varying(80)',false,'','')
+          ,('safety_events','ai_summary','text',false,'','')
+          ,('safety_events','coaching_status','character varying(80)',true,'''Not Created''::character varying','')
+          ,('safety_events','incident_status','character varying(80)',true,'''None''::character varying','')
+          ,('safety_events','job_id','bigint',false,'','')
+          ,('safety_events','latitude','numeric(10,7)',false,'','')
+          ,('safety_events','location_description','character varying(220)',false,'','')
+          ,('safety_events','longitude','numeric(10,7)',false,'','')
+          ,('safety_events','occurred_at','timestamp with time zone',false,'','')
+          ,('safety_events','posted_speed_limit','numeric(8,2)',false,'','')
+          ,('safety_events','recommended_action','character varying(260)',false,'','')
+          ,('safety_events','route_id','bigint',false,'','')
+          ,('safety_events','speed','numeric(8,2)',false,'','')
+          ,('expenses','approval_status','character varying(80)',true,'''Pending''::character varying','')
+          ,('expenses','carrier_id','bigint',false,'','')
+          ,('expenses','category_name','character varying(120)',false,'','')
+          ,('expenses','currency','character varying(10)',true,'''USD''::character varying','')
+          ,('expenses','customer_id','bigint',false,'','')
+          ,('expenses','deleted_at','timestamp with time zone',false,'','')
+          ,('expenses','document_id','bigint',false,'','')
+          ,('expenses','driver_id','bigint',false,'','')
+          ,('expenses','expense_number','character varying(80)',false,'','')
+          ,('expenses','job_id','bigint',false,'','')
+          ,('expenses','notes','text',false,'','')
+          ,('expenses','receipt_status','character varying(80)',true,'''Missing''::character varying','')
+          ,('expenses','recommended_action','character varying(260)',false,'','')
+          ,('expenses','risk_score','numeric(6,2)',true,'20','')
+          ,('expenses','route_id','bigint',false,'','')
+          ,('expenses','updated_at','timestamp with time zone',false,'','')
+          ,('expenses','vehicle_id','bigint',false,'','')
+          ,('expenses','vendor_name','character varying(180)',false,'','')
+          ,('fuel_transactions','anomaly_status','character varying(80)',true,'''Normal''::character varying','')
+          ,('fuel_transactions','currency','character varying(10)',true,'''USD''::character varying','')
+          ,('fuel_transactions','deleted_at','timestamp with time zone',false,'','')
+          ,('fuel_transactions','driver_id','bigint',false,'','')
+          ,('fuel_transactions','fuel_card_number','character varying(80)',false,'','')
+          ,('fuel_transactions','fuel_date','date',false,'','')
+          ,('fuel_transactions','fuel_type','character varying(80)',true,'''Diesel''::character varying','')
+          ,('fuel_transactions','job_id','bigint',false,'','')
+          ,('fuel_transactions','notes','text',false,'','')
+          ,('fuel_transactions','odometer','numeric(12,2)',false,'','')
+          ,('fuel_transactions','payment_method','character varying(80)',true,'''Fleet Card''::character varying','')
+          ,('fuel_transactions','quantity','numeric(10,3)',true,'0','')
+          ,('fuel_transactions','recommended_action','character varying(260)',false,'','')
+          ,('fuel_transactions','region','character varying(120)',false,'','')
+          ,('fuel_transactions','route_id','bigint',false,'','')
+          ,('fuel_transactions','transaction_number','character varying(80)',false,'','')
+          ,('fuel_transactions','unit','character varying(30)',true,'''Gallons''::character varying','')
+          ,('fuel_transactions','unit_price','numeric(10,4)',true,'0','')
+          ,('fuel_transactions','updated_at','timestamp with time zone',false,'','')
+          ,('maintenance_items','created_at','timestamp with time zone',true,'now()','')
+          ,('maintenance_items','due_engine_hours','integer',false,'','')
+          ,('maintenance_items','due_odometer','integer',false,'','')
+          ,('dashcam_events','ai_confidence','numeric(6,2)',true,'84','')
+          ,('dashcam_events','ai_summary','text',false,'','')
+          ,('dashcam_events','created_at','timestamp with time zone',true,'now()','')
+          ,('dashcam_events','deleted_at','timestamp with time zone',false,'','')
+          ,('dashcam_events','driver_facing_clip_url','character varying(400)',false,'','')
+          ,('dashcam_events','driver_id','bigint',false,'','')
+          ,('dashcam_events','event_type','character varying(120)',false,'','')
+          ,('dashcam_events','evidence_status','character varying(80)',true,'''Not Packaged''::character varying','')
+          ,('dashcam_events','false_positive','boolean',true,'false','')
+          ,('dashcam_events','job_id','bigint',false,'','')
+          ,('dashcam_events','latitude','numeric(10,7)',false,'','')
+          ,('dashcam_events','location_description','character varying(220)',false,'','')
+          ,('dashcam_events','longitude','numeric(10,7)',false,'','')
+          ,('dashcam_events','occurred_at','timestamp with time zone',false,'','')
+          ,('dashcam_events','recommended_action','character varying(260)',false,'','')
+          ,('dashcam_events','review_status','character varying(80)',true,'''Pending Review''::character varying','')
+          ,('dashcam_events','road_facing_clip_url','character varying(400)',false,'','')
+          ,('dashcam_events','route_id','bigint',false,'','')
+          ,('dashcam_events','thumbnail_url','character varying(400)',false,'','')
+          ,('dashcam_events','updated_at','timestamp with time zone',false,'','')
+          ,('dashcam_events','vehicle_id','bigint',false,'','')
+          ,('tenant_api_keys','id','bigint',true,'','a')
+          ,('tenant_api_keys','company_id','bigint',true,'','')
+          ,('tenant_api_keys','key_hash','character varying(64)',true,'','')
+          ,('tenant_api_keys','key_prefix','character varying(32)',true,'','')
+          ,('tenant_api_keys','last_four','character varying(8)',true,'','')
+          ,('tenant_api_keys','label','character varying(200)',false,'','')
+          ,('tenant_api_keys','created_by','character varying(200)',false,'','')
+          ,('tenant_api_keys','created_at','timestamp with time zone',true,'now()','')
+          ,('tenant_api_keys','last_used_at','timestamp with time zone',false,'','')
+          ,('tenant_api_keys','revoked_at','timestamp with time zone',false,'','')
+          ,('tenant_api_keys','revoked_by','character varying(200)',false,'','')
         ), identity_indexes(name, table_name, key1, key2, predicate) AS (VALUES
           ('uq_vehicles_identity_code_normalized','vehicles','company_id','lower(btrim(vehicle_code::text))',''),
           ('uq_drivers_identity_code_normalized','drivers','company_id','lower(btrim(driver_code::text))',''),

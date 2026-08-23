@@ -388,15 +388,35 @@ if (IsProtectedEnvironment(app.Environment) && app.Configuration.GetValue<bool>(
 
 using (var scope = app.Services.CreateScope())
 {
-    // Schema init does DDL + seeding and MUST run as the DB owner, never the
-    // restricted runtime role (opstrax_app is NOSUPERUSER/NOBYPASSRLS with no DDL
-    // grants). Decide up front whether to run it:
-    //   • owner-capable role (super/bypassrls)  -> run schema init (normal path).
-    //   • restricted role + RLS enforced        -> SKIP with a clear log; the owner
-    //     applies migrations/seeders out-of-band (documented production flow), so the
-    //     single runtime process can boot as opstrax_app without failing on DDL.
-    //   • restricted role + RLS off (misconfig) -> warn but still attempt (legacy behaviour).
-    var runSchemaInit = await ShouldRunSchemaInitAsync(app, scope.ServiceProvider.GetRequiredService<Database>());
+    // ── MIGRATIONS ARE THE ONLY SCHEMA AUTHORITY (stage88) ────────────────────
+    // Boot-time runtime DDL is RETIRED. It was never a schema authority: this
+    // process skipped every *SchemaService whenever it connected as the restricted
+    // opstrax_app role under RLS enforcement — always true in staging and
+    // production — so 1,006 columns and 51 tables that only those services declared
+    // could never exist there, and the endpoints selecting them returned 42703 /
+    // 42P01 while /health/ready stayed green. A boot path that runs in development
+    // and silently does not run in production is a split-brain, not a fallback.
+    // database/migrations/2026_08_22_stage88_runtime_schema_service_contract.sql
+    // materializes every one of those declarations as migration-owned schema, so
+    // the migration chain is now a strict superset of what this block ever built.
+    //
+    // The *SchemaService classes and their declaration lists are DELIBERATELY kept:
+    // they are the generator input for stage88 and the subject of the runtime/
+    // migration parity test. Only their EXECUTION at boot is retired.
+    //
+    // DEV / LOCAL ONBOARDING is the same command production uses:
+    //   NEON_PG_URI=postgresql://…/opstrax_local ./tools/apply-neon-predeploy-migrations.sh
+    //
+    // The decision is now explicit configuration, never inferred from the connected
+    // role (see ResolveRuntimeSchemaDdlAsync): once a database carries the stage88
+    // ledger row, boot performs NO DDL on it — which is every protected environment
+    // and every correctly-onboarded dev box. The one surviving exception is a
+    // database the chain has never touched at all, where the legacy path still
+    // bootstraps rather than leaving a developer with an empty database and no
+    // explanation. `SchemaInit:RunRuntimeDdl` overrides both directions.
+    var runtimeIdentity = scope.ServiceProvider.GetRequiredService<Database>();
+    await AssertRuntimeDatabaseIdentityAsync(app, runtimeIdentity);
+    var runSchemaInit = await ResolveRuntimeSchemaDdlAsync(app, builder.Configuration, runtimeIdentity);
     if (runSchemaInit)
     {
     await RunSchemaStep(app, "Core", () => scope.ServiceProvider.GetRequiredService<CoreSchemaService>().EnsureAsync());
@@ -503,8 +523,10 @@ using (var scope = app.Services.CreateScope())
     }
     else
     {
-        app.Logger.LogWarning("Schema init SKIPPED — runtime is connected as the restricted role under RLS enforcement. " +
-            "Ensure migrations/seeders have been applied out-of-band by the DB owner.");
+        app.Logger.LogInformation(
+            "Boot-time schema DDL is retired — migrations are the only schema authority. " +
+            "Apply database/migrations via tools/apply-neon-predeploy-migrations.sh (through stage88) " +
+            "before starting the API; /health/ready reports any object the contract still misses.");
     }
 }
 
@@ -1574,18 +1596,101 @@ static async Task RunSchemaStep(WebApplication app, string name, Func<Task> step
     }
 }
 
-// Guard: schema init must connect as the DB owner, not the restricted `opstrax_app`
-// role. A NOBYPASSRLS non-superuser role has no DDL grants and would fail every
-// CREATE/ALTER — so we detect it up front and throw, halting startup with a clear
-// message instead of a cascade of permission errors. Only enforced when RLS is on
-// (the only scenario in which a restricted role is even in play); otherwise a warning.
-// Decide whether startup should run schema DDL/seeding, based on the connected role.
-//   owner-capable (super/bypassrls)        -> true  (normal single-process path)
-//   restricted role + RLS enforced         -> false (owner applies schema out-of-band;
-//                                                     runtime boots as opstrax_app safely)
-//   restricted role + RLS off (misconfig)  -> true + warn (legacy behaviour; DDL will
-//                                                     likely fail, surfaced loudly)
-static async Task<bool> ShouldRunSchemaInitAsync(WebApplication app, Database db)
+// Decide whether boot runs the retired *SchemaService DDL.
+//
+// Stage88 made migrations the only schema authority, so this answers "no" for every
+// database the migration chain has touched. It is deliberately NOT inferred from the
+// connected role any more: role inference is exactly what produced the split-brain
+// (owner-capable dev boot built 1,006 columns that the restricted staging/production
+// process could never build, so the deployed code queried columns the deployed
+// database could not hold).
+//
+//   protected environment               -> false, ALWAYS. Owners apply the chain. This is
+//                                          an absolute floor and is evaluated FIRST: a
+//                                          `true` in SchemaInit:RunRuntimeDdl is refused
+//                                          (and logged) rather than honoured, because a
+//                                          config flag must not be able to re-enable
+//                                          retired boot DDL in production. `false` there
+//                                          is redundant but harmless.
+//   SchemaInit:RunRuntimeDdl set        -> otherwise honour it, both directions.
+//   stage88 ledger row present          -> false. Migrations own this database.
+//   otherwise (chain never applied here) -> true + a loud warning naming the chain,
+//                                          so a first boot against a genuinely empty
+//                                          local database still bootstraps.
+static async Task<bool> ResolveRuntimeSchemaDdlAsync(WebApplication app, IConfiguration configuration, Database db)
+{
+    const string Stage88 = "2026_08_22_stage88_runtime_schema_service_contract";
+    var configured = configuration.GetValue<bool?>("SchemaInit:RunRuntimeDdl");
+
+    // The protected-environment floor is checked BEFORE the config flag, not after it.
+    // Evaluating the flag first made the header's "protected environment -> false, always"
+    // untrue: anything that can set SchemaInit:RunRuntimeDdl=true (an env var, a stray
+    // appsettings override, a copied Render blueprint) could re-enable the retired boot DDL
+    // against production and rebuild the split-brain that stage88 exists to end. Refuse it
+    // loudly instead of silently obeying.
+    if (configured is true && IsProtectedEnvironment(app.Environment))
+    {
+        app.Logger.LogWarning(
+            "SchemaInit:RunRuntimeDdl=true was REFUSED — {Environment} is a protected environment and boot DDL is " +
+            "permanently disabled there. Schema is migration-owned; apply the migration chain with an owner role.",
+            app.Environment.EnvironmentName);
+    }
+    if (IsProtectedEnvironment(app.Environment))
+    {
+        app.Logger.LogInformation("Boot schema DDL disabled — protected environment. Schema is migration-owned.");
+        return false;
+    }
+
+    if (configured is not null)
+    {
+        app.Logger.LogInformation("Boot schema DDL is explicitly configured: SchemaInit:RunRuntimeDdl={Configured}.", configured);
+        return configured.Value;
+    }
+    try
+    {
+        // Two steps on purpose: PostgreSQL parses the whole statement before it runs,
+        // so a CASE guarding a SELECT on a missing relation still raises 42P01 — which
+        // would send a genuinely empty database down the "cannot tell" branch.
+        var ledgerExists = await db.ScalarLongAsync(
+            "SELECT CASE WHEN to_regclass('public.schema_migrations') IS NULL THEN 0 ELSE 1 END");
+        var ledgered = ledgerExists == 0
+            ? 0
+            : await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM schema_migrations WHERE version=@version",
+                c => c.Parameters.AddWithValue("@version", Stage88));
+        if (ledgered > 0)
+        {
+            app.Logger.LogInformation(
+                "Boot schema DDL disabled — {Version} is ledgered, so migrations own this database.", Stage88);
+            return false;
+        }
+        app.Logger.LogWarning(
+            "This database has no {Version} ledger row, so the migration chain has never been applied to it. " +
+            "Running the RETIRED boot-time schema services once so a first local boot is not left with an empty " +
+            "database. Apply tools/apply-neon-predeploy-migrations.sh — it is the only schema authority and a " +
+            "strict superset of what this path builds.", Stage88);
+        return true;
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning(ex, "Could not read the migration ledger; leaving boot schema DDL disabled.");
+        return false;
+    }
+}
+
+// Fail-closed proof of the runtime database identity.
+//
+// This USED to be ShouldRunSchemaInitAsync: it decided whether boot ran the runtime
+// *SchemaService DDL, and answering "no" for every restricted-role/RLS-enforced
+// process is exactly what made staging and production structurally unable to hold
+// the 1,006 columns those services declared. Stage88 moved every one of those
+// declarations into database/migrations, so the DDL decision no longer exists —
+// migrations are the only schema authority and boot never runs DDL.
+//
+// What survives is the half that was always load-bearing: a protected environment
+// must be connected as the EXACT restricted opstrax_app identity with no role
+// memberships and no CREATE rights, and startup is refused otherwise.
+static async Task AssertRuntimeDatabaseIdentityAsync(WebApplication app, Database db)
 {
     try
     {
@@ -1642,23 +1747,10 @@ static async Task<bool> ShouldRunSchemaInitAsync(WebApplication app, Database db
                 "Protected-environment runtime database role must be exact restricted opstrax_app with no role memberships.");
         }
 
-        if (looksLikeOwner)
-        {
-            app.Logger.LogInformation("Schema init will run — owner-capable role '{Role}' (super={Super}, bypassrls={Bypass}).",
-                roleName, isSuper, bypassRls);
-            return true;
-        }
-
-        if (rlsEnforced)
-        {
-            app.Logger.LogWarning("Skipping schema init — connected as restricted role '{Role}' under RLS enforcement. " +
-                "Migrations/seeders must be applied out-of-band by the DB owner.", roleName);
-            return false;
-        }
-
-        app.Logger.LogWarning("Connected as restricted role '{Role}' but RLS is OFF — attempting schema init anyway; " +
-            "DDL may fail. Apply owner migrations out-of-band before runtime boot.", roleName);
-        return true;
+        app.Logger.LogInformation(
+            "Runtime database identity proven — role '{Role}' (super={Super}, bypassrls={Bypass}, rlsEnforced={Rls}). " +
+            "Schema is migration-owned; boot performs no DDL.",
+            roleName, isSuper, bypassRls, rlsEnforced);
     }
     catch (Exception ex)
     {
@@ -1669,9 +1761,9 @@ static async Task<bool> ShouldRunSchemaInitAsync(WebApplication app, Database db
             throw new InvalidOperationException(
                 "Protected-environment runtime database role must be provably restricted opstrax_app.", ex);
         }
-        // Never block startup on the check itself failing (e.g. restricted pg_roles view).
-        app.Logger.LogWarning(ex, "Schema init role check could not be evaluated; proceeding with schema init.");
-        return true;
+        // Never block a non-protected startup on the check itself failing (e.g. a
+        // restricted pg_roles view). No DDL depends on the answer any more.
+        app.Logger.LogWarning(ex, "Runtime database identity check could not be evaluated; continuing.");
     }
 }
 
