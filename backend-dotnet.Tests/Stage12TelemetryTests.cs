@@ -132,9 +132,16 @@ public class Stage12TelemetryTests
     public void TelemetryPermissions_FailClosed_And_Recognize_Allowed_Aliases()
     {
         Assert.True(EndpointMappings.HasPermission(new[] { "map:view" }, "telemetry.live_state.read"));
-        Assert.True(EndpointMappings.HasPermission(new[] { "fleet:view" }, "telemetry.devices.read"));
+        Assert.True(EndpointMappings.HasPermission(new[] { "telematics:devices:view" }, "telemetry.devices.read"));
         Assert.True(EndpointMappings.HasPermission(new[] { "alerts:view" }, "telemetry.alerts.read"));
         Assert.False(EndpointMappings.HasPermission(Array.Empty<string>(), "telemetry.live_state.read"));
+        // Packet-2 alias mirror (tightened): coarse view grants no longer satisfy the
+        // telemetry surfaces — a fleet:view/dashboard:view-only session is denied.
+        Assert.False(EndpointMappings.HasPermission(new[] { "fleet:view" }, "telemetry.devices.read"));
+        Assert.False(EndpointMappings.HasPermission(new[] { "fleet:view" }, "telemetry.live_state.read"));
+        Assert.False(EndpointMappings.HasPermission(new[] { "dashboard:view" }, "telemetry.live_state.read"));
+        Assert.False(EndpointMappings.HasPermission(new[] { "dashboard:view" }, "telemetry.rules.read"));
+        Assert.False(EndpointMappings.HasPermission(new[] { "reports:manage" }, "audit:view"));
     }
 
     private static Database CreateDatabase()

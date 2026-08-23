@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Configuration;
+using Opstrax.Api.Controllers;
 using Opstrax.Api.Data;
 using Opstrax.Api.Services;
 using Xunit;
@@ -163,6 +164,219 @@ public class CustomerPortalPostgresTests
         await CleanupAsync(db, companyId);
         await CleanupAsync(db, otherCompanyId);
     }
+
+    // ── DEF-027: customer-scope binding + own-jobs visibility ──────────────────────
+
+    [Fact]
+    public async Task GetOwnJobs_ZeroOneMultiple_OrderedAndStrictlyScoped()
+    {
+        var db = CreateDatabase();
+        await EnsureSchemasAsync(db);
+        var companyId = await SeedCompanyAsync(db);
+        var otherCompanyId = await SeedCompanyAsync(db);
+        var customerA = await SeedCustomerAsync(db, companyId, "cust-jobs-A");
+        var customerB = await SeedCustomerAsync(db, companyId, "cust-jobs-B");
+        var otherCustomer = await SeedCustomerAsync(db, otherCompanyId, "cust-jobs-other");
+        var svc = new CustomerPortalService(db);
+
+        try
+        {
+            // Zero: a customer with no jobs sees an empty list (not an error, not others' rows).
+            Assert.Empty(await svc.GetOwnJobsAsync(companyId, customerA));
+
+            // One.
+            await SeedJobAtAsync(db, companyId, customerA, "JOB-ORD-2", daysAgo: 2);
+            var one = await svc.GetOwnJobsAsync(companyId, customerA);
+            Assert.Equal("JOB-ORD-2", Assert.Single(one)["jobNumber"]?.ToString());
+
+            // Multiple — ordered by scheduled_start DESC (newest first).
+            await SeedJobAtAsync(db, companyId, customerA, "JOB-ORD-1", daysAgo: 1);
+            await SeedJobAtAsync(db, companyId, customerA, "JOB-ORD-5", daysAgo: 5);
+            var many = await svc.GetOwnJobsAsync(companyId, customerA);
+            Assert.Equal(new[] { "JOB-ORD-1", "JOB-ORD-2", "JOB-ORD-5" },
+                many.Select(j => j["jobNumber"]?.ToString()).ToArray());
+
+            // Exclusions: same-company other customer, other company, NULL customer binding,
+            // and soft-deleted own job must never surface.
+            await SeedJobAtAsync(db, companyId, customerB, "JOB-ORD-B", daysAgo: 1);
+            await SeedJobAtAsync(db, otherCompanyId, otherCustomer, "JOB-ORD-X", daysAgo: 1);
+            await db.ExecuteAsync(
+                @"INSERT INTO jobs (company_id, customer_id, job_code, job_number, job_type, pickup_address, dropoff_address, scheduled_start, status, priority)
+                  VALUES (@cid, NULL, 'JOB-ORD-NULL', 'JOB-ORD-NULL', 'Delivery', 'a', 'b', NOW(), 'Scheduled', 'Normal')",
+                c => c.Parameters.AddWithValue("@cid", companyId));
+            await SeedJobAtAsync(db, companyId, customerA, "JOB-ORD-DEL", daysAgo: 0);
+            await db.ExecuteAsync("UPDATE jobs SET deleted_at=NOW() WHERE company_id=@cid AND job_code='JOB-ORD-DEL'",
+                c => c.Parameters.AddWithValue("@cid", companyId));
+
+            var visible = await svc.GetOwnJobsAsync(companyId, customerA);
+            var numbers = visible.Select(j => j["jobNumber"]?.ToString()).ToArray();
+            Assert.Equal(new[] { "JOB-ORD-1", "JOB-ORD-2", "JOB-ORD-5" }, numbers);
+            Assert.DoesNotContain("JOB-ORD-B", numbers);
+            Assert.DoesNotContain("JOB-ORD-X", numbers);
+            Assert.DoesNotContain("JOB-ORD-NULL", numbers);
+            Assert.DoesNotContain("JOB-ORD-DEL", numbers);
+        }
+        finally
+        {
+            await CleanupAsync(db, companyId);
+            await CleanupAsync(db, otherCompanyId);
+        }
+    }
+
+    [Fact]
+    public async Task ResolveCustomerId_FailsClosed_ForDanglingDeletedOrForeignBindings()
+    {
+        var db = CreateDatabase();
+        await EnsureSchemasAsync(db);
+        var companyId = await SeedCompanyAsync(db);
+        var otherCompanyId = await SeedCompanyAsync(db);
+        var liveCustomer = await SeedCustomerAsync(db, companyId, "cust-bind-live");
+        var deletedCustomer = await SeedCustomerAsync(db, companyId, "cust-bind-del");
+        var foreignCustomer = await SeedCustomerAsync(db, otherCompanyId, "cust-bind-foreign");
+        await db.ExecuteAsync("UPDATE customers SET deleted_at=NOW() WHERE id=@id", c => c.Parameters.AddWithValue("@id", deletedCustomer));
+        var svc = new CustomerPortalService(db);
+
+        try
+        {
+            var healthy = await SeedPortalUserAsync(db, companyId, liveCustomer, "bind-live@acme.example");
+            var dangling = await SeedPortalUserAsync(db, companyId, 987654321L, "bind-dangling@acme.example");
+            var toDeleted = await SeedPortalUserAsync(db, companyId, deletedCustomer, "bind-deleted@acme.example");
+            var toForeign = await SeedPortalUserAsync(db, companyId, foreignCustomer, "bind-foreign@acme.example");
+
+            // Healthy binding resolves.
+            Assert.Equal(liveCustomer, await svc.ResolveCustomerIdForUserAsync(companyId, healthy));
+
+            // DEF-027 fail-closed: broken bindings resolve to NULL → the endpoint's explicit
+            // 403 ("not a customer-portal user"), never a silent empty 200 portal.
+            Assert.Null(await svc.ResolveCustomerIdForUserAsync(companyId, dangling));
+            Assert.Null(await svc.ResolveCustomerIdForUserAsync(companyId, toDeleted));
+            Assert.Null(await svc.ResolveCustomerIdForUserAsync(companyId, toForeign));
+        }
+        finally
+        {
+            await CleanupAsync(db, companyId);
+            await CleanupAsync(db, otherCompanyId);
+        }
+    }
+
+    [Fact]
+    public async Task AdminUserBinding_RejectsCrossTenantAndDangling_AndAuditsChanges()
+    {
+        var db = CreateDatabase();
+        await EnsureSchemasAsync(db);
+        var companyId = await SeedCompanyAsync(db);
+        var otherCompanyId = await SeedCompanyAsync(db);
+        var ownCustomer = await SeedCustomerAsync(db, companyId, "cust-adm-own");
+        var foreignCustomer = await SeedCustomerAsync(db, otherCompanyId, "cust-adm-foreign");
+        var audit = new AuditService(db);
+
+        var adminId = await db.InsertAsync(
+            @"INSERT INTO users (company_id, full_name, email, role_name, status)
+              VALUES (@cid, 'Binding Admin', @em, 'Company Admin', 'Active')",
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@em", $"adm-{Guid.NewGuid():N}@acme.example"); });
+
+        Microsoft.AspNetCore.Http.DefaultHttpContext AdminHttp()
+        {
+            var http = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+            http.Items[EndpointMappings.AuthUserIdItemKey] = adminId;
+            http.Items[EndpointMappings.AuthCompanyIdItemKey] = companyId;
+            http.Items[EndpointMappings.AuthRoleItemKey] = "Company Admin";
+            http.Items[EndpointMappings.AuthPermissionsItemKey] = new[] { "users:create", "users:update" };
+            return http;
+        }
+
+        static int? StatusOf(Microsoft.AspNetCore.Http.IResult result) =>
+            (result as Microsoft.AspNetCore.Http.IStatusCodeHttpResult)?.StatusCode;
+
+        try
+        {
+            // Cross-tenant customer id → clear 400 (never a silent broken binding).
+            var crossTenant = await EndpointMappings.CreateAdminUser(AdminHttp(),
+                new Dictionary<string, object?>
+                {
+                    ["fullName"] = "Portal U1", ["email"] = $"p1-{Guid.NewGuid():N}@acme.example",
+                    ["roleName"] = "Customer Portal User", ["password"] = "Portal-Pass-1!",
+                    ["customerId"] = foreignCustomer,
+                }, db, audit, CancellationToken.None);
+            Assert.Equal(400, StatusOf(crossTenant));
+
+            // Dangling customer id → clear 400.
+            var dangling = await EndpointMappings.CreateAdminUser(AdminHttp(),
+                new Dictionary<string, object?>
+                {
+                    ["fullName"] = "Portal U2", ["email"] = $"p2-{Guid.NewGuid():N}@acme.example",
+                    ["roleName"] = "Customer Portal User", ["password"] = "Portal-Pass-1!",
+                    ["customerId"] = 987654321L,
+                }, db, audit, CancellationToken.None);
+            Assert.Equal(400, StatusOf(dangling));
+
+            // A binding on an INTERNAL role would brick the account (portal boundary) → 400.
+            var internalRole = await EndpointMappings.CreateAdminUser(AdminHttp(),
+                new Dictionary<string, object?>
+                {
+                    ["fullName"] = "Portal U3", ["email"] = $"p3-{Guid.NewGuid():N}@acme.example",
+                    ["roleName"] = "Dispatcher", ["password"] = "Portal-Pass-1!",
+                    ["customerId"] = ownCustomer,
+                }, db, audit, CancellationToken.None);
+            Assert.Equal(400, StatusOf(internalRole));
+
+            // Valid same-tenant binding persists.
+            var email = $"p4-{Guid.NewGuid():N}@acme.example";
+            var created = await EndpointMappings.CreateAdminUser(AdminHttp(),
+                new Dictionary<string, object?>
+                {
+                    ["fullName"] = "Portal U4", ["email"] = email,
+                    ["roleName"] = "Customer Portal User", ["password"] = "Portal-Pass-1!",
+                    ["customerId"] = ownCustomer,
+                }, db, audit, CancellationToken.None);
+            Assert.Equal(201, StatusOf(created));
+            var newUser = await db.QuerySingleAsync("SELECT id, customer_id FROM users WHERE company_id=@cid AND email=@em",
+                c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@em", email); });
+            Assert.NotNull(newUser);
+            Assert.Equal(ownCustomer, Convert.ToInt64(newUser!["customerId"]));
+            var newUserId = Convert.ToInt64(newUser["id"]);
+
+            // Update-path: clearing the binding persists NULL and writes the binding audit.
+            var cleared = await EndpointMappings.UpdateAdminUser(AdminHttp(), newUserId,
+                new Dictionary<string, object?> { ["customerId"] = null }, db, audit, CancellationToken.None);
+            Assert.Equal(200, StatusOf(cleared));
+            var afterClear = await db.QuerySingleAsync("SELECT customer_id FROM users WHERE id=@id",
+                c => c.Parameters.AddWithValue("@id", newUserId));
+            Assert.True(afterClear!["customerId"] is null or DBNull);
+            var bindingAudits = await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM audit_logs WHERE company_id=@cid AND action_name='user.customer_binding.changed' AND entity_id=@uid",
+                c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@uid", newUserId); });
+            Assert.True(bindingAudits >= 1, "binding change must be audited");
+
+            // Update-path cross-tenant rejection too.
+            var rebindForeign = await EndpointMappings.UpdateAdminUser(AdminHttp(), newUserId,
+                new Dictionary<string, object?> { ["roleName"] = "Customer Portal User", ["customerId"] = foreignCustomer },
+                db, audit, CancellationToken.None);
+            Assert.Equal(400, StatusOf(rebindForeign));
+        }
+        finally
+        {
+            await db.ExecuteAsync("DELETE FROM audit_logs WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", companyId));
+            await db.ExecuteAsync("DELETE FROM user_sessions WHERE user_id IN (SELECT id FROM users WHERE company_id=@c)", c => c.Parameters.AddWithValue("@c", companyId));
+            await db.ExecuteAsync("DELETE FROM users WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", companyId));
+            await CleanupAsync(db, companyId);
+            await CleanupAsync(db, otherCompanyId);
+        }
+    }
+
+    private static async Task SeedJobAtAsync(Database db, long companyId, long customerId, string jobCode, int daysAgo)
+        => await db.ExecuteAsync(
+            @"INSERT INTO jobs (company_id, customer_id, job_code, job_number, job_type, pickup_address, dropoff_address,
+                                scheduled_start, scheduled_end, status, priority)
+              VALUES (@companyId, @customerId, @jobCode, @jobCode, 'Delivery', '100 Origin St', '200 Destination Ave',
+                      NOW() - make_interval(days => @daysAgo), NOW() - make_interval(days => @daysAgo) + INTERVAL '4 hours', 'Scheduled', 'Normal')",
+            c =>
+            {
+                c.Parameters.AddWithValue("@companyId", companyId);
+                c.Parameters.AddWithValue("@customerId", customerId);
+                c.Parameters.AddWithValue("@jobCode", jobCode);
+                c.Parameters.AddWithValue("@daysAgo", daysAgo);
+            });
 
     // ── Helpers (self-contained; seeded/torn down per test) ────────────────────────
     private static Database CreateDatabase()

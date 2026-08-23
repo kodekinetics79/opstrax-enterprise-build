@@ -113,12 +113,21 @@ public class FoundationTests
     }
 
     [Fact]
-    public void RequirePermission_Allows_LiveMap_FromDashboardPermission()
+    public void RequirePermission_LiveMap_RequiresMapScope_NotDashboard()
     {
-        var http = BuildHttpContext("Tenant Admin", "42", "dashboard:view");
+        // Packet-2 alias mirror: live GPS state is MAP-scoped. A session holding only
+        // dashboard:view (or fleet:view) must NOT read live positions any more.
+        var denied = EndpointMappings.RequirePermission(
+            BuildHttpContext("Tenant Admin", "42", "dashboard:view"), "telemetry.live_state.read");
+        Assert.NotNull(denied);
 
+        var fleetDenied = EndpointMappings.RequirePermission(
+            BuildHttpContext("Tenant Admin", "42", "fleet:view"), "telemetry.live_state.read");
+        Assert.NotNull(fleetDenied);
+
+        // The map scope still opens it.
+        var http = BuildHttpContext("Tenant Admin", "42", "map:view");
         var result = EndpointMappings.RequirePermission(http, "telemetry.live_state.read");
-
         Assert.Null(result);
         var decision = Assert.IsType<AuthorizationDecisionResult>(http.Items["opstrax.authorization.decision"]);
         Assert.True(decision.IsAllowed);

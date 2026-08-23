@@ -32,7 +32,7 @@ public sealed class TelemetryLineagePostgresTests
             const long driverId = 730003;
             var eventId = await db.InsertAsync(
                 @"INSERT INTO location_events(company_id,vehicle_id,driver_id,assignment_id,trip_id,lat,lng,event_time,source)
-                  VALUES (@c,@v,@d,@a,@t,40.7128,-74.0060,NOW(),'device')",
+                  VALUES (@c,@v,@d,@a,@t,40.7128,-74.0060,NOW() - INTERVAL '2 minutes','device')",
                 c =>
                 {
                     c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@v", vehicleId);
