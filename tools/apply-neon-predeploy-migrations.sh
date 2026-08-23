@@ -131,6 +131,14 @@ MIGRATIONS=(
   # Must stay ahead of stage88. The dev-shaped local database masked this because
   # the runtime schema services build the trigger there; only the chain-only
   # oracle CI now builds exposes it.
+  # stage36/stage40 enrolled for the same reason as stage45/46, proven by CI:
+  # stage88 emits table and column SHAPE only -- no unique indexes -- so the
+  # revenue-recognition and delivered-to-billing paths failed with 42P10, 'no
+  # unique or exclusion constraint matching the ON CONFLICT specification'.
+  # ux_outbox_revenue_recognized, ux_outbox_job_delivered and the revrec unique
+  # indexes live only in these two files. Enrolled ahead of stage88.
+  2026_07_15_stage36_outbox_job_delivered_idempotency
+  2026_07_16_stage40_revenue_recognition
   2026_07_22_stage45_general_ledger
   2026_07_22_stage46_gl_period_close_export
   2026_07_30_stage52_fleet_identity_uniqueness
