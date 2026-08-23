@@ -200,9 +200,21 @@ public class DemoTenantSeederPostgresTests
     [Fact]
     public async Task CleanDatabase_BootstrapRollsBackMidSeedFailure_ThenCompletesAndRepeatsAsNoOp()
     {
-        // This is a real empty database booted by the actual application process. It does
-        // not replay a hand-selected/reduced set of schema services and therefore catches
-        // any drift between the app's authoritative startup path and DemoTenantSeeder.
+        // A real database provisioned exactly the way every environment is provisioned —
+        // base init SQL, the RLS cutover fixtures, then tools/apply-neon-predeploy-migrations.sh —
+        // and then booted by the actual application process.
+        //
+        // RECONCILED WITH STAGE 88: this test used to assert that BOOT materialized the
+        // schema. That contract is retired. Program.cs skipped every runtime *SchemaService
+        // whenever it connected as the restricted role under RLS enforcement — always true
+        // in staging and production — so the boot path could never be the schema authority
+        // there, and 1,006 columns that only those services declared went missing. Migrations
+        // are now the sole authority (ResolveRuntimeSchemaDdlAsync disables boot DDL the
+        // moment the stage88 ledger row exists). The assertions below are unchanged and the
+        // test is STRICTLY STRONGER: the columns must exist after the CHAIN has run, and the
+        // boot is additionally proven to have performed no DDL of its own — so drift between
+        // the migration chain and DemoTenantSeeder can no longer be papered over by a
+        // developer-only boot path that production never executes.
         var databaseName = $"opstrax_seed_clean_{Guid.NewGuid():N}";
         var adminBuilder = new NpgsqlConnectionStringBuilder(LocalConnectionString)
         {
@@ -221,6 +233,12 @@ public class DemoTenantSeederPostgresTests
         try
         {
             var clean = CreateDatabase(cleanBuilder.ConnectionString);
+            ApplyMigrationChain(cleanBuilder);
+
+            // The chain — not a boot — is what must have produced the schema.
+            Assert.Equal(1, await clean.ScalarLongAsync(
+                "SELECT COUNT(*) FROM schema_migrations WHERE version='2026_08_22_stage88_runtime_schema_service_contract'"));
+
             var port = FreeTcpPort();
             app = await StartCleanAppAsync(cleanBuilder.ConnectionString, port);
 
@@ -228,6 +246,33 @@ public class DemoTenantSeederPostgresTests
                 Assert.Equal(1, await clean.ScalarLongAsync(
                     "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='customer_feedback' AND column_name=@column",
                     c => c.Parameters.AddWithValue("@column", column)));
+
+            // Stage86/88 columns the runtime schema services used to own alone. On a
+            // protected environment the boot path never ran, so these were the live
+            // 42703s (/api/routes, /api/routes/summary, /api/expenses/summary,
+            // /api/safety/summary) that the migration chain must now guarantee.
+            foreach (var (table, column) in new[]
+                     {
+                         ("routes", "sla_risk"), ("routes", "efficiency_score"),
+                         ("routes", "total_stops"), ("routes", "cost_estimate"),
+                         ("expenses", "approval_status"), ("expenses", "receipt_status"),
+                         ("safety_events", "incident_status"), ("safety_events", "event_number"),
+                         ("work_orders", "asset_id"), ("audit_logs", "severity"),
+                     })
+            {
+                Assert.Equal(1, await clean.ScalarLongAsync(
+                    "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name=@table AND column_name=@column",
+                    c =>
+                    {
+                        c.Parameters.AddWithValue("@table", table);
+                        c.Parameters.AddWithValue("@column", column);
+                    }));
+            }
+
+            // /api/settings/api-keys returned 42P01 in every protected environment because
+            // tenant_api_keys existed only as a runtime schema-service declaration.
+            Assert.Equal(1, await clean.ScalarLongAsync(
+                "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='tenant_api_keys'"));
 
             // Exercise the real HTTP endpoint once and prove its repeat is a no-op.
             await clean.ExecuteAsync(
@@ -327,7 +372,7 @@ public class DemoTenantSeederPostgresTests
         {
             var scoped = CreateDatabase(scopedBuilder.ConnectionString);
             await scoped.ExecuteAsync(
-                @"CREATE TABLE jobs(id BIGINT PRIMARY KEY, company_id BIGINT NOT NULL, customer_id BIGINT NULL);
+                @"CREATE TABLE jobs(id BIGINT PRIMARY KEY, company_id BIGINT NOT NULL, customer_id BIGINT NULL, deleted_at TIMESTAMPTZ NULL);
                   CREATE TABLE customer_feedback(
                     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                     company_id BIGINT NOT NULL,
@@ -376,6 +421,79 @@ public class DemoTenantSeederPostgresTests
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         listener.Stop();
         return port;
+    }
+
+    // Provisions a database the ONE supported way: base init SQL + the RLS cutover
+    // fixtures, then the owner migration runner. This is what tools/test-predeploy-clean-chain.sh
+    // and every real environment do, and since stage88 it is the only schema authority —
+    // boot performs no DDL against a database carrying its ledger row.
+    private static void ApplyMigrationChain(NpgsqlConnectionStringBuilder target)
+    {
+        var root = RepoRootPath();
+        var fixtures = new[]
+        {
+            Path.Combine("database", "init", "001_schema.sql"),
+            Path.Combine("database", "init", "002_seed.sql"),
+            Path.Combine("database", "init", "004_jobs_execution.sql"),
+            Path.Combine("database", "migrations", "2026_06_30_stage19_row_level_security.sql"),
+            Path.Combine("database", "migrations", "2026_06_30_stage20_rls_force_and_app_role.sql"),
+            Path.Combine("database", "migrations", "2026_07_01_stage22_rls_reconcile_coverage.sql"),
+        };
+        var uri = $"postgresql://{Uri.EscapeDataString(target.Username!)}:{Uri.EscapeDataString(target.Password!)}" +
+                  $"@{target.Host}:{target.Port}/{target.Database}?sslmode=disable";
+
+        foreach (var fixture in fixtures)
+        {
+            RunOrThrow(root, "psql", [uri, "-v", "ON_ERROR_STOP=1", "-q", "-f", fixture],
+                new Dictionary<string, string>());
+        }
+        RunOrThrow(root, "bash", [Path.Combine("tools", "apply-neon-predeploy-migrations.sh")],
+            new Dictionary<string, string> { ["NEON_PG_URI"] = uri });
+    }
+
+    private static string RepoRootPath() => Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../.."));
+
+    private static void RunOrThrow(string workingDirectory, string fileName, string[] arguments,
+        IDictionary<string, string> environment)
+    {
+        var start = new ProcessStartInfo(fileName)
+        {
+            WorkingDirectory = workingDirectory,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        foreach (var argument in arguments) start.ArgumentList.Add(argument);
+        foreach (var pair in environment) start.Environment[pair.Key] = pair.Value;
+
+        Process process;
+        try
+        {
+            process = Process.Start(start)!;
+        }
+        catch (Exception ex)
+        {
+            // Never silently weaken this test into "boot builds the schema": if the
+            // provisioning toolchain is missing, say so and fail.
+            throw new Xunit.Sdk.XunitException(
+                $"Could not launch '{fileName}' to provision the database via the migration chain. " +
+                $"psql and bash are required (CI installs postgresql-client). {ex.Message}");
+        }
+        // Drain BOTH pipes concurrently. The migration chain writes thousands of NOTICE
+        // lines to stderr; reading stdout to the end first fills the stderr pipe buffer
+        // and psql blocks forever mid-migration.
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        var stdout = stdoutTask.GetAwaiter().GetResult();
+        var stderr = stderrTask.GetAwaiter().GetResult();
+        process.WaitForExit();
+        if (process.ExitCode != 0)
+        {
+            var tail = string.Join(Environment.NewLine,
+                (stdout + Environment.NewLine + stderr).Split('\n').TakeLast(40));
+            throw new Xunit.Sdk.XunitException(
+                $"Migration chain step failed: {fileName} {string.Join(' ', arguments)} (exit {process.ExitCode}){Environment.NewLine}{tail}");
+        }
     }
 
     private static async Task<Process> StartCleanAppAsync(string connectionString, int port)

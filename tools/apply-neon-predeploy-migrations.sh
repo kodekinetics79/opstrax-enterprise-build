@@ -111,10 +111,36 @@ MIGRATIONS=(
   2026_07_30_stage49_mfa_challenge_one_time
   2026_07_30_stage50_fleet_production_contract
   2026_07_30_stage51_production_runtime_support
+  # MUST follow stage51: it ALTERs latest_vehicle_positions, which stage51 creates.
+  # This array is a hand-maintained DEPENDENCY order, not a filename/date sort --
+  # stage30 is dated earlier but cannot run earlier.
+  # Adds geocoded_at/_lat/_lng, read AND written by
+  # POST /api/maps/reverse-geocode-positions (EndpointMappings.cs:11161-11179).
+  # While unenrolled the endpoint was a live 42703 in every protected environment,
+  # invisible to both schema guards (the parity test only sees SchemaService
+  # declarations; the orphan rule had no column dimension).
+  2026_07_09_stage30_position_address_cache
   # Stage12 enriches telemetry tables whose owner-safe definitions are installed
   # by Stage51 on the supported protected predecessor.
   2026_06_28_stage12a_telemetry_live_state
   2026_07_22_stage47_detention_recovery
+  # Enrolled after CI proved stage88 alone is not enough: stage88 emits tables,
+  # columns and indexes only -- zero functions, zero triggers. It materialised the
+  # GL tables WITHOUT gl_enforce_period_lock() and trg_gl_period_lock (stage46:43,56),
+  # turning a loud 42P01 into SILENT back-posting into a closed accounting period.
+  # Must stay ahead of stage88. The dev-shaped local database masked this because
+  # the runtime schema services build the trigger there; only the chain-only
+  # oracle CI now builds exposes it.
+  # stage36/stage40 enrolled for the same reason as stage45/46, proven by CI:
+  # stage88 emits table and column SHAPE only -- no unique indexes -- so the
+  # revenue-recognition and delivered-to-billing paths failed with 42P10, 'no
+  # unique or exclusion constraint matching the ON CONFLICT specification'.
+  # ux_outbox_revenue_recognized, ux_outbox_job_delivered and the revrec unique
+  # indexes live only in these two files. Enrolled ahead of stage88.
+  2026_07_15_stage36_outbox_job_delivered_idempotency
+  2026_07_16_stage40_revenue_recognition
+  2026_07_22_stage45_general_ledger
+  2026_07_22_stage46_gl_period_close_export
   2026_07_30_stage52_fleet_identity_uniqueness
   2026_07_30_stage53_tenant_rls_reconciliation
   2026_07_30_stage54_cold_chain_device_integrity
@@ -151,8 +177,33 @@ MIGRATIONS=(
   2026_08_20_stage81_customer_eta_secure_token
   2026_08_20_stage82_telematics_device_credential_constraint
   2026_08_21_stage83_company_security_settings_runtime_contract
+  # platform_settings is the operator SMTP/config store; protected environments never
+  # run PlatformSettingsService.EnsureSchemaAsync, so this file is its only creator.
+  2026_08_21_stage83_platform_settings
   2026_08_21_stage84_driver_hos_runtime_contract
   2026_08_21_stage85_alert_notification_delivery
+  # Stage86 ends the schema-service/migration split-brain for the runtime route
+  # columns (routes.sla_risk, work_orders/maintenance_items.asset_id,
+  # safety/dashcam event_number, audit_logs severity/module_key/action_type):
+  # protected environments skip the owner-capable Batch* schema services, so this
+  # file is the only path that materializes those columns there.
+  2026_08_22_stage86_runtime_route_column_contract
+  # Stage87 backfills users.role_id from role_name with the ResolveRoleRecord
+  # precedence (tenant-local role over global on a name collision).
+  2026_08_22_stage87_user_role_id_backfill
+  # Stage88 makes migrations the ONLY schema authority. Program.cs
+  # ShouldRunSchemaInitAsync skips EVERY runtime *SchemaService whenever the process
+  # is the restricted opstrax_app role under RLS enforcement — always true here — so
+  # 1,006 columns and 51 tables declared only in those services could never exist in
+  # a protected environment. Stage86 fixed 8 of them by hand and still left
+  # routes.efficiency_score, which sits in the same CASE expression as the
+  # routes.sla_risk it did enrol. This file is generated mechanically from all 48
+  # backend-dotnet/Services/*SchemaService.cs declaration lists, so the class cannot
+  # reopen one column at a time. It MUST run last: it creates tables that carry
+  # company_id and therefore enter FleetProductionReadinessService's dynamic
+  # tenant_scope, and it re-applies stage76's safe-column eld_devices grant over the
+  # column it adds there.
+  2026_08_22_stage88_runtime_schema_service_contract
 )
 
 echo "Target host: $(printf '%s' "$NEON_PG_URI" | sed -E 's|.*@([^/:?]+).*|\1|')"

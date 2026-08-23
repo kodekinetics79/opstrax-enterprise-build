@@ -1,11 +1,12 @@
 import { lazy, Suspense, type ReactNode } from "react";
 import { Navigate, Route, Routes } from "react-router";
+import { ShieldAlert } from "lucide-react";
 import { AppShell } from "@/layouts/AppShell";
 import { useAuth } from "@/hooks/useAuth";
 import { FeatureFlagsProvider, useFlag } from "@/hooks/useFeatureFlags";
 import { RequirePermission } from "@/hooks/usePermission";
 import { GCC_COUNTRIES, RequireRegion } from "@/hooks/useTenantRegion";
-import { getLandingRouteForSession } from "@/auth/sessionRouting";
+import { getLandingRouteForSession, isPortalConfinedSession } from "@/auth/sessionRouting";
 import { modules } from "@/modules/moduleConfig";
 import { LoginPage } from "@/pages/LoginPage";
 import { SsoCallbackPage } from "@/pages/SsoCallbackPage";
@@ -128,6 +129,8 @@ const DriverMessagesPage  = lazy(() => import("@/pages/driver/DriverMessagesPage
 const NotificationCenterPage = lazy(() => import("@/pages/NotificationCenterPage").then(m => ({ default: m.NotificationCenterPage })));
 const MessageCenterPage      = lazy(() => import("@/pages/MessageCenterPage").then(m => ({ default: m.MessageCenterPage })));
 const DriverNotificationsPage = lazy(() => import("@/pages/driver/DriverNotificationsPage").then(m => ({ default: m.DriverNotificationsPage })));
+// Customer Portal — portal-user shell, separate from the internal AppShell (DEF-024)
+const CustomerLayout = lazy(() => import("@/layouts/CustomerLayout").then(m => ({ default: m.CustomerLayout })));
 const PlatformOpsPage = lazy(() => import("@/pages/PlatformOpsPage"));
 const FleetHealthPage = lazy(() => import("@/pages/FleetHealthPage").then(m => ({ default: m.FleetHealthPage })));
 const FleetIntelligencePage = lazy(() => import("@/pages/FleetIntelligencePage").then(m => ({ default: m.FleetIntelligencePage })));
@@ -140,11 +143,21 @@ const FeatureFlagsPage = lazy(() => import("@/pages/FeatureFlagsPage").then((mod
 function ProtectedShell() {
   const { session } = useAuth();
   if (!session) return <Navigate to="/login" replace />;
+  const landingRoute = getLandingRouteForSession(session);
   // Drivers are confined to their own portal — the back-office shell is never rendered for them.
   // getLandingRouteForSession returns "/driver" for a driver-scoped session (driver:self, no
   // dashboard:view); anything they type under the protected shell bounces to the portal. Defense in
   // depth over the API side, where the isolated Driver role simply lacks any back-office permission.
-  if (getLandingRouteForSession(session) === "/driver") return <Navigate to="/driver" replace />;
+  if (landingRoute === "/driver") return <Navigate to="/driver" replace />;
+  // Customer-BOUND sessions (a server-side customers.id binding, or the portal permission
+  // shape with no internal grant at all) are confined to the customer portal shell the same
+  // way: any internal route they type bounces to /customer-portal, so the 35-module
+  // back-office chrome is never rendered for a portal identity (UAT DEF-024).
+  //
+  // This deliberately tests confinement, NOT "landingRoute === /customer-portal": internal
+  // staff such as Customer Service and CRM & Sales Manager hold customer_portal:view beside
+  // dispatch:view / crm:view, and bouncing them here made their accounts unusable.
+  if (isPortalConfinedSession(session)) return <Navigate to="/customer-portal" replace />;
   // Flags are only resolvable for an authenticated user (they're evaluated per-user
   // server-side), so the provider lives inside the authenticated shell.
   return <FeatureFlagsProvider><AppShell /></FeatureFlagsProvider>;
@@ -170,8 +183,46 @@ function RequireFlag({ flag, fallback = true, children }: { flag: string; fallba
   );
 }
 
+/**
+ * Terminal screen for an AUTHENTICATED session that resolves to no landing surface.
+ *
+ * getLandingRouteForSession fails closed to "/login". Rendering the ordinary login
+ * form there is a dead end: the user is already signed in, so there is nothing to
+ * explain the empty app, no way out, and submitting valid credentials appears to do
+ * nothing (it navigates to the landing route, which is /login again). This says what
+ * happened and gives a working sign-out.
+ */
+function NoWorkspaceScreen() {
+  const { session, logout } = useAuth();
+  const email = String(session?.user?.email ?? "");
+  const roleName = String(session?.role ?? "").trim();
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-slate-50 p-6">
+      <div className="panel w-full max-w-md p-8 text-center">
+        <ShieldAlert className="mx-auto h-10 w-10 text-amber-500" aria-hidden="true" />
+        <h1 className="mt-4 text-xl font-bold text-slate-900">No workspace assigned</h1>
+        <p className="mt-3 text-sm text-slate-600">
+          You are signed in{email ? <> as <span className="font-semibold text-slate-900">{email}</span></> : null}
+          {roleName ? <> with the <span className="font-semibold text-slate-900">{roleName}</span> role</> : null}
+          , but that account has no permissions that open a page in OpsTrax. Ask your
+          administrator to assign a role with access before signing in again.
+        </p>
+        <button
+          type="button"
+          onClick={() => { void logout(); }}
+          className="btn-primary mt-6 w-full"
+        >
+          Sign out
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const { session } = useAuth();
+  const landingRoute = session ? getLandingRouteForSession(session) : "/login";
 
   return (
     <Suspense fallback={<LoadingState />}>
@@ -179,7 +230,18 @@ export default function App() {
         {/* ── Platform Admin — fully isolated control plane, separate auth ── */}
         <Route path="/platform/*" element={<PlatformApp />} />
 
-        <Route path="/login" element={session ? <Navigate to={getLandingRouteForSession(session)} replace /> : <LoginPage />} />
+        {/* Three states, not two: no session → the login form; a session with a landing
+            surface → go there; a session whose landing route is /login (the fail-closed
+            terminal in getLandingRouteForSession) → the explanatory no-workspace screen,
+            never the login form it would otherwise loop against. */}
+        <Route
+          path="/login"
+          element={
+            !session ? <LoginPage />
+            : landingRoute === "/login" ? <NoWorkspaceScreen />
+            : <Navigate to={landingRoute} replace />
+          }
+        />
         <Route path="/sso/callback" element={<SsoCallbackPage />} />
         <Route path="/forgot-password" element={<ResetPasswordPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
@@ -204,8 +266,19 @@ export default function App() {
           </Route>
         ) : null}
 
+        {/* ── Customer Portal — portal-user shell, mirrors the DriverLayout pattern.
+            Lives OUTSIDE ProtectedShell so a customer-bound session (bounced out of the
+            internal shell above) has a home that never renders back-office chrome. Like
+            the driver shell it needs its own FeatureFlagsProvider. Internal supervisors
+            holding customer_portal:view preview the same customer chrome here. ── */}
+        {session ? (
+          <Route element={<RequirePermission permission="customer_portal:view"><FeatureFlagsProvider><CustomerLayout /></FeatureFlagsProvider></RequirePermission>}>
+            <Route path="/customer-portal" element={<CustomerPortalPage />} />
+          </Route>
+        ) : null}
+
         <Route element={<ProtectedShell />}>
-          <Route index element={<Navigate to={getLandingRouteForSession(session)} replace />} />
+          <Route index element={<Navigate to={landingRoute} replace />} />
 
         {/* ── Control Tower ── */}
         <Route path="/live-dashboard" element={<RequirePermission permission="dashboard:view"><FleetOverviewPage /></RequirePermission>} />
@@ -259,9 +332,13 @@ export default function App() {
         <Route path="/proof-of-delivery" element={<RequirePermission permission="shipments:view"><ProofOfDeliveryPage /></RequirePermission>} />
         <Route path="/last-mile-delivery" element={<RequirePermission permission="dispatch:view"><LastMileDeliveryPage /></RequirePermission>} />
 
-        {/* ── Customer Portal ── */}
+        {/* ── Customer visibility management (INTERNAL operator surfaces) ──
+            /customer-eta and /customer-visibility are supervisor tools (tracking-link
+            + token management, sending ETA updates), NOT portal-user pages — they stay
+            in the internal shell. The portal user's page is /customer-portal, hoisted
+            into CustomerLayout above; customer-bound sessions bounce before reaching
+            these routes. */}
         <Route path="/customer-eta" element={<RequirePermission permission="customer_portal:view"><CustomerEtaPage /></RequirePermission>} />
-        <Route path="/customer-portal" element={<RequirePermission permission="customer_portal:view"><CustomerPortalPage /></RequirePermission>} />
         <Route path="/customer-visibility" element={<RequirePermission permission="customer_portal:view"><CustomerVisibilityPage /></RequirePermission>} />
 
         {/* ── Fleet Health + Safety Command Center ── */}
@@ -360,8 +437,12 @@ export default function App() {
 
         {/* ── Settings / Platform (accessible to all authenticated users) ── */}
         <Route path="/settings" element={<RequirePermission permission="settings:view"><SettingsPage /></RequirePermission>} />
-        <Route path="/admin" element={<RequirePermission permissions={["users:view", "roles:view", "settings:view", "audit:view"]}><AdminPage /></RequirePermission>} />
-        <Route path="/user-management" element={<RequirePermission permissions={["users:view", "roles:view", "settings:view", "audit:view"]}><AdminPage /></RequirePermission>} />
+        {/* Governance surface: DIRECT grants only. Semantic (alias-expanded) matching let a
+            Dispatcher's reports:view reach /user-management through the audit:view alias
+            chain (UAT DEF-025). audit:view is deliberately absent — audit has its own
+            route (/audit-logs) and must not unlock user administration. */}
+        <Route path="/admin" element={<RequirePermission permissions={["users:view", "roles:view", "settings:view"]} direct><AdminPage /></RequirePermission>} />
+        <Route path="/user-management" element={<RequirePermission permissions={["users:view", "roles:view", "settings:view"]} direct><AdminPage /></RequirePermission>} />
         <Route path="/ops" element={<RequirePermission permission="ops:view"><PlatformOpsPage /></RequirePermission>} />
         <Route path="/platform/operations" element={<RequirePermission permission="ops:view"><PlatformOpsPage /></RequirePermission>} />
           <Route path="/about" element={<RequirePermission permission="settings:view"><AboutPage /></RequirePermission>} />
@@ -405,7 +486,7 @@ export default function App() {
               />
             ))}
         </Route>
-        <Route path="*" element={<Navigate to={session ? getLandingRouteForSession(session) : "/login"} replace />} />
+        <Route path="*" element={<Navigate to={landingRoute} replace />} />
       </Routes>
     </Suspense>
   );

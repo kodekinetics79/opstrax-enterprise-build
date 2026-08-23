@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging;
 using Opstrax.Telematics.Contracts.Eventing;
 using Opstrax.Telematics.Contracts.Identity;
 using Opstrax.Telematics.Gateway.Buffering;
+using Opstrax.Telematics.Gateway.Edge;
 using Opstrax.Telematics.Gateway.Observability;
 using Opstrax.Telematics.Gateway.Projection;
 using Opstrax.Telematics.Gateway.Security.Auth;
@@ -41,21 +42,19 @@ internal sealed class TcpGatewayService : BackgroundService
     private static readonly string GatewayInstance = Environment.MachineName;
 
     private readonly GatewayOptions _options;
-    private readonly IEventBackbone _backbone;
-    private readonly IDeviceRegistry _registry;
-    private readonly IDeviceAuthenticator _authenticator;
-    private readonly ITelemetryReplayGuard _replayGuard;
-    private readonly IPositionProjectionStore _projectionStore;
-    private readonly Gt06Adapter _adapter;
-    private readonly IStoreAndForwardBuffer _forwardBuffer;
+    private readonly IConnectionHandlerFactory _handlers;
     private readonly GatewayMetrics _metrics;
-    private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<TcpGatewayService> _logger;
 
     private readonly ConcurrentDictionary<long, Task> _connections = new();
     private long _connectionSequence;
     private TcpListener? _listener;
 
+    /// <summary>
+    /// Creates the listener for the canonical (direct-Postgres) pipeline. Retained as the
+    /// primary constructor so existing composition and the integration tests are unaffected by
+    /// the addition of the forwarding edge.
+    /// </summary>
     public TcpGatewayService(
         GatewayOptions options,
         IEventBackbone backbone,
@@ -67,17 +66,33 @@ internal sealed class TcpGatewayService : BackgroundService
         IStoreAndForwardBuffer forwardBuffer,
         GatewayMetrics metrics,
         ILoggerFactory loggerFactory)
+        : this(
+            options,
+            new CanonicalConnectionHandlerFactory(
+                backbone, registry, authenticator, replayGuard, projectionStore, adapter, forwardBuffer,
+                options ?? throw new ArgumentNullException(nameof(options)),
+                metrics ?? throw new ArgumentNullException(nameof(metrics)),
+                loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory))),
+            metrics,
+            loggerFactory)
+    {
+    }
+
+    /// <summary>
+    /// Creates the listener over an arbitrary connection handler. This is what lets the same
+    /// accept loop — quota, shed, drain and all — serve the HTTPS forwarding edge without
+    /// duplicating any of that logic.
+    /// </summary>
+    public TcpGatewayService(
+        GatewayOptions options,
+        IConnectionHandlerFactory handlers,
+        GatewayMetrics metrics,
+        ILoggerFactory loggerFactory)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
-        _backbone = backbone ?? throw new ArgumentNullException(nameof(backbone));
-        _registry = registry ?? throw new ArgumentNullException(nameof(registry));
-        _authenticator = authenticator ?? throw new ArgumentNullException(nameof(authenticator));
-        _replayGuard = replayGuard ?? throw new ArgumentNullException(nameof(replayGuard));
-        _projectionStore = projectionStore ?? throw new ArgumentNullException(nameof(projectionStore));
-        _adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
-        _forwardBuffer = forwardBuffer ?? throw new ArgumentNullException(nameof(forwardBuffer));
+        _handlers = handlers ?? throw new ArgumentNullException(nameof(handlers));
         _metrics = metrics ?? throw new ArgumentNullException(nameof(metrics));
-        _loggerFactory = loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory));
+        ArgumentNullException.ThrowIfNull(loggerFactory);
         _logger = loggerFactory.CreateLogger<TcpGatewayService>();
     }
 
@@ -108,8 +123,8 @@ internal sealed class TcpGatewayService : BackgroundService
                 bindAddress);
 
         _logger.LogInformation(
-            "Telematics gateway listening on {Endpoint} (protocol {Protocol}, max {MaxConnections} connections, idle timeout {IdleTimeout}).",
-            _listener.LocalEndpoint, Gt06Adapter.ProtocolName, _options.MaxConnections, _options.IdleTimeout);
+            "Telematics gateway listening on {Endpoint} ({Pipeline}, max {MaxConnections} connections, idle timeout {IdleTimeout}).",
+            _listener.LocalEndpoint, _handlers.Describe(), _options.MaxConnections, _options.IdleTimeout);
 
         return base.StartAsync(cancellationToken);
     }
@@ -189,20 +204,7 @@ internal sealed class TcpGatewayService : BackgroundService
             TelematicsInstrumentation.ActiveConnections.Add(1, ActiveConnectionLabels);
 
             long id = Interlocked.Increment(ref _connectionSequence);
-            var connection = new GatewayConnection(
-                client,
-                _adapter,
-                _registry,
-                _authenticator,
-                _replayGuard,
-                _projectionStore,
-                _backbone,
-                _forwardBuffer,
-                _options,
-                _metrics,
-                _loggerFactory.CreateLogger<GatewayConnection>());
-
-            Task task = Task.Run(() => connection.RunAsync(stoppingToken), CancellationToken.None);
+            Task task = Task.Run(() => _handlers.HandleAsync(client, stoppingToken), CancellationToken.None);
 
             // Register BEFORE attaching cleanup. A connection can run to completion synchronously
             // (a malformed flood does exactly that — identify, reject, close, all without yielding).
@@ -219,7 +221,7 @@ internal sealed class TcpGatewayService : BackgroundService
                     TelematicsInstrumentation.ActiveConnections.Add(-1, ActiveConnectionLabels);
                     _connections.TryRemove(id, out _);
 
-                    // RunAsync is total, so this should be unreachable — but an unobserved
+                    // The handler is total, so this should be unreachable — but an unobserved
                     // faulted task must never be allowed to disappear silently.
                     if (completed.IsFaulted)
                         _logger.LogError(completed.Exception, "Connection task faulted unexpectedly.");

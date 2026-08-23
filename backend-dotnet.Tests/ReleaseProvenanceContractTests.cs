@@ -5,8 +5,7 @@ public sealed class ReleaseProvenanceContractTests
     [Fact]
     public void ProductionApiDockerfilesPackageTerminalPilotMigrations()
     {
-        foreach (var dockerfile in new[] { Read("Dockerfile"), Read("backend-dotnet", "Dockerfile") })
-        foreach (var migration in new[]
+        var terminalPilotMigrations = new[]
         {
             "2026_07_16_stage42_telemetry_gateways.sql",
             "2026_07_22_stage47_detention_recovery.sql",
@@ -26,7 +25,24 @@ public sealed class ReleaseProvenanceContractTests
             "2026_08_18_stage81_platform_billing_itemization.sql",
             "2026_08_20_stage81_customer_eta_secure_token.sql",
             "2026_08_20_stage82_telematics_device_credential_constraint.sql",
-        }) Assert.Contains(migration, dockerfile, StringComparison.Ordinal);
+        };
+
+        // The root (demo/compose) Dockerfile still packages migrations file by file.
+        var rootDockerfile = Read("Dockerfile");
+        foreach (var migration in terminalPilotMigrations)
+            Assert.Contains(migration, rootDockerfile, StringComparison.Ordinal);
+
+        // The production API image switched to a whole-directory COPY at
+        // RETEST-20260821-1035-R1: its per-file allowlist had drifted (it stopped at
+        // stage82, silently dropping stage83/84/85+ from /app/Migrations). The contract
+        // is therefore the directory copy into the payload path plus each file actually
+        // existing on disk — which is what the per-file COPY asserts stood in for.
+        var apiDockerfile = Read("backend-dotnet", "Dockerfile");
+        Assert.Contains("COPY database/migrations/ database/migrations/", apiDockerfile, StringComparison.Ordinal);
+        Assert.Contains("COPY --from=build /src/database/migrations ./Migrations", apiDockerfile, StringComparison.Ordinal);
+        foreach (var migration in terminalPilotMigrations)
+            Assert.True(FileExists("database", "migrations", migration),
+                $"{migration} is missing from database/migrations/ — the API image directory COPY would not package it.");
 
         var customerEtaMigration = Read(
             "database", "migrations", "2026_08_20_stage81_customer_eta_secure_token.sql");
@@ -62,17 +78,28 @@ public sealed class ReleaseProvenanceContractTests
         Assert.Contains("--image api=opstrax-api:ci", workflow, StringComparison.Ordinal);
         Assert.Contains("--image frontend=opstrax-frontend:ci", workflow, StringComparison.Ordinal);
         Assert.Contains("--image gateway=opstrax-telematics-gateway:ci", workflow, StringComparison.Ordinal);
-        Assert.Contains("2026_08_02_stage71_coaching_evidence_reconciliation.sql", workflow, StringComparison.Ordinal);
-        Assert.Contains("2026_07_22_stage47_detention_recovery.sql", workflow, StringComparison.Ordinal);
-        Assert.Contains("2026_08_02_stage72_hos_offboarding_immutability_reconciliation.sql", workflow, StringComparison.Ordinal);
-        Assert.Contains("2026_08_02_stage73_hos_offboarding_null_fail_closed.sql", workflow, StringComparison.Ordinal);
-        Assert.Contains("2026_08_02_stage74_retention_policy_production_contract.sql", workflow, StringComparison.Ordinal);
-        Assert.Contains("2026_08_02_stage75_bounded_support_access.sql", workflow, StringComparison.Ordinal);
-        Assert.Contains("2026_08_12_stage77_protected_role_bootstrap.sql", workflow, StringComparison.Ordinal);
-        Assert.Contains("2026_08_13_stage78_country_profiles_runtime_contract.sql", workflow, StringComparison.Ordinal);
-        Assert.Contains("2026_08_13_stage79_tenant_provisioning_runtime_contract.sql", workflow, StringComparison.Ordinal);
-        Assert.Contains("2026_08_14_stage80_fleet_identity_backbone.sql", workflow, StringComparison.Ordinal);
-        Assert.Contains("2026_08_20_stage82_telematics_device_credential_constraint.sql", workflow, StringComparison.Ordinal);
+        // The packaging gate now derives per-file existence from the predeploy runner's
+        // MIGRATIONS array instead of a hand-maintained name list (see ci.yml "Verify
+        // launch-critical source and migrations are packaged"). Assert the derivation
+        // is wired in ci.yml, and that each terminal pilot migration is enrolled in the
+        // runner the derivation reads — the same guarantee, no longer drift-prone.
+        Assert.Contains("sed -n '/^MIGRATIONS=(/,/^)/p' tools/apply-neon-predeploy-migrations.sh", workflow, StringComparison.Ordinal);
+        var predeployRunner = Read("tools", "apply-neon-predeploy-migrations.sh");
+        foreach (var migration in new[]
+        {
+            "2026_08_02_stage71_coaching_evidence_reconciliation",
+            "2026_07_22_stage47_detention_recovery",
+            "2026_08_02_stage72_hos_offboarding_immutability_reconciliation",
+            "2026_08_02_stage73_hos_offboarding_null_fail_closed",
+            "2026_08_02_stage74_retention_policy_production_contract",
+            "2026_08_02_stage75_bounded_support_access",
+            "2026_08_12_stage77_protected_role_bootstrap",
+            "2026_08_13_stage78_country_profiles_runtime_contract",
+            "2026_08_13_stage79_tenant_provisioning_runtime_contract",
+            "2026_08_14_stage80_fleet_identity_backbone",
+            "2026_08_20_stage82_telematics_device_credential_constraint",
+        })
+            Assert.Contains($"\n  {migration}\n", predeployRunner, StringComparison.Ordinal);
         Assert.Contains("if: ${{ always() }}", workflow, StringComparison.Ordinal);
         Assert.Contains("opstrax-mandatory-gates-${{ env.CANDIDATE_SHA }}-${{ github.run_attempt }}", workflow, StringComparison.Ordinal);
         Assert.DoesNotContain("opstrax-release-candidate-${{ github.sha }}", workflow, StringComparison.Ordinal);
@@ -115,6 +142,15 @@ public sealed class ReleaseProvenanceContractTests
         Assert.Contains("NOT_EVIDENCED", collector, StringComparison.Ordinal);
         Assert.Contains("--require-registry-digest", collector, StringComparison.Ordinal);
         Assert.Contains("--format cyclonedx", collector, StringComparison.Ordinal);
+    }
+
+    private static bool FileExists(params string[] parts)
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !Directory.Exists(Path.Combine(directory.FullName, "backend-dotnet")))
+            directory = directory.Parent;
+        Assert.NotNull(directory);
+        return File.Exists(Path.Combine(new[] { directory.FullName }.Concat(parts).ToArray()));
     }
 
     private static string Read(params string[] parts)

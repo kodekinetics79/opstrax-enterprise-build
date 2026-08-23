@@ -13,17 +13,27 @@ public sealed class CustomerPortalService(Database db)
 {
     // Resolve the authenticated user's bound customer_id. Returns null when the user
     // is not a portal customer-user (internal staff) — the endpoint then denies access.
+    //
+    // DEF-027 fail-closed: a binding that points at a deleted or nonexistent customer
+    // resolves to NULL as well, so the caller lands on the explicit 403 ("not a
+    // customer-portal user") instead of a silent empty portal that looks like an
+    // operations outage. The join validates the customer against THIS tenant only.
     public async Task<long?> ResolveCustomerIdForUserAsync(long companyId, long userId, CancellationToken ct = default)
     {
         var row = await db.QuerySingleAsync(
-            "SELECT customer_id FROM users WHERE id=@userId AND company_id=@companyId AND status='Active' LIMIT 1",
+            @"SELECT u.customer_id, c.id validated_customer_id
+              FROM users u
+              LEFT JOIN customers c ON c.id = u.customer_id AND c.company_id = u.company_id AND c.deleted_at IS NULL
+              WHERE u.id=@userId AND u.company_id=@companyId AND u.status='Active' LIMIT 1",
             c =>
             {
                 c.Parameters.AddWithValue("@userId", userId);
                 c.Parameters.AddWithValue("@companyId", companyId);
             }, ct);
         if (row is null || !row.TryGetValue("customerId", out var value) || value is null or DBNull) return null;
-        return Convert.ToInt64(value, CultureInfo.InvariantCulture);
+        // Bound, but the customer is gone (deleted or never existed): fail closed.
+        if (!row.TryGetValue("validatedCustomerId", out var validated) || validated is null or DBNull) return null;
+        return Convert.ToInt64(validated, CultureInfo.InvariantCulture);
     }
 
     // Own invoices (customer-safe fields only) + their payments + a plain-English AR
@@ -218,7 +228,7 @@ public sealed class CustomerPortalService(Database db)
             @"SELECT id, COALESCE(job_number, job_code) AS job_number, status, sla_status,
                      scheduled_start, scheduled_end, pickup_address, dropoff_address, tracking_code, eta
               FROM jobs
-              WHERE company_id=@companyId AND customer_id=@customerId
+              WHERE company_id=@companyId AND customer_id=@customerId AND deleted_at IS NULL
               ORDER BY scheduled_start DESC NULLS LAST, id DESC",
             c =>
             {
@@ -235,7 +245,7 @@ public sealed class CustomerPortalService(Database db)
             @"SELECT id, COALESCE(job_number, job_code) AS job_number, status, sla_status,
                      scheduled_start, scheduled_end, pickup_address, dropoff_address, tracking_code, eta
               FROM jobs
-              WHERE company_id=@companyId AND customer_id=@customerId AND id=@jobId
+              WHERE company_id=@companyId AND customer_id=@customerId AND id=@jobId AND deleted_at IS NULL
               LIMIT 1",
             c =>
             {
@@ -265,7 +275,7 @@ public sealed class CustomerPortalService(Database db)
     public async Task<IReadOnlyList<Dictionary<string, object?>>> GetOwnProofsAsync(long companyId, long customerId, long jobId, CancellationToken ct = default)
     {
         var owns = await db.ScalarLongAsync(
-            "SELECT COUNT(*) FROM jobs WHERE company_id=@companyId AND customer_id=@customerId AND id=@jobId",
+            "SELECT COUNT(*) FROM jobs WHERE company_id=@companyId AND customer_id=@customerId AND id=@jobId AND deleted_at IS NULL",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
@@ -321,7 +331,7 @@ public sealed class CustomerPortalService(Database db)
         long companyId, long customerId, long jobId, int? rating, string? comment, string? feedbackType, string? subject, CancellationToken ct = default)
     {
         var owns = await db.ScalarLongAsync(
-            "SELECT COUNT(*) FROM jobs WHERE company_id=@companyId AND customer_id=@customerId AND id=@jobId",
+            "SELECT COUNT(*) FROM jobs WHERE company_id=@companyId AND customer_id=@customerId AND id=@jobId AND deleted_at IS NULL",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);

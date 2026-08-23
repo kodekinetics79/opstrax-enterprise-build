@@ -124,4 +124,91 @@ assert.match(driverDashboard, /String\(assignment\["vehicleConfirmedByDriverId"\
 assert.match(driverDashboard, /Verify assigned vehicle/, "Driver home must distinguish missing vehicle confirmation from missing DVIR evidence");
 assert.match(driverDashboard, /Start route to pickup/, "Driver home must not request a duplicate DVIR after signed safe evidence exists");
 
+// ── DEF-022: submit handlers must never convert/validate inside the mutate argument ──
+// A synchronous throw there is swallowed (zero network I/O, no visible error).
+const assignSubmit = devicesPage.match(/assignMut\.mutate\(\{[\s\S]*?\}\);/)?.[0] ?? "";
+assert.ok(assignSubmit, "Installation submit mutate call must remain identifiable");
+assert.doesNotMatch(assignSubmit, /toUtcIso\(/, "Installation submit must not call toUtcIso inside the mutate argument (a throw there is silently swallowed)");
+const unassignSubmit = devicesPage.match(/unassignMut\.mutate\(\{[\s\S]*?\}\);/)?.[0] ?? "";
+assert.ok(unassignSubmit, "Removal submit mutate call must remain identifiable");
+assert.doesNotMatch(unassignSubmit, /toUtcIso\(/, "Removal submit must not call toUtcIso inside the mutate argument");
+assert.match(devicesPage, /effectiveAtIso = toUtcIso\(/, "Installation effective time must be converted before mutate, inside try/catch");
+assert.match(devicesPage, /effectiveToIso = toUtcIso\(/, "Removal effective time must be converted before mutate, inside try/catch");
+assert.match(devicesPage, /setFormError\(validationError instanceof Error/, "Hoisted validation failures must land in visible form-error state");
+assert.match(devicesPage, /error=\{formError \?\? \(assignMut\.error instanceof Error/, "Installation form must merge validation and mutation errors into the ModalForm error slot");
+assert.match(devicesPage, /error=\{formError \?\? \(unassignMut\.error instanceof Error/, "Removal form must merge validation and mutation errors into the ModalForm error slot");
+assert.match(devicesPage, /error=\{formError \?\? \(installMut\.error instanceof Error/, "Commissioning form must merge validation and mutation errors into the ModalForm error slot");
+assert.match(devicesPage, /setFormError\("Select the observed commissioning result/, "Commissioning submit must surface a visible error instead of a silent bare return");
+assert.match(devicesPage, /Enter a valid odometer at installation/, "Odometer validation must produce a visible error instead of a silent bare return");
+
+// ── DEF-023: destructive lifecycle confirmations must be automatable and accessible ──
+const confirmDialog = readFileSync(resolve(root, "src/components/ConfirmDialog.tsx"), "utf8");
+assert.doesNotMatch(devicesPage, /window\.confirm\(/, "Native window.confirm blocks automation and assistive tech; lifecycle confirmations must use ConfirmDialog");
+assert.match(devicesPage, /import \{ ConfirmDialog \} from "@\/components\/ConfirmDialog";/, "The device page must import the shared accessible ConfirmDialog");
+assert.match(devicesPage, /<ConfirmDialog/, "ConfirmDialog must actually be rendered for lifecycle confirmations");
+for (const action of ['action: "archive"', 'action: "suspend"', 'action: "rotate-credentials"']) {
+  assert.match(devicesPage, new RegExp(action.replace(/[""]/g, '"')), `${action} must confirm through the in-app dialog`);
+}
+assert.match(confirmDialog, /role="dialog"/, "ConfirmDialog must expose a real dialog role");
+assert.match(confirmDialog, /aria-modal="true"/, "ConfirmDialog must be modal to assistive technology");
+assert.match(confirmDialog, /aria-labelledby=\{titleId\}/, "ConfirmDialog must be labelled by its visible title");
+assert.match(confirmDialog, /Escape/, "ConfirmDialog must cancel on Escape");
+assert.match(confirmDialog, /btn-danger/, "ConfirmDialog must offer a danger-variant confirm button");
+assert.match(confirmDialog, /busy \? "Working\.\.\." : confirmLabel/, "ConfirmDialog must expose an in-flight busy state");
+
+// Focus restore. Reading document.activeElement on mount lands on <body>: the row menu
+// that opened the dialog unmounts in the SAME commit that mounts it, so the opener has
+// to be captured at open time and handed in.
+assert.doesNotMatch(
+  confirmDialog, /const previouslyFocused = document\.activeElement/,
+  "ConfirmDialog must not capture the opener on mount — by then the row menu has already unmounted and activeElement is <body>",
+);
+assert.match(confirmDialog, /returnFocusTo\?: HTMLElement \| null/, "ConfirmDialog must accept the opener captured before it unmounted");
+assert.match(confirmDialog, /opener\.isConnected/, "ConfirmDialog must not focus a detached opener (the archived row is gone from the document)");
+assert.match(confirmDialog, /fallbackFocusSelector/, "ConfirmDialog must fall back to a stable page landmark when the opener is gone");
+assert.match(devicesPage, /const openConfirm = /, "The device page must capture the opening control when it opens a confirmation");
+assert.match(devicesPage, /opener: document\.activeElement instanceof HTMLElement/, "The opener must be captured at setConfirmTarget time, not inside the dialog");
+assert.match(devicesPage, /returnFocusTo=\{confirmTarget\.opener/, "The captured opener must be handed to ConfirmDialog");
+assert.doesNotMatch(devicesPage, /setConfirmTarget\(\{ action:/, "Every confirmation must open through openConfirm so the opener is captured");
+
+// The focus trap must keep owning focus while busy. Disabling every control drops focus
+// onto <body>, and Tab from <body> walks the BACKGROUND page — the trap only wraps at the
+// dialog's own first/last focusable.
+const cancelButton = confirmDialog.match(/<button\s+ref=\{cancelButton\}[\s\S]*?<\/button>/)?.[0] ?? "";
+assert.ok(cancelButton, "ConfirmDialog cancel button must remain identifiable");
+assert.doesNotMatch(cancelButton, /\bdisabled=\{busy\}/, "Cancel must stay focusable while busy, or focus escapes the dialog to <body>");
+assert.match(cancelButton, /aria-disabled=\{busy/, "Cancel must be aria-disabled (not disabled) while busy so it keeps its place in the tab order");
+assert.match(cancelButton, /if \(!busy\) onCancel\(\)/, "An aria-disabled Cancel must still refuse to act, so the dialog cannot detach from an in-flight action");
+assert.match(
+  confirmDialog, /!dialogRef\.current\?\.contains\(active\)/,
+  "The Tab handler must pull focus back when activeElement has escaped the dialog",
+);
+
+// ── DEF-021: a stale server error must not reappear as though the current input caused it ──
+// The dialogs render `formError ?? mutation.error`; clearing only formError un-masks the
+// PREVIOUS submit's 400 in the same role="alert".
+for (const [helper, mutation] of [
+  ["updateInstallationForm", "assignMut"],
+  ["updateRemovalForm", "unassignMut"],
+  ["updateCommissioningForm", "installMut"],
+]) {
+  const body = devicesPage.match(new RegExp(`const ${helper} = [\\s\\S]*?\\n  \\};`))?.[0] ?? "";
+  assert.ok(body, `${helper} must remain identifiable`);
+  assert.match(body, new RegExp(`${mutation}\\.reset\\(\\)`), `${helper} must reset ${mutation} so an old server error cannot resurface after a later client-side error`);
+}
+
+// ── DEF-020: measured counts must not default ──
+assert.match(devicesPage, /function measuredCount/, "Measured counts must render through an honest helper");
+assert.doesNotMatch(devicesPage, /pendingDevices \?\? 0/, "An unreported follow-up count must render as absent, never as a confident 0");
+assert.doesNotMatch(devicesPage, /deviceCount \|\| 0/, "An unreported device count must render as absent, never as a confident 0");
+
+const auditPage = readFileSync(resolve(root, "src/pages/AuditLogsPage.tsx"), "utf8");
+assert.doesNotMatch(auditPage, /rec\.score \?\? 0/, "An unscored recommendation must not be presented as scoring zero");
+assert.match(auditPage, /Unscored/, "A recommendation with no score must say so");
+assert.match(auditPage, /const exportsLoading\s*=/, "The export-request query's loading state must be distinguishable from a measured zero");
+assert.match(auditPage, /const aiRecsUnavailable\s*=/, "The recommendation query's failure state must be distinguishable from 'none found'");
+assert.match(auditPage, /Export requests could not be loaded/, "A failed export-request load must render an explicit error, not 'No export requests yet'");
+assert.match(auditPage, /Operations recommendations could not be loaded/, "A failed recommendation load must render an explicit error, not 'No recommendations available'");
+assert.match(auditPage, /exportsUnknown \? "—" : stats\.exportsTotal/, "The Export Requests total must render '—' while unknown, never 0");
+
 console.log("device installation frontend contract: ok");

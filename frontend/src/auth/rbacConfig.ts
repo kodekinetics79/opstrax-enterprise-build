@@ -237,21 +237,40 @@ const PERMISSION_GROUPS: Record<Permission, string[]> = {
   [P.OPERATIONS_PROOF_ARTIFACT_READ]: ["operations.proof_artifact.read", "operations.proof.read", "dispatch:view", "dispatch:manage", "driver:self"],
   [P.OPERATIONS_PROOF_ARTIFACT_CREATE]: ["operations.proof_artifact.create", "operations.proof.create", "dispatch:manage", "driver:self"],
 
-  [P.USERS_VIEW]: ["users.view", "users:view", "users.manage", "users:manage"],
+  // ── Governance view tiers are ONE-WAY (round-2 security fix) ───────────────
+  // Groups here are SYMMETRIC and MERGE on any shared token (see addPermissionGroup
+  // below), so putting `users.manage` beside `users:view` did not encode
+  // "manage implies view" — it made the two EQUIVALENT and merged this group with
+  // USERS_CREATE/UPDATE/DELETE. Measured on the shipped closure before the fix:
+  // settings:view→settings:manage, settings:view→settings:update,
+  // users:view→users:manage/create/update/delete, roles:view→users:manage and
+  // roles:view→roles:manage/update/create were ALL true, and settings:view also
+  // reached `telematics:providers:manage` (SETTINGS_VIEW → settings:manage →
+  // TELEMATICS_PROVIDERS_MANAGE). A Read-only Auditor was rendered — and on the
+  // frontend authorised for — the whole tenant-administration write surface.
+  // The view groups now carry ONLY their own view token. Do not add a manage
+  // token back: there is no one-way edge in this closure, only equivalence.
+  [P.USERS_VIEW]: ["users.view", "users:view"],
   [P.USERS_CREATE]: ["users.manage", "users:manage"],
   [P.USERS_UPDATE]: ["users.manage", "users:manage"],
   [P.USERS_DELETE]: ["users.manage", "users:manage"],
 
-  [P.ROLES_VIEW]: ["roles.view", "roles:view", "users.manage", "users:manage"],
+  [P.ROLES_VIEW]: ["roles.view", "roles:view"],
   [P.ROLES_CREATE]: ["roles.manage", "roles:manage", "users.manage", "users:manage"],
   [P.ROLES_UPDATE]: ["roles.manage", "roles:manage", "users.manage", "users:manage"],
 
-  [P.SETTINGS_VIEW]: ["settings.view", "settings:view", "settings.manage", "settings:manage"],
+  [P.SETTINGS_VIEW]: ["settings.view", "settings:view"],
   [P.SETTINGS_UPDATE]: ["settings.manage", "settings:manage"],
 
-  [P.AUDIT_VIEW]: ["audit.view", "audit:view", "reports.manage", "reports:manage"],
+  [P.AUDIT_VIEW]: ["audit.view", "audit:view"],
 
-  [P.TELEMATICS_DEVICES_VIEW]: ["fleet.view", "fleet:view", "telematics.view", "telematics:view"],
+  // PAGE-GATING token. Deliberately carries NO module-view alias (fleet:view /
+  // telematics:view): this group is merged into TELEMETRY_DEVICES_READ through the
+  // shared `telematics:devices:view` token, so any broad token listed here also
+  // satisfies telemetry.devices.read — which is exactly how Mechanic/Compliance
+  // Manager (fleet:view, no device grant) were shown /iot-devices that then 403'd.
+  // Roles that legitimately manage devices hold telematics:devices:view directly.
+  [P.TELEMATICS_DEVICES_VIEW]: ["telematics.devices.view", "telematics:devices:view"],
   [P.TELEMATICS_DEVICES_CREATE]: ["fleet.manage", "fleet:manage", "telematics.manage", "telematics:manage"],
   [P.TELEMATICS_DEVICES_UPDATE]: ["fleet.manage", "fleet:manage", "telematics.manage", "telematics:manage"],
   [P.TELEMATICS_DEVICES_DELETE]: ["fleet.manage", "fleet:manage", "telematics.manage", "telematics:manage"],
@@ -260,7 +279,12 @@ const PERMISSION_GROUPS: Record<Permission, string[]> = {
   [P.TELEMATICS_DEVICES_FIRMWARE]: ["maintenance.manage", "maintenance:manage", "telematics.manage", "telematics:manage"],
   [P.TELEMATICS_DEVICES_EXPORT]: ["fleet.view", "fleet:view", "fleet.manage", "fleet:manage", "telematics.view", "telematics:view"],
   [P.TELEMATICS_PROVIDERS_MANAGE]: ["settings.manage", "settings:manage", "fleet.manage", "fleet:manage", "telematics.manage", "telematics:manage"],
-  [P.TELEMATICS_GPS_VIEW]: ["fleet.view", "fleet:view", "telematics.gps.view", "telematics:gps:view", "telematics.view", "telematics:view"],
+  // PAGE-GATING token, same reasoning: this group is merged into
+  // TELEMETRY_LIVE_STATE_READ through the shared `telematics:gps:view` token, so a
+  // module-view alias here flows straight into the live-map permission. fleet:view /
+  // telematics:view removed — holders of those saw /map-view and got a 403 from
+  // /api/telemetry/live-state (they hold neither map:view nor telematics:gps:view).
+  [P.TELEMATICS_GPS_VIEW]: ["telematics.gps.view", "telematics:gps:view"],
   [P.TELEMATICS_GPS_EXPORT]: ["fleet.view", "fleet:view", "telematics.gps.export", "telematics:gps:export", "telematics.view", "telematics:view"],
   [P.TELEMATICS_DIAGNOSTICS_VIEW]: ["maintenance.view", "maintenance:view", "telematics.diagnostics.view", "telematics:diagnostics:view", "telematics.view", "telematics:view"],
   [P.TELEMATICS_DIAGNOSTICS_UPDATE]: ["maintenance.manage", "maintenance:manage", "telematics.diagnostics.update", "telematics:diagnostics:update", "telematics.manage", "telematics:manage"],
@@ -268,14 +292,14 @@ const PERMISSION_GROUPS: Record<Permission, string[]> = {
   [P.TELEMATICS_SENSORS_VIEW]: ["fleet.view", "fleet:view", "telematics.sensors.view", "telematics:sensors:view", "telematics.view", "telematics:view"],
   [P.TELEMATICS_SENSORS_UPDATE]: ["maintenance.manage", "maintenance:manage", "telematics.sensors.update", "telematics:sensors:update", "telematics.manage", "telematics:manage"],
   [P.TELEMATICS_SENSORS_EXPORT]: ["fleet.view", "fleet:view", "telematics.sensors.export", "telematics:sensors:export", "telematics.view", "telematics:view"],
-  [P.TELEMETRY_LIVE_STATE_READ]: ["telemetry.live_state.read", "telemetry.live-state.read", "telemetry.alerts.read", "telemetry.alerts.view", "telemetry.rules.read", "telemetry.rules.view", "dashboard:view", "dashboard.view", "map:view", "map.view", "fleet:view", "fleet.view", "telematics:gps:view"],
-  [P.TELEMETRY_DEVICES_READ]: ["telemetry.devices.read", "telemetry.devices.view", "telematics:devices:view", "telematics.devices.view", "fleet:view", "fleet.view"],
+  [P.TELEMETRY_LIVE_STATE_READ]: ["telemetry.live_state.read", "telemetry.live-state.read", "map:view", "map.view", "telematics:gps:view"],
+  [P.TELEMETRY_DEVICES_READ]: ["telemetry.devices.read", "telemetry.devices.view", "telematics:devices:view", "telematics.devices.view"],
   [P.TELEMETRY_DEVICES_MANAGE]: ["telemetry.devices.manage", "telematics:devices:create", "telematics:devices:update", "telematics:devices:delete", "telematics:devices:assign", "telematics:providers:manage", "fleet:manage", "fleet.manage"],
   [P.TELEMETRY_ALERTS_READ]: ["telemetry.alerts.read", "telemetry.alerts.view", "alerts:view", "alerts.view", "safety:view", "safety.view", "maintenance:view", "maintenance.view"],
   [P.TELEMETRY_ALERTS_MANAGE]: ["telemetry.alerts.manage", "alerts:acknowledge", "alerts:close", "alerts.manage", "alerts:manage", "safety:manage", "safety.manage", "maintenance:manage", "maintenance.manage"],
-  [P.TELEMETRY_RULES_READ]: ["telemetry.rules.read", "telemetry.rules.view", "dashboard:view", "dashboard.view", "fleet:view", "fleet.view"],
+  [P.TELEMETRY_RULES_READ]: ["telemetry.rules.read", "telemetry.rules.view"],
   [P.TELEMETRY_RULES_MANAGE]: ["telemetry.rules.manage", "devices:manage", "fleet:manage", "fleet.manage"],
-  [P.TELEMETRY_RECOMMENDATIONS_READ]: ["telemetry.recommendations.read", "reports:view", "reports.view", "dashboard:view", "dashboard.view"],
+  [P.TELEMETRY_RECOMMENDATIONS_READ]: ["telemetry.recommendations.read", "reports:view", "reports.view"],
 
   [P.CUSTOMER_PORTAL_VIEW]: ["customer_portal.view", "customer-portal:view", "customer_portal:view", "fleet.tracking.view", "fleet.pod.view"],
   [P.CUSTOMER_PORTAL_MANAGE]: ["customer_portal.manage", "customer-portal:manage", "customer_portal:manage", "fleet.customer_tracking.manage", "dispatch.manage", "dispatch:manage"],
@@ -316,6 +340,15 @@ const PERMISSION_GROUPS: Record<Permission, string[]> = {
 
 const permissionAliasLookup = new Map<string, string[]>();
 
+// SECURITY INVARIANT — alias groups are SYMMETRIC (undirected) closures.
+// Every token in a group satisfies every other token in that group, and two
+// groups sharing any token become mutually satisfying through it. A group is
+// therefore an equivalence statement, not a one-way "implied by" list: never
+// mix a broad module permission (dashboard:view, fleet:view, reports:manage,
+// settings:manage, …) into a narrow permission's alias list, or every holder
+// of ANY token in the group transitively gains the broad module. That exact
+// mistake let alerts:view satisfy dashboard:view and shipments:view satisfy
+// telemetry.devices.read (UAT DEF-006/DEF-024/DEF-025).
 function addPermissionGroup(canonical: Permission, aliases: string[]) {
   const variants = unique([canonical, ...aliases, ...aliases.flatMap(getPunctuationVariants)]);
   for (const token of variants) {

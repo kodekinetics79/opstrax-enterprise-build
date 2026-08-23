@@ -24,7 +24,11 @@ public sealed class WorkforceScheduleTenantIntegrityTests
         Assert.Contains("ws.driver_id AS driver_id", section, StringComparison.Ordinal);
         Assert.Contains("d.full_name AS driver_name", section, StringComparison.Ordinal);
         Assert.Contains("ws.monday AS mon", section, StringComparison.Ordinal);
-        Assert.Contains("d.license_number AS licence_class", section, StringComparison.Ordinal);
+        // DEF-015: the workforce projection must carry NO license material. The old shape
+        // exposed the license NUMBER mislabeled as a licence CLASS (drivers has no
+        // license_class column). The response key survives — empty, never fabricated.
+        Assert.Contains("'' AS licence_class", section, StringComparison.Ordinal);
+        Assert.DoesNotContain("license_number", section, StringComparison.Ordinal);
         Assert.Contains("0 AS hours_this_week", section, StringComparison.Ordinal);
         Assert.Contains("70 AS hos_limit", section, StringComparison.Ordinal);
         Assert.Contains("AS safety_score", section, StringComparison.Ordinal);

@@ -255,6 +255,105 @@ jobs:
           done
           NEON_PG_URI='postgresql://zayra:zayra@127.0.0.1:5433/opstrax_local?sslmode=disable' \
             ./tools/apply-neon-predeploy-migrations.sh
+      # ── Migration-pure oracle ────────────────────────────────────────────────
+      # The opstrax_local database above is DEV-SHAPED on purpose: the next step boots
+      # the app, which runs every runtime *SchemaService and creates the very columns
+      # a protected environment will never have (Program.cs ShouldRunSchemaInitAsync
+      # skips all of them under the restricted role + FORCE RLS). That makes this lane
+      # structurally incapable of catching the missing-column class — it is why
+      # RETEST-20260821-1035-R1 had to retract a Gate 1 PASS for /api/routes while
+      # routes.efficiency_score existed in no migration.
+      #
+      # opstrax_migration_pure is built by the migration chain ONLY and is NEVER
+      # booted against. The real controller SQL for the core journey endpoints is then
+      # executed on it, so a column or table that exists only in a schema service
+      # fails here as 42703/42P01 exactly as it would in staging. Keep BOTH databases:
+      # the dev-shaped one still runs the integration suites below.
+      - name: Build a migration-pure oracle database (never booted against)
+        run: |
+          createdb -h 127.0.0.1 -p 5433 -U zayra opstrax_migration_pure
+          for f in \
+            database/init/001_schema.sql \
+            database/init/002_seed.sql \
+            database/init/004_jobs_execution.sql \
+            database/migrations/2026_06_30_stage19_row_level_security.sql \
+            database/migrations/2026_06_30_stage20_rls_force_and_app_role.sql \
+            database/migrations/2026_07_01_stage22_rls_reconcile_coverage.sql; do
+            echo "Applying $f"
+            psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_migration_pure -v ON_ERROR_STOP=1 -q -f "$f"
+          done
+          NEON_PG_URI='postgresql://zayra:zayra@127.0.0.1:5433/opstrax_migration_pure?sslmode=disable' \
+            ./tools/apply-neon-predeploy-migrations.sh
+          psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_migration_pure -v ON_ERROR_STOP=1 -q \
+            -f database/migrations/2026_07_31_stage58_nonforgeable_tenant_ticket.sql
+          psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_migration_pure -v ON_ERROR_STOP=1 -q \
+            -f database/migrations/2026_07_31_stage59_data_protection_key_ring.sql
+          psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_migration_pure -v ON_ERROR_STOP=1 -q \
+            -f database/migrations/2026_08_11_stage76_telematics_security_hardening.sql
+          echo "migration-pure tables: $(psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_migration_pure -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';")"
+      - name: Core journey controller SQL must resolve on the migration-pure database
+        run: |
+          # Verbatim fragments from the handlers named in each heading. @cid/@branchId
+          # are bound to a literal tenant and NULL branch; the point is that every
+          # referenced relation and column must RESOLVE, not that rows come back.
+          # Update these when the handler SQL changes — that is the contract.
+          psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_migration_pure -v ON_ERROR_STOP=1 <<'JOURNEY_SQL'
+          \set QUIET on
+          \set cid 1
+
+          -- GET /api/routes  (EndpointMappings.Routes)
+          SELECT r.*, COALESCE(r.route_name,r.name) route_name, v.vehicle_code, d.full_name driver_name,
+                 (SELECT COUNT(*) FROM route_stops rs WHERE rs.route_id=r.id AND rs.company_id=r.company_id) stops,
+                 CASE WHEN r.sla_risk='High' OR r.status IN ('Delayed','At Risk') THEN 'High' WHEN r.efficiency_score < 82 THEN 'Medium' ELSE 'Low' END delay_hotspot_badge,
+                 CASE WHEN r.sla_risk='High' THEN 'Optimize sequence and send ETA updates'
+                      WHEN r.efficiency_score < 82 THEN 'Run route optimization preview'
+                      ELSE 'Release route plan' END recommended_action
+          FROM routes r
+          LEFT JOIN vehicles v ON v.id=r.assigned_vehicle_id AND v.company_id=r.company_id
+          LEFT JOIN drivers d ON d.id=r.assigned_driver_id AND d.company_id=r.company_id
+          WHERE r.company_id=:cid AND r.deleted_at IS NULL
+          ORDER BY r.planned_start DESC, r.id DESC LIMIT 1;
+
+          -- GET /api/routes/summary  (EndpointMappings.RoutesSummary)
+          SELECT COUNT(*) FILTER (WHERE r.created_at::date=CURRENT_DATE) total_routes_today,
+                 SUM(CASE WHEN status='Active' THEN 1 ELSE 0 END) active_routes,
+                 SUM(CASE WHEN status='Planned' THEN 1 ELSE 0 END) planned_routes,
+                 SUM(CASE WHEN status='Completed' THEN 1 ELSE 0 END) completed_routes,
+                 SUM(CASE WHEN status IN ('Delayed','At Risk') THEN 1 ELSE 0 END) delayed_routes,
+                 ROUND(AVG(total_stops),1) average_stops_per_route,
+                 CONCAT(ROUND(AVG(estimated_duration_minutes)), ' min') average_route_eta,
+                 ROUND(AVG(efficiency_score),1) route_efficiency_score,
+                 SUM(CASE WHEN sla_risk='High' OR status IN ('Delayed','At Risk') THEN 1 ELSE 0 END) high_risk_routes,
+                 CONCAT('$', TO_CHAR((COALESCE(SUM(cost_estimate),0))::numeric, 'FM9,999,999,999')) route_cost_estimate
+          FROM routes r WHERE r.company_id=:cid AND r.deleted_at IS NULL;
+
+          -- GET /api/expenses/summary  (EndpointMappings.ExpensesSummary)
+          SELECT CONCAT('$', TO_CHAR((COALESCE(SUM(CASE WHEN expense_date >= DATE_TRUNC('month', CURRENT_DATE) THEN amount ELSE 0 END),0))::numeric, 'FM9,999,999,990.00')) total_expenses_this_month,
+                 SUM(CASE WHEN approval_status='Pending' THEN 1 ELSE 0 END) pending_approval,
+                 SUM(CASE WHEN approval_status='Approved' THEN 1 ELSE 0 END) approved_expenses,
+                 SUM(CASE WHEN approval_status='Rejected' THEN 1 ELSE 0 END) rejected_expenses,
+                 SUM(CASE WHEN category_name='Fuel' THEN amount ELSE 0 END) fuel_expenses,
+                 SUM(CASE WHEN risk_score >= 60 THEN 1 ELSE 0 END) unusual_expenses,
+                 SUM(CASE WHEN receipt_status='Missing' THEN 1 ELSE 0 END) missing_receipts
+          FROM expenses WHERE company_id=:cid AND deleted_at IS NULL;
+
+          -- GET /api/safety/summary  (SafetyCoachingScorecardPilotEndpoints.SafetyScorecardSummary)
+          WITH scoped_drivers AS (
+            SELECT d.id,d.company_id FROM drivers d WHERE d.company_id=:cid AND d.deleted_at IS NULL),
+          recent_events AS (
+            SELECT se.* FROM safety_events se JOIN scoped_drivers d ON d.id=se.driver_id AND d.company_id=se.company_id
+            WHERE se.event_time>=NOW()-INTERVAL '30 days' AND se.deleted_at IS NULL AND LOWER(se.status)<>'dismissed')
+          SELECT (SELECT ROUND(AVG(dss.score_30d),1) FROM scoped_drivers d JOIN driver_safety_scores dss ON dss.driver_id=d.id AND dss.company_id=d.company_id AND dss.computed_at>=NOW()-INTERVAL '2 hours' AND dss.events_90d>0) fleet_safety_score,
+                 (SELECT COUNT(*) FROM scoped_drivers) total_drivers,
+                 (SELECT COUNT(*) FROM recent_events WHERE severity='Critical' AND status NOT IN ('resolved','dismissed')) critical_events,
+                 (SELECT COUNT(*) FROM recent_events WHERE event_type='Harsh Braking') harsh_braking;
+
+          -- GET /api/settings/api-keys  (EndpointMappings.ApiKeysList) — 42P01 at R1
+          SELECT id, key_prefix, last_four, label, created_by, created_at, last_used_at, revoked_at
+          FROM tenant_api_keys WHERE company_id=:cid
+          ORDER BY revoked_at IS NOT NULL, created_at DESC LIMIT 1;
+          JOURNEY_SQL
+          echo "core journey controller SQL resolved against a migration-pure schema"
       - name: Build API + tests
         run: |
           dotnet build backend-dotnet/Opstrax.Api.csproj
@@ -266,7 +365,10 @@ jobs:
           ASPNETCORE_ENVIRONMENT: Development
           ASPNETCORE_URLS: http://localhost:8099
           Jwt__Key: "ci-only-jwt-signing-key-at-least-32-chars-long-000"
-          Telemetry__GatewaySecret: "ci-gateway-secret-at-least-32-characters-long-00"
+          # Telemetry__GatewaySecret deliberately NOT set: nothing consumes the legacy
+          # fleet-wide secret any more (gateway ingest requires per-gateway credentials),
+          # and ConfigValidationService flags its PRESENCE — warn in Development, fail
+          # closed in protected environments. Setting it here was dead and contradictory.
         run: |
           (dotnet run --no-build --project backend-dotnet > /tmp/api_boot.log 2>&1 & echo $! > /tmp/api.pid)
           # Schema init (all *SchemaService.EnsureAsync) runs during startup and completes BEFORE the
@@ -432,51 +534,31 @@ jobs:
           test -f backend-dotnet/Services/FleetProductionReadinessService.cs
           test -f backend-dotnet/Services/MfaChallengeConsumptionService.cs
           test -f frontend/src/auth/csrfTokenStore.ts
-          test -f database/migrations/2026_07_16_stage42_telemetry_gateways.sql
-          test -f database/migrations/2026_07_30_customer_feedback_contract.sql
-          test -f database/migrations/2026_07_30_stage49_mfa_challenge_one_time.sql
+          # The API image packages database/migrations/ as a DIRECTORY copy
+          # (backend-dotnet/Dockerfile), so a per-file allowlist here can no longer
+          # fall behind what ships. Assert the directory shape, that every migration
+          # the predeploy runner enrolls exists, and that the retest-critical files
+          # are present by name.
+          test -d database/migrations
+          test -d database/migrations/telematics
+          ls database/migrations/*.sql >/dev/null
+          ls database/migrations/telematics/*.sql >/dev/null
+          sed -n '/^MIGRATIONS=(/,/^)/p' tools/apply-neon-predeploy-migrations.sh | \
+            grep -E '^  [A-Za-z0-9_./]+$' | sed -E 's/^ +//' | while read -r m; do
+              case "$m" in
+                ../init/001_schema) f="database/init/001_schema.sql" ;;
+                *)                  f="database/migrations/$m.sql" ;;
+              esac
+              test -f "$f" || { echo "runner enrolls missing file: $m" >&2; exit 1; }
+            done
           test -f database/migrations/2026_07_30_stage50_fleet_production_contract.sql
-          test -f database/migrations/2026_07_30_stage51_production_runtime_support.sql
-          test -f database/migrations/2026_07_30_stage52_fleet_identity_uniqueness.sql
-          test -f database/migrations/2026_07_30_stage53_tenant_rls_reconciliation.sql
-          test -f database/migrations/2026_07_30_stage54_cold_chain_device_integrity.sql
-          test -f database/migrations/2026_07_30_stage55_fleet_runtime_route_contract.sql
-          test -f database/migrations/2026_07_30_stage56_asset_type_integrity.sql
-          test -f database/migrations/2026_07_30_stage57_workforce_schedule_tenant_integrity.sql
           test -f database/migrations/2026_07_31_stage58_nonforgeable_tenant_ticket.sql
-          test -f database/migrations/2026_07_31_stage59_data_protection_key_ring.sql
-          test -f database/migrations/2026_08_01_stage60_dispatch_trip_pilot.sql
-          test -f database/migrations/2026_08_01_stage61_operations_proof_center.sql
-          test -f database/migrations/2026_08_01_stage62_last_mile_pilot.sql
-          test -f database/migrations/2026_08_01_stage63_route_plans_pilot.sql
-          test -f database/migrations/2026_07_22_stage47_detention_recovery.sql
-          test -f database/migrations/2026_08_01_stage64_shipments_pilot.sql
-          test -f database/migrations/2026_08_01_stage65_safety_pilot.sql
-          test -f database/migrations/2026_08_02_stage66_telematics_pilot.sql
-          test -f database/migrations/2026_08_02_stage67_telematics_diagnostics_integrity.sql
-          test -f database/migrations/2026_08_02_stage68_entitlement_policy_mode.sql
-          test -f database/migrations/2026_08_02_stage69_market_pack_control_hardening.sql
-          test -f database/migrations/2026_08_02_stage70_hos_pilot_schema_reconciliation.sql
-          test -f database/migrations/2026_08_02_stage71_coaching_evidence_reconciliation.sql
-          test -f database/migrations/2026_08_02_stage72_hos_offboarding_immutability_reconciliation.sql
-          test -f database/migrations/2026_08_02_stage73_hos_offboarding_null_fail_closed.sql
-          test -f database/migrations/2026_08_02_stage74_retention_policy_production_contract.sql
-          test -f database/migrations/2026_08_02_stage75_bounded_support_access.sql
           test -f database/migrations/2026_08_11_stage76_telematics_security_hardening.sql
-          test -f database/migrations/2026_08_12_stage77_protected_role_bootstrap.sql
-          test -f database/migrations/2026_08_13_stage78_country_profiles_runtime_contract.sql
-          test -f database/migrations/2026_08_13_stage79_tenant_provisioning_runtime_contract.sql
-          test -f database/migrations/2026_08_13_stage80_driver_proof_upload_binding.sql
-          test -f database/migrations/2026_08_14_stage80_fleet_identity_backbone.sql
-          test -f database/migrations/2026_08_18_stage81_platform_billing_itemization.sql
-          test -f database/migrations/2026_08_20_stage81_customer_eta_secure_token.sql
-          test -f database/migrations/2026_08_20_stage82_telematics_device_credential_constraint.sql
-          test -f database/migrations/telematics/001_latest_position_provenance.sql
-          test -f database/migrations/telematics/002_device_lifecycle.sql
-          test -f database/migrations/telematics/003_canonical_telemetry_timeseries.sql
-          test -f database/migrations/telematics/004_device_trust_policy.sql
-          test -f database/migrations/telematics/005_replay_guard.sql
-          test -f database/migrations/telematics/006_projection_inbox.sql
+          test -f database/migrations/2026_08_21_stage83_platform_settings.sql
+          test -f database/migrations/2026_08_21_stage84_driver_hos_runtime_contract.sql
+          test -f database/migrations/2026_08_21_stage85_alert_notification_delivery.sql
+          test -f database/migrations/2026_08_22_stage86_runtime_route_column_contract.sql
+          test -f database/migrations/2026_08_22_stage87_user_role_id_backfill.sql
           test -f tools/generate-fleet-production-migration.mjs
           test -x tools/collect-release-candidate-provenance.sh
           test -x tools/test-release-candidate-provenance.sh

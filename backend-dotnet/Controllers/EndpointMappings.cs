@@ -125,9 +125,17 @@ public static partial class EndpointMappings
                 ? Task.FromResult(denied)
                 : OkRows(db, "SELECT * FROM operational_events WHERE company_id=@companyId ORDER BY event_time DESC LIMIT 50", c => c.Parameters.AddWithValue("@companyId", GetCompanyId(http)), ct: ct);
         });
-        app.MapPost("/api/control-tower/actions/send-eta-update", SimpleAction("eta.sent", "ETA update queued"));
-        app.MapPost("/api/control-tower/actions/create-dispatch-review", SimpleAction("dispatch.review.created", "Dispatch review created"));
-        app.MapPost("/api/control-tower/actions/create-maintenance-review", SimpleAction("maintenance.review.created", "Maintenance review created"));
+        // These POSTs MINT audit records (eta.sent / dispatch.review.created /
+        // maintenance.review.created), so they are gated at the owning module's WRITE tier,
+        // not at the control-tower read tier. dashboard:view is held by every internal role
+        // including Read-Only Auditor, which must not be able to fabricate an operational
+        // record. Via the alias table the manage tier is satisfied by the granular grants the
+        // real operator roles already hold (dispatch:create/update/assign/cancel →
+        // dispatch:manage; maintenance:create/update/close/review → maintenance:manage), so
+        // no operator role loses an action it legitimately had.
+        app.MapPost("/api/control-tower/actions/send-eta-update", SimpleAction("eta.sent", "ETA update queued", "dispatch:manage"));
+        app.MapPost("/api/control-tower/actions/create-dispatch-review", SimpleAction("dispatch.review.created", "Dispatch review created", "dispatch:manage"));
+        app.MapPost("/api/control-tower/actions/create-maintenance-review", SimpleAction("maintenance.review.created", "Maintenance review created", "maintenance:manage"));
 
         // Server-side full-dataset CSV export (tenant + branch scoped, permission-gated,
         // streamed) — the client CSV only had the current page after pagination.
@@ -138,7 +146,9 @@ public static partial class EndpointMappings
         app.MapGet("/api/drivers/export", (HttpContext http, Database db, CancellationToken ct) =>
             ExportCsv(http, db, "drivers:view", "drivers", "d",
                 "SELECT d.driver_code, d.full_name, d.phone, d.email, d.license_number, d.license_expiry, d.status, d.safety_score, d.compliance_score FROM drivers d WHERE d.deleted_at IS NULL AND d.company_id=@cid",
-                "d.full_name", ct));
+                "d.full_name", ct,
+                // DEF-015: exported CSV carries the masked last-four rendering, never enc:.
+                transform: rows => MaskDriverLicenseIn(rows, http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>())));
         app.MapGet("/api/jobs/export", JobsExport);
         app.MapGet("/api/routes/export", (HttpContext http, Database db, CancellationToken ct) =>
             ExportCsv(http, db, "dispatch:view", "route-plans", "r",
@@ -160,8 +170,8 @@ public static partial class EndpointMappings
         app.MapPost("/api/vehicles", CreateVehicle);
         app.MapPut("/api/vehicles/{id:long}", UpdateVehicle);
         app.MapDelete("/api/vehicles/{id:long}", SoftDeleteWithPermission("vehicles", "vehicle.deleted", "fleet:manage"));
-        app.MapGet("/api/vehicles/{id:long}/timeline", Timeline("Vehicle"));
-        app.MapGet("/api/vehicles/{id:long}/recommendations", Recommendations("vehicles"));
+        app.MapGet("/api/vehicles/{id:long}/timeline", Timeline("Vehicle", "vehicles:view"));
+        app.MapGet("/api/vehicles/{id:long}/recommendations", Recommendations("vehicles", "vehicles:view"));
         app.MapPost("/api/vehicles/{id:long}/assign-driver", ChangeEntityStatus("vehicles", "assigned_driver_id", "vehicle.driver.assigned", "fleet:manage"));
         app.MapPost("/api/vehicles/{id:long}/change-status", ChangeStatus("vehicles", "vehicle.status.changed", "fleet:manage"));
 
@@ -292,8 +302,8 @@ public static partial class EndpointMappings
         app.MapPost("/api/drivers", CreateDriver);
         app.MapPut("/api/drivers/{id:long}", UpdateDriver);
         app.MapDelete("/api/drivers/{id:long}", SoftDeleteWithPermission("drivers", "driver.deleted", "fleet:manage"));
-        app.MapGet("/api/drivers/{id:long}/timeline", Timeline("Driver"));
-        app.MapGet("/api/drivers/{id:long}/recommendations", Recommendations("drivers"));
+        app.MapGet("/api/drivers/{id:long}/timeline", Timeline("Driver", "drivers:view"));
+        app.MapGet("/api/drivers/{id:long}/recommendations", Recommendations("drivers", "drivers:view"));
         app.MapPost("/api/drivers/{id:long}/assign-vehicle", ChangeEntityStatus("drivers", "assigned_vehicle_id", "driver.vehicle.assigned", "fleet:manage"));
         app.MapPost("/api/drivers/{id:long}/change-status", ChangeStatus("drivers", "driver.status.changed", "fleet:manage"));
         // Driver portal access. The only writers of drivers.user_id in the system — without
@@ -322,8 +332,8 @@ public static partial class EndpointMappings
         // the single-row handlers; every statement is company-scoped; one bad row does not
         // fail the batch.
         app.MapPost("/api/customers/bulk", CustomerBulk);
-        app.MapGet("/api/customers/{id:long}/timeline", Timeline("Customer"));
-        app.MapGet("/api/customers/{id:long}/recommendations", Recommendations("customers"));
+        app.MapGet("/api/customers/{id:long}/timeline", Timeline("Customer", "customers:view"));
+        app.MapGet("/api/customers/{id:long}/recommendations", Recommendations("customers", "customers:view"));
         // Health scores computed from REAL delivery history (never invented). Returns
         // state:"insufficient_data" with NULL scores when the customer has too little history.
         app.MapGet("/api/customers/{id:long}/health", CustomerHealth);
@@ -342,8 +352,8 @@ public static partial class EndpointMappings
             return denied is not null ? Task.FromResult(denied) : UpdateAsset(http, id, body, db, audit, ct);
         });
         app.MapDelete("/api/assets/{id:long}", SoftDeleteWithPermission("assets", "asset.deleted", "fleet:manage"));
-        app.MapGet("/api/assets/{id:long}/timeline", Timeline("Asset"));
-        app.MapGet("/api/assets/{id:long}/recommendations", Recommendations("assets"));
+        app.MapGet("/api/assets/{id:long}/timeline", Timeline("Asset", "vehicles:view"));
+        app.MapGet("/api/assets/{id:long}/recommendations", Recommendations("assets", "vehicles:view"));
         app.MapPost("/api/assets/{id:long}/assign", (HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) =>
         {
             var denied = RequirePermission(http, "fleet:manage");
@@ -462,7 +472,11 @@ public static partial class EndpointMappings
             return denied is not null ? Task.FromResult(denied) : CustomerEtaFeedback(http, jobId, body, db, audit, ct);
         });
         app.MapGet("/api/customer-eta/communications", CustomerEtaCommunications);
-        app.MapGet("/api/customer-eta/recommendations", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE module_key IN ('customer-eta','customer-portal') AND company_id=@cid ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
+        app.MapGet("/api/customer-eta/recommendations", (HttpContext http, Database db, CancellationToken ct) =>
+        {
+            if (RequirePermission(http, "customer_portal:view") is { } denied) return Task.FromResult(denied);
+            return OkRows(db, "SELECT * FROM ai_recommendations WHERE module_key IN ('customer-eta','customer-portal') AND company_id=@cid ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+        });
 
         // ── P5 Customer Visibility + ETA Risk Engine ─────────────────────────────────
         // Internal (session-auth): requires customer_portal:view or customer_portal:manage
@@ -722,18 +736,25 @@ public static partial class EndpointMappings
               WHERE cm.company_id=@cid
               ORDER BY cm.gross_margin_percent DESC LIMIT 50",
             c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
-        app.MapGet("/api/profitability/summary", (HttpContext http, Database db, CancellationToken ct) => db.QuerySingleAsync(
+        app.MapGet("/api/profitability/summary", async (HttpContext http, Database db, CancellationToken ct) =>
+        {
+            if (RequirePermission(http, "finance:view") is { } denied) return denied;
+            var row = await db.QuerySingleAsync(
             @"SELECT COALESCE(SUM(revenue_estimate),0) total_revenue,
                      COALESCE(SUM(total_cost),0) total_cost,
                      COALESCE(SUM(gross_margin),0) total_margin,
                      COALESCE(AVG(gross_margin_percent),0) avg_margin_pct,
                      COUNT(*) total_records
               FROM cost_margin_records WHERE company_id=@cid",
-            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct)
-            .ContinueWith(t => Results.Ok(ApiResponse<object>.Ok(t.Result ?? new Dictionary<string, object?>()))));
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+            return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
+        });
 
         // ── Carbon Emissions ──
-        app.MapGet("/api/carbon-emissions", (HttpContext http, Database db, CancellationToken ct) => OkRows(db,
+        app.MapGet("/api/carbon-emissions", (HttpContext http, Database db, CancellationToken ct) =>
+        {
+            if (RequirePermission(http, "reports:view") is { } denied) return Task.FromResult(denied);
+            return OkRows(db,
             @"SELECT v.id, v.vehicle_code, v.type vehicle_type,
                      COALESCE(SUM(ft.gallons),0) gallons_used,
                      COALESCE(SUM(ft.gallons * 10.21),0) co2_this_month,
@@ -746,12 +767,16 @@ public static partial class EndpointMappings
               WHERE v.company_id=@cid AND v.deleted_at IS NULL
               GROUP BY v.id, v.vehicle_code, v.type
               ORDER BY co2_this_month DESC",
-            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+        });
 
         // Real monthly CO2 trend, derived from fuel_transactions (Scope 1 direct
         // emissions = gallons * 10.21 kg). Last 6 calendar months, tenant-scoped.
         // Only months with actual fuel data appear — no fabricated backfill.
-        app.MapGet("/api/carbon-emissions/trend", (HttpContext http, Database db, CancellationToken ct) => OkRows(db,
+        app.MapGet("/api/carbon-emissions/trend", (HttpContext http, Database db, CancellationToken ct) =>
+        {
+            if (RequirePermission(http, "reports:view") is { } denied) return Task.FromResult(denied);
+            return OkRows(db,
             @"SELECT to_char(date_trunc('month', ft.transaction_time), 'Mon') AS month,
                      date_trunc('month', ft.transaction_time) AS month_start,
                      ROUND((COALESCE(SUM(ft.gallons),0) * 10.21 / 1000.0)::numeric, 1) AS emissions,
@@ -762,10 +787,14 @@ public static partial class EndpointMappings
                 AND ft.transaction_time >= date_trunc('month', NOW()) - 5 * INTERVAL '1 month'
               GROUP BY date_trunc('month', ft.transaction_time)
               ORDER BY month_start",
-            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+        });
 
         // ── Digital Forms ──
-        app.MapGet("/api/digital-forms/templates", (HttpContext http, Database db, CancellationToken ct) => OkRows(db,
+        app.MapGet("/api/digital-forms/templates", (HttpContext http, Database db, CancellationToken ct) =>
+        {
+            if (RequirePermission(http, "safety:view") is { } denied) return Task.FromResult(denied);
+            return OkRows(db,
             @"SELECT mr.id, mr.record_code form_key, mr.title, mr.tags category,
                      COALESCE(mr.numeric_value, 10) fields,
                      mr.notes compliance,
@@ -774,8 +803,12 @@ public static partial class EndpointMappings
               FROM module_records mr
               WHERE mr.company_id=@cid AND mr.module_key='digital-forms' AND mr.deleted_at IS NULL
               ORDER BY mr.tags, mr.title",
-            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
-        app.MapGet("/api/digital-forms/submissions", (HttpContext http, Database db, CancellationToken ct) => OkRows(db,
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+        });
+        app.MapGet("/api/digital-forms/submissions", (HttpContext http, Database db, CancellationToken ct) =>
+        {
+            if (RequirePermission(http, "safety:view") is { } denied) return Task.FromResult(denied);
+            return OkRows(db,
             @"SELECT mr.id, COALESCE(mr.title,'Form Submission') form_title, mr.record_code form_key,
                      mr.assigned_to_name submitted_by, mr.created_at submitted_at,
                      COALESCE(mr.status,'Passed') status,
@@ -783,8 +816,17 @@ public static partial class EndpointMappings
               FROM module_records mr
               WHERE mr.company_id=@cid AND mr.module_key='digital-forms-submission' AND mr.deleted_at IS NULL
               ORDER BY mr.created_at DESC LIMIT 50",
-            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+        });
         app.MapPost("/api/digital-forms/submissions", async (DigitalFormSubmissionBody body, Database db, HttpContext http, AuditService audit, CancellationToken ct) => {
+            // This INSERTs a compliance record with a hard-coded status='Passed'. Gating it on
+            // safety:view let a Read-only Auditor — whose entire point is that it cannot write —
+            // fabricate a passed compliance record. Writes take the safety WRITE tier, matching
+            // the ModuleWritePermissionByKey convention (read `x:view` / write `x:manage`) and
+            // the safety module's own RequireAnyDirectPermission guards. The alias table folds
+            // safety:create/update/review into safety:manage, so Tenant Admin, Safety Manager
+            // and every other role that can already file safety records is unaffected.
+            if (RequirePermission(http, "safety:manage") is { } denied) return denied;
             var companyId = GetCompanyId(http);
             var userId = http.Items[AuthUserIdItemKey]?.ToString() ?? "system";
             var code = $"SUB-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}";
@@ -933,7 +975,10 @@ public static partial class EndpointMappings
               LEFT JOIN drivers d ON d.id=va.driver_id
               WHERE va.company_id=@cid
               ORDER BY va.assigned_at DESC LIMIT 50" */
-        app.MapGet("/api/owners", (HttpContext http, Database db, CancellationToken ct) => OkRows(db,
+        app.MapGet("/api/owners", (HttpContext http, Database db, CancellationToken ct) =>
+        {
+            if (RequirePermission(http, "dispatch:view") is { } denied) return Task.FromResult(denied);
+            return OkRows(db,
             @"SELECT mr.id, mr.record_code owner_code, mr.title owner_name,
                      mr.assigned_to_name contact_name, mr.status,
                      COALESCE(mr.numeric_value, 0) vehicle_count,
@@ -943,7 +988,8 @@ public static partial class EndpointMappings
               FROM module_records mr
               WHERE mr.company_id=@cid AND mr.module_key='owners' AND mr.deleted_at IS NULL
               ORDER BY mr.created_at DESC",
-            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+        });
 
         // ── Traffic Violations ──
         app.MapGet("/api/traffic-violations", (HttpContext http, Database db, CancellationToken ct) =>
@@ -1079,15 +1125,19 @@ public static partial class EndpointMappings
         {
             if (RequirePermission(http, "maintenance:view") is { } denied) return Task.FromResult(denied);
             var (branchClause, branchId) = StrictBranchFilter(http, "v");
-            return OkRows(db, MaintenanceBaseSql + " WHERE mi.deleted_at IS NULL AND mi.due_date BETWEEN CURRENT_DATE AND CURRENT_DATE + 14 * INTERVAL '1 day'" + branchClause + " ORDER BY mi.due_date", c => { if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct: ct);
+            return OkRows(db, MaintenanceBaseSql + " WHERE mi.company_id=@cid AND mi.deleted_at IS NULL AND mi.due_date BETWEEN CURRENT_DATE AND CURRENT_DATE + 14 * INTERVAL '1 day'" + branchClause + " ORDER BY mi.due_date", c => { c.Parameters.AddWithValue("@cid", GetCompanyId(http)); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct: ct);
         });
         app.MapGet("/api/maintenance/overdue", (HttpContext http, Database db, CancellationToken ct) =>
         {
             if (RequirePermission(http, "maintenance:view") is { } denied) return Task.FromResult(denied);
             var (branchClause, branchId) = StrictBranchFilter(http, "v");
-            return OkRows(db, MaintenanceBaseSql + " WHERE mi.deleted_at IS NULL AND (mi.status='Overdue' OR mi.due_date < CURRENT_DATE)" + branchClause + " ORDER BY mi.due_date", c => { if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct: ct);
+            return OkRows(db, MaintenanceBaseSql + " WHERE mi.company_id=@cid AND mi.deleted_at IS NULL AND (mi.status='Overdue' OR mi.due_date < CURRENT_DATE)" + branchClause + " ORDER BY mi.due_date", c => { c.Parameters.AddWithValue("@cid", GetCompanyId(http)); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct: ct);
         });
-        app.MapGet("/api/maintenance/recommendations", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE module_key='maintenance' AND company_id=@cid ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
+        app.MapGet("/api/maintenance/recommendations", (HttpContext http, Database db, CancellationToken ct) =>
+        {
+            if (RequirePermission(http, "maintenance:view") is { } denied) return Task.FromResult(denied);
+            return OkRows(db, "SELECT * FROM ai_recommendations WHERE module_key='maintenance' AND company_id=@cid ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+        });
         app.MapGet("/api/maintenance", MaintenanceItems);
         app.MapGet("/api/maintenance/{id:long}", MaintenanceDetail);
         app.MapPost("/api/maintenance", (HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) =>
@@ -1132,7 +1182,7 @@ public static partial class EndpointMappings
         });
         app.MapDelete("/api/workorders/{id:long}", SoftDeleteWithPermission("work_orders", "workorder.deleted", "maintenance:manage"));
         app.MapGet("/api/workorders/{id:long}/timeline", WorkOrderTimeline);
-        app.MapGet("/api/workorders/{id:long}/recommendations", Recommendations("work-orders"));
+        app.MapGet("/api/workorders/{id:long}/recommendations", Recommendations("work-orders", "maintenance:view"));
         app.MapPost("/api/workorders/{id:long}/assign", (HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) =>
         {
             var denied = RequirePermission(http, "maintenance:manage");
@@ -1471,7 +1521,11 @@ public static partial class EndpointMappings
                 c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
         });
         app.MapGet("/api/fuel/anomalies", FuelAnomalies);
-        app.MapGet("/api/fuel/recommendations", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='fuel-idling' ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
+        app.MapGet("/api/fuel/recommendations", (HttpContext http, Database db, CancellationToken ct) =>
+        {
+            if (RequirePermission(http, "fuel:view") is { } denied) return Task.FromResult(denied);
+            return OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='fuel-idling' ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+        });
         app.MapPost("/api/fuel/import-preview", FuelImportPreview);
         app.MapPost("/api/fuel/anomalies/{id:long}/review", (HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) =>
         {
@@ -1489,9 +1543,16 @@ public static partial class EndpointMappings
         app.MapPost("/api/expenses/{id:long}/approve", ExpenseApprove);
         app.MapPost("/api/expenses/{id:long}/reject", ExpenseReject);
         app.MapGet("/api/expenses/categories", (HttpContext http, Database db, CancellationToken ct) =>
-            OkRows(db, "SELECT * FROM expense_categories WHERE company_id=@companyId AND status='Active' ORDER BY category_name",
-                c => c.Parameters.AddWithValue("@companyId", GetCompanyId(http)), ct: ct));
-        app.MapGet("/api/expenses/recommendations", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='expenses' ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
+        {
+            if (RequirePermission(http, "finance:view") is { } denied) return Task.FromResult(denied);
+            return OkRows(db, "SELECT * FROM expense_categories WHERE company_id=@companyId AND status='Active' ORDER BY category_name",
+                c => c.Parameters.AddWithValue("@companyId", GetCompanyId(http)), ct: ct);
+        });
+        app.MapGet("/api/expenses/recommendations", (HttpContext http, Database db, CancellationToken ct) =>
+        {
+            if (RequirePermission(http, "finance:view") is { } denied) return Task.FromResult(denied);
+            return OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='expenses' ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+        });
         app.MapPost("/api/expenses/import-preview", ExpenseImportPreview);
 
         // ===== BATCH 5: CONTRACTS / RATES ======================================
@@ -1539,7 +1600,13 @@ public static partial class EndpointMappings
             return OkRows(db, "SELECT cd.* FROM carrier_documents cd JOIN carriers ca ON ca.id=cd.carrier_id AND ca.company_id=@cid WHERE cd.carrier_id=@id ORDER BY cd.expiry_date", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct: ct);
         });
         app.MapPost("/api/carriers/{id:long}/status", CarrierStatus);
-        app.MapGet("/api/carriers/recommendations", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='carrier-management' ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
+        app.MapGet("/api/carriers/recommendations", (HttpContext http, Database db, CancellationToken ct) =>
+        {
+            // Same dual-audience gate as the Carriers list (fleet OR finance).
+            if (RequirePermission(http, "fleet:view") is { } fleetDenied && RequirePermission(http, "finance:view") is not null)
+                return Task.FromResult(fleetDenied);
+            return OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='carrier-management' ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+        });
 
         // ===== BATCH 5: PREDICTIVE COST & MARGIN ================================
         // TENANT LEAK FIX: every one of these read the whole cost_margin_records /
@@ -1549,33 +1616,65 @@ public static partial class EndpointMappings
         // including the joined rows (a child row whose company_id drifted must not leak a
         // foreign customer's name either).
         app.MapGet("/api/cost-margin/summary", CostMarginSummary);
-        app.MapGet("/api/cost-margin/jobs", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, "SELECT cm.*, COALESCE(j.job_code,CONCAT('Job-',cm.entity_id)) job_code, c.name customer_name FROM cost_margin_records cm LEFT JOIN jobs j ON j.id=cm.job_id AND j.company_id=cm.company_id LEFT JOIN customers c ON c.id=cm.customer_id AND c.company_id=cm.company_id WHERE cm.company_id=@cid AND cm.entity_type='job' ORDER BY cm.margin_percent ASC LIMIT 50", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
-        app.MapGet("/api/cost-margin/routes", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, "SELECT cm.*, r.route_code, COALESCE(r.route_name,r.name) route_name FROM cost_margin_records cm LEFT JOIN routes r ON r.id=cm.route_id AND r.company_id=cm.company_id WHERE cm.company_id=@cid AND cm.entity_type='route' ORDER BY cm.margin_percent ASC LIMIT 50", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
-        app.MapGet("/api/cost-margin/vehicles", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, "SELECT cm.*, v.vehicle_code, v.type vehicle_type FROM cost_margin_records cm LEFT JOIN vehicles v ON v.id=cm.vehicle_id AND v.company_id=cm.company_id WHERE cm.company_id=@cid AND cm.entity_type='vehicle' ORDER BY cm.total_cost DESC LIMIT 50", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
-        app.MapGet("/api/cost-margin/customers", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, "SELECT cm.*, c.name customer_name, c.sla_tier FROM cost_margin_records cm LEFT JOIN customers c ON c.id=cm.customer_id AND c.company_id=cm.company_id WHERE cm.company_id=@cid AND cm.entity_type='customer' ORDER BY cm.margin_percent ASC LIMIT 50", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
-        app.MapGet("/api/cost-margin/predictions", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM cost_margin_predictions WHERE company_id=@cid ORDER BY risk_level DESC, created_at DESC LIMIT 30", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
+        app.MapGet("/api/cost-margin/jobs", (HttpContext http, Database db, CancellationToken ct) =>
+        {
+            if (RequirePermission(http, "finance:view") is { } denied) return Task.FromResult(denied);
+            return OkRows(db, "SELECT cm.*, COALESCE(j.job_code,CONCAT('Job-',cm.entity_id)) job_code, c.name customer_name FROM cost_margin_records cm LEFT JOIN jobs j ON j.id=cm.job_id AND j.company_id=cm.company_id LEFT JOIN customers c ON c.id=cm.customer_id AND c.company_id=cm.company_id WHERE cm.company_id=@cid AND cm.entity_type='job' ORDER BY cm.margin_percent ASC LIMIT 50", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+        });
+        app.MapGet("/api/cost-margin/routes", (HttpContext http, Database db, CancellationToken ct) =>
+        {
+            if (RequirePermission(http, "finance:view") is { } denied) return Task.FromResult(denied);
+            return OkRows(db, "SELECT cm.*, r.route_code, COALESCE(r.route_name,r.name) route_name FROM cost_margin_records cm LEFT JOIN routes r ON r.id=cm.route_id AND r.company_id=cm.company_id WHERE cm.company_id=@cid AND cm.entity_type='route' ORDER BY cm.margin_percent ASC LIMIT 50", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+        });
+        app.MapGet("/api/cost-margin/vehicles", (HttpContext http, Database db, CancellationToken ct) =>
+        {
+            if (RequirePermission(http, "finance:view") is { } denied) return Task.FromResult(denied);
+            return OkRows(db, "SELECT cm.*, v.vehicle_code, v.type vehicle_type FROM cost_margin_records cm LEFT JOIN vehicles v ON v.id=cm.vehicle_id AND v.company_id=cm.company_id WHERE cm.company_id=@cid AND cm.entity_type='vehicle' ORDER BY cm.total_cost DESC LIMIT 50", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+        });
+        app.MapGet("/api/cost-margin/customers", (HttpContext http, Database db, CancellationToken ct) =>
+        {
+            if (RequirePermission(http, "finance:view") is { } denied) return Task.FromResult(denied);
+            return OkRows(db, "SELECT cm.*, c.name customer_name, c.sla_tier FROM cost_margin_records cm LEFT JOIN customers c ON c.id=cm.customer_id AND c.company_id=cm.company_id WHERE cm.company_id=@cid AND cm.entity_type='customer' ORDER BY cm.margin_percent ASC LIMIT 50", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+        });
+        app.MapGet("/api/cost-margin/predictions", (HttpContext http, Database db, CancellationToken ct) =>
+        {
+            if (RequirePermission(http, "finance:view") is { } denied) return Task.FromResult(denied);
+            return OkRows(db, "SELECT * FROM cost_margin_predictions WHERE company_id=@cid ORDER BY risk_level DESC, created_at DESC LIMIT 30", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+        });
 
         // ── Predictive Analytics (Fleet Intelligence) ──────────────────────────
         // Same leak class: module_records was read across all tenants.
-        app.MapGet("/api/predictions/maintenance", (HttpContext http, Database db, CancellationToken ct) => OkRows(db,
+        app.MapGet("/api/predictions/maintenance", (HttpContext http, Database db, CancellationToken ct) =>
+        {
+            if (RequirePermission(http, "reports:view") is { } denied) return Task.FromResult(denied);
+            return OkRows(db,
             @"SELECT mr.*, v.vehicle_code, v.type vehicle_type
               FROM module_records mr
               LEFT JOIN vehicles v ON v.id = CAST(mr.entity_id AS BIGINT) AND v.company_id = mr.company_id
               WHERE mr.company_id=@cid AND mr.module_key = 'predictions-maintenance'
               ORDER BY CAST(mr.data->>'confidencePct' AS FLOAT) DESC NULLS LAST LIMIT 20",
-            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
-        app.MapGet("/api/predictions/driver-risk", (HttpContext http, Database db, CancellationToken ct) => OkRows(db,
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+        });
+        app.MapGet("/api/predictions/driver-risk", (HttpContext http, Database db, CancellationToken ct) =>
+        {
+            if (RequirePermission(http, "reports:view") is { } denied) return Task.FromResult(denied);
+            return OkRows(db,
             @"SELECT mr.*, d.full_name driver_name
               FROM module_records mr
               LEFT JOIN drivers d ON d.id = CAST(mr.entity_id AS BIGINT) AND d.company_id = mr.company_id
               WHERE mr.company_id=@cid AND mr.module_key = 'predictions-driver-risk'
               ORDER BY CAST(mr.data->>'harshEvents' AS INT) DESC NULLS LAST LIMIT 20",
-            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
-        app.MapGet("/api/predictions/sla-risk", (HttpContext http, Database db, CancellationToken ct) => OkRows(db,
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+        });
+        app.MapGet("/api/predictions/sla-risk", (HttpContext http, Database db, CancellationToken ct) =>
+        {
+            if (RequirePermission(http, "reports:view") is { } denied) return Task.FromResult(denied);
+            return OkRows(db,
             @"SELECT mr.* FROM module_records mr
               WHERE mr.company_id=@cid AND mr.module_key = 'predictions-sla-risk'
               ORDER BY CAST(mr.data->>'delayProbability' AS FLOAT) DESC NULLS LAST LIMIT 20",
-            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+        });
 
         // ===== WORKFORCE MANAGEMENT ====================================================
         app.MapGet("/api/workforce/drivers", (HttpContext http, Database db, CancellationToken ct) =>
@@ -1583,7 +1682,7 @@ public static partial class EndpointMappings
             if (RequirePermission(http, "dispatch:view") is { } denied) return Task.FromResult<IResult>(denied);
             var (branchClause, branchId) = StrictBranchFilter(http, "d");
             return OkRows(db,
-                @"SELECT d.id, d.full_name AS name, d.driver_code AS code, d.license_number AS licence_class,
+                @"SELECT d.id, d.full_name AS name, d.driver_code AS code, '' AS licence_class,
                          0 AS hours_this_week,
                          70 AS hos_limit,
                          COALESCE(d.status, 'Available') status,
@@ -1668,14 +1767,22 @@ public static partial class EndpointMappings
                 return Results.Ok();
             }, ct);
         });
-        app.MapGet("/api/cost-margin/recommendations", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='predictive-margin' ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
+        app.MapGet("/api/cost-margin/recommendations", (HttpContext http, Database db, CancellationToken ct) =>
+        {
+            if (RequirePermission(http, "finance:view") is { } denied) return Task.FromResult(denied);
+            return OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='predictive-margin' ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+        });
         app.MapPost("/api/cost-margin/recalculate", CostMarginRecalculate);
         app.MapPost("/api/cost-margin/jobs/{jobId:long}/recalculate", (HttpContext http, long jobId, Database db, AuditService audit, CancellationToken ct) => CostMarginRecalculateJob(http, jobId, db, audit, ct));
 
         // ===== BATCH 5: COST LEAKAGE INTELLIGENCE ================================
         app.MapGet("/api/cost-leakage/summary", CostLeakageSummary);
         app.MapGet("/api/cost-leakage/items", CostLeakageItems);
-        app.MapGet("/api/cost-leakage/recommendations", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='cost-leakage' ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
+        app.MapGet("/api/cost-leakage/recommendations", (HttpContext http, Database db, CancellationToken ct) =>
+        {
+            if (RequirePermission(http, "finance:view") is { } denied) return Task.FromResult(denied);
+            return OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='cost-leakage' ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+        });
         app.MapPost("/api/cost-leakage/items/{id:long}/acknowledge", CostLeakageAcknowledge);
         app.MapPost("/api/cost-leakage/items/{id:long}/create-action", CostLeakageCreateAction);
 
@@ -1730,7 +1837,11 @@ public static partial class EndpointMappings
         // ===== BATCH 6: LOCALIZATION =============================================
         app.MapGet("/api/localization/countries", (Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM countries ORDER BY name", ct: ct));
         app.MapGet("/api/localization/languages", (Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM languages ORDER BY name", ct: ct));
-        app.MapGet("/api/localization/settings", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM tenant_locale_settings WHERE tenant_id=@cid LIMIT 1", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
+        app.MapGet("/api/localization/settings", (HttpContext http, Database db, CancellationToken ct) =>
+        {
+            if (RequirePermission(http, "settings:view") is { } denied) return Task.FromResult(denied);
+            return OkRows(db, "SELECT * FROM tenant_locale_settings WHERE tenant_id=@cid LIMIT 1", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+        });
         app.MapPut("/api/localization/settings", UpdateLocaleSettings);
         app.MapGet("/api/localization/user-preferences", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM user_locale_preferences WHERE user_id=@uid LIMIT 1", c => c.Parameters.AddWithValue("@uid", GetUserId(http)), ct: ct));
         app.MapPut("/api/localization/user-preferences", UpdateUserLocalePreferences);
@@ -1763,7 +1874,11 @@ public static partial class EndpointMappings
                 ct: ct);
         });
         app.MapPost("/api/reports/exports", CreateReportExport);
-        app.MapGet("/api/reports/ai/recommendations", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='reports-analytics' ORDER BY score DESC LIMIT 10", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
+        app.MapGet("/api/reports/ai/recommendations", (HttpContext http, Database db, CancellationToken ct) =>
+        {
+            if (RequirePermission(http, "reports:view") is { } denied) return Task.FromResult(denied);
+            return OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='reports-analytics' ORDER BY score DESC LIMIT 10", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+        });
 
         // ===== P8 REPORTING + ANALYTICS ENGINE ====================================
         // SECURITY: All query execution goes through the dataset registry whitelist.
@@ -1860,13 +1975,37 @@ public static partial class EndpointMappings
         // /api/kpi/metrics — computed from real fleet data; falls back to kpi_metrics table rows when real data is absent
         app.MapGet("/api/kpi/metrics", (HttpContext http, Database db, CancellationToken ct) => KpiMetricsComputed(http, db, ct));
         app.MapGet("/api/kpi/summary", KpiSummary);
-        app.MapGet("/api/kpi/targets", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, @"SELECT kt.*, km.kpi_name FROM kpi_targets kt LEFT JOIN kpi_metrics km ON km.kpi_code=kt.kpi_code AND km.tenant_id=kt.tenant_id WHERE kt.tenant_id=@cid ORDER BY kt.effective_date DESC LIMIT 30", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
-        app.MapGet("/api/kpi/ai/recommendations", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='sla-kpi' ORDER BY score DESC LIMIT 10", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
-        app.MapGet("/api/sla/records", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, @"SELECT sr.*, c.name customer_name, j.job_number FROM sla_records sr LEFT JOIN customers c ON c.id=sr.customer_id AND c.company_id=@tenantId LEFT JOIN jobs j ON j.id=sr.job_id AND j.company_id=@tenantId WHERE sr.tenant_id=@tenantId ORDER BY ARRAY_POSITION(ARRAY['Breached','At Risk','Met'], sr.status), sr.measured_at DESC NULLS LAST LIMIT 50", c => c.Parameters.AddWithValue("@tenantId", GetCompanyId(http)), ct: ct));
+        app.MapGet("/api/kpi/targets", (HttpContext http, Database db, CancellationToken ct) =>
+        {
+            if (RequirePermission(http, "reports:view") is { } denied) return Task.FromResult(denied);
+            return OkRows(db, @"SELECT kt.*, km.kpi_name FROM kpi_targets kt LEFT JOIN kpi_metrics km ON km.kpi_code=kt.kpi_code AND km.tenant_id=kt.tenant_id WHERE kt.tenant_id=@cid ORDER BY kt.effective_date DESC LIMIT 30", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+        });
+        app.MapGet("/api/kpi/ai/recommendations", (HttpContext http, Database db, CancellationToken ct) =>
+        {
+            if (RequirePermission(http, "reports:view") is { } denied) return Task.FromResult(denied);
+            return OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='sla-kpi' ORDER BY score DESC LIMIT 10", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+        });
+        app.MapGet("/api/sla/records", (HttpContext http, Database db, CancellationToken ct) =>
+        {
+            if (RequirePermission(http, "reports:view") is { } denied) return Task.FromResult(denied);
+            return OkRows(db, @"SELECT sr.*, c.name customer_name, j.job_number FROM sla_records sr LEFT JOIN customers c ON c.id=sr.customer_id AND c.company_id=@tenantId LEFT JOIN jobs j ON j.id=sr.job_id AND j.company_id=@tenantId WHERE sr.tenant_id=@tenantId ORDER BY ARRAY_POSITION(ARRAY['Breached','At Risk','Met'], sr.status), sr.measured_at DESC NULLS LAST LIMIT 50", c => c.Parameters.AddWithValue("@tenantId", GetCompanyId(http)), ct: ct);
+        });
         app.MapGet("/api/sla/summary", (HttpContext http, Database db, CancellationToken ct) => SlaSummary(http, db, ct));
-        app.MapGet("/api/sla/breaches", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, @"SELECT sb.*, sr.metric_name sla_name, sr.sla_type, c.name customer_name, j.job_number FROM sla_breaches sb JOIN sla_records sr ON sr.id=sb.sla_record_id AND sr.tenant_id=@tenantId LEFT JOIN customers c ON c.id=sr.customer_id AND c.company_id=@tenantId LEFT JOIN jobs j ON j.id=sr.job_id AND j.company_id=@tenantId WHERE sb.tenant_id=@tenantId ORDER BY sb.detected_at DESC LIMIT 30", c => c.Parameters.AddWithValue("@tenantId", GetCompanyId(http)), ct: ct));
-        app.MapPost("/api/sla/breaches/{id:long}/acknowledge", (HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) => SimpleUpdateStatus(http, "sla_breaches", id, "Acknowledged", "sla.breach_acknowledged", db, audit, ct, tenantColumn: "tenant_id"));
-        app.MapPost("/api/sla/breaches/{id:long}/resolve", (HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) => SimpleUpdateStatus(http, "sla_breaches", id, "Resolved", "sla.breach_resolved", db, audit, ct, tenantColumn: "tenant_id"));
+        app.MapGet("/api/sla/breaches", (HttpContext http, Database db, CancellationToken ct) =>
+        {
+            if (RequirePermission(http, "reports:view") is { } denied) return Task.FromResult(denied);
+            return OkRows(db, @"SELECT sb.*, sr.metric_name sla_name, sr.sla_type, c.name customer_name, j.job_number FROM sla_breaches sb JOIN sla_records sr ON sr.id=sb.sla_record_id AND sr.tenant_id=@tenantId LEFT JOIN customers c ON c.id=sr.customer_id AND c.company_id=@tenantId LEFT JOIN jobs j ON j.id=sr.job_id AND j.company_id=@tenantId WHERE sb.tenant_id=@tenantId ORDER BY sb.detected_at DESC LIMIT 30", c => c.Parameters.AddWithValue("@tenantId", GetCompanyId(http)), ct: ct);
+        });
+        app.MapPost("/api/sla/breaches/{id:long}/acknowledge", (HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) =>
+        {
+            if (RequirePermission(http, "reports:manage") is { } denied) return Task.FromResult(denied);
+            return SimpleUpdateStatus(http, "sla_breaches", id, "Acknowledged", "sla.breach_acknowledged", db, audit, ct, tenantColumn: "tenant_id");
+        });
+        app.MapPost("/api/sla/breaches/{id:long}/resolve", (HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) =>
+        {
+            if (RequirePermission(http, "reports:manage") is { } denied) return Task.FromResult(denied);
+            return SimpleUpdateStatus(http, "sla_breaches", id, "Resolved", "sla.breach_resolved", db, audit, ct, tenantColumn: "tenant_id");
+        });
 
         // ===== BATCH 7: AUDIT LOGS ===============================================
         app.MapGet("/api/audit/logs", async (HttpContext http, Database db, CancellationToken ct) =>
@@ -1897,7 +2036,11 @@ public static partial class EndpointMappings
                 ct: ct);
         });
         app.MapPost("/api/audit/export-requests", CreateAuditExportRequest);
-        app.MapGet("/api/audit/ai/recommendations", (HttpContext http, Database db, CancellationToken ct) => OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='audit-logs' ORDER BY score DESC LIMIT 10", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
+        app.MapGet("/api/audit/ai/recommendations", (HttpContext http, Database db, CancellationToken ct) =>
+        {
+            if (RequirePermission(http, "audit:view") is { } denied) return Task.FromResult(denied);
+            return OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='audit-logs' ORDER BY score DESC LIMIT 10", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+        });
 
         // ===== ADMIN / GOVERNANCE ==============================================
         // ── Branches / Depots / Yards (org hierarchy) ──
@@ -2040,15 +2183,20 @@ public static partial class EndpointMappings
         });
 
         // ===== DRIVER MESSAGING =====================================================
-        app.MapGet("/api/driver-messages", (HttpContext http, Database db, CancellationToken ct) => OkRows(db,
+        app.MapGet("/api/driver-messages", (HttpContext http, Database db, CancellationToken ct) =>
+        {
+            if (RequirePermission(http, "dispatch:view") is { } denied) return Task.FromResult(denied);
+            return OkRows(db,
             @"SELECT id, record_code, title subject, status,
                      tags channel, secondary_value recipient,
                      numeric_value replies, updated_at sent_at
               FROM module_records
               WHERE company_id=@cid AND module_key='driver-messages' AND deleted_at IS NULL
               ORDER BY created_at DESC LIMIT 100",
-            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+        });
         app.MapPost("/api/driver-messages", async (HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, NotificationService notif, CancellationToken ct) => {
+            if (RequirePermission(http, "dispatch:manage") is { } denied) return denied;
             var c = GetCompanyId(http);
             var code = $"MSG-{Guid.NewGuid():N}"[..16];
             var subject   = body.GetValueOrDefault("subject")?.ToString() ?? "Message";
@@ -2080,6 +2228,7 @@ public static partial class EndpointMappings
             return Results.Ok(ApiResponse<object>.Ok(new { code, subject }));
         });
         app.MapPost("/api/driver-messages/broadcast", async (HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, NotificationService notif, CancellationToken ct) => {
+            if (RequirePermission(http, "dispatch:manage") is { } denied) return denied;
             var c = GetCompanyId(http);
             var code = $"BCAST-{Guid.NewGuid():N}"[..18];
             var subject = body.GetValueOrDefault("subject")?.ToString() ?? "Broadcast";
@@ -2176,12 +2325,22 @@ public static partial class EndpointMappings
         ["Super Admin"]              = ["*"],
         ["Tenant Admin"]             = ["dashboard:view","vehicles:view","vehicles:create","vehicles:update","vehicles:delete","vehicles:assign","vehicles:export","drivers:view","drivers:create","drivers:update","drivers:delete","drivers:assign","drivers:export","shipments:view","shipments:create","shipments:update","shipments:delete","shipments:export","dispatch:view","dispatch:create","dispatch:update","dispatch:assign","dispatch:cancel","dispatch:override","customer_portal:view","customer_portal:manage","customers:view","customers:create","customers:update","customers:delete","safety:view","safety:create","safety:update","safety:review","safety:evidence:view","safety:evidence:export","maintenance:view","maintenance:create","maintenance:update","maintenance:close","compliance:view","compliance:update","compliance:export","compliance:manage","alerts:view","alerts:acknowledge","alerts:close","reports:view","reports:export","users:view","users:create","users:update","users:delete","roles:view","roles:update","settings:view","settings:update","audit:view","notifications:view","notifications:manage","messages:send","escalation:manage","ops:view","security:view","security:manage","access_review:view","access_review:manage"],
         ["Fleet Owner"]              = ["dashboard:view","vehicles:view","vehicles:create","vehicles:update","vehicles:delete","vehicles:assign","vehicles:export","drivers:view","drivers:create","drivers:update","drivers:delete","drivers:assign","drivers:export","shipments:view","shipments:create","shipments:update","shipments:delete","shipments:export","dispatch:view","dispatch:create","dispatch:update","dispatch:assign","dispatch:cancel","dispatch:override","customer_portal:view","customer_portal:manage","carriers:view","carriers:manage","fuel:view","fuel:manage","billing:view","billing:manage","alerts:view","alerts:acknowledge","alerts:close","maintenance:view","maintenance:create","maintenance:update","maintenance:close","maintenance:manage","compliance:view","compliance:update","compliance:export","reports:view","reports:export","notifications:view","notifications:manage","messages:send","escalation:manage","settings:view","settings:update","fleet.read","fleet.manage","fleet.admin"],
-        ["Fleet Manager"]            = ["dashboard:view","vehicles:view","vehicles:create","vehicles:update","vehicles:delete","vehicles:assign","vehicles:export","drivers:view","drivers:create","drivers:update","drivers:delete","drivers:assign","drivers:export","shipments:view","shipments:create","shipments:update","shipments:delete","shipments:export","dispatch:view","dispatch:create","dispatch:update","dispatch:assign","dispatch:cancel","dispatch:override","customer_portal:view","customer_portal:manage","carriers:view","carriers:manage","fuel:view","fuel:manage","billing:view","alerts:view","alerts:acknowledge","alerts:close","maintenance:view","maintenance:create","maintenance:update","maintenance:close","maintenance:manage","compliance:view","compliance:update","compliance:export","reports:view","reports:export","notifications:view","notifications:manage","messages:send","escalation:manage","fleet.read","fleet.manage"],
+        // NEW-R1-06 reconciliation: map:view + telematics:view are what database/init/002_seed.sql
+        // role 3 actually grants a Fleet Manager (seed:31). These defaults are the FALLBACK the
+        // middleware uses whenever a tenant's roles table has no matching row, and there the
+        // telematics surface was bare — a Fleet Manager on a tenant without seeded roles lost the
+        // live map entirely. Reconciled to the seed and NOT beyond it: the seed does NOT grant
+        // this role telematics:devices:view, so the device registry stays closed to it.
+        ["Fleet Manager"]            = ["dashboard:view","vehicles:view","vehicles:create","vehicles:update","vehicles:delete","vehicles:assign","vehicles:export","drivers:view","drivers:create","drivers:update","drivers:delete","drivers:assign","drivers:export","shipments:view","shipments:create","shipments:update","shipments:delete","shipments:export","dispatch:view","dispatch:create","dispatch:update","dispatch:assign","dispatch:cancel","dispatch:override","customer_portal:view","customer_portal:manage","carriers:view","carriers:manage","fuel:view","fuel:manage","billing:view","alerts:view","alerts:acknowledge","alerts:close","maintenance:view","maintenance:create","maintenance:update","maintenance:close","maintenance:manage","compliance:view","compliance:update","compliance:export","reports:view","reports:export","notifications:view","notifications:manage","messages:send","escalation:manage","map:view","telematics:view","fleet.read","fleet.manage"],
         // NOTE: customer_portal:manage (customer tracking-link management) is a
         // SUPERVISOR-only permission by the P4.1 security model (Tenant Admin / Fleet
         // Owner / Fleet Manager). Dispatcher manages shipments/stops/POD but not
         // customer visibility links — see P41HardeningTests.
-        ["Dispatcher"]               = ["dashboard:view","vehicles:view","drivers:view","shipments:view","shipments:create","shipments:update","shipments:export","dispatch:view","dispatch:create","dispatch:update","dispatch:assign","dispatch:cancel","carriers:view","fuel:view","alerts:view","alerts:acknowledge","customers:view","reports:view","notifications:view","messages:send"],
+        // NEW-R1-06 reconciliation: seed role 4 (seed:32) grants a Dispatcher map:view — the live
+        // board is the job. It was absent here, so the no-seeded-roles fallback silently withheld
+        // it. The seed grants this role NO telematics token, so telematics:devices:view is
+        // deliberately NOT added.
+        ["Dispatcher"]               = ["dashboard:view","vehicles:view","drivers:view","shipments:view","shipments:create","shipments:update","shipments:export","dispatch:view","dispatch:create","dispatch:update","dispatch:assign","dispatch:cancel","carriers:view","fuel:view","alerts:view","alerts:acknowledge","customers:view","reports:view","notifications:view","messages:send","map:view"],
         // The Driver role is PORTAL-ONLY and isolated: a driver's token carries only what the
         // mobile driver portal (/driver/*, all gated driver:self) actually needs — self service,
         // in-app messaging with dispatch, and their notifications. DVIR submission is authorized
@@ -2192,8 +2351,18 @@ public static partial class EndpointMappings
         // is the exact grant set — stray grants are revoked, keeping the portal genuinely isolated.
         ["Driver"]                   = ["driver:self","notifications:view","messages:send"],
         ["Safety Manager"]           = ["dashboard:view","safety:view","safety:create","safety:update","safety:review","safety:evidence:view","safety:evidence:export","alerts:view","alerts:acknowledge","alerts:close","compliance:view","compliance:update","compliance:export","reports:view","notifications:view"],
+        // NEW-R1-06, DECLINED deliberately: the bare telematics surface is CORRECT here.
+        // 'Maintenance Manager' has no row in database/init/002_seed.sql at all; its closest
+        // seeded analogue is 'Mechanic' (role 6: maintenance:view, maintenance:manage,
+        // dvir:review, fleet:view), which the seed grants NEITHER map:view NOR any telematics
+        // token. Adding either would widen BEYOND the seed rather than reconcile with it.
         ["Maintenance Manager"]      = ["dashboard:view","vehicles:view","maintenance:view","maintenance:create","maintenance:update","maintenance:close","alerts:view","alerts:acknowledge","alerts:close","compliance:view","reports:view","notifications:view"],
         ["Customer"]                 = ["shipments:view","customer_portal:view","alerts:view"],
+        // NEW-R1-06, DECLINED deliberately: the bare telematics surface is CORRECT here.
+        // The seed's 'Read-only Auditor' (role 12) is audit:view + fleet:view + dashboard:view —
+        // no map:view, no telematics token. Granting map:view would ALSO hand this read-only role
+        // telemetry.live_state.read through the live-state alias group, i.e. live GPS tracking of
+        // every driver, which neither the seed nor the role's purpose supports.
         ["Read-Only Auditor"]        = ["dashboard:view","vehicles:view","drivers:view","shipments:view","dispatch:view","customers:view","safety:view","maintenance:view","compliance:view","alerts:view","reports:view","users:view","roles:view","settings:view","audit:view","security:view","access_review:view"],
         ["Company Admin"]            = ["*"],
         ["Mechanic"]                 = ["maintenance:view","maintenance:manage","fleet:view"],
@@ -2321,9 +2490,16 @@ public static partial class EndpointMappings
     }
 
     /// <summary>Login-path adapter over <see cref="ResolveEffectivePermissionsAsync"/>.</summary>
+    /// <remarks>
+    /// NEW-R1-02: a NULL/blank role_name used to default to "Company Admin", which made the
+    /// RolePermissionDefaults fallback hand a WILDCARD session to any half-provisioned user
+    /// row. Fail closed instead: no role name → the defaults fallback cannot fire, and with
+    /// no role_id/permissions_json the session resolves ZERO permissions (the SPA lands on
+    /// /login) — never admin.
+    /// </remarks>
     public static async Task<string[]> ResolvePermissionsAsync(Dictionary<string, object?> user, Database db, CancellationToken ct)
     {
-        var roleName = user.GetValueOrDefault("roleName")?.ToString() ?? "Company Admin";
+        var roleName = user.GetValueOrDefault("roleName")?.ToString()?.Trim() ?? string.Empty;
         var roleId = user.TryGetValue("roleId", out var roleIdValue) && roleIdValue is not null and not DBNull
             ? Convert.ToInt64(roleIdValue)
             : 0L;
@@ -2630,16 +2806,22 @@ public static partial class EndpointMappings
             "operations.proof.read" or "operations.proof.create" or "operations.proof.update" or "operations.proof.submit" or "operations.proof.validate" => ["operations.proof.read", "operations.proof.create", "operations.proof.update", "operations.proof.submit", "operations.proof.validate", "dispatch:view", "dispatch:manage", "driver:self", "customer_portal:view"],
             "operations.proof_artifact.read" or "operations.proof_artifact.create" => ["operations.proof_artifact.read", "operations.proof_artifact.create", "operations.proof.read", "operations.proof.create", "dispatch:view", "dispatch:manage", "driver:self", "customer_portal:view"],
 
-            "telemetry.live_state.read" or "telemetry.live-state.read" => ["telemetry.live_state.read", "telemetry.live-state.read", "telemetry.alerts.read", "telemetry.alerts.view", "telemetry.rules.read", "telemetry.rules.view", "dashboard:view", "dashboard.view", "map:view", "map.view", "fleet:view", "fleet.view", "telematics:gps:view", "telematics.gps.view"],
-            "telemetry.devices.read" or "telemetry.devices.view" => ["telemetry.devices.read", "telemetry.devices.view", "telematics:devices:view", "telematics.devices.view", "fleet:view", "fleet.view"],
+            // Packet-2 mirror (alias cleanup): live-state is MAP-scoped. dashboard:view /
+            // fleet:view / the alerts+rules tokens no longer satisfy it — a session holding
+            // only fleet:view must not read live GPS state.
+            "telemetry.live_state.read" or "telemetry.live-state.read" => ["telemetry.live_state.read", "telemetry.live-state.read", "map:view", "map.view", "telematics:gps:view", "telematics.gps.view"],
+            // Packet-2 mirror: fleet:view no longer reaches the device registry.
+            "telemetry.devices.read" or "telemetry.devices.view" => ["telemetry.devices.read", "telemetry.devices.view", "telematics:devices:view", "telematics.devices.view"],
             "telemetry.devices.manage" => ["telemetry.devices.manage", "telematics:devices:create", "telematics:devices:update", "telematics:devices:delete", "telematics:devices:assign", "telematics:providers:manage", "fleet:manage", "fleet.manage"],
             // Mirror of the frontend permission group: providers-manage ⇄ devices-manage ⇄ fleet:manage.
             "telematics:providers:manage" or "telematics.providers.manage" => ["telematics:providers:manage", "telematics.providers.manage", "telemetry.devices.manage", "fleet:manage", "fleet.manage"],
             "telemetry.alerts.read" or "telemetry.alerts.view" => ["telemetry.alerts.read", "telemetry.alerts.view", "alerts:view", "alerts.view", "safety:view", "safety.view", "maintenance:view", "maintenance.view"],
             "telemetry.alerts.manage" => ["telemetry.alerts.manage", "alerts:acknowledge", "alerts:close", "alerts.manage", "alerts:manage", "safety:manage", "safety.manage", "maintenance:manage", "maintenance.manage"],
-            "telemetry.rules.read" or "telemetry.rules.view" => ["telemetry.rules.read", "telemetry.rules.view", "dashboard:view", "dashboard.view", "fleet:view", "fleet.view"],
+            // Packet-2 mirror: dashboard:view / fleet:view no longer satisfy rules reads.
+            "telemetry.rules.read" or "telemetry.rules.view" => ["telemetry.rules.read", "telemetry.rules.view"],
             "telemetry.rules.manage" => ["telemetry.rules.manage", "devices:manage", "fleet:manage", "fleet.manage"],
-            "telemetry.recommendations.read" => ["telemetry.recommendations.read", "reports:view", "reports.view", "dashboard:view", "dashboard.view"],
+            // Packet-2 mirror: dashboard:view no longer satisfies telemetry recommendations.
+            "telemetry.recommendations.read" => ["telemetry.recommendations.read", "reports:view", "reports.view"],
 
             "charge.read" or "charge.view" => ["charge.read", "charge.view", "charges:view", "finance:view", "billing:view"],
             "charge.create" or "charge.update" or "charge.manage" => ["charge.create", "charge.update", "charge.manage", "charges:create", "charges:update", "charges:manage", "finance:manage", "billing:manage"],
@@ -2703,16 +2885,32 @@ public static partial class EndpointMappings
             "reports:view" or "reports.view" => ["reports:view", "reports.view"],
             "reports:export" or "reports.manage" or "reports:manage" => ["reports:export", "reports.manage", "reports:manage", "reports:view", "reports.view"],
 
-            "users:view" or "users.view" => ["users:view", "users.view", "users.manage", "users:manage"],
+            // ── Governance view tiers are ONE-WAY (round-2 security fix) ─────────
+            // This table expands the tokens a session HOLDS (RequirePermission:
+            // `permissions.SelectMany(PermissionAliases)`), so anything listed beside
+            // a view token is GRANTED to every holder of that view token. Listing
+            // `users:manage` / `settings:manage` here therefore did not mean "manage
+            // implies view" — it meant "view implies MANAGE". A Read-only Auditor
+            // (users:view, roles:view, settings:view) could mint tenant API keys,
+            // repoint the tenant webhook, rotate the signing secret and flip feature
+            // flags. The manage tier below is untouched, so a genuine manage grant
+            // still reaches the manage endpoints; the reverse edge is now cut.
+            // Note the upward direction (manage ⇒ view) was ALREADY dead in
+            // enforcement before this change and is unchanged by it: the required side
+            // is expanded by FoundationServices, which declares no case for these
+            // tokens, so `users:manage` never satisfied a required `users:view` either.
+            "users:view" or "users.view" => ["users:view", "users.view"],
             "users:create" or "users:update" or "users:delete" or "users.manage" or "users:manage" => ["users:create", "users:update", "users:delete", "users.manage", "users:manage"],
 
-            "roles:view" or "roles.view" => ["roles:view", "roles.view", "users.manage", "users:manage"],
+            "roles:view" or "roles.view" => ["roles:view", "roles.view"],
             "roles:create" or "roles:update" or "roles.manage" or "roles:manage" => ["roles:create", "roles:update", "roles.manage", "roles:manage", "users.manage", "users:manage"],
 
-            "settings:view" or "settings.view" => ["settings:view", "settings.view", "settings.manage", "settings:manage"],
+            "settings:view" or "settings.view" => ["settings:view", "settings.view"],
             "settings:update" or "settings.manage" or "settings:manage" => ["settings:update", "settings.manage", "settings:manage"],
 
-            "audit:view" or "audit.view" => ["audit:view", "audit.view", "reports.manage", "reports:manage"],
+            // Packet-2 mirror: reports:manage no longer satisfies the audit trail — audit
+            // access is an explicit grant, not a side effect of managing reports.
+            "audit:view" or "audit.view" => ["audit:view", "audit.view"],
 
             "customer_portal:view" or "customer-portal:view" or "customer_portal.view" => ["customer_portal:view", "customer-portal:view", "customer_portal.view"],
 
@@ -2813,7 +3011,16 @@ public static partial class EndpointMappings
             return InvalidCredentials();
         }
 
-        var role = user["roleName"]?.ToString() ?? "Company Admin";
+        // NEW-R1-02 fail closed: a NULL role_name gets an EMPTY role (zero permissions),
+        // never the old "Company Admin" wildcard. Login still completes — the session
+        // simply carries no grants and the SPA routes the user back to /login.
+        var role = user["roleName"]?.ToString()?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(role))
+        {
+            var authServices = http.RequestServices;
+            authServices?.GetService<ILoggerFactory>()?.CreateLogger("Opstrax.Auth")
+                .LogWarning("User {UserId} has no role_name; issuing a zero-permission session (fail closed). Repair the user's role assignment.", userId);
+        }
 
         // The public login route has no middleware-populated tenant context. Set it
         // only after password verification so the MFA denial is tenant-auditable.
@@ -3430,7 +3637,14 @@ public static partial class EndpointMappings
         if (user is null)
             return Results.Json(ApiResponse<object>.Fail("Invalid or expired challenge"), statusCode: StatusCodes.Status401Unauthorized);
 
-        var role = user["roleName"]?.ToString() ?? "Company Admin";
+        // NEW-R1-02 fail closed: NULL role_name → empty role, zero permissions (see Login).
+        var role = user["roleName"]?.ToString()?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(role))
+        {
+            var authServices = http.RequestServices;
+            authServices?.GetService<ILoggerFactory>()?.CreateLogger("Opstrax.Auth")
+                .LogWarning("User {UserId} has no role_name; issuing a zero-permission session (fail closed). Repair the user's role assignment.", userId);
+        }
         http.Items[AuthCompanyIdItemKey] = companyId;
         http.Items[AuthUserIdItemKey] = userId;
         http.Items[AuthRoleItemKey] = role;
@@ -3927,7 +4141,14 @@ public static partial class EndpointMappings
             c => c.Parameters.AddWithValue("@id", userId), ct);
         if (user is null) return Results.Unauthorized();
 
-        var role = user["roleName"]?.ToString() ?? "Company Admin";
+        // NEW-R1-02 fail closed: NULL role_name → empty role, zero permissions (see Login).
+        var role = user["roleName"]?.ToString()?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(role))
+        {
+            var authServices = http.RequestServices;
+            authServices?.GetService<ILoggerFactory>()?.CreateLogger("Opstrax.Auth")
+                .LogWarning("User {UserId} has no role_name; session resolves zero permissions (fail closed). Repair the user's role assignment.", userId);
+        }
         var permissions = await ResolvePermissionsAsync(user, db, ct);
         var entitlements = await ResolveAuthEntitlementsAsync(db, Convert.ToInt64(user["companyId"]), ct);
         var hasSupportAccess = http.Items.TryGetValue(PlatformImpersonationPolicy.GrantRefItemKey, out var supportGrantRef);
@@ -4414,7 +4635,9 @@ public static partial class EndpointMappings
               WHERE d.deleted_at IS NULL AND d.company_id=@cid" + branchClause,
             "d.full_name",
             c => { c.Parameters.AddWithValue("@cid", GetCompanyId(http)); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct: ct,
-            searchColumns: new[] { "d.full_name", "d.driver_code", "d.license_number", "d.email", "d.phone", "d.status", "v.vehicle_code" });
+            searchColumns: new[] { "d.full_name", "d.driver_code", "d.license_number", "d.email", "d.phone", "d.status", "v.vehicle_code" },
+            // DEF-015: the roster ships d.* — render the license masked (last four only).
+            transform: rows => MaskDriverLicenseIn(rows, http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>()));
     }
 
     // Customer book. Was the ONLY customer read with no permission guard — its siblings
@@ -4868,8 +5091,10 @@ public static partial class EndpointMappings
               FROM drivers d LEFT JOIN vehicles v ON v.id=d.assigned_vehicle_id WHERE d.id=@id AND d.deleted_at IS NULL AND d.company_id=@cid" + branchClause,
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct);
         if (record is null) return Results.NotFound(ApiResponse<object>.Fail("Driver not found"));
-        // Decrypt encrypted-at-rest PII (license_number) before returning.
-        ProjectDriverPii(record, http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>());
+        // DEF-015: the detail view renders the license masked (last four). Full plaintext
+        // is available ONLY through the audited DSAR export (DataSubjectExport).
+        record["licenseNumber"] = MaskDriverLicense(record.GetValueOrDefault("licenseNumber"),
+            http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>());
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             record,
@@ -4913,7 +5138,7 @@ public static partial class EndpointMappings
             communications = await db.QueryAsync("SELECT * FROM customer_communications WHERE customer_id=@id AND company_id=@cid ORDER BY sent_at DESC LIMIT 10", c => Bind2(c, id, GetCompanyId(http)), ct),
             contracts = await db.QueryAsync("SELECT * FROM contracts WHERE customer_id=@id AND company_id=@cid ORDER BY expiration_date", c => Bind2(c, id, GetCompanyId(http)), ct),
             etaHistory = await db.QueryAsync("SELECT eu.* FROM eta_updates eu JOIN jobs j ON j.id=eu.job_id AND j.company_id=@cid WHERE j.customer_id=@id ORDER BY eu.sent_at DESC LIMIT 10", c => Bind2(c, id, GetCompanyId(http)), ct),
-            auditTrail = await AuditTrail(db, "Customer", id, ct)
+            auditTrail = await AuditTrail(db, "Customer", id, GetCompanyId(http), ct)
         }));
     }
 
@@ -4936,7 +5161,7 @@ public static partial class EndpointMappings
             recommendations = await TenantModuleRecommendations(db, GetCompanyId(http), "assets", ct),
             documents = await db.QueryAsync("SELECT * FROM asset_documents WHERE asset_id=@id ORDER BY expiry_date", c => c.Parameters.AddWithValue("@id", id), ct),
             movementHistory = await db.QueryAsync("SELECT * FROM entity_timeline_events WHERE entity_type='Asset' AND entity_id=@id ORDER BY created_at DESC LIMIT 8", c => c.Parameters.AddWithValue("@id", id), ct),
-            auditTrail = await AuditTrail(db, "Asset", id, ct)
+            auditTrail = await AuditTrail(db, "Asset", id, GetCompanyId(http), ct)
         }));
     }
 
@@ -5849,6 +6074,17 @@ public static partial class EndpointMappings
         var licenseValue = Get(body, "licenseNumber");
         var code = codeValue is DBNull ? null : codeValue?.ToString()?.Trim();
         var licenseRaw = licenseValue is DBNull ? null : licenseValue?.ToString()?.Trim();
+        // DEF-015: read surfaces render the license masked ("•••• 1234" / "Unavailable").
+        // If an edit form round-trips that rendering unchanged, treat it as "no change" —
+        // never store the mask as the driver's real license.
+        if (licenseRaw is not null &&
+            (licenseRaw.StartsWith("••••", StringComparison.Ordinal) ||
+             licenseRaw.Equals(MaskedLicenseUnavailable, StringComparison.OrdinalIgnoreCase)))
+        {
+            licenseRaw = null;
+            body = new Dictionary<string, object?>(body);
+            body.Remove("licenseNumber");
+        }
         if (code is not null && string.IsNullOrWhiteSpace(code))
             return Results.BadRequest(ApiResponse<object>.Fail("Driver validation failed", ["Driver code cannot be blank."]));
 
@@ -7868,6 +8104,7 @@ public static partial class EndpointMappings
 
     private static async Task<IResult> CustomerEtaSummary(HttpContext http, Database db, CancellationToken ct)
     {
+        if (RequirePermission(http, "customer_portal:view") is { } denied) return denied;
         var companyId = GetCompanyId(http);
         var row = await db.QuerySingleAsync(
             @"SELECT COUNT(*) total_tracked,
@@ -7958,7 +8195,9 @@ public static partial class EndpointMappings
     }
 
     private static Task<IResult> CustomerEtaCommunications(HttpContext http, Database db, CancellationToken ct)
-        => OkRows(db,
+    {
+        if (RequirePermission(http, "customer_portal:view") is { } denied) return Task.FromResult(denied);
+        return OkRows(db,
             @"SELECT cc.*, c.name customer_name, COALESCE(j.job_number,j.job_code) job_number, j.tracking_code
               FROM customer_communications cc
               LEFT JOIN customers c ON c.id=cc.customer_id
@@ -7966,6 +8205,7 @@ public static partial class EndpointMappings
               WHERE cc.company_id=@cid
               ORDER BY cc.sent_at DESC LIMIT 50",
             c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+    }
 
     private const string MaintenanceBaseSql =
         @"SELECT mi.*, COALESCE(mi.service_type,mi.category,mi.title) service_type, mi.risk_score maintenance_risk_heat_score,
@@ -8008,11 +8248,18 @@ public static partial class EndpointMappings
                  END entity_name
           FROM documents d";
 
-    private static Task<IResult> MaintenanceItems(Database db, CancellationToken ct)
-        => OkRows(db, MaintenanceBaseSql + " WHERE mi.deleted_at IS NULL ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Medium','Low'], mi.priority), mi.due_date, mi.id DESC", ct: ct);
+    private static Task<IResult> MaintenanceItems(HttpContext http, Database db, CancellationToken ct)
+    {
+        // DEF-006 sweep: this list was reachable by any authenticated principal AND read
+        // maintenance_items across every tenant. Gated + company-scoped now.
+        if (RequirePermission(http, "maintenance:view") is { } denied) return Task.FromResult(denied);
+        return OkRows(db, MaintenanceBaseSql + " WHERE mi.company_id=@cid AND mi.deleted_at IS NULL ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Medium','Low'], mi.priority), mi.due_date, mi.id DESC",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+    }
 
     private static async Task<IResult> MaintenanceSummary(HttpContext http, Database db, CancellationToken ct)
     {
+        if (RequirePermission(http, "maintenance:view") is { } denied) return denied;
         var row = await db.QuerySingleAsync(
             @"SELECT SUM(CASE WHEN mi.status IN ('Open','Scheduled','In Progress') OR mi.due_date <= CURRENT_DATE + 14 * INTERVAL '1 day' THEN 1 ELSE 0 END) maintenance_due,
                      SUM(CASE WHEN mi.status='Overdue' OR mi.due_date < CURRENT_DATE THEN 1 ELSE 0 END) overdue_services,
@@ -8036,7 +8283,9 @@ public static partial class EndpointMappings
 
     private static async Task<IResult> MaintenanceDetail(HttpContext http, long id, Database db, CancellationToken ct)
     {
-        var record = (await db.QueryAsync(MaintenanceBaseSql + " WHERE mi.id=@id", c => c.Parameters.AddWithValue("@id", id), ct)).FirstOrDefault();
+        if (RequirePermission(http, "maintenance:view") is { } denied) return denied;
+        var record = (await db.QueryAsync(MaintenanceBaseSql + " WHERE mi.id=@id AND mi.company_id=@cid",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct)).FirstOrDefault();
         if (record is null) return Results.NotFound(ApiResponse<object>.Fail("Maintenance item not found"));
         return Results.Ok(ApiResponse<object>.Ok(new
         {
@@ -9293,15 +9542,26 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         }));
     }
 
-    private static Func<HttpContext, Database, AuditService, CancellationToken, Task<IResult>> SimpleAction(string actionName, string message)
+    private static Func<HttpContext, Database, AuditService, CancellationToken, Task<IResult>> SimpleAction(string actionName, string message, string permission)
         => async (http, db, audit, ct) =>
         {
+            // DEF-006: these quick actions were reachable by ANY authenticated principal.
+            // They now demand the same permission the control-tower reads require.
+            if (RequirePermission(http, permission) is { } denied) return denied;
             await audit.LogAsync(http, actionName, "ControlTower", null, ct: ct);
             return Results.Ok(ApiResponse<object>.Ok(new { action = actionName, completedAt = DateTime.UtcNow }, message));
         };
 
-    private static Func<HttpContext, long, Database, CancellationToken, Task<IResult>> Timeline(string entityType)
-        => async (http, id, db, ct) => Results.Ok(ApiResponse<object>.Ok(await EntityTimeline(db, entityType, id, GetCompanyId(http), ct)));
+    private static Func<HttpContext, long, Database, CancellationToken, Task<IResult>> Timeline(string entityType, string permission)
+        => async (http, id, db, ct) =>
+        {
+            // DEF-006: gate with the owning module's read permission and verify the {id}
+            // belongs to the caller's tenant (mirrors JobTimeline / JobInAuthorizedScope).
+            if (RequirePermission(http, permission) is { } denied) return denied;
+            if (!await EntityInAuthorizedScope(http, entityType, id, db, ct))
+                return Results.NotFound(ApiResponse<object>.Fail($"{entityType} not found"));
+            return Results.Ok(ApiResponse<object>.Ok(await EntityTimeline(db, entityType, id, GetCompanyId(http), ct)));
+        };
 
     private static async Task<IResult> JobTimeline(HttpContext http, long id, Database db, CancellationToken ct)
     {
@@ -9319,9 +9579,14 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         return Results.Ok(ApiResponse<object>.Ok(await TenantModuleRecommendations(db, GetCompanyId(http), "jobs", ct)));
     }
 
-    private static Func<HttpContext, long, Database, CancellationToken, Task<IResult>> Recommendations(string module)
-        => async (http, id, db, ct) => Results.Ok(ApiResponse<object>.Ok(
-            await TenantModuleRecommendations(db, GetCompanyId(http), module, ct)));
+    private static Func<HttpContext, long, Database, CancellationToken, Task<IResult>> Recommendations(string module, string permission)
+        => async (http, id, db, ct) =>
+        {
+            // DEF-006: gate with the owning module's read permission.
+            if (RequirePermission(http, permission) is { } denied) return denied;
+            return Results.Ok(ApiResponse<object>.Ok(
+                await TenantModuleRecommendations(db, GetCompanyId(http), module, ct)));
+        };
 
     private static Func<HttpContext, long, Dictionary<string, object?>, Database, AuditService, CancellationToken, Task<IResult>> ChangeStatus(string table, string action, string permission)
         => async (http, id, body, db, audit, ct) =>
@@ -9546,14 +9811,6 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 c.Parameters.AddWithValue("@module", module.ToLowerInvariant());
             }, ct);
 
-    private static Task<List<Dictionary<string, object?>>> AuditTrail(Database db, string entityName, long id, CancellationToken ct)
-        => db.QueryAsync("SELECT * FROM audit_logs WHERE entity_name=@entity AND entity_id=@id ORDER BY created_at DESC LIMIT 20",
-            c =>
-            {
-                c.Parameters.AddWithValue("@entity", entityName);
-                c.Parameters.AddWithValue("@id", id);
-            }, ct);
-
     private static Task<List<Dictionary<string, object?>>> AuditTrail(Database db, string entityName, long id, long companyId, CancellationToken ct)
         => db.QueryAsync("SELECT * FROM audit_logs WHERE entity_name=@entity AND entity_id=@id AND company_id=@cid ORDER BY created_at DESC LIMIT 20",
             c => { c.Parameters.AddWithValue("@entity", entityName); c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
@@ -9587,6 +9844,34 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         return count == 1;
     }
 
+    // Mirrors JobInAuthorizedScope for the generic entity timeline reads: the {id} in
+    // the URL is a lookup key, never an authorization grant — the entity must belong to
+    // the caller's tenant (and branch, where the entity is branch-scoped) or the request
+    // 404s exactly like a nonexistent id.
+    private static async Task<bool> EntityInAuthorizedScope(HttpContext http, string entityType, long id, Database db, CancellationToken ct)
+    {
+        var table = entityType switch
+        {
+            "Vehicle" => "vehicles",
+            "Driver" => "drivers",
+            "Customer" => "customers",
+            "Asset" => "assets",
+            _ => null,
+        };
+        if (table is null) return false;
+        var branchId = GetBranchId(http);
+        var branchScope = branchId is not null && table is "vehicles" or "drivers" ? " AND branch_id=@branchId" : "";
+        var count = await db.ScalarLongAsync(
+            $"SELECT COUNT(*) FROM {table} WHERE id=@id AND company_id=@companyId AND deleted_at IS NULL{branchScope}",
+            c =>
+            {
+                c.Parameters.AddWithValue("@id", id);
+                c.Parameters.AddWithValue("@companyId", GetCompanyId(http));
+                if (branchScope.Length > 0) c.Parameters.AddWithValue("@branchId", branchId!.Value);
+            }, ct);
+        return count == 1;
+    }
+
     private static async Task<IResult> EntityById(Database db, string table, long id, long companyId, CancellationToken ct)
     {
         var row = await db.QuerySingleAsync($"SELECT * FROM {table} WHERE id=@id AND company_id=@companyId", c =>
@@ -9611,7 +9896,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     // bound memory. Honours ?search= via the caller's baseSql shape. Streams a text/csv
     // attachment. `alias`/`orderBy` are trusted literals, never user input.
     private static async Task<IResult> ExportCsv(HttpContext http, Database db, string permission, string name,
-        string alias, string baseSql, string orderBy, CancellationToken ct)
+        string alias, string baseSql, string orderBy, CancellationToken ct,
+        Action<List<Dictionary<string, object?>>>? transform = null)
     {
         if (RequirePermission(http, permission) is { } denied) return denied;
         var (branchClause, branchId) = StrictBranchFilter(http, alias);
@@ -9619,6 +9905,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var rows = await db.QueryAsync(
             $"{baseSql}{branchClause} ORDER BY {orderBy} LIMIT 100000",
             c => { c.Parameters.AddWithValue("@cid", GetCompanyId(http)); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct);
+        transform?.Invoke(rows);
 
         var sb = new System.Text.StringBuilder();
         if (rows.Count > 0)
@@ -9655,7 +9942,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     // the full count so the UI can paginate. Response body stays a plain data array
     // (backward compatible). `orderBy` is a trusted literal (never user input).
     private static async Task<IResult> PagedRows(HttpContext http, Database db, string baseSql, string orderBy,
-        Action<NpgsqlCommand> bind, string message = "", CancellationToken ct = default, string[]? searchColumns = null)
+        Action<NpgsqlCommand> bind, string message = "", CancellationToken ct = default, string[]? searchColumns = null,
+        Action<List<Dictionary<string, object?>>>? transform = null)
     {
         var q = http.Request.Query;
         var limit = 500;
@@ -9682,6 +9970,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var rows = await db.QueryAsync(
             $"{baseSql}{searchClause} ORDER BY {orderBy} LIMIT @_limit OFFSET @_offset",
             c => { BindAll(c); c.Parameters.AddWithValue("@_limit", limit); c.Parameters.AddWithValue("@_offset", offset); }, ct);
+        transform?.Invoke(rows);
         http.Response.Headers["X-Total-Count"] = total.ToString();
         return Results.Ok(ApiResponse<object>.Ok(rows, message));
     }
@@ -11707,11 +11996,50 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     }
 
     // Decrypts license_number in a driver result row in place (no-op when the value
-    // is legacy plaintext or PII is disabled). Applied to reads that return license.
+    // is legacy plaintext or PII is disabled). DEF-015: applied ONLY on the audited
+    // DSAR export path (DataSubjectExport) — every operational read surface renders
+    // the masked form via MaskDriverLicense instead.
     private static void ProjectDriverPii(Dictionary<string, object?> row, Opstrax.Api.Security.PiiProtectionService pii)
     {
         if (row.TryGetValue("licenseNumber", out var v) && v is string s)
             row["licenseNumber"] = pii.Decrypt(s);
+    }
+
+    // DEF-015 display policy — "masked last-four". Operational surfaces render the
+    // driver's license as "•••• 1234": never the enc: ciphertext and never the full
+    // plaintext. Null, undecryptable, or still-enveloped values render "Unavailable".
+    internal const string MaskedLicenseUnavailable = "Unavailable";
+
+    internal static string MaskDriverLicense(object? stored, Opstrax.Api.Security.PiiProtectionService pii)
+    {
+        var raw = stored is string s && !string.IsNullOrWhiteSpace(s) ? pii.Decrypt(s) : null;
+        if (string.IsNullOrWhiteSpace(raw) || raw.StartsWith("enc:", StringComparison.Ordinal))
+            return MaskedLicenseUnavailable;
+        var trimmed = raw.Trim();
+        return "•••• " + (trimmed.Length <= 4 ? trimmed : trimmed[^4..]);
+    }
+
+    // Applies the masked-last-four rendering to every row carrying a licenseNumber key.
+    internal static void MaskDriverLicenseIn(IEnumerable<Dictionary<string, object?>> rows, Opstrax.Api.Security.PiiProtectionService pii)
+    {
+        foreach (var row in rows)
+            if (row.ContainsKey("licenseNumber"))
+                row["licenseNumber"] = MaskDriverLicense(row["licenseNumber"], pii);
+    }
+
+    // Post-query mask for P8 reporting datasets: fields flagged MaskPii in the registry
+    // are rendered masked even for callers holding the Sensitive permission — the raw
+    // value's only exit is the DSAR export.
+    private static void MaskPiiDatasetFields(List<Dictionary<string, object?>> rows, ReportDatasetDef dataset, HttpContext http)
+    {
+        var maskKeys = dataset.Fields.Where(f => f.MaskPii)
+            .Select(f => ReportingDatasetRegistry.ToCamel(f.Key)).ToArray();
+        if (maskKeys.Length == 0 || rows.Count == 0) return;
+        var pii = http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>();
+        foreach (var row in rows)
+            foreach (var key in maskKeys)
+                if (row.ContainsKey(key))
+                    row[key] = MaskDriverLicense(row[key], pii);
     }
 
     private static void BindCustomer(NpgsqlCommand c, Dictionary<string, object?> body)
@@ -12526,8 +12854,10 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         return Results.Ok(ApiResponse<object>.Ok(new { id }, "Fuel anomaly reviewed"));
     }
 
-    private static Task<IResult> FuelImportPreview(Dictionary<string, object?> body, CancellationToken ct)
-        => Task.FromResult(Results.Ok(ApiResponse<object>.Ok(new
+    private static Task<IResult> FuelImportPreview(HttpContext http, Dictionary<string, object?> body, CancellationToken ct)
+    {
+        if (RequirePermission(http, "fuel:manage") is { } denied) return Task.FromResult(denied);
+        return Task.FromResult(Results.Ok(ApiResponse<object>.Ok(new
         {
             source = "Fuel Card Import Placeholder",
             detectedRows = 28,
@@ -12535,6 +12865,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             warnings = new[] { "2 rows missing odometer readings", "Station names matched to known vendor list" },
             columns = new[] { "transactionNumber", "vehicleCode", "fuelDate", "quantity", "unitPrice", "totalCost", "fuelStation", "fuelCardNumber" }
         }, "Fuel card import preview generated")));
+    }
 
     // =====================================================================
     // BATCH 5 HANDLERS — EXPENSES
@@ -12579,6 +12910,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
     private static async Task<IResult> ExpenseDetail(HttpContext http, long id, Database db, CancellationToken ct)
     {
+        if (RequirePermission(http, "finance:view") is { } denied) return denied;
         var record = await db.QuerySingleAsync(
             @"SELECT e.*, v.vehicle_code, d.full_name driver_name, j.job_code, c.name customer_name
               FROM expenses e
@@ -12682,8 +13014,10 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         return Results.Ok(ApiResponse<object>.Ok(new { id }, "Expense rejected"));
     }
 
-    private static Task<IResult> ExpenseImportPreview(Dictionary<string, object?> body, CancellationToken ct)
-        => Task.FromResult(Results.Ok(ApiResponse<object>.Ok(new
+    private static Task<IResult> ExpenseImportPreview(HttpContext http, Dictionary<string, object?> body, CancellationToken ct)
+    {
+        if (RequirePermission(http, "finance:manage") is { } denied) return Task.FromResult(denied);
+        return Task.FromResult(Results.Ok(ApiResponse<object>.Ok(new
         {
             source = "Expense Import Placeholder",
             detectedRows = 18,
@@ -12691,6 +13025,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             warnings = new[] { "1 row missing category — defaulted to Miscellaneous" },
             columns = new[] { "expenseNumber", "category", "amount", "expenseDate", "vehicleCode", "vendorName" }
         }, "Expense import preview generated")));
+    }
 
     // =====================================================================
     // BATCH 5 HANDLERS — CONTRACTS / RATES
@@ -13257,6 +13592,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     // the whole platform's numbers. Scoped.
     private static async Task<IResult> CostMarginSummary(HttpContext http, Database db, CancellationToken ct)
     {
+        if (RequirePermission(http, "finance:view") is { } denied) return denied;
         var row = await db.QuerySingleAsync(
             @"SELECT
                 CONCAT('$', TO_CHAR((COALESCE(SUM(revenue_estimate),0))::numeric, 'FM9,999,999,999')) revenue_estimate,
@@ -13278,6 +13614,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
     private static async Task<IResult> CostMarginRecalculate(HttpContext http, Database db, AuditService audit, CancellationToken ct)
     {
+        if (RequirePermission(http, "finance:manage") is { } denied) return denied;
         await audit.LogAsync(http, "cost.margin.recalculate.run", "CostMargin", null, ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new
         {
@@ -13291,6 +13628,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
     private static async Task<IResult> CostMarginRecalculateJob(HttpContext http, long jobId, Database db, AuditService audit, CancellationToken ct)
     {
+        if (RequirePermission(http, "finance:manage") is { } denied) return denied;
         var job = await db.QuerySingleAsync("SELECT revenue_estimate, cost_estimate, margin_estimate FROM jobs WHERE id=@id AND company_id=@cid", c => { c.Parameters.AddWithValue("@id", jobId); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct);
         await audit.LogAsync(http, "cost.margin.job.recalculated", "Job", jobId, ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new
@@ -13310,6 +13648,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
     private static async Task<IResult> CostLeakageSummary(HttpContext http, Database db, CancellationToken ct)
     {
+        if (RequirePermission(http, "finance:view") is { } denied) return denied;
         var cid = GetCompanyId(http);
         var row = await db.QuerySingleAsync(
             @"SELECT
@@ -13332,7 +13671,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     }
 
     private static Task<IResult> CostLeakageItems(HttpContext http, Database db, CancellationToken ct)
-        => OkRows(db,
+    {
+        if (RequirePermission(http, "finance:view") is { } denied) return Task.FromResult(denied);
+        return OkRows(db,
             @"SELECT cli.*,
                      (SELECT COUNT(*) FROM cost_leakage_actions a WHERE a.cost_leakage_item_id=cli.id AND a.status <> 'Cancelled') actions_count,
                      (SELECT ROUND(SUM(a.estimated_savings),2) FROM cost_leakage_actions a WHERE a.cost_leakage_item_id=cli.id) potential_savings
@@ -13340,9 +13681,11 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
               WHERE cli.company_id=@cid
               ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Medium','Low'], cli.severity), cli.estimated_loss DESC",
             c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+    }
 
     private static async Task<IResult> CostLeakageAcknowledge(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
+        if (RequirePermission(http, "finance:manage") is { } denied) return denied;
         var affected = await db.ExecuteAsync("UPDATE cost_leakage_items SET status='Acknowledged' WHERE id=@id AND company_id=@cid",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct);
         if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Cost leakage item not found"));
@@ -13352,6 +13695,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
     private static async Task<IResult> CostLeakageCreateAction(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
+        if (RequirePermission(http, "finance:manage") is { } denied) return denied;
         var cid = GetCompanyId(http);
         // Ownership guard FIRST: this tenant-scoped UPDATE also proves the item belongs to the
         // caller's company — otherwise an action could be attached to another tenant's item by id.
@@ -13579,6 +13923,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
     private static async Task<IResult> ReportsSummary(HttpContext http, Database db, CancellationToken ct)
     {
+        if (RequirePermission(http, "reports:view") is { } denied) return denied;
         var tenantId = GetCompanyId(http);
         var catalogCount  = await db.ScalarLongAsync("SELECT COUNT(*) FROM report_catalog WHERE status='Active' AND (tenant_id IS NULL OR tenant_id=@tenantId)", c => c.Parameters.AddWithValue("@tenantId", tenantId), ct: ct);
         var runsToday     = await db.ScalarLongAsync("SELECT COUNT(*) FROM report_runs WHERE tenant_id=@tenantId AND started_at::date=CURRENT_DATE", c => c.Parameters.AddWithValue("@tenantId", tenantId), ct: ct);
@@ -13744,6 +14089,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
     private static async Task<IResult> SlaSummary(HttpContext http, Database db, CancellationToken ct)
     {
+        if (RequirePermission(http, "reports:view") is { } denied) return denied;
         var tenantId = GetCompanyId(http);
         var total    = await db.ScalarLongAsync("SELECT COUNT(*) FROM sla_records WHERE tenant_id=@t", p => p.Parameters.AddWithValue("@t", tenantId), ct);
         var met      = await db.ScalarLongAsync("SELECT COUNT(*) FROM sla_records WHERE tenant_id=@t AND status='Met'", p => p.Parameters.AddWithValue("@t", tenantId), ct);
@@ -13912,6 +14258,93 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             : Results.Ok(ApiResponse<object>.Ok(row, "User"));
     }
 
+    // DEF-027: a customer-scope binding is only valid against a live customer of the
+    // SAME tenant. A cross-tenant id would be a data grant into another company; a
+    // dangling/deleted id produces the silent-empty-portal failure this defect is about.
+    private static async Task<bool> CustomerBindingIsValidAsync(Database db, long companyId, long customerId, CancellationToken ct)
+        => await db.ScalarLongAsync(
+            "SELECT COUNT(*) FROM customers WHERE id=@customerId AND company_id=@companyId AND deleted_at IS NULL",
+            c => { c.Parameters.AddWithValue("@customerId", customerId); c.Parameters.AddWithValue("@companyId", companyId); }, ct) == 1;
+
+    // A customer binding turns the principal into a customer-portal principal (the
+    // middleware sets AuthCustomerIdItemKey from users.customer_id), which locks it out
+    // of EVERY internal endpoint. Binding an internal role would brick the account.
+    /// <summary>
+    /// Grants that ONLY an internal back-office user is ever given. Mirrors
+    /// frontend/src/auth/sessionRouting.ts INTERNAL_DIRECT_GRANTS — keep in lockstep.
+    /// Deliberately EXCLUDES shipments:view and alerts:view: the real portal roles
+    /// (Customer = shipments:view + customer_portal:view + alerts:view, Customer Viewer,
+    /// Customer Portal User) hold those, and treating them as internal would make a genuine
+    /// customer unbindable.
+    /// </summary>
+    private static readonly string[] InternalOnlyDirectGrants =
+    [
+        "dashboard:view", "dispatch:view", "customers:view", "crm:view", "maintenance:view",
+        "safety:view", "compliance:view", "vehicles:view", "drivers:view", "fleet:view",
+        "users:view", "roles:view", "audit:view", "settings:view", "reports:view",
+        "finance:view", "billing:view", "carriers:view", "fuel:view", "ops:view",
+        "vendor_portal:view",
+    ];
+
+    /// <summary>
+    /// A customer binding is only valid for a CUSTOMER-PORTAL identity, keyed on the role's
+    /// PERMISSION SHAPE — never on its name.
+    ///
+    /// The old test was <c>roleName.Contains("Portal")</c>. The shipped roles
+    /// <c>Customer</c> and <c>Customer Viewer</c> contain no "Portal", so the binding path
+    /// 400'd on exactly the two roles the SPA's routing layer treats as portal identities —
+    /// routing keyed on permissions while binding keyed on the name, a self-contradictory
+    /// contract that produced unbindable dead accounts.
+    ///
+    /// This mirrors the SHIPPED frontend predicate (sessionRouting.ts
+    /// <c>isPortalConfinedSession</c>), not the naive
+    /// <c>customer_portal:view &amp;&amp; !dashboard:view</c> rule the SPA already replaced:
+    /// that simpler form also captures the internal <c>Customer Service</c> and
+    /// <c>CRM &amp; Sales Manager</c> roles, and binding one of those would lock a
+    /// back-office account out of every internal endpoint (RequirePermission rejects any
+    /// customer-bound principal from non-portal permissions). So: wildcard is never
+    /// bindable, <c>customer_portal:view</c> is required, and ANY internal-only direct
+    /// grant disqualifies. Fail-closed: an unresolvable role is rejected.
+    /// </summary>
+    private static async Task<IResult?> RequireCustomerBindableRoleAsync(
+        Database db, Dictionary<string, object?>? role, string? roleName, CancellationToken ct)
+    {
+        var denied = Results.BadRequest(ApiResponse<object>.Fail("Validation failed",
+            ["A customer binding is only valid for customer-portal roles. Internal roles must not be bound to a customer — the account would lose access to every internal page."]));
+        if (string.IsNullOrWhiteSpace(roleName)) return denied;
+
+        var roleId = role?.GetValueOrDefault("id") is { } rawId and not DBNull ? Convert.ToInt64(rawId) : 0L;
+        var permissions = await ResolveEffectivePermissionsAsync(
+            roleId, roleName, role?.GetValueOrDefault("permissionsJson"), null, db, ct);
+        if (permissions.Length == 0) return denied; // fail closed on an unresolvable role
+
+        var direct = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var permission in permissions)
+        {
+            var token = permission.Trim();
+            if (token.Length == 0) continue;
+            direct.Add(token);
+            direct.Add(token.Replace('.', ':'));
+            direct.Add(token.Replace(':', '.'));
+            // The '-' ↔ '_' fold matters as much as '.' ↔ ':' here. The DB seed spells
+            // portal/vendor tokens with a hyphen (customer-portal:view, roles 9/10) while
+            // the backend defaults use an underscore, and the SPA's isPortalConfinedSession
+            // folds both. Without this, a role spelled `vendor-portal:view` is INTERNAL to
+            // the SPA (which normalises it to vendor_portal:view and refuses to confine it)
+            // and NOT internal here — so an admin could bind that account to a customer and
+            // brick it: every internal endpoint then rejects the principal outright.
+            direct.Add(token.Replace('-', '_'));
+            direct.Add(token.Replace('_', '-'));
+        }
+
+        if (direct.Contains("*")) return denied;                        // wildcard admin
+        if (!direct.Contains("customer_portal:view") &&
+            !direct.Contains("customer-portal:view")) return denied;    // not a portal identity
+        if (InternalOnlyDirectGrants.Any(direct.Contains)) return denied; // internal staff
+
+        return null;
+    }
+
     internal static async Task<IResult> CreateAdminUser(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
         var denied = await RequireAdminPermission(http, audit, "users:create", "User", body, ct);
@@ -13944,6 +14377,20 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var roleName = Val(role.GetValueOrDefault("name"))!;
         var permissionsJson = "[]";
 
+        // DEF-027: optional customer-scope binding (what makes /api/portal/* resolve).
+        long? customerId = null;
+        var customerIdRaw = Val(Get(body, "customerId"))?.ToString()?.Trim();
+        if (!string.IsNullOrWhiteSpace(customerIdRaw))
+        {
+            if (await RequireCustomerBindableRoleAsync(db, role, roleName.ToString(), ct) is { } bindingDenied) return bindingDenied;
+            if (!long.TryParse(customerIdRaw, out var parsedCustomerId) || parsedCustomerId <= 0)
+                return Results.BadRequest(ApiResponse<object>.Fail("Validation failed", ["customerId must be a positive customer id."]));
+            if (!await CustomerBindingIsValidAsync(db, companyId, parsedCustomerId, ct))
+                return Results.BadRequest(ApiResponse<object>.Fail("Validation failed",
+                    ["The selected customer does not exist in this organization (or was deleted). Refresh the customer list and try again."]));
+            customerId = parsedCustomerId;
+        }
+
         // Seat-limit quota (Platform Admin commercial control): block creation once the
         // tenant is at its subscribed seat count. No subscription row = no cap (legacy).
         var seatLimit = await db.ScalarLongAsync(
@@ -13961,12 +14408,13 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         }
 
         var id = await db.InsertAsync(
-            @"INSERT INTO users (company_id, role_id, full_name, email, role_name, password_hash, permissions_json, status)
-              VALUES (@companyId, @roleId, @fullName, @email, @roleName, @passwordHash, @permissionsJson::jsonb, @status)",
+            @"INSERT INTO users (company_id, role_id, customer_id, full_name, email, role_name, password_hash, permissions_json, status)
+              VALUES (@companyId, @roleId, @customerId, @fullName, @email, @roleName, @passwordHash, @permissionsJson::jsonb, @status)",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
                 c.Parameters.AddWithValue("@roleId", role?.GetValueOrDefault("id") ?? DBNull.Value);
+                c.Parameters.AddWithValue("@customerId", (object?)customerId ?? DBNull.Value);
                 c.Parameters.AddWithValue("@fullName", fullName);
                 c.Parameters.AddWithValue("@email", email);
                 c.Parameters.AddWithValue("@roleName", roleName);
@@ -13984,13 +14432,13 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         }
 
         await audit.LogAsync(http, "user.created", "User", id,
-            System.Text.Json.JsonSerializer.Serialize(new { email, role = roleName, invited = inviteMode }), ct);
+            System.Text.Json.JsonSerializer.Serialize(new { email, role = roleName, invited = inviteMode, customerId }), ct);
         return Results.Created($"/api/admin/users/{id}",
             ApiResponse<object>.Ok(new { id, activationLink, activationExpiresAt },
                 inviteMode ? "User invited — share the activation link" : "User created"));
     }
 
-    private static async Task<IResult> UpdateAdminUser(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
+    internal static async Task<IResult> UpdateAdminUser(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
         var denied = await RequireAdminPermission(http, audit, "users:update", "User", new { id }, ct);
         if (denied is not null) return denied;
@@ -14014,10 +14462,53 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (!string.IsNullOrWhiteSpace(requestedStatus) && !AllowedUserStatuses.Contains(requestedStatus))
             return Results.BadRequest(ApiResponse<object>.Fail("Validation failed", ["Unsupported user status."]));
 
+        // DEF-027: customer-scope binding. Presence of the key is the intent signal —
+        // an empty/null value clears the binding, a value must validate against a live
+        // customer of this tenant, and any change is audited + revokes sessions (the
+        // binding decides what data the session can see).
+        var oldCustomerId = existing.TryGetValue("customerId", out var oldCust) && oldCust is not null and not DBNull
+            ? Convert.ToInt64(oldCust) : (long?)null;
+        var bindingProvided = body.ContainsKey("customerId");
+        var newCustomerId = oldCustomerId;
+        if (bindingProvided)
+        {
+            var customerIdRaw = Get(body, "customerId") is DBNull ? null : Get(body, "customerId")?.ToString()?.Trim();
+            if (string.IsNullOrWhiteSpace(customerIdRaw))
+            {
+                newCustomerId = null;
+            }
+            else
+            {
+                if (await RequireCustomerBindableRoleAsync(db, role, newRoleName, ct) is { } bindingDenied) return bindingDenied;
+                if (!long.TryParse(customerIdRaw, out var parsedCustomerId) || parsedCustomerId <= 0)
+                    return Results.BadRequest(ApiResponse<object>.Fail("Validation failed", ["customerId must be a positive customer id."]));
+                if (!await CustomerBindingIsValidAsync(db, companyId, parsedCustomerId, ct))
+                    return Results.BadRequest(ApiResponse<object>.Fail("Validation failed",
+                        ["The selected customer does not exist in this organization (or was deleted). Refresh the customer list and try again."]));
+                newCustomerId = parsedCustomerId;
+            }
+        }
+        // DEF-027 (retained-binding gap): the block above only validates the binding when the
+        // customerId KEY is present. A caller that changes a bound portal user to an INTERNAL
+        // role while omitting customerId therefore kept the binding — producing exactly the
+        // account RequireCustomerBindableRoleAsync's own message warns about: "the account
+        // would lose access to every internal page". The binding is a property of the ROLE, so
+        // it is revalidated on every role change, not only when the key is sent. A role that
+        // cannot hold a binding clears it; that is the only safe resolution, and it is audited
+        // and revokes sessions through bindingChanged below.
+        if (!bindingProvided && roleChanged && oldCustomerId is not null &&
+            await RequireCustomerBindableRoleAsync(db, role, newRoleName, ct) is not null)
+        {
+            newCustomerId = null;
+        }
+
+        var bindingChanged = newCustomerId != oldCustomerId;
+
         await db.ExecuteAsync(
             @"UPDATE users
               SET company_id=@companyId,
                   role_id=@roleId,
+                  customer_id=@customerId,
                   full_name=COALESCE(NULLIF(@fullName,''), full_name),
                   email=COALESCE(NULLIF(@email,''), email),
                   role_name=@roleName,
@@ -14030,6 +14521,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 c.Parameters.AddWithValue("@id", id);
                 c.Parameters.AddWithValue("@companyId", companyId);
                 c.Parameters.AddWithValue("@roleId", role?.GetValueOrDefault("id") ?? existing.GetValueOrDefault("roleId") ?? DBNull.Value);
+                c.Parameters.AddWithValue("@customerId", (object?)newCustomerId ?? DBNull.Value);
                 c.Parameters.AddWithValue("@fullName", Get(body, "fullName"));
                 c.Parameters.AddWithValue("@email", Get(body, "email"));
                 c.Parameters.AddWithValue("@roleName", newRoleName);
@@ -14040,13 +14532,19 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
         await audit.LogAsync(http, "user.updated", "User", id, System.Text.Json.JsonSerializer.Serialize(new { roleChanged, companyId }), ct);
 
+        if (bindingChanged)
+        {
+            await audit.LogAsync(http, "user.customer_binding.changed", "User", id,
+                System.Text.Json.JsonSerializer.Serialize(new { from = oldCustomerId, to = newCustomerId }), ct);
+        }
+
         // Revoke the user's active sessions when their role/permissions change or they
         // are deactivated — otherwise the old (possibly higher) privileges keep working
         // via the in-flight token until it expires.
         var newStatus = Get(body, "status")?.ToString()?.Trim();
         var deactivated = !string.IsNullOrWhiteSpace(newStatus) &&
                           newStatus.ToLowerInvariant() is "disabled" or "inactive" or "suspended";
-        if (roleChanged || deactivated)
+        if (roleChanged || deactivated || bindingChanged)
         {
             await db.ExecuteAsync("DELETE FROM user_sessions WHERE user_id=@id", c => c.Parameters.AddWithValue("@id", id), ct);
             await audit.LogAsync(http, "user.role.changed", "User", id, System.Text.Json.JsonSerializer.Serialize(new { from = oldRoleName, to = newRoleName, sessionsRevoked = true }), ct);
@@ -14188,7 +14686,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         return Results.Ok(ApiResponse<object>.Ok(new { id, sessionsRevoked = removed }, "All sessions revoked"));
     }
 
-    private static async Task<IResult> AdminRoles(HttpContext http, Database db, AuditService audit, CancellationToken ct)
+    internal static async Task<IResult> AdminRoles(HttpContext http, Database db, AuditService audit, CancellationToken ct)
     {
         var denied = RequirePermission(http, "roles:view");
         if (denied is not null) return denied;
@@ -15390,7 +15888,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 c.Parameters.AddWithValue("@cid", companyId);
             }, ct);
 
-        var auditTrail = await AuditTrail(db, "Alert", id, ct);
+        var auditTrail = await AuditTrail(db, "Alert", id, companyId, ct);
         return Results.Ok(ApiResponse<object>.Ok(new { alert = row, tasks, auditTrail }, "Alert detail"));
     }
 
@@ -17687,26 +18185,68 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     }
 
     // ── POST /api/devices/{id}/revoke ─────────────────────────────────────────────
+    // DEF-023: revoke writes the same lifecycle evidence as its suspend/activate siblings —
+    // a FOR UPDATE locked read, an idempotent replay guard, a device_state_transitions
+    // ledger row and an audit row. Neither the eld_devices nor the transitions CHECK
+    // vocabulary has a 'Revoked' member, so the lifecycle transition is encoded as
+    // 'Decommissioned' (permanently out of service, ingest-ineligible) with reason_code
+    // 'operator_revoke'; status='Revoked' + revoked_at remain the authoritative
+    // credential kill switch.
+    //
+    // SCOPE IS NOT A STYLE CHOICE — this handler MUST run in the SYSTEM transaction.
+    // Unlike suspend/activate (which only touch status/device_state/row_version/updated_at),
+    // revoke SETs nine credential columns — revoked_at, credential_revoked_reason,
+    // api_key_hash, hmac_secret, hmac_secret_encrypted, api_key_previous_hash,
+    // api_key_previous_valid_until, hmac_previous_secret_encrypted,
+    // hmac_previous_valid_until — on which the restricted `opstrax_app` runtime role holds
+    // NO column UPDATE privilege. In Staging/Production the tenant lane runs as
+    // `opstrax_app`, so a tenant-scoped revoke raises 42501 and the emergency credential
+    // kill switch 500s. Granting those privileges is forbidden: stage76
+    // (2026_08_11_stage76_telematics_security_hardening.sql:283-284) RAISES
+    // 'Stage76 eld_devices credential read boundary is unsafe' the moment `opstrax_app`
+    // holds UPDATE on api_key_hash/hmac_secret_encrypted. `opstrax_system` holds all of
+    // them, and can also INSERT the transitions + audit rows, so the whole unit of work
+    // stays atomic in one system transaction — the same reasoning DeviceInstallationCommission
+    // documents. Tenant isolation is preserved structurally: EVERY statement below is
+    // explicitly constrained by company_id, and the branch guard is enforced by the locked
+    // read, whose miss returns 404 before anything is written.
     private static async Task<IResult> DeviceRevoke(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct)
     {
         var denied = RequirePermission(http, "telemetry.devices.manage");
         if (denied is not null) return denied;
         var companyId = GetCompanyId(http);
         var branchId = GetBranchId(http);
-        var affected = await db.RunInSystemTransactionAsync(
-            () => db.ExecuteAsync(
-            @"UPDATE eld_devices SET status='Revoked', revoked_at=NOW(),
-                  credential_revoked_reason='operator_revoke', api_key_hash=NULL,
-                  hmac_secret=NULL, hmac_secret_encrypted=NULL,
-                  api_key_previous_hash=NULL, api_key_previous_valid_until=NULL,
-                  hmac_previous_secret_encrypted=NULL, hmac_previous_valid_until=NULL,
-                  updated_at=NOW()
-              WHERE id=@id AND company_id=@cid AND deleted_at IS NULL
-                AND (@branchId::BIGINT IS NULL OR branch_id=@branchId)",
-            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct), ct);
-        if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Device not found"));
-        await audit.LogAsync(http, "device.revoked", "EldDevice", id, null, ct);
-        return Results.Ok(ApiResponse<object>.Ok(new { id }, "Device revoked — all future ingest from this device will be rejected"));
+        var actorId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+        return await db.RunInSystemTransactionAsync<IResult>(async () =>
+        {
+            var current = await db.QuerySingleAsync(
+                @"SELECT status,device_state,row_version,branch_id,revoked_at FROM eld_devices
+                   WHERE id=@id AND company_id=@cid AND deleted_at IS NULL
+                     AND (@branchId::BIGINT IS NULL OR branch_id=@branchId) FOR UPDATE",
+                c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
+            if (current is null) return Results.NotFound(ApiResponse<object>.Fail("Device not found"));
+            if (current["revokedAt"] is not (null or DBNull) ||
+                string.Equals(current["status"]?.ToString(), "Revoked", StringComparison.OrdinalIgnoreCase))
+                return Results.Ok(ApiResponse<object>.Ok(new { id, status = "Revoked", idempotentReplay = true },
+                    "Device already revoked — credentials remain invalid"));
+
+            var affected = await db.ExecuteAsync(
+                @"UPDATE eld_devices SET status='Revoked', device_state='Decommissioned', revoked_at=NOW(),
+                      credential_revoked_reason='operator_revoke', api_key_hash=NULL,
+                      hmac_secret=NULL, hmac_secret_encrypted=NULL,
+                      api_key_previous_hash=NULL, api_key_previous_valid_until=NULL,
+                      hmac_previous_secret_encrypted=NULL, hmac_previous_valid_until=NULL,
+                      updated_at=NOW(), row_version=row_version+1
+                  WHERE id=@id AND company_id=@cid AND deleted_at IS NULL",
+                c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+            if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Device not found"));
+
+            await AppendDeviceTransitionAsync(db, companyId,
+                current["branchId"] is null or DBNull ? null : Convert.ToInt64(current["branchId"]), id,
+                current["deviceState"]?.ToString(), "Decommissioned", actorId, "operator_revoke", null, http.TraceIdentifier, ct);
+            await audit.LogAsync(http, "device.revoked", "EldDevice", id, null, ct);
+            return Results.Ok(ApiResponse<object>.Ok(new { id }, "Device revoked — all future ingest from this device will be rejected"));
+        }, ct);
     }
 
     // ── POST /api/devices/{id}/suspend ────────────────────────────────────────────
@@ -18657,6 +19197,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
               ORDER BY dss.score_30d ASC, dss.events_30d DESC
               LIMIT 100",
             c => { c.Parameters.AddWithValue("@cid", companyId); if (GetBranchId(http) is { } branchId) c.Parameters.AddWithValue("@branchId", branchId); }, ct);
+
+        // DEF-015: scorecards identify the driver by name/code; the license renders masked.
+        MaskDriverLicenseIn(scores, http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>());
 
         // For drivers with no score record, surface them at 100 (no events)
         return Results.Ok(ApiResponse<object>.Ok(scores, $"Driver safety scores ({scores.Count})"));
@@ -21164,7 +21707,10 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                     @"SELECT COUNT(*) FROM drivers d
                       WHERE d.id=@did AND d.company_id=@cid AND d.deleted_at IS NULL
                         AND d.branch_id IS NOT DISTINCT FROM @branchId::BIGINT
-                        AND LOWER(COALESCE(d.status,'active')) NOT IN ('inactive','suspended','terminated')
+                        -- BTRIM: drivers.status is untrimmed free text, so 'Inactive ' would
+                        -- otherwise slip past this blocklist and be offered as a swap target.
+                        -- The character set is explicit because 1-arg BTRIM strips spaces only.
+                        AND LOWER(BTRIM(COALESCE(d.status,'active'), E' \t\r\n\f\v')) NOT IN ('inactive','suspended','terminated')
                         AND NOT EXISTS (
                           SELECT 1 FROM dispatch_assignments active
                           WHERE active.company_id=d.company_id AND active.driver_id=d.id
@@ -23011,8 +23557,20 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var userId    = http.Items.TryGetValue(AuthUserIdItemKey, out var uid) && uid is not null ? Convert.ToInt64(uid) : 0L;
         var companyId = GetCompanyId(http);
         if (userId <= 0) return -1L;
+        // DEF-026: portal access is a lifecycle privilege, not just a link. A driver
+        // record moved to a revoked lifecycle status (Inactive/Suspended/…) loses the
+        // portal immediately — deleted_at alone left ex-drivers with a working app.
+        // Operational statuses (Available / On Route / Delayed / …) are unaffected.
+        // BTRIM is load-bearing: status is free-text varchar with no CHECK, so a value
+        // stored as 'Inactive ' (trailing space from an import or a UI field) failed the
+        // blocklist and kept an ex-driver's portal alive. The explicit character set is
+        // deliberate — one-argument BTRIM strips SPACES ONLY, so a tab/CR/LF-padded status
+        // would still slip through. Trim all whitespace before matching.
         var row = await db.QuerySingleAsync(
-            "SELECT id FROM drivers WHERE user_id=@uid AND company_id=@cid AND deleted_at IS NULL LIMIT 1",
+            @"SELECT id FROM drivers
+              WHERE user_id=@uid AND company_id=@cid AND deleted_at IS NULL
+                AND LOWER(BTRIM(COALESCE(status,''), E' \t\r\n\f\v')) NOT IN ('inactive','suspended','deleted','terminated','retired')
+              LIMIT 1",
             c => { c.Parameters.AddWithValue("@uid", userId); c.Parameters.AddWithValue("@cid", companyId); }, ct);
         return row?["id"] is not null and not DBNull ? Convert.ToInt64(row["id"]) : -1L;
     }
@@ -23038,7 +23596,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (driverId < 0) return DriverIdentityNotFound();
 
         var driver = await db.QuerySingleAsync(
-            @"SELECT d.id, d.full_name, d.status, d.license_number, d.license_expiry,
+            @"SELECT d.id, d.full_name, d.status,
                      v.id vehicle_id, v.vehicle_code, v.availability_status, v.out_of_service
               FROM drivers d
               LEFT JOIN LATERAL (
@@ -23091,16 +23649,46 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         // 'Completed' nor 'Cancelled', so a status-only test counted an acknowledged task as
         // still pending forever. The driver could acknowledge every task and the badge (and
         // the "You have N pending coaching task(s)" nag) would never clear.
-        var coachingCount = await db.ScalarLongAsync(
-            @"SELECT COUNT(*) FROM coaching_tasks
-              WHERE driver_id=@did AND company_id=@cid AND deleted_at IS NULL
-                AND COALESCE(driver_acknowledged, FALSE) = FALSE
-                AND status NOT IN ('Completed','Cancelled')",
-            c => { c.Parameters.AddWithValue("@did", driverId); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+        // DEF-026: schema/grant drift on optional companion tables must degrade this
+        // screen, never 500 it — the driver's home screen is how they reach dispatch.
+        // to_regclass guards absence (house style, see dispatch eligibility); the catch
+        // covers revoked grants (42501) and column drift (42703) the same way.
+        long coachingCount = 0;
+        try
+        {
+            if (await db.ScalarLongAsync(
+                    "SELECT CASE WHEN to_regclass('public.coaching_tasks') IS NULL THEN 0 ELSE 1 END", ct: ct) == 1)
+            {
+                coachingCount = await db.ScalarLongAsync(
+                    @"SELECT COUNT(*) FROM coaching_tasks
+                      WHERE driver_id=@did AND company_id=@cid AND deleted_at IS NULL
+                        AND COALESCE(driver_acknowledged, FALSE) = FALSE
+                        AND status NOT IN ('Completed','Cancelled')",
+                    c => { c.Parameters.AddWithValue("@did", driverId); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+            }
+        }
+        catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.UndefinedTable
+            or PostgresErrorCodes.InsufficientPrivilege or PostgresErrorCodes.UndefinedColumn)
+        {
+            coachingCount = 0;
+        }
 
-        var hosRow = await db.QuerySingleAsync(
-            "SELECT remaining_drive_hours, remaining_shift_hours, hos_status FROM hos_records WHERE driver_id=@did AND company_id=@cid ORDER BY shift_date DESC LIMIT 1",
-            c => { c.Parameters.AddWithValue("@did", driverId); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+        Dictionary<string, object?>? hosRow = null;
+        try
+        {
+            if (await db.ScalarLongAsync(
+                    "SELECT CASE WHEN to_regclass('public.hos_records') IS NULL THEN 0 ELSE 1 END", ct: ct) == 1)
+            {
+                hosRow = await db.QuerySingleAsync(
+                    "SELECT remaining_drive_hours, remaining_shift_hours, hos_status FROM hos_records WHERE driver_id=@did AND company_id=@cid ORDER BY shift_date DESC LIMIT 1",
+                    c => { c.Parameters.AddWithValue("@did", driverId); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+            }
+        }
+        catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.UndefinedTable
+            or PostgresErrorCodes.InsufficientPrivilege or PostgresErrorCodes.UndefinedColumn)
+        {
+            hosRow = null; // degrades to the hos-unavailable branch below
+        }
 
         var isOos = driver["outOfService"] is not null and not DBNull && Convert.ToInt32(driver["outOfService"]) == 1;
 
@@ -23825,16 +24413,31 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         // first, so the lockout was hiding a second, independent break. Also scoped by
         // company_id: driverId is tenant-resolved, but a bare driver_id filter on a
         // cross-tenant table is one refactor away from a leak.
-        var record = await db.QuerySingleAsync(
-            @"SELECT hr.remaining_drive_hours, hr.remaining_shift_hours, hr.remaining_cycle_hours,
-                     hr.hos_status, hr.shift_date, hr.eld_device_id,
-                     ed.device_serial eld_identifier
-              FROM hos_records hr
-              LEFT JOIN eld_devices ed ON ed.id = hr.eld_device_id AND ed.company_id = hr.company_id
-              WHERE hr.driver_id=@did AND hr.company_id=@cid
-              ORDER BY hr.shift_date DESC
-              LIMIT 1",
-            c => { c.Parameters.AddWithValue("@did", driverId); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+        // DEF-026: degrade to the data-unavailable branch on schema/grant drift
+        // (missing table 42P01, revoked grant 42501, column drift 42703) — never 500.
+        Dictionary<string, object?>? record = null;
+        try
+        {
+            if (await db.ScalarLongAsync(
+                    "SELECT CASE WHEN to_regclass('public.hos_records') IS NULL THEN 0 ELSE 1 END", ct: ct) == 1)
+            {
+                record = await db.QuerySingleAsync(
+                    @"SELECT hr.remaining_drive_hours, hr.remaining_shift_hours, hr.remaining_cycle_hours,
+                             hr.hos_status, hr.shift_date, hr.eld_device_id,
+                             ed.device_serial eld_identifier
+                      FROM hos_records hr
+                      LEFT JOIN eld_devices ed ON ed.id = hr.eld_device_id AND ed.company_id = hr.company_id
+                      WHERE hr.driver_id=@did AND hr.company_id=@cid
+                      ORDER BY hr.shift_date DESC
+                      LIMIT 1",
+                    c => { c.Parameters.AddWithValue("@did", driverId); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+            }
+        }
+        catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.UndefinedTable
+            or PostgresErrorCodes.InsufficientPrivilege or PostgresErrorCodes.UndefinedColumn)
+        {
+            record = null;
+        }
 
         if (record is null)
         {
@@ -24251,6 +24854,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         }
         sw.Stop();
 
+        // DEF-015: masked-last-four rendering for registry fields flagged MaskPii.
+        MaskPiiDatasetFields(rows, dataset, http);
+
         // Audit log
         await db.ExecuteAsync(
             @"INSERT INTO report_execution_log (company_id,user_id,dataset_key,row_count,execution_ms,filters_json,status)
@@ -24344,6 +24950,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
         var (sql, _, parms) = SecureQueryBuilder.Build(exportBody, dataset, companyId);
         var rows = await db.QueryAsync(sql, SecureQueryBuilder.BindParams(parms), ct);
+
+        // DEF-015: masked-last-four rendering for registry fields flagged MaskPii.
+        MaskPiiDatasetFields(rows, dataset, http);
 
         // Build CSV using System.Text.StringBuilder — no external dependency
         var sb = new System.Text.StringBuilder();

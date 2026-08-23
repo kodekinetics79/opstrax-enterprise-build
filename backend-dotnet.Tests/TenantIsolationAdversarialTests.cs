@@ -33,7 +33,7 @@ public sealed class TenantIsolationAdversarialTests
     {
         var source = EndpointSource();
         var list = Block(source,
-            "private static async Task<IResult> AdminRoles(",
+            "internal static async Task<IResult> AdminRoles(",
             "private static IResult AdminPermissions(");
         var update = Block(source,
             "private static async Task<IResult> UpdateAdminRole(",
