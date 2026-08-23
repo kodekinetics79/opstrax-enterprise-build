@@ -1447,11 +1447,29 @@ public static class PlatformEndpoints
         if (string.IsNullOrWhiteSpace(fullName))
             return Results.Json(ApiResponse<object>.Fail("Validation failed", "fullName is required"), statusCode: StatusCodes.Status400BadRequest);
 
-        var roleKnown = await db.ScalarLongAsync(
-            "SELECT COUNT(*) FROM roles WHERE LOWER(name)=LOWER(@r) AND (company_id IS NULL OR company_id=@cid)",
+        // ONE matching rule, and the CANONICAL name is what gets stored.
+        //
+        // Validation used to be case-INSENSITIVE (LOWER(name)=LOWER(@r)) while the INSERT
+        // resolved role_id case-SENSITIVELY (WHERE name=@role). roleName:"dispatcher"
+        // therefore passed validation, matched no row on the way in, and produced exactly
+        // the NULL role_id that DEF-021 exists to eliminate — after which the session falls
+        // through to RolePermissionDefaults (an OrdinalIgnoreCase dictionary that DOES match
+        // the variant) and the user receives the hardcoded defaults rather than the tenant's
+        // possibly-narrowed role. Resolving the row ONCE and reusing its id and its exact
+        // name closes both halves: the id can never be NULL when validation passed, and
+        // role_name always matches a real roles row byte for byte.
+        //
+        // Precedence is ResolveRoleRecord's: a tenant-local role outranks the global one of
+        // the same name (ORDER BY company_id NULLS LAST LIMIT 1), matching the stage87
+        // backfill and every other provisioning insert.
+        var resolvedRole = await db.QuerySingleAsync(
+            @"SELECT id, name FROM roles
+              WHERE LOWER(name)=LOWER(@r) AND (company_id IS NULL OR company_id=@cid)
+              ORDER BY company_id NULLS LAST LIMIT 1",
             c => { c.Parameters.AddWithValue("@r", roleName); c.Parameters.AddWithValue("@cid", id); }, ct);
-        if (roleKnown == 0)
+        if (resolvedRole is null)
             return Results.Json(ApiResponse<object>.Fail("Validation failed", $"Unknown role: {roleName}"), statusCode: StatusCodes.Status400BadRequest);
+        var canonicalRoleName = resolvedRole["name"]?.ToString() ?? roleName;
 
         // Same cross-tenant refusal as the admin invite: an email owned by another
         // company is never relocated, because that is account takeover by typo.
@@ -1468,15 +1486,23 @@ public static class PlatformEndpoints
                 statusCode: StatusCodes.Status409Conflict);
         }
 
+        // DEF-021: resolve role_id at provisioning time. The subquery now matches the way
+        // validation above matches — LOWER(name)=LOWER(@role), same ORDER BY … NULLS LAST
+        // precedence — and @role carries the CANONICAL name read back from the roles row, so
+        // the two agree by construction and role_id can no longer come back NULL for a role
+        // validation just accepted. Role membership is what the middleware and the role-card
+        // user counts read; role_name alone creates a member /api/admin/roles cannot count.
         var userId = await db.InsertAsync(
-            @"INSERT INTO users (company_id, full_name, email, role_name, status)
-              VALUES (@cid, @name, @email, @role, 'Pending') RETURNING id",
+            @"INSERT INTO users (company_id, role_id, full_name, email, role_name, status)
+              VALUES (@cid,
+                      (SELECT id FROM roles WHERE LOWER(name)=LOWER(@role) AND (company_id IS NULL OR company_id=@cid) ORDER BY company_id NULLS LAST LIMIT 1),
+                      @name, @email, @role, 'Pending') RETURNING id",
             c =>
             {
                 c.Parameters.AddWithValue("@cid", id);
                 c.Parameters.AddWithValue("@name", fullName!);
                 c.Parameters.AddWithValue("@email", email!);
-                c.Parameters.AddWithValue("@role", roleName);
+                c.Parameters.AddWithValue("@role", canonicalRoleName);
             }, ct);
 
         // Hand back a temporary password as well as the invite, because SMTP is not
@@ -1491,11 +1517,11 @@ public static class PlatformEndpoints
             }, ct);
 
         await AuditAsync(db, principal!, http, "tenant.user.created", "User", userId, id,
-            new { email, roleName }, ct);
+            new { email, roleName = canonicalRoleName }, ct);
 
         return Results.Ok(ApiResponse<object>.Ok(new
         {
-            userId, email, fullName, roleName, status = "Active",
+            userId, email, fullName, roleName = canonicalRoleName, status = "Active",
             temporaryPassword = temp,
         }, "User created — copy the temporary password now, it is shown only once"));
     }
@@ -2796,7 +2822,10 @@ public static class PlatformEndpoints
             if (!string.Equals(status, "Active", StringComparison.OrdinalIgnoreCase))
             {
                 await db.ExecuteAsync(
-                    "UPDATE users SET full_name=@n, role_name='Company Admin', status='Pending' WHERE id=@id AND company_id=@cid",
+                    @"UPDATE users SET full_name=@n, role_name='Company Admin',
+                          role_id=(SELECT id FROM roles WHERE LOWER(name)=LOWER('Company Admin') AND (company_id IS NULL OR company_id=@cid) ORDER BY company_id NULLS LAST LIMIT 1),
+                          status='Pending'
+                      WHERE id=@id AND company_id=@cid",
                     c =>
                     {
                         c.Parameters.AddWithValue("@n", name);
@@ -2810,9 +2839,12 @@ public static class PlatformEndpoints
             // Fresh admin: status 'Pending' (NOT the old 'Invited', which the login gate
             // and ResetPassword both reject) and NO password_hash. ResetPassword flips
             // 'Pending' -> 'Active' when the invite is accepted.
+            // DEF-021: same role_id resolution as every other provisioning insert.
             userId = await db.InsertAsync(
-                @"INSERT INTO users (company_id, full_name, email, role_name, status)
-                  VALUES (@cid, @name, @email, 'Company Admin', 'Pending')
+                @"INSERT INTO users (company_id, role_id, full_name, email, role_name, status)
+                  VALUES (@cid,
+                          (SELECT id FROM roles WHERE LOWER(name)=LOWER('Company Admin') AND (company_id IS NULL OR company_id=@cid) ORDER BY company_id NULLS LAST LIMIT 1),
+                          @name, @email, 'Company Admin', 'Pending')
                   RETURNING id",
                 c =>
                 {

@@ -346,12 +346,23 @@ public sealed class DemoTenantSeeder(Database db, IConfiguration? config = null)
         await UpsertPilotUserAsync(companyId, southBranchId, $"dispatch{suffix}@meridian.demo",
             "Meridian Dispatcher", "Dispatcher",
             "[\"dashboard:view\",\"drivers:view\",\"vehicles:view\",\"shipments:view\",\"dispatch:view\",\"dispatch:create\",\"dispatch:assign\",\"dispatch:update\",\"alerts:view\",\"safety:view\"]", ct);
+        // 'Maintenance Manager' and 'Safety Auditor' are demo personas that the GLOBAL role
+        // catalog does not ship (it has 'Mechanic' and 'Read-only Auditor', whose grant sets
+        // are materially narrower). Seeding a user against a name no role row carries made
+        // the role_id subselect resolve NULL, so every fresh demo tenant recreated the exact
+        // DEF-021 rows stage87 exists to eliminate. Create them as TENANT-LOCAL roles first —
+        // that gives real role membership without either polluting the global catalog or
+        // silently reshaping the persona (the role json below IS the persona's grant set).
+        const string maintenanceLeadPermissions =
+            "[\"dashboard:view\",\"vehicles:view\",\"maintenance:view\",\"maintenance:create\",\"maintenance:update\",\"maintenance:close\",\"compliance:view\",\"compliance:update\",\"safety:view\"]";
+        const string safetyAuditorPermissions =
+            "[\"dashboard:view\",\"drivers:view\",\"vehicles:view\",\"safety:view\",\"compliance:view\",\"reports:view\",\"reports:export\"]";
+        await UpsertTenantRoleAsync(companyId, "Maintenance Manager", maintenanceLeadPermissions, ct);
+        await UpsertTenantRoleAsync(companyId, "Safety Auditor", safetyAuditorPermissions, ct);
         await UpsertPilotUserAsync(companyId, northBranchId, $"maintenance{suffix}@meridian.demo",
-            "Meridian Maintenance Lead", "Maintenance Manager",
-            "[\"dashboard:view\",\"vehicles:view\",\"maintenance:view\",\"maintenance:create\",\"maintenance:update\",\"maintenance:close\",\"compliance:view\",\"compliance:update\",\"safety:view\"]", ct);
+            "Meridian Maintenance Lead", "Maintenance Manager", maintenanceLeadPermissions, ct);
         await UpsertPilotUserAsync(companyId, null, $"auditor{suffix}@meridian.demo",
-            "Meridian Safety Auditor", "Safety Auditor",
-            "[\"dashboard:view\",\"drivers:view\",\"vehicles:view\",\"safety:view\",\"compliance:view\",\"reports:view\",\"reports:export\"]", ct);
+            "Meridian Safety Auditor", "Safety Auditor", safetyAuditorPermissions, ct);
 
         // Deterministic branch ownership gives the pilot both scoped and tenant-wide stories.
         await db.ExecuteAsync(
@@ -491,23 +502,75 @@ public sealed class DemoTenantSeeder(Database db, IConfiguration? config = null)
                 RETURNING id",
             c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@code", code); c.Parameters.AddWithValue("@name", name); c.Parameters.AddWithValue("@city", city); }, ct);
 
+    // Creates (or refreshes) a TENANT-LOCAL role so a demo persona whose name is not in
+    // the global catalog still resolves to a real role row. ResolveRoleRecord prefers the
+    // tenant-local row over a same-named global one (ORDER BY company_id NULLS LAST), so
+    // this is the supported way to give a tenant a persona the platform catalog does not
+    // ship. permissions_json is the persona's own grant set, which keeps the demo user's
+    // effective permissions identical to what the seeder has always granted — resolving
+    // role_id makes ResolveEffectivePermissionsAsync read the ROLE's json instead of the
+    // user's, so the two MUST agree or the persona silently changes shape.
+    private Task<long> UpsertTenantRoleAsync(long companyId, string name, string permissionsJson, CancellationToken ct)
+        => db.ScalarLongAsync(
+            @"INSERT INTO roles(company_id,name,permissions_json,is_system)
+                VALUES (@companyId,@name,@perms::jsonb,FALSE)
+                ON CONFLICT (company_id, lower(name)) WHERE company_id IS NOT NULL
+                DO UPDATE SET permissions_json=EXCLUDED.permissions_json
+                RETURNING id",
+            c =>
+            {
+                c.Parameters.AddWithValue("@companyId", companyId);
+                c.Parameters.AddWithValue("@name", name);
+                c.Parameters.AddWithValue("@perms", permissionsJson);
+            }, ct);
+
+    // DEF-021 guard: a seeded user MUST carry role membership (users.role_id), because the
+    // role card counts membership and ResolveEffectivePermissionsAsync keys off it. The
+    // previous inline `(SELECT id FROM roles WHERE name=@roleName …)` subselect resolved to
+    // NULL whenever the persona's role_name was absent from the catalog, and NULL is a
+    // perfectly legal value for a nullable column — so every fresh demo tenant silently
+    // recreated the exact rows stage87 exists to eliminate, and no test noticed because the
+    // insert did name the role_id column. The role is now resolved FIRST and an unresolvable
+    // name throws instead of seeding an uncountable user.
+    // Resolves role membership with ResolveRoleRecord precedence (tenant-local wins over a
+    // same-named global role) and THROWS when the name resolves to nothing. Every seeding
+    // path must go through this: handing a nullable column a nullable subselect is how the
+    // seeder silently re-created DEF-021 rows on every fresh tenant.
+    private async Task<long> RequireRoleIdAsync(long companyId, string roleName, string email, CancellationToken ct)
+    {
+        var roleId = await db.ScalarLongAsync(
+            @"SELECT COALESCE((SELECT id FROM roles WHERE name=@roleName AND (company_id IS NULL OR company_id=@companyId)
+                                ORDER BY company_id NULLS LAST LIMIT 1), 0)",
+            c => { c.Parameters.AddWithValue("@roleName", roleName); c.Parameters.AddWithValue("@companyId", companyId); }, ct);
+        if (roleId <= 0)
+            throw new InvalidOperationException(
+                $"Demo seeding cannot provision '{email}': role '{roleName}' exists in neither the global catalog nor " +
+                $"company {companyId}'s tenant-local roles. Seed the role first (UpsertTenantRoleAsync) or use a catalog " +
+                "role name — a user with a NULL role_id is uncountable on the role card and re-creates DEF-021.");
+        return roleId;
+    }
+
     private async Task<long> UpsertPilotUserAsync(long companyId, long? branchId, string email, string fullName, string roleName, string permissionsJson, CancellationToken ct)
-        => await db.ScalarLongAsync(
-            @"INSERT INTO users(company_id,branch_id,full_name,email,role_name,status,password_hash,permissions_json)
-                VALUES (@companyId,@branchId,@fullName,@email,@roleName,'Active',@passwordHash,@perms::jsonb)
-                ON CONFLICT(company_id,email) DO UPDATE SET branch_id=EXCLUDED.branch_id,full_name=EXCLUDED.full_name,role_name=EXCLUDED.role_name,
+    {
+        var roleId = await RequireRoleIdAsync(companyId, roleName, email, ct);
+        return await db.ScalarLongAsync(
+            @"INSERT INTO users(company_id,branch_id,role_id,full_name,email,role_name,status,password_hash,permissions_json)
+                VALUES (@companyId,@branchId,@roleId,@fullName,@email,@roleName,'Active',@passwordHash,@perms::jsonb)
+                ON CONFLICT(company_id,email) DO UPDATE SET branch_id=EXCLUDED.branch_id,role_id=EXCLUDED.role_id,full_name=EXCLUDED.full_name,role_name=EXCLUDED.role_name,
                     status='Active',password_hash=EXCLUDED.password_hash,permissions_json=EXCLUDED.permissions_json
                 RETURNING id",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
                 c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+                c.Parameters.AddWithValue("@roleId", roleId);
                 c.Parameters.AddWithValue("@fullName", fullName);
                 c.Parameters.AddWithValue("@email", email);
                 c.Parameters.AddWithValue("@roleName", roleName);
                 c.Parameters.AddWithValue("@passwordHash", PlatformSchemaService.HashPassword(demoPassword));
                 c.Parameters.AddWithValue("@perms", permissionsJson);
             }, ct);
+    }
 
     private async Task<long> RequiredEntityIdAsync(string table, string keyColumn, string key, long companyId, CancellationToken ct)
     {
@@ -653,19 +716,23 @@ public sealed class DemoTenantSeeder(Database db, IConfiguration? config = null)
             c => { c.Parameters.AddWithValue("@id", invoiceId); c.Parameters.AddWithValue("@issued", issuedDaysAgo); c.Parameters.AddWithValue("@due", dueInDays); }, ct);
 
     private async Task SeedUserAsync(long companyId, string email, string fullName, string roleName, long? customerId, string permissionsJson, CancellationToken ct)
-        => await db.ExecuteAsync(
-            @"INSERT INTO users (company_id, customer_id, full_name, email, role_name, status, password_hash, permissions_json)
-              VALUES (@companyId, @customerId, @fullName, @email, @roleName, 'Active', @passwordHash, @perms::jsonb)",
+    {
+        var roleId = await RequireRoleIdAsync(companyId, roleName, email, ct);
+        await db.ExecuteAsync(
+            @"INSERT INTO users (company_id, customer_id, role_id, full_name, email, role_name, status, password_hash, permissions_json)
+              VALUES (@companyId, @customerId, @roleId, @fullName, @email, @roleName, 'Active', @passwordHash, @perms::jsonb)",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
                 c.Parameters.AddWithValue("@customerId", (object?)customerId ?? DBNull.Value);
+                c.Parameters.AddWithValue("@roleId", roleId);
                 c.Parameters.AddWithValue("@fullName", fullName);
                 c.Parameters.AddWithValue("@email", email);
                 c.Parameters.AddWithValue("@roleName", roleName);
                 c.Parameters.AddWithValue("@passwordHash", PlatformSchemaService.HashPassword(demoPassword));
                 c.Parameters.AddWithValue("@perms", permissionsJson);
             }, ct);
+    }
 
     private static string ResolveDemoPassword(IConfiguration? config)
     {
