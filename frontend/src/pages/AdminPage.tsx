@@ -22,6 +22,7 @@ import {
 import { useAuditExportRequests, useAuditLogs, useCreateAuditExport } from "@/hooks/useBatch7";
 import { useLocalizationSettings, useUpdateLocaleSettings } from "@/hooks/useBatch6";
 import { adminApi } from "@/services/adminApi";
+import { customersApi } from "@/services/customersApi";
 import { PERMISSIONS } from "@/auth/rbacConfig";
 import { EmptyState, ErrorState, LoadingState, PageHeader, PasswordInput, StatusBadge } from "@/components/ui";
 import type { AnyRecord } from "@/types";
@@ -35,6 +36,8 @@ type UserFormState = {
   companyId: number;
   roleId: string;
   roleName: string;
+  /** DEF-027: customer-scope binding for portal roles ("" = no binding). */
+  customerId: string;
   status: string;
   password: string;
 };
@@ -252,6 +255,7 @@ export function AdminPage() {
     companyId: Number(session?.company?.id ?? session?.company?.companyId ?? 0),
     roleId: "",
     roleName: "",
+    customerId: "",
     status: "Active",
     password: "",
   });
@@ -317,6 +321,65 @@ export function AdminPage() {
     [sortedUsers, safeUserPage],
   );
 
+  // DEF-027: the customer-scope select is only meaningful for portal roles, and the
+  // customer book needs customers:view — load lazily and degrade to a plain id input
+  // when the list is unavailable rather than silently hiding the binding control.
+  //
+  // "Is this a portal role?" is decided by the role's PERMISSIONS, never by its display
+  // name. `/portal/i.test(roleName)` missed the two roles that most need binding —
+  // `Customer` (shipments:view, customer_portal:view, alerts:view) and
+  // `Customer Viewer` — because neither name contains "Portal", so an admin could
+  // create those accounts but never bind them: the portal APIs then 403 for want of a
+  // customer, and the UI offered no control to repair it. It also matched internal
+  // roles whose names happen to contain "portal".
+  //
+  // The signature is: holds customer_portal:view, does NOT hold dashboard:view (an
+  // internal supervisor previewing the portal must not be bindable — a binding turns
+  // the principal into a customer principal and locks it out of every internal
+  // endpoint), and is not a wildcard admin.
+  const selectedRole = useMemo(
+    () => (roleOptions as AnyRecord[]).find((option) => String(option.id) === String(userForm.roleId)),
+    [roleOptions, userForm.roleId],
+  );
+  const selectedRolePermissions = useMemo(
+    () => permissionList(selectedRole?.permissions ?? selectedRole?.permissionsJson ?? selectedRole?.permissions_json)
+      .map((permission) => permission.trim().toLowerCase().replace(/\./g, ":").replace(/-/g, "_")),
+    [selectedRole],
+  );
+  const isPortalRole = selectedRolePermissions.length > 0
+    ? selectedRolePermissions.includes("customer_portal:view")
+      && !selectedRolePermissions.includes("dashboard:view")
+      && !selectedRolePermissions.includes("*")
+    // The roles endpoint did not return permissions for this role, so the signature
+    // cannot be evaluated. Fall back to the legacy name test rather than hiding the
+    // control outright — an unbindable account is the worse failure.
+    : /portal/i.test(userForm.roleName);
+  const customerOptionsQ = useQuery({
+    queryKey: ["admin-customer-options"],
+    queryFn: () => customersApi.list(),
+    enabled: userModal !== null && isPortalRole,
+    staleTime: 60_000,
+  });
+  const customerOptions = useMemo(
+    () =>
+      ((customerOptionsQ.data ?? []) as AnyRecord[])
+        .filter((c) => String(c.status ?? "Active").toLowerCase() !== "deleted")
+        .map((c) => ({ id: Number(c.id), name: String(c.name ?? c.customerName ?? `Customer ${c.id}`) }))
+        .filter((c) => Number.isFinite(c.id) && c.id > 0),
+    [customerOptionsQ.data],
+  );
+
+  // Client-side shape check for the degrade-to-id-input path. "abc" / "0" / "-3" /
+  // "2.5" all round-tripped to a server 400 with no on-screen explanation.
+  const customerIdError = (() => {
+    if (!isPortalRole) return null;
+    const raw = userForm.customerId.trim();
+    if (!raw) return null;
+    return /^\d+$/.test(raw) && Number(raw) > 0
+      ? null
+      : "Enter a positive whole-number customer ID.";
+  })();
+
   const selectedUserId = selectedUser ? Number(selectedUser.id) : null;
   const sessionsQ = useQuery({
     queryKey: ["admin-user-sessions", selectedUserId],
@@ -342,6 +405,7 @@ export function AdminPage() {
       companyId: Number(session?.company?.id ?? session?.company?.companyId ?? 0),
       roleId: "",
       roleName: String(roleOptions[0]?.name ?? ""),
+      customerId: "",
       status: "Active",
       password: "",
     });
@@ -357,6 +421,7 @@ export function AdminPage() {
       companyId: Number(user.companyId ?? user.company_id ?? session?.company?.id ?? 0),
       roleId: String(user.roleId ?? user.role_id ?? ""),
       roleName: String(user.roleName ?? user.role_name ?? ""),
+      customerId: user.customerId != null || user.customer_id != null ? String(user.customerId ?? user.customer_id) : "",
       status: String(user.status ?? "Active"),
       password: "",
     });
@@ -371,6 +436,9 @@ export function AdminPage() {
       companyId: userForm.companyId,
       roleId: userForm.roleId ? Number(userForm.roleId) : undefined,
       roleName: userForm.roleName,
+      // DEF-027: customer-scope binding. The key's presence is the API's intent
+      // signal — null clears the binding, a number binds a portal user to a customer.
+      customerId: userForm.customerId ? Number(userForm.customerId) : null,
       status: userForm.status,
     };
     try {
@@ -1180,7 +1248,26 @@ export function AdminPage() {
                 <label className="label">Role</label>
                 <select className="field w-full" value={String(userForm.roleId ?? "")} onChange={(e) => {
                   const role = roleOptions.find((option) => String(option.id) === e.target.value);
-                  setUserForm((f) => ({ ...f, roleId: e.target.value, roleName: String(role?.name ?? "") }));
+                  const nextPermissions = permissionList(
+                    (role as AnyRecord | undefined)?.permissions
+                    ?? (role as AnyRecord | undefined)?.permissionsJson
+                    ?? (role as AnyRecord | undefined)?.permissions_json,
+                  ).map((permission) => permission.trim().toLowerCase().replace(/\./g, ":").replace(/-/g, "_"));
+                  const nextIsPortal = nextPermissions.length > 0
+                    ? nextPermissions.includes("customer_portal:view")
+                      && !nextPermissions.includes("dashboard:view")
+                      && !nextPermissions.includes("*")
+                    : /portal/i.test(String(role?.name ?? ""));
+                  // Switching to a non-portal role hides the Customer scope control but
+                  // used to KEEP the value, which the form then submitted — the server
+                  // rejected the binding and the admin saw a 400 about a field that was
+                  // no longer on screen. Drop the binding with the control.
+                  setUserForm((f) => ({
+                    ...f,
+                    roleId: e.target.value,
+                    roleName: String(role?.name ?? ""),
+                    customerId: nextIsPortal ? f.customerId : "",
+                  }));
                 }}>
                   <option value="" disabled>Select a role</option>
                   {roleOptions.map((role) => <option key={role.id} value={String(role.id)}>{role.name}</option>)}
@@ -1192,6 +1279,61 @@ export function AdminPage() {
                   {["Active", "Inactive", "Pending"].map((status) => <option key={status} value={status}>{status}</option>)}
                 </select>
               </div>
+              {isPortalRole && (
+                <div className="md:col-span-2">
+                  <label className="label">Customer scope</label>
+                  {customerOptionsQ.isError ? (
+                    <>
+                      <input
+                        className="field w-full"
+                        type="number"
+                        min={1}
+                        placeholder="Customer ID"
+                        aria-invalid={customerIdError ? true : undefined}
+                        value={userForm.customerId}
+                        onChange={(e) => setUserForm((f) => ({ ...f, customerId: e.target.value }))}
+                      />
+                      <p role="alert" className="mt-1 text-xs text-amber-600">
+                        Customer list could not be loaded — enter the customer ID directly.
+                      </p>
+                      {/* Without the list we cannot confirm the id EXISTS, but we can
+                          reject a shape the server will certainly refuse, here instead
+                          of after a round trip. */}
+                      {customerIdError && <p role="alert" className="mt-1 text-xs text-red-600">{customerIdError}</p>}
+                    </>
+                  ) : customerOptionsQ.isLoading ? (
+                    <select className="field w-full" value="" disabled>
+                      <option value="">Loading customers…</option>
+                    </select>
+                  ) : customerOptions.length === 0 ? (
+                    // An honest empty state: a tenant with no customers on file cannot
+                    // bind anyone. A select whose only entry is "No customer binding"
+                    // looked like a working control that simply did nothing.
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+                      <p className="text-xs font-semibold text-amber-800">No customers on file</p>
+                      <p className="mt-1 text-xs text-amber-700">
+                        This organization has no customer records yet, so a portal user cannot be bound to
+                        one. Create the customer under Customers first, then edit this user to bind it.
+                      </p>
+                    </div>
+                  ) : (
+                    <select
+                      className="field w-full"
+                      value={userForm.customerId}
+                      onChange={(e) => setUserForm((f) => ({ ...f, customerId: e.target.value }))}
+                    >
+                      <option value="">No customer binding</option>
+                      {customerOptions.map((c) => (
+                        <option key={c.id} value={String(c.id)}>{c.name}</option>
+                      ))}
+                    </select>
+                  )}
+                  <p className="mt-1 text-xs text-slate-500">
+                    Portal users see only the bound customer's shipments, invoices and proofs.
+                    Without a binding, portal sign-in is denied — nothing renders as an empty page.
+                  </p>
+                </div>
+              )}
               {userModal === "create" ? (
                 <div>
                   <label className="label">Password (optional)</label>
@@ -1211,7 +1353,7 @@ export function AdminPage() {
             {modalError && <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">{modalError}</p>}
             <div className="flex gap-2 pt-2">
               <button type="button" className="btn-ghost flex-1" onClick={() => setUserModal(null)}>Cancel</button>
-              <button type="button" className="btn-primary flex-1" onClick={saveUser} disabled={!userForm.fullName.trim() || !userForm.email.trim() || !userForm.roleId || (userModal === "create" ? !canCreateUsers : !canUpdateUsers)}>
+              <button type="button" className="btn-primary flex-1" onClick={saveUser} disabled={!userForm.fullName.trim() || !userForm.email.trim() || !userForm.roleId || Boolean(customerIdError) || (userModal === "create" ? !canCreateUsers : !canUpdateUsers)}>
                 Save User
               </button>
             </div>
