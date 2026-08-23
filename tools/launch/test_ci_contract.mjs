@@ -161,14 +161,29 @@ test("release API image contains the required gateway and terminal migrations", 
     workflow.indexOf("release-container-builds:"),
     workflow.indexOf("exact-sha-release-evidence:"),
   );
+  // Existence is no longer asserted per file: the release job derives it from the
+  // predeploy runner's MIGRATIONS array, so every enrolled migration is checked --
+  // strictly stronger than the four-file allowlist this test used to pin. The
+  // per-file docker cp + cmp assertions below still prove the image payload itself.
+  assert.match(release, /sed -n '\/\^MIGRATIONS=\(\/,\/\^\)\/p' tools\/apply-neon-predeploy-migrations\.sh/);
+  assert.match(release, /runner enrolls missing file/);
+
   for (const migration of [
     "2026_07_16_stage42_telemetry_gateways.sql",
     "2026_08_11_stage76_telematics_security_hardening.sql",
     "2026_08_12_stage77_protected_role_bootstrap.sql",
     "2026_08_13_stage80_driver_proof_upload_binding.sql",
   ]) {
-    assert.match(dockerfile, new RegExp(`COPY database/migrations/${migration} database/migrations/`));
-    assert.match(release, new RegExp(`test -f database/migrations/${migration}`));
+    // The Dockerfile used to COPY migrations one file at a time. That allowlist had
+    // already drifted -- it stopped at stage82 and silently dropped stage83 onward from
+    // the image's /app/Migrations payload -- so it is now a directory COPY, which cannot
+    // drift. Assert the directory COPY plus the file's presence on disk: strictly
+    // stronger than the old per-file assertion, which only covered the four named here.
+    assert.match(dockerfile, /COPY database\/migrations\/ database\/migrations\//);
+    assert.ok(
+      fs.existsSync(path.join(repository, "database", "migrations", migration)),
+      `${migration} must exist on disk to be packaged by the directory COPY`,
+    );
     assert.match(release, new RegExp(`docker cp \\\"\\$api_container:/app/Migrations/${migration}\\\"`));
     assert.match(release, new RegExp(`cmp database/migrations/${migration}`));
   }
