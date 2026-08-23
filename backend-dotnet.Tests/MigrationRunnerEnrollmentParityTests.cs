@@ -252,8 +252,6 @@ public sealed class MigrationRunnerEnrollmentParityTests
         "2026_07_16_stage41_fin_config_envelope",
         "2026_07_21_stage43_tenant_mfa",
         "2026_07_21_stage44_maintenance_pm_baseline",
-        "2026_07_22_stage45_general_ledger",
-        "2026_07_22_stage46_gl_period_close_export",
         "2026_07_22_stage48_driver_detention_pay",
         "2026_08_18_stage81_platform_billing_itemization",
     ];

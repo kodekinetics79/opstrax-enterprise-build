@@ -124,6 +124,15 @@ MIGRATIONS=(
   # by Stage51 on the supported protected predecessor.
   2026_06_28_stage12a_telemetry_live_state
   2026_07_22_stage47_detention_recovery
+  # Enrolled after CI proved stage88 alone is not enough: stage88 emits tables,
+  # columns and indexes only -- zero functions, zero triggers. It materialised the
+  # GL tables WITHOUT gl_enforce_period_lock() and trg_gl_period_lock (stage46:43,56),
+  # turning a loud 42P01 into SILENT back-posting into a closed accounting period.
+  # Must stay ahead of stage88. The dev-shaped local database masked this because
+  # the runtime schema services build the trigger there; only the chain-only
+  # oracle CI now builds exposes it.
+  2026_07_22_stage45_general_ledger
+  2026_07_22_stage46_gl_period_close_export
   2026_07_30_stage52_fleet_identity_uniqueness
   2026_07_30_stage53_tenant_rls_reconciliation
   2026_07_30_stage54_cold_chain_device_integrity
