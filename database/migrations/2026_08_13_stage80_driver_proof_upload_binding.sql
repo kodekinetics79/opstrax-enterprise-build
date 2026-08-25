@@ -60,8 +60,18 @@ REVOKE ALL ON TABLE dispatch_proof_uploads FROM PUBLIC;
 REVOKE ALL ON SEQUENCE dispatch_proof_uploads_id_seq FROM PUBLIC;
 GRANT SELECT,INSERT,UPDATE,DELETE ON TABLE dispatch_proof_uploads TO opstrax_app;
 GRANT USAGE,SELECT ON SEQUENCE dispatch_proof_uploads_id_seq TO opstrax_app;
-GRANT SELECT,INSERT,UPDATE,DELETE ON TABLE dispatch_proof_uploads TO opstrax_system;
-GRANT USAGE,SELECT ON SEQUENCE dispatch_proof_uploads_id_seq TO opstrax_system;
+DO $stage80_system_grants$
+BEGIN
+  -- A genuinely empty cluster does not have the system identity until the runner's
+  -- terminal Stage58 reconciliation. Established protected clusters do. Avoid making
+  -- the pre-terminal migration depend on cluster-global role residue; Stage58 grants
+  -- this table and its owned sequence when it creates/reconciles opstrax_system.
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_system') THEN
+    GRANT SELECT,INSERT,UPDATE,DELETE ON TABLE dispatch_proof_uploads TO opstrax_system;
+    GRANT USAGE,SELECT ON SEQUENCE dispatch_proof_uploads_id_seq TO opstrax_system;
+  END IF;
+END
+$stage80_system_grants$;
 
 INSERT INTO schema_migrations(version,description)
 VALUES ('2026_08_13_stage80_driver_proof_upload_binding',

@@ -21,6 +21,7 @@ public sealed class FleetProductionReadinessService
         "EscalationBackgroundService",
         "ScheduledReportBackgroundService",
         "RetentionEnforcementService",
+        "OutboxDispatcherBackgroundService",
     ];
 
     internal static readonly TimeSpan CriticalWorkerStartupGrace = TimeSpan.FromMinutes(2);

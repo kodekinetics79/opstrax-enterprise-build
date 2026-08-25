@@ -23,10 +23,11 @@ public class FleetRbacTaxonomyTests
     }
 
     [Fact]
-    public void FleetManager_Holding_Granular_Tokens_Satisfies_FleetTaxonomy()
+    public void FleetManager_Holding_Granular_Tokens_Uses_Directed_FleetTaxonomy()
     {
         var perms = Role("Fleet Manager");
-        // shipments:update (held) must satisfy the new canonical fleet.shipments.manage
+        // A narrow shipments:update grant must not become the broad manage umbrella.
+        Assert.False(EndpointMappings.HasPermission(["shipments:update"], "fleet.shipments.manage"));
         Assert.True(EndpointMappings.HasPermission(perms, "fleet.shipments.manage"));
         Assert.True(EndpointMappings.HasPermission(perms, "fleet.read"));
         Assert.True(EndpointMappings.HasPermission(perms, "fleet.carriers.manage"));
@@ -37,7 +38,8 @@ public class FleetRbacTaxonomyTests
     public void CustomerViewer_Cannot_Manage_Carriers_Or_Fuel()
     {
         var perms = Role("Customer Viewer");
-        Assert.True(EndpointMappings.HasPermission(perms, "fleet.shipments.view"));
+        Assert.True(EndpointMappings.HasPermission(perms, "customer_portal:view"));
+        Assert.False(EndpointMappings.HasPermission(perms, "fleet.shipments.view"));
         Assert.False(EndpointMappings.HasPermission(perms, "fleet.carriers.manage"));
         Assert.False(EndpointMappings.HasPermission(perms, "fleet.fuel.manage"));
         Assert.False(EndpointMappings.HasPermission(perms, "fleet.billing.manage"));

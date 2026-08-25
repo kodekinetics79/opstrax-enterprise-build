@@ -416,7 +416,7 @@ export function OperationsProofCenterPage() {
                   Create Document
                 </button>
               ) : null}
-              {latestAccessDocument?.id && !["verified", "waived_with_approval", "expired"].includes(String(latestAccessDocument.status).toLowerCase()) && hasPermission("operations.access_document.update") ? (
+              {latestAccessDocument?.id && !["verified", "waived_with_approval", "expired"].includes(String(latestAccessDocument.status).toLowerCase()) && hasPermission("operations.access_document.verify") ? (
                 <button type="button" className="btn-ghost" onClick={() => completeRequirementMutation.mutate("document")} disabled={completeRequirementMutation.isPending}>
                   Verify Document
                 </button>
@@ -443,7 +443,7 @@ export function OperationsProofCenterPage() {
                   Create Authorization
                 </button>
               ) : null}
-              {latestPickupAuthorization?.id && !["verified", "expired", "revoked"].includes(String(latestPickupAuthorization.status).toLowerCase()) && hasPermission("operations.pickup_authorization.update") ? (
+              {latestPickupAuthorization?.id && !["verified", "expired", "revoked"].includes(String(latestPickupAuthorization.status).toLowerCase()) && hasPermission("operations.pickup_authorization.verify") ? (
                 <button type="button" className="btn-ghost" onClick={() => completeRequirementMutation.mutate("pickup")} disabled={completeRequirementMutation.isPending}>
                   Verify Authorization
                 </button>

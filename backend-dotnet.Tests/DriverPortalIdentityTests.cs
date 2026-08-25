@@ -128,15 +128,11 @@ public class RolePermissionReconcilerPostgresTests
     }
 
     /// <summary>
-    /// The reconciler must never REMOVE a grant that is live but not in the code default.
-    /// Dispatcher's `jobs:view` / `fleet:view` / `dispatch:manage` are exactly that — absent
-    /// from RolePermissionDefaults["Dispatcher"], but enforced via the semantic alias tables.
-    /// A "make the DB match the code" reconciler would have silently broken the Dispatcher
-    /// role while fixing the Driver one. (`map:view` was in this list until NEW-R1-06
-    /// reconciled the code default with what seed role 4 actually grants.)
+    /// AUD-003 makes Dispatcher authoritative: historical umbrella grants must be removed,
+    /// leaving exactly the reviewed action-level set shared by code and seed data.
     /// </summary>
     [Fact]
-    public async Task Reconcile_IsAdditive_AndDoesNotStripLiveGrantsAbsentFromCodeDefaults()
+    public async Task DispatcherReconcile_IsAuthoritative_AndStripsLegacyUmbrellas()
     {
         var db = CreateDatabase();
         await EnsureCoreBootstrapAsync(db);
@@ -144,12 +140,13 @@ public class RolePermissionReconcilerPostgresTests
 
         var dispatcher = await EffectiveRoleGrantsAsync(db, "Dispatcher");
 
-        Assert.Contains("jobs:view", dispatcher);        // → job.read via FoundationServices
-        Assert.Contains("dispatch:manage", dispatcher);  // 19 enforcement sites
-        Assert.Contains("fleet:view", dispatcher);       // 12 enforcement sites
-        // …and it still gained everything the code declares.
-        foreach (var declared in EndpointMappings.RolePermissionDefaults["Dispatcher"])
-            Assert.Contains(declared, dispatcher);
+        Assert.DoesNotContain("jobs:view", dispatcher);
+        Assert.DoesNotContain("jobs:manage", dispatcher);
+        Assert.DoesNotContain("dispatch:manage", dispatcher);
+        Assert.DoesNotContain("fleet:view", dispatcher);
+        Assert.Equal(
+            EndpointMappings.RolePermissionDefaults["Dispatcher"].OrderBy(x => x, StringComparer.Ordinal),
+            dispatcher.OrderBy(x => x, StringComparer.Ordinal));
     }
 
     /// <summary>The union the middleware actually resolves: roles.permissions_json ∪ role_permissions.</summary>

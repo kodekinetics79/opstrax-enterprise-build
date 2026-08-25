@@ -29,6 +29,8 @@ services:
       ConnectionStrings__SystemConnection: ${PG_CONNECTION_SYSTEM:?PG_CONNECTION_SYSTEM must use opstrax_system}
       Rls__EnforceTenantContext: "true"
       Rls__TenantTicketTtlSeconds: ${RLS_TENANT_TICKET_TTL_SECONDS:-120}
+      OutboxDispatcher__Enabled: "true"
+      OutboxDispatcher__AllowProduction: "true"
       DATA_PROTECTION_CERTIFICATE_BASE64: ${DATA_PROTECTION_CERTIFICATE_BASE64:?base64 PKCS12 Data Protection certificate required}
       DATA_PROTECTION_CERTIFICATE_PASSWORD: ${DATA_PROTECTION_CERTIFICATE_PASSWORD:?Data Protection certificate password required}
       DATA_PROTECTION_PREVIOUS_CERTIFICATE_BASE64: ${DATA_PROTECTION_PREVIOUS_CERTIFICATE_BASE64:-}

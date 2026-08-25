@@ -168,6 +168,60 @@ for (const [view, writes] of Object.entries(GOVERNANCE_VIEW_TIERS)) {
 assert.equal(hasPermission(["settings:view"], "telematics:providers:manage"), false, "settings:view must NOT satisfy telematics:providers:manage");
 assert.equal(hasPermission(["settings:view"], "telemetry.devices.manage"), false, "settings:view must NOT satisfy telemetry.devices.manage");
 
+// ── 3c. AUD-003: action inheritance is directed, never a sibling closure ─────
+// Every pair below evaluated TRUE on b982ef8. A narrow/read/export grant must not
+// acquire another mutation merely because both were historically listed together.
+for (const [held, required] of [
+  ["drivers:create", "drivers:delete"],
+  ["vehicles:update", "vehicles:delete"],
+  ["shipments:create", "shipments:delete"],
+  ["dispatch:create", "dispatch:cancel"],
+  ["customers:update", "customers:delete"],
+  ["safety:create", "safety:review"],
+  ["maintenance:update", "maintenance:close"],
+  ["compliance:export", "compliance:manage"],
+  ["alerts:acknowledge", "alerts:close"],
+  ["reports:export", "reports:manage"],
+  ["users:create", "users:delete"],
+  ["roles:create", "roles:update"],
+  ["telematics:devices:update", "telemetry.devices.manage"],
+  ["dispatch.smart_assign.read", "dispatch.smart_assign.accept"],
+  ["dispatch:assign", "dispatch.smart_assign.recommend"],
+  ["dispatch:assign", "dispatch.smart_assign.accept"],
+  ["reports:view", "reports:export"],
+  ["dispatch:manage", "shipments:delete"],
+  ["operations.site_access.read", "operations.site_access.create"],
+  ["operations.access_document.read", "operations.access_document.verify"],
+  ["operations.access_document.update", "operations.access_document.verify"],
+  ["operations.pickup_authorization.update", "operations.pickup_authorization.verify"],
+  ["operations.proof.read", "operations.proof.validate"],
+  ["operations.proof.create", "operations.proof.update"],
+  ["operations.proof.create", "operations.proof.submit"],
+  ["finance.invoice.issue", "finance.invoice.approve"],
+  ["settlement.create", "settlement.pay"],
+  ["tax.update", "tax.publish"],
+  ["revrec.update", "revrec.period.close"],
+]) {
+  assert.equal(hasPermission([held], required), false, `${held} must NOT satisfy sibling mutation ${required}`);
+}
+
+for (const [held, required] of [
+  ["fleet:manage", "vehicles:delete"],
+  ["drivers:manage", "drivers:assign"],
+  ["shipments:manage", "shipments:delete"],
+  ["dispatch:manage", "dispatch:cancel"],
+  ["maintenance:manage", "maintenance:close"],
+  ["compliance:manage", "compliance:export"],
+  ["alerts:manage", "alerts:close"],
+  ["reports:manage", "reports:export"],
+  ["users:manage", "users:delete"],
+  ["roles:manage", "roles:update"],
+  ["settings:manage", "settings:update"],
+  ["finance:manage", "finance.invoice.approve"],
+]) {
+  assert.equal(hasPermission([held], required), true, `${held} must retain intentional implication to ${required}`);
+}
+
 // The Read-only Auditor is the role this defect was reported against. Drive the
 // SHIPPED backend grant set, not the frontend catalogue.
 const READ_ONLY_AUDITOR = BACKEND_ROLES["Read-Only Auditor"];
@@ -190,10 +244,10 @@ for (const seeded of ["db:Operations Manager", "db:Finance & Billing Manager"]) 
   }
 }
 // The genuine write tiers must survive the tightening — a one-way edge, not a deletion.
-assert.equal(hasPermission(["settings:update"], "settings:manage"), true, "settings:update must still satisfy settings:manage");
+assert.equal(hasPermission(["settings:update"], "settings:manage"), false, "settings:update must not become settings:manage");
 assert.equal(hasPermission(["settings:manage"], "settings:update"), true, "settings:manage must still satisfy settings:update");
-assert.equal(hasPermission(["users:create"], "users:manage"), true, "users:create must still satisfy users:manage");
-assert.equal(hasPermission(["roles:update"], "roles:manage"), true, "roles:update must still satisfy roles:manage");
+assert.equal(hasPermission(["users:create"], "users:manage"), false, "users:create must not become users:manage");
+assert.equal(hasPermission(["roles:update"], "roles:manage"), false, "roles:update must not become roles:manage");
 assert.equal(hasPermission(BACKEND_ROLES["Tenant Admin"], "settings:manage"), true, "Tenant Admin must keep settings:manage (settings:update)");
 assert.equal(hasPermission(BACKEND_ROLES["Tenant Admin"], "users:manage"), true, "Tenant Admin must keep users:manage (users:create/update/delete)");
 assert.equal(hasPermission(BACKEND_ROLES["Fleet Owner"], "settings:manage"), true, "Fleet Owner must keep settings:manage (settings:update)");
@@ -205,14 +259,11 @@ assert.equal(hasPermission(BACKEND_ROLES["Fleet Owner"], "settings:manage"), tru
 for (const [held, required] of [
   ["fleet:manage", "telemetry.devices.manage"],
   ["fleet.manage", "telemetry.devices.manage"],
-  ["telematics:devices:create", "telemetry.devices.manage"],
   ["telematics:providers:manage", "telemetry.devices.manage"],
   ["alerts:view", "telemetry.alerts.read"],
   ["safety:view", "telemetry.alerts.read"],
   ["maintenance:view", "telemetry.alerts.read"],
-  ["alerts:acknowledge", "telemetry.alerts.manage"],
-  ["safety:manage", "telemetry.alerts.manage"],
-  ["maintenance:manage", "telemetry.alerts.manage"],
+  ["alerts:manage", "telemetry.alerts.manage"],
   ["fleet:manage", "telemetry.rules.manage"],
   ["devices:manage", "telemetry.rules.manage"],
 ]) {
@@ -220,15 +271,8 @@ for (const [held, required] of [
 }
 // A read grant still never reaches the device write tier.
 assert.equal(hasPermission(["telematics:devices:view"], "telemetry.devices.manage"), false, "telematics:devices:view must NOT satisfy telemetry.devices.manage");
-// KNOWN DIVERGENCE, recorded so it cannot drift further unnoticed: the ALERTS_VIEW
-// group lists fleet:view (mirroring the backend's `alerts:view => [… fleet:view …]`
-// satisfy-set), and because this closure is symmetric that makes fleet:view reach
-// telemetry.alerts.read here while the backend denies it. This is a nav OVER-render
-// (SPA shows the alert surface, API 403s), not an API bypass, and closing it means
-// removing fleet:view from ALERTS_VIEW — a change to the alerts navigation for every
-// fleet:view holder, which belongs in its own packet. Asserted as-is so a future
-// change has to come here and decide deliberately.
-assert.equal(hasPermission(["fleet:view"], "telemetry.alerts.read"), true, "KNOWN: fleet:view reaches telemetry.alerts.read on the frontend only (ALERTS_VIEW lists fleet:view); the backend denies it");
+// Broad fleet read alone is not an alert grant on either side.
+assert.equal(hasPermission(["fleet:view"], "telemetry.alerts.read"), false, "fleet:view must not reach telemetry.alerts.read");
 
 // ── 4. Internal roles keep the telemetry surfaces they hold legitimately ──
 assert.equal(hasPermission(ROLE_PERMISSIONS.fleet_manager, "telemetry.live_state.read"), true, "fleet_manager must keep the live map");

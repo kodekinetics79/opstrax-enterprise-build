@@ -33,7 +33,6 @@ public class MutationPermissionTierTests
     [InlineData("Company Admin", "safety:manage")]
     [InlineData("Super Admin", "safety:manage")]
     [InlineData("Tenant Admin", "dispatch:manage")]
-    [InlineData("Dispatcher", "dispatch:manage")]
     [InlineData("Fleet Manager", "dispatch:manage")]
     [InlineData("Fleet Owner", "dispatch:manage")]
     [InlineData("Tenant Admin", "maintenance:manage")]

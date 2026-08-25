@@ -126,6 +126,8 @@ dotnet build backend-dotnet.Tests/Opstrax.Tests.csproj --no-restore --verbosity 
     DemoSeed__Enabled=false \
     ENABLE_FLEET_DEMO_SEED=false \
     Telemetry__Simulator__Enabled=false \
+    OutboxDispatcher__Enabled=true \
+    OutboxDispatcher__AllowProduction=true \
     RetentionWorker__Enabled=true \
     Cors__AllowedOrigins="https://pilot.example.invalid" \
     ./bin/Debug/net8.0/Opstrax.Api
@@ -183,7 +185,7 @@ jq -e '.status=="healthy" and .environment=="Production"
   and .checks.data_protection_key_ring.status=="ready"
   and .checks.fleet_production_contract.status=="ready"
   and .checks.critical_worker_contract.status=="healthy"
-  and .checks.critical_worker_contract.expected_count==7
+  and .checks.critical_worker_contract.expected_count==8
   and ([.checks.services[] | select(.name=="RetentionEnforcementService" and .status=="healthy")] | length)==1' \
   "$rehearsal_tmp/deep.json" >/dev/null
 
