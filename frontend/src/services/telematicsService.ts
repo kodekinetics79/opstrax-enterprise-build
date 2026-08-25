@@ -1306,6 +1306,14 @@ export const telematicsService = {
 
   // ── Mutations backed by real endpoints ────────────────────────────────────────────
 
+  async previewDeviceImport(rows: AnyRecord[]): Promise<AnyRecord> {
+    return unwrap<AnyRecord>(apiClient.post("/api/telemetry/devices/import-preview", { rows }));
+  },
+
+  async commitDeviceImport(rows: AnyRecord[]): Promise<AnyRecord> {
+    return unwrap<AnyRecord>(apiClient.post("/api/telemetry/devices/import-commit", { rows }));
+  },
+
   // Provision a device = INITIATE A REAL CONNECTION (the Render/Vercel model), not a
   // data save. The backend generates a real apiKey + HMAC secret that authenticate the
   // physical device's telemetry POSTs to /api/telemetry/ingest. Those credentials are

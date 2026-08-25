@@ -23,6 +23,7 @@ import { useAuditExportRequests, useAuditLogs, useCreateAuditExport } from "@/ho
 import { useLocalizationSettings, useUpdateLocaleSettings } from "@/hooks/useBatch6";
 import { adminApi } from "@/services/adminApi";
 import { customersApi } from "@/services/customersApi";
+import { branchesApi } from "@/services/branchesApi";
 import { PERMISSIONS } from "@/auth/rbacConfig";
 import { EmptyState, ErrorState, LoadingState, PageHeader, PasswordInput, StatusBadge } from "@/components/ui";
 import type { AnyRecord } from "@/types";
@@ -38,6 +39,8 @@ type UserFormState = {
   roleName: string;
   /** DEF-027: customer-scope binding for portal roles ("" = no binding). */
   customerId: string;
+  /** Empty means tenant-wide; otherwise the user's enforced branch ownership scope. */
+  branchId: string;
   status: string;
   password: string;
 };
@@ -256,6 +259,7 @@ export function AdminPage() {
     roleId: "",
     roleName: "",
     customerId: "",
+    branchId: "",
     status: "Active",
     password: "",
   });
@@ -282,6 +286,12 @@ export function AdminPage() {
   const permissionsQ = useAdminPermissions();
   const accessReviewsQ = useAccessReviews(canViewAccessReviews);
   const accessReviewQ = useAccessReview(selectedReviewId);
+  const branchesQ = useQuery({
+    queryKey: ["branches"],
+    queryFn: branchesApi.list,
+    enabled: userModal !== null,
+    staleTime: 60_000,
+  });
   const localeQ = useLocalizationSettings();
   const auditLogsQ = useAuditLogs(undefined, canViewAudit);
   const auditExportsQ = useAuditExportRequests(canViewAudit);
@@ -406,6 +416,7 @@ export function AdminPage() {
       roleId: "",
       roleName: String(roleOptions[0]?.name ?? ""),
       customerId: "",
+      branchId: "",
       status: "Active",
       password: "",
     });
@@ -422,6 +433,7 @@ export function AdminPage() {
       roleId: String(user.roleId ?? user.role_id ?? ""),
       roleName: String(user.roleName ?? user.role_name ?? ""),
       customerId: user.customerId != null || user.customer_id != null ? String(user.customerId ?? user.customer_id) : "",
+      branchId: user.branchId != null || user.branch_id != null ? String(user.branchId ?? user.branch_id) : "",
       status: String(user.status ?? "Active"),
       password: "",
     });
@@ -439,6 +451,7 @@ export function AdminPage() {
       // DEF-027: customer-scope binding. The key's presence is the API's intent
       // signal — null clears the binding, a number binds a portal user to a customer.
       customerId: userForm.customerId ? Number(userForm.customerId) : null,
+      branchId: userForm.branchId ? Number(userForm.branchId) : null,
       status: userForm.status,
     };
     try {
@@ -1278,6 +1291,17 @@ export function AdminPage() {
                 <select className="field w-full" value={String(userForm.status ?? "Active")} onChange={(e) => setUserForm((f) => ({ ...f, status: e.target.value }))}>
                   {["Active", "Inactive", "Pending"].map((status) => <option key={status} value={status}>{status}</option>)}
                 </select>
+              </div>
+              <div className="md:col-span-2">
+                <label className="label">Branch scope</label>
+                <select className="field w-full" value={userForm.branchId} disabled={branchesQ.isLoading || branchesQ.isError} onChange={(e) => setUserForm((f) => ({ ...f, branchId: e.target.value }))}>
+                  <option value="">Tenant-wide (all branches)</option>
+                  {(branchesQ.data ?? []).filter((branch) => String(branch.status ?? "Active") === "Active").map((branch) => (
+                    <option key={String(branch.id)} value={String(branch.id)}>{String(branch.branchCode)} — {String(branch.name)}</option>
+                  ))}
+                </select>
+                {branchesQ.isError && <p role="alert" className="mt-1 text-xs text-rose-600">Branch scopes could not be loaded. Close this form and retry.</p>}
+                <p className="mt-1 text-xs text-slate-500">Branch-bound accounts can access only operational records owned by that branch.</p>
               </div>
               {isPortalRole && (
                 <div className="md:col-span-2">

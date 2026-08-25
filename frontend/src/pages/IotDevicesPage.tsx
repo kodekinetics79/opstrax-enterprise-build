@@ -27,6 +27,7 @@ import {
 import { useNavigate } from "react-router";
 import { EmptyState, ErrorState, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge } from "@/components/ui";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { EntityImportExport } from "@/components/EntityImportExport";
 import { PERMISSIONS } from "@/auth/rbacConfig";
 import { useHasPermission } from "@/hooks/usePermission";
 import { vehiclesApi } from "@/services/vehiclesApi";
@@ -774,6 +775,20 @@ export function IotDevicesPage() {
         description="Evidence-backed device connectivity, assignment, reported firmware, and active diagnostic exceptions. Unsupported controls are labelled explicitly."
         actions={
           <>
+            <EntityImportExport
+              canImport={canCreate}
+              canExport={false}
+              config={{
+                entity: "devices",
+                columns: ["deviceSerial", "imei", "deviceCategory", "deviceModel", "provider", "firmwareVersion", "notes"],
+                requiredColumns: ["deviceSerial", "deviceCategory"],
+                templateEndpoint: "/api/telemetry/devices/import-template",
+                importPreview: telematicsService.previewDeviceImport,
+                importCommit: telematicsService.commitDeviceImport,
+                invalidateKey: "telematics",
+                onImported: refreshAll,
+              }}
+            />
             <button
               className="btn-ghost"
               disabled={!canExport}

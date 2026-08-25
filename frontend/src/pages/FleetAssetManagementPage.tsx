@@ -5,6 +5,7 @@ import { ClayStat, ConsoleRail } from '@/components/console';
 import { notifyApiError } from '@/services/fleetTmsApi';
 import { fleetApi, fleetAssetApi, type Asset, type AssetAssignment, type AssetEvent, type AssetType } from '@/services/fleetTmsApi';
 import { LoadingState } from '@/components/ui';
+import { EntityImportExport } from '@/components/EntityImportExport';
 import { useHasPermission } from '@/hooks/usePermission';
 
 type AssetDetail = {
@@ -248,9 +249,23 @@ export function FleetAssetManagementPage() {
             <span className="font-bold text-amber-600 tabular-nums">{assets.filter((asset) => asset.condition !== 'Good').length}</span> need review
           </>}
           actions={
-            <Link to="/fleet-workspace" className="btn-ghost h-10">
-              Fleet Workspace
-            </Link>
+            <>
+              <EntityImportExport
+                canImport={canManageFleet}
+                canExport={false}
+                config={{
+                  entity: 'assets',
+                  columns: ['assetTag', 'name', 'assetTypeCode', 'status', 'currentLocation', 'condition', 'isReturnable', 'quantity', 'unitOfMeasure', 'notes'],
+                  requiredColumns: ['assetTag', 'name', 'assetTypeCode'],
+                  templateEndpoint: '/api/fleet-tms/assets/import-template',
+                  importPreview: fleetAssetApi.previewImport,
+                  importCommit: fleetAssetApi.commitImport,
+                  invalidateKey: 'fleet-assets',
+                  onImported: refresh,
+                }}
+              />
+              <Link to="/fleet-workspace" className="btn-ghost h-10">Fleet Workspace</Link>
+            </>
           }
         />
 
