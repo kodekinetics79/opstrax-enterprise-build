@@ -2350,6 +2350,7 @@ public static partial class EndpointMappings
 
     internal static readonly string[] CustomRolePermissionCatalog =
     [
+        "telemetry.devices.manage",
         "telematics:devices:view",
         "telematics:devices:diagnostics",
         "telematics:gps:view",
@@ -11643,6 +11644,41 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         return errors;
     }
 
+    private sealed record ExistingVehicleImportIdentity(long Id, string VehicleCode, string? Vin, long? BranchId);
+
+    // Import files contain hundreds of rows. Resolve all potentially matching
+    // identities in one tenant-scoped query instead of making 2-3 sequential DB
+    // round trips per row. Besides keeping the browser preview responsive, this
+    // preserves the same tenant-wide VIN and branch-aware vehicle-code semantics
+    // used by the commit path.
+    private static async Task<List<ExistingVehicleImportIdentity>> ExistingVehicleImportIdentities(
+        Database db, long companyId, IReadOnlyList<Dictionary<string, object?>> rows, CancellationToken ct)
+    {
+        var codes = rows.Select(row => ImportStr(row, "vehicleCode")?.ToLowerInvariant())
+            .Where(value => value is not null).Cast<string>().Distinct(StringComparer.Ordinal).ToArray();
+        var vins = rows.Select(row => ImportStr(row, "vin")?.ToLowerInvariant())
+            .Where(value => value is not null).Cast<string>().Distinct(StringComparer.Ordinal).ToArray();
+        if (codes.Length == 0 && vins.Length == 0) return [];
+
+        var matches = await db.QueryAsync(
+            @"SELECT id, vehicle_code, vin, branch_id
+              FROM vehicles
+              WHERE company_id=@cid AND deleted_at IS NULL
+                AND (LOWER(vehicle_code)=ANY(@codes) OR LOWER(vin)=ANY(@vins))",
+            command =>
+            {
+                command.Parameters.AddWithValue("@cid", companyId);
+                command.Parameters.AddWithValue("@codes", codes);
+                command.Parameters.AddWithValue("@vins", vins);
+            }, ct);
+
+        return matches.Select(match => new ExistingVehicleImportIdentity(
+            Convert.ToInt64(match["id"], CultureInfo.InvariantCulture),
+            match["vehicleCode"]?.ToString() ?? "",
+            match["vin"]?.ToString(),
+            match["branchId"] is null ? null : Convert.ToInt64(match["branchId"], CultureInfo.InvariantCulture))).ToList();
+    }
+
     private static IResult VehiclesImportTemplate(HttpContext http)
     {
         if (RequirePermission(http, "vehicles:view") is { } denied) return denied;
@@ -11663,6 +11699,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var results = new List<object>();
         int creates = 0, updates = 0, invalid = 0;
         var seenCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var existingIdentities = await ExistingVehicleImportIdentities(db, companyId, rows, ct);
         for (var i = 0; i < rows.Count; i++)
         {
             var errors = ValidateVehicleImportRow(rows[i], seenCodes);
@@ -11670,12 +11707,12 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             long existingId = 0;
             if (errors.Count == 0)
             {
-                existingId = await db.ScalarLongAsync(
-                    "SELECT COALESCE(MAX(id),0) FROM vehicles WHERE company_id=@cid AND LOWER(vehicle_code)=LOWER(@code) AND deleted_at IS NULL" + (branchId is null ? "" : " AND branch_id=@branchId"),
-                    c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@code", code); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct);
-                if (existingId == 0 && branchId is not null && await db.ScalarLongAsync(
-                    "SELECT COUNT(*) FROM vehicles WHERE company_id=@cid AND LOWER(vehicle_code)=LOWER(@code) AND deleted_at IS NULL",
-                    c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@code", code); }, ct) > 0)
+                var codeOwner = existingIdentities.FirstOrDefault(identity =>
+                    string.Equals(identity.VehicleCode, code, StringComparison.OrdinalIgnoreCase)
+                    && (branchId is null || identity.BranchId == branchId));
+                existingId = codeOwner?.Id ?? 0;
+                if (existingId == 0 && branchId is not null && existingIdentities.Any(identity =>
+                    string.Equals(identity.VehicleCode, code, StringComparison.OrdinalIgnoreCase)))
                     errors.Add($"Vehicle code '{code}' already exists outside the authorized branch.");
                 var vin = ImportStr(rows[i], "vin");
                 if (vin is not null)
@@ -11685,9 +11722,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                     // database unique index and commit path; otherwise it promises a
                     // create that commit can only skip after a 23505.  Do not return the
                     // owning row or branch -- the generic identity conflict is enough.
-                    var vinOwner = await db.ScalarLongAsync(
-                        "SELECT COALESCE(MAX(id),0) FROM vehicles WHERE company_id=@cid AND LOWER(vin)=LOWER(@vin) AND deleted_at IS NULL",
-                        c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@vin", vin); }, ct);
+                    var vinOwner = existingIdentities.FirstOrDefault(identity =>
+                        string.Equals(identity.Vin, vin, StringComparison.OrdinalIgnoreCase))?.Id ?? 0;
                     if (vinOwner > 0 && vinOwner != existingId)
                         errors.Add($"VIN '{vin}' is already registered to another vehicle.");
                 }
@@ -11711,6 +11747,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         int created = 0, updated = 0;
         var skipped = new List<object>();
         var seenCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var existingIdentities = await ExistingVehicleImportIdentities(db, companyId, rows, ct);
         for (var i = 0; i < rows.Count; i++)
         {
             var errors = ValidateVehicleImportRow(rows[i], seenCodes);
@@ -11718,19 +11755,18 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             long existingId = 0;
             if (errors.Count == 0)
             {
-                existingId = await db.ScalarLongAsync(
-                    "SELECT COALESCE(MAX(id),0) FROM vehicles WHERE company_id=@cid AND LOWER(vehicle_code)=LOWER(@code) AND deleted_at IS NULL" + (branchId is null ? "" : " AND branch_id=@branchId"),
-                    c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@code", code); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct);
-                if (existingId == 0 && branchId is not null && await db.ScalarLongAsync(
-                    "SELECT COUNT(*) FROM vehicles WHERE company_id=@cid AND LOWER(vehicle_code)=LOWER(@code) AND deleted_at IS NULL",
-                    c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@code", code); }, ct) > 0)
+                var codeOwner = existingIdentities.FirstOrDefault(identity =>
+                    string.Equals(identity.VehicleCode, code, StringComparison.OrdinalIgnoreCase)
+                    && (branchId is null || identity.BranchId == branchId));
+                existingId = codeOwner?.Id ?? 0;
+                if (existingId == 0 && branchId is not null && existingIdentities.Any(identity =>
+                    string.Equals(identity.VehicleCode, code, StringComparison.OrdinalIgnoreCase)))
                     errors.Add($"Vehicle code '{code}' already exists outside the authorized branch.");
                 var vin = ImportStr(rows[i], "vin");
                 if (vin is not null)
                 {
-                    var vinOwner = await db.ScalarLongAsync(
-                        "SELECT COALESCE(MAX(id),0) FROM vehicles WHERE company_id=@cid AND LOWER(vin)=LOWER(@vin) AND deleted_at IS NULL",
-                        c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@vin", vin); }, ct);
+                    var vinOwner = existingIdentities.FirstOrDefault(identity =>
+                        string.Equals(identity.Vin, vin, StringComparison.OrdinalIgnoreCase))?.Id ?? 0;
                     if (vinOwner > 0 && vinOwner != existingId)
                         errors.Add($"VIN '{vin}' is already registered to another vehicle.");
                 }
