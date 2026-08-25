@@ -1182,6 +1182,9 @@ function EditTenantUserForm({ tenantId, user, roles, onDone, onInviteSent }: {
   });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [issuedInvite, setIssuedInvite] = useState<{
+    email: string; url?: string; token?: string; emailSent: boolean;
+  } | null>(null);
 
   const emailChanged = form.email.trim().toLowerCase() !== currentEmail.toLowerCase();
   const valid = form.fullName.trim() !== "" && isEmail(form.email.trim());
@@ -1207,9 +1210,15 @@ function EditTenantUserForm({ tenantId, user, roles, onDone, onInviteSent }: {
     setBusy(true); setErr(null);
     try {
       const res = await platformApi.resendTenantUserInvite(tenantId, Number(user.id));
+      setIssuedInvite({
+        email: String(res.email ?? currentEmail),
+        url: res.activationUrl ? String(res.activationUrl) : undefined,
+        token: res.activationToken ? String(res.activationToken) : undefined,
+        emailSent: res.emailSent === true,
+      });
       onInviteSent(res?.emailSent
         ? `Set-password invite emailed to ${String(res.email)}`
-        : "Invite re-armed, but no email was sent — SMTP or the tenant public URL is not configured");
+        : "Invite re-armed — deliver the one-time activation link shown below");
     } catch (e) { setErr(e instanceof Error ? e.message : "Could not re-send the invite"); }
     finally { setBusy(false); }
   };
@@ -1247,6 +1256,9 @@ function EditTenantUserForm({ tenantId, user, roles, onDone, onInviteSent }: {
         <PButton disabled={busy || !valid} onClick={save}>{busy ? "Saving…" : "Save user"}</PButton>
         <PButton variant="ghost" disabled={busy} onClick={resendInvite}>Re-send set-password invite</PButton>
       </div>
+      {issuedInvite && (
+        <ActivationLinkPanel {...issuedInvite} onDismiss={() => setIssuedInvite(null)} />
+      )}
     </div>
   );
 }

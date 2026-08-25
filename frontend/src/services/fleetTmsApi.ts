@@ -3,6 +3,7 @@
 // (envelope-aware) instead of a bespoke axios client. Endpoints are additive and live
 // under /api/fleet-tms/* (authenticated) and /api/public/shipments/* (anonymous).
 import { apiClient, unwrap } from "@/services/apiClient";
+import type { AnyRecord } from "@/types";
 
 // Lightweight error reporter (replaces Zayra's notifyApiError from api/client).
 export function notifyApiError(error: unknown, fallback = "Request failed"): string {
@@ -733,6 +734,8 @@ export const fleetAssetApi = {
   createAssetType: (body: Partial<AssetType> & { code: string; name: string }) =>
     unwrap<AssetType>(apiClient.post("/api/fleet-tms/assets/types", body)),
   assets: () => unwrap<{ items: Asset[] }>(apiClient.get("/api/fleet-tms/assets")),
+  previewImport: (rows: AnyRecord[]) => unwrap<AnyRecord>(apiClient.post("/api/fleet-tms/assets/import-preview", { rows })),
+  commitImport: (rows: AnyRecord[]) => unwrap<AnyRecord>(apiClient.post("/api/fleet-tms/assets/import-commit", { rows })),
   asset: (id: string) => unwrap<{ asset: Asset; assignments: AssetAssignment[]; events: AssetEvent[] }>(apiClient.get(`/api/fleet-tms/assets/${id}`)),
   createAsset: (body: Partial<Asset> & { assetTypeId: string; assetTag: string; name: string }) =>
     unwrap<Asset>(apiClient.post("/api/fleet-tms/assets", body)),

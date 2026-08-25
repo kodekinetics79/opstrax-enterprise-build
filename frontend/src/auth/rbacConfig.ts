@@ -1,6 +1,9 @@
 export const PERMISSIONS = {
   DASHBOARD_VIEW: "dashboard:view",
 
+  // Canonical server guard for branch, vehicle, driver, and fleet-asset writes.
+  FLEET_MANAGE: "fleet:manage",
+
   VEHICLES_VIEW: "vehicles:view",
   VEHICLES_CREATE: "vehicles:create",
   VEHICLES_UPDATE: "vehicles:update",
@@ -153,6 +156,11 @@ const P = PERMISSIONS;
 
 const PERMISSION_GROUPS: Record<Permission, string[]> = {
   [P.DASHBOARD_VIEW]: ["dashboard.view"],
+
+  // Fail closed on the endpoint's canonical fleet:manage requirement. Do not
+  // reproduce the server's legacy sibling-action alias closure in the client:
+  // a vehicles:update grant must never make a Delete control appear.
+  [P.FLEET_MANAGE]: ["fleet.manage"],
 
   [P.VEHICLES_VIEW]: ["fleet.view", "fleet:view"],
   [P.VEHICLES_CREATE]: ["fleet.manage", "fleet:manage"],

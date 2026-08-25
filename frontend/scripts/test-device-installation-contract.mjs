@@ -59,6 +59,16 @@ assert.match(devicesPage, /defaultCommissioningForm:[^=]*= \{ result: ""/, "Comm
 assert.doesNotMatch(devicesPage, /defaultCommissioningForm:[^=]*= \{ result: "(?:Passed|Failed)"/, "Commissioning must not default either outcome");
 assert.match(devicesPage, /Replacement credentials/, "Rotated secrets must be shown through an explicit one-time dialog");
 assert.match(devicesPage, /setRotatedCredentials\(null\)/, "One-time rotated secrets must be cleared when the dialog closes");
+assert.match(devicesPage, /visible: canManageLifecycle/, "device lifecycle actions must carry an explicit server-permission visibility gate");
+assert.match(devicesPage, /visible: canAssign/, "device installation actions must carry an explicit assignment visibility gate");
+assert.match(devicesPage, /visible: canDelete/, "device archival must carry an explicit delete visibility gate");
+assert.match(devicesPage, /const canCreate = canManageDeviceLifecycle/, "device onboarding must use the API's telemetry.devices.manage contract");
+assert.match(devicesPage, /const canDelete = canManageDeviceLifecycle/, "device archival must use the API's telemetry.devices.manage contract");
+assert.match(devicesPage, /const canGovernInstallations = canManageDeviceLifecycle/, "device installation must use the API's telemetry.devices.manage contract");
+assert.match(devicesPage, /actionContracts\.filter\(\(contract\) => contract\.visible\)/, "permission-blocked device mutations must be omitted from the detail UI");
+assert.match(devicesPage, /\{connectOpen && canCreate \? \(/, "a stale device connection dialog must close when permission is lost");
+assert.match(devicesPage, /\{assignTarget && canGovernInstallations \? \(/, "a stale installation dialog must close when permission is lost");
+assert.match(devicesPage, /\{confirmTarget && confirmAllowed \? \(/, "destructive confirmation must fail closed if permission changes");
 assert.doesNotMatch(devicesPage, /Schedule firmware for/, "Unsupported OTA scheduling must not be presented as an operational form");
 assert.doesNotMatch(devicesPage, /onRunDiagnostics|diagnosticsMut/, "Unsupported on-demand diagnostics must not be presented as an operational action");
 assert.match(devicesPage, /OTA scheduling and firmware history are not connected/, "Unsupported OTA must be labelled explicitly as read-only");

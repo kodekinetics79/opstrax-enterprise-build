@@ -25,7 +25,7 @@ const NAV_SECTIONS = [
   {
     label: "Fleet",
     color: "text-blue-600",
-    items: ["vehicles", "drivers", "fleet-utilization", "fleet-workspace", "fleet-cold-chain", "fleet-assets", "fleet-saudi-readiness", "fleet-compliance", "assignments"],
+    items: ["vehicles", "drivers", "branches", "fleet-utilization", "fleet-workspace", "fleet-cold-chain", "fleet-assets", "fleet-saudi-readiness", "fleet-compliance", "assignments"],
   },
   {
     label: "Dispatch",
@@ -479,7 +479,7 @@ export function AppShell() {
               {isOpen && (
                 <div className="mb-1 ml-[13px] border-l border-slate-200/80 pl-2">
                   {section.items.map((module) => {
-                    const Icon = moduleIcons[module.key];
+                    const Icon = moduleIcons[module.key] ?? moduleIcons.assets;
                     const active = isRouteActive(module.route, location.pathname);
                     return (
                       <Link

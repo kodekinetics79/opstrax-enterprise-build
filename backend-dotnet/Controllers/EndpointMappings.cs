@@ -235,6 +235,9 @@ public static partial class EndpointMappings
         app.MapPut("/api/telemetry/rules/{ruleType}", TelemetryRulesUpsert);
         // Device lifecycle
         app.MapGet("/api/telemetry/devices", TelemetryDeviceList);
+        app.MapGet("/api/telemetry/devices/import-template", DevicesImportTemplate);
+        app.MapPost("/api/telemetry/devices/import-preview", DevicesImportPreview);
+        app.MapPost("/api/telemetry/devices/import-commit", DevicesImportCommit);
         app.MapGet("/api/telemetry/devices/{id:long}", TelemetryDeviceDetail);
         app.MapPost("/api/telemetry/gateways", TelemetryGatewayProvision);
         app.MapGet("/api/telemetry/gateways", TelemetryGatewayList);
@@ -2344,6 +2347,13 @@ public static partial class EndpointMappings
         app.MapPost($"/api/{moduleKey}", (HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) => CreateModuleRecord(http, moduleKey, body, db, audit, ct));
         app.MapPut($"/api/{moduleKey}/{{id:long}}", (HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) => UpdateModuleRecord(http, moduleKey, id, body, db, audit, ct));
     }
+
+    internal static readonly string[] CustomRolePermissionCatalog =
+    [
+        "telematics:devices:view",
+        "telematics:devices:diagnostics",
+        "telematics:gps:view",
+    ];
 
     internal static readonly Dictionary<string, string[]> RolePermissionDefaults = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -14422,6 +14432,25 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             return Results.BadRequest(ApiResponse<object>.Fail("Validation failed",
                 ["Customer-portal roles require an active customer binding."]));
 
+        long? branchId = null;
+        var requestedBranch = Val(Get(body, "branchId"))?.ToString()?.Trim();
+        if (!string.IsNullOrWhiteSpace(requestedBranch))
+        {
+            if (!long.TryParse(requestedBranch, out var parsedBranchId) || parsedBranchId <= 0 ||
+                await db.ScalarLongAsync(
+                    "SELECT COUNT(*) FROM branches WHERE id=@branchId AND company_id=@companyId AND deleted_at IS NULL AND status='Active'",
+                    c => { c.Parameters.AddWithValue("@branchId", parsedBranchId); c.Parameters.AddWithValue("@companyId", companyId); }, ct) != 1)
+                return Results.BadRequest(ApiResponse<object>.Fail("Validation failed", ["Select an active branch in this organization."]));
+            var actorBranchId = GetBranchId(http);
+            if (actorBranchId is not null && actorBranchId != parsedBranchId)
+                return Results.Json(ApiResponse<object>.Fail("Forbidden", "Branch-bound administrators cannot assign users to another branch."), statusCode: StatusCodes.Status403Forbidden);
+            branchId = parsedBranchId;
+        }
+        else if (GetBranchId(http) is { } actorBranchId)
+        {
+            branchId = actorBranchId;
+        }
+
         // Seat-limit quota (Platform Admin commercial control): block creation once the
         // tenant is at its subscribed seat count. No subscription row = no cap (legacy).
         var seatLimit = await db.ScalarLongAsync(
@@ -14439,11 +14468,12 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         }
 
         var id = await db.InsertAsync(
-            @"INSERT INTO users (company_id, role_id, customer_id, full_name, email, role_name, password_hash, permissions_json, status)
-              VALUES (@companyId, @roleId, @customerId, @fullName, @email, @roleName, @passwordHash, @permissionsJson::jsonb, @status)",
+            @"INSERT INTO users (company_id, branch_id, role_id, customer_id, full_name, email, role_name, password_hash, permissions_json, status)
+              VALUES (@companyId, @branchId, @roleId, @customerId, @fullName, @email, @roleName, @passwordHash, @permissionsJson::jsonb, @status)",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
+                c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
                 c.Parameters.AddWithValue("@roleId", role?.GetValueOrDefault("id") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@customerId", (object?)customerId ?? DBNull.Value);
                 c.Parameters.AddWithValue("@fullName", fullName);
@@ -14463,7 +14493,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         }
 
         await audit.LogAsync(http, "user.created", "User", id,
-            System.Text.Json.JsonSerializer.Serialize(new { email, role = roleName, invited = inviteMode, customerId }), ct);
+            System.Text.Json.JsonSerializer.Serialize(new { email, role = roleName, invited = inviteMode, customerId, branchId }), ct);
         return Results.Created($"/api/admin/users/{id}",
             ApiResponse<object>.Ok(new { id, activationLink, activationExpiresAt },
                 inviteMode ? "User invited — share the activation link" : "User created"));
@@ -14539,10 +14569,39 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
         var bindingChanged = newCustomerId != oldCustomerId;
 
+        var oldBranchId = existing.TryGetValue("branchId", out var oldBranch) && oldBranch is not null and not DBNull
+            ? Convert.ToInt64(oldBranch) : (long?)null;
+        var branchProvided = body.ContainsKey("branchId");
+        var newBranchId = oldBranchId;
+        if (branchProvided)
+        {
+            var branchRaw = Get(body, "branchId") is DBNull ? null : Get(body, "branchId")?.ToString()?.Trim();
+            if (string.IsNullOrWhiteSpace(branchRaw))
+            {
+                if (GetBranchId(http) is not null)
+                    return Results.Json(ApiResponse<object>.Fail("Forbidden", "Branch-bound administrators cannot grant tenant-wide access."), statusCode: StatusCodes.Status403Forbidden);
+                newBranchId = null;
+            }
+            else
+            {
+                if (!long.TryParse(branchRaw, out var parsedBranchId) || parsedBranchId <= 0 ||
+                    await db.ScalarLongAsync(
+                        "SELECT COUNT(*) FROM branches WHERE id=@branchId AND company_id=@companyId AND deleted_at IS NULL AND status='Active'",
+                        c => { c.Parameters.AddWithValue("@branchId", parsedBranchId); c.Parameters.AddWithValue("@companyId", companyId); }, ct) != 1)
+                    return Results.BadRequest(ApiResponse<object>.Fail("Validation failed", ["Select an active branch in this organization."]));
+                var actorBranchId = GetBranchId(http);
+                if (actorBranchId is not null && actorBranchId != parsedBranchId)
+                    return Results.Json(ApiResponse<object>.Fail("Forbidden", "Branch-bound administrators cannot assign users to another branch."), statusCode: StatusCodes.Status403Forbidden);
+                newBranchId = parsedBranchId;
+            }
+        }
+        var branchChanged = newBranchId != oldBranchId;
+
         await db.ExecuteAsync(
             @"UPDATE users
               SET company_id=@companyId,
                   role_id=@roleId,
+                  branch_id=@branchId,
                   customer_id=@customerId,
                   full_name=COALESCE(NULLIF(@fullName,''), full_name),
                   email=COALESCE(NULLIF(@email,''), email),
@@ -14556,6 +14615,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 c.Parameters.AddWithValue("@id", id);
                 c.Parameters.AddWithValue("@companyId", companyId);
                 c.Parameters.AddWithValue("@roleId", role?.GetValueOrDefault("id") ?? existing.GetValueOrDefault("roleId") ?? DBNull.Value);
+                c.Parameters.AddWithValue("@branchId", (object?)newBranchId ?? DBNull.Value);
                 c.Parameters.AddWithValue("@customerId", (object?)newCustomerId ?? DBNull.Value);
                 c.Parameters.AddWithValue("@fullName", Get(body, "fullName"));
                 c.Parameters.AddWithValue("@email", Get(body, "email"));
@@ -14565,12 +14625,17 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 c.Parameters.AddWithValue("@allUsers", allUsers ? 1 : 0);
             }, ct);
 
-        await audit.LogAsync(http, "user.updated", "User", id, System.Text.Json.JsonSerializer.Serialize(new { roleChanged, companyId }), ct);
+        await audit.LogAsync(http, "user.updated", "User", id, System.Text.Json.JsonSerializer.Serialize(new { roleChanged, branchChanged, companyId }), ct);
 
         if (bindingChanged)
         {
             await audit.LogAsync(http, "user.customer_binding.changed", "User", id,
                 System.Text.Json.JsonSerializer.Serialize(new { from = oldCustomerId, to = newCustomerId }), ct);
+        }
+        if (branchChanged)
+        {
+            await audit.LogAsync(http, "user.branch_binding.changed", "User", id,
+                System.Text.Json.JsonSerializer.Serialize(new { from = oldBranchId, to = newBranchId }), ct);
         }
 
         // Revoke the user's active sessions when their role/permissions change or they
@@ -14579,7 +14644,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var newStatus = Get(body, "status")?.ToString()?.Trim();
         var deactivated = !string.IsNullOrWhiteSpace(newStatus) &&
                           newStatus.ToLowerInvariant() is "disabled" or "inactive" or "suspended";
-        if (roleChanged || deactivated || bindingChanged)
+        if (roleChanged || deactivated || bindingChanged || branchChanged)
         {
             await db.ExecuteAsync("DELETE FROM user_sessions WHERE user_id=@id", c => c.Parameters.AddWithValue("@id", id), ct);
             await audit.LogAsync(http, "user.role.changed", "User", id, System.Text.Json.JsonSerializer.Serialize(new { from = oldRoleName, to = newRoleName, sessionsRevoked = true }), ct);
@@ -14748,6 +14813,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var permissions = RolePermissionDefaults
             .Values
             .SelectMany(static values => values)
+            .Concat(CustomRolePermissionCatalog)
             .Where(permission => !string.IsNullOrWhiteSpace(permission) && permission != "*")
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(permission => permission, StringComparer.OrdinalIgnoreCase)
@@ -14954,6 +15020,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     {
         var catalog = RolePermissionDefaults.Values
             .SelectMany(static values => values)
+            .Concat(CustomRolePermissionCatalog)
             .Where(static value => !string.IsNullOrWhiteSpace(value) && value != "*")
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
@@ -17956,6 +18023,166 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
               ORDER BY e.device_serial",
             c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
         return Results.Ok(ApiResponse<object>.Ok(devices, "Devices"));
+    }
+
+    private static IResult DevicesImportTemplate(HttpContext http)
+    {
+        if (RequirePermission(http, "telemetry.devices.read") is { } denied) return denied;
+        const string csv = "deviceSerial,imei,deviceCategory,deviceModel,provider,firmwareVersion,notes\n" +
+                           "GPS-000001,352099001000001,GPS,Concox GT06,Certification Provider,1.0.0,Certification inventory\n";
+        return Results.File(System.Text.Encoding.UTF8.GetBytes(csv), "text/csv", "devices-import-template.csv");
+    }
+
+    private static List<string> ValidateDeviceImportRow(
+        Dictionary<string, object?> row, HashSet<string> fileIdentities)
+    {
+        var errors = new List<string>();
+        var serial = ImportStr(row, "deviceSerial")?.ToUpperInvariant();
+        var imei = ImportStr(row, "imei");
+        var requestedCategory = ImportStr(row, "deviceCategory");
+        if (serial is null)
+            errors.Add("deviceSerial is required.");
+        else if (serial.Length is < 4 or > 120 ||
+                 !System.Text.RegularExpressions.Regex.IsMatch(serial, "^[A-Z0-9][A-Z0-9._:/-]*$"))
+            errors.Add("deviceSerial must be 4-120 characters using letters, digits, period, underscore, colon, slash, or hyphen.");
+        if (imei is not null && !System.Text.RegularExpressions.Regex.IsMatch(imei, "^[0-9]{15}$"))
+            errors.Add("imei must contain exactly 15 digits.");
+        if (requestedCategory is null || !InstallationRoles.Contains(requestedCategory))
+            errors.Add("deviceCategory is required and must be a supported hardware role.");
+
+        if (serial is not null && !fileIdentities.Add(serial))
+            errors.Add($"Duplicate device identity '{serial}' earlier in this file.");
+        if (imei is not null && !fileIdentities.Add(imei))
+            errors.Add($"Duplicate device identity '{imei}' earlier in this file.");
+        return errors;
+    }
+
+    private static async Task<long> ExistingDeviceIdentityCount(
+        Database db, string serial, string? imei, CancellationToken ct)
+        => await db.ScalarLongAsync(
+            @"SELECT COUNT(*) FROM eld_devices
+              WHERE deleted_at IS NULL AND COALESCE(device_state,'')<>'Quarantined'
+                AND (UPPER(BTRIM(device_serial))=@serial
+                  OR (@imei::TEXT IS NOT NULL AND REGEXP_REPLACE(COALESCE(imei,''),'[^0-9]','','g')=@imei)
+                  OR UPPER(BTRIM(device_serial))=UPPER(COALESCE(@imei,''))
+                  OR UPPER(BTRIM(COALESCE(imei,'')))=@serial)",
+            c => { c.Parameters.AddWithValue("@serial", serial); c.Parameters.AddWithValue("@imei", (object?)imei ?? DBNull.Value); }, ct);
+
+    private static async Task<IResult> DevicesImportPreview(
+        HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
+    {
+        if (RequirePermission(http, "telemetry.devices.manage") is { } denied) return denied;
+        var rows = ImportRows(body);
+        if (rows.Count == 0)
+            return Results.BadRequest(ApiResponse<object>.Fail("No rows to import. Send { rows: [...] } parsed from the CSV."));
+        var fileIdentities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var results = new List<object>();
+        var creates = 0;
+        var invalid = 0;
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var errors = ValidateDeviceImportRow(rows[i], fileIdentities);
+            var serial = ImportStr(rows[i], "deviceSerial")?.ToUpperInvariant() ?? "";
+            var imei = ImportStr(rows[i], "imei");
+            if (errors.Count == 0 && await ExistingDeviceIdentityCount(db, serial, imei, ct) > 0)
+                errors.Add("Device serial or IMEI is already registered. Existing devices are never overwritten by import.");
+            var action = errors.Count == 0 ? "create" : "error";
+            if (action == "create") creates++; else invalid++;
+            results.Add(new { rowNumber = i + 1, key = serial, action, errors });
+        }
+        return Results.Ok(ApiResponse<object>.Ok(new { total = rows.Count, creates, updates = 0, invalid, rows = results }));
+    }
+
+    private static async Task<IResult> DevicesImportCommit(
+        HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
+    {
+        if (RequirePermission(http, "telemetry.devices.manage") is { } denied) return denied;
+        var rows = ImportRows(body);
+        if (rows.Count == 0)
+            return Results.BadRequest(ApiResponse<object>.Fail("No rows to import. Send { rows: [...] } parsed from the CSV."));
+
+        var companyId = GetCompanyId(http);
+        var branchId = GetBranchId(http);
+        var fileIdentities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var skipped = new List<object>();
+        var credentials = new List<object>();
+        var created = 0;
+        var pii = http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>();
+
+        await db.RunInSystemTransactionAsync(async () =>
+        {
+            for (var i = 0; i < rows.Count; i++)
+            {
+                var errors = ValidateDeviceImportRow(rows[i], fileIdentities);
+                var serial = ImportStr(rows[i], "deviceSerial")?.ToUpperInvariant() ?? "";
+                var imei = ImportStr(rows[i], "imei");
+                if (errors.Count == 0 && await ExistingDeviceIdentityCount(db, serial, imei, ct) > 0)
+                    errors.Add("Device serial or IMEI is already registered. Existing devices are never overwritten by import.");
+                if (errors.Count > 0)
+                {
+                    skipped.Add(new { rowNumber = i + 1, key = serial, errors });
+                    continue;
+                }
+
+                var rawApiKey = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+                var rawHmacSecret = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+                var encryptedHmacSecret = DeviceHmacSecretProtection.EncryptForStorage(pii, rawHmacSecret);
+                if (encryptedHmacSecret is null)
+                {
+                    skipped.Add(new { rowNumber = i + 1, key = serial, errors = new[] { "Device credential encryption is unavailable." } });
+                    continue;
+                }
+                var category = NormalizeInstallationRole(ImportStr(rows[i], "deviceCategory")!);
+                try
+                {
+                    await db.ExecuteAsync(
+                        @"SELECT pg_advisory_xact_lock(hashtextextended(identity,0))
+                          FROM unnest(@identities::TEXT[]) identity ORDER BY identity",
+                        c => c.Parameters.AddWithValue("@identities",
+                            new[] { serial, imei }.Where(value => !string.IsNullOrWhiteSpace(value))
+                                .Select(value => $"device-identity:{value}").OrderBy(value => value).ToArray()), ct);
+                    if (await ExistingDeviceIdentityCount(db, serial, imei, ct) > 0)
+                    {
+                        skipped.Add(new { rowNumber = i + 1, key = serial, errors = new[] { "Device serial or IMEI was registered concurrently." } });
+                        continue;
+                    }
+                    var id = await db.InsertWithSavepointAsync(
+                        @"INSERT INTO eld_devices
+                            (company_id, branch_id, device_serial, imei, device_category, device_model, provider,
+                             firmware_version, notes, api_key_hash, hmac_secret, hmac_secret_encrypted,
+                             hmac_key_version, hmac_rotated_at, credential_revoked_reason, status, created_at)
+                          VALUES (@cid,@branch,@serial,@imei,@category,@model,@provider,@firmware,@notes,
+                                  encode(sha256(@rawKey::bytea),'hex'),NULL,@hmacEncrypted,1,NOW(),NULL,'Active',NOW())",
+                        c =>
+                        {
+                            c.Parameters.AddWithValue("@cid", companyId);
+                            c.Parameters.AddWithValue("@branch", (object?)branchId ?? DBNull.Value);
+                            c.Parameters.AddWithValue("@serial", serial);
+                            c.Parameters.AddWithValue("@imei", (object?)imei ?? DBNull.Value);
+                            c.Parameters.AddWithValue("@category", category);
+                            c.Parameters.AddWithValue("@model", (object?)ImportStr(rows[i], "deviceModel") ?? DBNull.Value);
+                            c.Parameters.AddWithValue("@provider", (object?)ImportStr(rows[i], "provider") ?? DBNull.Value);
+                            c.Parameters.AddWithValue("@firmware", (object?)ImportStr(rows[i], "firmwareVersion") ?? DBNull.Value);
+                            c.Parameters.AddWithValue("@notes", (object?)ImportStr(rows[i], "notes") ?? DBNull.Value);
+                            c.Parameters.AddWithValue("@rawKey", rawApiKey);
+                            c.Parameters.AddWithValue("@hmacEncrypted", encryptedHmacSecret);
+                        }, ct);
+                    credentials.Add(new { deviceSerial = serial, apiKey = rawApiKey, hmacSecret = rawHmacSecret });
+                    created++;
+                    await audit.LogAsync(http, "device.provisioned", "EldDevice", id, $"serial:{serial};bulk-import", ct);
+                }
+                catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
+                {
+                    skipped.Add(new { rowNumber = i + 1, key = serial, errors = new[] { "Device serial or IMEI is already registered." } });
+                }
+            }
+            return true;
+        }, ct);
+        await audit.LogAsync(http, "devices.imported", "EldDevice", null,
+            JsonSerializer.Serialize(new { created, skipped = skipped.Count, total = rows.Count }), ct);
+        http.Response.Headers.CacheControl = "no-store";
+        http.Response.Headers.Pragma = "no-cache";
+        return Results.Ok(ApiResponse<object>.Ok(new { created, updated = 0, skipped, total = rows.Count, credentials }));
     }
 
     // ── GET /api/devices/{id} ─────────────────────────────────────────────────────
@@ -23615,6 +23842,50 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             "Driver identity not found for this session. Ensure your user account is linked to a driver record."),
             statusCode: StatusCodes.Status403Forbidden);
 
+    // A tenant administrator can create a user with the built-in Driver role before granting
+    // that user portal access from the Drivers workflow. That account is authenticated and
+    // correctly holds driver:self, but it does not yet have a drivers.user_id link. The home
+    // screen must remain usable as a safe setup state instead of turning that provisioning gap
+    // into a raw 403. This response contains no fleet or assignment data; every operational
+    // driver endpoint still resolves a linked, active driver identity independently.
+    internal static IResult DriverProfileNotProvisionedDashboard() =>
+        Results.Ok(ApiResponse<object>.Ok(new
+        {
+            driver = new
+            {
+                id = (long?)null,
+                fullName = "Driver",
+                status = "Portal access not provisioned",
+                vehicleId = (long?)null,
+                vehicleCode = (string?)null,
+                vehicleOos = false,
+                vehicleAvailabilityStatus = (string?)null,
+            },
+            currentAssignment = (object?)null,
+            vehicleBlocking = new
+            {
+                criticalDefects = 0,
+                blocked = false,
+                reason = (string?)null,
+            },
+            hos = new
+            {
+                dataAvailable = false,
+                remainingDriveHours = (object?)null,
+                remainingShiftHours = (object?)null,
+                hosStatus = (object?)"unavailable",
+            },
+            coaching = new { pendingCount = 0 },
+            guidance = new[]
+            {
+                new
+                {
+                    level = "warning",
+                    message = "Your Driver role is active, but no driver profile is linked. Ask a fleet administrator to grant portal access from the Drivers workflow.",
+                },
+            },
+        }));
+
     private static async Task<bool> AssignmentBelongsToDriverAsync(
         long assignmentId, long driverId, long companyId, Database db, CancellationToken ct)
     {
@@ -23628,7 +23899,22 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     {
         var companyId = GetCompanyId(http);
         var driverId  = await GetDriverIdFromAuthAsync(http, db, ct);
-        if (driverId < 0) return DriverIdentityNotFound();
+        if (driverId < 0)
+        {
+            var userId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+            var hasLinkedDriver = userId > 0 && await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM drivers WHERE user_id=@uid AND company_id=@cid",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@uid", userId);
+                    c.Parameters.AddWithValue("@cid", companyId);
+                }, ct) > 0;
+
+            // A previously-linked identity that no longer resolves is inactive, suspended,
+            // terminated, retired, or deleted. Preserve the lifecycle revocation boundary.
+            if (hasLinkedDriver) return DriverIdentityNotFound();
+            return DriverProfileNotProvisionedDashboard();
+        }
 
         var driver = await db.QuerySingleAsync(
             @"SELECT d.id, d.full_name, d.status,

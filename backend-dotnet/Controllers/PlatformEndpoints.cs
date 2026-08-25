@@ -1697,13 +1697,21 @@ public static class PlatformEndpoints
             }, ct);
 
         var emailSent = await TrySendTenantInviteEmailAsync(http, id, email, fullName, rawToken, ct);
+        var activationUrl = await BuildTenantActivationUrlAsync(http, email, rawToken, ct);
 
         await AuditAsync(db, principal!, http, "tenant.user.invite_resent", "User", userId, id,
             new { email, emailSent }, ct);
-        return Results.Ok(ApiResponse<object>.Ok(new { userId, email, emailSent },
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            userId,
+            email,
+            emailSent,
+            activationUrl,
+            activationToken = rawToken,
+        },
             emailSent
                 ? "Invite emailed"
-                : "Invite re-armed, but no email was sent (SMTP or the tenant public URL is not configured)"));
+                : "Invite created — email was not sent, so deliver the activation link below"));
     }
 
     // Unambiguous alphabet (no O/0, I/l/1) so a handed-over password is easy to type.

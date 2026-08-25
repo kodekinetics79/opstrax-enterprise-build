@@ -21,10 +21,11 @@ export interface ImportExportConfig {
   columns: readonly string[];           // canonical camelCase headers (template order)
   requiredColumns: readonly string[];   // shown as required in the wizard help
   templateEndpoint: string;             // GET  → text/csv
-  exportEndpoint: string;               // GET  → text/csv (full tenant dataset)
+  exportEndpoint?: string;              // GET  → text/csv (full tenant dataset)
   importPreview: (rows: AnyRecord[]) => Promise<AnyRecord>;
   importCommit: (rows: AnyRecord[]) => Promise<AnyRecord>;
   invalidateKey: string;                // react-query key root to refresh after commit
+  onImported?: () => void | Promise<void>;
 }
 
 /* ---------------- CSV parsing (quoted fields, CRLF, BOM) ---------------- */
@@ -121,14 +122,18 @@ export function EntityImportExport({ config, canImport, canExport }: {
         onClick={() => download("template", config.templateEndpoint, `${config.entity}-import-template.csv`)}>
         {busy === "template" ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileDown className="h-4 w-4" />} Template
       </button>
-      <button type="button" className="btn-ghost h-10" disabled={!canImport} title={canImport ? "Import a CSV of records" : "Requires fleet manage permission"}
-        onClick={() => canImport && setWizardOpen(true)}>
-        <FileUp className="h-4 w-4" /> Import
-      </button>
-      <button type="button" className="btn-ghost h-10" disabled={!canExport || busy === "export"} title={canExport ? "Export the full dataset (all pages)" : "Requires export permission"}
-        onClick={() => canExport && download("export", config.exportEndpoint, `${config.entity}_${new Date().toISOString().slice(0, 10)}.csv`)}>
-        {busy === "export" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} Export
-      </button>
+      {canImport ? (
+        <button type="button" className="btn-ghost h-10" title="Import a CSV of records"
+          onClick={() => setWizardOpen(true)}>
+          <FileUp className="h-4 w-4" /> Import
+        </button>
+      ) : null}
+      {config.exportEndpoint && canExport ? (
+        <button type="button" className="btn-ghost h-10" disabled={busy === "export"} title="Export the full dataset (all pages)"
+          onClick={() => download("export", config.exportEndpoint!, `${config.entity}_${new Date().toISOString().slice(0, 10)}.csv`)}>
+          {busy === "export" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} Export
+        </button>
+      ) : null}
       {toolbarError && <span className="text-xs font-semibold text-rose-600">{toolbarError}</span>}
       {wizardOpen && <ImportWizard config={config} onClose={() => setWizardOpen(false)} />}
     </div>
@@ -186,7 +191,20 @@ function ImportWizard({ config, onClose }: { config: ImportExportConfig; onClose
       const r = await config.importCommit(rows);
       setResult(r);
       setStep("done");
+      const credentials = Array.isArray(r.credentials) ? r.credentials as AnyRecord[] : [];
+      if (credentials.length > 0) {
+        const headers = ["deviceSerial", "apiKey", "hmacSecret"];
+        const quote = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+        const csv = [headers.join(","), ...credentials.map((row) => headers.map((key) => quote(row[key])).join(","))].join("\n");
+        const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = `${config.entity}-one-time-credentials.csv`;
+        anchor.click();
+        URL.revokeObjectURL(url);
+      }
       await queryClient.invalidateQueries({ queryKey: [config.invalidateKey] });
+      await config.onImported?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Import failed — no rows were guaranteed committed.");
     } finally {
@@ -219,12 +237,12 @@ function ImportWizard({ config, onClose }: { config: ImportExportConfig; onClose
                 <Upload className="h-8 w-8 text-slate-400" />
                 <p className="mt-3 text-sm font-bold text-slate-700">Choose a CSV file</p>
                 <p className="mt-1 text-xs text-slate-500">
-                  Up to 500 rows. Required: {config.requiredColumns.join(", ")}. Matching {config.entity === "vehicles" ? "codes" : "codes"} update existing records; new ones are created.
+                  Up to 500 rows. Required: {config.requiredColumns.join(", ")}. Matching {config.columns[0]} values update existing records; new ones are created.
                 </p>
               </button>
               <input ref={fileRef} type="file" accept=".csv,text/csv" aria-label="Choose a CSV file to import" className="hidden" onChange={(e) => void onFile(e.target.files?.[0])} />
               <p className="text-center text-[11px] font-medium text-slate-400">
-                Column headers accepted in any of these forms: <code className="rounded bg-slate-100 px-1">vehicleCode</code>, <code className="rounded bg-slate-100 px-1">vehicle_code</code>, <code className="rounded bg-slate-100 px-1">Vehicle Code</code>
+                Column headers tolerate camelCase, snake_case and spaced labels. For example: <code className="rounded bg-slate-100 px-1">{config.columns[0]}</code>.
               </p>
               {working && <p className="flex items-center justify-center gap-2 text-sm font-semibold text-slate-500"><Loader2 className="h-4 w-4 animate-spin" /> Validating rows on the server…</p>}
             </div>
@@ -290,6 +308,11 @@ function ImportWizard({ config, onClose }: { config: ImportExportConfig; onClose
                     <p key={i} className="text-xs text-rose-600">Row {String(s.rowNumber)} ({String(s.key || "—")}): {(s.errors as string[])?.join("; ")}</p>
                   ))}
                 </div>
+              )}
+              {Array.isArray(result.credentials) && result.credentials.length > 0 && (
+                <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
+                  One-time device credentials were downloaded as a CSV. Store it securely; these secrets cannot be displayed again.
+                </p>
               )}
             </div>
           )}

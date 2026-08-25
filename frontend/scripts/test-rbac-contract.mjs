@@ -446,6 +446,37 @@ assert.match(
   "the no-workspace terminal must offer a working sign-out",
 );
 
+// ── 8. Module 1 mutation surfaces follow the server's fleet:manage guard ────
+// The endpoints require fleet:manage. The UI deliberately requires that canonical
+// grant instead of reproducing the server's legacy sibling-action alias closure.
+// These executable checks protect the fail-closed graph; source tripwires protect
+// the render gates.
+assert.equal(hasPermission(["fleet:manage"], "fleet:manage"), true, "Fleet Manager must retain fleet-master mutations");
+assert.equal(hasPermission(["vehicles:create"], "fleet:manage"), false, "a page-specific grant must not advertise the broader fleet-master contract");
+assert.equal(hasPermission(["maintenance:manage", "fleet:view"], "fleet:manage"), false, "Maintenance Manager must remain read-only in fleet master");
+assert.equal(hasPermission(["dashboard:view", "fleet:view", "reports:view"], "fleet:manage"), false, "read-only Executive must remain read-only in fleet master");
+
+const branchPage = readFileSync(resolve(root, "src/pages/BranchesPage.tsx"), "utf8");
+const vehiclesPage = readFileSync(resolve(root, "src/pages/VehiclesPage.tsx"), "utf8");
+const vehiclesModule = readFileSync(resolve(root, "src/pages/VehiclesModulePage.tsx"), "utf8");
+const driversModule = readFileSync(resolve(root, "src/pages/DriversModulePage.tsx"), "utf8");
+const entityList = readFileSync(resolve(root, "src/pages/EntityListPage.tsx"), "utf8");
+const fleetAssets = readFileSync(resolve(root, "src/pages/FleetAssetManagementPage.tsx"), "utf8");
+const importExport = readFileSync(resolve(root, "src/components/EntityImportExport.tsx"), "utf8");
+
+for (const [name, source] of Object.entries({ branchPage, vehiclesPage, vehiclesModule, driversModule, entityList, fleetAssets })) {
+  assert.match(source, /PERMISSIONS\.FLEET_MANAGE/, `${name} must gate fleet-master writes on the server's canonical permission`);
+}
+assert.match(branchPage, /actions=\{canManage \? <button/, "Branches must omit Add Branch for read-only roles");
+assert.match(branchPage, /\{form && canManage && \(/, "a stale branch form must close when fleet mutation permission is lost");
+assert.match(vehiclesPage, /\{canCreate \? \(/, "Vehicles must omit New vehicle for read-only roles");
+assert.match(vehiclesPage, /\{canUpdate \? <button[^>]*>.*Edit/s, "Vehicle detail must omit Edit for read-only roles");
+assert.match(driversModule, /\{canManageFleet \? \(/, "Drivers overview must omit New driver for read-only roles");
+assert.match(entityList, /cfg\.api\.create && canCreate/, "fleet rosters must omit Create and Import for read-only roles");
+assert.match(fleetAssets, /\{canManageFleet \? <section[\s\S]*?>Create asset</, "fleet assets must omit inventory-intake controls for read-only roles");
+assert.match(fleetAssets, /\{canManageFleet \? <section[\s\S]*?>Scan & custody</, "fleet assets must omit scan mutation controls for read-only roles");
+assert.doesNotMatch(importExport, /disabled=\{!canImport\}/, "CSV Import must be absent, not permission-disabled, for a read-only role");
+
 console.log("RBAC contract OK: alias closure, portal identity boundary, governance guards, guard-verified landing ladder and nav/route lockstep all hold.");
 
 // ── helpers ──────────────────────────────────────────────────────────────────

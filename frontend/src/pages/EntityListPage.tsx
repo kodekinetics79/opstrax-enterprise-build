@@ -6,7 +6,7 @@ import { useNavigate, useSearchParams } from "react-router";
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 import { AiInsightCard, DataTable, EmptyState, ErrorState, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, exportCsv, labelize } from "@/components/ui";
 import { DriverIntelligenceBoard, triageOf, type Triage } from "@/components/DriverIntelligenceBoard";
-import { useHasPermission } from "@/hooks/usePermission";
+import { PERMISSIONS, useHasPermission } from "@/hooks/usePermission";
 import { useAuth } from "@/hooks/useAuth";
 import { isCustomerPortalRole, isDriverPortalRole, scopeRowsForSession } from "@/auth/accessScope";
 import { assetsApi } from "@/services/assetsApi";
@@ -240,7 +240,11 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
   const isScopedViewer = Boolean(session && (isDriverPortalRole(String(session.role ?? "")) || isCustomerPortalRole(String(session.role ?? ""))));
   const queryClient = useQueryClient();
   const permissions = permissionMatrix(kind);
-  const canCreate = hasPermission(permissions.create);
+  const isFleetMaster = kind === "vehicles" || kind === "drivers" || kind === "assets";
+  const canManageFleet = hasPermission(PERMISSIONS.FLEET_MANAGE);
+  // The shipped fleet-master write endpoints all require fleet:manage. Use the
+  // server contract here so page-specific labels cannot advertise a 403 action.
+  const canCreate = isFleetMaster ? canManageFleet : hasPermission(permissions.create);
 
   useEffect(() => {
     if (searchParams.get("new") !== "1") return;
@@ -251,9 +255,9 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
     setIsCreating(true);
     setEditing({ ...cfg.defaults });
   }, [searchParams, setSearchParams, canCreate, cfg]);
-  const canUpdate = hasPermission(permissions.update);
-  const canDelete = hasPermission(permissions.delete);
-  const canAssign = hasPermission(permissions.assign);
+  const canUpdate = isFleetMaster ? canManageFleet : hasPermission(permissions.update);
+  const canDelete = isFleetMaster ? canManageFleet : hasPermission(permissions.delete);
+  const canAssign = isFleetMaster ? canManageFleet : hasPermission(permissions.assign);
   const canExport = hasPermission(permissions.export);
 
   const list = useQuery({ queryKey: [kind], queryFn: cfg.api.list });
@@ -266,11 +270,9 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
   const selectedDetail = detail.data;
   const selectedRecord = (selectedDetail?.record as AnyRecord | undefined) || selected;
   const recommendations = (selectedDetail?.recommendations as AnyRecord[] | undefined) || [];
-  const isFleetMaster = kind === "vehicles" || kind === "drivers" || kind === "assets";
-
-  const driverOptions = useQuery({ queryKey: ["drivers", "assignment-options"], queryFn: driversApi.list, enabled: !isScopedViewer && (kind === "vehicles" || kind === "assets") });
-  const vehicleOptions = useQuery({ queryKey: ["vehicles", "assignment-options"], queryFn: vehiclesApi.list, enabled: !isScopedViewer && (kind === "drivers" || kind === "assets") });
-  const customerOptions = useQuery({ queryKey: ["customers", "assignment-options"], queryFn: customersApi.list, enabled: !isScopedViewer && kind === "assets" });
+  const driverOptions = useQuery({ queryKey: ["drivers", "assignment-options"], queryFn: driversApi.list, enabled: canAssign && !isScopedViewer && (kind === "vehicles" || kind === "assets") });
+  const vehicleOptions = useQuery({ queryKey: ["vehicles", "assignment-options"], queryFn: vehiclesApi.list, enabled: canAssign && !isScopedViewer && (kind === "drivers" || kind === "assets") });
+  const customerOptions = useQuery({ queryKey: ["customers", "assignment-options"], queryFn: customersApi.list, enabled: canAssign && !isScopedViewer && kind === "assets" });
   const planningInsights = useQuery({ queryKey: ["vehicles", "planning-insights"], queryFn: vehiclesApi.planningInsights, enabled: kind === "vehicles" && !isScopedViewer });
   const scopedRows = useMemo(() => scopeRowsForSession(kind, list.data || [], session), [kind, list.data, session]);
   const visibleSummary = useMemo(() => buildVisibleSummary(kind, scopedRows, summary.data as AnyRecord | undefined, session), [kind, scopedRows, session, summary.data]);
@@ -359,8 +361,8 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
         description={cfg.description}
         actions={
           <>
-            {cfg.api.create ? <button className="btn-primary" disabled={!canCreate} title={!canCreate ? "You do not have permission to perform this action." : undefined} onClick={() => { if (canCreate) { setIsCreating(true); setEditing({ ...cfg.defaults }); } }}><Plus className="h-4 w-4" /> Create</button> : null}
-            {cfg.api.create ? (
+            {cfg.api.create && canCreate ? <button className="btn-primary" onClick={() => { setIsCreating(true); setEditing({ ...cfg.defaults }); }}><Plus className="h-4 w-4" /> Create</button> : null}
+            {cfg.api.create && canCreate ? (
               <BulkImportControls
                 kind={kind}
                 fields={cfg.fields}
@@ -373,7 +375,7 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
                 }}
               />
             ) : null}
-            <button className="btn-ghost" disabled={!canExport} title={!canExport ? "You do not have permission to perform this action." : undefined} onClick={() => { if (canExport) exportCsv(kind, rows); }}><Download className="h-4 w-4" /> Export CSV</button>
+            {canExport ? <button className="btn-ghost" onClick={() => exportCsv(kind, rows)}><Download className="h-4 w-4" /> Export CSV</button> : null}
           </>
         }
       />
@@ -458,7 +460,7 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
         canAssign={canAssign}
       />
 
-      {editing ? (
+      {editing && (isCreating ? canCreate : canUpdate) ? (
         <CreateEditModal
           title={`${isCreating ? "Create" : "Edit"} ${cfg.title}`}
           fields={cfg.fields}
@@ -661,9 +663,9 @@ function BatchDetailDrawer({ kind, config: cfg, detail, record, loading, assignP
           <span className="badge"><Bot className="h-4 w-4" /> {String(record.recommendedAction || "Monitoring active")}</span>
         </div>
         <div className="mt-5 flex gap-3">
-          <button className="btn-primary" disabled={!canUpdate} title={!canUpdate ? "You do not have permission to perform this action." : undefined} onClick={() => canUpdate && onEdit(record)}><Edit3 className="h-4 w-4" /> Edit</button>
+          {canUpdate ? <button className="btn-primary" onClick={() => onEdit(record)}><Edit3 className="h-4 w-4" /> Edit</button> : null}
           {onSmartAssign ? <button className="btn-ghost" onClick={onSmartAssign} disabled={assignPending || !canAssign} title={!canAssign ? "You do not have permission to perform this action." : undefined}><UserCheck className="h-4 w-4" /> {assignPending ? "Assigning..." : "Smart Assign"}</button> : null}
-          <button className="btn-ghost" disabled={!canDelete} title={!canDelete ? "You do not have permission to perform this action." : undefined} onClick={() => canDelete && onDelete(record)}><Trash2 className="h-4 w-4" /> Delete</button>
+          {canDelete ? <button className="btn-ghost" onClick={() => onDelete(record)}><Trash2 className="h-4 w-4" /> Delete</button> : null}
           <button className="btn-ghost" onClick={() => onNavigate("/audit-logs")}><FileText className="h-4 w-4" /> Audit trail</button>
         </div>
 

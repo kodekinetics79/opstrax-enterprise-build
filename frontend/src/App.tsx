@@ -80,6 +80,7 @@ const Batch4SafetyPage = lazy(() => import("@/pages/Batch4SafetyPage").then((mod
 const Batch5FinancePage = lazy(() => import("@/pages/Batch5FinancePage").then((module) => ({ default: module.Batch5FinancePage })));
 const CommandCenterPage = lazy(() => import("@/pages/CommandCenterPage").then((module) => ({ default: module.CommandCenterPage })));
 const AdminPage = lazy(() => import("@/pages/AdminPage").then((module) => ({ default: module.AdminPage })));
+const BranchesPage = lazy(() => import("@/pages/BranchesPage").then((module) => ({ default: module.BranchesPage })));
 const CompliancePage = lazy(() => import("@/pages/CompliancePage").then((module) => ({ default: module.CompliancePage })));
 const HosEldPage = lazy(() => import("@/pages/HosEldPage").then((module) => ({ default: module.HosEldPage })));
 const SettingsPage = lazy(() => import("@/pages/SettingsPage").then((module) => ({ default: module.SettingsPage })));
@@ -443,6 +444,7 @@ export default function App() {
             route (/audit-logs) and must not unlock user administration. */}
         <Route path="/admin" element={<RequirePermission permissions={["users:view", "roles:view", "settings:view"]} direct><AdminPage /></RequirePermission>} />
         <Route path="/user-management" element={<RequirePermission permissions={["users:view", "roles:view", "settings:view"]} direct><AdminPage /></RequirePermission>} />
+        <Route path="/branches" element={<RequirePermission permission="dashboard:view"><BranchesPage /></RequirePermission>} />
         <Route path="/ops" element={<RequirePermission permission="ops:view"><PlatformOpsPage /></RequirePermission>} />
         <Route path="/platform/operations" element={<RequirePermission permission="ops:view"><PlatformOpsPage /></RequirePermission>} />
           <Route path="/about" element={<RequirePermission permission="settings:view"><AboutPage /></RequirePermission>} />

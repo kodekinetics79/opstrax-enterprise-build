@@ -33,6 +33,9 @@ public static class FleetTmsColdChainEndpoints
         Guard(app.MapGet("/api/fleet-tms/assets/types", AssetTypes), "fleet:view");
         Guard(app.MapPost("/api/fleet-tms/assets/types", CreateAssetType), "fleet:manage");
         Guard(app.MapGet("/api/fleet-tms/assets", Assets), "fleet:view");
+        Guard(app.MapGet("/api/fleet-tms/assets/import-template", AssetsImportTemplate), "fleet:view");
+        Guard(app.MapPost("/api/fleet-tms/assets/import-preview", AssetsImportPreview), "fleet:manage");
+        Guard(app.MapPost("/api/fleet-tms/assets/import-commit", AssetsImportCommit), "fleet:manage");
         Guard(app.MapGet("/api/fleet-tms/assets/{id:long}", AssetDetail), "fleet:view");
         Guard(app.MapPost("/api/fleet-tms/assets", CreateAsset), "fleet:manage");
         Guard(app.MapPut("/api/fleet-tms/assets/{id:long}", UpdateAsset), "fleet:manage");
@@ -525,6 +528,142 @@ LEFT JOIN fleet_tms_asset_types t ON t.id=a.asset_type_id
 WHERE a.company_id=@companyId" + BranchScope(http, "a.") + " ORDER BY a.last_seen_at_utc DESC NULLS LAST, a.asset_tag",
             c => { c.Parameters.AddWithValue("@companyId", Cid(http)); BindBranch(c, http); }, ct);
         return Ok(new { items });
+    }
+
+    private const int AssetImportMaxRows = 500;
+
+    private static List<Dictionary<string, object?>> AssetImportRows(Dictionary<string, object?> body)
+    {
+        var rows = new List<Dictionary<string, object?>>();
+        if (body.TryGetValue("rows", out var raw) && raw is JsonElement array && array.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in array.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object) continue;
+                rows.Add(item.EnumerateObject().ToDictionary(property => property.Name, property => (object?)property.Value.Clone()));
+                if (rows.Count >= AssetImportMaxRows) break;
+            }
+        }
+        return rows;
+    }
+
+    private static string? AssetImportStr(Dictionary<string, object?> row, string key) => GetText(row, key)?.Trim();
+
+    private static IResult AssetsImportTemplate(HttpContext http)
+    {
+        const string csv = "assetTag,name,assetTypeCode,status,currentLocation,condition,isReturnable,quantity,unitOfMeasure,notes\n" +
+                           "TRL-0001,Certification Trailer 0001,TRAILER,Available,North Yard,Good,true,1,Each,Non-personal certification inventory\n";
+        return Results.File(System.Text.Encoding.UTF8.GetBytes(csv), "text/csv", "assets-import-template.csv");
+    }
+
+    private static async Task<(AssetRequest? Request, List<string> Errors)> ValidateAssetImportRow(
+        HttpContext http, Dictionary<string, object?> row, HashSet<string> fileTags, Database db, CancellationToken ct)
+    {
+        var errors = new List<string>();
+        var tag = AssetImportStr(row, "assetTag");
+        var name = AssetImportStr(row, "name");
+        var typeCode = AssetImportStr(row, "assetTypeCode");
+        if (tag is null) errors.Add("assetTag is required.");
+        else if (!fileTags.Add(tag)) errors.Add($"Duplicate assetTag '{tag}' earlier in this file.");
+        if (name is null) errors.Add("name is required.");
+        if (typeCode is null) errors.Add("assetTypeCode is required.");
+        long typeId = 0;
+        if (typeCode is not null)
+        {
+            typeId = await db.ScalarLongAsync(
+                "SELECT COALESCE(MAX(id),0) FROM fleet_tms_asset_types WHERE company_id=@companyId AND lower(code)=lower(@code)" +
+                (Bid(http) is null ? "" : " AND (branch_id=@branchId OR branch_id IS NULL)"),
+                c => { c.Parameters.AddWithValue("@companyId", Cid(http)); c.Parameters.AddWithValue("@code", typeCode); BindBranch(c, http); }, ct);
+            if (typeId == 0) errors.Add($"Asset type code '{typeCode}' does not exist in this branch scope. Create it first.");
+        }
+        decimal? quantity = null;
+        var quantityRaw = AssetImportStr(row, "quantity");
+        if (quantityRaw is not null)
+        {
+            if (decimal.TryParse(quantityRaw, NumberStyles.Any, CultureInfo.InvariantCulture, out var parsed)) quantity = parsed;
+            else errors.Add("quantity must be a number.");
+        }
+        bool? isReturnable = null;
+        var returnableRaw = AssetImportStr(row, "isReturnable");
+        if (returnableRaw is not null)
+        {
+            if (bool.TryParse(returnableRaw, out var parsed)) isReturnable = parsed;
+            else errors.Add("isReturnable must be true or false.");
+        }
+        var request = new AssetRequest(typeId, tag, name, AssetImportStr(row, "status") ?? "Available",
+            AssetImportStr(row, "currentLocation") ?? "", AssetImportStr(row, "condition") ?? "Good",
+            isReturnable ?? true, quantity ?? 1m, AssetImportStr(row, "unitOfMeasure") ?? "Each",
+            AssetImportStr(row, "notes") ?? "", null);
+        if (ValidateAssetRequest(request, true) is { } invalid) errors.Add(invalid);
+        return (request, errors);
+    }
+
+    private static async Task<IResult> AssetsImportPreview(HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
+    {
+        var rows = AssetImportRows(body);
+        if (rows.Count == 0) return Bad("No rows to import. Send { rows: [...] } parsed from the CSV.");
+        var results = new List<object>();
+        var creates = 0; var updates = 0; var invalid = 0;
+        var fileTags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var (request, errors) = await ValidateAssetImportRow(http, rows[i], fileTags, db, ct);
+            var existingId = errors.Count == 0 ? await db.ScalarLongAsync(
+                "SELECT COALESCE(MAX(id),0) FROM fleet_tms_assets WHERE company_id=@companyId AND branch_id IS NOT DISTINCT FROM @branchId AND lower(asset_tag)=lower(@tag)",
+                c => { c.Parameters.AddWithValue("@companyId", Cid(http)); c.Parameters.AddWithValue("@branchId", (object?)Bid(http) ?? DBNull.Value); c.Parameters.AddWithValue("@tag", request!.AssetTag!); }, ct) : 0;
+            var action = errors.Count > 0 ? "error" : existingId > 0 ? "update" : "create";
+            if (action == "create") creates++; else if (action == "update") updates++; else invalid++;
+            results.Add(new { rowNumber = i + 1, key = request?.AssetTag ?? AssetImportStr(rows[i], "assetTag") ?? "", action, errors });
+        }
+        return Ok(new { total = rows.Count, creates, updates, invalid, rows = results });
+    }
+
+    private static async Task<IResult> AssetsImportCommit(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
+    {
+        var rows = AssetImportRows(body);
+        if (rows.Count == 0) return Bad("No rows to import. Send { rows: [...] } parsed from the CSV.");
+        var companyId = Cid(http); var branchId = Bid(http);
+        var created = 0; var updated = 0; var skipped = new List<object>();
+        var fileTags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var (request, errors) = await ValidateAssetImportRow(http, rows[i], fileTags, db, ct);
+            var tag = request?.AssetTag ?? AssetImportStr(rows[i], "assetTag") ?? "";
+            var existingId = errors.Count == 0 ? await db.ScalarLongAsync(
+                "SELECT COALESCE(MAX(id),0) FROM fleet_tms_assets WHERE company_id=@companyId AND branch_id IS NOT DISTINCT FROM @branchId AND lower(asset_tag)=lower(@tag)",
+                c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); c.Parameters.AddWithValue("@tag", tag); }, ct) : 0;
+            if (errors.Count > 0) { skipped.Add(new { rowNumber = i + 1, key = tag, errors }); continue; }
+            try
+            {
+                if (existingId > 0)
+                {
+                    await db.ExecuteWithSavepointAsync(@"UPDATE fleet_tms_assets SET asset_type_id=@type,name=@name,status=@status,current_location=@loc,
+                        condition=@condition,is_returnable=@returnable,quantity=@qty,unit_of_measure=@uom,notes=@notes,updated_at_utc=NOW()
+                        WHERE id=@id AND company_id=@companyId AND branch_id IS NOT DISTINCT FROM @branchId", c =>
+                    {
+                        BindAsset(c, companyId, request!, false); c.Parameters.AddWithValue("@id", existingId);
+                        c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+                    }, ct);
+                    updated++;
+                }
+                else
+                {
+                    await db.InsertWithSavepointAsync(@"INSERT INTO fleet_tms_assets
+                        (company_id,branch_id,asset_type_id,asset_tag,name,status,current_location,condition,is_returnable,quantity,unit_of_measure,notes,last_seen_at_utc,created_at_utc,updated_at_utc)
+                        VALUES (@companyId,@branchId,@type,@tag,@name,@status,@loc,@condition,@returnable,@qty,@uom,@notes,@lastSeen,NOW(),NOW())", c =>
+                    {
+                        BindAsset(c, companyId, request!, true); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+                    }, ct);
+                    created++;
+                }
+            }
+            catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
+            {
+                skipped.Add(new { rowNumber = i + 1, key = tag, errors = new[] { "Asset tag already exists in this branch scope." } });
+            }
+        }
+        await audit.LogAsync(http, "assets.imported", "FleetTmsAsset", null, JsonSerializer.Serialize(new { created, updated, skipped = skipped.Count, total = rows.Count }), ct);
+        return Ok(new { created, updated, skipped, total = rows.Count });
     }
 
     private static async Task<IResult> AssetDetail(HttpContext http, long id, Database db, CancellationToken ct)

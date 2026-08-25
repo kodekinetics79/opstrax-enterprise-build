@@ -17,13 +17,17 @@ import { EntityImportExport } from "@/components/EntityImportExport";
 import { vehiclesApi } from "@/services/vehiclesApi";
 import { scopeRowsForSession } from "@/auth/accessScope";
 import { useAuth } from "@/hooks/useAuth";
-import { useHasPermission } from "@/hooks/usePermission";
+import { PERMISSIONS, useHasPermission } from "@/hooks/usePermission";
 import type { AnyRecord } from "@/types";
 import { VehiclesPage as VehiclesRosterPage } from "@/pages/VehiclesPage";
 
 const VEHICLE_IMPORT_EXPORT = {
   entity: "vehicles",
-  columns: ["vehicleCode", "type", "make", "model", "year", "odometerMiles", "vin", "plateNumber", "status"],
+  columns: [
+    "vehicleCode", "type", "make", "model", "year", "vehicleClass",
+    "odometerMiles", "vin", "vinExceptionType", "alternateIdentifier",
+    "plateNumber", "plateJurisdiction", "status",
+  ],
   requiredColumns: ["vehicleCode"],
   templateEndpoint: "/api/vehicles/import-template",
   exportEndpoint: "/api/vehicles/export",
@@ -92,6 +96,7 @@ export function VehiclesModulePage() {
   const section = readSection(location.pathname);
   const { session } = useAuth();
   const hasPermission = useHasPermission();
+  const canManageFleet = hasPermission(PERMISSIONS.FLEET_MANAGE);
 
   const list = useQuery({ queryKey: ["vehicles"], queryFn: vehiclesApi.list });
   const summary = useQuery({ queryKey: ["vehicles", "summary"], queryFn: vehiclesApi.summary });
@@ -135,17 +140,17 @@ export function VehiclesModulePage() {
         <div className="flex flex-wrap items-center gap-2">
           <EntityImportExport
             config={VEHICLE_IMPORT_EXPORT}
-            canImport={hasPermission("fleet:manage")}
+            canImport={canManageFleet}
             canExport={hasPermission("vehicles:view")}
           />
           {/* Single-add sat only on the roster tab, so the Overview offered bulk import
               but no way to add one record — users reasonably concluded it was missing.
               Deep-links into the roster's existing create form rather than duplicating it. */}
-          <button type="button" disabled={!hasPermission("vehicles:create")}
-            title={hasPermission("vehicles:create") ? undefined : "You do not have permission to perform this action."}
-            onClick={() => navigate("/vehicles/roster?new=1")} className="btn-ghost h-10">
-            <Plus className="h-4 w-4" /> New vehicle
-          </button>
+          {canManageFleet ? (
+            <button type="button" onClick={() => navigate("/vehicles/roster?new=1")} className="btn-ghost h-10">
+              <Plus className="h-4 w-4" /> New vehicle
+            </button>
+          ) : null}
           <button type="button" onClick={() => navigate("/vehicles/roster")} className="btn-primary h-10">
             Open roster <ArrowRight className="h-4 w-4" />
           </button>

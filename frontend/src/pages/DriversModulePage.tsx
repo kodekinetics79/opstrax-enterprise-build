@@ -17,7 +17,7 @@ import { EntityImportExport } from "@/components/EntityImportExport";
 import { driversApi } from "@/services/driversApi";
 import { scopeRowsForSession } from "@/auth/accessScope";
 import { useAuth } from "@/hooks/useAuth";
-import { useHasPermission } from "@/hooks/usePermission";
+import { PERMISSIONS, useHasPermission } from "@/hooks/usePermission";
 import type { AnyRecord } from "@/types";
 import { EntityListPage } from "@/pages/EntityListPage";
 
@@ -136,6 +136,7 @@ export function DriversModulePage() {
   const section = readSection(location.pathname);
   const { session } = useAuth();
   const hasPermission = useHasPermission();
+  const canManageFleet = hasPermission(PERMISSIONS.FLEET_MANAGE);
 
   const list = useQuery({ queryKey: ["drivers"], queryFn: driversApi.list });
   const summary = useQuery({ queryKey: ["drivers", "summary"], queryFn: driversApi.summary });
@@ -174,17 +175,17 @@ export function DriversModulePage() {
           <div className="flex flex-wrap items-center gap-2">
             <EntityImportExport
               config={DRIVER_IMPORT_EXPORT}
-              canImport={hasPermission("fleet:manage")}
+              canImport={canManageFleet}
               canExport={hasPermission("drivers:view")}
             />
             {/* Single-add sat only on the roster tab, so the Overview offered bulk import
                 but no way to add one record — users reasonably concluded it was missing.
                 Deep-links into the roster's existing create form rather than duplicating it. */}
-            <button type="button" disabled={!hasPermission("drivers:create")}
-              title={hasPermission("drivers:create") ? undefined : "You do not have permission to perform this action."}
-              onClick={() => navigate("/drivers/roster?new=1")} className="btn-ghost h-10">
-              <Plus className="h-4 w-4" /> New driver
-            </button>
+            {canManageFleet ? (
+              <button type="button" onClick={() => navigate("/drivers/roster?new=1")} className="btn-ghost h-10">
+                <Plus className="h-4 w-4" /> New driver
+              </button>
+            ) : null}
             <button type="button" onClick={() => navigate("/drivers/roster")} className="btn-primary h-10">
               Open roster <ArrowRight className="h-4 w-4" />
             </button>
@@ -585,7 +586,7 @@ function RecordsView({ rows, onNavigate }: { rows: AnyRecord[]; onNavigate: (rou
  */
 function PortalAccessCard({ record, onChanged }: { record: AnyRecord | null; onChanged: () => void }) {
   const hasPermission = useHasPermission();
-  const canManage = hasPermission("fleet:manage");
+  const canManage = hasPermission(PERMISSIONS.FLEET_MANAGE);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tempPassword, setTempPassword] = useState<string | null>(null);
