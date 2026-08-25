@@ -3,12 +3,13 @@ import { apiPaged, getDriverById, getDrivers } from "@/services/fleetDomainApi";
 import type { AnyRecord } from "@/types";
 
 export const driversApi = {
-  list: () => getDrivers(),
-  listPaged: (opts?: { limit?: number; offset?: number; search?: string }) => apiPaged("/api/drivers", opts),
+  list: () => getDrivers("active"),
+  listArchived: () => getDrivers("archived"),
+  listPaged: (opts?: { limit?: number; offset?: number; search?: string; lifecycle?: "active" | "archived" }) => apiPaged(`/api/drivers?lifecycle=${opts?.lifecycle ?? "active"}`, opts),
   // Use the tenant-wide aggregate endpoint rather than calculating KPIs from the
   // capped driver list. Its camel-cased aliases match the existing page contract.
   summary: () => unwrap<AnyRecord>(apiClient.get("/api/drivers/summary")),
-  detail: (id: string | number) => getDriverById(id),
+  detail: (id: string | number, lifecycle: "active" | "archived" = "active") => getDriverById(id, lifecycle),
   // Recommendations come from the live detail envelope — never fabricated client-side.
   recommendations: (id: string | number) => getDriverById(id).then((detail) => (Array.isArray(detail.recommendations) ? detail.recommendations : [])),
   // Real CSV import pipeline — server-validated preview, then committed upsert.
@@ -18,6 +19,8 @@ export const driversApi = {
   create: (payload: AnyRecord) => unwrap<AnyRecord>(apiClient.post("/api/drivers", payload)),
   update: (id: string | number, payload: AnyRecord) => unwrap<AnyRecord>(apiClient.put(`/api/drivers/${id}`, payload)),
   remove: (id: string | number) => unwrap<AnyRecord>(apiClient.delete(`/api/drivers/${id}`)),
+  archive: (id: string | number) => unwrap<AnyRecord>(apiClient.post(`/api/drivers/${id}/archive`, {})),
+  reactivate: (id: string | number) => unwrap<AnyRecord>(apiClient.post(`/api/drivers/${id}/reactivate`, {})),
   assignVehicle: (id: string | number, vehicleId: string | number) => unwrap<AnyRecord>(apiClient.post(`/api/drivers/${id}/assign-vehicle`, { vehicleId })),
   changeStatus: (id: string | number, status: string) => unwrap<AnyRecord>(apiClient.post(`/api/drivers/${id}/change-status`, { status })),
 

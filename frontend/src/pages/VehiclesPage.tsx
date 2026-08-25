@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Activity, ArrowUpRight, Boxes, Camera, ChevronRight, Cpu, Download, Gauge, Info,
+  Activity, ArchiveRestore, ArrowUpRight, Boxes, Camera, ChevronRight, Cpu, Download, Gauge, Info,
   MapPin, Navigation, Plus, Save, Search, ShieldAlert, Sparkles, Trash2, TrendingUp,
   Truck, UserCheck, Video, Wrench, X, Radio,
 } from "lucide-react";
@@ -110,7 +110,7 @@ const FIELDS: VehicleField[] = [
   { key: "status", label: "Status", type: "select", options: ["Available", "On Route", "At Stop", "Idle", "Delayed", "Maintenance"] },
 ] as const;
 
-const FILTERS = ["All", "Moving", "Available", "On Route", "Maintenance", "At risk"] as const;
+const FILTERS = ["All", "Moving", "Available", "On Route", "Maintenance", "At risk", "Archived"] as const;
 
 /* ------------------------------------------------------------------ page */
 
@@ -141,13 +141,14 @@ export function VehiclesPage() {
   const [exportError, setExportError] = useState<string | null>(null);
   const [offset, setOffset] = useState(0);
   const PAGE_SIZE = 50;
+  const archivedView = filter === "Archived";
 
   // Server-side paginated + searched — never fetches the full fleet. The search term
   // is applied server-side (so a 1000-vehicle fleet is searchable); the status filter
   // below operates on the returned page. Live telemetry columns refresh on an interval.
   const list = useQuery({
-    queryKey: ["vehicles", "paged", search.trim(), offset],
-    queryFn: () => vehiclesApi.listPaged({ limit: PAGE_SIZE, offset, search }),
+    queryKey: ["vehicles", "paged", archivedView ? "archived" : "active", search.trim(), offset],
+    queryFn: () => vehiclesApi.listPaged({ limit: PAGE_SIZE, offset, search, lifecycle: archivedView ? "archived" : "active" }),
     refetchInterval: 30_000,
   });
   const pagedRows = (list.data?.rows ?? []) as AnyRecord[];
@@ -155,8 +156,8 @@ export function VehiclesPage() {
   const summary = useQuery({ queryKey: ["vehicles", "summary"], queryFn: vehiclesApi.summary, refetchInterval: 30_000 });
   const planning = useQuery({ queryKey: ["vehicles", "planning-insights"], queryFn: vehiclesApi.planningInsights });
   const detail = useQuery({
-    queryKey: ["vehicles", "detail", selectedId],
-    queryFn: () => vehiclesApi.detail(String(selectedId)),
+    queryKey: ["vehicles", "detail", selectedId, archivedView ? "archived" : "active"],
+    queryFn: () => vehiclesApi.detail(String(selectedId), archivedView ? "archived" : "active"),
     enabled: selectedId != null,
     refetchInterval: selectedId != null ? 20_000 : false,
   });
@@ -170,7 +171,7 @@ export function VehiclesPage() {
   const filtered = useMemo(() => {
     return rows.filter((row) => {
       const status = String(g(row, "status") ?? "");
-      return filter === "All" ? true :
+      return filter === "Archived" ? true : filter === "All" ? true :
         filter === "Moving" ? isMoving(row) :
         filter === "At risk" ? (riskTier(row) === "High" || /maintenance|delayed/i.test(status)) :
         status.toLowerCase().includes(filter.toLowerCase());
@@ -207,7 +208,11 @@ export function VehiclesPage() {
     onSuccess: async () => { setEditing(null); setIsCreating(false); await queryClient.invalidateQueries({ queryKey: ["vehicles"] }); },
   });
   const remove = useMutation({
-    mutationFn: (id: string | number) => vehiclesApi.remove(id),
+    mutationFn: (id: string | number) => vehiclesApi.archive(id),
+    onSuccess: async () => { setSelectedId(null); await queryClient.invalidateQueries({ queryKey: ["vehicles"] }); },
+  });
+  const reactivate = useMutation({
+    mutationFn: (id: string | number) => vehiclesApi.reactivate(id),
     onSuccess: async () => { setSelectedId(null); await queryClient.invalidateQueries({ queryKey: ["vehicles"] }); },
   });
   const assign = useMutation({
@@ -220,7 +225,7 @@ export function VehiclesPage() {
       if (selectedId != null) await queryClient.invalidateQueries({ queryKey: ["vehicles", "detail", selectedId] });
     },
   });
-  const actionError = save.error ?? remove.error ?? assign.error;
+  const actionError = save.error ?? remove.error ?? reactivate.error ?? assign.error;
 
   if (list.isLoading) return <LoadingState />;
   if (list.isError) return <ErrorState message={list.error instanceof Error ? list.error.message : "Unable to load vehicles."} />;
@@ -301,7 +306,7 @@ export function VehiclesPage() {
           </div>
           <div className="fc-seg flex flex-wrap items-center gap-1 p-1">
             {FILTERS.map((f) => (
-              <button key={f} type="button" onClick={() => setFilter(f)}
+              <button key={f} type="button" onClick={() => { setFilter(f); setOffset(0); setSelectedId(null); }}
                 className={`fc-seg-btn ${filter === f ? "fc-seg-btn-active" : ""}`}>
                 {f}
               </button>
@@ -421,10 +426,11 @@ export function VehiclesPage() {
       {selectedRecord && (
         <VehicleDrawer
           record={selectedRecord} detail={detail.data} loading={detail.isLoading}
-          canUpdate={canUpdate} canDelete={canDelete} canAssign={canAssign} assigning={assign.isPending}
+          canUpdate={canUpdate && !archivedView} canDelete={canDelete && !archivedView} canAssign={canAssign && !archivedView} canReactivate={canUpdate && archivedView} assigning={assign.isPending}
           onClose={() => setSelectedId(null)}
           onEdit={() => { if (canUpdate) { setIsCreating(false); setEditing(selectedRecord); } }}
           onDelete={() => canDelete && window.confirm(`Archive ${String(g(selectedRecord, "vehicleCode", "vehicle_code") ?? "this vehicle")}? It will leave the active fleet registry; the server may block archival while operational records still depend on it.`) && remove.mutate(String(selectedRecord.id))}
+          onReactivate={() => canUpdate && reactivate.mutate(String(selectedRecord.id))}
           onAssign={() => canAssign && setAssignmentVehicle(selectedRecord)}
           onNavigate={navigate}
         />
@@ -612,10 +618,10 @@ function DriverAssignmentModal({ vehicle, drivers, saving, serverError, onClose,
 
 /* ------------------------------------------------------------------ drawer */
 
-function VehicleDrawer({ record, detail, loading, canUpdate, canDelete, canAssign, assigning, onClose, onEdit, onDelete, onAssign, onNavigate }: {
+function VehicleDrawer({ record, detail, loading, canUpdate, canDelete, canAssign, canReactivate, assigning, onClose, onEdit, onDelete, onReactivate, onAssign, onNavigate }: {
   record: AnyRecord; detail?: AnyRecord; loading: boolean;
-  canUpdate: boolean; canDelete: boolean; canAssign: boolean; assigning: boolean;
-  onClose: () => void; onEdit: () => void; onDelete: () => void; onAssign: () => void; onNavigate: (r: string) => void;
+  canUpdate: boolean; canDelete: boolean; canAssign: boolean; canReactivate: boolean; assigning: boolean;
+  onClose: () => void; onEdit: () => void; onDelete: () => void; onReactivate: () => void; onAssign: () => void; onNavigate: (r: string) => void;
 }) {
   const code = String(g(record, "vehicleCode", "vehicle_code") ?? `Vehicle ${record.id}`);
   const recs = (detail?.recommendations as AnyRecord[]) || [];
@@ -664,6 +670,7 @@ function VehicleDrawer({ record, detail, loading, canUpdate, canDelete, canAssig
             {canAssign ? <button type="button" disabled={assigning} onClick={onAssign} className="btn-ghost h-9 px-3 text-xs"><UserCheck className="h-3.5 w-3.5" /> {g(record, "assignedDriverId", "assigned_driver_id") ? "Reassign driver" : "Assign driver"}</button> : null}
             <button type="button" onClick={() => onNavigate("/map-view")} className="btn-ghost h-9 px-3 text-xs"><MapPin className="h-3.5 w-3.5" /> Live map</button>
             {canDelete ? <button type="button" onClick={onDelete} className="ml-auto inline-flex h-9 items-center gap-1.5 rounded-xl border border-rose-200 px-3 text-xs font-semibold text-rose-600 transition hover:bg-rose-50"><Trash2 className="h-3.5 w-3.5" /> Archive vehicle</button> : null}
+            {canReactivate ? <button type="button" onClick={onReactivate} className="ml-auto btn-primary h-9 px-3 text-xs"><ArchiveRestore className="h-3.5 w-3.5" /> Reactivate vehicle</button> : null}
           </div>
         </div>
 

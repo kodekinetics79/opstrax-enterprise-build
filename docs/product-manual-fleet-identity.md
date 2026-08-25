@@ -30,4 +30,8 @@ Provision devices without a vehicle or driver binding, then use the governed ins
 
 To assign or reassign a primary driver, open the vehicle or driver record, choose **Assign** or **Reassign**, select the intended available record, review the pairing, and choose **Confirm assignment**. The product rejects cross-branch pairs and ineligible resources. Refresh the detail drawer and open **Assignments** to verify the active pairing. The vehicle and driver drawers show the same ledger as effective-from/effective-to history; the released row remains visible after reassignment.
 
-Archive or deactivate records through their product action instead of reusing identities. Reactivate only after confirming the identity is not already active elsewhere.
+To retire a vehicle or driver, open the active record and choose **Archive**. The product blocks archival while active dispatch assignments, jobs, routes, trips, or vehicle device installations still depend on the record. Resolve those dependencies and retry. A fleet-master vehicle/driver pairing is released automatically, with its effective-to history retained.
+
+Archived records remain available from the **Archived** filter and are read-only. Open an archived record and choose **Reactivate** to return it to the active register. Its prior operational status is preserved; legacy records archived by older releases return as **Available**. Reactivation is rejected when another active record now uses the same governed vehicle or driver identity.
+
+Driver licence numbers are shown only as masked last-four values on operational screens. Internal identity-search indexes are never customer-facing; use the audited data-subject export workflow when legally authorized plaintext is required.

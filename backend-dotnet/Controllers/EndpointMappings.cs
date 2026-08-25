@@ -188,7 +188,11 @@ public static partial class EndpointMappings
         app.MapGet("/api/vehicles/{id:long}", VehicleDetail);
         app.MapPost("/api/vehicles", CreateVehicle);
         app.MapPut("/api/vehicles/{id:long}", UpdateVehicle);
-        app.MapDelete("/api/vehicles/{id:long}", SoftDeleteWithPermission("vehicles", "vehicle.deleted", "fleet:manage"));
+        app.MapPost("/api/vehicles/{id:long}/archive", FleetMasterLifecycle("vehicles", archive: true));
+        app.MapPost("/api/vehicles/{id:long}/reactivate", FleetMasterLifecycle("vehicles", archive: false));
+        // Compatibility: DELETE is a reversible archive and must use the same dependency
+        // checks/history release as the explicit customer-facing archive route.
+        app.MapDelete("/api/vehicles/{id:long}", FleetMasterLifecycle("vehicles", archive: true));
         app.MapGet("/api/vehicles/{id:long}/timeline", Timeline("Vehicle", "vehicles:view"));
         app.MapGet("/api/vehicles/{id:long}/recommendations", Recommendations("vehicles", "vehicles:view"));
         app.MapPost("/api/vehicles/{id:long}/assign-driver", ChangeEntityStatus("vehicles", "assigned_driver_id", "vehicle.driver.assigned", "fleet:manage"));
@@ -323,7 +327,9 @@ public static partial class EndpointMappings
         app.MapGet("/api/drivers/{id:long}", DriverDetail);
         app.MapPost("/api/drivers", CreateDriver);
         app.MapPut("/api/drivers/{id:long}", UpdateDriver);
-        app.MapDelete("/api/drivers/{id:long}", SoftDeleteWithPermission("drivers", "driver.deleted", "fleet:manage"));
+        app.MapPost("/api/drivers/{id:long}/archive", FleetMasterLifecycle("drivers", archive: true));
+        app.MapPost("/api/drivers/{id:long}/reactivate", FleetMasterLifecycle("drivers", archive: false));
+        app.MapDelete("/api/drivers/{id:long}", FleetMasterLifecycle("drivers", archive: true));
         app.MapGet("/api/drivers/{id:long}/timeline", Timeline("Driver", "drivers:view"));
         app.MapGet("/api/drivers/{id:long}/recommendations", Recommendations("drivers", "drivers:view"));
         app.MapPost("/api/drivers/{id:long}/assign-vehicle", ChangeEntityStatus("drivers", "assigned_vehicle_id", "driver.vehicle.assigned", "fleet:manage"));
@@ -4607,9 +4613,14 @@ public static partial class EndpointMappings
     private static Task<IResult> Vehicles(HttpContext http, Database db, CancellationToken ct)
     {
         if (RequirePermission(http, "vehicles:view") is { } denied) return Task.FromResult(denied);
+        var lifecycle = http.Request.Query["lifecycle"].FirstOrDefault()?.Trim().ToLowerInvariant() ?? "active";
+        if (lifecycle is not ("active" or "archived"))
+            return Task.FromResult(Results.BadRequest(ApiResponse<object>.Fail("Invalid lifecycle filter", ["Use active or archived."])));
         var (branchClause, branchId) = StrictBranchFilter(http, "v");
+        var lifecycleClause = lifecycle == "archived" ? " AND v.deleted_at IS NOT NULL" : " AND v.deleted_at IS NULL";
         return PagedRows(http, db,
-            @"SELECT v.*, d.full_name assigned_driver,
+            @"SELECT v.*, CASE WHEN v.deleted_at IS NULL THEN 'Active' ELSE 'Archived' END lifecycle_status,
+                     d.full_name assigned_driver,
                      current_device.device_id current_device_id,current_device.last_seen_at device_last_seen_at,
                      current_device.device_state current_device_status,
                      current_camera.device_id current_camera_id,current_camera.last_seen_at camera_last_seen_at,
@@ -4643,7 +4654,7 @@ public static partial class EndpointMappings
                   AND i.status IN ('Installed','Verified') AND i.device_role='Dashcam'
                 ORDER BY i.is_primary DESC,i.effective_from DESC,i.id DESC LIMIT 1
               ) current_camera ON TRUE
-              WHERE v.deleted_at IS NULL AND v.company_id=@cid" + branchClause,
+              WHERE v.company_id=@cid" + lifecycleClause + branchClause,
             "v.vehicle_code",
             c => { c.Parameters.AddWithValue("@cid", GetCompanyId(http)); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct: ct,
             searchColumns: new[] { "v.vehicle_code", "v.make", "v.model", "v.vin", "v.plate_number", "v.status", "d.full_name" });
@@ -4652,9 +4663,14 @@ public static partial class EndpointMappings
     private static Task<IResult> Drivers(HttpContext http, Database db, CancellationToken ct)
     {
         if (RequirePermission(http, "drivers:view") is { } denied) return Task.FromResult(denied);
+        var lifecycle = http.Request.Query["lifecycle"].FirstOrDefault()?.Trim().ToLowerInvariant() ?? "active";
+        if (lifecycle is not ("active" or "archived"))
+            return Task.FromResult(Results.BadRequest(ApiResponse<object>.Fail("Invalid lifecycle filter", ["Use active or archived."])));
         var (branchClause, branchId) = StrictBranchFilter(http, "d");
+        var lifecycleClause = lifecycle == "archived" ? " AND d.deleted_at IS NOT NULL" : " AND d.deleted_at IS NULL";
         return PagedRows(http, db,
-            @"SELECT d.*, v.vehicle_code assigned_vehicle,
+            @"SELECT d.*, CASE WHEN d.deleted_at IS NULL THEN 'Active' ELSE 'Archived' END lifecycle_status,
+                     v.vehicle_code assigned_vehicle,
                      ROUND((d.readiness_score + d.safety_score + d.compliance_score + (100 - d.risk_score)) / 4, 1) driver_readiness_score,
                      CASE WHEN d.risk_score >= 70 OR d.status='Delayed' THEN 'High'
                           WHEN d.risk_score >= 40 OR d.compliance_score < 85 THEN 'Medium'
@@ -4673,12 +4689,12 @@ public static partial class EndpointMappings
               FROM drivers d
               LEFT JOIN vehicles v ON v.id=d.assigned_vehicle_id
               LEFT JOIN users pu ON pu.id=d.user_id AND pu.company_id=d.company_id
-              WHERE d.deleted_at IS NULL AND d.company_id=@cid" + branchClause,
+              WHERE d.company_id=@cid" + lifecycleClause + branchClause,
             "d.full_name",
             c => { c.Parameters.AddWithValue("@cid", GetCompanyId(http)); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct: ct,
             searchColumns: new[] { "d.full_name", "d.driver_code", "d.license_number", "d.email", "d.phone", "d.status", "v.vehicle_code" },
             // DEF-015: the roster ships d.* — render the license masked (last four only).
-            transform: rows => MaskDriverLicenseIn(rows, http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>()));
+            transform: rows => ProtectDriverOperationalRows(rows, http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>()));
     }
 
     // Customer book. Was the ONLY customer read with no permission guard — its siblings
@@ -5057,9 +5073,14 @@ public static partial class EndpointMappings
     private static async Task<IResult> VehicleDetail(HttpContext http, long id, Database db, CancellationToken ct)
     {
         if (RequirePermission(http, "vehicles:view") is { } denied) return denied;
+        var lifecycle = http.Request.Query["lifecycle"].FirstOrDefault()?.Trim().ToLowerInvariant() ?? "active";
+        if (lifecycle is not ("active" or "archived"))
+            return Results.BadRequest(ApiResponse<object>.Fail("Invalid lifecycle filter", ["Use active or archived."]));
         var (branchClause, branchId) = StrictBranchFilter(http, "v");
+        var lifecycleClause = lifecycle == "archived" ? " AND v.deleted_at IS NOT NULL" : " AND v.deleted_at IS NULL";
         var record = await db.QuerySingleAsync(
-            @"SELECT v.*, d.full_name assigned_driver,
+            @"SELECT v.*, CASE WHEN v.deleted_at IS NULL THEN 'Active' ELSE 'Archived' END lifecycle_status,
+                     d.full_name assigned_driver,
                      current_device.device_id current_device_id,current_device.last_seen_at device_last_seen_at,
                      current_device.device_state current_device_status,
                      current_camera.device_id current_camera_id,current_camera.last_seen_at camera_last_seen_at,
@@ -5081,7 +5102,7 @@ public static partial class EndpointMappings
                   AND i.status IN ('Installed','Verified') AND i.device_role='Dashcam'
                 ORDER BY i.is_primary DESC,i.effective_from DESC,i.id DESC LIMIT 1
               ) current_camera ON TRUE
-              WHERE v.id=@id AND v.deleted_at IS NULL AND v.company_id=@cid" + branchClause,
+              WHERE v.id=@id AND v.company_id=@cid" + lifecycleClause + branchClause,
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct);
         if (record is null) return Results.NotFound(ApiResponse<object>.Fail("Vehicle not found"));
         return Results.Ok(ApiResponse<object>.Ok(new
@@ -5129,17 +5150,23 @@ public static partial class EndpointMappings
     private static async Task<IResult> DriverDetail(HttpContext http, long id, Database db, CancellationToken ct)
     {
         if (RequirePermission(http, "drivers:view") is { } denied) return denied;
+        var lifecycle = http.Request.Query["lifecycle"].FirstOrDefault()?.Trim().ToLowerInvariant() ?? "active";
+        if (lifecycle is not ("active" or "archived"))
+            return Results.BadRequest(ApiResponse<object>.Fail("Invalid lifecycle filter", ["Use active or archived."]));
         var (branchClause, branchId) = StrictBranchFilter(http, "d");
+        var lifecycleClause = lifecycle == "archived" ? " AND d.deleted_at IS NOT NULL" : " AND d.deleted_at IS NULL";
         var record = await db.QuerySingleAsync(
-            @"SELECT d.*, v.vehicle_code assigned_vehicle,
+            @"SELECT d.*, CASE WHEN d.deleted_at IS NULL THEN 'Active' ELSE 'Archived' END lifecycle_status,
+                     v.vehicle_code assigned_vehicle,
                      ROUND((d.readiness_score + d.safety_score + d.compliance_score + (100 - d.risk_score)) / 4, 1) driver_readiness_score
-              FROM drivers d LEFT JOIN vehicles v ON v.id=d.assigned_vehicle_id WHERE d.id=@id AND d.deleted_at IS NULL AND d.company_id=@cid" + branchClause,
+              FROM drivers d LEFT JOIN vehicles v ON v.id=d.assigned_vehicle_id WHERE d.id=@id AND d.company_id=@cid" + lifecycleClause + branchClause,
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct);
         if (record is null) return Results.NotFound(ApiResponse<object>.Fail("Driver not found"));
         // DEF-015: the detail view renders the license masked (last four). Full plaintext
         // is available ONLY through the audited DSAR export (DataSubjectExport).
         record["licenseNumber"] = MaskDriverLicense(record.GetValueOrDefault("licenseNumber"),
             http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>());
+        record.Remove("licenseNumberBidx");
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             record,
@@ -7300,6 +7327,7 @@ public static partial class EndpointMappings
                                   AND da2.assignment_status NOT IN ('delivered','cancelled'))" + branchClause + @"
               ORDER BY match_readiness DESC",
             c => { c.Parameters.AddWithValue("@cid", companyId); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct);
+        ProtectDriverOperationalRows(rows, http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>());
         return Results.Ok(ApiResponse<object>.Ok(rows));
     }
 
@@ -9796,6 +9824,151 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             return Results.Ok(ApiResponse<object>.Ok(new { id }, "Deleted"));
         };
 
+    private static Func<HttpContext, long, Database, AuditService, CancellationToken, Task<IResult>> FleetMasterLifecycle(
+        string table, bool archive)
+        => async (http, id, db, audit, ct) =>
+        {
+            if (RequirePermission(http, "fleet:manage") is { } denied) return denied;
+            var companyId = GetCompanyId(http);
+            var branchId = GetBranchId(http);
+            var entityName = table == "vehicles" ? "Vehicle" : "Driver";
+            var currentColumn = table == "vehicles" ? "assigned_driver_id" : "assigned_vehicle_id";
+            var expectedLifecycle = archive ? "deleted_at IS NULL" : "deleted_at IS NOT NULL";
+
+            try
+            {
+                return await db.RunInTenantTransactionAsync(companyId, async () =>
+                {
+                    await db.ExecuteAsync("SELECT pg_advisory_xact_lock(@companyId)",
+                        c => c.Parameters.AddWithValue("@companyId", companyId), ct);
+
+                    var record = await db.QuerySingleAsync(
+                        $"SELECT id,branch_id,status,{currentColumn} current_target_id FROM {table} " +
+                        $"WHERE id=@id AND company_id=@companyId AND {expectedLifecycle}" +
+                        (branchId is null ? "" : " AND branch_id=@branchId") + " FOR UPDATE",
+                        c =>
+                        {
+                            c.Parameters.AddWithValue("@id", id);
+                            c.Parameters.AddWithValue("@companyId", companyId);
+                            if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId.Value);
+                        }, ct);
+                    if (record is null)
+                        return Results.NotFound(ApiResponse<object>.Fail(
+                            archive ? $"{entityName} not found or already archived" : $"Archived {entityName.ToLowerInvariant()} not found"));
+
+                    if (archive)
+                    {
+                        var blockers = await FleetMasterArchiveBlockers(db, table, id, companyId, ct);
+                        if (blockers.Count > 0)
+                            return Results.Conflict(ApiResponse<object>.Fail(
+                                $"{entityName} cannot be archived while operational work is active.", blockers.ToArray()));
+
+                        var targetId = record["currentTargetId"] is { } rawTarget && rawTarget is not DBNull
+                            ? Convert.ToInt64(rawTarget)
+                            : (long?)null;
+                        if (targetId is not null)
+                        {
+                            var targetTable = table == "vehicles" ? "drivers" : "vehicles";
+                            var reciprocalColumn = table == "vehicles" ? "assigned_vehicle_id" : "assigned_driver_id";
+                            await db.ExecuteAsync(
+                                $"UPDATE {targetTable} SET {reciprocalColumn}=NULL " +
+                                $"WHERE id=@targetId AND company_id=@companyId AND {reciprocalColumn}=@id",
+                                c =>
+                                {
+                                    c.Parameters.AddWithValue("@targetId", targetId.Value);
+                                    c.Parameters.AddWithValue("@companyId", companyId);
+                                    c.Parameters.AddWithValue("@id", id);
+                                }, ct);
+                        }
+
+                        await db.ExecuteAsync(
+                            "UPDATE vehicle_assignments SET status='Released',released_at=COALESCE(released_at,NOW()) " +
+                            $"WHERE company_id=@companyId AND status='Active' AND {(table == "vehicles" ? "vehicle_id" : "driver_id")}=@id",
+                            c =>
+                            {
+                                c.Parameters.AddWithValue("@companyId", companyId);
+                                c.Parameters.AddWithValue("@id", id);
+                            }, ct);
+
+                        await db.ExecuteAsync(
+                            $"UPDATE {table} SET {currentColumn}=NULL,deleted_at=NOW() WHERE id=@id AND company_id=@companyId",
+                            c =>
+                            {
+                                c.Parameters.AddWithValue("@id", id);
+                                c.Parameters.AddWithValue("@companyId", companyId);
+                            }, ct);
+                    }
+                    else
+                    {
+                        // The dedicated lifecycle preserves status. Older generic soft-deletes
+                        // destroyed it, so restore those legacy rows to the conservative neutral
+                        // state rather than reviving them as Deleted/Archived.
+                        await db.ExecuteAsync(
+                            $"UPDATE {table} SET deleted_at=NULL,status=CASE WHEN status IN ('Deleted','Archived') THEN 'Available' ELSE status END " +
+                            "WHERE id=@id AND company_id=@companyId",
+                            c =>
+                            {
+                                c.Parameters.AddWithValue("@id", id);
+                                c.Parameters.AddWithValue("@companyId", companyId);
+                            }, ct);
+                    }
+
+                    var eventName = $"{entityName.ToLowerInvariant()}.{(archive ? "archived" : "reactivated")}";
+                    var title = $"{entityName} {(archive ? "archived" : "reactivated")}";
+                    await AddTimeline(db, companyId, entityName, id, eventName, title, ct);
+                    await audit.LogAsync(http, eventName, entityName, id, ct: ct);
+                    return Results.Ok(ApiResponse<object>.Ok(new
+                    {
+                        id,
+                        lifecycleStatus = archive ? "Archived" : "Active"
+                    }, title));
+                }, ct);
+            }
+            catch (PostgresException ex) when (!archive &&
+                (table == "vehicles" ? IsVehicleIdentityViolation(ex) : IsDriverIdentityViolation(ex)))
+            {
+                return Results.Conflict(ApiResponse<object>.Fail(
+                    $"{entityName} cannot be reactivated because an active record now uses one of its governed identities."));
+            }
+        };
+
+    private static async Task<List<string>> FleetMasterArchiveBlockers(
+        Database db, string table, long id, long companyId, CancellationToken ct)
+    {
+        var blockers = new List<string>();
+        var idColumn = table == "vehicles" ? "vehicle_id" : "driver_id";
+
+        async Task AddIfAny(string label, string sql)
+        {
+            var count = await db.ScalarLongAsync(sql,
+                c =>
+                {
+                    c.Parameters.AddWithValue("@companyId", companyId);
+                    c.Parameters.AddWithValue("@id", id);
+                }, ct);
+            if (count > 0) blockers.Add($"{count} {label}");
+        }
+
+        await AddIfAny("active dispatch assignment(s)",
+            $"SELECT COUNT(*) FROM dispatch_assignments WHERE company_id=@companyId AND {idColumn}=@id " +
+            "AND LOWER(COALESCE(assignment_status,status,'assigned')) NOT IN ('delivered','cancelled')");
+        await AddIfAny("active job(s)",
+            $"SELECT COUNT(*) FROM jobs WHERE company_id=@companyId AND {idColumn.Replace("vehicle_id", "assigned_vehicle_id").Replace("driver_id", "assigned_driver_id")}=@id " +
+            "AND deleted_at IS NULL AND LOWER(COALESCE(status,'')) NOT IN ('completed','delivered','cancelled','deleted')");
+        await AddIfAny("active route(s)",
+            $"SELECT COUNT(*) FROM routes WHERE company_id=@companyId AND {idColumn.Replace("vehicle_id", "assigned_vehicle_id").Replace("driver_id", "assigned_driver_id")}=@id " +
+            "AND deleted_at IS NULL AND LOWER(COALESCE(status,'')) NOT IN ('completed','cancelled','archived')");
+        await AddIfAny("active trip(s)",
+            $"SELECT COUNT(*) FROM trips WHERE company_id=@companyId AND {idColumn}=@id " +
+            "AND LOWER(COALESCE(status,'')) NOT IN ('completed','cancelled')");
+        if (table == "vehicles")
+            await AddIfAny("active device installation(s)",
+                "SELECT COUNT(*) FROM device_installations WHERE company_id=@companyId AND vehicle_id=@id " +
+                "AND effective_to IS NULL AND status IN ('Installed','Verified')");
+
+        return blockers;
+    }
+
     private static Func<HttpContext, long, Database, AuditService, CancellationToken, Task<IResult>> SoftDelete(string table, string action)
         => async (http, id, db, audit, ct) =>
         {
@@ -12191,6 +12364,21 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         foreach (var row in rows)
             if (row.ContainsKey("licenseNumber"))
                 row["licenseNumber"] = MaskDriverLicense(row["licenseNumber"], pii);
+    }
+
+    // d.* is retained on legacy operational reads, but equality-search material is
+    // internal-only and must never cross the customer-facing API boundary.
+    internal static void ProtectDriverOperationalRow(Dictionary<string, object?> row, Opstrax.Api.Security.PiiProtectionService pii)
+    {
+        if (row.ContainsKey("licenseNumber"))
+            row["licenseNumber"] = MaskDriverLicense(row["licenseNumber"], pii);
+        row.Remove("licenseNumberBidx");
+    }
+
+    internal static void ProtectDriverOperationalRows(IEnumerable<Dictionary<string, object?>> rows, Opstrax.Api.Security.PiiProtectionService pii)
+    {
+        foreach (var row in rows)
+            ProtectDriverOperationalRow(row, pii);
     }
 
     // Post-query mask for P8 reporting datasets: fields flagged MaskPii in the registry
@@ -27482,6 +27670,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
         if (drv is null)
             return Results.NotFound(ApiResponse<object>.Fail("Driver not found"));
+
+        ProtectDriverOperationalRow(drv, http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>());
 
         var openEvents = await db.QueryAsync(
             @"SELECT se.id, se.event_number, se.event_type, se.severity,
