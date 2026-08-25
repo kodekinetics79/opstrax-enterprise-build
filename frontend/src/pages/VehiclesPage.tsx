@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Activity, ArrowUpRight, Boxes, Camera, ChevronRight, Cpu, Download, Gauge, Info,
+  Activity, ArchiveRestore, ArrowUpRight, Boxes, Camera, ChevronRight, Cpu, Download, Gauge, Info,
   MapPin, Navigation, Plus, Save, Search, ShieldAlert, Sparkles, Trash2, TrendingUp,
   Truck, UserCheck, Video, Wrench, X, Radio,
 } from "lucide-react";
@@ -110,7 +110,7 @@ const FIELDS: VehicleField[] = [
   { key: "status", label: "Status", type: "select", options: ["Available", "On Route", "At Stop", "Idle", "Delayed", "Maintenance"] },
 ] as const;
 
-const FILTERS = ["All", "Moving", "Available", "On Route", "Maintenance", "At risk"] as const;
+const FILTERS = ["All", "Moving", "Available", "On Route", "Maintenance", "At risk", "Archived"] as const;
 
 /* ------------------------------------------------------------------ page */
 
@@ -130,6 +130,7 @@ export function VehiclesPage() {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("All");
   const [selectedId, setSelectedId] = useState<string | number | null>(null);
+  const [assignmentVehicle, setAssignmentVehicle] = useState<AnyRecord | null>(null);
   const [editing, setEditing] = useState<AnyRecord | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   // Single-add lives here on the roster, but users look for it on the module
@@ -140,13 +141,14 @@ export function VehiclesPage() {
   const [exportError, setExportError] = useState<string | null>(null);
   const [offset, setOffset] = useState(0);
   const PAGE_SIZE = 50;
+  const archivedView = filter === "Archived";
 
   // Server-side paginated + searched — never fetches the full fleet. The search term
   // is applied server-side (so a 1000-vehicle fleet is searchable); the status filter
   // below operates on the returned page. Live telemetry columns refresh on an interval.
   const list = useQuery({
-    queryKey: ["vehicles", "paged", search.trim(), offset],
-    queryFn: () => vehiclesApi.listPaged({ limit: PAGE_SIZE, offset, search }),
+    queryKey: ["vehicles", "paged", archivedView ? "archived" : "active", search.trim(), offset],
+    queryFn: () => vehiclesApi.listPaged({ limit: PAGE_SIZE, offset, search, lifecycle: archivedView ? "archived" : "active" }),
     refetchInterval: 30_000,
   });
   const pagedRows = (list.data?.rows ?? []) as AnyRecord[];
@@ -154,12 +156,12 @@ export function VehiclesPage() {
   const summary = useQuery({ queryKey: ["vehicles", "summary"], queryFn: vehiclesApi.summary, refetchInterval: 30_000 });
   const planning = useQuery({ queryKey: ["vehicles", "planning-insights"], queryFn: vehiclesApi.planningInsights });
   const detail = useQuery({
-    queryKey: ["vehicles", "detail", selectedId],
-    queryFn: () => vehiclesApi.detail(String(selectedId)),
+    queryKey: ["vehicles", "detail", selectedId, archivedView ? "archived" : "active"],
+    queryFn: () => vehiclesApi.detail(String(selectedId), archivedView ? "archived" : "active"),
     enabled: selectedId != null,
     refetchInterval: selectedId != null ? 20_000 : false,
   });
-  const drivers = useQuery({ queryKey: ["drivers", "assign-pool"], queryFn: driversApi.list, enabled: canAssign });
+  const drivers = useQuery({ queryKey: ["drivers", "assign-pool", 2000], queryFn: () => driversApi.listPaged({ limit: 2000 }).then((result) => result.rows), enabled: canAssign });
   const rows = useMemo(() => {
     return scopeRowsForSession("vehicles", pagedRows, session);
   }, [pagedRows, session]);
@@ -169,7 +171,7 @@ export function VehiclesPage() {
   const filtered = useMemo(() => {
     return rows.filter((row) => {
       const status = String(g(row, "status") ?? "");
-      return filter === "All" ? true :
+      return filter === "Archived" ? true : filter === "All" ? true :
         filter === "Moving" ? isMoving(row) :
         filter === "At risk" ? (riskTier(row) === "High" || /maintenance|delayed/i.test(status)) :
         status.toLowerCase().includes(filter.toLowerCase());
@@ -206,24 +208,24 @@ export function VehiclesPage() {
     onSuccess: async () => { setEditing(null); setIsCreating(false); await queryClient.invalidateQueries({ queryKey: ["vehicles"] }); },
   });
   const remove = useMutation({
-    mutationFn: (id: string | number) => vehiclesApi.remove(id),
+    mutationFn: (id: string | number) => vehiclesApi.archive(id),
+    onSuccess: async () => { setSelectedId(null); await queryClient.invalidateQueries({ queryKey: ["vehicles"] }); },
+  });
+  const reactivate = useMutation({
+    mutationFn: (id: string | number) => vehiclesApi.reactivate(id),
     onSuccess: async () => { setSelectedId(null); await queryClient.invalidateQueries({ queryKey: ["vehicles"] }); },
   });
   const assign = useMutation({
-    mutationFn: async (vehicleId: string | number) => {
-      const pool = (drivers.data || []).filter((d) => !g(d, "assignedVehicleId", "assigned_vehicle_id"));
-      const best = [...(pool.length ? pool : drivers.data || [])]
-        .sort((a, b) => num(g(b, "driverReadinessScore", "safetyScore")) - num(g(a, "driverReadinessScore", "safetyScore")))[0];
-      if (!best?.id) throw new Error("No available driver to assign.");
-      return vehiclesApi.assignDriver(String(vehicleId), String(best.id));
-    },
+    mutationFn: ({ vehicleId, driverId }: { vehicleId: string | number; driverId: string | number }) =>
+      vehiclesApi.assignDriver(String(vehicleId), String(driverId)),
     onSuccess: async () => {
+      setAssignmentVehicle(null);
       await queryClient.invalidateQueries({ queryKey: ["vehicles"] });
       await queryClient.invalidateQueries({ queryKey: ["drivers"] });
       if (selectedId != null) await queryClient.invalidateQueries({ queryKey: ["vehicles", "detail", selectedId] });
     },
   });
-  const actionError = save.error ?? remove.error ?? assign.error;
+  const actionError = save.error ?? remove.error ?? reactivate.error ?? assign.error;
 
   if (list.isLoading) return <LoadingState />;
   if (list.isError) return <ErrorState message={list.error instanceof Error ? list.error.message : "Unable to load vehicles."} />;
@@ -304,7 +306,7 @@ export function VehiclesPage() {
           </div>
           <div className="fc-seg flex flex-wrap items-center gap-1 p-1">
             {FILTERS.map((f) => (
-              <button key={f} type="button" onClick={() => setFilter(f)}
+              <button key={f} type="button" onClick={() => { setFilter(f); setOffset(0); setSelectedId(null); }}
                 className={`fc-seg-btn ${filter === f ? "fc-seg-btn-active" : ""}`}>
                 {f}
               </button>
@@ -424,11 +426,12 @@ export function VehiclesPage() {
       {selectedRecord && (
         <VehicleDrawer
           record={selectedRecord} detail={detail.data} loading={detail.isLoading}
-          canUpdate={canUpdate} canDelete={canDelete} canAssign={canAssign} assigning={assign.isPending}
+          canUpdate={canUpdate && !archivedView} canDelete={canDelete && !archivedView} canAssign={canAssign && !archivedView} canReactivate={canUpdate && archivedView} assigning={assign.isPending}
           onClose={() => setSelectedId(null)}
           onEdit={() => { if (canUpdate) { setIsCreating(false); setEditing(selectedRecord); } }}
           onDelete={() => canDelete && window.confirm(`Archive ${String(g(selectedRecord, "vehicleCode", "vehicle_code") ?? "this vehicle")}? It will leave the active fleet registry; the server may block archival while operational records still depend on it.`) && remove.mutate(String(selectedRecord.id))}
-          onAssign={() => canAssign && assign.mutate(selectedRecord.id as string)}
+          onReactivate={() => canUpdate && reactivate.mutate(String(selectedRecord.id))}
+          onAssign={() => canAssign && setAssignmentVehicle(selectedRecord)}
           onNavigate={navigate}
         />
       )}
@@ -437,6 +440,16 @@ export function VehiclesPage() {
         <VehicleFormModal title={isCreating ? "New vehicle" : "Edit vehicle"} initial={editing} saving={save.isPending} serverError={save.error instanceof Error ? save.error.message : undefined}
           onClose={() => { setEditing(null); setIsCreating(false); }} onSave={(p) => save.mutate(p)} />
       )}
+      {assignmentVehicle && canAssign ? (
+        <DriverAssignmentModal
+          vehicle={assignmentVehicle}
+          drivers={(drivers.data || []) as AnyRecord[]}
+          saving={assign.isPending}
+          serverError={assign.error instanceof Error ? assign.error.message : undefined}
+          onClose={() => setAssignmentVehicle(null)}
+          onSave={(driverId) => assign.mutate({ vehicleId: String(assignmentVehicle.id), driverId })}
+        />
+      ) : null}
     </div>
   );
 }
@@ -547,12 +560,68 @@ function LifecycleBand({ data, loading }: { data?: AnyRecord; loading: boolean }
   );
 }
 
+function DriverAssignmentModal({ vehicle, drivers, saving, serverError, onClose, onSave }: {
+  vehicle: AnyRecord;
+  drivers: AnyRecord[];
+  saving: boolean;
+  serverError?: string;
+  onClose: () => void;
+  onSave: (driverId: string) => void;
+}) {
+  const currentDriverId = String(g(vehicle, "assignedDriverId", "assigned_driver_id") ?? "");
+  const [driverId, setDriverId] = useState(currentDriverId);
+  const availableDrivers = useMemo(() => drivers
+    .filter((driver) => {
+      const assignedVehicleId = g(driver, "assignedVehicleId", "assigned_vehicle_id");
+      return assignedVehicleId == null || String(driver.id) === currentDriverId;
+    })
+    .sort((a, b) => String(g(a, "driverCode", "driver_code") ?? "").localeCompare(String(g(b, "driverCode", "driver_code") ?? ""))), [drivers, currentDriverId]);
+  const selected = drivers.find((driver) => String(driver.id) === driverId);
+  const vehicleCode = String(g(vehicle, "vehicleCode", "vehicle_code") ?? `Vehicle ${vehicle.id}`);
+
+  return (
+    <div className="fixed inset-0 z-[80] grid place-items-center bg-slate-900/50 p-4 backdrop-blur-sm anim-fade-in">
+      <form role="dialog" aria-modal="true" aria-labelledby="driver-assignment-title" className="panel w-full max-w-xl p-6 shadow-2xl" onSubmit={(event) => { event.preventDefault(); if (driverId) onSave(driverId); }}>
+        <div className="flex items-start justify-between border-b border-slate-200 pb-4">
+          <div>
+            <p className="section-title text-teal-700">Fleet master assignment</p>
+            <h2 id="driver-assignment-title" className="mt-1 text-xl font-bold text-slate-900">{currentDriverId ? "Reassign" : "Assign"} {vehicleCode}</h2>
+            <p className="mt-1 text-sm text-slate-500">Choose the intended driver, review the change, then confirm. The previous pairing will be released with an effective-to timestamp.</p>
+          </div>
+          <button type="button" className="icon-btn" onClick={onClose} disabled={saving} aria-label="Close"><X className="h-5 w-5" /></button>
+        </div>
+        <label className="mt-5 block">
+          <span className="mb-1.5 block text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Driver</span>
+          <select className="field w-full" required value={driverId} onChange={(event) => setDriverId(event.target.value)}>
+            <option value="">Select an available driver</option>
+            {availableDrivers.map((driver) => (
+              <option key={String(driver.id)} value={String(driver.id)}>
+                {String(g(driver, "driverCode", "driver_code") ?? `Driver ${driver.id}`)} — {String(g(driver, "fullName", "full_name") ?? "Unnamed driver")}
+              </option>
+            ))}
+          </select>
+        </label>
+        {selected ? (
+          <div className="mt-4 rounded-xl border border-teal-200 bg-teal-50 p-4 text-sm text-slate-700">
+            <strong>{vehicleCode}</strong> will be assigned to <strong>{String(g(selected, "driverCode", "driver_code") ?? selected.id)} — {String(g(selected, "fullName", "full_name") ?? "Unnamed driver")}</strong>.
+          </div>
+        ) : null}
+        {serverError ? <p role="alert" className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{serverError}</p> : null}
+        <div className="mt-6 flex justify-end gap-3 border-t border-slate-200 pt-4">
+          <button type="button" className="btn-ghost" onClick={onClose} disabled={saving}>Cancel</button>
+          <button type="submit" className="btn-primary" disabled={saving || !driverId || driverId === currentDriverId}>{saving ? "Saving assignment…" : "Confirm assignment"}</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------------ drawer */
 
-function VehicleDrawer({ record, detail, loading, canUpdate, canDelete, canAssign, assigning, onClose, onEdit, onDelete, onAssign, onNavigate }: {
+function VehicleDrawer({ record, detail, loading, canUpdate, canDelete, canAssign, canReactivate, assigning, onClose, onEdit, onDelete, onReactivate, onAssign, onNavigate }: {
   record: AnyRecord; detail?: AnyRecord; loading: boolean;
-  canUpdate: boolean; canDelete: boolean; canAssign: boolean; assigning: boolean;
-  onClose: () => void; onEdit: () => void; onDelete: () => void; onAssign: () => void; onNavigate: (r: string) => void;
+  canUpdate: boolean; canDelete: boolean; canAssign: boolean; canReactivate: boolean; assigning: boolean;
+  onClose: () => void; onEdit: () => void; onDelete: () => void; onReactivate: () => void; onAssign: () => void; onNavigate: (r: string) => void;
 }) {
   const code = String(g(record, "vehicleCode", "vehicle_code") ?? `Vehicle ${record.id}`);
   const recs = (detail?.recommendations as AnyRecord[]) || [];
@@ -560,6 +629,7 @@ function VehicleDrawer({ record, detail, loading, canUpdate, canDelete, canAssig
   const replayTrail = (detail?.replayTrail as AnyRecord[]) || [];
   const currentDevices = (detail?.currentDevices as AnyRecord[]) || [];
   const installationHistory = (detail?.installationHistory as AnyRecord[]) || [];
+  const assignmentHistory = (detail?.assignmentHistory as AnyRecord[]) || [];
   const speed = num(g(record, "speedMph", "speed_mph"));
   const fresh = freshness(g(record, "lastSeenAt", "last_seen_at"));
   const hasGps = g(record, "lat") != null && g(record, "lng") != null;
@@ -597,9 +667,10 @@ function VehicleDrawer({ record, detail, loading, canUpdate, canDelete, canAssig
           </div>
           <div className="mt-4 flex flex-wrap gap-2">
             {canUpdate ? <button type="button" onClick={onEdit} className="btn-primary h-9 px-3 text-xs"><Wrench className="h-3.5 w-3.5" /> Edit</button> : null}
-            {canAssign ? <button type="button" disabled={assigning} onClick={onAssign} className="btn-ghost h-9 px-3 text-xs"><UserCheck className="h-3.5 w-3.5" /> {assigning ? "Assigning…" : "Smart assign"}</button> : null}
+            {canAssign ? <button type="button" disabled={assigning} onClick={onAssign} className="btn-ghost h-9 px-3 text-xs"><UserCheck className="h-3.5 w-3.5" /> {g(record, "assignedDriverId", "assigned_driver_id") ? "Reassign driver" : "Assign driver"}</button> : null}
             <button type="button" onClick={() => onNavigate("/map-view")} className="btn-ghost h-9 px-3 text-xs"><MapPin className="h-3.5 w-3.5" /> Live map</button>
             {canDelete ? <button type="button" onClick={onDelete} className="ml-auto inline-flex h-9 items-center gap-1.5 rounded-xl border border-rose-200 px-3 text-xs font-semibold text-rose-600 transition hover:bg-rose-50"><Trash2 className="h-3.5 w-3.5" /> Archive vehicle</button> : null}
+            {canReactivate ? <button type="button" onClick={onReactivate} className="ml-auto btn-primary h-9 px-3 text-xs"><ArchiveRestore className="h-3.5 w-3.5" /> Reactivate vehicle</button> : null}
           </div>
         </div>
 
@@ -666,6 +737,10 @@ function VehicleDrawer({ record, detail, loading, canUpdate, canDelete, canAssig
           <DrawerTable title="Device installation history" icon={<Radio className="h-4 w-4" />}
             rows={installationHistory} cols={["deviceSerial", "deviceRole", "status", "effectiveFrom", "effectiveTo"]}
             loading={loading} onEmpty="No device installation history recorded." />
+
+          <DrawerTable title="Driver assignment history" icon={<UserCheck className="h-4 w-4" />}
+            rows={assignmentHistory} cols={["driverCode", "driverName", "status", "effectiveFrom", "effectiveTo"]}
+            loading={loading} onEmpty="No driver assignment history recorded." />
 
           {/* AI recommendation — from live detail envelope, not fabricated */}
           {recs.length > 0 && (

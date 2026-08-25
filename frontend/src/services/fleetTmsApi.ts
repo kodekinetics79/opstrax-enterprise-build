@@ -735,7 +735,9 @@ export const fleetAssetApi = {
     unwrap<AssetType>(apiClient.post("/api/fleet-tms/assets/types", body)),
   assets: () => unwrap<{ items: Asset[] }>(apiClient.get("/api/fleet-tms/assets")),
   previewImport: (rows: AnyRecord[]) => unwrap<AnyRecord>(apiClient.post("/api/fleet-tms/assets/import-preview", { rows })),
-  commitImport: (rows: AnyRecord[]) => unwrap<AnyRecord>(apiClient.post("/api/fleet-tms/assets/import-commit", { rows })),
+  // A 500-row commit performs audited inserts/updates. Keep the default timeout
+  // for ordinary calls while allowing this bounded customer workflow to finish.
+  commitImport: (rows: AnyRecord[]) => unwrap<AnyRecord>(apiClient.post("/api/fleet-tms/assets/import-commit", { rows }, { timeout: 120000 })),
   asset: (id: string) => unwrap<{ asset: Asset; assignments: AssetAssignment[]; events: AssetEvent[] }>(apiClient.get(`/api/fleet-tms/assets/${id}`)),
   createAsset: (body: Partial<Asset> & { assetTypeId: string; assetTag: string; name: string }) =>
     unwrap<Asset>(apiClient.post("/api/fleet-tms/assets", body)),

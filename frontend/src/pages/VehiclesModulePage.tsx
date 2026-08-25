@@ -110,7 +110,13 @@ export function VehiclesModulePage() {
   if (list.isError) return <ErrorState message={list.error instanceof Error ? list.error.message : "Unable to load vehicles."} />;
   if (summary.isError) return <ErrorState message={summary.error instanceof Error ? summary.error.message : "Unable to load vehicle summary."} />;
 
-  const available = rows.filter((row) => /available/i.test(String(g(row, "status")))).length;
+  // The list endpoint is deliberately paged at 500 rows. Header totals must come
+  // from the branch-aware aggregate endpoint so a large fleet is never presented
+  // as only the first page of its registry.
+  const total = visibleSummary.total != null ? num(visibleSummary.total) : rows.length;
+  const available = visibleSummary.available != null
+    ? num(visibleSummary.available)
+    : rows.filter((row) => /available/i.test(String(g(row, "status")))).length;
   const atRisk = num(visibleSummary.atRisk ?? visibleSummary.at_risk) || rows.filter((row) => riskTier(row) === "High").length;
   const deviceEx = num(visibleSummary.deviceExceptions ?? visibleSummary.device_exceptions) ||
     rows.filter((row) => !/online/i.test(String(g(row, "deviceStatus", "device_status") ?? "Unknown")) || !/online/i.test(String(g(row, "cameraStatus", "camera_status") ?? "Unknown"))).length;
@@ -132,7 +138,7 @@ export function VehiclesModulePage() {
           </span>
           <h1 className="mt-1 text-[26px] font-black leading-none tracking-tight text-slate-950">Vehicles</h1>
           <p className="mt-1.5 text-[12.5px] font-medium text-slate-500">
-            <span className="font-bold text-slate-700 tabular-nums">{rows.length}</span> units in the fleet registry ·{" "}
+            <span className="font-bold text-slate-700 tabular-nums">{total}</span> units in the fleet registry ·{" "}
             <span className="font-bold text-emerald-600 tabular-nums">{available}</span> available ·{" "}
             <span className="font-bold text-rose-600 tabular-nums">{atRisk}</span> need attention
           </p>

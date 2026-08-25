@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { tokens, chart } from "@/styles/tokens";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, AlertTriangle, Bot, ClipboardCheck, Download, Edit3, FileDown, FileText, Plus, Save, Search, Sparkles, Target, Trash2, Upload, UserCheck, X } from "lucide-react";
+import { Activity, AlertTriangle, ArchiveRestore, Bot, ClipboardCheck, Download, Edit3, FileDown, FileText, Plus, Save, Search, Sparkles, Target, Trash2, Upload, UserCheck, X } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router";
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 import { AiInsightCard, DataTable, EmptyState, ErrorState, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, exportCsv, labelize } from "@/components/ui";
@@ -18,6 +18,14 @@ import type { AnyRecord } from "@/types";
 
 type EntityKind = "vehicles" | "drivers" | "jobs" | "customers" | "assets";
 
+// Generic drawers must stay safe when an endpoint adds implementation columns.
+// Search indexes and authentication/crypto material are never customer-facing data.
+const INTERNAL_RECORD_KEY = /(?:bidx|blind.?index|password|secret|token|cipher(?:text)?|credential|api.?key|refresh.?key|private.?key)/i;
+
+export function customerVisibleRecordEntries(record: AnyRecord) {
+  return Object.entries(record).filter(([key]) => !INTERNAL_RECORD_KEY.test(key));
+}
+
 type Field = {
   key: string;
   label: string;
@@ -28,12 +36,15 @@ type Field = {
 
 type EntityApi = {
   list: () => Promise<AnyRecord[]>;
+  listArchived?: () => Promise<AnyRecord[]>;
   summary: () => Promise<AnyRecord>;
-  detail: (id: string | number) => Promise<AnyRecord>;
+  detail: (id: string | number, lifecycle?: "active" | "archived") => Promise<AnyRecord>;
   recommendations: (id: string | number) => Promise<AnyRecord[]>;
   create?: (payload: AnyRecord) => Promise<AnyRecord>;
   update?: (id: string | number, payload: AnyRecord) => Promise<AnyRecord>;
   remove?: (id: string | number) => Promise<AnyRecord>;
+  archive?: (id: string | number) => Promise<AnyRecord>;
+  reactivate?: (id: string | number) => Promise<AnyRecord>;
 };
 
 type EntityConfig = {
@@ -121,6 +132,7 @@ const config: Record<EntityKind, EntityConfig> = {
       ["HOS Status", "hos", ["logDate", "drivingHours", "onDutyHours", "cycleHoursLeft", "status"]],
       ["DVIR Status", "inspections", ["inspectionType", "result", "createdAt"]],
       ["Safety / Coaching Queue", "safetyEvents", ["eventType", "severity", "reviewStatus", "eventTime"]],
+      ["Vehicle Assignment History", "assignmentHistory", ["vehicleCode", "status", "effectiveFrom", "effectiveTo"]],
       ["Audit Trail", "auditTrail", ["actionName", "actorName", "createdAt"]],
     ],
   },
@@ -229,6 +241,7 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<AnyRecord | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const [assignmentOpen, setAssignmentOpen] = useState(false);
   // Deep link from a module Overview ("New driver" etc.) straight into the create
   // form. Single-add lives on the roster, but users look for it on Overview, which
   // otherwise shows only the bulk Template/Import/Export actions.
@@ -259,19 +272,20 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
   const canDelete = isFleetMaster ? canManageFleet : hasPermission(permissions.delete);
   const canAssign = isFleetMaster ? canManageFleet : hasPermission(permissions.assign);
   const canExport = hasPermission(permissions.export);
+  const archivedView = (kind === "vehicles" || kind === "drivers") && statusFilter === "Archived";
 
-  const list = useQuery({ queryKey: [kind], queryFn: cfg.api.list });
+  const list = useQuery({ queryKey: [kind, "lifecycle", archivedView ? "archived" : "active"], queryFn: () => archivedView && cfg.api.listArchived ? cfg.api.listArchived() : cfg.api.list() });
   const summary = useQuery({ queryKey: [kind, "summary"], queryFn: cfg.api.summary });
   const detail = useQuery({
-    queryKey: [kind, "detail", selected?.id],
-    queryFn: () => cfg.api.detail(String(selected?.id)),
+    queryKey: [kind, "detail", selected?.id, archivedView ? "archived" : "active"],
+    queryFn: () => cfg.api.detail(String(selected?.id), archivedView ? "archived" : "active"),
     enabled: Boolean(selected?.id),
   });
   const selectedDetail = detail.data;
   const selectedRecord = (selectedDetail?.record as AnyRecord | undefined) || selected;
   const recommendations = (selectedDetail?.recommendations as AnyRecord[] | undefined) || [];
-  const driverOptions = useQuery({ queryKey: ["drivers", "assignment-options"], queryFn: driversApi.list, enabled: canAssign && !isScopedViewer && (kind === "vehicles" || kind === "assets") });
-  const vehicleOptions = useQuery({ queryKey: ["vehicles", "assignment-options"], queryFn: vehiclesApi.list, enabled: canAssign && !isScopedViewer && (kind === "drivers" || kind === "assets") });
+  const driverOptions = useQuery({ queryKey: ["drivers", "assignment-options", 2000], queryFn: () => driversApi.listPaged({ limit: 2000 }).then((result) => result.rows), enabled: canAssign && !isScopedViewer && (kind === "vehicles" || kind === "assets") });
+  const vehicleOptions = useQuery({ queryKey: ["vehicles", "assignment-options", 2000], queryFn: () => vehiclesApi.listPaged({ limit: 2000 }).then((result) => result.rows), enabled: canAssign && !isScopedViewer && (kind === "drivers" || kind === "assets") });
   const customerOptions = useQuery({ queryKey: ["customers", "assignment-options"], queryFn: customersApi.list, enabled: canAssign && !isScopedViewer && kind === "assets" });
   const planningInsights = useQuery({ queryKey: ["vehicles", "planning-insights"], queryFn: vehiclesApi.planningInsights, enabled: kind === "vehicles" && !isScopedViewer });
   const scopedRows = useMemo(() => scopeRowsForSession(kind, list.data || [], session), [kind, list.data, session]);
@@ -286,24 +300,29 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
     },
   });
   const deleteMutation = useMutation({
-    mutationFn: (id: string | number) => cfg.api.remove!(id),
+    mutationFn: (id: string | number) => (cfg.api.archive ?? cfg.api.remove)!(id),
+    onSuccess: async () => {
+      setSelected(null);
+      await queryClient.invalidateQueries({ queryKey: [kind] });
+    },
+  });
+  const reactivateMutation = useMutation({
+    mutationFn: (id: string | number) => cfg.api.reactivate!(id),
     onSuccess: async () => {
       setSelected(null);
       await queryClient.invalidateQueries({ queryKey: [kind] });
     },
   });
   const assignMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (targetId?: string) => {
       if (!selectedRecord?.id) return null;
       if (kind === "vehicles") {
-        const driver = pickBestDriver(driverOptions.data || []);
-        if (!driver?.id) throw new Error("No available driver found for assignment.");
-        return vehiclesApi.assignDriver(String(selectedRecord.id), String(driver.id));
+        if (!targetId) throw new Error("Choose a driver before confirming the assignment.");
+        return vehiclesApi.assignDriver(String(selectedRecord.id), targetId);
       }
       if (kind === "drivers") {
-        const vehicle = pickBestVehicle(vehicleOptions.data || []);
-        if (!vehicle?.id) throw new Error("No available vehicle found for assignment.");
-        return driversApi.assignVehicle(String(selectedRecord.id), String(vehicle.id));
+        if (!targetId) throw new Error("Choose a vehicle before confirming the assignment.");
+        return driversApi.assignVehicle(String(selectedRecord.id), targetId);
       }
       if (kind === "assets") {
         const vehicle = pickBestVehicle(vehicleOptions.data || []);
@@ -318,6 +337,7 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
       return null;
     },
     onSuccess: async () => {
+      setAssignmentOpen(false);
       await queryClient.invalidateQueries({ queryKey: [kind] });
       await queryClient.invalidateQueries({ queryKey: ["drivers"] });
       await queryClient.invalidateQueries({ queryKey: ["vehicles"] });
@@ -329,7 +349,7 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
     const source = scopedRows;
     return source.filter((row) => {
       const qLower = search.toLowerCase();
-      const matchesStatus = statusFilter === "All" ||
+      const matchesStatus = archivedView || statusFilter === "All" ||
         String(row.status || "").toLowerCase().includes(statusFilter.toLowerCase()) ||
         (statusFilter === "At Risk" && (Number(row.riskScore || row.risk_score || 0) >= 40 || /maintenance|delayed/i.test(String(row.status))));
 
@@ -341,7 +361,7 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
 
       return matchesStatus && matchesSearch && matchesTriage;
     });
-  }, [scopedRows, search, statusFilter, triageFilter, kind]);
+  }, [scopedRows, search, statusFilter, triageFilter, kind, archivedView]);
 
   useEffect(() => {
     if (selected && !rows.some((row) => String(row.id) === String(selected.id))) {
@@ -351,7 +371,7 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
 
   if (list.isLoading) return <LoadingState />;
   if (list.isError) return <ErrorState message={list.error instanceof Error ? list.error.message : `Unable to load ${cfg.title.toLowerCase()}.`} />;
-  const mutationError = saveMutation.error || deleteMutation.error || assignMutation.error;
+  const mutationError = saveMutation.error || deleteMutation.error || reactivateMutation.error || assignMutation.error;
 
   return (
     <div className="flex h-full flex-col gap-6 overflow-y-auto">
@@ -419,7 +439,7 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
               Triage: {triageFilter} <X className="h-3 w-3" />
             </button>
           ) : null}
-          {["All", "Active", "Available", "At Risk", "Maintenance"].map((item) => (
+          {["All", "Active", "Available", "At Risk", "Maintenance", ...((kind === "vehicles" || kind === "drivers") ? ["Archived"] : [])].map((item) => (
             <button key={item} className={statusFilter === item ? "btn-primary" : "btn-ghost"} onClick={() => setStatusFilter(item)}>{item}</button>
           ))}
         </div>
@@ -452,12 +472,17 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
         assignPending={assignMutation.isPending}
         onClose={() => setSelected(null)}
         onEdit={(record) => { if (canUpdate) { setIsCreating(false); setEditing(record); } }}
-        onDelete={(record) => canDelete && cfg.api.remove && deleteMutation.mutate(String(record.id))}
-        onSmartAssign={isFleetMaster && canAssign ? () => assignMutation.mutate() : undefined}
+        onDelete={(record) => canDelete && (cfg.api.archive || cfg.api.remove) && window.confirm(`Archive this ${kind.slice(0, -1)}? It will remain available in the Archived view.`) && deleteMutation.mutate(String(record.id))}
+        onReactivate={(record) => canUpdate && cfg.api.reactivate && reactivateMutation.mutate(String(record.id))}
+        onSmartAssign={!archivedView && isFleetMaster && canAssign ? () => {
+          if (kind === "vehicles" || kind === "drivers") setAssignmentOpen(true);
+          else assignMutation.mutate(undefined);
+        } : undefined}
         onNavigate={navigate}
-        canUpdate={canUpdate}
-        canDelete={canDelete}
-        canAssign={canAssign}
+        canUpdate={canUpdate && !archivedView}
+        canDelete={canDelete && !archivedView}
+        canAssign={canAssign && !archivedView}
+        canReactivate={canUpdate && archivedView && Boolean(cfg.api.reactivate)}
       />
 
       {editing && (isCreating ? canCreate : canUpdate) ? (
@@ -468,6 +493,17 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
           saving={saveMutation.isPending}
           onClose={() => { setEditing(null); setIsCreating(false); }}
           onSave={(payload) => saveMutation.mutate(payload)}
+        />
+      ) : null}
+      {assignmentOpen && selectedRecord && (kind === "vehicles" || kind === "drivers") ? (
+        <FleetMasterAssignmentModal
+          kind={kind}
+          record={selectedRecord}
+          options={(kind === "vehicles" ? driverOptions.data : vehicleOptions.data) || []}
+          saving={assignMutation.isPending}
+          serverError={assignMutation.error instanceof Error ? assignMutation.error.message : undefined}
+          onClose={() => setAssignmentOpen(false)}
+          onSave={(targetId) => assignMutation.mutate(targetId)}
         />
       ) : null}
     </div>
@@ -630,7 +666,61 @@ function BulkImportControls({ kind, fields, defaults, create, canImport, onImpor
   );
 }
 
-function BatchDetailDrawer({ kind, config: cfg, detail, record, loading, assignPending, onClose, onEdit, onDelete, onSmartAssign, onNavigate, canUpdate, canDelete, canAssign }: {
+function FleetMasterAssignmentModal({ kind, record, options, saving, serverError, onClose, onSave }: {
+  kind: "vehicles" | "drivers";
+  record: AnyRecord;
+  options: AnyRecord[];
+  saving: boolean;
+  serverError?: string;
+  onClose: () => void;
+  onSave: (targetId: string) => void;
+}) {
+  const currentTargetId = String(kind === "vehicles"
+    ? (record.assignedDriverId ?? record.assigned_driver_id ?? "")
+    : (record.assignedVehicleId ?? record.assigned_vehicle_id ?? ""));
+  const [targetId, setTargetId] = useState(currentTargetId);
+  const eligible = options.filter((option) => {
+    if (String(option.id) === currentTargetId) return true;
+    return kind === "vehicles"
+      ? !(option.assignedVehicleId ?? option.assigned_vehicle_id)
+      : !(option.assignedDriverId ?? option.assigned_driver_id);
+  });
+  const recordLabel = recordTitle(kind, record);
+  const targetLabel = kind === "vehicles" ? "driver" : "vehicle";
+
+  return (
+    <div className="fixed inset-0 z-[80] grid place-items-center bg-black/60 p-4 backdrop-blur-sm">
+      <form role="dialog" aria-modal="true" aria-labelledby="fleet-master-assignment-title" className="panel w-full max-w-xl p-6 shadow-2xl" onSubmit={(event) => { event.preventDefault(); if (targetId) onSave(targetId); }}>
+        <div className="flex items-start justify-between border-b border-slate-200 pb-4">
+          <div>
+            <p className="section-title text-teal-700">Fleet master assignment</p>
+            <h2 id="fleet-master-assignment-title" className="mt-1 text-xl font-bold text-slate-900">{currentTargetId ? "Reassign" : "Assign"} {recordLabel}</h2>
+            <p className="mt-1 text-sm text-slate-500">Select the intended {targetLabel} and confirm. Reassignment preserves the previous effective-dated history row.</p>
+          </div>
+          <button type="button" className="icon-btn" onClick={onClose} disabled={saving} aria-label="Close"><X className="h-5 w-5" /></button>
+        </div>
+        <label className="mt-5 block">
+          <span className="mb-1.5 block text-xs font-bold uppercase tracking-[0.14em] text-slate-500">{targetLabel}</span>
+          <select className="field w-full" required value={targetId} onChange={(event) => setTargetId(event.target.value)}>
+            <option value="">Select an available {targetLabel}</option>
+            {eligible.map((option) => <option key={String(option.id)} value={String(option.id)}>
+              {kind === "vehicles"
+                ? `${String(option.driverCode ?? option.driver_code ?? option.id)} — ${String(option.fullName ?? option.full_name ?? "Unnamed driver")}`
+                : `${String(option.vehicleCode ?? option.vehicle_code ?? option.id)} — ${String(option.make ?? "")} ${String(option.model ?? "")}`.trim()}
+            </option>)}
+          </select>
+        </label>
+        {serverError ? <p role="alert" className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{serverError}</p> : null}
+        <div className="mt-6 flex justify-end gap-3 border-t border-slate-200 pt-4">
+          <button type="button" className="btn-ghost" onClick={onClose} disabled={saving}>Cancel</button>
+          <button type="submit" className="btn-primary" disabled={saving || !targetId || targetId === currentTargetId}>{saving ? "Saving assignment…" : "Confirm assignment"}</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function BatchDetailDrawer({ kind, config: cfg, detail, record, loading, assignPending, onClose, onEdit, onDelete, onReactivate, onSmartAssign, onNavigate, canUpdate, canDelete, canAssign, canReactivate }: {
   kind: EntityKind;
   config: EntityConfig;
   detail?: AnyRecord;
@@ -640,11 +730,13 @@ function BatchDetailDrawer({ kind, config: cfg, detail, record, loading, assignP
   onClose: () => void;
   onEdit: (record: AnyRecord) => void;
   onDelete: (record: AnyRecord) => void;
+  onReactivate: (record: AnyRecord) => void;
   onSmartAssign?: () => void;
   onNavigate: (route: string) => void;
   canUpdate: boolean;
   canDelete: boolean;
   canAssign: boolean;
+  canReactivate: boolean;
 }) {
   if (!record) return null;
   const timeline = (detail?.timeline as AnyRecord[] | undefined) || [];
@@ -664,8 +756,9 @@ function BatchDetailDrawer({ kind, config: cfg, detail, record, loading, assignP
         </div>
         <div className="mt-5 flex gap-3">
           {canUpdate ? <button className="btn-primary" onClick={() => onEdit(record)}><Edit3 className="h-4 w-4" /> Edit</button> : null}
-          {onSmartAssign ? <button className="btn-ghost" onClick={onSmartAssign} disabled={assignPending || !canAssign} title={!canAssign ? "You do not have permission to perform this action." : undefined}><UserCheck className="h-4 w-4" /> {assignPending ? "Assigning..." : "Smart Assign"}</button> : null}
-          {canDelete ? <button className="btn-ghost" onClick={() => onDelete(record)}><Trash2 className="h-4 w-4" /> Delete</button> : null}
+          {onSmartAssign ? <button className="btn-ghost" onClick={onSmartAssign} disabled={assignPending || !canAssign} title={!canAssign ? "You do not have permission to perform this action." : undefined}><UserCheck className="h-4 w-4" /> {assignPending ? "Assigning..." : ((kind === "vehicles" ? record.assignedDriverId ?? record.assigned_driver_id : kind === "drivers" ? record.assignedVehicleId ?? record.assigned_vehicle_id : null) ? "Reassign" : "Assign")}</button> : null}
+          {canDelete ? <button className="btn-ghost" onClick={() => onDelete(record)}><Trash2 className="h-4 w-4" /> Archive</button> : null}
+          {canReactivate ? <button className="btn-primary" onClick={() => onReactivate(record)}><ArchiveRestore className="h-4 w-4" /> Reactivate</button> : null}
           <button className="btn-ghost" onClick={() => onNavigate("/audit-logs")}><FileText className="h-4 w-4" /> Audit trail</button>
         </div>
 
@@ -695,7 +788,7 @@ function BatchDetailDrawer({ kind, config: cfg, detail, record, loading, assignP
         <DecisionBrief config={cfg} record={record} />
 
         <div className="mt-6 grid gap-3 sm:grid-cols-2">
-          {Object.entries(record).slice(0, 18).map(([key, value]) => (
+          {customerVisibleRecordEntries(record).slice(0, 18).map(([key, value]) => (
             <div key={key} className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
               <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">{labelize(key)}</p>
               <p className="mt-1 break-words text-sm text-slate-200">{String(value ?? "--")}</p>

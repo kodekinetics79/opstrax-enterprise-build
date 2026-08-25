@@ -60,6 +60,23 @@ public class DriverLicenseExposureContractTests
         Assert.Equal(EndpointMappings.MaskedLicenseUnavailable, EndpointMappings.MaskDriverLicense("   ", pii));
     }
 
+    [Fact]
+    public void OperationalProjection_MasksLicense_AndRemovesBlindIndex()
+    {
+        var pii = EnabledPii();
+        var row = new Dictionary<string, object?>
+        {
+            ["driverCode"] = "DRV-001",
+            ["licenseNumber"] = pii.Encrypt("PRIVATE-7788"),
+            ["licenseNumberBidx"] = pii.BlindIndex("PRIVATE-7788"),
+        };
+
+        EndpointMappings.ProtectDriverOperationalRow(row, pii);
+
+        Assert.Equal("•••• 7788", row["licenseNumber"]);
+        Assert.False(row.ContainsKey("licenseNumberBidx"));
+    }
+
     private sealed class ForeignKeyProvider : IDataKeyProvider
     {
         private readonly byte[] _key = Enumerable.Range(100, 32).Select(i => (byte)i).ToArray();
@@ -91,6 +108,7 @@ public class DriverLicenseExposureContractTests
             "UpdateDriver",          // write path (mask round-trip guarded, asserted below)
             "DriversImportPreview",  // import write path
             "DriversImportCommit",   // import write path
+            "LoadDriverImportIdentities", // private duplicate-validation lookup; never serialized
             "BindDriver",            // write-path binder (encrypts)
             "DataSubjectExport",     // DSAR — the ONLY full-plaintext exit
             "DataSubjectErase",      // crypto-shred write
@@ -119,7 +137,7 @@ public class DriverLicenseExposureContractTests
 
         // Roster + export wire the transform hook to the mask helper.
         var drivers = Block(source, "private static Task<IResult> Drivers(", "private static async Task<IResult> Customers(");
-        Assert.Contains("transform: rows => MaskDriverLicenseIn(rows,", drivers, StringComparison.Ordinal);
+        Assert.Contains("transform: rows => ProtectDriverOperationalRows(rows,", drivers, StringComparison.Ordinal);
 
         var export = Block(source, "app.MapGet(\"/api/drivers/export\"", "app.MapGet(\"/api/jobs/export\"");
         Assert.Contains("transform: rows => MaskDriverLicenseIn(rows,", export, StringComparison.Ordinal);
@@ -131,7 +149,16 @@ public class DriverLicenseExposureContractTests
         // Detail renders masked and no longer decrypts to plaintext.
         var detail = Block(source, "private static async Task<IResult> DriverDetail(", "private static async Task<IResult> CustomerDetail(");
         Assert.Contains("MaskDriverLicense(record.GetValueOrDefault(\"licenseNumber\")", detail, StringComparison.Ordinal);
+        Assert.Contains("record.Remove(\"licenseNumberBidx\")", detail, StringComparison.Ordinal);
         Assert.DoesNotContain("ProjectDriverPii", detail, StringComparison.Ordinal);
+
+        var available = Block(source, "private static async Task<IResult> AvailableDrivers(", "private static async Task<IResult> AvailableVehicles(");
+        Assert.Contains("row.Remove(\"licenseNumber\")", available, StringComparison.Ordinal);
+        Assert.Contains("row.Remove(\"licenseNumberBidx\")", available, StringComparison.Ordinal);
+
+        var fleetHealth = Block(source, "private static async Task<IResult> FleetHealthDriverDetail(", "// ── Fleet Health scoring helpers");
+        Assert.Contains("drv.Remove(\"licenseNumber\")", fleetHealth, StringComparison.Ordinal);
+        Assert.Contains("drv.Remove(\"licenseNumberBidx\")", fleetHealth, StringComparison.Ordinal);
 
         // Driver self-view DTO omits the license — the query must not fetch it either.
         var driverMe = Block(source, "private static async Task<IResult> DriverMe(", "private static async Task<IResult> DriverAssignments(");
@@ -144,6 +171,21 @@ public class DriverLicenseExposureContractTests
         // Update path refuses to store a round-tripped mask as the real license.
         var update = Block(source, "private static async Task<IResult> UpdateDriver(", "private static async Task<IResult> CreateCustomer(");
         Assert.Contains("licenseRaw.StartsWith(\"••••\"", update, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void GenericCustomerDrawer_DeniesInternalSecurityFields()
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !Directory.Exists(Path.Combine(root.FullName, "frontend")))
+            root = root.Parent;
+        Assert.NotNull(root);
+        var source = File.ReadAllText(Path.Combine(root!.FullName, "frontend", "src", "pages", "EntityListPage.tsx"));
+
+        Assert.Contains("INTERNAL_RECORD_KEY", source, StringComparison.Ordinal);
+        Assert.Contains("bidx|blind.?index|password|secret|token|cipher", source, StringComparison.Ordinal);
+        Assert.Contains("customerVisibleRecordEntries(record).slice", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("Object.entries(record).slice", source, StringComparison.Ordinal);
     }
 
     [Fact]

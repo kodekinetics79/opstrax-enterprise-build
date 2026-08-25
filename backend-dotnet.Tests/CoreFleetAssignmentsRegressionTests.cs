@@ -82,6 +82,43 @@ public sealed class CoreFleetAssignmentsRegressionTests
         Assert.Contains("SET {reciprocalColumn}=NULL", change);
         Assert.Contains("SET {column}=NULL", change);
         Assert.Contains("AND branch_id=@branchId", change);
+        Assert.Contains("sourceBranchId != targetBranchId", change);
+        Assert.Contains("Driver and vehicle must belong to the same branch", change);
+        Assert.Contains("targetKeyPresent", change);
+        Assert.Contains("Assignment target must be a positive integer", change);
+        Assert.Contains("oldTargetId == targetId", change);
+    }
+
+    [Fact]
+    public void VehicleDetailUsesFleetMasterAssignmentAndReturnsEffectiveDatedHistory()
+    {
+        var source = Read("backend-dotnet", "Controllers", "EndpointMappings.cs");
+        var detail = Block(source, "private static async Task<IResult> VehicleDetail", "private static async Task<IResult> DriverDetail");
+
+        Assert.Contains("d.id=v.assigned_driver_id", detail);
+        Assert.Contains("assignmentHistory = await db.QueryAsync", detail);
+        Assert.Contains("va.assigned_at effective_from", detail);
+        Assert.Contains("va.released_at effective_to", detail);
+        Assert.DoesNotContain("current_dispatch", detail);
+    }
+
+    [Fact]
+    public void VehicleAssignmentUiRequiresExplicitSelectionAndShowsHistory()
+    {
+        var vehicles = Read("frontend", "src", "pages", "VehiclesPage.tsx");
+        var entityList = Read("frontend", "src", "pages", "EntityListPage.tsx");
+        var assignments = Read("frontend", "src", "pages", "FleetAssignmentsPage.tsx");
+
+        Assert.Contains("DriverAssignmentModal", vehicles);
+        Assert.Contains("Confirm assignment", vehicles);
+        Assert.DoesNotContain("Smart assign", vehicles);
+        Assert.Contains("Driver assignment history", vehicles);
+        Assert.Contains("Fleet assignment history", assignments);
+        Assert.Contains("/api/vehicle-assignments", assignments);
+        Assert.Contains("FleetMasterAssignmentModal", entityList);
+        Assert.Contains("Confirm assignment", entityList);
+        Assert.Contains("listPaged({ limit: 2000 })", entityList);
+        Assert.Contains("Vehicle Assignment History", entityList);
     }
 
     [Fact]

@@ -556,8 +556,69 @@ WHERE a.company_id=@companyId" + BranchScope(http, "a.") + " ORDER BY a.last_see
         return Results.File(System.Text.Encoding.UTF8.GetBytes(csv), "text/csv", "assets-import-template.csv");
     }
 
-    private static async Task<(AssetRequest? Request, List<string> Errors)> ValidateAssetImportRow(
-        HttpContext http, Dictionary<string, object?> row, HashSet<string> fileTags, Database db, CancellationToken ct)
+    private sealed record AssetImportLookups(
+        IReadOnlyDictionary<string, long> AssetTypeIds,
+        IReadOnlyDictionary<string, long> ExistingAssetIds);
+
+    private static async Task<AssetImportLookups> LoadAssetImportLookups(
+        HttpContext http, IReadOnlyList<Dictionary<string, object?>> rows, Database db, CancellationToken ct)
+    {
+        var companyId = Cid(http);
+        var branchId = Bid(http);
+        var typeCodes = rows
+            .Select(row => AssetImportStr(row, "assetTypeCode"))
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value!.ToLowerInvariant())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var assetTags = rows
+            .Select(row => AssetImportStr(row, "assetTag"))
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value!.ToLowerInvariant())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        var typeRows = typeCodes.Length == 0
+            ? []
+            : await db.QueryAsync(@"
+SELECT id, lower(btrim(code)) normalized_code
+FROM fleet_tms_asset_types
+WHERE company_id=@companyId
+  AND lower(btrim(code)) = ANY(@codes)" + SharedConfigScope(http),
+                c =>
+                {
+                    c.Parameters.AddWithValue("@companyId", companyId);
+                    c.Parameters.AddWithValue("@codes", typeCodes);
+                    BindBranch(c, http);
+                }, ct);
+        var existingRows = assetTags.Length == 0
+            ? []
+            : await db.QueryAsync(@"
+SELECT id, lower(btrim(asset_tag)) normalized_tag
+FROM fleet_tms_assets
+WHERE company_id=@companyId
+  AND branch_id IS NOT DISTINCT FROM @branchId
+  AND lower(btrim(asset_tag)) = ANY(@tags)",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@companyId", companyId);
+                    c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+                    c.Parameters.AddWithValue("@tags", assetTags);
+                }, ct);
+
+        return new AssetImportLookups(
+            typeRows.ToDictionary(
+                row => row["normalizedCode"]?.ToString() ?? "",
+                row => Convert.ToInt64(row["id"]),
+                StringComparer.OrdinalIgnoreCase),
+            existingRows.ToDictionary(
+                row => row["normalizedTag"]?.ToString() ?? "",
+                row => Convert.ToInt64(row["id"]),
+                StringComparer.OrdinalIgnoreCase));
+    }
+
+    private static (AssetRequest? Request, List<string> Errors) ValidateAssetImportRow(
+        Dictionary<string, object?> row, HashSet<string> fileTags, IReadOnlyDictionary<string, long> assetTypeIds)
     {
         var errors = new List<string>();
         var tag = AssetImportStr(row, "assetTag");
@@ -568,14 +629,8 @@ WHERE a.company_id=@companyId" + BranchScope(http, "a.") + " ORDER BY a.last_see
         if (name is null) errors.Add("name is required.");
         if (typeCode is null) errors.Add("assetTypeCode is required.");
         long typeId = 0;
-        if (typeCode is not null)
-        {
-            typeId = await db.ScalarLongAsync(
-                "SELECT COALESCE(MAX(id),0) FROM fleet_tms_asset_types WHERE company_id=@companyId AND lower(code)=lower(@code)" +
-                (Bid(http) is null ? "" : " AND (branch_id=@branchId OR branch_id IS NULL)"),
-                c => { c.Parameters.AddWithValue("@companyId", Cid(http)); c.Parameters.AddWithValue("@code", typeCode); BindBranch(c, http); }, ct);
-            if (typeId == 0) errors.Add($"Asset type code '{typeCode}' does not exist in this branch scope. Create it first.");
-        }
+        if (typeCode is not null && !assetTypeIds.TryGetValue(typeCode, out typeId))
+            errors.Add($"Asset type code '{typeCode}' does not exist in this branch scope. Create it first.");
         decimal? quantity = null;
         var quantityRaw = AssetImportStr(row, "quantity");
         if (quantityRaw is not null)
@@ -602,15 +657,16 @@ WHERE a.company_id=@companyId" + BranchScope(http, "a.") + " ORDER BY a.last_see
     {
         var rows = AssetImportRows(body);
         if (rows.Count == 0) return Bad("No rows to import. Send { rows: [...] } parsed from the CSV.");
+        var lookups = await LoadAssetImportLookups(http, rows, db, ct);
         var results = new List<object>();
         var creates = 0; var updates = 0; var invalid = 0;
         var fileTags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         for (var i = 0; i < rows.Count; i++)
         {
-            var (request, errors) = await ValidateAssetImportRow(http, rows[i], fileTags, db, ct);
-            var existingId = errors.Count == 0 ? await db.ScalarLongAsync(
-                "SELECT COALESCE(MAX(id),0) FROM fleet_tms_assets WHERE company_id=@companyId AND branch_id IS NOT DISTINCT FROM @branchId AND lower(asset_tag)=lower(@tag)",
-                c => { c.Parameters.AddWithValue("@companyId", Cid(http)); c.Parameters.AddWithValue("@branchId", (object?)Bid(http) ?? DBNull.Value); c.Parameters.AddWithValue("@tag", request!.AssetTag!); }, ct) : 0;
+            var (request, errors) = ValidateAssetImportRow(rows[i], fileTags, lookups.AssetTypeIds);
+            var existingId = errors.Count == 0 && lookups.ExistingAssetIds.TryGetValue(request!.AssetTag!, out var cachedId)
+                ? cachedId
+                : 0;
             var action = errors.Count > 0 ? "error" : existingId > 0 ? "update" : "create";
             if (action == "create") creates++; else if (action == "update") updates++; else invalid++;
             results.Add(new { rowNumber = i + 1, key = request?.AssetTag ?? AssetImportStr(rows[i], "assetTag") ?? "", action, errors });
@@ -622,16 +678,17 @@ WHERE a.company_id=@companyId" + BranchScope(http, "a.") + " ORDER BY a.last_see
     {
         var rows = AssetImportRows(body);
         if (rows.Count == 0) return Bad("No rows to import. Send { rows: [...] } parsed from the CSV.");
+        var lookups = await LoadAssetImportLookups(http, rows, db, ct);
         var companyId = Cid(http); var branchId = Bid(http);
         var created = 0; var updated = 0; var skipped = new List<object>();
         var fileTags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         for (var i = 0; i < rows.Count; i++)
         {
-            var (request, errors) = await ValidateAssetImportRow(http, rows[i], fileTags, db, ct);
+            var (request, errors) = ValidateAssetImportRow(rows[i], fileTags, lookups.AssetTypeIds);
             var tag = request?.AssetTag ?? AssetImportStr(rows[i], "assetTag") ?? "";
-            var existingId = errors.Count == 0 ? await db.ScalarLongAsync(
-                "SELECT COALESCE(MAX(id),0) FROM fleet_tms_assets WHERE company_id=@companyId AND branch_id IS NOT DISTINCT FROM @branchId AND lower(asset_tag)=lower(@tag)",
-                c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); c.Parameters.AddWithValue("@tag", tag); }, ct) : 0;
+            var existingId = errors.Count == 0 && lookups.ExistingAssetIds.TryGetValue(tag, out var cachedId)
+                ? cachedId
+                : 0;
             if (errors.Count > 0) { skipped.Add(new { rowNumber = i + 1, key = tag, errors }); continue; }
             try
             {

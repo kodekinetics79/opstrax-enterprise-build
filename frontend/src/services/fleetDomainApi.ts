@@ -53,16 +53,16 @@ export function getDashboardSummary() {
   return apiRecord("/api/command-center/summary");
 }
 
-export function getVehicles() {
-  return apiList("/api/vehicles");
+export function getVehicles(lifecycle: "active" | "archived" = "active") {
+  return apiList(`/api/vehicles?lifecycle=${lifecycle}`);
 }
 
-export function getVehicleById(id: string | number) {
+export function getVehicleById(id: string | number, lifecycle: "active" | "archived" = "active") {
   // Collections here mirror exactly what the /api/vehicles/{id} endpoint returns
   // (ControlTowerVehicleDetail): live active jobs, safety + dashcam video events,
   // upcoming maintenance, and the recent GPS replay trail. Anything the backend
   // legitimately omits defaults to [] so the UI shows an honest empty state.
-  return apiRecord(`/api/vehicles/${id}`).then((detail) => ({
+  return apiRecord(`/api/vehicles/${id}?lifecycle=${lifecycle}`).then((detail) => ({
     ...detail,
     record: (detail.record as AnyRecord) ?? detail,
     activeJobs: asRows(detail.activeJobs),
@@ -73,16 +73,17 @@ export function getVehicleById(id: string | number) {
     videoEvents: asRows(detail.videoEvents),
     maintenance: asRows(detail.maintenance),
     replayTrail: asRows(detail.replayTrail),
+    assignmentHistory: asRows(detail.assignmentHistory),
     recommendations: asRows(detail.recommendations),
   }));
 }
 
-export function getDrivers() {
-  return apiList("/api/drivers");
+export function getDrivers(lifecycle: "active" | "archived" = "active") {
+  return apiList(`/api/drivers?lifecycle=${lifecycle}`);
 }
 
-export function getDriverById(id: string | number) {
-  return apiRecord(`/api/drivers/${id}`).then((detail) => ({
+export function getDriverById(id: string | number, lifecycle: "active" | "archived" = "active") {
+  return apiRecord(`/api/drivers/${id}?lifecycle=${lifecycle}`).then((detail) => ({
     ...detail,
     record: (detail.record as AnyRecord) ?? detail,
     certifications: asRows(detail.certifications),
@@ -91,6 +92,7 @@ export function getDriverById(id: string | number) {
     inspections: asRows(detail.inspections),
     safetyEvents: asRows(detail.safetyEvents),
     timeline: asRows(detail.timeline),
+    assignmentHistory: asRows(detail.assignmentHistory),
     auditTrail: asRows(detail.auditTrail),
     recommendations: asRows(detail.recommendations),
   }));

@@ -188,7 +188,11 @@ public static partial class EndpointMappings
         app.MapGet("/api/vehicles/{id:long}", VehicleDetail);
         app.MapPost("/api/vehicles", CreateVehicle);
         app.MapPut("/api/vehicles/{id:long}", UpdateVehicle);
-        app.MapDelete("/api/vehicles/{id:long}", SoftDeleteWithPermission("vehicles", "vehicle.deleted", "fleet:manage"));
+        app.MapPost("/api/vehicles/{id:long}/archive", FleetMasterLifecycle("vehicles", archive: true));
+        app.MapPost("/api/vehicles/{id:long}/reactivate", FleetMasterLifecycle("vehicles", archive: false));
+        // Compatibility: DELETE is a reversible archive and must use the same dependency
+        // checks/history release as the explicit customer-facing archive route.
+        app.MapDelete("/api/vehicles/{id:long}", FleetMasterLifecycle("vehicles", archive: true));
         app.MapGet("/api/vehicles/{id:long}/timeline", Timeline("Vehicle", "vehicles:view"));
         app.MapGet("/api/vehicles/{id:long}/recommendations", Recommendations("vehicles", "vehicles:view"));
         app.MapPost("/api/vehicles/{id:long}/assign-driver", ChangeEntityStatus("vehicles", "assigned_driver_id", "vehicle.driver.assigned", "fleet:manage"));
@@ -323,7 +327,9 @@ public static partial class EndpointMappings
         app.MapGet("/api/drivers/{id:long}", DriverDetail);
         app.MapPost("/api/drivers", CreateDriver);
         app.MapPut("/api/drivers/{id:long}", UpdateDriver);
-        app.MapDelete("/api/drivers/{id:long}", SoftDeleteWithPermission("drivers", "driver.deleted", "fleet:manage"));
+        app.MapPost("/api/drivers/{id:long}/archive", FleetMasterLifecycle("drivers", archive: true));
+        app.MapPost("/api/drivers/{id:long}/reactivate", FleetMasterLifecycle("drivers", archive: false));
+        app.MapDelete("/api/drivers/{id:long}", FleetMasterLifecycle("drivers", archive: true));
         app.MapGet("/api/drivers/{id:long}/timeline", Timeline("Driver", "drivers:view"));
         app.MapGet("/api/drivers/{id:long}/recommendations", Recommendations("drivers", "drivers:view"));
         app.MapPost("/api/drivers/{id:long}/assign-vehicle", ChangeEntityStatus("drivers", "assigned_vehicle_id", "driver.vehicle.assigned", "fleet:manage"));
@@ -4607,9 +4613,14 @@ public static partial class EndpointMappings
     private static Task<IResult> Vehicles(HttpContext http, Database db, CancellationToken ct)
     {
         if (RequirePermission(http, "vehicles:view") is { } denied) return Task.FromResult(denied);
+        var lifecycle = http.Request.Query["lifecycle"].FirstOrDefault()?.Trim().ToLowerInvariant() ?? "active";
+        if (lifecycle is not ("active" or "archived"))
+            return Task.FromResult(Results.BadRequest(ApiResponse<object>.Fail("Invalid lifecycle filter", ["Use active or archived."])));
         var (branchClause, branchId) = StrictBranchFilter(http, "v");
+        var lifecycleClause = lifecycle == "archived" ? " AND v.deleted_at IS NOT NULL" : " AND v.deleted_at IS NULL";
         return PagedRows(http, db,
-            @"SELECT v.*, d.full_name assigned_driver,
+            @"SELECT v.*, CASE WHEN v.deleted_at IS NULL THEN 'Active' ELSE 'Archived' END lifecycle_status,
+                     d.full_name assigned_driver,
                      current_device.device_id current_device_id,current_device.last_seen_at device_last_seen_at,
                      current_device.device_state current_device_status,
                      current_camera.device_id current_camera_id,current_camera.last_seen_at camera_last_seen_at,
@@ -4643,7 +4654,7 @@ public static partial class EndpointMappings
                   AND i.status IN ('Installed','Verified') AND i.device_role='Dashcam'
                 ORDER BY i.is_primary DESC,i.effective_from DESC,i.id DESC LIMIT 1
               ) current_camera ON TRUE
-              WHERE v.deleted_at IS NULL AND v.company_id=@cid" + branchClause,
+              WHERE v.company_id=@cid" + lifecycleClause + branchClause,
             "v.vehicle_code",
             c => { c.Parameters.AddWithValue("@cid", GetCompanyId(http)); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct: ct,
             searchColumns: new[] { "v.vehicle_code", "v.make", "v.model", "v.vin", "v.plate_number", "v.status", "d.full_name" });
@@ -4652,9 +4663,14 @@ public static partial class EndpointMappings
     private static Task<IResult> Drivers(HttpContext http, Database db, CancellationToken ct)
     {
         if (RequirePermission(http, "drivers:view") is { } denied) return Task.FromResult(denied);
+        var lifecycle = http.Request.Query["lifecycle"].FirstOrDefault()?.Trim().ToLowerInvariant() ?? "active";
+        if (lifecycle is not ("active" or "archived"))
+            return Task.FromResult(Results.BadRequest(ApiResponse<object>.Fail("Invalid lifecycle filter", ["Use active or archived."])));
         var (branchClause, branchId) = StrictBranchFilter(http, "d");
+        var lifecycleClause = lifecycle == "archived" ? " AND d.deleted_at IS NOT NULL" : " AND d.deleted_at IS NULL";
         return PagedRows(http, db,
-            @"SELECT d.*, v.vehicle_code assigned_vehicle,
+            @"SELECT d.*, CASE WHEN d.deleted_at IS NULL THEN 'Active' ELSE 'Archived' END lifecycle_status,
+                     v.vehicle_code assigned_vehicle,
                      ROUND((d.readiness_score + d.safety_score + d.compliance_score + (100 - d.risk_score)) / 4, 1) driver_readiness_score,
                      CASE WHEN d.risk_score >= 70 OR d.status='Delayed' THEN 'High'
                           WHEN d.risk_score >= 40 OR d.compliance_score < 85 THEN 'Medium'
@@ -4673,12 +4689,12 @@ public static partial class EndpointMappings
               FROM drivers d
               LEFT JOIN vehicles v ON v.id=d.assigned_vehicle_id
               LEFT JOIN users pu ON pu.id=d.user_id AND pu.company_id=d.company_id
-              WHERE d.deleted_at IS NULL AND d.company_id=@cid" + branchClause,
+              WHERE d.company_id=@cid" + lifecycleClause + branchClause,
             "d.full_name",
             c => { c.Parameters.AddWithValue("@cid", GetCompanyId(http)); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct: ct,
             searchColumns: new[] { "d.full_name", "d.driver_code", "d.license_number", "d.email", "d.phone", "d.status", "v.vehicle_code" },
             // DEF-015: the roster ships d.* — render the license masked (last four only).
-            transform: rows => MaskDriverLicenseIn(rows, http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>()));
+            transform: rows => ProtectDriverOperationalRows(rows, http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>()));
     }
 
     // Customer book. Was the ONLY customer read with no permission guard — its siblings
@@ -4755,6 +4771,7 @@ public static partial class EndpointMappings
         var row = await db.QuerySingleAsync(
             @"SELECT COUNT(*) total,
                      SUM(CASE WHEN status IN ('Active','Available','On Route','At Stop','Idle') THEN 1 ELSE 0 END) active,
+                     SUM(CASE WHEN status='Available' THEN 1 ELSE 0 END) available,
                      SUM(CASE WHEN status IN ('Delayed','Maintenance') OR risk_score >= 55 THEN 1 ELSE 0 END) at_risk,
                      ROUND(AVG(readiness_score) FILTER (
                          WHERE LOWER(COALESCE(device_status,'')) NOT IN ('','unknown','unavailable')
@@ -4902,7 +4919,7 @@ public static partial class EndpointMappings
               LEFT JOIN vehicles v ON v.id=va.vehicle_id AND v.company_id=va.company_id
               LEFT JOIN drivers d ON d.id=va.driver_id AND d.company_id=va.company_id
               WHERE va.company_id=@cid" + branchClause + @"
-              ORDER BY va.assigned_at DESC LIMIT 50",
+              ORDER BY va.assigned_at DESC",
             c =>
             {
                 c.Parameters.AddWithValue("@cid", companyId);
@@ -5056,22 +5073,21 @@ public static partial class EndpointMappings
     private static async Task<IResult> VehicleDetail(HttpContext http, long id, Database db, CancellationToken ct)
     {
         if (RequirePermission(http, "vehicles:view") is { } denied) return denied;
+        var lifecycle = http.Request.Query["lifecycle"].FirstOrDefault()?.Trim().ToLowerInvariant() ?? "active";
+        if (lifecycle is not ("active" or "archived"))
+            return Results.BadRequest(ApiResponse<object>.Fail("Invalid lifecycle filter", ["Use active or archived."]));
         var (branchClause, branchId) = StrictBranchFilter(http, "v");
+        var lifecycleClause = lifecycle == "archived" ? " AND v.deleted_at IS NOT NULL" : " AND v.deleted_at IS NULL";
         var record = await db.QuerySingleAsync(
-            @"SELECT v.*, d.full_name assigned_driver,
+            @"SELECT v.*, CASE WHEN v.deleted_at IS NULL THEN 'Active' ELSE 'Archived' END lifecycle_status,
+                     d.full_name assigned_driver,
                      current_device.device_id current_device_id,current_device.last_seen_at device_last_seen_at,
                      current_device.device_state current_device_status,
                      current_camera.device_id current_camera_id,current_camera.last_seen_at camera_last_seen_at,
                      current_camera.device_state current_camera_status,
                      ROUND((v.readiness_score + v.data_quality_score + (100 - v.risk_score)) / 3, 1) fleet_readiness_score
               FROM vehicles v
-              LEFT JOIN LATERAL (
-                SELECT da.driver_id FROM dispatch_assignments da
-                WHERE da.company_id=v.company_id AND da.vehicle_id=v.id
-                  AND da.assignment_status NOT IN ('delivered','cancelled')
-                ORDER BY da.assigned_at DESC,da.id DESC LIMIT 1
-              ) current_dispatch ON TRUE
-              LEFT JOIN drivers d ON d.id=current_dispatch.driver_id AND d.company_id=v.company_id
+              LEFT JOIN drivers d ON d.id=v.assigned_driver_id AND d.company_id=v.company_id
               LEFT JOIN LATERAL (
                 SELECT i.device_id,e.last_seen_at,e.device_state
                 FROM device_installations i JOIN eld_devices e ON e.id=i.device_id AND e.company_id=i.company_id
@@ -5086,7 +5102,7 @@ public static partial class EndpointMappings
                   AND i.status IN ('Installed','Verified') AND i.device_role='Dashcam'
                 ORDER BY i.is_primary DESC,i.effective_from DESC,i.id DESC LIMIT 1
               ) current_camera ON TRUE
-              WHERE v.id=@id AND v.deleted_at IS NULL AND v.company_id=@cid" + branchClause,
+              WHERE v.id=@id AND v.company_id=@cid" + lifecycleClause + branchClause,
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct);
         if (record is null) return Results.NotFound(ApiResponse<object>.Fail("Vehicle not found"));
         return Results.Ok(ApiResponse<object>.Ok(new
@@ -5114,6 +5130,15 @@ public static partial class EndpointMappings
                   WHERE i.company_id=@cid AND i.vehicle_id=@id
                   ORDER BY i.effective_from DESC,i.id DESC LIMIT 100",
                 c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct),
+            assignmentHistory = await db.QueryAsync(
+                @"SELECT va.id,va.vehicle_id,va.driver_id,va.assignment_type,va.status,
+                         va.assigned_at effective_from,va.released_at effective_to,
+                         d.driver_code,d.full_name driver_name
+                  FROM vehicle_assignments va
+                  LEFT JOIN drivers d ON d.id=va.driver_id AND d.company_id=va.company_id
+                  WHERE va.company_id=@cid AND va.vehicle_id=@id
+                  ORDER BY va.assigned_at DESC,va.id DESC LIMIT 100",
+                c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct),
             compliance = await db.QueryAsync("SELECT * FROM compliance_documents WHERE related_entity_type='Vehicle' AND related_entity_id=@id ORDER BY expiry_date LIMIT 8", c => c.Parameters.AddWithValue("@id", id), ct),
             safetyEvents = await db.QueryAsync("SELECT * FROM safety_events WHERE vehicle_id=@id ORDER BY event_time DESC LIMIT 8", c => c.Parameters.AddWithValue("@id", id), ct),
             trips = await db.QueryAsync("SELECT * FROM trips WHERE vehicle_id=@id ORDER BY started_at DESC LIMIT 8", c => c.Parameters.AddWithValue("@id", id), ct),
@@ -5125,17 +5150,23 @@ public static partial class EndpointMappings
     private static async Task<IResult> DriverDetail(HttpContext http, long id, Database db, CancellationToken ct)
     {
         if (RequirePermission(http, "drivers:view") is { } denied) return denied;
+        var lifecycle = http.Request.Query["lifecycle"].FirstOrDefault()?.Trim().ToLowerInvariant() ?? "active";
+        if (lifecycle is not ("active" or "archived"))
+            return Results.BadRequest(ApiResponse<object>.Fail("Invalid lifecycle filter", ["Use active or archived."]));
         var (branchClause, branchId) = StrictBranchFilter(http, "d");
+        var lifecycleClause = lifecycle == "archived" ? " AND d.deleted_at IS NOT NULL" : " AND d.deleted_at IS NULL";
         var record = await db.QuerySingleAsync(
-            @"SELECT d.*, v.vehicle_code assigned_vehicle,
+            @"SELECT d.*, CASE WHEN d.deleted_at IS NULL THEN 'Active' ELSE 'Archived' END lifecycle_status,
+                     v.vehicle_code assigned_vehicle,
                      ROUND((d.readiness_score + d.safety_score + d.compliance_score + (100 - d.risk_score)) / 4, 1) driver_readiness_score
-              FROM drivers d LEFT JOIN vehicles v ON v.id=d.assigned_vehicle_id WHERE d.id=@id AND d.deleted_at IS NULL AND d.company_id=@cid" + branchClause,
+              FROM drivers d LEFT JOIN vehicles v ON v.id=d.assigned_vehicle_id WHERE d.id=@id AND d.company_id=@cid" + lifecycleClause + branchClause,
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct);
         if (record is null) return Results.NotFound(ApiResponse<object>.Fail("Driver not found"));
         // DEF-015: the detail view renders the license masked (last four). Full plaintext
         // is available ONLY through the audited DSAR export (DataSubjectExport).
         record["licenseNumber"] = MaskDriverLicense(record.GetValueOrDefault("licenseNumber"),
             http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>());
+        record.Remove("licenseNumberBidx");
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             record,
@@ -5157,6 +5188,15 @@ public static partial class EndpointMappings
             hos = await db.QueryAsync("SELECT * FROM hos_logs WHERE driver_id=@id ORDER BY log_date DESC LIMIT 8", c => c.Parameters.AddWithValue("@id", id), ct),
             inspections = await db.QueryAsync("SELECT * FROM inspections WHERE driver_id=@id ORDER BY created_at DESC LIMIT 8", c => c.Parameters.AddWithValue("@id", id), ct),
             safetyEvents = await db.QueryAsync("SELECT * FROM safety_events WHERE driver_id=@id ORDER BY event_time DESC LIMIT 8", c => c.Parameters.AddWithValue("@id", id), ct),
+            assignmentHistory = await db.QueryAsync(
+                @"SELECT va.id,va.vehicle_id,va.driver_id,va.assignment_type,va.status,
+                         va.assigned_at effective_from,va.released_at effective_to,
+                         v.vehicle_code
+                  FROM vehicle_assignments va
+                  LEFT JOIN vehicles v ON v.id=va.vehicle_id AND v.company_id=va.company_id
+                  WHERE va.company_id=@cid AND va.driver_id=@id
+                  ORDER BY va.assigned_at DESC,va.id DESC LIMIT 100",
+                c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct),
             auditTrail = await AuditTrail(db, "Driver", id, GetCompanyId(http), ct)
         }));
     }
@@ -7287,6 +7327,13 @@ public static partial class EndpointMappings
                                   AND da2.assignment_status NOT IN ('delivered','cancelled'))" + branchClause + @"
               ORDER BY match_readiness DESC",
             c => { c.Parameters.AddWithValue("@cid", companyId); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct);
+        // Dispatch eligibility does not need licence material at all. Omit both the
+        // encrypted display value and its equality-search index from this projection.
+        foreach (var row in rows)
+        {
+            row.Remove("licenseNumber");
+            row.Remove("licenseNumberBidx");
+        }
         return Results.Ok(ApiResponse<object>.Ok(rows));
     }
 
@@ -9662,10 +9709,15 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             // unique indexes this makes concurrent reciprocal assignments deterministic.
             await db.ExecuteAsync("SELECT pg_advisory_xact_lock(@companyId)",
                 c => c.Parameters.AddWithValue("@companyId", companyId), ct);
+            var targetKeyPresent = body.ContainsKey("targetId") || body.ContainsKey("driverId") || body.ContainsKey("vehicleId");
+            if (!targetKeyPresent)
+                return Results.BadRequest(ApiResponse<object>.Fail("An explicit driverId, vehicleId, or null targetId is required."));
             var rawTarget = new[] { Get(body, "targetId"), Get(body, "driverId"), Get(body, "vehicleId") }
                 .FirstOrDefault(value => value is not null and not DBNull && !string.IsNullOrWhiteSpace(value.ToString()));
             long parsedTarget = 0;
             var hasTarget = rawTarget is not null and not DBNull && long.TryParse(rawTarget.ToString(), out parsedTarget) && parsedTarget > 0;
+            if (rawTarget is not null and not DBNull && !hasTarget)
+                return Results.BadRequest(ApiResponse<object>.Fail("Assignment target must be a positive integer or explicit null for unassignment."));
             var targetId = hasTarget ? parsedTarget : (long?)null;
             var source = await db.QuerySingleAsync(
                 $"SELECT id, branch_id, {column} current_target_id FROM {table} WHERE id=@id AND company_id=@companyId AND deleted_at IS NULL" + (branchId is null ? "" : " AND branch_id=@branchId") + " FOR UPDATE",
@@ -9683,6 +9735,11 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 if (target is null)
                     return Results.BadRequest(ApiResponse<object>.Fail($"Assigned {targetTable.TrimEnd('s')} was not found in this branch."));
 
+                var sourceBranchId = source["branchId"] is null or DBNull ? (long?)null : Convert.ToInt64(source["branchId"]);
+                var targetBranchId = target["branchId"] is null or DBNull ? (long?)null : Convert.ToInt64(target["branchId"]);
+                if (sourceBranchId != targetBranchId)
+                    return Results.UnprocessableEntity(ApiResponse<object>.Fail("Driver and vehicle must belong to the same branch."));
+
                 var candidateVehicleId = table == "vehicles" ? id : targetId.Value;
                 var candidateDriverId = table == "drivers" ? id : targetId.Value;
                 var eligibility = await CheckDispatchEligibilityAsync(companyId, candidateVehicleId, candidateDriverId, db, ct);
@@ -9693,6 +9750,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
             var oldTargetId = source["currentTargetId"] is { } oldTarget && oldTarget is not DBNull ? Convert.ToInt64(oldTarget) : (long?)null;
             var targetOldSourceId = target?.GetValueOrDefault("reciprocalId") is { } oldSource && oldSource is not DBNull ? Convert.ToInt64(oldSource) : (long?)null;
+            if (oldTargetId == targetId && (targetId is null || targetOldSourceId == id))
+                return Results.Ok(ApiResponse<object>.Ok(new { id }, "Assignment already current"));
 
             // Clear both sides of any prior pair before writing the new symmetric link. All
             // request DB calls share the request transaction, so a database failure rolls the
@@ -9770,6 +9829,151 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             await audit.LogAsync(http, action, table, id, ct: ct);
             return Results.Ok(ApiResponse<object>.Ok(new { id }, "Deleted"));
         };
+
+    private static Func<HttpContext, long, Database, AuditService, CancellationToken, Task<IResult>> FleetMasterLifecycle(
+        string table, bool archive)
+        => async (http, id, db, audit, ct) =>
+        {
+            if (RequirePermission(http, "fleet:manage") is { } denied) return denied;
+            var companyId = GetCompanyId(http);
+            var branchId = GetBranchId(http);
+            var entityName = table == "vehicles" ? "Vehicle" : "Driver";
+            var currentColumn = table == "vehicles" ? "assigned_driver_id" : "assigned_vehicle_id";
+            var expectedLifecycle = archive ? "deleted_at IS NULL" : "deleted_at IS NOT NULL";
+
+            try
+            {
+                return await db.RunInTenantTransactionAsync(companyId, async () =>
+                {
+                    await db.ExecuteAsync("SELECT pg_advisory_xact_lock(@companyId)",
+                        c => c.Parameters.AddWithValue("@companyId", companyId), ct);
+
+                    var record = await db.QuerySingleAsync(
+                        $"SELECT id,branch_id,status,{currentColumn} current_target_id FROM {table} " +
+                        $"WHERE id=@id AND company_id=@companyId AND {expectedLifecycle}" +
+                        (branchId is null ? "" : " AND branch_id=@branchId") + " FOR UPDATE",
+                        c =>
+                        {
+                            c.Parameters.AddWithValue("@id", id);
+                            c.Parameters.AddWithValue("@companyId", companyId);
+                            if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId.Value);
+                        }, ct);
+                    if (record is null)
+                        return Results.NotFound(ApiResponse<object>.Fail(
+                            archive ? $"{entityName} not found or already archived" : $"Archived {entityName.ToLowerInvariant()} not found"));
+
+                    if (archive)
+                    {
+                        var blockers = await FleetMasterArchiveBlockers(db, table, id, companyId, ct);
+                        if (blockers.Count > 0)
+                            return Results.Conflict(ApiResponse<object>.Fail(
+                                $"{entityName} cannot be archived while operational work is active.", blockers.ToArray()));
+
+                        var targetId = record["currentTargetId"] is { } rawTarget && rawTarget is not DBNull
+                            ? Convert.ToInt64(rawTarget)
+                            : (long?)null;
+                        if (targetId is not null)
+                        {
+                            var targetTable = table == "vehicles" ? "drivers" : "vehicles";
+                            var reciprocalColumn = table == "vehicles" ? "assigned_vehicle_id" : "assigned_driver_id";
+                            await db.ExecuteAsync(
+                                $"UPDATE {targetTable} SET {reciprocalColumn}=NULL " +
+                                $"WHERE id=@targetId AND company_id=@companyId AND {reciprocalColumn}=@id",
+                                c =>
+                                {
+                                    c.Parameters.AddWithValue("@targetId", targetId.Value);
+                                    c.Parameters.AddWithValue("@companyId", companyId);
+                                    c.Parameters.AddWithValue("@id", id);
+                                }, ct);
+                        }
+
+                        await db.ExecuteAsync(
+                            "UPDATE vehicle_assignments SET status='Released',released_at=COALESCE(released_at,NOW()) " +
+                            $"WHERE company_id=@companyId AND status='Active' AND {(table == "vehicles" ? "vehicle_id" : "driver_id")}=@id",
+                            c =>
+                            {
+                                c.Parameters.AddWithValue("@companyId", companyId);
+                                c.Parameters.AddWithValue("@id", id);
+                            }, ct);
+
+                        await db.ExecuteAsync(
+                            $"UPDATE {table} SET {currentColumn}=NULL,deleted_at=NOW() WHERE id=@id AND company_id=@companyId",
+                            c =>
+                            {
+                                c.Parameters.AddWithValue("@id", id);
+                                c.Parameters.AddWithValue("@companyId", companyId);
+                            }, ct);
+                    }
+                    else
+                    {
+                        // The dedicated lifecycle preserves status. Older generic soft-deletes
+                        // destroyed it, so restore those legacy rows to the conservative neutral
+                        // state rather than reviving them as Deleted/Archived.
+                        await db.ExecuteAsync(
+                            $"UPDATE {table} SET deleted_at=NULL,status=CASE WHEN status IN ('Deleted','Archived') THEN 'Available' ELSE status END " +
+                            "WHERE id=@id AND company_id=@companyId",
+                            c =>
+                            {
+                                c.Parameters.AddWithValue("@id", id);
+                                c.Parameters.AddWithValue("@companyId", companyId);
+                            }, ct);
+                    }
+
+                    var eventName = $"{entityName.ToLowerInvariant()}.{(archive ? "archived" : "reactivated")}";
+                    var title = $"{entityName} {(archive ? "archived" : "reactivated")}";
+                    await AddTimeline(db, companyId, entityName, id, eventName, title, ct);
+                    await audit.LogAsync(http, eventName, entityName, id, ct: ct);
+                    return Results.Ok(ApiResponse<object>.Ok(new
+                    {
+                        id,
+                        lifecycleStatus = archive ? "Archived" : "Active"
+                    }, title));
+                }, ct);
+            }
+            catch (PostgresException ex) when (!archive &&
+                (table == "vehicles" ? IsVehicleIdentityViolation(ex) : IsDriverIdentityViolation(ex)))
+            {
+                return Results.Conflict(ApiResponse<object>.Fail(
+                    $"{entityName} cannot be reactivated because an active record now uses one of its governed identities."));
+            }
+        };
+
+    private static async Task<List<string>> FleetMasterArchiveBlockers(
+        Database db, string table, long id, long companyId, CancellationToken ct)
+    {
+        var blockers = new List<string>();
+        var idColumn = table == "vehicles" ? "vehicle_id" : "driver_id";
+
+        async Task AddIfAny(string label, string sql)
+        {
+            var count = await db.ScalarLongAsync(sql,
+                c =>
+                {
+                    c.Parameters.AddWithValue("@companyId", companyId);
+                    c.Parameters.AddWithValue("@id", id);
+                }, ct);
+            if (count > 0) blockers.Add($"{count} {label}");
+        }
+
+        await AddIfAny("active dispatch assignment(s)",
+            $"SELECT COUNT(*) FROM dispatch_assignments WHERE company_id=@companyId AND {idColumn}=@id " +
+            "AND LOWER(COALESCE(assignment_status,status,'assigned')) NOT IN ('delivered','cancelled')");
+        await AddIfAny("active job(s)",
+            $"SELECT COUNT(*) FROM jobs WHERE company_id=@companyId AND {idColumn.Replace("vehicle_id", "assigned_vehicle_id").Replace("driver_id", "assigned_driver_id")}=@id " +
+            "AND deleted_at IS NULL AND LOWER(COALESCE(status,'')) NOT IN ('completed','delivered','cancelled','deleted')");
+        await AddIfAny("active route(s)",
+            $"SELECT COUNT(*) FROM routes WHERE company_id=@companyId AND {idColumn.Replace("vehicle_id", "assigned_vehicle_id").Replace("driver_id", "assigned_driver_id")}=@id " +
+            "AND deleted_at IS NULL AND LOWER(COALESCE(status,'')) NOT IN ('completed','cancelled','archived')");
+        await AddIfAny("active trip(s)",
+            $"SELECT COUNT(*) FROM trips WHERE company_id=@companyId AND {idColumn}=@id " +
+            "AND LOWER(COALESCE(status,'')) NOT IN ('completed','cancelled')");
+        if (table == "vehicles")
+            await AddIfAny("active device installation(s)",
+                "SELECT COUNT(*) FROM device_installations WHERE company_id=@companyId AND vehicle_id=@id " +
+                "AND effective_to IS NULL AND status IN ('Installed','Verified')");
+
+        return blockers;
+    }
 
     private static Func<HttpContext, long, Database, AuditService, CancellationToken, Task<IResult>> SoftDelete(string table, string action)
         => async (http, id, db, audit, ct) =>
@@ -11844,6 +12048,93 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         return errors;
     }
 
+    private sealed record DriverImportIdentity(
+        long Id,
+        long? BranchId,
+        string DriverCode,
+        string? LicenseBlindIndex,
+        string? PlainLicense);
+
+    private static string NormalizeImportIdentity(string value) => value.Trim().ToUpperInvariant();
+
+    private static async Task<List<DriverImportIdentity>> LoadDriverImportIdentities(
+        IReadOnlyCollection<Dictionary<string, object?>> rows,
+        long companyId,
+        Opstrax.Api.Security.PiiProtectionService pii,
+        Database db,
+        CancellationToken ct)
+    {
+        var codes = rows.Select(row => ImportStr(row, "driverCode"))
+            .Where(value => value is not null)
+            .Select(value => NormalizeImportIdentity(value!))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var licenses = rows.Select(row => ImportStr(row, "licenseNumber"))
+            .Where(value => value is not null)
+            .Select(value => NormalizeImportIdentity(value!))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var blindIndexes = pii.Enabled
+            ? licenses.Select(value => pii.BlindIndex(value))
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Select(value => value!)
+                .Distinct(StringComparer.Ordinal)
+                .ToArray()
+            : [];
+
+        if (codes.Length == 0 && licenses.Length == 0) return [];
+
+        var licensePredicate = pii.Enabled
+            ? @"license_number_bidx=ANY(@licenseBlindIndexes) OR
+                 (NULLIF(BTRIM(license_number_bidx),'') IS NULL AND UPPER(BTRIM(license_number))=ANY(@licenses))"
+            : "UPPER(BTRIM(license_number))=ANY(@licenses)";
+        var matches = await db.QueryAsync($@"
+            SELECT id,branch_id,driver_code,license_number_bidx,license_number
+            FROM drivers
+            WHERE company_id=@companyId AND deleted_at IS NULL
+              AND (UPPER(BTRIM(driver_code))=ANY(@codes) OR {licensePredicate})",
+            command =>
+            {
+                command.Parameters.AddWithValue("@companyId", companyId);
+                command.Parameters.AddWithValue("@codes", NpgsqlDbType.Array | NpgsqlDbType.Text, codes);
+                command.Parameters.AddWithValue("@licenses", NpgsqlDbType.Array | NpgsqlDbType.Text, licenses);
+                if (pii.Enabled)
+                    command.Parameters.AddWithValue("@licenseBlindIndexes", NpgsqlDbType.Array | NpgsqlDbType.Text, blindIndexes);
+            }, ct);
+
+        return matches.Select(row => new DriverImportIdentity(
+            Convert.ToInt64(row["id"]),
+            row["branchId"] is null or DBNull ? null : Convert.ToInt64(row["branchId"]),
+            row["driverCode"]?.ToString() ?? "",
+            row["licenseNumberBidx"]?.ToString(),
+            row["licenseNumber"]?.ToString())).ToList();
+    }
+
+    private static (long ExistingId, bool OutsideBranch) ResolveDriverCodeOwner(
+        IReadOnlyCollection<DriverImportIdentity> identities, string code, long? branchId)
+    {
+        var owners = identities.Where(identity =>
+            string.Equals(identity.DriverCode.Trim(), code.Trim(), StringComparison.OrdinalIgnoreCase)).ToList();
+        var authorized = branchId is null
+            ? owners.FirstOrDefault()
+            : owners.FirstOrDefault(identity => identity.BranchId == branchId);
+        return (authorized?.Id ?? 0, branchId is not null && authorized is null && owners.Count > 0);
+    }
+
+    private static long ResolveDriverLicenseOwner(
+        IReadOnlyCollection<DriverImportIdentity> identities,
+        string license,
+        Opstrax.Api.Security.PiiProtectionService pii)
+    {
+        var normalized = NormalizeImportIdentity(license);
+        var blindIndex = pii.Enabled ? pii.BlindIndex(normalized) : null;
+        var owner = identities.FirstOrDefault(identity =>
+            pii.Enabled && !string.IsNullOrWhiteSpace(identity.LicenseBlindIndex)
+                ? string.Equals(identity.LicenseBlindIndex, blindIndex, StringComparison.Ordinal)
+                : string.Equals(identity.PlainLicense?.Trim(), normalized, StringComparison.OrdinalIgnoreCase));
+        return owner?.Id ?? 0;
+    }
+
     private static IResult DriversImportTemplate(HttpContext http)
     {
         if (RequirePermission(http, "drivers:view") is { } denied) return denied;
@@ -11865,6 +12156,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var results = new List<object>();
         int creates = 0, updates = 0, invalid = 0;
         var seenCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var identities = await LoadDriverImportIdentities(rows, companyId, pii, db, ct);
         for (var i = 0; i < rows.Count; i++)
         {
             var errors = ValidateDriverImportRow(rows[i], seenCodes);
@@ -11872,12 +12164,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             long existingId = 0;
             if (errors.Count == 0)
             {
-                existingId = await db.ScalarLongAsync(
-                    "SELECT COALESCE(MAX(id),0) FROM drivers WHERE company_id=@cid AND LOWER(driver_code)=LOWER(@code) AND deleted_at IS NULL" + (branchId is null ? "" : " AND branch_id=@branchId"),
-                    c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@code", code); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct);
-                if (existingId == 0 && branchId is not null && await db.ScalarLongAsync(
-                    "SELECT COUNT(*) FROM drivers WHERE company_id=@cid AND LOWER(driver_code)=LOWER(@code) AND deleted_at IS NULL",
-                    c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@code", code); }, ct) > 0)
+                var codeOwner = ResolveDriverCodeOwner(identities, code, branchId);
+                existingId = codeOwner.ExistingId;
+                if (codeOwner.OutsideBranch)
                     errors.Add($"Driver code '{code}' already exists outside the authorized branch.");
                 var license = ImportStr(rows[i], "licenseNumber");
                 if (license is not null)
@@ -11885,17 +12174,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                     // Driver licence is also tenant-wide identity.  Keep code lookup
                     // branch-scoped for upsert ownership, but validate the submitted
                     // licence across the tenant so preview and commit agree.
-                    var dupSql = pii.Enabled
-                        ? @"SELECT COALESCE(MAX(id),0) FROM drivers WHERE company_id=@cid AND deleted_at IS NULL
-                            AND (license_number_bidx=@bidx OR
-                                 (NULLIF(BTRIM(license_number_bidx),'') IS NULL AND LOWER(BTRIM(license_number))=LOWER(BTRIM(@lic))))"
-                        : "SELECT COALESCE(MAX(id),0) FROM drivers WHERE company_id=@cid AND LOWER(BTRIM(license_number))=LOWER(BTRIM(@lic)) AND deleted_at IS NULL";
-                    var licOwner = await db.ScalarLongAsync(dupSql, c =>
-                    {
-                        c.Parameters.AddWithValue("@cid", companyId);
-                        c.Parameters.AddWithValue("@lic", license);
-                        if (pii.Enabled) c.Parameters.AddWithValue("@bidx", (object?)pii.BlindIndex(license) ?? DBNull.Value);
-                    }, ct);
+                    var licOwner = ResolveDriverLicenseOwner(identities, license, pii);
                     if (licOwner > 0 && licOwner != existingId)
                         errors.Add($"License number '{license}' is already registered to another driver.");
                 }
@@ -11920,6 +12199,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         int created = 0, updated = 0;
         var skipped = new List<object>();
         var seenCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var identities = await LoadDriverImportIdentities(rows, companyId, pii, db, ct);
         for (var i = 0; i < rows.Count; i++)
         {
             var errors = ValidateDriverImportRow(rows[i], seenCodes);
@@ -11928,26 +12208,13 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             long existingId = 0;
             if (errors.Count == 0)
             {
-                existingId = await db.ScalarLongAsync(
-                    "SELECT COALESCE(MAX(id),0) FROM drivers WHERE company_id=@cid AND LOWER(driver_code)=LOWER(@code) AND deleted_at IS NULL" + (branchId is null ? "" : " AND branch_id=@branchId"),
-                    c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@code", code); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct);
-                if (existingId == 0 && branchId is not null && await db.ScalarLongAsync(
-                    "SELECT COUNT(*) FROM drivers WHERE company_id=@cid AND LOWER(driver_code)=LOWER(@code) AND deleted_at IS NULL",
-                    c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@code", code); }, ct) > 0)
+                var codeOwner = ResolveDriverCodeOwner(identities, code, branchId);
+                existingId = codeOwner.ExistingId;
+                if (codeOwner.OutsideBranch)
                     errors.Add($"Driver code '{code}' already exists outside the authorized branch.");
                 if (license is not null)
                 {
-                    var dupSql = pii.Enabled
-                        ? @"SELECT COALESCE(MAX(id),0) FROM drivers WHERE company_id=@cid AND deleted_at IS NULL
-                            AND (license_number_bidx=@bidx OR
-                                 (NULLIF(BTRIM(license_number_bidx),'') IS NULL AND LOWER(BTRIM(license_number))=LOWER(BTRIM(@lic))))"
-                        : "SELECT COALESCE(MAX(id),0) FROM drivers WHERE company_id=@cid AND LOWER(BTRIM(license_number))=LOWER(BTRIM(@lic)) AND deleted_at IS NULL";
-                    var licOwner = await db.ScalarLongAsync(dupSql, c =>
-                    {
-                        c.Parameters.AddWithValue("@cid", companyId);
-                        c.Parameters.AddWithValue("@lic", license);
-                        if (pii.Enabled) c.Parameters.AddWithValue("@bidx", (object?)pii.BlindIndex(license) ?? DBNull.Value);
-                    }, ct);
+                    var licOwner = ResolveDriverLicenseOwner(identities, license, pii);
                     if (licOwner > 0 && licOwner != existingId)
                         errors.Add($"License number '{license}' is already registered to another driver.");
                 }
@@ -12103,6 +12370,21 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         foreach (var row in rows)
             if (row.ContainsKey("licenseNumber"))
                 row["licenseNumber"] = MaskDriverLicense(row["licenseNumber"], pii);
+    }
+
+    // d.* is retained on legacy operational reads, but equality-search material is
+    // internal-only and must never cross the customer-facing API boundary.
+    internal static void ProtectDriverOperationalRow(Dictionary<string, object?> row, Opstrax.Api.Security.PiiProtectionService pii)
+    {
+        if (row.ContainsKey("licenseNumber"))
+            row["licenseNumber"] = MaskDriverLicense(row["licenseNumber"], pii);
+        row.Remove("licenseNumberBidx");
+    }
+
+    internal static void ProtectDriverOperationalRows(IEnumerable<Dictionary<string, object?>> rows, Opstrax.Api.Security.PiiProtectionService pii)
+    {
+        foreach (var row in rows)
+            ProtectDriverOperationalRow(row, pii);
     }
 
     // Post-query mask for P8 reporting datasets: fields flagged MaskPii in the registry
@@ -18093,16 +18375,54 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         return errors;
     }
 
-    private static async Task<long> ExistingDeviceIdentityCount(
-        Database db, string serial, string? imei, CancellationToken ct)
-        => await db.ScalarLongAsync(
-            @"SELECT COUNT(*) FROM eld_devices
-              WHERE deleted_at IS NULL AND COALESCE(device_state,'')<>'Quarantined'
-                AND (UPPER(BTRIM(device_serial))=@serial
-                  OR (@imei::TEXT IS NOT NULL AND REGEXP_REPLACE(COALESCE(imei,''),'[^0-9]','','g')=@imei)
-                  OR UPPER(BTRIM(device_serial))=UPPER(COALESCE(@imei,''))
-                  OR UPPER(BTRIM(COALESCE(imei,'')))=@serial)",
-            c => { c.Parameters.AddWithValue("@serial", serial); c.Parameters.AddWithValue("@imei", (object?)imei ?? DBNull.Value); }, ct);
+    private sealed record DeviceImportCandidate(
+        int RowNumber,
+        Dictionary<string, object?> Row,
+        string Serial,
+        string? Imei,
+        List<string> Errors);
+
+    private static string NormalizeDeviceImportIdentity(string value) => value.Trim().ToUpperInvariant();
+
+    private static string[] DeviceImportIdentities(IEnumerable<Dictionary<string, object?>> rows) => rows
+        .SelectMany(row => new[] { ImportStr(row, "deviceSerial"), ImportStr(row, "imei") })
+        .Where(value => !string.IsNullOrWhiteSpace(value))
+        .Select(value => NormalizeDeviceImportIdentity(value!))
+        .Distinct(StringComparer.Ordinal)
+        .ToArray();
+
+    private static async Task<HashSet<string>> LoadExistingDeviceImportIdentities(
+        Database db, IEnumerable<Dictionary<string, object?>> rows, CancellationToken ct)
+    {
+        var identities = DeviceImportIdentities(rows);
+        if (identities.Length == 0) return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // Device serial and IMEI intentionally share one global identity namespace.
+        // Keep the query unscoped by company, matching provisioning and the unique indexes.
+        var matches = await db.QueryAsync(@"
+            SELECT UPPER(BTRIM(device_serial)) normalized_serial,
+                   UPPER(BTRIM(COALESCE(imei,''))) normalized_imei,
+                   REGEXP_REPLACE(COALESCE(imei,''),'[^0-9]','','g') numeric_imei
+            FROM eld_devices
+            WHERE deleted_at IS NULL AND COALESCE(device_state,'')<>'Quarantined'
+              AND (UPPER(BTRIM(device_serial))=ANY(@identities)
+                OR UPPER(BTRIM(COALESCE(imei,'')))=ANY(@identities)
+                OR REGEXP_REPLACE(COALESCE(imei,''),'[^0-9]','','g')=ANY(@identities))",
+            command => command.Parameters.AddWithValue(
+                "@identities", NpgsqlDbType.Array | NpgsqlDbType.Text, identities), ct);
+
+        var existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var match in matches)
+        {
+            foreach (var key in new[] { "normalizedSerial", "normalizedImei", "numericImei" })
+                if (match[key]?.ToString() is { Length: > 0 } value) existing.Add(value);
+        }
+        return existing;
+    }
+
+    private static bool DeviceImportIdentityExists(HashSet<string> existing, string serial, string? imei) =>
+        existing.Contains(NormalizeDeviceImportIdentity(serial)) ||
+        (imei is not null && existing.Contains(NormalizeDeviceImportIdentity(imei)));
 
     private static async Task<IResult> DevicesImportPreview(
         HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
@@ -18115,12 +18435,13 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var results = new List<object>();
         var creates = 0;
         var invalid = 0;
+        var existing = await LoadExistingDeviceImportIdentities(db, rows, ct);
         for (var i = 0; i < rows.Count; i++)
         {
             var errors = ValidateDeviceImportRow(rows[i], fileIdentities);
             var serial = ImportStr(rows[i], "deviceSerial")?.ToUpperInvariant() ?? "";
             var imei = ImportStr(rows[i], "imei");
-            if (errors.Count == 0 && await ExistingDeviceIdentityCount(db, serial, imei, ct) > 0)
+            if (errors.Count == 0 && DeviceImportIdentityExists(existing, serial, imei))
                 errors.Add("Device serial or IMEI is already registered. Existing devices are never overwritten by import.");
             var action = errors.Count == 0 ? "create" : "error";
             if (action == "create") creates++; else invalid++;
@@ -18144,19 +18465,46 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var credentials = new List<object>();
         var created = 0;
         var pii = http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>();
+        var candidates = new List<DeviceImportCandidate>(rows.Count);
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var errors = ValidateDeviceImportRow(rows[i], fileIdentities);
+            candidates.Add(new DeviceImportCandidate(
+                i + 1,
+                rows[i],
+                ImportStr(rows[i], "deviceSerial")?.ToUpperInvariant() ?? "",
+                ImportStr(rows[i], "imei"),
+                errors));
+        }
 
         await db.RunInSystemTransactionAsync(async () =>
         {
-            for (var i = 0; i < rows.Count; i++)
+            var validRows = candidates.Where(candidate => candidate.Errors.Count == 0).ToList();
+            var lockIdentities = DeviceImportIdentities(validRows.Select(candidate => candidate.Row))
+                .Select(value => $"device-identity:{value}")
+                .OrderBy(value => value, StringComparer.Ordinal)
+                .ToArray();
+            if (lockIdentities.Length > 0)
             {
-                var errors = ValidateDeviceImportRow(rows[i], fileIdentities);
-                var serial = ImportStr(rows[i], "deviceSerial")?.ToUpperInvariant() ?? "";
-                var imei = ImportStr(rows[i], "imei");
-                if (errors.Count == 0 && await ExistingDeviceIdentityCount(db, serial, imei, ct) > 0)
+                await db.ExecuteAsync(
+                    @"SELECT pg_advisory_xact_lock(hashtextextended(identity,0))
+                      FROM unnest(@identities::TEXT[]) identity ORDER BY identity",
+                    command => command.Parameters.AddWithValue(
+                        "@identities", NpgsqlDbType.Array | NpgsqlDbType.Text, lockIdentities), ct);
+            }
+            var existing = await LoadExistingDeviceImportIdentities(
+                db, validRows.Select(candidate => candidate.Row), ct);
+
+            foreach (var candidate in candidates)
+            {
+                var errors = candidate.Errors;
+                var serial = candidate.Serial;
+                var imei = candidate.Imei;
+                if (errors.Count == 0 && DeviceImportIdentityExists(existing, serial, imei))
                     errors.Add("Device serial or IMEI is already registered. Existing devices are never overwritten by import.");
                 if (errors.Count > 0)
                 {
-                    skipped.Add(new { rowNumber = i + 1, key = serial, errors });
+                    skipped.Add(new { rowNumber = candidate.RowNumber, key = serial, errors });
                     continue;
                 }
 
@@ -18165,23 +18513,12 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 var encryptedHmacSecret = DeviceHmacSecretProtection.EncryptForStorage(pii, rawHmacSecret);
                 if (encryptedHmacSecret is null)
                 {
-                    skipped.Add(new { rowNumber = i + 1, key = serial, errors = new[] { "Device credential encryption is unavailable." } });
+                    skipped.Add(new { rowNumber = candidate.RowNumber, key = serial, errors = new[] { "Device credential encryption is unavailable." } });
                     continue;
                 }
-                var category = NormalizeInstallationRole(ImportStr(rows[i], "deviceCategory")!);
+                var category = NormalizeInstallationRole(ImportStr(candidate.Row, "deviceCategory")!);
                 try
                 {
-                    await db.ExecuteAsync(
-                        @"SELECT pg_advisory_xact_lock(hashtextextended(identity,0))
-                          FROM unnest(@identities::TEXT[]) identity ORDER BY identity",
-                        c => c.Parameters.AddWithValue("@identities",
-                            new[] { serial, imei }.Where(value => !string.IsNullOrWhiteSpace(value))
-                                .Select(value => $"device-identity:{value}").OrderBy(value => value).ToArray()), ct);
-                    if (await ExistingDeviceIdentityCount(db, serial, imei, ct) > 0)
-                    {
-                        skipped.Add(new { rowNumber = i + 1, key = serial, errors = new[] { "Device serial or IMEI was registered concurrently." } });
-                        continue;
-                    }
                     var id = await db.InsertWithSavepointAsync(
                         @"INSERT INTO eld_devices
                             (company_id, branch_id, device_serial, imei, device_category, device_model, provider,
@@ -18196,10 +18533,10 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                             c.Parameters.AddWithValue("@serial", serial);
                             c.Parameters.AddWithValue("@imei", (object?)imei ?? DBNull.Value);
                             c.Parameters.AddWithValue("@category", category);
-                            c.Parameters.AddWithValue("@model", (object?)ImportStr(rows[i], "deviceModel") ?? DBNull.Value);
-                            c.Parameters.AddWithValue("@provider", (object?)ImportStr(rows[i], "provider") ?? DBNull.Value);
-                            c.Parameters.AddWithValue("@firmware", (object?)ImportStr(rows[i], "firmwareVersion") ?? DBNull.Value);
-                            c.Parameters.AddWithValue("@notes", (object?)ImportStr(rows[i], "notes") ?? DBNull.Value);
+                            c.Parameters.AddWithValue("@model", (object?)ImportStr(candidate.Row, "deviceModel") ?? DBNull.Value);
+                            c.Parameters.AddWithValue("@provider", (object?)ImportStr(candidate.Row, "provider") ?? DBNull.Value);
+                            c.Parameters.AddWithValue("@firmware", (object?)ImportStr(candidate.Row, "firmwareVersion") ?? DBNull.Value);
+                            c.Parameters.AddWithValue("@notes", (object?)ImportStr(candidate.Row, "notes") ?? DBNull.Value);
                             c.Parameters.AddWithValue("@rawKey", rawApiKey);
                             c.Parameters.AddWithValue("@hmacEncrypted", encryptedHmacSecret);
                         }, ct);
@@ -18209,7 +18546,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 }
                 catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
                 {
-                    skipped.Add(new { rowNumber = i + 1, key = serial, errors = new[] { "Device serial or IMEI is already registered." } });
+                    skipped.Add(new { rowNumber = candidate.RowNumber, key = serial, errors = new[] { "Device serial or IMEI is already registered." } });
                 }
             }
             return true;
@@ -27339,6 +27676,10 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
         if (drv is null)
             return Results.NotFound(ApiResponse<object>.Fail("Driver not found"));
+
+        // Fleet-health risk has no licence use case; omit identity material entirely.
+        drv.Remove("licenseNumber");
+        drv.Remove("licenseNumberBidx");
 
         var openEvents = await db.QueryAsync(
             @"SELECT se.id, se.event_number, se.event_type, se.severity,
