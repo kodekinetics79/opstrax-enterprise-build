@@ -208,6 +208,7 @@ export const moduleIcons: Record<string, typeof Activity> = {
   "logistics-workspace": Map,
   vehicles: Truck,
   drivers: Users,
+  branches: Building2,
   owners: UserCog,
   assignments: Activity,
   documents: FileText,

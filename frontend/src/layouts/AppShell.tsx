@@ -479,7 +479,7 @@ export function AppShell() {
               {isOpen && (
                 <div className="mb-1 ml-[13px] border-l border-slate-200/80 pl-2">
                   {section.items.map((module) => {
-                    const Icon = moduleIcons[module.key];
+                    const Icon = moduleIcons[module.key] ?? moduleIcons.assets;
                     const active = isRouteActive(module.route, location.pathname);
                     return (
                       <Link
