@@ -28,4 +28,6 @@ Before importing assets, create the referenced asset type (for example `TRAILER`
 
 Provision devices without a vehicle or driver binding, then use the governed installation workflow to install, commission, transfer, or remove them. Use Assignments for vehicle/driver work and Returnable Assets for asset custody. Reassignment closes the prior effective period and preserves history; do not edit identity fields to simulate a transfer.
 
+To assign or reassign a primary driver, open the vehicle or driver record, choose **Assign** or **Reassign**, select the intended available record, review the pairing, and choose **Confirm assignment**. The product rejects cross-branch pairs and ineligible resources. Refresh the detail drawer and open **Assignments** to verify the active pairing. The vehicle and driver drawers show the same ledger as effective-from/effective-to history; the released row remains visible after reassignment.
+
 Archive or deactivate records through their product action instead of reusing identities. Reactivate only after confirming the identity is not already active elsewhere.

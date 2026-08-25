@@ -121,6 +121,7 @@ const config: Record<EntityKind, EntityConfig> = {
       ["HOS Status", "hos", ["logDate", "drivingHours", "onDutyHours", "cycleHoursLeft", "status"]],
       ["DVIR Status", "inspections", ["inspectionType", "result", "createdAt"]],
       ["Safety / Coaching Queue", "safetyEvents", ["eventType", "severity", "reviewStatus", "eventTime"]],
+      ["Vehicle Assignment History", "assignmentHistory", ["vehicleCode", "status", "effectiveFrom", "effectiveTo"]],
       ["Audit Trail", "auditTrail", ["actionName", "actorName", "createdAt"]],
     ],
   },
@@ -229,6 +230,7 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<AnyRecord | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const [assignmentOpen, setAssignmentOpen] = useState(false);
   // Deep link from a module Overview ("New driver" etc.) straight into the create
   // form. Single-add lives on the roster, but users look for it on Overview, which
   // otherwise shows only the bulk Template/Import/Export actions.
@@ -270,8 +272,8 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
   const selectedDetail = detail.data;
   const selectedRecord = (selectedDetail?.record as AnyRecord | undefined) || selected;
   const recommendations = (selectedDetail?.recommendations as AnyRecord[] | undefined) || [];
-  const driverOptions = useQuery({ queryKey: ["drivers", "assignment-options"], queryFn: driversApi.list, enabled: canAssign && !isScopedViewer && (kind === "vehicles" || kind === "assets") });
-  const vehicleOptions = useQuery({ queryKey: ["vehicles", "assignment-options"], queryFn: vehiclesApi.list, enabled: canAssign && !isScopedViewer && (kind === "drivers" || kind === "assets") });
+  const driverOptions = useQuery({ queryKey: ["drivers", "assignment-options", 2000], queryFn: () => driversApi.listPaged({ limit: 2000 }).then((result) => result.rows), enabled: canAssign && !isScopedViewer && (kind === "vehicles" || kind === "assets") });
+  const vehicleOptions = useQuery({ queryKey: ["vehicles", "assignment-options", 2000], queryFn: () => vehiclesApi.listPaged({ limit: 2000 }).then((result) => result.rows), enabled: canAssign && !isScopedViewer && (kind === "drivers" || kind === "assets") });
   const customerOptions = useQuery({ queryKey: ["customers", "assignment-options"], queryFn: customersApi.list, enabled: canAssign && !isScopedViewer && kind === "assets" });
   const planningInsights = useQuery({ queryKey: ["vehicles", "planning-insights"], queryFn: vehiclesApi.planningInsights, enabled: kind === "vehicles" && !isScopedViewer });
   const scopedRows = useMemo(() => scopeRowsForSession(kind, list.data || [], session), [kind, list.data, session]);
@@ -293,17 +295,15 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
     },
   });
   const assignMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (targetId?: string) => {
       if (!selectedRecord?.id) return null;
       if (kind === "vehicles") {
-        const driver = pickBestDriver(driverOptions.data || []);
-        if (!driver?.id) throw new Error("No available driver found for assignment.");
-        return vehiclesApi.assignDriver(String(selectedRecord.id), String(driver.id));
+        if (!targetId) throw new Error("Choose a driver before confirming the assignment.");
+        return vehiclesApi.assignDriver(String(selectedRecord.id), targetId);
       }
       if (kind === "drivers") {
-        const vehicle = pickBestVehicle(vehicleOptions.data || []);
-        if (!vehicle?.id) throw new Error("No available vehicle found for assignment.");
-        return driversApi.assignVehicle(String(selectedRecord.id), String(vehicle.id));
+        if (!targetId) throw new Error("Choose a vehicle before confirming the assignment.");
+        return driversApi.assignVehicle(String(selectedRecord.id), targetId);
       }
       if (kind === "assets") {
         const vehicle = pickBestVehicle(vehicleOptions.data || []);
@@ -318,6 +318,7 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
       return null;
     },
     onSuccess: async () => {
+      setAssignmentOpen(false);
       await queryClient.invalidateQueries({ queryKey: [kind] });
       await queryClient.invalidateQueries({ queryKey: ["drivers"] });
       await queryClient.invalidateQueries({ queryKey: ["vehicles"] });
@@ -453,7 +454,10 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
         onClose={() => setSelected(null)}
         onEdit={(record) => { if (canUpdate) { setIsCreating(false); setEditing(record); } }}
         onDelete={(record) => canDelete && cfg.api.remove && deleteMutation.mutate(String(record.id))}
-        onSmartAssign={isFleetMaster && canAssign ? () => assignMutation.mutate() : undefined}
+        onSmartAssign={isFleetMaster && canAssign ? () => {
+          if (kind === "vehicles" || kind === "drivers") setAssignmentOpen(true);
+          else assignMutation.mutate(undefined);
+        } : undefined}
         onNavigate={navigate}
         canUpdate={canUpdate}
         canDelete={canDelete}
@@ -468,6 +472,17 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
           saving={saveMutation.isPending}
           onClose={() => { setEditing(null); setIsCreating(false); }}
           onSave={(payload) => saveMutation.mutate(payload)}
+        />
+      ) : null}
+      {assignmentOpen && selectedRecord && (kind === "vehicles" || kind === "drivers") ? (
+        <FleetMasterAssignmentModal
+          kind={kind}
+          record={selectedRecord}
+          options={(kind === "vehicles" ? driverOptions.data : vehicleOptions.data) || []}
+          saving={assignMutation.isPending}
+          serverError={assignMutation.error instanceof Error ? assignMutation.error.message : undefined}
+          onClose={() => setAssignmentOpen(false)}
+          onSave={(targetId) => assignMutation.mutate(targetId)}
         />
       ) : null}
     </div>
@@ -630,6 +645,60 @@ function BulkImportControls({ kind, fields, defaults, create, canImport, onImpor
   );
 }
 
+function FleetMasterAssignmentModal({ kind, record, options, saving, serverError, onClose, onSave }: {
+  kind: "vehicles" | "drivers";
+  record: AnyRecord;
+  options: AnyRecord[];
+  saving: boolean;
+  serverError?: string;
+  onClose: () => void;
+  onSave: (targetId: string) => void;
+}) {
+  const currentTargetId = String(kind === "vehicles"
+    ? (record.assignedDriverId ?? record.assigned_driver_id ?? "")
+    : (record.assignedVehicleId ?? record.assigned_vehicle_id ?? ""));
+  const [targetId, setTargetId] = useState(currentTargetId);
+  const eligible = options.filter((option) => {
+    if (String(option.id) === currentTargetId) return true;
+    return kind === "vehicles"
+      ? !(option.assignedVehicleId ?? option.assigned_vehicle_id)
+      : !(option.assignedDriverId ?? option.assigned_driver_id);
+  });
+  const recordLabel = recordTitle(kind, record);
+  const targetLabel = kind === "vehicles" ? "driver" : "vehicle";
+
+  return (
+    <div className="fixed inset-0 z-[80] grid place-items-center bg-black/60 p-4 backdrop-blur-sm">
+      <form role="dialog" aria-modal="true" aria-labelledby="fleet-master-assignment-title" className="panel w-full max-w-xl p-6 shadow-2xl" onSubmit={(event) => { event.preventDefault(); if (targetId) onSave(targetId); }}>
+        <div className="flex items-start justify-between border-b border-slate-200 pb-4">
+          <div>
+            <p className="section-title text-teal-700">Fleet master assignment</p>
+            <h2 id="fleet-master-assignment-title" className="mt-1 text-xl font-bold text-slate-900">{currentTargetId ? "Reassign" : "Assign"} {recordLabel}</h2>
+            <p className="mt-1 text-sm text-slate-500">Select the intended {targetLabel} and confirm. Reassignment preserves the previous effective-dated history row.</p>
+          </div>
+          <button type="button" className="icon-btn" onClick={onClose} disabled={saving} aria-label="Close"><X className="h-5 w-5" /></button>
+        </div>
+        <label className="mt-5 block">
+          <span className="mb-1.5 block text-xs font-bold uppercase tracking-[0.14em] text-slate-500">{targetLabel}</span>
+          <select className="field w-full" required value={targetId} onChange={(event) => setTargetId(event.target.value)}>
+            <option value="">Select an available {targetLabel}</option>
+            {eligible.map((option) => <option key={String(option.id)} value={String(option.id)}>
+              {kind === "vehicles"
+                ? `${String(option.driverCode ?? option.driver_code ?? option.id)} — ${String(option.fullName ?? option.full_name ?? "Unnamed driver")}`
+                : `${String(option.vehicleCode ?? option.vehicle_code ?? option.id)} — ${String(option.make ?? "")} ${String(option.model ?? "")}`.trim()}
+            </option>)}
+          </select>
+        </label>
+        {serverError ? <p role="alert" className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{serverError}</p> : null}
+        <div className="mt-6 flex justify-end gap-3 border-t border-slate-200 pt-4">
+          <button type="button" className="btn-ghost" onClick={onClose} disabled={saving}>Cancel</button>
+          <button type="submit" className="btn-primary" disabled={saving || !targetId || targetId === currentTargetId}>{saving ? "Saving assignment…" : "Confirm assignment"}</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function BatchDetailDrawer({ kind, config: cfg, detail, record, loading, assignPending, onClose, onEdit, onDelete, onSmartAssign, onNavigate, canUpdate, canDelete, canAssign }: {
   kind: EntityKind;
   config: EntityConfig;
@@ -664,7 +733,7 @@ function BatchDetailDrawer({ kind, config: cfg, detail, record, loading, assignP
         </div>
         <div className="mt-5 flex gap-3">
           {canUpdate ? <button className="btn-primary" onClick={() => onEdit(record)}><Edit3 className="h-4 w-4" /> Edit</button> : null}
-          {onSmartAssign ? <button className="btn-ghost" onClick={onSmartAssign} disabled={assignPending || !canAssign} title={!canAssign ? "You do not have permission to perform this action." : undefined}><UserCheck className="h-4 w-4" /> {assignPending ? "Assigning..." : "Smart Assign"}</button> : null}
+          {onSmartAssign ? <button className="btn-ghost" onClick={onSmartAssign} disabled={assignPending || !canAssign} title={!canAssign ? "You do not have permission to perform this action." : undefined}><UserCheck className="h-4 w-4" /> {assignPending ? "Assigning..." : ((kind === "vehicles" ? record.assignedDriverId ?? record.assigned_driver_id : kind === "drivers" ? record.assignedVehicleId ?? record.assigned_vehicle_id : null) ? "Reassign" : "Assign")}</button> : null}
           {canDelete ? <button className="btn-ghost" onClick={() => onDelete(record)}><Trash2 className="h-4 w-4" /> Delete</button> : null}
           <button className="btn-ghost" onClick={() => onNavigate("/audit-logs")}><FileText className="h-4 w-4" /> Audit trail</button>
         </div>

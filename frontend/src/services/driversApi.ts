@@ -1,9 +1,10 @@
 import { apiClient, unwrap } from "@/services/apiClient";
-import { getDriverById, getDrivers } from "@/services/fleetDomainApi";
+import { apiPaged, getDriverById, getDrivers } from "@/services/fleetDomainApi";
 import type { AnyRecord } from "@/types";
 
 export const driversApi = {
   list: () => getDrivers(),
+  listPaged: (opts?: { limit?: number; offset?: number; search?: string }) => apiPaged("/api/drivers", opts),
   // Use the tenant-wide aggregate endpoint rather than calculating KPIs from the
   // capped driver list. Its camel-cased aliases match the existing page contract.
   summary: () => unwrap<AnyRecord>(apiClient.get("/api/drivers/summary")),

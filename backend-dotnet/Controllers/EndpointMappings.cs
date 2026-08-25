@@ -4903,7 +4903,7 @@ public static partial class EndpointMappings
               LEFT JOIN vehicles v ON v.id=va.vehicle_id AND v.company_id=va.company_id
               LEFT JOIN drivers d ON d.id=va.driver_id AND d.company_id=va.company_id
               WHERE va.company_id=@cid" + branchClause + @"
-              ORDER BY va.assigned_at DESC LIMIT 50",
+              ORDER BY va.assigned_at DESC",
             c =>
             {
                 c.Parameters.AddWithValue("@cid", companyId);
@@ -5066,13 +5066,7 @@ public static partial class EndpointMappings
                      current_camera.device_state current_camera_status,
                      ROUND((v.readiness_score + v.data_quality_score + (100 - v.risk_score)) / 3, 1) fleet_readiness_score
               FROM vehicles v
-              LEFT JOIN LATERAL (
-                SELECT da.driver_id FROM dispatch_assignments da
-                WHERE da.company_id=v.company_id AND da.vehicle_id=v.id
-                  AND da.assignment_status NOT IN ('delivered','cancelled')
-                ORDER BY da.assigned_at DESC,da.id DESC LIMIT 1
-              ) current_dispatch ON TRUE
-              LEFT JOIN drivers d ON d.id=current_dispatch.driver_id AND d.company_id=v.company_id
+              LEFT JOIN drivers d ON d.id=v.assigned_driver_id AND d.company_id=v.company_id
               LEFT JOIN LATERAL (
                 SELECT i.device_id,e.last_seen_at,e.device_state
                 FROM device_installations i JOIN eld_devices e ON e.id=i.device_id AND e.company_id=i.company_id
@@ -5114,6 +5108,15 @@ public static partial class EndpointMappings
                   JOIN eld_devices e ON e.id=i.device_id AND e.company_id=i.company_id
                   WHERE i.company_id=@cid AND i.vehicle_id=@id
                   ORDER BY i.effective_from DESC,i.id DESC LIMIT 100",
+                c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct),
+            assignmentHistory = await db.QueryAsync(
+                @"SELECT va.id,va.vehicle_id,va.driver_id,va.assignment_type,va.status,
+                         va.assigned_at effective_from,va.released_at effective_to,
+                         d.driver_code,d.full_name driver_name
+                  FROM vehicle_assignments va
+                  LEFT JOIN drivers d ON d.id=va.driver_id AND d.company_id=va.company_id
+                  WHERE va.company_id=@cid AND va.vehicle_id=@id
+                  ORDER BY va.assigned_at DESC,va.id DESC LIMIT 100",
                 c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct),
             compliance = await db.QueryAsync("SELECT * FROM compliance_documents WHERE related_entity_type='Vehicle' AND related_entity_id=@id ORDER BY expiry_date LIMIT 8", c => c.Parameters.AddWithValue("@id", id), ct),
             safetyEvents = await db.QueryAsync("SELECT * FROM safety_events WHERE vehicle_id=@id ORDER BY event_time DESC LIMIT 8", c => c.Parameters.AddWithValue("@id", id), ct),
@@ -5158,6 +5161,15 @@ public static partial class EndpointMappings
             hos = await db.QueryAsync("SELECT * FROM hos_logs WHERE driver_id=@id ORDER BY log_date DESC LIMIT 8", c => c.Parameters.AddWithValue("@id", id), ct),
             inspections = await db.QueryAsync("SELECT * FROM inspections WHERE driver_id=@id ORDER BY created_at DESC LIMIT 8", c => c.Parameters.AddWithValue("@id", id), ct),
             safetyEvents = await db.QueryAsync("SELECT * FROM safety_events WHERE driver_id=@id ORDER BY event_time DESC LIMIT 8", c => c.Parameters.AddWithValue("@id", id), ct),
+            assignmentHistory = await db.QueryAsync(
+                @"SELECT va.id,va.vehicle_id,va.driver_id,va.assignment_type,va.status,
+                         va.assigned_at effective_from,va.released_at effective_to,
+                         v.vehicle_code
+                  FROM vehicle_assignments va
+                  LEFT JOIN vehicles v ON v.id=va.vehicle_id AND v.company_id=va.company_id
+                  WHERE va.company_id=@cid AND va.driver_id=@id
+                  ORDER BY va.assigned_at DESC,va.id DESC LIMIT 100",
+                c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct),
             auditTrail = await AuditTrail(db, "Driver", id, GetCompanyId(http), ct)
         }));
     }
@@ -9663,10 +9675,15 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             // unique indexes this makes concurrent reciprocal assignments deterministic.
             await db.ExecuteAsync("SELECT pg_advisory_xact_lock(@companyId)",
                 c => c.Parameters.AddWithValue("@companyId", companyId), ct);
+            var targetKeyPresent = body.ContainsKey("targetId") || body.ContainsKey("driverId") || body.ContainsKey("vehicleId");
+            if (!targetKeyPresent)
+                return Results.BadRequest(ApiResponse<object>.Fail("An explicit driverId, vehicleId, or null targetId is required."));
             var rawTarget = new[] { Get(body, "targetId"), Get(body, "driverId"), Get(body, "vehicleId") }
                 .FirstOrDefault(value => value is not null and not DBNull && !string.IsNullOrWhiteSpace(value.ToString()));
             long parsedTarget = 0;
             var hasTarget = rawTarget is not null and not DBNull && long.TryParse(rawTarget.ToString(), out parsedTarget) && parsedTarget > 0;
+            if (rawTarget is not null and not DBNull && !hasTarget)
+                return Results.BadRequest(ApiResponse<object>.Fail("Assignment target must be a positive integer or explicit null for unassignment."));
             var targetId = hasTarget ? parsedTarget : (long?)null;
             var source = await db.QuerySingleAsync(
                 $"SELECT id, branch_id, {column} current_target_id FROM {table} WHERE id=@id AND company_id=@companyId AND deleted_at IS NULL" + (branchId is null ? "" : " AND branch_id=@branchId") + " FOR UPDATE",
@@ -9684,6 +9701,11 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 if (target is null)
                     return Results.BadRequest(ApiResponse<object>.Fail($"Assigned {targetTable.TrimEnd('s')} was not found in this branch."));
 
+                var sourceBranchId = source["branchId"] is null or DBNull ? (long?)null : Convert.ToInt64(source["branchId"]);
+                var targetBranchId = target["branchId"] is null or DBNull ? (long?)null : Convert.ToInt64(target["branchId"]);
+                if (sourceBranchId != targetBranchId)
+                    return Results.UnprocessableEntity(ApiResponse<object>.Fail("Driver and vehicle must belong to the same branch."));
+
                 var candidateVehicleId = table == "vehicles" ? id : targetId.Value;
                 var candidateDriverId = table == "drivers" ? id : targetId.Value;
                 var eligibility = await CheckDispatchEligibilityAsync(companyId, candidateVehicleId, candidateDriverId, db, ct);
@@ -9694,6 +9716,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
             var oldTargetId = source["currentTargetId"] is { } oldTarget && oldTarget is not DBNull ? Convert.ToInt64(oldTarget) : (long?)null;
             var targetOldSourceId = target?.GetValueOrDefault("reciprocalId") is { } oldSource && oldSource is not DBNull ? Convert.ToInt64(oldSource) : (long?)null;
+            if (oldTargetId == targetId && (targetId is null || targetOldSourceId == id))
+                return Results.Ok(ApiResponse<object>.Ok(new { id }, "Assignment already current"));
 
             // Clear both sides of any prior pair before writing the new symmetric link. All
             // request DB calls share the request transaction, so a database failure rolls the

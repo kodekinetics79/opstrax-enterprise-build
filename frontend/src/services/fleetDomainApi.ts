@@ -73,6 +73,7 @@ export function getVehicleById(id: string | number) {
     videoEvents: asRows(detail.videoEvents),
     maintenance: asRows(detail.maintenance),
     replayTrail: asRows(detail.replayTrail),
+    assignmentHistory: asRows(detail.assignmentHistory),
     recommendations: asRows(detail.recommendations),
   }));
 }
@@ -91,6 +92,7 @@ export function getDriverById(id: string | number) {
     inspections: asRows(detail.inspections),
     safetyEvents: asRows(detail.safetyEvents),
     timeline: asRows(detail.timeline),
+    assignmentHistory: asRows(detail.assignmentHistory),
     auditTrail: asRows(detail.auditTrail),
     recommendations: asRows(detail.recommendations),
   }));
