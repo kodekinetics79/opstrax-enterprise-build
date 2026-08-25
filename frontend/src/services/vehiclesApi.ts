@@ -17,7 +17,11 @@ export const vehiclesApi = {
   recommendations: (id: string | number) => getVehicleById(id).then((detail) => (Array.isArray(detail.recommendations) ? detail.recommendations : [])),
   // Real CSV import pipeline — server-validated preview, then committed upsert.
   importPreview: (rows: AnyRecord[]) => unwrap<AnyRecord>(apiClient.post("/api/vehicles/import-preview", { rows })),
-  importCommit: (rows: AnyRecord[]) => unwrap<AnyRecord>(apiClient.post("/api/vehicles/import", { rows })),
+  // Large customer imports perform governed identity checks and audited writes for
+  // every row. Keep the ordinary API client at 30s, but allow this explicitly
+  // long-running, user-visible workflow enough time to finish and report its
+  // atomic result instead of cancelling a valid 200-500 row commit mid-flight.
+  importCommit: (rows: AnyRecord[]) => unwrap<AnyRecord>(apiClient.post("/api/vehicles/import", { rows }, { timeout: 120000 })),
   // Writes must be truthful — surface backend failures instead of faking success.
   create: (payload: AnyRecord) => unwrap<AnyRecord>(apiClient.post("/api/vehicles", payload)),
   update: (id: string | number, payload: AnyRecord) => unwrap<AnyRecord>(apiClient.put(`/api/vehicles/${id}`, payload)),
