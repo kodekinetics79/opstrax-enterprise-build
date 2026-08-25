@@ -23,7 +23,11 @@ import { VehiclesPage as VehiclesRosterPage } from "@/pages/VehiclesPage";
 
 const VEHICLE_IMPORT_EXPORT = {
   entity: "vehicles",
-  columns: ["vehicleCode", "type", "make", "model", "year", "odometerMiles", "vin", "plateNumber", "status"],
+  columns: [
+    "vehicleCode", "type", "make", "model", "year", "vehicleClass",
+    "odometerMiles", "vin", "vinExceptionType", "alternateIdentifier",
+    "plateNumber", "plateJurisdiction", "status",
+  ],
   requiredColumns: ["vehicleCode"],
   templateEndpoint: "/api/vehicles/import-template",
   exportEndpoint: "/api/vehicles/export",
