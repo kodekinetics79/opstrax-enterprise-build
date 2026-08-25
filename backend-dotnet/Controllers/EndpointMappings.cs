@@ -8909,10 +8909,11 @@ public static partial class EndpointMappings
         var errors = ValidateDocument(body);
         if (errors.Count > 0) return Results.BadRequest(ApiResponse<object>.Fail("Document validation failed", errors.ToArray()));
         var companyId = GetCompanyId(http);
-        var entityType = Get(body, "entityType").ToString()?.Trim().ToLowerInvariant();
-        var entityId = ToNullableLong(Get(body, "entityId").ToString());
+        var entityType = Get(body, "entityType")?.ToString()?.Trim().ToLowerInvariant();
+        var entityId = ToNullableLong(Get(body, "entityId")?.ToString());
         var entityError = await ValidateDocumentEntityAsync(http, entityType, entityId, db, ct);
-        if (entityError is not null) return Results.BadRequest(ApiResponse<object>.Fail("Document validation failed", [entityError]));
+        if (entityError is not null || entityType is null || entityId is null)
+            return Results.BadRequest(ApiResponse<object>.Fail("Document validation failed", [entityError ?? "Choose a valid vehicle, driver, or asset."]));
         body["entityType"] = entityType;
         body["entityId"] = entityId.Value;
         NormalizeDocumentDates(body);
@@ -8935,10 +8936,11 @@ public static partial class EndpointMappings
 
         var errors = ValidateDocumentDateFields(body);
         if (errors.Count > 0) return Results.BadRequest(ApiResponse<object>.Fail("Document validation failed", errors.ToArray()));
-        var entityType = !IsBlank(Get(body, "entityType")) ? Get(body, "entityType").ToString()?.Trim().ToLowerInvariant() : existing["entityType"]?.ToString();
-        var entityId = !IsBlank(Get(body, "entityId")) ? ToNullableLong(Get(body, "entityId").ToString()) : ToNullableLong(existing["entityId"]?.ToString());
+        var entityType = !IsBlank(Get(body, "entityType")) ? Get(body, "entityType")?.ToString()?.Trim().ToLowerInvariant() : existing["entityType"]?.ToString();
+        var entityId = !IsBlank(Get(body, "entityId")) ? ToNullableLong(Get(body, "entityId")?.ToString()) : ToNullableLong(existing["entityId"]?.ToString());
         var entityError = await ValidateDocumentEntityAsync(http, entityType, entityId, db, ct);
-        if (entityError is not null) return Results.BadRequest(ApiResponse<object>.Fail("Document validation failed", [entityError]));
+        if (entityError is not null || entityType is null || entityId is null)
+            return Results.BadRequest(ApiResponse<object>.Fail("Document validation failed", [entityError ?? "Choose a valid vehicle, driver, or asset."]));
         body["entityType"] = entityType;
         body["entityId"] = entityId.Value;
         NormalizeDocumentDates(body);
