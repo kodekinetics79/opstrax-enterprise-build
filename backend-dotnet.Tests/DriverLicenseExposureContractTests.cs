@@ -153,10 +153,12 @@ public class DriverLicenseExposureContractTests
         Assert.DoesNotContain("ProjectDriverPii", detail, StringComparison.Ordinal);
 
         var available = Block(source, "private static async Task<IResult> AvailableDrivers(", "private static async Task<IResult> AvailableVehicles(");
-        Assert.Contains("ProtectDriverOperationalRows(rows,", available, StringComparison.Ordinal);
+        Assert.Contains("row.Remove(\"licenseNumber\")", available, StringComparison.Ordinal);
+        Assert.Contains("row.Remove(\"licenseNumberBidx\")", available, StringComparison.Ordinal);
 
         var fleetHealth = Block(source, "private static async Task<IResult> FleetHealthDriverDetail(", "// ── Fleet Health scoring helpers");
-        Assert.Contains("ProtectDriverOperationalRow(drv,", fleetHealth, StringComparison.Ordinal);
+        Assert.Contains("drv.Remove(\"licenseNumber\")", fleetHealth, StringComparison.Ordinal);
+        Assert.Contains("drv.Remove(\"licenseNumberBidx\")", fleetHealth, StringComparison.Ordinal);
 
         // Driver self-view DTO omits the license — the query must not fetch it either.
         var driverMe = Block(source, "private static async Task<IResult> DriverMe(", "private static async Task<IResult> DriverAssignments(");

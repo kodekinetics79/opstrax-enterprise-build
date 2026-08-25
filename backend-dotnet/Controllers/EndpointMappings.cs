@@ -7327,7 +7327,13 @@ public static partial class EndpointMappings
                                   AND da2.assignment_status NOT IN ('delivered','cancelled'))" + branchClause + @"
               ORDER BY match_readiness DESC",
             c => { c.Parameters.AddWithValue("@cid", companyId); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct);
-        ProtectDriverOperationalRows(rows, http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>());
+        // Dispatch eligibility does not need licence material at all. Omit both the
+        // encrypted display value and its equality-search index from this projection.
+        foreach (var row in rows)
+        {
+            row.Remove("licenseNumber");
+            row.Remove("licenseNumberBidx");
+        }
         return Results.Ok(ApiResponse<object>.Ok(rows));
     }
 
@@ -27671,7 +27677,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (drv is null)
             return Results.NotFound(ApiResponse<object>.Fail("Driver not found"));
 
-        ProtectDriverOperationalRow(drv, http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>());
+        // Fleet-health risk has no licence use case; omit identity material entirely.
+        drv.Remove("licenseNumber");
+        drv.Remove("licenseNumberBidx");
 
         var openEvents = await db.QueryAsync(
             @"SELECT se.id, se.event_number, se.event_type, se.severity,
