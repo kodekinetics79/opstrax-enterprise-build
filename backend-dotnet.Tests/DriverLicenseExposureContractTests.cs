@@ -91,6 +91,7 @@ public class DriverLicenseExposureContractTests
             "UpdateDriver",          // write path (mask round-trip guarded, asserted below)
             "DriversImportPreview",  // import write path
             "DriversImportCommit",   // import write path
+            "LoadDriverImportIdentities", // private duplicate-validation lookup; never serialized
             "BindDriver",            // write-path binder (encrypts)
             "DataSubjectExport",     // DSAR — the ONLY full-plaintext exit
             "DataSubjectErase",      // crypto-shred write
