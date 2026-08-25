@@ -255,7 +255,7 @@ export function FleetAssetManagementPage() {
                 canExport={false}
                 config={{
                   entity: 'assets',
-                  columns: ['assetTag', 'name', 'assetTypeCode', 'status', 'currentLocation', 'condition', 'isReturnable', 'quantity', 'unitOfMeasure', 'notes'],
+                  columns: ['assetTag', 'branchCode', 'name', 'assetTypeCode', 'status', 'currentLocation', 'condition', 'isReturnable', 'quantity', 'unitOfMeasure', 'notes'],
                   requiredColumns: ['assetTag', 'name', 'assetTypeCode'],
                   templateEndpoint: '/api/fleet-tms/assets/import-template',
                   importPreview: fleetAssetApi.previewImport,

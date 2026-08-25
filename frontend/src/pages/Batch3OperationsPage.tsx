@@ -149,14 +149,14 @@ function getBatch3Permission(kind: Batch3Kind, action: string) {
     if (action === "mechanicReview" || action === "certifyRepair") return "maintenance:update";
     return "maintenance:view";
   }
-  if (action === "renew" || action === "upload") return "maintenance:update";
-  return "maintenance:view";
+  if (action === "renew" || action === "upload" || action === "update") return "compliance:manage";
+  return "compliance:view";
 }
 
 export function Batch3OperationsPage({ kind }: { kind: Batch3Kind }) {
   const config = configs[kind];
   const { session } = useAuth();
-  const exportPermission = kind === "documents" ? "maintenance:update" : "maintenance:view";
+  const exportPermission = kind === "documents" ? "compliance:view" : "maintenance:view";
   
   const hasPermission = (perm: string) => {
     if (!session?.permissions) return false;
@@ -178,7 +178,11 @@ export function Batch3OperationsPage({ kind }: { kind: Batch3Kind }) {
   };
 
   const save = useMutation({
-    mutationFn: (payload: AnyRecord) => payload.id ? config.api.update(payload.id as string | number, payload) : config.api.create(payload),
+    mutationFn: (payload: AnyRecord) => payload.id
+      ? config.api.update(payload.id as string | number, payload)
+      : kind === "documents"
+        ? documentsApi.upload(payload)
+        : config.api.create(payload),
     onSuccess: async () => { setEditing(null); await invalidate(); },
   });
 
@@ -226,8 +230,8 @@ export function Batch3OperationsPage({ kind }: { kind: Batch3Kind }) {
           <>
             <button
               className="btn-primary"
-              disabled={!hasPermission(kind === "work-orders" || kind === "maintenance" ? "maintenance:create" : "maintenance:update")}
-              title={!hasPermission(kind === "work-orders" || kind === "maintenance" ? "maintenance:create" : "maintenance:update") ? "You do not have permission to perform this action." : `Create a new ${config.eyebrow.toLowerCase()} record.`}
+              disabled={!hasPermission(kind === "documents" ? "compliance:manage" : kind === "work-orders" || kind === "maintenance" ? "maintenance:create" : "maintenance:update")}
+              title={!hasPermission(kind === "documents" ? "compliance:manage" : kind === "work-orders" || kind === "maintenance" ? "maintenance:create" : "maintenance:update") ? "You do not have permission to perform this action." : `Create a new ${config.eyebrow.toLowerCase()} record.`}
               onClick={() => setEditing(defaultForm(kind))}
             >
               <Plus className="h-4 w-4" /> {config.createLabel}
@@ -269,7 +273,7 @@ export function Batch3OperationsPage({ kind }: { kind: Batch3Kind }) {
         onEdit={(record) => setEditing(record)}
         onAction={(type, row) => action.mutate({ type, row })}
       />
-      {editing ? <RecordModal title={config.createLabel} fields={config.fields} initial={editing} saving={save.isPending} onClose={() => setEditing(null)} onSave={(payload) => save.mutate(payload)} /> : null}
+      {editing ? <RecordModal title={config.createLabel} fields={config.fields} initial={editing} saving={save.isPending} requireFile={kind === "documents" && !editing.id} onClose={() => setEditing(null)} onSave={(payload) => save.mutate(payload)} /> : null}
     </div>
   );
 }
@@ -334,15 +338,16 @@ function DetailDrawer({ kind, config, detail, loading, onClose, onEdit, onAction
   );
 }
 
-function RecordModal({ title, fields, initial, saving, onClose, onSave }: { title: string; fields: string[][]; initial: AnyRecord; saving: boolean; onClose: () => void; onSave: (payload: AnyRecord) => void }) {
+function RecordModal({ title, fields, initial, saving, requireFile = false, onClose, onSave }: { title: string; fields: string[][]; initial: AnyRecord; saving: boolean; requireFile?: boolean; onClose: () => void; onSave: (payload: AnyRecord) => void }) {
   const [form, setForm] = useState<AnyRecord>(initial);
   const submit = (event: FormEvent) => { event.preventDefault(); onSave(form); };
   return (
     <div className="fixed inset-0 z-[60] grid place-items-center bg-black/60 p-4">
       <form className="panel max-h-[90vh] w-full max-w-4xl overflow-y-auto p-6" onSubmit={submit}>
         <div className="flex justify-between"><h2 className="text-2xl font-semibold text-slate-900">{form.id ? `Edit ${title}` : title}</h2><button type="button" className="icon-btn" onClick={onClose}><X /></button></div>
+        {requireFile ? <label className="mt-6 block"><span className="mb-2 block text-xs font-bold uppercase tracking-[0.16em] text-slate-500">Document file</span><input className="field" type="file" required accept=".pdf,.png,.jpg,.jpeg,.gif,.webp,.heic,.heif,.docx,.xlsx,.txt,.csv" onChange={(e) => setForm((x) => ({ ...x, file: e.target.files?.[0] }))} /><span className="mt-1 block text-xs text-slate-500">PDF, image, Word, Excel, text or CSV; maximum 25 MB.</span></label> : null}
         <div className="mt-6 grid gap-4 md:grid-cols-2">{fields.map(([key, label]) => <label key={key}><span className="mb-2 block text-xs font-bold uppercase tracking-[0.16em] text-slate-500">{label}</span><input className="field" value={String(form[key] ?? "")} onChange={(e) => setForm((x) => ({ ...x, [key]: e.target.value }))} /></label>)}</div>
-        <div className="mt-6 flex justify-end gap-3"><button type="button" className="btn-ghost" onClick={onClose}>Cancel</button><button type="submit" className="btn-primary" disabled={saving}>Save</button></div>
+        <div className="mt-6 flex justify-end gap-3"><button type="button" className="btn-ghost" onClick={onClose}>Cancel</button><button type="submit" className="btn-primary" disabled={saving}>{saving ? "Uploading…" : requireFile ? "Upload" : "Save"}</button></div>
       </form>
     </div>
   );

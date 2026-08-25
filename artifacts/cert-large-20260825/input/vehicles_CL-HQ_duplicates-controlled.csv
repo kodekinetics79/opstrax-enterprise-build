@@ -1,0 +1,3 @@
+vehicleCode,branchCode,type,make,model,year,vehicleClass,odometerMiles,vin,vinExceptionType,alternateIdentifier,plateNumber,plateJurisdiction,status
+CLHQ-V-0001,CL-HQ,Tractor,Freightliner,Cascadia,2017,Class 8,49919,,legacy-fleet-identifier,CERT-CLHQ-VEH-0001,OH-0001,OH,Available
+CLHQ-V-0001,CL-HQ,Tractor,Freightliner,Cascadia,2017,Class 8,49919,,legacy-fleet-identifier,CERT-CLHQ-VEH-0001,OH-0001,OH,Available

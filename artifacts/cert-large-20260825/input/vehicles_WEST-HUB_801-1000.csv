@@ -1,0 +1,201 @@
+vehicleCode,branchCode,type,make,model,year,vehicleClass,odometerMiles,vin,vinExceptionType,alternateIdentifier,plateNumber,plateJurisdiction,status
+WESTHUB-V-0001,WEST-HUB,Tractor,Freightliner,Cascadia,2017,Class 8,49919,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0001,AZ-0001,AZ,Available
+WESTHUB-V-0002,WEST-HUB,Truck,Ford,F-650,2018,Class 6,57838,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0002,AZ-0002,AZ,Available
+WESTHUB-V-0003,WEST-HUB,Van,Ford,Transit,2019,Class 2b,65757,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0003,AZ-0003,AZ,Available
+WESTHUB-V-0004,WEST-HUB,Truck,Isuzu,NPR-HD,2020,Class 5,73676,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0004,AZ-0004,AZ,Available
+WESTHUB-V-0005,WEST-HUB,Tractor,Volvo,VNL 760,2021,Class 8,81595,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0005,AZ-0005,AZ,Available
+WESTHUB-V-0006,WEST-HUB,Tractor,Freightliner,Cascadia,2022,Class 8,89514,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0006,AZ-0006,AZ,Available
+WESTHUB-V-0007,WEST-HUB,Truck,Ford,F-650,2023,Class 6,97433,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0007,AZ-0007,AZ,Available
+WESTHUB-V-0008,WEST-HUB,Van,Ford,Transit,2024,Class 2b,105352,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0008,AZ-0008,AZ,Available
+WESTHUB-V-0009,WEST-HUB,Truck,Isuzu,NPR-HD,2025,Class 5,113271,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0009,AZ-0009,AZ,Available
+WESTHUB-V-0010,WEST-HUB,Tractor,Volvo,VNL 760,2026,Class 8,121190,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0010,AZ-0010,AZ,Available
+WESTHUB-V-0011,WEST-HUB,Tractor,Freightliner,Cascadia,2017,Class 8,129109,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0011,AZ-0011,AZ,Available
+WESTHUB-V-0012,WEST-HUB,Truck,Ford,F-650,2018,Class 6,137028,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0012,AZ-0012,AZ,Available
+WESTHUB-V-0013,WEST-HUB,Van,Ford,Transit,2019,Class 2b,144947,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0013,AZ-0013,AZ,Available
+WESTHUB-V-0014,WEST-HUB,Truck,Isuzu,NPR-HD,2020,Class 5,152866,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0014,AZ-0014,AZ,Available
+WESTHUB-V-0015,WEST-HUB,Tractor,Volvo,VNL 760,2021,Class 8,160785,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0015,AZ-0015,AZ,Available
+WESTHUB-V-0016,WEST-HUB,Tractor,Freightliner,Cascadia,2022,Class 8,168704,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0016,AZ-0016,AZ,Available
+WESTHUB-V-0017,WEST-HUB,Truck,Ford,F-650,2023,Class 6,176623,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0017,AZ-0017,AZ,Available
+WESTHUB-V-0018,WEST-HUB,Van,Ford,Transit,2024,Class 2b,184542,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0018,AZ-0018,AZ,Available
+WESTHUB-V-0019,WEST-HUB,Truck,Isuzu,NPR-HD,2025,Class 5,192461,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0019,AZ-0019,AZ,Available
+WESTHUB-V-0020,WEST-HUB,Tractor,Volvo,VNL 760,2026,Class 8,200380,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0020,AZ-0020,AZ,Maintenance
+WESTHUB-V-0021,WEST-HUB,Tractor,Freightliner,Cascadia,2017,Class 8,208299,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0021,AZ-0021,AZ,Available
+WESTHUB-V-0022,WEST-HUB,Truck,Ford,F-650,2018,Class 6,216218,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0022,AZ-0022,AZ,Available
+WESTHUB-V-0023,WEST-HUB,Van,Ford,Transit,2019,Class 2b,224137,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0023,AZ-0023,AZ,Available
+WESTHUB-V-0024,WEST-HUB,Truck,Isuzu,NPR-HD,2020,Class 5,232056,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0024,AZ-0024,AZ,Available
+WESTHUB-V-0025,WEST-HUB,Tractor,Volvo,VNL 760,2021,Class 8,239975,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0025,AZ-0025,AZ,Available
+WESTHUB-V-0026,WEST-HUB,Tractor,Freightliner,Cascadia,2022,Class 8,247894,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0026,AZ-0026,AZ,Available
+WESTHUB-V-0027,WEST-HUB,Truck,Ford,F-650,2023,Class 6,255813,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0027,AZ-0027,AZ,Available
+WESTHUB-V-0028,WEST-HUB,Van,Ford,Transit,2024,Class 2b,263732,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0028,AZ-0028,AZ,Available
+WESTHUB-V-0029,WEST-HUB,Truck,Isuzu,NPR-HD,2025,Class 5,271651,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0029,AZ-0029,AZ,Available
+WESTHUB-V-0030,WEST-HUB,Tractor,Volvo,VNL 760,2026,Class 8,279570,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0030,AZ-0030,AZ,Available
+WESTHUB-V-0031,WEST-HUB,Tractor,Freightliner,Cascadia,2017,Class 8,287489,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0031,AZ-0031,AZ,Available
+WESTHUB-V-0032,WEST-HUB,Truck,Ford,F-650,2018,Class 6,295408,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0032,AZ-0032,AZ,Available
+WESTHUB-V-0033,WEST-HUB,Van,Ford,Transit,2019,Class 2b,303327,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0033,AZ-0033,AZ,Available
+WESTHUB-V-0034,WEST-HUB,Truck,Isuzu,NPR-HD,2020,Class 5,311246,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0034,AZ-0034,AZ,Available
+WESTHUB-V-0035,WEST-HUB,Tractor,Volvo,VNL 760,2021,Class 8,319165,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0035,AZ-0035,AZ,Available
+WESTHUB-V-0036,WEST-HUB,Tractor,Freightliner,Cascadia,2022,Class 8,327084,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0036,AZ-0036,AZ,Available
+WESTHUB-V-0037,WEST-HUB,Truck,Ford,F-650,2023,Class 6,335003,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0037,AZ-0037,AZ,Available
+WESTHUB-V-0038,WEST-HUB,Van,Ford,Transit,2024,Class 2b,342922,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0038,AZ-0038,AZ,Available
+WESTHUB-V-0039,WEST-HUB,Truck,Isuzu,NPR-HD,2025,Class 5,350841,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0039,AZ-0039,AZ,Available
+WESTHUB-V-0040,WEST-HUB,Tractor,Volvo,VNL 760,2026,Class 8,358760,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0040,AZ-0040,AZ,Maintenance
+WESTHUB-V-0041,WEST-HUB,Tractor,Freightliner,Cascadia,2017,Class 8,366679,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0041,AZ-0041,AZ,Available
+WESTHUB-V-0042,WEST-HUB,Truck,Ford,F-650,2018,Class 6,374598,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0042,AZ-0042,AZ,Available
+WESTHUB-V-0043,WEST-HUB,Van,Ford,Transit,2019,Class 2b,382517,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0043,AZ-0043,AZ,Available
+WESTHUB-V-0044,WEST-HUB,Truck,Isuzu,NPR-HD,2020,Class 5,390436,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0044,AZ-0044,AZ,Available
+WESTHUB-V-0045,WEST-HUB,Tractor,Volvo,VNL 760,2021,Class 8,398355,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0045,AZ-0045,AZ,Available
+WESTHUB-V-0046,WEST-HUB,Tractor,Freightliner,Cascadia,2022,Class 8,406274,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0046,AZ-0046,AZ,Available
+WESTHUB-V-0047,WEST-HUB,Truck,Ford,F-650,2023,Class 6,414193,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0047,AZ-0047,AZ,Available
+WESTHUB-V-0048,WEST-HUB,Van,Ford,Transit,2024,Class 2b,422112,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0048,AZ-0048,AZ,Available
+WESTHUB-V-0049,WEST-HUB,Truck,Isuzu,NPR-HD,2025,Class 5,430031,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0049,AZ-0049,AZ,Available
+WESTHUB-V-0050,WEST-HUB,Tractor,Volvo,VNL 760,2026,Class 8,437950,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0050,AZ-0050,AZ,Available
+WESTHUB-V-0051,WEST-HUB,Tractor,Freightliner,Cascadia,2017,Class 8,445869,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0051,AZ-0051,AZ,Available
+WESTHUB-V-0052,WEST-HUB,Truck,Ford,F-650,2018,Class 6,453788,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0052,AZ-0052,AZ,Available
+WESTHUB-V-0053,WEST-HUB,Van,Ford,Transit,2019,Class 2b,461707,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0053,AZ-0053,AZ,Available
+WESTHUB-V-0054,WEST-HUB,Truck,Isuzu,NPR-HD,2020,Class 5,469626,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0054,AZ-0054,AZ,Available
+WESTHUB-V-0055,WEST-HUB,Tractor,Volvo,VNL 760,2021,Class 8,477545,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0055,AZ-0055,AZ,Available
+WESTHUB-V-0056,WEST-HUB,Tractor,Freightliner,Cascadia,2022,Class 8,485464,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0056,AZ-0056,AZ,Available
+WESTHUB-V-0057,WEST-HUB,Truck,Ford,F-650,2023,Class 6,493383,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0057,AZ-0057,AZ,Available
+WESTHUB-V-0058,WEST-HUB,Van,Ford,Transit,2024,Class 2b,501302,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0058,AZ-0058,AZ,Available
+WESTHUB-V-0059,WEST-HUB,Truck,Isuzu,NPR-HD,2025,Class 5,509221,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0059,AZ-0059,AZ,Available
+WESTHUB-V-0060,WEST-HUB,Tractor,Volvo,VNL 760,2026,Class 8,517140,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0060,AZ-0060,AZ,Maintenance
+WESTHUB-V-0061,WEST-HUB,Tractor,Freightliner,Cascadia,2017,Class 8,525059,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0061,AZ-0061,AZ,Available
+WESTHUB-V-0062,WEST-HUB,Truck,Ford,F-650,2018,Class 6,532978,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0062,AZ-0062,AZ,Available
+WESTHUB-V-0063,WEST-HUB,Van,Ford,Transit,2019,Class 2b,540897,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0063,AZ-0063,AZ,Available
+WESTHUB-V-0064,WEST-HUB,Truck,Isuzu,NPR-HD,2020,Class 5,548816,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0064,AZ-0064,AZ,Available
+WESTHUB-V-0065,WEST-HUB,Tractor,Volvo,VNL 760,2021,Class 8,556735,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0065,AZ-0065,AZ,Available
+WESTHUB-V-0066,WEST-HUB,Tractor,Freightliner,Cascadia,2022,Class 8,564654,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0066,AZ-0066,AZ,Available
+WESTHUB-V-0067,WEST-HUB,Truck,Ford,F-650,2023,Class 6,572573,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0067,AZ-0067,AZ,Available
+WESTHUB-V-0068,WEST-HUB,Van,Ford,Transit,2024,Class 2b,580492,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0068,AZ-0068,AZ,Available
+WESTHUB-V-0069,WEST-HUB,Truck,Isuzu,NPR-HD,2025,Class 5,588411,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0069,AZ-0069,AZ,Available
+WESTHUB-V-0070,WEST-HUB,Tractor,Volvo,VNL 760,2026,Class 8,596330,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0070,AZ-0070,AZ,Available
+WESTHUB-V-0071,WEST-HUB,Tractor,Freightliner,Cascadia,2017,Class 8,604249,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0071,AZ-0071,AZ,Available
+WESTHUB-V-0072,WEST-HUB,Truck,Ford,F-650,2018,Class 6,612168,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0072,AZ-0072,AZ,Available
+WESTHUB-V-0073,WEST-HUB,Van,Ford,Transit,2019,Class 2b,620087,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0073,AZ-0073,AZ,Available
+WESTHUB-V-0074,WEST-HUB,Truck,Isuzu,NPR-HD,2020,Class 5,628006,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0074,AZ-0074,AZ,Available
+WESTHUB-V-0075,WEST-HUB,Tractor,Volvo,VNL 760,2021,Class 8,635925,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0075,AZ-0075,AZ,Available
+WESTHUB-V-0076,WEST-HUB,Tractor,Freightliner,Cascadia,2022,Class 8,643844,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0076,AZ-0076,AZ,Available
+WESTHUB-V-0077,WEST-HUB,Truck,Ford,F-650,2023,Class 6,651763,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0077,AZ-0077,AZ,Available
+WESTHUB-V-0078,WEST-HUB,Van,Ford,Transit,2024,Class 2b,49682,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0078,AZ-0078,AZ,Available
+WESTHUB-V-0079,WEST-HUB,Truck,Isuzu,NPR-HD,2025,Class 5,57601,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0079,AZ-0079,AZ,Available
+WESTHUB-V-0080,WEST-HUB,Tractor,Volvo,VNL 760,2026,Class 8,65520,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0080,AZ-0080,AZ,Maintenance
+WESTHUB-V-0081,WEST-HUB,Tractor,Freightliner,Cascadia,2017,Class 8,73439,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0081,AZ-0081,AZ,Available
+WESTHUB-V-0082,WEST-HUB,Truck,Ford,F-650,2018,Class 6,81358,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0082,AZ-0082,AZ,Available
+WESTHUB-V-0083,WEST-HUB,Van,Ford,Transit,2019,Class 2b,89277,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0083,AZ-0083,AZ,Available
+WESTHUB-V-0084,WEST-HUB,Truck,Isuzu,NPR-HD,2020,Class 5,97196,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0084,AZ-0084,AZ,Available
+WESTHUB-V-0085,WEST-HUB,Tractor,Volvo,VNL 760,2021,Class 8,105115,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0085,AZ-0085,AZ,Available
+WESTHUB-V-0086,WEST-HUB,Tractor,Freightliner,Cascadia,2022,Class 8,113034,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0086,AZ-0086,AZ,Available
+WESTHUB-V-0087,WEST-HUB,Truck,Ford,F-650,2023,Class 6,120953,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0087,AZ-0087,AZ,Available
+WESTHUB-V-0088,WEST-HUB,Van,Ford,Transit,2024,Class 2b,128872,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0088,AZ-0088,AZ,Available
+WESTHUB-V-0089,WEST-HUB,Truck,Isuzu,NPR-HD,2025,Class 5,136791,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0089,AZ-0089,AZ,Available
+WESTHUB-V-0090,WEST-HUB,Tractor,Volvo,VNL 760,2026,Class 8,144710,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0090,AZ-0090,AZ,Available
+WESTHUB-V-0091,WEST-HUB,Tractor,Freightliner,Cascadia,2017,Class 8,152629,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0091,AZ-0091,AZ,Available
+WESTHUB-V-0092,WEST-HUB,Truck,Ford,F-650,2018,Class 6,160548,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0092,AZ-0092,AZ,Available
+WESTHUB-V-0093,WEST-HUB,Van,Ford,Transit,2019,Class 2b,168467,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0093,AZ-0093,AZ,Available
+WESTHUB-V-0094,WEST-HUB,Truck,Isuzu,NPR-HD,2020,Class 5,176386,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0094,AZ-0094,AZ,Available
+WESTHUB-V-0095,WEST-HUB,Tractor,Volvo,VNL 760,2021,Class 8,184305,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0095,AZ-0095,AZ,Available
+WESTHUB-V-0096,WEST-HUB,Tractor,Freightliner,Cascadia,2022,Class 8,192224,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0096,AZ-0096,AZ,Available
+WESTHUB-V-0097,WEST-HUB,Truck,Ford,F-650,2023,Class 6,200143,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0097,AZ-0097,AZ,Available
+WESTHUB-V-0098,WEST-HUB,Van,Ford,Transit,2024,Class 2b,208062,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0098,AZ-0098,AZ,Available
+WESTHUB-V-0099,WEST-HUB,Truck,Isuzu,NPR-HD,2025,Class 5,215981,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0099,AZ-0099,AZ,Available
+WESTHUB-V-0100,WEST-HUB,Tractor,Volvo,VNL 760,2026,Class 8,223900,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0100,AZ-0100,AZ,Maintenance
+WESTHUB-V-0101,WEST-HUB,Tractor,Freightliner,Cascadia,2017,Class 8,231819,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0101,AZ-0101,AZ,Available
+WESTHUB-V-0102,WEST-HUB,Truck,Ford,F-650,2018,Class 6,239738,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0102,AZ-0102,AZ,Available
+WESTHUB-V-0103,WEST-HUB,Van,Ford,Transit,2019,Class 2b,247657,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0103,AZ-0103,AZ,Available
+WESTHUB-V-0104,WEST-HUB,Truck,Isuzu,NPR-HD,2020,Class 5,255576,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0104,AZ-0104,AZ,Available
+WESTHUB-V-0105,WEST-HUB,Tractor,Volvo,VNL 760,2021,Class 8,263495,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0105,AZ-0105,AZ,Available
+WESTHUB-V-0106,WEST-HUB,Tractor,Freightliner,Cascadia,2022,Class 8,271414,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0106,AZ-0106,AZ,Available
+WESTHUB-V-0107,WEST-HUB,Truck,Ford,F-650,2023,Class 6,279333,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0107,AZ-0107,AZ,Available
+WESTHUB-V-0108,WEST-HUB,Van,Ford,Transit,2024,Class 2b,287252,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0108,AZ-0108,AZ,Available
+WESTHUB-V-0109,WEST-HUB,Truck,Isuzu,NPR-HD,2025,Class 5,295171,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0109,AZ-0109,AZ,Available
+WESTHUB-V-0110,WEST-HUB,Tractor,Volvo,VNL 760,2026,Class 8,303090,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0110,AZ-0110,AZ,Available
+WESTHUB-V-0111,WEST-HUB,Tractor,Freightliner,Cascadia,2017,Class 8,311009,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0111,AZ-0111,AZ,Available
+WESTHUB-V-0112,WEST-HUB,Truck,Ford,F-650,2018,Class 6,318928,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0112,AZ-0112,AZ,Available
+WESTHUB-V-0113,WEST-HUB,Van,Ford,Transit,2019,Class 2b,326847,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0113,AZ-0113,AZ,Available
+WESTHUB-V-0114,WEST-HUB,Truck,Isuzu,NPR-HD,2020,Class 5,334766,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0114,AZ-0114,AZ,Available
+WESTHUB-V-0115,WEST-HUB,Tractor,Volvo,VNL 760,2021,Class 8,342685,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0115,AZ-0115,AZ,Available
+WESTHUB-V-0116,WEST-HUB,Tractor,Freightliner,Cascadia,2022,Class 8,350604,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0116,AZ-0116,AZ,Available
+WESTHUB-V-0117,WEST-HUB,Truck,Ford,F-650,2023,Class 6,358523,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0117,AZ-0117,AZ,Available
+WESTHUB-V-0118,WEST-HUB,Van,Ford,Transit,2024,Class 2b,366442,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0118,AZ-0118,AZ,Available
+WESTHUB-V-0119,WEST-HUB,Truck,Isuzu,NPR-HD,2025,Class 5,374361,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0119,AZ-0119,AZ,Available
+WESTHUB-V-0120,WEST-HUB,Tractor,Volvo,VNL 760,2026,Class 8,382280,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0120,AZ-0120,AZ,Maintenance
+WESTHUB-V-0121,WEST-HUB,Tractor,Freightliner,Cascadia,2017,Class 8,390199,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0121,AZ-0121,AZ,Available
+WESTHUB-V-0122,WEST-HUB,Truck,Ford,F-650,2018,Class 6,398118,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0122,AZ-0122,AZ,Available
+WESTHUB-V-0123,WEST-HUB,Van,Ford,Transit,2019,Class 2b,406037,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0123,AZ-0123,AZ,Available
+WESTHUB-V-0124,WEST-HUB,Truck,Isuzu,NPR-HD,2020,Class 5,413956,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0124,AZ-0124,AZ,Available
+WESTHUB-V-0125,WEST-HUB,Tractor,Volvo,VNL 760,2021,Class 8,421875,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0125,AZ-0125,AZ,Available
+WESTHUB-V-0126,WEST-HUB,Tractor,Freightliner,Cascadia,2022,Class 8,429794,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0126,AZ-0126,AZ,Available
+WESTHUB-V-0127,WEST-HUB,Truck,Ford,F-650,2023,Class 6,437713,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0127,AZ-0127,AZ,Available
+WESTHUB-V-0128,WEST-HUB,Van,Ford,Transit,2024,Class 2b,445632,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0128,AZ-0128,AZ,Available
+WESTHUB-V-0129,WEST-HUB,Truck,Isuzu,NPR-HD,2025,Class 5,453551,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0129,AZ-0129,AZ,Available
+WESTHUB-V-0130,WEST-HUB,Tractor,Volvo,VNL 760,2026,Class 8,461470,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0130,AZ-0130,AZ,Available
+WESTHUB-V-0131,WEST-HUB,Tractor,Freightliner,Cascadia,2017,Class 8,469389,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0131,AZ-0131,AZ,Available
+WESTHUB-V-0132,WEST-HUB,Truck,Ford,F-650,2018,Class 6,477308,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0132,AZ-0132,AZ,Available
+WESTHUB-V-0133,WEST-HUB,Van,Ford,Transit,2019,Class 2b,485227,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0133,AZ-0133,AZ,Available
+WESTHUB-V-0134,WEST-HUB,Truck,Isuzu,NPR-HD,2020,Class 5,493146,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0134,AZ-0134,AZ,Available
+WESTHUB-V-0135,WEST-HUB,Tractor,Volvo,VNL 760,2021,Class 8,501065,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0135,AZ-0135,AZ,Available
+WESTHUB-V-0136,WEST-HUB,Tractor,Freightliner,Cascadia,2022,Class 8,508984,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0136,AZ-0136,AZ,Available
+WESTHUB-V-0137,WEST-HUB,Truck,Ford,F-650,2023,Class 6,516903,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0137,AZ-0137,AZ,Available
+WESTHUB-V-0138,WEST-HUB,Van,Ford,Transit,2024,Class 2b,524822,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0138,AZ-0138,AZ,Available
+WESTHUB-V-0139,WEST-HUB,Truck,Isuzu,NPR-HD,2025,Class 5,532741,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0139,AZ-0139,AZ,Available
+WESTHUB-V-0140,WEST-HUB,Tractor,Volvo,VNL 760,2026,Class 8,540660,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0140,AZ-0140,AZ,Maintenance
+WESTHUB-V-0141,WEST-HUB,Tractor,Freightliner,Cascadia,2017,Class 8,548579,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0141,AZ-0141,AZ,Available
+WESTHUB-V-0142,WEST-HUB,Truck,Ford,F-650,2018,Class 6,556498,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0142,AZ-0142,AZ,Available
+WESTHUB-V-0143,WEST-HUB,Van,Ford,Transit,2019,Class 2b,564417,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0143,AZ-0143,AZ,Available
+WESTHUB-V-0144,WEST-HUB,Truck,Isuzu,NPR-HD,2020,Class 5,572336,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0144,AZ-0144,AZ,Available
+WESTHUB-V-0145,WEST-HUB,Tractor,Volvo,VNL 760,2021,Class 8,580255,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0145,AZ-0145,AZ,Available
+WESTHUB-V-0146,WEST-HUB,Tractor,Freightliner,Cascadia,2022,Class 8,588174,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0146,AZ-0146,AZ,Available
+WESTHUB-V-0147,WEST-HUB,Truck,Ford,F-650,2023,Class 6,596093,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0147,AZ-0147,AZ,Available
+WESTHUB-V-0148,WEST-HUB,Van,Ford,Transit,2024,Class 2b,604012,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0148,AZ-0148,AZ,Available
+WESTHUB-V-0149,WEST-HUB,Truck,Isuzu,NPR-HD,2025,Class 5,611931,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0149,AZ-0149,AZ,Available
+WESTHUB-V-0150,WEST-HUB,Tractor,Volvo,VNL 760,2026,Class 8,619850,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0150,AZ-0150,AZ,Available
+WESTHUB-V-0151,WEST-HUB,Tractor,Freightliner,Cascadia,2017,Class 8,627769,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0151,AZ-0151,AZ,Available
+WESTHUB-V-0152,WEST-HUB,Truck,Ford,F-650,2018,Class 6,635688,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0152,AZ-0152,AZ,Available
+WESTHUB-V-0153,WEST-HUB,Van,Ford,Transit,2019,Class 2b,643607,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0153,AZ-0153,AZ,Available
+WESTHUB-V-0154,WEST-HUB,Truck,Isuzu,NPR-HD,2020,Class 5,651526,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0154,AZ-0154,AZ,Available
+WESTHUB-V-0155,WEST-HUB,Tractor,Volvo,VNL 760,2021,Class 8,49445,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0155,AZ-0155,AZ,Available
+WESTHUB-V-0156,WEST-HUB,Tractor,Freightliner,Cascadia,2022,Class 8,57364,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0156,AZ-0156,AZ,Available
+WESTHUB-V-0157,WEST-HUB,Truck,Ford,F-650,2023,Class 6,65283,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0157,AZ-0157,AZ,Available
+WESTHUB-V-0158,WEST-HUB,Van,Ford,Transit,2024,Class 2b,73202,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0158,AZ-0158,AZ,Available
+WESTHUB-V-0159,WEST-HUB,Truck,Isuzu,NPR-HD,2025,Class 5,81121,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0159,AZ-0159,AZ,Available
+WESTHUB-V-0160,WEST-HUB,Tractor,Volvo,VNL 760,2026,Class 8,89040,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0160,AZ-0160,AZ,Maintenance
+WESTHUB-V-0161,WEST-HUB,Tractor,Freightliner,Cascadia,2017,Class 8,96959,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0161,AZ-0161,AZ,Available
+WESTHUB-V-0162,WEST-HUB,Truck,Ford,F-650,2018,Class 6,104878,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0162,AZ-0162,AZ,Available
+WESTHUB-V-0163,WEST-HUB,Van,Ford,Transit,2019,Class 2b,112797,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0163,AZ-0163,AZ,Available
+WESTHUB-V-0164,WEST-HUB,Truck,Isuzu,NPR-HD,2020,Class 5,120716,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0164,AZ-0164,AZ,Available
+WESTHUB-V-0165,WEST-HUB,Tractor,Volvo,VNL 760,2021,Class 8,128635,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0165,AZ-0165,AZ,Available
+WESTHUB-V-0166,WEST-HUB,Tractor,Freightliner,Cascadia,2022,Class 8,136554,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0166,AZ-0166,AZ,Available
+WESTHUB-V-0167,WEST-HUB,Truck,Ford,F-650,2023,Class 6,144473,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0167,AZ-0167,AZ,Available
+WESTHUB-V-0168,WEST-HUB,Van,Ford,Transit,2024,Class 2b,152392,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0168,AZ-0168,AZ,Available
+WESTHUB-V-0169,WEST-HUB,Truck,Isuzu,NPR-HD,2025,Class 5,160311,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0169,AZ-0169,AZ,Available
+WESTHUB-V-0170,WEST-HUB,Tractor,Volvo,VNL 760,2026,Class 8,168230,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0170,AZ-0170,AZ,Available
+WESTHUB-V-0171,WEST-HUB,Tractor,Freightliner,Cascadia,2017,Class 8,176149,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0171,AZ-0171,AZ,Available
+WESTHUB-V-0172,WEST-HUB,Truck,Ford,F-650,2018,Class 6,184068,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0172,AZ-0172,AZ,Available
+WESTHUB-V-0173,WEST-HUB,Van,Ford,Transit,2019,Class 2b,191987,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0173,AZ-0173,AZ,Available
+WESTHUB-V-0174,WEST-HUB,Truck,Isuzu,NPR-HD,2020,Class 5,199906,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0174,AZ-0174,AZ,Available
+WESTHUB-V-0175,WEST-HUB,Tractor,Volvo,VNL 760,2021,Class 8,207825,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0175,AZ-0175,AZ,Available
+WESTHUB-V-0176,WEST-HUB,Tractor,Freightliner,Cascadia,2022,Class 8,215744,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0176,AZ-0176,AZ,Available
+WESTHUB-V-0177,WEST-HUB,Truck,Ford,F-650,2023,Class 6,223663,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0177,AZ-0177,AZ,Available
+WESTHUB-V-0178,WEST-HUB,Van,Ford,Transit,2024,Class 2b,231582,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0178,AZ-0178,AZ,Available
+WESTHUB-V-0179,WEST-HUB,Truck,Isuzu,NPR-HD,2025,Class 5,239501,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0179,AZ-0179,AZ,Available
+WESTHUB-V-0180,WEST-HUB,Tractor,Volvo,VNL 760,2026,Class 8,247420,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0180,AZ-0180,AZ,Maintenance
+WESTHUB-V-0181,WEST-HUB,Tractor,Freightliner,Cascadia,2017,Class 8,255339,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0181,AZ-0181,AZ,Available
+WESTHUB-V-0182,WEST-HUB,Truck,Ford,F-650,2018,Class 6,263258,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0182,AZ-0182,AZ,Available
+WESTHUB-V-0183,WEST-HUB,Van,Ford,Transit,2019,Class 2b,271177,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0183,AZ-0183,AZ,Available
+WESTHUB-V-0184,WEST-HUB,Truck,Isuzu,NPR-HD,2020,Class 5,279096,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0184,AZ-0184,AZ,Available
+WESTHUB-V-0185,WEST-HUB,Tractor,Volvo,VNL 760,2021,Class 8,287015,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0185,AZ-0185,AZ,Available
+WESTHUB-V-0186,WEST-HUB,Tractor,Freightliner,Cascadia,2022,Class 8,294934,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0186,AZ-0186,AZ,Available
+WESTHUB-V-0187,WEST-HUB,Truck,Ford,F-650,2023,Class 6,302853,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0187,AZ-0187,AZ,Available
+WESTHUB-V-0188,WEST-HUB,Van,Ford,Transit,2024,Class 2b,310772,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0188,AZ-0188,AZ,Available
+WESTHUB-V-0189,WEST-HUB,Truck,Isuzu,NPR-HD,2025,Class 5,318691,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0189,AZ-0189,AZ,Available
+WESTHUB-V-0190,WEST-HUB,Tractor,Volvo,VNL 760,2026,Class 8,326610,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0190,AZ-0190,AZ,Available
+WESTHUB-V-0191,WEST-HUB,Tractor,Freightliner,Cascadia,2017,Class 8,334529,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0191,AZ-0191,AZ,Available
+WESTHUB-V-0192,WEST-HUB,Truck,Ford,F-650,2018,Class 6,342448,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0192,AZ-0192,AZ,Available
+WESTHUB-V-0193,WEST-HUB,Van,Ford,Transit,2019,Class 2b,350367,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0193,AZ-0193,AZ,Available
+WESTHUB-V-0194,WEST-HUB,Truck,Isuzu,NPR-HD,2020,Class 5,358286,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0194,AZ-0194,AZ,Available
+WESTHUB-V-0195,WEST-HUB,Tractor,Volvo,VNL 760,2021,Class 8,366205,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0195,AZ-0195,AZ,Available
+WESTHUB-V-0196,WEST-HUB,Tractor,Freightliner,Cascadia,2022,Class 8,374124,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0196,AZ-0196,AZ,Available
+WESTHUB-V-0197,WEST-HUB,Truck,Ford,F-650,2023,Class 6,382043,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0197,AZ-0197,AZ,Available
+WESTHUB-V-0198,WEST-HUB,Van,Ford,Transit,2024,Class 2b,389962,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0198,AZ-0198,AZ,Available
+WESTHUB-V-0199,WEST-HUB,Truck,Isuzu,NPR-HD,2025,Class 5,397881,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0199,AZ-0199,AZ,Available
+WESTHUB-V-0200,WEST-HUB,Tractor,Volvo,VNL 760,2026,Class 8,405800,,legacy-fleet-identifier,CERT-WESTHUB-VEH-0200,AZ-0200,AZ,Maintenance

@@ -23,7 +23,7 @@ import { EntityListPage } from "@/pages/EntityListPage";
 
 const DRIVER_IMPORT_EXPORT = {
   entity: "drivers",
-  columns: ["driverCode", "fullName", "phone", "email", "licenseNumber", "status"],
+  columns: ["driverCode", "branchCode", "fullName", "phone", "email", "licenseNumber", "status"],
   requiredColumns: ["driverCode", "fullName"],
   templateEndpoint: "/api/drivers/import-template",
   exportEndpoint: "/api/drivers/export",

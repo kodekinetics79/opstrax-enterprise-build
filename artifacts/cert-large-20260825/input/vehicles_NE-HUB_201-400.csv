@@ -1,0 +1,201 @@
+vehicleCode,branchCode,type,make,model,year,vehicleClass,odometerMiles,vin,vinExceptionType,alternateIdentifier,plateNumber,plateJurisdiction,status
+NEHUB-V-0001,NE-HUB,Tractor,Freightliner,Cascadia,2017,Class 8,49919,,legacy-fleet-identifier,CERT-NEHUB-VEH-0001,NJ-0001,NJ,Available
+NEHUB-V-0002,NE-HUB,Truck,Ford,F-650,2018,Class 6,57838,,legacy-fleet-identifier,CERT-NEHUB-VEH-0002,NJ-0002,NJ,Available
+NEHUB-V-0003,NE-HUB,Van,Ford,Transit,2019,Class 2b,65757,,legacy-fleet-identifier,CERT-NEHUB-VEH-0003,NJ-0003,NJ,Available
+NEHUB-V-0004,NE-HUB,Truck,Isuzu,NPR-HD,2020,Class 5,73676,,legacy-fleet-identifier,CERT-NEHUB-VEH-0004,NJ-0004,NJ,Available
+NEHUB-V-0005,NE-HUB,Tractor,Volvo,VNL 760,2021,Class 8,81595,,legacy-fleet-identifier,CERT-NEHUB-VEH-0005,NJ-0005,NJ,Available
+NEHUB-V-0006,NE-HUB,Tractor,Freightliner,Cascadia,2022,Class 8,89514,,legacy-fleet-identifier,CERT-NEHUB-VEH-0006,NJ-0006,NJ,Available
+NEHUB-V-0007,NE-HUB,Truck,Ford,F-650,2023,Class 6,97433,,legacy-fleet-identifier,CERT-NEHUB-VEH-0007,NJ-0007,NJ,Available
+NEHUB-V-0008,NE-HUB,Van,Ford,Transit,2024,Class 2b,105352,,legacy-fleet-identifier,CERT-NEHUB-VEH-0008,NJ-0008,NJ,Available
+NEHUB-V-0009,NE-HUB,Truck,Isuzu,NPR-HD,2025,Class 5,113271,,legacy-fleet-identifier,CERT-NEHUB-VEH-0009,NJ-0009,NJ,Available
+NEHUB-V-0010,NE-HUB,Tractor,Volvo,VNL 760,2026,Class 8,121190,,legacy-fleet-identifier,CERT-NEHUB-VEH-0010,NJ-0010,NJ,Available
+NEHUB-V-0011,NE-HUB,Tractor,Freightliner,Cascadia,2017,Class 8,129109,,legacy-fleet-identifier,CERT-NEHUB-VEH-0011,NJ-0011,NJ,Available
+NEHUB-V-0012,NE-HUB,Truck,Ford,F-650,2018,Class 6,137028,,legacy-fleet-identifier,CERT-NEHUB-VEH-0012,NJ-0012,NJ,Available
+NEHUB-V-0013,NE-HUB,Van,Ford,Transit,2019,Class 2b,144947,,legacy-fleet-identifier,CERT-NEHUB-VEH-0013,NJ-0013,NJ,Available
+NEHUB-V-0014,NE-HUB,Truck,Isuzu,NPR-HD,2020,Class 5,152866,,legacy-fleet-identifier,CERT-NEHUB-VEH-0014,NJ-0014,NJ,Available
+NEHUB-V-0015,NE-HUB,Tractor,Volvo,VNL 760,2021,Class 8,160785,,legacy-fleet-identifier,CERT-NEHUB-VEH-0015,NJ-0015,NJ,Available
+NEHUB-V-0016,NE-HUB,Tractor,Freightliner,Cascadia,2022,Class 8,168704,,legacy-fleet-identifier,CERT-NEHUB-VEH-0016,NJ-0016,NJ,Available
+NEHUB-V-0017,NE-HUB,Truck,Ford,F-650,2023,Class 6,176623,,legacy-fleet-identifier,CERT-NEHUB-VEH-0017,NJ-0017,NJ,Available
+NEHUB-V-0018,NE-HUB,Van,Ford,Transit,2024,Class 2b,184542,,legacy-fleet-identifier,CERT-NEHUB-VEH-0018,NJ-0018,NJ,Available
+NEHUB-V-0019,NE-HUB,Truck,Isuzu,NPR-HD,2025,Class 5,192461,,legacy-fleet-identifier,CERT-NEHUB-VEH-0019,NJ-0019,NJ,Available
+NEHUB-V-0020,NE-HUB,Tractor,Volvo,VNL 760,2026,Class 8,200380,,legacy-fleet-identifier,CERT-NEHUB-VEH-0020,NJ-0020,NJ,Maintenance
+NEHUB-V-0021,NE-HUB,Tractor,Freightliner,Cascadia,2017,Class 8,208299,,legacy-fleet-identifier,CERT-NEHUB-VEH-0021,NJ-0021,NJ,Available
+NEHUB-V-0022,NE-HUB,Truck,Ford,F-650,2018,Class 6,216218,,legacy-fleet-identifier,CERT-NEHUB-VEH-0022,NJ-0022,NJ,Available
+NEHUB-V-0023,NE-HUB,Van,Ford,Transit,2019,Class 2b,224137,,legacy-fleet-identifier,CERT-NEHUB-VEH-0023,NJ-0023,NJ,Available
+NEHUB-V-0024,NE-HUB,Truck,Isuzu,NPR-HD,2020,Class 5,232056,,legacy-fleet-identifier,CERT-NEHUB-VEH-0024,NJ-0024,NJ,Available
+NEHUB-V-0025,NE-HUB,Tractor,Volvo,VNL 760,2021,Class 8,239975,,legacy-fleet-identifier,CERT-NEHUB-VEH-0025,NJ-0025,NJ,Available
+NEHUB-V-0026,NE-HUB,Tractor,Freightliner,Cascadia,2022,Class 8,247894,,legacy-fleet-identifier,CERT-NEHUB-VEH-0026,NJ-0026,NJ,Available
+NEHUB-V-0027,NE-HUB,Truck,Ford,F-650,2023,Class 6,255813,,legacy-fleet-identifier,CERT-NEHUB-VEH-0027,NJ-0027,NJ,Available
+NEHUB-V-0028,NE-HUB,Van,Ford,Transit,2024,Class 2b,263732,,legacy-fleet-identifier,CERT-NEHUB-VEH-0028,NJ-0028,NJ,Available
+NEHUB-V-0029,NE-HUB,Truck,Isuzu,NPR-HD,2025,Class 5,271651,,legacy-fleet-identifier,CERT-NEHUB-VEH-0029,NJ-0029,NJ,Available
+NEHUB-V-0030,NE-HUB,Tractor,Volvo,VNL 760,2026,Class 8,279570,,legacy-fleet-identifier,CERT-NEHUB-VEH-0030,NJ-0030,NJ,Available
+NEHUB-V-0031,NE-HUB,Tractor,Freightliner,Cascadia,2017,Class 8,287489,,legacy-fleet-identifier,CERT-NEHUB-VEH-0031,NJ-0031,NJ,Available
+NEHUB-V-0032,NE-HUB,Truck,Ford,F-650,2018,Class 6,295408,,legacy-fleet-identifier,CERT-NEHUB-VEH-0032,NJ-0032,NJ,Available
+NEHUB-V-0033,NE-HUB,Van,Ford,Transit,2019,Class 2b,303327,,legacy-fleet-identifier,CERT-NEHUB-VEH-0033,NJ-0033,NJ,Available
+NEHUB-V-0034,NE-HUB,Truck,Isuzu,NPR-HD,2020,Class 5,311246,,legacy-fleet-identifier,CERT-NEHUB-VEH-0034,NJ-0034,NJ,Available
+NEHUB-V-0035,NE-HUB,Tractor,Volvo,VNL 760,2021,Class 8,319165,,legacy-fleet-identifier,CERT-NEHUB-VEH-0035,NJ-0035,NJ,Available
+NEHUB-V-0036,NE-HUB,Tractor,Freightliner,Cascadia,2022,Class 8,327084,,legacy-fleet-identifier,CERT-NEHUB-VEH-0036,NJ-0036,NJ,Available
+NEHUB-V-0037,NE-HUB,Truck,Ford,F-650,2023,Class 6,335003,,legacy-fleet-identifier,CERT-NEHUB-VEH-0037,NJ-0037,NJ,Available
+NEHUB-V-0038,NE-HUB,Van,Ford,Transit,2024,Class 2b,342922,,legacy-fleet-identifier,CERT-NEHUB-VEH-0038,NJ-0038,NJ,Available
+NEHUB-V-0039,NE-HUB,Truck,Isuzu,NPR-HD,2025,Class 5,350841,,legacy-fleet-identifier,CERT-NEHUB-VEH-0039,NJ-0039,NJ,Available
+NEHUB-V-0040,NE-HUB,Tractor,Volvo,VNL 760,2026,Class 8,358760,,legacy-fleet-identifier,CERT-NEHUB-VEH-0040,NJ-0040,NJ,Maintenance
+NEHUB-V-0041,NE-HUB,Tractor,Freightliner,Cascadia,2017,Class 8,366679,,legacy-fleet-identifier,CERT-NEHUB-VEH-0041,NJ-0041,NJ,Available
+NEHUB-V-0042,NE-HUB,Truck,Ford,F-650,2018,Class 6,374598,,legacy-fleet-identifier,CERT-NEHUB-VEH-0042,NJ-0042,NJ,Available
+NEHUB-V-0043,NE-HUB,Van,Ford,Transit,2019,Class 2b,382517,,legacy-fleet-identifier,CERT-NEHUB-VEH-0043,NJ-0043,NJ,Available
+NEHUB-V-0044,NE-HUB,Truck,Isuzu,NPR-HD,2020,Class 5,390436,,legacy-fleet-identifier,CERT-NEHUB-VEH-0044,NJ-0044,NJ,Available
+NEHUB-V-0045,NE-HUB,Tractor,Volvo,VNL 760,2021,Class 8,398355,,legacy-fleet-identifier,CERT-NEHUB-VEH-0045,NJ-0045,NJ,Available
+NEHUB-V-0046,NE-HUB,Tractor,Freightliner,Cascadia,2022,Class 8,406274,,legacy-fleet-identifier,CERT-NEHUB-VEH-0046,NJ-0046,NJ,Available
+NEHUB-V-0047,NE-HUB,Truck,Ford,F-650,2023,Class 6,414193,,legacy-fleet-identifier,CERT-NEHUB-VEH-0047,NJ-0047,NJ,Available
+NEHUB-V-0048,NE-HUB,Van,Ford,Transit,2024,Class 2b,422112,,legacy-fleet-identifier,CERT-NEHUB-VEH-0048,NJ-0048,NJ,Available
+NEHUB-V-0049,NE-HUB,Truck,Isuzu,NPR-HD,2025,Class 5,430031,,legacy-fleet-identifier,CERT-NEHUB-VEH-0049,NJ-0049,NJ,Available
+NEHUB-V-0050,NE-HUB,Tractor,Volvo,VNL 760,2026,Class 8,437950,,legacy-fleet-identifier,CERT-NEHUB-VEH-0050,NJ-0050,NJ,Available
+NEHUB-V-0051,NE-HUB,Tractor,Freightliner,Cascadia,2017,Class 8,445869,,legacy-fleet-identifier,CERT-NEHUB-VEH-0051,NJ-0051,NJ,Available
+NEHUB-V-0052,NE-HUB,Truck,Ford,F-650,2018,Class 6,453788,,legacy-fleet-identifier,CERT-NEHUB-VEH-0052,NJ-0052,NJ,Available
+NEHUB-V-0053,NE-HUB,Van,Ford,Transit,2019,Class 2b,461707,,legacy-fleet-identifier,CERT-NEHUB-VEH-0053,NJ-0053,NJ,Available
+NEHUB-V-0054,NE-HUB,Truck,Isuzu,NPR-HD,2020,Class 5,469626,,legacy-fleet-identifier,CERT-NEHUB-VEH-0054,NJ-0054,NJ,Available
+NEHUB-V-0055,NE-HUB,Tractor,Volvo,VNL 760,2021,Class 8,477545,,legacy-fleet-identifier,CERT-NEHUB-VEH-0055,NJ-0055,NJ,Available
+NEHUB-V-0056,NE-HUB,Tractor,Freightliner,Cascadia,2022,Class 8,485464,,legacy-fleet-identifier,CERT-NEHUB-VEH-0056,NJ-0056,NJ,Available
+NEHUB-V-0057,NE-HUB,Truck,Ford,F-650,2023,Class 6,493383,,legacy-fleet-identifier,CERT-NEHUB-VEH-0057,NJ-0057,NJ,Available
+NEHUB-V-0058,NE-HUB,Van,Ford,Transit,2024,Class 2b,501302,,legacy-fleet-identifier,CERT-NEHUB-VEH-0058,NJ-0058,NJ,Available
+NEHUB-V-0059,NE-HUB,Truck,Isuzu,NPR-HD,2025,Class 5,509221,,legacy-fleet-identifier,CERT-NEHUB-VEH-0059,NJ-0059,NJ,Available
+NEHUB-V-0060,NE-HUB,Tractor,Volvo,VNL 760,2026,Class 8,517140,,legacy-fleet-identifier,CERT-NEHUB-VEH-0060,NJ-0060,NJ,Maintenance
+NEHUB-V-0061,NE-HUB,Tractor,Freightliner,Cascadia,2017,Class 8,525059,,legacy-fleet-identifier,CERT-NEHUB-VEH-0061,NJ-0061,NJ,Available
+NEHUB-V-0062,NE-HUB,Truck,Ford,F-650,2018,Class 6,532978,,legacy-fleet-identifier,CERT-NEHUB-VEH-0062,NJ-0062,NJ,Available
+NEHUB-V-0063,NE-HUB,Van,Ford,Transit,2019,Class 2b,540897,,legacy-fleet-identifier,CERT-NEHUB-VEH-0063,NJ-0063,NJ,Available
+NEHUB-V-0064,NE-HUB,Truck,Isuzu,NPR-HD,2020,Class 5,548816,,legacy-fleet-identifier,CERT-NEHUB-VEH-0064,NJ-0064,NJ,Available
+NEHUB-V-0065,NE-HUB,Tractor,Volvo,VNL 760,2021,Class 8,556735,,legacy-fleet-identifier,CERT-NEHUB-VEH-0065,NJ-0065,NJ,Available
+NEHUB-V-0066,NE-HUB,Tractor,Freightliner,Cascadia,2022,Class 8,564654,,legacy-fleet-identifier,CERT-NEHUB-VEH-0066,NJ-0066,NJ,Available
+NEHUB-V-0067,NE-HUB,Truck,Ford,F-650,2023,Class 6,572573,,legacy-fleet-identifier,CERT-NEHUB-VEH-0067,NJ-0067,NJ,Available
+NEHUB-V-0068,NE-HUB,Van,Ford,Transit,2024,Class 2b,580492,,legacy-fleet-identifier,CERT-NEHUB-VEH-0068,NJ-0068,NJ,Available
+NEHUB-V-0069,NE-HUB,Truck,Isuzu,NPR-HD,2025,Class 5,588411,,legacy-fleet-identifier,CERT-NEHUB-VEH-0069,NJ-0069,NJ,Available
+NEHUB-V-0070,NE-HUB,Tractor,Volvo,VNL 760,2026,Class 8,596330,,legacy-fleet-identifier,CERT-NEHUB-VEH-0070,NJ-0070,NJ,Available
+NEHUB-V-0071,NE-HUB,Tractor,Freightliner,Cascadia,2017,Class 8,604249,,legacy-fleet-identifier,CERT-NEHUB-VEH-0071,NJ-0071,NJ,Available
+NEHUB-V-0072,NE-HUB,Truck,Ford,F-650,2018,Class 6,612168,,legacy-fleet-identifier,CERT-NEHUB-VEH-0072,NJ-0072,NJ,Available
+NEHUB-V-0073,NE-HUB,Van,Ford,Transit,2019,Class 2b,620087,,legacy-fleet-identifier,CERT-NEHUB-VEH-0073,NJ-0073,NJ,Available
+NEHUB-V-0074,NE-HUB,Truck,Isuzu,NPR-HD,2020,Class 5,628006,,legacy-fleet-identifier,CERT-NEHUB-VEH-0074,NJ-0074,NJ,Available
+NEHUB-V-0075,NE-HUB,Tractor,Volvo,VNL 760,2021,Class 8,635925,,legacy-fleet-identifier,CERT-NEHUB-VEH-0075,NJ-0075,NJ,Available
+NEHUB-V-0076,NE-HUB,Tractor,Freightliner,Cascadia,2022,Class 8,643844,,legacy-fleet-identifier,CERT-NEHUB-VEH-0076,NJ-0076,NJ,Available
+NEHUB-V-0077,NE-HUB,Truck,Ford,F-650,2023,Class 6,651763,,legacy-fleet-identifier,CERT-NEHUB-VEH-0077,NJ-0077,NJ,Available
+NEHUB-V-0078,NE-HUB,Van,Ford,Transit,2024,Class 2b,49682,,legacy-fleet-identifier,CERT-NEHUB-VEH-0078,NJ-0078,NJ,Available
+NEHUB-V-0079,NE-HUB,Truck,Isuzu,NPR-HD,2025,Class 5,57601,,legacy-fleet-identifier,CERT-NEHUB-VEH-0079,NJ-0079,NJ,Available
+NEHUB-V-0080,NE-HUB,Tractor,Volvo,VNL 760,2026,Class 8,65520,,legacy-fleet-identifier,CERT-NEHUB-VEH-0080,NJ-0080,NJ,Maintenance
+NEHUB-V-0081,NE-HUB,Tractor,Freightliner,Cascadia,2017,Class 8,73439,,legacy-fleet-identifier,CERT-NEHUB-VEH-0081,NJ-0081,NJ,Available
+NEHUB-V-0082,NE-HUB,Truck,Ford,F-650,2018,Class 6,81358,,legacy-fleet-identifier,CERT-NEHUB-VEH-0082,NJ-0082,NJ,Available
+NEHUB-V-0083,NE-HUB,Van,Ford,Transit,2019,Class 2b,89277,,legacy-fleet-identifier,CERT-NEHUB-VEH-0083,NJ-0083,NJ,Available
+NEHUB-V-0084,NE-HUB,Truck,Isuzu,NPR-HD,2020,Class 5,97196,,legacy-fleet-identifier,CERT-NEHUB-VEH-0084,NJ-0084,NJ,Available
+NEHUB-V-0085,NE-HUB,Tractor,Volvo,VNL 760,2021,Class 8,105115,,legacy-fleet-identifier,CERT-NEHUB-VEH-0085,NJ-0085,NJ,Available
+NEHUB-V-0086,NE-HUB,Tractor,Freightliner,Cascadia,2022,Class 8,113034,,legacy-fleet-identifier,CERT-NEHUB-VEH-0086,NJ-0086,NJ,Available
+NEHUB-V-0087,NE-HUB,Truck,Ford,F-650,2023,Class 6,120953,,legacy-fleet-identifier,CERT-NEHUB-VEH-0087,NJ-0087,NJ,Available
+NEHUB-V-0088,NE-HUB,Van,Ford,Transit,2024,Class 2b,128872,,legacy-fleet-identifier,CERT-NEHUB-VEH-0088,NJ-0088,NJ,Available
+NEHUB-V-0089,NE-HUB,Truck,Isuzu,NPR-HD,2025,Class 5,136791,,legacy-fleet-identifier,CERT-NEHUB-VEH-0089,NJ-0089,NJ,Available
+NEHUB-V-0090,NE-HUB,Tractor,Volvo,VNL 760,2026,Class 8,144710,,legacy-fleet-identifier,CERT-NEHUB-VEH-0090,NJ-0090,NJ,Available
+NEHUB-V-0091,NE-HUB,Tractor,Freightliner,Cascadia,2017,Class 8,152629,,legacy-fleet-identifier,CERT-NEHUB-VEH-0091,NJ-0091,NJ,Available
+NEHUB-V-0092,NE-HUB,Truck,Ford,F-650,2018,Class 6,160548,,legacy-fleet-identifier,CERT-NEHUB-VEH-0092,NJ-0092,NJ,Available
+NEHUB-V-0093,NE-HUB,Van,Ford,Transit,2019,Class 2b,168467,,legacy-fleet-identifier,CERT-NEHUB-VEH-0093,NJ-0093,NJ,Available
+NEHUB-V-0094,NE-HUB,Truck,Isuzu,NPR-HD,2020,Class 5,176386,,legacy-fleet-identifier,CERT-NEHUB-VEH-0094,NJ-0094,NJ,Available
+NEHUB-V-0095,NE-HUB,Tractor,Volvo,VNL 760,2021,Class 8,184305,,legacy-fleet-identifier,CERT-NEHUB-VEH-0095,NJ-0095,NJ,Available
+NEHUB-V-0096,NE-HUB,Tractor,Freightliner,Cascadia,2022,Class 8,192224,,legacy-fleet-identifier,CERT-NEHUB-VEH-0096,NJ-0096,NJ,Available
+NEHUB-V-0097,NE-HUB,Truck,Ford,F-650,2023,Class 6,200143,,legacy-fleet-identifier,CERT-NEHUB-VEH-0097,NJ-0097,NJ,Available
+NEHUB-V-0098,NE-HUB,Van,Ford,Transit,2024,Class 2b,208062,,legacy-fleet-identifier,CERT-NEHUB-VEH-0098,NJ-0098,NJ,Available
+NEHUB-V-0099,NE-HUB,Truck,Isuzu,NPR-HD,2025,Class 5,215981,,legacy-fleet-identifier,CERT-NEHUB-VEH-0099,NJ-0099,NJ,Available
+NEHUB-V-0100,NE-HUB,Tractor,Volvo,VNL 760,2026,Class 8,223900,,legacy-fleet-identifier,CERT-NEHUB-VEH-0100,NJ-0100,NJ,Maintenance
+NEHUB-V-0101,NE-HUB,Tractor,Freightliner,Cascadia,2017,Class 8,231819,,legacy-fleet-identifier,CERT-NEHUB-VEH-0101,NJ-0101,NJ,Available
+NEHUB-V-0102,NE-HUB,Truck,Ford,F-650,2018,Class 6,239738,,legacy-fleet-identifier,CERT-NEHUB-VEH-0102,NJ-0102,NJ,Available
+NEHUB-V-0103,NE-HUB,Van,Ford,Transit,2019,Class 2b,247657,,legacy-fleet-identifier,CERT-NEHUB-VEH-0103,NJ-0103,NJ,Available
+NEHUB-V-0104,NE-HUB,Truck,Isuzu,NPR-HD,2020,Class 5,255576,,legacy-fleet-identifier,CERT-NEHUB-VEH-0104,NJ-0104,NJ,Available
+NEHUB-V-0105,NE-HUB,Tractor,Volvo,VNL 760,2021,Class 8,263495,,legacy-fleet-identifier,CERT-NEHUB-VEH-0105,NJ-0105,NJ,Available
+NEHUB-V-0106,NE-HUB,Tractor,Freightliner,Cascadia,2022,Class 8,271414,,legacy-fleet-identifier,CERT-NEHUB-VEH-0106,NJ-0106,NJ,Available
+NEHUB-V-0107,NE-HUB,Truck,Ford,F-650,2023,Class 6,279333,,legacy-fleet-identifier,CERT-NEHUB-VEH-0107,NJ-0107,NJ,Available
+NEHUB-V-0108,NE-HUB,Van,Ford,Transit,2024,Class 2b,287252,,legacy-fleet-identifier,CERT-NEHUB-VEH-0108,NJ-0108,NJ,Available
+NEHUB-V-0109,NE-HUB,Truck,Isuzu,NPR-HD,2025,Class 5,295171,,legacy-fleet-identifier,CERT-NEHUB-VEH-0109,NJ-0109,NJ,Available
+NEHUB-V-0110,NE-HUB,Tractor,Volvo,VNL 760,2026,Class 8,303090,,legacy-fleet-identifier,CERT-NEHUB-VEH-0110,NJ-0110,NJ,Available
+NEHUB-V-0111,NE-HUB,Tractor,Freightliner,Cascadia,2017,Class 8,311009,,legacy-fleet-identifier,CERT-NEHUB-VEH-0111,NJ-0111,NJ,Available
+NEHUB-V-0112,NE-HUB,Truck,Ford,F-650,2018,Class 6,318928,,legacy-fleet-identifier,CERT-NEHUB-VEH-0112,NJ-0112,NJ,Available
+NEHUB-V-0113,NE-HUB,Van,Ford,Transit,2019,Class 2b,326847,,legacy-fleet-identifier,CERT-NEHUB-VEH-0113,NJ-0113,NJ,Available
+NEHUB-V-0114,NE-HUB,Truck,Isuzu,NPR-HD,2020,Class 5,334766,,legacy-fleet-identifier,CERT-NEHUB-VEH-0114,NJ-0114,NJ,Available
+NEHUB-V-0115,NE-HUB,Tractor,Volvo,VNL 760,2021,Class 8,342685,,legacy-fleet-identifier,CERT-NEHUB-VEH-0115,NJ-0115,NJ,Available
+NEHUB-V-0116,NE-HUB,Tractor,Freightliner,Cascadia,2022,Class 8,350604,,legacy-fleet-identifier,CERT-NEHUB-VEH-0116,NJ-0116,NJ,Available
+NEHUB-V-0117,NE-HUB,Truck,Ford,F-650,2023,Class 6,358523,,legacy-fleet-identifier,CERT-NEHUB-VEH-0117,NJ-0117,NJ,Available
+NEHUB-V-0118,NE-HUB,Van,Ford,Transit,2024,Class 2b,366442,,legacy-fleet-identifier,CERT-NEHUB-VEH-0118,NJ-0118,NJ,Available
+NEHUB-V-0119,NE-HUB,Truck,Isuzu,NPR-HD,2025,Class 5,374361,,legacy-fleet-identifier,CERT-NEHUB-VEH-0119,NJ-0119,NJ,Available
+NEHUB-V-0120,NE-HUB,Tractor,Volvo,VNL 760,2026,Class 8,382280,,legacy-fleet-identifier,CERT-NEHUB-VEH-0120,NJ-0120,NJ,Maintenance
+NEHUB-V-0121,NE-HUB,Tractor,Freightliner,Cascadia,2017,Class 8,390199,,legacy-fleet-identifier,CERT-NEHUB-VEH-0121,NJ-0121,NJ,Available
+NEHUB-V-0122,NE-HUB,Truck,Ford,F-650,2018,Class 6,398118,,legacy-fleet-identifier,CERT-NEHUB-VEH-0122,NJ-0122,NJ,Available
+NEHUB-V-0123,NE-HUB,Van,Ford,Transit,2019,Class 2b,406037,,legacy-fleet-identifier,CERT-NEHUB-VEH-0123,NJ-0123,NJ,Available
+NEHUB-V-0124,NE-HUB,Truck,Isuzu,NPR-HD,2020,Class 5,413956,,legacy-fleet-identifier,CERT-NEHUB-VEH-0124,NJ-0124,NJ,Available
+NEHUB-V-0125,NE-HUB,Tractor,Volvo,VNL 760,2021,Class 8,421875,,legacy-fleet-identifier,CERT-NEHUB-VEH-0125,NJ-0125,NJ,Available
+NEHUB-V-0126,NE-HUB,Tractor,Freightliner,Cascadia,2022,Class 8,429794,,legacy-fleet-identifier,CERT-NEHUB-VEH-0126,NJ-0126,NJ,Available
+NEHUB-V-0127,NE-HUB,Truck,Ford,F-650,2023,Class 6,437713,,legacy-fleet-identifier,CERT-NEHUB-VEH-0127,NJ-0127,NJ,Available
+NEHUB-V-0128,NE-HUB,Van,Ford,Transit,2024,Class 2b,445632,,legacy-fleet-identifier,CERT-NEHUB-VEH-0128,NJ-0128,NJ,Available
+NEHUB-V-0129,NE-HUB,Truck,Isuzu,NPR-HD,2025,Class 5,453551,,legacy-fleet-identifier,CERT-NEHUB-VEH-0129,NJ-0129,NJ,Available
+NEHUB-V-0130,NE-HUB,Tractor,Volvo,VNL 760,2026,Class 8,461470,,legacy-fleet-identifier,CERT-NEHUB-VEH-0130,NJ-0130,NJ,Available
+NEHUB-V-0131,NE-HUB,Tractor,Freightliner,Cascadia,2017,Class 8,469389,,legacy-fleet-identifier,CERT-NEHUB-VEH-0131,NJ-0131,NJ,Available
+NEHUB-V-0132,NE-HUB,Truck,Ford,F-650,2018,Class 6,477308,,legacy-fleet-identifier,CERT-NEHUB-VEH-0132,NJ-0132,NJ,Available
+NEHUB-V-0133,NE-HUB,Van,Ford,Transit,2019,Class 2b,485227,,legacy-fleet-identifier,CERT-NEHUB-VEH-0133,NJ-0133,NJ,Available
+NEHUB-V-0134,NE-HUB,Truck,Isuzu,NPR-HD,2020,Class 5,493146,,legacy-fleet-identifier,CERT-NEHUB-VEH-0134,NJ-0134,NJ,Available
+NEHUB-V-0135,NE-HUB,Tractor,Volvo,VNL 760,2021,Class 8,501065,,legacy-fleet-identifier,CERT-NEHUB-VEH-0135,NJ-0135,NJ,Available
+NEHUB-V-0136,NE-HUB,Tractor,Freightliner,Cascadia,2022,Class 8,508984,,legacy-fleet-identifier,CERT-NEHUB-VEH-0136,NJ-0136,NJ,Available
+NEHUB-V-0137,NE-HUB,Truck,Ford,F-650,2023,Class 6,516903,,legacy-fleet-identifier,CERT-NEHUB-VEH-0137,NJ-0137,NJ,Available
+NEHUB-V-0138,NE-HUB,Van,Ford,Transit,2024,Class 2b,524822,,legacy-fleet-identifier,CERT-NEHUB-VEH-0138,NJ-0138,NJ,Available
+NEHUB-V-0139,NE-HUB,Truck,Isuzu,NPR-HD,2025,Class 5,532741,,legacy-fleet-identifier,CERT-NEHUB-VEH-0139,NJ-0139,NJ,Available
+NEHUB-V-0140,NE-HUB,Tractor,Volvo,VNL 760,2026,Class 8,540660,,legacy-fleet-identifier,CERT-NEHUB-VEH-0140,NJ-0140,NJ,Maintenance
+NEHUB-V-0141,NE-HUB,Tractor,Freightliner,Cascadia,2017,Class 8,548579,,legacy-fleet-identifier,CERT-NEHUB-VEH-0141,NJ-0141,NJ,Available
+NEHUB-V-0142,NE-HUB,Truck,Ford,F-650,2018,Class 6,556498,,legacy-fleet-identifier,CERT-NEHUB-VEH-0142,NJ-0142,NJ,Available
+NEHUB-V-0143,NE-HUB,Van,Ford,Transit,2019,Class 2b,564417,,legacy-fleet-identifier,CERT-NEHUB-VEH-0143,NJ-0143,NJ,Available
+NEHUB-V-0144,NE-HUB,Truck,Isuzu,NPR-HD,2020,Class 5,572336,,legacy-fleet-identifier,CERT-NEHUB-VEH-0144,NJ-0144,NJ,Available
+NEHUB-V-0145,NE-HUB,Tractor,Volvo,VNL 760,2021,Class 8,580255,,legacy-fleet-identifier,CERT-NEHUB-VEH-0145,NJ-0145,NJ,Available
+NEHUB-V-0146,NE-HUB,Tractor,Freightliner,Cascadia,2022,Class 8,588174,,legacy-fleet-identifier,CERT-NEHUB-VEH-0146,NJ-0146,NJ,Available
+NEHUB-V-0147,NE-HUB,Truck,Ford,F-650,2023,Class 6,596093,,legacy-fleet-identifier,CERT-NEHUB-VEH-0147,NJ-0147,NJ,Available
+NEHUB-V-0148,NE-HUB,Van,Ford,Transit,2024,Class 2b,604012,,legacy-fleet-identifier,CERT-NEHUB-VEH-0148,NJ-0148,NJ,Available
+NEHUB-V-0149,NE-HUB,Truck,Isuzu,NPR-HD,2025,Class 5,611931,,legacy-fleet-identifier,CERT-NEHUB-VEH-0149,NJ-0149,NJ,Available
+NEHUB-V-0150,NE-HUB,Tractor,Volvo,VNL 760,2026,Class 8,619850,,legacy-fleet-identifier,CERT-NEHUB-VEH-0150,NJ-0150,NJ,Available
+NEHUB-V-0151,NE-HUB,Tractor,Freightliner,Cascadia,2017,Class 8,627769,,legacy-fleet-identifier,CERT-NEHUB-VEH-0151,NJ-0151,NJ,Available
+NEHUB-V-0152,NE-HUB,Truck,Ford,F-650,2018,Class 6,635688,,legacy-fleet-identifier,CERT-NEHUB-VEH-0152,NJ-0152,NJ,Available
+NEHUB-V-0153,NE-HUB,Van,Ford,Transit,2019,Class 2b,643607,,legacy-fleet-identifier,CERT-NEHUB-VEH-0153,NJ-0153,NJ,Available
+NEHUB-V-0154,NE-HUB,Truck,Isuzu,NPR-HD,2020,Class 5,651526,,legacy-fleet-identifier,CERT-NEHUB-VEH-0154,NJ-0154,NJ,Available
+NEHUB-V-0155,NE-HUB,Tractor,Volvo,VNL 760,2021,Class 8,49445,,legacy-fleet-identifier,CERT-NEHUB-VEH-0155,NJ-0155,NJ,Available
+NEHUB-V-0156,NE-HUB,Tractor,Freightliner,Cascadia,2022,Class 8,57364,,legacy-fleet-identifier,CERT-NEHUB-VEH-0156,NJ-0156,NJ,Available
+NEHUB-V-0157,NE-HUB,Truck,Ford,F-650,2023,Class 6,65283,,legacy-fleet-identifier,CERT-NEHUB-VEH-0157,NJ-0157,NJ,Available
+NEHUB-V-0158,NE-HUB,Van,Ford,Transit,2024,Class 2b,73202,,legacy-fleet-identifier,CERT-NEHUB-VEH-0158,NJ-0158,NJ,Available
+NEHUB-V-0159,NE-HUB,Truck,Isuzu,NPR-HD,2025,Class 5,81121,,legacy-fleet-identifier,CERT-NEHUB-VEH-0159,NJ-0159,NJ,Available
+NEHUB-V-0160,NE-HUB,Tractor,Volvo,VNL 760,2026,Class 8,89040,,legacy-fleet-identifier,CERT-NEHUB-VEH-0160,NJ-0160,NJ,Maintenance
+NEHUB-V-0161,NE-HUB,Tractor,Freightliner,Cascadia,2017,Class 8,96959,,legacy-fleet-identifier,CERT-NEHUB-VEH-0161,NJ-0161,NJ,Available
+NEHUB-V-0162,NE-HUB,Truck,Ford,F-650,2018,Class 6,104878,,legacy-fleet-identifier,CERT-NEHUB-VEH-0162,NJ-0162,NJ,Available
+NEHUB-V-0163,NE-HUB,Van,Ford,Transit,2019,Class 2b,112797,,legacy-fleet-identifier,CERT-NEHUB-VEH-0163,NJ-0163,NJ,Available
+NEHUB-V-0164,NE-HUB,Truck,Isuzu,NPR-HD,2020,Class 5,120716,,legacy-fleet-identifier,CERT-NEHUB-VEH-0164,NJ-0164,NJ,Available
+NEHUB-V-0165,NE-HUB,Tractor,Volvo,VNL 760,2021,Class 8,128635,,legacy-fleet-identifier,CERT-NEHUB-VEH-0165,NJ-0165,NJ,Available
+NEHUB-V-0166,NE-HUB,Tractor,Freightliner,Cascadia,2022,Class 8,136554,,legacy-fleet-identifier,CERT-NEHUB-VEH-0166,NJ-0166,NJ,Available
+NEHUB-V-0167,NE-HUB,Truck,Ford,F-650,2023,Class 6,144473,,legacy-fleet-identifier,CERT-NEHUB-VEH-0167,NJ-0167,NJ,Available
+NEHUB-V-0168,NE-HUB,Van,Ford,Transit,2024,Class 2b,152392,,legacy-fleet-identifier,CERT-NEHUB-VEH-0168,NJ-0168,NJ,Available
+NEHUB-V-0169,NE-HUB,Truck,Isuzu,NPR-HD,2025,Class 5,160311,,legacy-fleet-identifier,CERT-NEHUB-VEH-0169,NJ-0169,NJ,Available
+NEHUB-V-0170,NE-HUB,Tractor,Volvo,VNL 760,2026,Class 8,168230,,legacy-fleet-identifier,CERT-NEHUB-VEH-0170,NJ-0170,NJ,Available
+NEHUB-V-0171,NE-HUB,Tractor,Freightliner,Cascadia,2017,Class 8,176149,,legacy-fleet-identifier,CERT-NEHUB-VEH-0171,NJ-0171,NJ,Available
+NEHUB-V-0172,NE-HUB,Truck,Ford,F-650,2018,Class 6,184068,,legacy-fleet-identifier,CERT-NEHUB-VEH-0172,NJ-0172,NJ,Available
+NEHUB-V-0173,NE-HUB,Van,Ford,Transit,2019,Class 2b,191987,,legacy-fleet-identifier,CERT-NEHUB-VEH-0173,NJ-0173,NJ,Available
+NEHUB-V-0174,NE-HUB,Truck,Isuzu,NPR-HD,2020,Class 5,199906,,legacy-fleet-identifier,CERT-NEHUB-VEH-0174,NJ-0174,NJ,Available
+NEHUB-V-0175,NE-HUB,Tractor,Volvo,VNL 760,2021,Class 8,207825,,legacy-fleet-identifier,CERT-NEHUB-VEH-0175,NJ-0175,NJ,Available
+NEHUB-V-0176,NE-HUB,Tractor,Freightliner,Cascadia,2022,Class 8,215744,,legacy-fleet-identifier,CERT-NEHUB-VEH-0176,NJ-0176,NJ,Available
+NEHUB-V-0177,NE-HUB,Truck,Ford,F-650,2023,Class 6,223663,,legacy-fleet-identifier,CERT-NEHUB-VEH-0177,NJ-0177,NJ,Available
+NEHUB-V-0178,NE-HUB,Van,Ford,Transit,2024,Class 2b,231582,,legacy-fleet-identifier,CERT-NEHUB-VEH-0178,NJ-0178,NJ,Available
+NEHUB-V-0179,NE-HUB,Truck,Isuzu,NPR-HD,2025,Class 5,239501,,legacy-fleet-identifier,CERT-NEHUB-VEH-0179,NJ-0179,NJ,Available
+NEHUB-V-0180,NE-HUB,Tractor,Volvo,VNL 760,2026,Class 8,247420,,legacy-fleet-identifier,CERT-NEHUB-VEH-0180,NJ-0180,NJ,Maintenance
+NEHUB-V-0181,NE-HUB,Tractor,Freightliner,Cascadia,2017,Class 8,255339,,legacy-fleet-identifier,CERT-NEHUB-VEH-0181,NJ-0181,NJ,Available
+NEHUB-V-0182,NE-HUB,Truck,Ford,F-650,2018,Class 6,263258,,legacy-fleet-identifier,CERT-NEHUB-VEH-0182,NJ-0182,NJ,Available
+NEHUB-V-0183,NE-HUB,Van,Ford,Transit,2019,Class 2b,271177,,legacy-fleet-identifier,CERT-NEHUB-VEH-0183,NJ-0183,NJ,Available
+NEHUB-V-0184,NE-HUB,Truck,Isuzu,NPR-HD,2020,Class 5,279096,,legacy-fleet-identifier,CERT-NEHUB-VEH-0184,NJ-0184,NJ,Available
+NEHUB-V-0185,NE-HUB,Tractor,Volvo,VNL 760,2021,Class 8,287015,,legacy-fleet-identifier,CERT-NEHUB-VEH-0185,NJ-0185,NJ,Available
+NEHUB-V-0186,NE-HUB,Tractor,Freightliner,Cascadia,2022,Class 8,294934,,legacy-fleet-identifier,CERT-NEHUB-VEH-0186,NJ-0186,NJ,Available
+NEHUB-V-0187,NE-HUB,Truck,Ford,F-650,2023,Class 6,302853,,legacy-fleet-identifier,CERT-NEHUB-VEH-0187,NJ-0187,NJ,Available
+NEHUB-V-0188,NE-HUB,Van,Ford,Transit,2024,Class 2b,310772,,legacy-fleet-identifier,CERT-NEHUB-VEH-0188,NJ-0188,NJ,Available
+NEHUB-V-0189,NE-HUB,Truck,Isuzu,NPR-HD,2025,Class 5,318691,,legacy-fleet-identifier,CERT-NEHUB-VEH-0189,NJ-0189,NJ,Available
+NEHUB-V-0190,NE-HUB,Tractor,Volvo,VNL 760,2026,Class 8,326610,,legacy-fleet-identifier,CERT-NEHUB-VEH-0190,NJ-0190,NJ,Available
+NEHUB-V-0191,NE-HUB,Tractor,Freightliner,Cascadia,2017,Class 8,334529,,legacy-fleet-identifier,CERT-NEHUB-VEH-0191,NJ-0191,NJ,Available
+NEHUB-V-0192,NE-HUB,Truck,Ford,F-650,2018,Class 6,342448,,legacy-fleet-identifier,CERT-NEHUB-VEH-0192,NJ-0192,NJ,Available
+NEHUB-V-0193,NE-HUB,Van,Ford,Transit,2019,Class 2b,350367,,legacy-fleet-identifier,CERT-NEHUB-VEH-0193,NJ-0193,NJ,Available
+NEHUB-V-0194,NE-HUB,Truck,Isuzu,NPR-HD,2020,Class 5,358286,,legacy-fleet-identifier,CERT-NEHUB-VEH-0194,NJ-0194,NJ,Available
+NEHUB-V-0195,NE-HUB,Tractor,Volvo,VNL 760,2021,Class 8,366205,,legacy-fleet-identifier,CERT-NEHUB-VEH-0195,NJ-0195,NJ,Available
+NEHUB-V-0196,NE-HUB,Tractor,Freightliner,Cascadia,2022,Class 8,374124,,legacy-fleet-identifier,CERT-NEHUB-VEH-0196,NJ-0196,NJ,Available
+NEHUB-V-0197,NE-HUB,Truck,Ford,F-650,2023,Class 6,382043,,legacy-fleet-identifier,CERT-NEHUB-VEH-0197,NJ-0197,NJ,Available
+NEHUB-V-0198,NE-HUB,Van,Ford,Transit,2024,Class 2b,389962,,legacy-fleet-identifier,CERT-NEHUB-VEH-0198,NJ-0198,NJ,Available
+NEHUB-V-0199,NE-HUB,Truck,Isuzu,NPR-HD,2025,Class 5,397881,,legacy-fleet-identifier,CERT-NEHUB-VEH-0199,NJ-0199,NJ,Available
+NEHUB-V-0200,NE-HUB,Tractor,Volvo,VNL 760,2026,Class 8,405800,,legacy-fleet-identifier,CERT-NEHUB-VEH-0200,NJ-0200,NJ,Maintenance

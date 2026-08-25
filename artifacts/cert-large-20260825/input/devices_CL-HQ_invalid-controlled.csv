@@ -1,0 +1,6 @@
+deviceSerial,branchCode,imei,deviceCategory,deviceModel,provider,firmwareVersion,notes
+,CL-HQ,990000001009901,GPS,Certification GPS-500,OpsTrax Certification Lab,1.0.0,Missing serial controlled failure
+BAD SERIAL,CL-HQ,990000001009902,GPS,Certification GPS-500,OpsTrax Certification Lab,1.0.0,Invalid serial characters controlled failure
+CLHQ-BAD-IMEI-01,CL-HQ,99000000100990,GPS,Certification GPS-500,OpsTrax Certification Lab,1.0.0,Fourteen digit IMEI controlled failure
+CLHQ-BAD-IMEI-02,CL-HQ,99000000100ABCD,GPS,Certification GPS-500,OpsTrax Certification Lab,1.0.0,Alphabetic IMEI controlled failure
+CLHQ-BAD-CATEGORY-01,CL-HQ,990000001009905,Satellite,Certification Satellite-100,OpsTrax Certification Lab,1.0.0,Unsupported category controlled failure

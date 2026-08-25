@@ -14,6 +14,7 @@ import { customersApi } from "@/services/customersApi";
 import { driversApi } from "@/services/driversApi";
 import { jobsApi } from "@/services/jobsApi";
 import { vehiclesApi } from "@/services/vehiclesApi";
+import { downloadServerExport } from "@/services/fleetDomainApi";
 import type { AnyRecord } from "@/types";
 
 type EntityKind = "vehicles" | "drivers" | "jobs" | "customers" | "assets";
@@ -242,6 +243,7 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
   const [editing, setEditing] = useState<AnyRecord | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [assignmentOpen, setAssignmentOpen] = useState(false);
+  const [pendingArchive, setPendingArchive] = useState<AnyRecord | null>(null);
   // Deep link from a module Overview ("New driver" etc.) straight into the create
   // form. Single-add lives on the roster, but users look for it on Overview, which
   // otherwise shows only the bulk Template/Import/Export actions.
@@ -303,6 +305,7 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
     mutationFn: (id: string | number) => (cfg.api.archive ?? cfg.api.remove)!(id),
     onSuccess: async () => {
       setSelected(null);
+      setPendingArchive(null);
       await queryClient.invalidateQueries({ queryKey: [kind] });
     },
   });
@@ -344,6 +347,13 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
       if (selectedRecord?.id) await queryClient.invalidateQueries({ queryKey: [kind, "detail", selectedRecord.id] });
     },
   });
+  const exportMutation = useMutation({
+    mutationFn: () => kind === "vehicles"
+      ? downloadServerExport("/api/vehicles/export", `vehicles_${new Date().toISOString().slice(0, 10)}.csv`)
+      : kind === "drivers"
+        ? downloadServerExport("/api/drivers/export", `drivers_${new Date().toISOString().slice(0, 10)}.csv`)
+        : Promise.resolve(exportCsv(kind, rows)),
+  });
 
   const rows = useMemo(() => {
     const source = scopedRows;
@@ -371,7 +381,7 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
 
   if (list.isLoading) return <LoadingState />;
   if (list.isError) return <ErrorState message={list.error instanceof Error ? list.error.message : `Unable to load ${cfg.title.toLowerCase()}.`} />;
-  const mutationError = saveMutation.error || deleteMutation.error || reactivateMutation.error || assignMutation.error;
+  const mutationError = saveMutation.error || deleteMutation.error || reactivateMutation.error || assignMutation.error || exportMutation.error;
 
   return (
     <div className="flex h-full flex-col gap-6 overflow-y-auto">
@@ -395,7 +405,7 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
                 }}
               />
             ) : null}
-            {canExport ? <button className="btn-ghost" onClick={() => exportCsv(kind, rows)}><Download className="h-4 w-4" /> Export CSV</button> : null}
+            {canExport ? <button className="btn-ghost" disabled={exportMutation.isPending} onClick={() => exportMutation.mutate()}><Download className="h-4 w-4" /> {exportMutation.isPending ? "Exporting…" : "Export CSV"}</button> : null}
           </>
         }
       />
@@ -472,7 +482,7 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
         assignPending={assignMutation.isPending}
         onClose={() => setSelected(null)}
         onEdit={(record) => { if (canUpdate) { setIsCreating(false); setEditing(record); } }}
-        onDelete={(record) => canDelete && (cfg.api.archive || cfg.api.remove) && window.confirm(`Archive this ${kind.slice(0, -1)}? It will remain available in the Archived view.`) && deleteMutation.mutate(String(record.id))}
+        onDelete={(record) => canDelete && (cfg.api.archive || cfg.api.remove) && setPendingArchive(record)}
         onReactivate={(record) => canUpdate && cfg.api.reactivate && reactivateMutation.mutate(String(record.id))}
         onSmartAssign={!archivedView && isFleetMaster && canAssign ? () => {
           if (kind === "vehicles" || kind === "drivers") setAssignmentOpen(true);
@@ -484,6 +494,22 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
         canAssign={canAssign && !archivedView}
         canReactivate={canUpdate && archivedView && Boolean(cfg.api.reactivate)}
       />
+      {pendingArchive ? (
+        <div className="fixed inset-0 z-[70] grid place-items-center bg-black/60 p-4" role="dialog" aria-modal="true" aria-labelledby="archive-confirm-title">
+          <div className="panel w-full max-w-lg p-6">
+            <h2 id="archive-confirm-title" className="text-xl font-semibold text-slate-900">Archive {kind.slice(0, -1)}?</h2>
+            <p className="mt-3 text-sm text-slate-600">
+              {String(pendingArchive.driverCode || pendingArchive.vehicleCode || pendingArchive.name || pendingArchive.id)} will leave the Active view and remain available in Archived for review or reactivation.
+            </p>
+            <div className="mt-6 flex justify-end gap-3">
+              <button className="btn-ghost" type="button" disabled={deleteMutation.isPending} onClick={() => setPendingArchive(null)}>Cancel</button>
+              <button className="btn-primary" type="button" disabled={deleteMutation.isPending} onClick={() => deleteMutation.mutate(String(pendingArchive.id))}>
+                {deleteMutation.isPending ? "Archiving…" : "Archive"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {editing && (isCreating ? canCreate : canUpdate) ? (
         <CreateEditModal

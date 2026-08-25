@@ -796,7 +796,7 @@ export function IotDevicesPage() {
               canExport={false}
               config={{
                 entity: "devices",
-                columns: ["deviceSerial", "imei", "deviceCategory", "deviceModel", "provider", "firmwareVersion", "notes"],
+                columns: ["deviceSerial", "branchCode", "imei", "deviceCategory", "deviceModel", "provider", "firmwareVersion", "notes"],
                 requiredColumns: ["deviceSerial", "deviceCategory"],
                 templateEndpoint: "/api/telemetry/devices/import-template",
                 importPreview: telematicsService.previewDeviceImport,
