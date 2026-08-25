@@ -1,6 +1,6 @@
-using OpsTrax.Api.Controllers;
+using Opstrax.Api.Controllers;
 
-namespace OpsTrax.Api.Tests;
+namespace Opstrax.Api.Tests;
 
 public sealed class AdminRolePermissionCatalogTests
 {
