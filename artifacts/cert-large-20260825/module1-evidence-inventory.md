@@ -2,7 +2,7 @@
 
 Inventory date: 2026-08-25
 Artifact root: `artifacts/cert-large-20260825/`
-Visible Chrome screenshots currently present locally: **151 PNG files**
+Visible Chrome screenshots currently present locally: **166 PNG files**
 
 ## Coverage summary
 
@@ -15,6 +15,7 @@ Visible Chrome screenshots currently present locally: **151 PNG files**
 | Import surfaces | Vehicle, driver, device, and returnable-asset template/import screenshots plus 28 governed certification CSVs | Customer-visible templates and import dialogs exist; 1,000 vehicles and 500 drivers have persisted through observed valid imports. | Remaining 750 drivers, 1,100 devices, 300 assets, and controlled invalid/duplicate/correction journeys remain open because the native picker became unavailable. |
 | Roles/accounts | `chrome/module1-6d068938-24-active-role-accounts.png`, `chrome/module1-6d068938-five-fleet-managers-active.png`, custom role and branch-scope screenshots | 24 active role accounts, five Fleet Managers, custom Maintenance Manager/Executive role setup. A CL-HQ Fleet Manager Chrome session denied a NE-HUB driver search on b131, but its screenshot bytes were not preserved. | Complete login/permission matrix is not proved; Customer entitlement and the 25th account remain externally blocked. |
 | Defects/regressions | Pre-fix missing controls, 403, wrong driver guidance, and hard-refresh crash screenshots | Objective before/after evidence for several staging and Module 1 defects. | Some fixes have only a surface retest, not full workflow retest. |
+| Exact `ef031fa` corrective cycle | `chrome/ef031fa-exact-frontend-api-live-gate.png`, lifecycle/driver records, zero-volume, export-failure, document, and Render captures | Matching full frontend/API SHA was visibly Live; D0003 Active and masked-license records passed; asset/device export SQL failures and remaining volume/tool blockers are objectively preserved. | Export fixes require a new exact-SHA Chrome retest; dataset and file-selection blockers remain. |
 
 ## Data artifacts present
 
@@ -30,6 +31,8 @@ The input directory now contains 30 CSV files:
 ## Evidence integrity
 
 The screenshot manifest must be regenerated after the corrective browser cycle so it covers final screenshots, recordings, network/console artifacts, datasets, exports, and performance files. The Browser Evidence Lead corrected an evidence-preservation error on b131: several reported screenshot path names never existed because returned bytes were not written. Those claims are withdrawn in the defect ledger. Only `chrome/b1313ed5-current-live-dashboard.png` is verified for b131, at 22,010 bytes and SHA-256 `be6c056501649307af6ba5ff86edfdc38eef6ee4d0d6abd7bdda0ac6b6f262ab`.
+
+The `ef031fa` cycle added 15 byte-preserved PNGs whose local SHA-256 values were rechecked after capture. It includes both the initially failed frontend-provenance gate and the corrected full-SHA Live gate, plus the two export 500s and their visible Render error details. These are valid pre-fix evidence; they do not close M1-030 without a new deployed-SHA browser retest.
 
 ## Required additions before closure
 

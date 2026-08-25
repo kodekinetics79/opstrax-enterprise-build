@@ -18772,7 +18772,7 @@ WHERE e.company_id=@cid AND e.deleted_at IS NULL
         if (RequirePermission(http, "telematics:devices:export") is { } denied) return denied;
         var rows = await db.QueryAsync(@"
 SELECT e.device_serial, e.imei, e.device_category, e.device_model, e.provider,
-       e.firmware_version, e.status, e.device_state, b.code branch_code,
+       e.firmware_version, e.status, e.device_state, b.branch_code,
        v.vehicle_code, d.full_name driver_name, e.last_seen_at, e.revoked_at, e.created_at
 FROM eld_devices e
 LEFT JOIN branches b ON b.id=e.branch_id AND b.company_id=e.company_id

@@ -598,7 +598,7 @@ LEFT JOIN fleet_tms_asset_types t ON t.id=a.asset_type_id
     {
         var search = http.Request.Query["search"].FirstOrDefault()?.Trim() ?? "";
         var rows = await db.QueryAsync(@"
-SELECT a.asset_tag, b.code branch_code, a.name, t.code asset_type_code, a.status,
+SELECT a.asset_tag, b.branch_code, a.name, t.code asset_type_code, a.status,
        a.current_location, a.condition, a.is_returnable, a.quantity, a.unit_of_measure,
        a.notes, a.last_seen_at_utc, a.created_at_utc
 FROM fleet_tms_assets a
