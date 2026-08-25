@@ -12,7 +12,7 @@ export const driversApi = {
   recommendations: (id: string | number) => getDriverById(id).then((detail) => (Array.isArray(detail.recommendations) ? detail.recommendations : [])),
   // Real CSV import pipeline — server-validated preview, then committed upsert.
   importPreview: (rows: AnyRecord[]) => unwrap<AnyRecord>(apiClient.post("/api/drivers/import-preview", { rows })),
-  importCommit: (rows: AnyRecord[]) => unwrap<AnyRecord>(apiClient.post("/api/drivers/import", { rows })),
+  importCommit: (rows: AnyRecord[]) => unwrap<AnyRecord>(apiClient.post("/api/drivers/import", { rows }, { timeout: 120000 })),
   // Writes must be truthful — surface backend failures instead of faking success.
   create: (payload: AnyRecord) => unwrap<AnyRecord>(apiClient.post("/api/drivers", payload)),
   update: (id: string | number, payload: AnyRecord) => unwrap<AnyRecord>(apiClient.put(`/api/drivers/${id}`, payload)),

@@ -1311,7 +1311,7 @@ export const telematicsService = {
   },
 
   async commitDeviceImport(rows: AnyRecord[]): Promise<AnyRecord> {
-    return unwrap<AnyRecord>(apiClient.post("/api/telemetry/devices/import-commit", { rows }));
+    return unwrap<AnyRecord>(apiClient.post("/api/telemetry/devices/import-commit", { rows }, { timeout: 120000 }));
   },
 
   // Provision a device = INITIATE A REAL CONNECTION (the Render/Vercel model), not a

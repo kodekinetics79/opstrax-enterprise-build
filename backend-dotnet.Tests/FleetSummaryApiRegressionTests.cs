@@ -43,10 +43,15 @@ public sealed class FleetSummaryApiRegressionTests
         var driverSummary = MethodSection(source, "private static async Task<IResult> DriverSummary", "private static async Task<IResult> CustomerSummary");
 
         Assert.Contains("COUNT(*) total", vehicleSummary);
+        Assert.Contains("status='Available'", vehicleSummary);
         Assert.Contains("at_risk", vehicleSummary);
         Assert.Contains("fleet_readiness_score", vehicleSummary);
         Assert.Contains("data_completeness_score", vehicleSummary);
         Assert.Contains("device_exceptions", vehicleSummary);
+
+        var vehiclePage = ReadSource("frontend", "src", "pages", "VehiclesModulePage.tsx");
+        Assert.Contains("visibleSummary.total != null ? num(visibleSummary.total) : rows.length", vehiclePage);
+        Assert.Contains("{total}</span> units in the fleet registry", vehiclePage);
 
         Assert.Contains("COUNT(*) total", driverSummary);
         Assert.Contains("at_risk", driverSummary);

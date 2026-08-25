@@ -120,6 +120,28 @@ public sealed class FleetTmsSecurityHardeningTests
     }
 
     [Fact]
+    public void AssetImportCachesScopedIdentityLookupsAndUsesABoundedClientTimeout()
+    {
+        var source = ReadSource("backend-dotnet", "Controllers", "FleetTmsColdChainEndpoints.cs");
+        var start = source.IndexOf("private sealed record AssetImportLookups", StringComparison.Ordinal);
+        var end = source.IndexOf("private static async Task<IResult> AssetDetail", start, StringComparison.Ordinal);
+        Assert.True(start >= 0 && end > start);
+        var import = source[start..end];
+
+        Assert.Equal(2, Count(import, "LoadAssetImportLookups(http, rows, db, ct)"));
+        Assert.Contains("lower(btrim(code)) = ANY(@codes)", import, StringComparison.Ordinal);
+        Assert.Contains("SharedConfigScope(http)", import, StringComparison.Ordinal);
+        Assert.Contains("branch_id IS NOT DISTINCT FROM @branchId", import, StringComparison.Ordinal);
+        Assert.Contains("lower(btrim(asset_tag)) = ANY(@tags)", import, StringComparison.Ordinal);
+        Assert.Contains("lookups.AssetTypeIds", import, StringComparison.Ordinal);
+        Assert.Contains("lookups.ExistingAssetIds", import, StringComparison.Ordinal);
+        Assert.DoesNotContain("ScalarLongAsync", import, StringComparison.Ordinal);
+
+        var client = ReadSource("frontend", "src", "services", "fleetTmsApi.ts");
+        Assert.Contains("/api/fleet-tms/assets/import-commit\", { rows }, { timeout: 120000 }", client, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ScanValidationRejectsBlankIdentifiersAndInvalidReferences()
     {
         var blankBarcode = new AssetScanRequest("Barcode", null, null, " ", null, null, null, null, null, null);

@@ -4755,6 +4755,7 @@ public static partial class EndpointMappings
         var row = await db.QuerySingleAsync(
             @"SELECT COUNT(*) total,
                      SUM(CASE WHEN status IN ('Active','Available','On Route','At Stop','Idle') THEN 1 ELSE 0 END) active,
+                     SUM(CASE WHEN status='Available' THEN 1 ELSE 0 END) available,
                      SUM(CASE WHEN status IN ('Delayed','Maintenance') OR risk_score >= 55 THEN 1 ELSE 0 END) at_risk,
                      ROUND(AVG(readiness_score) FILTER (
                          WHERE LOWER(COALESCE(device_status,'')) NOT IN ('','unknown','unavailable')
@@ -11844,6 +11845,93 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         return errors;
     }
 
+    private sealed record DriverImportIdentity(
+        long Id,
+        long? BranchId,
+        string DriverCode,
+        string? LicenseBlindIndex,
+        string? PlainLicense);
+
+    private static string NormalizeImportIdentity(string value) => value.Trim().ToUpperInvariant();
+
+    private static async Task<List<DriverImportIdentity>> LoadDriverImportIdentities(
+        IReadOnlyCollection<Dictionary<string, object?>> rows,
+        long companyId,
+        Opstrax.Api.Security.PiiProtectionService pii,
+        Database db,
+        CancellationToken ct)
+    {
+        var codes = rows.Select(row => ImportStr(row, "driverCode"))
+            .Where(value => value is not null)
+            .Select(value => NormalizeImportIdentity(value!))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var licenses = rows.Select(row => ImportStr(row, "licenseNumber"))
+            .Where(value => value is not null)
+            .Select(value => NormalizeImportIdentity(value!))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var blindIndexes = pii.Enabled
+            ? licenses.Select(value => pii.BlindIndex(value))
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Select(value => value!)
+                .Distinct(StringComparer.Ordinal)
+                .ToArray()
+            : [];
+
+        if (codes.Length == 0 && licenses.Length == 0) return [];
+
+        var licensePredicate = pii.Enabled
+            ? @"license_number_bidx=ANY(@licenseBlindIndexes) OR
+                 (NULLIF(BTRIM(license_number_bidx),'') IS NULL AND UPPER(BTRIM(license_number))=ANY(@licenses))"
+            : "UPPER(BTRIM(license_number))=ANY(@licenses)";
+        var matches = await db.QueryAsync($@"
+            SELECT id,branch_id,driver_code,license_number_bidx,license_number
+            FROM drivers
+            WHERE company_id=@companyId AND deleted_at IS NULL
+              AND (UPPER(BTRIM(driver_code))=ANY(@codes) OR {licensePredicate})",
+            command =>
+            {
+                command.Parameters.AddWithValue("@companyId", companyId);
+                command.Parameters.AddWithValue("@codes", NpgsqlDbType.Array | NpgsqlDbType.Text, codes);
+                command.Parameters.AddWithValue("@licenses", NpgsqlDbType.Array | NpgsqlDbType.Text, licenses);
+                if (pii.Enabled)
+                    command.Parameters.AddWithValue("@licenseBlindIndexes", NpgsqlDbType.Array | NpgsqlDbType.Text, blindIndexes);
+            }, ct);
+
+        return matches.Select(row => new DriverImportIdentity(
+            Convert.ToInt64(row["id"]),
+            row["branchId"] is null or DBNull ? null : Convert.ToInt64(row["branchId"]),
+            row["driverCode"]?.ToString() ?? "",
+            row["licenseNumberBidx"]?.ToString(),
+            row["licenseNumber"]?.ToString())).ToList();
+    }
+
+    private static (long ExistingId, bool OutsideBranch) ResolveDriverCodeOwner(
+        IReadOnlyCollection<DriverImportIdentity> identities, string code, long? branchId)
+    {
+        var owners = identities.Where(identity =>
+            string.Equals(identity.DriverCode.Trim(), code.Trim(), StringComparison.OrdinalIgnoreCase)).ToList();
+        var authorized = branchId is null
+            ? owners.FirstOrDefault()
+            : owners.FirstOrDefault(identity => identity.BranchId == branchId);
+        return (authorized?.Id ?? 0, branchId is not null && authorized is null && owners.Count > 0);
+    }
+
+    private static long ResolveDriverLicenseOwner(
+        IReadOnlyCollection<DriverImportIdentity> identities,
+        string license,
+        Opstrax.Api.Security.PiiProtectionService pii)
+    {
+        var normalized = NormalizeImportIdentity(license);
+        var blindIndex = pii.Enabled ? pii.BlindIndex(normalized) : null;
+        var owner = identities.FirstOrDefault(identity =>
+            pii.Enabled && !string.IsNullOrWhiteSpace(identity.LicenseBlindIndex)
+                ? string.Equals(identity.LicenseBlindIndex, blindIndex, StringComparison.Ordinal)
+                : string.Equals(identity.PlainLicense?.Trim(), normalized, StringComparison.OrdinalIgnoreCase));
+        return owner?.Id ?? 0;
+    }
+
     private static IResult DriversImportTemplate(HttpContext http)
     {
         if (RequirePermission(http, "drivers:view") is { } denied) return denied;
@@ -11865,6 +11953,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var results = new List<object>();
         int creates = 0, updates = 0, invalid = 0;
         var seenCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var identities = await LoadDriverImportIdentities(rows, companyId, pii, db, ct);
         for (var i = 0; i < rows.Count; i++)
         {
             var errors = ValidateDriverImportRow(rows[i], seenCodes);
@@ -11872,12 +11961,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             long existingId = 0;
             if (errors.Count == 0)
             {
-                existingId = await db.ScalarLongAsync(
-                    "SELECT COALESCE(MAX(id),0) FROM drivers WHERE company_id=@cid AND LOWER(driver_code)=LOWER(@code) AND deleted_at IS NULL" + (branchId is null ? "" : " AND branch_id=@branchId"),
-                    c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@code", code); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct);
-                if (existingId == 0 && branchId is not null && await db.ScalarLongAsync(
-                    "SELECT COUNT(*) FROM drivers WHERE company_id=@cid AND LOWER(driver_code)=LOWER(@code) AND deleted_at IS NULL",
-                    c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@code", code); }, ct) > 0)
+                var codeOwner = ResolveDriverCodeOwner(identities, code, branchId);
+                existingId = codeOwner.ExistingId;
+                if (codeOwner.OutsideBranch)
                     errors.Add($"Driver code '{code}' already exists outside the authorized branch.");
                 var license = ImportStr(rows[i], "licenseNumber");
                 if (license is not null)
@@ -11885,17 +11971,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                     // Driver licence is also tenant-wide identity.  Keep code lookup
                     // branch-scoped for upsert ownership, but validate the submitted
                     // licence across the tenant so preview and commit agree.
-                    var dupSql = pii.Enabled
-                        ? @"SELECT COALESCE(MAX(id),0) FROM drivers WHERE company_id=@cid AND deleted_at IS NULL
-                            AND (license_number_bidx=@bidx OR
-                                 (NULLIF(BTRIM(license_number_bidx),'') IS NULL AND LOWER(BTRIM(license_number))=LOWER(BTRIM(@lic))))"
-                        : "SELECT COALESCE(MAX(id),0) FROM drivers WHERE company_id=@cid AND LOWER(BTRIM(license_number))=LOWER(BTRIM(@lic)) AND deleted_at IS NULL";
-                    var licOwner = await db.ScalarLongAsync(dupSql, c =>
-                    {
-                        c.Parameters.AddWithValue("@cid", companyId);
-                        c.Parameters.AddWithValue("@lic", license);
-                        if (pii.Enabled) c.Parameters.AddWithValue("@bidx", (object?)pii.BlindIndex(license) ?? DBNull.Value);
-                    }, ct);
+                    var licOwner = ResolveDriverLicenseOwner(identities, license, pii);
                     if (licOwner > 0 && licOwner != existingId)
                         errors.Add($"License number '{license}' is already registered to another driver.");
                 }
@@ -11920,6 +11996,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         int created = 0, updated = 0;
         var skipped = new List<object>();
         var seenCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var identities = await LoadDriverImportIdentities(rows, companyId, pii, db, ct);
         for (var i = 0; i < rows.Count; i++)
         {
             var errors = ValidateDriverImportRow(rows[i], seenCodes);
@@ -11928,26 +12005,13 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             long existingId = 0;
             if (errors.Count == 0)
             {
-                existingId = await db.ScalarLongAsync(
-                    "SELECT COALESCE(MAX(id),0) FROM drivers WHERE company_id=@cid AND LOWER(driver_code)=LOWER(@code) AND deleted_at IS NULL" + (branchId is null ? "" : " AND branch_id=@branchId"),
-                    c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@code", code); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct);
-                if (existingId == 0 && branchId is not null && await db.ScalarLongAsync(
-                    "SELECT COUNT(*) FROM drivers WHERE company_id=@cid AND LOWER(driver_code)=LOWER(@code) AND deleted_at IS NULL",
-                    c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@code", code); }, ct) > 0)
+                var codeOwner = ResolveDriverCodeOwner(identities, code, branchId);
+                existingId = codeOwner.ExistingId;
+                if (codeOwner.OutsideBranch)
                     errors.Add($"Driver code '{code}' already exists outside the authorized branch.");
                 if (license is not null)
                 {
-                    var dupSql = pii.Enabled
-                        ? @"SELECT COALESCE(MAX(id),0) FROM drivers WHERE company_id=@cid AND deleted_at IS NULL
-                            AND (license_number_bidx=@bidx OR
-                                 (NULLIF(BTRIM(license_number_bidx),'') IS NULL AND LOWER(BTRIM(license_number))=LOWER(BTRIM(@lic))))"
-                        : "SELECT COALESCE(MAX(id),0) FROM drivers WHERE company_id=@cid AND LOWER(BTRIM(license_number))=LOWER(BTRIM(@lic)) AND deleted_at IS NULL";
-                    var licOwner = await db.ScalarLongAsync(dupSql, c =>
-                    {
-                        c.Parameters.AddWithValue("@cid", companyId);
-                        c.Parameters.AddWithValue("@lic", license);
-                        if (pii.Enabled) c.Parameters.AddWithValue("@bidx", (object?)pii.BlindIndex(license) ?? DBNull.Value);
-                    }, ct);
+                    var licOwner = ResolveDriverLicenseOwner(identities, license, pii);
                     if (licOwner > 0 && licOwner != existingId)
                         errors.Add($"License number '{license}' is already registered to another driver.");
                 }
@@ -18093,16 +18157,54 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         return errors;
     }
 
-    private static async Task<long> ExistingDeviceIdentityCount(
-        Database db, string serial, string? imei, CancellationToken ct)
-        => await db.ScalarLongAsync(
-            @"SELECT COUNT(*) FROM eld_devices
-              WHERE deleted_at IS NULL AND COALESCE(device_state,'')<>'Quarantined'
-                AND (UPPER(BTRIM(device_serial))=@serial
-                  OR (@imei::TEXT IS NOT NULL AND REGEXP_REPLACE(COALESCE(imei,''),'[^0-9]','','g')=@imei)
-                  OR UPPER(BTRIM(device_serial))=UPPER(COALESCE(@imei,''))
-                  OR UPPER(BTRIM(COALESCE(imei,'')))=@serial)",
-            c => { c.Parameters.AddWithValue("@serial", serial); c.Parameters.AddWithValue("@imei", (object?)imei ?? DBNull.Value); }, ct);
+    private sealed record DeviceImportCandidate(
+        int RowNumber,
+        Dictionary<string, object?> Row,
+        string Serial,
+        string? Imei,
+        List<string> Errors);
+
+    private static string NormalizeDeviceImportIdentity(string value) => value.Trim().ToUpperInvariant();
+
+    private static string[] DeviceImportIdentities(IEnumerable<Dictionary<string, object?>> rows) => rows
+        .SelectMany(row => new[] { ImportStr(row, "deviceSerial"), ImportStr(row, "imei") })
+        .Where(value => !string.IsNullOrWhiteSpace(value))
+        .Select(value => NormalizeDeviceImportIdentity(value!))
+        .Distinct(StringComparer.Ordinal)
+        .ToArray();
+
+    private static async Task<HashSet<string>> LoadExistingDeviceImportIdentities(
+        Database db, IEnumerable<Dictionary<string, object?>> rows, CancellationToken ct)
+    {
+        var identities = DeviceImportIdentities(rows);
+        if (identities.Length == 0) return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // Device serial and IMEI intentionally share one global identity namespace.
+        // Keep the query unscoped by company, matching provisioning and the unique indexes.
+        var matches = await db.QueryAsync(@"
+            SELECT UPPER(BTRIM(device_serial)) normalized_serial,
+                   UPPER(BTRIM(COALESCE(imei,''))) normalized_imei,
+                   REGEXP_REPLACE(COALESCE(imei,''),'[^0-9]','','g') numeric_imei
+            FROM eld_devices
+            WHERE deleted_at IS NULL AND COALESCE(device_state,'')<>'Quarantined'
+              AND (UPPER(BTRIM(device_serial))=ANY(@identities)
+                OR UPPER(BTRIM(COALESCE(imei,'')))=ANY(@identities)
+                OR REGEXP_REPLACE(COALESCE(imei,''),'[^0-9]','','g')=ANY(@identities))",
+            command => command.Parameters.AddWithValue(
+                "@identities", NpgsqlDbType.Array | NpgsqlDbType.Text, identities), ct);
+
+        var existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var match in matches)
+        {
+            foreach (var key in new[] { "normalizedSerial", "normalizedImei", "numericImei" })
+                if (match[key]?.ToString() is { Length: > 0 } value) existing.Add(value);
+        }
+        return existing;
+    }
+
+    private static bool DeviceImportIdentityExists(HashSet<string> existing, string serial, string? imei) =>
+        existing.Contains(NormalizeDeviceImportIdentity(serial)) ||
+        (imei is not null && existing.Contains(NormalizeDeviceImportIdentity(imei)));
 
     private static async Task<IResult> DevicesImportPreview(
         HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
@@ -18115,12 +18217,13 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var results = new List<object>();
         var creates = 0;
         var invalid = 0;
+        var existing = await LoadExistingDeviceImportIdentities(db, rows, ct);
         for (var i = 0; i < rows.Count; i++)
         {
             var errors = ValidateDeviceImportRow(rows[i], fileIdentities);
             var serial = ImportStr(rows[i], "deviceSerial")?.ToUpperInvariant() ?? "";
             var imei = ImportStr(rows[i], "imei");
-            if (errors.Count == 0 && await ExistingDeviceIdentityCount(db, serial, imei, ct) > 0)
+            if (errors.Count == 0 && DeviceImportIdentityExists(existing, serial, imei))
                 errors.Add("Device serial or IMEI is already registered. Existing devices are never overwritten by import.");
             var action = errors.Count == 0 ? "create" : "error";
             if (action == "create") creates++; else invalid++;
@@ -18144,19 +18247,46 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var credentials = new List<object>();
         var created = 0;
         var pii = http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>();
+        var candidates = new List<DeviceImportCandidate>(rows.Count);
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var errors = ValidateDeviceImportRow(rows[i], fileIdentities);
+            candidates.Add(new DeviceImportCandidate(
+                i + 1,
+                rows[i],
+                ImportStr(rows[i], "deviceSerial")?.ToUpperInvariant() ?? "",
+                ImportStr(rows[i], "imei"),
+                errors));
+        }
 
         await db.RunInSystemTransactionAsync(async () =>
         {
-            for (var i = 0; i < rows.Count; i++)
+            var validRows = candidates.Where(candidate => candidate.Errors.Count == 0).ToList();
+            var lockIdentities = DeviceImportIdentities(validRows.Select(candidate => candidate.Row))
+                .Select(value => $"device-identity:{value}")
+                .OrderBy(value => value, StringComparer.Ordinal)
+                .ToArray();
+            if (lockIdentities.Length > 0)
             {
-                var errors = ValidateDeviceImportRow(rows[i], fileIdentities);
-                var serial = ImportStr(rows[i], "deviceSerial")?.ToUpperInvariant() ?? "";
-                var imei = ImportStr(rows[i], "imei");
-                if (errors.Count == 0 && await ExistingDeviceIdentityCount(db, serial, imei, ct) > 0)
+                await db.ExecuteAsync(
+                    @"SELECT pg_advisory_xact_lock(hashtextextended(identity,0))
+                      FROM unnest(@identities::TEXT[]) identity ORDER BY identity",
+                    command => command.Parameters.AddWithValue(
+                        "@identities", NpgsqlDbType.Array | NpgsqlDbType.Text, lockIdentities), ct);
+            }
+            var existing = await LoadExistingDeviceImportIdentities(
+                db, validRows.Select(candidate => candidate.Row), ct);
+
+            foreach (var candidate in candidates)
+            {
+                var errors = candidate.Errors;
+                var serial = candidate.Serial;
+                var imei = candidate.Imei;
+                if (errors.Count == 0 && DeviceImportIdentityExists(existing, serial, imei))
                     errors.Add("Device serial or IMEI is already registered. Existing devices are never overwritten by import.");
                 if (errors.Count > 0)
                 {
-                    skipped.Add(new { rowNumber = i + 1, key = serial, errors });
+                    skipped.Add(new { rowNumber = candidate.RowNumber, key = serial, errors });
                     continue;
                 }
 
@@ -18165,23 +18295,12 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 var encryptedHmacSecret = DeviceHmacSecretProtection.EncryptForStorage(pii, rawHmacSecret);
                 if (encryptedHmacSecret is null)
                 {
-                    skipped.Add(new { rowNumber = i + 1, key = serial, errors = new[] { "Device credential encryption is unavailable." } });
+                    skipped.Add(new { rowNumber = candidate.RowNumber, key = serial, errors = new[] { "Device credential encryption is unavailable." } });
                     continue;
                 }
-                var category = NormalizeInstallationRole(ImportStr(rows[i], "deviceCategory")!);
+                var category = NormalizeInstallationRole(ImportStr(candidate.Row, "deviceCategory")!);
                 try
                 {
-                    await db.ExecuteAsync(
-                        @"SELECT pg_advisory_xact_lock(hashtextextended(identity,0))
-                          FROM unnest(@identities::TEXT[]) identity ORDER BY identity",
-                        c => c.Parameters.AddWithValue("@identities",
-                            new[] { serial, imei }.Where(value => !string.IsNullOrWhiteSpace(value))
-                                .Select(value => $"device-identity:{value}").OrderBy(value => value).ToArray()), ct);
-                    if (await ExistingDeviceIdentityCount(db, serial, imei, ct) > 0)
-                    {
-                        skipped.Add(new { rowNumber = i + 1, key = serial, errors = new[] { "Device serial or IMEI was registered concurrently." } });
-                        continue;
-                    }
                     var id = await db.InsertWithSavepointAsync(
                         @"INSERT INTO eld_devices
                             (company_id, branch_id, device_serial, imei, device_category, device_model, provider,
@@ -18196,10 +18315,10 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                             c.Parameters.AddWithValue("@serial", serial);
                             c.Parameters.AddWithValue("@imei", (object?)imei ?? DBNull.Value);
                             c.Parameters.AddWithValue("@category", category);
-                            c.Parameters.AddWithValue("@model", (object?)ImportStr(rows[i], "deviceModel") ?? DBNull.Value);
-                            c.Parameters.AddWithValue("@provider", (object?)ImportStr(rows[i], "provider") ?? DBNull.Value);
-                            c.Parameters.AddWithValue("@firmware", (object?)ImportStr(rows[i], "firmwareVersion") ?? DBNull.Value);
-                            c.Parameters.AddWithValue("@notes", (object?)ImportStr(rows[i], "notes") ?? DBNull.Value);
+                            c.Parameters.AddWithValue("@model", (object?)ImportStr(candidate.Row, "deviceModel") ?? DBNull.Value);
+                            c.Parameters.AddWithValue("@provider", (object?)ImportStr(candidate.Row, "provider") ?? DBNull.Value);
+                            c.Parameters.AddWithValue("@firmware", (object?)ImportStr(candidate.Row, "firmwareVersion") ?? DBNull.Value);
+                            c.Parameters.AddWithValue("@notes", (object?)ImportStr(candidate.Row, "notes") ?? DBNull.Value);
                             c.Parameters.AddWithValue("@rawKey", rawApiKey);
                             c.Parameters.AddWithValue("@hmacEncrypted", encryptedHmacSecret);
                         }, ct);
@@ -18209,7 +18328,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 }
                 catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
                 {
-                    skipped.Add(new { rowNumber = i + 1, key = serial, errors = new[] { "Device serial or IMEI is already registered." } });
+                    skipped.Add(new { rowNumber = candidate.RowNumber, key = serial, errors = new[] { "Device serial or IMEI is already registered." } });
                 }
             }
             return true;
