@@ -25,7 +25,7 @@ public static class PlatformTenantModuleCatalog
         new("logistics-workspace", null), new("customer-eta", "customer_portal"),
         new("customer-portal", "customer_portal"), new("customer-visibility", "customer_portal"),
         new("fleet-utilization", null), new("fleet-workspace", null), new("fleet-cold-chain", null),
-        new("fleet-assets", null), new("fleet-saudi-readiness", null),
+        new("fleet-assets", null), new("branches", null), new("fleet-saudi-readiness", null),
         new("fleet-compliance", "compliance"), new("vehicles", null), new("drivers", null),
         new("owners", null), new("assignments", null), new("documents", null),
         new("iot-devices", "telematics"), new("telematics-control-tower", "telematics"),

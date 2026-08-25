@@ -38,14 +38,14 @@ Canada/NA and Saudi/GCC market packs are separately deny-by-default regardless o
 
 ## Tenant-governed core/open catalog
 
-The following 46 configured modules have **no Platform commercial entitlement**. They are not anonymous: tenant authentication, RBAC, branch/self/customer predicates, country/feature/deployment conditions and handler validation still apply. Package omission alone cannot disable their UI or API. “Included core/open” therefore means **not selectively gated by the current Platform package/entitlement mechanism**; it is an enforcement classification, not proof of contractual SKU inclusion, production completeness, successful third-party integration, or unlimited usage.
+The following 47 configured modules have **no Platform commercial entitlement**. They are not anonymous: tenant authentication, RBAC, branch/self/customer predicates, country/feature/deployment conditions and handler validation still apply. Package omission alone cannot disable their UI or API. “Included core/open” therefore means **not selectively gated by the current Platform package/entitlement mechanism**; it is an enforcement classification, not proof of contractual SKU inclusion, production completeness, successful third-party integration, or unlimited usage.
 
 | Family | Modules | Control owner |
 |---|---|---|
 | Operations | `command-center`, `fleet-health`, `live-dashboard`, `alerts`, `active-shipments`, `control-tower` | tenant RBAC; deployment health for infrastructure |
 | CRM adjunct | `account-health`, `follow-ups`, `support-tickets`, `renewals`, `upsell-opportunities` | tenant CRM/customer permissions; not commercially gated |
 | Execution adjunct | `load-bookings`, `shipments`, `operations-proof-center`, `logistics-workspace`, `driver-messaging`, `workforce` | tenant dispatch/shipment/operations permissions |
-| Fleet core | `fleet-utilization`, `fleet-workspace`, `fleet-cold-chain`, `fleet-assets`, `fleet-saudi-readiness`, `vehicles`, `drivers`, `owners`, `assignments`, `documents` | tenant fleet/dispatch/compliance RBAC; Saudi page also country/pack API checks |
+| Fleet core | `fleet-utilization`, `fleet-workspace`, `fleet-cold-chain`, `fleet-assets`, `branches`, `fleet-saudi-readiness`, `vehicles`, `drivers`, `owners`, `assignments`, `documents` | tenant fleet/dispatch/compliance RBAC; Saudi page also country/pack API checks |
 | Financial core | `fuel-idling`, `expenses`, `invoices`, `ar-aging`, `payments`, `profitability`, `tax-config`, `billing-consolidation`, `driver-pay`, `revenue-recognition` | tenant finance/tax/billing/settlement RBAC |
 | Governance | `user-management`, `audit-logs`, `alert-rules`, `feature-flags`, `about` | tenant admin/auditor permissions |
 | Intelligence/forms | `carbon-tracking`, `digital-forms`, `ai-copilot`, `predictive-analytics` | tenant reports/safety RBAC; AI also consumes tenant `ai_copilot` flag |
@@ -88,7 +88,7 @@ Precedence is explicit: package reassignment replaces only `source='package'`; e
 
 ## Residual enterprise risks
 
-1. **P1 — 46 modules are not Platform-commercially gated.** Fleet, finance, execution adjuncts, governance and AI cannot be disabled by package omission. Sales must not translate this technical classification into a promise that every capability is contractually free, complete, integrated or unlimited. Package definitions may call them included core only after commercial/product approval; selective control requires both UI and API gates.
+1. **P1 — 47 modules are not Platform-commercially gated.** Fleet, finance, execution adjuncts, governance and AI cannot be disabled by package omission. Sales must not translate this technical classification into a promise that every capability is contractually free, complete, integrated or unlimited. Package definitions may call them included core only after commercial/product approval; selective control requires both UI and API gates.
 2. **P1 — API ownership is prefix-based and manually maintained.** A new endpoint under a gated UI can be left outside `ModuleKeyForPath`. The drift test protects the current catalog/keys, but endpoint-to-product ownership still requires review in every new endpoint PR.
 3. **P1 — composite pages cross entitlement boundaries.** Live Map may combine Telematics with Dispatch overlays; HOS UI combines Compliance and ELD/Telematics; Fleet workspaces combine multiple open and gated APIs. They need explicit degraded states, not inferred all-or-nothing ownership.
 4. **P1 — Saudi Readiness has a split boundary.** Its navigation is country-filtered but not `requiredEntitlement`; its APIs enforce Compliance and Saudi/GCC pack. A deep link can render before receiving API denial.
@@ -104,7 +104,7 @@ Precedence is explicit: package reassignment replaces only `source='package'`; e
 - `tools/rehearse-platform-control-plane.sh` creates a redacted evidence bundle and runs the deterministic disposable-tenant package/override/deny/audit/restoration sequence documented in `PLATFORM_CONTROL_PLANE_REHEARSAL_RUNBOOK.md`.
 - `PLATFORM_CONTROL_PLANE_DEMO_GAP_REVIEW.md` separates release gates, required demo disclosures and production-shaped follow-up from the controls proven here.
 - `PlatformControlPlaneRehearsalTests` exercises real Platform endpoint methods for package and override transitions, verifies audit actor/action order and proves cleanup; its companion contract assertion binds nav/deep-link/API denial to the same authenticated policy. Rendered-browser proof remains a separate required observation.
-- `PlatformEnterpriseControlMapTests` fails when the 91-module catalog changes without updating this control map, when entitlement counts/keys drift, or when navigation/deep-link/API fail-closed contracts disappear.
+- `PlatformEnterpriseControlMapTests` fails when the 92-module catalog changes without updating this control map, when entitlement counts/keys drift, or when navigation/deep-link/API fail-closed contracts disappear.
 - The same contract now proves every configured module has a registered tenant route and that every catalog key appears in exactly one correct documented commercial bucket; a name merely appearing elsewhere in this document is no longer sufficient.
 - `PlatformEnterpriseControlMapTests` also prevents restoration of the arbitrary generic module bucket API, requires RBAC mappings for every registered compatibility root and binds Traffic Violations reads to `safety:view`.
 - `EntitlementPolicyModePostgresTests` proves new-tenant deny-by-default, legacy compatibility, package/override precedence and audited policy conversion.

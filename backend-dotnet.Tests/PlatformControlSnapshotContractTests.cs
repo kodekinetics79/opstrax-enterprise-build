@@ -66,9 +66,9 @@ public sealed class PlatformControlSnapshotContractTests
             .ToArray();
 
         Assert.Equal(spaEntries, serverEntries);
-        Assert.Equal(91, serverEntries.Length);
+        Assert.Equal(92, serverEntries.Length);
         Assert.Equal(45, serverEntries.Count(entry => entry.Entitlement.Length > 0));
-        Assert.Equal(46, serverEntries.Count(entry => entry.Entitlement.Length == 0));
+        Assert.Equal(47, serverEntries.Count(entry => entry.Entitlement.Length == 0));
     }
 
     private static string Read(params string[] parts)
