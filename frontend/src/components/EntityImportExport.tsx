@@ -216,14 +216,19 @@ function ImportWizard({ config, onClose }: { config: ImportExportConfig; onClose
   const importable = Number(preview?.creates ?? 0) + Number(preview?.updates ?? 0);
 
   return (
-    <div className="fixed inset-0 z-[70] grid place-items-center bg-slate-900/40 p-4 backdrop-blur-sm" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-[70] grid place-items-center bg-slate-900/40 p-4 backdrop-blur-sm"
+      onClick={(event) => {
+        if (!working && event.target === event.currentTarget) onClose();
+      }}
+    >
       <div className="fc-neumo flex max-h-[86vh] w-full max-w-2xl flex-col overflow-hidden anim-fade-up" onClick={(e) => e.stopPropagation()}>
         <div className="flex shrink-0 items-start justify-between px-6 pt-5">
           <div>
             <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">CSV import</div>
             <h2 className="mt-1 text-xl font-black capitalize tracking-tight text-slate-900">Import {config.entity}</h2>
           </div>
-          <button type="button" aria-label="Close" onClick={onClose} className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"><X className="h-5 w-5" /></button>
+          <button type="button" aria-label="Close" disabled={working} onClick={onClose} className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"><X className="h-5 w-5" /></button>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
@@ -334,7 +339,7 @@ function ImportWizard({ config, onClose }: { config: ImportExportConfig; onClose
               </button>
             </>
           ) : (
-            <button type="button" className={step === "done" ? "btn-primary h-10" : "btn-ghost h-10"} onClick={onClose}>
+            <button type="button" className={step === "done" ? "btn-primary h-10" : "btn-ghost h-10"} disabled={working} onClick={onClose}>
               {step === "done" ? "Done" : "Cancel"}
             </button>
           )}
