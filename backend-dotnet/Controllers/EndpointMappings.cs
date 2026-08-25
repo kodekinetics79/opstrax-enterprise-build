@@ -2348,6 +2348,13 @@ public static partial class EndpointMappings
         app.MapPut($"/api/{moduleKey}/{{id:long}}", (HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) => UpdateModuleRecord(http, moduleKey, id, body, db, audit, ct));
     }
 
+    internal static readonly string[] CustomRolePermissionCatalog =
+    [
+        "telematics:devices:view",
+        "telematics:devices:diagnostics",
+        "telematics:gps:view",
+    ];
+
     internal static readonly Dictionary<string, string[]> RolePermissionDefaults = new(StringComparer.OrdinalIgnoreCase)
     {
         ["Super Admin"]              = ["*"],
@@ -14806,6 +14813,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var permissions = RolePermissionDefaults
             .Values
             .SelectMany(static values => values)
+            .Concat(CustomRolePermissionCatalog)
             .Where(permission => !string.IsNullOrWhiteSpace(permission) && permission != "*")
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(permission => permission, StringComparer.OrdinalIgnoreCase)
@@ -15012,6 +15020,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     {
         var catalog = RolePermissionDefaults.Values
             .SelectMany(static values => values)
+            .Concat(CustomRolePermissionCatalog)
             .Where(static value => !string.IsNullOrWhiteSpace(value) && value != "*")
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
