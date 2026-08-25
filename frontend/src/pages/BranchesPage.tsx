@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Plus, Search, X } from "lucide-react";
 import { PageHeader, EmptyState, ErrorState, LoadingState, StatusBadge } from "@/components/ui";
-import { useHasPermission } from "@/hooks/usePermission";
+import { PERMISSIONS, useHasPermission } from "@/hooks/usePermission";
 import { branchesApi } from "@/services/branchesApi";
 import type { AnyRecord } from "@/types";
 
@@ -32,7 +32,7 @@ function apiError(error: unknown) {
 export function BranchesPage() {
   const queryClient = useQueryClient();
   const hasPermission = useHasPermission();
-  const canManage = hasPermission("fleet:manage");
+  const canManage = hasPermission(PERMISSIONS.FLEET_MANAGE);
   const [search, setSearch] = useState("");
   const [form, setForm] = useState<BranchForm | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -62,7 +62,7 @@ export function BranchesPage() {
         eyebrow="Fleet identity"
         title="Branches"
         description="Create and maintain the branch, depot, and yard ownership scopes used by fleet records and role accounts."
-        actions={<button className="btn-primary" disabled={!canManage} onClick={() => { setError(null); setForm({ ...emptyForm }); }}><Plus className="h-4 w-4" /> Add Branch</button>}
+        actions={canManage ? <button className="btn-primary" onClick={() => { setError(null); setForm({ ...emptyForm }); }}><Plus className="h-4 w-4" /> Add Branch</button> : null}
       />
       <div className="panel p-4">
         <label className="relative block max-w-lg">
@@ -85,18 +85,18 @@ export function BranchesPage() {
                 <td className="px-4 py-3 tabular-nums">{Number(row.vehicleCount ?? 0)}</td>
                 <td className="px-4 py-3 tabular-nums">{Number(row.driverCount ?? 0)}</td>
                 <td className="px-4 py-3"><StatusBadge status={String(row.status ?? "Active")} /></td>
-                <td className="px-4 py-3"><button className="icon-btn" disabled={!canManage} aria-label={`Edit ${String(row.name)}`} onClick={() => { setError(null); setForm({
+                <td className="px-4 py-3">{canManage ? <button className="icon-btn" aria-label={`Edit ${String(row.name)}`} onClick={() => { setError(null); setForm({
                   id: Number(row.id), branchCode: String(row.branchCode ?? ""), name: String(row.name ?? ""),
                   branchType: (String(row.branchType ?? "branch") as BranchForm['branchType']), region: String(row.region ?? ""),
                   city: String(row.city ?? ""), state: String(row.state ?? ""), countryCode: String(row.countryCode ?? "US"),
                   timezone: String(row.timezone ?? "America/New_York"), status: String(row.status ?? "Active"),
-                }); }}><Pencil className="h-4 w-4" /></button></td>
+                }); }}><Pencil className="h-4 w-4" /></button> : null}</td>
               </tr>
             ))}</tbody>
           </table>
         </div>
       )}
-      {form && (
+      {form && canManage && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-slate-900/35 p-4 backdrop-blur-sm">
           <div className="panel w-full max-w-2xl space-y-4 p-6" role="dialog" aria-label={form.id ? "Edit branch" : "Add branch"}>
             <div className="flex items-center justify-between"><h2 className="text-lg font-bold">{form.id ? "Edit Branch" : "Add Branch"}</h2><button className="icon-btn" onClick={() => setForm(null)}><X className="h-4 w-4" /></button></div>

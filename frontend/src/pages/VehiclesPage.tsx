@@ -9,10 +9,9 @@ import { useNavigate, useSearchParams } from "react-router";
 import { vehiclesApi } from "@/services/vehiclesApi";
 import { driversApi } from "@/services/driversApi";
 import { downloadServerExport } from "@/services/fleetDomainApi";
-import { useHasPermission } from "@/hooks/usePermission";
+import { PERMISSIONS, useHasPermission } from "@/hooks/usePermission";
 import { useAuth } from "@/hooks/useAuth";
 import { scopeRowsForSession } from "@/auth/accessScope";
-import { PERMISSIONS } from "@/auth/rbacConfig";
 import { labelize, LoadingState, ErrorState, EmptyState } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
@@ -121,10 +120,11 @@ export function VehiclesPage() {
   const hasPermission = useHasPermission();
   const queryClient = useQueryClient();
 
-  const canCreate = hasPermission("vehicles:create");
-  const canUpdate = hasPermission("vehicles:update");
-  const canDelete = hasPermission("vehicles:delete");
-  const canAssign = hasPermission("vehicles:assign");
+  const canManageFleet = hasPermission(PERMISSIONS.FLEET_MANAGE);
+  const canCreate = canManageFleet;
+  const canUpdate = canManageFleet;
+  const canDelete = canManageFleet;
+  const canAssign = canManageFleet;
   const canExport = hasPermission("vehicles:export");
 
   const [search, setSearch] = useState("");
@@ -266,11 +266,11 @@ export function VehiclesPage() {
               title="Export the full fleet (all pages)" className="btn-ghost h-10">
               <Download className="h-4 w-4" /> Export
             </button>
-            <button type="button" disabled={!canCreate}
-              onClick={() => { if (canCreate) { setIsCreating(true); setEditing({ type: "Truck", status: "Available" }); } }}
-              className="btn-primary h-10">
-              <Plus className="h-4 w-4" /> New vehicle
-            </button>
+            {canCreate ? (
+              <button type="button" onClick={() => { setIsCreating(true); setEditing({ type: "Truck", status: "Available" }); }} className="btn-primary h-10">
+                <Plus className="h-4 w-4" /> New vehicle
+              </button>
+            ) : null}
           </div>
         </div>
       </header>
@@ -433,7 +433,7 @@ export function VehiclesPage() {
         />
       )}
 
-      {editing && (
+      {editing && canManageFleet && (
         <VehicleFormModal title={isCreating ? "New vehicle" : "Edit vehicle"} initial={editing} saving={save.isPending} serverError={save.error instanceof Error ? save.error.message : undefined}
           onClose={() => { setEditing(null); setIsCreating(false); }} onSave={(p) => save.mutate(p)} />
       )}
@@ -596,10 +596,10 @@ function VehicleDrawer({ record, detail, loading, canUpdate, canDelete, canAssig
             <button type="button" aria-label="Close" onClick={onClose} className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"><X className="h-5 w-5" /></button>
           </div>
           <div className="mt-4 flex flex-wrap gap-2">
-            <button type="button" disabled={!canUpdate} onClick={onEdit} className="btn-primary h-9 px-3 text-xs"><Wrench className="h-3.5 w-3.5" /> Edit</button>
-            <button type="button" disabled={!canAssign || assigning} onClick={onAssign} className="btn-ghost h-9 px-3 text-xs"><UserCheck className="h-3.5 w-3.5" /> {assigning ? "Assigning…" : "Smart assign"}</button>
+            {canUpdate ? <button type="button" onClick={onEdit} className="btn-primary h-9 px-3 text-xs"><Wrench className="h-3.5 w-3.5" /> Edit</button> : null}
+            {canAssign ? <button type="button" disabled={assigning} onClick={onAssign} className="btn-ghost h-9 px-3 text-xs"><UserCheck className="h-3.5 w-3.5" /> {assigning ? "Assigning…" : "Smart assign"}</button> : null}
             <button type="button" onClick={() => onNavigate("/map-view")} className="btn-ghost h-9 px-3 text-xs"><MapPin className="h-3.5 w-3.5" /> Live map</button>
-            <button type="button" disabled={!canDelete} onClick={onDelete} className="ml-auto inline-flex h-9 items-center gap-1.5 rounded-xl border border-rose-200 px-3 text-xs font-semibold text-rose-600 transition hover:bg-rose-50 disabled:opacity-40"><Trash2 className="h-3.5 w-3.5" /> Archive vehicle</button>
+            {canDelete ? <button type="button" onClick={onDelete} className="ml-auto inline-flex h-9 items-center gap-1.5 rounded-xl border border-rose-200 px-3 text-xs font-semibold text-rose-600 transition hover:bg-rose-50"><Trash2 className="h-3.5 w-3.5" /> Archive vehicle</button> : null}
           </div>
         </div>
 

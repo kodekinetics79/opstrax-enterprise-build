@@ -6,7 +6,7 @@ import { notifyApiError } from '@/services/fleetTmsApi';
 import { fleetApi, fleetAssetApi, type Asset, type AssetAssignment, type AssetEvent, type AssetType } from '@/services/fleetTmsApi';
 import { LoadingState } from '@/components/ui';
 import { EntityImportExport } from '@/components/EntityImportExport';
-import { useHasPermission } from '@/hooks/usePermission';
+import { PERMISSIONS, useHasPermission } from '@/hooks/usePermission';
 
 type AssetDetail = {
   asset: Asset;
@@ -16,7 +16,7 @@ type AssetDetail = {
 
 export function FleetAssetManagementPage() {
   const hasPermission = useHasPermission();
-  const canManageFleet = hasPermission('fleet:manage');
+  const canManageFleet = hasPermission(PERMISSIONS.FLEET_MANAGE);
   const [assetTypes, setAssetTypes] = useState<AssetType[]>([]);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [shipments, setShipments] = useState<Array<{ id: string; shipmentNumber: string; customerName: string; status: string }>>([]);
@@ -316,7 +316,7 @@ export function FleetAssetManagementPage() {
                 </div>
               </section>
 
-              <section className="rounded-[28px] border border-white/75 bg-white/75 p-6 shadow-[0_24px_50px_rgba(15,23,42,0.08)] backdrop-blur">
+              {canManageFleet ? <section className="rounded-[28px] border border-white/75 bg-white/75 p-6 shadow-[0_24px_50px_rgba(15,23,42,0.08)] backdrop-blur">
                 <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">Create asset</p>
                 <h2 className="mt-2 text-2xl font-black text-slate-950">Inventory intake</h2>
                 <div className="mt-5 grid gap-4 sm:grid-cols-2">
@@ -333,14 +333,14 @@ export function FleetAssetManagementPage() {
                   <textarea value={forms.typeDescription} onChange={(e) => setForms((current) => ({ ...current, typeDescription: e.target.value }))} rows={3} placeholder="Type description" className="sm:col-span-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400" />
                 </div>
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  <button disabled={!canManageFleet || saving} onClick={createAsset} title={canManageFleet ? undefined : 'Requires fleet manage permission'} className="rounded-2xl bg-gradient-to-r from-blue-600 to-cyan-600 px-4 py-3 font-bold text-white shadow-lg transition hover:from-blue-500 hover:to-cyan-500 disabled:opacity-60">
+                  <button disabled={saving} onClick={createAsset} className="rounded-2xl bg-gradient-to-r from-blue-600 to-cyan-600 px-4 py-3 font-bold text-white shadow-lg transition hover:from-blue-500 hover:to-cyan-500 disabled:opacity-60">
                     {saving ? 'Saving...' : 'Create asset'}
                   </button>
-                  <button disabled={!canManageFleet || saving} onClick={createAssetType} title={canManageFleet ? undefined : 'Requires fleet manage permission'} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 font-bold text-slate-700 transition hover:border-cyan-300 hover:text-cyan-700 disabled:opacity-60">
+                  <button disabled={saving} onClick={createAssetType} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 font-bold text-slate-700 transition hover:border-cyan-300 hover:text-cyan-700 disabled:opacity-60">
                     Add asset type
                   </button>
                 </div>
-              </section>
+              </section> : null}
             </div>
           </div>
 
@@ -368,21 +368,21 @@ export function FleetAssetManagementPage() {
               </div>
             </section>
 
-            <section className="rounded-[28px] border border-white/75 bg-white/80 p-6 shadow-[0_24px_50px_rgba(15,23,42,0.08)] backdrop-blur">
+            {canManageFleet ? <section className="rounded-[28px] border border-white/75 bg-white/80 p-6 shadow-[0_24px_50px_rgba(15,23,42,0.08)] backdrop-blur">
               <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">Scan & custody</p>
               <h2 className="mt-2 text-2xl font-black text-slate-950">Barcode / RFID actions</h2>
               <div className="mt-5 space-y-3">
                 <input value={forms.scanValue} onChange={(e) => { setForms((current) => ({ ...current, scanValue: e.target.value })); if (actionMessage) setActionMessage(''); }} placeholder="Scan value / tag" className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400" />
                 <textarea value={forms.scanNotes} onChange={(e) => setForms((current) => ({ ...current, scanNotes: e.target.value }))} rows={3} placeholder="Scan notes" className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400" />
                 {actionMessage && <p className="text-sm font-medium text-rose-600" role="alert">{actionMessage}</p>}
-                <button onClick={scan} disabled={!canManageFleet || !forms.scanValue.trim()} title={canManageFleet ? undefined : 'Requires fleet manage permission'} className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
+                <button onClick={scan} disabled={!forms.scanValue.trim()} className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
                   <Barcode className="h-4 w-4" />
                   Capture barcode scan
                 </button>
               </div>
-            </section>
+            </section> : null}
 
-            <section className="rounded-[28px] border border-white/75 bg-white/80 p-6 shadow-[0_24px_50px_rgba(15,23,42,0.08)] backdrop-blur">
+            {canManageFleet ? <section className="rounded-[28px] border border-white/75 bg-white/80 p-6 shadow-[0_24px_50px_rgba(15,23,42,0.08)] backdrop-blur">
               <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">Assignment</p>
               <h2 className="mt-2 text-2xl font-black text-slate-950">Move selected asset</h2>
               <div className="mt-5 space-y-3">
@@ -392,18 +392,18 @@ export function FleetAssetManagementPage() {
                   {shipments.map((shipment) => <option key={shipment.id} value={shipment.id}>{shipment.shipmentNumber}</option>)}
                 </select>
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <button onClick={() => assign('checkOut')} disabled={!canManageFleet || !selectedAssetId} title={canManageFleet ? undefined : 'Requires fleet manage permission'} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-blue-600 to-cyan-600 px-4 py-3 font-bold text-white transition hover:from-blue-500 hover:to-cyan-500 disabled:cursor-not-allowed disabled:opacity-50">
+                  <button onClick={() => assign('checkOut')} disabled={!selectedAssetId} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-blue-600 to-cyan-600 px-4 py-3 font-bold text-white transition hover:from-blue-500 hover:to-cyan-500 disabled:cursor-not-allowed disabled:opacity-50">
                     <CheckCheck className="h-4 w-4" />
                     Check out
                   </button>
-                  <button onClick={() => assign('checkIn')} disabled={!canManageFleet || !selectedAssetId} title={canManageFleet ? undefined : 'Requires fleet manage permission'} className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 font-bold text-slate-700 transition hover:border-cyan-300 hover:text-cyan-700 disabled:cursor-not-allowed disabled:opacity-50">
+                  <button onClick={() => assign('checkIn')} disabled={!selectedAssetId} className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 font-bold text-slate-700 transition hover:border-cyan-300 hover:text-cyan-700 disabled:cursor-not-allowed disabled:opacity-50">
                     <Truck className="h-4 w-4" />
                     Check in
                   </button>
                 </div>
                 <textarea value={forms.movementNotes} onChange={(e) => setForms((current) => ({ ...current, movementNotes: e.target.value }))} rows={3} placeholder="Movement notes" className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400" />
               </div>
-            </section>
+            </section> : null}
 
             <section className="rounded-[28px] border border-white/75 bg-white/80 p-6 shadow-[0_24px_50px_rgba(15,23,42,0.08)] backdrop-blur">
               <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">Selected asset</p>

@@ -238,6 +238,7 @@ type DeviceActionContract = {
   key: string;
   label: string;
   icon: ReactNode;
+  visible: boolean;
   state: ActionContractState;
   reason: string;
   onClick: () => void;
@@ -295,6 +296,7 @@ function buildActionContracts(
       key: "edit",
       label: "Metadata read-only",
       icon: <Settings2 className="h-4 w-4" />,
+      visible: canUpdate,
       state: canUpdate ? "unsupported" : "permission-blocked",
       reason: canUpdate ? "No metadata PATCH contract is available; inventory fields are read-only." : "Requires TELEMATICS_DEVICES_UPDATE.",
       onClick: () => undefined,
@@ -303,6 +305,7 @@ function buildActionContracts(
       key: "assign",
       label: hasCurrentVehicle ? "Transfer" : "Install",
       icon: <ArrowRightLeft className="h-4 w-4" />,
+      visible: canAssign,
       state: archived ? "state-blocked" : canAssign ? "ready" : "permission-blocked",
       reason: archived ? "Archived devices cannot be installed or transferred." : canAssign ? "Governed installation permission is available." : "Requires device assignment plus TELEMETRY_DEVICES_MANAGE.",
       onClick: onAssign,
@@ -311,6 +314,7 @@ function buildActionContracts(
       key: "unassign",
       label: "Remove installation",
       icon: <Truck className="h-4 w-4" />,
+      visible: canAssign,
       state: archived ? "state-blocked" : !canAssign ? "permission-blocked" : hasCurrentVehicle ? "ready" : "state-blocked",
       reason: archived
         ? "Archived device installation history is read-only."
@@ -325,6 +329,7 @@ function buildActionContracts(
       key: "install",
       label: "Record commissioning",
       icon: <CheckCircle2 className="h-4 w-4" />,
+      visible: canAssign,
       state: archived
         ? "state-blocked"
         : !canAssign
@@ -355,6 +360,7 @@ function buildActionContracts(
       key: "refresh",
       label: "Reload Snapshot",
       icon: <RefreshCw className="h-4 w-4" />,
+      visible: true,
       state: "ready",
       reason: "Read endpoint available for a fresh status read.",
       onClick: onRefresh,
@@ -363,6 +369,7 @@ function buildActionContracts(
       key: "device-state",
       label: /suspended/.test(eldStatus) ? "Activate device" : "Suspend device",
       icon: <ShieldCheck className="h-4 w-4" />,
+      visible: canManageLifecycle,
       state: archived
         ? "state-blocked"
         : !canManageLifecycle
@@ -385,6 +392,7 @@ function buildActionContracts(
       key: "rotate-secret",
       label: "Rotate credentials",
       icon: <KeyRound className="h-4 w-4" />,
+      visible: canManageLifecycle,
       state: canManageLifecycle && !/revoked|retired/.test(eldStatus) ? "ready" : canManageLifecycle ? "state-blocked" : "permission-blocked",
       reason: !canManageLifecycle
         ? "Requires TELEMETRY_DEVICES_MANAGE."
@@ -397,6 +405,7 @@ function buildActionContracts(
       key: inRecovery ? "resolve" : "needs-attention",
       label: inRecovery ? "Resolve" : "Needs Attention",
       icon: inRecovery ? <ShieldCheck className="h-4 w-4" /> : <Activity className="h-4 w-4" />,
+      visible: canRecover,
       state: archived ? "state-blocked" : !canRecover ? "permission-blocked" : inRecovery || markEligible ? "ready" : "state-blocked",
       reason: archived
         ? "Archived devices cannot enter or leave recovery."
@@ -413,6 +422,7 @@ function buildActionContracts(
       key: "archive",
       label: "Archive",
       icon: <Trash2 className="h-4 w-4" />,
+      visible: canDelete,
       state: archived ? "state-blocked" : canDelete ? "ready" : "permission-blocked",
       reason: archived ? "This device is already archived." : canDelete ? "Permission and revoke route available." : "Requires TELEMATICS_DEVICES_DELETE.",
       onClick: onArchive,
@@ -453,13 +463,14 @@ export function IotDevicesPage() {
   const queryClient = useQueryClient();
   const hasPermission = useHasPermission();
 
-  const canCreate = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_CREATE);
-  const canUpdate = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_UPDATE);
-  const canDelete = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_DELETE);
-  const canAssign = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_ASSIGN);
   const canDiagnostics = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_DIAGNOSTICS);
+  // Provision, import, revoke/archive, installation, commissioning, suspension,
+  // activation, and credential rotation all share this exact server guard.
   const canManageDeviceLifecycle = hasPermission(PERMISSIONS.TELEMETRY_DEVICES_MANAGE);
-  const canGovernInstallations = canAssign && canManageDeviceLifecycle;
+  const canCreate = canManageDeviceLifecycle;
+  const canUpdate = canManageDeviceLifecycle;
+  const canDelete = canManageDeviceLifecycle;
+  const canGovernInstallations = canManageDeviceLifecycle;
   // Recovery (mark/resolve malfunction) is gated server-side on
   // compliance:update | compliance:manage | telematics:manage — NOT maintenance:manage,
   // which the broader DIAGNOSTICS alias set includes. Gate the UI on the compliance set so
@@ -656,9 +667,9 @@ export function IotDevicesPage() {
   // DEF-023: run/cancel the confirmed lifecycle action through the existing mutations.
   const runConfirmedAction = () => {
     if (!confirmTarget) return;
-    if (confirmTarget.action === "archive") archiveMut.mutate(confirmTarget.device.id);
-    else if (confirmTarget.action === "suspend") suspendMut.mutate(confirmTarget.device.id);
-    else rotateSecretMut.mutate(confirmTarget.device.id);
+    if (confirmTarget.action === "archive" && canDelete) archiveMut.mutate(confirmTarget.device.id);
+    else if (confirmTarget.action === "suspend" && canManageDeviceLifecycle) suspendMut.mutate(confirmTarget.device.id);
+    else if (confirmTarget.action === "rotate-credentials" && canManageDeviceLifecycle) rotateSecretMut.mutate(confirmTarget.device.id);
   };
   const cancelConfirmedAction = () => {
     if (!confirmTarget) return;
@@ -677,6 +688,11 @@ export function IotDevicesPage() {
     : confirmTarget?.action === "suspend" ? suspendMut.error
     : confirmTarget?.action === "rotate-credentials" ? rotateSecretMut.error
     : null;
+  const confirmAllowed = confirmTarget?.action === "archive"
+    ? canDelete
+    : confirmTarget?.action === "suspend" || confirmTarget?.action === "rotate-credentials"
+      ? canManageDeviceLifecycle
+      : false;
 
   // DEF-022: any field-level change clears the visible validation error.
   //
@@ -789,22 +805,12 @@ export function IotDevicesPage() {
                 onImported: refreshAll,
               }}
             />
-            <button
-              className="btn-ghost"
-              disabled={!canExport}
-              title={actionTitle(canExport, "Export the current device inventory to CSV.")}
-              onClick={() => canExport && void exportCurrent()}
-            >
+            {canExport ? <button className="btn-ghost" title="Export the current device inventory to CSV." onClick={() => void exportCurrent()}>
               <Download className="h-4 w-4" /> Export Devices CSV
-            </button>
-            <button
-              className="btn-primary"
-              disabled={!canCreate}
-              title={actionTitle(canCreate, "Connect a new device and generate its live credentials.")}
-              onClick={() => canCreate && openConnect()}
-            >
+            </button> : null}
+            {canCreate ? <button className="btn-primary" title="Connect a new device and generate its live credentials." onClick={openConnect}>
               <PlugZap className="h-4 w-4" /> Connect Device
-            </button>
+            </button> : null}
           </>
         }
       />
@@ -878,15 +884,14 @@ export function IotDevicesPage() {
                       <td className="px-4 py-3 text-slate-700">{row.vehicleCode || "Unlabeled vehicle"}</td>
                       <td className="px-4 py-3"><StatusBadge status={row.deviceState || "Quarantined"} /></td>
                       <td className="px-4 py-3">
-                        <button
+                        {canGovernInstallations ? <button
                           className="btn-primary py-2 text-xs"
-                          disabled={!canGovernInstallations}
-                          title={actionTitle(canGovernInstallations, "Review evidence and resolve this quarantined identity.")}
+                          title="Review evidence and resolve this quarantined identity."
                           onClick={() => {
                             setQuarantineTarget(row);
                             setQuarantineResolution({ resolutionNotes: "", correctedDeviceSerial: row.deviceSerial ?? "", correctedImei: row.imei ?? "" });
                           }}
-                        >Resolve conflict</button>
+                        >Resolve conflict</button> : null}
                       </td>
                     </tr>
                   ))}
@@ -917,24 +922,23 @@ export function IotDevicesPage() {
                     <div className="flex justify-between"><span>Scoped devices</span><span>{measuredCount(provider.deviceCount)}</span></div>
                     <div className="flex justify-between"><span>Needs follow-up</span><span>{measuredCount((provider as AnyRecord).pendingDevices)}</span></div>
                   </div>
-                  <div className="mt-4 flex flex-wrap gap-2">
+                  {canManageProviders ? <div className="mt-4 flex flex-wrap gap-2">
                     <button
                       className="btn-ghost"
-                      disabled={!canManageProviders}
-                      title={actionTitle(canManageProviders, "Open provider management settings.")}
-                      onClick={() => canManageProviders && navigate("/integrations")}
+                      title="Open provider management settings."
+                      onClick={() => navigate("/integrations")}
                     >
                       <Settings2 className="h-4 w-4" /> Manage Provider
                     </button>
                     <button
                       className="btn-ghost"
-                      disabled={!canManageProviders || providerSyncMut.isPending}
-                      title={actionTitle(canManageProviders, "Run provider sync for the selected integration scope.")}
-                      onClick={() => canManageProviders && providerSyncMut.mutate(String(provider.id))}
+                      disabled={providerSyncMut.isPending}
+                      title="Run provider sync for the selected integration scope."
+                      onClick={() => providerSyncMut.mutate(String(provider.id))}
                     >
                       <PlugZap className="h-4 w-4" /> Sync Provider
                     </button>
-                  </div>
+                  </div> : null}
                 </div>
               ))}
             </div>
@@ -995,7 +999,7 @@ export function IotDevicesPage() {
                         {openMenuId === row.id && (
                           <div className="absolute right-0 z-50 mt-1 w-48 rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
                             <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50" onClick={() => { setSelectedId(row.id); setOpenMenuId(null); }}>View Details</button>
-                            <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-400" disabled title="Device metadata is read-only until a PATCH contract is available.">Metadata read-only</button>
+                            {canUpdate ? <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-400" disabled title="Device metadata is read-only until a PATCH contract is available.">Metadata read-only</button> : null}
                             {row.lifecycleStatus !== "Archived" && canGovernInstallations && <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50" onClick={() => { openInstallation(row); setOpenMenuId(null); }}>{row.assignedVehicleId ? "Transfer installation" : "Install on vehicle"}</button>}
                             {canDiagnostics && <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50" onClick={() => { navigate("/obd-j1939"); setOpenMenuId(null); }}>View Diagnostics</button>}
                             <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50" onClick={() => { refreshMut.mutate(row.id); setOpenMenuId(null); }}>Refresh Status</button>
@@ -1062,7 +1066,7 @@ export function IotDevicesPage() {
       ) : null}
 
       {/* STEP 1 — Register connection. Minimal, honest inputs; the serial is the real key. */}
-      {connectOpen ? (
+      {connectOpen && canCreate ? (
         <ConnectDeviceDialog
           form={connectForm}
           onChange={setConnectForm}
@@ -1081,7 +1085,7 @@ export function IotDevicesPage() {
         />
       ) : null}
 
-      {assignTarget ? (
+      {assignTarget && canGovernInstallations ? (
         <ModalForm
           title={`${assignTarget.assignedVehicleId ? "Transfer" : "Install"} ${assignTarget.deviceName}`}
           onClose={() => { setAssignTarget(null); setInstallationForm(defaultInstallationForm); setFormError(null); assignMut.reset(); }}
@@ -1174,7 +1178,7 @@ export function IotDevicesPage() {
         </ModalForm>
       ) : null}
 
-      {removalTarget ? (
+      {removalTarget && canGovernInstallations ? (
         <ModalForm
           title={`Remove ${removalTarget.deviceName} installation`}
           onClose={() => { setRemovalTarget(null); setRemovalForm(defaultRemovalForm); setFormError(null); unassignMut.reset(); }}
@@ -1208,7 +1212,7 @@ export function IotDevicesPage() {
         </ModalForm>
       ) : null}
 
-      {commissionTarget ? (
+      {commissionTarget && canGovernInstallations ? (
         <ModalForm
           title={`Commission ${commissionTarget.deviceName}`}
           onClose={() => { setCommissionTarget(null); setCommissioningForm(defaultCommissioningForm); setFormError(null); installMut.reset(); }}
@@ -1245,11 +1249,11 @@ export function IotDevicesPage() {
         </ModalForm>
       ) : null}
 
-      {rotatedCredentials ? (
+      {rotatedCredentials && canManageDeviceLifecycle ? (
         <RotatedCredentialsDialog credentials={rotatedCredentials} onDone={() => { setRotatedCredentials(null); rotateSecretMut.reset(); }} />
       ) : null}
 
-      {attentionTarget ? (
+      {attentionTarget && canRecover ? (
         <ModalForm
           title={`Open recovery for ${attentionTarget.deviceName}`}
           onClose={() => setAttentionTarget(null)}
@@ -1271,7 +1275,7 @@ export function IotDevicesPage() {
         </ModalForm>
       ) : null}
 
-      {quarantineTarget ? (
+      {quarantineTarget && canGovernInstallations ? (
         <ModalForm
           title={`Resolve ${quarantineTarget.deviceSerial || quarantineTarget.reasonCode.replaceAll("_", " ")}`}
           onClose={() => { setQuarantineTarget(null); quarantineResolveMut.reset(); }}
@@ -1301,7 +1305,7 @@ export function IotDevicesPage() {
         </ModalForm>
       ) : null}
 
-      {confirmTarget ? (
+      {confirmTarget && confirmAllowed ? (
         <ConfirmDialog
           title={CONFIRM_ACTION_COPY[confirmTarget.action].title}
           message={CONFIRM_ACTION_COPY[confirmTarget.action].message(confirmTarget.device.deviceName)}
@@ -1359,12 +1363,12 @@ function DeviceDetailDrawer({
       </div>
 
       <div className="mt-2 flex flex-wrap gap-2">
-        {actionContracts.map((contract) => (
+        {actionContracts.filter((contract) => contract.visible).map((contract) => (
           <ActionContractBadge key={`contract-${contract.key}`} contract={contract} />
         ))}
       </div>
       <div className="mt-6 flex flex-wrap gap-3">
-        {actionContracts.map((contract) => (
+        {actionContracts.filter((contract) => contract.visible).map((contract) => (
           <ActionButton
             key={contract.key}
             label={contract.label}

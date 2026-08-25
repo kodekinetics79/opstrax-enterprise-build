@@ -122,16 +122,18 @@ export function EntityImportExport({ config, canImport, canExport }: {
         onClick={() => download("template", config.templateEndpoint, `${config.entity}-import-template.csv`)}>
         {busy === "template" ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileDown className="h-4 w-4" />} Template
       </button>
-      <button type="button" className="btn-ghost h-10" disabled={!canImport} title={canImport ? "Import a CSV of records" : "Requires fleet manage permission"}
-        onClick={() => canImport && setWizardOpen(true)}>
-        <FileUp className="h-4 w-4" /> Import
-      </button>
-      {config.exportEndpoint && (
-        <button type="button" className="btn-ghost h-10" disabled={!canExport || busy === "export"} title={canExport ? "Export the full dataset (all pages)" : "Requires export permission"}
-          onClick={() => canExport && download("export", config.exportEndpoint!, `${config.entity}_${new Date().toISOString().slice(0, 10)}.csv`)}>
+      {canImport ? (
+        <button type="button" className="btn-ghost h-10" title="Import a CSV of records"
+          onClick={() => setWizardOpen(true)}>
+          <FileUp className="h-4 w-4" /> Import
+        </button>
+      ) : null}
+      {config.exportEndpoint && canExport ? (
+        <button type="button" className="btn-ghost h-10" disabled={busy === "export"} title="Export the full dataset (all pages)"
+          onClick={() => download("export", config.exportEndpoint!, `${config.entity}_${new Date().toISOString().slice(0, 10)}.csv`)}>
           {busy === "export" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} Export
         </button>
-      )}
+      ) : null}
       {toolbarError && <span className="text-xs font-semibold text-rose-600">{toolbarError}</span>}
       {wizardOpen && <ImportWizard config={config} onClose={() => setWizardOpen(false)} />}
     </div>
