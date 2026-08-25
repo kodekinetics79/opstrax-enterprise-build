@@ -17,7 +17,7 @@ public sealed class PlatformEnterpriseControlMapTests
             "\\{ key: \\\"(?<key>[^\\\"]+)\\\".*?route: \\\"(?<route>[^\\\"]+)\\\"(?<tail>.*)$",
             RegexOptions.Multiline);
 
-        Assert.Equal(91, matches.Count);
+        Assert.Equal(92, matches.Count);
         var keys = matches.Select(match => match.Groups["key"].Value).ToArray();
         Assert.Equal(keys.Length, keys.Distinct(StringComparer.Ordinal).Count());
         Assert.All(keys, key => Assert.Contains($"`{key}`", controlMap, StringComparison.Ordinal));
@@ -77,7 +77,7 @@ public sealed class PlatformEnterpriseControlMapTests
             .Select(match => match.Groups["route"].Value)
             .ToHashSet(StringComparer.Ordinal);
 
-        Assert.Equal(91, configuredRoutes.Length);
+        Assert.Equal(92, configuredRoutes.Length);
         Assert.All(configuredRoutes, route => Assert.Contains(route, registeredRoutes));
     }
 
@@ -93,7 +93,7 @@ public sealed class PlatformEnterpriseControlMapTests
             .ToArray();
 
         Assert.Equal(45, controlled.Length);
-        Assert.Equal(46, matches.Count - controlled.Length);
+        Assert.Equal(47, matches.Count - controlled.Length);
 
         var entitlementCounts = controlled
             .Select(match => Regex.Match(match.Groups["tail"].Value, "requiredEntitlement: \\\"(?<value>[^\\\"]+)\\\"").Groups["value"].Value)
@@ -247,7 +247,7 @@ public sealed class PlatformEnterpriseControlMapTests
     {
         var controlMap = Read("docs", "platform", "PLATFORM_ADMIN_ENTERPRISE_CONTROL_MAP.md");
 
-        Assert.Contains("46 modules are not Platform-commercially gated", controlMap, StringComparison.Ordinal);
+        Assert.Contains("47 modules are not Platform-commercially gated", controlMap, StringComparison.Ordinal);
         Assert.Contains("API ownership is prefix-based", controlMap, StringComparison.Ordinal);
         Assert.Contains("Saudi Readiness has a split boundary", controlMap, StringComparison.Ordinal);
         Assert.Contains("quotas are incomplete", controlMap, StringComparison.Ordinal);
