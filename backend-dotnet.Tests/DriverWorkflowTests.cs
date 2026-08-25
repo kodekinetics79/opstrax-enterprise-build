@@ -1,4 +1,6 @@
 using Opstrax.Api.Controllers;
+using Microsoft.Extensions.DependencyInjection;
+using System.Text.Json;
 using Xunit;
 
 namespace Opstrax.Tests;
@@ -57,6 +59,32 @@ public class DriverPermissionTests
                                                "drivers:view", "safety:view", "compliance:view",
                                                "alerts:view", "dashboard:view" })
             Assert.DoesNotContain(backOfficeRead, perms);
+    }
+
+    [Fact]
+    public async Task UnprovisionedDriverDashboard_IsSafeAndDoesNotExposeFleetData()
+    {
+        var result = EndpointMappings.DriverProfileNotProvisionedDashboard();
+        var http = new Microsoft.AspNetCore.Http.DefaultHttpContext
+        {
+            RequestServices = new ServiceCollection()
+                .AddLogging()
+                .BuildServiceProvider(),
+        };
+        http.Response.Body = new MemoryStream();
+
+        await result.ExecuteAsync(http);
+
+        Assert.Equal(200, http.Response.StatusCode);
+        http.Response.Body.Position = 0;
+        using var json = await JsonDocument.ParseAsync(http.Response.Body);
+        var data = json.RootElement.GetProperty("data");
+        Assert.Equal(JsonValueKind.Null, data.GetProperty("driver").GetProperty("id").ValueKind);
+        Assert.Equal(JsonValueKind.Null, data.GetProperty("currentAssignment").ValueKind);
+        Assert.False(data.GetProperty("vehicleBlocking").GetProperty("blocked").GetBoolean());
+        Assert.Contains("no driver profile is linked",
+            data.GetProperty("guidance")[0].GetProperty("message").GetString(),
+            StringComparison.OrdinalIgnoreCase);
     }
 }
 

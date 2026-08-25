@@ -23842,6 +23842,50 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             "Driver identity not found for this session. Ensure your user account is linked to a driver record."),
             statusCode: StatusCodes.Status403Forbidden);
 
+    // A tenant administrator can create a user with the built-in Driver role before granting
+    // that user portal access from the Drivers workflow. That account is authenticated and
+    // correctly holds driver:self, but it does not yet have a drivers.user_id link. The home
+    // screen must remain usable as a safe setup state instead of turning that provisioning gap
+    // into a raw 403. This response contains no fleet or assignment data; every operational
+    // driver endpoint still resolves a linked, active driver identity independently.
+    internal static IResult DriverProfileNotProvisionedDashboard() =>
+        Results.Ok(ApiResponse<object>.Ok(new
+        {
+            driver = new
+            {
+                id = (long?)null,
+                fullName = "Driver",
+                status = "Portal access not provisioned",
+                vehicleId = (long?)null,
+                vehicleCode = (string?)null,
+                vehicleOos = false,
+                vehicleAvailabilityStatus = (string?)null,
+            },
+            currentAssignment = (object?)null,
+            vehicleBlocking = new
+            {
+                criticalDefects = 0,
+                blocked = false,
+                reason = (string?)null,
+            },
+            hos = new
+            {
+                dataAvailable = false,
+                remainingDriveHours = (object?)null,
+                remainingShiftHours = (object?)null,
+                hosStatus = (object?)"unavailable",
+            },
+            coaching = new { pendingCount = 0 },
+            guidance = new[]
+            {
+                new
+                {
+                    level = "warning",
+                    message = "Your Driver role is active, but no driver profile is linked. Ask a fleet administrator to grant portal access from the Drivers workflow.",
+                },
+            },
+        }));
+
     private static async Task<bool> AssignmentBelongsToDriverAsync(
         long assignmentId, long driverId, long companyId, Database db, CancellationToken ct)
     {
@@ -23855,7 +23899,22 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     {
         var companyId = GetCompanyId(http);
         var driverId  = await GetDriverIdFromAuthAsync(http, db, ct);
-        if (driverId < 0) return DriverIdentityNotFound();
+        if (driverId < 0)
+        {
+            var userId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+            var hasLinkedDriver = userId > 0 && await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM drivers WHERE user_id=@uid AND company_id=@cid",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@uid", userId);
+                    c.Parameters.AddWithValue("@cid", companyId);
+                }, ct) > 0;
+
+            // A previously-linked identity that no longer resolves is inactive, suspended,
+            // terminated, retired, or deleted. Preserve the lifecycle revocation boundary.
+            if (hasLinkedDriver) return DriverIdentityNotFound();
+            return DriverProfileNotProvisionedDashboard();
+        }
 
         var driver = await db.QuerySingleAsync(
             @"SELECT d.id, d.full_name, d.status,
