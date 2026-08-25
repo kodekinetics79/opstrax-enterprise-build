@@ -2350,6 +2350,7 @@ public static partial class EndpointMappings
 
     internal static readonly string[] CustomRolePermissionCatalog =
     [
+        "telemetry.devices.manage",
         "telematics:devices:view",
         "telematics:devices:diagnostics",
         "telematics:gps:view",

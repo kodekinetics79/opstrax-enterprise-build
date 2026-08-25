@@ -5,6 +5,7 @@ namespace Opstrax.Api.Tests;
 public sealed class AdminRolePermissionCatalogTests
 {
     [Theory]
+    [InlineData("telemetry.devices.manage")]
     [InlineData("telematics:devices:view")]
     [InlineData("telematics:devices:diagnostics")]
     [InlineData("telematics:gps:view")]
