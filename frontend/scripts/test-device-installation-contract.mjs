@@ -78,7 +78,7 @@ assert.match(devicesPage, /Installation History/, "The detail drawer must render
 assert.match(devicesPage, /Device lifecycle action failed/, "Lifecycle mutation failures must be rendered to the operator");
 assert.match(devicesPage, /\{ key: "archived", label: "Archived" \}/, "Archived devices must remain available in an explicit lifecycle view");
 assert.doesNotMatch(devicesPage, /\.filter\(\(row\) => row\.lifecycleStatus !== "Archived"\)/, "Archived records must not be silently removed before lifecycle filtering");
-assert.match(devicesPage, /const managedCount = activeDevices\.length/, "Managed device totals must exclude archived inventory");
+assert.match(devicesPage, /const managedCount = devicesQ\.data\?\.summary\.active \?\? 0/, "Managed device totals must use the branch-scoped server summary and exclude archived inventory");
 assert.match(devicesPage, /\["Lifecycle", device\.lifecycleStatus\]/, "Device detail must render lifecycle status");
 assert.match(devicesPage, /Identity Quarantine/, "Identity quarantine must be visible without manual database identifiers");
 assert.match(devicesPage, /Resolve with audit evidence/, "Quarantine resolution must retain an explicit evidence workflow");

@@ -1,12 +1,14 @@
 import { FormEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
   AlertTriangle,
   ArrowRightLeft,
   CheckCircle2,
+  ChevronLeft,
   ChevronDown,
+  ChevronRight,
   Copy,
   Cpu,
   Download,
@@ -191,13 +193,6 @@ const DEVICE_TABS: Array<{ key: DeviceTab; label: string }> = [
   { key: "data-health", label: "Data Health" },
   { key: "providers", label: "Provider Connections" },
 ];
-
-function downloadCsv(filename: string, body: string) {
-  const anchor = document.createElement("a");
-  anchor.href = URL.createObjectURL(new Blob([body], { type: "text/csv" }));
-  anchor.download = filename;
-  anchor.click();
-}
 
 function emptyStateForTab(tab: DeviceTab) {
   if (tab === "archived") return { title: "No archived devices", subtitle: "Revoked and retired devices remain visible here with their lifecycle history." };
@@ -483,6 +478,10 @@ export function IotDevicesPage() {
 
   const [tab, setTab] = useState<DeviceTab>("all");
   const [search, setSearch] = useState("");
+  const [deviceSearchQuery, setDeviceSearchQuery] = useState("");
+  const [devicePage, setDevicePage] = useState(1);
+  const [deviceSort, setDeviceSort] = useState<"serial" | "provider" | "model" | "status" | "lastCheckIn" | "vehicle">("serial");
+  const [deviceDirection, setDeviceDirection] = useState<"asc" | "desc">("asc");
   const [selectedId, setSelectedId] = useState<string | number | null>(null);
   // Step 1 of the connect flow — the minimal register-connection form.
   const [connectOpen, setConnectOpen] = useState(false);
@@ -508,7 +507,27 @@ export function IotDevicesPage() {
   // DEF-023: pending in-app confirmation for a destructive lifecycle action.
   const [confirmTarget, setConfirmTarget] = useState<ConfirmActionTarget | null>(null);
 
-  const devicesQ = useQuery({ queryKey: ["telematics", "devices"], queryFn: telematicsService.getDevices, staleTime: 20_000 });
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDeviceSearchQuery(search.trim());
+      setDevicePage(1);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [search]);
+
+  const devicesQ = useQuery({
+    queryKey: ["telematics", "devices", "page", devicePage, deviceSearchQuery, tab, deviceSort, deviceDirection],
+    queryFn: () => telematicsService.getDevicePage({
+      page: devicePage,
+      pageSize: 100,
+      search: deviceSearchQuery,
+      view: tab,
+      sort: deviceSort,
+      direction: deviceDirection,
+    }),
+    placeholderData: keepPreviousData,
+    staleTime: 20_000,
+  });
   const providersQ = useQuery({ queryKey: ["telematics", "providers"], queryFn: telematicsService.getProviders, staleTime: 20_000 });
   const vehiclesQ = useQuery({ queryKey: ["vehicles", "list"], queryFn: vehiclesApi.list, staleTime: 20_000 });
   const quarantineQ = useQuery({
@@ -718,41 +737,22 @@ export function IotDevicesPage() {
   };
 
   const deviceRows = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    return (devicesQ.data ?? [])
-      .filter((row) => activeTabCount(tab, row))
-      .filter((row) => {
-        const haystack = [
-          row.deviceName,
-          row.deviceType,
-          row.deviceCategory,
-          row.provider,
-          row.serialNumber,
-          row.identifier,
-          row.imei,
-          row.assignedVehicleCode,
-          row.assignedDriverName,
-          row.tenantName,
-          row.linkedShipmentId,
-          row.connectionStatus,
-          row.installStatus,
-        ].join(" ").toLowerCase();
-        return !query || haystack.includes(query);
-      });
-  }, [devicesQ.data, search, tab]);
+    return devicesQ.data?.items ?? [];
+  }, [devicesQ.data?.items]);
   const vehicleOptions = (vehiclesQ.data ?? []) as AnyRecord[];
 
   const selectedRecord = detailQ.data?.device ?? deviceRows.find((row) => String(row.id) === String(selectedId)) ?? null;
 
-  const activeDevices = (devicesQ.data ?? []).filter((row) => activeTabCount("all", row));
-  const archivedCount = (devicesQ.data ?? []).filter((row) => activeTabCount("archived", row)).length;
-  const offlineCount = activeDevices.filter((row) => /offline/i.test(row.connectionStatus)).length;
-  const attentionCount = activeDevices.filter((row) => /attention|offline/i.test(row.connectionStatus) || row.openAlertCount > 0).length;
-  const measuredHealth = activeDevices.filter((row) => row.dataHealthAvailable);
-  const managedCount = activeDevices.length;
+  const currentPageActiveDevices = (devicesQ.data?.items ?? []).filter((row) => activeTabCount("all", row));
+  const archivedCount = devicesQ.data?.summary.archived ?? 0;
+  const offlineCount = devicesQ.data?.summary.offline ?? 0;
+  const attentionCount = devicesQ.data?.summary.attention ?? 0;
+  const measuredHealth = currentPageActiveDevices.filter((row) => row.dataHealthAvailable);
+  const managedCount = devicesQ.data?.summary.active ?? 0;
   const avgHealth = measuredHealth.length
     ? Math.round(measuredHealth.reduce((sum, row) => sum + Number(row.dataHealthScore), 0) / measuredHealth.length)
     : null;
+  const devicePageCount = Math.max(1, Math.ceil((devicesQ.data?.total ?? 0) / 100));
 
   if (devicesQ.isLoading) return <DeviceLoadingState />;
   if (devicesQ.isError) return <ErrorState message="Unable to load the device command center right now." />;
@@ -777,8 +777,7 @@ export function IotDevicesPage() {
   };
 
   const exportCurrent = async () => {
-    const csv = await telematicsService.exportDevicesCsv();
-    downloadCsv("opstrax-device-command-center.csv", csv);
+    await telematicsService.exportDevices();
   };
 
   const emptyState = emptyStateForTab(tab);
@@ -836,7 +835,7 @@ export function IotDevicesPage() {
         <KpiCard label="Active Managed Devices" value={managedCount} status={managedCount ? "Active" : "Pending"} icon={<RadioTower className="h-4 w-4" />} />
         <KpiCard label="Offline" value={offlineCount} status={!managedCount ? "Pending" : offlineCount ? "Critical" : "Healthy"} icon={<WifiOff className="h-4 w-4" />} />
         <KpiCard label="Needs Attention" value={attentionCount} status={!managedCount ? "Pending" : attentionCount ? "Watch" : "Healthy"} icon={<Activity className="h-4 w-4" />} />
-        <KpiCard label="Average Data Health" value={avgHealth == null ? "Unknown" : `${avgHealth}%`} status={avgHealth == null ? "Pending" : avgHealth >= 85 ? "Healthy" : avgHealth >= 70 ? "Watch" : "Critical"} icon={<Cpu className="h-4 w-4" />} />
+        <KpiCard label="Page Data Health" value={avgHealth == null ? "Unknown" : `${avgHealth}%`} status={avgHealth == null ? "Pending" : avgHealth >= 85 ? "Healthy" : avgHealth >= 70 ? "Watch" : "Critical"} icon={<Cpu className="h-4 w-4" />} />
       </div>
       <p className="text-xs text-slate-500">Data health is a derived signal score for active devices: stale check-in, malfunction state, open telemetry alerts, and active faults reduce the score. Devices without evidence remain Unknown. <button type="button" className="font-semibold text-teal-700 hover:underline" onClick={() => setTab("archived")}>{archivedCount} archived</button> devices are retained separately.</p>
 
@@ -851,9 +850,27 @@ export function IotDevicesPage() {
               aria-label="Search devices by provider, serial, IMEI, vehicle, driver, or tenant"
             />
           </div>
+          <div className="flex flex-wrap gap-2">
+            <select
+              aria-label="Sort devices"
+              className="field min-w-36"
+              value={deviceSort}
+              onChange={(event) => { setDeviceSort(event.target.value as typeof deviceSort); setDevicePage(1); }}
+            >
+              <option value="serial">Serial</option>
+              <option value="provider">Provider</option>
+              <option value="model">Model</option>
+              <option value="status">Status</option>
+              <option value="lastCheckIn">Last check-in</option>
+              <option value="vehicle">Vehicle</option>
+            </select>
+            <button type="button" className="btn-ghost py-2 text-xs" onClick={() => { setDeviceDirection((current) => current === "asc" ? "desc" : "asc"); setDevicePage(1); }}>
+              {deviceDirection === "asc" ? "Ascending" : "Descending"}
+            </button>
+          </div>
           <div className="flex flex-wrap gap-2" role="tablist" aria-label="Device workspace views">
             {DEVICE_TABS.map((item) => (
-              <button key={item.key} role="tab" aria-selected={tab === item.key} className={tab === item.key ? "btn-primary py-2 text-xs" : "btn-ghost py-2 text-xs"} onClick={() => setTab(item.key)}>
+              <button key={item.key} role="tab" aria-selected={tab === item.key} className={tab === item.key ? "btn-primary py-2 text-xs" : "btn-ghost py-2 text-xs"} onClick={() => { setTab(item.key); setDevicePage(1); }}>
                 {item.label}
               </button>
             ))}
@@ -1012,6 +1029,13 @@ export function IotDevicesPage() {
                 ))}
               </tbody>
             </table>
+            <div className="flex items-center justify-between border-t border-slate-200 px-4 py-3 text-sm text-slate-600">
+              <span>Page {devicePage} of {devicePageCount} · {deviceRows.length} shown · {devicesQ.data?.total ?? 0} matching</span>
+              <div className="flex gap-2">
+                <button type="button" aria-label="Previous device page" className="btn-ghost h-9 px-3" disabled={devicePage <= 1} onClick={() => setDevicePage((current) => Math.max(1, current - 1))}><ChevronLeft className="h-4 w-4" /></button>
+                <button type="button" aria-label="Next device page" className="btn-ghost h-9 px-3" disabled={devicePage >= devicePageCount} onClick={() => setDevicePage((current) => Math.min(devicePageCount, current + 1))}><ChevronRight className="h-4 w-4" /></button>
+              </div>
+            </div>
           </div>
         )}
       </div>

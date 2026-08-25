@@ -1,4 +1,5 @@
 import { apiClient, unwrap } from "@/services/apiClient";
+import { downloadServerExport } from "@/services/fleetDomainApi";
 import { isCustomerPortalRole, isDriverPortalRole, resolveCustomerIdentity, resolveDriverIdentity } from "@/auth/accessScope";
 import { hasPermission } from "@/auth/rbacConfig";
 import { readRawSession } from "@/auth/sessionStorage";
@@ -174,6 +175,23 @@ export type DeviceCommandRecord = {
   openAlertCount: number;
   maintenanceStatus: string;
   complianceSummary: string;
+};
+
+export type DevicePageOptions = {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  view?: string;
+  sort?: "serial" | "provider" | "model" | "status" | "lastCheckIn" | "vehicle";
+  direction?: "asc" | "desc";
+};
+
+export type DevicePageResult = {
+  items: DeviceCommandRecord[];
+  total: number;
+  page: number;
+  pageSize: number;
+  summary: { active: number; archived: number; offline: number; attention: number };
 };
 
 // ── Wire-format normalization ─────────────────────────────────────────────────────────
@@ -497,8 +515,8 @@ function mapDeviceRow(
   const serial = String(row.device_serial ?? "");
   const secondsSincePing = row.seconds_since_ping == null ? null : Number(row.seconds_since_ping);
   const revoked = Boolean(row.revoked_at);
-  const openAlerts = alertCountBySerial.get(serial) ?? 0;
-  const activeFaults = faultCountBySerial.get(serial) ?? 0;
+  const openAlerts = alertCountBySerial.get(serial) ?? Number(row.open_alert_count ?? 0);
+  const activeFaults = faultCountBySerial.get(serial) ?? Number(row.active_fault_count ?? 0);
 
   const signals: HealthSignals = {
     status: String(row.status ?? ""),
@@ -1140,6 +1158,39 @@ export const telematicsService = {
     return loadScopedDevices(session);
   },
 
+  async getDevicePage(options: DevicePageOptions = {}): Promise<DevicePageResult> {
+    const session = getSession();
+    const payload = await unwrap<{
+      items: AnyRecord[];
+      total: number;
+      page: number;
+      pageSize: number;
+      summary?: AnyRecord;
+    }>(apiClient.get("/api/telemetry/devices/page", {
+      params: {
+        page: options.page ?? 1,
+        pageSize: Math.min(100, Math.max(1, options.pageSize ?? 100)),
+        search: options.search?.trim() || undefined,
+        view: options.view ?? "all",
+        sort: options.sort ?? "serial",
+        direction: options.direction ?? "asc",
+      },
+    }));
+    const summary = payload.summary ?? {};
+    return {
+      items: (payload.items ?? []).map((row) => mapDeviceRow(row, new Map(), new Map(), session)),
+      total: Number(payload.total ?? 0),
+      page: Number(payload.page ?? 1),
+      pageSize: Number(payload.pageSize ?? 100),
+      summary: {
+        active: Number(summary.active ?? 0),
+        archived: Number(summary.archived ?? 0),
+        offline: Number(summary.offline ?? 0),
+        attention: Number(summary.attention ?? 0),
+      },
+    };
+  },
+
   async getDeviceById(id: string | number): Promise<DeviceDetailRecord> {
     const session = getSession();
     // Real single-device read + the cross-feeds needed to populate the detail drawer.
@@ -1608,6 +1659,10 @@ export const telematicsService = {
       "supportStatus",
     ];
     return [columns.join(","), ...rows.map((row) => columns.map((column) => JSON.stringify(row[column as keyof DeviceCommandRecord] ?? "")).join(","))].join("\n");
+  },
+
+  async exportDevices() {
+    return downloadServerExport("/api/telemetry/devices/export", `opstrax-device-command-center_${new Date().toISOString().slice(0, 10)}.csv`);
   },
 
   exportClusterCsv(rows: TelematicsClusterRecord[], columns: string[]) {

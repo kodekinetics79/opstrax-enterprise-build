@@ -138,7 +138,10 @@ export function DriversModulePage() {
   const hasPermission = useHasPermission();
   const canManageFleet = hasPermission(PERMISSIONS.FLEET_MANAGE);
 
-  const list = useQuery({ queryKey: ["drivers"], queryFn: driversApi.list });
+  // Keep the canonical module roster cache distinct from lightweight driver pickers.
+  // A legacy messaging picker used the same key with a different response contract,
+  // which could leave Records with a non-roster value after cross-module navigation.
+  const list = useQuery({ queryKey: ["drivers", "module", "active"], queryFn: driversApi.list });
   const summary = useQuery({ queryKey: ["drivers", "summary"], queryFn: driversApi.summary });
 
   const rows = useMemo(() => scopeRowsForSession("drivers", list.data || [], session), [list.data, session]);
@@ -176,7 +179,7 @@ export function DriversModulePage() {
             <EntityImportExport
               config={DRIVER_IMPORT_EXPORT}
               canImport={canManageFleet}
-              canExport={hasPermission("drivers:view")}
+              canExport={hasPermission("drivers:export")}
             />
             {/* Single-add sat only on the roster tab, so the Overview offered bulk import
                 but no way to add one record — users reasonably concluded it was missing.

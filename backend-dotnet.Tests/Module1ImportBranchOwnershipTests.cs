@@ -91,6 +91,7 @@ public sealed class Module1ImportBranchOwnershipTests
         var inputRoot = Path.Combine(RepoRoot, "artifacts", "cert-large-20260825", "input");
         var files = new[] { "vehicles", "drivers", "devices", "assets" }
             .SelectMany(prefix => Directory.GetFiles(inputRoot, $"{prefix}_*.csv"))
+            .Where(path => !Path.GetFileName(path).Contains("_b1313ed5", StringComparison.Ordinal))
             .ToArray();
 
         Assert.Equal(28, files.Length);

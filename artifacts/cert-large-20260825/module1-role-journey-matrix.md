@@ -2,7 +2,7 @@
 
 Evidence cut: 2026-08-25
 Tenant: `CERT-LARGE-20260825`
-Candidate represented by latest role evidence: `6d06893881f3fd58482681549735892a201f2b39`
+Latest deployed candidate exercised: `b1313ed5b32ee12e5cbcc625e397b0bc38037e0a`
 
 Status terms: **Observed** means directly visible in preserved Chrome evidence; **Pending** means no adequate browser evidence exists; **Blocked** means a documented entitlement or external constraint prevents the journey.
 
@@ -31,10 +31,10 @@ Status terms: **Observed** means directly visible in preserved Chrome evidence; 
 | Download driver template | Observed | Pending | Pending | Pending | Deny expected; pending | Read-only/deny mutation expected; pending | Blocked |
 | Download device template | Observed | Pending | Pending | Pending | Deny expected; pending | Read-only/deny mutation expected; pending | Blocked |
 | Download trailer/asset template | Observed | Pending | Pending | Pending | Deny expected; pending | Read-only/deny mutation expected; pending | Blocked |
-| Import valid/invalid/duplicate rows | Pending | Pending per granted rights | Deny expected unless explicitly granted | Deny expected | Deny expected | Deny expected | Blocked |
-| Search/filter/sort/page/export full dataset | Pending | Pending, branch-scoped | Pending, branch-scoped | Pending, branch-scoped | Pending, self/minimal scope | Pending, tenant-wide read-only | Blocked |
-| Assign/reassign driver, vehicle, device, trailer | Pending | Pending per granted rights | Pending; expected positive for dispatch assignments | Pending; device/maintenance boundary to verify | Deny expected | Deny expected | Blocked |
-| View effective-dated assignment history | Pending | Pending, branch-scoped | Pending, branch-scoped | Pending, branch-scoped | Pending/self scope | Pending, tenant-wide read-only | Blocked |
+| Import valid/invalid/duplicate rows | Valid 1,000-vehicle and 500-driver batches observed; remaining entities and invalid/duplicate correction pending | Pending per granted rights | Deny expected unless explicitly granted | Deny expected | Deny expected | Deny expected | Blocked |
+| Search/filter/sort/page/export full dataset | Vehicle full-volume and 500-driver paging/export partly observed; corrective assets/devices pending | Pending, branch-scoped | Pending, branch-scoped | Pending, branch-scoped | Pending, self/minimal scope | Pending, tenant-wide read-only | Blocked |
+| Assign/reassign driver, vehicle, device, trailer | Vehicle/driver reassignment observed; device/trailer pending | Pending per granted rights | Pending; expected positive for dispatch assignments | Pending; device/maintenance boundary to verify | Deny expected | Deny expected | Blocked |
+| View effective-dated assignment history | Vehicle/driver history observed through refresh and relogin; device/trailer pending | Pending, branch-scoped | Pending, branch-scoped | Pending, branch-scoped | Pending/self scope | Pending, tenant-wide read-only | Blocked |
 | Archive/reactivate records | Pending | Pending per granted rights | Deny expected unless explicitly granted | Pending for maintenance-owned lifecycle only | Deny expected | Deny expected | Blocked |
 | View readiness/document/expiry state | Pending | Pending | Pending | Pending | Pending/self scope | Pending/read-only | Blocked |
 | Cross-branch export leakage test | Pending | Pending | Pending | Pending | Pending | Not applicable if tenant-wide by design; verify read-only | Blocked |
@@ -56,6 +56,10 @@ Status terms: **Observed** means directly visible in preserved Chrome evidence; 
 - `chrome/module1-6d068938-executive-persisted-exact.png`: custom Executive role persisted.
 - `chrome/module1-6d068938-maintenance-manager-cl-hq-scope.png`: branch-bound maintenance account configuration.
 - `chrome/module1-customers-not-in-plan-71fd868.png`: Customer journey entitlement blocker.
+- `chrome/m1-021-post-vehicle-d0002-history-045c8a4.png` and `chrome/m1-021-after-logout-login-assignments-045c8a4.png`: governed vehicle/driver reassignment and effective-dated history persistence.
+- `input/drivers_server_export_b1313ed5.csv`: complete 500-driver server export at that evidence cut.
+
+The b131 Fleet Manager cross-branch denial, archive/reactivate lifecycle, 500-driver pagination, and document-modal observations were not preserved as screenshots because returned screenshot bytes were not written. They therefore remain Pending under this matrix's evidence definition and must be repeated on the corrective SHA.
 
 ## Closure rule
 

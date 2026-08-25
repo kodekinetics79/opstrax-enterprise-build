@@ -111,7 +111,7 @@ const configs = {
     ],
     columns: ["documentNumber", "documentType", "category", "entityType", "entityName", "countryCode", "issuingAuthority", "issuedAt", "expiresAt", "status", "renewalStatus", "documentExpiryRiskScore", "recommendedAction"],
     fields: [["title", "Title"], ["documentNumber", "Document Number"], ["entityType", "Entity Type"], ["entityId", "Entity ID"], ["documentType", "Document Type"], ["category", "Category"], ["countryCode", "Country"], ["issuingAuthority", "Issuing Authority"], ["issuedAt", "Issued At"], ["expiresAt", "Expires At"], ["status", "Status"], ["renewalStatus", "Renewal Status"], ["riskScore", "Risk Score"], ["recommendedAction", "Recommended Action"], ["notes", "Notes"]],
-    actions: ["renew", "upload"],
+    actions: ["renew"],
     detailSections: [["Timeline", "timeline", ["eventTitle", "eventDescription", "occurredAt"]]],
   },
 } satisfies Record<Batch3Kind, {
@@ -250,6 +250,7 @@ export function Batch3OperationsPage({ kind }: { kind: Batch3Kind }) {
       <div className="grid gap-4 md:grid-cols-4 xl:grid-cols-6">
         {config.kpis.map(([label, key]) => <KpiCard key={key} label={label} value={String(s[key] ?? 0)} icon={config.icon} status={/overdue|critical|unsafe|expired|missing|risk/i.test(label) ? "Review" : "Active"} />)}
       </div>
+      {action.isError ? <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{(action.error as Error)?.message || "The requested document action could not be completed."}</p> : null}
       <div className="panel flex flex-col gap-3 p-4 xl:flex-row xl:items-center">
         <input className="field xl:max-w-md" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={`Search ${config.eyebrow.toLowerCase()} by entity, status, country, vendor, risk...`} />
         <select className="field xl:max-w-[180px]" value={status} onChange={(e) => setStatus(e.target.value)}>
@@ -273,7 +274,7 @@ export function Batch3OperationsPage({ kind }: { kind: Batch3Kind }) {
         onEdit={(record) => setEditing(record)}
         onAction={(type, row) => action.mutate({ type, row })}
       />
-      {editing ? <RecordModal title={config.createLabel} fields={config.fields} initial={editing} saving={save.isPending} requireFile={kind === "documents" && !editing.id} onClose={() => setEditing(null)} onSave={(payload) => save.mutate(payload)} /> : null}
+      {editing ? <RecordModal title={config.createLabel} fields={config.fields} initial={editing} saving={save.isPending} error={save.isError ? (save.error as Error)?.message || "The document could not be saved. Review the fields and try again." : null} requireFile={kind === "documents" && !editing.id} onClose={() => { save.reset(); setEditing(null); }} onSave={(payload) => save.mutate(payload)} /> : null}
     </div>
   );
 }
@@ -338,16 +339,19 @@ function DetailDrawer({ kind, config, detail, loading, onClose, onEdit, onAction
   );
 }
 
-function RecordModal({ title, fields, initial, saving, requireFile = false, onClose, onSave }: { title: string; fields: string[][]; initial: AnyRecord; saving: boolean; requireFile?: boolean; onClose: () => void; onSave: (payload: AnyRecord) => void }) {
+function RecordModal({ title, fields, initial, saving, error, requireFile = false, onClose, onSave }: { title: string; fields: string[][]; initial: AnyRecord; saving: boolean; error?: string | null; requireFile?: boolean; onClose: () => void; onSave: (payload: AnyRecord) => void }) {
   const [form, setForm] = useState<AnyRecord>(initial);
   const submit = (event: FormEvent) => { event.preventDefault(); onSave(form); };
+  const uploadReady = !requireFile || (form.file instanceof File && String(form.title ?? "").trim() !== "" && String(form.entityId ?? "").trim() !== "");
   return (
     <div className="fixed inset-0 z-[60] grid place-items-center bg-black/60 p-4">
       <form className="panel max-h-[90vh] w-full max-w-4xl overflow-y-auto p-6" onSubmit={submit}>
         <div className="flex justify-between"><h2 className="text-2xl font-semibold text-slate-900">{form.id ? `Edit ${title}` : title}</h2><button type="button" className="icon-btn" onClick={onClose}><X /></button></div>
         {requireFile ? <label className="mt-6 block"><span className="mb-2 block text-xs font-bold uppercase tracking-[0.16em] text-slate-500">Document file</span><input className="field" type="file" required accept=".pdf,.png,.jpg,.jpeg,.gif,.webp,.heic,.heif,.docx,.xlsx,.txt,.csv" onChange={(e) => setForm((x) => ({ ...x, file: e.target.files?.[0] }))} /><span className="mt-1 block text-xs text-slate-500">PDF, image, Word, Excel, text or CSV; maximum 25 MB.</span></label> : null}
-        <div className="mt-6 grid gap-4 md:grid-cols-2">{fields.map(([key, label]) => <label key={key}><span className="mb-2 block text-xs font-bold uppercase tracking-[0.16em] text-slate-500">{label}</span><input className="field" value={String(form[key] ?? "")} onChange={(e) => setForm((x) => ({ ...x, [key]: e.target.value }))} /></label>)}</div>
-        <div className="mt-6 flex justify-end gap-3"><button type="button" className="btn-ghost" onClick={onClose}>Cancel</button><button type="submit" className="btn-primary" disabled={saving}>{saving ? "Uploading…" : requireFile ? "Upload" : "Save"}</button></div>
+        <div className="mt-6 grid gap-4 md:grid-cols-2">{fields.map(([key, label]) => <label key={key}><span className="mb-2 block text-xs font-bold uppercase tracking-[0.16em] text-slate-500">{label}{requireFile && ["title", "entityType", "entityId"].includes(key) ? " *" : ""}</span><input className="field" required={requireFile && ["title", "entityType", "entityId"].includes(key)} value={String(form[key] ?? "")} onChange={(e) => setForm((x) => ({ ...x, [key]: e.target.value }))} /></label>)}</div>
+        {error ? <p role="alert" className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</p> : null}
+        {requireFile && !uploadReady ? <p className="mt-4 text-sm text-slate-500">Choose a file and enter the required title and entity ID to enable upload.</p> : null}
+        <div className="mt-6 flex justify-end gap-3"><button type="button" className="btn-ghost" onClick={onClose}>Cancel</button><button type="submit" className="btn-primary" disabled={saving || !uploadReady}>{saving ? "Uploading…" : requireFile ? "Upload" : "Save"}</button></div>
       </form>
     </div>
   );
@@ -389,6 +393,6 @@ async function runAction(kind: Batch3Kind, type: string, row: AnyRecord) {
     if (type === "certifyRepair") return dvirApi.certifyRepair(id, rowVersion);
     throw new Error("Unsupported DVIR action");
   }
-  if (type === "renew") return documentsApi.renewPlaceholder(id);
-  return documentsApi.uploadPlaceholder(defaultForm("documents"));
+  if (type === "renew") return documentsApi.renew(id);
+  throw new Error("Unsupported document action");
 }

@@ -12,6 +12,7 @@ import { isCustomerPortalRole, isDriverPortalRole, scopeRowsForSession } from "@
 import { assetsApi } from "@/services/assetsApi";
 import { customersApi } from "@/services/customersApi";
 import { driversApi } from "@/services/driversApi";
+import { EntityImportExport } from "@/components/EntityImportExport";
 import { jobsApi } from "@/services/jobsApi";
 import { vehiclesApi } from "@/services/vehiclesApi";
 import { downloadServerExport } from "@/services/fleetDomainApi";
@@ -25,6 +26,19 @@ const INTERNAL_RECORD_KEY = /(?:bidx|blind.?index|password|secret|token|cipher(?
 
 export function customerVisibleRecordEntries(record: AnyRecord) {
   return Object.entries(record).filter(([key]) => !INTERNAL_RECORD_KEY.test(key));
+}
+
+export function fleetArchiveErrorMessage(error: unknown): string {
+  const candidate = error as {
+    message?: string;
+    response?: { data?: { message?: string; errors?: unknown[] } };
+  } | null;
+  const payload = candidate?.response?.data;
+  const parts = [
+    payload?.message,
+    ...(Array.isArray(payload?.errors) ? payload.errors.map(String) : []),
+  ].filter((value): value is string => Boolean(value?.trim()));
+  return [...new Set(parts)].join(" ") || candidate?.message || "The record could not be archived.";
 }
 
 type Field = {
@@ -359,7 +373,11 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
     const source = scopedRows;
     return source.filter((row) => {
       const qLower = search.toLowerCase();
+      // Fleet-master lifecycle is enforced by the active/archived API query. A live
+      // driver may legitimately be Available, On Route, or Suspended; the "Active"
+      // tab means not archived rather than the literal operational status "Active".
       const matchesStatus = archivedView || statusFilter === "All" ||
+        ((kind === "vehicles" || kind === "drivers") && statusFilter === "Active") ||
         String(row.status || "").toLowerCase().includes(statusFilter.toLowerCase()) ||
         (statusFilter === "At Risk" && (Number(row.riskScore || row.risk_score || 0) >= 40 || /maintenance|delayed/i.test(String(row.status))));
 
@@ -392,7 +410,22 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
         actions={
           <>
             {cfg.api.create && canCreate ? <button className="btn-primary" onClick={() => { setIsCreating(true); setEditing({ ...cfg.defaults }); }}><Plus className="h-4 w-4" /> Create</button> : null}
-            {cfg.api.create && canCreate ? (
+            {kind === "drivers" && canCreate ? (
+              <EntityImportExport
+                config={{
+                  entity: "drivers",
+                  columns: ["driverCode", "branchCode", "fullName", "phone", "email", "licenseNumber", "status"],
+                  requiredColumns: ["driverCode", "fullName"],
+                  templateEndpoint: "/api/drivers/import-template",
+                  importPreview: driversApi.importPreview,
+                  importCommit: driversApi.importCommit,
+                  invalidateKey: "drivers",
+                  onImported: () => queryClient.invalidateQueries({ queryKey: [kind, "summary"] }),
+                }}
+                canImport={canCreate}
+                canExport={false}
+              />
+            ) : cfg.api.create && canCreate ? (
               <BulkImportControls
                 kind={kind}
                 fields={cfg.fields}
@@ -482,7 +515,11 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
         assignPending={assignMutation.isPending}
         onClose={() => setSelected(null)}
         onEdit={(record) => { if (canUpdate) { setIsCreating(false); setEditing(record); } }}
-        onDelete={(record) => canDelete && (cfg.api.archive || cfg.api.remove) && setPendingArchive(record)}
+        onDelete={(record) => {
+          if (!canDelete || !(cfg.api.archive || cfg.api.remove)) return;
+          deleteMutation.reset();
+          setPendingArchive(record);
+        }}
         onReactivate={(record) => canUpdate && cfg.api.reactivate && reactivateMutation.mutate(String(record.id))}
         onSmartAssign={!archivedView && isFleetMaster && canAssign ? () => {
           if (kind === "vehicles" || kind === "drivers") setAssignmentOpen(true);
@@ -501,8 +538,13 @@ export function EntityListPage({ kind }: { kind: EntityKind }) {
             <p className="mt-3 text-sm text-slate-600">
               {String(pendingArchive.driverCode || pendingArchive.vehicleCode || pendingArchive.name || pendingArchive.id)} will leave the Active view and remain available in Archived for review or reactivation.
             </p>
+            {deleteMutation.error ? (
+              <div role="alert" className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                {fleetArchiveErrorMessage(deleteMutation.error)}
+              </div>
+            ) : null}
             <div className="mt-6 flex justify-end gap-3">
-              <button className="btn-ghost" type="button" disabled={deleteMutation.isPending} onClick={() => setPendingArchive(null)}>Cancel</button>
+              <button className="btn-ghost" type="button" disabled={deleteMutation.isPending} onClick={() => { deleteMutation.reset(); setPendingArchive(null); }}>Cancel</button>
               <button className="btn-primary" type="button" disabled={deleteMutation.isPending} onClick={() => deleteMutation.mutate(String(pendingArchive.id))}>
                 {deleteMutation.isPending ? "Archiving…" : "Archive"}
               </button>

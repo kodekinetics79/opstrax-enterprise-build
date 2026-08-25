@@ -203,6 +203,7 @@ public sealed class CoreFleetIdentityConflictPostgresTests
         var companyId = await SeedCompany(db);
         try
         {
+            await SeedImportBranch(db, companyId);
             await db.ExecuteAsync(@"INSERT INTO drivers(company_id,driver_code,full_name,license_number,license_number_bidx)
                 VALUES (@c,'LEGACY-PLAIN','Legacy Plaintext','TRANSITION-LICENSE',NULL)",
                 c => c.Parameters.AddWithValue("@c", companyId));
@@ -218,6 +219,7 @@ public sealed class CoreFleetIdentityConflictPostgresTests
             var importBody = JsonSerializer.Deserialize<Dictionary<string, object?>>(@"{
                 ""rows"": [{
                     ""driverCode"": ""TRANSITION-IMPORT"",
+                    ""branchCode"": ""MAIN"",
                     ""fullName"": ""Transition Import"",
                     ""licenseNumber"": ""transition-license""
                 }]
@@ -277,12 +279,13 @@ public sealed class CoreFleetIdentityConflictPostgresTests
         var companyId = await SeedCompany(db);
         try
         {
+            await SeedImportBranch(db, companyId);
             var vehicleResults = await Task.WhenAll(Enumerable.Range(0, 20).Select(i =>
-                CommitVehicleImport(companyId, $"IMPORT-VIN-{i:00}", SharedValidVin)));
+                CommitVehicleImport(companyId, $"IMPORT-VIN-{i:00}", SharedValidVin, "MAIN")));
             AssertImportContention(vehicleResults, $"VIN '{SharedValidVin}' is already registered to another vehicle.");
 
             var driverResults = await Task.WhenAll(Enumerable.Range(0, 20).Select(i =>
-                CommitDriverImport(companyId, $"IMPORT-LIC-{i:00}", "IMPORT-SHARED-LICENSE")));
+                CommitDriverImport(companyId, $"IMPORT-LIC-{i:00}", "IMPORT-SHARED-LICENSE", "MAIN")));
             AssertImportContention(driverResults,
                 "License number 'IMPORT-SHARED-LICENSE' is already registered to another driver.");
 
@@ -290,7 +293,7 @@ public sealed class CoreFleetIdentityConflictPostgresTests
             // but every request must remain a stable 200 import result rather than a
             // leaked unique violation or transaction-aborted 500.
             var codeResults = await Task.WhenAll(Enumerable.Range(0, 20).Select(_ =>
-                CommitVehicleImport(companyId, "IMPORT-SHARED-CODE", null)));
+                CommitVehicleImport(companyId, "IMPORT-SHARED-CODE", null, "MAIN")));
             Assert.All(codeResults, result => Assert.True(IsOk(result)));
             Assert.Equal(20, codeResults.Sum(ImportProcessedRows));
         }
@@ -448,7 +451,7 @@ public sealed class CoreFleetIdentityConflictPostgresTests
         finally { accessor.Current = null; }
     }
 
-    private static async Task<IResult> CommitVehicleImport(long companyId, string code, string? vin)
+    private static async Task<IResult> CommitVehicleImport(long companyId, string code, string? vin, string branchCode)
     {
         var accessor = new TenantScopeAccessor();
         var db = Db(accessor);
@@ -459,6 +462,7 @@ public sealed class CoreFleetIdentityConflictPostgresTests
             var result = await Invoke("VehiclesImportCommit", Principal(companyId), ImportBody(new()
             {
                 ["vehicleCode"] = code,
+                ["branchCode"] = branchCode,
                 ["type"] = "Truck",
                 ["vin"] = vin,
                 ["vinExceptionType"] = vin is null ? "legacy-fleet-identifier" : null,
@@ -470,7 +474,7 @@ public sealed class CoreFleetIdentityConflictPostgresTests
         finally { accessor.Current = null; }
     }
 
-    private static async Task<IResult> CommitDriverImport(long companyId, string code, string license)
+    private static async Task<IResult> CommitDriverImport(long companyId, string code, string license, string branchCode)
     {
         var accessor = new TenantScopeAccessor();
         var db = Db(accessor);
@@ -481,6 +485,7 @@ public sealed class CoreFleetIdentityConflictPostgresTests
             var result = await Invoke("DriversImportCommit", Principal(companyId, piiEnabled: true), ImportBody(new()
             {
                 ["driverCode"] = code,
+                ["branchCode"] = branchCode,
                 ["fullName"] = "Import Race Driver",
                 ["licenseNumber"] = license,
             }), db, new AuditService(db), CancellationToken.None);
@@ -632,6 +637,10 @@ public sealed class CoreFleetIdentityConflictPostgresTests
         "INSERT INTO companies(company_code,name,industry) VALUES (@code,'Fleet Identity Conflict Test','Transportation')",
         c => c.Parameters.AddWithValue("@code", $"FIC-{Guid.NewGuid():N}"));
 
+    private static Task<long> SeedImportBranch(Database db, long companyId) => db.InsertAsync(
+        "INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,'MAIN','Main','Active')",
+        c => c.Parameters.AddWithValue("@c", companyId));
+
     private static Task<long> Count(Database db, string table, long companyId)
         => db.ScalarLongAsync($"SELECT COUNT(*) FROM {table} WHERE company_id=@c",
             c => c.Parameters.AddWithValue("@c", companyId));
@@ -649,7 +658,7 @@ public sealed class CoreFleetIdentityConflictPostgresTests
 
     private static async Task Cleanup(Database db, long companyId)
     {
-        foreach (var table in new[] { "audit_logs", "vehicles", "drivers" })
+        foreach (var table in new[] { "audit_logs", "vehicles", "drivers", "branches" })
             await db.ExecuteAsync($"DELETE FROM {table} WHERE company_id=@c",
                 c => c.Parameters.AddWithValue("@c", companyId));
         await db.ExecuteAsync("DELETE FROM companies WHERE id=@c",

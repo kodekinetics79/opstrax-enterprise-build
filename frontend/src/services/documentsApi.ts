@@ -24,8 +24,7 @@ export const documentsApi = {
   update: (id: string | number, payload: AnyRecord) => unwrap<AnyRecord>(apiClient.put(`/api/documents/${id}`, payload)),
   remove: (id: string | number) => unwrap<AnyRecord>(apiClient.delete(`/api/documents/${id}`)),
   expiring: () => unwrap<AnyRecord[]>(apiClient.get("/api/documents/expiring")),
-  uploadPlaceholder: (payload: AnyRecord) => unwrap<AnyRecord>(apiClient.post("/api/documents/upload-placeholder", payload)),
-  renewPlaceholder: (id: string | number) => unwrap<AnyRecord>(apiClient.post(`/api/documents/${id}/renew-placeholder`, {})),
+  renew: (id: string | number) => unwrap<AnyRecord>(apiClient.post(`/api/documents/${id}/renew`, {})),
   timeline: (id: string | number) => unwrap<AnyRecord[]>(apiClient.get(`/api/documents/${id}/timeline`)),
   recommendations: () => unwrap<AnyRecord[]>(apiClient.get("/api/documents/recommendations")),
 };

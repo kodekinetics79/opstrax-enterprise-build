@@ -33,6 +33,7 @@ public static class FleetTmsColdChainEndpoints
         Guard(app.MapGet("/api/fleet-tms/assets/types", AssetTypes), "fleet:view");
         Guard(app.MapPost("/api/fleet-tms/assets/types", CreateAssetType), "fleet:manage");
         Guard(app.MapGet("/api/fleet-tms/assets", Assets), "fleet:view");
+        Guard(app.MapGet("/api/fleet-tms/assets/export", AssetsExport), "fleet:manage");
         Guard(app.MapGet("/api/fleet-tms/assets/import-template", AssetsImportTemplate), "fleet:view");
         Guard(app.MapPost("/api/fleet-tms/assets/import-preview", AssetsImportPreview), "fleet:manage");
         Guard(app.MapPost("/api/fleet-tms/assets/import-commit", AssetsImportCommit), "fleet:manage");
@@ -519,15 +520,121 @@ ON CONFLICT DO NOTHING",
 
     private static async Task<IResult> Assets(HttpContext http, Database db, CancellationToken ct)
     {
+        var page = int.TryParse(http.Request.Query["page"].FirstOrDefault(), out var parsedPage)
+            ? Math.Max(1, parsedPage)
+            : 1;
+        var pageSize = int.TryParse(http.Request.Query["pageSize"].FirstOrDefault(), out var parsedPageSize)
+            ? Math.Clamp(parsedPageSize, 1, 100)
+            : 100;
+        var search = http.Request.Query["search"].FirstOrDefault()?.Trim() ?? "";
+        var direction = string.Equals(http.Request.Query["direction"].FirstOrDefault(), "desc", StringComparison.OrdinalIgnoreCase)
+            ? "DESC"
+            : "ASC";
+        var sort = http.Request.Query["sort"].FirstOrDefault()?.Trim().ToLowerInvariant() switch
+        {
+            "name" => "a.name",
+            "status" => "a.status",
+            "location" => "a.current_location",
+            "condition" => "a.condition",
+            "type" => "t.name",
+            "lastseen" => "a.last_seen_at_utc",
+            _ => "a.asset_tag",
+        };
+        var where = @"WHERE a.company_id=@companyId" + BranchScope(http, "a.") + @"
+  AND (@search='' OR a.asset_tag ILIKE '%' || @search || '%'
+    OR a.name ILIKE '%' || @search || '%'
+    OR COALESCE(t.code,'') ILIKE '%' || @search || '%'
+    OR COALESCE(t.name,'') ILIKE '%' || @search || '%'
+    OR COALESCE(a.status,'') ILIKE '%' || @search || '%'
+    OR COALESCE(a.current_location,'') ILIKE '%' || @search || '%'
+    OR COALESCE(a.condition,'') ILIKE '%' || @search || '%')";
+        Action<NpgsqlCommand> bind = c =>
+        {
+            c.Parameters.AddWithValue("@companyId", Cid(http));
+            c.Parameters.AddWithValue("@search", search);
+            BindBranch(c, http);
+        };
+        var total = await db.ScalarLongAsync(@"
+SELECT COUNT(*)
+FROM fleet_tms_assets a
+LEFT JOIN fleet_tms_asset_types t ON t.id=a.asset_type_id
+" + where, bind, ct);
+        var summary = await db.QuerySingleAsync(@"
+SELECT COUNT(*) FILTER (WHERE a.status IN ('Assigned','InUse')) assigned,
+       COUNT(*) FILTER (WHERE a.status='Available') available,
+       COUNT(*) FILTER (WHERE a.condition<>'Good') needs_review
+FROM fleet_tms_assets a
+LEFT JOIN fleet_tms_asset_types t ON t.id=a.asset_type_id
+" + where, bind, ct);
         var items = await db.QueryAsync(@"
 SELECT a.id, a.asset_type_id, t.code asset_type_code, t.name asset_type_name, a.asset_tag, a.name, a.status,
        a.current_location, a.condition, a.is_returnable, a.quantity, a.unit_of_measure, a.notes, a.last_seen_at_utc, a.created_at_utc,
        (SELECT COUNT(*) FROM fleet_tms_asset_assignments aa WHERE aa.asset_id=a.id AND aa.company_id=a.company_id AND aa.branch_id IS NOT DISTINCT FROM a.branch_id) assignment_count
 FROM fleet_tms_assets a
 LEFT JOIN fleet_tms_asset_types t ON t.id=a.asset_type_id
-WHERE a.company_id=@companyId" + BranchScope(http, "a.") + " ORDER BY a.last_seen_at_utc DESC NULLS LAST, a.asset_tag",
-            c => { c.Parameters.AddWithValue("@companyId", Cid(http)); BindBranch(c, http); }, ct);
-        return Ok(new { items });
+" + where + $" ORDER BY {sort} {direction} NULLS LAST, a.asset_tag LIMIT @limit OFFSET @offset",
+            c =>
+            {
+                bind(c);
+                c.Parameters.AddWithValue("@limit", pageSize);
+                c.Parameters.AddWithValue("@offset", (page - 1) * pageSize);
+            }, ct);
+        return Ok(new
+        {
+            items,
+            total,
+            page,
+            pageSize,
+            summary = summary ?? new Dictionary<string, object?>
+            {
+                ["assigned"] = 0L,
+                ["available"] = 0L,
+                ["needsReview"] = 0L,
+            },
+        });
+    }
+
+    private static async Task<IResult> AssetsExport(HttpContext http, Database db, CancellationToken ct)
+    {
+        var search = http.Request.Query["search"].FirstOrDefault()?.Trim() ?? "";
+        var rows = await db.QueryAsync(@"
+SELECT a.asset_tag, b.code branch_code, a.name, t.code asset_type_code, a.status,
+       a.current_location, a.condition, a.is_returnable, a.quantity, a.unit_of_measure,
+       a.notes, a.last_seen_at_utc, a.created_at_utc
+FROM fleet_tms_assets a
+LEFT JOIN fleet_tms_asset_types t ON t.id=a.asset_type_id
+LEFT JOIN branches b ON b.id=a.branch_id AND b.company_id=a.company_id
+WHERE a.company_id=@companyId" + BranchScope(http, "a.") + @"
+  AND (@search='' OR a.asset_tag ILIKE '%' || @search || '%'
+    OR a.name ILIKE '%' || @search || '%'
+    OR COALESCE(t.code,'') ILIKE '%' || @search || '%'
+    OR COALESCE(a.current_location,'') ILIKE '%' || @search || '%')
+ORDER BY a.asset_tag
+LIMIT 100000",
+            c =>
+            {
+                c.Parameters.AddWithValue("@companyId", Cid(http));
+                c.Parameters.AddWithValue("@search", search);
+                BindBranch(c, http);
+            }, ct);
+        return CsvFile(rows, "returnable-assets");
+    }
+
+    private static IResult CsvFile(IReadOnlyList<Dictionary<string, object?>> rows, string name)
+    {
+        var csv = new System.Text.StringBuilder();
+        if (rows.Count == 0)
+        {
+            csv.AppendLine("assetTag,branchCode,name,assetTypeCode,status,currentLocation,condition,isReturnable,quantity,unitOfMeasure,notes,lastSeenAtUtc,createdAtUtc");
+        }
+        else
+        {
+            var columns = rows[0].Keys.ToList();
+            csv.AppendLine(string.Join(",", columns));
+            foreach (var row in rows)
+                csv.AppendLine(string.Join(",", columns.Select(column => EndpointMappings.CsvCell(row[column]))));
+        }
+        return Results.File(System.Text.Encoding.UTF8.GetBytes(csv.ToString()), "text/csv", $"{name}_{DateTime.UtcNow:yyyy-MM-dd_HH-mm}.csv");
     }
 
     private const int AssetImportMaxRows = 500;

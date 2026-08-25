@@ -622,6 +622,22 @@ export interface Asset {
   assignmentCount?: number;
 }
 
+export type AssetPageOptions = {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  sort?: "assetTag" | "name" | "status" | "location" | "condition" | "type" | "lastSeen";
+  direction?: "asc" | "desc";
+};
+
+export type AssetPageResult = {
+  items: Asset[];
+  total: number;
+  page: number;
+  pageSize: number;
+  summary: { assigned: number; available: number; needsReview: number };
+};
+
 export interface AssetAssignment {
   id: string;
   assetId: string;
@@ -733,7 +749,15 @@ export const fleetAssetApi = {
   assetTypes: () => unwrap<{ items: AssetType[] }>(apiClient.get("/api/fleet-tms/assets/types")),
   createAssetType: (body: Partial<AssetType> & { code: string; name: string }) =>
     unwrap<AssetType>(apiClient.post("/api/fleet-tms/assets/types", body)),
-  assets: () => unwrap<{ items: Asset[] }>(apiClient.get("/api/fleet-tms/assets")),
+  assets: (options: AssetPageOptions = {}) => unwrap<AssetPageResult>(apiClient.get("/api/fleet-tms/assets", {
+    params: {
+      page: options.page ?? 1,
+      pageSize: Math.min(100, Math.max(1, options.pageSize ?? 100)),
+      search: options.search?.trim() || undefined,
+      sort: options.sort ?? "assetTag",
+      direction: options.direction ?? "asc",
+    },
+  })),
   previewImport: (rows: AnyRecord[]) => unwrap<AnyRecord>(apiClient.post("/api/fleet-tms/assets/import-preview", { rows })),
   // A 500-row commit performs audited inserts/updates. Keep the default timeout
   // for ordinary calls while allowing this bounded customer workflow to finish.
