@@ -204,6 +204,9 @@ MIGRATIONS=(
   # tenant_scope, and it re-applies stage76's safe-column eld_devices grant over the
   # column it adds there.
   2026_08_22_stage88_runtime_schema_service_contract
+  # Inbox failures persist an exponential next_attempt_at schedule. Stage89 is the
+  # owner-safe protected-environment contract that adds and indexes that column.
+  2026_08_24_stage89_inbox_retry_schedule
 )
 
 echo "Target host: $(printf '%s' "$NEON_PG_URI" | sed -E 's|.*@([^/:?]+).*|\1|')"

@@ -51,6 +51,23 @@ public sealed class MigrationRunnerEnrollmentParityTests
     }
 
     [Fact]
+    public void PreTerminalDriverProofMigration_DoesNotRequireTheSystemRoleOnAnEmptyCluster()
+    {
+        var migration = File.ReadAllText(Path.Combine(
+            RepoRoot(), "database", "migrations",
+            "2026_08_13_stage80_driver_proof_upload_binding.sql"));
+
+        Assert.Contains("IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_system')", migration,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "GRANT SELECT,INSERT,UPDATE,DELETE ON TABLE dispatch_proof_uploads TO opstrax_system;",
+            RemoveDoBlocks(migration), StringComparison.Ordinal);
+    }
+
+    private static string RemoveDoBlocks(string sql) =>
+        Regex.Replace(sql, @"DO\s+\$[^$]+\$.*?\$[^$]+\$\s*;", "", RegexOptions.Singleline);
+
+    [Fact]
     public void NewlyEnrolledMigrations_SitInChronologicalOrder()
     {
         var enrolled = RunnerArrayEntries();

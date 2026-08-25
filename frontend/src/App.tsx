@@ -382,9 +382,9 @@ export default function App() {
         <Route path="/renewals" element={<RequirePermission permission="customers:view"><AccountHealthPage /></RequirePermission>} />
         <Route path="/upsell-opportunities" element={<RequirePermission permission="customers:view"><AccountHealthPage /></RequirePermission>} />
         <Route path="/traffic-violations" element={<RequirePermission permission="safety:view"><TrafficViolationsPage /></RequirePermission>} />
-        <Route path="/service-history" element={<RequirePermission permission="fleet:view"><MaintenancePlanningPage /></RequirePermission>} />
-        <Route path="/downtime" element={<RequirePermission permission="fleet:view"><MaintenancePlanningPage /></RequirePermission>} />
-        <Route path="/preventive-maintenance" element={<RequirePermission permission="fleet:view"><MaintenancePlanningPage /></RequirePermission>} />
+        <Route path="/service-history" element={<RequirePermission permission="maintenance:view"><MaintenancePlanningPage /></RequirePermission>} />
+        <Route path="/downtime" element={<RequirePermission permission="maintenance:view"><MaintenancePlanningPage /></RequirePermission>} />
+        <Route path="/preventive-maintenance" element={<RequirePermission permission="maintenance:view"><MaintenancePlanningPage /></RequirePermission>} />
 
         {/* ── Financials (standalone) ── */}
         <Route path="/invoices"      element={<RequirePermission permission="finance:view"><FinancialAnalyticsPage /></RequirePermission>} />

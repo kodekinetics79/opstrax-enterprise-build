@@ -16,6 +16,26 @@ namespace Opstrax.Tests;
 public sealed class Stage9DriverAuthorizationTests
 {
     [Fact]
+    public void Stage9Routes_UseCanonicalDirectedPolicy_WithoutLegacyBroadMutationAliases()
+    {
+        var stage9 = ReadSource("backend-dotnet", "Controllers", "Stage9Endpoints.cs");
+
+        Assert.Contains("RequirePermission(http, \"dispatch.smart_assign.read\")", stage9, StringComparison.Ordinal);
+        Assert.Contains("RequirePermission(http, \"dispatch.smart_assign.recommend\")", stage9, StringComparison.Ordinal);
+        Assert.Contains("RequirePermission(http, \"dispatch.smart_assign.accept\")", stage9, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"dispatch.smart_assign.recommend\", \"dispatch:assign\"", stage9, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"dispatch.smart_assign.accept\", \"dispatch:assign\"", stage9, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"operations.site_access.create\", \"job:update\"", stage9, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"operations.access_document.create\", \"dispatch:manage\"", stage9, StringComparison.Ordinal);
+        Assert.Contains("? \"operations.access_document.verify\"", stage9, StringComparison.Ordinal);
+        Assert.Contains("? \"operations.pickup_authorization.verify\"", stage9, StringComparison.Ordinal);
+        Assert.Contains("RequirePermission(http, \"operations.proof.update\")", stage9, StringComparison.Ordinal);
+        Assert.Contains("RequirePermission(http, \"operations.proof.submit\")", stage9, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"operations.proof.update\", \"operations.proof.create\"", stage9, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"operations.proof.submit\", \"operations.proof.create\"", stage9, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void GenericStage9MutationsDoNotTreatDriverSelfAsAnOperationsGrant()
     {
         var stage9 = ReadSource("backend-dotnet", "Controllers", "Stage9Endpoints.cs");

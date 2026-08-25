@@ -101,7 +101,7 @@ export const modules: ModuleConfig[] = [
   { key: "fleet-compliance", title: "Fleet Compliance", route: "/fleet-compliance", group: "Fleet", description: "Market-pack readiness — Canada/NA driver qualification, DVIR, IFTA & HOS/ELD foundation; Saudi/GCC transport documents, VAT & Hijri expiry.", accent: "blue", requiredPermission: "compliance:view", requiredEntitlement: "compliance" },
   { key: "vehicles",    title: "Vehicles",    route: "/vehicles",    group: "Fleet", description: "Fleet registry, age, readiness, documents, device visibility and lifecycle planning.", accent: "blue",   requiredPermission: "vehicles:view" },
   { key: "drivers",     title: "Drivers",     route: "/drivers",     group: "Fleet", description: "Driver availability, HOS, safety, documents, assignment and coaching state.", accent: "green",  requiredPermission: "drivers:view" },
-  { key: "owners",      title: "Owners",      route: "/owners",      group: "Fleet", description: "Owner-operator and asset ownership management.", accent: "teal",   requiredPermission: "fleet.view" },
+  { key: "owners",      title: "Owners",      route: "/owners",      group: "Fleet", description: "Owner-operator and asset ownership management.", accent: "teal",   requiredPermission: "dispatch:view" },
   { key: "assignments", title: "Assignments", route: "/assignments", group: "Fleet", description: "Driver, vehicle, device and asset assignment history.", accent: "purple", requiredPermission: "dispatch:view" },
   { key: "documents",   title: "Documents",   route: "/documents",   group: "Fleet", description: "Vehicle, driver, contract, POD, invoice and compliance document vault.", accent: "blue",   requiredPermission: "fleet.view" },
 

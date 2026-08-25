@@ -12,6 +12,7 @@ using Opstrax.Api.Foundation;
 using Opstrax.Api.Data;
 using Opstrax.Api.DTOs;
 using Opstrax.Api.Observability;
+using Opstrax.Api.Security;
 using Opstrax.Api.Services;
 
 namespace Opstrax.Api.Controllers;
@@ -33,10 +34,28 @@ public static partial class EndpointMappings
         "Active", "Inactive", "Pending", "Suspended"
     };
 
-    // True when the authenticated principal is a customer-portal user (bound to a
-    // customer_id). Such principals may ONLY use customer_portal:* permissions.
+    // A persisted customer binding is authoritative, but permission shape is also
+    // authoritative when the row is malformed. Otherwise a portal role with a NULL
+    // customer_id is silently promoted into an internal tenant principal.
     public static bool IsCustomerPortalPrincipal(HttpContext http)
-        => http.Items.TryGetValue(AuthCustomerIdItemKey, out var v) && v is not null and not DBNull;
+    {
+        if (http.Items.TryGetValue(AuthCustomerIdItemKey, out var v) && v is not null and not DBNull)
+            return true;
+        return http.Items.TryGetValue(AuthPermissionsItemKey, out var raw)
+            && raw is string[] permissions
+            && IsCustomerPortalPermissionShape(permissions);
+    }
+
+    internal static bool IsCustomerPortalPermissionShape(IEnumerable<string> permissions)
+    {
+        static string Normalize(string value) => value.Trim().ToLowerInvariant()
+            .Replace('.', ':').Replace('-', '_');
+        var direct = permissions.Select(Normalize)
+            .Where(static value => value.Length > 0)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (direct.Contains("*") || !direct.Contains("customer_portal:view")) return false;
+        return !InternalOnlyDirectGrants.Select(Normalize).Any(direct.Contains);
+    }
 
     private static bool IsCustomerPortalPermission(string permission)
         => permission.StartsWith("customer_portal", StringComparison.OrdinalIgnoreCase)
@@ -474,6 +493,7 @@ public static partial class EndpointMappings
         app.MapGet("/api/customer-eta/communications", CustomerEtaCommunications);
         app.MapGet("/api/customer-eta/recommendations", (HttpContext http, Database db, CancellationToken ct) =>
         {
+            if (RequireInternalUser(http) is { } internalDenied) return Task.FromResult(internalDenied);
             if (RequirePermission(http, "customer_portal:view") is { } denied) return Task.FromResult(denied);
             return OkRows(db, "SELECT * FROM ai_recommendations WHERE module_key IN ('customer-eta','customer-portal') AND company_id=@cid ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
         });
@@ -482,21 +502,25 @@ public static partial class EndpointMappings
         // Internal (session-auth): requires customer_portal:view or customer_portal:manage
         app.MapGet("/api/customer-visibility/shipments", (HttpContext http, Database db, CancellationToken ct) =>
         {
+            if (RequireInternalUser(http) is { } internalDenied) return Task.FromResult(internalDenied);
             var denied = RequirePermission(http, "customer_portal:view");
             return denied is not null ? Task.FromResult(denied) : CustomerVisibilityShipments(http, db, ct);
         });
         app.MapGet("/api/customer-visibility/shipments/{id:long}", (HttpContext http, long id, Database db, CancellationToken ct) =>
         {
+            if (RequireInternalUser(http) is { } internalDenied) return Task.FromResult(internalDenied);
             var denied = RequirePermission(http, "customer_portal:view");
             return denied is not null ? Task.FromResult(denied) : CustomerVisibilityShipmentDetail(http, id, db, ct);
         });
         app.MapPost("/api/customer-visibility/shipments/{id:long}/share", (HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) =>
         {
+            if (RequireInternalUser(http) is { } internalDenied) return Task.FromResult(internalDenied);
             var denied = RequirePermission(http, "customer_portal:manage");
             return denied is not null ? Task.FromResult(denied) : CustomerVisibilityShare(http, id, body, db, audit, ct);
         });
         app.MapDelete("/api/customer-visibility/shipments/{id:long}/share", async (HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) =>
         {
+            if (RequireInternalUser(http) is { } internalDenied) return internalDenied;
             var denied = RequirePermission(http, "customer_portal:manage");
             if (denied is not null) return denied;
             var companyId = GetCompanyId(http);
@@ -508,6 +532,7 @@ public static partial class EndpointMappings
         });
         app.MapGet("/api/customer-visibility/insights", (HttpContext http, Database db, CancellationToken ct) =>
         {
+            if (RequireInternalUser(http) is { } internalDenied) return Task.FromResult(internalDenied);
             var denied = RequirePermission(http, "customer_portal:view");
             return denied is not null ? Task.FromResult(denied) : CustomerVisibilityInsights(http, db, ct);
         });
@@ -2323,15 +2348,15 @@ public static partial class EndpointMappings
     internal static readonly Dictionary<string, string[]> RolePermissionDefaults = new(StringComparer.OrdinalIgnoreCase)
     {
         ["Super Admin"]              = ["*"],
-        ["Tenant Admin"]             = ["dashboard:view","vehicles:view","vehicles:create","vehicles:update","vehicles:delete","vehicles:assign","vehicles:export","drivers:view","drivers:create","drivers:update","drivers:delete","drivers:assign","drivers:export","shipments:view","shipments:create","shipments:update","shipments:delete","shipments:export","dispatch:view","dispatch:create","dispatch:update","dispatch:assign","dispatch:cancel","dispatch:override","customer_portal:view","customer_portal:manage","customers:view","customers:create","customers:update","customers:delete","safety:view","safety:create","safety:update","safety:review","safety:evidence:view","safety:evidence:export","maintenance:view","maintenance:create","maintenance:update","maintenance:close","compliance:view","compliance:update","compliance:export","compliance:manage","alerts:view","alerts:acknowledge","alerts:close","reports:view","reports:export","users:view","users:create","users:update","users:delete","roles:view","roles:update","settings:view","settings:update","audit:view","notifications:view","notifications:manage","messages:send","escalation:manage","ops:view","security:view","security:manage","access_review:view","access_review:manage"],
-        ["Fleet Owner"]              = ["dashboard:view","vehicles:view","vehicles:create","vehicles:update","vehicles:delete","vehicles:assign","vehicles:export","drivers:view","drivers:create","drivers:update","drivers:delete","drivers:assign","drivers:export","shipments:view","shipments:create","shipments:update","shipments:delete","shipments:export","dispatch:view","dispatch:create","dispatch:update","dispatch:assign","dispatch:cancel","dispatch:override","customer_portal:view","customer_portal:manage","carriers:view","carriers:manage","fuel:view","fuel:manage","billing:view","billing:manage","alerts:view","alerts:acknowledge","alerts:close","maintenance:view","maintenance:create","maintenance:update","maintenance:close","maintenance:manage","compliance:view","compliance:update","compliance:export","reports:view","reports:export","notifications:view","notifications:manage","messages:send","escalation:manage","settings:view","settings:update","fleet.read","fleet.manage","fleet.admin"],
+        ["Tenant Admin"]             = ["dashboard:view","vehicles:view","vehicles:create","vehicles:update","vehicles:delete","vehicles:assign","vehicles:export","fleet:manage","drivers:view","drivers:create","drivers:update","drivers:delete","drivers:assign","drivers:export","shipments:view","shipments:create","shipments:update","shipments:delete","shipments:export","dispatch:view","dispatch:create","dispatch:update","dispatch:assign","dispatch:cancel","dispatch:manage","dispatch:override","customer_portal:view","customer_portal:manage","customers:view","customers:create","customers:update","customers:delete","safety:view","safety:create","safety:update","safety:review","safety:manage","safety:evidence:view","safety:evidence:export","maintenance:view","maintenance:create","maintenance:update","maintenance:close","maintenance:manage","compliance:view","compliance:update","compliance:export","compliance:manage","alerts:view","alerts:acknowledge","alerts:close","alerts:manage","reports:view","reports:export","reports:manage","users:view","users:create","users:update","users:delete","users:manage","roles:view","roles:update","roles:manage","settings:view","settings:update","settings:manage","audit:view","notifications:view","notifications:manage","messages:send","escalation:manage","ops:view","security:view","security:manage","access_review:view","access_review:manage"],
+        ["Fleet Owner"]              = ["dashboard:view","vehicles:view","vehicles:create","vehicles:update","vehicles:delete","vehicles:assign","vehicles:export","drivers:view","drivers:create","drivers:update","drivers:delete","drivers:assign","drivers:export","shipments:view","shipments:create","shipments:update","shipments:delete","shipments:export","dispatch:view","dispatch:create","dispatch:update","dispatch:assign","dispatch:cancel","dispatch:manage","dispatch:override","customer_portal:view","customer_portal:manage","carriers:view","carriers:manage","fuel:view","fuel:manage","billing:view","billing:manage","alerts:view","alerts:acknowledge","alerts:close","alerts:manage","maintenance:view","maintenance:create","maintenance:update","maintenance:close","maintenance:manage","compliance:view","compliance:update","compliance:export","compliance:manage","reports:view","reports:export","reports:manage","notifications:view","notifications:manage","messages:send","escalation:manage","settings:view","settings:update","settings:manage","fleet.read","fleet.manage","fleet.admin"],
         // NEW-R1-06 reconciliation: map:view + telematics:view are what database/init/002_seed.sql
         // role 3 actually grants a Fleet Manager (seed:31). These defaults are the FALLBACK the
         // middleware uses whenever a tenant's roles table has no matching row, and there the
         // telematics surface was bare — a Fleet Manager on a tenant without seeded roles lost the
         // live map entirely. Reconciled to the seed and NOT beyond it: the seed does NOT grant
         // this role telematics:devices:view, so the device registry stays closed to it.
-        ["Fleet Manager"]            = ["dashboard:view","vehicles:view","vehicles:create","vehicles:update","vehicles:delete","vehicles:assign","vehicles:export","drivers:view","drivers:create","drivers:update","drivers:delete","drivers:assign","drivers:export","shipments:view","shipments:create","shipments:update","shipments:delete","shipments:export","dispatch:view","dispatch:create","dispatch:update","dispatch:assign","dispatch:cancel","dispatch:override","customer_portal:view","customer_portal:manage","carriers:view","carriers:manage","fuel:view","fuel:manage","billing:view","alerts:view","alerts:acknowledge","alerts:close","maintenance:view","maintenance:create","maintenance:update","maintenance:close","maintenance:manage","compliance:view","compliance:update","compliance:export","reports:view","reports:export","notifications:view","notifications:manage","messages:send","escalation:manage","map:view","telematics:view","fleet.read","fleet.manage"],
+        ["Fleet Manager"]            = ["dashboard:view","vehicles:view","vehicles:create","vehicles:update","vehicles:delete","vehicles:assign","vehicles:export","drivers:view","drivers:create","drivers:update","drivers:delete","drivers:assign","drivers:export","shipments:view","shipments:create","shipments:update","shipments:delete","shipments:export","dispatch:view","dispatch:create","dispatch:update","dispatch:assign","dispatch:cancel","dispatch:manage","dispatch:override","customer_portal:view","customer_portal:manage","carriers:view","carriers:manage","fuel:view","fuel:manage","billing:view","alerts:view","alerts:acknowledge","alerts:close","alerts:manage","maintenance:view","maintenance:create","maintenance:update","maintenance:close","maintenance:manage","compliance:view","compliance:update","compliance:export","compliance:manage","reports:view","reports:export","reports:manage","notifications:view","notifications:manage","messages:send","escalation:manage","map:view","telematics:view","fleet.read","fleet.manage"],
         // NOTE: customer_portal:manage (customer tracking-link management) is a
         // SUPERVISOR-only permission by the P4.1 security model (Tenant Admin / Fleet
         // Owner / Fleet Manager). Dispatcher manages shipments/stops/POD but not
@@ -2350,14 +2375,14 @@ public static partial class EndpointMappings
         // API directly. Driver is an AUTHORITATIVE role in RolePermissionReconciler, so this list
         // is the exact grant set — stray grants are revoked, keeping the portal genuinely isolated.
         ["Driver"]                   = ["driver:self","notifications:view","messages:send"],
-        ["Safety Manager"]           = ["dashboard:view","safety:view","safety:create","safety:update","safety:review","safety:evidence:view","safety:evidence:export","alerts:view","alerts:acknowledge","alerts:close","compliance:view","compliance:update","compliance:export","reports:view","notifications:view"],
+        ["Safety Manager"]           = ["dashboard:view","safety:view","safety:create","safety:update","safety:review","safety:manage","safety:evidence:view","safety:evidence:export","alerts:view","alerts:acknowledge","alerts:close","compliance:view","compliance:update","compliance:export","compliance:manage","reports:view","notifications:view"],
         // NEW-R1-06, DECLINED deliberately: the bare telematics surface is CORRECT here.
         // 'Maintenance Manager' has no row in database/init/002_seed.sql at all; its closest
         // seeded analogue is 'Mechanic' (role 6: maintenance:view, maintenance:manage,
         // dvir:review, fleet:view), which the seed grants NEITHER map:view NOR any telematics
         // token. Adding either would widen BEYOND the seed rather than reconcile with it.
-        ["Maintenance Manager"]      = ["dashboard:view","vehicles:view","maintenance:view","maintenance:create","maintenance:update","maintenance:close","alerts:view","alerts:acknowledge","alerts:close","compliance:view","reports:view","notifications:view"],
-        ["Customer"]                 = ["shipments:view","customer_portal:view","alerts:view"],
+        ["Maintenance Manager"]      = ["dashboard:view","vehicles:view","maintenance:view","maintenance:create","maintenance:update","maintenance:close","maintenance:manage","alerts:view","alerts:acknowledge","alerts:close","compliance:view","reports:view","notifications:view"],
+        ["Customer"]                 = ["customer_portal:view"],
         // NEW-R1-06, DECLINED deliberately: the bare telematics surface is CORRECT here.
         // The seed's 'Read-only Auditor' (role 12) is audit:view + fleet:view + dashboard:view —
         // no map:view, no telematics token. Granting map:view would ALSO hand this read-only role
@@ -2368,12 +2393,12 @@ public static partial class EndpointMappings
         ["Mechanic"]                 = ["maintenance:view","maintenance:manage","fleet:view"],
         ["Compliance Manager"]       = ["compliance:view","compliance:manage","audit:view","fleet:view","dashboard:view","security:view","access_review:view","access_review:manage"],
         ["Customer Service"]         = ["customers:view","customer_portal:view","dispatch:view","crm:view"],
-        ["Customer Portal User"]     = ["customer_portal:view","shipments:view"],
+        ["Customer Portal User"]     = ["customer_portal:view"],
         ["Reseller / Partner Admin"] = ["*"],
         // ── Fleet/TMS personas (additive, permission-scoped) ──
         ["Carrier Partner"]          = ["dashboard:view","shipments:view","carriers:view","dispatch:view","fleet.shipments.view","fleet.carriers.view","notifications:view"],
         ["Finance/Billing User"]     = ["dashboard:view","billing:view","billing:manage","reports:view","reports:export","shipments:view","customers:view","fleet.billing.view","fleet.billing.manage","fleet.read"],
-        ["Customer Viewer"]          = ["customer_portal:view","shipments:view","fleet.pod.view","fleet.tracking.view","fleet.shipments.view"],
+        ["Customer Viewer"]          = ["customer_portal:view"],
     };
 
     /// <summary>
@@ -2514,12 +2539,7 @@ public static partial class EndpointMappings
     }
 
     public static bool HasPermission(IReadOnlyCollection<string> permissions, string requiredPermission)
-    {
-        if (permissions.Count == 0) return false;
-        if (permissions.Any(static p => string.Equals(p, "*", StringComparison.OrdinalIgnoreCase))) return true;
-        var set = permissions.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return PermissionAliases(requiredPermission).Any(set.Contains);
-    }
+        => PermissionPolicy.Allows(permissions, requiredPermission);
 
     public static IResult? RequirePermission(HttpContext http, string permission)
     {
@@ -2539,10 +2559,7 @@ public static partial class EndpointMappings
         // customer_portal:* permissions. This rejects them from EVERY internal endpoint
         // even when their role grants an overlapping permission (e.g. shipments:view),
         // and independently of whether the endpoint scopes by company_id.
-        if (IsCustomerPortalPrincipal(http) && !IsCustomerPortalPermission(permission))
-        {
-            return Results.Json(ApiResponse<object>.Fail("Forbidden", "Customer-portal accounts cannot access internal endpoints"), statusCode: StatusCodes.Status403Forbidden);
-        }
+        var portalBoundaryDenied = IsCustomerPortalPrincipal(http) && !IsCustomerPortalPermission(permission);
 
         var role = http.Items.TryGetValue(AuthRoleItemKey, out var roleRaw) ? roleRaw?.ToString() : null;
         if (string.IsNullOrWhiteSpace(role))
@@ -2554,15 +2571,11 @@ public static partial class EndpointMappings
         var correlation = services?.GetService<ICorrelationContext>();
         var authorization = services?.GetService<IAuthorizationDecisionService>() ?? AuthorizationEngine.Default;
         var audit = services?.GetService<IAuditLogService>();
-        var effectivePermissions = permissions
-            .SelectMany(PermissionAliases)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
         var actor = new ActorContext(
             ActorTypes.TenantUser,
             userIdRaw?.ToString(),
             role,
-            effectivePermissions,
+            permissions,
             companyId.ToString());
 
         var decision = authorization.Decide(new AuthorizationDecisionRequest(
@@ -2571,7 +2584,9 @@ public static partial class EndpointMappings
             new ResourceContext("api_endpoint", permission, actor.TenantId, actor.ActorId),
             null,
             null,
-            new AuthorizationPolicyContext(),
+            new AuthorizationPolicyContext(
+                DenyOverride: portalBoundaryDenied,
+                Reason: portalBoundaryDenied ? "Customer-portal accounts cannot access internal endpoints" : null),
             correlation?.CorrelationId,
             correlation?.RequestId));
 
@@ -2726,6 +2741,9 @@ public static partial class EndpointMappings
         return branchId is null ? ("", null) : ($" AND {alias}.branch_id = @branchId", branchId);
     }
 
+    // Legacy vocabulary inventory retained temporarily for migration/test discovery.
+    // Runtime authorization no longer calls this symmetric table; PermissionPolicy is
+    // the sole enforcing authority.
     private static IEnumerable<string> PermissionAliases(string permission)
     {
         var normalized = permission.ToLowerInvariant();
@@ -2968,7 +2986,7 @@ public static partial class EndpointMappings
             return InvalidCredentials();
 
         var user = await db.QuerySingleAsync(
-            @"SELECT u.id, u.full_name, u.email, u.role_name, u.role_id, u.permissions_json, u.password_hash, u.status user_status,
+            @"SELECT u.id, u.full_name, u.email, u.role_name, u.role_id, u.permissions_json, u.customer_id, u.password_hash, u.status user_status,
                      c.id company_id, c.name company_name, c.company_code, c.status company_status, c.country company_country, c.currency company_currency,
                      c.entitlement_policy_mode
               FROM users u JOIN companies c ON c.id = u.company_id
@@ -3028,6 +3046,13 @@ public static partial class EndpointMappings
         http.Items[AuthUserIdItemKey] = userId;
         http.Items[AuthRoleItemKey] = role;
 
+        // Validate the principal shape before returning an MFA challenge. A challenge is
+        // already an authentication capability; malformed portal identities must fail
+        // closed before either challenge or session issuance.
+        var permissions = await ResolvePermissionsAsync(user, db, ct);
+        if (!await PortalSessionBindingIsValidAsync(db, companyId, user, permissions, ct))
+            return InvalidPortalBinding();
+
         if (SecuritySettingsService.IsMfaRequiredForRole(settings, role))
         {
             await audit.LogAsync(http, "user.login.mfa_required", "User", userId,
@@ -3067,7 +3092,6 @@ public static partial class EndpointMappings
         await passwordPolicy.RecordSuccessfulLoginAsync(
             companyId, userId, sourceIp, userAgent, ct);
 
-        var permissions = await ResolvePermissionsAsync(user, db, ct);
         var entitlements = await ResolveAuthEntitlementsAsync(db, companyId, ct);
 
         var token = Convert.ToBase64String(Guid.NewGuid().ToByteArray());
@@ -3628,7 +3652,7 @@ public static partial class EndpointMappings
 
         // Reload the user (same shape as Login's success response).
         var user = await db.QuerySingleAsync(
-            @"SELECT u.id, u.full_name, u.email, u.role_name, u.role_id, u.permissions_json, u.status user_status,
+            @"SELECT u.id, u.full_name, u.email, u.role_name, u.role_id, u.permissions_json, u.customer_id, u.status user_status,
                      c.id company_id, c.name company_name, c.company_code, c.status company_status, c.country company_country, c.currency company_currency
               FROM users u JOIN companies c ON c.id = u.company_id
               WHERE u.id=@id AND u.company_id=@cid LIMIT 1
@@ -3700,6 +3724,8 @@ public static partial class EndpointMappings
         await audit.LogAsync(http, "user.login", "User", userId, JsonSerializer.Serialize(new { source = "login-verify", mfa = true }), ct: ct);
 
         var permissions = await ResolvePermissionsAsync(user, db, ct);
+        if (!await PortalSessionBindingIsValidAsync(db, companyId, user, permissions, ct))
+            return InvalidPortalBinding();
         var token = Convert.ToBase64String(Guid.NewGuid().ToByteArray());
         var csrfToken = CurrentCsrfToken(http);
         await db.ExecuteAsync(
@@ -3948,7 +3974,8 @@ public static partial class EndpointMappings
         // tenant even if the email happens to exist there.
         var companyId = Convert.ToInt64(row["companyId"]);
         var user = await db.QuerySingleAsync(
-            @"SELECT u.id, u.status user_status, c.status company_status
+            @"SELECT u.id, u.role_name, u.role_id, u.permissions_json, u.customer_id,
+                     u.status user_status, c.status company_status
               FROM users u JOIN companies c ON c.id=u.company_id
               WHERE LOWER(u.email)=@email AND u.company_id=@cid LIMIT 1",
             c => { c.Parameters.AddWithValue("@email", email); c.Parameters.AddWithValue("@cid", companyId); }, ct);
@@ -3961,6 +3988,9 @@ public static partial class EndpointMappings
             return SsoError("sso_tenant_suspended");
 
         var userId = Convert.ToInt64(user["id"]);
+        var permissions = await ResolvePermissionsAsync(user, db, ct);
+        if (!await PortalSessionBindingIsValidAsync(db, companyId, user, permissions, ct))
+            return SsoError("sso_account_configuration_invalid");
         http.Items[AuthCompanyIdItemKey] = companyId;
         http.Items[AuthUserIdItemKey]    = userId;
 
@@ -8104,6 +8134,7 @@ public static partial class EndpointMappings
 
     private static async Task<IResult> CustomerEtaSummary(HttpContext http, Database db, CancellationToken ct)
     {
+        if (RequireInternalUser(http) is { } internalDenied) return internalDenied;
         if (RequirePermission(http, "customer_portal:view") is { } denied) return denied;
         var companyId = GetCompanyId(http);
         var row = await db.QuerySingleAsync(
@@ -8196,6 +8227,7 @@ public static partial class EndpointMappings
 
     private static Task<IResult> CustomerEtaCommunications(HttpContext http, Database db, CancellationToken ct)
     {
+        if (RequireInternalUser(http) is { } internalDenied) return Task.FromResult(internalDenied);
         if (RequirePermission(http, "customer_portal:view") is { } denied) return Task.FromResult(denied);
         return OkRows(db,
             @"SELECT cc.*, c.name customer_name, COALESCE(j.job_number,j.job_code) job_number, j.tracking_code
@@ -14261,10 +14293,25 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     // DEF-027: a customer-scope binding is only valid against a live customer of the
     // SAME tenant. A cross-tenant id would be a data grant into another company; a
     // dangling/deleted id produces the silent-empty-portal failure this defect is about.
-    private static async Task<bool> CustomerBindingIsValidAsync(Database db, long companyId, long customerId, CancellationToken ct)
+    internal static async Task<bool> CustomerBindingIsValidAsync(Database db, long companyId, long customerId, CancellationToken ct)
         => await db.ScalarLongAsync(
-            "SELECT COUNT(*) FROM customers WHERE id=@customerId AND company_id=@companyId AND deleted_at IS NULL",
+            "SELECT COUNT(*) FROM customers WHERE id=@customerId AND company_id=@companyId AND deleted_at IS NULL AND LOWER(BTRIM(status))='active'",
             c => { c.Parameters.AddWithValue("@customerId", customerId); c.Parameters.AddWithValue("@companyId", companyId); }, ct) == 1;
+
+    private static async Task<bool> PortalSessionBindingIsValidAsync(
+        Database db, long companyId, Dictionary<string, object?> user, string[] permissions, CancellationToken ct)
+    {
+        if (!IsCustomerPortalPermissionShape(permissions)) return true;
+        if (!user.TryGetValue("customerId", out var raw) || raw is null or DBNull ||
+            !long.TryParse(raw.ToString(), out var customerId) || customerId <= 0)
+            return false;
+        return await CustomerBindingIsValidAsync(db, companyId, customerId, ct);
+    }
+
+    private static IResult InvalidPortalBinding() => Results.Json(
+        ApiResponse<object>.Fail("Account configuration invalid",
+            "This customer-portal account is not attached to an active customer. Contact an administrator."),
+        statusCode: StatusCodes.Status403Forbidden);
 
     // A customer binding turns the principal into a customer-portal principal (the
     // middleware sets AuthCustomerIdItemKey from users.customer_id), which locks it out
@@ -14306,43 +14353,23 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     /// bindable, <c>customer_portal:view</c> is required, and ANY internal-only direct
     /// grant disqualifies. Fail-closed: an unresolvable role is rejected.
     /// </summary>
-    private static async Task<IResult?> RequireCustomerBindableRoleAsync(
+    internal static async Task<bool> IsCustomerPortalRoleAsync(
         Database db, Dictionary<string, object?>? role, string? roleName, CancellationToken ct)
     {
-        var denied = Results.BadRequest(ApiResponse<object>.Fail("Validation failed",
-            ["A customer binding is only valid for customer-portal roles. Internal roles must not be bound to a customer — the account would lose access to every internal page."]));
-        if (string.IsNullOrWhiteSpace(roleName)) return denied;
+        if (string.IsNullOrWhiteSpace(roleName)) return false;
 
         var roleId = role?.GetValueOrDefault("id") is { } rawId and not DBNull ? Convert.ToInt64(rawId) : 0L;
         var permissions = await ResolveEffectivePermissionsAsync(
             roleId, roleName, role?.GetValueOrDefault("permissionsJson"), null, db, ct);
-        if (permissions.Length == 0) return denied; // fail closed on an unresolvable role
+        return permissions.Length > 0 && IsCustomerPortalPermissionShape(permissions);
+    }
 
-        var direct = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var permission in permissions)
-        {
-            var token = permission.Trim();
-            if (token.Length == 0) continue;
-            direct.Add(token);
-            direct.Add(token.Replace('.', ':'));
-            direct.Add(token.Replace(':', '.'));
-            // The '-' ↔ '_' fold matters as much as '.' ↔ ':' here. The DB seed spells
-            // portal/vendor tokens with a hyphen (customer-portal:view, roles 9/10) while
-            // the backend defaults use an underscore, and the SPA's isPortalConfinedSession
-            // folds both. Without this, a role spelled `vendor-portal:view` is INTERNAL to
-            // the SPA (which normalises it to vendor_portal:view and refuses to confine it)
-            // and NOT internal here — so an admin could bind that account to a customer and
-            // brick it: every internal endpoint then rejects the principal outright.
-            direct.Add(token.Replace('-', '_'));
-            direct.Add(token.Replace('_', '-'));
-        }
-
-        if (direct.Contains("*")) return denied;                        // wildcard admin
-        if (!direct.Contains("customer_portal:view") &&
-            !direct.Contains("customer-portal:view")) return denied;    // not a portal identity
-        if (InternalOnlyDirectGrants.Any(direct.Contains)) return denied; // internal staff
-
-        return null;
+    private static async Task<IResult?> RequireCustomerBindableRoleAsync(
+        Database db, Dictionary<string, object?>? role, string? roleName, CancellationToken ct)
+    {
+        if (await IsCustomerPortalRoleAsync(db, role, roleName, ct)) return null;
+        return Results.BadRequest(ApiResponse<object>.Fail("Validation failed",
+            ["A customer binding is only valid for customer-portal roles. Internal roles must not be bound to a customer — the account would lose access to every internal page."]));
     }
 
     internal static async Task<IResult> CreateAdminUser(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
@@ -14376,6 +14403,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             return Results.BadRequest(ApiResponse<object>.Fail("Validation failed", ["Unsupported user status."]));
         var roleName = Val(role.GetValueOrDefault("name"))!;
         var permissionsJson = "[]";
+        var portalRole = await IsCustomerPortalRoleAsync(db, role, roleName.ToString(), ct);
 
         // DEF-027: optional customer-scope binding (what makes /api/portal/* resolve).
         long? customerId = null;
@@ -14390,6 +14418,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                     ["The selected customer does not exist in this organization (or was deleted). Refresh the customer list and try again."]));
             customerId = parsedCustomerId;
         }
+        if (portalRole && customerId is null)
+            return Results.BadRequest(ApiResponse<object>.Fail("Validation failed",
+                ["Customer-portal roles require an active customer binding."]));
 
         // Seat-limit quota (Platform Admin commercial control): block creation once the
         // tenant is at its subscribed seat count. No subscription row = no cap (legacy).
@@ -14457,6 +14488,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var newRoleName = role?.GetValueOrDefault("name")?.ToString() ?? Get(body, "roleName")?.ToString() ?? oldRoleName;
         var roleChanged = !string.Equals(oldRoleName, newRoleName, StringComparison.OrdinalIgnoreCase);
         var permissionsJson = "[]";
+        var portalRole = await IsCustomerPortalRoleAsync(db, role, newRoleName, ct);
 
         var requestedStatus = Get(body, "status")?.ToString()?.Trim();
         if (!string.IsNullOrWhiteSpace(requestedStatus) && !AllowedUserStatuses.Contains(requestedStatus))
@@ -14501,6 +14533,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         {
             newCustomerId = null;
         }
+        if (portalRole && newCustomerId is null)
+            return Results.BadRequest(ApiResponse<object>.Fail("Validation failed",
+                ["Customer-portal roles require an active customer binding."]));
 
         var bindingChanged = newCustomerId != oldCustomerId;
 
@@ -25083,11 +25118,32 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     // All analytics endpoints compute from real operational data.
     // Labeled as "System Analytics Insight" — not presented as AI-generated.
 
+    // The current analytics datasets combine tables with incompatible branch ownership
+    // (some direct, some parent-derived, and some tenant-only SLA rows). Until every query
+    // has one reviewed derivation, fail closed instead of returning tenant-wide aggregates
+    // to a branch principal. Tenant-wide principals retain the existing behavior.
+    private static IResult? RequireAnalyticsBranchScope(HttpContext http)
+    {
+        // /api/analytics/customer is an internal tenant aggregate despite its legacy
+        // customer_portal:view gate. A portal principal must use /api/portal/*, whose
+        // queries carry both company_id and customer_id.
+        if (IsCustomerPortalPrincipal(http))
+            return Results.Json(ApiResponse<object>.Fail("Forbidden",
+                "Customer-portal accounts cannot access tenant analytics."),
+                statusCode: StatusCodes.Status403Forbidden);
+        return GetBranchId(http) is null
+            ? null
+            : Results.Json(ApiResponse<object>.Fail("Forbidden",
+                "Analytics is not available for branch-scoped accounts."),
+                statusCode: StatusCodes.Status403Forbidden);
+    }
+
     private static async Task<IResult> AnalyticsExecutive(HttpContext http, Database db, CancellationToken ct)
     {
         var c = GetCompanyId(http);
         var denied = RequirePermission(http, "dashboard:view");
         if (denied is not null) return denied;
+        if (RequireAnalyticsBranchScope(http) is { } branchDenied) return branchDenied;
 
         var vehicleTotal  = await db.ScalarLongAsync("SELECT COUNT(*) FROM vehicles WHERE company_id=@c AND deleted_at IS NULL", p => p.Parameters.AddWithValue("@c", c), ct);
         var vehicleActive = await db.ScalarLongAsync("SELECT COUNT(*) FROM vehicles WHERE company_id=@c AND deleted_at IS NULL AND status IN ('Active','In Transit','Assigned')", p => p.Parameters.AddWithValue("@c", c), ct);
@@ -25129,6 +25185,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var c      = GetCompanyId(http);
         var denied = RequirePermission(http, "dispatch:view");
         if (denied is not null) return denied;
+        if (RequireAnalyticsBranchScope(http) is { } branchDenied) return branchDenied;
 
         var activeTrips    = await db.ScalarLongAsync("SELECT COUNT(*) FROM trips WHERE company_id=@c AND status IN ('Active','In Progress','In Transit')", p => p.Parameters.AddWithValue("@c", c), ct);
         var tripsToday     = await db.ScalarLongAsync("SELECT COUNT(*) FROM trips WHERE company_id=@c AND started_at::date=CURRENT_DATE", p => p.Parameters.AddWithValue("@c", c), ct);
@@ -25154,6 +25211,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var c      = GetCompanyId(http);
         var denied = RequirePermission(http, "dispatch:view");
         if (denied is not null) return denied;
+        if (RequireAnalyticsBranchScope(http) is { } branchDenied) return branchDenied;
 
         var assigned  = await db.ScalarLongAsync("SELECT COUNT(*) FROM dispatch_assignments WHERE company_id=@c AND assignment_status='assigned'", p => p.Parameters.AddWithValue("@c", c), ct);
         var accepted  = await db.ScalarLongAsync("SELECT COUNT(*) FROM dispatch_assignments WHERE company_id=@c AND assignment_status='accepted'", p => p.Parameters.AddWithValue("@c", c), ct);
@@ -25181,6 +25239,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var c      = GetCompanyId(http);
         var denied = RequirePermission(http, "safety:view");
         if (denied is not null) return denied;
+        if (RequireAnalyticsBranchScope(http) is { } branchDenied) return branchDenied;
 
         var totalEvents   = await db.ScalarLongAsync("SELECT COUNT(*) FROM safety_events WHERE company_id=@c AND event_time >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
         var criticalEvents = await db.ScalarLongAsync("SELECT COUNT(*) FROM safety_events WHERE company_id=@c AND severity='Critical' AND event_time >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
@@ -25216,6 +25275,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var c      = GetCompanyId(http);
         var denied = RequirePermission(http, "maintenance:view");
         if (denied is not null) return denied;
+        if (RequireAnalyticsBranchScope(http) is { } branchDenied) return branchDenied;
 
         var oosVehicles    = await db.ScalarLongAsync("SELECT COUNT(*) FROM vehicles WHERE company_id=@c AND deleted_at IS NULL AND out_of_service=TRUE", p => p.Parameters.AddWithValue("@c", c), ct);
         var criticalDefects = await db.ScalarLongAsync("SELECT COUNT(*) FROM dvir_defects WHERE company_id=@c AND severity='Critical' AND status NOT IN ('resolved','Resolved')", p => p.Parameters.AddWithValue("@c", c), ct);
@@ -25245,6 +25305,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var c      = GetCompanyId(http);
         var denied = RequirePermission(http, "customer_portal:view");
         if (denied is not null) return denied;
+        if (RequireAnalyticsBranchScope(http) is { } branchDenied) return branchDenied;
 
         var slaTotal   = await db.ScalarLongAsync("SELECT COUNT(*) FROM sla_records WHERE tenant_id=@c", p => p.Parameters.AddWithValue("@c", c), ct);
         var slaMet     = await db.ScalarLongAsync("SELECT COUNT(*) FROM sla_records WHERE tenant_id=@c AND status='Met'", p => p.Parameters.AddWithValue("@c", c), ct);
@@ -25271,6 +25332,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var c      = GetCompanyId(http);
         var denied = RequirePermission(http, "reports:view");
         if (denied is not null) return denied;
+        if (RequireAnalyticsBranchScope(http) is { } branchDenied) return branchDenied;
 
         // 7-day daily dispatch activity
         var dispatchTrend = await db.QueryAsync(
@@ -25319,6 +25381,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var c      = GetCompanyId(http);
         var denied = RequirePermission(http, "reports:view");
         if (denied is not null) return denied;
+        if (RequireAnalyticsBranchScope(http) is { } branchDenied) return branchDenied;
 
         var insights = new List<object>();
 

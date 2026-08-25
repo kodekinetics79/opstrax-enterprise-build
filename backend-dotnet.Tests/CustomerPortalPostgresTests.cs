@@ -290,6 +290,15 @@ public class CustomerPortalPostgresTests
 
         try
         {
+            Assert.True(await EndpointMappings.CustomerBindingIsValidAsync(
+                db, companyId, ownCustomer, CancellationToken.None));
+            await db.ExecuteAsync("UPDATE customers SET status='Inactive' WHERE id=@id AND company_id=@cid",
+                c => { c.Parameters.AddWithValue("@id", ownCustomer); c.Parameters.AddWithValue("@cid", companyId); });
+            Assert.False(await EndpointMappings.CustomerBindingIsValidAsync(
+                db, companyId, ownCustomer, CancellationToken.None));
+            await db.ExecuteAsync("UPDATE customers SET status='Active' WHERE id=@id AND company_id=@cid",
+                c => { c.Parameters.AddWithValue("@id", ownCustomer); c.Parameters.AddWithValue("@cid", companyId); });
+
             // Cross-tenant customer id → clear 400 (never a silent broken binding).
             var crossTenant = await EndpointMappings.CreateAdminUser(AdminHttp(),
                 new Dictionary<string, object?>
@@ -336,23 +345,32 @@ public class CustomerPortalPostgresTests
             Assert.Equal(ownCustomer, Convert.ToInt64(newUser!["customerId"]));
             var newUserId = Convert.ToInt64(newUser["id"]);
 
-            // Update-path: clearing the binding persists NULL and writes the binding audit.
+            // Update-path: a portal role may never retain a null binding.
             var cleared = await EndpointMappings.UpdateAdminUser(AdminHttp(), newUserId,
                 new Dictionary<string, object?> { ["customerId"] = null }, db, audit, CancellationToken.None);
-            Assert.Equal(200, StatusOf(cleared));
+            Assert.Equal(400, StatusOf(cleared));
             var afterClear = await db.QuerySingleAsync("SELECT customer_id FROM users WHERE id=@id",
                 c => c.Parameters.AddWithValue("@id", newUserId));
-            Assert.True(afterClear!["customerId"] is null or DBNull);
-            var bindingAudits = await db.ScalarLongAsync(
-                "SELECT COUNT(*) FROM audit_logs WHERE company_id=@cid AND action_name='user.customer_binding.changed' AND entity_id=@uid",
-                c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@uid", newUserId); });
-            Assert.True(bindingAudits >= 1, "binding change must be audited");
+            Assert.Equal(ownCustomer, Convert.ToInt64(afterClear!["customerId"]));
 
             // Update-path cross-tenant rejection too.
             var rebindForeign = await EndpointMappings.UpdateAdminUser(AdminHttp(), newUserId,
                 new Dictionary<string, object?> { ["roleName"] = "Customer Portal User", ["customerId"] = foreignCustomer },
                 db, audit, CancellationToken.None);
             Assert.Equal(400, StatusOf(rebindForeign));
+
+            // Moving to an internal role revokes portal identity and clears stale binding.
+            var internalTransition = await EndpointMappings.UpdateAdminUser(AdminHttp(), newUserId,
+                new Dictionary<string, object?> { ["roleName"] = "Dispatcher" },
+                db, audit, CancellationToken.None);
+            Assert.Equal(200, StatusOf(internalTransition));
+            var afterTransition = await db.QuerySingleAsync("SELECT customer_id FROM users WHERE id=@id",
+                c => c.Parameters.AddWithValue("@id", newUserId));
+            Assert.True(afterTransition!["customerId"] is null or DBNull);
+            var bindingAudits = await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM audit_logs WHERE company_id=@cid AND action_name='user.customer_binding.changed' AND entity_id=@uid",
+                c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@uid", newUserId); });
+            Assert.True(bindingAudits >= 1, "binding change must be audited");
         }
         finally
         {

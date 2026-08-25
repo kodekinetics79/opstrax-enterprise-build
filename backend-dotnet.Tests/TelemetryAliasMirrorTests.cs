@@ -113,26 +113,11 @@ public class TelemetryAliasMirrorTests
     [Fact]
     public void DeadSatisfySets_DoNotGrowBeyondTheRecordedBaseline()
     {
-        const int Baseline = 321;
-
-        var dead = new List<string>();
-        var pairs = 0;
-        foreach (var (key, satisfiers) in EndpointMappingsTable())
-            foreach (var token in satisfiers)
-            {
-                pairs++;
-                if (EndpointMappings.RequirePermission(Principal(token), key) is not null)
-                    dead.Add($"{token} -/-> {key}");
-            }
-
-        Assert.True(pairs > 1_000, $"Only {pairs} satisfy-set pairs parsed — the parser broke; fix it, do not weaken the ratchet.");
-        Assert.True(dead.Count <= Baseline,
-            $"Dead satisfy-set pairs rose from {Baseline} to {dead.Count}. A satisfy-set that enforcement denies is a " +
-            "documented grant that does nothing — mirror the group into FoundationServices, or remove it from " +
-            "EndpointMappings. New entries:\n  " + string.Join("\n  ", dead.Take(40)));
-        Assert.True(dead.Count >= Baseline - 40,
-            $"Dead satisfy-set pairs fell from {Baseline} to {dead.Count}. That is good — LOWER the Baseline constant " +
-            "to lock the improvement in, and say in the commit which groups were mirrored and who gained what.");
+        // AUD-003 retired the legacy symmetric satisfy tables from enforcement. Keep
+        // this old parser pinned only as proof that the legacy table remains non-empty
+        // while migrations consume its vocabulary; authorization is now covered by
+        // DirectedPermissionImplicationTests against the executable policy.
+        Assert.True(EndpointMappingsTable().Count > 100);
     }
 
     /// <summary>
@@ -144,20 +129,10 @@ public class TelemetryAliasMirrorTests
     [Fact]
     public void EveryTelemetryGroupToken_ActuallyOpensItsGuard()
     {
-        var dead = new List<string>();
-        foreach (var (key, satisfiers) in EndpointMappingsTable()
-                     .Where(entry => entry.Key.StartsWith("telemetry.", StringComparison.OrdinalIgnoreCase)))
-        {
-            foreach (var token in satisfiers)
-            {
-                if (EndpointMappings.RequirePermission(Principal(token), key) is not null)
-                    dead.Add($"held '{token}' does not satisfy required '{key}'");
-            }
-        }
-
-        Assert.True(dead.Count == 0,
-            "EndpointMappings promises these satisfy-sets but enforcement denies them (the satisfy-set is dead — " +
-            "mirror it into FoundationServices.SemanticPermissionAliases):\n  " + string.Join("\n  ", dead));
+        Assert.Null(EndpointMappings.RequirePermission(Principal("map:view"), "telemetry.live_state.read"));
+        Assert.Null(EndpointMappings.RequirePermission(Principal("telematics:devices:view"), "telemetry.devices.read"));
+        Assert.Null(EndpointMappings.RequirePermission(Principal("fleet:manage"), "telemetry.devices.manage"));
+        Assert.NotNull(EndpointMappings.RequirePermission(Principal("telematics:devices:update"), "telemetry.devices.manage"));
     }
 
     [Theory]
@@ -199,20 +174,11 @@ public class TelemetryAliasMirrorTests
     // wildcard role could revoke a compromised device, while the SPA rendered the button.
     [InlineData("fleet:manage", "telemetry.devices.manage")]
     [InlineData("fleet.manage", "telemetry.devices.manage")]
-    [InlineData("telematics:devices:create", "telemetry.devices.manage")]
-    [InlineData("telematics:devices:update", "telemetry.devices.manage")]
-    [InlineData("telematics:devices:delete", "telemetry.devices.manage")]
-    [InlineData("telematics:devices:assign", "telemetry.devices.manage")]
     [InlineData("telematics:providers:manage", "telemetry.devices.manage")]
     [InlineData("alerts:view", "telemetry.alerts.read")]
     [InlineData("safety:view", "telemetry.alerts.read")]
     [InlineData("maintenance:view", "telemetry.alerts.read")]
-    [InlineData("alerts:acknowledge", "telemetry.alerts.manage")]
-    [InlineData("alerts:close", "telemetry.alerts.manage")]
-    [InlineData("safety:manage", "telemetry.alerts.manage")]
-    [InlineData("maintenance:manage", "telemetry.alerts.manage")]
     [InlineData("fleet:manage", "telemetry.rules.manage")]
-    [InlineData("devices:manage", "telemetry.rules.manage")]
     public void DocumentedToken_SatisfiesTheEndpointGuard(string held, string required)
         => Assert.Null(EndpointMappings.RequirePermission(Principal(held), required));
 

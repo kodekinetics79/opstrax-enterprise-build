@@ -76,7 +76,7 @@ public class FoundationTests
     [Fact]
     public void RequirePermission_Denies_ExecutionSummary_WhenPermissionMissing()
     {
-        var http = BuildHttpContext("Customer", "42", "customer_portal:view");
+        var http = BuildHttpContext("Dispatcher", "42", "dashboard:view");
 
         var result = EndpointMappings.RequirePermission(http, "operations.execution_summary.read");
 
@@ -89,7 +89,7 @@ public class FoundationTests
     [Fact]
     public void RequirePermission_Denies_VehicleSummary_WhenPermissionMissing()
     {
-        var http = BuildHttpContext("Customer", "42", "customer_portal:view");
+        var http = BuildHttpContext("Dispatcher", "42", "dashboard:view");
 
         var result = EndpointMappings.RequirePermission(http, "vehicles:view");
 
@@ -102,7 +102,7 @@ public class FoundationTests
     [Fact]
     public void RequirePermission_Denies_JobSummary_WhenPermissionMissing()
     {
-        var http = BuildHttpContext("Customer", "42", "customer_portal:view");
+        var http = BuildHttpContext("Dispatcher", "42", "dashboard:view");
 
         var result = EndpointMappings.RequirePermission(http, "shipments:view");
 

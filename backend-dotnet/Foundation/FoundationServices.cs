@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
+using Opstrax.Api.Security;
 
 namespace Opstrax.Api.Foundation;
 
@@ -58,7 +59,7 @@ public sealed class AuthorizationDecisionService(IFeatureAccessService? featureA
             return Denied(request, permission, "Tenant boundary violation");
 
         if (policy.DenyOverride)
-            return Denied(request, permission, "Deny override applied");
+            return Denied(request, permission, policy.Reason ?? "Deny override applied");
 
         if (!PermissionAllowed(actorPermissions, permission))
             return Denied(request, permission, $"Missing permission: {permission}");
@@ -106,26 +107,10 @@ public sealed class AuthorizationDecisionService(IFeatureAccessService? featureA
     }
 
     private static bool PermissionAllowed(IReadOnlyCollection<string> permissions, string permission)
-    {
-        if (permissions.Count == 0) return false;
-        if (permissions.Any(p => string.Equals(p, "*", StringComparison.OrdinalIgnoreCase))) return true;
-        var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            permission,
-            permission.Replace('.', ':'),
-            permission.Replace(':', '.'),
-        };
+        => PermissionPolicy.Allows(permissions, permission);
 
-        foreach (var alias in SemanticPermissionAliases(permission))
-        {
-            aliases.Add(alias);
-            aliases.Add(alias.Replace('.', ':'));
-            aliases.Add(alias.Replace(':', '.'));
-        }
-
-        return permissions.Any(aliases.Contains);
-    }
-
+    // Legacy vocabulary inventory only. PermissionAllowed delegates exclusively to the
+    // directed PermissionPolicy; this symmetric table must never re-enter enforcement.
     private static IEnumerable<string> SemanticPermissionAliases(string permission)
     {
         if (permission is "customer.account.read" or "customer.account.view" or "customers:view" or "crm:view")

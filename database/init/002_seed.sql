@@ -29,8 +29,8 @@ INSERT INTO roles (id, name, permissions_json) OVERRIDING SYSTEM VALUE VALUES
 (1,  'Super Admin',              jsonb_build_array('*')),
 (2,  'Company Admin',            jsonb_build_array('*')),
 (3,  'Fleet Manager',            jsonb_build_array('dashboard:view','fleet:view','fleet:manage','maintenance:view','maintenance:manage','telematics:view','dispatch:view','intelligence:view','map:view')),
-(4,  'Dispatcher',               jsonb_build_array('dashboard:view','dispatch:view','dispatch:manage','fleet:view','jobs:view','jobs:manage','map:view','customers:view')),
-(5,  'Driver',                   jsonb_build_array('driver:portal','jobs:view','dvir:manage')),
+(4,  'Dispatcher',               jsonb_build_array('dashboard:view','vehicles:view','drivers:view','shipments:view','shipments:create','shipments:update','shipments:export','dispatch:view','dispatch:create','dispatch:update','dispatch:assign','dispatch:cancel','carriers:view','fuel:view','alerts:view','alerts:acknowledge','customers:view','reports:view','notifications:view','messages:send','map:view')),
+(5,  'Driver',                   jsonb_build_array('driver:self','notifications:view','messages:send')),
 (6,  'Mechanic',                 jsonb_build_array('maintenance:view','maintenance:manage','dvir:review','fleet:view')),
 (7,  'Safety Manager',           jsonb_build_array('dashboard:view','safety:view','safety:manage','compliance:view','fleet:view','telematics:view','intelligence:view')),
 (8,  'Compliance Manager',       jsonb_build_array('dashboard:view','compliance:view','compliance:manage','audit:view','fleet:view','intelligence:view')),
@@ -49,9 +49,9 @@ INSERT INTO users (company_id, role_id, full_name, email, role_name, demo_passwo
 (1, 2, 'Avery Stone',     'admin@opstrax.com',        'Company Admin',           NULL, jsonb_build_array('*')),
 (1, 2, 'Avery Stone',     'admin@demo-fleet.com',     'Company Admin',           NULL, jsonb_build_array('*')),
 (1, 13, 'Erin Parker',    'operations@demo-fleet.com','Operations Manager',      NULL, jsonb_build_array('dashboard:view','map:view','fleet:view','dispatch:view','dispatch:manage','orders:view','orders:manage','shipments:view','shipments:manage','pod:view','pod:upload','maintenance:view','safety:view','dashcam:view','compliance:view','reports:view','settings:view')),
-(1, 4, 'Maya Patel',      'dispatcher@demo-fleet.com','Dispatcher',              NULL, jsonb_build_array('dashboard:view','dispatch:view','dispatch:manage','fleet:view','jobs:view','jobs:manage','map:view','customers:view')),
+(1, 4, 'Maya Patel',      'dispatcher@demo-fleet.com','Dispatcher',              NULL, jsonb_build_array('dashboard:view','vehicles:view','drivers:view','shipments:view','shipments:create','shipments:update','shipments:export','dispatch:view','dispatch:create','dispatch:update','dispatch:assign','dispatch:cancel','carriers:view','fuel:view','alerts:view','alerts:acknowledge','customers:view','reports:view','notifications:view','messages:send','map:view')),
 (1, 3, 'Nolan Brooks',    'fleet@demo-fleet.com',     'Fleet Manager',           NULL, jsonb_build_array('dashboard:view','fleet:view','fleet:manage','maintenance:view','maintenance:manage','telematics:view','dispatch:view','intelligence:view','map:view')),
-(1, 5, 'Omar Ali',        'driver@demo-fleet.com',    'Driver',                  NULL, jsonb_build_array('driver:portal','jobs:view','dvir:manage')),
+(1, 5, 'Omar Ali',        'driver@demo-fleet.com',    'Driver',                  NULL, jsonb_build_array('driver:self','notifications:view','messages:send')),
 (1, 7, 'Sofia Ramirez',   'safety@demo-fleet.com',    'Safety & Compliance Manager',NULL, jsonb_build_array('dashboard:view','safety:view','safety:manage','compliance:view','fleet:view','telematics:view','intelligence:view')),
 (1, 14, 'Priya Shah',     'finance@demo-fleet.com',   'Finance & Billing Manager',NULL, jsonb_build_array('finance:view','finance:manage','fuel:view','fuel:manage','reports:view','settings:view')),
 (1, 15, 'Jordan Kim',     'crm@demo-fleet.com',       'CRM & Sales Manager',     NULL, jsonb_build_array('crm:view','crm:manage','campaigns:view','campaigns:manage','customer_portal:view','reports:view')),
@@ -516,10 +516,13 @@ INSERT INTO role_permissions (role_id, permission_key) VALUES
 (3,'dashboard:view'),(3,'fleet:view'),(3,'fleet:manage'),(3,'maintenance:view'),
 (3,'maintenance:manage'),(3,'telematics:view'),(3,'dispatch:view'),(3,'intelligence:view'),(3,'map:view');
 INSERT INTO role_permissions (role_id, permission_key) VALUES
-(4,'dashboard:view'),(4,'dispatch:view'),(4,'dispatch:manage'),(4,'fleet:view'),
-(4,'jobs:view'),(4,'jobs:manage'),(4,'map:view'),(4,'customers:view');
+(4,'dashboard:view'),(4,'vehicles:view'),(4,'drivers:view'),(4,'shipments:view'),
+(4,'shipments:create'),(4,'shipments:update'),(4,'shipments:export'),(4,'dispatch:view'),
+(4,'dispatch:create'),(4,'dispatch:update'),(4,'dispatch:assign'),(4,'dispatch:cancel'),
+(4,'carriers:view'),(4,'fuel:view'),(4,'alerts:view'),(4,'alerts:acknowledge'),
+(4,'customers:view'),(4,'reports:view'),(4,'notifications:view'),(4,'messages:send'),(4,'map:view');
 INSERT INTO role_permissions (role_id, permission_key) VALUES
-(5,'driver:portal'),(5,'jobs:view'),(5,'dvir:manage');
+(5,'driver:self'),(5,'notifications:view'),(5,'messages:send');
 INSERT INTO role_permissions (role_id, permission_key) VALUES
 (6,'maintenance:view'),(6,'maintenance:manage'),(6,'dvir:review'),(6,'fleet:view');
 INSERT INTO role_permissions (role_id, permission_key) VALUES

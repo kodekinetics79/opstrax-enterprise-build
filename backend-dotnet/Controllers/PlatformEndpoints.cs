@@ -1463,13 +1463,17 @@ public static class PlatformEndpoints
         // the same name (ORDER BY company_id NULLS LAST LIMIT 1), matching the stage87
         // backfill and every other provisioning insert.
         var resolvedRole = await db.QuerySingleAsync(
-            @"SELECT id, name FROM roles
+            @"SELECT id, name, permissions_json FROM roles
               WHERE LOWER(name)=LOWER(@r) AND (company_id IS NULL OR company_id=@cid)
               ORDER BY company_id NULLS LAST LIMIT 1",
             c => { c.Parameters.AddWithValue("@r", roleName); c.Parameters.AddWithValue("@cid", id); }, ct);
         if (resolvedRole is null)
             return Results.Json(ApiResponse<object>.Fail("Validation failed", $"Unknown role: {roleName}"), statusCode: StatusCodes.Status400BadRequest);
         var canonicalRoleName = resolvedRole["name"]?.ToString() ?? roleName;
+        if (await EndpointMappings.IsCustomerPortalRoleAsync(db, resolvedRole, canonicalRoleName, ct))
+            return Results.Json(ApiResponse<object>.Fail("Validation failed",
+                "Customer-portal users require a customer binding and must be provisioned from tenant user administration."),
+                statusCode: StatusCodes.Status400BadRequest);
 
         // Same cross-tenant refusal as the admin invite: an email owned by another
         // company is never relocated, because that is account takeover by typo.
@@ -1534,7 +1538,7 @@ public static class PlatformEndpoints
         if (error is not null) return error;
 
         var user = await db.QuerySingleAsync(
-            "SELECT id, email, full_name, role_name, status FROM users WHERE id=@uid AND company_id=@cid",
+            "SELECT id, email, full_name, role_id, role_name, status, customer_id FROM users WHERE id=@uid AND company_id=@cid",
             c => { c.Parameters.AddWithValue("@uid", userId); c.Parameters.AddWithValue("@cid", id); }, ct);
         if (user is null)
             return Results.Json(ApiResponse<object>.Fail("Not found", "That user does not belong to this tenant"),
@@ -1567,13 +1571,21 @@ public static class PlatformEndpoints
                     statusCode: StatusCodes.Status409Conflict);
         }
 
+        Dictionary<string, object?>? resolvedNewRole = null;
         if (!string.IsNullOrWhiteSpace(newRole))
         {
-            var roleKnown = await db.ScalarLongAsync(
-                "SELECT COUNT(*) FROM roles WHERE LOWER(name)=LOWER(@r) AND (company_id IS NULL OR company_id=@cid)",
+            resolvedNewRole = await db.QuerySingleAsync(
+                @"SELECT id, name, permissions_json FROM roles
+                  WHERE LOWER(name)=LOWER(@r) AND (company_id IS NULL OR company_id=@cid)
+                  ORDER BY company_id NULLS LAST LIMIT 1",
                 c => { c.Parameters.AddWithValue("@r", newRole!); c.Parameters.AddWithValue("@cid", id); }, ct);
-            if (roleKnown == 0)
+            if (resolvedNewRole is null)
                 return Results.Json(ApiResponse<object>.Fail("Validation failed", $"Unknown role: {newRole}"), statusCode: StatusCodes.Status400BadRequest);
+            newRole = resolvedNewRole["name"]?.ToString() ?? newRole;
+            if (await EndpointMappings.IsCustomerPortalRoleAsync(db, resolvedNewRole, newRole, ct))
+                return Results.Json(ApiResponse<object>.Fail("Validation failed",
+                    "Customer-portal users require a customer binding and must be provisioned from tenant user administration."),
+                    statusCode: StatusCodes.Status400BadRequest);
         }
 
         if (!string.IsNullOrWhiteSpace(newStatus) && newStatus is not ("Active" or "Disabled" or "Pending"))
@@ -1590,18 +1602,24 @@ public static class PlatformEndpoints
                 "This is the tenant's last active administrator. Promote or create another admin first."),
                 statusCode: StatusCodes.Status409Conflict);
 
+        var clearsCustomerBinding = resolvedNewRole is not null &&
+            user.GetValueOrDefault("customerId") is not null and not DBNull;
         await db.ExecuteAsync(
             @"UPDATE users SET
                 email     = COALESCE(@email, email),
                 full_name = COALESCE(@name, full_name),
+                role_id   = COALESCE(@roleId, role_id),
                 role_name = COALESCE(@role, role_name),
+                customer_id = CASE WHEN @clearCustomerBinding THEN NULL ELSE customer_id END,
                 status    = COALESCE(@status, status)
               WHERE id=@uid AND company_id=@cid",
             c =>
             {
                 c.Parameters.AddWithValue("@email", (object?)newEmail ?? DBNull.Value);
                 c.Parameters.AddWithValue("@name", (object?)newName ?? DBNull.Value);
+                c.Parameters.AddWithValue("@roleId", resolvedNewRole?.GetValueOrDefault("id") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@role", (object?)newRole ?? DBNull.Value);
+                c.Parameters.AddWithValue("@clearCustomerBinding", clearsCustomerBinding);
                 c.Parameters.AddWithValue("@status", (object?)newStatus ?? DBNull.Value);
                 c.Parameters.AddWithValue("@uid", userId);
                 c.Parameters.AddWithValue("@cid", id);
