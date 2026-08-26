@@ -13,6 +13,9 @@ ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
 RUN npm run build
 
 FROM nginxinc/nginx-unprivileged:1.30.4-alpine-slim@sha256:e88d990b349df8cf4aa82f16642d7a23375016638c9ace4e5c6ca25028e62e65
+USER root
+RUN apk upgrade --no-cache
+USER 101
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
 EXPOSE 8080
