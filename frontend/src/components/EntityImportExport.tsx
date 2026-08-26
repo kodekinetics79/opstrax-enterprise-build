@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle2, Download, FileDown, FileUp, Loader2, Upload, X } from "lucide-react";
 import { downloadServerExport } from "@/services/fleetDomainApi";
+import { importErrorMessage } from "@/utils/importErrorMessage";
 import type { AnyRecord } from "@/types";
 
 /* ============================================================
@@ -206,7 +207,9 @@ function ImportWizard({ config, onClose }: { config: ImportExportConfig; onClose
       await queryClient.invalidateQueries({ queryKey: [config.invalidateKey] });
       await config.onImported?.();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Import failed — no rows were guaranteed committed.");
+      // Keep the preview, parsed rows and wizard open so the customer can read the
+      // row-specific rejection, go Back to correct the CSV, or safely retry.
+      setError(importErrorMessage(e, "Import failed — no rows were changed. Review the preview and retry."));
     } finally {
       setWorking(false);
     }
@@ -323,7 +326,7 @@ function ImportWizard({ config, onClose }: { config: ImportExportConfig; onClose
           )}
 
           {error && (
-            <p className="mt-4 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-700">
+            <p role="alert" aria-live="assertive" className="mt-4 flex items-start gap-2 whitespace-pre-wrap rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-700">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> {error}
             </p>
           )}
