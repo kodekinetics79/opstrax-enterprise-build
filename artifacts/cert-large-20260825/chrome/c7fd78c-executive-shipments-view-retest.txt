@@ -1,0 +1,59 @@
+OpsTrax Live Operations — Executive canonical shipments:view correction and retest
+Date: 2026-08-26 EDT
+Tenant: CERT-LARGE-20260825
+Candidate/deployed SHA: c7fd78cc1b4c9ac0621b28065150b0f67bb0fbe8
+Primary evidence surface: rendered product in visible Google Chrome
+Staging only; production untouched.
+
+AUTHORIZED ROLE CORRECTION — PASS
+- Tenant Admin fresh login succeeded through the customer-facing login workflow.
+- Users & Roles > Roles > Executive opened in the visible role editor.
+- Before change, canonical checkbox shipments:view was visibly unchecked.
+- The editor exposed distinct unambiguous canonical permissions:
+  shipments:create, shipments:delete, shipments:export, shipments:update, shipments:view.
+- Exactly shipments:view was selected and saved.
+- No shipments:create/update/delete/export permission was selected.
+- No dispatch permission was selected or changed.
+- Save completed and the Executive role summary changed from +4 more to +5 more.
+- After a full page refresh, reopening Executive showed:
+  shipments:view checked;
+  shipments:create unchecked;
+  shipments:update unchecked;
+  shipments:delete unchecked;
+  shipments:export unchecked.
+- Role selection/save/settle observation: 9,914 ms.
+
+EXECUTIVE FRESH LOGIN / PERSISTENCE — PASS
+- Tenant Admin logged out completely.
+- Executive 01 fresh login succeeded using the existing secure credential workflow; no secret was logged.
+- Fresh-login completion: 2,733 ms.
+- Jobs navigation appeared after the new grant, proving the saved permission was active in a new authenticated session.
+- Rendered Jobs page showed tenant-scoped empty truth: 0 shown / 0 total.
+- Full exact Frontend/API c7fd78c and Live gate rendered on Jobs.
+- Jobs navigation/load: 1,646 ms.
+- Admin / Users & Roles navigation remained absent for Executive.
+
+READ-ONLY CONTROL BOUNDARY — FAIL (P1)
+- Despite Executive having only shipments:view among shipment permissions, the rendered Jobs page exposed:
+  * Create Job button;
+  * Import CSV button;
+  * Export Roster button.
+- The controls were not marked disabled in the rendered accessibility tree.
+- No edit/update control could be evaluated because the tenant has 0 jobs.
+- The unexpected controls were not clicked; no job, import, or export mutation/action occurred.
+- This fails the requested Executive read-only UI acceptance condition and creates misleading/unsafe authorization UX. Backend denial was not inferred from the UI and was not tested with a mutation.
+- Required fix: gate Create Job on shipments:create, Import CSV on the applicable create/manage permission, and Export Roster on shipments:export; keep list/direct Jobs access on shipments:view.
+
+CONSOLE / NETWORK
+- Chrome console warn/error query after the correction and fresh-role retest: 0 entries.
+- No material failed request surfaced in the available Chrome diagnostics.
+- A final optional direct Admin URL probe could not be initiated because the desktop window bridge returned cgWindowNotFound; this is an external controller limitation, not a product finding. Admin navigation absence was still verified in the rendered Executive session.
+
+DATA / SAFETY
+- Only the explicitly authorized Executive role permission change was made.
+- No tenant record, telemetry, job, route, dispatch, import, or production resource was mutated.
+
+VERDICT: FAIL / P1 OPEN
+- The canonical least-privilege role grant persisted exactly.
+- Executive Jobs read access now works.
+- Read-only certification fails because unauthorized create/import/export controls remain visibly enabled.
