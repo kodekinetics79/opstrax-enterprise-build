@@ -88,16 +88,24 @@ public sealed class DevicePageFaultPostgresTests
                 c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchId); c.Parameters.AddWithValue("@code", $"V-{suffix}"); });
             var gpsSerial = $"GPS-{suffix}";
             var obdSerial = $"OBD-{suffix}";
+            var quarantinedSerial = $"GPS-QUARANTINED-{suffix}";
             var gpsId = await db.InsertAsync(
                 "INSERT INTO eld_devices(company_id,branch_id,device_serial,device_category,status,device_state) VALUES (@c,@b,@s,'GPS Tracker','Provisioning','Registered')",
                 c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchId); c.Parameters.AddWithValue("@s", gpsSerial); });
             await db.InsertAsync(
                 "INSERT INTO eld_devices(company_id,branch_id,device_serial,device_category,status,device_state) VALUES (@c,@b,@s,'OBD-II','Provisioning','Registered')",
                 c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchId); c.Parameters.AddWithValue("@s", obdSerial); });
+            var quarantinedId = await db.InsertAsync(
+                "INSERT INTO eld_devices(company_id,branch_id,device_serial,device_category,status,device_state,last_seen_at) VALUES (@c,@b,@s,'GPS Tracker','Active','Quarantined',NOW())",
+                c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchId); c.Parameters.AddWithValue("@s", quarantinedSerial); });
             await db.ExecuteAsync(
                 @"INSERT INTO latest_vehicle_positions(company_id,vehicle_id,device_id,lat,lng,engine_status,event_time,received_at)
                   VALUES (@c,@v,@d,43.65,-79.38,'Running',NOW(),NOW())",
                 c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@v", vehicleId); c.Parameters.AddWithValue("@d", gpsId); });
+            await db.ExecuteAsync(
+                @"INSERT INTO latest_vehicle_positions(company_id,vehicle_id,device_id,lat,lng,event_time,received_at)
+                  VALUES (@c,@v,@d,43.66,-79.39,NOW(),NOW())",
+                c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@v", vehicleId); c.Parameters.AddWithValue("@d", quarantinedId); });
 
             var diagnostics = Principal(companyId, branchId, "telematics:diagnostics:view");
             diagnostics.Request.QueryString = new QueryString("?cluster=diagnostics&pageSize=50");
@@ -116,13 +124,26 @@ public sealed class DevicePageFaultPostgresTests
             Assert.Equal(43.65m, gpsItems.Single(item => item.GetProperty("deviceSerial").GetString() == gpsSerial).GetProperty("positionLat").GetDecimal());
             Assert.Equal(JsonValueKind.Null, gpsItems.Single(item => item.GetProperty("deviceSerial").GetString() == obdSerial).GetProperty("positionLat").ValueKind);
 
+            gps.Request.QueryString = new QueryString("?cluster=gps&view=online&pageSize=50");
+            using var onlinePayload = Payload(await Invoke("TelemetryDevicePage", gps, db, CancellationToken.None));
+            var onlineItems = onlinePayload.RootElement.GetProperty("data").GetProperty("items").EnumerateArray().ToArray();
+            Assert.Single(onlineItems);
+            Assert.Equal(gpsSerial, onlineItems[0].GetProperty("deviceSerial").GetString());
+
+            gps.Request.QueryString = new QueryString("?cluster=gps&view=attention&pageSize=50");
+            using var attentionPayload = Payload(await Invoke("TelemetryDevicePage", gps, db, CancellationToken.None));
+            var attentionItems = attentionPayload.RootElement.GetProperty("data").GetProperty("items").EnumerateArray().ToArray();
+            Assert.Equal(2, attentionItems.Length);
+            Assert.Contains(attentionItems, item => item.GetProperty("deviceSerial").GetString() == quarantinedSerial);
+
             gps.Request.QueryString = new QueryString("?cluster=gps&view=offline&pageSize=50");
             using var offlinePayload = Payload(await Invoke("TelemetryDevicePage", gps, db, CancellationToken.None));
             var offlineData = offlinePayload.RootElement.GetProperty("data");
             Assert.Equal(1, offlineData.GetProperty("total").GetInt64());
             // Fleet summary stays scoped to the full authorized GPS cluster; only the
             // queue total/items shrink under a view filter.
-            Assert.Equal(2, offlineData.GetProperty("summary").GetProperty("active").GetInt64());
+            Assert.Equal(3, offlineData.GetProperty("summary").GetProperty("active").GetInt64());
+            Assert.Equal(2, offlineData.GetProperty("summary").GetProperty("attention").GetInt64());
             Assert.Equal(obdSerial, Assert.Single(offlineData.GetProperty("items").EnumerateArray()).GetProperty("deviceSerial").GetString());
 
             gps.Request.QueryString = new QueryString("?cluster=gps&view=stale-gps&pageSize=50");
@@ -134,7 +155,7 @@ public sealed class DevicePageFaultPostgresTests
             var searchData = searchPayload.RootElement.GetProperty("data");
             Assert.Equal(1, searchData.GetProperty("total").GetInt64());
             // Search narrows the queue, not the full-fleet KPI denominator.
-            Assert.Equal(2, searchData.GetProperty("summary").GetProperty("active").GetInt64());
+            Assert.Equal(3, searchData.GetProperty("summary").GetProperty("active").GetInt64());
         }
         finally
         {
@@ -195,6 +216,90 @@ public sealed class DevicePageFaultPostgresTests
         }
         finally
         {
+            await db.ExecuteAsync("DELETE FROM fault_codes WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", companyId));
+            await db.ExecuteAsync("DELETE FROM eld_devices WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", companyId));
+            await db.ExecuteAsync("DELETE FROM companies WHERE id=@cid", c => c.Parameters.AddWithValue("@cid", companyId));
+        }
+    }
+
+    [Fact]
+    public async Task ControlTowerSummaryPriorityAndEvidenceRespectLifecycleAndPermissions()
+    {
+        var db = Db();
+        var suffix = Guid.NewGuid().ToString("N")[..10];
+        var companyId = await db.InsertAsync(
+            "INSERT INTO companies(company_code,name,industry) VALUES (@code,'Control Tower truth','Transportation')",
+            c => c.Parameters.AddWithValue("@code", $"CTT-{suffix}"));
+        try
+        {
+            var activeSerial = $"AAA-ACTIVE-{suffix}";
+            var alertSerial = $"BBB-ALERT-{suffix}";
+            var faultSerial = $"CCC-FAULT-{suffix}";
+            var quarantinedSerial = $"DDD-QUARANTINED-{suffix}";
+            var neverSerial = $"ZZZ-NEVER-{suffix}";
+            var revokedSerial = $"000-REVOKED-{suffix}";
+            async Task<long> Insert(string serial, string status, bool checkedIn, bool revoked = false) => await db.InsertAsync(
+                @"INSERT INTO eld_devices(company_id,device_serial,status,device_state,last_seen_at,revoked_at)
+                  VALUES (@cid,@serial,@status,'Registered',CASE WHEN @checked THEN NOW() END,CASE WHEN @revoked THEN NOW() END)",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@cid", companyId);
+                    c.Parameters.AddWithValue("@serial", serial);
+                    c.Parameters.AddWithValue("@status", status);
+                    c.Parameters.AddWithValue("@checked", checkedIn);
+                    c.Parameters.AddWithValue("@revoked", revoked);
+                });
+
+            await Insert(activeSerial, "Active", true);
+            var alertId = await Insert(alertSerial, "Active", true);
+            await Insert(faultSerial, "Active", true);
+            await Insert(quarantinedSerial, "Active", true);
+            await db.ExecuteAsync("UPDATE eld_devices SET device_state='Quarantined' WHERE company_id=@cid AND device_serial=@serial",
+                c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@serial", quarantinedSerial); });
+            await Insert(neverSerial, "Active", false);
+            await Insert(revokedSerial, "Retired", false, true);
+            await db.ExecuteAsync(
+                @"INSERT INTO telemetry_alerts(company_id,device_id,alert_type,severity,message,status)
+                  VALUES (@cid,@device,'connectivity','High','Controlled test alert','Open')",
+                c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@device", alertId); });
+            await Fault(db, companyId, faultSerial, "P2000", "0 seconds");
+
+            var deviceOnly = Principal(companyId);
+            deviceOnly.Request.QueryString = new QueryString("?view=attention&pageSize=100&sort=priority&direction=desc");
+            using var deviceOnlyPayload = Payload(await Invoke("TelemetryDevicePage", deviceOnly, db, CancellationToken.None));
+            var deviceOnlyData = deviceOnlyPayload.RootElement.GetProperty("data");
+            Assert.Equal(2, deviceOnlyData.GetProperty("total").GetInt64());
+            Assert.Equal(neverSerial, deviceOnlyData.GetProperty("items").EnumerateArray().First().GetProperty("deviceSerial").GetString());
+            Assert.Equal(5, deviceOnlyData.GetProperty("summary").GetProperty("active").GetInt64());
+            Assert.Equal(1, deviceOnlyData.GetProperty("summary").GetProperty("archived").GetInt64());
+            Assert.Equal(1, deviceOnlyData.GetProperty("summary").GetProperty("neverConnected").GetInt64());
+            Assert.Equal(3, deviceOnlyData.GetProperty("summary").GetProperty("online").GetInt64());
+            Assert.Equal(JsonValueKind.Null, deviceOnlyData.GetProperty("summary").GetProperty("faulted").ValueKind);
+            deviceOnly.Request.QueryString = new QueryString("?view=all&pageSize=100&sort=serial&direction=asc");
+            using var redactedPayload = Payload(await Invoke("TelemetryDevicePage", deviceOnly, db, CancellationToken.None));
+            var redactedItems = redactedPayload.RootElement.GetProperty("data").GetProperty("items").EnumerateArray().ToArray();
+            Assert.Equal(5, redactedItems.Length);
+            Assert.Equal(0, redactedItems.Single(item => item.GetProperty("deviceSerial").GetString() == alertSerial).GetProperty("openAlertCount").GetInt64());
+            Assert.Equal(0, redactedItems.Single(item => item.GetProperty("deviceSerial").GetString() == faultSerial).GetProperty("activeFaultCount").GetInt64());
+
+            var alertReader = Principal(companyId, null, "telematics:devices:view", "telemetry.alerts.read");
+            alertReader.Request.QueryString = new QueryString("?view=attention&pageSize=100&sort=priority&direction=desc");
+            using var alertPayload = Payload(await Invoke("TelemetryDevicePage", alertReader, db, CancellationToken.None));
+            var alertItems = alertPayload.RootElement.GetProperty("data").GetProperty("items").EnumerateArray().ToArray();
+            Assert.Equal(3, alertItems.Length);
+            Assert.Equal(1, alertItems.Single(item => item.GetProperty("deviceSerial").GetString() == alertSerial).GetProperty("openAlertCount").GetInt64());
+
+            var fullReader = Principal(companyId, null, "telematics:devices:view", "telemetry.alerts.read", "telematics:diagnostics:view");
+            fullReader.Request.QueryString = new QueryString("?view=attention&pageSize=1&sort=priority&direction=desc");
+            using var fullPayload = Payload(await Invoke("TelemetryDevicePage", fullReader, db, CancellationToken.None));
+            var fullData = fullPayload.RootElement.GetProperty("data");
+            Assert.Equal(4, fullData.GetProperty("total").GetInt64());
+            Assert.Equal(neverSerial, Assert.Single(fullData.GetProperty("items").EnumerateArray()).GetProperty("deviceSerial").GetString());
+            Assert.Equal(1, fullData.GetProperty("summary").GetProperty("faulted").GetInt64());
+        }
+        finally
+        {
+            await db.ExecuteAsync("DELETE FROM telemetry_alerts WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", companyId));
             await db.ExecuteAsync("DELETE FROM fault_codes WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", companyId));
             await db.ExecuteAsync("DELETE FROM eld_devices WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", companyId));
             await db.ExecuteAsync("DELETE FROM companies WHERE id=@cid", c => c.Parameters.AddWithValue("@cid", companyId));

@@ -18724,60 +18724,84 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             : 100;
         var search = http.Request.Query["search"].FirstOrDefault()?.Trim() ?? "";
         var view = http.Request.Query["view"].FirstOrDefault()?.Trim().ToLowerInvariant() ?? "all";
+        var permissions = http.Items.TryGetValue(AuthPermissionsItemKey, out var permissionValue) && permissionValue is string[] heldPermissions
+            ? heldPermissions
+            : [];
+        var canReadDiagnostics = HasPermission(permissions, "telematics:diagnostics:view")
+            || HasPermission(permissions, "maintenance:view");
+        var canReadAlerts = HasPermission(permissions, "telemetry.alerts.read");
+        var alertAttentionClause = canReadAlerts
+            ? " OR EXISTS (SELECT 1 FROM telemetry_alerts ta WHERE ta.company_id=e.company_id AND ta.device_id=e.id AND ta.status='Open')"
+            : "";
+        var faultAttentionClause = canReadDiagnostics
+            ? " OR EXISTS (SELECT 1 FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active')"
+            : "";
         var direction = string.Equals(http.Request.Query["direction"].FirstOrDefault(), "desc", StringComparison.OrdinalIgnoreCase)
             ? "DESC"
             : "ASC";
-        var sort = http.Request.Query["sort"].FirstOrDefault()?.Trim().ToLowerInvariant() switch
+        var sortKey = http.Request.Query["sort"].FirstOrDefault()?.Trim().ToLowerInvariant() ?? "serial";
+        var priorityExpression = @"CASE
+            WHEN e.last_seen_at IS NULL THEN 4
+            WHEN e.last_seen_at < NOW() - INTERVAL '15 minutes' THEN 3
+            WHEN e.status IN ('Suspended','Malfunction') THEN 3
+            WHEN LOWER(COALESCE(e.device_state,'')) IN ('quarantined','suspended') THEN 3
+            WHEN e.status IN ('Diagnostic')" + alertAttentionClause + faultAttentionClause + @" THEN 2
+            ELSE 0 END";
+        var sort = sortKey switch
         {
             "provider" => "e.provider",
             "model" => "e.device_model",
             "status" => "e.status",
             "lastcheckin" => "e.last_seen_at",
             "vehicle" => "v.vehicle_code",
+            "priority" => priorityExpression,
             _ => "e.device_serial",
         };
         var standardViewClause = view switch
         {
             "archived" => " AND (e.revoked_at IS NOT NULL OR e.status IN ('Revoked','Retired'))",
-            "unassigned" => " AND e.revoked_at IS NULL AND current_install.id IS NULL",
-            "offline" => " AND e.revoked_at IS NULL AND (e.last_seen_at IS NULL OR e.last_seen_at < NOW() - INTERVAL '15 minutes' OR e.status IN ('Suspended','Malfunction'))",
-            "attention" => @" AND e.revoked_at IS NULL AND (
+            "unassigned" => " AND e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired') AND current_install.id IS NULL",
+            "offline" => " AND e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired') AND (e.last_seen_at IS NULL OR e.last_seen_at < NOW() - INTERVAL '15 minutes' OR e.status IN ('Suspended','Malfunction'))",
+            "attention" => @" AND e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired') AND (
                 e.last_seen_at IS NULL OR e.last_seen_at < NOW() - INTERVAL '15 minutes'
-                OR e.status IN ('Suspended','Malfunction','Diagnostic')
-                OR EXISTS (SELECT 1 FROM telemetry_alerts ta WHERE ta.company_id=e.company_id AND ta.device_id=e.id AND ta.status='Open'))",
-            "provisioning" => " AND e.revoked_at IS NULL AND (e.status ILIKE '%provision%' OR e.device_state ILIKE '%provision%' OR current_install.id IS NULL)",
-            "installations" => " AND e.revoked_at IS NULL AND current_install.id IS NOT NULL",
-            "data-health" => " AND e.revoked_at IS NULL AND e.last_seen_at IS NOT NULL",
+                OR e.status IN ('Suspended','Malfunction','Diagnostic')"
+                + " OR LOWER(COALESCE(e.device_state,'')) IN ('quarantined','suspended')"
+                + alertAttentionClause + faultAttentionClause + ")",
+            "provisioning" => " AND e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired') AND (e.status ILIKE '%provision%' OR e.device_state ILIKE '%provision%' OR current_install.id IS NULL)",
+            "installations" => " AND e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired') AND current_install.id IS NOT NULL",
+            "data-health" => " AND e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired') AND e.last_seen_at IS NOT NULL",
             "all" or "firmware" => " AND e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired')",
             _ => " AND e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired')",
         };
         var gpsViewClause = view switch
         {
-            "online" => @" AND e.revoked_at IS NULL AND e.status NOT IN ('Suspended','Malfunction','Diagnostic')
+            "online" => @" AND e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired','Suspended','Malfunction','Diagnostic')
+                AND LOWER(COALESCE(e.device_state,'')) NOT IN ('quarantined','suspended')
                 AND lp.lat BETWEEN -90 AND 90 AND lp.lng BETWEEN -180 AND 180
                 AND EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) <= 120",
-            "stale-gps" => @" AND e.revoked_at IS NULL AND lp.lat BETWEEN -90 AND 90 AND lp.lng BETWEEN -180 AND 180
+            "stale-gps" => @" AND e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired') AND lp.lat BETWEEN -90 AND 90 AND lp.lng BETWEEN -180 AND 180
                 AND EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) > 900",
-            "offline" => @" AND e.revoked_at IS NULL AND (
+            "offline" => @" AND e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired') AND (
                 lp.id IS NULL OR lp.lat NOT BETWEEN -90 AND 90 OR lp.lng NOT BETWEEN -180 AND 180
                 OR e.status IN ('Suspended','Malfunction'))",
-            "attention" => @" AND e.revoked_at IS NULL AND (
+            "attention" => @" AND e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired') AND (
                 lp.id IS NULL OR lp.lat NOT BETWEEN -90 AND 90 OR lp.lng NOT BETWEEN -180 AND 180
                 OR EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) > 900
-                OR e.status IN ('Suspended','Malfunction'))",
+                OR e.status IN ('Suspended','Malfunction')
+                OR LOWER(COALESCE(e.device_state,'')) IN ('quarantined','suspended'))",
             _ => " AND e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired')",
         };
         var diagnosticsViewClause = view switch
         {
-            "fresh" => @" AND e.revoked_at IS NULL AND diagnostic_evidence.observed_at IS NOT NULL
+            "fresh" => @" AND e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired') AND diagnostic_evidence.observed_at IS NOT NULL
                 AND EXTRACT(EPOCH FROM (NOW()-diagnostic_evidence.observed_at)) <= 120",
-            "watch" => @" AND e.revoked_at IS NULL AND diagnostic_evidence.observed_at IS NOT NULL
+            "watch" => @" AND e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired') AND diagnostic_evidence.observed_at IS NOT NULL
                 AND EXTRACT(EPOCH FROM (NOW()-diagnostic_evidence.observed_at)) > 120
                 AND EXTRACT(EPOCH FROM (NOW()-diagnostic_evidence.observed_at)) <= 900",
-            "stale" => @" AND e.revoked_at IS NULL AND (
+            "stale" => @" AND e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired') AND (
                 diagnostic_evidence.observed_at IS NULL
                 OR EXTRACT(EPOCH FROM (NOW()-diagnostic_evidence.observed_at)) > 900)",
-            "issues" => @" AND e.revoked_at IS NULL AND EXISTS (
+            "issues" => @" AND e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired') AND EXISTS (
                 SELECT 1 FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active')",
             _ => " AND e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired')",
         };
@@ -18881,7 +18905,9 @@ WHERE e.company_id=@cid AND e.deleted_at IS NULL
             WHEN EXTRACT(EPOCH FROM (NOW()-diagnostic_evidence.observed_at)) <= 120 THEN 'live'
             WHEN EXTRACT(EPOCH FROM (NOW()-diagnostic_evidence.observed_at)) <= 900 THEN 'delayed'
             ELSE 'stale' END position_freshness",
-            _ => ", 0 active_fault_count",
+            _ => ", " + (canReadDiagnostics
+                ? "(SELECT COUNT(*) FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active') active_fault_count"
+                : "0 active_fault_count"),
         };
         var items = await db.QueryAsync(@"
 SELECT e.id, e.device_serial, e.imei, e.device_category, e.device_model, e.provider, e.status, e.device_state,
@@ -18893,7 +18919,9 @@ SELECT e.id, e.device_serial, e.imei, e.device_category, e.device_model, e.provi
        current_install.activation_verified_at,
        v.vehicle_code, d.full_name driver_name,
        EXTRACT(EPOCH FROM (NOW() - e.last_seen_at))::BIGINT seconds_since_ping,
-       (SELECT COUNT(*) FROM telemetry_alerts ta WHERE ta.company_id=e.company_id AND ta.device_id=e.id AND ta.status='Open') open_alert_count
+       " + (canReadAlerts
+           ? "(SELECT COUNT(*) FROM telemetry_alerts ta WHERE ta.company_id=e.company_id AND ta.device_id=e.id AND ta.status='Open')"
+           : "0") + @" open_alert_count
 " + evidenceSelect + fromSql + clusterClause + viewClause + $" ORDER BY {sort} {direction} NULLS LAST, e.device_serial LIMIT @limit OFFSET @offset",
             command =>
             {
@@ -18901,36 +18929,36 @@ SELECT e.id, e.device_serial, e.imei, e.device_category, e.device_model, e.provi
                 command.Parameters.AddWithValue("@limit", pageSize);
                 command.Parameters.AddWithValue("@offset", (page - 1) * pageSize);
             }, ct);
-        var permissions = http.Items.TryGetValue(AuthPermissionsItemKey, out var permissionValue) && permissionValue is string[] heldPermissions
-            ? heldPermissions
-            : [];
-        var canReadDiagnostics = HasPermission(permissions, "telematics:diagnostics:view")
-            || HasPermission(permissions, "maintenance:view");
         var summaryFields = cluster switch
         {
-            "gps" => @"COUNT(*) active,0 archived,
-       COUNT(*) FILTER (WHERE lp.id IS NULL OR lp.lat NOT BETWEEN -90 AND 90 OR lp.lng NOT BETWEEN -180 AND 180
+            "gps" => @"COUNT(*) FILTER (WHERE e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired')) active,
+       COUNT(*) FILTER (WHERE e.revoked_at IS NOT NULL OR e.status IN ('Revoked','Retired')) archived,
+       COUNT(*) FILTER (WHERE e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired') AND (lp.id IS NULL OR lp.lat NOT BETWEEN -90 AND 90 OR lp.lng NOT BETWEEN -180 AND 180
          OR EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) > 900
-         OR e.status IN ('Suspended','Malfunction')) offline,
-       COUNT(*) FILTER (WHERE lp.id IS NULL OR lp.lat NOT BETWEEN -90 AND 90 OR lp.lng NOT BETWEEN -180 AND 180
+         OR e.status IN ('Suspended','Malfunction'))) offline,
+       COUNT(*) FILTER (WHERE e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired') AND (lp.id IS NULL OR lp.lat NOT BETWEEN -90 AND 90 OR lp.lng NOT BETWEEN -180 AND 180
          OR EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) > 900
-         OR e.status IN ('Suspended','Malfunction')) attention",
-            "diagnostics" => @"COUNT(*) active,0 archived,
-       COUNT(*) FILTER (WHERE diagnostic_evidence.observed_at IS NULL
-         OR EXTRACT(EPOCH FROM (NOW()-diagnostic_evidence.observed_at)) > 900) offline,
-       COUNT(*) FILTER (WHERE diagnostic_evidence.observed_at IS NULL
+         OR e.status IN ('Suspended','Malfunction')
+         OR LOWER(COALESCE(e.device_state,'')) IN ('quarantined','suspended'))) attention",
+            "diagnostics" => @"COUNT(*) FILTER (WHERE e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired')) active,
+       COUNT(*) FILTER (WHERE e.revoked_at IS NOT NULL OR e.status IN ('Revoked','Retired')) archived,
+       COUNT(*) FILTER (WHERE e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired') AND (diagnostic_evidence.observed_at IS NULL
+         OR EXTRACT(EPOCH FROM (NOW()-diagnostic_evidence.observed_at)) > 900)) offline,
+       COUNT(*) FILTER (WHERE e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired') AND (diagnostic_evidence.observed_at IS NULL
          OR EXTRACT(EPOCH FROM (NOW()-diagnostic_evidence.observed_at)) > 900
-         OR EXISTS (SELECT 1 FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active')) attention",
-            _ => @"COUNT(*) active,0 archived,
-       COUNT(*) FILTER (WHERE e.last_seen_at IS NOT NULL AND e.last_seen_at >= NOW() - INTERVAL '15 minutes'
-         AND e.status NOT IN ('Suspended','Malfunction','Diagnostic')) online,
-       COUNT(*) FILTER (WHERE e.last_seen_at IS NULL) never_connected,
-       COUNT(*) FILTER (WHERE e.last_seen_at IS NULL OR e.last_seen_at < NOW() - INTERVAL '15 minutes' OR e.status IN ('Suspended','Malfunction')) offline,
-       COUNT(*) FILTER (WHERE e.last_seen_at IS NULL OR e.last_seen_at < NOW() - INTERVAL '15 minutes'
-         OR e.status IN ('Suspended','Malfunction','Diagnostic')
-         OR EXISTS (SELECT 1 FROM telemetry_alerts ta WHERE ta.company_id=e.company_id AND ta.device_id=e.id AND ta.status='Open')) attention,
+         OR EXISTS (SELECT 1 FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active'))) attention",
+            _ => @"COUNT(*) FILTER (WHERE e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired')) active,
+       COUNT(*) FILTER (WHERE e.revoked_at IS NOT NULL OR e.status IN ('Revoked','Retired')) archived,
+       COUNT(*) FILTER (WHERE e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired')
+         AND e.last_seen_at IS NOT NULL AND e.last_seen_at >= NOW() - INTERVAL '15 minutes'
+         AND e.status NOT IN ('Suspended','Malfunction','Diagnostic')
+         AND LOWER(COALESCE(e.device_state,'')) NOT IN ('quarantined','suspended')) online,
+       COUNT(*) FILTER (WHERE e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired') AND e.last_seen_at IS NULL) never_connected,
+       COUNT(*) FILTER (WHERE e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired') AND (e.last_seen_at IS NULL OR e.last_seen_at < NOW() - INTERVAL '15 minutes' OR e.status IN ('Suspended','Malfunction'))) offline,
+       COUNT(*) FILTER (WHERE e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired') AND (e.last_seen_at IS NULL OR e.last_seen_at < NOW() - INTERVAL '15 minutes'
+         OR e.status IN ('Suspended','Malfunction','Diagnostic') OR LOWER(COALESCE(e.device_state,'')) IN ('quarantined','suspended')" + alertAttentionClause + faultAttentionClause + @")) attention,
        " + (canReadDiagnostics
-           ? "COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active')) faulted"
+           ? "COUNT(*) FILTER (WHERE e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired') AND EXISTS (SELECT 1 FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active')) faulted"
            : "NULL::BIGINT faulted"),
         };
         // Summary cards describe the complete authorized fleet/cluster and must not

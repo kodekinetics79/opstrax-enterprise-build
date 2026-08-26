@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import { Activity, AlertTriangle, CheckCircle2, Download, Gauge, MapPinned, RadioTower, Search, ShieldCheck, Wrench } from "lucide-react";
 import { EmptyState, ErrorState, KpiCard, LoadingState, PageHeader, StatusBadge } from "@/components/ui";
@@ -20,6 +20,14 @@ type ExceptionRow = {
 
 function exceptionFor(device: DeviceCommandRecord): ExceptionRow {
   const neverConnected = !device.lastCheckIn || device.lastCheckIn === "—";
+  const governedHold = /quarantined|suspended/i.test(device.deviceState);
+
+  if (governedHold) return {
+    id: String(device.id), device: device.deviceName, vehicle: device.assignedVehicleCode || "Unassigned", provider: device.provider,
+    status: "Needs attention", reason: `${device.deviceState} commissioning or lifecycle hold`,
+    evidence: `device state: ${device.deviceState} · check-in: ${device.lastCheckIn}`,
+    action: "Resolve the governed device hold before returning it to service", severity: 5,
+  };
 
   if (neverConnected) return {
     id: String(device.id), device: device.deviceName, vehicle: device.assignedVehicleCode || "Unassigned", provider: device.provider,
@@ -32,10 +40,14 @@ function exceptionFor(device: DeviceCommandRecord): ExceptionRow {
     evidence: `check-in: ${device.lastCheckIn}`,
     action: "Check vehicle power, cellular coverage, and device cable", severity: 3,
   };
-  const needsAttention = /attention|malfunction|quarantined|rotation|diagnostic/i.test(`${device.connectionStatus} ${device.lifecycleStatus}`) || device.openAlertCount > 0;
+  const needsAttention = /attention|malfunction|quarantined|suspended|rotation|diagnostic/i.test(`${device.connectionStatus} ${device.lifecycleStatus} ${device.deviceState}`) || device.openAlertCount > 0 || device.activeFaultCount > 0;
   return needsAttention ? {
     id: String(device.id), device: device.deviceName, vehicle: device.assignedVehicleCode || "Unassigned", provider: device.provider,
-    status: "Needs attention", reason: device.openAlertCount ? `${device.openAlertCount} open telemetry alert${device.openAlertCount === 1 ? "" : "s"}` : device.lifecycleStatus,
+    status: "Needs attention", reason: device.openAlertCount
+      ? `${device.openAlertCount} open telemetry alert${device.openAlertCount === 1 ? "" : "s"}`
+      : device.activeFaultCount > 0
+        ? `${device.activeFaultCount} active diagnostic fault${device.activeFaultCount === 1 ? "" : "s"}`
+        : /quarantined|suspended/i.test(device.deviceState) ? device.deviceState : device.lifecycleStatus,
     evidence: `health: ${device.dataHealthAvailable ? `${device.dataHealthScore}/100` : "unknown"} · lifecycle: ${device.lifecycleStatus}`,
     action: "Open Device Health and resolve the evidence-backed issue", severity: 2,
   } : {
@@ -53,33 +65,39 @@ export function TelematicsControlTowerPage() {
   const [search, setSearch] = useState("");
   const [settledSearch, setSettledSearch] = useState("");
   const [view, setView] = useState("attention");
+  const [sort, setSort] = useState<"priority" | "serial" | "provider" | "vehicle" | "lastCheckIn">("priority");
   const [page, setPage] = useState(1);
   const pageSize = 100;
 
   useEffect(() => {
-    const timer = window.setTimeout(() => { setSettledSearch(search.trim()); setPage(1); }, 250);
+    const timer = window.setTimeout(() => { setSettledSearch(search.trim()); }, 250);
     return () => window.clearTimeout(timer);
   }, [search]);
 
   const query = useQuery({
-    queryKey: ["telematics-control-tower", page, settledSearch, view],
-    queryFn: () => telematicsService.getDevicePage({ page, pageSize, search: settledSearch, view, sort: "status", direction: "asc" }),
-    placeholderData: keepPreviousData,
+    queryKey: ["telematics-control-tower", page, settledSearch, view, sort],
+    queryFn: () => telematicsService.getDevicePage({ page, pageSize, search: settledSearch, view, sort, direction: sort === "priority" ? "desc" : "asc" }),
     refetchInterval: 30_000,
   });
 
-  const exceptions = useMemo(() => (query.data?.items ?? []).map(exceptionFor)
-    .sort((a, b) => b.severity - a.severity || a.device.localeCompare(b.device)), [query.data?.items]);
+  // Ordering is applied before LIMIT/OFFSET on the server so page 1 is the
+  // fleet-wide highest-priority page rather than a page-local re-sort.
+  const exceptions = useMemo(() => (query.data?.items ?? []).map(exceptionFor), [query.data?.items]);
+
+  const total = query.data?.total ?? 0;
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  useEffect(() => {
+    if (query.data && page > pageCount) setPage(pageCount);
+  }, [page, pageCount, query.data]);
 
   if (query.isLoading) return <LoadingState />;
   if (query.isError) return <ErrorState message={query.error instanceof Error ? query.error.message : "Unable to load device signals."} onRetry={() => { void query.refetch(); }} />;
 
   const summary = query.data?.summary;
   const denominator = summary?.active ?? 0;
-  const total = query.data?.total ?? 0;
-  const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const rangeStart = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const rangeEnd = Math.min(page * pageSize, total);
+  const searchPending = search.trim() !== settledSearch;
 
   return (
     <div className="space-y-5">
@@ -128,18 +146,23 @@ export function TelematicsControlTowerPage() {
           </div>
         </div>
 
-        <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_220px]">
+        <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_220px_220px]">
           <label className="relative block">
             <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-slate-400" aria-hidden />
             <span className="sr-only">Search priority queue</span>
-            <input className="field pl-9" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search device, serial, provider, vehicle, or driver" />
+            <input className="field pl-9" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Search device, serial, provider, vehicle, or driver" />
           </label>
           <label><span className="sr-only">Queue filter</span><select className="field" value={view} onChange={(event) => { setView(event.target.value); setPage(1); }}>
             <option value="attention">Needs action</option><option value="offline">Offline or never connected</option><option value="provisioning">Provisioning or unassigned</option><option value="all">All managed devices</option>
           </select></label>
+          <label><span className="sr-only">Queue sort</span><select className="field" value={sort} onChange={(event) => { setSort(event.target.value as typeof sort); setPage(1); }}>
+            <option value="priority">Highest risk first</option><option value="serial">Device serial</option><option value="provider">Provider</option><option value="vehicle">Vehicle</option><option value="lastCheckIn">Last check-in</option>
+          </select></label>
         </div>
 
-        {exceptions.length === 0 ? (
+        {searchPending ? (
+          <div className="mt-4" aria-live="polite"><LoadingState /></div>
+        ) : exceptions.length === 0 ? (
           <div className="mt-4"><EmptyState title="No matching devices" subtitle="No connectivity or lifecycle rows match this queue view. GPS and Diagnostics retain their own permission-scoped evidence." /></div>
         ) : (
           <div className="mt-4 overflow-x-auto">
@@ -155,10 +178,10 @@ export function TelematicsControlTowerPage() {
             </table>
           </div>
         )}
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4 text-sm text-slate-600" aria-live="polite">
+        {!searchPending ? <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4 text-sm text-slate-600" aria-live="polite">
           <span>{rangeStart}–{rangeEnd} of {total} · Page {page} of {pageCount}</span>
           <div className="flex gap-2"><button className="btn-ghost" disabled={page <= 1 || query.isFetching} onClick={() => setPage((value) => Math.max(1, value - 1))}>Previous</button><button className="btn-ghost" disabled={page >= pageCount || query.isFetching} onClick={() => setPage((value) => Math.min(pageCount, value + 1))}>Next</button></div>
-        </div>
+        </div> : null}
       </section>
 
       <section className="grid gap-3 md:grid-cols-3">

@@ -76,9 +76,19 @@ public sealed class LargeFleetPaginationContractTests
 
         Assert.Contains("neverConnected: Number", service, StringComparison.Ordinal);
         Assert.Contains("Summary cards describe the complete authorized fleet/cluster", endpoints, StringComparison.Ordinal);
-        Assert.Contains("COUNT(*) FILTER (WHERE e.last_seen_at IS NULL) never_connected", endpoints, StringComparison.Ordinal);
+        Assert.Contains("e.status NOT IN ('Revoked','Retired') AND e.last_seen_at IS NULL) never_connected", endpoints, StringComparison.Ordinal);
+        Assert.Contains("COUNT(*) FILTER (WHERE e.revoked_at IS NOT NULL OR e.status IN ('Revoked','Retired')) archived", endpoints, StringComparison.Ordinal);
         Assert.Contains("HasPermission(permissions, \"telematics:diagnostics:view\")", endpoints, StringComparison.Ordinal);
+        Assert.Contains("HasPermission(permissions, \"telemetry.alerts.read\")", endpoints, StringComparison.Ordinal);
+        Assert.Contains("faultAttentionClause", endpoints, StringComparison.Ordinal);
+        Assert.Contains("\"priority\" => priorityExpression", endpoints, StringComparison.Ordinal);
         Assert.Contains("command.Parameters.AddWithValue(\"@search\", \"\")", endpoints, StringComparison.Ordinal);
+        Assert.DoesNotContain("placeholderData: keepPreviousData", page, StringComparison.Ordinal);
+        Assert.Contains("Highest risk first", page, StringComparison.Ordinal);
+        Assert.Contains("sort === \"priority\" ? \"desc\" : \"asc\"", page, StringComparison.Ordinal);
+        Assert.Contains("const governedHold = /quarantined|suspended/i.test(device.deviceState)", page, StringComparison.Ordinal);
+        Assert.Contains("Resolve the governed device hold before returning it to service", page, StringComparison.Ordinal);
+        Assert.Contains("LOWER(COALESCE(e.device_state,'')) NOT IN ('quarantined','suspended')", endpoints, StringComparison.Ordinal);
         Assert.Contains("idx_lvp_company_device_received", schema, StringComparison.Ordinal);
     }
 
