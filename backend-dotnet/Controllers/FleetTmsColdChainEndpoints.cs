@@ -810,6 +810,7 @@ WHERE company_id=@companyId
         var lookups = await LoadAssetImportLookups(http, rows, db, ct);
         var companyId = Cid(http);
         var created = 0; var updated = 0; var skipped = new List<object>();
+        var candidates = new List<(int RowNumber, string Tag, long BranchId, long ExistingId, AssetRequest Request)>();
         var fileTags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         for (var i = 0; i < rows.Count; i++)
         {
@@ -825,37 +826,102 @@ WHERE company_id=@companyId
                 ? cachedId
                 : 0;
             if (errors.Count > 0) { skipped.Add(new { rowNumber = i + 1, key = tag, errors }); continue; }
-            try
+            candidates.Add((i + 1, tag, rowBranchId!.Value, existingId, request!));
+        }
+
+        try
+        {
+            var counts = await db.WithTransactionAsync(async (connection, transaction) =>
             {
-                if (existingId > 0)
+                // A request may already own an ambient transaction. Keep an import-level
+                // savepoint so a row failure cannot leave earlier rows mutated in that scope.
+                await AssetImportTransactionCommand(connection, transaction, "SAVEPOINT assets_import_commit", ct);
+                var transactionCreated = 0;
+                var transactionUpdated = 0;
+                try
                 {
-                    await db.ExecuteWithSavepointAsync(@"UPDATE fleet_tms_assets SET asset_type_id=@type,name=@name,status=@status,current_location=@loc,
+                    foreach (var candidate in candidates)
+                    {
+                        if (candidate.ExistingId > 0)
+                        {
+                            var locked = await LockAsset(connection, transaction, companyId, candidate.BranchId, candidate.ExistingId, ct)
+                                ?? throw new AssetImportCommitException(candidate.RowNumber, candidate.Tag, "Asset no longer exists in this branch scope.");
+                            var custody = await ActiveCustodyState(connection, transaction, companyId, candidate.BranchId, candidate.ExistingId, ct);
+                            if (custody.Count > 0)
+                            {
+                                if (!string.Equals(candidate.Request.Status?.Trim(), locked.Status.Trim(), StringComparison.OrdinalIgnoreCase))
+                                    throw new AssetImportCommitException(candidate.RowNumber, candidate.Tag,
+                                        $"Asset has active custody; status must remain '{locked.Status}' until it is checked in.");
+                                if (!string.Equals(candidate.Request.CurrentLocation?.Trim(), locked.Location.Trim(), StringComparison.OrdinalIgnoreCase))
+                                    throw new AssetImportCommitException(candidate.RowNumber, candidate.Tag,
+                                        $"Asset has active custody; currentLocation must remain '{locked.Location}' until it is checked in.");
+                                if (candidate.Request.Quantity!.Value < custody.Quantity)
+                                    throw new AssetImportCommitException(candidate.RowNumber, candidate.Tag,
+                                        $"Asset quantity cannot be reduced below active custody quantity {custody.Quantity.ToString(CultureInfo.InvariantCulture)}.");
+                            }
+
+                            await using var update = new NpgsqlCommand(@"UPDATE fleet_tms_assets SET asset_type_id=@type,name=@name,status=@status,current_location=@loc,
                         condition=@condition,is_returnable=@returnable,quantity=@qty,unit_of_measure=@uom,notes=@notes,updated_at_utc=NOW()
-                        WHERE id=@id AND company_id=@companyId AND branch_id IS NOT DISTINCT FROM @branchId", c =>
-                    {
-                        BindAsset(c, companyId, request!, false); c.Parameters.AddWithValue("@id", existingId);
-                        c.Parameters.AddWithValue("@branchId", rowBranchId!.Value);
-                    }, ct);
-                    updated++;
-                }
-                else
-                {
-                    await db.InsertWithSavepointAsync(@"INSERT INTO fleet_tms_assets
+                        WHERE id=@id AND company_id=@companyId AND branch_id IS NOT DISTINCT FROM @branchId", connection, transaction);
+                            BindAsset(update, companyId, candidate.Request, false);
+                            update.Parameters.AddWithValue("@id", candidate.ExistingId);
+                            update.Parameters.AddWithValue("@branchId", candidate.BranchId);
+                            if (await update.ExecuteNonQueryAsync(ct) != 1)
+                                throw new AssetImportCommitException(candidate.RowNumber, candidate.Tag, "Asset could not be updated in this branch scope.");
+                            transactionUpdated++;
+                        }
+                        else
+                        {
+                            await using var insert = new NpgsqlCommand(@"INSERT INTO fleet_tms_assets
                         (company_id,branch_id,asset_type_id,asset_tag,name,status,current_location,condition,is_returnable,quantity,unit_of_measure,notes,last_seen_at_utc,created_at_utc,updated_at_utc)
-                        VALUES (@companyId,@branchId,@type,@tag,@name,@status,@loc,@condition,@returnable,@qty,@uom,@notes,@lastSeen,NOW(),NOW())", c =>
-                    {
-                        BindAsset(c, companyId, request!, true); c.Parameters.AddWithValue("@branchId", rowBranchId!.Value);
-                    }, ct);
-                    created++;
+                        VALUES (@companyId,@branchId,@type,@tag,@name,@status,@loc,@condition,@returnable,@qty,@uom,@notes,@lastSeen,NOW(),NOW())", connection, transaction);
+                            BindAsset(insert, companyId, candidate.Request, true);
+                            insert.Parameters.AddWithValue("@branchId", candidate.BranchId);
+                            try { await insert.ExecuteNonQueryAsync(ct); }
+                            catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
+                            {
+                                throw new AssetImportCommitException(candidate.RowNumber, candidate.Tag,
+                                    "Asset tag already exists in this branch scope.");
+                            }
+                            transactionCreated++;
+                        }
+                    }
+                    await AssetImportTransactionCommand(connection, transaction, "RELEASE SAVEPOINT assets_import_commit", ct);
+                    return (transactionCreated, transactionUpdated);
                 }
-            }
-            catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
-            {
-                skipped.Add(new { rowNumber = i + 1, key = tag, errors = new[] { "Asset tag already exists in this branch scope." } });
-            }
+                catch (Exception mutationError)
+                {
+                    try { await AssetImportTransactionCommand(connection, transaction, "ROLLBACK TO SAVEPOINT assets_import_commit", ct); }
+                    catch (Exception rollbackError) { throw new AggregateException(mutationError, rollbackError); }
+                    throw;
+                }
+            }, ct);
+            created = counts.transactionCreated;
+            updated = counts.transactionUpdated;
+        }
+        catch (AssetImportCommitException ex)
+        {
+            return Bad($"Import stopped at row {ex.RowNumber} ('{ex.Key}'): {ex.Message} No rows were changed.");
+        }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
+        {
+            return Bad("Import stopped because an asset identity conflicted with an existing record. No rows were changed; preview the file again and correct the duplicate assetTag.");
         }
         await audit.LogAsync(http, "assets.imported", "FleetTmsAsset", null, JsonSerializer.Serialize(new { created, updated, skipped = skipped.Count, total = rows.Count }), ct);
         return Ok(new { created, updated, skipped, total = rows.Count });
+    }
+
+    private sealed class AssetImportCommitException(int rowNumber, string key, string message) : InvalidOperationException(message)
+    {
+        public int RowNumber { get; } = rowNumber;
+        public string Key { get; } = key;
+    }
+
+    private static async Task AssetImportTransactionCommand(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, string sql, CancellationToken ct)
+    {
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
+        await command.ExecuteNonQueryAsync(ct);
     }
 
     private static async Task<IResult> AssetDetail(HttpContext http, long id, Database db, CancellationToken ct)
@@ -931,15 +997,23 @@ FOR UPDATE", connection, transaction);
 
     private static async Task<long> ActiveCustodyCount(
         NpgsqlConnection connection, NpgsqlTransaction transaction, long companyId, long? branchId, long assetId, CancellationToken ct)
+        => (await ActiveCustodyState(connection, transaction, companyId, branchId, assetId, ct)).Count;
+
+    private sealed record AssetCustodyState(long Count, decimal Quantity);
+
+    private static async Task<AssetCustodyState> ActiveCustodyState(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long companyId, long? branchId, long assetId, CancellationToken ct)
     {
         await using var command = new NpgsqlCommand(@"
-SELECT COUNT(*) FROM fleet_tms_asset_assignments
+SELECT COUNT(*), COALESCE(SUM(quantity), 0) FROM fleet_tms_asset_assignments
 WHERE company_id=@companyId AND branch_id IS NOT DISTINCT FROM @branchId AND asset_id=@asset
   AND released_at_utc IS NULL AND status IN ('Assigned','CheckedOut','InUse')", connection, transaction);
         command.Parameters.AddWithValue("@companyId", companyId);
         command.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
         command.Parameters.AddWithValue("@asset", assetId);
-        return Convert.ToInt64(await command.ExecuteScalarAsync(ct));
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        await reader.ReadAsync(ct);
+        return new AssetCustodyState(reader.GetInt64(0), reader.GetDecimal(1));
     }
 
     private static async Task WriteAssetCustodyState(NpgsqlConnection connection, NpgsqlTransaction transaction,
