@@ -385,6 +385,7 @@ public static partial class EndpointMappings
 
         app.MapGet("/api/jobs/summary", JobsSummary);
         app.MapGet("/api/jobs", Jobs);
+        app.MapGet("/api/jobs/customer-options", JobCustomerOptions);
         app.MapGet("/api/jobs/{id:long}", JobDetail);
         app.MapPost("/api/jobs", CreateJob);
         app.MapPut("/api/jobs/{id:long}", UpdateJob);
@@ -6543,6 +6544,43 @@ public static partial class EndpointMappings
         await audit.LogAsync(http, "asset.assigned", "Asset", id, ct: ct);
         await AddTimeline(db, GetCompanyId(http), "Asset", id, "asset.assigned", "Asset assignment updated", ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id }, "Asset assigned"));
+    }
+
+    private static Task<IResult> JobCustomerOptions(HttpContext http, Database db, CancellationToken ct)
+    {
+        // Creating or editing a shipment requires selecting a valid tenant customer. This
+        // deliberately lives under the dispatch entitlement and returns only the minimal
+        // operational identity projection; forcing dispatchers through the CRM endpoint
+        // made the create journey impossible when CRM was not part of the tenant package.
+        var denied = RequireAnyDirectPermission(http,
+            "job:create", "shipments:create", "dispatch:create", "dispatch:manage",
+            "job:update", "shipments:update", "dispatch:update");
+        if (denied is not null) return Task.FromResult(denied);
+
+        var search = http.Request.Query.TryGetValue("search", out var requestedSearch)
+            ? requestedSearch.ToString().Trim()
+            : "";
+        var requestedLimit = http.Request.Query.TryGetValue("limit", out var requestedLimitRaw)
+            && int.TryParse(requestedLimitRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedLimit)
+                ? parsedLimit
+                : 100;
+        var limit = Math.Clamp(requestedLimit, 1, 200);
+
+        return OkRows(db,
+            @"SELECT id,customer_code,name,status
+              FROM customers
+              WHERE company_id=@companyId AND deleted_at IS NULL
+                AND LOWER(BTRIM(status))='active'
+                AND (@search='' OR name ILIKE '%' || @search || '%'
+                     OR customer_code ILIKE '%' || @search || '%')
+              ORDER BY name,customer_code,id
+              LIMIT @limit",
+            c =>
+            {
+                c.Parameters.AddWithValue("@companyId", GetCompanyId(http));
+                c.Parameters.AddWithValue("@search", search);
+                c.Parameters.AddWithValue("@limit", limit);
+            }, ct: ct);
     }
 
     private static async Task<IResult> CreateJob(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, IDomainEventPublisher events, CancellationToken ct)

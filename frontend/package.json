@@ -11,7 +11,7 @@
     "build": "tsc -b && vite build && npm run verify:bundle-budget",
     "preview": "vite preview --host 0.0.0.0 --port 10000 --strictPort",
     "lint": "eslint .",
-    "test:contracts": "node scripts/test-device-installation-contract.mjs && node scripts/test-rbac-contract.mjs && node scripts/test-entity-import-error-contract.mjs && node scripts/test-telemetry-empty-state.mjs && node scripts/test-fleet-query-presentation.mjs",
+    "test:contracts": "node scripts/test-device-installation-contract.mjs && node scripts/test-rbac-contract.mjs && node scripts/test-entity-import-error-contract.mjs && node scripts/test-telemetry-empty-state.mjs && node scripts/test-fleet-query-presentation.mjs && node scripts/test-live-operations-create-journeys.mjs",
     "verify:bundle-budget": "node scripts/verify-bundle-budget.mjs"
   },
   "dependencies": {

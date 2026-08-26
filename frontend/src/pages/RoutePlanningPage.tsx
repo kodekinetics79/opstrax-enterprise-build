@@ -9,6 +9,8 @@ import { useRouteDetail, useRoutes, useRouteSummary } from "@/hooks/useBatch2";
 import { routesApi } from "@/services/routesApi";
 import { downloadServerExport } from "@/services/fleetDomainApi";
 import type { AnyRecord } from "@/types";
+import { apiErrorMessage } from "@/utils/apiErrorMessage";
+import { prepareRouteForm } from "@/utils/routeForm";
 
 const routeFields = [["routeCode","Route Code"],["routeName","Route Name"],["region","Region / Zone"],["plannedStart","Planned Start"],["plannedEnd","Planned End"],["routeType","Route Type"],["optimizationMode","Optimization Mode"],["costEstimate","Cost Estimate"],["status","Status"],["notes","Notes"]];
 const stopFields = [["stopSequence","Sequence"],["jobId","Job ID"],["customerId","Customer ID"],["stopType","Stop Type"],["address","Address"],["latitude","Latitude"],["longitude","Longitude"],["timeWindowStart","Window Start"],["timeWindowEnd","Window End"],["eta","ETA"],["status","Status"],["proofStatus","Proof Status"],["notes","Notes"]];
@@ -50,7 +52,7 @@ export function RoutePlanningPage() {
   const save = useMutation({
     mutationFn: (payload: AnyRecord) => payload.id ? routesApi.update(String(payload.id), payload) : routesApi.create(payload),
     onSuccess: async () => { setEditing(null); await refresh(); notify("success", "Route saved"); },
-    onError: (error: Error) => notify("error", error.message || "Route save was rejected"),
+    onError: (error: unknown) => notify("error", apiErrorMessage(error, "Route save was rejected. Review the highlighted fields and try again.")),
   });
   const remove = useMutation({
     mutationFn: (id: string | number) => routesApi.remove(id),
@@ -91,7 +93,7 @@ export function RoutePlanningPage() {
   return <div className="fleet-console space-y-3">
     {toast ? <div role="status" className={`fixed right-5 top-20 z-[90] rounded-xl border px-4 py-3 text-sm font-semibold shadow-xl ${toast.kind === "error" ? "border-rose-200 bg-rose-50 text-rose-800" : toast.kind === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-sky-200 bg-sky-50 text-sky-800"}`}>{toast.message}</div> : null}
     <PageHeader eyebrow="Route Planning" title="Route Plans" description="Plan branch-owned routes, validate resources and HOS, manage stops, and preview deterministic sequencing." actions={<>
-      <button type="button" className="btn-primary" disabled={!canManage} title={!canManage ? "dispatch:manage is required" : undefined} onClick={() => canManage && setEditing({ status: "Planned", routeType: "Delivery", optimizationMode: "Balanced" })}><Plus className="h-4 w-4" /> Create Route</button>
+      <button type="button" className="btn-primary" disabled={!canManage} title={!canManage ? "dispatch:manage is required" : undefined} onClick={() => { if (canManage) { save.reset(); setEditing({ status: "Planned", routeType: "Delivery", optimizationMode: "Balanced" }); } }}><Plus className="h-4 w-4" /> Create Route</button>
       <button type="button" className="btn-ghost" disabled={!canExport} onClick={() => void exportRoutes()}><Download className="h-4 w-4" /> Export Route Plan</button>
     </>} />
     <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
@@ -105,11 +107,19 @@ export function RoutePlanningPage() {
     </div>
     {routeRows.length ? <DataTable rows={routeRows} columns={["routeCode", "routeName", "region", "driverName", "vehicleCode", "stops", "plannedStart", "plannedEnd", "status", "estimatedDurationMinutes", "estimatedDistance", "efficiencyScore", "slaRisk", "recommendedAction"]} onSelect={setSelected} /> : <EmptyState title="No routes match these filters" subtitle="Adjust the status or search criteria." />}
     <RouteDrawer detail={detail.data} loading={detail.isLoading} canManage={canManage} canAssign={canAssign} optimizeResult={optimize.data}
-      onClose={() => setSelected(null)} onEdit={setEditing} onAssign={setAssigning}
+      onClose={() => setSelected(null)} onEdit={(record) => { save.reset(); setEditing(record); }} onAssign={setAssigning}
       onAddStop={() => setStopEditing({ stopType: "Drop-off", status: "Pending", proofStatus: "Pending" })}
       onEditStop={setStopEditing} onDeleteStop={(stopId) => { if (window.confirm("Remove this route stop?")) deleteStop.mutate(stopId); }}
       onOptimize={(id) => optimize.mutate(id)} onArchive={(id) => remove.mutate(id)} />
-    {editing ? <Modal title={editing.id ? "Edit Route" : "Create Route"} fields={routeFields} initial={editing} saving={save.isPending} onClose={() => setEditing(null)} onSave={(p) => save.mutate(p)} /> : null}
+    {editing ? <RouteModal
+      title={editing.id ? "Edit Route" : "Create Route"}
+      initial={editing}
+      saving={save.isPending}
+      serverError={save.error ? apiErrorMessage(save.error, "Route save was rejected. Review the fields and try again.") : null}
+      onClearError={save.reset}
+      onClose={() => { save.reset(); setEditing(null); }}
+      onSave={(payload) => save.mutate(payload)}
+    /> : null}
     {assigning ? <AssignmentModal initial={assigning} saving={assign.isPending} onClose={() => setAssigning(null)} onSave={(payload) => assign.mutate({ id: String(assigning.id), payload })} /> : null}
     {stopEditing ? <Modal title={stopEditing.id ? "Edit Route Stop" : "Add Route Stop"} fields={stopFields} initial={stopEditing} saving={saveStop.isPending} onClose={() => setStopEditing(null)} onSave={(p) => saveStop.mutate(p)} /> : null}
   </div>;
@@ -143,6 +153,65 @@ function AssignmentModal({ initial, saving, onClose, onSave }: { initial: AnyRec
   const [form, setForm] = useState<AnyRecord>({ driverId: initial.assignedDriverId ?? "", vehicleId: initial.assignedVehicleId ?? "", override: false });
   const submit = (event: FormEvent) => { event.preventDefault(); onSave({ ...form, driverId: Number(form.driverId), vehicleId: Number(form.vehicleId) }); };
   return <div className="fixed inset-0 z-[70] grid place-items-center bg-black/60 p-4"><form className="panel w-full max-w-lg p-6" onSubmit={submit}><div className="flex justify-between"><h2 className="text-xl font-bold">Assign Route Resources</h2><button type="button" className="icon-btn" onClick={onClose}><X /></button></div><div className="mt-5 grid gap-4 sm:grid-cols-2"><Field label="Driver ID"><input className="field" type="number" min="1" required value={String(form.driverId)} onChange={(e) => setForm((x) => ({ ...x, driverId: e.target.value }))} /></Field><Field label="Vehicle ID"><input className="field" type="number" min="1" required value={String(form.vehicleId)} onChange={(e) => setForm((x) => ({ ...x, vehicleId: e.target.value }))} /></Field></div><label className="mt-4 flex gap-2 text-sm"><input type="checkbox" checked={Boolean(form.override)} onChange={(e) => setForm((x) => ({ ...x, override: e.target.checked }))} /> Request authorized availability override</label><p className="mt-3 text-xs text-slate-500">The API validates tenant, branch, current HOS, maintenance state, availability, and active-route conflicts.</p><div className="mt-6 flex justify-end gap-3"><button type="button" className="btn-ghost" onClick={onClose}>Cancel</button><button type="submit" className="btn-primary" disabled={saving}>{saving ? "Assigning…" : "Assign & Activate"}</button></div></form></div>;
+}
+
+function RouteModal({ title, initial, saving, serverError, onClearError, onClose, onSave }: {
+  title: string;
+  initial: AnyRecord;
+  saving: boolean;
+  serverError: string | null;
+  onClearError: () => void;
+  onClose: () => void;
+  onSave: (payload: AnyRecord) => void;
+}) {
+  const [form, setForm] = useState<AnyRecord>(initial);
+  const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    const prepared = prepareRouteForm(form);
+    setValidationErrors(prepared.errors);
+    if (prepared.errors.length > 0) return;
+    onSave(prepared.payload);
+  };
+  const change = (key: string, value: string) => {
+    setValidationErrors([]);
+    onClearError();
+    setForm((current) => ({ ...current, [key]: value }));
+  };
+  const errors = validationErrors.length > 0 ? validationErrors : serverError ? [serverError] : [];
+  const typeFor = (key: string) => /start|end/i.test(key) ? "datetime-local" : /cost/i.test(key) ? "number" : "text";
+
+  return <div className="fixed inset-0 z-[60] grid place-items-center bg-black/60 p-4">
+    <form role="dialog" aria-modal="true" aria-labelledby="route-modal-title" aria-describedby={errors.length ? "route-form-errors" : undefined} className="panel max-h-[90vh] w-full max-w-3xl overflow-y-auto p-6" onSubmit={submit} noValidate>
+      <div className="flex justify-between">
+        <h2 id="route-modal-title" className="text-2xl font-semibold text-slate-900">{title}</h2>
+        <button type="button" className="icon-btn" onClick={onClose} aria-label="Close route form"><X /></button>
+      </div>
+      {errors.length > 0 ? (
+        <div id="route-form-errors" role="alert" className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-800">
+          <p>The route was not saved.</p>
+          <ul className="mt-1 list-disc space-y-1 pl-5">{errors.map((error) => <li key={error}>{error}</li>)}</ul>
+        </div>
+      ) : null}
+      <div className="mt-6 grid gap-4 md:grid-cols-2">
+        {routeFields.map(([key, label]) => <Field key={key} label={label}>
+          <input
+            className="field"
+            type={typeFor(key)}
+            step={key === "costEstimate" ? "any" : undefined}
+            min={key === "costEstimate" ? "0" : undefined}
+            value={String(form[key] ?? "")}
+            onChange={(event) => change(key, event.target.value)}
+            required={["routeCode", "routeName", "plannedStart", "plannedEnd"].includes(key)}
+          />
+        </Field>)}
+      </div>
+      <div className="mt-6 flex justify-end gap-3">
+        <button type="button" className="btn-ghost" onClick={onClose} disabled={saving}>Cancel</button>
+        <button type="submit" className="btn-primary" disabled={saving}>{saving ? "Saving…" : "Save Route"}</button>
+      </div>
+    </form>
+  </div>;
 }
 
 function Modal({ title, fields, initial, saving, onClose, onSave }: { title: string; fields: string[][]; initial: AnyRecord; saving: boolean; onClose: () => void; onSave: (payload: AnyRecord) => void }) {
