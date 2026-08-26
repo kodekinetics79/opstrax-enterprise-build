@@ -26,11 +26,25 @@ public sealed class Module1BrowserWorkflowContractTests
     {
         var backend = Read("backend-dotnet", "Controllers", "EndpointMappings.cs");
         var routes = Block(backend, "app.MapGet(\"/api/vehicles/export\"", "app.MapGet(\"/api/jobs/export\"");
+        var exports = Block(backend, "private static Task<IResult> VehiclesExport(", "// Keep user-controlled identifiers/names");
 
-        Assert.Contains("ExportCsv(http, db, \"vehicles:export\"", routes, StringComparison.Ordinal);
-        Assert.Contains("ExportCsv(http, db, \"drivers:export\"", routes, StringComparison.Ordinal);
-        Assert.DoesNotContain("ExportCsv(http, db, \"vehicles:view\"", routes, StringComparison.Ordinal);
-        Assert.DoesNotContain("ExportCsv(http, db, \"drivers:view\"", routes, StringComparison.Ordinal);
+        Assert.Contains("VehiclesExport", routes, StringComparison.Ordinal);
+        Assert.Contains("DriversExport", routes, StringComparison.Ordinal);
+        Assert.Contains("ExportCsv(http, db, \"vehicles:export\"", exports, StringComparison.Ordinal);
+        Assert.Contains("ExportCsv(http, db, \"drivers:export\"", exports, StringComparison.Ordinal);
+        Assert.DoesNotContain("ExportCsv(http, db, \"vehicles:view\"", exports, StringComparison.Ordinal);
+        Assert.DoesNotContain("ExportCsv(http, db, \"drivers:view\"", exports, StringComparison.Ordinal);
+        Assert.Contains("b.branch_code", exports, StringComparison.Ordinal);
+        Assert.Contains("v.vehicle_class", exports, StringComparison.Ordinal);
+        Assert.Contains("v.vin_exception_type", exports, StringComparison.Ordinal);
+        Assert.Contains("v.alternate_identifier", exports, StringComparison.Ordinal);
+        Assert.Contains("v.plate_jurisdiction", exports, StringComparison.Ordinal);
+        Assert.Contains("d.readiness_score", exports, StringComparison.Ordinal);
+        Assert.Contains("d.risk_score", exports, StringComparison.Ordinal);
+        Assert.Contains("LEFT JOIN branches b ON b.id=v.branch_id AND b.company_id=v.company_id", exports, StringComparison.Ordinal);
+        Assert.Contains("LEFT JOIN branches b ON b.id=d.branch_id AND b.company_id=d.company_id", exports, StringComparison.Ordinal);
+        Assert.Contains("\"v.vehicle_code,v.id\"", exports, StringComparison.Ordinal);
+        Assert.Contains("\"d.driver_code,d.id\"", exports, StringComparison.Ordinal);
     }
 
     [Theory]

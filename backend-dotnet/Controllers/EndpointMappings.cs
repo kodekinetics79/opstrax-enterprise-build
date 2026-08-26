@@ -158,16 +158,8 @@ public static partial class EndpointMappings
 
         // Server-side full-dataset CSV export (tenant + branch scoped, permission-gated,
         // streamed) — the client CSV only had the current page after pagination.
-        app.MapGet("/api/vehicles/export", (HttpContext http, Database db, CancellationToken ct) =>
-            ExportCsv(http, db, "vehicles:export", "vehicles", "v",
-                "SELECT v.vehicle_code, v.type, v.make, v.model, v.year, v.vin, v.plate_number, v.status, v.odometer_miles, v.device_status FROM vehicles v WHERE v.deleted_at IS NULL AND v.company_id=@cid",
-                "v.vehicle_code", ct));
-        app.MapGet("/api/drivers/export", (HttpContext http, Database db, CancellationToken ct) =>
-            ExportCsv(http, db, "drivers:export", "drivers", "d",
-                "SELECT d.driver_code, d.full_name, d.phone, d.email, d.license_number, d.license_expiry, d.status, d.safety_score, d.compliance_score FROM drivers d WHERE d.deleted_at IS NULL AND d.company_id=@cid",
-                "d.full_name", ct,
-                // DEF-015: exported CSV carries the masked last-four rendering, never enc:.
-                transform: rows => MaskDriverLicenseIn(rows, http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>())));
+        app.MapGet("/api/vehicles/export", VehiclesExport);
+        app.MapGet("/api/drivers/export", DriversExport);
         app.MapGet("/api/jobs/export", JobsExport);
         app.MapGet("/api/routes/export", (HttpContext http, Database db, CancellationToken ct) =>
             ExportCsv(http, db, "dispatch:view", "route-plans", "r",
@@ -10350,6 +10342,29 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var ts = DateTime.UtcNow.ToString("yyyy-MM-dd_HH-mm");
         return Results.File(bytes, "text/csv", $"{name}_{ts}.csv");
     }
+
+    private static Task<IResult> VehiclesExport(HttpContext http, Database db, CancellationToken ct) =>
+        ExportCsv(http, db, "vehicles:export", "vehicles", "v",
+            @"SELECT v.vehicle_code,b.branch_code,v.type,v.make,v.model,v.year,v.vehicle_class,
+                     v.vin,v.vin_exception_type,v.alternate_identifier,v.plate_number,v.plate_jurisdiction,
+                     v.status,v.odometer_miles,v.device_status
+                FROM vehicles v
+                LEFT JOIN branches b ON b.id=v.branch_id AND b.company_id=v.company_id
+               WHERE v.deleted_at IS NULL AND v.company_id=@cid",
+            "v.vehicle_code,v.id", ct);
+
+    private static Task<IResult> DriversExport(HttpContext http, Database db, CancellationToken ct) =>
+        ExportCsv(http, db, "drivers:export", "drivers", "d",
+            @"SELECT d.driver_code,b.branch_code,d.full_name,d.phone,d.email,d.license_number,
+                     TO_CHAR(d.license_expiry,'YYYY-MM-DD') license_expiry,
+                     d.status,d.safety_score,d.readiness_score,d.risk_score,d.compliance_score
+                FROM drivers d
+                LEFT JOIN branches b ON b.id=d.branch_id AND b.company_id=d.company_id
+               WHERE d.deleted_at IS NULL AND d.company_id=@cid",
+            "d.driver_code,d.id", ct,
+            // DEF-015: exported CSV carries the masked last-four rendering, never enc:.
+            transform: rows => MaskDriverLicenseIn(rows,
+                http.RequestServices.GetRequiredService<Opstrax.Api.Security.PiiProtectionService>()));
 
     // Keep user-controlled identifiers/names from becoming formulas when an exported
     // CSV is opened in Excel or another spreadsheet. Quoting alone does not disable

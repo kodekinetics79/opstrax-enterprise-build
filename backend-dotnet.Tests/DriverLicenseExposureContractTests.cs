@@ -101,7 +101,7 @@ public class DriverLicenseExposureContractTests
         var source = MappingsSource();
         var allowed = new HashSet<string>(StringComparer.Ordinal)
         {
-            "MapOpsTraxEndpoints",   // drivers/export registration — masked via transform (asserted below)
+            "DriversExport",         // customer CSV export — masked via transform (asserted below)
             "Drivers",               // roster — masked via transform (asserted below)
             "SafetyDriverScores",    // scorecards — MaskDriverLicenseIn (asserted below)
             "CreateDriver",          // write path (encrypt + blind index + duplicate check)
@@ -139,7 +139,7 @@ public class DriverLicenseExposureContractTests
         var drivers = Block(source, "private static Task<IResult> Drivers(", "private static async Task<IResult> Customers(");
         Assert.Contains("transform: rows => ProtectDriverOperationalRows(rows,", drivers, StringComparison.Ordinal);
 
-        var export = Block(source, "app.MapGet(\"/api/drivers/export\"", "app.MapGet(\"/api/jobs/export\"");
+        var export = Block(source, "private static Task<IResult> DriversExport(", "// Keep user-controlled identifiers/names");
         Assert.Contains("transform: rows => MaskDriverLicenseIn(rows,", export, StringComparison.Ordinal);
 
         // Scorecards mask in place.
