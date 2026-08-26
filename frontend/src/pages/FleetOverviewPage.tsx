@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import {
   Activity, AlertTriangle, BellRing, ChevronRight, Clock, Gauge as GaugeIcon,
   MapPin, Package, Radio, Search, ShieldAlert, Truck, Wifi, WifiOff, Wrench, Zap,
@@ -151,12 +151,7 @@ export function FleetOverviewPage() {
     queryFn: () => vehiclesApi.fleetOverview({ page, pageSize, search, status: tab, sort, order: sortOrder }),
     refetchInterval: 30_000,
     enabled: canViewVehicles,
-    placeholderData: keepPreviousData,
   });
-  useEffect(() => {
-    const serverPage = Number(vehiclesQ.data?.page);
-    if (Number.isInteger(serverPage) && serverPage > 0 && serverPage !== page) setPage(serverPage);
-  }, [page, vehiclesQ.data?.page]);
   const alertsQ   = useQuery({ queryKey: ["fleet-overview-alerts"],   queryFn: () => alertsApi.list(),  refetchInterval: 60_000, enabled: canViewAlerts });
   const jobsQ     = useQuery({ queryKey: ["fleet-overview-jobs"],     queryFn: () => jobsApi.summary(), refetchInterval: 60_000, enabled: canViewJobs });
 
@@ -190,6 +185,7 @@ export function FleetOverviewPage() {
   const totalFleet = Number(summary.total ?? 0);
   const selectedTotal = Number(vehiclesQ.data?.total ?? 0);
   const pageCount = Number(vehiclesQ.data?.pageCount ?? 0);
+  const displayPage = Number(vehiclesQ.data?.page ?? page);
   const flagged = Number(summary.flagged ?? 0);
 
   // Readiness instrumentation — only from vehicles that actually report a score.
@@ -458,7 +454,7 @@ export function FleetOverviewPage() {
           {/* Instrument strip */}
           <div className="flex shrink-0 flex-wrap items-center gap-x-5 gap-y-2 px-5 py-3 text-[11.5px] font-semibold text-slate-500">
             <span className="tabular-nums">
-              {selectedTotal > 0 ? `${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, selectedTotal)}` : "0"} of {selectedTotal} vehicles
+              {selectedTotal > 0 ? `${(displayPage - 1) * pageSize + 1}–${Math.min(displayPage * pageSize, selectedTotal)}` : "0"} of {selectedTotal} vehicles
             </span>
             <span className="inline-flex items-center gap-2">
               <span className="deck-led deck-led-emerald" />
@@ -478,20 +474,20 @@ export function FleetOverviewPage() {
               <button
                 type="button"
                 className="btn-ghost h-8 px-3 text-xs"
-                disabled={page <= 1 || vehiclesQ.isFetching}
-                onClick={() => setPage((current) => Math.max(1, current - 1))}
+                disabled={displayPage <= 1 || vehiclesQ.isFetching}
+                onClick={() => setPage(Math.max(1, displayPage - 1))}
                 aria-label="Previous fleet page"
               >
                 Previous
               </button>
               <span className="min-w-[76px] text-center tabular-nums" aria-live="polite">
-                Page {pageCount === 0 ? 0 : page} of {pageCount}
+                Page {pageCount === 0 ? 0 : displayPage} of {pageCount}
               </span>
               <button
                 type="button"
                 className="btn-ghost h-8 px-3 text-xs"
-                disabled={pageCount === 0 || page >= pageCount || vehiclesQ.isFetching}
-                onClick={() => setPage((current) => Math.min(pageCount, current + 1))}
+                disabled={pageCount === 0 || displayPage >= pageCount || vehiclesQ.isFetching}
+                onClick={() => setPage(Math.min(pageCount, displayPage + 1))}
                 aria-label="Next fleet page"
               >
                 Next

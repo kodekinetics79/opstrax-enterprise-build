@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Http;
 using Npgsql;
 using Opstrax.Api.Data;
 using Opstrax.Api.DTOs;
+using Opstrax.Api.Services;
 
 namespace Opstrax.Api.Controllers;
 
@@ -44,7 +45,13 @@ public static partial class EndpointMappings
         var direction = descending ? "DESC" : "ASC";
         var companyId = GetCompanyId(http);
         var (branchClause, branchId) = StrictBranchFilter(http, "v");
-        var canViewDeviceState = RequirePermission(http, "telemetry.devices.read") is null;
+        var hasDevicePermission = RequirePermission(http, "telemetry.devices.read") is null;
+        var canViewDeviceState = false;
+        if (hasDevicePermission)
+        {
+            var telematics = await new EntitlementService(db).CheckModuleAsync(companyId, "telematics", ct);
+            canViewDeviceState = telematics.Allowed;
+        }
 
         // The overview bucket is deliberately mutually exclusive. In a live-operations
         // surface, an explicitly offline device takes precedence over registry activity;
@@ -57,22 +64,14 @@ WITH scoped AS (
            d.full_name assigned_driver,
            CASE
              WHEN NOT @canViewDeviceState THEN 'Unknown'
-             WHEN COALESCE(NULLIF(BTRIM(current_device.device_state),''),NULLIF(BTRIM(v.device_status),'')) IS NULL THEN 'Unknown'
-             WHEN LOWER(COALESCE(NULLIF(BTRIM(current_device.device_state),''),NULLIF(BTRIM(v.device_status),'')))='online' THEN 'Online'
-             WHEN LOWER(COALESCE(NULLIF(BTRIM(current_device.device_state),''),NULLIF(BTRIM(v.device_status),''))) ~ '(degraded|weak|intermittent)' THEN 'Degraded'
-             WHEN LOWER(COALESCE(NULLIF(BTRIM(current_device.device_state),''),NULLIF(BTRIM(v.device_status),''))) ~ '^(offline|inactive|disconnected|revoked|suspended)$' THEN 'Offline'
+             WHEN NULLIF(BTRIM(v.device_status),'') IS NULL THEN 'Unknown'
+             WHEN LOWER(NULLIF(BTRIM(v.device_status),''))='online' THEN 'Online'
+             WHEN LOWER(NULLIF(BTRIM(v.device_status),'')) ~ '(degraded|weak|intermittent)' THEN 'Degraded'
+             WHEN LOWER(NULLIF(BTRIM(v.device_status),'')) ~ '^(offline|inactive|disconnected|revoked|suspended)$' THEN 'Offline'
              ELSE 'Unknown'
            END signal_status
       FROM vehicles v
       LEFT JOIN drivers d ON d.id=v.assigned_driver_id AND d.company_id=v.company_id AND d.deleted_at IS NULL
-      LEFT JOIN LATERAL (
-        SELECT e.device_state
-          FROM device_installations i
-          JOIN eld_devices e ON e.id=i.device_id AND e.company_id=i.company_id
-         WHERE i.company_id=v.company_id AND i.vehicle_id=v.id AND i.effective_to IS NULL
-           AND i.status IN ('Installed','Verified') AND i.device_role IN ('GPS','ELD','OBD-II','J1939/CAN')
-         ORDER BY i.is_primary DESC,i.effective_from DESC,i.id DESC LIMIT 1
-      ) current_device ON TRUE
      WHERE v.company_id=@cid AND v.deleted_at IS NULL" + branchClause + @"
 ), classified AS (
     SELECT scoped.*,
