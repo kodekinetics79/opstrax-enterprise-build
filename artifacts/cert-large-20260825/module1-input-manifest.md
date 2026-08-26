@@ -78,7 +78,7 @@ The role accounts are intentionally excluded from CSV processing. Complete the 2
 ## Evidence boundary at manifest preparation
 
 - Five branches and 24 active authorized role accounts have preserved visible-Chrome evidence in the certification artifact tree.
-- Five 200-row vehicle batches were visibly imported and persisted on deployed SHA `ec024903...`; later candidate SHAs require the prescribed redeploy/retest cycle.
-- Driver import evidence is partial; remaining driver, device, and asset uploads still require visible Chrome execution.
-- Assignment-history fixes were closed in code at `045c8a4...`, but full cross-entity customer journeys still require browser retest.
+- The rendered tenant now reconciles exactly 1,000 vehicles, 1,250 drivers, 1,100 devices, and 300 assets after customer-facing UI imports.
+- Controlled invalid and duplicate device/asset previews were visibly rejected without changing the reconciled totals. The vehicle/driver controlled correction cycle remains an evidence gap.
+- Vehicle/driver, device, and trailer reassignment/custody histories now have preserved visible-Chrome evidence through refresh and logout/login. The final device-transfer retest passed on deployed SHA `7e98a39d66d67dbd5bb5419602532d7ec1aa23d1`.
 - This manifest certifies only file integrity and intended use. It does not certify Module 1.
