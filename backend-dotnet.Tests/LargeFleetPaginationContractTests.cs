@@ -57,6 +57,31 @@ public sealed class LargeFleetPaginationContractTests
         Assert.DoesNotContain("exportDevicesCsv()", page, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void TelematicsControlTower_UsesServerPagingAndFullFleetSummary()
+    {
+        var endpoints = Read("backend-dotnet", "Controllers", "EndpointMappings.cs");
+        var schema = Read("backend-dotnet", "Services", "TelemetrySchemaService.cs");
+        var service = Read("frontend", "src", "services", "telematicsService.ts");
+        var page = Read("frontend", "src", "pages", "TelematicsControlTowerPage.tsx");
+
+        Assert.Contains("getDevicePage({ page, pageSize", page, StringComparison.Ordinal);
+        Assert.Contains("pageSize = 100", page, StringComparison.Ordinal);
+        Assert.Contains("Search priority queue", page, StringComparison.Ordinal);
+        Assert.Contains("Page {page} of {pageCount}", page, StringComparison.Ordinal);
+        Assert.Contains("Export devices CSV", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("getGpsTrackingRecords()", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("getDiagnosticsRecords()", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("telematicsService.getDevices()", page, StringComparison.Ordinal);
+
+        Assert.Contains("neverConnected: Number", service, StringComparison.Ordinal);
+        Assert.Contains("Summary cards describe the complete authorized fleet/cluster", endpoints, StringComparison.Ordinal);
+        Assert.Contains("COUNT(*) FILTER (WHERE e.last_seen_at IS NULL) never_connected", endpoints, StringComparison.Ordinal);
+        Assert.Contains("HasPermission(permissions, \"telematics:diagnostics:view\")", endpoints, StringComparison.Ordinal);
+        Assert.Contains("command.Parameters.AddWithValue(\"@search\", \"\")", endpoints, StringComparison.Ordinal);
+        Assert.Contains("idx_lvp_company_device_received", schema, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData("=HYPERLINK(\"https://invalid.example\")", "'=HYPERLINK")]
     [InlineData("+SUM(1,2)", "'+SUM")]

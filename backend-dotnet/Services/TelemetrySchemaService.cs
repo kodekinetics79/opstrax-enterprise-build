@@ -252,6 +252,9 @@ public sealed class TelemetrySchemaService(Database db)
         // Matches ux_eld_devices_imei from migration stage32 so both provisioning paths agree.
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_eld_devices_imei ON eld_devices(imei) WHERE imei IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS idx_lvp_tenant ON latest_vehicle_positions(company_id, received_at)",
+        // Device-first latest-position reads back the paged GPS/diagnostics workspaces;
+        // keep the lateral lookup bounded at large-fleet volume.
+        "CREATE INDEX IF NOT EXISTS idx_lvp_company_device_received ON latest_vehicle_positions(company_id, device_id, received_at DESC, id DESC) WHERE device_id IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS idx_lvp_status ON latest_vehicle_positions(company_id, telemetry_status, risk_level)",
         "CREATE INDEX IF NOT EXISTS idx_tn_device_used ON telemetry_nonces(device_id, used_at)",
         "CREATE INDEX IF NOT EXISTS idx_ggr_received ON gps_gateway_replay(received_at)",
