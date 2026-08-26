@@ -5,13 +5,13 @@
 
 BEGIN;
 
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM platform_roles WHERE role_key='product_admin') THEN
-    RAISE EXCEPTION 'Stage90 requires the protected platform role bootstrap through Stage77';
-  END IF;
-END
-$$;
+-- Keep this guard as plain SQL so governed migration runners that split SQL
+-- statements do not have to parse a dollar-quoted PL/pgSQL block. The protected
+-- role key is unique, so the denominator is 1 only when Stage77 is present; a
+-- missing (or corrupt duplicate) role fails the transaction with division by zero.
+SELECT 1 / (COUNT(*) = 1)::integer AS stage77_product_admin_guard
+FROM platform_roles
+WHERE role_key = 'product_admin';
 
 INSERT INTO platform_role_permissions (role_id, permission_key)
 SELECT id, 'platform:pilot:run'
