@@ -61,6 +61,7 @@ public sealed class LargeFleetPaginationContractTests
     public void TelematicsControlTower_UsesServerPagingAndFullFleetSummary()
     {
         var endpoints = Read("backend-dotnet", "Controllers", "EndpointMappings.cs");
+        var schema = Read("backend-dotnet", "Services", "TelemetrySchemaService.cs");
         var service = Read("frontend", "src", "services", "telematicsService.ts");
         var page = Read("frontend", "src", "pages", "TelematicsControlTowerPage.tsx");
 
@@ -78,6 +79,7 @@ public sealed class LargeFleetPaginationContractTests
         Assert.Contains("COUNT(*) FILTER (WHERE e.last_seen_at IS NULL) never_connected", endpoints, StringComparison.Ordinal);
         Assert.Contains("HasPermission(permissions, \"telematics:diagnostics:view\")", endpoints, StringComparison.Ordinal);
         Assert.Contains("command.Parameters.AddWithValue(\"@search\", \"\")", endpoints, StringComparison.Ordinal);
+        Assert.Contains("idx_lvp_company_device_received", schema, StringComparison.Ordinal);
     }
 
     [Theory]
