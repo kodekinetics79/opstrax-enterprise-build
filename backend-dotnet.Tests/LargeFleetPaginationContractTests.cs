@@ -86,6 +86,8 @@ public sealed class LargeFleetPaginationContractTests
         Assert.DoesNotContain("placeholderData: keepPreviousData", page, StringComparison.Ordinal);
         Assert.Contains("Highest risk first", page, StringComparison.Ordinal);
         Assert.Contains("sort === \"priority\" ? \"desc\" : \"asc\"", page, StringComparison.Ordinal);
+        Assert.Contains("role=\"status\" aria-live=\"polite\" aria-busy=\"true\"", page, StringComparison.Ordinal);
+        Assert.Contains("Updating priority queue…", page, StringComparison.Ordinal);
         Assert.Contains("const governedHold = /quarantined|suspended/i.test(device.deviceState)", page, StringComparison.Ordinal);
         Assert.Contains("Resolve the governed device hold before returning it to service", page, StringComparison.Ordinal);
         Assert.Contains("LOWER(COALESCE(e.device_state,'')) NOT IN ('quarantined','suspended')", endpoints, StringComparison.Ordinal);
