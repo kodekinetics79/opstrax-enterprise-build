@@ -21,6 +21,7 @@ import { PERMISSIONS } from "@/auth/rbacConfig";
 import { useHasPermission } from "@/hooks/usePermission";
 import { maintenanceApi } from "@/services/maintenanceApi";
 import { telematicsService, type DeviceDetailRecord, type TelematicsClusterRecord, type TelemetryClusterPageResult } from "@/services/telematicsService";
+import { resolveTelemetryEmptyState } from "@/utils/telemetryEmptyState";
 
 type TelematicsKind = "gps-tracking" | "obd-j1939" | "sensor-health" | "cold-chain";
 
@@ -325,6 +326,12 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
   const total = recordsQ.data?.total ?? 0;
   const visibleUnits = paged ? recordsQ.data?.summary.active ?? 0 : total;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const emptyState = resolveTelemetryEmptyState({
+    rowCount: rows.length,
+    searchInput,
+    appliedSearch: search,
+    tab,
+  });
 
   if (recordsQ.isLoading) return <LoadingState />;
   if (recordsQ.isError) {
@@ -429,9 +436,10 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
           </div>
         </div>
 
-        {!rows.length ? (
-          hasAnyLiveData ? (
-            // Live rows exist for this tenant; the active search / filter tab hid them all.
+        {emptyState !== "rows" ? (
+          emptyState === "filtered-empty" || hasAnyLiveData ? (
+            // An active search/filter produced no matches. Never describe this as
+            // an empty tenant or tell the operator to provision existing devices.
             <EmptyState title={config.emptyTitle} subtitle={config.emptySubtitle} />
           ) : (
             // No devices reported any live telemetry for this tenant yet.
