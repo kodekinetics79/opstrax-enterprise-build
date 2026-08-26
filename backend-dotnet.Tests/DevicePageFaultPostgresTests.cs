@@ -86,6 +86,7 @@ public sealed class DevicePageFaultPostgresTests
                 @"INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,vin_exception_type,alternate_identifier,status)
                   VALUES (@c,@b,@code,'Truck','legacy-fleet-identifier',@code,'Available')",
                 c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchId); c.Parameters.AddWithValue("@code", $"V-{suffix}"); });
+            var quarantinedVehicleId = await Vehicle(db, companyId, branchId, $"V-Q-{suffix}");
             var gpsSerial = $"GPS-{suffix}";
             var obdSerial = $"OBD-{suffix}";
             var quarantinedSerial = $"GPS-QUARANTINED-{suffix}";
@@ -105,7 +106,7 @@ public sealed class DevicePageFaultPostgresTests
             await db.ExecuteAsync(
                 @"INSERT INTO latest_vehicle_positions(company_id,vehicle_id,device_id,lat,lng,event_time,received_at)
                   VALUES (@c,@v,@d,43.66,-79.39,NOW(),NOW())",
-                c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@v", vehicleId); c.Parameters.AddWithValue("@d", quarantinedId); });
+                c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@v", quarantinedVehicleId); c.Parameters.AddWithValue("@d", quarantinedId); });
 
             var diagnostics = Principal(companyId, branchId, "telematics:diagnostics:view");
             diagnostics.Request.QueryString = new QueryString("?cluster=diagnostics&pageSize=50");
