@@ -47,6 +47,8 @@ public sealed class ProductPilotHarnessTests
         Assert.Contains("WHERE c.name=@identifier", source, StringComparison.Ordinal);
         Assert.Contains("(SELECT COUNT(*) FROM companies WHERE name=@identifier)=1", source, StringComparison.Ordinal);
         Assert.DoesNotContain("WHERE company_code=@code", source, StringComparison.Ordinal);
+        Assert.Contains("Opstrax.Api.Observability.BuildInfo.Version", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("configuration[\"OPSTRAX_DEPLOY_VERSION\"]", source, StringComparison.Ordinal);
 
         var migration = Read("database", "migrations", "2026_08_26_stage90_product_pilot_permission.sql");
         Assert.Contains("platform:pilot:run", migration, StringComparison.Ordinal);

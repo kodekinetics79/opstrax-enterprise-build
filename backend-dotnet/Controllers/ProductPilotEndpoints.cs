@@ -59,7 +59,11 @@ public static class ProductPilotEndpoints
         var policy = tenant["entitlementPolicyMode"]?.ToString() ?? "unknown";
         var active = string.Equals(tenant["status"]?.ToString(), "Active", StringComparison.OrdinalIgnoreCase);
         var eligible = active && string.Equals(policy, "package_allowlist", StringComparison.Ordinal);
-        var deployedSha = configuration["OPSTRAX_DEPLOY_VERSION"] ?? configuration["RENDER_GIT_COMMIT"] ?? "unknown";
+        // Use the same immutable runtime provenance resolver as health, logs, and
+        // About. On Render the platform-provided commit is authoritative over an
+        // operator-supplied label, preventing a stale variable from misreporting
+        // the artifact that is actually serving this request.
+        var deployedSha = Opstrax.Api.Observability.BuildInfo.Version;
 
         return Results.Ok(ApiResponse<object>.Ok(new
         {
