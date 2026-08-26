@@ -463,6 +463,23 @@ public static partial class EndpointMappings
                         "SELECT pg_advisory_xact_lock(hashtextextended(@identity,0))",
                         c => c.Parameters.AddWithValue("@identity", $"device-transfer-idempotency:{companyId}:{idempotencyKey}"), ct);
                 }
+                // Live ingestion takes this exact tenant/device row lock before it
+                // resolves an installation and persists canonical telemetry. Hold the
+                // same lock before checking either evidence store so an in-flight event
+                // must commit first; the subsequent checks then observe and reject it.
+                var lockedDevice = await db.QuerySingleAsync(
+                    @"SELECT id FROM eld_devices
+                       WHERE id=@did AND company_id=@cid AND deleted_at IS NULL
+                         AND (@branch::bigint IS NULL OR branch_id=@branch)
+                       FOR UPDATE",
+                    c =>
+                    {
+                        c.Parameters.AddWithValue("@did", id);
+                        c.Parameters.AddWithValue("@cid", companyId);
+                        c.Parameters.AddWithValue("@branch", (object?)branchId ?? DBNull.Value);
+                    }, ct);
+                if (lockedDevice is null)
+                    return Results.BadRequest(ApiResponse<object>.Fail("Device and target vehicle must exist in the same tenant and branch"));
                 var resources = await LoadInstallationResourcesAsync(db, companyId, branchId, id, body.VehicleId, ct);
                 if (resources is null)
                     return Results.BadRequest(ApiResponse<object>.Fail("Device and target vehicle must exist in the same tenant and branch"));

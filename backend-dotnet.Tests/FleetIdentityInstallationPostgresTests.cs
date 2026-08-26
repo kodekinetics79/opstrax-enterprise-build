@@ -202,7 +202,9 @@ public sealed class FleetIdentityInstallationPostgresTests
         var owner = Db();
         var runtime = Db(TestDb.AppConnectionString, true, TestDb.SystemConnectionString);
         var companyId = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + Random.Shared.Next(950_000, 999_000);
+        var otherCompanyId = companyId + 1;
         await Company(owner, companyId, "RUNTIME-LANE");
+        await Company(owner, otherCompanyId, "OTHER-LANE");
         try
         {
             Assert.Equal(0, await owner.ScalarLongAsync(
@@ -225,6 +227,16 @@ public sealed class FleetIdentityInstallationPostgresTests
                     c.Parameters.AddWithValue("@d", deviceId); c.Parameters.AddWithValue("@v", sourceVehicle);
                     c.Parameters.AddWithValue("@at", installedAt);
                 });
+            await owner.ExecuteAsync(
+                @"INSERT INTO canonical_telemetry_events
+                    (company_id,device_id,installation_id,event_type,event_time)
+                  VALUES (@other,@d,@i,'device.heartbeat',NOW())",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@other", otherCompanyId);
+                    c.Parameters.AddWithValue("@d", deviceId);
+                    c.Parameters.AddWithValue("@i", installationId);
+                });
 
             // Execute with the same split identities used in production. The app role
             // performs the tenant mutation while the system role returns only the
@@ -240,6 +252,159 @@ public sealed class FleetIdentityInstallationPostgresTests
             Assert.Equal(targetVehicle, await owner.ScalarLongAsync(
                 "SELECT vehicle_id FROM device_installations WHERE company_id=@c AND device_id=@d AND effective_to IS NULL",
                 c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@d", deviceId); }));
+        }
+        finally
+        {
+            foreach (var company in new[] { companyId, otherCompanyId })
+            foreach (var sql in new[]
+            {
+                "DELETE FROM canonical_telemetry_events WHERE company_id=@c",
+                "DELETE FROM audit_logs WHERE company_id=@c", "DELETE FROM device_state_transitions WHERE company_id=@c",
+                "DELETE FROM idempotency_keys WHERE tenant_id=@c", "DELETE FROM device_installations WHERE company_id=@c",
+                "DELETE FROM eld_devices WHERE company_id=@c", "DELETE FROM vehicles WHERE company_id=@c",
+                "DELETE FROM branches WHERE company_id=@c", "DELETE FROM companies WHERE id=@c"
+            }) await owner.ExecuteAsync(sql, c => c.Parameters.AddWithValue("@c", company));
+        }
+    }
+
+    [Fact]
+    public async Task TransferWaitsForInFlightCanonicalEventThenRechecksAndRejects()
+    {
+        var owner = Db();
+        var applicationName = $"transfer-race-{Guid.NewGuid():N}";
+        var appConnection = new NpgsqlConnectionStringBuilder(TestDb.AppConnectionString)
+        {
+            ApplicationName = applicationName
+        }.ConnectionString;
+        var runtime = Db(appConnection, true, TestDb.SystemConnectionString);
+        var companyId = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + Random.Shared.Next(1_000_000, 1_049_000);
+        await Company(owner, companyId, "INGEST-RACE");
+        try
+        {
+            var branch = await Branch(owner, companyId, "INGEST-RACE");
+            var sourceVehicle = await Vehicle(owner, companyId, branch, $"INGEST-A-{companyId}", alternate: $"INGEST-MFG-A-{companyId}");
+            var targetVehicle = await Vehicle(owner, companyId, branch, $"INGEST-B-{companyId}", alternate: $"INGEST-MFG-B-{companyId}");
+            var deviceId = await Device(owner, companyId, $"INGEST-DEVICE-{companyId}");
+            var installationId = await owner.InsertAsync(
+                @"INSERT INTO device_installations
+                    (company_id,branch_id,device_id,vehicle_id,status,device_role,is_primary,effective_from,installed_at,source)
+                  VALUES (@c,@b,@d,@v,'Installed','GPS',TRUE,NOW()-INTERVAL '10 minutes',NOW()-INTERVAL '10 minutes','test')",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branch);
+                    c.Parameters.AddWithValue("@d", deviceId); c.Parameters.AddWithValue("@v", sourceVehicle);
+                });
+            var transferAt = DateTimeOffset.UtcNow.AddSeconds(-2);
+
+            await using var ingestionConnection = new NpgsqlConnection(TestDb.SystemConnectionString);
+            await ingestionConnection.OpenAsync();
+            await using var ingestionTransaction = await ingestionConnection.BeginTransactionAsync();
+            await using (var lockDevice = new NpgsqlCommand(
+                "SELECT id FROM eld_devices WHERE id=@d AND company_id=@c AND deleted_at IS NULL FOR UPDATE",
+                ingestionConnection, ingestionTransaction))
+            {
+                lockDevice.Parameters.AddWithValue("@d", deviceId);
+                lockDevice.Parameters.AddWithValue("@c", companyId);
+                Assert.Equal(deviceId, Convert.ToInt64(await lockDevice.ExecuteScalarAsync()));
+            }
+
+            var transferTask = Invoke("DeviceInstallationTransfer", Principal(companyId, 42), deviceId,
+                Body("DeviceInstallationTransferBody", targetVehicle, (long?)installationId,
+                    "replace vehicle", "new route", "GPS", true, (DateTimeOffset?)transferAt,
+                    "yard bay 2", 49919m, "heartbeat", (int?)1, $"race-transfer-{Guid.NewGuid():N}"),
+                runtime, new AuditService(runtime), CancellationToken.None);
+
+            var observedWaiting = false;
+            for (var attempt = 0; attempt < 100 && !observedWaiting; attempt++)
+            {
+                observedWaiting = await owner.ScalarLongAsync(
+                    @"SELECT COUNT(*) FROM pg_stat_activity
+                       WHERE application_name=@app AND wait_event_type='Lock'
+                         AND query LIKE '%eld_devices%' AND query LIKE '%FOR UPDATE%'",
+                    c => c.Parameters.AddWithValue("@app", applicationName)) != 0;
+                if (!observedWaiting) await Task.Delay(20);
+            }
+            Assert.True(observedWaiting, "Transfer did not wait on the ingestion device row lock");
+            Assert.False(transferTask.IsCompleted, "Transfer completed before in-flight telemetry committed");
+
+            await using (var insertEvent = new NpgsqlCommand(
+                @"INSERT INTO canonical_telemetry_events
+                    (company_id,vehicle_id,device_id,installation_id,event_type,event_time)
+                  VALUES (@c,@v,@d,@i,'device.heartbeat',@at)",
+                ingestionConnection, ingestionTransaction))
+            {
+                insertEvent.Parameters.AddWithValue("@c", companyId);
+                insertEvent.Parameters.AddWithValue("@v", sourceVehicle);
+                insertEvent.Parameters.AddWithValue("@d", deviceId);
+                insertEvent.Parameters.AddWithValue("@i", installationId);
+                insertEvent.Parameters.AddWithValue("@at", DateTimeOffset.UtcNow);
+                await insertEvent.ExecuteNonQueryAsync();
+            }
+            await ingestionTransaction.CommitAsync();
+
+            var transfer = await transferTask.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Equal(StatusCodes.Status409Conflict, Status(transfer));
+            Assert.Equal(1, await Count(owner, companyId, deviceId));
+            Assert.Equal(sourceVehicle, await owner.ScalarLongAsync(
+                "SELECT vehicle_id FROM device_installations WHERE company_id=@c AND device_id=@d AND effective_to IS NULL",
+                c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@d", deviceId); }));
+            Assert.Equal(0, await owner.ScalarLongAsync(
+                "SELECT COUNT(*) FROM idempotency_keys WHERE tenant_id=@c AND operation='device.installation.transfer'",
+                c => c.Parameters.AddWithValue("@c", companyId)));
+        }
+        finally
+        {
+            foreach (var sql in new[]
+            {
+                "DELETE FROM canonical_telemetry_events WHERE company_id=@c",
+                "DELETE FROM audit_logs WHERE company_id=@c", "DELETE FROM device_state_transitions WHERE company_id=@c",
+                "DELETE FROM idempotency_keys WHERE tenant_id=@c", "DELETE FROM device_installations WHERE company_id=@c",
+                "DELETE FROM eld_devices WHERE company_id=@c", "DELETE FROM vehicles WHERE company_id=@c",
+                "DELETE FROM branches WHERE company_id=@c", "DELETE FROM companies WHERE id=@c"
+            }) await owner.ExecuteAsync(sql, c => c.Parameters.AddWithValue("@c", companyId));
+        }
+    }
+
+    [Fact]
+    public async Task CanonicalEvidencePrivilegeFailureReturnsSafeUnavailableAndRollsBack()
+    {
+        var owner = Db();
+        // Deliberately misconfigure only the test system lane as the restricted app
+        // identity. Its canonical SELECT fails with 42501 without changing shared ACLs.
+        var runtimeWithoutCanonicalLane = Db(TestDb.AppConnectionString, true, TestDb.AppConnectionString);
+        var companyId = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + Random.Shared.Next(1_050_000, 1_099_000);
+        await Company(owner, companyId, "PRIVILEGE-ROLLBACK");
+        try
+        {
+            var branch = await Branch(owner, companyId, "PRIVILEGE-ROLLBACK");
+            var sourceVehicle = await Vehicle(owner, companyId, branch, $"ROLLBACK-A-{companyId}", alternate: $"ROLLBACK-MFG-A-{companyId}");
+            var targetVehicle = await Vehicle(owner, companyId, branch, $"ROLLBACK-B-{companyId}", alternate: $"ROLLBACK-MFG-B-{companyId}");
+            var deviceId = await Device(owner, companyId, $"ROLLBACK-DEVICE-{companyId}");
+            var installationId = await owner.InsertAsync(
+                @"INSERT INTO device_installations
+                    (company_id,branch_id,device_id,vehicle_id,status,device_role,is_primary,effective_from,installed_at,source)
+                  VALUES (@c,@b,@d,@v,'Installed','GPS',TRUE,NOW()-INTERVAL '10 minutes',NOW()-INTERVAL '10 minutes','test')",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branch);
+                    c.Parameters.AddWithValue("@d", deviceId); c.Parameters.AddWithValue("@v", sourceVehicle);
+                });
+            var idempotencyKey = $"privilege-transfer-{Guid.NewGuid():N}";
+
+            var transfer = await Invoke("DeviceInstallationTransfer", Principal(companyId, 42), deviceId,
+                Body("DeviceInstallationTransferBody", targetVehicle, (long?)installationId,
+                    "replace vehicle", "new route", "GPS", true, (DateTimeOffset?)DateTimeOffset.UtcNow.AddSeconds(-1),
+                    "yard bay 2", 49919m, "heartbeat", (int?)1, idempotencyKey),
+                runtimeWithoutCanonicalLane, new AuditService(runtimeWithoutCanonicalLane), CancellationToken.None);
+
+            Assert.Equal(StatusCodes.Status503ServiceUnavailable, Status(transfer));
+            Assert.Equal(1, await Count(owner, companyId, deviceId));
+            Assert.Equal(sourceVehicle, await owner.ScalarLongAsync(
+                "SELECT vehicle_id FROM device_installations WHERE company_id=@c AND device_id=@d AND effective_to IS NULL",
+                c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@d", deviceId); }));
+            Assert.Equal(0, await owner.ScalarLongAsync(
+                "SELECT COUNT(*) FROM idempotency_keys WHERE tenant_id=@c AND idempotency_key=@key",
+                c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@key", idempotencyKey); }));
         }
         finally
         {
