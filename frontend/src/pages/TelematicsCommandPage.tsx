@@ -20,7 +20,7 @@ import { EmptyState, ErrorState, KpiCard, LoadingState, PageHeader, RiskBadge, S
 import { PERMISSIONS } from "@/auth/rbacConfig";
 import { useHasPermission } from "@/hooks/usePermission";
 import { maintenanceApi } from "@/services/maintenanceApi";
-import { telematicsService, type DeviceDetailRecord, type TelematicsClusterRecord } from "@/services/telematicsService";
+import { telematicsService, type DeviceDetailRecord, type TelematicsClusterRecord, type TelemetryClusterPageResult } from "@/services/telematicsService";
 
 type TelematicsKind = "gps-tracking" | "obd-j1939" | "sensor-health" | "cold-chain";
 
@@ -123,6 +123,24 @@ function filterRecord(kind: TelematicsKind, record: TelematicsClusterRecord, tab
   return true;
 }
 
+function isServerPaged(kind: TelematicsKind): kind is "gps-tracking" | "obd-j1939" {
+  return kind === "gps-tracking" || kind === "obd-j1939";
+}
+
+function serverView(kind: "gps-tracking" | "obd-j1939", tab: string) {
+  if (kind === "gps-tracking") {
+    if (tab === "Online") return "online";
+    if (tab === "Stale GPS" || tab === "Offline") return "stale";
+    if (tab === "Critical") return "attention";
+    return "all";
+  }
+  if (tab === "Fresh") return "fresh";
+  if (tab === "Watch") return "watch";
+  if (tab === "Stale") return "stale";
+  if (tab === "Issues") return "issues";
+  return "all";
+}
+
 // Treat the service's honest empty markers ("—", "", "No ...") as "no value" so we
 // never join them into a half-real string like "—, —" or "— mph · —".
 function hasValue(value: string | number | null | undefined) {
@@ -182,10 +200,28 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
   const canUpdate = hasPermission(config.requiredUpdatePermission);
   const [tab, setTab] = useState(config.filterTabs[0]);
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<TelematicsClusterRecord | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const recordsQ = useQuery({ queryKey: ["telematics-cluster", kind], queryFn: config.query, staleTime: 20_000 });
+  const paged = isServerPaged(kind);
+  const pageSize = 50;
+  const recordsQ = useQuery({
+    queryKey: ["telematics-cluster", kind, paged ? page : 1, paged ? search : "", paged ? tab : ""],
+    queryFn: async (): Promise<TelemetryClusterPageResult> => {
+      if (paged) {
+        return telematicsService.getTelemetryClusterPage(kind, {
+          page,
+          pageSize,
+          search,
+          view: serverView(kind, tab),
+        });
+      }
+      const items = await config.query();
+      return { items, total: items.length, page: 1, pageSize: Math.max(1, items.length), summary: { active: items.length, offline: 0, attention: 0 } };
+    },
+    staleTime: 20_000,
+  });
   const detailQ = useQuery({
     queryKey: ["telematics-cluster-detail", kind, selected?.deviceId],
     queryFn: () => telematicsService.getDeviceById(String(selected?.deviceId)),
@@ -237,7 +273,9 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
 
   const rows = useMemo(() => {
     const query = search.trim().toLowerCase();
-    return (recordsQ.data ?? []).filter((record) => {
+    const records = recordsQ.data?.items ?? [];
+    if (paged) return records;
+    return records.filter((record) => {
       const haystack = [
         record.vehicleCode,
         record.deviceName,
@@ -254,11 +292,11 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
       ].join(" ").toLowerCase();
       return (!query || haystack.includes(query)) && filterRecord(kind, record, tab);
     });
-  }, [recordsQ.data, search, kind, tab]);
+  }, [recordsQ.data?.items, search, kind, tab, paged]);
 
   const selectedRecord = rows.find((row) => row.id === selected?.id) ?? selected;
-  const offlineCount = rows.filter((row) => row.offlineWarning).length;
-  const issueCount = rows.filter((row) => row.alertStatus === "Open" || (row.troubleCodes?.length ?? 0) > 0 || (row.deviceHealthAvailable && row.deviceHealth < 70)).length;
+  const offlineCount = paged ? recordsQ.data?.summary.offline ?? 0 : rows.filter((row) => row.offlineWarning).length;
+  const issueCount = paged ? recordsQ.data?.summary.attention ?? 0 : rows.filter((row) => row.alertStatus === "Open" || (row.troubleCodes?.length ?? 0) > 0 || (row.deviceHealthAvailable && row.deviceHealth < 70)).length;
 
   // Average health only counts rows that carry a real numeric health signal. With an
   // empty (or all-signal-less) fleet there is nothing to average, so we surface "—"
@@ -270,7 +308,10 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
 
   // Distinguish "this tenant has no live telemetry at all" from "the current search /
   // filter simply matched nothing" — the two empty states carry different meaning.
-  const hasAnyLiveData = (recordsQ.data?.length ?? 0) > 0;
+  const hasAnyLiveData = (recordsQ.data?.total ?? 0) > 0;
+  const total = recordsQ.data?.total ?? 0;
+  const visibleUnits = paged ? recordsQ.data?.summary.active ?? 0 : total;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   if (recordsQ.isLoading) return <LoadingState />;
   if (recordsQ.isError) {
@@ -325,7 +366,7 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
       ) : null}
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiCard label="Visible Units" value={rows.length} status="Active" icon={kpiIcon} />
+        <KpiCard label="Visible Units" value={visibleUnits} status="Active" icon={kpiIcon} />
         <KpiCard label="Offline / Stale" value={offlineCount} status={offlineCount ? "Critical" : "Healthy"} icon={<AlertTriangle className="h-4 w-4" />} />
         <KpiCard label="Needs Action" value={issueCount} status={issueCount ? "Watch" : "Healthy"} icon={<RadioTower className="h-4 w-4" />} />
         <KpiCard
@@ -363,12 +404,12 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
           <input
             className="field xl:min-w-[360px]"
             value={search}
-            onChange={(event) => setSearch(event.target.value)}
+            onChange={(event) => { setSearch(event.target.value); setPage(1); }}
             placeholder={config.searchPlaceholder}
           />
           <div className="flex flex-wrap gap-2">
             {config.filterTabs.map((item) => (
-              <button key={item} className={tab === item ? "btn-primary py-2 text-xs" : "btn-ghost py-2 text-xs"} onClick={() => setTab(item)}>
+              <button key={item} className={tab === item ? "btn-primary py-2 text-xs" : "btn-ghost py-2 text-xs"} onClick={() => { setTab(item); setPage(1); }}>
                 {item}
               </button>
             ))}
@@ -457,6 +498,18 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
             </table>
           </div>
         )}
+        {paged && total > 0 ? (
+          <nav className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4" aria-label={`${config.title} pagination`}>
+            <p className="text-sm text-slate-600">
+              Showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, total)} of {total}
+            </p>
+            <div className="flex items-center gap-2">
+              <button className="btn-ghost py-2 text-xs" disabled={page <= 1 || recordsQ.isFetching} onClick={() => setPage((current) => Math.max(1, current - 1))}>Previous</button>
+              <span className="text-sm text-slate-600">Page {page} of {totalPages}</span>
+              <button className="btn-ghost py-2 text-xs" disabled={page >= totalPages || recordsQ.isFetching} onClick={() => setPage((current) => Math.min(totalPages, current + 1))}>Next</button>
+            </div>
+          </nav>
+        ) : null}
       </div>
 
       {selectedRecord ? (

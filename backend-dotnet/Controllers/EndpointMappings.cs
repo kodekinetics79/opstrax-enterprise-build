@@ -18675,6 +18675,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             : 100;
         var search = http.Request.Query["search"].FirstOrDefault()?.Trim() ?? "";
         var view = http.Request.Query["view"].FirstOrDefault()?.Trim().ToLowerInvariant() ?? "all";
+        var cluster = http.Request.Query["cluster"].FirstOrDefault()?.Trim().ToLowerInvariant() ?? "all";
         var direction = string.Equals(http.Request.Query["direction"].FirstOrDefault(), "desc", StringComparison.OrdinalIgnoreCase)
             ? "DESC"
             : "ASC";
@@ -18693,16 +18694,43 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             "unassigned" => " AND e.revoked_at IS NULL AND current_install.id IS NULL",
             "offline" => " AND e.revoked_at IS NULL AND (e.last_seen_at IS NULL OR e.last_seen_at < NOW() - INTERVAL '15 minutes' OR e.status IN ('Suspended','Malfunction'))",
             "attention" => @" AND e.revoked_at IS NULL AND (
-                e.last_seen_at IS NULL OR e.last_seen_at < NOW() - INTERVAL '15 minutes'
+                lp.id IS NULL OR lp.lat NOT BETWEEN -90 AND 90 OR lp.lng NOT BETWEEN -180 AND 180
+                OR EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) > 900
                 OR e.status IN ('Suspended','Malfunction','Diagnostic')
-                OR EXISTS (SELECT 1 FROM telemetry_alerts ta WHERE ta.company_id=e.company_id AND ta.device_id=e.id AND ta.status='Open'))",
+                OR EXISTS (SELECT 1 FROM telemetry_alerts ta WHERE ta.company_id=e.company_id AND ta.device_id=e.id AND ta.status='Open')
+                OR EXISTS (SELECT 1 FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active'))",
             "provisioning" => " AND e.revoked_at IS NULL AND (e.status ILIKE '%provision%' OR e.device_state ILIKE '%provision%' OR current_install.id IS NULL)",
             "diagnostics" => @" AND e.revoked_at IS NULL AND EXISTS (
+                SELECT 1 FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active')",
+            "online" or "fresh" => @" AND e.revoked_at IS NULL
+                AND e.status NOT IN ('Suspended','Malfunction','Diagnostic')
+                AND lp.lat BETWEEN -90 AND 90 AND lp.lng BETWEEN -180 AND 180
+                AND EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) <= 120",
+            "stale" => @" AND e.revoked_at IS NULL AND (
+                lp.id IS NULL OR lp.lat NOT BETWEEN -90 AND 90 OR lp.lng NOT BETWEEN -180 AND 180
+                OR EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) > 900
+                OR e.status IN ('Suspended','Malfunction'))",
+            "watch" => @" AND e.revoked_at IS NULL AND (
+                (lp.lat BETWEEN -90 AND 90 AND lp.lng BETWEEN -180 AND 180
+                 AND EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) > 120
+                 AND EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) <= 900)
+                OR e.status IN ('Diagnostic')
+                OR EXISTS (SELECT 1 FROM telemetry_alerts ta WHERE ta.company_id=e.company_id AND ta.device_id=e.id AND ta.status='Open'))",
+            "issues" => @" AND e.revoked_at IS NULL AND EXISTS (
                 SELECT 1 FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active')",
             "installations" => " AND e.revoked_at IS NULL AND current_install.id IS NOT NULL",
             "data-health" => " AND e.revoked_at IS NULL AND e.last_seen_at IS NOT NULL",
             "all" or "firmware" => " AND e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired')",
             _ => " AND e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired')",
+        };
+        var clusterClause = cluster switch
+        {
+            "gps" => "",
+            "diagnostics" => @" AND (
+                COALESCE(e.device_category,'') ~* '(obd|j1939|can)'
+                OR COALESCE(e.device_model,'') ~* '(obd|j1939|can)'
+                OR COALESCE(current_install.device_role,'') ~* '(obd|j1939|can)')",
+            _ => "",
         };
         const string fromSql = @"
 FROM eld_devices e
@@ -18721,6 +18749,12 @@ LEFT JOIN LATERAL (
   ORDER BY da.assigned_at DESC,da.id DESC LIMIT 1
 ) active_dispatch ON TRUE
 LEFT JOIN drivers d ON d.id=active_dispatch.driver_id AND d.company_id=e.company_id
+LEFT JOIN LATERAL (
+  SELECT p.* FROM latest_vehicle_positions p
+  WHERE p.company_id=e.company_id
+    AND (p.device_id=e.id OR (current_install.vehicle_id IS NOT NULL AND p.vehicle_id=current_install.vehicle_id))
+  ORDER BY p.received_at DESC,p.id DESC LIMIT 1
+) lp ON TRUE
 WHERE e.company_id=@cid AND e.deleted_at IS NULL
   AND (@branchId::BIGINT IS NULL OR e.branch_id=@branchId)
   AND (@search='' OR e.device_serial ILIKE '%' || @search || '%'
@@ -18729,14 +18763,17 @@ WHERE e.company_id=@cid AND e.deleted_at IS NULL
     OR COALESCE(e.device_category,'') ILIKE '%' || @search || '%'
     OR COALESCE(e.provider,'') ILIKE '%' || @search || '%'
     OR COALESCE(v.vehicle_code,'') ILIKE '%' || @search || '%'
-    OR COALESCE(d.full_name,'') ILIKE '%' || @search || '%')";
+    OR COALESCE(d.full_name,'') ILIKE '%' || @search || '%'
+    OR COALESCE(lp.address,'') ILIKE '%' || @search || '%'
+    OR EXISTS (SELECT 1 FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial
+               AND (fc.code ILIKE '%' || @search || '%' OR COALESCE(fc.description,'') ILIKE '%' || @search || '%')))";
         Action<NpgsqlCommand> bind = command =>
         {
             command.Parameters.AddWithValue("@cid", GetCompanyId(http));
             command.Parameters.AddWithValue("@branchId", (object?)GetBranchId(http) ?? DBNull.Value);
             command.Parameters.AddWithValue("@search", search);
         };
-        var total = await db.ScalarLongAsync("SELECT COUNT(*) " + fromSql + viewClause, bind, ct);
+        var total = await db.ScalarLongAsync("SELECT COUNT(*) " + fromSql + clusterClause + viewClause, bind, ct);
         var items = await db.QueryAsync(@"
 SELECT e.id, e.device_serial, e.imei, e.device_category, e.device_model, e.provider, e.status, e.device_state,
        current_install.vehicle_id, active_dispatch.driver_id, e.firmware_version,
@@ -18748,8 +18785,21 @@ SELECT e.id, e.device_serial, e.imei, e.device_category, e.device_model, e.provi
        v.vehicle_code, d.full_name driver_name,
        EXTRACT(EPOCH FROM (NOW() - e.last_seen_at))::BIGINT seconds_since_ping,
        (SELECT COUNT(*) FROM telemetry_alerts ta WHERE ta.company_id=e.company_id AND ta.device_id=e.id AND ta.status='Open') open_alert_count,
-       (SELECT COUNT(*) FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active') active_fault_count
-" + fromSql + viewClause + $" ORDER BY {sort} {direction} NULLS LAST, e.device_serial LIMIT @limit OFFSET @offset",
+       (SELECT COUNT(*) FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active') active_fault_count,
+       (SELECT STRING_AGG(CONCAT_WS(' ',NULLIF(fc.code_type,''),fc.code), ', ' ORDER BY fc.code_type,fc.code)
+          FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active') active_fault_codes,
+       lp.lat position_lat,lp.lng position_lng,lp.speed_mph position_speed_mph,lp.heading position_heading,
+       lp.accuracy_meters position_accuracy_meters,lp.engine_status position_engine_status,
+       lp.odometer_miles position_odometer_miles,lp.fuel_level position_fuel_level,
+       lp.battery_voltage position_battery_voltage,lp.event_time position_event_time,
+       lp.address position_address,lp.source position_source,lp.provider position_provider,
+       lp.protocol position_protocol,lp.confidence position_confidence,
+       lp.device_fix_time position_device_fix_time,lp.gateway_received_at position_gateway_received_at,
+       CASE WHEN lp.id IS NULL THEN 'none'
+            WHEN EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) <= 120 THEN 'live'
+            WHEN EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) <= 900 THEN 'delayed'
+            ELSE 'stale' END position_freshness
+" + fromSql + clusterClause + viewClause + $" ORDER BY {sort} {direction} NULLS LAST, e.device_serial LIMIT @limit OFFSET @offset",
             command =>
             {
                 bind(command);
@@ -18759,19 +18809,17 @@ SELECT e.id, e.device_serial, e.imei, e.device_category, e.device_model, e.provi
         var summary = await db.QuerySingleAsync(@"
 SELECT COUNT(*) FILTER (WHERE e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired')) active,
        COUNT(*) FILTER (WHERE e.revoked_at IS NOT NULL OR e.status IN ('Revoked','Retired')) archived,
-       COUNT(*) FILTER (WHERE e.revoked_at IS NULL AND (e.last_seen_at IS NULL OR e.last_seen_at < NOW() - INTERVAL '15 minutes' OR e.status IN ('Suspended','Malfunction'))) offline,
        COUNT(*) FILTER (WHERE e.revoked_at IS NULL AND (
-         e.last_seen_at IS NULL OR e.last_seen_at < NOW() - INTERVAL '15 minutes'
+         lp.id IS NULL OR lp.lat NOT BETWEEN -90 AND 90 OR lp.lng NOT BETWEEN -180 AND 180
+         OR EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) > 900
+         OR e.status IN ('Suspended','Malfunction'))) offline,
+       COUNT(*) FILTER (WHERE e.revoked_at IS NULL AND (
+         lp.id IS NULL OR lp.lat NOT BETWEEN -90 AND 90 OR lp.lng NOT BETWEEN -180 AND 180
+         OR EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) > 900
          OR e.status IN ('Suspended','Malfunction','Diagnostic')
-         OR EXISTS (SELECT 1 FROM telemetry_alerts ta WHERE ta.company_id=e.company_id AND ta.device_id=e.id AND ta.status='Open'))) attention
-FROM eld_devices e
-WHERE e.company_id=@cid AND e.deleted_at IS NULL
-  AND (@branchId::BIGINT IS NULL OR e.branch_id=@branchId)",
-            command =>
-            {
-                command.Parameters.AddWithValue("@cid", GetCompanyId(http));
-                command.Parameters.AddWithValue("@branchId", (object?)GetBranchId(http) ?? DBNull.Value);
-            }, ct);
+         OR EXISTS (SELECT 1 FROM telemetry_alerts ta WHERE ta.company_id=e.company_id AND ta.device_id=e.id AND ta.status='Open')
+         OR EXISTS (SELECT 1 FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active'))) attention
+" + fromSql + clusterClause, bind, ct);
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             items,
