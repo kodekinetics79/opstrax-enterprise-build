@@ -134,6 +134,7 @@ public static partial class EndpointMappings
         app.MapPost("/api/alerts/{id:long}/tasks", AlertCreateTask);
 
         app.MapGet("/api/command-center/summary", CommandCenterSummary);
+        app.MapGet("/api/live-operations/fleet-overview", LiveOperationsFleetOverview);
         app.MapGet("/api/control-tower/summary", ControlTowerSummary);
         app.MapGet("/api/control-tower/entities", ControlTowerEntities);
         app.MapGet("/api/control-tower/entities/{entityType}/{id:long}", ControlTowerEntity);
