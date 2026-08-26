@@ -18901,6 +18901,11 @@ SELECT e.id, e.device_serial, e.imei, e.device_category, e.device_model, e.provi
                 command.Parameters.AddWithValue("@limit", pageSize);
                 command.Parameters.AddWithValue("@offset", (page - 1) * pageSize);
             }, ct);
+        var permissions = http.Items.TryGetValue(AuthPermissionsItemKey, out var permissionValue) && permissionValue is string[] heldPermissions
+            ? heldPermissions
+            : [];
+        var canReadDiagnostics = HasPermission(permissions, "telematics:diagnostics:view")
+            || HasPermission(permissions, "maintenance:view");
         var summaryFields = cluster switch
         {
             "gps" => @"COUNT(*) active,0 archived,
@@ -18917,12 +18922,25 @@ SELECT e.id, e.device_serial, e.imei, e.device_category, e.device_model, e.provi
          OR EXTRACT(EPOCH FROM (NOW()-diagnostic_evidence.observed_at)) > 900
          OR EXISTS (SELECT 1 FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active')) attention",
             _ => @"COUNT(*) active,0 archived,
+       COUNT(*) FILTER (WHERE e.last_seen_at IS NOT NULL AND e.last_seen_at >= NOW() - INTERVAL '15 minutes'
+         AND e.status NOT IN ('Suspended','Malfunction','Diagnostic')) online,
+       COUNT(*) FILTER (WHERE e.last_seen_at IS NULL) never_connected,
        COUNT(*) FILTER (WHERE e.last_seen_at IS NULL OR e.last_seen_at < NOW() - INTERVAL '15 minutes' OR e.status IN ('Suspended','Malfunction')) offline,
        COUNT(*) FILTER (WHERE e.last_seen_at IS NULL OR e.last_seen_at < NOW() - INTERVAL '15 minutes'
          OR e.status IN ('Suspended','Malfunction','Diagnostic')
-         OR EXISTS (SELECT 1 FROM telemetry_alerts ta WHERE ta.company_id=e.company_id AND ta.device_id=e.id AND ta.status='Open')) attention",
+         OR EXISTS (SELECT 1 FROM telemetry_alerts ta WHERE ta.company_id=e.company_id AND ta.device_id=e.id AND ta.status='Open')) attention,
+       " + (canReadDiagnostics
+           ? "COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active')) faulted"
+           : "NULL::BIGINT faulted"),
         };
-        var summary = await db.QuerySingleAsync("SELECT " + summaryFields + fromSql + clusterClause + viewClause, bind, ct);
+        // Summary cards describe the complete authorized fleet/cluster and must not
+        // collapse to the current search, tab, or page. The queue total remains filtered.
+        var summary = await db.QuerySingleAsync("SELECT " + summaryFields + fromSql + clusterClause, command =>
+        {
+            command.Parameters.AddWithValue("@cid", GetCompanyId(http));
+            command.Parameters.AddWithValue("@branchId", (object?)GetBranchId(http) ?? DBNull.Value);
+            command.Parameters.AddWithValue("@search", "");
+        }, ct);
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             items,

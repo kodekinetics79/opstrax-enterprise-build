@@ -191,7 +191,15 @@ export type DevicePageResult = {
   total: number;
   page: number;
   pageSize: number;
-  summary: { active: number; archived: number; offline: number; attention: number };
+  summary: {
+    active: number;
+    archived: number;
+    offline: number;
+    attention: number;
+    online: number;
+    neverConnected: number;
+    faulted: number | null;
+  };
 };
 
 export type TelemetryClusterPageOptions = {
@@ -1241,6 +1249,9 @@ export const telematicsService = {
         archived: Number(summary.archived ?? 0),
         offline: Number(summary.offline ?? 0),
         attention: Number(summary.attention ?? 0),
+        online: Number(summary.online ?? 0),
+        neverConnected: Number(summary.neverConnected ?? summary.never_connected ?? 0),
+        faulted: summary.faulted == null ? null : Number(summary.faulted),
       },
     };
   },
