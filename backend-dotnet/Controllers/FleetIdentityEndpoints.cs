@@ -463,6 +463,23 @@ public static partial class EndpointMappings
                         "SELECT pg_advisory_xact_lock(hashtextextended(@identity,0))",
                         c => c.Parameters.AddWithValue("@identity", $"device-transfer-idempotency:{companyId}:{idempotencyKey}"), ct);
                 }
+                // Live ingestion takes this exact tenant/device row lock before it
+                // resolves an installation and persists canonical telemetry. Hold the
+                // same lock before checking either evidence store so an in-flight event
+                // must commit first; the subsequent checks then observe and reject it.
+                var lockedDevice = await db.QuerySingleAsync(
+                    @"SELECT id FROM eld_devices
+                       WHERE id=@did AND company_id=@cid AND deleted_at IS NULL
+                         AND (@branch::bigint IS NULL OR branch_id=@branch)
+                       FOR UPDATE",
+                    c =>
+                    {
+                        c.Parameters.AddWithValue("@did", id);
+                        c.Parameters.AddWithValue("@cid", companyId);
+                        c.Parameters.AddWithValue("@branch", (object?)branchId ?? DBNull.Value);
+                    }, ct);
+                if (lockedDevice is null)
+                    return Results.BadRequest(ApiResponse<object>.Fail("Device and target vehicle must exist in the same tenant and branch"));
                 var resources = await LoadInstallationResourcesAsync(db, companyId, branchId, id, body.VehicleId, ct);
                 if (resources is null)
                     return Results.BadRequest(ApiResponse<object>.Fail("Device and target vehicle must exist in the same tenant and branch"));
@@ -587,6 +604,12 @@ public static partial class EndpointMappings
         {
             return Results.Conflict(ApiResponse<object>.Fail("Target installation conflicts with an active device or primary vehicle role"));
         }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.InsufficientPrivilege)
+        {
+            return Results.Json(
+                ApiResponse<object>.Fail("Transfer could not verify attributed telemetry; no installation changes were saved"),
+                statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
     }
 
     private static Task<long> DeviceVisibleAsync(Database db, long companyId, long? branchId, long deviceId, CancellationToken ct) =>
@@ -610,14 +633,12 @@ public static partial class EndpointMappings
         db.ScalarLongAsync("SELECT COUNT(*) FROM vehicles WHERE id=@id AND company_id=@cid AND deleted_at IS NULL AND (@branch::bigint IS NULL OR branch_id=@branch)",
             c => { c.Parameters.AddWithValue("@id", vehicleId); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branch", (object?)branchId ?? DBNull.Value); }, ct);
 
-    private static Task<long> InstallationHasEventAtOrAfterAsync(
-        Database db, long companyId, long installationId, DateTimeOffset effectiveTo, CancellationToken ct) =>
-        db.ScalarLongAsync(
+    private static async Task<long> InstallationHasEventAtOrAfterAsync(
+        Database db, long companyId, long installationId, DateTimeOffset effectiveTo, CancellationToken ct)
+    {
+        var locationEvent = await db.ScalarLongAsync(
             @"SELECT CASE WHEN EXISTS (
                    SELECT 1 FROM location_events
-                    WHERE company_id=@cid AND installation_id=@iid AND event_time>=@effective
-                 ) OR EXISTS (
-                   SELECT 1 FROM canonical_telemetry_events
                     WHERE company_id=@cid AND installation_id=@iid AND event_time>=@effective
                  ) THEN 1 ELSE 0 END",
             c =>
@@ -626,6 +647,24 @@ public static partial class EndpointMappings
                 c.Parameters.AddWithValue("@iid", installationId);
                 c.Parameters.AddWithValue("@effective", effectiveTo);
             }, ct);
+        if (locationEvent != 0) return 1;
+
+        // Stage76 intentionally keeps canonical telemetry system-only: the tenant
+        // application role may not read raw canonical event rows. Perform only the
+        // minimum boolean attribution check through the independently authenticated
+        // system lane, retaining the explicit company + installation predicates.
+        return await db.RunInSystemScopeAsync(() => db.ScalarLongAsync(
+            @"SELECT CASE WHEN EXISTS (
+                   SELECT 1 FROM canonical_telemetry_events
+                    WHERE company_id=@cid AND installation_id=@iid AND event_time>=@effective
+                 ) THEN 1 ELSE 0 END",
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid", companyId);
+                c.Parameters.AddWithValue("@iid", installationId);
+                c.Parameters.AddWithValue("@effective", effectiveTo);
+            }, ct), ct);
+    }
 
     private static async Task<IResult> DeviceInstallationQuarantineList(
         HttpContext http, Database db, CancellationToken ct)

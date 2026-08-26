@@ -175,6 +175,19 @@ public sealed class FleetIdentityBackboneContractTests
         Assert.Contains("Device identity is quarantined", routes, StringComparison.Ordinal);
         Assert.Contains("InstallationHasEventAtOrAfterAsync", lifecycle, StringComparison.Ordinal);
         Assert.Contains("cannot predate telemetry already attributed", lifecycle, StringComparison.Ordinal);
+        var transfer = Block(lifecycle, "private static async Task<IResult> DeviceInstallationTransfer(", "private static Task<long> DeviceVisibleAsync(");
+        Assert.Contains("SELECT id FROM eld_devices", transfer, StringComparison.Ordinal);
+        Assert.Contains("company_id=@cid AND deleted_at IS NULL", transfer, StringComparison.Ordinal);
+        Assert.Contains("FOR UPDATE", transfer, StringComparison.Ordinal);
+        Assert.True(transfer.IndexOf("SELECT id FROM eld_devices", StringComparison.Ordinal) <
+                    transfer.IndexOf("InstallationHasEventAtOrAfterAsync", StringComparison.Ordinal));
+        var eventBoundary = Block(lifecycle, "private static async Task<long> InstallationHasEventAtOrAfterAsync(", "private static async Task<IResult> DeviceInstallationQuarantineList(");
+        Assert.Contains("FROM location_events", eventBoundary, StringComparison.Ordinal);
+        Assert.Contains("RunInSystemScopeAsync", eventBoundary, StringComparison.Ordinal);
+        Assert.Contains("FROM canonical_telemetry_events", eventBoundary, StringComparison.Ordinal);
+        Assert.Contains("company_id=@cid AND installation_id=@iid", eventBoundary, StringComparison.Ordinal);
+        Assert.Contains("PostgresErrorCodes.InsufficientPrivilege", lifecycle, StringComparison.Ordinal);
+        Assert.Contains("no installation changes were saved", lifecycle, StringComparison.Ordinal);
         Assert.Contains("DeviceTransferRequestHash", lifecycle, StringComparison.Ordinal);
         Assert.Contains("idempotency_keys", lifecycle, StringComparison.Ordinal);
         Assert.Contains("Idempotency key was already used for a different transfer", lifecycle, StringComparison.Ordinal);
