@@ -10,7 +10,7 @@ import { routesApi } from "@/services/routesApi";
 import { downloadServerExport } from "@/services/fleetDomainApi";
 import type { AnyRecord } from "@/types";
 import { apiErrorMessage } from "@/utils/apiErrorMessage";
-import { prepareRouteForm } from "@/utils/routeForm";
+import { prepareRouteForm, routeFormForDisplay } from "@/utils/routeForm";
 
 const routeFields = [["routeCode","Route Code"],["routeName","Route Name"],["region","Region / Zone"],["plannedStart","Planned Start"],["plannedEnd","Planned End"],["routeType","Route Type"],["optimizationMode","Optimization Mode"],["costEstimate","Cost Estimate"],["status","Status"],["notes","Notes"]];
 const stopFields = [["stopSequence","Sequence"],["jobId","Job ID"],["customerId","Customer ID"],["stopType","Stop Type"],["address","Address"],["latitude","Latitude"],["longitude","Longitude"],["timeWindowStart","Window Start"],["timeWindowEnd","Window End"],["eta","ETA"],["status","Status"],["proofStatus","Proof Status"],["notes","Notes"]];
@@ -164,7 +164,7 @@ function RouteModal({ title, initial, saving, serverError, onClearError, onClose
   onClose: () => void;
   onSave: (payload: AnyRecord) => void;
 }) {
-  const [form, setForm] = useState<AnyRecord>(initial);
+  const [form, setForm] = useState<AnyRecord>(() => routeFormForDisplay(initial));
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -198,7 +198,7 @@ function RouteModal({ title, initial, saving, serverError, onClearError, onClose
           <input
             className="field"
             type={typeFor(key)}
-            step={key === "costEstimate" ? "any" : undefined}
+            step={key === "costEstimate" ? "any" : /start|end/i.test(key) ? "1" : undefined}
             min={key === "costEstimate" ? "0" : undefined}
             value={String(form[key] ?? "")}
             onChange={(event) => change(key, event.target.value)}

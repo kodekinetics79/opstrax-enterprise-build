@@ -157,6 +157,19 @@ public sealed class RoutePlansPilotPostgresTests
                 "SELECT id FROM routes WHERE company_id=@c AND status='Active' AND assigned_driver_id=@d",
                 c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@d", driver); }))!["id"]);
 
+            var assignedEdit = await Invoke("UpdateRoute", httpA, activeRoute,
+                new Dictionary<string, object?> { ["routeName"] = "Assigned route edited", ["region"] = "East" },
+                db, audit, CancellationToken.None);
+            Assert.Equal(StatusCodes.Status200OK, Status(assignedEdit));
+            var assignedAfterEdit = await db.QuerySingleAsync(
+                "SELECT route_name,region,assigned_driver_id,assigned_vehicle_id FROM routes WHERE id=@id AND company_id=@c",
+                c => { c.Parameters.AddWithValue("@id", activeRoute); c.Parameters.AddWithValue("@c", companyId); });
+            Assert.NotNull(assignedAfterEdit);
+            Assert.Equal("Assigned route edited", assignedAfterEdit!["routeName"]?.ToString());
+            Assert.Equal("East", assignedAfterEdit["region"]?.ToString());
+            Assert.Equal(driver, Convert.ToInt64(assignedAfterEdit["assignedDriverId"]));
+            Assert.Equal(vehicle, Convert.ToInt64(assignedAfterEdit["assignedVehicleId"]));
+
             var contestedRouteA = await CreateRoute(db, audit, companyId, branchA, $"RACE-A-{companyId}");
             var contestedRouteB = await CreateRoute(db, audit, companyId, branchA, $"RACE-B-{companyId}");
             var contestedJob = await db.InsertAsync(

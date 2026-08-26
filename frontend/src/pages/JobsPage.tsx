@@ -134,6 +134,7 @@ export function JobsPage() {
   const canDispatch = canManageDispatch || hasDirectPermission("dispatch:update");
   const canAssign = canManageDispatch || hasDirectPermission("dispatch:assign");
   const canExport = directActionAccess.export;
+  const canQueueProof = directActionAccess.queueProof;
   const canOpenCustomerMaster = hasPermission("customers:view")
     && (session?.entitlementPolicyMode !== "package_allowlist" || session.entitlements?.crm === true);
   const scopedRows = useMemo(() => scopeRowsForSession("jobs", jobs.data || [], session), [jobs.data, session]);
@@ -392,11 +393,11 @@ export function JobsPage() {
         onAssign={(record) => canAssign && setAssigning(record)}
         onDelete={(id) => canDelete && window.confirm("Archive this job? It will be removed from the active shipment register.") && remove.mutate(id)}
         onEta={(id) => canDispatch && action.mutate({ type: "eta", id })}
-        onProof={(id) => canDispatch && action.mutate({ type: "proof", id })}
+        onProof={(id) => canQueueProof && action.mutate({ type: "proof", id })}
         onStatus={(id, next) => (next === "Cancelled" ? canCancel : canDispatch) && changeStatus.mutate({ id, status: next })}
         statusPending={changeStatus.isPending}
         onExport={() => exportJobRecordCsv(selectedRecord(detail.data, selected), detail.data)}
-        canEdit={canEdit} canDelete={canDelete} canDispatch={canDispatch} canCancel={canCancel} canAssign={canAssign} canExport={canExport}
+        canEdit={canEdit} canDelete={canDelete} canDispatch={canDispatch} canQueueProof={canQueueProof} canCancel={canCancel} canAssign={canAssign} canExport={canExport}
       />
       {editing ? <JobModal
         initial={editing}
@@ -446,7 +447,7 @@ function PipelineChip({ label, count, active, tone = "default", onClick }: { lab
   );
 }
 
-function JobDrawer({ detail, loading, error, onClose, onEdit, onAssign, onEta, onProof, onStatus, statusPending, onDelete, onExport, canEdit, canDelete, canDispatch, canCancel, canAssign, canExport }: { detail?: AnyRecord; loading: boolean; error?: unknown; onClose: () => void; onEdit: (record: AnyRecord) => void; onAssign: (record: AnyRecord) => void; onEta: (id: string | number) => void; onProof: (id: string | number) => void; onStatus: (id: string | number, status: string) => void; statusPending: boolean; onDelete: (id: string | number) => void; onExport: () => void; canEdit: boolean; canDelete: boolean; canDispatch: boolean; canCancel: boolean; canAssign: boolean; canExport: boolean }) {
+function JobDrawer({ detail, loading, error, onClose, onEdit, onAssign, onEta, onProof, onStatus, statusPending, onDelete, onExport, canEdit, canDelete, canDispatch, canQueueProof, canCancel, canAssign, canExport }: { detail?: AnyRecord; loading: boolean; error?: unknown; onClose: () => void; onEdit: (record: AnyRecord) => void; onAssign: (record: AnyRecord) => void; onEta: (id: string | number) => void; onProof: (id: string | number) => void; onStatus: (id: string | number, status: string) => void; statusPending: boolean; onDelete: (id: string | number) => void; onExport: () => void; canEdit: boolean; canDelete: boolean; canDispatch: boolean; canQueueProof: boolean; canCancel: boolean; canAssign: boolean; canExport: boolean }) {
   const record = detail?.record as AnyRecord | undefined;
   if (!record && !loading && !error) return null;
   if (!record) return (
@@ -481,7 +482,7 @@ function JobDrawer({ detail, loading, error, onClose, onEdit, onAssign, onEta, o
             <button type="button" className="btn-primary h-9 py-0" disabled={!canEdit} title={!canEdit ? "You do not have permission to perform this action." : undefined} onClick={() => canEdit && onEdit(record)}><Edit3 className="h-4 w-4" /> Edit</button>
             <button type="button" className="btn-ghost h-9 py-0" disabled={!canAssign || terminal} title={!canAssign ? "You do not have permission to assign jobs." : terminal ? "Terminal jobs cannot be reassigned." : undefined} onClick={() => canAssign && !terminal && onAssign(record)}><UserCheck className="h-4 w-4" /> {record.assignedDriverId ? "Reassign" : "Assign"}</button>
             <button type="button" className="btn-ghost h-9 py-0" disabled={!canDispatch || terminal} title={!canDispatch ? "You do not have permission to perform this action." : terminal ? "ETA updates are closed for terminal jobs." : undefined} onClick={() => canDispatch && !terminal && onEta(String(record.id))}><Send className="h-4 w-4" /> Send ETA</button>
-            <button type="button" className="btn-ghost h-9 py-0" disabled={!canDispatch || terminal} title={!canDispatch ? "You do not have permission to perform this action." : terminal ? "POD is closed for terminal jobs." : undefined} onClick={() => canDispatch && !terminal && onProof(String(record.id))}><FileCheck2 className="h-4 w-4" /> Queue POD</button>
+            <button type="button" className="btn-ghost h-9 py-0" disabled={!canQueueProof || terminal} title={!canQueueProof ? "You do not have permission to queue proof." : terminal ? "POD is closed for terminal jobs." : undefined} onClick={() => canQueueProof && !terminal && onProof(String(record.id))}><FileCheck2 className="h-4 w-4" /> Queue POD</button>
             {canExport ? <button type="button" className="btn-ghost h-9 py-0" onClick={onExport}><Download className="h-4 w-4" /> Export</button> : null}
             <button type="button" className="btn-ghost h-9 py-0 text-red-600" disabled={!canDelete} title={!canDelete ? "You do not have permission to perform this action." : "Archive this job"} onClick={() => canDelete && onDelete(String(record.id))}><Trash2 className="h-4 w-4" /> Archive</button>
           </div>

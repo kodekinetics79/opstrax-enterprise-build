@@ -4,7 +4,9 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { apiErrorMessage } from "../src/utils/apiErrorMessage.ts";
 import { resolveJobActionAccess } from "../src/utils/jobActionAccess.ts";
-import { prepareRouteForm } from "../src/utils/routeForm.ts";
+import { instantToLocalDateTime, localDateTimeToIso, prepareRouteForm, routeFormForDisplay } from "../src/utils/routeForm.ts";
+
+process.env.TZ = "America/New_York";
 
 const direct = (...owned) => {
   const permissions = new Set(owned);
@@ -14,22 +16,36 @@ assert.deepEqual(resolveJobActionAccess(direct("shipments:view")), {
   create: false,
   import: false,
   export: false,
+  queueProof: false,
 });
 assert.deepEqual(resolveJobActionAccess(direct("shipments:create")), {
   create: true,
   import: true,
   export: false,
+  queueProof: false,
 });
 assert.deepEqual(resolveJobActionAccess(direct("shipments:export")), {
   create: false,
   import: false,
   export: true,
+  queueProof: false,
 });
 assert.deepEqual(resolveJobActionAccess(direct("dispatch:manage")), {
   create: true,
   import: true,
   export: false,
+  queueProof: true,
 });
+assert.deepEqual(resolveJobActionAccess(direct("shipments:update")), {
+  create: false,
+  import: false,
+  export: false,
+  queueProof: true,
+});
+
+assert.equal(localDateTimeToIso("2026-08-27T09:00:00"), "2026-08-27T13:00:00.000Z");
+assert.equal(instantToLocalDateTime("2026-08-27T13:00:00.000Z"), "2026-08-27T09:00:00");
+assert.equal(localDateTimeToIso(instantToLocalDateTime("2026-08-27T13:00:00.000Z")), "2026-08-27T13:00:00.000Z");
 
 const valid = prepareRouteForm({
   routeCode: "  RT-100  ",
@@ -43,6 +59,23 @@ assert.deepEqual(valid.errors, []);
 assert.equal(valid.payload.routeCode, "RT-100");
 assert.equal(valid.payload.routeName, "Customer delivery");
 assert.equal(valid.payload.costEstimate, 125.5);
+assert.equal(valid.payload.plannedStart, "2026-08-27T13:00:00.000Z");
+
+const assignedRouteEdit = prepareRouteForm(routeFormForDisplay({
+  id: 42,
+  routeCode: "RT-ASSIGNED",
+  routeName: "Assigned route edited",
+  plannedStart: "2026-08-27T13:00:00.000Z",
+  plannedEnd: "2026-08-27T15:00:00.000Z",
+  assignedDriverId: 701,
+  assignedVehicleId: 801,
+}));
+assert.deepEqual(assignedRouteEdit.errors, []);
+assert.equal(assignedRouteEdit.payload.id, 42);
+assert.equal(assignedRouteEdit.payload.routeName, "Assigned route edited");
+assert.equal(assignedRouteEdit.payload.plannedStart, "2026-08-27T13:00:00.000Z");
+assert.ok(!("assignedDriverId" in assignedRouteEdit.payload));
+assert.ok(!("assignedVehicleId" in assignedRouteEdit.payload));
 
 const invalid = prepareRouteForm({
   routeCode: "RT-101",
@@ -70,7 +103,9 @@ assert.match(jobsPage, /useHasDirectPermission/);
 assert.match(jobsPage, /canCreate \? <button[\s\S]*Create Job/);
 assert.match(jobsPage, /canImport \? <>[\s\S]*Import CSV/);
 assert.match(jobsPage, /canExport \? <button[\s\S]*Export Roster/);
+assert.match(jobsPage, /canQueueProof && !terminal && onProof/);
 assert.match(routePage, /prepareRouteForm\(form\)/);
+assert.match(routePage, /routeFormForDisplay\(initial\)/);
 assert.match(routePage, /id="route-form-errors" role="alert"/);
 assert.match(routePage, /serverError=\{save\.error \? apiErrorMessage/);
 

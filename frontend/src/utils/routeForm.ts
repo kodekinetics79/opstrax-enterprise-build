@@ -6,9 +6,54 @@ export type PreparedRouteForm = {
 };
 
 const allowedStatuses = new Set(["Planned", "Active", "Delayed", "At Risk", "Completed", "Cancelled"]);
+const localDateTimePattern = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?$/;
 
 function text(value: unknown): string {
   return typeof value === "string" ? value.trim() : String(value ?? "").trim();
+}
+
+function pad(value: number, length = 2): string {
+  return String(value).padStart(length, "0");
+}
+
+/** Converts an API instant into the wall-clock value required by datetime-local. */
+export function instantToLocalDateTime(value: unknown): string {
+  const raw = text(value);
+  if (!raw) return "";
+  const instant = new Date(raw);
+  if (Number.isNaN(instant.getTime())) return raw;
+  return `${pad(instant.getFullYear(), 4)}-${pad(instant.getMonth() + 1)}-${pad(instant.getDate())}`
+    + `T${pad(instant.getHours())}:${pad(instant.getMinutes())}:${pad(instant.getSeconds())}`;
+}
+
+/** Interprets a datetime-local wall clock in the browser timezone and emits a UTC instant. */
+export function localDateTimeToIso(value: unknown): string | null {
+  const raw = text(value);
+  const match = localDateTimePattern.exec(raw);
+  if (!match) {
+    const explicitInstant = new Date(raw);
+    return raw && !Number.isNaN(explicitInstant.getTime()) ? explicitInstant.toISOString() : null;
+  }
+  const [, yearRaw, monthRaw, dayRaw, hourRaw, minuteRaw, secondRaw = "0", millisRaw = "0"] = match;
+  const year = Number(yearRaw);
+  const month = Number(monthRaw) - 1;
+  const day = Number(dayRaw);
+  const hour = Number(hourRaw);
+  const minute = Number(minuteRaw);
+  const second = Number(secondRaw);
+  const millis = Number(millisRaw.padEnd(3, "0"));
+  const local = new Date(year, month, day, hour, minute, second, millis);
+  if (local.getFullYear() !== year || local.getMonth() !== month || local.getDate() !== day
+    || local.getHours() !== hour || local.getMinutes() !== minute || local.getSeconds() !== second) return null;
+  return local.toISOString();
+}
+
+export function routeFormForDisplay(values: RouteFormValues): RouteFormValues {
+  return {
+    ...values,
+    plannedStart: instantToLocalDateTime(values.plannedStart),
+    plannedEnd: instantToLocalDateTime(values.plannedEnd),
+  };
 }
 
 /** Normalizes the customer-entered route form and mirrors server validation. */
@@ -29,11 +74,11 @@ export function prepareRouteForm(values: RouteFormValues): PreparedRouteForm {
   if (!plannedStart) errors.push("Planned start is required.");
   if (!plannedEnd) errors.push("Planned end is required.");
 
-  const startMs = Date.parse(plannedStart);
-  const endMs = Date.parse(plannedEnd);
-  if (plannedStart && Number.isNaN(startMs)) errors.push("Planned start must be a valid date and time.");
-  if (plannedEnd && Number.isNaN(endMs)) errors.push("Planned end must be a valid date and time.");
-  if (!Number.isNaN(startMs) && !Number.isNaN(endMs) && endMs <= startMs) {
+  const startIso = plannedStart ? localDateTimeToIso(plannedStart) : null;
+  const endIso = plannedEnd ? localDateTimeToIso(plannedEnd) : null;
+  if (plannedStart && !startIso) errors.push("Planned start must be a valid local date and time.");
+  if (plannedEnd && !endIso) errors.push("Planned end must be a valid local date and time.");
+  if (startIso && endIso && Date.parse(endIso) <= Date.parse(startIso)) {
     errors.push("Planned window end must be after planned window start.");
   }
   if (!allowedStatuses.has(status)) errors.push("Route status is invalid.");
@@ -50,9 +95,14 @@ export function prepareRouteForm(values: RouteFormValues): PreparedRouteForm {
 
   payload.routeCode = routeCode;
   payload.routeName = routeName;
-  payload.plannedStart = plannedStart;
-  payload.plannedEnd = plannedEnd;
+  payload.plannedStart = startIso ?? plannedStart;
+  payload.plannedEnd = endIso ?? plannedEnd;
   payload.status = status;
+  // Assignment is governed by the dedicated route assignment action. Detail
+  // projections include these fields, but ordinary route edits must not replay
+  // them into UpdateRoute and trigger (or bypass) assignment mutation checks.
+  delete payload.assignedDriverId;
+  delete payload.assignedVehicleId;
   for (const key of ["region", "routeType", "optimizationMode", "notes"] as const) {
     const normalized = text(values[key]);
     if (normalized) payload[key] = normalized;

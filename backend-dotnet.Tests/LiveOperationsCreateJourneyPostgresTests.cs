@@ -98,9 +98,11 @@ public sealed class LiveOperationsCreateJourneyContractTests
         Assert.Contains("canCreate ? <button", jobs, StringComparison.Ordinal);
         Assert.Contains("canImport ? <>", jobs, StringComparison.Ordinal);
         Assert.Contains("canExport ? <button", jobs, StringComparison.Ordinal);
+        Assert.Contains("canQueueProof && !terminal && onProof", jobs, StringComparison.Ordinal);
         Assert.DoesNotContain("[\"customerId\", \"Customer ID\"]", jobs, StringComparison.Ordinal);
         Assert.Contains("/api/jobs/customer-options", api, StringComparison.Ordinal);
         Assert.Contains("prepareRouteForm(form)", routes, StringComparison.Ordinal);
+        Assert.Contains("routeFormForDisplay(initial)", routes, StringComparison.Ordinal);
         Assert.Contains("role=\"alert\"", routes, StringComparison.Ordinal);
         Assert.Contains("apiErrorMessage(save.error", routes, StringComparison.Ordinal);
         Assert.Contains("Save Route", routes, StringComparison.Ordinal);

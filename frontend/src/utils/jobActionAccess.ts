@@ -4,6 +4,7 @@ export type JobActionAccess = {
   create: boolean;
   import: boolean;
   export: boolean;
+  queueProof: boolean;
 };
 
 // Keep these action gates aligned with EndpointMappings' direct-permission
@@ -19,5 +20,8 @@ export function resolveJobActionAccess(hasDirectPermission: DirectPermissionChec
     create: canCreate,
     import: canCreate,
     export: hasDirectPermission("shipments:export"),
+    queueProof: hasDirectPermission("dispatch:manage")
+      || hasDirectPermission("dispatch:update")
+      || hasDirectPermission("shipments:update"),
   };
 }
