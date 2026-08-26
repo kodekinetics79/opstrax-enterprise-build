@@ -161,7 +161,10 @@ export function TelematicsControlTowerPage() {
         </div>
 
         {searchPending ? (
-          <div className="mt-4" aria-live="polite"><LoadingState /></div>
+          <div className="mt-4" role="status" aria-live="polite" aria-busy="true">
+            <p className="mb-3 text-sm font-medium text-slate-600">Updating priority queue…</p>
+            <LoadingState />
+          </div>
         ) : exceptions.length === 0 ? (
           <div className="mt-4"><EmptyState title="No matching devices" subtitle="No connectivity or lifecycle rows match this queue view. GPS and Diagnostics retain their own permission-scoped evidence." /></div>
         ) : (
