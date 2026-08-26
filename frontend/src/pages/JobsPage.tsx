@@ -9,16 +9,17 @@ import {
   AiInsightCard, DataTable, EmptyState, ErrorState, KpiCard, LoadingState, PageHeader,
   RiskBadge, StatusBadge, exportCsv, labelize,
 } from "@/components/ui";
-import { useHasPermission } from "@/hooks/usePermission";
+import { useHasDirectPermission, useHasPermission } from "@/hooks/usePermission";
 import { useAuth } from "@/hooks/useAuth";
 import { isCustomerPortalRole, isDriverPortalRole, scopeRowsForSession } from "@/auth/accessScope";
 import { useJobDetail, useJobSummary } from "@/hooks/useBatch2";
 import { jobsApi } from "@/services/jobsApi";
 import { downloadServerExport } from "@/services/fleetDomainApi";
+import { resolveJobActionAccess } from "@/utils/jobActionAccess";
 import type { AnyRecord } from "@/types";
 
 const fields = [
-  ["jobNumber", "Job Number"], ["customerId", "Customer ID"], ["jobType", "Job Type"], ["priority", "Priority"],
+  ["jobNumber", "Job Number"], ["jobType", "Job Type"], ["priority", "Priority"],
   ["pickupAddress", "Pickup Address"], ["dropoffAddress", "Drop-off Address"], ["scheduledStart", "Scheduled Start"],
   ["scheduledEnd", "Scheduled End"], ["slaWindowStart", "SLA Start"], ["slaWindowEnd", "SLA End"],
   ["requiredVehicleType", "Required Vehicle Type"], ["requiredDriverCertification", "Required Driver Certification"],
@@ -115,6 +116,7 @@ export function JobsPage() {
   const detail = useJobDetail(selected?.id as string | number | undefined);
   const qc = useQueryClient();
   const hasPermission = useHasPermission();
+  const hasDirectPermission = useHasDirectPermission();
   const { session } = useAuth();
   const surface = ((): ShipmentSurface => {
     if (location.pathname === "/active-shipments") return "active-shipments";
@@ -122,14 +124,19 @@ export function JobsPage() {
     return "jobs";
   })();
   const surfaceConfig = SURFACE_CONFIG[surface];
-  const canManageDispatch = hasPermission("dispatch:manage");
-  const canCreate = canManageDispatch || hasPermission("shipments:create") || hasPermission("dispatch:create");
-  const canEdit = canManageDispatch || hasPermission("shipments:update") || hasPermission("dispatch:update");
-  const canCancel = canManageDispatch || hasPermission("dispatch:cancel");
-  const canDelete = canManageDispatch || hasPermission("shipments:delete") || canCancel;
-  const canDispatch = canManageDispatch || hasPermission("dispatch:update");
-  const canAssign = canManageDispatch || hasPermission("dispatch:assign");
-  const canExport = hasPermission("shipments:export");
+  const directActionAccess = resolveJobActionAccess(hasDirectPermission);
+  const canManageDispatch = hasDirectPermission("dispatch:manage");
+  const canCreate = directActionAccess.create;
+  const canImport = directActionAccess.import;
+  const canEdit = canManageDispatch || hasDirectPermission("job:update") || hasDirectPermission("shipments:update") || hasDirectPermission("dispatch:update");
+  const canCancel = canManageDispatch || hasDirectPermission("dispatch:cancel");
+  const canDelete = canManageDispatch || hasDirectPermission("shipments:delete") || canCancel;
+  const canDispatch = canManageDispatch || hasDirectPermission("dispatch:update");
+  const canAssign = canManageDispatch || hasDirectPermission("dispatch:assign");
+  const canExport = directActionAccess.export;
+  const canQueueProof = directActionAccess.queueProof;
+  const canOpenCustomerMaster = hasPermission("customers:view")
+    && (session?.entitlementPolicyMode !== "package_allowlist" || session.entitlements?.crm === true);
   const scopedRows = useMemo(() => scopeRowsForSession("jobs", jobs.data || [], session), [jobs.data, session]);
   const visibleSummary = useMemo(() => buildJobSummary(scopedRows, summary.data as AnyRecord | undefined, session), [scopedRows, session, summary.data]);
 
@@ -286,10 +293,12 @@ export function JobsPage() {
         title={surfaceConfig.title}
         description={surfaceConfig.description}
         actions={<>
-          <button type="button" className="btn-primary" disabled={!canCreate} title={!canCreate ? "You do not have permission to perform this action." : undefined} onClick={() => canCreate && setEditing({ priority: "Normal", jobType: "Delivery", status: "Unassigned" })}><Plus className="h-4 w-4" /> {surfaceConfig.createLabel}</button>
-          <input ref={importInput} className="sr-only" type="file" accept=".csv,text/csv" onChange={chooseImport} tabIndex={-1} aria-hidden="true" />
-          <button type="button" className="btn-ghost" disabled={!canCreate || previewImport.isPending} title={!canCreate ? "You do not have permission to import shipments." : undefined} onClick={() => canCreate && importInput.current?.click()}><Upload className="h-4 w-4" /> {previewImport.isPending ? "Validating..." : "Import CSV"}</button>
-          <button type="button" className="btn-ghost" disabled={!canExport} title={!canExport ? "You do not have permission to perform this action." : undefined} onClick={exportRoster}><Download className="h-4 w-4" /> Export Roster</button>
+          {canCreate ? <button type="button" className="btn-primary" onClick={() => setEditing({ priority: "Normal", jobType: "Delivery", status: "Unassigned" })}><Plus className="h-4 w-4" /> {surfaceConfig.createLabel}</button> : null}
+          {canImport ? <>
+            <input ref={importInput} className="sr-only" type="file" accept=".csv,text/csv" onChange={chooseImport} tabIndex={-1} aria-hidden="true" />
+            <button type="button" className="btn-ghost" disabled={previewImport.isPending} onClick={() => importInput.current?.click()}><Upload className="h-4 w-4" /> {previewImport.isPending ? "Validating..." : "Import CSV"}</button>
+          </> : null}
+          {canExport ? <button type="button" className="btn-ghost" onClick={exportRoster}><Download className="h-4 w-4" /> Export Roster</button> : null}
         </>}
       />
 
@@ -384,13 +393,20 @@ export function JobsPage() {
         onAssign={(record) => canAssign && setAssigning(record)}
         onDelete={(id) => canDelete && window.confirm("Archive this job? It will be removed from the active shipment register.") && remove.mutate(id)}
         onEta={(id) => canDispatch && action.mutate({ type: "eta", id })}
-        onProof={(id) => canDispatch && action.mutate({ type: "proof", id })}
+        onProof={(id) => canQueueProof && action.mutate({ type: "proof", id })}
         onStatus={(id, next) => (next === "Cancelled" ? canCancel : canDispatch) && changeStatus.mutate({ id, status: next })}
         statusPending={changeStatus.isPending}
         onExport={() => exportJobRecordCsv(selectedRecord(detail.data, selected), detail.data)}
-        canEdit={canEdit} canDelete={canDelete} canDispatch={canDispatch} canCancel={canCancel} canAssign={canAssign} canExport={canExport}
+        canEdit={canEdit} canDelete={canDelete} canDispatch={canDispatch} canQueueProof={canQueueProof} canCancel={canCancel} canAssign={canAssign} canExport={canExport}
       />
-      {editing ? <JobModal initial={editing} saving={save.isPending} onClose={() => setEditing(null)} onSave={(payload) => save.mutate(payload)} /> : null}
+      {editing ? <JobModal
+        initial={editing}
+        saving={save.isPending}
+        canOpenCustomerMaster={canOpenCustomerMaster}
+        onOpenCustomerMaster={() => navigate("/customers")}
+        onClose={() => setEditing(null)}
+        onSave={(payload) => save.mutate(payload)}
+      /> : null}
       {assigning ? <AssignmentModal initial={assigning} saving={assign.isPending} onClose={() => setAssigning(null)} onSave={(payload) => assign.mutate({ id: String(assigning.id), payload })} /> : null}
       {importSession ? <JobImportModal session={importSession} saving={commitImport.isPending} onClose={() => setImportSession(null)} onCommit={() => commitImport.mutate({ rows: importSession.rows, idempotencyKey: importSession.idempotencyKey })} /> : null}
     </div>
@@ -431,7 +447,7 @@ function PipelineChip({ label, count, active, tone = "default", onClick }: { lab
   );
 }
 
-function JobDrawer({ detail, loading, error, onClose, onEdit, onAssign, onEta, onProof, onStatus, statusPending, onDelete, onExport, canEdit, canDelete, canDispatch, canCancel, canAssign, canExport }: { detail?: AnyRecord; loading: boolean; error?: unknown; onClose: () => void; onEdit: (record: AnyRecord) => void; onAssign: (record: AnyRecord) => void; onEta: (id: string | number) => void; onProof: (id: string | number) => void; onStatus: (id: string | number, status: string) => void; statusPending: boolean; onDelete: (id: string | number) => void; onExport: () => void; canEdit: boolean; canDelete: boolean; canDispatch: boolean; canCancel: boolean; canAssign: boolean; canExport: boolean }) {
+function JobDrawer({ detail, loading, error, onClose, onEdit, onAssign, onEta, onProof, onStatus, statusPending, onDelete, onExport, canEdit, canDelete, canDispatch, canQueueProof, canCancel, canAssign, canExport }: { detail?: AnyRecord; loading: boolean; error?: unknown; onClose: () => void; onEdit: (record: AnyRecord) => void; onAssign: (record: AnyRecord) => void; onEta: (id: string | number) => void; onProof: (id: string | number) => void; onStatus: (id: string | number, status: string) => void; statusPending: boolean; onDelete: (id: string | number) => void; onExport: () => void; canEdit: boolean; canDelete: boolean; canDispatch: boolean; canQueueProof: boolean; canCancel: boolean; canAssign: boolean; canExport: boolean }) {
   const record = detail?.record as AnyRecord | undefined;
   if (!record && !loading && !error) return null;
   if (!record) return (
@@ -466,8 +482,8 @@ function JobDrawer({ detail, loading, error, onClose, onEdit, onAssign, onEta, o
             <button type="button" className="btn-primary h-9 py-0" disabled={!canEdit} title={!canEdit ? "You do not have permission to perform this action." : undefined} onClick={() => canEdit && onEdit(record)}><Edit3 className="h-4 w-4" /> Edit</button>
             <button type="button" className="btn-ghost h-9 py-0" disabled={!canAssign || terminal} title={!canAssign ? "You do not have permission to assign jobs." : terminal ? "Terminal jobs cannot be reassigned." : undefined} onClick={() => canAssign && !terminal && onAssign(record)}><UserCheck className="h-4 w-4" /> {record.assignedDriverId ? "Reassign" : "Assign"}</button>
             <button type="button" className="btn-ghost h-9 py-0" disabled={!canDispatch || terminal} title={!canDispatch ? "You do not have permission to perform this action." : terminal ? "ETA updates are closed for terminal jobs." : undefined} onClick={() => canDispatch && !terminal && onEta(String(record.id))}><Send className="h-4 w-4" /> Send ETA</button>
-            <button type="button" className="btn-ghost h-9 py-0" disabled={!canDispatch || terminal} title={!canDispatch ? "You do not have permission to perform this action." : terminal ? "POD is closed for terminal jobs." : undefined} onClick={() => canDispatch && !terminal && onProof(String(record.id))}><FileCheck2 className="h-4 w-4" /> Queue POD</button>
-            <button type="button" className="btn-ghost h-9 py-0" disabled={!canExport} title={!canExport ? "You do not have permission to perform this action." : undefined} onClick={() => canExport && onExport()}><Download className="h-4 w-4" /> Export</button>
+            <button type="button" className="btn-ghost h-9 py-0" disabled={!canQueueProof || terminal} title={!canQueueProof ? "You do not have permission to queue proof." : terminal ? "POD is closed for terminal jobs." : undefined} onClick={() => canQueueProof && !terminal && onProof(String(record.id))}><FileCheck2 className="h-4 w-4" /> Queue POD</button>
+            {canExport ? <button type="button" className="btn-ghost h-9 py-0" onClick={onExport}><Download className="h-4 w-4" /> Export</button> : null}
             <button type="button" className="btn-ghost h-9 py-0 text-red-600" disabled={!canDelete} title={!canDelete ? "You do not have permission to perform this action." : "Archive this job"} onClick={() => canDelete && onDelete(String(record.id))}><Trash2 className="h-4 w-4" /> Archive</button>
           </div>
         </div>
@@ -619,9 +635,35 @@ function JobImportModal({ session, saving, onClose, onCommit }: { session: JobIm
   );
 }
 
-function JobModal({ initial, saving, onClose, onSave }: { initial: AnyRecord; saving: boolean; onClose: () => void; onSave: (payload: AnyRecord) => void }) {
+function JobModal({ initial, saving, canOpenCustomerMaster, onOpenCustomerMaster, onClose, onSave }: {
+  initial: AnyRecord;
+  saving: boolean;
+  canOpenCustomerMaster: boolean;
+  onOpenCustomerMaster: () => void;
+  onClose: () => void;
+  onSave: (payload: AnyRecord) => void;
+}) {
   const [form, setForm] = useState<AnyRecord>(initial);
-  const submit = (event: FormEvent) => { event.preventDefault(); onSave(form); };
+  const [customerSearchInput, setCustomerSearchInput] = useState("");
+  const [customerSearch, setCustomerSearch] = useState("");
+  useEffect(() => {
+    const timer = window.setTimeout(() => setCustomerSearch(customerSearchInput.trim()), 250);
+    return () => window.clearTimeout(timer);
+  }, [customerSearchInput]);
+  const customerOptionsQ = useQuery({
+    queryKey: ["jobs", "customer-options", customerSearch],
+    queryFn: () => jobsApi.customerOptions(customerSearch),
+  });
+  const customerOptions = customerOptionsQ.data ?? [];
+  const selectedCustomerId = String(form.customerId ?? "");
+  const selectedCustomerInOptions = customerOptions.some((customer) => String(customer.id) === selectedCustomerId);
+  const canSubmit = Boolean(selectedCustomerId) && !customerOptionsQ.isLoading && !customerOptionsQ.isError
+    && (selectedCustomerInOptions || Boolean(initial.customerId));
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (!canSubmit) return;
+    onSave({ ...form, customerId: Number(selectedCustomerId) });
+  };
   return (
     <div className="fixed inset-0 z-[60] grid place-items-center bg-slate-900/50 p-4 backdrop-blur-sm anim-fade-in">
       <form role="dialog" aria-modal="true" aria-labelledby="job-modal-title" className="panel max-h-[90vh] w-full max-w-3xl overflow-y-auto p-6 shadow-2xl" onSubmit={submit}>
@@ -630,16 +672,62 @@ function JobModal({ initial, saving, onClose, onSave }: { initial: AnyRecord; sa
           <button type="button" className="icon-btn" onClick={onClose} aria-label="Close"><X className="h-5 w-5" /></button>
         </div>
         <div className="mt-6 grid gap-4 md:grid-cols-2">
+          <div className="md:col-span-2 rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <label className="block">
+              <span className="mb-1.5 block text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Find customer</span>
+              <input
+                className="field"
+                type="search"
+                value={customerSearchInput}
+                onChange={(event) => setCustomerSearchInput(event.target.value)}
+                placeholder="Search customer name or code"
+                aria-controls="job-customer-selector"
+              />
+            </label>
+            <label className="mt-3 block">
+              <span className="mb-1.5 block text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Customer</span>
+              <select
+                id="job-customer-selector"
+                className="field"
+                required
+                disabled={customerOptionsQ.isLoading || customerOptionsQ.isError || customerOptions.length === 0}
+                value={selectedCustomerId}
+                onChange={(event) => setForm((current) => ({ ...current, customerId: event.target.value }))}
+              >
+                <option value="">Select an active customer</option>
+                {initial.customerId && !selectedCustomerInOptions ? (
+                  <option value={String(initial.customerId)}>{String(initial.customerName ?? `Current customer ${initial.customerId}`)}</option>
+                ) : null}
+                {customerOptions.map((customer) => (
+                  <option key={String(customer.id)} value={String(customer.id)}>
+                    {String(customer.name)}{customer.customerCode ? ` · ${String(customer.customerCode)}` : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {customerOptionsQ.isLoading ? <p role="status" className="mt-2 text-xs text-slate-500">Loading active customers…</p> : null}
+            {customerOptionsQ.isError ? (
+              <p role="alert" className="mt-2 text-xs font-semibold text-rose-700">
+                {requestError(customerOptionsQ.error, "Customer choices are unavailable. Ask an administrator to confirm your dispatch access.")}
+              </p>
+            ) : null}
+            {!customerOptionsQ.isLoading && !customerOptionsQ.isError && customerOptions.length === 0 ? (
+              <div className="mt-2 text-xs text-amber-800">
+                <p>No active customers are available. A customer must be created through the Commercial customer master before a job can be saved.</p>
+                {canOpenCustomerMaster ? <button type="button" className="mt-2 font-bold text-teal-700 hover:underline" onClick={onOpenCustomerMaster}>Open Customers</button> : <p className="mt-1">Ask an account administrator to enable Commercial/CRM access or create the customer.</p>}
+              </div>
+            ) : null}
+          </div>
           {fields.map(([key, label]) => (
             <label key={key} className="block">
               <span className="mb-1.5 block text-xs font-bold uppercase tracking-[0.14em] text-slate-500">{label}</span>
-              <input className="field" value={String(form[key] ?? "")} onChange={(e) => setForm((x) => ({ ...x, [key]: e.target.value }))} required={["jobNumber", "customerId", "pickupAddress", "dropoffAddress"].includes(key)} />
+              <input className="field" value={String(form[key] ?? "")} onChange={(e) => setForm((x) => ({ ...x, [key]: e.target.value }))} required={["jobNumber", "pickupAddress", "dropoffAddress"].includes(key)} />
             </label>
           ))}
         </div>
         <div className="mt-6 flex justify-end gap-3 border-t border-slate-200 pt-4">
           <button type="button" className="btn-ghost" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn-primary" disabled={saving}>{saving ? "Saving..." : "Save Job"}</button>
+          <button type="submit" className="btn-primary" disabled={saving || !canSubmit}>{saving ? "Saving..." : "Save Job"}</button>
         </div>
       </form>
     </div>

@@ -19,9 +19,13 @@ export function apiErrorMessage(error: unknown, fallback: string): string {
   const payload = (error as ErrorResponse | null)?.response?.data;
   if (payload && typeof payload === "object") {
     const envelope = payload as { message?: unknown; error?: unknown; errors?: unknown };
-    const serverMessage = safeErrorText(envelope.message)
-      ?? safeErrorText(envelope.error)
-      ?? (Array.isArray(envelope.errors) ? safeErrorText(envelope.errors[0]) : null);
+    const summary = safeErrorText(envelope.message) ?? safeErrorText(envelope.error);
+    const details = Array.isArray(envelope.errors)
+      ? envelope.errors.map(safeErrorText).filter((item): item is string => Boolean(item)).slice(0, 5)
+      : [];
+    const serverMessage = summary && details.length
+      ? `${summary}: ${details.join(" ")}`
+      : summary ?? details[0] ?? null;
     if (serverMessage) return serverMessage;
   }
 
