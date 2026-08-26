@@ -47,8 +47,11 @@ public static class ProductPilotEndpoints
                      (SELECT COUNT(*) FROM customers WHERE company_id=c.id AND deleted_at IS NULL) customer_count,
                      (SELECT COUNT(*) FROM jobs WHERE company_id=c.id AND deleted_at IS NULL) job_count,
                      (SELECT COUNT(*) FROM routes WHERE company_id=c.id AND deleted_at IS NULL) route_count
-              FROM companies c WHERE c.company_code=@code LIMIT 1",
-            c => c.Parameters.AddWithValue("@code", CertificationTenantCode), ct), ct);
+              FROM companies c
+              WHERE c.name=@identifier
+                AND (SELECT COUNT(*) FROM companies WHERE name=@identifier)=1
+              LIMIT 1",
+            c => c.Parameters.AddWithValue("@identifier", CertificationTenantCode), ct), ct);
 
         if (tenant is null)
             return Results.Json(ApiResponse<object>.Fail("Certification tenant is unavailable"), statusCode: StatusCodes.Status409Conflict);
@@ -66,6 +69,7 @@ public static class ProductPilotEndpoints
             tenant = new
             {
                 id = Convert.ToInt64(tenant["id"]),
+                identifier = CertificationTenantCode,
                 code = tenant["companyCode"],
                 name = tenant["name"],
                 status = tenant["status"],
@@ -135,11 +139,13 @@ public static class ProductPilotEndpoints
                 }
 
                 var tenant = await db.QuerySingleAsync(
-                    @"SELECT id, company_code, status, entitlement_policy_mode FROM companies
-                      WHERE company_code=@code FOR UPDATE",
-                    c => c.Parameters.AddWithValue("@code", CertificationTenantCode), ct);
+                    @"SELECT id, company_code, name, status, entitlement_policy_mode FROM companies
+                      WHERE name=@identifier
+                        AND (SELECT COUNT(*) FROM companies WHERE name=@identifier)=1
+                      FOR UPDATE",
+                    c => c.Parameters.AddWithValue("@identifier", CertificationTenantCode), ct);
                 if (tenant is null) throw new PilotConflictException("The certification tenant does not exist.");
-                if (!string.Equals(tenant["companyCode"]?.ToString(), CertificationTenantCode, StringComparison.Ordinal)
+                if (!string.Equals(tenant["name"]?.ToString(), CertificationTenantCode, StringComparison.Ordinal)
                     || !string.Equals(tenant["status"]?.ToString(), "Active", StringComparison.OrdinalIgnoreCase))
                     throw new PilotConflictException("The certification tenant identity or status is not eligible.");
                 if (!string.Equals(tenant["entitlementPolicyMode"]?.ToString(), "package_allowlist", StringComparison.Ordinal))
