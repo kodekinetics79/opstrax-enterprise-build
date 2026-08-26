@@ -19078,7 +19078,7 @@ LIMIT 100000",
             @"SELECT i.id,i.device_id,i.vehicle_id,i.device_role,i.is_primary,i.status,
                      i.effective_from,i.effective_to,i.installed_at,i.removed_at,
                      i.activation_verified_at,i.commissioning_method,i.commissioning_result,
-                     i.verification_reference,i.installation_location,i.assignment_reason,
+                     i.verification_reference,i.installation_location,i.odometer_at_installation,i.assignment_reason,
                      i.removal_reason,i.source,i.row_version,v.vehicle_code
               FROM device_installations i
               JOIN vehicles v ON v.id=i.vehicle_id AND v.company_id=i.company_id

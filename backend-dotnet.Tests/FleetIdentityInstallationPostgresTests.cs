@@ -141,11 +141,11 @@ public sealed class FleetIdentityInstallationPostgresTests
             var transferKey = $"transfer-{Guid.NewGuid():N}";
             var transferred = await Invoke("DeviceInstallationTransfer",http,deviceId,
                 Body("DeviceInstallationTransferBody",vehicleB,(long?)firstId,"replace vehicle","new route", "GPS",true,
-                    (DateTimeOffset?)DateTimeOffset.UtcNow,null,null,"heartbeat",(int?)1,transferKey),
+                    (DateTimeOffset?)DateTimeOffset.UtcNow,"yard bay 2",57838m,"heartbeat",(int?)1,transferKey),
                 db,audit,CancellationToken.None);
             Assert.Equal(StatusCodes.Status200OK,Status(transferred));
             var history = await db.QueryAsync(
-                "SELECT id,vehicle_id,status,effective_from,effective_to,replaced_installation_id FROM device_installations WHERE company_id=@c AND device_id=@d ORDER BY effective_from,id",
+                "SELECT id,vehicle_id,status,effective_from,effective_to,replaced_installation_id,odometer_at_installation FROM device_installations WHERE company_id=@c AND device_id=@d ORDER BY effective_from,id",
                 c => { c.Parameters.AddWithValue("@c",companyId); c.Parameters.AddWithValue("@d",deviceId); });
             Assert.Equal(2,history.Count);
             Assert.Equal("Removed",history[0]["status"]);
@@ -154,6 +154,7 @@ public sealed class FleetIdentityInstallationPostgresTests
             Assert.Equal("Installed",history[1]["status"]);
             Assert.Equal(vehicleB,Convert.ToInt64(history[1]["vehicleId"]));
             Assert.Equal(firstId,Convert.ToInt64(history[1]["replacedInstallationId"]));
+            Assert.Equal(57838m, Convert.ToDecimal(history[1]["odometerAtInstallation"]));
             Assert.Equal(vehicleB,await db.ScalarLongAsync(
                 "SELECT vehicle_id FROM eld_devices WHERE company_id=@c AND id=@d",
                 c => { c.Parameters.AddWithValue("@c",companyId); c.Parameters.AddWithValue("@d",deviceId); }));

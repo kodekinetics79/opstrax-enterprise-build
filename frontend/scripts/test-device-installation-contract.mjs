@@ -8,6 +8,7 @@ const service = readFileSync(resolve(root, "src/services/telematicsService.ts"),
 const devicesPage = readFileSync(resolve(root, "src/pages/IotDevicesPage.tsx"), "utf8");
 const vehiclesPage = readFileSync(resolve(root, "src/pages/VehiclesPage.tsx"), "utf8");
 const coldChainPage = readFileSync(resolve(root, "src/pages/FleetColdChainPage.tsx"), "utf8");
+const apiErrorMessage = readFileSync(resolve(root, "src/utils/apiErrorMessage.ts"), "utf8");
 
 assert.match(service, /imei: String\(row\.imei \?\? ""\)/, "IMEI must be mapped from the live device row");
 assert.match(service, /deviceCategory: String\(row\.device_category \?\? "Unknown"\)/, "Governed hardware category must be mapped from the live device row");
@@ -145,11 +146,17 @@ assert.doesNotMatch(unassignSubmit, /toUtcIso\(/, "Removal submit must not call 
 assert.match(devicesPage, /effectiveAtIso = toUtcIso\(/, "Installation effective time must be converted before mutate, inside try/catch");
 assert.match(devicesPage, /effectiveToIso = toUtcIso\(/, "Removal effective time must be converted before mutate, inside try/catch");
 assert.match(devicesPage, /setFormError\(validationError instanceof Error/, "Hoisted validation failures must land in visible form-error state");
-assert.match(devicesPage, /error=\{formError \?\? \(assignMut\.error instanceof Error/, "Installation form must merge validation and mutation errors into the ModalForm error slot");
+assert.match(devicesPage, /error=\{formError \?\? \(assignMut\.error \? apiErrorMessage/, "Installation form must merge validation and safe mutation errors into the ModalForm error slot");
 assert.match(devicesPage, /error=\{formError \?\? \(unassignMut\.error instanceof Error/, "Removal form must merge validation and mutation errors into the ModalForm error slot");
 assert.match(devicesPage, /error=\{formError \?\? \(installMut\.error instanceof Error/, "Commissioning form must merge validation and mutation errors into the ModalForm error slot");
 assert.match(devicesPage, /setFormError\("Select the observed commissioning result/, "Commissioning submit must surface a visible error instead of a silent bare return");
 assert.match(devicesPage, /Enter a valid odometer at installation/, "Odometer validation must produce a visible error instead of a silent bare return");
+assert.match(devicesPage, /Date\.parse\(effectiveAtIso\) > Date\.now\(\)/, "Installation and transfer must reject a future effective time before mutation");
+assert.match(devicesPage, /max=\{currentLocalMinute\(\)\}/, "The effective-time picker must not offer a future minute");
+assert.match(devicesPage, /apiErrorMessage\(assignMut\.error,/, "Installation and transfer must render a safe server rejection instead of Axios's generic status text");
+assert.match(apiErrorMessage, /envelope\.message/, "Handled API message envelopes must be surfaced to the operator");
+assert.match(apiErrorMessage, /genericHttpMessage\.test\(text\)/, "Generic Axios status text must not replace a useful customer-safe error");
+assert.match(apiErrorMessage, /stackFrame\.test\(text\)/, "Diagnostic stack frames must never be rendered in the installation modal");
 
 // ── DEF-023: destructive lifecycle confirmations must be automatable and accessible ──
 const confirmDialog = readFileSync(resolve(root, "src/components/ConfirmDialog.tsx"), "utf8");
