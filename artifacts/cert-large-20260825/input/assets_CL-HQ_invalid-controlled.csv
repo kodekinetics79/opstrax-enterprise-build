@@ -1,0 +1,9 @@
+assetTag,branchCode,name,assetTypeCode,status,currentLocation,condition,isReturnable,quantity,unitOfMeasure,notes
+,CL-HQ,Certification Trailer Invalid 0001,TRAILER,Available,Central Operations HQ,Good,TRUE,1,Each,Missing asset tag controlled failure
+CLHQ-TRL-0051,CL-HQ,,TRAILER,Available,Central Operations HQ,Good,TRUE,1,Each,Missing asset name controlled failure
+CLHQ-TRL-0052,CL-HQ,Certification Trailer CLHQ 0052,NO-SUCH-TYPE,Available,Central Operations HQ,Good,TRUE,1,Each,Unknown asset type controlled failure
+CLHQ-TRL-0053,CL-HQ,Certification Trailer CLHQ 0053,TRAILER,Available,Central Operations HQ,Good,TRUE,abc,Each,Non-numeric quantity controlled failure
+CLHQ-TRL-0054,CL-HQ,Certification Trailer CLHQ 0054,TRAILER,Available,Central Operations HQ,Good,TRUE,0,Each,Zero quantity controlled failure
+CLHQ-TRL-0055,CL-HQ,Certification Trailer CLHQ 0055,TRAILER,Available,Central Operations HQ,Good,maybe,1,Each,Invalid returnable flag controlled failure
+CLHQ-TRL-0056,CL-HQ,Certification Trailer CLHQ 0056,TRAILER,Disposed,Central Operations HQ,Good,TRUE,1,Each,Invalid status controlled failure
+CLHQ-TRL-0057,CL-HQ,Certification Trailer CLHQ 0057,TRAILER,Available,Central Operations HQ,Excellent,TRUE,1,Each,Invalid condition controlled failure

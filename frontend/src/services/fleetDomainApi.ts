@@ -54,7 +54,7 @@ export function getDashboardSummary() {
 }
 
 export function getVehicles(lifecycle: "active" | "archived" = "active") {
-  return apiList(`/api/vehicles?lifecycle=${lifecycle}`);
+  return apiPaged(`/api/vehicles?lifecycle=${lifecycle}`, { limit: 2000 }).then((result) => result.rows);
 }
 
 export function getVehicleById(id: string | number, lifecycle: "active" | "archived" = "active") {
@@ -79,7 +79,7 @@ export function getVehicleById(id: string | number, lifecycle: "active" | "archi
 }
 
 export function getDrivers(lifecycle: "active" | "archived" = "active") {
-  return apiList(`/api/drivers?lifecycle=${lifecycle}`);
+  return apiPaged(`/api/drivers?lifecycle=${lifecycle}`, { limit: 2000 }).then((result) => result.rows);
 }
 
 export function getDriverById(id: string | number, lifecycle: "active" | "archived" = "active") {

@@ -33,6 +33,7 @@ public static class FleetTmsColdChainEndpoints
         Guard(app.MapGet("/api/fleet-tms/assets/types", AssetTypes), "fleet:view");
         Guard(app.MapPost("/api/fleet-tms/assets/types", CreateAssetType), "fleet:manage");
         Guard(app.MapGet("/api/fleet-tms/assets", Assets), "fleet:view");
+        Guard(app.MapGet("/api/fleet-tms/assets/export", AssetsExport), "fleet:manage");
         Guard(app.MapGet("/api/fleet-tms/assets/import-template", AssetsImportTemplate), "fleet:view");
         Guard(app.MapPost("/api/fleet-tms/assets/import-preview", AssetsImportPreview), "fleet:manage");
         Guard(app.MapPost("/api/fleet-tms/assets/import-commit", AssetsImportCommit), "fleet:manage");
@@ -519,15 +520,121 @@ ON CONFLICT DO NOTHING",
 
     private static async Task<IResult> Assets(HttpContext http, Database db, CancellationToken ct)
     {
+        var page = int.TryParse(http.Request.Query["page"].FirstOrDefault(), out var parsedPage)
+            ? Math.Max(1, parsedPage)
+            : 1;
+        var pageSize = int.TryParse(http.Request.Query["pageSize"].FirstOrDefault(), out var parsedPageSize)
+            ? Math.Clamp(parsedPageSize, 1, 100)
+            : 100;
+        var search = http.Request.Query["search"].FirstOrDefault()?.Trim() ?? "";
+        var direction = string.Equals(http.Request.Query["direction"].FirstOrDefault(), "desc", StringComparison.OrdinalIgnoreCase)
+            ? "DESC"
+            : "ASC";
+        var sort = http.Request.Query["sort"].FirstOrDefault()?.Trim().ToLowerInvariant() switch
+        {
+            "name" => "a.name",
+            "status" => "a.status",
+            "location" => "a.current_location",
+            "condition" => "a.condition",
+            "type" => "t.name",
+            "lastseen" => "a.last_seen_at_utc",
+            _ => "a.asset_tag",
+        };
+        var where = @"WHERE a.company_id=@companyId" + BranchScope(http, "a.") + @"
+  AND (@search='' OR a.asset_tag ILIKE '%' || @search || '%'
+    OR a.name ILIKE '%' || @search || '%'
+    OR COALESCE(t.code,'') ILIKE '%' || @search || '%'
+    OR COALESCE(t.name,'') ILIKE '%' || @search || '%'
+    OR COALESCE(a.status,'') ILIKE '%' || @search || '%'
+    OR COALESCE(a.current_location,'') ILIKE '%' || @search || '%'
+    OR COALESCE(a.condition,'') ILIKE '%' || @search || '%')";
+        Action<NpgsqlCommand> bind = c =>
+        {
+            c.Parameters.AddWithValue("@companyId", Cid(http));
+            c.Parameters.AddWithValue("@search", search);
+            BindBranch(c, http);
+        };
+        var total = await db.ScalarLongAsync(@"
+SELECT COUNT(*)
+FROM fleet_tms_assets a
+LEFT JOIN fleet_tms_asset_types t ON t.id=a.asset_type_id
+" + where, bind, ct);
+        var summary = await db.QuerySingleAsync(@"
+SELECT COUNT(*) FILTER (WHERE a.status IN ('Assigned','InUse')) assigned,
+       COUNT(*) FILTER (WHERE a.status='Available') available,
+       COUNT(*) FILTER (WHERE a.condition<>'Good') needs_review
+FROM fleet_tms_assets a
+LEFT JOIN fleet_tms_asset_types t ON t.id=a.asset_type_id
+" + where, bind, ct);
         var items = await db.QueryAsync(@"
 SELECT a.id, a.asset_type_id, t.code asset_type_code, t.name asset_type_name, a.asset_tag, a.name, a.status,
        a.current_location, a.condition, a.is_returnable, a.quantity, a.unit_of_measure, a.notes, a.last_seen_at_utc, a.created_at_utc,
        (SELECT COUNT(*) FROM fleet_tms_asset_assignments aa WHERE aa.asset_id=a.id AND aa.company_id=a.company_id AND aa.branch_id IS NOT DISTINCT FROM a.branch_id) assignment_count
 FROM fleet_tms_assets a
 LEFT JOIN fleet_tms_asset_types t ON t.id=a.asset_type_id
-WHERE a.company_id=@companyId" + BranchScope(http, "a.") + " ORDER BY a.last_seen_at_utc DESC NULLS LAST, a.asset_tag",
-            c => { c.Parameters.AddWithValue("@companyId", Cid(http)); BindBranch(c, http); }, ct);
-        return Ok(new { items });
+" + where + $" ORDER BY {sort} {direction} NULLS LAST, a.asset_tag LIMIT @limit OFFSET @offset",
+            c =>
+            {
+                bind(c);
+                c.Parameters.AddWithValue("@limit", pageSize);
+                c.Parameters.AddWithValue("@offset", (page - 1) * pageSize);
+            }, ct);
+        return Ok(new
+        {
+            items,
+            total,
+            page,
+            pageSize,
+            summary = summary ?? new Dictionary<string, object?>
+            {
+                ["assigned"] = 0L,
+                ["available"] = 0L,
+                ["needsReview"] = 0L,
+            },
+        });
+    }
+
+    private static async Task<IResult> AssetsExport(HttpContext http, Database db, CancellationToken ct)
+    {
+        var search = http.Request.Query["search"].FirstOrDefault()?.Trim() ?? "";
+        var rows = await db.QueryAsync(@"
+SELECT a.asset_tag, b.branch_code, a.name, t.code asset_type_code, a.status,
+       a.current_location, a.condition, a.is_returnable, a.quantity, a.unit_of_measure,
+       a.notes, a.last_seen_at_utc, a.created_at_utc
+FROM fleet_tms_assets a
+LEFT JOIN fleet_tms_asset_types t ON t.id=a.asset_type_id
+LEFT JOIN branches b ON b.id=a.branch_id AND b.company_id=a.company_id
+WHERE a.company_id=@companyId" + BranchScope(http, "a.") + @"
+  AND (@search='' OR a.asset_tag ILIKE '%' || @search || '%'
+    OR a.name ILIKE '%' || @search || '%'
+    OR COALESCE(t.code,'') ILIKE '%' || @search || '%'
+    OR COALESCE(a.current_location,'') ILIKE '%' || @search || '%')
+ORDER BY a.asset_tag
+LIMIT 100000",
+            c =>
+            {
+                c.Parameters.AddWithValue("@companyId", Cid(http));
+                c.Parameters.AddWithValue("@search", search);
+                BindBranch(c, http);
+            }, ct);
+        return CsvFile(rows, "returnable-assets");
+    }
+
+    private static IResult CsvFile(IReadOnlyList<Dictionary<string, object?>> rows, string name)
+    {
+        var csv = new System.Text.StringBuilder();
+        if (rows.Count == 0)
+        {
+            csv.AppendLine("assetTag,branchCode,name,assetTypeCode,status,currentLocation,condition,isReturnable,quantity,unitOfMeasure,notes,lastSeenAtUtc,createdAtUtc");
+        }
+        else
+        {
+            var columns = rows[0].Keys.ToList();
+            csv.AppendLine(string.Join(",", columns));
+            foreach (var row in rows)
+                csv.AppendLine(string.Join(",", columns.Select(column => EndpointMappings.CsvCell(row[column]))));
+        }
+        return Results.File(System.Text.Encoding.UTF8.GetBytes(csv.ToString()), "text/csv", $"{name}_{DateTime.UtcNow:yyyy-MM-dd_HH-mm}.csv");
     }
 
     private const int AssetImportMaxRows = 500;
@@ -551,20 +658,27 @@ WHERE a.company_id=@companyId" + BranchScope(http, "a.") + " ORDER BY a.last_see
 
     private static IResult AssetsImportTemplate(HttpContext http)
     {
-        const string csv = "assetTag,name,assetTypeCode,status,currentLocation,condition,isReturnable,quantity,unitOfMeasure,notes\n" +
-                           "TRL-0001,Certification Trailer 0001,TRAILER,Available,North Yard,Good,true,1,Each,Non-personal certification inventory\n";
+        const string csv = "assetTag,branchCode,name,assetTypeCode,status,currentLocation,condition,isReturnable,quantity,unitOfMeasure,notes\n" +
+                           "TRL-0001,CL-HQ,Certification Trailer 0001,TRAILER,Available,North Yard,Good,true,1,Each,Non-personal certification inventory\n";
         return Results.File(System.Text.Encoding.UTF8.GetBytes(csv), "text/csv", "assets-import-template.csv");
     }
 
+    private sealed record AssetTypeImportIdentity(long Id, long? BranchId, string Code);
+
     private sealed record AssetImportLookups(
-        IReadOnlyDictionary<string, long> AssetTypeIds,
+        IReadOnlyDictionary<string, long> ActiveBranches,
+        IReadOnlyList<AssetTypeImportIdentity> AssetTypes,
         IReadOnlyDictionary<string, long> ExistingAssetIds);
+
+    private static string AssetImportIdentityKey(long branchId, string assetTag)
+        => $"{branchId}:{assetTag.Trim().ToLowerInvariant()}";
 
     private static async Task<AssetImportLookups> LoadAssetImportLookups(
         HttpContext http, IReadOnlyList<Dictionary<string, object?>> rows, Database db, CancellationToken ct)
     {
         var companyId = Cid(http);
-        var branchId = Bid(http);
+        var activeBranches = await EndpointMappings.LoadActiveImportBranchMap(
+            db, companyId, rows.Select(row => AssetImportStr(row, "branchCode")), ct);
         var typeCodes = rows
             .Select(row => AssetImportStr(row, "assetTypeCode"))
             .Where(value => !string.IsNullOrWhiteSpace(value))
@@ -581,56 +695,66 @@ WHERE a.company_id=@companyId" + BranchScope(http, "a.") + " ORDER BY a.last_see
         var typeRows = typeCodes.Length == 0
             ? []
             : await db.QueryAsync(@"
-SELECT id, lower(btrim(code)) normalized_code
+SELECT id, branch_id, lower(btrim(code)) normalized_code
 FROM fleet_tms_asset_types
 WHERE company_id=@companyId
-  AND lower(btrim(code)) = ANY(@codes)" + SharedConfigScope(http),
+  AND lower(btrim(code)) = ANY(@codes)",
                 c =>
                 {
                     c.Parameters.AddWithValue("@companyId", companyId);
                     c.Parameters.AddWithValue("@codes", typeCodes);
-                    BindBranch(c, http);
                 }, ct);
         var existingRows = assetTags.Length == 0
             ? []
             : await db.QueryAsync(@"
-SELECT id, lower(btrim(asset_tag)) normalized_tag
+SELECT id, branch_id, lower(btrim(asset_tag)) normalized_tag
 FROM fleet_tms_assets
 WHERE company_id=@companyId
-  AND branch_id IS NOT DISTINCT FROM @branchId
+  AND branch_id IS NOT NULL
   AND lower(btrim(asset_tag)) = ANY(@tags)",
                 c =>
                 {
                     c.Parameters.AddWithValue("@companyId", companyId);
-                    c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
                     c.Parameters.AddWithValue("@tags", assetTags);
                 }, ct);
 
         return new AssetImportLookups(
-            typeRows.ToDictionary(
-                row => row["normalizedCode"]?.ToString() ?? "",
-                row => Convert.ToInt64(row["id"]),
-                StringComparer.OrdinalIgnoreCase),
+            activeBranches,
+            typeRows.Select(row => new AssetTypeImportIdentity(
+                Convert.ToInt64(row["id"]),
+                row["branchId"] is null or DBNull ? null : Convert.ToInt64(row["branchId"]),
+                row["normalizedCode"]?.ToString() ?? "")).ToList(),
             existingRows.ToDictionary(
-                row => row["normalizedTag"]?.ToString() ?? "",
+                row => AssetImportIdentityKey(Convert.ToInt64(row["branchId"]), row["normalizedTag"]?.ToString() ?? ""),
                 row => Convert.ToInt64(row["id"]),
                 StringComparer.OrdinalIgnoreCase));
     }
 
     private static (AssetRequest? Request, List<string> Errors) ValidateAssetImportRow(
-        Dictionary<string, object?> row, HashSet<string> fileTags, IReadOnlyDictionary<string, long> assetTypeIds)
+        Dictionary<string, object?> row, long? rowBranchId, string? branchError,
+        HashSet<string> fileTags, IReadOnlyList<AssetTypeImportIdentity> assetTypes)
     {
         var errors = new List<string>();
+        if (branchError is not null) errors.Add(branchError);
         var tag = AssetImportStr(row, "assetTag");
         var name = AssetImportStr(row, "name");
         var typeCode = AssetImportStr(row, "assetTypeCode");
         if (tag is null) errors.Add("assetTag is required.");
-        else if (!fileTags.Add(tag)) errors.Add($"Duplicate assetTag '{tag}' earlier in this file.");
+        else if (!fileTags.Add(rowBranchId is { } branchId ? AssetImportIdentityKey(branchId, tag) : tag))
+            errors.Add($"Duplicate assetTag '{tag}' earlier in this file for the same branch.");
         if (name is null) errors.Add("name is required.");
         if (typeCode is null) errors.Add("assetTypeCode is required.");
         long typeId = 0;
-        if (typeCode is not null && !assetTypeIds.TryGetValue(typeCode, out typeId))
-            errors.Add($"Asset type code '{typeCode}' does not exist in this branch scope. Create it first.");
+        if (typeCode is not null && rowBranchId is not null)
+        {
+            var type = assetTypes
+                .Where(candidate => string.Equals(candidate.Code, typeCode, StringComparison.OrdinalIgnoreCase)
+                    && (candidate.BranchId is null || candidate.BranchId == rowBranchId))
+                .OrderByDescending(candidate => candidate.BranchId == rowBranchId)
+                .FirstOrDefault();
+            if (type is null) errors.Add($"Asset type code '{typeCode}' does not exist in this branch scope. Create it first.");
+            else typeId = type.Id;
+        }
         decimal? quantity = null;
         var quantityRaw = AssetImportStr(row, "quantity");
         if (quantityRaw is not null)
@@ -663,8 +787,13 @@ WHERE company_id=@companyId
         var fileTags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         for (var i = 0; i < rows.Count; i++)
         {
-            var (request, errors) = ValidateAssetImportRow(rows[i], fileTags, lookups.AssetTypeIds);
-            var existingId = errors.Count == 0 && lookups.ExistingAssetIds.TryGetValue(request!.AssetTag!, out var cachedId)
+            var resolvedBranch = EndpointMappings.ResolveImportBranch(
+                AssetImportStr(rows[i], "branchCode"), Bid(http), lookups.ActiveBranches);
+            var (request, errors) = ValidateAssetImportRow(
+                rows[i], resolvedBranch.BranchId, resolvedBranch.Error, fileTags, lookups.AssetTypes);
+            var existingKey = resolvedBranch.BranchId is { } rowBranchId && request?.AssetTag is { } assetTag
+                ? AssetImportIdentityKey(rowBranchId, assetTag) : "";
+            var existingId = errors.Count == 0 && lookups.ExistingAssetIds.TryGetValue(existingKey, out var cachedId)
                 ? cachedId
                 : 0;
             var action = errors.Count > 0 ? "error" : existingId > 0 ? "update" : "create";
@@ -679,14 +808,20 @@ WHERE company_id=@companyId
         var rows = AssetImportRows(body);
         if (rows.Count == 0) return Bad("No rows to import. Send { rows: [...] } parsed from the CSV.");
         var lookups = await LoadAssetImportLookups(http, rows, db, ct);
-        var companyId = Cid(http); var branchId = Bid(http);
+        var companyId = Cid(http);
         var created = 0; var updated = 0; var skipped = new List<object>();
         var fileTags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         for (var i = 0; i < rows.Count; i++)
         {
-            var (request, errors) = ValidateAssetImportRow(rows[i], fileTags, lookups.AssetTypeIds);
+            var resolvedBranch = EndpointMappings.ResolveImportBranch(
+                AssetImportStr(rows[i], "branchCode"), Bid(http), lookups.ActiveBranches);
+            var (request, errors) = ValidateAssetImportRow(
+                rows[i], resolvedBranch.BranchId, resolvedBranch.Error, fileTags, lookups.AssetTypes);
             var tag = request?.AssetTag ?? AssetImportStr(rows[i], "assetTag") ?? "";
-            var existingId = errors.Count == 0 && lookups.ExistingAssetIds.TryGetValue(tag, out var cachedId)
+            var rowBranchId = resolvedBranch.BranchId;
+            var existingKey = rowBranchId is { } requestedBranchId
+                ? AssetImportIdentityKey(requestedBranchId, tag) : "";
+            var existingId = errors.Count == 0 && lookups.ExistingAssetIds.TryGetValue(existingKey, out var cachedId)
                 ? cachedId
                 : 0;
             if (errors.Count > 0) { skipped.Add(new { rowNumber = i + 1, key = tag, errors }); continue; }
@@ -699,7 +834,7 @@ WHERE company_id=@companyId
                         WHERE id=@id AND company_id=@companyId AND branch_id IS NOT DISTINCT FROM @branchId", c =>
                     {
                         BindAsset(c, companyId, request!, false); c.Parameters.AddWithValue("@id", existingId);
-                        c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+                        c.Parameters.AddWithValue("@branchId", rowBranchId!.Value);
                     }, ct);
                     updated++;
                 }
@@ -709,7 +844,7 @@ WHERE company_id=@companyId
                         (company_id,branch_id,asset_type_id,asset_tag,name,status,current_location,condition,is_returnable,quantity,unit_of_measure,notes,last_seen_at_utc,created_at_utc,updated_at_utc)
                         VALUES (@companyId,@branchId,@type,@tag,@name,@status,@loc,@condition,@returnable,@qty,@uom,@notes,@lastSeen,NOW(),NOW())", c =>
                     {
-                        BindAsset(c, companyId, request!, true); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+                        BindAsset(c, companyId, request!, true); c.Parameters.AddWithValue("@branchId", rowBranchId!.Value);
                     }, ct);
                     created++;
                 }

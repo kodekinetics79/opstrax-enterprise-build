@@ -24,7 +24,7 @@ import { VehiclesPage as VehiclesRosterPage } from "@/pages/VehiclesPage";
 const VEHICLE_IMPORT_EXPORT = {
   entity: "vehicles",
   columns: [
-    "vehicleCode", "type", "make", "model", "year", "vehicleClass",
+    "vehicleCode", "branchCode", "type", "make", "model", "year", "vehicleClass",
     "odometerMiles", "vin", "vinExceptionType", "alternateIdentifier",
     "plateNumber", "plateJurisdiction", "status",
   ],

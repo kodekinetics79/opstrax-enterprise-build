@@ -1,0 +1,201 @@
+vehicleCode,branchCode,type,make,model,year,vehicleClass,odometerMiles,vin,vinExceptionType,alternateIdentifier,plateNumber,plateJurisdiction,status
+SEDEPOT-V-0001,SE-DEPOT,Tractor,Freightliner,Cascadia,2017,Class 8,49919,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0001,GA-0001,GA,Available
+SEDEPOT-V-0002,SE-DEPOT,Truck,Ford,F-650,2018,Class 6,57838,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0002,GA-0002,GA,Available
+SEDEPOT-V-0003,SE-DEPOT,Van,Ford,Transit,2019,Class 2b,65757,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0003,GA-0003,GA,Available
+SEDEPOT-V-0004,SE-DEPOT,Truck,Isuzu,NPR-HD,2020,Class 5,73676,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0004,GA-0004,GA,Available
+SEDEPOT-V-0005,SE-DEPOT,Tractor,Volvo,VNL 760,2021,Class 8,81595,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0005,GA-0005,GA,Available
+SEDEPOT-V-0006,SE-DEPOT,Tractor,Freightliner,Cascadia,2022,Class 8,89514,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0006,GA-0006,GA,Available
+SEDEPOT-V-0007,SE-DEPOT,Truck,Ford,F-650,2023,Class 6,97433,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0007,GA-0007,GA,Available
+SEDEPOT-V-0008,SE-DEPOT,Van,Ford,Transit,2024,Class 2b,105352,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0008,GA-0008,GA,Available
+SEDEPOT-V-0009,SE-DEPOT,Truck,Isuzu,NPR-HD,2025,Class 5,113271,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0009,GA-0009,GA,Available
+SEDEPOT-V-0010,SE-DEPOT,Tractor,Volvo,VNL 760,2026,Class 8,121190,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0010,GA-0010,GA,Available
+SEDEPOT-V-0011,SE-DEPOT,Tractor,Freightliner,Cascadia,2017,Class 8,129109,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0011,GA-0011,GA,Available
+SEDEPOT-V-0012,SE-DEPOT,Truck,Ford,F-650,2018,Class 6,137028,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0012,GA-0012,GA,Available
+SEDEPOT-V-0013,SE-DEPOT,Van,Ford,Transit,2019,Class 2b,144947,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0013,GA-0013,GA,Available
+SEDEPOT-V-0014,SE-DEPOT,Truck,Isuzu,NPR-HD,2020,Class 5,152866,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0014,GA-0014,GA,Available
+SEDEPOT-V-0015,SE-DEPOT,Tractor,Volvo,VNL 760,2021,Class 8,160785,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0015,GA-0015,GA,Available
+SEDEPOT-V-0016,SE-DEPOT,Tractor,Freightliner,Cascadia,2022,Class 8,168704,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0016,GA-0016,GA,Available
+SEDEPOT-V-0017,SE-DEPOT,Truck,Ford,F-650,2023,Class 6,176623,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0017,GA-0017,GA,Available
+SEDEPOT-V-0018,SE-DEPOT,Van,Ford,Transit,2024,Class 2b,184542,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0018,GA-0018,GA,Available
+SEDEPOT-V-0019,SE-DEPOT,Truck,Isuzu,NPR-HD,2025,Class 5,192461,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0019,GA-0019,GA,Available
+SEDEPOT-V-0020,SE-DEPOT,Tractor,Volvo,VNL 760,2026,Class 8,200380,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0020,GA-0020,GA,Maintenance
+SEDEPOT-V-0021,SE-DEPOT,Tractor,Freightliner,Cascadia,2017,Class 8,208299,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0021,GA-0021,GA,Available
+SEDEPOT-V-0022,SE-DEPOT,Truck,Ford,F-650,2018,Class 6,216218,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0022,GA-0022,GA,Available
+SEDEPOT-V-0023,SE-DEPOT,Van,Ford,Transit,2019,Class 2b,224137,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0023,GA-0023,GA,Available
+SEDEPOT-V-0024,SE-DEPOT,Truck,Isuzu,NPR-HD,2020,Class 5,232056,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0024,GA-0024,GA,Available
+SEDEPOT-V-0025,SE-DEPOT,Tractor,Volvo,VNL 760,2021,Class 8,239975,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0025,GA-0025,GA,Available
+SEDEPOT-V-0026,SE-DEPOT,Tractor,Freightliner,Cascadia,2022,Class 8,247894,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0026,GA-0026,GA,Available
+SEDEPOT-V-0027,SE-DEPOT,Truck,Ford,F-650,2023,Class 6,255813,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0027,GA-0027,GA,Available
+SEDEPOT-V-0028,SE-DEPOT,Van,Ford,Transit,2024,Class 2b,263732,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0028,GA-0028,GA,Available
+SEDEPOT-V-0029,SE-DEPOT,Truck,Isuzu,NPR-HD,2025,Class 5,271651,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0029,GA-0029,GA,Available
+SEDEPOT-V-0030,SE-DEPOT,Tractor,Volvo,VNL 760,2026,Class 8,279570,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0030,GA-0030,GA,Available
+SEDEPOT-V-0031,SE-DEPOT,Tractor,Freightliner,Cascadia,2017,Class 8,287489,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0031,GA-0031,GA,Available
+SEDEPOT-V-0032,SE-DEPOT,Truck,Ford,F-650,2018,Class 6,295408,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0032,GA-0032,GA,Available
+SEDEPOT-V-0033,SE-DEPOT,Van,Ford,Transit,2019,Class 2b,303327,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0033,GA-0033,GA,Available
+SEDEPOT-V-0034,SE-DEPOT,Truck,Isuzu,NPR-HD,2020,Class 5,311246,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0034,GA-0034,GA,Available
+SEDEPOT-V-0035,SE-DEPOT,Tractor,Volvo,VNL 760,2021,Class 8,319165,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0035,GA-0035,GA,Available
+SEDEPOT-V-0036,SE-DEPOT,Tractor,Freightliner,Cascadia,2022,Class 8,327084,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0036,GA-0036,GA,Available
+SEDEPOT-V-0037,SE-DEPOT,Truck,Ford,F-650,2023,Class 6,335003,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0037,GA-0037,GA,Available
+SEDEPOT-V-0038,SE-DEPOT,Van,Ford,Transit,2024,Class 2b,342922,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0038,GA-0038,GA,Available
+SEDEPOT-V-0039,SE-DEPOT,Truck,Isuzu,NPR-HD,2025,Class 5,350841,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0039,GA-0039,GA,Available
+SEDEPOT-V-0040,SE-DEPOT,Tractor,Volvo,VNL 760,2026,Class 8,358760,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0040,GA-0040,GA,Maintenance
+SEDEPOT-V-0041,SE-DEPOT,Tractor,Freightliner,Cascadia,2017,Class 8,366679,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0041,GA-0041,GA,Available
+SEDEPOT-V-0042,SE-DEPOT,Truck,Ford,F-650,2018,Class 6,374598,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0042,GA-0042,GA,Available
+SEDEPOT-V-0043,SE-DEPOT,Van,Ford,Transit,2019,Class 2b,382517,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0043,GA-0043,GA,Available
+SEDEPOT-V-0044,SE-DEPOT,Truck,Isuzu,NPR-HD,2020,Class 5,390436,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0044,GA-0044,GA,Available
+SEDEPOT-V-0045,SE-DEPOT,Tractor,Volvo,VNL 760,2021,Class 8,398355,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0045,GA-0045,GA,Available
+SEDEPOT-V-0046,SE-DEPOT,Tractor,Freightliner,Cascadia,2022,Class 8,406274,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0046,GA-0046,GA,Available
+SEDEPOT-V-0047,SE-DEPOT,Truck,Ford,F-650,2023,Class 6,414193,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0047,GA-0047,GA,Available
+SEDEPOT-V-0048,SE-DEPOT,Van,Ford,Transit,2024,Class 2b,422112,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0048,GA-0048,GA,Available
+SEDEPOT-V-0049,SE-DEPOT,Truck,Isuzu,NPR-HD,2025,Class 5,430031,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0049,GA-0049,GA,Available
+SEDEPOT-V-0050,SE-DEPOT,Tractor,Volvo,VNL 760,2026,Class 8,437950,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0050,GA-0050,GA,Available
+SEDEPOT-V-0051,SE-DEPOT,Tractor,Freightliner,Cascadia,2017,Class 8,445869,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0051,GA-0051,GA,Available
+SEDEPOT-V-0052,SE-DEPOT,Truck,Ford,F-650,2018,Class 6,453788,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0052,GA-0052,GA,Available
+SEDEPOT-V-0053,SE-DEPOT,Van,Ford,Transit,2019,Class 2b,461707,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0053,GA-0053,GA,Available
+SEDEPOT-V-0054,SE-DEPOT,Truck,Isuzu,NPR-HD,2020,Class 5,469626,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0054,GA-0054,GA,Available
+SEDEPOT-V-0055,SE-DEPOT,Tractor,Volvo,VNL 760,2021,Class 8,477545,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0055,GA-0055,GA,Available
+SEDEPOT-V-0056,SE-DEPOT,Tractor,Freightliner,Cascadia,2022,Class 8,485464,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0056,GA-0056,GA,Available
+SEDEPOT-V-0057,SE-DEPOT,Truck,Ford,F-650,2023,Class 6,493383,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0057,GA-0057,GA,Available
+SEDEPOT-V-0058,SE-DEPOT,Van,Ford,Transit,2024,Class 2b,501302,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0058,GA-0058,GA,Available
+SEDEPOT-V-0059,SE-DEPOT,Truck,Isuzu,NPR-HD,2025,Class 5,509221,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0059,GA-0059,GA,Available
+SEDEPOT-V-0060,SE-DEPOT,Tractor,Volvo,VNL 760,2026,Class 8,517140,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0060,GA-0060,GA,Maintenance
+SEDEPOT-V-0061,SE-DEPOT,Tractor,Freightliner,Cascadia,2017,Class 8,525059,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0061,GA-0061,GA,Available
+SEDEPOT-V-0062,SE-DEPOT,Truck,Ford,F-650,2018,Class 6,532978,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0062,GA-0062,GA,Available
+SEDEPOT-V-0063,SE-DEPOT,Van,Ford,Transit,2019,Class 2b,540897,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0063,GA-0063,GA,Available
+SEDEPOT-V-0064,SE-DEPOT,Truck,Isuzu,NPR-HD,2020,Class 5,548816,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0064,GA-0064,GA,Available
+SEDEPOT-V-0065,SE-DEPOT,Tractor,Volvo,VNL 760,2021,Class 8,556735,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0065,GA-0065,GA,Available
+SEDEPOT-V-0066,SE-DEPOT,Tractor,Freightliner,Cascadia,2022,Class 8,564654,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0066,GA-0066,GA,Available
+SEDEPOT-V-0067,SE-DEPOT,Truck,Ford,F-650,2023,Class 6,572573,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0067,GA-0067,GA,Available
+SEDEPOT-V-0068,SE-DEPOT,Van,Ford,Transit,2024,Class 2b,580492,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0068,GA-0068,GA,Available
+SEDEPOT-V-0069,SE-DEPOT,Truck,Isuzu,NPR-HD,2025,Class 5,588411,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0069,GA-0069,GA,Available
+SEDEPOT-V-0070,SE-DEPOT,Tractor,Volvo,VNL 760,2026,Class 8,596330,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0070,GA-0070,GA,Available
+SEDEPOT-V-0071,SE-DEPOT,Tractor,Freightliner,Cascadia,2017,Class 8,604249,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0071,GA-0071,GA,Available
+SEDEPOT-V-0072,SE-DEPOT,Truck,Ford,F-650,2018,Class 6,612168,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0072,GA-0072,GA,Available
+SEDEPOT-V-0073,SE-DEPOT,Van,Ford,Transit,2019,Class 2b,620087,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0073,GA-0073,GA,Available
+SEDEPOT-V-0074,SE-DEPOT,Truck,Isuzu,NPR-HD,2020,Class 5,628006,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0074,GA-0074,GA,Available
+SEDEPOT-V-0075,SE-DEPOT,Tractor,Volvo,VNL 760,2021,Class 8,635925,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0075,GA-0075,GA,Available
+SEDEPOT-V-0076,SE-DEPOT,Tractor,Freightliner,Cascadia,2022,Class 8,643844,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0076,GA-0076,GA,Available
+SEDEPOT-V-0077,SE-DEPOT,Truck,Ford,F-650,2023,Class 6,651763,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0077,GA-0077,GA,Available
+SEDEPOT-V-0078,SE-DEPOT,Van,Ford,Transit,2024,Class 2b,49682,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0078,GA-0078,GA,Available
+SEDEPOT-V-0079,SE-DEPOT,Truck,Isuzu,NPR-HD,2025,Class 5,57601,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0079,GA-0079,GA,Available
+SEDEPOT-V-0080,SE-DEPOT,Tractor,Volvo,VNL 760,2026,Class 8,65520,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0080,GA-0080,GA,Maintenance
+SEDEPOT-V-0081,SE-DEPOT,Tractor,Freightliner,Cascadia,2017,Class 8,73439,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0081,GA-0081,GA,Available
+SEDEPOT-V-0082,SE-DEPOT,Truck,Ford,F-650,2018,Class 6,81358,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0082,GA-0082,GA,Available
+SEDEPOT-V-0083,SE-DEPOT,Van,Ford,Transit,2019,Class 2b,89277,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0083,GA-0083,GA,Available
+SEDEPOT-V-0084,SE-DEPOT,Truck,Isuzu,NPR-HD,2020,Class 5,97196,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0084,GA-0084,GA,Available
+SEDEPOT-V-0085,SE-DEPOT,Tractor,Volvo,VNL 760,2021,Class 8,105115,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0085,GA-0085,GA,Available
+SEDEPOT-V-0086,SE-DEPOT,Tractor,Freightliner,Cascadia,2022,Class 8,113034,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0086,GA-0086,GA,Available
+SEDEPOT-V-0087,SE-DEPOT,Truck,Ford,F-650,2023,Class 6,120953,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0087,GA-0087,GA,Available
+SEDEPOT-V-0088,SE-DEPOT,Van,Ford,Transit,2024,Class 2b,128872,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0088,GA-0088,GA,Available
+SEDEPOT-V-0089,SE-DEPOT,Truck,Isuzu,NPR-HD,2025,Class 5,136791,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0089,GA-0089,GA,Available
+SEDEPOT-V-0090,SE-DEPOT,Tractor,Volvo,VNL 760,2026,Class 8,144710,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0090,GA-0090,GA,Available
+SEDEPOT-V-0091,SE-DEPOT,Tractor,Freightliner,Cascadia,2017,Class 8,152629,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0091,GA-0091,GA,Available
+SEDEPOT-V-0092,SE-DEPOT,Truck,Ford,F-650,2018,Class 6,160548,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0092,GA-0092,GA,Available
+SEDEPOT-V-0093,SE-DEPOT,Van,Ford,Transit,2019,Class 2b,168467,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0093,GA-0093,GA,Available
+SEDEPOT-V-0094,SE-DEPOT,Truck,Isuzu,NPR-HD,2020,Class 5,176386,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0094,GA-0094,GA,Available
+SEDEPOT-V-0095,SE-DEPOT,Tractor,Volvo,VNL 760,2021,Class 8,184305,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0095,GA-0095,GA,Available
+SEDEPOT-V-0096,SE-DEPOT,Tractor,Freightliner,Cascadia,2022,Class 8,192224,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0096,GA-0096,GA,Available
+SEDEPOT-V-0097,SE-DEPOT,Truck,Ford,F-650,2023,Class 6,200143,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0097,GA-0097,GA,Available
+SEDEPOT-V-0098,SE-DEPOT,Van,Ford,Transit,2024,Class 2b,208062,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0098,GA-0098,GA,Available
+SEDEPOT-V-0099,SE-DEPOT,Truck,Isuzu,NPR-HD,2025,Class 5,215981,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0099,GA-0099,GA,Available
+SEDEPOT-V-0100,SE-DEPOT,Tractor,Volvo,VNL 760,2026,Class 8,223900,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0100,GA-0100,GA,Maintenance
+SEDEPOT-V-0101,SE-DEPOT,Tractor,Freightliner,Cascadia,2017,Class 8,231819,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0101,GA-0101,GA,Available
+SEDEPOT-V-0102,SE-DEPOT,Truck,Ford,F-650,2018,Class 6,239738,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0102,GA-0102,GA,Available
+SEDEPOT-V-0103,SE-DEPOT,Van,Ford,Transit,2019,Class 2b,247657,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0103,GA-0103,GA,Available
+SEDEPOT-V-0104,SE-DEPOT,Truck,Isuzu,NPR-HD,2020,Class 5,255576,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0104,GA-0104,GA,Available
+SEDEPOT-V-0105,SE-DEPOT,Tractor,Volvo,VNL 760,2021,Class 8,263495,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0105,GA-0105,GA,Available
+SEDEPOT-V-0106,SE-DEPOT,Tractor,Freightliner,Cascadia,2022,Class 8,271414,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0106,GA-0106,GA,Available
+SEDEPOT-V-0107,SE-DEPOT,Truck,Ford,F-650,2023,Class 6,279333,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0107,GA-0107,GA,Available
+SEDEPOT-V-0108,SE-DEPOT,Van,Ford,Transit,2024,Class 2b,287252,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0108,GA-0108,GA,Available
+SEDEPOT-V-0109,SE-DEPOT,Truck,Isuzu,NPR-HD,2025,Class 5,295171,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0109,GA-0109,GA,Available
+SEDEPOT-V-0110,SE-DEPOT,Tractor,Volvo,VNL 760,2026,Class 8,303090,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0110,GA-0110,GA,Available
+SEDEPOT-V-0111,SE-DEPOT,Tractor,Freightliner,Cascadia,2017,Class 8,311009,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0111,GA-0111,GA,Available
+SEDEPOT-V-0112,SE-DEPOT,Truck,Ford,F-650,2018,Class 6,318928,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0112,GA-0112,GA,Available
+SEDEPOT-V-0113,SE-DEPOT,Van,Ford,Transit,2019,Class 2b,326847,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0113,GA-0113,GA,Available
+SEDEPOT-V-0114,SE-DEPOT,Truck,Isuzu,NPR-HD,2020,Class 5,334766,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0114,GA-0114,GA,Available
+SEDEPOT-V-0115,SE-DEPOT,Tractor,Volvo,VNL 760,2021,Class 8,342685,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0115,GA-0115,GA,Available
+SEDEPOT-V-0116,SE-DEPOT,Tractor,Freightliner,Cascadia,2022,Class 8,350604,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0116,GA-0116,GA,Available
+SEDEPOT-V-0117,SE-DEPOT,Truck,Ford,F-650,2023,Class 6,358523,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0117,GA-0117,GA,Available
+SEDEPOT-V-0118,SE-DEPOT,Van,Ford,Transit,2024,Class 2b,366442,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0118,GA-0118,GA,Available
+SEDEPOT-V-0119,SE-DEPOT,Truck,Isuzu,NPR-HD,2025,Class 5,374361,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0119,GA-0119,GA,Available
+SEDEPOT-V-0120,SE-DEPOT,Tractor,Volvo,VNL 760,2026,Class 8,382280,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0120,GA-0120,GA,Maintenance
+SEDEPOT-V-0121,SE-DEPOT,Tractor,Freightliner,Cascadia,2017,Class 8,390199,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0121,GA-0121,GA,Available
+SEDEPOT-V-0122,SE-DEPOT,Truck,Ford,F-650,2018,Class 6,398118,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0122,GA-0122,GA,Available
+SEDEPOT-V-0123,SE-DEPOT,Van,Ford,Transit,2019,Class 2b,406037,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0123,GA-0123,GA,Available
+SEDEPOT-V-0124,SE-DEPOT,Truck,Isuzu,NPR-HD,2020,Class 5,413956,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0124,GA-0124,GA,Available
+SEDEPOT-V-0125,SE-DEPOT,Tractor,Volvo,VNL 760,2021,Class 8,421875,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0125,GA-0125,GA,Available
+SEDEPOT-V-0126,SE-DEPOT,Tractor,Freightliner,Cascadia,2022,Class 8,429794,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0126,GA-0126,GA,Available
+SEDEPOT-V-0127,SE-DEPOT,Truck,Ford,F-650,2023,Class 6,437713,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0127,GA-0127,GA,Available
+SEDEPOT-V-0128,SE-DEPOT,Van,Ford,Transit,2024,Class 2b,445632,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0128,GA-0128,GA,Available
+SEDEPOT-V-0129,SE-DEPOT,Truck,Isuzu,NPR-HD,2025,Class 5,453551,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0129,GA-0129,GA,Available
+SEDEPOT-V-0130,SE-DEPOT,Tractor,Volvo,VNL 760,2026,Class 8,461470,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0130,GA-0130,GA,Available
+SEDEPOT-V-0131,SE-DEPOT,Tractor,Freightliner,Cascadia,2017,Class 8,469389,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0131,GA-0131,GA,Available
+SEDEPOT-V-0132,SE-DEPOT,Truck,Ford,F-650,2018,Class 6,477308,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0132,GA-0132,GA,Available
+SEDEPOT-V-0133,SE-DEPOT,Van,Ford,Transit,2019,Class 2b,485227,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0133,GA-0133,GA,Available
+SEDEPOT-V-0134,SE-DEPOT,Truck,Isuzu,NPR-HD,2020,Class 5,493146,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0134,GA-0134,GA,Available
+SEDEPOT-V-0135,SE-DEPOT,Tractor,Volvo,VNL 760,2021,Class 8,501065,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0135,GA-0135,GA,Available
+SEDEPOT-V-0136,SE-DEPOT,Tractor,Freightliner,Cascadia,2022,Class 8,508984,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0136,GA-0136,GA,Available
+SEDEPOT-V-0137,SE-DEPOT,Truck,Ford,F-650,2023,Class 6,516903,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0137,GA-0137,GA,Available
+SEDEPOT-V-0138,SE-DEPOT,Van,Ford,Transit,2024,Class 2b,524822,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0138,GA-0138,GA,Available
+SEDEPOT-V-0139,SE-DEPOT,Truck,Isuzu,NPR-HD,2025,Class 5,532741,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0139,GA-0139,GA,Available
+SEDEPOT-V-0140,SE-DEPOT,Tractor,Volvo,VNL 760,2026,Class 8,540660,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0140,GA-0140,GA,Maintenance
+SEDEPOT-V-0141,SE-DEPOT,Tractor,Freightliner,Cascadia,2017,Class 8,548579,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0141,GA-0141,GA,Available
+SEDEPOT-V-0142,SE-DEPOT,Truck,Ford,F-650,2018,Class 6,556498,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0142,GA-0142,GA,Available
+SEDEPOT-V-0143,SE-DEPOT,Van,Ford,Transit,2019,Class 2b,564417,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0143,GA-0143,GA,Available
+SEDEPOT-V-0144,SE-DEPOT,Truck,Isuzu,NPR-HD,2020,Class 5,572336,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0144,GA-0144,GA,Available
+SEDEPOT-V-0145,SE-DEPOT,Tractor,Volvo,VNL 760,2021,Class 8,580255,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0145,GA-0145,GA,Available
+SEDEPOT-V-0146,SE-DEPOT,Tractor,Freightliner,Cascadia,2022,Class 8,588174,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0146,GA-0146,GA,Available
+SEDEPOT-V-0147,SE-DEPOT,Truck,Ford,F-650,2023,Class 6,596093,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0147,GA-0147,GA,Available
+SEDEPOT-V-0148,SE-DEPOT,Van,Ford,Transit,2024,Class 2b,604012,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0148,GA-0148,GA,Available
+SEDEPOT-V-0149,SE-DEPOT,Truck,Isuzu,NPR-HD,2025,Class 5,611931,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0149,GA-0149,GA,Available
+SEDEPOT-V-0150,SE-DEPOT,Tractor,Volvo,VNL 760,2026,Class 8,619850,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0150,GA-0150,GA,Available
+SEDEPOT-V-0151,SE-DEPOT,Tractor,Freightliner,Cascadia,2017,Class 8,627769,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0151,GA-0151,GA,Available
+SEDEPOT-V-0152,SE-DEPOT,Truck,Ford,F-650,2018,Class 6,635688,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0152,GA-0152,GA,Available
+SEDEPOT-V-0153,SE-DEPOT,Van,Ford,Transit,2019,Class 2b,643607,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0153,GA-0153,GA,Available
+SEDEPOT-V-0154,SE-DEPOT,Truck,Isuzu,NPR-HD,2020,Class 5,651526,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0154,GA-0154,GA,Available
+SEDEPOT-V-0155,SE-DEPOT,Tractor,Volvo,VNL 760,2021,Class 8,49445,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0155,GA-0155,GA,Available
+SEDEPOT-V-0156,SE-DEPOT,Tractor,Freightliner,Cascadia,2022,Class 8,57364,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0156,GA-0156,GA,Available
+SEDEPOT-V-0157,SE-DEPOT,Truck,Ford,F-650,2023,Class 6,65283,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0157,GA-0157,GA,Available
+SEDEPOT-V-0158,SE-DEPOT,Van,Ford,Transit,2024,Class 2b,73202,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0158,GA-0158,GA,Available
+SEDEPOT-V-0159,SE-DEPOT,Truck,Isuzu,NPR-HD,2025,Class 5,81121,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0159,GA-0159,GA,Available
+SEDEPOT-V-0160,SE-DEPOT,Tractor,Volvo,VNL 760,2026,Class 8,89040,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0160,GA-0160,GA,Maintenance
+SEDEPOT-V-0161,SE-DEPOT,Tractor,Freightliner,Cascadia,2017,Class 8,96959,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0161,GA-0161,GA,Available
+SEDEPOT-V-0162,SE-DEPOT,Truck,Ford,F-650,2018,Class 6,104878,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0162,GA-0162,GA,Available
+SEDEPOT-V-0163,SE-DEPOT,Van,Ford,Transit,2019,Class 2b,112797,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0163,GA-0163,GA,Available
+SEDEPOT-V-0164,SE-DEPOT,Truck,Isuzu,NPR-HD,2020,Class 5,120716,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0164,GA-0164,GA,Available
+SEDEPOT-V-0165,SE-DEPOT,Tractor,Volvo,VNL 760,2021,Class 8,128635,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0165,GA-0165,GA,Available
+SEDEPOT-V-0166,SE-DEPOT,Tractor,Freightliner,Cascadia,2022,Class 8,136554,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0166,GA-0166,GA,Available
+SEDEPOT-V-0167,SE-DEPOT,Truck,Ford,F-650,2023,Class 6,144473,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0167,GA-0167,GA,Available
+SEDEPOT-V-0168,SE-DEPOT,Van,Ford,Transit,2024,Class 2b,152392,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0168,GA-0168,GA,Available
+SEDEPOT-V-0169,SE-DEPOT,Truck,Isuzu,NPR-HD,2025,Class 5,160311,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0169,GA-0169,GA,Available
+SEDEPOT-V-0170,SE-DEPOT,Tractor,Volvo,VNL 760,2026,Class 8,168230,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0170,GA-0170,GA,Available
+SEDEPOT-V-0171,SE-DEPOT,Tractor,Freightliner,Cascadia,2017,Class 8,176149,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0171,GA-0171,GA,Available
+SEDEPOT-V-0172,SE-DEPOT,Truck,Ford,F-650,2018,Class 6,184068,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0172,GA-0172,GA,Available
+SEDEPOT-V-0173,SE-DEPOT,Van,Ford,Transit,2019,Class 2b,191987,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0173,GA-0173,GA,Available
+SEDEPOT-V-0174,SE-DEPOT,Truck,Isuzu,NPR-HD,2020,Class 5,199906,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0174,GA-0174,GA,Available
+SEDEPOT-V-0175,SE-DEPOT,Tractor,Volvo,VNL 760,2021,Class 8,207825,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0175,GA-0175,GA,Available
+SEDEPOT-V-0176,SE-DEPOT,Tractor,Freightliner,Cascadia,2022,Class 8,215744,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0176,GA-0176,GA,Available
+SEDEPOT-V-0177,SE-DEPOT,Truck,Ford,F-650,2023,Class 6,223663,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0177,GA-0177,GA,Available
+SEDEPOT-V-0178,SE-DEPOT,Van,Ford,Transit,2024,Class 2b,231582,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0178,GA-0178,GA,Available
+SEDEPOT-V-0179,SE-DEPOT,Truck,Isuzu,NPR-HD,2025,Class 5,239501,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0179,GA-0179,GA,Available
+SEDEPOT-V-0180,SE-DEPOT,Tractor,Volvo,VNL 760,2026,Class 8,247420,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0180,GA-0180,GA,Maintenance
+SEDEPOT-V-0181,SE-DEPOT,Tractor,Freightliner,Cascadia,2017,Class 8,255339,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0181,GA-0181,GA,Available
+SEDEPOT-V-0182,SE-DEPOT,Truck,Ford,F-650,2018,Class 6,263258,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0182,GA-0182,GA,Available
+SEDEPOT-V-0183,SE-DEPOT,Van,Ford,Transit,2019,Class 2b,271177,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0183,GA-0183,GA,Available
+SEDEPOT-V-0184,SE-DEPOT,Truck,Isuzu,NPR-HD,2020,Class 5,279096,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0184,GA-0184,GA,Available
+SEDEPOT-V-0185,SE-DEPOT,Tractor,Volvo,VNL 760,2021,Class 8,287015,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0185,GA-0185,GA,Available
+SEDEPOT-V-0186,SE-DEPOT,Tractor,Freightliner,Cascadia,2022,Class 8,294934,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0186,GA-0186,GA,Available
+SEDEPOT-V-0187,SE-DEPOT,Truck,Ford,F-650,2023,Class 6,302853,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0187,GA-0187,GA,Available
+SEDEPOT-V-0188,SE-DEPOT,Van,Ford,Transit,2024,Class 2b,310772,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0188,GA-0188,GA,Available
+SEDEPOT-V-0189,SE-DEPOT,Truck,Isuzu,NPR-HD,2025,Class 5,318691,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0189,GA-0189,GA,Available
+SEDEPOT-V-0190,SE-DEPOT,Tractor,Volvo,VNL 760,2026,Class 8,326610,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0190,GA-0190,GA,Available
+SEDEPOT-V-0191,SE-DEPOT,Tractor,Freightliner,Cascadia,2017,Class 8,334529,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0191,GA-0191,GA,Available
+SEDEPOT-V-0192,SE-DEPOT,Truck,Ford,F-650,2018,Class 6,342448,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0192,GA-0192,GA,Available
+SEDEPOT-V-0193,SE-DEPOT,Van,Ford,Transit,2019,Class 2b,350367,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0193,GA-0193,GA,Available
+SEDEPOT-V-0194,SE-DEPOT,Truck,Isuzu,NPR-HD,2020,Class 5,358286,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0194,GA-0194,GA,Available
+SEDEPOT-V-0195,SE-DEPOT,Tractor,Volvo,VNL 760,2021,Class 8,366205,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0195,GA-0195,GA,Available
+SEDEPOT-V-0196,SE-DEPOT,Tractor,Freightliner,Cascadia,2022,Class 8,374124,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0196,GA-0196,GA,Available
+SEDEPOT-V-0197,SE-DEPOT,Truck,Ford,F-650,2023,Class 6,382043,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0197,GA-0197,GA,Available
+SEDEPOT-V-0198,SE-DEPOT,Van,Ford,Transit,2024,Class 2b,389962,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0198,GA-0198,GA,Available
+SEDEPOT-V-0199,SE-DEPOT,Truck,Isuzu,NPR-HD,2025,Class 5,397881,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0199,GA-0199,GA,Available
+SEDEPOT-V-0200,SE-DEPOT,Tractor,Volvo,VNL 760,2026,Class 8,405800,,legacy-fleet-identifier,CERT-SEDEPOT-VEH-0200,GA-0200,GA,Maintenance

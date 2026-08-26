@@ -130,10 +130,12 @@ public sealed class FleetTmsSecurityHardeningTests
 
         Assert.Equal(2, Count(import, "LoadAssetImportLookups(http, rows, db, ct)"));
         Assert.Contains("lower(btrim(code)) = ANY(@codes)", import, StringComparison.Ordinal);
-        Assert.Contains("SharedConfigScope(http)", import, StringComparison.Ordinal);
-        Assert.Contains("branch_id IS NOT DISTINCT FROM @branchId", import, StringComparison.Ordinal);
+        Assert.Contains("LoadActiveImportBranchMap", import, StringComparison.Ordinal);
+        Assert.Contains("WHERE company_id=@companyId", import, StringComparison.Ordinal);
+        Assert.Contains("candidate.BranchId is null || candidate.BranchId == rowBranchId", import, StringComparison.Ordinal);
+        Assert.Contains("AssetImportIdentityKey", import, StringComparison.Ordinal);
         Assert.Contains("lower(btrim(asset_tag)) = ANY(@tags)", import, StringComparison.Ordinal);
-        Assert.Contains("lookups.AssetTypeIds", import, StringComparison.Ordinal);
+        Assert.Contains("lookups.AssetTypes", import, StringComparison.Ordinal);
         Assert.Contains("lookups.ExistingAssetIds", import, StringComparison.Ordinal);
         Assert.DoesNotContain("ScalarLongAsync", import, StringComparison.Ordinal);
 

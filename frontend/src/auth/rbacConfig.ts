@@ -284,7 +284,7 @@ const PERMISSION_GROUPS: Record<Permission, string[]> = {
   [P.TELEMATICS_DEVICES_ASSIGN]: ["fleet.manage", "fleet:manage", "dispatch.manage", "dispatch:manage", "telematics.manage", "telematics:manage"],
   [P.TELEMATICS_DEVICES_DIAGNOSTICS]: ["maintenance.manage", "maintenance:manage", "compliance.manage", "compliance:manage", "telematics.manage", "telematics:manage"],
   [P.TELEMATICS_DEVICES_FIRMWARE]: ["maintenance.manage", "maintenance:manage", "telematics.manage", "telematics:manage"],
-  [P.TELEMATICS_DEVICES_EXPORT]: ["fleet.view", "fleet:view", "fleet.manage", "fleet:manage", "telematics.view", "telematics:view"],
+  [P.TELEMATICS_DEVICES_EXPORT]: ["telematics.devices.export", "telematics:devices:export"],
   [P.TELEMATICS_PROVIDERS_MANAGE]: ["settings.manage", "settings:manage", "fleet.manage", "fleet:manage", "telematics.manage", "telematics:manage"],
   // PAGE-GATING token, same reasoning: this group is merged into
   // TELEMETRY_LIVE_STATE_READ through the shared `telematics:gps:view` token, so a
