@@ -941,7 +941,12 @@ function positionForDevice(device: DeviceCommandRecord, positions: AnyRecord[]):
 
 // Build a cluster row from a real device + its real live position + real fault codes.
 // Every value is either a live field or an honest "—"/empty marker — no fake defaults.
-function toClusterRecord(device: DeviceCommandRecord, positions: AnyRecord[], faultRows: AnyRecord[]): TelematicsClusterRecord {
+function toClusterRecord(
+  device: DeviceCommandRecord,
+  positions: AnyRecord[],
+  faultRows: AnyRecord[],
+  evidenceKind: "position" | "diagnostics" = "position",
+): TelematicsClusterRecord {
   const position = positionForDevice(device, positions);
   const deviceFaults = faultRows.filter((fault) => String(fault.device_id ?? "") === device.serialNumber);
   const troubleCodes = deviceFaults.map((fault) => {
@@ -964,15 +969,16 @@ function toClusterRecord(device: DeviceCommandRecord, positions: AnyRecord[], fa
   const positionAvailable = isValidPosition(position);
   const serverFreshness = String(position?.freshness ?? "").toLowerCase();
   const isStalePosition = position ? String(position.is_stale) === "1" || serverFreshness === "stale" : false;
-  // A managed device with no valid position is not healthy/online. Preserve the
-  // honest "No data" label, while counting it as offline and requiring action.
-  const offlineWarning = /offline/i.test(device.connectionStatus) || isStalePosition || !positionAvailable;
   const deviceFixAt = position?.device_fix_time ?? position?.event_time;
   const gatewayReceivedAt = position?.gateway_received_at;
   const lastPingAt = deviceFixAt ? String(deviceFixAt) : device.lastCheckIn;
   const engineStatus = position?.engine_status ? String(position.engine_status) : "—";
   const hasEngineEvidence = troubleCodes.length > 0 || [position?.engine_status, position?.odometer_miles, position?.fuel_level, position?.battery_voltage].some((value) => value != null && String(value).trim() !== "");
-  const dataFreshnessStatus = !positionAvailable
+  const requiredEvidenceAvailable = evidenceKind === "diagnostics" ? hasEngineEvidence : positionAvailable;
+  // GPS and diagnostics have different evidence contracts. A vehicle-level fix is
+  // never substituted for a source device's own evidence by the API.
+  const offlineWarning = /offline/i.test(device.connectionStatus) || isStalePosition || !requiredEvidenceAvailable;
+  const dataFreshnessStatus = !requiredEvidenceAvailable
     ? "No data"
     : offlineWarning
       ? "Stale"
@@ -1263,7 +1269,9 @@ export const telematicsService = {
     }));
     const normalized = (payload.items ?? []).map(normalizeKeys);
     const positions = normalized
-      .filter((row) => row.position_lat != null && row.position_lng != null)
+      .filter((row) => kind === "obd-j1939"
+        ? row.position_event_time != null || row.position_device_fix_time != null
+        : row.position_lat != null && row.position_lng != null)
       .map((row) => ({
         device_id: row.id,
         vehicle_id: row.vehicle_id,
@@ -1295,7 +1303,7 @@ export const telematicsService = {
     const devices = normalized.map((row) => mapDeviceRow(row, new Map(), new Map(), session));
     const summary = normalizeKeys(payload.summary ?? {});
     return {
-      items: devices.map((device) => toClusterRecord(device, positions, faults)),
+      items: devices.map((device) => toClusterRecord(device, positions, faults, kind === "obd-j1939" ? "diagnostics" : "position")),
       total: Number(payload.total ?? 0),
       page: Number(payload.page ?? 1),
       pageSize: Number(payload.pageSize ?? 50),

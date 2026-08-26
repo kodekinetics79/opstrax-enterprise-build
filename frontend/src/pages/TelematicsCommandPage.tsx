@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -130,7 +130,8 @@ function isServerPaged(kind: TelematicsKind): kind is "gps-tracking" | "obd-j193
 function serverView(kind: "gps-tracking" | "obd-j1939", tab: string) {
   if (kind === "gps-tracking") {
     if (tab === "Online") return "online";
-    if (tab === "Stale GPS" || tab === "Offline") return "stale";
+    if (tab === "Stale GPS") return "stale-gps";
+    if (tab === "Offline") return "offline";
     if (tab === "Critical") return "attention";
     return "all";
   }
@@ -199,10 +200,19 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
   const canExport = hasPermission(config.requiredExportPermission);
   const canUpdate = hasPermission(config.requiredUpdatePermission);
   const [tab, setTab] = useState(config.filterTabs[0]);
+  const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<TelematicsClusterRecord | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setSearch(searchInput);
+      setPage(1);
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [searchInput]);
 
   const paged = isServerPaged(kind);
   const pageSize = 50;
@@ -403,8 +413,8 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
           <input
             className="field xl:min-w-[360px]"
-            value={search}
-            onChange={(event) => { setSearch(event.target.value); setPage(1); }}
+            value={searchInput}
+            onChange={(event) => setSearchInput(event.target.value)}
             placeholder={config.searchPlaceholder}
           />
           <div className="flex flex-wrap gap-2">
