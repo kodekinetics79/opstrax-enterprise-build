@@ -173,6 +173,7 @@ export type DeviceCommandRecord = {
   linkedShipmentId: string;
   linkedShipmentStatus: string;
   openAlertCount: number;
+  activeFaultCount: number;
   maintenanceStatus: string;
   complianceSummary: string;
 };
@@ -182,7 +183,7 @@ export type DevicePageOptions = {
   pageSize?: number;
   search?: string;
   view?: string;
-  sort?: "serial" | "provider" | "model" | "status" | "lastCheckIn" | "vehicle";
+  sort?: "serial" | "provider" | "model" | "status" | "lastCheckIn" | "vehicle" | "priority";
   direction?: "asc" | "desc";
 };
 
@@ -613,6 +614,7 @@ function mapDeviceRow(
     linkedShipmentId: "",
     linkedShipmentStatus: "No active shipment",
     openAlertCount: openAlerts,
+    activeFaultCount: activeFaults,
     maintenanceStatus: activeFaults > 0 ? `${activeFaults} active fault${activeFaults === 1 ? "" : "s"}` : "—",
     complianceSummary: "Not assessed",
   };
