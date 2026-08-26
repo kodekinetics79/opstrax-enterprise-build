@@ -207,6 +207,7 @@ MIGRATIONS=(
   # Inbox failures persist an exponential next_attempt_at schedule. Stage89 is the
   # owner-safe protected-environment contract that adds and indexes that column.
   2026_08_24_stage89_inbox_retry_schedule
+  2026_08_26_stage90_product_pilot_permission
 )
 
 echo "Target host: $(printf '%s' "$NEON_PG_URI" | sed -E 's|.*@([^/:?]+).*|\1|')"

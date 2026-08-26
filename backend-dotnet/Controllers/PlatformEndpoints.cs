@@ -36,8 +36,8 @@ public static class PlatformEndpoints
     public static void MapPlatformEndpoints(this WebApplication app)
     {
         // ── Auth ──────────────────────────────────────────────────────────────
-        app.MapPost("/api/platform/auth/login", PlatformLogin);
-        app.MapGet("/api/platform/auth/me", PlatformMe);
+        app.MapPost("/api/platform/auth/login", PlatformLoginWithConfig);
+        app.MapGet("/api/platform/auth/me", PlatformMeWithConfig);
         app.MapPost("/api/platform/auth/logout", PlatformLogout);
 
         // ── Command Center ──────────────────────────────────────────────────────
@@ -129,6 +129,10 @@ public static class PlatformEndpoints
 
         // ── Platform settings (outbound email / SMTP) ───────────────────────────
         PlatformSettingsEndpoints.Map(app);
+
+        // Fixed-tenant, staging-only certification readiness control. Mapping is
+        // absent unless all fail-closed ProductPilot settings agree.
+        ProductPilotEndpoints.Map(app);
     }
 
     // ════════════════════════════════════════════════════════════════════════════
@@ -277,7 +281,13 @@ public static class PlatformEndpoints
                 c.Parameters.AddWithValue("@ip", http.Connection.RemoteIpAddress?.ToString() ?? "unknown");
             }, ct);
 
-    internal static async Task<IResult> PlatformLogin(HttpContext http, PlatformLoginRequest request, Database db, CancellationToken ct)
+    internal static Task<IResult> PlatformLogin(HttpContext http, PlatformLoginRequest request, Database db, CancellationToken ct)
+        => PlatformLoginCore(http, request, db, null, null, ct);
+
+    private static Task<IResult> PlatformLoginWithConfig(HttpContext http, PlatformLoginRequest request, Database db, IHostEnvironment environment, IConfiguration configuration, CancellationToken ct)
+        => PlatformLoginCore(http, request, db, environment, configuration, ct);
+
+    private static async Task<IResult> PlatformLoginCore(HttpContext http, PlatformLoginRequest request, Database db, IHostEnvironment? environment, IConfiguration? configuration, CancellationToken ct)
     {
         var email = (request.Email ?? "").Trim();
         var ip = http.Connection.RemoteIpAddress?.ToString() ?? "unknown";
@@ -352,10 +362,17 @@ public static class PlatformEndpoints
             admin = new { id = adminId, email = admin["email"], name = admin["fullName"] },
             role = new { key = admin["roleKey"], name = admin["roleName"] },
             permissions = perms,
+            productPilotAvailable = environment is not null && configuration is not null && ProductPilotEndpoints.IsAvailable(environment, configuration),
         }, "Platform login successful"));
     }
 
     private static async Task<IResult> PlatformMe(HttpContext http, Database db, CancellationToken ct)
+        => await PlatformMeCore(http, db, null, null, ct);
+
+    private static Task<IResult> PlatformMeWithConfig(HttpContext http, Database db, IHostEnvironment environment, IConfiguration configuration, CancellationToken ct)
+        => PlatformMeCore(http, db, environment, configuration, ct);
+
+    private static async Task<IResult> PlatformMeCore(HttpContext http, Database db, IHostEnvironment? environment, IConfiguration? configuration, CancellationToken ct)
     {
         var principal = await AuthenticateAsync(http, db, ct);
         if (principal is null) return Results.Json(ApiResponse<object>.Fail("Unauthorized"), statusCode: StatusCodes.Status401Unauthorized);
@@ -366,6 +383,7 @@ public static class PlatformEndpoints
             admin = new { id = principal.AdminId, email = principal.Email, name = name?["fullName"] },
             role = new { key = principal.RoleKey, name = principal.RoleName },
             permissions = principal.Permissions,
+            productPilotAvailable = environment is not null && configuration is not null && ProductPilotEndpoints.IsAvailable(environment, configuration),
         }, "Session active"));
     }
 

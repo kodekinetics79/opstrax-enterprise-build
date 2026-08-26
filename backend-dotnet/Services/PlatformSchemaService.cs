@@ -320,7 +320,7 @@ public sealed class PlatformSchemaService(Database db)
         ["support_admin"] = ("Support Admin", "Inspect tenant status. Bounded support access requires an explicit, separately reviewed grant.",
             ["platform:dashboard:view", "platform:tenants:view", "platform:support:view"]),
         ["product_admin"] = ("Product Admin", "Manage feature entitlements, packages and platform health.",
-            ["platform:dashboard:view", "platform:tenants:view", "platform:entitlements:view", "platform:entitlements:manage", "platform:packages:view", "platform:packages:manage", "platform:countries:view", "platform:countries:manage", "platform:ops:view"]),
+            ["platform:dashboard:view", "platform:tenants:view", "platform:entitlements:view", "platform:entitlements:manage", "platform:pilot:run", "platform:packages:view", "platform:packages:manage", "platform:countries:view", "platform:countries:manage", "platform:ops:view"]),
         ["compliance_admin"] = ("Compliance Admin", "Audit, security and access review oversight.",
             ["platform:dashboard:view", "platform:tenants:view", "platform:audit:view", "platform:ops:view", "platform:admins:view"]),
         ["readonly_executive"] = ("Read-only Executive", "Executive read-only visibility of the whole business.",

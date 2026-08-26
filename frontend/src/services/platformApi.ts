@@ -11,6 +11,7 @@ export type PlatformSession = {
   admin: { id: number; email: string; name: string };
   role: { key: string; name: string };
   permissions: string[];
+  productPilotAvailable?: boolean;
 };
 
 export type PlatformSessionProfile = Omit<PlatformSession, "token">;
@@ -164,6 +165,12 @@ export const platformApi = {
   // Command Center
   commandCenter: () => unwrap<AnyRecord>(platformClient.get("/api/platform/command-center/summary")),
   commercialOps: () => unwrap<AnyRecord>(platformClient.get("/api/platform/commercial-ops/summary")),
+
+  // Staging-only, fixed-tenant pilot readiness. The server does not map these
+  // routes unless the dedicated staging configuration is enabled.
+  productPilot: () => unwrap<AnyRecord>(platformClient.get("/api/platform/product-pilot")),
+  enableProductPilotCrm: (body: { tenantCode: string; requestId: string; acknowledgeStagingOnly: boolean }) =>
+    unwrap<AnyRecord>(platformClient.post("/api/platform/product-pilot/enable-crm", body)),
 
   // Tenants
   tenants: () => unwrap<AnyRecord[]>(platformClient.get("/api/platform/tenants")),
