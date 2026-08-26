@@ -1,0 +1,35 @@
+OpsTrax Module 1 export retest
+Timestamp: 2026-08-26 America/New_York
+Tenant: CERT-LARGE-20260825
+Frontend SHA: 5d7c16517e2d8a414f698d7382754c4280e241ca
+API SHA: 5d7c16517e2d8a414f698d7382754c4280e241ca
+Rendered status: Live; All systems operational
+
+Vehicle page load: 4.712 s
+Vehicle export: 15.289 s
+Vehicle rows: 1000
+Vehicle unique codes: 1000
+Vehicle ordering: ascending, CLHQ-V-0001 through WESTHUB-V-0200
+Vehicle branches: CL-HQ 200; MW-YARD 200; NE-HUB 200; SE-DEPOT 200; WEST-HUB 200
+Vehicle header: vehicleCode,branchCode,type,make,model,year,vehicleClass,vin,vinExceptionType,alternateIdentifier,plateNumber,plateJurisdiction,status,odometerMiles,deviceStatus
+Vehicle governed identities: 1000 unique alternateIdentifier values; 1000 legacy-fleet-identifier exceptions; no PREVIEW identity
+Vehicle console warnings/errors: 0
+
+Driver page load: 4.708 s
+Driver export: 15.304 s
+Driver rows: 1250
+Driver unique codes: 1250
+Driver ordering: ascending, CLHQ-D-0001 through WESTHUB-D-0250
+Driver branches: CL-HQ 250; MW-YARD 250; NE-HUB 250; SE-DEPOT 250; WEST-HUB 250
+Driver header: driverCode,branchCode,fullName,phone,email,licenseNumber,licenseExpiry,status,safetyScore,readinessScore,riskScore,complianceScore
+Driver license privacy: 1250 masked; 0 unmasked; no PREVIEW identity
+Driver console warnings/errors: 0
+
+Refresh Driver persistence: 3.705 s; total 1250
+Fresh Tenant Admin login: 4.272 s
+Post-login Vehicle page: 3.805 s; total 1000
+Post-login Driver page: 3.687 s; total 1250
+Post-login console warnings/errors: 0
+
+Screenshot limitation: native macOS capture was attached to an unrelated Chrome window, so no screenshot file is claimed for this cycle.
+Customer mutations: none

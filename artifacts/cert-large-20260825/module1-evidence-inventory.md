@@ -8,11 +8,11 @@ Visible Chrome screenshots currently present locally: **338 PNG files**
 
 | Evidence family | Representative files | What it establishes | Important limitation |
 |---|---|---|---|
-| Exact-SHA staging/readiness | `chrome/7e98a39-render-deploy-live.png`, `chrome/7e98a39-exact-frontend-api-live-gate.png`, `readiness/7e98a39-health-ready.txt` | Render deployment is Live; the rendered product shows matching full frontend/API SHA; supporting readiness request returned HTTP 200. | Direct health-tab navigation is blocked by the Chrome client, so HTTP readiness is supporting evidence paired with the rendered Live gate. |
+| Exact-SHA staging/readiness | `chrome/5d7c165-export-retest.txt`, `readiness/5d7c165-health-ready-exact.json` | The rendered product showed matching full frontend/API SHA `5d7c165…`, Live, tenant `CERT-LARGE`, and All systems operational; supporting readiness returned HTTP 200 at the same SHA. | Native screenshot capture remained attached to an unrelated Chrome window, so the final gate is preserved as a text evidence ledger plus sanitized readiness JSON rather than a claimed image. Raw headers containing rotating CSRF values are excluded. |
 | Isolated tenant and authentication | `chrome/platform-tenant-cert-large-created.png`, `chrome/tenant-admin-active-after-activation.png`, `chrome/stable-tenant-admin-login-exact-sha.png`, `chrome/tenant-admin-second-login-success.png` | `CERT-LARGE-20260825` creation and administrator authentication/persistence journey. | Non-admin role logins are not yet evidenced. |
 | Entitlements | `chrome/platform-dispatch-telematics-enabled-only.png`, `chrome/module1-assignments-dispatch-entitlement-resolved.png`, `chrome/module1-customers-not-in-plan-71fd868.png` | Only Dispatch and Telematics were intentionally enabled; assignments became reachable; Customer remains outside plan. | Customer role journey remains blocked. |
 | Branches | `chrome/module1-branches-five-persisted-71fd868.png` plus final-SHA Fleet Manager, Dispatcher, and Maintenance Manager branch-negative captures | Five branches persisted; representative branch-bound roles could see CL-HQ data and could not search another branch's records. | Record-level negative coverage is representative rather than exhaustive for every role/entity combination. |
-| Import surfaces | Vehicle, driver, device, and returnable-asset template/import screenshots plus governed certification CSVs | Customer UI imports persisted exactly 1,000 vehicles, 1,250 drivers, 1,100 devices, and 300 assets. Device/asset controlled invalid and duplicate behavior is preserved. | Controlled vehicle/driver error-correction cycles and full vehicle/driver exports remain open. |
+| Import/export surfaces | Vehicle, driver, device, and returnable-asset template/import evidence plus governed certification CSVs and exact `5d7c165` vehicle/driver exports | Customer UI imports persisted exactly 1,000 vehicles, 1,250 drivers, 1,100 devices, and 300 assets. Complete vehicle/driver exports reconcile counts, branches, governed fields, ordering, uniqueness, and licence masking. Device/asset controlled invalid and duplicate behavior is preserved. | Controlled vehicle/driver correction and duplicate-preview cycles remain incomplete because of external Chrome download/file-picker control failures. |
 | Roles/accounts | Role setup plus `75eda29` fresh-login/branch/direct-URL evidence | Fleet Manager, Dispatcher, Maintenance Manager, Driver, and Executive representative journeys passed; 24 active accounts are present. | Customer entitlement and the twenty-fifth account remain externally blocked. |
 | Defects/regressions | Pre-fix missing controls, 403, wrong driver guidance, and hard-refresh crash screenshots | Objective before/after evidence for several staging and Module 1 defects. | Some fixes have only a surface retest, not full workflow retest. |
 | Exact `ef031fa` corrective cycle | `chrome/ef031fa-exact-frontend-api-live-gate.png`, lifecycle/driver records, zero-volume, export-failure, document, and Render captures | Matching full frontend/API SHA was visibly Live; D0003 Active and masked-license records passed; asset/device export SQL failures and remaining volume/tool blockers are objectively preserved. | Export fixes require a new exact-SHA Chrome retest; dataset and file-selection blockers remain. |
@@ -26,7 +26,7 @@ The artifact pack contains 37 input/workflow files, including governed CSV input
 - the real b131 driver template download, whose missing `branchCode` proves M1-027;
 - the real b131 driver server export with 501 lines (header plus all 500 records present at that evidence cut).
 
-`module1-input-manifest.md` records the governed input counts and hashes. Controlled device/asset preview errors and complete device/asset exports are preserved. Corrected vehicle/driver re-uploads, complete vehicle/driver exports, recordings, and structured failed-request logs/HAR are still required.
+`module1-input-manifest.md` records the governed input counts and hashes. Controlled device/asset preview errors and complete exports for all four entity families are preserved. Corrected vehicle/driver re-uploads, recordings, and structured failed-request logs/HAR are still required.
 
 ## Evidence integrity
 
@@ -40,11 +40,10 @@ Exact `8483733` deployment evidence is preserved as `chrome/8483733-render-deplo
 
 1. Authorize/enable the Customer/CRM entitlement and create/authenticate the twenty-fifth role account.
 2. Complete controlled invalid/duplicate correction cycles for vehicles and drivers.
-3. Preserve complete vehicle and driver exports and reconcile them to 1,000/1,250 records.
-4. Create and exercise safe nonpersonal document/expiry/readiness records; enable Maintenance Center if its journey remains required.
-5. Capture exact 1440×900, 1280×800, 768×1024, and 390×844 layouts with a controller that reports viewport dimensions.
-6. Preserve a screen recording and structured network/HAR evidence.
+3. Create and exercise safe nonpersonal document/expiry/readiness records; enable Maintenance Center if its journey remains required.
+4. Capture exact 1440×900, 1280×800, 768×1024, and 390×844 layouts with a controller that reports viewport dimensions.
+5. Preserve a screen recording and structured network/HAR evidence.
 
 ## Current evidence verdict
 
-The Module 1 certification verdict is **BLOCKED**, not `CERTIFIED`. The final exact-SHA device-transfer P1 is closed and current Chrome diagnostics are clean. Mandatory external entitlement/viewport capabilities and the explicitly listed evidence gaps still prevent certification; Module 2 has not begun.
+The Module 1 certification verdict is **BLOCKED**, not `CERTIFIED`. The final exact-SHA device-transfer and fleet-master export P1s are closed and current Chrome diagnostics are clean. Mandatory external entitlement/viewport capabilities and the explicitly listed evidence gaps still prevent certification; Module 2 has not begun.

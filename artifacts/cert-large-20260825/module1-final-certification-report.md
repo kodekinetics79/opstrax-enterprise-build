@@ -10,12 +10,11 @@ Verdict: **BLOCKED**
 
 ## Release identity and staging readiness
 
-- Candidate and deployed SHA: `7e98a39d66d67dbd5bb5419602532d7ec1aa23d1`
-- Vercel staging deployment: `dpl_E8wscufzWvRjT6c1ETet3AFqbEwq`
-- Render staging deployment: `dep-da77n195efls73ccqr2g`
-- Render deployment reached Live in 1m44s.
+- Candidate and deployed SHA: `5d7c16517e2d8a414f698d7382754c4280e241ca`
+- Vercel staging deployment: `dpl_881PhKrp23ipzsgiUu9JzEbp4bXM`
+- Render staging deployment: `dep-da7f38psrm7s738b6650`
 - The authenticated rendered product showed the matching full frontend and API SHA, tenant `CERT-LARGE`, Live, and **All systems operational**.
-- Supporting `/health/ready` request returned HTTP 200 in 0.869442s with the same deployment SHA, connected database (70ms), valid configuration, and zero RLS, grant, or tenant-coverage violations.
+- Supporting `/health/ready` returned HTTP 200 with the same full deployment SHA; the non-sensitive JSON is preserved as `readiness/5d7c165-health-ready-exact.json`. Raw headers containing rotating CSRF values are intentionally excluded.
 - Production was not touched.
 
 ## Certification population
@@ -48,6 +47,7 @@ Passed in visible Chrome:
 - trailer custody reassignment and effective-dated history;
 - driver archive, refresh/logout-login persistence, and reactivation;
 - one controlled device transfer, submitted once without retry, with full history persistence and clean current diagnostics.
+- complete full-volume vehicle and driver exports with branch distribution, governed fleet-master fields, deterministic ordering, uniqueness, and masked driver licences; refresh and full logout/login persistence passed.
 
 Final device retest details: `CLHQ-DEV-0001` transferred from `CLHQ-V-0001` to `CLHQ-V-0002` effective 2026-08-26 05:01Z. The new row retained Bay 2, odometer 57,838, method and reason; the closed V0001 row retained Bay 1, odometer 49,919, original method/reason, and effective-to time. Refresh and full logout/login preserved both rows. Provider Audit remained neutral `Restricted`. Current Chrome warning/error logs were empty and there was no unresolved current material failed request.
 
@@ -61,6 +61,8 @@ Final device retest details: `CLHQ-DEV-0001` transferred from `CLHQ-V-0001` to `
 | 250-driver commit | 50.2–50.4s |
 | Asset custody-conflict commit-to-actionable-alert | 12.517s |
 | Final device transfer | visible success about 10.4s; POST 200 in 1907.8ms |
+| Full 1,000-vehicle export | 15.289s; 1,000 ordered unique rows |
+| Full 1,250-driver export | 15.304s; 1,250 ordered unique rows; all licences masked |
 | Device-history refresh | about 7.2s |
 | Full logout/fresh login | about 14.5s |
 | Re-open persisted device history | about 7.6s |
@@ -69,7 +71,7 @@ The 1,000-vehicle/1,250-driver totals and server-paged 1,100-device/300-asset re
 
 ## Independent adversarial review
 
-The PR #62 transfer fix received an independent adversarial review focused on tenant isolation, runtime privilege separation, ingestion/transfer races, rollback, and deadlock risk. The reviewer returned CLEAR with no remaining P0/P1. Focused PostgreSQL runtime-role, cross-tenant, deterministic race/recheck, and privilege-rollback cases passed. This is supporting evidence; the rendered Chrome retest is the acceptance evidence.
+The PR #62 transfer fix received an independent adversarial review focused on tenant isolation, runtime privilege separation, ingestion/transfer races, rollback, and deadlock risk. PR #64 received a separate adversarial export review focused on permissions, tenant/branch isolation, joins, ordering, CSV injection, sensitive leakage, completeness, and regression coverage. Its sole test-harness finding was corrected before merge; handler review found no product/security defect. Exact PR and merge-SHA CI, including PostgreSQL integration, passed. This is supporting evidence; the rendered Chrome retests are the acceptance evidence.
 
 ## Why the verdict is BLOCKED
 
@@ -79,9 +81,8 @@ No open P0/P1 remains in the final device-transfer path, but Module 1 cannot hon
 2. The installed visible-Chrome controller cannot set/report the required 1440×900, 1280×800, 768×1024, and 390×844 viewports; native resize attempts remained at 1728×851/940.
 3. Maintenance Center entitlement is unavailable.
 4. Certification data has no linked readiness/expiry documents, so expiry behavior is not proved.
-5. Full vehicle and driver export artifacts are missing.
-6. Controlled invalid/duplicate correction cycles for vehicles and drivers are incomplete.
-7. No screen recording or structured HAR was produced.
+5. Controlled invalid/duplicate correction cycles for vehicles and drivers are incomplete because the external Chrome download/file-picker controller could not preserve/select the corrected files reliably.
+6. No screen recording or structured HAR was produced.
 
 These are explicit certification blockers, not permission to start Module 2. Module 2 has not begun.
 
@@ -94,4 +95,5 @@ These are explicit certification blockers, not permission to start Module 2. Mod
 - Defect/fix/retest ledger: `module1-defect-fix-retest-ledger.md`
 - Product manual: `../../docs/product-manual-fleet-identity.md`
 - Competitor assessment: `module1-competitor-assessment.md`
-- Supporting readiness result: `readiness/7e98a39-health-ready.txt`
+- Supporting readiness result: `readiness/5d7c165-health-ready-exact.json`
+- Final export retest ledger: `chrome/5d7c165-export-retest.txt`
