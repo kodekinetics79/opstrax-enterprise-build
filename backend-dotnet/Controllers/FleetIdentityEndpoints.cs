@@ -449,11 +449,20 @@ public static partial class EndpointMappings
         var effectiveAt = body.EffectiveAt?.ToUniversalTime() ?? DateTimeOffset.UtcNow;
         if (effectiveAt > DateTimeOffset.UtcNow)
             return Results.BadRequest(ApiResponse<object>.Fail("Transfer effective time cannot be in the future"));
+        var idempotencyKey = Clean(body.IdempotencyKey);
+        var requestHash = DeviceTransferRequestHash(id, body, effectiveAt);
+        const string idempotencyOperation = "device.installation.transfer";
         try
         {
             return await db.RunInTenantTransactionAsync(companyId, async () =>
             {
                 await LockInstallationIdentityAsync(db, companyId, id, body.VehicleId, ct);
+                if (idempotencyKey is not null)
+                {
+                    await db.ExecuteAsync(
+                        "SELECT pg_advisory_xact_lock(hashtextextended(@identity,0))",
+                        c => c.Parameters.AddWithValue("@identity", $"device-transfer-idempotency:{companyId}:{idempotencyKey}"), ct);
+                }
                 var resources = await LoadInstallationResourcesAsync(db, companyId, branchId, id, body.VehicleId, ct);
                 if (resources is null)
                     return Results.BadRequest(ApiResponse<object>.Fail("Device and target vehicle must exist in the same tenant and branch"));
@@ -465,18 +474,35 @@ public static partial class EndpointMappings
                     ? (long?)null : Convert.ToInt64(resources["deviceBranchId"]);
                 if (deviceBranchId.HasValue && deviceBranchId != installationBranchId)
                     return Results.Conflict(ApiResponse<object>.Fail("Device and target vehicle must belong to the same branch"));
-                if (!string.IsNullOrWhiteSpace(body.IdempotencyKey))
+                if (idempotencyKey is not null)
                 {
-                    var replay = await db.QuerySingleAsync(
-                        @"SELECT id,replaced_installation_id,device_id,vehicle_id,status,effective_from,row_version
-                          FROM device_installations WHERE company_id=@cid AND idempotency_key=@key",
-                        c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@key", body.IdempotencyKey.Trim()); }, ct);
-                    if (replay is not null)
+                    var ledger = await db.QuerySingleAsync(
+                        @"SELECT request_hash,status,response_reference FROM idempotency_keys
+                           WHERE tenant_id=@cid AND operation=@operation AND idempotency_key=@key",
+                        c =>
+                        {
+                            c.Parameters.AddWithValue("@cid", companyId);
+                            c.Parameters.AddWithValue("@operation", idempotencyOperation);
+                            c.Parameters.AddWithValue("@key", idempotencyKey);
+                        }, ct);
+                    if (ledger is not null)
                     {
-                        if (Convert.ToInt64(replay["deviceId"]) != id || Convert.ToInt64(replay["vehicleId"]) != body.VehicleId)
+                        if (!string.Equals(ledger["requestHash"]?.ToString(), requestHash, StringComparison.Ordinal))
                             return Results.Conflict(ApiResponse<object>.Fail("Idempotency key was already used for a different transfer"));
-                        return Results.Ok(ApiResponse<object>.Ok(replay,"Device transfer already recorded"));
+                        if (!long.TryParse(ledger["responseReference"]?.ToString(), out var replayId))
+                            return Results.Conflict(ApiResponse<object>.Fail("The matching device transfer is still being recorded; retry after refreshing"));
+                        var replay = await db.QuerySingleAsync(
+                            @"SELECT id,replaced_installation_id,device_id,vehicle_id,status,effective_from,row_version
+                                FROM device_installations WHERE company_id=@cid AND id=@id",
+                            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", replayId); }, ct);
+                        if (replay is null)
+                            return Results.Conflict(ApiResponse<object>.Fail("The matching device transfer could not be resolved; refresh before retrying"));
+                        return Results.Ok(ApiResponse<object>.Ok(replay, "Device transfer already recorded"));
                     }
+                    if (await db.ScalarLongAsync(
+                        "SELECT COUNT(*) FROM device_installations WHERE company_id=@cid AND idempotency_key=@key",
+                        c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@key", idempotencyKey); }, ct) != 0)
+                        return Results.Conflict(ApiResponse<object>.Fail("Idempotency key belongs to a legacy transfer that cannot be safely replayed; submit with a new key"));
                 }
                 var prior = await db.QuerySingleAsync(
                     @"SELECT id,row_version,effective_from FROM device_installations
@@ -495,6 +521,20 @@ public static partial class EndpointMappings
                 if (await InstallationHasEventAtOrAfterAsync(db, companyId, priorId, effectiveAt, ct) != 0)
                     return Results.Conflict(ApiResponse<object>.Fail(
                         "Transfer cannot predate telemetry already attributed to the current installation; use the current time or an append-only correction workflow"));
+                if (idempotencyKey is not null)
+                {
+                    await db.ExecuteAsync(
+                        @"INSERT INTO idempotency_keys
+                            (tenant_id,operation,idempotency_key,request_hash,status,expires_at,created_at)
+                          VALUES (@cid,@operation,@key,@hash,'processing',NOW()+INTERVAL '24 hours',NOW())",
+                        c =>
+                        {
+                            c.Parameters.AddWithValue("@cid", companyId);
+                            c.Parameters.AddWithValue("@operation", idempotencyOperation);
+                            c.Parameters.AddWithValue("@key", idempotencyKey);
+                            c.Parameters.AddWithValue("@hash", requestHash);
+                        }, ct);
+                }
                 await db.ExecuteAsync(
                     @"UPDATE device_installations SET status='Removed',effective_to=@at,removed_at=@at,removed_by=@actor,
                          removal_reason=@reason,updated_at=NOW(),row_version=row_version+1 WHERE id=@id",
@@ -517,8 +557,22 @@ public static partial class EndpointMappings
                         c.Parameters.AddWithValue("@odometer", (object?)body.OdometerAtInstallation ?? DBNull.Value);
                         c.Parameters.AddWithValue("@method", (object?)Clean(body.CommissioningMethod) ?? DBNull.Value);
                         c.Parameters.AddWithValue("@reason", body.AssignmentReason.Trim()); c.Parameters.AddWithValue("@correlation", http.TraceIdentifier);
-                        c.Parameters.AddWithValue("@idempotency", (object?)Clean(body.IdempotencyKey) ?? DBNull.Value); c.Parameters.AddWithValue("@prior", priorId);
+                        c.Parameters.AddWithValue("@idempotency", (object?)idempotencyKey ?? DBNull.Value); c.Parameters.AddWithValue("@prior", priorId);
                     }, ct);
+                if (idempotencyKey is not null)
+                {
+                    await db.ExecuteAsync(
+                        @"UPDATE idempotency_keys SET status='completed',response_reference=@response
+                           WHERE tenant_id=@cid AND operation=@operation AND idempotency_key=@key AND request_hash=@hash",
+                        c =>
+                        {
+                            c.Parameters.AddWithValue("@response", newId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                            c.Parameters.AddWithValue("@cid", companyId);
+                            c.Parameters.AddWithValue("@operation", idempotencyOperation);
+                            c.Parameters.AddWithValue("@key", idempotencyKey);
+                            c.Parameters.AddWithValue("@hash", requestHash);
+                        }, ct);
+                }
                 await db.ExecuteAsync(
                     "UPDATE eld_devices SET device_state='Installed',updated_at=NOW() WHERE company_id=@cid AND id=@did",
                     c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@did", id); }, ct);
@@ -758,6 +812,25 @@ public static partial class EndpointMappings
         }, ct);
 
     private static string NormalizeInstallationRole(string role) => InstallationRoles.First(candidate => candidate.Equals(role.Trim(), StringComparison.OrdinalIgnoreCase));
+    private static string DeviceTransferRequestHash(long deviceId, DeviceInstallationTransferBody body, DateTimeOffset effectiveAt)
+    {
+        var canonical = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            deviceId,
+            body.VehicleId,
+            currentInstallationId = body.CurrentInstallationId,
+            expectedRowVersion = body.ExpectedRowVersion,
+            effectiveAt = effectiveAt.ToUniversalTime().ToString("O", System.Globalization.CultureInfo.InvariantCulture),
+            removalReason = Clean(body.RemovalReason),
+            assignmentReason = Clean(body.AssignmentReason),
+            deviceRole = NormalizeInstallationRole(body.DeviceRole),
+            body.IsPrimary,
+            installationLocation = Clean(body.InstallationLocation),
+            odometerAtInstallation = body.OdometerAtInstallation?.ToString("G29", System.Globalization.CultureInfo.InvariantCulture),
+            commissioningMethod = Clean(body.CommissioningMethod),
+        });
+        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
+    }
     private static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     private static bool ValidLength(string? value, int maximum)
     {

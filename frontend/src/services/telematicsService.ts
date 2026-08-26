@@ -117,7 +117,7 @@ export type TelematicsProviderSeedRecord = {
   matchConfidence?: "exact" | "fuzzy" | "none" | "restricted";
   auditMessage?: string;
   isMatchedToDevice?: boolean;
-  visibilitySource?: "connected" | "restricted" | "unmatched";
+  visibilitySource?: "connected" | "restricted" | "unmatched" | "unavailable";
 };
 
 export type DeviceCommandRecord = {
@@ -846,27 +846,58 @@ async function loadProviderCatalog(): Promise<TelematicsProviderSeedRecord[]> {
   });
 }
 
-async function buildProviderAuditForDevice(device: DeviceCommandRecord): Promise<TelematicsProviderSeedRecord[]> {
+export function canReadProviderCatalog(session: UserSession | null): boolean {
+  const permissions = session?.permissions ?? [];
+  const permitted = ["integrations:view", "integrations:manage", "telematics:providers:manage"]
+    .some((permission) => hasPermission(permissions, permission));
+  if (!permitted) return false;
+
+  // RequireIntegrationsModule checks the authoritative `fleet.integrations` key.
+  // Legacy tenants inherit access; allowlist tenants must carry that exact enabled
+  // entitlement or a request would deterministically receive 403.
+  return session?.entitlementPolicyMode !== "package_allowlist"
+    || session.entitlements?.["fleet.integrations"] === true;
+}
+
+function restrictedProviderAudit(device: DeviceCommandRecord): TelematicsProviderSeedRecord[] {
+  return [{
+    id: "provider-audit-restricted",
+    name: "Integrations visibility restricted",
+    category: "Telematics & ELD",
+    integrationStatus: "Restricted",
+    tenantId: device.tenantId ?? 0,
+    deviceCount: 0,
+    lastSyncAt: "—",
+    supportTier: "tenant",
+    pendingDevices: 0,
+    isMatchedToDevice: false,
+    visibilitySource: "restricted",
+    matchConfidence: "restricted",
+    auditMessage: "Integration connector evidence is restricted for this role or tenant plan.",
+  }];
+}
+
+async function buildProviderAuditForDevice(device: DeviceCommandRecord, session: UserSession | null): Promise<TelematicsProviderSeedRecord[]> {
+  if (!canReadProviderCatalog(session)) return restrictedProviderAudit(device);
   try {
     const catalog = await loadProviderCatalog();
     return deriveProviderIntegrationAudit(device, catalog);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to read integrations";
+  } catch {
     return [
       {
-        id: "provider-audit-restricted",
-        name: "Integrations visibility restricted",
+        id: "provider-audit-unavailable",
+        name: "Integration evidence unavailable",
         category: "Telematics & ELD",
-        integrationStatus: "Restricted",
+        integrationStatus: "Unavailable",
         tenantId: device.tenantId ?? 0,
         deviceCount: 0,
         lastSyncAt: "—",
         supportTier: "tenant",
         pendingDevices: 0,
         isMatchedToDevice: false,
-        visibilitySource: "restricted",
-        matchConfidence: "restricted",
-        auditMessage: message || "Integration connector access is not available for this user/session.",
+        visibilitySource: "unavailable",
+        matchConfidence: "none",
+        auditMessage: "Integration connector evidence is temporarily unavailable.",
       },
     ];
   }
@@ -1302,7 +1333,7 @@ export const telematicsService = {
       currentInstallation,
       installations,
       sensorReadings: [], // no standalone sensor-reading endpoint
-      providers: await buildProviderAuditForDevice(scoped),
+      providers: await buildProviderAuditForDevice(scoped, session),
       auditLog: [], // no device audit-log endpoint
       assignmentHistory: Array.isArray(detail.assignment_history)
         ? (detail.assignment_history as AnyRecord[]).map(normalizeKeys)

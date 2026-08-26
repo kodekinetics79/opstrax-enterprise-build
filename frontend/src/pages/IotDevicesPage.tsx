@@ -34,6 +34,7 @@ import { PERMISSIONS } from "@/auth/rbacConfig";
 import { useHasPermission } from "@/hooks/usePermission";
 import { vehiclesApi } from "@/services/vehiclesApi";
 import {
+  canReadProviderCatalog,
   telematicsService,
   type DeviceCommandRecord,
   type DeviceCommissioningInput,
@@ -45,6 +46,8 @@ import {
   type DeviceProvisionResult,
 } from "@/services/telematicsService";
 import type { AnyRecord } from "@/types";
+import { apiErrorMessage } from "@/utils/apiErrorMessage";
+import { useAuth } from "@/hooks/useAuth";
 
 type DeviceTab =
   | "all"
@@ -155,6 +158,12 @@ function toUtcIso(localDateTime: string, field: string) {
   const parsed = new Date(localDateTime);
   if (!localDateTime || Number.isNaN(parsed.getTime())) throw new Error(`Enter a valid ${field}.`);
   return parsed.toISOString();
+}
+
+function currentLocalMinute() {
+  const now = new Date();
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
 }
 
 // Minimal, honest inputs for INITIATING A CONNECTION (the Render/Vercel model).
@@ -457,6 +466,7 @@ export function IotDevicesPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const hasPermission = useHasPermission();
+  const { session } = useAuth();
 
   const canDiagnostics = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_DIAGNOSTICS);
   // Provision, import, revoke/archive, installation, commissioning, suspension,
@@ -475,6 +485,7 @@ export function IotDevicesPage() {
   const canRecover = hasPermission(PERMISSIONS.COMPLIANCE_UPDATE);
   const canExport = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_EXPORT);
   const canManageProviders = hasPermission(PERMISSIONS.TELEMATICS_PROVIDERS_MANAGE);
+  const canViewProviderCatalog = canReadProviderCatalog(session);
 
   const [tab, setTab] = useState<DeviceTab>("all");
   const [search, setSearch] = useState("");
@@ -528,7 +539,12 @@ export function IotDevicesPage() {
     placeholderData: keepPreviousData,
     staleTime: 20_000,
   });
-  const providersQ = useQuery({ queryKey: ["telematics", "providers"], queryFn: telematicsService.getProviders, staleTime: 20_000 });
+  const providersQ = useQuery({
+    queryKey: ["telematics", "providers"],
+    queryFn: telematicsService.getProviders,
+    enabled: canViewProviderCatalog,
+    staleTime: 20_000,
+  });
   const vehiclesQ = useQuery({ queryKey: ["vehicles", "list"], queryFn: vehiclesApi.list, staleTime: 20_000 });
   const quarantineQ = useQuery({
     queryKey: ["telematics", "identity-quarantine"],
@@ -917,7 +933,9 @@ export function IotDevicesPage() {
             </div>
           )
         ) : tab === "providers" ? (
-          providersQ.isLoading ? (
+          !canViewProviderCatalog ? (
+            <EmptyState title="Provider integrations restricted" subtitle="Connector evidence is not available for this role or tenant plan." />
+          ) : providersQ.isLoading ? (
             <LoadingState />
           ) : providersQ.isError ? (
             <ErrorState message="Unable to load provider integrations right now." />
@@ -1128,6 +1146,9 @@ export function IotDevicesPage() {
                 throw new Error("Enter a valid odometer at installation (a number of 0 or greater).");
               }
               effectiveAtIso = toUtcIso(installationForm.effectiveAt, assignTarget.assignedVehicleId ? "transfer effective time" : "installation effective time");
+              if (Date.parse(effectiveAtIso) > Date.now()) {
+                throw new Error(`${assignTarget.assignedVehicleId ? "Transfer" : "Installation"} effective time cannot be in the future. Choose the current or an earlier time.`);
+              }
             } catch (validationError) {
               setFormError(validationError instanceof Error ? validationError.message : "Enter valid installation details before submitting.");
               return;
@@ -1149,7 +1170,7 @@ export function IotDevicesPage() {
           }}
           submitLabel={assignTarget.assignedVehicleId ? "Transfer Device" : "Install Device"}
           busy={assignMut.isPending}
-          error={formError ?? (assignMut.error instanceof Error ? assignMut.error.message : null)}
+          error={formError ?? (assignMut.error ? apiErrorMessage(assignMut.error, "The device installation change was not completed. Reload the device and try again.") : null)}
         >
           <p className="mb-4 rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-800">
             This creates effective-dated installation history. Enter the observed facts; OpsTrax will not infer the role, primary designation, time, location, odometer, method, or reasons.
@@ -1179,7 +1200,7 @@ export function IotDevicesPage() {
               </select>
             </FormField>
             <FormField label={`${assignTarget.assignedVehicleId ? "Transfer" : "Installation"} effective time (required)`}>
-              <input className="field w-full" type="datetime-local" value={installationForm.effectiveAt} onChange={(event) => updateInstallationForm((form) => ({ ...form, effectiveAt: event.target.value }))} required />
+              <input className="field w-full" type="datetime-local" max={currentLocalMinute()} value={installationForm.effectiveAt} onChange={(event) => updateInstallationForm((form) => ({ ...form, effectiveAt: event.target.value }))} required />
             </FormField>
             <FormField label="Installation location (required)">
               <input className="field w-full" maxLength={160} value={installationForm.installationLocation} onChange={(event) => updateInstallationForm((form) => ({ ...form, installationLocation: event.target.value }))} placeholder="Bay, depot, or service location" required />
@@ -1605,6 +1626,9 @@ function DeviceDetailDrawer({
               installation.installStatus,
               installation.deviceRole,
               installation.isPrimary ? "Primary" : "Secondary",
+              installation.installationLocation ? `Location: ${installation.installationLocation}` : null,
+              installation.odometerAtInstallation ? `Odometer: ${installation.odometerAtInstallation}` : null,
+              installation.commissioningMethod ? `Method: ${installation.commissioningMethod}` : null,
               installation.assignmentReason,
               installation.removalReason,
             ].filter(Boolean).join(" · "),

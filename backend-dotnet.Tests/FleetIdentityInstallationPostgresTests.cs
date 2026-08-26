@@ -139,13 +139,19 @@ public sealed class FleetIdentityInstallationPostgresTests
             Assert.Equal(StatusCodes.Status400BadRequest,Status(crossTenant));
 
             var transferKey = $"transfer-{Guid.NewGuid():N}";
-            var transferred = await Invoke("DeviceInstallationTransfer",http,deviceId,
-                Body("DeviceInstallationTransferBody",vehicleB,(long?)firstId,"replace vehicle","new route", "GPS",true,
-                    (DateTimeOffset?)DateTimeOffset.UtcNow,null,null,"heartbeat",(int?)1,transferKey),
-                db,audit,CancellationToken.None);
-            Assert.Equal(StatusCodes.Status200OK,Status(transferred));
+            var transferAt = DateTimeOffset.UtcNow.AddMilliseconds(-50);
+            async Task<IResult> TransferAttempt()
+            {
+                var attemptDb = Db();
+                return await Invoke("DeviceInstallationTransfer",Principal(companyId,userId:42),deviceId,
+                    Body("DeviceInstallationTransferBody",vehicleB,(long?)firstId,"replace vehicle","new route", "GPS",true,
+                        (DateTimeOffset?)transferAt,"yard bay 2",57838m,"heartbeat",(int?)1,transferKey),
+                    attemptDb,new AuditService(attemptDb),CancellationToken.None);
+            }
+            var concurrentResults = await Task.WhenAll(TransferAttempt(), TransferAttempt());
+            Assert.All(concurrentResults, result => Assert.Equal(StatusCodes.Status200OK, Status(result)));
             var history = await db.QueryAsync(
-                "SELECT id,vehicle_id,status,effective_from,effective_to,replaced_installation_id FROM device_installations WHERE company_id=@c AND device_id=@d ORDER BY effective_from,id",
+                "SELECT id,vehicle_id,status,effective_from,effective_to,replaced_installation_id,odometer_at_installation FROM device_installations WHERE company_id=@c AND device_id=@d ORDER BY effective_from,id",
                 c => { c.Parameters.AddWithValue("@c",companyId); c.Parameters.AddWithValue("@d",deviceId); });
             Assert.Equal(2,history.Count);
             Assert.Equal("Removed",history[0]["status"]);
@@ -154,15 +160,22 @@ public sealed class FleetIdentityInstallationPostgresTests
             Assert.Equal("Installed",history[1]["status"]);
             Assert.Equal(vehicleB,Convert.ToInt64(history[1]["vehicleId"]));
             Assert.Equal(firstId,Convert.ToInt64(history[1]["replacedInstallationId"]));
+            Assert.Equal(57838m, Convert.ToDecimal(history[1]["odometerAtInstallation"]));
             Assert.Equal(vehicleB,await db.ScalarLongAsync(
                 "SELECT vehicle_id FROM eld_devices WHERE company_id=@c AND id=@d",
                 c => { c.Parameters.AddWithValue("@c",companyId); c.Parameters.AddWithValue("@d",deviceId); }));
 
             var transferReplay = await Invoke("DeviceInstallationTransfer",http,deviceId,
                 Body("DeviceInstallationTransferBody",vehicleB,(long?)firstId,"replace vehicle","new route", "GPS",true,
-                    (DateTimeOffset?)DateTimeOffset.UtcNow,null,null,"heartbeat",(int?)1,transferKey),
+                    (DateTimeOffset?)transferAt,"yard bay 2",57838m,"heartbeat",(int?)1,transferKey),
                 db,audit,CancellationToken.None);
             Assert.Equal(StatusCodes.Status200OK,Status(transferReplay));
+            Assert.Equal(2,await Count(db,companyId,deviceId));
+            var changedReplay = await Invoke("DeviceInstallationTransfer",http,deviceId,
+                Body("DeviceInstallationTransferBody",vehicleB,(long?)firstId,"replace vehicle","new route", "GPS",true,
+                    (DateTimeOffset?)transferAt,"yard bay 2",57839m,"heartbeat",(int?)1,transferKey),
+                db,audit,CancellationToken.None);
+            Assert.Equal(StatusCodes.Status409Conflict, Status(changedReplay));
             Assert.Equal(2,await Count(db,companyId,deviceId));
             Assert.Equal(2,await db.ScalarLongAsync(
                 "SELECT COUNT(*) FROM audit_logs WHERE company_id=@c AND action_name IN ('device.installation.created','device.installation.transferred')",
@@ -176,6 +189,7 @@ public sealed class FleetIdentityInstallationPostgresTests
                 "DELETE FROM audit_logs WHERE company_id=@c","DELETE FROM device_state_transitions WHERE company_id=@c",
                 "DELETE FROM device_installations WHERE company_id=@c","DELETE FROM eld_devices WHERE company_id=@c",
                 "DELETE FROM vehicles WHERE company_id=@c","DELETE FROM branches WHERE company_id=@c",
+                "DELETE FROM idempotency_keys WHERE tenant_id=@c",
                 "DELETE FROM companies WHERE id=@c"
             })
                 await db.ExecuteAsync(sql,c => c.Parameters.AddWithValue("@c",company));
