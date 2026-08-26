@@ -32,7 +32,8 @@ public sealed class TelemetryClusterPaginationContractTests
 
         Assert.Contains("lp.id IS NULL OR lp.lat NOT BETWEEN -90 AND 90 OR lp.lng NOT BETWEEN -180 AND 180", source, StringComparison.Ordinal);
         Assert.Contains("COALESCE(lp.device_fix_time,lp.event_time,lp.received_at)", source, StringComparison.Ordinal);
-        Assert.Contains("LOWER(fc.status)='active')) attention", source, StringComparison.Ordinal);
+        Assert.Contains("LOWER(fc.status)='active')", source, StringComparison.Ordinal);
+        Assert.Contains("LOWER(COALESCE(e.device_state,'')) IN ('quarantined','suspended')", source, StringComparison.Ordinal);
         Assert.Contains("active_fault_codes", source, StringComparison.Ordinal);
         Assert.Contains("CASE WHEN lp.engine_status IS NOT NULL OR lp.odometer_miles IS NOT NULL", source, StringComparison.Ordinal);
         Assert.Contains("GREATEST(", source, StringComparison.Ordinal);
