@@ -37,7 +37,7 @@ public static class PlatformEndpoints
     {
         // ── Auth ──────────────────────────────────────────────────────────────
         app.MapPost("/api/platform/auth/login", PlatformLoginWithConfig);
-        app.MapGet("/api/platform/auth/me", PlatformMe);
+        app.MapGet("/api/platform/auth/me", PlatformMeWithConfig);
         app.MapPost("/api/platform/auth/logout", PlatformLogout);
 
         // ── Command Center ──────────────────────────────────────────────────────
@@ -366,7 +366,13 @@ public static class PlatformEndpoints
         }, "Platform login successful"));
     }
 
-    private static async Task<IResult> PlatformMe(HttpContext http, Database db, IHostEnvironment environment, IConfiguration configuration, CancellationToken ct)
+    private static Task<IResult> PlatformMe(HttpContext http, Database db, CancellationToken ct)
+        => PlatformMeCore(http, db, null, null, ct);
+
+    private static Task<IResult> PlatformMeWithConfig(HttpContext http, Database db, IHostEnvironment environment, IConfiguration configuration, CancellationToken ct)
+        => PlatformMeCore(http, db, environment, configuration, ct);
+
+    private static async Task<IResult> PlatformMeCore(HttpContext http, Database db, IHostEnvironment? environment, IConfiguration? configuration, CancellationToken ct)
     {
         var principal = await AuthenticateAsync(http, db, ct);
         if (principal is null) return Results.Json(ApiResponse<object>.Fail("Unauthorized"), statusCode: StatusCodes.Status401Unauthorized);
@@ -377,7 +383,7 @@ public static class PlatformEndpoints
             admin = new { id = principal.AdminId, email = principal.Email, name = name?["fullName"] },
             role = new { key = principal.RoleKey, name = principal.RoleName },
             permissions = principal.Permissions,
-            productPilotAvailable = ProductPilotEndpoints.IsAvailable(environment, configuration),
+            productPilotAvailable = environment is not null && configuration is not null && ProductPilotEndpoints.IsAvailable(environment, configuration),
         }, "Session active"));
     }
 
