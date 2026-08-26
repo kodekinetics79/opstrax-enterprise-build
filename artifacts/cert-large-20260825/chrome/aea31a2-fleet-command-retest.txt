@@ -1,0 +1,64 @@
+OpsTrax Fleet Command focused corrective browser retest
+Date: 2026-08-26 America/New_York
+Tenant: CERT-LARGE-20260825
+Stable staging: https://opstrax-staging-certification.vercel.app
+Exact frontend/API SHA: aea31a227a14736c9e00034c1942aa2a9b5649c5
+Roles: Tenant/Fleet Administrator, Dispatcher CL-HQ, Executive 01
+
+DEPLOYMENT / READINESS
+- Render staging service only: srv-d9u6qnajobas73ef2590.
+- OPSTRAX_DEPLOY_VERSION corrected to full exact SHA.
+- Exact source selected visibly: merge PR #69, fix(live-ops): page truthful fleet command overview.
+- Manual staging deployment triggered 2:31:42 PM EDT; terminal Deploy succeeded | Live in 1m37s.
+- Vercel staging deployment supplied by integration owner: dpl_H33gWHmrWQb1Na9rZru8fXhfFvXJ, exact matching bundle SHA.
+- Supporting /health/ready: HTTP 200; x-deployment-version and JSON version both full exact SHA; DB connected; config valid; fleet contract ready.
+- Final rendered About/Recheck: full matching frontend/API SHA, Live, All systems operational at 2:40:07 PM.
+
+TENANT ADMIN — TRUTHFULNESS / LARGE-FLEET PAGING
+- Initial Fleet Command customer load: 2.122 s.
+- 1,000 vehicles tracked; 50 Out of Service; 950 Unknown; 0 Available; 0 Offline; 0 Active/Idle.
+- Rows render Unknown and No live GPS instead of claiming vehicle/device availability from absent telemetry.
+- Complementary Fleet Pulse reports Unknown 1,000 and zero Online/Degraded/Offline, consistent with no live signal.
+- 50 rows rendered per page; Page 1 of 20; Previous disabled.
+- Page 1 -> 10: 13.625 s; Page 10 first settled row NEHUB-V-0051; 50 rows.
+- Page 10 -> 20: 14.422 s; Page 20 range WESTHUB-V-0151 through WESTHUB-V-0200; 50 rows; Next disabled.
+
+SEARCH / SORT / FILTER RESET
+- From Page 20, search CLHQ-V-0001 eventually reset to Page 1 of 1 and one correct row; settled after approximately 2.2 s.
+- P1 acceptance failure: at 100 ms after initiating the deep-page search, the visible accessibility state still contained prior WESTHUB-V-0151 / WESTHUB-V-0200 rows while the new query was active. Old rows cleared before the result settled, but the stale-row flash is reproducible and violates the explicit no-old-row-flash gate.
+- Clearing search via keyboard reset to Page 1 of 20 and 50 rows.
+- From Page 10, toggling sort descending reset cleanly to Page 1 in 1.585 s with no stale old row; first row WESTHUB-V-0200; 50 rows.
+- From Page 10, OOS filter reset cleanly with no stale old row; settled Page 1 of 1 with exactly 50/50 OOS rows in approximately 2.3 s.
+
+REFRESH / LOGOUT-LOGIN
+- Full hard refresh: bootstrap initially showed Unavailable while loading, then settled exact/Live after 2.4 additional seconds; Page 1 of 20, 50 rows, truthful 950 Unknown persisted.
+- Full logout/fresh Tenant Admin login: 4.705 s; Fleet Overview then loaded exact/Live in 1.704 s with Page 1 of 20 and 50 rows.
+
+DISPATCHER CL-HQ
+- Fresh secure login: 3.288 s; no Users & Roles navigation.
+- Fleet Command loaded in 1.704 s.
+- Correct branch scope: 200 vehicles, 190 Available, 10 OOS, Page 1 of 4, 50 rows; no NEHUB/SEDEPOT/MWYARD/WESTHUB data visible.
+- Search WESTHUB-V-0001 produced 0 rows, Page 0 of 0, and explicit “No vehicles match this search or filter”; no cross-branch identifier leaked.
+- Dispatcher receives role-appropriate vehicle availability view without tenant-wide telemetry detail.
+
+EXECUTIVE 01
+- Fresh secure login: 3.166 s; no Admin navigation.
+- Fleet Command loaded in 1.613 s with tenant-wide 1,000 vehicles, truthful 50 OOS / 950 Unknown, Page 1 of 20, 50 rows.
+- No Create/Edit/Assign/Reassign/Delete/Archive/Connect control was rendered.
+- Provider identity `OpsTrax Certification Lab` was not exposed in the Executive Fleet Command view.
+
+CONSOLE / NETWORK
+- Chrome console warning/error collection after full retest: 0 entries.
+- No material failed request or unresolved raw 4xx/5xx surfaced in the product.
+- Installed persistent Chrome control does not expose a complete request waterfall; no stronger claim is made.
+
+FINDINGS / VERDICT
+- Corrected KPI truthfulness: PASS.
+- 50-row / 20-page traversal and boundary controls: PASS.
+- Sort and OOS deep-page resets: PASS.
+- Refresh and logout/login persistence: PASS.
+- Dispatcher branch scope: PASS.
+- Executive read-only/redaction: PASS.
+- No P0 reproduced.
+- Open P1: search from a deep page briefly displays stale prior-page rows before the new result settles.
+- Focused retest verdict: BLOCKED pending removal/retest of the stale-row search flash; no synthetic telemetry was introduced.
