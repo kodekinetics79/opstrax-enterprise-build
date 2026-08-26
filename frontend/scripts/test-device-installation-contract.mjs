@@ -166,6 +166,9 @@ assert.match(service, /if \(!canReadProviderCatalog\(session\)\) return restrict
 assert.doesNotMatch(service, /auditMessage: message \|\| "Integration connector access/, "Provider audit must not render raw Axios errors");
 assert.match(devicesPage, /enabled: canViewProviderCatalog/, "The provider tab query must not issue a known-forbidden request");
 assert.match(devicesPage, /Provider integrations restricted/, "Expected provider restrictions must render as a deliberate restricted state");
+for (const historyFact of ["installation.installationLocation", "installation.odometerAtInstallation", "installation.commissioningMethod"]) {
+  assert.match(devicesPage, new RegExp(historyFact.replace(".", "\\.")), `${historyFact} must remain visible after an installation becomes historical`);
+}
 
 // ── DEF-023: destructive lifecycle confirmations must be automatable and accessible ──
 const confirmDialog = readFileSync(resolve(root, "src/components/ConfirmDialog.tsx"), "utf8");

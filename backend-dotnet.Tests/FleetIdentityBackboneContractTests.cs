@@ -175,6 +175,17 @@ public sealed class FleetIdentityBackboneContractTests
         Assert.Contains("Device identity is quarantined", routes, StringComparison.Ordinal);
         Assert.Contains("InstallationHasEventAtOrAfterAsync", lifecycle, StringComparison.Ordinal);
         Assert.Contains("cannot predate telemetry already attributed", lifecycle, StringComparison.Ordinal);
+        Assert.Contains("DeviceTransferRequestHash", lifecycle, StringComparison.Ordinal);
+        Assert.Contains("idempotency_keys", lifecycle, StringComparison.Ordinal);
+        Assert.Contains("Idempotency key was already used for a different transfer", lifecycle, StringComparison.Ordinal);
+        var transferFingerprint = Block(lifecycle, "private static string DeviceTransferRequestHash(", "private static string? Clean(");
+        foreach (var governedField in new[]
+        {
+            "deviceId", "body.VehicleId", "body.CurrentInstallationId", "body.ExpectedRowVersion", "effectiveAt",
+            "body.RemovalReason", "body.AssignmentReason", "body.DeviceRole", "body.IsPrimary",
+            "body.InstallationLocation", "body.OdometerAtInstallation", "body.CommissioningMethod"
+        }) Assert.Contains(governedField, transferFingerprint, StringComparison.Ordinal);
+        Assert.Contains("SHA256.HashData", transferFingerprint, StringComparison.Ordinal);
         Assert.Contains("device_installation_quarantine", registry, StringComparison.Ordinal);
         Assert.Contains("resolution_notes", lifecycle, StringComparison.Ordinal);
         Assert.Contains("Duplicate serial quarantine requires a corrected serial", lifecycle, StringComparison.Ordinal);
