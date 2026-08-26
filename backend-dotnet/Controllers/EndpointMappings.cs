@@ -18730,25 +18730,14 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         };
         var diagnosticsViewClause = view switch
         {
-            "fresh" => @" AND e.revoked_at IS NULL
-                AND (lp.engine_status IS NOT NULL OR lp.odometer_miles IS NOT NULL OR lp.fuel_level IS NOT NULL OR lp.battery_voltage IS NOT NULL
-                     OR EXISTS (SELECT 1 FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active'))
-                AND EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at,
-                    (SELECT MAX(fc.last_observed_at) FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active')))) <= 120",
-            "watch" => @" AND e.revoked_at IS NULL
-                AND (lp.engine_status IS NOT NULL OR lp.odometer_miles IS NOT NULL OR lp.fuel_level IS NOT NULL OR lp.battery_voltage IS NOT NULL
-                     OR EXISTS (SELECT 1 FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active'))
-                AND EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at,
-                    (SELECT MAX(fc.last_observed_at) FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active')))) > 120
-                AND EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at,
-                    (SELECT MAX(fc.last_observed_at) FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active')))) <= 900",
+            "fresh" => @" AND e.revoked_at IS NULL AND diagnostic_evidence.observed_at IS NOT NULL
+                AND EXTRACT(EPOCH FROM (NOW()-diagnostic_evidence.observed_at)) <= 120",
+            "watch" => @" AND e.revoked_at IS NULL AND diagnostic_evidence.observed_at IS NOT NULL
+                AND EXTRACT(EPOCH FROM (NOW()-diagnostic_evidence.observed_at)) > 120
+                AND EXTRACT(EPOCH FROM (NOW()-diagnostic_evidence.observed_at)) <= 900",
             "stale" => @" AND e.revoked_at IS NULL AND (
-                (lp.engine_status IS NULL AND lp.odometer_miles IS NULL AND lp.fuel_level IS NULL AND lp.battery_voltage IS NULL
-                    AND NOT EXISTS (SELECT 1 FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active'))
-                OR COALESCE(lp.device_fix_time,lp.event_time,lp.received_at,
-                    (SELECT MAX(fc.last_observed_at) FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active')) IS NULL
-                OR EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at,
-                    (SELECT MAX(fc.last_observed_at) FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active')))) > 900)",
+                diagnostic_evidence.observed_at IS NULL
+                OR EXTRACT(EPOCH FROM (NOW()-diagnostic_evidence.observed_at)) > 900)",
             "issues" => @" AND e.revoked_at IS NULL AND EXISTS (
                 SELECT 1 FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active')",
             _ => " AND e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired')",
@@ -18764,12 +18753,22 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 OR EXISTS (SELECT 1 FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active'))",
             _ => "",
         };
-        var evidenceJoin = cluster is "gps" or "diagnostics" ? @"
+        var positionEvidenceJoin = cluster is "gps" or "diagnostics" ? @"
 LEFT JOIN LATERAL (
   SELECT p.* FROM latest_vehicle_positions p
   WHERE p.company_id=e.company_id AND p.device_id=e.id
   ORDER BY p.received_at DESC,p.id DESC LIMIT 1
 ) lp ON TRUE" : "";
+        var diagnosticEvidenceJoin = cluster == "diagnostics" ? @"
+LEFT JOIN LATERAL (
+  SELECT GREATEST(
+    CASE WHEN lp.engine_status IS NOT NULL OR lp.odometer_miles IS NOT NULL
+                   OR lp.fuel_level IS NOT NULL OR lp.battery_voltage IS NOT NULL
+         THEN COALESCE(lp.device_fix_time,lp.event_time,lp.received_at) END,
+    (SELECT MAX(fc.last_observed_at) FROM fault_codes fc
+      WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active')
+  ) observed_at
+) diagnostic_evidence ON TRUE" : "";
         var evidenceSearch = cluster switch
         {
             "gps" => " OR COALESCE(lp.address,'') ILIKE '%' || @search || '%'",
@@ -18794,7 +18793,7 @@ LEFT JOIN LATERAL (
   ORDER BY da.assigned_at DESC,da.id DESC LIMIT 1
 ) active_dispatch ON TRUE
 LEFT JOIN drivers d ON d.id=active_dispatch.driver_id AND d.company_id=e.company_id
-" + evidenceJoin + @"
+" + positionEvidenceJoin + diagnosticEvidenceJoin + @"
 WHERE e.company_id=@cid AND e.deleted_at IS NULL
   AND (@branchId::BIGINT IS NULL OR e.branch_id=@branchId)
   AND (@search='' OR e.device_serial ILIKE '%' || @search || '%'
@@ -18835,16 +18834,13 @@ WHERE e.company_id=@cid AND e.deleted_at IS NULL
        NULL::NUMERIC position_accuracy_meters,lp.engine_status position_engine_status,
        lp.odometer_miles position_odometer_miles,lp.fuel_level position_fuel_level,
        lp.battery_voltage position_battery_voltage,
-       COALESCE(lp.event_time,(SELECT MAX(fc.last_observed_at) FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active')) position_event_time,
+       diagnostic_evidence.observed_at position_event_time,
        NULL::TEXT position_address,lp.source position_source,lp.provider position_provider,
        lp.protocol position_protocol,lp.confidence position_confidence,
        lp.device_fix_time position_device_fix_time,lp.gateway_received_at position_gateway_received_at,
-       CASE WHEN COALESCE(lp.device_fix_time,lp.event_time,lp.received_at,
-                         (SELECT MAX(fc.last_observed_at) FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active')) IS NULL THEN 'none'
-            WHEN EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at,
-                         (SELECT MAX(fc.last_observed_at) FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active')))) <= 120 THEN 'live'
-            WHEN EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at,
-                         (SELECT MAX(fc.last_observed_at) FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active')))) <= 900 THEN 'delayed'
+       CASE WHEN diagnostic_evidence.observed_at IS NULL THEN 'none'
+            WHEN EXTRACT(EPOCH FROM (NOW()-diagnostic_evidence.observed_at)) <= 120 THEN 'live'
+            WHEN EXTRACT(EPOCH FROM (NOW()-diagnostic_evidence.observed_at)) <= 900 THEN 'delayed'
             ELSE 'stale' END position_freshness",
             _ => ", 0 active_fault_count",
         };
@@ -18876,18 +18872,10 @@ SELECT e.id, e.device_serial, e.imei, e.device_category, e.device_model, e.provi
          OR EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) > 900
          OR e.status IN ('Suspended','Malfunction')) attention",
             "diagnostics" => @"COUNT(*) active,0 archived,
-       COUNT(*) FILTER (WHERE (lp.engine_status IS NULL AND lp.odometer_miles IS NULL AND lp.fuel_level IS NULL AND lp.battery_voltage IS NULL
-             AND NOT EXISTS (SELECT 1 FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active'))
-         OR COALESCE(lp.device_fix_time,lp.event_time,lp.received_at,
-              (SELECT MAX(fc.last_observed_at) FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active')) IS NULL
-         OR EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at,
-              (SELECT MAX(fc.last_observed_at) FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active')))) > 900) offline,
-       COUNT(*) FILTER (WHERE (lp.engine_status IS NULL AND lp.odometer_miles IS NULL AND lp.fuel_level IS NULL AND lp.battery_voltage IS NULL
-             AND NOT EXISTS (SELECT 1 FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active'))
-         OR COALESCE(lp.device_fix_time,lp.event_time,lp.received_at,
-              (SELECT MAX(fc.last_observed_at) FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active')) IS NULL
-         OR EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at,
-              (SELECT MAX(fc.last_observed_at) FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active')))) > 900
+       COUNT(*) FILTER (WHERE diagnostic_evidence.observed_at IS NULL
+         OR EXTRACT(EPOCH FROM (NOW()-diagnostic_evidence.observed_at)) > 900) offline,
+       COUNT(*) FILTER (WHERE diagnostic_evidence.observed_at IS NULL
+         OR EXTRACT(EPOCH FROM (NOW()-diagnostic_evidence.observed_at)) > 900
          OR EXISTS (SELECT 1 FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active')) attention",
             _ => @"COUNT(*) active,0 archived,
        COUNT(*) FILTER (WHERE e.last_seen_at IS NULL OR e.last_seen_at < NOW() - INTERVAL '15 minutes' OR e.status IN ('Suspended','Malfunction')) offline,

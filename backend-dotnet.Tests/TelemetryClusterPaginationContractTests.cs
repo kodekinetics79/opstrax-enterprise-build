@@ -34,6 +34,9 @@ public sealed class TelemetryClusterPaginationContractTests
         Assert.Contains("COALESCE(lp.device_fix_time,lp.event_time,lp.received_at)", source, StringComparison.Ordinal);
         Assert.Contains("LOWER(fc.status)='active')) attention", source, StringComparison.Ordinal);
         Assert.Contains("active_fault_codes", source, StringComparison.Ordinal);
+        Assert.Contains("CASE WHEN lp.engine_status IS NOT NULL OR lp.odometer_miles IS NOT NULL", source, StringComparison.Ordinal);
+        Assert.Contains("GREATEST(", source, StringComparison.Ordinal);
+        Assert.Contains("diagnostic_evidence.observed_at", source, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -50,6 +53,8 @@ public sealed class TelemetryClusterPaginationContractTests
         Assert.Contains("Showing {(page - 1) * pageSize + 1}", page, StringComparison.Ordinal);
         Assert.Contains(">Previous</button>", page, StringComparison.Ordinal);
         Assert.Contains(">Next</button>", page, StringComparison.Ordinal);
+        Assert.Contains("enabled: Boolean(selected?.deviceId) && !paged", page, StringComparison.Ordinal);
+        Assert.Contains("detail?: DeviceDetailRecord", page, StringComparison.Ordinal);
     }
 
     [Theory]

@@ -235,7 +235,10 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
   const detailQ = useQuery({
     queryKey: ["telematics-cluster-detail", kind, selected?.deviceId],
     queryFn: () => telematicsService.getDeviceById(String(selected?.deviceId)),
-    enabled: Boolean(selected?.deviceId),
+    // GPS/diagnostics rows already came from the dedicated, permission-gated
+    // cluster projection. Do not over-fetch the generic device/location/fault
+    // detail feeds, whose broader permissions are intentionally different.
+    enabled: Boolean(selected?.deviceId) && !paged,
     staleTime: 20_000,
   });
 
@@ -526,9 +529,9 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
         <div className="fixed inset-0 z-50 flex justify-end bg-black/55 backdrop-blur-sm" onClick={() => setSelected(null)}>
           <aside className="h-full w-full max-w-5xl overflow-y-auto border-l border-white/[0.09] bg-slate-950 p-6 shadow-2xl" onClick={(event) => event.stopPropagation()}>
             <button className="float-right icon-btn" aria-label="Close telematics details" onClick={() => setSelected(null)}><X className="h-4 w-4" /></button>
-            {detailQ.isLoading ? (
+            {!paged && detailQ.isLoading ? (
               <LoadingState />
-            ) : detailQ.isError || !detailQ.data ? (
+            ) : !paged && (detailQ.isError || !detailQ.data) ? (
               <ErrorState message="Unable to load telematics detail." />
             ) : (
               <TelematicsDetailDrawer
@@ -557,14 +560,14 @@ function TelematicsDetailDrawer({
 }: {
   kind: TelematicsKind;
   row: TelematicsClusterRecord;
-  detail: DeviceDetailRecord;
+  detail?: DeviceDetailRecord;
   canUpdate: boolean;
   onRefresh: () => void;
   onMaintenance: () => void;
 }) {
-  const latestDiagnostic = detail.diagnostics[0];
-  const latestSensor = detail.sensorReadings[0];
-  const latestHealth = detail.healthEvents[0];
+  const latestDiagnostic = detail?.diagnostics[0];
+  const latestSensor = detail?.sensorReadings[0];
+  const latestHealth = detail?.healthEvents[0];
   return (
     <>
       <p className="section-title text-teal-300">{kind === "gps-tracking" ? "GPS Detail" : kind === "obd-j1939" ? "Diagnostics Detail" : "Sensor Detail"}</p>
@@ -640,7 +643,14 @@ function TelematicsDetailDrawer({
       <div className="mt-6 panel p-5">
         <p className="section-title">Field Notes</p>
         <div className="mt-4 grid gap-3 md:grid-cols-3">
-          <ContextCard title="Latest diagnostic" body={latestDiagnostic ? `${latestDiagnostic.result} · ${latestDiagnostic.faultCode}` : "No diagnostics captured for this unit yet."} />
+          <ContextCard
+            title="Latest diagnostic"
+            body={latestDiagnostic
+              ? `${latestDiagnostic.result} · ${latestDiagnostic.faultCode}`
+              : row.troubleCodes.length
+                ? `Active fault codes: ${row.troubleCodes.join(", ")}`
+                : "No diagnostics captured for this unit yet."}
+          />
           <ContextCard title="Latest sensor reading" body={latestSensor ? `${latestSensor.temperature ?? latestSensor.tirePressure ?? latestSensor.fuelLevel ?? "No reading"} · ${latestSensor.recordedAt}` : "No sensor reading captured for this unit yet."} />
           <ContextCard title="Recommended action" body={row.recommendedAction} />
         </div>
