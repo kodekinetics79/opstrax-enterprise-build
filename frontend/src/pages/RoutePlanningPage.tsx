@@ -166,6 +166,7 @@ function RouteModal({ title, initial, saving, serverError, onClearError, onClose
 }) {
   const [form, setForm] = useState<AnyRecord>(() => routeFormForDisplay(initial));
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  const [plainDateTimeEntry, setPlainDateTimeEntry] = useState(false);
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const prepared = prepareRouteForm(form);
@@ -179,7 +180,7 @@ function RouteModal({ title, initial, saving, serverError, onClearError, onClose
     setForm((current) => ({ ...current, [key]: value }));
   };
   const errors = validationErrors.length > 0 ? validationErrors : serverError ? [serverError] : [];
-  const typeFor = (key: string) => /start|end/i.test(key) ? "datetime-local" : /cost/i.test(key) ? "number" : "text";
+  const typeFor = (key: string) => /start|end/i.test(key) ? (plainDateTimeEntry ? "text" : "datetime-local") : /cost/i.test(key) ? "number" : "text";
 
   return <div className="fixed inset-0 z-[60] grid place-items-center bg-black/60 p-4">
     <form role="dialog" aria-modal="true" aria-labelledby="route-modal-title" aria-describedby={errors.length ? "route-form-errors" : undefined} className="panel max-h-[90vh] w-full max-w-3xl overflow-y-auto p-6" onSubmit={submit} noValidate>
@@ -193,11 +194,18 @@ function RouteModal({ title, initial, saving, serverError, onClearError, onClose
           <ul className="mt-1 list-disc space-y-1 pl-5">{errors.map((error) => <li key={error}>{error}</li>)}</ul>
         </div>
       ) : null}
+      <label className="mt-5 flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+        <input type="checkbox" className="mt-1" checked={plainDateTimeEntry} onChange={(event) => setPlainDateTimeEntry(event.target.checked)} />
+        <span><strong>Use plain date/time entry</strong><span className="mt-0.5 block text-xs text-slate-500">Accessible fallback for browsers or assistive tools that cannot operate the native picker. Enter YYYY-MM-DDTHH:MM; the same validation and UTC conversion apply.</span></span>
+      </label>
       <div className="mt-6 grid gap-4 md:grid-cols-2">
         {routeFields.map(([key, label]) => <Field key={key} label={label}>
           <input
+            id={`route-${key}`}
             className="field"
             type={typeFor(key)}
+            inputMode={plainDateTimeEntry && /start|end/i.test(key) ? "text" : undefined}
+            placeholder={plainDateTimeEntry && /start|end/i.test(key) ? "2026-08-26T09:00" : undefined}
             step={key === "costEstimate" ? "any" : /start|end/i.test(key) ? "1" : undefined}
             min={key === "costEstimate" ? "0" : undefined}
             value={String(form[key] ?? "")}

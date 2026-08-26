@@ -98,22 +98,20 @@ public sealed class TenantScope : IAsyncDisposable
 public sealed class Database(IConfiguration configuration, TenantScopeAccessor? scopes = null)
 {
     // Credentials are environment-only — never hard-coded in appsettings.json.
-    // Production resolution is explicit: ConnectionStrings:DefaultConnection or
+    // Protected-environment resolution is explicit: ConnectionStrings:DefaultConnection or
     // PG_CONNECTION_APP. The legacy PG_CONNECTION fallback is non-production only.
     private readonly string _connectionString =
         ResolveAppConnection(configuration)
         ?? throw new InvalidOperationException(
             "Application database connection string is not configured. Set ConnectionStrings__DefaultConnection or PG_CONNECTION_APP.");
 
-    private readonly bool _productionRls =
+    private readonly bool _protectedRls =
         configuration.GetValue<bool>("Rls:EnforceTenantContext") &&
-        string.Equals(
-            configuration["ASPNETCORE_ENVIRONMENT"] ?? configuration["DOTNET_ENVIRONMENT"] ?? configuration["Environment"],
-            "Production", StringComparison.OrdinalIgnoreCase);
+        IsProtectedEnvironment(configuration["ASPNETCORE_ENVIRONMENT"] ?? configuration["DOTNET_ENVIRONMENT"] ?? configuration["Environment"]);
 
     // Cross-tenant bootstrap, platform, public-token and background work uses a
     // physically separate pool and the narrowly-granted opstrax_system login. In
-    // Production+RLS this value is mandatory and NEVER falls back to the app pool.
+    // Production/Staging+RLS this value is mandatory and NEVER falls back to the app pool.
     // Non-production retains the one-identity fallback so local schema tools and the
     // existing owner-backed integration tests keep working without production secrets.
     private readonly string? _systemConnectionString = ResolveSystemConnection(configuration);
@@ -152,11 +150,9 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
             config.GetConnectionString("DefaultConnection"),
             config["PG_CONNECTION_APP"],
             Environment.GetEnvironmentVariable("PG_CONNECTION_APP"));
-        var productionRls = config.GetValue<bool>("Rls:EnforceTenantContext") &&
-            string.Equals(
-                config["ASPNETCORE_ENVIRONMENT"] ?? config["DOTNET_ENVIRONMENT"] ?? config["Environment"],
-                "Production", StringComparison.OrdinalIgnoreCase);
-        return productionRls
+        var protectedRls = config.GetValue<bool>("Rls:EnforceTenantContext") &&
+            IsProtectedEnvironment(config["ASPNETCORE_ENVIRONMENT"] ?? config["DOTNET_ENVIRONMENT"] ?? config["Environment"]);
+        return protectedRls
             ? explicitApp
             : Coalesce(explicitApp, config["PG_CONNECTION"], Environment.GetEnvironmentVariable("PG_CONNECTION"));
     }
@@ -167,15 +163,17 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
             config.GetConnectionString("SystemConnection"),
             config["PG_CONNECTION_SYSTEM"],
             Environment.GetEnvironmentVariable("PG_CONNECTION_SYSTEM"));
-        var productionRls = config.GetValue<bool>("Rls:EnforceTenantContext") &&
-            string.Equals(
-                config["ASPNETCORE_ENVIRONMENT"] ?? config["DOTNET_ENVIRONMENT"] ?? config["Environment"],
-                "Production", StringComparison.OrdinalIgnoreCase);
-        if (productionRls && string.IsNullOrWhiteSpace(explicitSystem))
+        var protectedRls = config.GetValue<bool>("Rls:EnforceTenantContext") &&
+            IsProtectedEnvironment(config["ASPNETCORE_ENVIRONMENT"] ?? config["DOTNET_ENVIRONMENT"] ?? config["Environment"]);
+        if (protectedRls && string.IsNullOrWhiteSpace(explicitSystem))
             throw new InvalidOperationException(
-                "System database connection string is required in Production with RLS. Set ConnectionStrings__SystemConnection or PG_CONNECTION_SYSTEM.");
+                "System database connection string is required in Production or Staging with RLS. Set ConnectionStrings__SystemConnection or PG_CONNECTION_SYSTEM.");
         return explicitSystem;
     }
+
+    private static bool IsProtectedEnvironment(string? environment) =>
+        string.Equals(environment, "Production", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(environment, "Staging", StringComparison.OrdinalIgnoreCase);
 
     private static int ResolveTenantTicketTtl(IConfiguration config)
     {
@@ -288,12 +286,12 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
         => await OpenWithRetryAsync(_connectionString, ct);
 
     /// <summary>
-    /// Opens the isolated system pool. Production+RLS never aliases or falls back to
+    /// Opens the isolated system pool. Production/Staging+RLS never aliases or falls back to
     /// the application identity; local/test environments may use the app connection.
     /// </summary>
     public async Task<NpgsqlConnection> OpenSystemAsync(CancellationToken ct = default)
     {
-        if (_productionRls && string.IsNullOrWhiteSpace(_systemConnectionString))
+        if (_protectedRls && string.IsNullOrWhiteSpace(_systemConnectionString))
             throw new InvalidOperationException("System database identity is unavailable.");
         return await OpenWithRetryAsync(_systemConnectionString ?? _connectionString, ct);
     }

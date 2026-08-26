@@ -96,6 +96,9 @@ assert.equal(apiErrorMessage(new Error("Request failed with status code 400"), "
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const jobsPage = readFileSync(resolve(root, "src/pages/JobsPage.tsx"), "utf8");
 const routePage = readFileSync(resolve(root, "src/pages/RoutePlanningPage.tsx"), "utf8");
+const pilotPage = readFileSync(resolve(root, "src/pages/platform/PlatformProductPilotPage.tsx"), "utf8");
+const platformApp = readFileSync(resolve(root, "src/pages/platform/PlatformApp.tsx"), "utf8");
+const platformShell = readFileSync(resolve(root, "src/layouts/PlatformShell.tsx"), "utf8");
 assert.match(jobsPage, /<select[\s\S]*id="job-customer-selector"[\s\S]*Select an active customer/);
 assert.doesNotMatch(jobsPage, /\["customerId",\s*"Customer ID"\]/);
 assert.match(jobsPage, /No active customers are available/);
@@ -108,5 +111,13 @@ assert.match(routePage, /prepareRouteForm\(form\)/);
 assert.match(routePage, /routeFormForDisplay\(initial\)/);
 assert.match(routePage, /id="route-form-errors" role="alert"/);
 assert.match(routePage, /serverError=\{save\.error \? apiErrorMessage/);
+assert.match(routePage, /Use plain date\/time entry/);
+assert.match(routePage, /plainDateTimeEntry \? "text" : "datetime-local"/);
+assert.match(pilotPage, /CERT-LARGE-20260825/);
+assert.match(pilotPage, /No SQL seeding · No telemetry simulation/);
+assert.match(pilotPage, /apiErrorMessage\(error, "The pilot action could not be completed safely\."\)/);
+assert.match(pilotPage, /apiErrorMessage\(query\.error, "Pilot readiness could not be loaded safely\."\)/);
+assert.match(platformApp, /permission="platform:pilot:run" requireProductPilot/);
+assert.match(platformShell, /productPilotAvailable === true/);
 
 console.log("Live Operations create-journey behavior contract passed.");
