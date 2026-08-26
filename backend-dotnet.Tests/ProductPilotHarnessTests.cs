@@ -44,6 +44,9 @@ public sealed class ProductPilotHarnessTests
         Assert.Contains("platform:pilot:run", source, StringComparison.Ordinal);
         Assert.Contains("FOR UPDATE", source, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("RunInSystemTransactionAsync", source, StringComparison.Ordinal);
+        Assert.Contains("WHERE c.name=@identifier", source, StringComparison.Ordinal);
+        Assert.Contains("(SELECT COUNT(*) FROM companies WHERE name=@identifier)=1", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("WHERE company_code=@code", source, StringComparison.Ordinal);
 
         var migration = Read("database", "migrations", "2026_08_26_stage90_product_pilot_permission.sql");
         Assert.Contains("platform:pilot:run", migration, StringComparison.Ordinal);
