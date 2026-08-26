@@ -88,6 +88,7 @@ These are explicit certification blockers, not permission to start Module 2. Mod
 ## Artifact index
 
 - Input files and hashes: `module1-input-manifest.md` and `input/`
+- Special controlled-workflow fixtures: `controlled-workflows/`
 - Chrome evidence: `chrome/`
 - Role/journey matrix: `module1-role-journey-matrix.md`
 - Defect/fix/retest ledger: `module1-defect-fix-retest-ledger.md`

@@ -19,7 +19,7 @@ Visible Chrome screenshots currently present locally: **338 PNG files**
 
 ## Data artifacts present
 
-The input directory now contains 37 files, including governed CSV inputs, product-generated one-time device credential downloads, and a safe certification document fixture:
+The artifact pack contains 37 input/workflow files, including governed CSV inputs, the separately stored custody-conflict fixture, product-generated one-time device credential downloads, and a safe certification document fixture:
 
 - 20 valid branch batches totaling 1,000 vehicles, 1,250 drivers, 1,100 devices, and 300 returnable assets;
 - eight controlled invalid/duplicate files (one invalid and one duplicate file per entity);
