@@ -12,6 +12,7 @@ import { jobsApi } from "@/services/jobsApi";
 import { useAuth } from "@/hooks/useAuth";
 import { useHasDirectPermission, useHasPermission } from "@/hooks/usePermission";
 import type { AnyRecord } from "@/types";
+import { fleetQueryFingerprint, resolveFleetQueryPresentation } from "@/utils/fleetQueryPresentation";
 
 // Vehicle movement status is derived from real vehicle + telemetry fields. We do NOT
 // fabricate GPS speed/location — where live telemetry is absent we show honest blanks.
@@ -146,17 +147,34 @@ export function FleetOverviewPage() {
     return () => window.clearTimeout(timer);
   }, [searchInput]);
 
+  const requestFingerprint = fleetQueryFingerprint({
+    page, pageSize, search, status: tab, sort, order: sortOrder,
+  });
   const vehiclesQ = useQuery({
-    queryKey: ["fleet-overview-vehicles", page, pageSize, search, tab, sort, sortOrder],
-    queryFn: () => vehiclesApi.fleetOverview({ page, pageSize, search, status: tab, sort, order: sortOrder }),
+    queryKey: ["fleet-overview-vehicles", requestFingerprint],
+    queryFn: async (): Promise<AnyRecord & { queryFingerprint: string }> => {
+      const response = await vehiclesApi.fleetOverview({ page, pageSize, search, status: tab, sort, order: sortOrder });
+      return { ...response, queryFingerprint: requestFingerprint };
+    },
     refetchInterval: 30_000,
     enabled: canViewVehicles,
   });
   const alertsQ   = useQuery({ queryKey: ["fleet-overview-alerts"],   queryFn: () => alertsApi.list(),  refetchInterval: 60_000, enabled: canViewAlerts });
   const jobsQ     = useQuery({ queryKey: ["fleet-overview-jobs"],     queryFn: () => jobsApi.summary(), refetchInterval: 60_000, enabled: canViewJobs });
 
+  const fleetPresentation = resolveFleetQueryPresentation({
+    rawSearch: searchInput,
+    appliedSearch: search,
+    requestFingerprint,
+    responseFingerprint: vehiclesQ.data?.queryFingerprint as string | undefined,
+    hasData: Boolean(vehiclesQ.data),
+    isFetching: vehiclesQ.isFetching,
+  });
+  const isFleetSettling = fleetPresentation === "settling";
+  const visibleFleetData = fleetPresentation === "rows" ? vehiclesQ.data : undefined;
+
   const fleet: FleetRow[] = useMemo(() => {
-    const rows = ((vehiclesQ.data?.items ?? []) as AnyRecord[]);
+    const rows = ((visibleFleetData?.items ?? []) as AnyRecord[]);
     return rows.map((v) => ({
       id:          String(v.vehicleCode ?? v.id),
       vehicleId:   String(v.id),
@@ -170,7 +188,7 @@ export function FleetOverviewPage() {
       readiness:   Number(v.readiness ?? v.readinessScore ?? v.fleetReadinessScore ?? 0),
       flag:        v.flag ? String(v.flag) : deriveFlag(v),
     }));
-  }, [vehiclesQ.data]);
+  }, [visibleFleetData]);
 
   const summary = (vehiclesQ.data?.summary ?? {}) as AnyRecord;
   const counts = {
@@ -333,6 +351,8 @@ export function FleetOverviewPage() {
                 value={searchInput}
                 onChange={(event) => setSearchInput(event.target.value)}
                 placeholder="Search vehicle or driver"
+                aria-controls="fleet-roster"
+                aria-describedby={isFleetSettling ? "fleet-query-status" : undefined}
                 className="h-9 w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 text-xs text-slate-700 outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
               />
             </label>
@@ -362,7 +382,11 @@ export function FleetOverviewPage() {
           </div>
 
           <div className="deck-bezel mx-3 flex min-h-0 flex-1 flex-col">
-            <div className="deck-screen min-h-0 flex-1 overflow-auto">
+            <div
+              id="fleet-roster"
+              className="deck-screen min-h-0 flex-1 overflow-auto"
+              aria-busy={isFleetSettling || vehiclesQ.isFetching}
+            >
               <table className="w-full text-sm">
                 <thead className="sticky top-0 z-10 bg-[#fcfdff]">
                   <tr className="border-b border-slate-200/80">
@@ -440,7 +464,15 @@ export function FleetOverviewPage() {
                 </tbody>
               </table>
 
-              {filtered.length === 0 && (
+              {isFleetSettling && (
+                <div id="fleet-query-status" role="status" aria-live="polite" className="py-12 text-center">
+                  <Activity className="mx-auto h-8 w-8 animate-pulse text-teal-500" />
+                  <p className="mt-2 text-sm font-semibold text-slate-600">Updating fleet view…</p>
+                  <p className="mt-1 text-xs text-slate-400">Applying search, filter, and sort changes.</p>
+                </div>
+              )}
+
+              {!isFleetSettling && filtered.length === 0 && (
                 <div className="py-12 text-center">
                   <Radio className="mx-auto h-8 w-8 text-slate-300" />
                   <p className="mt-2 text-sm font-semibold text-slate-500">
@@ -454,7 +486,9 @@ export function FleetOverviewPage() {
           {/* Instrument strip */}
           <div className="flex shrink-0 flex-wrap items-center gap-x-5 gap-y-2 px-5 py-3 text-[11.5px] font-semibold text-slate-500">
             <span className="tabular-nums">
-              {selectedTotal > 0 ? `${(displayPage - 1) * pageSize + 1}–${Math.min(displayPage * pageSize, selectedTotal)}` : "0"} of {selectedTotal} vehicles
+              {isFleetSettling
+                ? "Updating fleet view…"
+                : `${selectedTotal > 0 ? `${(displayPage - 1) * pageSize + 1}–${Math.min(displayPage * pageSize, selectedTotal)}` : "0"} of ${selectedTotal} vehicles`}
             </span>
             <span className="inline-flex items-center gap-2">
               <span className="deck-led deck-led-emerald" />
@@ -474,19 +508,19 @@ export function FleetOverviewPage() {
               <button
                 type="button"
                 className="btn-ghost h-8 px-3 text-xs"
-                disabled={displayPage <= 1 || vehiclesQ.isFetching}
+                disabled={displayPage <= 1 || vehiclesQ.isFetching || isFleetSettling}
                 onClick={() => setPage(Math.max(1, displayPage - 1))}
                 aria-label="Previous fleet page"
               >
                 Previous
               </button>
               <span className="min-w-[76px] text-center tabular-nums" aria-live="polite">
-                Page {pageCount === 0 ? 0 : displayPage} of {pageCount}
+                {isFleetSettling ? "Updating…" : `Page ${pageCount === 0 ? 0 : displayPage} of ${pageCount}`}
               </span>
               <button
                 type="button"
                 className="btn-ghost h-8 px-3 text-xs"
-                disabled={pageCount === 0 || displayPage >= pageCount || vehiclesQ.isFetching}
+                disabled={pageCount === 0 || displayPage >= pageCount || vehiclesQ.isFetching || isFleetSettling}
                 onClick={() => setPage(Math.min(pageCount, displayPage + 1))}
                 aria-label="Next fleet page"
               >
