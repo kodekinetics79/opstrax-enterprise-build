@@ -128,7 +128,14 @@ public sealed class Module1ExportPostgresTests
     private static string Csv(IResult result)
     {
         Assert.Equal("text/csv", Assert.IsAssignableFrom<IContentTypeHttpResult>(result).ContentType);
-        var bytes = Assert.IsType<byte[]>(result.GetType().GetProperty("FileContents")!.GetValue(result));
+        var contents = result.GetType().GetProperty("FileContents")!.GetValue(result);
+        var bytes = contents switch
+        {
+            byte[] value => value,
+            ReadOnlyMemory<byte> value => value.ToArray(),
+            _ => throw new Xunit.Sdk.XunitException(
+                $"Unexpected CSV file content representation: {contents?.GetType().FullName ?? "null"}")
+        };
         return Encoding.UTF8.GetString(bytes).Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 
