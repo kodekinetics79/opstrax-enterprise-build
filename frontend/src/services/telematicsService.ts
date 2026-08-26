@@ -194,6 +194,21 @@ export type DevicePageResult = {
   summary: { active: number; archived: number; offline: number; attention: number };
 };
 
+export type TelemetryClusterPageOptions = {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  view?: string;
+};
+
+export type TelemetryClusterPageResult = {
+  items: TelematicsClusterRecord[];
+  total: number;
+  page: number;
+  pageSize: number;
+  summary: { active: number; offline: number; attention: number };
+};
+
 // ── Wire-format normalization ─────────────────────────────────────────────────────────
 // The .NET API returns db.QueryAsync rows whose SQL aliases are camel-cased by
 // Data/Database.cs (ToCamel: device_serial -> deviceSerial, row_version -> rowVersion, …),
@@ -926,7 +941,12 @@ function positionForDevice(device: DeviceCommandRecord, positions: AnyRecord[]):
 
 // Build a cluster row from a real device + its real live position + real fault codes.
 // Every value is either a live field or an honest "—"/empty marker — no fake defaults.
-function toClusterRecord(device: DeviceCommandRecord, positions: AnyRecord[], faultRows: AnyRecord[]): TelematicsClusterRecord {
+function toClusterRecord(
+  device: DeviceCommandRecord,
+  positions: AnyRecord[],
+  faultRows: AnyRecord[],
+  evidenceKind: "position" | "diagnostics" = "position",
+): TelematicsClusterRecord {
   const position = positionForDevice(device, positions);
   const deviceFaults = faultRows.filter((fault) => String(fault.device_id ?? "") === device.serialNumber);
   const troubleCodes = deviceFaults.map((fault) => {
@@ -949,13 +969,16 @@ function toClusterRecord(device: DeviceCommandRecord, positions: AnyRecord[], fa
   const positionAvailable = isValidPosition(position);
   const serverFreshness = String(position?.freshness ?? "").toLowerCase();
   const isStalePosition = position ? String(position.is_stale) === "1" || serverFreshness === "stale" : false;
-  const offlineWarning = /offline/i.test(device.connectionStatus) || isStalePosition;
   const deviceFixAt = position?.device_fix_time ?? position?.event_time;
   const gatewayReceivedAt = position?.gateway_received_at;
   const lastPingAt = deviceFixAt ? String(deviceFixAt) : device.lastCheckIn;
   const engineStatus = position?.engine_status ? String(position.engine_status) : "—";
   const hasEngineEvidence = troubleCodes.length > 0 || [position?.engine_status, position?.odometer_miles, position?.fuel_level, position?.battery_voltage].some((value) => value != null && String(value).trim() !== "");
-  const dataFreshnessStatus = !positionAvailable
+  const requiredEvidenceAvailable = evidenceKind === "diagnostics" ? hasEngineEvidence : positionAvailable;
+  // GPS and diagnostics have different evidence contracts. A vehicle-level fix is
+  // never substituted for a source device's own evidence by the API.
+  const offlineWarning = /offline/i.test(device.connectionStatus) || isStalePosition || !requiredEvidenceAvailable;
+  const dataFreshnessStatus = !requiredEvidenceAvailable
     ? "No data"
     : offlineWarning
       ? "Stale"
@@ -1216,6 +1239,76 @@ export const telematicsService = {
       summary: {
         active: Number(summary.active ?? 0),
         archived: Number(summary.archived ?? 0),
+        offline: Number(summary.offline ?? 0),
+        attention: Number(summary.attention ?? 0),
+      },
+    };
+  },
+
+  async getTelemetryClusterPage(
+    kind: "gps-tracking" | "obd-j1939",
+    options: TelemetryClusterPageOptions = {},
+  ): Promise<TelemetryClusterPageResult> {
+    const session = getSession();
+    const payload = await unwrap<{
+      items: AnyRecord[];
+      total: number;
+      page: number;
+      pageSize: number;
+      summary?: AnyRecord;
+    }>(apiClient.get("/api/telemetry/devices/page", {
+      params: {
+        page: options.page ?? 1,
+        pageSize: Math.min(100, Math.max(1, options.pageSize ?? 50)),
+        search: options.search?.trim() || undefined,
+        view: options.view ?? "all",
+        cluster: kind === "obd-j1939" ? "diagnostics" : "gps",
+        sort: "serial",
+        direction: "asc",
+      },
+    }));
+    const normalized = (payload.items ?? []).map(normalizeKeys);
+    const positions = normalized
+      .filter((row) => kind === "obd-j1939"
+        ? row.position_event_time != null || row.position_device_fix_time != null
+        : row.position_lat != null && row.position_lng != null)
+      .map((row) => ({
+        device_id: row.id,
+        vehicle_id: row.vehicle_id,
+        lat: row.position_lat,
+        lng: row.position_lng,
+        speed_mph: row.position_speed_mph,
+        heading: row.position_heading,
+        accuracy_meters: row.position_accuracy_meters,
+        engine_status: row.position_engine_status,
+        odometer_miles: row.position_odometer_miles,
+        fuel_level: row.position_fuel_level,
+        battery_voltage: row.position_battery_voltage,
+        event_time: row.position_event_time,
+        address: row.position_address,
+        source: row.position_source,
+        provider: row.position_provider,
+        protocol: row.position_protocol,
+        confidence: row.position_confidence,
+        device_fix_time: row.position_device_fix_time,
+        gateway_received_at: row.position_gateway_received_at,
+        freshness: row.position_freshness,
+        is_stale: row.position_freshness === "stale" ? "1" : "0",
+      }));
+    const faults = normalized.flatMap((row) => String(row.active_fault_codes ?? "")
+      .split(",")
+      .map((code) => code.trim())
+      .filter(Boolean)
+      .map((code) => ({ device_id: row.device_serial, code })));
+    const devices = normalized.map((row) => mapDeviceRow(row, new Map(), new Map(), session));
+    const summary = normalizeKeys(payload.summary ?? {});
+    return {
+      items: devices.map((device) => toClusterRecord(device, positions, faults, kind === "obd-j1939" ? "diagnostics" : "position")),
+      total: Number(payload.total ?? 0),
+      page: Number(payload.page ?? 1),
+      pageSize: Number(payload.pageSize ?? 50),
+      summary: {
+        active: Number(summary.active ?? 0),
         offline: Number(summary.offline ?? 0),
         attention: Number(summary.attention ?? 0),
       },
