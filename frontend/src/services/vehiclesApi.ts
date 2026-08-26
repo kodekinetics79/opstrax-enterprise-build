@@ -6,6 +6,8 @@ export const vehiclesApi = {
   list: () => getVehicles("active"),
   listArchived: () => getVehicles("archived"),
   listPaged: (opts?: { limit?: number; offset?: number; search?: string; lifecycle?: "active" | "archived" }) => apiPaged(`/api/vehicles?lifecycle=${opts?.lifecycle ?? "active"}`, opts),
+  fleetOverview: (opts: { page: number; pageSize?: number; search?: string; status?: string; sort?: string; order?: "asc" | "desc" }) =>
+    unwrap<AnyRecord>(apiClient.get("/api/live-operations/fleet-overview", { params: opts })),
   // Use the tenant-wide aggregate endpoint. The list endpoint is paged (500 rows by
   // default), so deriving these KPIs from getVehicles() under-counted larger fleets.
   // DataReaderExtensions camel-cases the SQL aliases, preserving the shape consumed
