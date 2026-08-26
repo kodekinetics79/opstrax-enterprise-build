@@ -366,8 +366,8 @@ public static class PlatformEndpoints
         }, "Platform login successful"));
     }
 
-    private static Task<IResult> PlatformMe(HttpContext http, Database db, CancellationToken ct)
-        => PlatformMeCore(http, db, null, null, ct);
+    private static async Task<IResult> PlatformMe(HttpContext http, Database db, CancellationToken ct)
+        => await PlatformMeCore(http, db, null, null, ct);
 
     private static Task<IResult> PlatformMeWithConfig(HttpContext http, Database db, IHostEnvironment environment, IConfiguration configuration, CancellationToken ct)
         => PlatformMeCore(http, db, environment, configuration, ct);
