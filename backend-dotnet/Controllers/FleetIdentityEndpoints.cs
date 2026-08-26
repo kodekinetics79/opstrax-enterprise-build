@@ -587,6 +587,12 @@ public static partial class EndpointMappings
         {
             return Results.Conflict(ApiResponse<object>.Fail("Target installation conflicts with an active device or primary vehicle role"));
         }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.InsufficientPrivilege)
+        {
+            return Results.Json(
+                ApiResponse<object>.Fail("Transfer could not verify attributed telemetry; no installation changes were saved"),
+                statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
     }
 
     private static Task<long> DeviceVisibleAsync(Database db, long companyId, long? branchId, long deviceId, CancellationToken ct) =>
@@ -610,14 +616,12 @@ public static partial class EndpointMappings
         db.ScalarLongAsync("SELECT COUNT(*) FROM vehicles WHERE id=@id AND company_id=@cid AND deleted_at IS NULL AND (@branch::bigint IS NULL OR branch_id=@branch)",
             c => { c.Parameters.AddWithValue("@id", vehicleId); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branch", (object?)branchId ?? DBNull.Value); }, ct);
 
-    private static Task<long> InstallationHasEventAtOrAfterAsync(
-        Database db, long companyId, long installationId, DateTimeOffset effectiveTo, CancellationToken ct) =>
-        db.ScalarLongAsync(
+    private static async Task<long> InstallationHasEventAtOrAfterAsync(
+        Database db, long companyId, long installationId, DateTimeOffset effectiveTo, CancellationToken ct)
+    {
+        var locationEvent = await db.ScalarLongAsync(
             @"SELECT CASE WHEN EXISTS (
                    SELECT 1 FROM location_events
-                    WHERE company_id=@cid AND installation_id=@iid AND event_time>=@effective
-                 ) OR EXISTS (
-                   SELECT 1 FROM canonical_telemetry_events
                     WHERE company_id=@cid AND installation_id=@iid AND event_time>=@effective
                  ) THEN 1 ELSE 0 END",
             c =>
@@ -626,6 +630,24 @@ public static partial class EndpointMappings
                 c.Parameters.AddWithValue("@iid", installationId);
                 c.Parameters.AddWithValue("@effective", effectiveTo);
             }, ct);
+        if (locationEvent != 0) return 1;
+
+        // Stage76 intentionally keeps canonical telemetry system-only: the tenant
+        // application role may not read raw canonical event rows. Perform only the
+        // minimum boolean attribution check through the independently authenticated
+        // system lane, retaining the explicit company + installation predicates.
+        return await db.RunInSystemScopeAsync(() => db.ScalarLongAsync(
+            @"SELECT CASE WHEN EXISTS (
+                   SELECT 1 FROM canonical_telemetry_events
+                    WHERE company_id=@cid AND installation_id=@iid AND event_time>=@effective
+                 ) THEN 1 ELSE 0 END",
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid", companyId);
+                c.Parameters.AddWithValue("@iid", installationId);
+                c.Parameters.AddWithValue("@effective", effectiveTo);
+            }, ct), ct);
+    }
 
     private static async Task<IResult> DeviceInstallationQuarantineList(
         HttpContext http, Database db, CancellationToken ct)

@@ -197,6 +197,63 @@ public sealed class FleetIdentityInstallationPostgresTests
     }
 
     [Fact]
+    public async Task RuntimeAppRoleTransfersWithoutCanonicalTelemetryPrivilegeUsingSystemEvidenceLane()
+    {
+        var owner = Db();
+        var runtime = Db(TestDb.AppConnectionString, true, TestDb.SystemConnectionString);
+        var companyId = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + Random.Shared.Next(950_000, 999_000);
+        await Company(owner, companyId, "RUNTIME-LANE");
+        try
+        {
+            Assert.Equal(0, await owner.ScalarLongAsync(
+                "SELECT CASE WHEN has_table_privilege('opstrax_app','canonical_telemetry_events','SELECT') THEN 1 ELSE 0 END"));
+            Assert.Equal(1, await owner.ScalarLongAsync(
+                "SELECT CASE WHEN has_table_privilege('opstrax_system','canonical_telemetry_events','SELECT') THEN 1 ELSE 0 END"));
+
+            var branch = await Branch(owner, companyId, "RUNTIME-LANE");
+            var sourceVehicle = await Vehicle(owner, companyId, branch, $"RUNTIME-A-{companyId}", alternate: $"RUNTIME-MFG-A-{companyId}");
+            var targetVehicle = await Vehicle(owner, companyId, branch, $"RUNTIME-B-{companyId}", alternate: $"RUNTIME-MFG-B-{companyId}");
+            var deviceId = await Device(owner, companyId, $"RUNTIME-DEVICE-{companyId}");
+            var installedAt = DateTimeOffset.UtcNow.AddMinutes(-10);
+            var installationId = await owner.InsertAsync(
+                @"INSERT INTO device_installations
+                    (company_id,branch_id,device_id,vehicle_id,status,device_role,is_primary,effective_from,installed_at,source)
+                  VALUES (@c,@b,@d,@v,'Installed','GPS',TRUE,@at,@at,'test')",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branch);
+                    c.Parameters.AddWithValue("@d", deviceId); c.Parameters.AddWithValue("@v", sourceVehicle);
+                    c.Parameters.AddWithValue("@at", installedAt);
+                });
+
+            // Execute with the same split identities used in production. The app role
+            // performs the tenant mutation while the system role returns only the
+            // bounded canonical-event existence result.
+            var transferred = await Invoke("DeviceInstallationTransfer", Principal(companyId, 42), deviceId,
+                Body("DeviceInstallationTransferBody", targetVehicle, (long?)installationId,
+                    "replace vehicle", "new route", "GPS", true, (DateTimeOffset?)DateTimeOffset.UtcNow.AddSeconds(-1),
+                    "yard bay 2", 49919m, "heartbeat", (int?)1, $"runtime-transfer-{Guid.NewGuid():N}"),
+                runtime, new AuditService(runtime), CancellationToken.None);
+
+            Assert.Equal(StatusCodes.Status200OK, Status(transferred));
+            Assert.Equal(2, await Count(owner, companyId, deviceId));
+            Assert.Equal(targetVehicle, await owner.ScalarLongAsync(
+                "SELECT vehicle_id FROM device_installations WHERE company_id=@c AND device_id=@d AND effective_to IS NULL",
+                c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@d", deviceId); }));
+        }
+        finally
+        {
+            foreach (var sql in new[]
+            {
+                "DELETE FROM audit_logs WHERE company_id=@c", "DELETE FROM device_state_transitions WHERE company_id=@c",
+                "DELETE FROM idempotency_keys WHERE tenant_id=@c", "DELETE FROM device_installations WHERE company_id=@c",
+                "DELETE FROM eld_devices WHERE company_id=@c", "DELETE FROM vehicles WHERE company_id=@c",
+                "DELETE FROM branches WHERE company_id=@c", "DELETE FROM companies WHERE id=@c"
+            }) await owner.ExecuteAsync(sql, c => c.Parameters.AddWithValue("@c", companyId));
+        }
+    }
+
+    [Fact]
     public async Task CompatibilityProjectionUsesMutationTimeWhenTransferStartsAfterTransaction()
     {
         var db = Db();
@@ -565,6 +622,14 @@ public sealed class FleetIdentityInstallationPostgresTests
         c => { c.Parameters.AddWithValue("@c",company); c.Parameters.AddWithValue("@d",device); });
     private static Database Db() => new(new ConfigurationBuilder().AddInMemoryCollection(
         new Dictionary<string,string?> { ["ConnectionStrings:DefaultConnection"] = TestDb.ConnectionString }).Build());
+    private static Database Db(string appConnection, bool rls, string systemConnection) => new(
+        new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string,string?>
+        {
+            ["ConnectionStrings:DefaultConnection"] = appConnection,
+            ["ConnectionStrings:SystemConnection"] = systemConnection,
+            ["Rls:EnforceTenantContext"] = rls.ToString(),
+            ["Rls:TenantTicketTtlSeconds"] = "120"
+        }).Build(), new TenantScopeAccessor());
     private static DefaultHttpContext Principal(long companyId,long userId,string[]? permissions=null)
     {
         var http = new DefaultHttpContext { TraceIdentifier=$"install-{Guid.NewGuid():N}" };
