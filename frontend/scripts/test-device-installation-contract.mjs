@@ -158,6 +158,15 @@ assert.match(apiErrorMessage, /envelope\.message/, "Handled API message envelope
 assert.match(apiErrorMessage, /genericHttpMessage\.test\(text\)/, "Generic Axios status text must not replace a useful customer-safe error");
 assert.match(apiErrorMessage, /stackFrame\.test\(text\)/, "Diagnostic stack frames must never be rendered in the installation modal");
 
+// Expected integration authorization/entitlement denials are a restricted state,
+// not a material device-detail failure and not a reason to issue a known-forbidden request.
+assert.match(service, /export function canReadProviderCatalog\(session:/, "Provider catalog access must be decided from the authenticated session");
+assert.match(service, /session\.entitlements\?\.\["fleet\.integrations"\] === true/, "Provider reads must mirror the backend's exact integration entitlement");
+assert.match(service, /if \(!canReadProviderCatalog\(session\)\) return restrictedProviderAudit\(device\)/, "Restricted device viewers must not call the integrations API");
+assert.doesNotMatch(service, /auditMessage: message \|\| "Integration connector access/, "Provider audit must not render raw Axios errors");
+assert.match(devicesPage, /enabled: canViewProviderCatalog/, "The provider tab query must not issue a known-forbidden request");
+assert.match(devicesPage, /Provider integrations restricted/, "Expected provider restrictions must render as a deliberate restricted state");
+
 // ── DEF-023: destructive lifecycle confirmations must be automatable and accessible ──
 const confirmDialog = readFileSync(resolve(root, "src/components/ConfirmDialog.tsx"), "utf8");
 assert.doesNotMatch(devicesPage, /window\.confirm\(/, "Native window.confirm blocks automation and assistive tech; lifecycle confirmations must use ConfirmDialog");

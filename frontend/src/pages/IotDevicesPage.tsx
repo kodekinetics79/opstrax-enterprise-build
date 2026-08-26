@@ -34,6 +34,7 @@ import { PERMISSIONS } from "@/auth/rbacConfig";
 import { useHasPermission } from "@/hooks/usePermission";
 import { vehiclesApi } from "@/services/vehiclesApi";
 import {
+  canReadProviderCatalog,
   telematicsService,
   type DeviceCommandRecord,
   type DeviceCommissioningInput,
@@ -46,6 +47,7 @@ import {
 } from "@/services/telematicsService";
 import type { AnyRecord } from "@/types";
 import { apiErrorMessage } from "@/utils/apiErrorMessage";
+import { useAuth } from "@/hooks/useAuth";
 
 type DeviceTab =
   | "all"
@@ -464,6 +466,7 @@ export function IotDevicesPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const hasPermission = useHasPermission();
+  const { session } = useAuth();
 
   const canDiagnostics = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_DIAGNOSTICS);
   // Provision, import, revoke/archive, installation, commissioning, suspension,
@@ -482,6 +485,7 @@ export function IotDevicesPage() {
   const canRecover = hasPermission(PERMISSIONS.COMPLIANCE_UPDATE);
   const canExport = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_EXPORT);
   const canManageProviders = hasPermission(PERMISSIONS.TELEMATICS_PROVIDERS_MANAGE);
+  const canViewProviderCatalog = canReadProviderCatalog(session);
 
   const [tab, setTab] = useState<DeviceTab>("all");
   const [search, setSearch] = useState("");
@@ -535,7 +539,12 @@ export function IotDevicesPage() {
     placeholderData: keepPreviousData,
     staleTime: 20_000,
   });
-  const providersQ = useQuery({ queryKey: ["telematics", "providers"], queryFn: telematicsService.getProviders, staleTime: 20_000 });
+  const providersQ = useQuery({
+    queryKey: ["telematics", "providers"],
+    queryFn: telematicsService.getProviders,
+    enabled: canViewProviderCatalog,
+    staleTime: 20_000,
+  });
   const vehiclesQ = useQuery({ queryKey: ["vehicles", "list"], queryFn: vehiclesApi.list, staleTime: 20_000 });
   const quarantineQ = useQuery({
     queryKey: ["telematics", "identity-quarantine"],
@@ -924,7 +933,9 @@ export function IotDevicesPage() {
             </div>
           )
         ) : tab === "providers" ? (
-          providersQ.isLoading ? (
+          !canViewProviderCatalog ? (
+            <EmptyState title="Provider integrations restricted" subtitle="Connector evidence is not available for this role or tenant plan." />
+          ) : providersQ.isLoading ? (
             <LoadingState />
           ) : providersQ.isError ? (
             <ErrorState message="Unable to load provider integrations right now." />
