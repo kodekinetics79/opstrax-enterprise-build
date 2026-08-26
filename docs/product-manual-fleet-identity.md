@@ -22,6 +22,8 @@ Vehicles, drivers, devices, and returnable assets support customer-facing CSV on
 
 Vehicle and driver registers show 100 sorted rows per page after filters are applied. Returnable Assets and Devices also use 100-row server pages, so large fleets do not load every record into the browser at once. Their search, sort, totals, page controls, and exports are calculated by the server across the caller's complete authorized branch scope. Export controls appear only for accounts with the corresponding export or fleet-management permission.
 
+Vehicle exports include branch ownership, class, VIN-exception type, alternate identifier, plate jurisdiction, status, odometer, and device status. Driver exports include branch ownership, licence expiry, safety, readiness, risk, and compliance fields. Driver licence values remain masked in operational exports. Rows are deterministically ordered by customer code, and text that could be interpreted as a spreadsheet formula is neutralized.
+
 Vehicle codes, VINs, driver codes, licence numbers, device serials, IMEIs, and asset tags are validated before commit. Device imports never overwrite an existing hardware identity. A successful device import automatically downloads one-time API and HMAC credentials; store that file securely because the secrets cannot be displayed again.
 
 Before importing assets, create the referenced asset type (for example `TRAILER`) through the Returnable Assets form. The `assetTypeCode` in each CSV row must match a type visible in the importing account’s branch scope.

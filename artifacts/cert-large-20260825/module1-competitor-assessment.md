@@ -2,7 +2,7 @@
 
 Assessment date: 2026-08-26
 Scope: Fleet Identity & Asset Master only
-Latest deployed OpsTrax candidate exercised: `7e98a39d66d67dbd5bb5419602532d7ec1aa23d1`
+Latest deployed OpsTrax candidate exercised: `5d7c16517e2d8a414f698d7382754c4280e241ca`
 
 ## Executive conclusion
 
@@ -12,7 +12,7 @@ The most material competitive gaps are evidence gaps that must be resolved in Ch
 
 1. Controlled device and asset invalid/duplicate behavior is preserved, including atomic rollback of a custody-conflicting asset update; the equivalent vehicle/driver correction cycle remains open.
 2. Five non-admin role logins and representative branch/read-only/direct-URL restrictions passed, but the Customer account remains externally blocked by the unavailable CRM/customer entitlement.
-3. Full-volume asset/device search, sort, pagination, and export passed; full vehicle/driver export artifacts are missing.
+3. Full-volume asset/device search, sort, pagination, and export passed; exact-SHA vehicle and driver exports also reconciled complete branch/governed fields, ordering, uniqueness, and masked licences.
 4. The installed visible-Chrome controller cannot set or verify the four required viewport sizes, and no recording/HAR was produced.
 5. Readiness views were inspected, but the certification data has no linked expiry documents and the separate Maintenance Center package is unavailable.
 6. User onboarding remains form-based; there is no customer-facing user CSV import surface.
@@ -27,7 +27,7 @@ The most material competitive gaps are evidence gaps that must be resolved in Ch
 | Branch/group scoping | Samsara combines roles with tags to restrict access to tagged drivers, vehicles, and devices. Motive supports custom roles and group-bound visibility. Geotab groups organize assets/users and control data access, with site-wide group filtering. Fleetio uses hierarchical groups/subgroups and record-set permissions. | Five branches persist; representative Fleet Manager, Dispatcher, and Maintenance Manager CL-HQ views denied cross-branch searches; Driver and administrative direct URLs were safely restricted. | Representative enforcement is credible; exhaustive per-role/per-entity export-negative coverage remains open. |
 | Roles and least privilege | Samsara and Motive provide default and custom granular roles; Geotab provides standard and custom security clearances; Fleetio separates owner/admin/user powers and group record sets. | Fleet Manager, Dispatcher, Maintenance Manager, Driver, and Executive authenticated journeys passed representative positive and negative checks. | Directionally competitive; Customer remains blocked and Documents/Maintenance entitlement coverage is incomplete. |
 | Lifecycle/archive | Fleetio retains historical vehicle data in read-only archived records, supports restore, and prevents restoration when an active VIN/name conflicts. Geotab archives users while retaining data and can reactivate them. Motive deactivates users/vehicles and preserves historical data/audit context. | Driver `CLHQ-D-0003` archive, refresh/logout-login persistence, read-only history, and reactivation audit passed. | Core recoverable lifecycle is demonstrated for drivers; broader entity coverage is not exhaustive. |
-| Large-list usability | Fleetio import history is searchable/filterable and exposes status/count columns; its asset/contact lists support searching, filtering, sorting, and group filtering. Geotab supports group filters and paginated/sorted device retrieval. Samsara APIs use cursor pagination. | Exact 1,000/1,250/1,100/300 totals persisted. Asset/device full-volume search, sort, server paging, and export passed; vehicle/driver boundary search passed. | Full vehicle/driver export artifacts and all four exact viewports remain required. |
+| Large-list usability | Fleetio import history is searchable/filterable and exposes status/count columns; its asset/contact lists support searching, filtering, sorting, and group filtering. Geotab supports group filters and paginated/sorted device retrieval. Samsara APIs use cursor pagination. | Exact 1,000/1,250/1,100/300 totals persisted. Asset/device full-volume search, sort, server paging, and export passed. Exact-SHA vehicle and driver full exports completed in 15.289s/15.304s with complete ordered unique rows. | Export completeness is now credible; all four exact viewports and formal percentile performance traces remain required. |
 | Auditability | Motive documents audit logging for imports, user changes, vehicle/device assignment, and deactivation. Fleetio retains import history with created/updated/error counts and supports rollback of new imports. | The pack contains screenshots but no product-level import history/rollback proof, recording, console log, or failed-network capture. | Evidence preservation exists, but product auditability and clean-console/network requirements remain open. |
 
 ## Product-specific observations
@@ -71,4 +71,4 @@ OpsTrax should not be described as competitor-ready until visible Chrome evidenc
 
 ## Current verdict contribution
 
-**BLOCKED / not certifiable from the present evidence.** This is a Module 1 certification verdict, not a product-wide failure. No open P0/P1 finding remains in the final device-transfer path, and the populated staging tenant is suitable for a controlled pilot. Certification remains blocked by the explicit Customer entitlement/account gap, unavailable exact viewport control, unavailable Maintenance Center entitlement, missing recording/HAR, absent readiness-expiry records, missing full vehicle/driver exports, and the incomplete controlled vehicle/driver correction cycle.
+**BLOCKED / not certifiable from the present evidence.** This is a Module 1 certification verdict, not a product-wide failure. No open P0/P1 finding remains in the final device-transfer or fleet-master export paths, and the populated staging tenant is suitable for a controlled pilot. Certification remains blocked by the explicit Customer entitlement/account gap, unavailable exact viewport control, unavailable Maintenance Center entitlement, missing recording/HAR, absent readiness-expiry records, and the incomplete controlled vehicle/driver correction cycle.

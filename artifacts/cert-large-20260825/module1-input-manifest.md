@@ -44,7 +44,7 @@ The listed row counts exclude the header. SHA-256 values identify the exact file
 | Assets / MW-YARD Fleet Manager | `input/assets_MW-YARD_181-240.csv` | 60 | `e2e4c1acd46fc450f0ac9b5cedba7933f109c38599238cde0af6be6ed6f24a4a` |
 | Assets / WEST-HUB Fleet Manager | `input/assets_WEST-HUB_241-300.csv` | 60 | `e049468cae88816edd3f7b75a3ca6d75ffb83856e99c639c9110df3e51b944a3` |
 
-Schema verification: vehicles have 13 columns, drivers 6, devices 7, and assets 10, matching the downloaded customer templates. Every data row has the expected column count. Valid primary identities are unique across all five batches. Total rows are exactly 1,000 / 1,250 / 1,100 / 300.
+Schema verification: vehicles have 14 columns, drivers 6, devices 7, and assets 10, matching the downloaded customer templates. Every data row has the expected column count. Valid primary identities are unique across all five batches. Total rows are exactly 1,000 / 1,250 / 1,100 / 300.
 
 ## Controlled rejection files
 
@@ -81,4 +81,5 @@ The role accounts are intentionally excluded from CSV processing. Complete the 2
 - The rendered tenant now reconciles exactly 1,000 vehicles, 1,250 drivers, 1,100 devices, and 300 assets after customer-facing UI imports.
 - Controlled invalid and duplicate device/asset previews were visibly rejected without changing the reconciled totals. The vehicle/driver controlled correction cycle remains an evidence gap.
 - Vehicle/driver, device, and trailer reassignment/custody histories now have preserved visible-Chrome evidence through refresh and logout/login. The final device-transfer retest passed on deployed SHA `7e98a39d66d67dbd5bb5419602532d7ec1aa23d1`.
+- Exact `5d7c165` customer-facing exports are preserved as `input/vehicles-export-5d7c165.csv` (1,000 rows, SHA-256 `adb755cf531b610c836f9bd1beb52821102261a8ea55b1615a7e6838b294178f`) and `input/drivers-export-5d7c165.csv` (1,250 rows, SHA-256 `d301700a1ff7bf7746c9cb0db0659a1cebc0b7f5119f2b06849f8b9583866d6e`).
 - This manifest certifies only file integrity and intended use. It does not certify Module 1.
