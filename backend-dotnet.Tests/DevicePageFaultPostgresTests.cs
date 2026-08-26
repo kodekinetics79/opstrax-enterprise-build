@@ -96,7 +96,7 @@ public sealed class DevicePageFaultPostgresTests
                 "INSERT INTO eld_devices(company_id,branch_id,device_serial,device_category,status,device_state) VALUES (@c,@b,@s,'OBD-II','Provisioning','Registered')",
                 c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchId); c.Parameters.AddWithValue("@s", obdSerial); });
             var quarantinedId = await db.InsertAsync(
-                "INSERT INTO eld_devices(company_id,branch_id,device_serial,device_category,status,device_state,last_seen_at) VALUES (@c,@b,@s,'GPS Tracker','Active','Quarantined',NOW())",
+                "INSERT INTO eld_devices(company_id,branch_id,device_serial,device_category,status,device_state,last_seen_at) VALUES (@c,@b,@s,'GPS Tracker','Provisioning','Quarantined',NOW())",
                 c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchId); c.Parameters.AddWithValue("@s", quarantinedSerial); });
             await db.ExecuteAsync(
                 @"INSERT INTO latest_vehicle_positions(company_id,vehicle_id,device_id,lat,lng,engine_status,event_time,received_at)
@@ -250,13 +250,13 @@ public sealed class DevicePageFaultPostgresTests
                     c.Parameters.AddWithValue("@revoked", revoked);
                 });
 
-            await Insert(activeSerial, "Active", true);
-            var alertId = await Insert(alertSerial, "Active", true);
-            await Insert(faultSerial, "Active", true);
-            await Insert(quarantinedSerial, "Active", true);
+            await Insert(activeSerial, "Provisioning", true);
+            var alertId = await Insert(alertSerial, "Provisioning", true);
+            await Insert(faultSerial, "Provisioning", true);
+            await Insert(quarantinedSerial, "Provisioning", true);
             await db.ExecuteAsync("UPDATE eld_devices SET device_state='Quarantined' WHERE company_id=@cid AND device_serial=@serial",
                 c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@serial", quarantinedSerial); });
-            await Insert(neverSerial, "Active", false);
+            await Insert(neverSerial, "Provisioning", false);
             await Insert(revokedSerial, "Retired", false, true);
             await db.ExecuteAsync(
                 @"INSERT INTO telemetry_alerts(company_id,device_id,alert_type,severity,message,status)
