@@ -120,7 +120,9 @@ public sealed class DevicePageFaultPostgresTests
             using var offlinePayload = Payload(await Invoke("TelemetryDevicePage", gps, db, CancellationToken.None));
             var offlineData = offlinePayload.RootElement.GetProperty("data");
             Assert.Equal(1, offlineData.GetProperty("total").GetInt64());
-            Assert.Equal(1, offlineData.GetProperty("summary").GetProperty("active").GetInt64());
+            // Fleet summary stays scoped to the full authorized GPS cluster; only the
+            // queue total/items shrink under a view filter.
+            Assert.Equal(2, offlineData.GetProperty("summary").GetProperty("active").GetInt64());
             Assert.Equal(obdSerial, Assert.Single(offlineData.GetProperty("items").EnumerateArray()).GetProperty("deviceSerial").GetString());
 
             gps.Request.QueryString = new QueryString("?cluster=gps&view=stale-gps&pageSize=50");
@@ -131,7 +133,8 @@ public sealed class DevicePageFaultPostgresTests
             using var searchPayload = Payload(await Invoke("TelemetryDevicePage", gps, db, CancellationToken.None));
             var searchData = searchPayload.RootElement.GetProperty("data");
             Assert.Equal(1, searchData.GetProperty("total").GetInt64());
-            Assert.Equal(1, searchData.GetProperty("summary").GetProperty("active").GetInt64());
+            // Search narrows the queue, not the full-fleet KPI denominator.
+            Assert.Equal(2, searchData.GetProperty("summary").GetProperty("active").GetInt64());
         }
         finally
         {
