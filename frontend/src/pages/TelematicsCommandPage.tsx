@@ -22,6 +22,7 @@ import { useHasPermission } from "@/hooks/usePermission";
 import { maintenanceApi } from "@/services/maintenanceApi";
 import { telematicsService, type DeviceDetailRecord, type TelematicsClusterRecord, type TelemetryClusterPageResult } from "@/services/telematicsService";
 import { resolveTelemetryEmptyState } from "@/utils/telemetryEmptyState";
+import { apiErrorMessage } from "@/utils/apiErrorMessage";
 
 type TelematicsKind = "gps-tracking" | "obd-j1939" | "sensor-health" | "cold-chain";
 
@@ -200,6 +201,7 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
 
   const canExport = hasPermission(config.requiredExportPermission);
   const canUpdate = hasPermission(config.requiredUpdatePermission);
+  const canViewGeofences = hasPermission("map:view");
   const [tab, setTab] = useState(config.filterTabs[0]);
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
@@ -308,6 +310,14 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
     });
   }, [recordsQ.data?.items, search, kind, tab, paged]);
 
+  const exportMut = useMutation({
+    mutationFn: async () => paged
+      ? telematicsService.exportTelemetryClusterCsv(kind, { search, view: serverView(kind, tab) }, config.columns)
+      : telematicsService.exportClusterCsv(rows, config.columns),
+    onSuccess: (csv) => downloadCsv(`opstrax-${kind}.csv`, csv),
+    onError: (error) => setNotice(apiErrorMessage(error, "The complete authorized export could not be created. Retry the export.")),
+  });
+
   const selectedRecord = rows.find((row) => row.id === selected?.id) ?? selected;
   const offlineCount = paged ? recordsQ.data?.summary.offline ?? 0 : rows.filter((row) => row.offlineWarning).length;
   const issueCount = paged ? recordsQ.data?.summary.attention ?? 0 : rows.filter((row) => row.alertStatus === "Open" || (row.troubleCodes?.length ?? 0) > 0 || (row.deviceHealthAvailable && row.deviceHealth < 70)).length;
@@ -335,18 +345,16 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
 
   if (recordsQ.isLoading) return <LoadingState />;
   if (recordsQ.isError) {
+    const fallback = kind === "obd-j1939"
+      ? "OBD / J1939 evidence could not be loaded. Retry, or ask a tenant administrator to confirm diagnostics access for this role."
+      : `Unable to load ${config.title.toLowerCase()} right now.`;
     return (
       <ErrorState
-        message={`Unable to load ${config.title.toLowerCase()} right now.`}
-        onRetry={() => recordsQ.refetch()}
+        message={apiErrorMessage(recordsQ.error, fallback)}
+        onRetry={() => void recordsQ.refetch()}
       />
     );
   }
-
-  const exportCurrent = () => {
-    const csv = telematicsService.exportClusterCsv(rows, config.columns);
-    downloadCsv(`opstrax-${kind}.csv`, csv);
-  };
 
   return (
     <div className="fleet-console flex h-full flex-col gap-3 overflow-y-auto">
@@ -358,15 +366,25 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
           <>
             <button
               className="btn-ghost"
-              disabled={!canExport}
-              title={permissionTitle(canExport, "Export the current telematics view.")}
-              onClick={() => canExport && exportCurrent()}
+              disabled={!canExport || exportMut.isPending}
+              title={permissionTitle(canExport, "Export every authorized row matching the current search and filter.")}
+              onClick={() => canExport && exportMut.mutate()}
             >
-              <Download className="h-4 w-4" /> Export CSV
+              <Download className="h-4 w-4" /> {exportMut.isPending ? "Preparing export…" : "Export CSV"}
             </button>
             <button className="btn-primary" onClick={() => navigate("/iot-devices")}>
               <Truck className="h-4 w-4" /> Open Device Command
             </button>
+            {kind === "gps-tracking" ? (
+              <button
+                className="btn-ghost"
+                disabled={!canViewGeofences}
+                title={permissionTitle(canViewGeofences, "Open geofence setup and alert boundaries.")}
+                onClick={() => canViewGeofences && navigate("/geofences")}
+              >
+                <MapPinned className="h-4 w-4" /> Manage Geofences
+              </button>
+            ) : null}
             {kind === "cold-chain" ? <button className="btn-ghost" onClick={() => navigate("/fleet-cold-chain")}><Thermometer className="h-4 w-4" /> Cold Chain Monitor</button> : null}
           </>
         }

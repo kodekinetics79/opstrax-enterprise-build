@@ -17,7 +17,7 @@ public sealed class TelemetryClusterPaginationContractTests
         Assert.Contains("\"diagnostics\" => \"telematics:diagnostics:view\"", source, StringComparison.Ordinal);
         Assert.Contains("(@branchId::BIGINT IS NULL OR e.branch_id=@branchId)", source, StringComparison.Ordinal);
         Assert.Contains("var cluster = http.Request.Query[\"cluster\"]", source, StringComparison.Ordinal);
-        Assert.Contains("(obd(-ii)?|j1939|can)", source, StringComparison.Ordinal);
+        Assert.Contains("\"diagnostics\" => \" AND diagnostic_evidence.observed_at IS NOT NULL\"", source, StringComparison.Ordinal);
         Assert.Contains("SELECT p.* FROM latest_vehicle_positions p", source, StringComparison.Ordinal);
         Assert.Contains("p.company_id=e.company_id AND p.device_id=e.id", source, StringComparison.Ordinal);
         Assert.DoesNotContain("p.vehicle_id=current_install.vehicle_id", source, StringComparison.Ordinal);

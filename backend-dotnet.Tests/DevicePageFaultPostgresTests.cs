@@ -113,10 +113,12 @@ public sealed class DevicePageFaultPostgresTests
             using var diagnosticPayload = Payload(await Invoke("TelemetryDevicePage", diagnostics, db, CancellationToken.None));
             var diagnosticData = diagnosticPayload.RootElement.GetProperty("data");
             Assert.Equal(1, diagnosticData.GetProperty("total").GetInt64());
-            var obd = Assert.Single(diagnosticData.GetProperty("items").EnumerateArray());
-            Assert.Equal(obdSerial, obd.GetProperty("deviceSerial").GetString());
-            Assert.Equal("none", obd.GetProperty("positionFreshness").GetString());
-            Assert.Equal(1, diagnosticData.GetProperty("summary").GetProperty("offline").GetInt64());
+            var evidence = Assert.Single(diagnosticData.GetProperty("items").EnumerateArray());
+            Assert.Equal(gpsSerial, evidence.GetProperty("deviceSerial").GetString());
+            Assert.Equal("live", evidence.GetProperty("positionFreshness").GetString());
+            Assert.Equal(0, diagnosticData.GetProperty("summary").GetProperty("offline").GetInt64());
+            Assert.DoesNotContain(diagnosticData.GetProperty("items").EnumerateArray(),
+                item => item.GetProperty("deviceSerial").GetString() == obdSerial);
 
             var gps = Principal(companyId, branchId, "telematics:gps:view");
             gps.Request.QueryString = new QueryString("?cluster=gps&pageSize=50");

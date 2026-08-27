@@ -7,7 +7,6 @@ import {
   ArrowRightLeft,
   CheckCircle2,
   ChevronLeft,
-  ChevronDown,
   ChevronRight,
   Copy,
   Cpu,
@@ -104,10 +103,10 @@ const CONFIRM_ACTION_COPY: Record<
   { title: string; confirmLabel: string; variant: "default" | "danger"; message: (deviceName: string) => string }
 > = {
   archive: {
-    title: "Archive device",
-    confirmLabel: "Archive Device",
+    title: "Revoke and archive device",
+    confirmLabel: "Revoke & Archive",
     variant: "danger",
-    message: (deviceName) => `Archive ${deviceName}? The device is revoked and new ingestion is blocked; it remains visible in the Archived view with its lifecycle history.`,
+    message: (deviceName) => `Permanently revoke and archive ${deviceName}? All device credentials are invalidated, future ingestion is blocked, and this action cannot be reactivated. Its lifecycle history remains visible. Use Suspend for a reversible stop.`,
   },
   suspend: {
     title: "Suspend device",
@@ -196,7 +195,7 @@ const DEVICE_TABS: Array<{ key: DeviceTab; label: string }> = [
   { key: "attention", label: "Needs Attention" },
   { key: "firmware", label: "Firmware (read-only)" },
   { key: "provisioning", label: "Provisioning" },
-  { key: "diagnostics", label: "Diagnostics" },
+  { key: "diagnostics", label: "Diagnostics evidence" },
   { key: "quarantine", label: "Identity Quarantine" },
   { key: "installations", label: "Installations" },
   { key: "data-health", label: "Data Health" },
@@ -222,7 +221,9 @@ function activeTabCount(tab: DeviceTab, row: DeviceCommandRecord) {
   if (tab === "attention") return /attention|offline/i.test(row.connectionStatus) || row.openAlertCount > 0;
   if (tab === "firmware") return true; // read-only current-version listing; no OTA/target diff exists in this pilot
   if (tab === "provisioning") return /provision|awaiting/i.test(row.connectionStatus) || /awaiting|warning/i.test(row.installStatus);
-  if (tab === "diagnostics") return true;
+  // Diagnostics is a separate evidence feed, not a device-inventory filter.
+  // Never count every registered device as though it had diagnostic evidence.
+  if (tab === "diagnostics") return false;
   if (tab === "installations") return true;
   if (tab === "data-health") return true;
   return false;
@@ -424,11 +425,11 @@ function buildActionContracts(
     },
     {
       key: "archive",
-      label: "Archive",
+      label: "Revoke & Archive",
       icon: <Trash2 className="h-4 w-4" />,
       visible: canDelete,
       state: archived ? "state-blocked" : canDelete ? "ready" : "permission-blocked",
-      reason: archived ? "This device is already archived." : canDelete ? "Permission and revoke route available." : "Requires TELEMATICS_DEVICES_DELETE.",
+      reason: archived ? "This device is already revoked and archived." : canDelete ? "Permanently revokes credentials and archives the device. Use Suspend for a reversible stop." : "Requires TELEMATICS_DEVICES_DELETE.",
       onClick: onArchive,
     },
   ];
@@ -511,7 +512,6 @@ export function IotDevicesPage() {
   const [attentionNotes, setAttentionNotes] = useState("");
   const [quarantineTarget, setQuarantineTarget] = useState<DeviceIdentityQuarantineRecord | null>(null);
   const [quarantineResolution, setQuarantineResolution] = useState({ resolutionNotes: "", correctedDeviceSerial: "", correctedImei: "" });
-  const [openMenuId, setOpenMenuId] = useState<string | number | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   // DEF-022: client-side validation failures must be visible, never swallowed.
   const [formError, setFormError] = useState<string | null>(null);
@@ -590,7 +590,7 @@ export function IotDevicesPage() {
     onSuccess: async () => {
       setConfirmTarget(null);
       setSelectedId(null);
-      setNotice("Device archived successfully.");
+      setNotice("Device credentials revoked and device archived permanently.");
       await refreshAll();
     },
   });
@@ -893,7 +893,28 @@ export function IotDevicesPage() {
           </div>
         </div>
 
-        {tab === "quarantine" ? (
+        {tab === "diagnostics" ? (
+          <section role="region" aria-labelledby="diagnostics-evidence-title" className="rounded-2xl border border-slate-200 bg-slate-50 p-6">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="max-w-3xl">
+                <h2 id="diagnostics-evidence-title" className="text-lg font-semibold text-slate-900">Diagnostics evidence is separate from device inventory</h2>
+                <p className="mt-2 text-sm text-slate-600">
+                  Only devices with received OBD, J1939, or CAN evidence appear in Diagnostics. Device Health does not infer diagnostic coverage for every registered device.
+                </p>
+                {!canDiagnostics ? <p role="status" className="mt-3 text-sm font-medium text-amber-700">Diagnostics evidence is not available for this role. Ask a tenant administrator for diagnostics access.</p> : null}
+              </div>
+              <button
+                type="button"
+                className="btn-primary shrink-0"
+                disabled={!canDiagnostics}
+                title={actionTitle(canDiagnostics, "Open received OBD, J1939, and CAN evidence.")}
+                onClick={() => canDiagnostics && navigate("/obd-j1939")}
+              >
+                <Activity className="h-4 w-4" /> Open OBD / J1939 evidence
+              </button>
+            </div>
+          </section>
+        ) : tab === "quarantine" ? (
           quarantineQ.isLoading ? (
             <LoadingState />
           ) : quarantineQ.isError ? (
@@ -981,7 +1002,7 @@ export function IotDevicesPage() {
         ) : !deviceRows.length ? (
           <EmptyState title={emptyState.title} subtitle={emptyState.subtitle} />
         ) : (
-          <div className="overflow-x-auto" onClick={(e) => { if (!(e.target as HTMLElement).closest(".relative")) setOpenMenuId(null); }}>
+          <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-200">
@@ -1023,25 +1044,15 @@ export function IotDevicesPage() {
                       <div className="text-xs text-slate-500">{row.supportStatus}</div>
                     </td>
                     <td className="px-4 py-3">
-                      <div className="relative">
-                        <button
-                          type="button"
-                          className="btn-ghost h-8 px-3 flex items-center gap-1"
-                          onClick={() => setOpenMenuId(openMenuId === row.id ? null : row.id)}
-                        >
-                          Manage <ChevronDown className="h-3 w-3" />
-                        </button>
-                        {openMenuId === row.id && (
-                          <div className="absolute right-0 z-50 mt-1 w-48 rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
-                            <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50" onClick={() => { setSelectedId(row.id); setOpenMenuId(null); }}>View Details</button>
-                            {canUpdate ? <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-400" disabled title="Device metadata is read-only until a PATCH contract is available.">Metadata read-only</button> : null}
-                            {row.lifecycleStatus !== "Archived" && canGovernInstallations && <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50" onClick={() => { openInstallation(row); setOpenMenuId(null); }}>{row.assignedVehicleId ? "Transfer installation" : "Install on vehicle"}</button>}
-                            {canDiagnostics && <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50" onClick={() => { navigate("/obd-j1939"); setOpenMenuId(null); }}>View Diagnostics</button>}
-                            <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50" onClick={() => { refreshMut.mutate(row.id); setOpenMenuId(null); }}>Refresh Status</button>
-                            {row.lifecycleStatus !== "Archived" && canDelete && <button type="button" className="flex w-full items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50" onClick={() => { openConfirm({ action: "archive", device: row }); setOpenMenuId(null); }}>Archive Device</button>}
-                          </div>
-                        )}
-                      </div>
+                      <button
+                        type="button"
+                        className="btn-ghost h-8 px-3"
+                        aria-label={`Manage ${row.deviceName}`}
+                        aria-haspopup="dialog"
+                        onClick={() => setSelectedId(row.id)}
+                      >
+                        Manage
+                      </button>
                     </td>
                   </tr>
                 ))}

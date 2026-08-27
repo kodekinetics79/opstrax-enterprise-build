@@ -17175,6 +17175,14 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             System.Threading.Interlocked.Increment(ref _telemetryRejected);
             return Results.Json(ApiResponse<object>.Fail("Speed out of range"), statusCode: 422);
         }
+        var idempotencyKey = body.ClientGeneratedId?.Trim();
+        if (idempotencyKey?.Length > 120 || body.CorrelationId?.Length > 120 ||
+            body.CausationId?.Length > 120 || body.SourceChannel?.Length > 40)
+        {
+            System.Threading.Interlocked.Increment(ref _telemetryRejectedValidation);
+            System.Threading.Interlocked.Increment(ref _telemetryRejected);
+            return Results.Json(ApiResponse<object>.Fail("Telemetry identifier exceeds accepted length"), statusCode: 422);
+        }
 
         // Installation/dispatch binding is resolved under lock inside the write
         // transaction. Mutable device vehicle/driver projections are never trusted.
@@ -17189,6 +17197,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         long eventId = 0;
         var duplicateNonce = false;
         var identityRejected = false;
+        var idempotentReplay = false;
+        var idempotencyConflict = false;
         var alertsCreated = 0;
         var speedThreshold = 65m;
         var telemetryCommitted = await db.RunInSystemTransactionAsync(async () =>
@@ -17215,6 +17225,43 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             return false;
         }
 
+        // A transport retry may use a fresh nonce while retaining its stable
+        // client-generated identity. Serialize that identity and accept it only when
+        // the exact authenticated payload matches the first committed observation.
+        if (!string.IsNullOrWhiteSpace(idempotencyKey))
+        {
+            await db.ExecuteAsync(
+                "SELECT pg_advisory_xact_lock(hashtextextended(@key,0))",
+                c => c.Parameters.AddWithValue("@key", $"native:{companyId}:{idempotencyKey}"), ct);
+            var existing = await db.QuerySingleAsync(
+                @"SELECT id,device_id,ingest_fingerprint FROM location_events
+                  WHERE company_id=@cid AND idempotency_key=@key LIMIT 1",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@cid", companyId);
+                    c.Parameters.AddWithValue("@key", idempotencyKey);
+                }, ct);
+            if (existing is not null)
+            {
+                var existingFingerprint = existing.GetValueOrDefault("ingestFingerprint")?.ToString();
+                var fingerprintedRows = string.IsNullOrWhiteSpace(existingFingerprint) ? 0 : 1;
+                var sameAuthenticatedDevice = existing.GetValueOrDefault("deviceId") is { } storedDevice &&
+                    storedDevice is not DBNull && Convert.ToInt64(storedDevice) == deviceId;
+                var decision = sameAuthenticatedDevice
+                    ? TelemetryPayloadFingerprint.Decide(
+                        1, existingFingerprint, fingerprintedRows, fingerprintedRows, bodyHex)
+                    : TelemetryPayloadReplayDecision.Conflict;
+                if (decision == TelemetryPayloadReplayDecision.IdenticalReplay)
+                {
+                    idempotentReplay = true;
+                    eventId = Convert.ToInt64(existing["id"]);
+                    return true;
+                }
+                idempotencyConflict = true;
+                return false;
+            }
+        }
+
         speedThreshold = await db.ScalarDecimalAsync(
             "SELECT threshold_value FROM telemetry_rules WHERE company_id=@cid AND rule_type='speeding' AND enabled=TRUE LIMIT 1",
             c => c.Parameters.AddWithValue("@cid", companyId), ct) ?? 65m;
@@ -17224,11 +17271,11 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 (company_id, vehicle_id, device_id, installation_id, assignment_id, trip_id, driver_id, lat, lng, speed_mph, heading,
                  accuracy_meters, event_type, engine_status, fuel_level, odometer_miles,
                  battery_voltage, nonce, source, source_channel, correlation_id, causation_id,
-                 client_generated_id, idempotency_key, observed_at, normalized_at, event_time, received_at)
+                 client_generated_id, idempotency_key, ingest_fingerprint, observed_at, normalized_at, event_time, received_at)
               VALUES
                 (@companyId, @vehicleId, @deviceId, @installationId, @assignmentId, @tripId, @driverId, @lat, @lng, @speedMph, @heading,
                  @acc, @eventType, @eng, @fuel, @odo, @batt, @nonce, 'device', 'native-hmac',
-                 @correlationId, @causationId, @clientGeneratedId, @idempotencyKey,
+                 @correlationId, @causationId, @clientGeneratedId, @idempotencyKey, @ingestFingerprint,
                  @observedAt, NOW(), @observedAt, NOW())",
             c =>
             {
@@ -17252,8 +17299,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 c.Parameters.AddWithValue("@nonce",      xNonce);
                 c.Parameters.AddWithValue("@correlationId", body.CorrelationId ?? (object)DBNull.Value);
                 c.Parameters.AddWithValue("@causationId",   body.CausationId ?? (object)DBNull.Value);
-                c.Parameters.AddWithValue("@clientGeneratedId", body.ClientGeneratedId ?? (object)DBNull.Value);
-                c.Parameters.AddWithValue("@idempotencyKey", body.ClientGeneratedId ?? (object)DBNull.Value);
+                c.Parameters.AddWithValue("@clientGeneratedId", idempotencyKey ?? (object)DBNull.Value);
+                c.Parameters.AddWithValue("@idempotencyKey", idempotencyKey ?? (object)DBNull.Value);
+                c.Parameters.AddWithValue("@ingestFingerprint", bodyHex);
                 c.Parameters.AddWithValue("@observedAt", observedAt);
             }, ct);
 
@@ -17481,11 +17529,25 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             return Results.Json(ApiResponse<object>.Fail(
                 "No unambiguous active installation/dispatch identity exists at the device event time"), statusCode: 422);
         }
+        if (idempotencyConflict)
+        {
+            System.Threading.Interlocked.Increment(ref _telemetryRejected);
+            return Results.Conflict(ApiResponse<object>.Fail(
+                "ClientGeneratedId was already used with a different telemetry payload"));
+        }
         if (!telemetryCommitted || duplicateNonce)
         {
             System.Threading.Interlocked.Increment(ref _telemetryRejectedReplay);
             System.Threading.Interlocked.Increment(ref _telemetryRejected);
             return Results.Json(ApiResponse<object>.Fail("Duplicate nonce — replay detected"), statusCode: 409);
+        }
+
+        if (idempotentReplay)
+        {
+            System.Threading.Interlocked.Increment(ref _telemetryAccepted);
+            return Results.Ok(ApiResponse<object>.Ok(
+                new { id = eventId, deviceId, companyId, replayed = true },
+                "Telemetry already recorded"));
         }
 
         if (alertsCreated > 0)
@@ -18809,11 +18871,10 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var clusterClause = cluster switch
         {
             "gps" => "",
-            "diagnostics" => @" AND (
-                COALESCE(e.device_category,'') ~* '(^|[^a-z0-9])(obd(-ii)?|j1939|can)([^a-z0-9]|$)'
-                OR COALESCE(e.device_model,'') ~* '(^|[^a-z0-9])(obd(-ii)?|j1939|can)([^a-z0-9]|$)'
-                OR COALESCE(current_install.device_role,'') ~* '(^|[^a-z0-9])(obd(-ii)?|j1939|can)([^a-z0-9]|$)'
-                OR EXISTS (SELECT 1 FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active'))",
+            // Diagnostic inventory is evidence-only. A model/category/installation
+            // label describes capability, not an observation, and must never create
+            // an OBD/J1939 row by itself.
+            "diagnostics" => " AND diagnostic_evidence.observed_at IS NOT NULL",
             _ => "",
         };
         var positionEvidenceJoin = cluster is "gps" or "diagnostics" ? @"
@@ -22068,7 +22129,8 @@ LIMIT 100000",
             nonceCommand.Parameters.AddWithValue("@device", numericDeviceId);
             nonceCommand.Parameters.AddWithValue("@nonce", nonce);
             if (await nonceCommand.ExecuteScalarAsync(ct) is null)
-                return (Replay: true, TransportReplay: true, FaultIds: Array.Empty<long>(), HoldIds: Array.Empty<long>());
+            return (Replay: true, TransportReplay: true, PayloadConflict: false,
+                FaultIds: Array.Empty<long>(), HoldIds: Array.Empty<long>());
 
             // Serialize a physical source event independently of transport nonce. This closes
             // the race where two altered payloads reuse the same source ID with different DTCs.
@@ -22079,14 +22141,30 @@ LIMIT 100000",
                 await eventLock.ExecuteNonQueryAsync(ct);
             }
             await using (var existingEvent = new Npgsql.NpgsqlCommand(
-                @"SELECT EXISTS(SELECT 1 FROM fault_occurrences
-                                 WHERE company_id=@cid AND device_id=@did AND source_event_id=@event)", connection, transaction))
+                @"SELECT COUNT(*) occurrence_count,
+                         MIN(payload_fingerprint) payload_fingerprint,
+                         COUNT(payload_fingerprint) fingerprinted_count,
+                         COUNT(DISTINCT payload_fingerprint) fingerprint_count
+                  FROM fault_occurrences
+                  WHERE company_id=@cid AND device_id=@did AND source_event_id=@event", connection, transaction))
             {
                 existingEvent.Parameters.AddWithValue("@cid", companyId);
                 existingEvent.Parameters.AddWithValue("@did", deviceId);
                 existingEvent.Parameters.AddWithValue("@event", body.SourceEventId!.Trim());
-                if (Convert.ToBoolean(await existingEvent.ExecuteScalarAsync(ct)))
-                    return (Replay: true, TransportReplay: false, FaultIds: Array.Empty<long>(), HoldIds: Array.Empty<long>());
+                await using var existingReader = await existingEvent.ExecuteReaderAsync(ct);
+                if (await existingReader.ReadAsync(ct) && existingReader.GetInt64(0) > 0)
+                {
+                    var existingFingerprint = existingReader.IsDBNull(1) ? null : existingReader.GetString(1);
+                    var fingerprintedCount = existingReader.GetInt64(2);
+                    var fingerprintCount = existingReader.GetInt64(3);
+                    var decision = TelemetryPayloadFingerprint.Decide(
+                        existingReader.GetInt64(0), existingFingerprint,
+                        fingerprintedCount, fingerprintCount, bodyHash);
+                    var matches = decision == TelemetryPayloadReplayDecision.IdenticalReplay;
+                    return (Replay: matches, TransportReplay: false,
+                        PayloadConflict: decision == TelemetryPayloadReplayDecision.Conflict,
+                        FaultIds: Array.Empty<long>(), HoldIds: Array.Empty<long>());
+                }
             }
 
             var acceptedOccurrences = 0;
@@ -22097,11 +22175,12 @@ LIMIT 100000",
                 await using var occurrence = new Npgsql.NpgsqlCommand(
                     @"INSERT INTO fault_occurrences
                         (company_id,branch_id,device_id,vehicle_id,source_event_id,dtc_ordinal,canonical_dtc,
-                         observed_at,controller,source_address,bus,protocol,code,spn,fmi,occurrence_count,lamp_status,raw_evidence)
+                         observed_at,controller,source_address,bus,protocol,code,spn,fmi,occurrence_count,lamp_status,raw_evidence,payload_fingerprint)
                       VALUES (@cid,@branch,@did,@vid,@event,@ordinal,@canonical,@observed,@controller,@sourceAddress,@bus,
-                              @protocol,@code,@spn,@fmi,@occurrences,@lamps::jsonb,@evidence::jsonb)
+                              @protocol,@code,@spn,@fmi,@occurrences,@lamps::jsonb,@evidence::jsonb,@fingerprint)
                       ON CONFLICT (company_id,device_id,source_event_id,dtc_ordinal,canonical_dtc) DO NOTHING RETURNING id", connection, transaction);
                 Common(occurrence, companyId, branchId, deviceId, vehicleId, body, normalized, dtc, observedAt);
+                occurrence.Parameters.AddWithValue("@fingerprint", bodyHash);
                 if (await occurrence.ExecuteScalarAsync(ct) is null) continue;
                 acceptedOccurrences++;
 
@@ -22217,12 +22296,15 @@ LIMIT 100000",
                 }
             }
 
-            return (Replay: acceptedOccurrences == 0, TransportReplay: false,
+            return (Replay: acceptedOccurrences == 0, TransportReplay: false, PayloadConflict: false,
                 FaultIds: faultIds.ToArray(), HoldIds: holdIds.ToArray());
         }, ct);
 
         if (outcome.TransportReplay)
             return Results.Conflict(ApiResponse<object>.Fail("Duplicate nonce — replay detected"));
+        if (outcome.PayloadConflict)
+            return Results.Conflict(ApiResponse<object>.Fail(
+                "sourceEventId was already used with a different diagnostic payload"));
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             protocol = normalized!.Protocol, vehicleId, branchId, faultIds = outcome.FaultIds,
