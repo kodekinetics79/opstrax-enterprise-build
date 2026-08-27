@@ -15,6 +15,142 @@ namespace Opstrax.Tests;
 public sealed class DeviceInstallationImportPostgresTests
 {
     [Fact]
+    public async Task LargeTenantWideBatchCommits499RowsAtomically()
+    {
+        var db = Db();
+        var companyId = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + Random.Shared.Next(19_000_000, 19_900_000);
+        await Company(db, companyId);
+        try
+        {
+            var effective = DateTimeOffset.UtcNow.AddMinutes(-2).ToString("O");
+            var rows = new List<Dictionary<string, object?>>(499);
+            for (var branchNumber = 1; branchNumber <= 5; branchNumber++)
+            {
+                var branchCode = $"LARGE-{branchNumber}";
+                var branchId = await Branch(db, companyId, branchCode);
+                var first = branchNumber == 1 ? 2 : 1;
+                for (var item = first; item <= 100; item++)
+                {
+                    var vehicleCode = $"LARGE-V-{branchNumber}-{item:D4}-{companyId}";
+                    var serial = $"LARGE-D-{branchNumber}-{item:D4}-{companyId}";
+                    await Vehicle(db, companyId, branchId, vehicleCode);
+                    await Device(db, companyId, branchId, serial);
+                    rows.Add(Row(serial, branchCode, vehicleCode, effective,
+                        $"large-install-{branchNumber}-{item:D4}-{companyId}"));
+                }
+            }
+
+            var result = await Invoke("DeviceInstallationsImportCommit", Principal(companyId, null),
+                ImportBody(rows.ToArray()), db, new AuditService(db), CancellationToken.None);
+
+            Assert.Equal(StatusCodes.Status200OK, Status(result));
+            Assert.Equal(499, await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM device_installations WHERE company_id=@c AND source='operator'",
+                command => command.Parameters.AddWithValue("@c", companyId)));
+            Assert.Equal(499, await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM device_state_transitions WHERE company_id=@c AND reason_code='installation_created'",
+                command => command.Parameters.AddWithValue("@c", companyId)));
+            Assert.Equal(499, await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM idempotency_keys WHERE tenant_id=@c AND operation='device.installation.bulk-import' AND status='completed'",
+                command => command.Parameters.AddWithValue("@c", companyId)));
+        }
+        finally
+        {
+            await Cleanup(db, companyId);
+        }
+    }
+
+    [Fact]
+    public async Task PreviewRejectsClosedHistoryOverlapAndCommitRemainsAtomic()
+    {
+        var db = Db();
+        var companyId = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + Random.Shared.Next(18_000_000, 18_900_000);
+        await Company(db, companyId);
+        try
+        {
+            var branch = await Branch(db, companyId, "HISTORY-A");
+            var historicalVehicleCode = $"HISTORY-V-1-{companyId}";
+            var validVehicleCode = $"HISTORY-V-2-{companyId}";
+            var historicalSerial = $"HISTORY-D-1-{companyId}";
+            var validSerial = $"HISTORY-D-2-{companyId}";
+            var historicalVehicle = await Vehicle(db, companyId, branch, historicalVehicleCode);
+            var validVehicle = await Vehicle(db, companyId, branch, validVehicleCode);
+            var historicalDevice = await Device(db, companyId, branch, historicalSerial);
+            var validDevice = await Device(db, companyId, branch, validSerial);
+            var historyFrom = DateTimeOffset.UtcNow.AddDays(-10);
+            var historyTo = DateTimeOffset.UtcNow.AddDays(-5);
+            await db.ExecuteAsync(
+                @"INSERT INTO device_installations
+                    (company_id,branch_id,device_id,vehicle_id,status,device_role,is_primary,effective_from,effective_to,
+                     installed_at,removed_at,assignment_reason,removal_reason,source,idempotency_key,created_at)
+                  VALUES (@c,@b,@d,@v,'Removed','GPS',TRUE,@from,@to,@from,@to,
+                          'Historical assignment','Historical removal','operator',@key,NOW())",
+                command =>
+                {
+                    command.Parameters.AddWithValue("@c", companyId); command.Parameters.AddWithValue("@b", branch);
+                    command.Parameters.AddWithValue("@d", historicalDevice); command.Parameters.AddWithValue("@v", historicalVehicle);
+                    command.Parameters.AddWithValue("@from", historyFrom); command.Parameters.AddWithValue("@to", historyTo);
+                    command.Parameters.AddWithValue("@key", $"history-existing-{companyId}");
+                });
+
+            var exclusion = await Assert.ThrowsAsync<PostgresException>(() => db.ExecuteAsync(
+                @"INSERT INTO device_installations
+                    (company_id,branch_id,device_id,vehicle_id,status,device_role,is_primary,effective_from,
+                     installed_at,assignment_reason,source,idempotency_key,created_at)
+                  VALUES (@c,@b,@d,@v,'Installed','GPS',TRUE,@from,@from,
+                          'Overlapping assignment','operator',@key,NOW())",
+                command =>
+                {
+                    command.Parameters.AddWithValue("@c", companyId); command.Parameters.AddWithValue("@b", branch);
+                    command.Parameters.AddWithValue("@d", historicalDevice); command.Parameters.AddWithValue("@v", historicalVehicle);
+                    command.Parameters.AddWithValue("@from", historyFrom.AddDays(2));
+                    command.Parameters.AddWithValue("@key", $"history-direct-overlap-{companyId}");
+                }));
+            Assert.Equal(PostgresErrorCodes.ExclusionViolation, exclusion.SqlState);
+
+            var overlapping = ImportBody(
+                Row(historicalSerial, "HISTORY-A", historicalVehicleCode,
+                    historyFrom.AddDays(2).ToString("O"), $"history-overlap-{companyId}"),
+                Row(validSerial, "HISTORY-A", validVehicleCode,
+                    DateTimeOffset.UtcNow.AddDays(-1).ToString("O"), $"history-valid-{companyId}"));
+            var preview = await Invoke("DeviceInstallationsImportPreview", Principal(companyId, branch),
+                overlapping, db, CancellationToken.None);
+
+            Assert.Equal(StatusCodes.Status200OK, Status(preview));
+            Assert.Contains("overlaps closed installation history", ResponseJson(preview), StringComparison.Ordinal);
+            Assert.Contains("overlaps closed primary GPS assignment history", ResponseJson(preview), StringComparison.Ordinal);
+            var rejected = await Invoke("DeviceInstallationsImportCommit", Principal(companyId, branch),
+                overlapping, db, new AuditService(db), CancellationToken.None);
+            Assert.Equal(StatusCodes.Status400BadRequest, Status(rejected));
+            Assert.Equal(1, await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM device_installations WHERE company_id=@c",
+                command => command.Parameters.AddWithValue("@c", companyId)));
+            Assert.Equal(0, await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM idempotency_keys WHERE tenant_id=@c AND operation='device.installation.bulk-import'",
+                command => command.Parameters.AddWithValue("@c", companyId)));
+            Assert.Equal("Registered", (await db.QuerySingleAsync(
+                "SELECT device_state FROM eld_devices WHERE company_id=@c AND id=@d",
+                command => { command.Parameters.AddWithValue("@c", companyId); command.Parameters.AddWithValue("@d", validDevice); }))!["deviceState"]?.ToString());
+
+            var corrected = ImportBody(
+                Row(historicalSerial, "HISTORY-A", historicalVehicleCode,
+                    historyTo.AddDays(1).ToString("O"), $"history-corrected-{companyId}"),
+                Row(validSerial, "HISTORY-A", validVehicleCode,
+                    DateTimeOffset.UtcNow.AddDays(-1).ToString("O"), $"history-valid-{companyId}"));
+            var committed = await Invoke("DeviceInstallationsImportCommit", Principal(companyId, branch),
+                corrected, db, new AuditService(db), CancellationToken.None);
+            Assert.Equal(StatusCodes.Status200OK, Status(committed));
+            Assert.Equal(2, await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM device_installations WHERE company_id=@c AND effective_to IS NULL",
+                command => command.Parameters.AddWithValue("@c", companyId)));
+        }
+        finally
+        {
+            await Cleanup(db, companyId);
+        }
+    }
+
+    [Fact]
     public async Task BulkInstallPersistsHistoryReplaysAndRollsBackConflictsAndBranchMismatch()
     {
         var db = Db();

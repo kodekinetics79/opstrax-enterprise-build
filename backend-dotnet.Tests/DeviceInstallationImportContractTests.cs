@@ -67,6 +67,10 @@ public sealed class DeviceInstallationImportContractTests
         Assert.Contains("outside the selected or authorized branch", validation, StringComparison.Ordinal);
         Assert.Contains("already has an active installation", validation, StringComparison.Ordinal);
         Assert.Contains("active primary", validation, StringComparison.Ordinal);
+        Assert.Contains("i.status IN ('Installed','Verified','Removed')", validation, StringComparison.Ordinal);
+        Assert.Contains("i.effective_to>@earliest", validation, StringComparison.Ordinal);
+        Assert.Contains("overlaps closed installation history", validation, StringComparison.Ordinal);
+        Assert.Contains("overlaps closed primary", validation, StringComparison.Ordinal);
     }
 
     [Fact]

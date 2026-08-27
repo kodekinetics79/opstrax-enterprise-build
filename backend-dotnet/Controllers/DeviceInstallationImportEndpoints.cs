@@ -319,8 +319,11 @@ public static partial class EndpointMappings
                 command.Parameters.AddWithValue("@caller_branch", (object?)callerBranchId ?? DBNull.Value);
                 command.Parameters.AddWithValue("@codes", NpgsqlDbType.Array | NpgsqlDbType.Text, vehicleCodes);
             }, ct);
+        var earliestEffectiveFrom = candidates.Where(row => row.EffectiveFrom.HasValue)
+            .Select(row => row.EffectiveFrom!.Value).DefaultIfEmpty(DateTimeOffset.UtcNow).Min();
         var installations = await db.QueryAsync(
-            @"SELECT i.id,i.device_id,i.vehicle_id,i.device_role,i.is_primary,i.idempotency_key,i.effective_to,i.status,
+            @"SELECT i.id,i.device_id,i.vehicle_id,i.device_role,i.is_primary,i.idempotency_key,
+                     i.effective_from,i.effective_to,i.status,
                      UPPER(BTRIM(d.device_serial)) device_key,UPPER(BTRIM(v.vehicle_code)) vehicle_key
                 FROM device_installations i
                 JOIN eld_devices d ON d.id=i.device_id AND d.company_id=i.company_id
@@ -328,7 +331,8 @@ public static partial class EndpointMappings
                WHERE i.company_id=@cid AND
                  (@caller_branch::BIGINT IS NULL OR
                     (i.branch_id=@caller_branch AND d.branch_id=@caller_branch AND v.branch_id=@caller_branch)) AND
-                 (((i.effective_to IS NULL AND i.status IN ('Installed','Verified')) AND
+                 ((i.status IN ('Installed','Verified','Removed') AND
+                    (i.effective_to IS NULL OR i.effective_to>@earliest) AND
                     (UPPER(BTRIM(d.device_serial))=ANY(@serials) OR UPPER(BTRIM(v.vehicle_code))=ANY(@codes)))
                    OR i.idempotency_key=ANY(@keys))",
             command =>
@@ -338,6 +342,7 @@ public static partial class EndpointMappings
                 command.Parameters.AddWithValue("@serials", NpgsqlDbType.Array | NpgsqlDbType.Text, serials);
                 command.Parameters.AddWithValue("@codes", NpgsqlDbType.Array | NpgsqlDbType.Text, vehicleCodes);
                 command.Parameters.AddWithValue("@keys", NpgsqlDbType.Array | NpgsqlDbType.Text, installationKeys);
+                command.Parameters.AddWithValue("@earliest", earliestEffectiveFrom);
             }, ct);
         var idempotencyEntries = await db.QueryAsync(
             @"SELECT idempotency_key,request_hash,status,response_reference
@@ -428,13 +433,28 @@ public static partial class EndpointMappings
                 }
             }
             if (currentDevice is not null && !replay) candidate.Errors.Add("Device already has an active installation; use the governed transfer workflow.");
-            if (candidate.IsPrimary && vehicleId.HasValue && installations.Any(row =>
+            if (currentDevice is null && !replay && candidate.EffectiveFrom.HasValue && deviceId.HasValue && installations.Any(row =>
+                    Convert.ToInt64(row["deviceId"], CultureInfo.InvariantCulture) == deviceId.Value &&
+                    row["effectiveTo"] is not (null or DBNull) &&
+                    (row["status"]?.ToString() is "Installed" or "Verified" or "Removed") &&
+                    new DateTimeOffset(Convert.ToDateTime(row["effectiveTo"], CultureInfo.InvariantCulture).ToUniversalTime()) > candidate.EffectiveFrom.Value))
+                candidate.Errors.Add("effectiveFrom overlaps closed installation history for this device; choose a timestamp at or after the prior installation ended.");
+            var currentPrimary = candidate.IsPrimary && vehicleId.HasValue && installations.Any(row =>
                     row["effectiveTo"] is null or DBNull && (row["status"]?.ToString() is "Installed" or "Verified") &&
                     Convert.ToInt64(row["vehicleId"], CultureInfo.InvariantCulture) == vehicleId.Value &&
                     Convert.ToBoolean(row["isPrimary"], CultureInfo.InvariantCulture) &&
                     string.Equals(row["deviceRole"]?.ToString(), candidate.Role, StringComparison.Ordinal) &&
-                    (!deviceId.HasValue || Convert.ToInt64(row["deviceId"], CultureInfo.InvariantCulture) != deviceId.Value)))
+                    (!deviceId.HasValue || Convert.ToInt64(row["deviceId"], CultureInfo.InvariantCulture) != deviceId.Value));
+            if (currentPrimary)
                 candidate.Errors.Add($"Vehicle already has an active primary {candidate.Role} installation.");
+            if (!currentPrimary && !replay && candidate.IsPrimary && candidate.EffectiveFrom.HasValue && vehicleId.HasValue && installations.Any(row =>
+                    row["effectiveTo"] is not (null or DBNull) &&
+                    (row["status"]?.ToString() is "Installed" or "Verified" or "Removed") &&
+                    Convert.ToInt64(row["vehicleId"], CultureInfo.InvariantCulture) == vehicleId.Value &&
+                    Convert.ToBoolean(row["isPrimary"], CultureInfo.InvariantCulture) &&
+                    string.Equals(row["deviceRole"]?.ToString(), candidate.Role, StringComparison.Ordinal) &&
+                    new DateTimeOffset(Convert.ToDateTime(row["effectiveTo"], CultureInfo.InvariantCulture).ToUniversalTime()) > candidate.EffectiveFrom.Value))
+                candidate.Errors.Add($"effectiveFrom overlaps closed primary {candidate.Role} assignment history for this vehicle; choose a timestamp at or after the prior assignment ended.");
             candidates[candidate.RowNumber - 1] = candidate with
             {
                 DeviceId = deviceId,
