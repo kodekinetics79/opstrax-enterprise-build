@@ -37,6 +37,8 @@ public static partial class EndpointMappings
         bool Replay = false,
         bool IdempotencyConflict = false);
 
+    private sealed class InstallationImportPersistenceException(string message) : Exception(message);
+
     private static IResult DeviceInstallationsImportTemplate(HttpContext http)
     {
         if (RequireAnyDirectPermission(http, "telemetry.devices.manage") is { } denied) return denied;
@@ -176,6 +178,134 @@ public static partial class EndpointMappings
                 command.Parameters.AddWithValue("@expected", deviceIds.Length);
             }, ct);
         return updated.Count == deviceIds.Length;
+    }
+
+    private static async Task<IReadOnlyDictionary<int, long>> PersistInstallationImportCandidatesAsync(
+        Database db, HttpContext http, long companyId, long actorId,
+        IReadOnlyList<InstallationImportCandidate> candidates, CancellationToken ct)
+    {
+        if (candidates.Count == 0) return new Dictionary<int, long>();
+        var payload = JsonSerializer.Serialize(candidates.Select(candidate => new
+        {
+            row_number = candidate.RowNumber,
+            scoped_key = InstallationImportScopedIdempotencyKey(candidate),
+            request_hash = candidate.RequestHash,
+            branch_id = candidate.BranchId!.Value,
+            device_id = candidate.DeviceId!.Value,
+            vehicle_id = candidate.VehicleId!.Value,
+            device_state = candidate.DeviceState,
+            role = candidate.Role,
+            is_primary = candidate.IsPrimary,
+            effective_from = candidate.EffectiveFrom!.Value,
+            location = candidate.Location,
+            odometer = candidate.Odometer,
+            method = candidate.Method,
+            reason = candidate.Reason
+        }));
+        var persisted = await db.QueryAsync(
+            @"WITH input AS MATERIALIZED (
+                  SELECT * FROM jsonb_to_recordset(@rows::jsonb) AS row(
+                    row_number INT,scoped_key TEXT,request_hash TEXT,branch_id BIGINT,device_id BIGINT,
+                    vehicle_id BIGINT,device_state TEXT,role TEXT,is_primary BOOLEAN,effective_from TIMESTAMPTZ,
+                    location TEXT,odometer NUMERIC,method TEXT,reason TEXT)
+              ), inserted_keys AS (
+                  INSERT INTO idempotency_keys
+                    (tenant_id,operation,idempotency_key,request_hash,status,expires_at,created_at)
+                  SELECT @cid,@operation,scoped_key,request_hash,'processing',NOW()+INTERVAL '24 hours',NOW()
+                    FROM input ORDER BY row_number
+                  RETURNING idempotency_key,request_hash
+              ), installations AS (
+                  INSERT INTO device_installations
+                    (company_id,branch_id,device_id,vehicle_id,installer_user_id,installed_by,status,
+                     device_role,is_primary,effective_from,installed_at,installation_location,
+                     odometer_at_installation,commissioning_method,assignment_reason,source,
+                     correlation_id,idempotency_key,created_at)
+                  SELECT @cid,input.branch_id,input.device_id,input.vehicle_id,@actor,@actor,'Installed',
+                         input.role,input.is_primary,input.effective_from,input.effective_from,input.location,
+                         input.odometer,input.method,input.reason,'operator',@correlation,input.scoped_key,NOW()
+                    FROM input
+                    JOIN inserted_keys key ON key.idempotency_key=input.scoped_key
+                                         AND key.request_hash=input.request_hash
+                   ORDER BY input.row_number
+                  RETURNING id,idempotency_key
+              )
+              SELECT input.row_number,installations.id installation_id
+                FROM input JOIN installations ON installations.idempotency_key=input.scoped_key
+               ORDER BY input.row_number",
+            command =>
+            {
+                command.Parameters.AddWithValue("@rows", NpgsqlDbType.Jsonb, payload);
+                command.Parameters.AddWithValue("@cid", companyId);
+                command.Parameters.AddWithValue("@operation", InstallationImportIdempotencyOperation);
+                command.Parameters.AddWithValue("@actor", NpgsqlDbType.Bigint, actorId > 0 ? actorId : DBNull.Value);
+                command.Parameters.AddWithValue("@correlation", http.TraceIdentifier);
+            }, ct);
+        if (persisted.Count != candidates.Count)
+            throw new InstallationImportPersistenceException(
+                "Bulk installation persistence returned an incomplete installation set.");
+
+        var persistedPayload = JsonSerializer.Serialize(persisted.Select(row => new
+        {
+            row_number = Convert.ToInt32(row["rowNumber"], CultureInfo.InvariantCulture),
+            installation_id = Convert.ToInt64(row["installationId"], CultureInfo.InvariantCulture)
+        }));
+        var finalized = await db.QuerySingleAsync(
+            @"WITH input AS MATERIALIZED (
+                  SELECT * FROM jsonb_to_recordset(@rows::jsonb) AS row(
+                    row_number INT,scoped_key TEXT,request_hash TEXT,branch_id BIGINT,device_id BIGINT,
+                    vehicle_id BIGINT,device_state TEXT,role TEXT,is_primary BOOLEAN,effective_from TIMESTAMPTZ,
+                    location TEXT,odometer NUMERIC,method TEXT,reason TEXT)
+              ), persisted AS MATERIALIZED (
+                  SELECT * FROM jsonb_to_recordset(@persisted::jsonb)
+                    AS row(row_number INT,installation_id BIGINT)
+              ), completed_keys AS (
+                  UPDATE idempotency_keys key
+                     SET status='completed',response_reference=persisted.installation_id::TEXT
+                    FROM input JOIN persisted USING (row_number)
+                   WHERE key.tenant_id=@cid AND key.operation=@operation
+                     AND key.idempotency_key=input.scoped_key AND key.request_hash=input.request_hash
+                  RETURNING key.idempotency_key
+              ), transitions AS (
+                  INSERT INTO device_state_transitions
+                    (company_id,branch_id,device_id,from_state,to_state,reason_code,reason,
+                     actor_user_id,correlation_id,occurred_at)
+                  SELECT @cid,input.branch_id,input.device_id,input.device_state,'Installed','installation_created',
+                         input.reason,@actor,@transitionCorrelation,NOW()
+                    FROM input JOIN persisted USING (row_number)
+                   ORDER BY input.row_number
+                  RETURNING device_id
+              )
+              SELECT (SELECT COUNT(*) FROM completed_keys) completed_count,
+                     (SELECT COUNT(*) FROM transitions) transition_count",
+            command =>
+            {
+                command.Parameters.AddWithValue("@rows", NpgsqlDbType.Jsonb, payload);
+                command.Parameters.AddWithValue("@persisted", NpgsqlDbType.Jsonb, persistedPayload);
+                command.Parameters.AddWithValue("@cid", companyId);
+                command.Parameters.AddWithValue("@operation", InstallationImportIdempotencyOperation);
+                command.Parameters.AddWithValue("@actor", NpgsqlDbType.Bigint, actorId > 0 ? actorId : DBNull.Value);
+                command.Parameters.AddWithValue("@transitionCorrelation", CorrelationUuid(http.TraceIdentifier));
+            }, ct);
+        var completedCount = Convert.ToInt32(finalized?["completedCount"] ?? 0, CultureInfo.InvariantCulture);
+        var transitionCount = Convert.ToInt32(finalized?["transitionCount"] ?? 0, CultureInfo.InvariantCulture);
+        if (completedCount != candidates.Count || transitionCount != candidates.Count)
+            throw new InstallationImportPersistenceException(
+                "Bulk installation persistence returned an incomplete ledger or transition set.");
+
+        return persisted.ToDictionary(
+            row => Convert.ToInt32(row["rowNumber"], CultureInfo.InvariantCulture),
+            row => Convert.ToInt64(row["installationId"], CultureInfo.InvariantCulture));
+    }
+
+    private static bool IsInstallationImportPersistenceConflict(PostgresException exception) =>
+        exception.SqlState is PostgresErrorCodes.ExclusionViolation or PostgresErrorCodes.UniqueViolation or
+            PostgresErrorCodes.CheckViolation or PostgresErrorCodes.ForeignKeyViolation or
+            PostgresErrorCodes.DeadlockDetected;
+
+    private static async Task RollbackInstallationImportSavepointAsync(Database db, CancellationToken ct)
+    {
+        await db.ExecuteAsync("ROLLBACK TO SAVEPOINT installation_import_mutation", ct: ct);
+        await db.ExecuteAsync("RELEASE SAVEPOINT installation_import_mutation", ct: ct);
     }
 
     private static async Task<List<InstallationImportCandidate>> ValidateInstallationImportAsync(
@@ -505,9 +635,7 @@ public static partial class EndpointMappings
         if (rows.Count == 0) return Results.BadRequest(ApiResponse<object>.Fail("No installation rows to import."));
         var companyId = GetCompanyId(http);
         var actorId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
-        try
-        {
-            return await db.RunInTenantTransactionAsync<IResult>(companyId, async () =>
+        return await db.RunInTenantTransactionAsync<IResult>(companyId, async () =>
             {
                 var advisoryScope = GetBranchId(http)?.ToString(CultureInfo.InvariantCulture) ?? "tenant";
                 var lockKeys = rows.SelectMany(row => new[]
@@ -552,90 +680,60 @@ public static partial class EndpointMappings
                         ? Results.Conflict(failure)
                         : Results.BadRequest(failure);
                 }
-                if (!await MarkInstallationImportDevicesInstalledAsync(db, companyId, candidates, ct))
-                    return Results.Conflict(ApiResponse<object>.Fail(
-                        "A device lifecycle state changed during import. No rows changed; refresh and retry."));
-
-                var created = 0;
-                var skipped = new List<object>();
-                var rowResults = new List<object>();
-                foreach (var candidate in candidates)
+                await db.ExecuteAsync("SAVEPOINT installation_import_mutation", ct: ct);
+                try
                 {
-                    if (candidate.Replay)
+                    if (!await MarkInstallationImportDevicesInstalledAsync(db, companyId, candidates, ct))
                     {
-                        skipped.Add(new
-                        {
-                            rowNumber = candidate.RowNumber,
-                            key = candidate.Key,
-                            errors = new[] { "Installation already recorded; no duplicate history created." }
-                        });
-                        rowResults.Add(new { rowNumber = candidate.RowNumber, key = candidate.Key, action = "skip" });
-                        continue;
+                        await db.ExecuteAsync("RELEASE SAVEPOINT installation_import_mutation", ct: ct);
+                        return Results.Conflict(ApiResponse<object>.Fail(
+                            "A device lifecycle state changed during import. No rows changed; refresh and retry."));
                     }
-                    await db.ExecuteAsync(
-                        @"INSERT INTO idempotency_keys
-                            (tenant_id,operation,idempotency_key,request_hash,status,expires_at,created_at)
-                          VALUES (@cid,@operation,@key,@hash,'processing',NOW()+INTERVAL '24 hours',NOW())",
-                        command =>
+
+                    var createdCandidates = candidates.Where(candidate => !candidate.Replay).ToArray();
+                    var persistedByRow = await PersistInstallationImportCandidatesAsync(
+                        db, http, companyId, actorId, createdCandidates, ct);
+                    var created = 0;
+                    var skipped = new List<object>();
+                    var rowResults = new List<object>();
+                    var createdAudits = new List<AuditService.BatchEntry>(createdCandidates.Length);
+                    foreach (var candidate in candidates)
+                    {
+                        if (candidate.Replay)
                         {
-                            command.Parameters.AddWithValue("@cid", companyId);
-                            command.Parameters.AddWithValue("@operation", InstallationImportIdempotencyOperation);
-                            command.Parameters.AddWithValue("@key", InstallationImportScopedIdempotencyKey(candidate));
-                            command.Parameters.AddWithValue("@hash", candidate.RequestHash!);
-                        }, ct);
-                    var installationId = await db.InsertAsync(
-                        @"INSERT INTO device_installations
-                            (company_id,branch_id,device_id,vehicle_id,installer_user_id,installed_by,status,
-                             device_role,is_primary,effective_from,installed_at,installation_location,
-                             odometer_at_installation,commissioning_method,assignment_reason,source,
-                             correlation_id,idempotency_key,created_at)
-                          VALUES (@cid,@branch,@did,@vid,@actor,@actor,'Installed',@role,@primary,@effective,@effective,
-                                  @location,@odometer,@method,@reason,'operator',@correlation,@idempotency,NOW())",
-                        command =>
-                        {
-                            command.Parameters.AddWithValue("@cid", companyId);
-                            command.Parameters.AddWithValue("@branch", candidate.BranchId!.Value);
-                            command.Parameters.AddWithValue("@did", candidate.DeviceId!.Value);
-                            command.Parameters.AddWithValue("@vid", candidate.VehicleId!.Value);
-                            command.Parameters.AddWithValue("@actor", actorId > 0 ? actorId : DBNull.Value);
-                            command.Parameters.AddWithValue("@role", candidate.Role);
-                            command.Parameters.AddWithValue("@primary", candidate.IsPrimary);
-                            command.Parameters.AddWithValue("@effective", candidate.EffectiveFrom!.Value);
-                            command.Parameters.AddWithValue("@location", (object?)candidate.Location ?? DBNull.Value);
-                            command.Parameters.AddWithValue("@odometer", (object?)candidate.Odometer ?? DBNull.Value);
-                            command.Parameters.AddWithValue("@method", (object?)candidate.Method ?? DBNull.Value);
-                            command.Parameters.AddWithValue("@reason", candidate.Reason);
-                            command.Parameters.AddWithValue("@correlation", http.TraceIdentifier);
-                            command.Parameters.AddWithValue("@idempotency", InstallationImportScopedIdempotencyKey(candidate));
-                        }, ct);
-                    await db.ExecuteAsync(
-                        @"UPDATE idempotency_keys SET status='completed',response_reference=@response
-                           WHERE tenant_id=@cid AND operation=@operation AND idempotency_key=@key AND request_hash=@hash",
-                        command =>
-                        {
-                            command.Parameters.AddWithValue("@response", installationId.ToString(CultureInfo.InvariantCulture));
-                            command.Parameters.AddWithValue("@cid", companyId);
-                            command.Parameters.AddWithValue("@operation", InstallationImportIdempotencyOperation);
-                            command.Parameters.AddWithValue("@key", InstallationImportScopedIdempotencyKey(candidate));
-                            command.Parameters.AddWithValue("@hash", candidate.RequestHash!);
-                        }, ct);
-                    await AppendDeviceTransitionAsync(db, companyId, candidate.BranchId, candidate.DeviceId!.Value,
-                        candidate.DeviceState, "Installed", actorId, "installation_created", candidate.Reason, http.TraceIdentifier, ct);
-                    await audit.LogAsync(http, "device.installation.created", "DeviceInstallation", installationId,
-                        JsonSerializer.Serialize(new { deviceId = candidate.DeviceId, vehicleId = candidate.VehicleId, effectiveFrom = candidate.EffectiveFrom, source = "bulk-csv" }), ct);
-                    created++;
-                    rowResults.Add(new { rowNumber = candidate.RowNumber, key = candidate.Key, action = "create", installationId });
+                            skipped.Add(new
+                            {
+                                rowNumber = candidate.RowNumber,
+                                key = candidate.Key,
+                                errors = new[] { "Installation already recorded; no duplicate history created." }
+                            });
+                            rowResults.Add(new { rowNumber = candidate.RowNumber, key = candidate.Key, action = "skip" });
+                            continue;
+                        }
+                        var installationId = persistedByRow[candidate.RowNumber];
+                        createdAudits.Add(new AuditService.BatchEntry(installationId,
+                            JsonSerializer.Serialize(new { deviceId = candidate.DeviceId, vehicleId = candidate.VehicleId, effectiveFrom = candidate.EffectiveFrom, source = "bulk-csv" })));
+                        created++;
+                        rowResults.Add(new { rowNumber = candidate.RowNumber, key = candidate.Key, action = "create", installationId });
+                    }
+                    await audit.LogBatchAsync(http, "device.installation.created", "DeviceInstallation", createdAudits, ct);
+                    await audit.LogAsync(http, "device.installations.imported", "DeviceInstallation", null,
+                        JsonSerializer.Serialize(new { created, skipped = skipped.Count, total = candidates.Count }), ct);
+                    await db.ExecuteAsync("RELEASE SAVEPOINT installation_import_mutation", ct: ct);
+                    return Results.Ok(ApiResponse<object>.Ok(new { created, updated = 0, skipped, total = candidates.Count, rows = rowResults }));
                 }
-                await audit.LogAsync(http, "device.installations.imported", "DeviceInstallation", null,
-                    JsonSerializer.Serialize(new { created, skipped = skipped.Count, total = candidates.Count }), ct);
-                return Results.Ok(ApiResponse<object>.Ok(new { created, updated = 0, skipped, total = candidates.Count, rows = rowResults }));
+                catch (PostgresException ex) when (IsInstallationImportPersistenceConflict(ex))
+                {
+                    await RollbackInstallationImportSavepointAsync(db, ct);
+                    return Results.Conflict(ApiResponse<object>.Fail(
+                        "A device, vehicle, or primary role changed after preview. No rows changed; refresh the CSV and retry."));
+                }
+                catch (InstallationImportPersistenceException)
+                {
+                    await RollbackInstallationImportSavepointAsync(db, ct);
+                    return Results.Conflict(ApiResponse<object>.Fail(
+                        "The complete installation batch could not be persisted. No rows changed; refresh the CSV and retry."));
+                }
             }, ct);
-        }
-        catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.ExclusionViolation or
-            PostgresErrorCodes.UniqueViolation or PostgresErrorCodes.CheckViolation or PostgresErrorCodes.ForeignKeyViolation or
-            PostgresErrorCodes.DeadlockDetected)
-        {
-            return Results.Conflict(ApiResponse<object>.Fail("A device, vehicle, or primary role changed after preview. No rows changed; refresh the CSV and retry."));
-        }
     }
 }

@@ -98,6 +98,7 @@ public sealed class DeviceInstallationImportContractTests
     {
         var source = Read("backend-dotnet", "Controllers", "DeviceInstallationImportEndpoints.cs");
         var commit = MethodBlock(source, "DeviceInstallationsImportCommit");
+        var persist = MethodBlock(source, "PersistInstallationImportCandidatesAsync");
         Assert.Contains("RunInTenantTransactionAsync", commit, StringComparison.Ordinal);
         Assert.Contains("Distinct(StringComparer.Ordinal).OrderBy", commit, StringComparison.Ordinal);
         Assert.Contains("pg_advisory_xact_lock", commit, StringComparison.Ordinal);
@@ -112,23 +113,31 @@ public sealed class DeviceInstallationImportContractTests
         Assert.Contains("before.VehicleId != row.VehicleId", commit, StringComparison.Ordinal);
         Assert.Contains("before.BranchId != row.BranchId", commit, StringComparison.Ordinal);
         Assert.True(commit.IndexOf("resourceIdentityChanged", StringComparison.Ordinal) < commit.IndexOf("MarkInstallationImportDevicesInstalledAsync", StringComparison.Ordinal));
-        Assert.True(commit.IndexOf("invalid.Count > 0", StringComparison.Ordinal) < commit.IndexOf("INSERT INTO device_installations", StringComparison.Ordinal));
-        Assert.True(commit.IndexOf("MarkInstallationImportDevicesInstalledAsync", StringComparison.Ordinal) < commit.IndexOf("INSERT INTO idempotency_keys", StringComparison.Ordinal));
+        Assert.True(commit.IndexOf("invalid.Count > 0", StringComparison.Ordinal) < commit.IndexOf("PersistInstallationImportCandidatesAsync", StringComparison.Ordinal));
+        Assert.True(commit.IndexOf("MarkInstallationImportDevicesInstalledAsync", StringComparison.Ordinal) < commit.IndexOf("PersistInstallationImportCandidatesAsync", StringComparison.Ordinal));
         Assert.Contains("No rows changed", commit, StringComparison.Ordinal);
         Assert.Contains("candidate.Replay", commit, StringComparison.Ordinal);
-        Assert.Contains("candidate.RequestHash", commit, StringComparison.Ordinal);
-        Assert.Contains("INSERT INTO idempotency_keys", commit, StringComparison.Ordinal);
+        Assert.Contains("candidate.RequestHash", persist, StringComparison.Ordinal);
+        Assert.Contains("INSERT INTO idempotency_keys", persist, StringComparison.Ordinal);
+        Assert.Contains("jsonb_to_recordset", persist, StringComparison.Ordinal);
+        Assert.Contains("inserted_keys", persist, StringComparison.Ordinal);
+        Assert.Contains("completed_keys", persist, StringComparison.Ordinal);
         Assert.Contains("invalid.Any(row => row.IdempotencyConflict)", commit, StringComparison.Ordinal);
-        Assert.Contains("status,", commit, StringComparison.Ordinal);
-        Assert.Contains("'Installed'", commit, StringComparison.Ordinal);
-        Assert.DoesNotContain("commissioning_result", commit, StringComparison.Ordinal);
-        Assert.DoesNotContain("activation_verified_at", commit, StringComparison.Ordinal);
-        Assert.Contains("AppendDeviceTransitionAsync", commit, StringComparison.Ordinal);
+        Assert.Contains("status,", persist, StringComparison.Ordinal);
+        Assert.Contains("'Installed'", persist, StringComparison.Ordinal);
+        Assert.DoesNotContain("commissioning_result", persist, StringComparison.Ordinal);
+        Assert.DoesNotContain("activation_verified_at", persist, StringComparison.Ordinal);
+        Assert.Contains("INSERT INTO device_state_transitions", persist, StringComparison.Ordinal);
+        Assert.Contains("LogBatchAsync", commit, StringComparison.Ordinal);
+        var resultLoopStart = commit.IndexOf("foreach (var candidate", StringComparison.Ordinal);
+        var resultLoopEnd = commit.IndexOf("await audit.LogBatchAsync", resultLoopStart, StringComparison.Ordinal);
+        Assert.DoesNotContain("await db.", commit[resultLoopStart..resultLoopEnd], StringComparison.Ordinal);
         Assert.Contains("device.installation.created", commit, StringComparison.Ordinal);
         Assert.Contains("device.installations.imported", commit, StringComparison.Ordinal);
-        Assert.Contains("PostgresErrorCodes.CheckViolation", commit, StringComparison.Ordinal);
-        Assert.Contains("PostgresErrorCodes.ForeignKeyViolation", commit, StringComparison.Ordinal);
-        Assert.Contains("PostgresErrorCodes.DeadlockDetected", commit, StringComparison.Ordinal);
+        Assert.Contains("IsInstallationImportPersistenceConflict", commit, StringComparison.Ordinal);
+        Assert.Contains("PostgresErrorCodes.CheckViolation", source, StringComparison.Ordinal);
+        Assert.Contains("PostgresErrorCodes.ForeignKeyViolation", source, StringComparison.Ordinal);
+        Assert.Contains("PostgresErrorCodes.DeadlockDetected", source, StringComparison.Ordinal);
     }
 
     [Fact]
