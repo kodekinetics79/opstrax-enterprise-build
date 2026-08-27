@@ -237,6 +237,9 @@ public static partial class EndpointMappings
         app.MapGet("/api/telemetry/devices/import-template", DevicesImportTemplate);
         app.MapPost("/api/telemetry/devices/import-preview", DevicesImportPreview);
         app.MapPost("/api/telemetry/devices/import-commit", DevicesImportCommit);
+        app.MapGet("/api/telemetry/device-installations/import-template", DeviceInstallationsImportTemplate);
+        app.MapPost("/api/telemetry/device-installations/import-preview", DeviceInstallationsImportPreview);
+        app.MapPost("/api/telemetry/device-installations/import-commit", DeviceInstallationsImportCommit);
         app.MapGet("/api/telemetry/devices/{id:long}", TelemetryDeviceDetail);
         app.MapPost("/api/telemetry/gateways", TelemetryGatewayProvision);
         app.MapGet("/api/telemetry/gateways", TelemetryGatewayList);
@@ -19624,6 +19627,7 @@ LIMIT 100000",
         var actorId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
         return await db.RunInSystemTransactionAsync<IResult>(async () =>
         {
+            await LockInstallationIdentityAsync(db, companyId, id, null, ct);
             var current = await db.QuerySingleAsync(
                 @"SELECT status,device_state,row_version,branch_id,revoked_at FROM eld_devices
                    WHERE id=@id AND company_id=@cid AND deleted_at IS NULL
@@ -19664,6 +19668,7 @@ LIMIT 100000",
         var actorId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
         return await db.RunInTenantTransactionAsync(companyId, async () =>
         {
+            await LockInstallationIdentityAsync(db, companyId, id, null, ct);
             var current = await db.QuerySingleAsync(
                 @"SELECT status,device_state,row_version,branch_id,revoked_at FROM eld_devices
                    WHERE id=@id AND company_id=@cid AND deleted_at IS NULL
@@ -19699,6 +19704,7 @@ LIMIT 100000",
         var actorId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
         return await db.RunInTenantTransactionAsync(companyId, async () =>
         {
+            await LockInstallationIdentityAsync(db, companyId, id, null, ct);
             var current = await db.QuerySingleAsync(
                 @"SELECT status,device_state,row_version,branch_id,revoked_at FROM eld_devices
                    WHERE id=@id AND company_id=@cid AND deleted_at IS NULL

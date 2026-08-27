@@ -57,7 +57,7 @@ public sealed class TelemetryClusterPaginationContractTests
         Assert.Contains("Showing {(page - 1) * pageSize + 1}", page, StringComparison.Ordinal);
         Assert.Contains(">Previous</button>", page, StringComparison.Ordinal);
         Assert.Contains(">Next</button>", page, StringComparison.Ordinal);
-        Assert.Contains("enabled: Boolean(selected?.deviceId) && !paged", page, StringComparison.Ordinal);
+        Assert.Contains("enabled: canView && Boolean(selected?.deviceId) && !paged", page, StringComparison.Ordinal);
         Assert.Contains("detail?: DeviceDetailRecord", page, StringComparison.Ordinal);
     }
 

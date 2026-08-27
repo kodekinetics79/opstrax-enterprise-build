@@ -30,7 +30,7 @@ import { EmptyState, ErrorState, KpiCard, LoadingState, PageHeader, RiskBadge, S
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { EntityImportExport } from "@/components/EntityImportExport";
 import { PERMISSIONS } from "@/auth/rbacConfig";
-import { useHasPermission } from "@/hooks/usePermission";
+import { useHasDirectPermission, useHasPermission } from "@/hooks/usePermission";
 import { vehiclesApi } from "@/services/vehiclesApi";
 import {
   canReadProviderCatalog,
@@ -467,6 +467,7 @@ export function IotDevicesPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const hasPermission = useHasPermission();
+  const hasDirectPermission = useHasDirectPermission();
   const { session } = useAuth();
 
   const canDiagnostics = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_DIAGNOSTICS);
@@ -477,6 +478,7 @@ export function IotDevicesPage() {
   const canUpdate = canManageDeviceLifecycle;
   const canDelete = canManageDeviceLifecycle;
   const canGovernInstallations = canManageDeviceLifecycle;
+  const canBulkInstall = hasDirectPermission(PERMISSIONS.TELEMETRY_DEVICES_MANAGE);
   // Recovery (mark/resolve malfunction) is gated server-side on
   // compliance:update | compliance:manage | telematics:manage — NOT maintenance:manage,
   // which the broader DIAGNOSTICS alias set includes. Gate the UI on the compliance set so
@@ -818,8 +820,26 @@ export function IotDevicesPage() {
                 importCommit: telematicsService.commitDeviceImport,
                 invalidateKey: "telematics",
                 onImported: refreshAll,
+                toolbarLabel: "Device",
               }}
             />
+            {canBulkInstall ? <EntityImportExport
+              canImport={canBulkInstall}
+              canExport={false}
+              config={{
+                entity: "device installations",
+                columns: ["deviceSerial", "branchCode", "vehicleCode", "deviceRole", "isPrimary", "effectiveFrom", "installationLocation", "odometerAtInstallation", "commissioningMethod", "assignmentReason", "idempotencyKey"],
+                requiredColumns: ["deviceSerial", "branchCode", "vehicleCode", "deviceRole", "isPrimary", "effectiveFrom", "assignmentReason", "idempotencyKey"],
+                templateEndpoint: "/api/telemetry/device-installations/import-template",
+                importPreview: telematicsService.previewDeviceInstallationImport,
+                importCommit: telematicsService.commitDeviceInstallationImport,
+                invalidateKey: "telematics",
+                onImported: refreshAll,
+                atomic: true,
+                toolbarLabel: "Installation",
+                importHelp: "Up to 500 rows. This create-only workflow records new installations. Exact idempotent replays are skipped; use the governed Transfer action for reassignment.",
+              }}
+            /> : null}
             {canExport ? <button className="btn-ghost" title="Export the current device inventory to CSV." onClick={() => void exportCurrent()}>
               <Download className="h-4 w-4" /> Export Devices CSV
             </button> : null}

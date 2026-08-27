@@ -1504,6 +1504,14 @@ export const telematicsService = {
     return unwrap<AnyRecord>(apiClient.post("/api/telemetry/devices/import-commit", { rows }, { timeout: 120000 }));
   },
 
+  async previewDeviceInstallationImport(rows: AnyRecord[]): Promise<AnyRecord> {
+    return unwrap<AnyRecord>(apiClient.post("/api/telemetry/device-installations/import-preview", { rows }));
+  },
+
+  async commitDeviceInstallationImport(rows: AnyRecord[]): Promise<AnyRecord> {
+    return unwrap<AnyRecord>(apiClient.post("/api/telemetry/device-installations/import-commit", { rows }, { timeout: 120000 }));
+  },
+
   // Provision a device = INITIATE A REAL CONNECTION (the Render/Vercel model), not a
   // data save. The backend generates a real apiKey + HMAC secret that authenticate the
   // physical device's telemetry POSTs to /api/telemetry/ingest. Those credentials are

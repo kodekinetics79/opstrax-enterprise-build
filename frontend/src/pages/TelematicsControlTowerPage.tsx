@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import { Activity, AlertTriangle, CheckCircle2, Download, Gauge, MapPinned, RadioTower, Search, ShieldCheck, Wrench } from "lucide-react";
 import { EmptyState, ErrorState, KpiCard, LoadingState, PageHeader, StatusBadge } from "@/components/ui";
 import { PERMISSIONS, useHasPermission } from "@/hooks/usePermission";
-import { telematicsService, type DeviceCommandRecord } from "@/services/telematicsService";
+import { telematicsService, type DeviceCommandRecord, type DevicePageResult } from "@/services/telematicsService";
 
 type ExceptionRow = {
   id: string;
@@ -67,6 +67,8 @@ export function TelematicsControlTowerPage() {
   const [view, setView] = useState("attention");
   const [sort, setSort] = useState<"priority" | "serial" | "provider" | "vehicle" | "lastCheckIn">("priority");
   const [page, setPage] = useState(1);
+  const hasLoadedQueue = useRef(false);
+  const lastSuccessfulSummary = useRef<DevicePageResult["summary"] | null>(null);
   const pageSize = 100;
 
   useEffect(() => {
@@ -80,6 +82,13 @@ export function TelematicsControlTowerPage() {
     refetchInterval: 30_000,
   });
 
+  useEffect(() => {
+    if (query.data) {
+      hasLoadedQueue.current = true;
+      lastSuccessfulSummary.current = query.data.summary;
+    }
+  }, [query.data]);
+
   // Ordering is applied before LIMIT/OFFSET on the server so page 1 is the
   // fleet-wide highest-priority page rather than a page-local re-sort.
   const exceptions = useMemo(() => (query.data?.items ?? []).map(exceptionFor), [query.data?.items]);
@@ -90,15 +99,24 @@ export function TelematicsControlTowerPage() {
     if (query.data && page > pageCount) setPage(pageCount);
   }, [page, pageCount, query.data]);
 
-  if (query.isLoading) return <LoadingState />;
+  const searchPending = search.trim() !== settledSearch;
+  // Once the queue has rendered, query-key transitions should retain page
+  // context while suppressing stale rows and announcing the pending result.
+  // Background refreshes keep the current truthful rows visible because they
+  // have data and are not a query-key loading transition.
+  const queueTransitionPending = searchPending || (query.isLoading && hasLoadedQueue.current);
+
+  if (query.isLoading && !hasLoadedQueue.current) return <LoadingState />;
   if (query.isError) return <ErrorState message={query.error instanceof Error ? query.error.message : "Unable to load device signals."} onRetry={() => { void query.refetch(); }} />;
 
-  const summary = query.data?.summary;
+  // Search, view, sort, and pagination only change the queue rows; the API
+  // summary is for the complete authorized fleet. Keep the last successful
+  // summary during a query-key transition so the KPI cards never flash false
+  // zeroes while the replacement queue is loading.
+  const summary = query.data?.summary ?? lastSuccessfulSummary.current;
   const denominator = summary?.active ?? 0;
   const rangeStart = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const rangeEnd = Math.min(page * pageSize, total);
-  const searchPending = search.trim() !== settledSearch;
-
   return (
     <div className="space-y-5">
       <PageHeader title="Telematics Control Tower" description="Exception-first DeviceOps for connectivity and lifecycle evidence, with permission-scoped GPS and diagnostics workspaces." eyebrow="Telematics & IoT" />
@@ -132,7 +150,7 @@ export function TelematicsControlTowerPage() {
         </div>
       </section>
 
-      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm" aria-busy={queueTransitionPending}>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 className="font-semibold text-slate-900">Priority action queue</h2>
@@ -160,7 +178,7 @@ export function TelematicsControlTowerPage() {
           </select></label>
         </div>
 
-        {searchPending ? (
+        {queueTransitionPending ? (
           <div className="mt-4" role="status" aria-live="polite" aria-busy="true">
             <p className="mb-3 text-sm font-medium text-slate-600">Updating priority queue…</p>
             <LoadingState />
@@ -181,7 +199,7 @@ export function TelematicsControlTowerPage() {
             </table>
           </div>
         )}
-        {!searchPending ? <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4 text-sm text-slate-600" aria-live="polite">
+        {!queueTransitionPending ? <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4 text-sm text-slate-600" aria-live="polite">
           <span>{rangeStart}–{rangeEnd} of {total} · Page {page} of {pageCount}</span>
           <div className="flex gap-2"><button className="btn-ghost" disabled={page <= 1 || query.isFetching} onClick={() => setPage((value) => Math.max(1, value - 1))}>Previous</button><button className="btn-ghost" disabled={page >= pageCount || query.isFetching} onClick={() => setPage((value) => Math.min(pageCount, value + 1))}>Next</button></div>
         </div> : null}

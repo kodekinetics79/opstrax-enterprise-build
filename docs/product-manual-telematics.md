@@ -8,6 +8,12 @@ This guide describes the customer-visible Telematics workflow. A device registry
 2. Open **Device Health** and download the current customer import template.
 3. Populate non-duplicated serial numbers, device type, provider, branch, and any supported optional identifiers.
 4. Upload the CSV through the import workflow. Correct rejected rows in the product workflow and upload the corrected file.
+
+### Bulk device installation
+
+After devices and vehicles exist, open **Device Health** and use the separate **device installations** template and import control. Each row identifies an existing device and vehicle, their branch, the hardware role, effective timestamp, reason, and a unique idempotency key. Imports accept up to 500 rows, so a 1,000-installation fleet uses two files.
+
+Review the server preview before committing. The installation import is atomic: every row must be valid, and a concurrent device, vehicle, branch, or primary-role conflict changes no rows. Re-uploading an already completed file reports those rows as already recorded and does not duplicate history. Bulk installation creates normal effective-dated **Installed** records and audit/history entries; it never marks a device commissioned or verified. Commissioning still requires authenticated telemetry evidence through the normal device workflow.
 5. Store the one-time device credentials securely when the product presents them. OpsTrax does not display those secrets again.
 6. Refresh the page and use search, filters, sorting, pagination, and export to verify that the accepted records persisted in the intended branches.
 

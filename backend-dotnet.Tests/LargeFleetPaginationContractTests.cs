@@ -88,6 +88,12 @@ public sealed class LargeFleetPaginationContractTests
         Assert.Contains("sort === \"priority\" ? \"desc\" : \"asc\"", page, StringComparison.Ordinal);
         Assert.Contains("role=\"status\" aria-live=\"polite\" aria-busy=\"true\"", page, StringComparison.Ordinal);
         Assert.Contains("Updating priority queue…", page, StringComparison.Ordinal);
+        Assert.Contains("const queueTransitionPending = searchPending || (query.isLoading && hasLoadedQueue.current)", page, StringComparison.Ordinal);
+        Assert.Contains("const lastSuccessfulSummary = useRef<DevicePageResult[\"summary\"] | null>(null)", page, StringComparison.Ordinal);
+        Assert.Contains("lastSuccessfulSummary.current = query.data.summary", page, StringComparison.Ordinal);
+        Assert.Contains("const summary = query.data?.summary ?? lastSuccessfulSummary.current", page, StringComparison.Ordinal);
+        Assert.Contains("aria-busy={queueTransitionPending}", page, StringComparison.Ordinal);
+        Assert.Contains("!queueTransitionPending ? <div", page, StringComparison.Ordinal);
         Assert.Contains("const governedHold = /quarantined|suspended/i.test(device.deviceState)", page, StringComparison.Ordinal);
         Assert.Contains("Resolve the governed device hold before returning it to service", page, StringComparison.Ordinal);
         Assert.Contains("LOWER(COALESCE(e.device_state,'')) NOT IN ('quarantined','suspended')", endpoints, StringComparison.Ordinal);

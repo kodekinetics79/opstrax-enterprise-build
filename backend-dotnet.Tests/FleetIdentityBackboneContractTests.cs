@@ -176,11 +176,12 @@ public sealed class FleetIdentityBackboneContractTests
         Assert.Contains("InstallationHasEventAtOrAfterAsync", lifecycle, StringComparison.Ordinal);
         Assert.Contains("cannot predate telemetry already attributed", lifecycle, StringComparison.Ordinal);
         var transfer = Block(lifecycle, "private static async Task<IResult> DeviceInstallationTransfer(", "private static Task<long> DeviceVisibleAsync(");
-        Assert.Contains("SELECT id FROM eld_devices", transfer, StringComparison.Ordinal);
-        Assert.Contains("company_id=@cid AND deleted_at IS NULL", transfer, StringComparison.Ordinal);
-        Assert.Contains("FOR UPDATE", transfer, StringComparison.Ordinal);
-        Assert.True(transfer.IndexOf("SELECT id FROM eld_devices", StringComparison.Ordinal) <
+        Assert.Contains("LoadAndLockInstallationResourcesAsync", transfer, StringComparison.Ordinal);
+        Assert.True(transfer.IndexOf("LoadAndLockInstallationResourcesAsync", StringComparison.Ordinal) <
                     transfer.IndexOf("InstallationHasEventAtOrAfterAsync", StringComparison.Ordinal));
+        var resourceLock = Block(lifecycle, "private static async Task<Dictionary<string, object?>?> LoadAndLockInstallationResourcesAsync(", "private static bool IsDeviceInstallEligible(");
+        Assert.Contains("company_id=@cid", resourceLock, StringComparison.Ordinal);
+        Assert.Equal(3, resourceLock.Split("FOR UPDATE", StringSplitOptions.None).Length - 1);
         var eventBoundary = Block(lifecycle, "private static async Task<long> InstallationHasEventAtOrAfterAsync(", "private static async Task<IResult> DeviceInstallationQuarantineList(");
         Assert.Contains("FROM location_events", eventBoundary, StringComparison.Ordinal);
         Assert.Contains("RunInSystemScopeAsync", eventBoundary, StringComparison.Ordinal);
