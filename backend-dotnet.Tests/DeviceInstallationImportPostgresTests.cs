@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
 using System.Text.Json;
@@ -7,12 +8,13 @@ using Npgsql;
 using Opstrax.Api.Controllers;
 using Opstrax.Api.Data;
 using Opstrax.Api.Services;
+using Xunit.Abstractions;
 
 namespace Opstrax.Tests;
 
 [Trait("Category", "Integration")]
 [Collection("fleet-identity-schema")]
-public sealed class DeviceInstallationImportPostgresTests
+public sealed class DeviceInstallationImportPostgresTests(ITestOutputHelper output)
 {
     [Fact]
     public async Task LargeTenantWideBatchCommits499RowsAtomically()
@@ -40,10 +42,15 @@ public sealed class DeviceInstallationImportPostgresTests
                 }
             }
 
+            var stopwatch = Stopwatch.StartNew();
             var result = await Invoke("DeviceInstallationsImportCommit", Principal(companyId, null),
                 ImportBody(rows.ToArray()), db, new AuditService(db), CancellationToken.None);
+            stopwatch.Stop();
+            output.WriteLine("499-row/five-branch installation commit duration: {0:F3}s", stopwatch.Elapsed.TotalSeconds);
 
             Assert.Equal(StatusCodes.Status200OK, Status(result));
+            Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(30),
+                $"499-row atomic commit took {stopwatch.Elapsed.TotalSeconds:F3}s; expected <30s for a 4x client-timeout safety margin.");
             Assert.Equal(499, await db.ScalarLongAsync(
                 "SELECT COUNT(*) FROM device_installations WHERE company_id=@c AND source='operator'",
                 command => command.Parameters.AddWithValue("@c", companyId)));
@@ -53,10 +60,162 @@ public sealed class DeviceInstallationImportPostgresTests
             Assert.Equal(499, await db.ScalarLongAsync(
                 "SELECT COUNT(*) FROM idempotency_keys WHERE tenant_id=@c AND operation='device.installation.bulk-import' AND status='completed'",
                 command => command.Parameters.AddWithValue("@c", companyId)));
+            Assert.Equal(499, await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM audit_logs WHERE company_id=@c AND action_name='device.installation.created'",
+                command => command.Parameters.AddWithValue("@c", companyId)));
+            Assert.Equal(1, await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM audit_logs WHERE company_id=@c AND action_name='device.installations.imported'",
+                command => command.Parameters.AddWithValue("@c", companyId)));
         }
         finally
         {
             await Cleanup(db, companyId);
+        }
+    }
+
+    [Fact]
+    public async Task AmbientTenantScopeCountMismatchReturns409RollsBackAndRemainsCommittable()
+    {
+        var owner = Db();
+        var companyId = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + Random.Shared.Next(17_000_000, 17_400_000);
+        await Company(owner, companyId);
+        try
+        {
+            var branch = await Branch(owner, companyId, "AMBIENT-COUNT");
+            var vehicleCode = $"AMBIENT-COUNT-V-{companyId}";
+            var serial = $"AMBIENT-COUNT-D-{companyId}";
+            await Vehicle(owner, companyId, branch, vehicleCode);
+            var device = await Device(owner, companyId, branch, serial);
+            await owner.ExecuteAsync(
+                @"CREATE OR REPLACE FUNCTION test_suppress_bulk_install_transition() RETURNS TRIGGER
+                    LANGUAGE plpgsql AS $$
+                    BEGIN
+                      IF NEW.reason='Force batch count mismatch' THEN RETURN NULL; END IF;
+                      RETURN NEW;
+                    END $$;
+                  DROP TRIGGER IF EXISTS test_suppress_bulk_install_transition ON device_state_transitions;
+                  CREATE TRIGGER test_suppress_bulk_install_transition
+                    BEFORE INSERT ON device_state_transitions FOR EACH ROW
+                    EXECUTE FUNCTION test_suppress_bulk_install_transition()" );
+
+            var runtime = ProtectedDb();
+            var result = await runtime.RunInTenantScopeAsync(companyId, async () =>
+            {
+                var response = await Invoke("DeviceInstallationsImportCommit", Principal(companyId, branch),
+                    ImportBody(Row(serial, "AMBIENT-COUNT", vehicleCode,
+                        DateTimeOffset.UtcNow.AddMinutes(-2).ToString("O"), $"ambient-count-{companyId}",
+                        "Force batch count mismatch")),
+                    runtime, new AuditService(runtime), CancellationToken.None);
+                Assert.Equal(StatusCodes.Status409Conflict, Status(response));
+                Assert.Contains("No rows changed", ResponseJson(response), StringComparison.Ordinal);
+                Assert.Equal(1, await runtime.ScalarLongAsync("SELECT 1"));
+                return response;
+            });
+            Assert.Equal(StatusCodes.Status409Conflict, Status(result));
+            Assert.Equal("Registered", (await owner.QuerySingleAsync(
+                "SELECT device_state FROM eld_devices WHERE company_id=@c AND id=@d",
+                command => { command.Parameters.AddWithValue("@c", companyId); command.Parameters.AddWithValue("@d", device); }))!["deviceState"]?.ToString());
+            await AssertNoInstallationImportMutation(owner, companyId);
+        }
+        finally
+        {
+            await owner.ExecuteAsync(
+                @"DROP TRIGGER IF EXISTS test_suppress_bulk_install_transition ON device_state_transitions;
+                  DROP FUNCTION IF EXISTS test_suppress_bulk_install_transition()" );
+            await Cleanup(owner, companyId);
+        }
+    }
+
+    [Fact]
+    public async Task AmbientTenantScopeConstraintReturnsUseful409RollsBackAndRemainsCommittable()
+    {
+        var owner = Db();
+        var companyId = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + Random.Shared.Next(17_500_000, 17_900_000);
+        await Company(owner, companyId);
+        try
+        {
+            var branch = await Branch(owner, companyId, "AMBIENT-CONSTRAINT");
+            var vehicleCode = $"AMBIENT-CONSTRAINT-V-{companyId}";
+            var serial = $"AMBIENT-CONSTRAINT-D-{companyId}";
+            await Vehicle(owner, companyId, branch, vehicleCode);
+            var device = await Device(owner, companyId, branch, serial);
+            await owner.ExecuteAsync(
+                @"ALTER TABLE device_installations DROP CONSTRAINT IF EXISTS test_bulk_import_constraint;
+                  ALTER TABLE device_installations ADD CONSTRAINT test_bulk_import_constraint
+                    CHECK (assignment_reason IS DISTINCT FROM 'Force constraint conflict')" );
+
+            var runtime = ProtectedDb();
+            var result = await runtime.RunInTenantScopeAsync(companyId, async () =>
+            {
+                var response = await Invoke("DeviceInstallationsImportCommit", Principal(companyId, branch),
+                    ImportBody(Row(serial, "AMBIENT-CONSTRAINT", vehicleCode,
+                        DateTimeOffset.UtcNow.AddMinutes(-2).ToString("O"), $"ambient-constraint-{companyId}",
+                        "Force constraint conflict")),
+                    runtime, new AuditService(runtime), CancellationToken.None);
+                Assert.Equal(StatusCodes.Status409Conflict, Status(response));
+                Assert.Contains("No rows changed", ResponseJson(response), StringComparison.Ordinal);
+                Assert.Equal(1, await runtime.ScalarLongAsync("SELECT 1"));
+                return response;
+            });
+            Assert.Equal(StatusCodes.Status409Conflict, Status(result));
+            Assert.Equal("Registered", (await owner.QuerySingleAsync(
+                "SELECT device_state FROM eld_devices WHERE company_id=@c AND id=@d",
+                command => { command.Parameters.AddWithValue("@c", companyId); command.Parameters.AddWithValue("@d", device); }))!["deviceState"]?.ToString());
+            await AssertNoInstallationImportMutation(owner, companyId);
+        }
+        finally
+        {
+            await owner.ExecuteAsync(
+                "ALTER TABLE device_installations DROP CONSTRAINT IF EXISTS test_bulk_import_constraint");
+            await Cleanup(owner, companyId);
+        }
+    }
+
+    [Fact]
+    public async Task AmbientTenantScopeAuditSequenceConflictFailsClosedAndRemainsCommittable()
+    {
+        var owner = Db();
+        var companyId = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + Random.Shared.Next(16_500_000, 16_900_000);
+        await Company(owner, companyId);
+        try
+        {
+            var branch = await Branch(owner, companyId, "AMBIENT-AUDIT");
+            var vehicleCode = $"AMBIENT-AUDIT-V-{companyId}";
+            var serial = $"AMBIENT-AUDIT-D-{companyId}";
+            await Vehicle(owner, companyId, branch, vehicleCode);
+            var device = await Device(owner, companyId, branch, serial);
+            var occupiedId = await owner.InsertAsync(
+                @"INSERT INTO audit_logs(company_id,actor_name,action_name,entity_name,details_json)
+                  VALUES (@c,'test','test.audit.sequence.occupied','DeviceInstallation','{}'::jsonb)",
+                command => command.Parameters.AddWithValue("@c", companyId));
+            await owner.ExecuteAsync(
+                "SELECT setval(pg_get_serial_sequence('audit_logs','id'),@occupied,FALSE)",
+                command => command.Parameters.AddWithValue("@occupied", occupiedId));
+
+            var runtime = ProtectedDb();
+            var result = await runtime.RunInTenantScopeAsync(companyId, async () =>
+            {
+                var response = await Invoke("DeviceInstallationsImportCommit", Principal(companyId, branch),
+                    ImportBody(Row(serial, "AMBIENT-AUDIT", vehicleCode,
+                        DateTimeOffset.UtcNow.AddMinutes(-2).ToString("O"), $"ambient-audit-{companyId}")),
+                    runtime, new AuditService(runtime), CancellationToken.None);
+                Assert.Equal(StatusCodes.Status409Conflict, Status(response));
+                Assert.Contains("No rows changed", ResponseJson(response), StringComparison.Ordinal);
+                Assert.Equal(1, await runtime.ScalarLongAsync("SELECT 1"));
+                return response;
+            });
+            Assert.Equal(StatusCodes.Status409Conflict, Status(result));
+            Assert.Equal("Registered", (await owner.QuerySingleAsync(
+                "SELECT device_state FROM eld_devices WHERE company_id=@c AND id=@d",
+                command => { command.Parameters.AddWithValue("@c", companyId); command.Parameters.AddWithValue("@d", device); }))!["deviceState"]?.ToString());
+            await AssertNoInstallationImportMutation(owner, companyId);
+        }
+        finally
+        {
+            await owner.ExecuteAsync(
+                @"SELECT setval(pg_get_serial_sequence('audit_logs','id'),
+                    GREATEST((SELECT COALESCE(MAX(id),0) FROM audit_logs),1),TRUE)" );
+            await Cleanup(owner, companyId);
         }
     }
 
@@ -1317,12 +1476,13 @@ public sealed class DeviceInstallationImportPostgresTests
         }
     }
 
-    private static Dictionary<string, object?> Row(string serial, string branch, string vehicle, string effective, string key) => new()
+    private static Dictionary<string, object?> Row(string serial, string branch, string vehicle, string effective, string key,
+        string reason = "Initial governed installation") => new()
     {
         ["deviceSerial"] = serial, ["branchCode"] = branch, ["vehicleCode"] = vehicle,
         ["deviceRole"] = "GPS", ["isPrimary"] = "true", ["effectiveFrom"] = effective,
         ["installationLocation"] = "Front dashboard", ["odometerAtInstallation"] = "100",
-        ["commissioningMethod"] = "CSV onboarding", ["assignmentReason"] = "Initial governed installation",
+        ["commissioningMethod"] = "CSV onboarding", ["assignmentReason"] = reason,
         ["idempotencyKey"] = key
     };
 
@@ -1388,6 +1548,29 @@ public sealed class DeviceInstallationImportPostgresTests
         if (applicationName is not null) builder.ApplicationName = applicationName;
         return new Database(new ConfigurationBuilder().AddInMemoryCollection(
             new Dictionary<string, string?> { ["ConnectionStrings:DefaultConnection"] = builder.ConnectionString }).Build());
+    }
+    private static Database ProtectedDb() => new(new ConfigurationBuilder().AddInMemoryCollection(
+        new Dictionary<string, string?>
+        {
+            ["ConnectionStrings:DefaultConnection"] = TestDb.AppConnectionString,
+            ["ConnectionStrings:SystemConnection"] = TestDb.SystemConnectionString,
+            ["Rls:EnforceTenantContext"] = "true",
+            ["ASPNETCORE_ENVIRONMENT"] = "Staging"
+        }).Build());
+    private static async Task AssertNoInstallationImportMutation(Database db, long companyId)
+    {
+        Assert.Equal(0, await db.ScalarLongAsync(
+            "SELECT COUNT(*) FROM device_installations WHERE company_id=@c AND source='operator'",
+            command => command.Parameters.AddWithValue("@c", companyId)));
+        Assert.Equal(0, await db.ScalarLongAsync(
+            "SELECT COUNT(*) FROM device_state_transitions WHERE company_id=@c AND reason_code='installation_created'",
+            command => command.Parameters.AddWithValue("@c", companyId)));
+        Assert.Equal(0, await db.ScalarLongAsync(
+            "SELECT COUNT(*) FROM idempotency_keys WHERE tenant_id=@c AND operation='device.installation.bulk-import'",
+            command => command.Parameters.AddWithValue("@c", companyId)));
+        Assert.Equal(0, await db.ScalarLongAsync(
+            "SELECT COUNT(*) FROM audit_logs WHERE company_id=@c AND action_name IN ('device.installation.created','device.installations.imported')",
+            command => command.Parameters.AddWithValue("@c", companyId)));
     }
     private static async Task WaitForDatabaseLock(
         Database observer, string applicationName, int? blockerPid = null, string? queryPattern = null)

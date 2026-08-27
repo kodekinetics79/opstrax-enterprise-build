@@ -139,6 +139,7 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
     // (background workers, SSE) MUST wrap their DB work in a scope or the restricted
     // `opstrax_app` role returns 0 rows (fail-closed) — see BeginSystemScopeAsync.
     public bool RlsEnforced { get; } = configuration.GetValue<bool>("Rls:EnforceTenantContext");
+    internal bool HasAmbientTransaction => _scopes.Current is not null;
     private readonly int _tenantTicketTtlSeconds = ResolveTenantTicketTtl(configuration);
 
     private static string? Coalesce(params string?[] values)
