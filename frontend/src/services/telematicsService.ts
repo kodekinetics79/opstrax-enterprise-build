@@ -208,6 +208,7 @@ export type TelemetryClusterPageOptions = {
   pageSize?: number;
   search?: string;
   view?: string;
+  purpose?: "view" | "export";
 };
 
 export type TelemetryClusterPageResult = {
@@ -1276,6 +1277,7 @@ export const telematicsService = {
         search: options.search?.trim() || undefined,
         view: options.view ?? "all",
         cluster: kind === "obd-j1939" ? "diagnostics" : "gps",
+        purpose: options.purpose ?? "view",
         sort: "serial",
         direction: "asc",
       },
@@ -1811,7 +1813,7 @@ export const telematicsService = {
     let page = 1;
     let expectedTotal = 0;
     do {
-      const batch = await this.getTelemetryClusterPage(kind, { ...options, page, pageSize: 100 });
+      const batch = await this.getTelemetryClusterPage(kind, { ...options, page, pageSize: 100, purpose: "export" });
       expectedTotal = batch.total;
       rows.push(...batch.items);
       if (batch.items.length === 0 && rows.length < expectedTotal) {

@@ -18768,11 +18768,18 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     private static async Task<IResult> TelemetryDevicePage(HttpContext http, Database db, CancellationToken ct)
     {
         var cluster = http.Request.Query["cluster"].FirstOrDefault()?.Trim().ToLowerInvariant() ?? "all";
-        var requiredPermission = cluster switch
+        var purpose = http.Request.Query["purpose"].FirstOrDefault()?.Trim().ToLowerInvariant() ?? "view";
+        if (purpose is not ("view" or "export"))
+            return Results.BadRequest(ApiResponse<object>.Fail("Unsupported telemetry page purpose."));
+        if (purpose == "export" && cluster == "all")
+            return Results.BadRequest(ApiResponse<object>.Fail("Device inventory export uses the dedicated device export endpoint."));
+        var requiredPermission = (cluster, purpose) switch
         {
-            "gps" => "telematics:gps:view",
-            "diagnostics" => "telematics:diagnostics:view",
-            "all" => "telemetry.devices.read",
+            ("gps", "export") => "telematics:gps:export",
+            ("diagnostics", "export") => "telematics:diagnostics:export",
+            ("gps", _) => "telematics:gps:view",
+            ("diagnostics", _) => "telematics:diagnostics:view",
+            ("all", _) => "telemetry.devices.read",
             _ => "telemetry.devices.read",
         };
         if (RequirePermission(http, requiredPermission) is { } denied) return denied;
@@ -18786,6 +18793,15 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             : 100;
         var search = http.Request.Query["search"].FirstOrDefault()?.Trim() ?? "";
         var view = http.Request.Query["view"].FirstOrDefault()?.Trim().ToLowerInvariant() ?? "all";
+        if (purpose == "export" && page == 1)
+        {
+            var audit = http.Features.Get<Microsoft.AspNetCore.Http.Features.IServiceProvidersFeature>()?
+                .RequestServices?.GetService<AuditService>();
+            if (audit is null)
+                return Results.Json(ApiResponse<object>.Fail("Telemetry export audit service is unavailable."), statusCode: 503);
+            await audit.LogAsync(http, $"telematics.{cluster}.export.requested", "TelemetryCluster", null,
+                JsonSerializer.Serialize(new { cluster, view, filtered = search.Length > 0 }), ct);
+        }
         var permissions = http.Items.TryGetValue(AuthPermissionsItemKey, out var permissionValue) && permissionValue is string[] heldPermissions
             ? heldPermissions
             : [];

@@ -21,6 +21,7 @@ assert.match(devices, /Revoke & Archive[\s\S]*Use Suspend for a reversible stop/
 
 const service = fs.readFileSync(new URL("../src/services/telematicsService.ts", import.meta.url), "utf8");
 assert.match(service, /while \(rows\.length < expectedTotal\)/, "Cluster export traverses every server page");
+assert.match(service, /purpose: "export"/, "Cluster export declares its server-enforced export purpose");
 assert.match(service, /\^\[=\+\\-@\\t\\r\]/, "Cluster CSV neutralizes spreadsheet formulas");
 
 console.log("Telematics customer-pilot UX contract passed.");
