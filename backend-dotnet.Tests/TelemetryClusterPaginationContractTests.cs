@@ -13,11 +13,14 @@ public sealed class TelemetryClusterPaginationContractTests
     {
         var source = Read("backend-dotnet", "Controllers", "EndpointMappings.cs");
 
-        Assert.Contains("\"gps\" => \"telematics:gps:view\"", source, StringComparison.Ordinal);
-        Assert.Contains("\"diagnostics\" => \"telematics:diagnostics:view\"", source, StringComparison.Ordinal);
+        Assert.Contains("(\"gps\", _) => \"telematics:gps:view\"", source, StringComparison.Ordinal);
+        Assert.Contains("(\"diagnostics\", _) => \"telematics:diagnostics:view\"", source, StringComparison.Ordinal);
+        Assert.Contains("(\"gps\", \"export\") => \"telematics:gps:export\"", source, StringComparison.Ordinal);
+        Assert.Contains("(\"diagnostics\", \"export\") => \"telematics:diagnostics:export\"", source, StringComparison.Ordinal);
+        Assert.Contains("telematics.{cluster}.export.requested", source, StringComparison.Ordinal);
         Assert.Contains("(@branchId::BIGINT IS NULL OR e.branch_id=@branchId)", source, StringComparison.Ordinal);
         Assert.Contains("var cluster = http.Request.Query[\"cluster\"]", source, StringComparison.Ordinal);
-        Assert.Contains("(obd(-ii)?|j1939|can)", source, StringComparison.Ordinal);
+        Assert.Contains("\"diagnostics\" => \" AND diagnostic_evidence.observed_at IS NOT NULL\"", source, StringComparison.Ordinal);
         Assert.Contains("SELECT p.* FROM latest_vehicle_positions p", source, StringComparison.Ordinal);
         Assert.Contains("p.company_id=e.company_id AND p.device_id=e.id", source, StringComparison.Ordinal);
         Assert.DoesNotContain("p.vehicle_id=current_install.vehicle_id", source, StringComparison.Ordinal);
@@ -54,7 +57,7 @@ public sealed class TelemetryClusterPaginationContractTests
         Assert.Contains("Showing {(page - 1) * pageSize + 1}", page, StringComparison.Ordinal);
         Assert.Contains(">Previous</button>", page, StringComparison.Ordinal);
         Assert.Contains(">Next</button>", page, StringComparison.Ordinal);
-        Assert.Contains("enabled: Boolean(selected?.deviceId) && !paged", page, StringComparison.Ordinal);
+        Assert.Contains("enabled: canView && Boolean(selected?.deviceId) && !paged", page, StringComparison.Ordinal);
         Assert.Contains("detail?: DeviceDetailRecord", page, StringComparison.Ordinal);
     }
 
@@ -70,6 +73,29 @@ public sealed class TelemetryClusterPaginationContractTests
         http.Items[EndpointMappings.AuthUserIdItemKey] = 10L;
         http.Items[EndpointMappings.AuthCompanyIdItemKey] = 20L;
         http.Items[EndpointMappings.AuthRoleItemKey] = "Narrow telemetry reader";
+        http.Items[EndpointMappings.AuthPermissionsItemKey] = new[] { heldPermission };
+        var db = new Database(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["ConnectionStrings:DefaultConnection"] = "Host=127.0.0.1;Port=1;Database=unused;Username=unused;Password=unused",
+            ["Rls:EnforceTenantContext"] = "false",
+        }).Build(), new TenantScopeAccessor());
+
+        var method = typeof(EndpointMappings).GetMethod("TelemetryDevicePage", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var result = await (Task<IResult>)method.Invoke(null, [http, db, CancellationToken.None])!;
+
+        Assert.Equal(StatusCodes.Status403Forbidden, Assert.IsAssignableFrom<IStatusCodeHttpResult>(result).StatusCode);
+    }
+
+    [Theory]
+    [InlineData("gps", "telematics:gps:view")]
+    [InlineData("diagnostics", "telematics:diagnostics:view")]
+    public async Task ClusterExportPurposeDeniesViewOnlyPermission(string cluster, string heldPermission)
+    {
+        var http = new DefaultHttpContext();
+        http.Request.QueryString = new QueryString($"?cluster={cluster}&purpose=export");
+        http.Items[EndpointMappings.AuthUserIdItemKey] = 10L;
+        http.Items[EndpointMappings.AuthCompanyIdItemKey] = 20L;
+        http.Items[EndpointMappings.AuthRoleItemKey] = "View-only telemetry reader";
         http.Items[EndpointMappings.AuthPermissionsItemKey] = new[] { heldPermission };
         var db = new Database(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {

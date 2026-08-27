@@ -224,7 +224,7 @@ public static partial class EndpointMappings
             return await db.RunInTenantTransactionAsync(companyId, async () =>
             {
                 await LockInstallationIdentityAsync(db, companyId, id, body.VehicleId, ct);
-                var resources = await LoadInstallationResourcesAsync(db, companyId, branchId, id, body.VehicleId, ct);
+                var resources = await LoadAndLockInstallationResourcesAsync(db, companyId, branchId, id, body.VehicleId, ct);
                 if (resources is null)
                     return Results.BadRequest(ApiResponse<object>.Fail("Device and vehicle are not available in this tenant and branch"));
                 if (!IsDeviceInstallEligible(resources))
@@ -252,6 +252,17 @@ public static partial class EndpointMappings
                     }
                 }
 
+                var deviceUpdated = await db.ExecuteAsync(
+                    @"UPDATE eld_devices SET device_state='Installed',updated_at=NOW()
+                       WHERE company_id=@cid AND id=@did AND deleted_at IS NULL AND revoked_at IS NULL
+                         AND LOWER(COALESCE(status,'')) NOT IN ('revoked','suspended','retired','decommissioned')
+                         AND LOWER(COALESCE(device_state,'')) NOT IN
+                           ('suspended','quarantined','lost','decommissioning','decommissioned','retired')",
+                    c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@did", id); }, ct);
+                if (deviceUpdated != 1)
+                    return Results.Conflict(ApiResponse<object>.Fail(
+                        "Device lifecycle state changed before installation; no installation was recorded"));
+
                 var installationId = await db.InsertAsync(
                     @"INSERT INTO device_installations
                         (company_id,branch_id,device_id,vehicle_id,installer_user_id,installed_by,
@@ -276,9 +287,6 @@ public static partial class EndpointMappings
                         c.Parameters.AddWithValue("@correlation", http.TraceIdentifier);
                         c.Parameters.AddWithValue("@idempotency", (object?)Clean(body.IdempotencyKey) ?? DBNull.Value);
                     }, ct);
-                await db.ExecuteAsync(
-                    "UPDATE eld_devices SET device_state='Installed',updated_at=NOW() WHERE company_id=@cid AND id=@did",
-                    c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@did", id); }, ct);
                 await AppendDeviceTransitionAsync(db, companyId, installationBranchId, id,
                     resources["deviceState"]?.ToString(), "Installed", actorId,
                     "installation_created", body.AssignmentReason, http.TraceIdentifier, ct);
@@ -288,9 +296,11 @@ public static partial class EndpointMappings
                     ApiResponse<object>.Ok(new { id = installationId, deviceId = id, body.VehicleId, status = "Installed", effectiveFrom, rowVersion = 1 }));
             }, ct);
         }
-        catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.ExclusionViolation or PostgresErrorCodes.UniqueViolation)
+        catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.ExclusionViolation or
+            PostgresErrorCodes.UniqueViolation or PostgresErrorCodes.DeadlockDetected)
         {
-            return Results.Conflict(ApiResponse<object>.Fail("The device or primary vehicle role already has an overlapping installation"));
+            return Results.Conflict(ApiResponse<object>.Fail(
+                "The device or primary vehicle role changed or already has an overlapping installation; refresh and retry"));
         }
     }
 
@@ -308,6 +318,7 @@ public static partial class EndpointMappings
             (result == "failed" && Clean(body.VerificationReference) is not { Length: >= 8 }))
             return Results.BadRequest(ApiResponse<object>.Fail("Failed commissioning requires a failure reference of 8 to 500 characters"));
         var companyId = GetCompanyId(http);
+        var branchId = GetBranchId(http);
         var actorId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
         // Commissioning proof spans location_events and the system-owned canonical
         // telemetry ledger. The runtime app role is intentionally denied direct
@@ -316,6 +327,23 @@ public static partial class EndpointMappings
         // constrained by company_id/device_id/installation_id.
         return await db.RunInSystemTransactionAsync<IResult>(async () =>
         {
+            await LockInstallationIdentityAsync(db, companyId, id, null, ct);
+            var visibleInstallation = await db.QuerySingleAsync(
+                @"SELECT i.branch_id,d.device_state,d.status device_status,d.revoked_at FROM device_installations i
+                   JOIN eld_devices d ON d.company_id=i.company_id AND d.id=i.device_id
+                  WHERE i.company_id=@cid AND i.id=@iid AND i.device_id=@did
+                    AND d.deleted_at IS NULL
+                    AND (@branch::BIGINT IS NULL OR (d.branch_id=@branch AND i.branch_id=@branch))
+                  FOR UPDATE OF d,i",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@iid", installationId);
+                    c.Parameters.AddWithValue("@did", id); c.Parameters.AddWithValue("@branch", (object?)branchId ?? DBNull.Value);
+                }, ct);
+            if (visibleInstallation is null) return Results.NotFound(ApiResponse<object>.Fail("Installation not found"));
+            if (!IsDeviceInstallEligible(visibleInstallation))
+                return Results.Conflict(ApiResponse<object>.Fail(
+                    "Device lifecycle state does not permit commissioning; no commissioning changes were saved"));
             Dictionary<string, object?>? telemetryProof = null;
             if (result == "passed")
             {
@@ -342,6 +370,7 @@ public static partial class EndpointMappings
                       failure_reason=CASE WHEN @passed THEN NULL ELSE COALESCE(@reference,'Commissioning failed') END,
                       updated_at=NOW(),row_version=row_version+1
                   WHERE id=@iid AND device_id=@did AND company_id=@cid AND effective_to IS NULL
+                    AND (@branch::BIGINT IS NULL OR branch_id=@branch)
                     AND status='Installed' AND row_version=@version
                     AND (NOT @passed OR activation_verified_at IS NOT NULL)
                   RETURNING status,commissioning_result,verification_reference,activation_verified_at,row_version,updated_at",
@@ -349,6 +378,7 @@ public static partial class EndpointMappings
                 {
                     c.Parameters.AddWithValue("@iid", installationId); c.Parameters.AddWithValue("@did", id);
                     c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@passed", result == "passed");
+                    c.Parameters.AddWithValue("@branch", (object?)branchId ?? DBNull.Value);
                     c.Parameters.AddWithValue("@reference", (object?)proofReference ?? DBNull.Value);
                     c.Parameters.AddWithValue("@version", (object?)body.ExpectedRowVersion ?? DBNull.Value);
                 }, ct);
@@ -358,9 +388,15 @@ public static partial class EndpointMappings
                     : "Installation not found, closed, or changed"));
             await db.ExecuteAsync(
                 @"UPDATE eld_devices SET device_state=CASE WHEN @passed THEN 'Verified' ELSE 'Quarantined' END,
-                      updated_at=NOW() WHERE company_id=@cid AND id=@did",
-                c => { c.Parameters.AddWithValue("@passed", result == "passed"); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@did", id); }, ct);
-            await AppendDeviceTransitionAsync(db, companyId, GetBranchId(http), id, "Installed",
+                      updated_at=NOW() WHERE company_id=@cid AND id=@did
+                        AND (@branch::BIGINT IS NULL OR branch_id=@branch)",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@passed", result == "passed"); c.Parameters.AddWithValue("@cid", companyId);
+                    c.Parameters.AddWithValue("@did", id); c.Parameters.AddWithValue("@branch", (object?)branchId ?? DBNull.Value);
+                }, ct);
+            await AppendDeviceTransitionAsync(db, companyId,
+                visibleInstallation["branchId"] is null or DBNull ? null : Convert.ToInt64(visibleInstallation["branchId"]), id, "Installed",
                 result == "passed" ? "Verified" : "Quarantined", actorId, "commissioning", body.VerificationReference,
                 http.TraceIdentifier, ct);
             await audit.LogAsync(http, "device.installation.commissioned", "DeviceInstallation", installationId,
@@ -392,10 +428,38 @@ public static partial class EndpointMappings
         if (effectiveTo > DateTimeOffset.UtcNow)
             return Results.BadRequest(ApiResponse<object>.Fail("Removal effective time cannot be in the future"));
         var companyId = GetCompanyId(http);
+        var branchId = GetBranchId(http);
         var actorId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
         return await db.RunInTenantTransactionAsync(companyId, async () =>
         {
             await LockInstallationIdentityAsync(db, companyId, id, null, ct);
+            var device = await db.QuerySingleAsync(
+                @"SELECT status,device_state,revoked_at,branch_id FROM eld_devices
+                   WHERE company_id=@cid AND id=@did AND deleted_at IS NULL
+                     AND (@branch::BIGINT IS NULL OR branch_id=@branch) FOR UPDATE",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@did", id);
+                    c.Parameters.AddWithValue("@branch", (object?)branchId ?? DBNull.Value);
+                }, ct);
+            if (device is null) return Results.NotFound(ApiResponse<object>.Fail("Device not found"));
+            var deviceState = device["deviceState"]?.ToString() ?? "";
+            var deviceStatus = device["status"]?.ToString() ?? "";
+            var preserveTerminalLifecycle = device["revokedAt"] is not (null or DBNull) ||
+                new[] { "Revoked", "Suspended", "Retired", "Decommissioned" }.Contains(deviceStatus, StringComparer.OrdinalIgnoreCase) ||
+                new[] { "Suspended", "Quarantined", "Lost", "Decommissioning", "Decommissioned", "Retired" }
+                    .Contains(deviceState, StringComparer.OrdinalIgnoreCase);
+            var visibleInstallation = await db.QuerySingleAsync(
+                @"SELECT id FROM device_installations
+                   WHERE id=@iid AND device_id=@did AND company_id=@cid
+                     AND (@branch::BIGINT IS NULL OR branch_id=@branch)
+                   FOR UPDATE",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@iid", installationId); c.Parameters.AddWithValue("@did", id);
+                    c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branch", (object?)branchId ?? DBNull.Value);
+                }, ct);
+            if (visibleInstallation is null) return Results.NotFound(ApiResponse<object>.Fail("Installation not found"));
             if (await InstallationHasEventAtOrAfterAsync(db, companyId, installationId, effectiveTo, ct) != 0)
                 return Results.Conflict(ApiResponse<object>.Fail(
                     "Removal cannot predate telemetry already attributed to this installation; use the current time or an append-only correction workflow"));
@@ -404,22 +468,31 @@ public static partial class EndpointMappings
                   SET status='Removed',effective_to=@effective,removed_at=@effective,removed_by=@actor,
                       removal_reason=@reason,updated_at=NOW(),row_version=row_version+1
                   WHERE id=@iid AND device_id=@did AND company_id=@cid AND effective_to IS NULL
+                    AND (@branch::BIGINT IS NULL OR branch_id=@branch)
                     AND status IN ('Installed','Verified') AND effective_from<@effective
                     AND row_version=@version",
                 c =>
                 {
                     c.Parameters.AddWithValue("@iid", installationId); c.Parameters.AddWithValue("@did", id);
                     c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@effective", effectiveTo);
+                    c.Parameters.AddWithValue("@branch", (object?)branchId ?? DBNull.Value);
                     c.Parameters.AddWithValue("@actor", actorId > 0 ? actorId : DBNull.Value);
                     c.Parameters.AddWithValue("@reason", body.RemovalReason.Trim());
                     c.Parameters.AddWithValue("@version", body.ExpectedRowVersion.Value);
                 }, ct);
             if (affected == 0) return Results.Conflict(ApiResponse<object>.Fail("Installation not found, closed, or changed"));
             await db.ExecuteAsync(
-                "UPDATE eld_devices SET device_state='Registered',updated_at=NOW() WHERE company_id=@cid AND id=@did",
-                c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@did", id); }, ct);
-            await AppendDeviceTransitionAsync(db, companyId, GetBranchId(http), id, "Installed", "Registered", actorId,
-                "installation_removed", body.RemovalReason, http.TraceIdentifier, ct);
+                @"UPDATE eld_devices SET device_state=CASE WHEN @preserve THEN device_state ELSE 'Registered' END,updated_at=NOW()
+                   WHERE company_id=@cid AND id=@did",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@preserve", preserveTerminalLifecycle);
+                    c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@did", id);
+                }, ct);
+            if (!preserveTerminalLifecycle)
+                await AppendDeviceTransitionAsync(db, companyId,
+                    device["branchId"] is null or DBNull ? null : Convert.ToInt64(device["branchId"]), id, deviceState, "Registered", actorId,
+                    "installation_removed", body.RemovalReason, http.TraceIdentifier, ct);
             await audit.LogAsync(http, "device.installation.removed", "DeviceInstallation", installationId,
                 System.Text.Json.JsonSerializer.Serialize(new { deviceId = id, effectiveTo, body.RemovalReason }), ct);
             return Results.Ok(ApiResponse<object>.Ok(new { id = installationId, status = "Removed", effectiveTo }));
@@ -463,24 +536,11 @@ public static partial class EndpointMappings
                         "SELECT pg_advisory_xact_lock(hashtextextended(@identity,0))",
                         c => c.Parameters.AddWithValue("@identity", $"device-transfer-idempotency:{companyId}:{idempotencyKey}"), ct);
                 }
-                // Live ingestion takes this exact tenant/device row lock before it
-                // resolves an installation and persists canonical telemetry. Hold the
-                // same lock before checking either evidence store so an in-flight event
-                // must commit first; the subsequent checks then observe and reject it.
-                var lockedDevice = await db.QuerySingleAsync(
-                    @"SELECT id FROM eld_devices
-                       WHERE id=@did AND company_id=@cid AND deleted_at IS NULL
-                         AND (@branch::bigint IS NULL OR branch_id=@branch)
-                       FOR UPDATE",
-                    c =>
-                    {
-                        c.Parameters.AddWithValue("@did", id);
-                        c.Parameters.AddWithValue("@cid", companyId);
-                        c.Parameters.AddWithValue("@branch", (object?)branchId ?? DBNull.Value);
-                    }, ct);
-                if (lockedDevice is null)
-                    return Results.BadRequest(ApiResponse<object>.Fail("Device and target vehicle must exist in the same tenant and branch"));
-                var resources = await LoadInstallationResourcesAsync(db, companyId, branchId, id, body.VehicleId, ct);
+                // The shared helper locks the active branch, device, then target vehicle.
+                // Its device row lock is the same lock live ingestion takes while
+                // resolving installation attribution, so evidence checks below remain
+                // serialized with both fleet lifecycle and telemetry persistence.
+                var resources = await LoadAndLockInstallationResourcesAsync(db, companyId, branchId, id, body.VehicleId, ct);
                 if (resources is null)
                     return Results.BadRequest(ApiResponse<object>.Fail("Device and target vehicle must exist in the same tenant and branch"));
                 if (!IsDeviceInstallEligible(resources))
@@ -600,7 +660,8 @@ public static partial class EndpointMappings
                 return Results.Ok(ApiResponse<object>.Ok(new { priorInstallationId = priorId, id = newId, body.VehicleId, effectiveFrom = effectiveAt, status = "Installed" }, "Device transferred"));
             }, ct);
         }
-        catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.ExclusionViolation or PostgresErrorCodes.UniqueViolation)
+        catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.ExclusionViolation or
+            PostgresErrorCodes.UniqueViolation or PostgresErrorCodes.DeadlockDetected)
         {
             return Results.Conflict(ApiResponse<object>.Fail("Target installation conflicts with an active device or primary vehicle role"));
         }
@@ -803,20 +864,61 @@ public static partial class EndpointMappings
         }
     }
 
-    private static Task<Dictionary<string, object?>?> LoadInstallationResourcesAsync(
-        Database db,long companyId,long? authorizedBranchId,long deviceId,long vehicleId,CancellationToken ct) =>
-        db.QuerySingleAsync(
-            @"SELECT d.branch_id device_branch_id,d.device_state,d.status device_status,d.revoked_at,
-                     v.branch_id vehicle_branch_id
-              FROM eld_devices d JOIN vehicles v ON v.company_id=d.company_id
-              WHERE d.company_id=@cid AND d.id=@did AND v.id=@vid
-                AND d.deleted_at IS NULL AND v.deleted_at IS NULL
-                AND (@branch::BIGINT IS NULL OR (d.branch_id=@branch OR d.branch_id IS NULL) AND v.branch_id=@branch)",
-            c =>
+    private static async Task<Dictionary<string, object?>?> LoadAndLockInstallationResourcesAsync(
+        Database db,long companyId,long? authorizedBranchId,long deviceId,long vehicleId,CancellationToken ct)
+    {
+        var expected = await db.QuerySingleAsync(
+            @"SELECT d.branch_id device_branch_id,v.branch_id vehicle_branch_id
+                FROM eld_devices d JOIN vehicles v ON v.company_id=d.company_id
+               WHERE d.company_id=@cid AND d.id=@did AND v.id=@vid
+                 AND d.deleted_at IS NULL AND v.deleted_at IS NULL
+                 AND (@branch::BIGINT IS NULL OR (d.branch_id=@branch OR d.branch_id IS NULL) AND v.branch_id=@branch)",
+            command =>
             {
-                c.Parameters.AddWithValue("@cid",companyId); c.Parameters.AddWithValue("@did",deviceId);
-                c.Parameters.AddWithValue("@vid",vehicleId); c.Parameters.AddWithValue("@branch",(object?)authorizedBranchId ?? DBNull.Value);
+                command.Parameters.AddWithValue("@cid",companyId); command.Parameters.AddWithValue("@did",deviceId);
+                command.Parameters.AddWithValue("@vid",vehicleId);
+                command.Parameters.AddWithValue("@branch",(object?)authorizedBranchId ?? DBNull.Value);
             },ct);
+        if (expected is null || expected["vehicleBranchId"] is null or DBNull) return null;
+        var expectedBranchId = Convert.ToInt64(expected["vehicleBranchId"]);
+        var branch = await db.QuerySingleAsync(
+            @"SELECT b.id,b.status,b.deleted_at FROM branches b
+               WHERE b.company_id=@cid AND b.id=@branch
+               FOR UPDATE",
+            command =>
+            {
+                command.Parameters.AddWithValue("@cid",companyId); command.Parameters.AddWithValue("@branch",expectedBranchId);
+            },ct);
+        if (branch is null || branch["deletedAt"] is not (null or DBNull) ||
+            !string.Equals(branch["status"]?.ToString(),"Active",StringComparison.OrdinalIgnoreCase)) return null;
+        var device = await db.QuerySingleAsync(
+            @"SELECT d.branch_id device_branch_id,d.device_state,d.status device_status,d.revoked_at,d.deleted_at
+                FROM eld_devices d
+               WHERE d.company_id=@cid AND d.id=@did
+               FOR UPDATE",
+            command =>
+            {
+                command.Parameters.AddWithValue("@cid",companyId); command.Parameters.AddWithValue("@did",deviceId);
+                command.Parameters.AddWithValue("@expected_branch",expectedBranchId);
+            },ct);
+        if (device is null || device["deletedAt"] is not (null or DBNull) ||
+            (device["deviceBranchId"] is not (null or DBNull) &&
+             Convert.ToInt64(device["deviceBranchId"]) != expectedBranchId)) return null;
+        var vehicle = await db.QuerySingleAsync(
+            @"SELECT v.branch_id vehicle_branch_id,v.deleted_at FROM vehicles v
+               WHERE v.company_id=@cid AND v.id=@vid
+               FOR UPDATE",
+            command =>
+            {
+                command.Parameters.AddWithValue("@cid",companyId); command.Parameters.AddWithValue("@vid",vehicleId);
+                command.Parameters.AddWithValue("@expected_branch",expectedBranchId);
+            },ct);
+        if (vehicle is null || vehicle["deletedAt"] is not (null or DBNull) ||
+            vehicle["vehicleBranchId"] is null or DBNull ||
+            Convert.ToInt64(vehicle["vehicleBranchId"]) != expectedBranchId) return null;
+        device["vehicleBranchId"] = vehicle["vehicleBranchId"];
+        return device;
+    }
 
     private static bool IsDeviceInstallEligible(Dictionary<string, object?> row)
     {
@@ -831,9 +933,20 @@ public static partial class EndpointMappings
 
     private static async Task LockInstallationIdentityAsync(Database db, long companyId, long deviceId, long? vehicleId, CancellationToken ct)
     {
-        await db.ExecuteAsync("SELECT pg_advisory_xact_lock(@key)", c => c.Parameters.AddWithValue("@key", HashCode.Combine(companyId, deviceId)), ct);
-        if (vehicleId is { } value)
-            await db.ExecuteAsync("SELECT pg_advisory_xact_lock(@key)", c => c.Parameters.AddWithValue("@key", HashCode.Combine(companyId, value, 80)), ct);
+        await LockInstallationResourceIdentitiesAsync(db, companyId, new[] { deviceId },
+            vehicleId is { } value ? new[] { value } : Array.Empty<long>(), ct);
+    }
+
+    private static Task LockInstallationResourceIdentitiesAsync(
+        Database db, long companyId, IEnumerable<long> deviceIds, IEnumerable<long> vehicleIds, CancellationToken ct)
+    {
+        var identities = deviceIds.Select(id => $"device-install-resource:{companyId}:device:{id}")
+            .Concat(vehicleIds.Select(id => $"device-install-resource:{companyId}:vehicle:{id}"))
+            .Distinct(StringComparer.Ordinal).OrderBy(value => value, StringComparer.Ordinal).ToArray();
+        return identities.Length == 0 ? Task.CompletedTask : db.ExecuteAsync(
+            @"SELECT pg_advisory_xact_lock(hashtextextended(identity,0))
+                FROM unnest(@identities::TEXT[]) identity ORDER BY identity",
+            command => command.Parameters.AddWithValue("@identities", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text, identities), ct);
     }
 
     private static Task AppendDeviceTransitionAsync(Database db, long companyId, long? branchId, long deviceId,

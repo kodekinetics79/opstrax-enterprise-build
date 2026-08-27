@@ -54,6 +54,7 @@
 #   stage78  Protected-environment country-profile runtime contract
 #   stage79  Protected-environment tenant-provisioning runtime contract
 #   stage80  Effective-dated fleet identity backbone
+#   stage91  Native telemetry and diagnostic payload fingerprint idempotency
 #
 # WHAT IT DELIBERATELY SKIPS
 #   stage19/20/22 (the broad Row-Level Security cutover). Stage49 itself is
@@ -208,6 +209,7 @@ MIGRATIONS=(
   # owner-safe protected-environment contract that adds and indexes that column.
   2026_08_24_stage89_inbox_retry_schedule
   2026_08_26_stage90_product_pilot_permission
+  2026_08_26_stage91_telematics_ingest_fingerprint
 )
 
 echo "Target host: $(printf '%s' "$NEON_PG_URI" | sed -E 's|.*@([^/:?]+).*|\1|')"

@@ -18,10 +18,11 @@ import {
 import { useNavigate } from "react-router";
 import { EmptyState, ErrorState, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge } from "@/components/ui";
 import { PERMISSIONS } from "@/auth/rbacConfig";
-import { useHasPermission } from "@/hooks/usePermission";
+import { useHasDirectPermission, useHasPermission } from "@/hooks/usePermission";
 import { maintenanceApi } from "@/services/maintenanceApi";
 import { telematicsService, type DeviceDetailRecord, type TelematicsClusterRecord, type TelemetryClusterPageResult } from "@/services/telematicsService";
 import { resolveTelemetryEmptyState } from "@/utils/telemetryEmptyState";
+import { apiErrorMessage } from "@/utils/apiErrorMessage";
 
 type TelematicsKind = "gps-tracking" | "obd-j1939" | "sensor-health" | "cold-chain";
 
@@ -34,6 +35,7 @@ type ClusterConfig = {
   emptySubtitle: string;
   searchPlaceholder: string;
   query: () => Promise<TelematicsClusterRecord[]>;
+  requiredViewPermission: string;
   requiredExportPermission: string;
   requiredUpdatePermission: string;
   filterTabs: string[];
@@ -49,6 +51,7 @@ const configs: Record<TelematicsKind, ClusterConfig> = {
     emptySubtitle: "No vehicles match the current GPS filters for this tenant.",
     searchPlaceholder: "Search vehicle, driver, location, route, status, or device health...",
     query: () => telematicsService.getGpsTrackingRecords(),
+    requiredViewPermission: PERMISSIONS.TELEMATICS_GPS_VIEW,
     requiredExportPermission: PERMISSIONS.TELEMATICS_GPS_EXPORT,
     requiredUpdatePermission: PERMISSIONS.TELEMATICS_GPS_VIEW,
     filterTabs: ["All", "Online", "Stale GPS", "Offline", "Critical"],
@@ -62,6 +65,7 @@ const configs: Record<TelematicsKind, ClusterConfig> = {
     emptySubtitle: "No engine or bus diagnostics are visible for the current filters.",
     searchPlaceholder: "Search vehicle, protocol, driver, fault code, freshness, or provider...",
     query: () => telematicsService.getDiagnosticsRecords(),
+    requiredViewPermission: PERMISSIONS.TELEMATICS_DIAGNOSTICS_VIEW,
     requiredExportPermission: PERMISSIONS.TELEMATICS_DIAGNOSTICS_EXPORT,
     requiredUpdatePermission: PERMISSIONS.TELEMATICS_DIAGNOSTICS_UPDATE,
     filterTabs: ["All", "Fresh", "Watch", "Stale", "Issues"],
@@ -75,6 +79,7 @@ const configs: Record<TelematicsKind, ClusterConfig> = {
     emptySubtitle: "No scoped sensors match the active filters.",
     searchPlaceholder: "Search sensor type, vehicle, alert status, reading, calibration, or signal...",
     query: () => telematicsService.getSensorHealthRecords(),
+    requiredViewPermission: PERMISSIONS.TELEMATICS_SENSORS_VIEW,
     requiredExportPermission: PERMISSIONS.TELEMATICS_SENSORS_EXPORT,
     requiredUpdatePermission: PERMISSIONS.TELEMATICS_SENSORS_UPDATE,
     filterTabs: ["All", "Nominal", "Watch", "Alerting", "Offline"],
@@ -88,6 +93,7 @@ const configs: Record<TelematicsKind, ClusterConfig> = {
     emptySubtitle: "No cold-chain sensors are visible for this tenant and filter set.",
     searchPlaceholder: "Search reefer unit, route, reading, shipment, or alert status...",
     query: () => telematicsService.getColdChainRecords(),
+    requiredViewPermission: PERMISSIONS.TELEMATICS_SENSORS_VIEW,
     requiredExportPermission: PERMISSIONS.TELEMATICS_SENSORS_EXPORT,
     requiredUpdatePermission: "fleet:manage",
     filterTabs: ["All", "Nominal", "Watch", "Alerting", "Offline"],
@@ -187,11 +193,16 @@ function permissionTitle(allowed: boolean, message: string) {
   return allowed ? message : "You do not have permission to perform this action.";
 }
 
+function isForbidden(error: unknown) {
+  return (error as { response?: { status?: unknown } } | null)?.response?.status === 403;
+}
+
 export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
   const config = configs[kind];
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const hasPermission = useHasPermission();
+  const hasDirectPermission = useHasDirectPermission();
   const kpiIcon = kind === "gps-tracking"
     ? <MapPinned className="h-4 w-4" />
     : kind === "obd-j1939"
@@ -200,6 +211,8 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
 
   const canExport = hasPermission(config.requiredExportPermission);
   const canUpdate = hasPermission(config.requiredUpdatePermission);
+  const canView = hasDirectPermission(config.requiredViewPermission);
+  const canViewGeofences = hasPermission("map:view");
   const [tab, setTab] = useState(config.filterTabs[0]);
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
@@ -231,6 +244,7 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
       const items = await config.query();
       return { items, total: items.length, page: 1, pageSize: Math.max(1, items.length), summary: { active: items.length, offline: 0, attention: 0 } };
     },
+    enabled: canView,
     staleTime: 20_000,
   });
   const detailQ = useQuery({
@@ -239,7 +253,7 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
     // GPS/diagnostics rows already came from the dedicated, permission-gated
     // cluster projection. Do not over-fetch the generic device/location/fault
     // detail feeds, whose broader permissions are intentionally different.
-    enabled: Boolean(selected?.deviceId) && !paged,
+    enabled: canView && Boolean(selected?.deviceId) && !paged,
     staleTime: 20_000,
   });
 
@@ -308,6 +322,14 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
     });
   }, [recordsQ.data?.items, search, kind, tab, paged]);
 
+  const exportMut = useMutation({
+    mutationFn: async () => paged
+      ? telematicsService.exportTelemetryClusterCsv(kind, { search, view: serverView(kind, tab) }, config.columns)
+      : telematicsService.exportClusterCsv(rows, config.columns),
+    onSuccess: (csv) => downloadCsv(`opstrax-${kind}.csv`, csv),
+    onError: (error) => setNotice(apiErrorMessage(error, "The complete authorized export could not be created. Retry the export.")),
+  });
+
   const selectedRecord = rows.find((row) => row.id === selected?.id) ?? selected;
   const offlineCount = paged ? recordsQ.data?.summary.offline ?? 0 : rows.filter((row) => row.offlineWarning).length;
   const issueCount = paged ? recordsQ.data?.summary.attention ?? 0 : rows.filter((row) => row.alertStatus === "Open" || (row.troubleCodes?.length ?? 0) > 0 || (row.deviceHealthAvailable && row.deviceHealth < 70)).length;
@@ -333,20 +355,28 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
     tab,
   });
 
+  if (!canView || (recordsQ.isError && isForbidden(recordsQ.error))) {
+    return (
+      <div className="panel p-8 text-center" role="status">
+        <p className="text-lg font-semibold text-slate-900">{config.title} access restricted</p>
+        <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-600">
+          This evidence is not available for the current role. Ask a tenant administrator to grant the appropriate access if it is required for your work.
+        </p>
+      </div>
+    );
+  }
   if (recordsQ.isLoading) return <LoadingState />;
   if (recordsQ.isError) {
+    const fallback = kind === "obd-j1939"
+      ? "OBD / J1939 evidence could not be loaded. Retry, or ask a tenant administrator to confirm diagnostics access for this role."
+      : `Unable to load ${config.title.toLowerCase()} right now.`;
     return (
       <ErrorState
-        message={`Unable to load ${config.title.toLowerCase()} right now.`}
-        onRetry={() => recordsQ.refetch()}
+        message={apiErrorMessage(recordsQ.error, fallback)}
+        onRetry={() => void recordsQ.refetch()}
       />
     );
   }
-
-  const exportCurrent = () => {
-    const csv = telematicsService.exportClusterCsv(rows, config.columns);
-    downloadCsv(`opstrax-${kind}.csv`, csv);
-  };
 
   return (
     <div className="fleet-console flex h-full flex-col gap-3 overflow-y-auto">
@@ -358,15 +388,25 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
           <>
             <button
               className="btn-ghost"
-              disabled={!canExport}
-              title={permissionTitle(canExport, "Export the current telematics view.")}
-              onClick={() => canExport && exportCurrent()}
+              disabled={!canExport || exportMut.isPending}
+              title={permissionTitle(canExport, "Export every authorized row matching the current search and filter.")}
+              onClick={() => canExport && exportMut.mutate()}
             >
-              <Download className="h-4 w-4" /> Export CSV
+              <Download className="h-4 w-4" /> {exportMut.isPending ? "Preparing export…" : "Export CSV"}
             </button>
             <button className="btn-primary" onClick={() => navigate("/iot-devices")}>
               <Truck className="h-4 w-4" /> Open Device Command
             </button>
+            {kind === "gps-tracking" ? (
+              <button
+                className="btn-ghost"
+                disabled={!canViewGeofences}
+                title={permissionTitle(canViewGeofences, "Open geofence setup and alert boundaries.")}
+                onClick={() => canViewGeofences && navigate("/geofences")}
+              >
+                <MapPinned className="h-4 w-4" /> Manage Geofences
+              </button>
+            ) : null}
             {kind === "cold-chain" ? <button className="btn-ghost" onClick={() => navigate("/fleet-cold-chain")}><Thermometer className="h-4 w-4" /> Cold Chain Monitor</button> : null}
           </>
         }

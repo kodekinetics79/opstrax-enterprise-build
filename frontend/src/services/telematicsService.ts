@@ -208,6 +208,7 @@ export type TelemetryClusterPageOptions = {
   pageSize?: number;
   search?: string;
   view?: string;
+  purpose?: "view" | "export";
 };
 
 export type TelemetryClusterPageResult = {
@@ -1276,6 +1277,7 @@ export const telematicsService = {
         search: options.search?.trim() || undefined,
         view: options.view ?? "all",
         cluster: kind === "obd-j1939" ? "diagnostics" : "gps",
+        purpose: options.purpose ?? "view",
         sort: "serial",
         direction: "asc",
       },
@@ -1500,6 +1502,14 @@ export const telematicsService = {
 
   async commitDeviceImport(rows: AnyRecord[]): Promise<AnyRecord> {
     return unwrap<AnyRecord>(apiClient.post("/api/telemetry/devices/import-commit", { rows }, { timeout: 120000 }));
+  },
+
+  async previewDeviceInstallationImport(rows: AnyRecord[]): Promise<AnyRecord> {
+    return unwrap<AnyRecord>(apiClient.post("/api/telemetry/device-installations/import-preview", { rows }));
+  },
+
+  async commitDeviceInstallationImport(rows: AnyRecord[]): Promise<AnyRecord> {
+    return unwrap<AnyRecord>(apiClient.post("/api/telemetry/device-installations/import-commit", { rows }, { timeout: 120000 }));
   },
 
   // Provision a device = INITIATE A REAL CONNECTION (the Render/Vercel model), not a
@@ -1802,10 +1812,40 @@ export const telematicsService = {
     return downloadServerExport("/api/telemetry/devices/export", `opstrax-device-command-center_${new Date().toISOString().slice(0, 10)}.csv`);
   },
 
+  async exportTelemetryClusterCsv(
+    kind: "gps-tracking" | "obd-j1939",
+    options: Pick<TelemetryClusterPageOptions, "search" | "view">,
+    columns: string[],
+  ) {
+    const rows: TelematicsClusterRecord[] = [];
+    let page = 1;
+    let expectedTotal = 0;
+    do {
+      const batch = await this.getTelemetryClusterPage(kind, { ...options, page, pageSize: 100, purpose: "export" });
+      expectedTotal = batch.total;
+      rows.push(...batch.items);
+      if (batch.items.length === 0 && rows.length < expectedTotal) {
+        throw new Error(`Export stopped after ${rows.length} of ${expectedTotal} authorized rows. Retry the export.`);
+      }
+      page += 1;
+    } while (rows.length < expectedTotal);
+    if (rows.length !== expectedTotal) {
+      throw new Error(`Export changed during pagination (${rows.length} rows read; ${expectedTotal} expected). Retry the export.`);
+    }
+    return this.exportClusterCsv(rows, columns);
+  },
+
   exportClusterCsv(rows: TelematicsClusterRecord[], columns: string[]) {
+    const csvCell = (value: unknown) => {
+      const text = Array.isArray(value) ? value.join(", ") : String(value ?? "");
+      // Neutralize spreadsheet formulas from provider/address/device-controlled
+      // fields before applying RFC-4180 quoting.
+      const safe = /^[=+\-@\t\r]/.test(text) ? `'${text}` : text;
+      return `"${safe.replaceAll('"', '""')}"`;
+    };
     return [
-      columns.join(","),
-      ...rows.map((row) => columns.map((column) => JSON.stringify(row[column as keyof TelematicsClusterRecord] ?? "")).join(",")),
+      columns.map(csvCell).join(","),
+      ...rows.map((row) => columns.map((column) => csvCell(row[column as keyof TelematicsClusterRecord])).join(",")),
     ].join("\n");
   },
 };

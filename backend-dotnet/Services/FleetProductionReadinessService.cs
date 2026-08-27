@@ -960,6 +960,8 @@ public sealed class FleetProductionReadinessService
           COALESCE((SELECT COUNT(*)=1 FROM schema_migrations WHERE version='2026_08_14_stage80_fleet_identity_backbone'),false)
             AND COALESCE((SELECT COUNT(*)=1 FROM schema_migrations
               WHERE version='2026_08_20_stage82_telematics_device_credential_constraint'),false)
+            AND COALESCE((SELECT COUNT(*)=1 FROM schema_migrations
+              WHERE version='2026_08_26_stage91_telematics_ingest_fingerprint'),false)
             AND COALESCE((SELECT COUNT(*)=1 AND BOOL_AND(
               c.convalidated
               AND pg_get_constraintdef(c.oid,true) LIKE '%hmac_secret IS NULL%'
@@ -977,14 +979,15 @@ public sealed class FleetProductionReadinessService
             AND to_regclass('public.ex_stage80_device_installation_period') IS NOT NULL
             AND to_regclass('public.uq_stage80_vehicle_primary_role') IS NOT NULL
             AND to_regprocedure('public.stage80_sync_device_vehicle_projection()') IS NOT NULL
-            AND COALESCE((SELECT COUNT(*)=13 FROM (VALUES
+            AND COALESCE((SELECT COUNT(*)=15 FROM (VALUES
               ('device_installations','effective_from'),('device_installations','effective_to'),
               ('device_installations','device_role'),('device_installations','row_version'),
               ('location_events','installation_id'),('location_events','assignment_id'),
-              ('location_events','engine_status'),
+              ('location_events','engine_status'),('location_events','ingest_fingerprint'),
               ('latest_vehicle_positions','battery_voltage'),('latest_vehicle_positions','address'),
               ('latest_vehicle_positions','installation_id'),('latest_vehicle_positions','assignment_id'),
-              ('canonical_telemetry_events','installation_id'),('canonical_telemetry_events','assignment_id')
+              ('canonical_telemetry_events','installation_id'),('canonical_telemetry_events','assignment_id'),
+              ('fault_occurrences','payload_fingerprint')
             ) expected(table_name,column_name)
             JOIN information_schema.columns actual ON actual.table_schema='public'
               AND actual.table_name=expected.table_name AND actual.column_name=expected.column_name),false)
