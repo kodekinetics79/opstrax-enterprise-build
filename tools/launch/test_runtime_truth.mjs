@@ -35,6 +35,8 @@ test("runtime provenance is exact in operator diagnostics and speakable-only on 
   for (const marker of ["VERCEL_GIT_COMMIT_SHA", "VITE_DEPLOYMENT_SHA", "__OPSTRAX_FRONTEND_SHA__", "__OPSTRAX_FRONTEND_ENVIRONMENT__", "__OPSTRAX_API_BASE_URL__"]) {
     assert.ok(vite.includes(marker), `build provenance omits ${marker}`);
   }
+  assert.ok(vite.indexOf("RENDER_GIT_COMMIT") < vite.indexOf("VITE_DEPLOYMENT_SHA"),
+    "Render's immutable commit identity must override a stale manually pinned deployment SHA");
   for (const marker of ["frontendSha", "apiSha", "frontendEnvironment", "apiEnvironment", "apiBaseUrl"]) {
     assert.ok(diagnostics.includes(marker), `runtime diagnostics omit ${marker}`);
   }
