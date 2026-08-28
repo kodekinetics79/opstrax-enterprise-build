@@ -619,6 +619,57 @@ public class GatewaySessionIdentityTests
         return Wrap(crcRegion);
     }
 
+
+    /// <summary>
+    /// The session map is bounded by what is actually connected: an ordinary disconnect releases
+    /// the device's lease. Without this the registry would be a slow leak keyed by every device
+    /// that ever logged in — the same unbounded-collection defect the replay guard's device map had.
+    /// </summary>
+    [Fact]
+    public async Task A_closed_connection_releases_its_device_lease()
+    {
+        var sessions = new ActiveDeviceSessionRegistry();
+        await using GatewayHarness gw = await GatewayHarness.StartAsync(sessions: sessions);
+
+        for (int cycle = 0; cycle < 5; cycle++)
+        {
+            using (TcpClient client = await gw.ConnectAsync())
+            {
+                NetworkStream stream = client.GetStream();
+                byte[] login = BuildLoginFrame(ImeiA, serial: 1);
+                await stream.WriteAsync(login);
+                Assert.Equal(AckForFrame(login), await ReadExactlyAsync(stream, 10));
+                Assert.Equal(1, sessions.ActiveSessionCount);
+            }
+
+            // The client hung up; the lease must go with it.
+            await WaitUntilAsync(() => sessions.ActiveSessionCount == 0, SocketTimeout);
+            Assert.Equal(0, sessions.ActiveSessionCount);
+        }
+    }
+
+    /// <summary>
+    /// Refused logins leave no trace in the session map. A scanner spraying forged IMEIs at a public
+    /// port must not be able to grow a gateway-lifetime collection one probe at a time.
+    /// </summary>
+    [Fact]
+    public async Task Refused_logins_never_enter_the_session_map()
+    {
+        var sessions = new ActiveDeviceSessionRegistry();
+        await using GatewayHarness gw = await GatewayHarness.StartAsync(sessions: sessions);
+
+        for (int i = 0; i < 25; i++)
+        {
+            using TcpClient client = await gw.ConnectAsync();
+            NetworkStream stream = client.GetStream();
+            await stream.WriteAsync(BuildLoginFrame($"86812030333{i:D4}", serial: 1));
+            await PeerClosedWithinAsync(stream, SocketTimeout);
+        }
+
+        Assert.Equal(0, sessions.ActiveSessionCount);
+        Assert.Equal(25, gw.Metrics.UnknownDeviceRejections);
+    }
+
     // ── Harness ────────────────────────────────────────────────────────────────
 
     private sealed class GatewayHarness : IAsyncDisposable
