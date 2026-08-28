@@ -18887,6 +18887,12 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             "lastcheckin" => "e.last_seen_at",
             "vehicle" => "v.vehicle_code",
             "priority" => priorityExpression,
+            "fixtime" when cluster == "gps" => "COALESCE(lp.device_fix_time,lp.event_time,lp.received_at)",
+            "freshness" when cluster == "gps" => @"CASE
+                WHEN lp.id IS NULL OR lp.lat NOT BETWEEN -90 AND 90 OR lp.lng NOT BETWEEN -180 AND 180 THEN 4
+                WHEN EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) > 900 THEN 3
+                WHEN EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) > 120 THEN 2
+                ELSE 0 END",
             _ => "e.device_serial",
         };
         var standardViewClause = view switch
@@ -18911,6 +18917,11 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 AND LOWER(COALESCE(e.device_state,'')) NOT IN ('quarantined','suspended')
                 AND lp.lat BETWEEN -90 AND 90 AND lp.lng BETWEEN -180 AND 180
                 AND EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) <= 120",
+            "delayed-gps" => @" AND e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired','Suspended','Malfunction','Diagnostic')
+                AND LOWER(COALESCE(e.device_state,'')) NOT IN ('quarantined','suspended')
+                AND lp.lat BETWEEN -90 AND 90 AND lp.lng BETWEEN -180 AND 180
+                AND EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) > 120
+                AND EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) <= 900",
             "stale-gps" => @" AND e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired') AND lp.lat BETWEEN -90 AND 90 AND lp.lng BETWEEN -180 AND 180
                 AND EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) > 900",
             "offline" => @" AND e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired') AND (

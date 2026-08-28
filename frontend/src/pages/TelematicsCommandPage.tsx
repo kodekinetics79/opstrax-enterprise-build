@@ -46,15 +46,15 @@ const configs: Record<TelematicsKind, ClusterConfig> = {
     eyebrow: "Telematics & IoT",
     title: "GPS Tracking",
     description: "Current and last-known positions with fix time, gateway receipt, provenance, and explicit blockers. Route linkage is not inferred.",
-    columns: ["vehicleCode", "deviceName", "locationLabel", "positionSource", "positionAccuracy", "deviceFixAt", "gatewayReceivedAt", "dataFreshnessStatus", "routingReadiness"],
+    columns: ["serialNumber", "vehicleCode", "locationLabel", "positionSource", "positionAccuracy", "deviceFixAt", "gatewayReceivedAt", "dataFreshnessStatus", "routingReadiness"],
     emptyTitle: "No GPS records found",
     emptySubtitle: "No vehicles match the current GPS filters for this tenant.",
-    searchPlaceholder: "Search vehicle, driver, location, route, status, or device health...",
+    searchPlaceholder: "Search serial, IMEI, model, category, provider, vehicle, driver, or location...",
     query: () => telematicsService.getGpsTrackingRecords(),
     requiredViewPermission: PERMISSIONS.TELEMATICS_GPS_VIEW,
     requiredExportPermission: PERMISSIONS.TELEMATICS_GPS_EXPORT,
     requiredUpdatePermission: PERMISSIONS.TELEMATICS_GPS_VIEW,
-    filterTabs: ["All", "Online", "Stale GPS", "Offline", "Critical"],
+    filterTabs: ["All", "Online", "Delayed / Watch", "Stale GPS", "Offline", "Critical"],
   },
   "obd-j1939": {
     eyebrow: "Telematics & IoT",
@@ -137,6 +137,7 @@ function isServerPaged(kind: TelematicsKind): kind is "gps-tracking" | "obd-j193
 function serverView(kind: "gps-tracking" | "obd-j1939", tab: string) {
   if (kind === "gps-tracking") {
     if (tab === "Online") return "online";
+    if (tab === "Delayed / Watch") return "delayed-gps";
     if (tab === "Stale GPS") return "stale-gps";
     if (tab === "Offline") return "offline";
     if (tab === "Critical") return "attention";
@@ -148,6 +149,26 @@ function serverView(kind: "gps-tracking" | "obd-j1939", tab: string) {
   if (tab === "Issues") return "issues";
   return "all";
 }
+
+const columnLabels: Record<string, string> = {
+  serialNumber: "Device serial",
+  vehicleCode: "Vehicle",
+  deviceName: "Device",
+  locationLabel: "Location",
+  positionSource: "Source",
+  positionAccuracy: "Accuracy",
+  deviceFixAt: "Device fix",
+  gatewayReceivedAt: "Gateway receipt",
+  dataFreshnessStatus: "Freshness",
+  routingReadiness: "Operational use",
+  protocolType: "Protocol",
+  troubleCodes: "Trouble codes",
+  engineStatus: "Engine status",
+  odometer: "Odometer",
+  fuelLevel: "Fuel level",
+  batteryVoltage: "Battery voltage",
+  lastEngineDataAt: "Last engine data",
+};
 
 // Treat the service's honest empty markers ("—", "", "No ...") as "no value" so we
 // never join them into a half-real string like "—, —" or "— mph · —".
@@ -168,6 +189,14 @@ function formatSpeedHeading(speed: string, heading: string) {
 }
 
 function renderCell(column: string, row: TelematicsClusterRecord) {
+  if (column === "serialNumber") {
+    return (
+      <div>
+        <p className="font-semibold text-slate-900">{row.serialNumber}</p>
+        <p className="text-xs text-slate-400">{row.deviceName} · {row.provider}</p>
+      </div>
+    );
+  }
   if (column === "deviceName") {
     return (
       <div>
@@ -217,6 +246,8 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
+  const [gpsSort, setGpsSort] = useState<"freshness" | "fixTime" | "vehicle" | "serial" | "provider">("freshness");
+  const [gpsDirection, setGpsDirection] = useState<"asc" | "desc">("desc");
   const [selected, setSelected] = useState<TelematicsClusterRecord | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -231,7 +262,7 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
   const paged = isServerPaged(kind);
   const pageSize = 50;
   const recordsQ = useQuery({
-    queryKey: ["telematics-cluster", kind, paged ? page : 1, paged ? search : "", paged ? tab : ""],
+    queryKey: ["telematics-cluster", kind, paged ? page : 1, paged ? search : "", paged ? tab : "", paged ? gpsSort : "", paged ? gpsDirection : ""],
     queryFn: async (): Promise<TelemetryClusterPageResult> => {
       if (paged) {
         return telematicsService.getTelemetryClusterPage(kind, {
@@ -239,6 +270,8 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
           pageSize,
           search,
           view: serverView(kind, tab),
+          sort: kind === "gps-tracking" ? gpsSort : "serial",
+          direction: kind === "gps-tracking" ? gpsDirection : "asc",
         });
       }
       const items = await config.query();
@@ -324,7 +357,7 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
 
   const exportMut = useMutation({
     mutationFn: async () => paged
-      ? telematicsService.exportTelemetryClusterCsv(kind, { search, view: serverView(kind, tab) }, config.columns)
+      ? telematicsService.exportTelemetryClusterCsv(kind, { search, view: serverView(kind, tab), sort: kind === "gps-tracking" ? gpsSort : "serial", direction: kind === "gps-tracking" ? gpsDirection : "asc" }, config.columns)
       : telematicsService.exportClusterCsv(rows, config.columns),
     onSuccess: (csv) => downloadCsv(`opstrax-${kind}.csv`, csv),
     onError: (error) => setNotice(apiErrorMessage(error, "The complete authorized export could not be created. Retry the export.")),
@@ -346,7 +379,7 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
   // filter simply matched nothing" — the two empty states carry different meaning.
   const hasAnyLiveData = (recordsQ.data?.total ?? 0) > 0;
   const total = recordsQ.data?.total ?? 0;
-  const visibleUnits = paged ? recordsQ.data?.summary.active ?? 0 : total;
+  const fleetUnits = paged ? recordsQ.data?.summary.active ?? 0 : total;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const emptyState = resolveTelemetryEmptyState({
     rowCount: rows.length,
@@ -426,16 +459,17 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
       ) : null}
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiCard label="Visible Units" value={visibleUnits} status="Active" icon={kpiIcon} />
-        <KpiCard label="Offline / Stale" value={offlineCount} status={offlineCount ? "Critical" : "Healthy"} icon={<AlertTriangle className="h-4 w-4" />} />
-        <KpiCard label="Needs Action" value={issueCount} status={issueCount ? "Watch" : "Healthy"} icon={<RadioTower className="h-4 w-4" />} />
+        <KpiCard label="Fleet managed units" value={fleetUnits} status="Active" icon={kpiIcon} />
+        <KpiCard label="Fleet offline / stale" value={offlineCount} status={offlineCount ? "Critical" : "Healthy"} icon={<AlertTriangle className="h-4 w-4" />} />
+        <KpiCard label="Fleet needs action" value={issueCount} status={issueCount ? "Watch" : "Healthy"} icon={<RadioTower className="h-4 w-4" />} />
         <KpiCard
-          label="Average Health"
+          label="Current page health"
           value={avgHealth == null ? "—" : `${avgHealth}%`}
-          status={avgHealth == null ? "Active" : avgHealth >= 85 ? "Healthy" : avgHealth >= 70 ? "Watch" : "Critical"}
+          status={avgHealth == null ? "Unknown" : avgHealth >= 85 ? "Healthy" : avgHealth >= 70 ? "Watch" : "Critical"}
           icon={<BatteryCharging className="h-4 w-4" />}
         />
       </div>
+      {paged ? <p className="text-xs text-slate-500">Fleet cards cover every authorized unit. Health is averaged only across evidence-bearing rows on the current page.</p> : null}
 
       {kind === "gps-tracking" ? (
         <div className="grid gap-4 xl:grid-cols-3">
@@ -473,6 +507,12 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
                 {item}
               </button>
             ))}
+            {kind === "gps-tracking" ? <>
+              <label><span className="sr-only">Sort GPS records</span><select className="field py-2 text-xs" value={gpsSort} onChange={(event) => { setGpsSort(event.target.value as typeof gpsSort); setPage(1); }}>
+                <option value="freshness">Freshness risk</option><option value="fixTime">Last device fix</option><option value="vehicle">Vehicle</option><option value="serial">Device serial</option><option value="provider">Provider</option>
+              </select></label>
+              <button className="btn-ghost py-2 text-xs" type="button" onClick={() => { setGpsDirection((value) => value === "asc" ? "desc" : "asc"); setPage(1); }} aria-label={`Sort ${gpsDirection === "asc" ? "descending" : "ascending"}`}>{gpsDirection === "asc" ? "Ascending" : "Descending"}</button>
+            </> : null}
           </div>
         </div>
 
@@ -492,24 +532,24 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
           )
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="min-w-[1280px] text-sm">
               <thead>
                 <tr className="border-b border-slate-200">
                   {config.columns.map((column) => (
-                    <th key={column} className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500">{column}</th>
+                    <th key={column} className={`px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500 ${column === config.columns[0] ? "sticky left-0 z-10 bg-white" : ""}`}>{columnLabels[column] ?? column}</th>
                   ))}
-                  <th className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500">Actions</th>
+                  <th className="sticky right-0 z-10 bg-white px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {rows.map((row) => (
                   <tr key={row.id} className="transition hover:bg-slate-50">
                     {config.columns.map((column) => (
-                      <td key={column} className="px-4 py-3 text-slate-700">
+                      <td key={column} className={`px-4 py-3 text-slate-700 ${column === config.columns[0] ? "sticky left-0 z-[1] bg-white" : ""}`}>
                         {renderCell(column, row)}
                       </td>
                     ))}
-                    <td className="px-4 py-3">
+                    <td className="sticky right-0 z-[1] bg-white px-4 py-3">
                       <div className="flex flex-wrap gap-2">
                         <button className="btn-ghost h-8 px-3" onClick={() => setSelected(row)}>
                           {kind === "gps-tracking" ? "Inspect position" : kind === "obd-j1939" ? "View diagnostics" : "View sensor"}

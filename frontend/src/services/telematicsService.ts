@@ -209,6 +209,8 @@ export type TelemetryClusterPageOptions = {
   search?: string;
   view?: string;
   purpose?: "view" | "export";
+  sort?: "serial" | "provider" | "vehicle" | "freshness" | "fixTime";
+  direction?: "asc" | "desc";
 };
 
 export type TelemetryClusterPageResult = {
@@ -367,6 +369,7 @@ export type TelematicsClusterRecord = {
   id: string;
   deviceId: string | number;
   deviceName: string;
+  serialNumber: string;
   deviceType: string;
   provider: string;
   vehicleId: string;
@@ -1009,6 +1012,7 @@ function toClusterRecord(
     id: `${protocolType.toLowerCase()}-${device.id}`,
     deviceId: device.id,
     deviceName: device.deviceName,
+    serialNumber: device.serialNumber,
     deviceType: device.deviceType,
     provider: device.provider,
     vehicleId: device.assignedVehicleId,
@@ -1103,6 +1107,7 @@ function toColdChainClusterRecord(
     id: `cold-chain-${device.id}`,
     deviceId: device.id,
     deviceName: device.name || device.deviceCode,
+    serialNumber: device.deviceCode,
     deviceType: "Cold-chain sensor",
     provider: device.sourceChannel ? String(device.sourceChannel) : "Cold-chain service",
     vehicleId: "",
@@ -1278,8 +1283,8 @@ export const telematicsService = {
         view: options.view ?? "all",
         cluster: kind === "obd-j1939" ? "diagnostics" : "gps",
         purpose: options.purpose ?? "view",
-        sort: "serial",
-        direction: "asc",
+        sort: options.sort ?? "serial",
+        direction: options.direction ?? "asc",
       },
     }));
     const normalized = (payload.items ?? []).map(normalizeKeys);
@@ -1814,7 +1819,7 @@ export const telematicsService = {
 
   async exportTelemetryClusterCsv(
     kind: "gps-tracking" | "obd-j1939",
-    options: Pick<TelemetryClusterPageOptions, "search" | "view">,
+    options: Pick<TelemetryClusterPageOptions, "search" | "view" | "sort" | "direction">,
     columns: string[],
   ) {
     const rows: TelematicsClusterRecord[] = [];

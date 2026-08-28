@@ -9,6 +9,7 @@ import { telematicsService, type DeviceCommandRecord, type DevicePageResult } fr
 type ExceptionRow = {
   id: string;
   device: string;
+  model: string;
   vehicle: string;
   provider: string;
   status: string;
@@ -23,26 +24,26 @@ function exceptionFor(device: DeviceCommandRecord): ExceptionRow {
   const governedHold = /quarantined|suspended/i.test(device.deviceState);
 
   if (governedHold) return {
-    id: String(device.id), device: device.deviceName, vehicle: device.assignedVehicleCode || "Unassigned", provider: device.provider,
+    id: String(device.id), device: device.serialNumber, model: device.deviceName, vehicle: device.assignedVehicleCode || "Unassigned", provider: device.provider,
     status: "Needs attention", reason: `${device.deviceState} commissioning or lifecycle hold`,
     evidence: `device state: ${device.deviceState} · check-in: ${device.lastCheckIn}`,
     action: "Resolve the governed device hold before returning it to service", severity: 5,
   };
 
   if (neverConnected) return {
-    id: String(device.id), device: device.deviceName, vehicle: device.assignedVehicleCode || "Unassigned", provider: device.provider,
+    id: String(device.id), device: device.serialNumber, model: device.deviceName, vehicle: device.assignedVehicleCode || "Unassigned", provider: device.provider,
     status: "Never connected", reason: "No device check-in has been observed", evidence: "last check-in: none",
     action: "Verify installation, power, SIM, and activation", severity: 4,
   };
   if (/offline/i.test(device.connectionStatus)) return {
-    id: String(device.id), device: device.deviceName, vehicle: device.assignedVehicleCode || "Unassigned", provider: device.provider,
+    id: String(device.id), device: device.serialNumber, model: device.deviceName, vehicle: device.assignedVehicleCode || "Unassigned", provider: device.provider,
     status: "Offline", reason: "The latest trusted signal is outside the freshness window",
     evidence: `check-in: ${device.lastCheckIn}`,
     action: "Check vehicle power, cellular coverage, and device cable", severity: 3,
   };
   const needsAttention = /attention|malfunction|quarantined|suspended|rotation|diagnostic/i.test(`${device.connectionStatus} ${device.lifecycleStatus} ${device.deviceState}`) || device.openAlertCount > 0 || device.activeFaultCount > 0;
   return needsAttention ? {
-    id: String(device.id), device: device.deviceName, vehicle: device.assignedVehicleCode || "Unassigned", provider: device.provider,
+    id: String(device.id), device: device.serialNumber, model: device.deviceName, vehicle: device.assignedVehicleCode || "Unassigned", provider: device.provider,
     status: "Needs attention", reason: device.openAlertCount
       ? `${device.openAlertCount} open telemetry alert${device.openAlertCount === 1 ? "" : "s"}`
       : device.activeFaultCount > 0
@@ -51,7 +52,7 @@ function exceptionFor(device: DeviceCommandRecord): ExceptionRow {
     evidence: `health: ${device.dataHealthAvailable ? `${device.dataHealthScore}/100` : "unknown"} · lifecycle: ${device.lifecycleStatus}`,
     action: "Open Device Health and resolve the evidence-backed issue", severity: 2,
   } : {
-    id: String(device.id), device: device.deviceName, vehicle: device.assignedVehicleCode || "Unassigned", provider: device.provider,
+    id: String(device.id), device: device.serialNumber, model: device.deviceName, vehicle: device.assignedVehicleCode || "Unassigned", provider: device.provider,
     status: device.connectionStatus || "Observed", reason: "No connectivity or lifecycle exception is currently observed",
     evidence: `check-in: ${device.lastCheckIn} · lifecycle: ${device.lifecycleStatus}`,
     action: "No DeviceOps action required", severity: 0,
@@ -157,7 +158,7 @@ export function TelematicsControlTowerPage() {
             <p className="mt-1 text-sm text-slate-500">Ranked by observed risk. Unknown signals stay unknown; the page does not manufacture modem, power, GPS, or engine readings.</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            {canExport ? <button className="btn-ghost" onClick={() => void telematicsService.exportDevices()}><Download className="h-4 w-4" /> Export devices CSV</button> : null}
+            {canExport ? <button className="btn-ghost" onClick={() => void telematicsService.exportDevices()}><Download className="h-4 w-4" /> Export full device inventory</button> : null}
             <button className="btn-ghost" onClick={() => navigate("/gps-tracking")}><MapPinned className="h-4 w-4" /> GPS</button>
             <button className="btn-ghost" onClick={() => navigate("/obd-j1939")}><Gauge className="h-4 w-4" /> Diagnostics</button>
             <button className="btn-primary" onClick={() => navigate("/iot-devices")}><Wrench className="h-4 w-4" /> Device Health</button>
@@ -187,14 +188,14 @@ export function TelematicsControlTowerPage() {
           <div className="mt-4"><EmptyState title="No matching devices" subtitle="No connectivity or lifecycle rows match this queue view. GPS and Diagnostics retain their own permission-scoped evidence." /></div>
         ) : (
           <div className="mt-4 overflow-x-auto">
-            <table className="min-w-full text-left text-sm">
+            <table className="min-w-[1100px] text-left text-sm">
               <thead className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500"><tr>
-                {['Device','Vehicle','Provider','State','Why it is here','Evidence','Next action'].map((header) => <th key={header} className="px-3 py-2 font-semibold">{header}</th>)}
+                {['Device identity','Vehicle','Provider','State','Why it is here','Evidence','Next action'].map((header, index) => <th key={header} className={`px-3 py-2 font-semibold ${index === 0 ? "sticky left-0 z-10 bg-white" : index === 6 ? "sticky right-0 z-10 bg-white" : ""}`}>{header}</th>)}
               </tr></thead>
               <tbody className="divide-y divide-slate-100">{exceptions.map((row) => <tr key={row.id} className="align-top hover:bg-slate-50">
-                <td className="px-3 py-3 font-semibold text-slate-900">{row.device}</td><td className="px-3 py-3">{row.vehicle}</td><td className="px-3 py-3">{row.provider}</td>
+                <td className="sticky left-0 z-[1] bg-white px-3 py-3"><p className="font-semibold text-slate-900">{row.device}</p><p className="mt-1 text-xs text-slate-500">{row.model}</p></td><td className="px-3 py-3">{row.vehicle}</td><td className="px-3 py-3">{row.provider}</td>
                 <td className="px-3 py-3"><StatusBadge status={row.status} /></td><td className="max-w-xs px-3 py-3">{row.reason}</td>
-                <td className="max-w-xs px-3 py-3 text-slate-600">{row.evidence}</td><td className="max-w-xs px-3 py-3 font-medium text-slate-800">{row.action}</td>
+                <td className="max-w-xs px-3 py-3 text-slate-600">{row.evidence}</td><td className="sticky right-0 z-[1] max-w-xs bg-white px-3 py-3 font-medium text-slate-800">{row.action}</td>
               </tr>)}</tbody>
             </table>
           </div>

@@ -5,6 +5,7 @@ const devices = fs.readFileSync(new URL("../src/pages/IotDevicesPage.tsx", impor
 const command = fs.readFileSync(new URL("../src/pages/TelematicsCommandPage.tsx", import.meta.url), "utf8");
 const importer = fs.readFileSync(new URL("../src/components/EntityImportExport.tsx", import.meta.url), "utf8");
 const service = fs.readFileSync(new URL("../src/services/telematicsService.ts", import.meta.url), "utf8");
+const controlTower = fs.readFileSync(new URL("../src/pages/TelematicsControlTowerPage.tsx", import.meta.url), "utf8");
 
 assert.match(devices, /aria-label={`Manage \${row\.deviceName}`}/, "Manage identifies the selected device");
 assert.match(devices, /aria-haspopup="dialog"[\s\S]*onClick=\{\(\) => setSelectedId\(row\.id\)\}/, "Manage opens the durable detail/action drawer");
@@ -18,6 +19,18 @@ assert.match(command, /apiErrorMessage\(recordsQ\.error, fallback\)/, "Telemetry
 assert.match(command, /OBD \/ J1939 evidence could not be loaded[\s\S]*confirm diagnostics access for this role/, "OBD fallback gives the Executive a useful recovery path");
 assert.match(command, /canViewGeofences = hasPermission\("map:view"\)/, "Geofence discovery follows the destination permission");
 assert.match(command, /kind === "gps-tracking"[\s\S]*navigate\("\/geofences"\)[\s\S]*Manage Geofences/, "GPS exposes geofence management");
+assert.match(service, /serialNumber: device\.serialNumber/, "GPS cluster retains the immutable serial for same-model device uniqueness");
+assert.match(command, /row\.serialNumber[\s\S]*row\.deviceName/, "GPS renders serial prominently and model secondarily");
+assert.match(controlTower, /device: device\.serialNumber, model: device\.deviceName/, "Control Tower separates immutable serial from display model");
+assert.match(controlTower, /Export full device inventory/, "Control Tower export states that it is not the filtered queue");
+assert.match(command, /Fleet managed units[\s\S]*Fleet offline \/ stale[\s\S]*Fleet needs action[\s\S]*Current page health/, "GPS KPI labels state fleet and page scope truthfully");
+assert.match(command, /Fleet cards cover every authorized unit[\s\S]*current page/, "GPS explains mixed KPI scopes");
+assert.match(command, /Search serial, IMEI, model, category, provider, vehicle, driver, or location/, "GPS search promise matches backend-supported fields");
+assert.match(command, /Delayed \/ Watch[\s\S]*delayed-gps/, "GPS exposes the delayed-fix cohort");
+assert.match(command, /Sort GPS records[\s\S]*Freshness risk[\s\S]*Last device fix[\s\S]*Device serial/, "GPS exposes enterprise sort controls");
+assert.match(service, /sort: options\.sort \?\? "serial"[\s\S]*direction: options\.direction \?\? "asc"/, "GPS sort reaches the server page endpoint");
+assert.match(command, /columnLabels\[column\] \?\? column/, "GPS uses human-readable column labels");
+assert.match(command, /sticky left-0[\s\S]*sticky right-0/, "GPS keeps identity and actions visible during horizontal scroll");
 
 assert.match(devices, /entity: "device installations"[\s\S]*atomic: true/, "Device Health exposes an atomic bulk installation wizard");
 assert.match(devices, /canBulkInstall = hasDirectPermission\(PERMISSIONS\.TELEMETRY_DEVICES_MANAGE\)/, "Bulk installation UI requires the direct canonical device-manage grant");
