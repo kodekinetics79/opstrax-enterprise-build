@@ -77,6 +77,28 @@ public sealed class AuthenticationMfaTests
     }
 
     [Fact]
+    public void SecurityPolicyCannotActivateMfaOverUnenrolledUsers()
+    {
+        var endpoints = ReadSource("backend-dotnet", "Controllers", "EndpointMappings.cs");
+        var putStart = endpoints.IndexOf("private static async Task<IResult> SecuritySettingsPut(", StringComparison.Ordinal);
+        var putEnd = endpoints.IndexOf("// ── Security Events", putStart, StringComparison.Ordinal);
+        var put = endpoints[putStart..putEnd];
+        var service = ReadSource("backend-dotnet", "Services", "SecuritySettingsService.cs");
+        var guardStart = service.IndexOf("CountMfaEnrollmentBlockersAsync(", StringComparison.Ordinal);
+        var guardEnd = service.IndexOf("// Default policy", guardStart, StringComparison.Ordinal);
+        var enrollmentGuard = service[guardStart..guardEnd];
+
+        Assert.Contains("CountMfaEnrollmentBlockersAsync", put, StringComparison.Ordinal);
+        Assert.Contains("StatusCodes.Status409Conflict", put, StringComparison.Ordinal);
+        AssertOrdered(put, "CountMfaEnrollmentBlockersAsync", "svc.UpsertAsync");
+        Assert.Contains("u.company_id=@cid", enrollmentGuard, StringComparison.Ordinal);
+        Assert.Contains("u.status", enrollmentGuard, StringComparison.Ordinal);
+        Assert.Contains("user_mfa_status", enrollmentGuard, StringComparison.Ordinal);
+        Assert.Contains("ums.mfa_enabled=TRUE", enrollmentGuard, StringComparison.Ordinal);
+        Assert.Contains("ums.mfa_secret IS NOT NULL", enrollmentGuard, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void MfaCompletion_Consumes_Durable_Challenge_Before_Session_Issuance()
     {
         var source = ReadSource("backend-dotnet", "Controllers", "EndpointMappings.cs");
@@ -239,5 +261,13 @@ public sealed class AuthenticationMfaTests
         for (var offset = 0; (offset = source.IndexOf(value, offset, StringComparison.Ordinal)) >= 0; offset += value.Length)
             count++;
         return count;
+    }
+
+    private static void AssertOrdered(string source, string first, string second)
+    {
+        var firstIndex = source.IndexOf(first, StringComparison.Ordinal);
+        var secondIndex = source.IndexOf(second, StringComparison.Ordinal);
+        Assert.True(firstIndex >= 0 && secondIndex > firstIndex,
+            $"Expected '{first}' before '{second}'.");
     }
 }

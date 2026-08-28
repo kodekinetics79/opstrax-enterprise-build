@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import axios from "axios";
 import { AlertCircle, ArrowRight, Building2, ClipboardCheck, Lock, Route, ShieldCheck, Wrench } from "lucide-react";
@@ -472,6 +472,8 @@ export function LoginPage() {
   const [mfaChallenge, setMfaChallenge] = useState<MfaChallenge | null>(null);
   const [mfaCode, setMfaCode]       = useState("");
   const { panelRef, sceneRef } = usePointerTilt();
+  const companyCodeRef = useRef<HTMLInputElement>(null);
+  const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
   const mfaCodeRef = useRef<HTMLInputElement>(null);
 
@@ -548,6 +550,36 @@ export function LoginPage() {
   useEffect(() => {
     if (step === "authenticate" && !ssoConn) passwordRef.current?.focus();
   }, [step, ssoConn]);
+
+  // Password managers can populate a controlled input without dispatching the
+  // input/change event React normally uses to update state. Copy only values
+  // already present in the browser-owned fields into the existing in-memory
+  // form state; never persist, log, serialize, or expose detected credentials.
+  const syncBrowserFilledFields = useCallback(() => {
+    const nextCompanyCode = companyCodeRef.current?.value ?? "";
+    const nextEmail = emailRef.current?.value ?? "";
+    const nextPassword = passwordRef.current?.value ?? "";
+    if (nextCompanyCode) setCompanyCode((current) => current === nextCompanyCode ? current : nextCompanyCode);
+    if (nextEmail) setEmail((current) => current === nextEmail ? current : nextEmail);
+    if (nextPassword) setPassword((current) => current === nextPassword ? current : nextPassword);
+  }, []);
+
+  useEffect(() => {
+    // Autofill may settle after paint or after Chrome finishes its credential UI.
+    // Keep this bounded so the page does not poll for the lifetime of a session.
+    syncBrowserFilledFields();
+    const frame = requestAnimationFrame(syncBrowserFilledFields);
+    const interval = window.setInterval(syncBrowserFilledFields, 200);
+    const stop = window.setTimeout(() => window.clearInterval(interval), 2_000);
+    const onVisibility = () => { if (document.visibilityState === "visible") syncBrowserFilledFields(); };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.clearInterval(interval);
+      window.clearTimeout(stop);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [step, ssoConn, syncBrowserFilledFields]);
 
   // Move focus to the MFA code field the moment it is revealed.
   useEffect(() => {
@@ -766,16 +798,16 @@ export function LoginPage() {
                 </div>
               )}
 
-              <form onSubmit={submit} className="space-y-4" noValidate>
+              <form onSubmit={submit} onInputCapture={syncBrowserFilledFields} autoComplete="on" className="space-y-4" noValidate>
                 {/* Identity: editable email (step 1) → read-only chip (step 2) */}
                 {step === "identify" ? (
                   <>
                     <div>
                       <label htmlFor="login-company-code" className="mb-1.5 block text-sm font-medium text-slate-700">Organization code</label>
                       <input
-                        id="login-company-code" value={companyCode}
+                        ref={companyCodeRef} id="login-company-code" name="organization" value={companyCode}
                         onChange={(e) => { setCompanyCode(e.target.value); if (companyCodeError) setCompanyCodeError(""); }}
-                        autoComplete="off" autoFocus placeholder="Your tenant code"
+                        autoComplete="organization" autoFocus placeholder="Your tenant code"
                         aria-invalid={companyCodeError ? true : undefined}
                         aria-describedby={companyCodeError ? "login-company-code-error" : "login-company-code-help"}
                         className="login2-field" />
@@ -788,7 +820,7 @@ export function LoginPage() {
                     <div>
                       <label htmlFor="login-email" className="mb-1.5 block text-sm font-medium text-slate-700">Work email</label>
                       <input
-                        id="login-email" type="email" inputMode="email" value={email}
+                        ref={emailRef} id="login-email" name="username" type="email" inputMode="email" value={email}
                         onChange={(e) => { setEmail(e.target.value); if (emailError) setEmailError(""); }}
                         autoComplete="username" placeholder="you@company.com"
                         aria-invalid={emailError ? true : undefined}
@@ -801,6 +833,19 @@ export function LoginPage() {
                   </>
                 ) : (
                   <div className="login2-idchip">
+                    {/* Keep the username in the authentication form so password
+                        managers can associate current-password with its identity. */}
+                    <input
+                      ref={emailRef}
+                      name="username"
+                      type="email"
+                      autoComplete="username"
+                      value={email}
+                      readOnly
+                      tabIndex={-1}
+                      className="sr-only"
+                      aria-hidden="true"
+                    />
                     <span className="flex min-w-0 items-center gap-2">
                       <Building2 className="h-4 w-4 shrink-0 text-teal-600" aria-hidden="true" />
                       <span className="min-w-0">
@@ -847,8 +892,10 @@ export function LoginPage() {
                           </div>
                           <div className="relative">
                             <input
-                              ref={passwordRef} id="login-password" type={showPassword ? "text" : "password"}
+                              ref={passwordRef} id="login-password" name="password" type={showPassword ? "text" : "password"}
                               value={password} onChange={(e) => setPassword(e.target.value)}
+                              onFocus={syncBrowserFilledFields}
+                              onBlur={syncBrowserFilledFields}
                               autoComplete="current-password" placeholder="••••••••"
                               className="login2-field pr-20" />
                             <button type="button" onClick={() => setShowPass((v) => !v)}

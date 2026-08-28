@@ -2674,9 +2674,10 @@ public static partial class EndpointMappings
     private static async Task<IResult> BranchDetail(HttpContext http, long id, Database db, CancellationToken ct)
     {
         if (RequirePermission(http, "dashboard:view") is { } denied) return denied;
+        var branchId = GetBranchId(http);
         var row = await db.QuerySingleAsync(
-            "SELECT b.*, u.full_name manager_name FROM branches b LEFT JOIN users u ON u.id=b.manager_user_id WHERE b.id=@id AND b.company_id=@cid AND b.deleted_at IS NULL",
-            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct);
+            "SELECT b.*, u.full_name manager_name FROM branches b LEFT JOIN users u ON u.id=b.manager_user_id WHERE b.id=@id AND b.company_id=@cid AND b.deleted_at IS NULL AND (@branchId::BIGINT IS NULL OR b.id=@branchId)",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); c.Parameters.AddWithValue("@branchId", branchId ?? (object)DBNull.Value); }, ct);
         return row is null ? Results.NotFound(ApiResponse<object>.Fail("Branch not found")) : Results.Ok(ApiResponse<object>.Ok(row));
     }
 
@@ -2684,6 +2685,8 @@ public static partial class EndpointMappings
     {
         var denied = RequirePermission(http, "fleet:manage");
         if (denied is not null) return denied;
+        // Changing tenant organization topology is tenant-wide administration.
+        if (GetBranchId(http) is not null) return Results.Forbid();
         var companyId = GetCompanyId(http);
         var code = Get(body, "branchCode")?.ToString()?.Trim();
         var name = Get(body, "name")?.ToString()?.Trim();
@@ -2717,11 +2720,12 @@ public static partial class EndpointMappings
     {
         var denied = RequirePermission(http, "fleet:manage");
         if (denied is not null) return denied;
+        var branchId = GetBranchId(http);
         var affected = await db.ExecuteAsync(
             @"UPDATE branches SET name=COALESCE(@name,name), branch_type=COALESCE(@type,branch_type),
                      region=COALESCE(@region,region), address=COALESCE(@address,address), city=COALESCE(@city,city),
                      state=COALESCE(@state,state), status=COALESCE(@status,status), manager_user_id=COALESCE(@mgr,manager_user_id), updated_at=NOW()
-              WHERE id=@id AND company_id=@cid AND deleted_at IS NULL",
+              WHERE id=@id AND company_id=@cid AND deleted_at IS NULL AND (@branchId::BIGINT IS NULL OR id=@branchId)",
             c => {
                 c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http));
                 c.Parameters.AddWithValue("@name", Get(body, "name")); c.Parameters.AddWithValue("@type", Get(body, "branchType"));
@@ -2729,6 +2733,7 @@ public static partial class EndpointMappings
                 c.Parameters.AddWithValue("@city", Get(body, "city")); c.Parameters.AddWithValue("@state", Get(body, "state"));
                 c.Parameters.AddWithValue("@status", Get(body, "status"));
                 c.Parameters.AddWithValue("@mgr", Get(body, "managerUserId"));
+                c.Parameters.AddWithValue("@branchId", branchId ?? (object)DBNull.Value);
             }, ct);
         if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Branch not found"));
         await audit.LogAsync(http, "branch.updated", "Branch", id, ct: ct);
@@ -5613,6 +5618,8 @@ public static partial class EndpointMappings
     {
         var definition = ModuleDefinitions.GetValueOrDefault(moduleKey) ?? ModuleDefinitions["fallback"];
         var companyId = GetCompanyId(http);
+        var branchId = GetBranchId(http);
+        var branchPredicate = ModuleBranchPredicate(moduleKey, definition.TableName, branchId);
         Dictionary<string, object?>? summary;
         List<Dictionary<string, object?>> rows;
         if (definition.TableName == "module_records")
@@ -5620,10 +5627,10 @@ public static partial class EndpointMappings
             summary = await db.QuerySingleAsync(@"SELECT COUNT(*) total,
                 SUM(CASE WHEN status NOT IN ('Closed','Completed','Cancelled') THEN 1 ELSE 0 END) active,
                 SUM(CASE WHEN risk_level IN ('High','Critical') THEN 1 ELSE 0 END) risk_items
-                FROM module_records WHERE company_id=@companyId AND module_key=@key",
-                c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@key", moduleKey); }, ct);
-            rows = await db.QueryAsync("SELECT * FROM module_records WHERE company_id=@companyId AND module_key=@key ORDER BY id DESC",
-                c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@key", moduleKey); }, ct);
+                FROM module_records WHERE company_id=@companyId AND module_key=@key" + branchPredicate,
+                c => BindModuleScope(c, companyId, moduleKey, branchId), ct);
+            rows = await db.QueryAsync("SELECT * FROM module_records WHERE company_id=@companyId AND module_key=@key" + branchPredicate + " ORDER BY id DESC",
+                c => BindModuleScope(c, companyId, moduleKey, branchId), ct);
         }
         else
         {
@@ -5632,13 +5639,17 @@ public static partial class EndpointMappings
             // module-specific projections can be reintroduced only with @companyId.
             var ownership = definition.TableName == "companies" ? "id" : "company_id";
             summary = await db.QuerySingleAsync(
-                $"SELECT COUNT(*) total FROM {definition.TableName} WHERE {ownership}=@companyId",
-                c => c.Parameters.AddWithValue("@companyId", companyId), ct);
+                $"SELECT COUNT(*) total FROM {definition.TableName} WHERE {ownership}=@companyId{branchPredicate}",
+                c => BindModuleScope(c, companyId, moduleKey, branchId), ct);
             rows = await db.QueryAsync(
-                $"SELECT * FROM {definition.TableName} WHERE {ownership}=@companyId ORDER BY id DESC LIMIT 2000",
-                c => c.Parameters.AddWithValue("@companyId", companyId), ct);
+                $"SELECT * FROM {definition.TableName} WHERE {ownership}=@companyId{branchPredicate} ORDER BY id DESC LIMIT 2000",
+                c => BindModuleScope(c, companyId, moduleKey, branchId), ct);
         }
-        var insights = await db.QueryAsync("SELECT * FROM ai_recommendations WHERE company_id=@companyId AND module_key=@key ORDER BY score DESC LIMIT 4", c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@key", moduleKey); }, ct);
+        // ai_recommendations has no durable branch ownership. Suppress it for a
+        // branch-bound principal rather than exposing tenant-wide narratives.
+        var insights = branchId is null
+            ? await db.QueryAsync("SELECT * FROM ai_recommendations WHERE company_id=@companyId AND module_key=@key ORDER BY score DESC LIMIT 4", c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@key", moduleKey); }, ct)
+            : [];
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             moduleKey,
@@ -5652,23 +5663,49 @@ public static partial class EndpointMappings
     private static async Task<IResult> LoadModuleDetail(HttpContext http, string moduleKey, long id, Database db, CancellationToken ct)
     {
         var definition = ModuleDefinitions.GetValueOrDefault(moduleKey) ?? ModuleDefinitions["fallback"];
+        var branchId = GetBranchId(http);
+        var branchPredicate = ModuleBranchPredicate(moduleKey, definition.TableName, branchId);
         if (definition.TableName == "module_records")
         {
-            var scoped = await db.QuerySingleAsync("SELECT * FROM module_records WHERE id=@id AND company_id=@companyId AND module_key=@key", c =>
+            var scoped = await db.QuerySingleAsync("SELECT * FROM module_records WHERE id=@id AND company_id=@companyId AND module_key=@key" + branchPredicate, c =>
             {
                 c.Parameters.AddWithValue("@id", id);
                 c.Parameters.AddWithValue("@companyId", GetCompanyId(http));
                 c.Parameters.AddWithValue("@key", moduleKey);
+                if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId.Value);
             }, ct);
             return scoped is null ? Results.NotFound(ApiResponse<object>.Fail("Record not found")) : Results.Ok(ApiResponse<object>.Ok(scoped));
         }
         var ownership = definition.TableName == "companies" ? "id" : "company_id";
-        var row = await db.QuerySingleAsync($"SELECT * FROM {definition.TableName} WHERE id=@id AND {ownership}=@companyId", c =>
+        var row = await db.QuerySingleAsync($"SELECT * FROM {definition.TableName} WHERE id=@id AND {ownership}=@companyId{branchPredicate}", c =>
         {
             c.Parameters.AddWithValue("@id", id);
             c.Parameters.AddWithValue("@companyId", GetCompanyId(http));
+            if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId.Value);
         }, ct);
         return row is null ? Results.NotFound(ApiResponse<object>.Fail("Record not found")) : Results.Ok(ApiResponse<object>.Ok(row));
+    }
+
+    private static string ModuleBranchPredicate(string moduleKey, string tableName, long? branchId)
+    {
+        if (branchId is null) return "";
+        return (moduleKey, tableName) switch
+        {
+            ("route-planning", "routes") or ("hos-eld", "hos_logs") or ("user-management", "users")
+                => " AND branch_id=@branchId",
+            ("fuel-idling", "fuel_transactions")
+                => " AND EXISTS (SELECT 1 FROM vehicles module_vehicle WHERE module_vehicle.id=fuel_transactions.vehicle_id AND module_vehicle.company_id=fuel_transactions.company_id AND module_vehicle.branch_id=@branchId AND module_vehicle.deleted_at IS NULL)",
+            ("compliance", "compliance_documents")
+                => " AND ((LOWER(related_entity_type) IN ('vehicle','vehicles') AND EXISTS (SELECT 1 FROM vehicles module_vehicle WHERE module_vehicle.id=compliance_documents.related_entity_id AND module_vehicle.company_id=compliance_documents.company_id AND module_vehicle.branch_id=@branchId AND module_vehicle.deleted_at IS NULL)) OR (LOWER(related_entity_type) IN ('driver','drivers') AND EXISTS (SELECT 1 FROM drivers module_driver WHERE module_driver.id=compliance_documents.related_entity_id AND module_driver.company_id=compliance_documents.company_id AND module_driver.branch_id=@branchId AND module_driver.deleted_at IS NULL)))",
+            _ => "",
+        };
+    }
+
+    private static void BindModuleScope(NpgsqlCommand command, long companyId, string moduleKey, long? branchId)
+    {
+        command.Parameters.AddWithValue("@companyId", companyId);
+        command.Parameters.AddWithValue("@key", moduleKey);
+        if (branchId is not null) command.Parameters.AddWithValue("@branchId", branchId.Value);
     }
 
     private static async Task<IResult> CreateModuleRecord(HttpContext http, string moduleKey, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
@@ -5683,7 +5720,7 @@ public static partial class EndpointMappings
         }
 
         var companyId = GetCompanyId(http);
-        var id = await db.InsertAsync(definition.CreateSql, c => BindModuleRecord(c, moduleKey, body, companyId), ct);
+        var id = await db.InsertAsync(definition.CreateSql, c => BindModuleRecord(c, moduleKey, body, companyId, GetBranchId(http)), ct);
         await audit.LogAsync(http, $"{moduleKey}.created", moduleKey, id, ct: ct);
         return Results.Created($"/api/{moduleKey}/{id}", ApiResponse<object>.Ok(new { id }, "Record created"));
     }
@@ -5699,10 +5736,12 @@ public static partial class EndpointMappings
             return await UpdateGenericModuleRecord(http, moduleKey, id, body, db, audit, ct);
         }
 
-        var affected = await db.ExecuteAsync($"{definition.UpdateSql} AND company_id=@companyId", c =>
+        var branchId = GetBranchId(http);
+        var branchPredicate = ModuleBranchPredicate(moduleKey, definition.TableName, branchId);
+        var affected = await db.ExecuteAsync($"{definition.UpdateSql} AND company_id=@companyId{branchPredicate}", c =>
         {
             c.Parameters.AddWithValue("@id", id);
-            BindModuleRecord(c, moduleKey, body, GetCompanyId(http));
+            BindModuleRecord(c, moduleKey, body, GetCompanyId(http), branchId);
         }, ct);
         if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Record not found"));
         await audit.LogAsync(http, $"{moduleKey}.updated", moduleKey, id, ct: ct);
@@ -10219,7 +10258,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
 
             var companyId = GetCompanyId(http);
             var branchId = GetBranchId(http);
-            var branchScope = branchId is not null && table is "vehicles" or "drivers" or "jobs" ? " AND branch_id=@branchId" : "";
+            var branchScope = branchId is not null && table is "vehicles" or "drivers" or "jobs"
+                ? " AND branch_id=@branchId"
+                : branchId is not null && table == "branches" ? " AND id=@branchId" : "";
             var affected = await db.ExecuteAsync(
                 $"UPDATE {table} SET deleted_at=CURRENT_TIMESTAMP, status='Deleted' WHERE id=@id AND company_id=@companyId{branchScope}",
                 c =>
@@ -10464,7 +10505,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     private static Action<NpgsqlCommand>? BindModule(string moduleKey, ModuleDefinition definition)
         => definition.RequiresModuleKey ? c => c.Parameters.AddWithValue("@key", moduleKey) : null;
 
-    private static void BindModuleRecord(NpgsqlCommand c, string moduleKey, Dictionary<string, object?> body, long companyId)
+    private static void BindModuleRecord(NpgsqlCommand c, string moduleKey, Dictionary<string, object?> body, long companyId, long? branchId)
     {
         c.Parameters.AddWithValue("@key", moduleKey);
         c.Parameters.AddWithValue("@companyId", companyId);
@@ -10474,6 +10515,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         c.Parameters.AddWithValue("@location", Get(body, "locationName"));
         c.Parameters.AddWithValue("@risk", Get(body, "riskLevel"));
         c.Parameters.AddWithValue("@amount", Get(body, "amount"));
+        c.Parameters.AddWithValue("@branchId", branchId ?? (object)DBNull.Value);
     }
 
     private sealed record ModuleDefinition(
@@ -10499,7 +10541,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
               ORDER BY r.id DESC",
             @"SELECT r.*, v.vehicle_code, d.full_name driver_name FROM routes r LEFT JOIN vehicles v ON v.id=r.assigned_vehicle_id LEFT JOIN drivers d ON d.id=r.assigned_driver_id WHERE r.id=@id",
             "SELECT COUNT(*) total, SUM(CASE WHEN status IN ('Active','Planned') THEN 1 ELSE 0 END) active, SUM(CASE WHEN status IN ('At Risk','Delayed') THEN 1 ELSE 0 END) risk_items FROM routes",
-            CreateSql: @"INSERT INTO routes (company_id, route_code, name, status) VALUES (@companyId, CONCAT('RTE-', floor(extract(epoch from now()))::bigint), @title, COALESCE(NULLIF(@status,''), 'Planned'))",
+            CreateSql: @"INSERT INTO routes (company_id, branch_id, route_code, name, status) VALUES (@companyId, @branchId, CONCAT('RTE-', floor(extract(epoch from now()))::bigint), @title, COALESCE(NULLIF(@status,''), 'Planned'))",
             UpdateSql: "UPDATE routes SET name=COALESCE(NULLIF(@title,''), name), status=COALESCE(NULLIF(@status,''), status) WHERE id=@id"),
 
         ["leads"] = new(
@@ -27235,7 +27277,15 @@ LIMIT 100000",
             return Results.Json(ApiResponse<object>.Fail("Invalid request body"),
                 statusCode: StatusCodes.Status400BadRequest);
 
-        await svc.UpsertAsync(GetCompanyId(http), body, http, http.RequestAborted);
+        var companyId = GetCompanyId(http);
+        var enrollmentBlockers = await svc.CountMfaEnrollmentBlockersAsync(companyId, body, http.RequestAborted);
+        if (enrollmentBlockers > 0)
+            return Results.Json(ApiResponse<object>.Fail(
+                    "MFA policy cannot be enabled",
+                    $"{enrollmentBlockers} active user(s) in the proposed MFA scope must enrol a factor before this policy can be enabled."),
+                statusCode: StatusCodes.Status409Conflict);
+
+        await svc.UpsertAsync(companyId, body, http, http.RequestAborted);
         return Results.Ok(ApiResponse<object>.Ok(new { updated = true }, "Security settings updated"));
     }
 

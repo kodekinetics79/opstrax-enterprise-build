@@ -35,6 +35,10 @@ services:
         sync: false
       - key: Jwt__Key
         sync: false
+      # Authenticates protected /health/deep automation. Keep synchronized with
+      # the deployment environment secret used by certification workflows.
+      - key: DIAGNOSTICS_KEY
+        sync: false
       # The legacy fleet-wide telemetry device/gateway secret env keys were REMOVED
       # deliberately. The device one was never consumed by ingest, and the gateway one was
       # retired as a cross-tenant skeleton key: ConfigValidationService treats its mere
