@@ -39,6 +39,14 @@ namespace Opstrax.Telematics.IntegrationTests;
 ///     bound to the same device until an idle timeout expires.</description></item>
 /// </list>
 /// </remarks>
+/// <remarks>
+/// Joined to the non-parallel observability collection because
+/// <see cref="Exported_metrics_agree_with_the_in_process_counters"/> reads the process-wide
+/// OpenTelemetry meter while comparing it against a per-harness counter. Any other test emitting
+/// to the same instruments concurrently inflates the exported side, which is not a drift in the
+/// production code and must not be reported as one.
+/// </remarks>
+[Collection(TelematicsObservabilityCollection.Name)]
 public class GatewaySessionIdentityTests
 {
     private static readonly TimeSpan SocketTimeout = TimeSpan.FromSeconds(5);
