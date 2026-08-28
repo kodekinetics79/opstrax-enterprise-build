@@ -4,6 +4,9 @@ using System.Security.Cryptography;
 using Microsoft.Extensions.Logging;
 using Opstrax.Telematics.Contracts.Adapters;
 using Opstrax.Telematics.Gateway.Forwarding;
+using Opstrax.Telematics.Gateway.Observability;
+using Opstrax.Telematics.Gateway.Quality;
+using Opstrax.Telematics.Gateway.Security;
 using Opstrax.Telematics.Gateway.Security.Replay;
 
 namespace Opstrax.Telematics.Gateway.Edge;
@@ -62,6 +65,28 @@ internal sealed class ForwardingConnection
     /// <summary>Set when a refused login should tear the connection down after the current batch.</summary>
     private bool _closeRequested;
 
+    /// <summary>Tracks which socket is authoritative for a device across the whole gateway.</summary>
+    private readonly ActiveDeviceSessionRegistry _sessions;
+
+    /// <summary>Flags fixes that could not physically follow the device's previous position.</summary>
+    private readonly FixPlausibilityGuard _plausibility;
+
+    /// <summary>Device key this session holds a lease on, and the lease id. Null until a bind succeeds.</summary>
+    private string? _leaseKey;
+    private long _leaseId;
+
+    /// <summary>
+    /// Whether this connection has already opened a replay epoch. One login per connection may do
+    /// so; repeated logins on the same socket must not let anyone advance generations at will.
+    /// </summary>
+    private bool _epochOpened;
+
+    /// <summary>
+    /// Cancelled on host shutdown or when a newer socket takes ownership of the same device, so a
+    /// displaced session stops reading immediately rather than lingering to its idle timeout.
+    /// </summary>
+    private CancellationTokenSource? _sessionCts;
+
     /// <summary>Creates a connection handler.</summary>
     public ForwardingConnection(
         TcpClient client,
@@ -72,10 +97,14 @@ internal sealed class ForwardingConnection
         IForwardOutbox outbox,
         GatewayOptions options,
         string? edgeInstance,
+        ActiveDeviceSessionRegistry sessions,
+        FixPlausibilityGuard plausibility,
         GatewayMetrics metrics,
         EdgeMetrics edgeMetrics,
         ILogger logger)
     {
+        _sessions = sessions ?? throw new ArgumentNullException(nameof(sessions));
+        _plausibility = plausibility ?? throw new ArgumentNullException(nameof(plausibility));
         _client = client ?? throw new ArgumentNullException(nameof(client));
         _router = router ?? throw new ArgumentNullException(nameof(router));
         _allowlist = allowlist ?? throw new ArgumentNullException(nameof(allowlist));
@@ -100,11 +129,15 @@ internal sealed class ForwardingConnection
     {
         _logger.LogDebug("Edge connection accepted from {RemoteEndpoint}.", _remoteEndpoint);
 
+        // Host shutdown PLUS "a newer socket took this device"; see GatewayConnection.RunAsync.
+        using var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+        _sessionCts = sessionCts;
+
         try
         {
             using (_client)
             {
-                await ReadLoopAsync(_client.GetStream(), stoppingToken).ConfigureAwait(false);
+                await ReadLoopAsync(_client.GetStream(), sessionCts.Token).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException)
@@ -124,6 +157,14 @@ internal sealed class ForwardingConnection
         }
         finally
         {
+            // Lease-checked release: a session that has already been displaced no longer owns the
+            // registry entry, so its cleanup cannot evict the socket that replaced it.
+            if (_leaseKey is { } leaseKey)
+            {
+                _sessions.Release(leaseKey, _leaseId);
+                _leaseKey = null;
+            }
+
             _logger.LogDebug("Edge connection {RemoteEndpoint} closed.", _remoteEndpoint);
         }
     }
@@ -205,14 +246,16 @@ internal sealed class ForwardingConnection
             // ── Decode every complete frame currently buffered ──────────────────
             IReadOnlyList<DecodedMessage> messages;
             int consumed;
+            FrameDecodeStats frameStats;
             try
             {
-                messages = _adapter!.Decode(_accumulator.AsSpan(0, _accumulated), out consumed);
+                messages = _adapter!.Decode(_accumulator.AsSpan(0, _accumulated), out consumed, out frameStats);
             }
             catch (ProtocolException ex)
             {
                 // Malformed beyond recovery. Fail closed: drop this connection only, and never
                 // fabricate a fix from corrupt bytes.
+                _metrics.IncrementMalformedFrames();
                 _metrics.IncrementMalformedConnectionsDropped();
                 _logger.LogWarning(ex,
                     "Dropping edge connection {RemoteEndpoint}: malformed {Protocol} framing at offset {Offset}.",
@@ -222,12 +265,24 @@ internal sealed class ForwardingConnection
 
             if (consumed > 0) Consume(consumed);
 
+            // A CRC-invalid frame is counted as a frame that ARRIVED and was rejected — never as a
+            // decoded one — so it can reach neither normalization, nor the replay guard, nor the
+            // forwarder, nor an ACK.
+            _metrics.AddFramesReceived(frameStats.FramesRead);
+            _metrics.AddCrcFailures(frameStats.CrcFailures);
+
+            if (frameStats.FramesRead > 0)
+                TelematicsInstrumentation.FramesReceived.Add(frameStats.FramesRead, FrameIntegrityLabels);
+            if (frameStats.CrcFailures > 0)
+                TelematicsInstrumentation.CrcFailures.Add(frameStats.CrcFailures, FrameIntegrityLabels);
+
             foreach (DecodedMessage message in messages)
             {
                 _metrics.IncrementFramesDecoded();
+                _metrics.RecordDecodedMessage(message.MessageType);
                 await HandleMessageAsync(message, stream, receivedAtUtc, stoppingToken).ConfigureAwait(false);
 
-                if (_closeRequested) break;
+                if (_closeRequested || stoppingToken.IsCancellationRequested) break;
             }
 
             if (_closeRequested)
@@ -287,10 +342,20 @@ internal sealed class ForwardingConnection
                 // A login that carried no identifier at all cannot be admitted by an allowlist.
                 _edgeMetrics.IncrementAllowlistRefusals();
                 _metrics.IncrementUnknownDeviceRejections();
+                _metrics.IncrementFramesRejected();
                 _logger.LogWarning(
                     "Refusing login from {RemoteEndpoint}: the frame carried no device identifier.", _remoteEndpoint);
                 _closeRequested = true;
                 return;
+            }
+
+            // A login is the boundary at which a rebooted device may legitimately restart its
+            // 16-bit frame counter from 1. Opening a replay epoch lets the guard read that as
+            // forward progress without forgetting anything it has already seen from this device.
+            if (!_epochOpened)
+            {
+                _epochOpened = true;
+                await BeginReplayEpochAsync(_imei, cancellationToken).ConfigureAwait(false);
             }
 
             // The login is acknowledged only once the IMEI is admitted, so an unlisted device
@@ -303,6 +368,7 @@ internal sealed class ForwardingConnection
         {
             _edgeMetrics.IncrementAllowlistRefusals();
             _metrics.IncrementUnknownDeviceRejections();
+            _metrics.IncrementFramesRejected();
             _logger.LogWarning(
                 "Rejecting {MessageType} frame on unbound edge session {RemoteEndpoint}: no admitted identity precedes it.",
                 message.MessageType, _remoteEndpoint);
@@ -329,20 +395,51 @@ internal sealed class ForwardingConnection
     /// <returns><see langword="false"/> when the device was refused and the connection is closing.</returns>
     private bool BindSession(string claimedImei)
     {
+        // ── One socket → one immutable device. ──────────────────────────────────────────
+        // Checked BEFORE the allowlist, because the question "is this the device this socket
+        // already belongs to?" is not the same question as "is this device admissible?", and
+        // getting the order wrong lets a second ALLOWLISTED device re-point a bound session. On
+        // this edge every later location frame is anonymous, so a re-point silently republishes one
+        // vehicle's movements under another IMEI — which OpsTrax then resolves to another tenant.
+        if (_imei is { } bound)
+        {
+            if (string.Equals(bound, claimedImei, StringComparison.Ordinal))
+                return true; // Same device re-introducing itself: identity already correct, unchanged.
+
+            _metrics.IncrementSessionIdentityViolations();
+            TelematicsInstrumentation.SessionIdentityViolations.Add(1, FrameIntegrityLabels);
+            _edgeMetrics.IncrementAllowlistRefusals();
+            _metrics.IncrementUnknownDeviceRejections();
+            _metrics.IncrementFramesRejected();
+
+            _logger.LogWarning(
+                "Refusing device {Imei} from {RemoteEndpoint}: this session is already bound to a different " +
+                "device. One connection carries one identity for its lifetime; the binding is unchanged, no " +
+                "acknowledgement is sent, and the connection is closing.",
+                DeviceIdentifier.Mask(claimedImei), _remoteEndpoint);
+
+            _closeRequested = true;
+            return false;
+        }
+
         if (_allowlist.IsAllowed(claimedImei))
         {
-            if (_imei is null)
-                _logger.LogInformation(
-                    "Edge session {RemoteEndpoint} bound to allowlisted device {Imei} via {Protocol}. " +
-                    "Ownership is resolved by OpsTrax, not here.",
-                    _remoteEndpoint, DeviceIdentifier.Mask(claimedImei), _adapter?.Metadata.Name);
+            _logger.LogInformation(
+                "Edge session {RemoteEndpoint} bound to allowlisted device {Imei} via {Protocol}. " +
+                "Ownership is resolved by OpsTrax, not here.",
+                _remoteEndpoint, DeviceIdentifier.Mask(claimedImei), _adapter?.Metadata.Name);
 
             _imei = claimedImei;
+
+            // One device → one authoritative socket. The IMEI is the only stable identity this edge
+            // has (it deliberately resolves no tenant), so it is the session key here.
+            TakeDeviceSession(claimedImei);
             return true;
         }
 
         _edgeMetrics.IncrementAllowlistRefusals();
         _metrics.IncrementUnknownDeviceRejections();
+        _metrics.IncrementFramesRejected();
 
         _logger.LogWarning(
             "Refusing device {Imei} from {RemoteEndpoint}: not on the IMEI allowlist ({Admitted} admitted{Faulted}). " +
@@ -352,6 +449,40 @@ internal sealed class ForwardingConnection
 
         _closeRequested = true;
         return false;
+    }
+
+    /// <summary>
+    /// Claims the authoritative session for <paramref name="imei"/>, cancelling whichever socket
+    /// held it. Release is lease-checked, so the displaced session's own cleanup cannot evict this
+    /// one on its way out.
+    /// </summary>
+    private void TakeDeviceSession(string imei)
+    {
+        CancellationTokenSource? sessionCts = _sessionCts;
+        if (sessionCts is null) return;
+
+        SessionAcquisition acquisition = _sessions.Acquire(imei, sessionCts);
+        _leaseKey = imei;
+        _leaseId = acquisition.LeaseId;
+
+        if (acquisition.DisplacedSession is not { } displaced) return;
+
+        _metrics.IncrementDuplicateSessionsDisplaced();
+        TelematicsInstrumentation.DuplicateSessionsDisplaced.Add(1, FrameIntegrityLabels);
+        _logger.LogWarning(
+            "Device {Imei} was admitted on {RemoteEndpoint} while an earlier session for the same device was " +
+            "still live; the earlier session is being closed. This connection is now the only authoritative one.",
+            DeviceIdentifier.Mask(imei), _remoteEndpoint);
+
+        try
+        {
+            displaced.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // The displaced connection finished between the swap and this cancel; its lease is
+            // already stale and there is nothing left to stop.
+        }
     }
 
     /// <summary>
@@ -390,8 +521,16 @@ internal sealed class ForwardingConnection
             else
             {
                 _edgeMetrics.IncrementNormalizationRejections();
+                _edgeMetrics.RecordNormalizationRejection(normalized.Rejection);
+
+                // Named, not just counted. This frame is about to be acknowledged and dropped, so
+                // the device will discard its only copy — right when the DEVICE sent something
+                // unusable, wrong when OUR DECODER made it unusable, and the aggregate counter
+                // cannot tell those apart.
                 _logger.LogWarning(
-                    "Discarding a {Protocol} frame from {Imei}: {Reason}.",
+                    "Discarding a {Protocol} frame from {Imei}: {Reason}. It will be acknowledged, so the device " +
+                    "drops its copy and this fix is unrecoverable. A rising {Reason} rate is a decoder fault until " +
+                    "proven otherwise.",
                     protocol, DeviceIdentifier.Mask(imei), normalized.Rejection);
             }
 
@@ -399,6 +538,31 @@ internal sealed class ForwardingConnection
             // withholding the ACK would wedge the device retrying it forever.
             await SendAckIfRequiredAsync(message, stream, cancellationToken).ConfigureAwait(false);
             return;
+        }
+
+        // ── Fix continuity: flagged and counted, still forwarded ────────────────
+        // The edge asserts no ownership and cannot annotate the canonical event, so its
+        // contribution is the counter and the log line. The fix goes to OpsTrax either way: a
+        // plausibility heuristic at the edge must not be the thing that loses a real position.
+        PlausibilityVerdict plausibility = _plausibility.Evaluate(
+            imei, observation.Lat, observation.Lng, observation.FixTimeUtc, observation.SpeedKph);
+
+        if (plausibility.TeleportSuspected)
+        {
+            _metrics.IncrementTeleportsSuspected();
+            TelematicsInstrumentation.TeleportSuspected.Add(1, FrameIntegrityLabels);
+            _logger.LogWarning(
+                "A {Protocol} fix from {Imei} implies {ImpliedSpeedKph:F0} km/h over {DistanceKm:F1} km since its " +
+                "previous position. Forwarding it anyway and flagging. Many devices at once means a decoder change, " +
+                "not a fleet of teleporting vehicles.",
+                protocol, DeviceIdentifier.Mask(imei), plausibility.ImpliedSpeedKph,
+                (plausibility.DistanceMetres ?? 0) / 1000.0);
+        }
+
+        if (plausibility.ImpossibleSpeed)
+        {
+            _metrics.IncrementImpossibleSpeeds();
+            TelematicsInstrumentation.ImpossibleSpeed.Add(1, FrameIntegrityLabels);
         }
 
         // ── Replay defence, before anything is sent ─────────────────────────────
@@ -475,6 +639,26 @@ internal sealed class ForwardingConnection
     private static string? VendorFor(string protocolName) =>
         protocolName.Equals("PacificTrack", StringComparison.OrdinalIgnoreCase) ? "Pacific Track" : null;
 
+    /// <summary>
+    /// Tells the replay guard a fresh admitted session has begun, so a counter that restarts at 1
+    /// after a power cycle reads as forward progress rather than as thousands of stale frames.
+    /// </summary>
+    private async Task BeginReplayEpochAsync(string imei, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _replayGuard.BeginSessionEpochAsync(imei, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Staying on the previous epoch is the STRICTER outcome, never the weaker one, so a
+            // failure here is logged and tolerated rather than refusing the device.
+            _logger.LogError(ex,
+                "Could not open a replay epoch for {Imei}; continuing on the previous epoch.",
+                DeviceIdentifier.Mask(imei));
+        }
+    }
+
     private async Task SendAckIfRequiredAsync(DecodedMessage message, NetworkStream stream, CancellationToken cancellationToken)
     {
         if (!message.RequiresAck) return;
@@ -482,10 +666,27 @@ internal sealed class ForwardingConnection
         byte[] ack = _adapter!.EncodeAck(message);
         if (ack.Length == 0) return;
 
+        // This connection's own stream. There is no shared writer, so an acknowledgement built for
+        // one device can never be emitted onto another device's socket.
         await stream.WriteAsync(ack, cancellationToken).ConfigureAwait(false);
+        _metrics.IncrementAcksSent();
+
         _logger.LogDebug("Acked {MessageType} (serial {Serial}) on {RemoteEndpoint}.",
             message.MessageType, message.ProtocolMessageId, _remoteEndpoint);
     }
+
+    /// <summary>Protocol-only labels for frame-integrity and session-safety series.</summary>
+    /// <remarks>
+    /// No tenant label: this edge resolves no tenant at all, and a frame that failed its checksum
+    /// has no trustworthy identity to attribute to one.
+    /// </remarks>
+    private System.Diagnostics.TagList FrameIntegrityLabels => new()
+    {
+        {
+            TelematicsInstrumentation.MetricLabels.Protocol,
+            _adapter?.Metadata.Name.ToLowerInvariant() ?? "unidentified"
+        },
+    };
 
     /// <summary>SHA-256 hex digest of the raw frame — the opaque content hash the replay guard dedups on.</summary>
     private static string HashFrame(IReadOnlyList<byte> rawFrame)

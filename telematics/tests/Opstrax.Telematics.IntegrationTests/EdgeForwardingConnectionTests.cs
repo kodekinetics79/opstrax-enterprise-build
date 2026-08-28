@@ -6,6 +6,8 @@ using Opstrax.Telematics.Contracts.Adapters;
 using Opstrax.Telematics.Gateway;
 using Opstrax.Telematics.Gateway.Edge;
 using Opstrax.Telematics.Gateway.Forwarding;
+using Opstrax.Telematics.Gateway.Quality;
+using Opstrax.Telematics.Gateway.Security;
 using Opstrax.Telematics.Gateway.Security.Replay;
 using Opstrax.Telematics.Protocols.Gt06;
 
@@ -24,6 +26,10 @@ public sealed class EdgeForwardingConnectionTests
 {
     private const string AllowedImei = "862464068456321";
     private const string UnlistedImei = "351234567890999";
+
+    /// <summary>A SECOND allowlisted device. The identity-crossover case only bites when the
+    /// intruding claim is itself admissible, so an allowlist check alone cannot catch it.</summary>
+    private const string SecondAllowedImei = "862464068456322";
 
     private static readonly TimeSpan SocketTimeout = TimeSpan.FromSeconds(10);
 
@@ -261,6 +267,138 @@ public sealed class EdgeForwardingConnectionTests
 
     // ── Harness ────────────────────────────────────────────────────────────────
 
+
+    // ── P0-01 / P0-02 on the forwarding edge ──────────────────────────────────
+
+    /// <summary>
+    /// A second login for a DIFFERENT — but equally allowlisted — device must not re-point a bound
+    /// edge session. On this path every later location frame is anonymous and OpsTrax resolves the
+    /// forwarded IMEI to a tenant, so a successful re-point would republish one operator's vehicle
+    /// movements under another operator's device.
+    /// </summary>
+    [Fact]
+    public async Task ASecondLoginForADifferentAllowlistedDevice_CannotRePointTheSession()
+    {
+        await using EdgeHarness harness = await EdgeHarness.StartAsync();
+        using TcpClient client = await harness.ConnectAsync();
+        NetworkStream stream = client.GetStream();
+
+        await stream.WriteAsync(BuildLoginFrame(AllowedImei));
+        await ReadExactlyAsync(stream, 10); // login ack
+
+        await stream.WriteAsync(BuildLocationFrame(serial: 2, fixTime: RecentFix()));
+        await WaitForAsync(() => harness.Forwarder.Delivered.Count == 1);
+        Assert.Contains($"\"imei\":\"{AllowedImei}\"", harness.Forwarder.Delivered[0]);
+
+        // Re-identify as the other allowlisted device, then send an anonymous fix.
+        await stream.WriteAsync(BuildLoginFrame(SecondAllowedImei));
+        await stream.WriteAsync(BuildLocationFrame(serial: 4, fixTime: RecentFix()));
+
+        Assert.True(await PeerClosedWithinAsync(stream, SocketTimeout),
+            "the edge must close a session whose login tried to change its device identity");
+
+        // Nothing was ever forwarded under the second IMEI.
+        Assert.All(harness.Forwarder.Delivered, payload =>
+        {
+            Assert.Contains($"\"imei\":\"{AllowedImei}\"", payload);
+            Assert.DoesNotContain($"\"imei\":\"{SecondAllowedImei}\"", payload);
+        });
+        Assert.Equal(1, harness.GatewayMetrics.SessionIdentityViolations);
+    }
+
+    /// <summary>A repeated login for the same device is idempotent and leaves the binding alone.</summary>
+    [Fact]
+    public async Task ARepeatedLoginForTheSameDevice_IsIdempotent()
+    {
+        await using EdgeHarness harness = await EdgeHarness.StartAsync();
+        using TcpClient client = await harness.ConnectAsync();
+        NetworkStream stream = client.GetStream();
+
+        await stream.WriteAsync(BuildLoginFrame(AllowedImei));
+        await ReadExactlyAsync(stream, 10);
+        await stream.WriteAsync(BuildLoginFrame(AllowedImei));
+        await ReadExactlyAsync(stream, 10);
+
+        await stream.WriteAsync(BuildLocationFrame(serial: 3, fixTime: RecentFix()));
+        await WaitForAsync(() => harness.Forwarder.Delivered.Count == 1);
+
+        Assert.Contains($"\"imei\":\"{AllowedImei}\"", harness.Forwarder.Delivered[0]);
+        Assert.Equal(0, harness.GatewayMetrics.SessionIdentityViolations);
+    }
+
+    /// <summary>
+    /// Two sockets admitted for the same device: the newest wins and the older is closed, so a
+    /// tracker that redialled after a silent bearer drop does not end up with two live sessions.
+    /// </summary>
+    [Fact]
+    public async Task ASecondConnectionForTheSameDevice_DisplacesTheFirst()
+    {
+        var sessions = new ActiveDeviceSessionRegistry();
+        await using EdgeHarness harness = await EdgeHarness.StartAsync(sessions: sessions);
+
+        using TcpClient first = await harness.ConnectAsync();
+        NetworkStream firstStream = first.GetStream();
+        await firstStream.WriteAsync(BuildLoginFrame(AllowedImei));
+        await ReadExactlyAsync(firstStream, 10);
+
+        using TcpClient second = await harness.ConnectAsync();
+        NetworkStream secondStream = second.GetStream();
+        await secondStream.WriteAsync(BuildLoginFrame(AllowedImei));
+        await ReadExactlyAsync(secondStream, 10);
+
+        Assert.True(await PeerClosedWithinAsync(firstStream, SocketTimeout),
+            "the displaced edge session must be closed, not left holding the device");
+        Assert.Equal(1, harness.GatewayMetrics.DuplicateSessionsDisplaced);
+        Assert.Equal(1, sessions.ActiveSessionCount);
+    }
+
+    /// <summary>
+    /// A CRC-corrupt frame between two good ones is counted as a checksum failure, produces no
+    /// forwarded observation, and does not drop the connection.
+    /// </summary>
+    [Fact]
+    public async Task ABadCrcFrameBetweenGoodOnes_IsCountedAndTheConnectionSurvives()
+    {
+        await using EdgeHarness harness = await EdgeHarness.StartAsync();
+        using TcpClient client = await harness.ConnectAsync();
+        NetworkStream stream = client.GetStream();
+
+        await stream.WriteAsync(BuildLoginFrame(AllowedImei));
+        await ReadExactlyAsync(stream, 10);
+
+        byte[] good1 = BuildLocationFrame(serial: 2, fixTime: RecentFix());
+        byte[] corrupt = BuildLocationFrame(serial: 3, fixTime: RecentFix());
+        corrupt[^3] ^= 0xFF; // flip a CRC byte; framing and stop bits stay intact
+        byte[] good2 = BuildLocationFrame(serial: 4, fixTime: RecentFix());
+
+        await stream.WriteAsync(good1.Concat(corrupt).Concat(good2).ToArray());
+
+        await WaitForAsync(() => harness.Forwarder.Delivered.Count == 2);
+        await WaitForAsync(() => harness.GatewayMetrics.CrcFailures == 1);
+
+        Assert.Equal(2, harness.Forwarder.Delivered.Count);
+        Assert.Equal(1, harness.GatewayMetrics.CrcFailures);
+        Assert.False(await PeerClosedWithinAsync(stream, TimeSpan.FromMilliseconds(300)),
+            "one corrupt frame must not drop a connection whose framing is still trustworthy");
+    }
+
+    /// <summary>Returns true once the peer closes the connection.</summary>
+    private static async Task<bool> PeerClosedWithinAsync(NetworkStream stream, TimeSpan timeout)
+    {
+        using var cts = new CancellationTokenSource(timeout);
+        var buffer = new byte[32];
+        try
+        {
+            while (true)
+            {
+                int read = await stream.ReadAsync(buffer, cts.Token);
+                if (read == 0) return true;
+            }
+        }
+        catch (OperationCanceledException) { return false; }
+        catch (IOException) { return true; }
+    }
+
     private sealed class EdgeHarness : IAsyncDisposable
     {
         private readonly string? _outboxDirectory;
@@ -293,7 +431,9 @@ public sealed class EdgeForwardingConnectionTests
 
         public static async Task<EdgeHarness> StartAsync(
             Action<StubForwarder>? configureForwarder = null,
-            IForwardOutbox? outbox = null)
+            IForwardOutbox? outbox = null,
+            ActiveDeviceSessionRegistry? sessions = null,
+            FixPlausibilityGuard? plausibility = null)
         {
             var options = new GatewayOptions
             {
@@ -320,12 +460,15 @@ public sealed class EdgeForwardingConnectionTests
 
             var factory = new ForwardingConnectionHandlerFactory(
                 new ProtocolRouter(new IProtocolAdapter[] { new Gt06Adapter(options.MaxFrameBytes) }),
-                new ImeiAllowlist(new AllowlistOptions { Imeis = { AllowedImei } }, NullLogger.Instance),
+                new ImeiAllowlist(
+                    new AllowlistOptions { Imeis = { AllowedImei, SecondAllowedImei } }, NullLogger.Instance),
                 new InMemoryReplayGuard(serialModulus: 65_536),
                 forwarder,
                 outbox,
                 options,
                 new EdgeOptions { Egress = EgressMode.Https, Forward = { EdgeInstance = "test-edge" } },
+                sessions ?? new ActiveDeviceSessionRegistry(),
+                plausibility ?? new FixPlausibilityGuard(),
                 gatewayMetrics,
                 metrics,
                 NullLoggerFactory.Instance);

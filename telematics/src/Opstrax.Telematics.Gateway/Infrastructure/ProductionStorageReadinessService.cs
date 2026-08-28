@@ -92,6 +92,12 @@ internal sealed class ProductionStorageReadinessService(
                 ('telemetry_replay_seen','event_id'),
                 ('telemetry_replay_device_state','last_raw_serial'),
                 ('telemetry_replay_device_state','high_water_unwrapped'),
+                -- 2026_08_28_stage92_gt06_replay_session_epoch. The replay guard SELECTs both on every location frame, so a
+                -- gateway running this build against an un-migrated database does not degrade: it
+                -- throws 42703 per frame and accepts no telemetry at all. Enrolled here so that
+                -- becomes a named startup failure instead of a silent total ingest outage.
+                ('telemetry_replay_device_state','pending_epoch_base'),
+                ('telemetry_replay_device_state','epoch_floor'),
                 ('canonical_telemetry_events','installation_id'),
                 ('eld_devices','last_seen_at'),('eld_devices','last_heartbeat_at'),
                 ('eld_devices','updated_at'),('location_events','device_id'),

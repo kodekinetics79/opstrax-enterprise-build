@@ -210,6 +210,13 @@ MIGRATIONS=(
   2026_08_24_stage89_inbox_retry_schedule
   2026_08_26_stage90_product_pilot_permission
   2026_08_26_stage91_telematics_ingest_fingerprint
+  # Reboot-safe GT06 replay epochs. ALTERs telemetry_replay_device_state, which
+  # telematics/005_replay_guard creates above, so it must follow it. Additive and
+  # idempotent. The gateway's PostgresReplayGuard SELECTs pending_epoch_base and
+  # epoch_floor on every location frame and ProductionStorageReadinessService
+  # requires both at boot, so a gateway shipped ahead of this migration refuses to
+  # start rather than accepting no telemetry while reporting healthy.
+  2026_08_28_stage92_gt06_replay_session_epoch
 )
 
 echo "Target host: $(printf '%s' "$NEON_PG_URI" | sed -E 's|.*@([^/:?]+).*|\1|')"

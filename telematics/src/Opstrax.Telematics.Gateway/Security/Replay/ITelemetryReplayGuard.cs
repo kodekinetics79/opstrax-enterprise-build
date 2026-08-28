@@ -153,4 +153,43 @@ public interface ITelemetryReplayGuard
     System.Threading.Tasks.Task<ReplayDecision> CheckAsync(
         string deviceId, long protocolSerial, string contentHash, DateTime deviceFixTimeUtc,
         System.Threading.CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Declares that a device has begun a fresh, successfully authenticated session, so its next
+    /// frame starts a new <b>counter epoch</b> instead of being compared against the counter the
+    /// previous session left behind.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The problem this solves.</b> A GT06 tracker restarts its 16-bit information serial at 1
+    /// when it powers up. A vehicle whose ignition cycles at serial 10 000 reconnects and sends
+    /// serial 1 — and to a plain high-water comparison that is nine thousand nine hundred and
+    /// ninety-nine steps backwards. Every frame the truck sends for the next several hours reads as
+    /// stale, so the whole post-reboot shift is degraded or discarded. That is a correctness bug
+    /// with a security-shaped cause, and the wrong fix for it is to relax the high-water rule.
+    /// </para>
+    /// <para>
+    /// <b>What an epoch is.</b> Implementations translate a raw protocol serial into a durable,
+    /// strictly monotonic <em>unwrapped</em> serial. An epoch boundary simply advances that
+    /// translation to the next counter generation, so a raw 1 arriving after a raw 10 000 maps
+    /// ahead of it rather than behind it. Nothing is deleted, reset or forgotten: the durable seen
+    /// ledger keeps every row it had, and the high-water mark only ever moves forward.
+    /// </para>
+    /// <para>
+    /// <b>What it does not weaken.</b> A new epoch changes only how a serial is <em>ordered</em>,
+    /// never whether a frame has been seen. Replayed bytes stay replayed bytes: the content-hash
+    /// ledger is keyed per device and spans epochs, so a frame captured before the power cycle is
+    /// still recognised as a duplicate when it is replayed after one — which is exactly the attack
+    /// an epoch boundary would otherwise open. Only a genuinely authenticated login may call this;
+    /// an unauthenticated peer has no way to reach it.
+    /// </para>
+    /// <para>
+    /// Calling this for a device with no history is a no-op: its first frame already bootstraps its
+    /// own epoch. Implementations must be safe to call concurrently with <see cref="CheckAsync"/>.
+    /// </para>
+    /// </remarks>
+    /// <param name="deviceId">The same partition key used for <see cref="Check"/>.</param>
+    /// <param name="cancellationToken">Cancels the (possibly durable) state update.</param>
+    System.Threading.Tasks.Task BeginSessionEpochAsync(
+        string deviceId, System.Threading.CancellationToken cancellationToken = default);
 }

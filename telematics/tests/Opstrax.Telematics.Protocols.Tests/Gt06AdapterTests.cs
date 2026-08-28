@@ -145,10 +145,17 @@ public class Gt06AdapterTests
         Assert.Equal(60, msg.Fields["speedKph"]);
         Assert.Equal(217, msg.Fields["courseDeg"]);
         Assert.True((bool)msg.Fields["positioned"]!);
-        Assert.True((bool)msg.Fields["realTimeGps"]!);
         Assert.True((bool)msg.Fields["coordinatesValid"]!);
         Assert.True((bool)msg.Fields["hemisphereNorth"]!);
         Assert.True((bool)msg.Fields["hemisphereWest"]!);
+
+        // This fixture's course/status word is 0x3CD9, whose bit 13 is SET. Per the vendor
+        // document (BYTE1 bit5, worked example 0x154C annotated "Bit5=0 -> real time GPS") a set
+        // bit 13 means DIFFERENTIAL positioning, not real-time. The fixture bytes are unchanged and
+        // authentic; it is the reading of them that was inverted. Both polarities are covered
+        // explicitly by Positioning_mode_bit13_is_asserted_for_differential_not_realtime.
+        Assert.True((bool)msg.Fields["isDifferentialPositioning"]!);
+        Assert.False((bool)msg.Fields["realTimeGps"]!);
     }
 
     [Fact]
@@ -328,8 +335,16 @@ public class Gt06AdapterTests
 
         Assert.Equal(MessageType.Location, msg.MessageType);
         Assert.False((bool)msg.Fields["coordinatesValid"]!);
-        // Raw out-of-range magnitude is still representable (plausibility is downstream).
-        Assert.True((double)msg.Fields["latitude"]! > 90.0);
+
+        // Raw out-of-range magnitude is still representable (plausibility is downstream). This
+        // fixture's course/status word is 0x382D: bit 10 CLEAR (southern latitude) and bit 11 SET
+        // (western longitude), so the ~139.8 degree magnitude is carried as a negative latitude.
+        // The magnitude is what this fixture exists to exercise; the sign is asserted here only so
+        // a future hemisphere regression cannot hide inside an absolute-value comparison.
+        Assert.Equal(-139.8, (double)msg.Fields["latitude"]!, 1);
+        Assert.True(Math.Abs((double)msg.Fields["latitude"]!) > 90.0);
+        Assert.False((bool)msg.Fields["hemisphereNorth"]!);
+        Assert.True((bool)msg.Fields["hemisphereWest"]!);
     }
 
     [Fact]

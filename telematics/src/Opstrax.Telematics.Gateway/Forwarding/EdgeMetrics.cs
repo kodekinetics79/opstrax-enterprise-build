@@ -21,6 +21,9 @@ internal sealed class EdgeMetrics
     private long _heartbeatsNotForwarded;
     private long _outboxEntriesDiscarded;
     private long _unidentifiedProtocolConnections;
+    private long _rejectedInvalidCoordinates;
+    private long _rejectedMissingDeviceTime;
+    private long _rejectedDeviceTimeOutOfWindow;
 
     /// <summary>
     /// Login attempts refused because the claimed IMEI is not on the allowlist. On a public port
@@ -96,4 +99,41 @@ internal sealed class EdgeMetrics
 
     /// <summary>Records a connection closed for speaking no recognised protocol.</summary>
     public void IncrementUnidentifiedProtocolConnections() => Interlocked.Increment(ref _unidentifiedProtocolConnections);
+
+    // ── Why normalization refused a frame ──────────────────────────────────────
+    // NormalizationRejections counts the total; these three name the cause. The distinction is
+    // not cosmetic. A frame refused here is ACKNOWLEDGED and then discarded — correct, because
+    // retransmitting cannot make an unusable frame usable, but it means the device drops its only
+    // copy and the fix is gone for good. That is the right call when the DEVICE sent something
+    // unusable and precisely the wrong outcome when OUR DECODER made it unusable, and the two are
+    // indistinguishable from the aggregate. A rising InvalidCoordinates is the decoder-fault
+    // signature; a rising DeviceTimeOutOfWindow is a fleet with unset clocks. Same counter before,
+    // opposite responses.
+
+    /// <summary>Frames refused because the decoded coordinates were out of range or the null-island sentinel.</summary>
+    public long RejectedInvalidCoordinates => Interlocked.Read(ref _rejectedInvalidCoordinates);
+
+    /// <summary>Frames refused because they carried no device-originated fix clock.</summary>
+    public long RejectedMissingDeviceTime => Interlocked.Read(ref _rejectedMissingDeviceTime);
+
+    /// <summary>Frames refused because the device clock fell outside the accepted window.</summary>
+    public long RejectedDeviceTimeOutOfWindow => Interlocked.Read(ref _rejectedDeviceTimeOutOfWindow);
+
+    /// <summary>Records a normalization refusal against its specific cause.</summary>
+    /// <param name="rejection">The reason normalization refused the frame.</param>
+    internal void RecordNormalizationRejection(NormalizationRejection rejection)
+    {
+        switch (rejection)
+        {
+            case NormalizationRejection.InvalidCoordinates:
+                Interlocked.Increment(ref _rejectedInvalidCoordinates);
+                break;
+            case NormalizationRejection.MissingDeviceTime:
+                Interlocked.Increment(ref _rejectedMissingDeviceTime);
+                break;
+            case NormalizationRejection.DeviceTimeOutOfWindow:
+                Interlocked.Increment(ref _rejectedDeviceTimeOutOfWindow);
+                break;
+        }
+    }
 }
