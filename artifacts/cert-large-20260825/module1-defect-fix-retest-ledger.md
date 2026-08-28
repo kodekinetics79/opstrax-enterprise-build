@@ -1,5 +1,12 @@
 # Module 1 defect, fix, and retest ledger
 
+## 2026-08-28 current-SHA closures
+
+| ID | Finding | Severity / effect | Fix evidence | Browser retest evidence | State |
+|---|---|---|---|---|---|
+| M1-041 | Granting Driver portal access linked the login and allowed Driver authentication, but Driver Records still displayed **Not provisioned** and continued to offer **Grant portal access** after refresh. | P1: customer administrators could not see the true access state or use the revoke workflow. | PR #90, merge SHA `4960df41edd4399d3b6c7b07fe8145936cf1905b`, joins the linked user into Driver detail and returns `portal_status`/`portal_email`; focused regression and all 11 CI jobs passed. | `chrome/4960df4-fleet-manager-driver-portal-active.png` shows the linked email, **Active**, and **Revoke access**. `chrome/4960df4-driver-linked-refresh-relogin.png` proves the positive Driver journey; console evidence is empty. | Closed. |
+| REL-001 | The customer Vercel project auto-deployed `main` but its compiled API origin still referenced a retired Render service returning 502. | P0 release integrity/customer availability risk. | Rebuilt and promoted exact frontend SHA `8c17b5936360c5b204396ea8bf038b2d2262e04f` against healthy production API `opstrax-enterprise-build-8x41.onrender.com`; disconnected production-project Git deployment. | Production login renders in visible Chrome with an empty console; production API returns HTTP 200 and permits `https://opstrax.vercel.app` through CORS. | Closed; future production deployment is manual/promoted only. |
+
 Evidence cut: 2026-08-26
 
 | ID | Finding | Severity / effect | Fix evidence | Browser retest evidence | State |

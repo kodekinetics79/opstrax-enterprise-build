@@ -1,5 +1,7 @@
 # Module 1 evidence inventory
 
+> 2026-08-28 addendum: the current-SHA evidence set adds seven PNGs, role-specific empty-console JSON, direct-URL result JSON, a performance JSON, and sanitized post-grace readiness for `4960df41edd4399d3b6c7b07fe8145936cf1905b`. The exact file list is in `module1-current-sha-4960df4-browser-cycle.md`. Customer and positive Driver linkage are no longer evidence gaps; the historical inventory below is retained for provenance.
+
 Inventory date: 2026-08-26
 Artifact root: `artifacts/cert-large-20260825/`
 Visible Chrome screenshots currently present locally: **338 PNG files**

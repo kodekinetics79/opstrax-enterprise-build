@@ -11,6 +11,14 @@ This module maintains the customer’s branch ownership structure, role accounts
 
 Changing a user’s role, customer binding, branch scope, or active status revokes existing sessions. A branch-bound administrator cannot grant tenant-wide access or assign another branch.
 
+### Driver portal access
+
+Creating or importing a driver does not automatically create a login. Open **Fleet → Drivers → Records**, select the driver, and use **Grant portal access** only after the driver has a valid, unique work email. If an active Driver-role account with the same email already exists in the tenant, OpsTrax links it without resetting its password. The record then shows the sign-in email and **Active** status.
+
+Use **Revoke access** to disable the Driver login, end its active sessions, and unlink it from the driver record. Regranting access is an explicit administrator action. A Driver login can be linked to only one active driver, and a staff-role identity cannot be converted into a Driver portal identity.
+
+After granting access, sign out and authenticate as the Driver. Verify that the Driver home resolves to the intended driver name, then refresh and repeat logout/login. Direct fleet, device, and administration URLs must return the Driver to the self-service application without displaying fleet records.
+
 ## CSV onboarding
 
 Vehicles, drivers, devices, and returnable assets support customer-facing CSV onboarding. Always download the current template from the relevant page. Files accept up to 500 rows; larger fleets should use multiple files.
