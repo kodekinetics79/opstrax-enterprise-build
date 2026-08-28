@@ -195,7 +195,7 @@ public sealed class TelemetryLiveStateService(Database db)
                 @"SELECT lsa.*,
                      EXTRACT(EPOCH FROM (NOW() - lsa.received_at))::BIGINT seconds_since_ping
               FROM telemetry_live_asset_states lsa
-              JOIN vehicles v ON v.id=lsa.vehicle_id AND v.company_id=lsa.company_id
+              LEFT JOIN vehicles v ON v.id=lsa.vehicle_id AND v.company_id=lsa.company_id
               WHERE lsa.company_id=@cid AND (@branchId::BIGINT IS NULL OR v.branch_id=@branchId)
               ORDER BY CASE lsa.risk_level WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 ELSE 3 END,
                        lsa.open_alert_count DESC,
@@ -213,7 +213,7 @@ public sealed class TelemetryLiveStateService(Database db)
             @"SELECT lsa.*,
                      EXTRACT(EPOCH FROM (NOW() - lsa.received_at))::BIGINT seconds_since_ping
               FROM telemetry_live_asset_states lsa
-              JOIN vehicles v ON v.id=lsa.vehicle_id AND v.company_id=lsa.company_id
+              LEFT JOIN vehicles v ON v.id=lsa.vehicle_id AND v.company_id=lsa.company_id
               WHERE lsa.company_id=@cid AND lsa.vehicle_id=@vid
                 AND (@branchId::BIGINT IS NULL OR v.branch_id=@branchId)
               LIMIT 1",

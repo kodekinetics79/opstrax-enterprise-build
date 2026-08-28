@@ -25,19 +25,19 @@ public sealed class TelemetryBranchAuthorizationTests
             var branchB = await Branch(db, company, $"B-{suffix}");
             var vehicleA = await Vehicle(db, company, branchA, $"TEL-A-{suffix}");
             var vehicleB = await Vehicle(db, company, branchB, $"TEL-B-{suffix}");
-            var deviceA = await Device(db, company, branchA, $"TEL-DEV-A-{suffix}");
+            // Model a legitimate historical transfer: the device starts in Branch B,
+            // is removed there, then ownership moves to Branch A before reinstall.
+            var deviceA = await Device(db, company, branchB, $"TEL-DEV-A-{suffix}");
             var deviceB = await Device(db, company, branchB, $"TEL-DEV-B-{suffix}");
-
-            await LiveState(db, company, vehicleA, deviceA, $"TEL-A-{suffix}");
-            await LiveState(db, company, vehicleB, deviceB, $"TEL-B-{suffix}");
-            await Alert(db, company, vehicleA, deviceA, "branch-a-alert");
-            await Alert(db, company, vehicleB, deviceB, "branch-b-alert");
 
             var oldB = await db.InsertAsync(
                 @"INSERT INTO device_installations
                     (company_id,branch_id,device_id,vehicle_id,status,device_role,is_primary,effective_from,effective_to,installed_at,removed_at,source)
                   VALUES (@c,@b,@d,@v,'Removed','GPS',TRUE,NOW()-INTERVAL '10 days',NOW()-INTERVAL '5 days',NOW()-INTERVAL '10 days',NOW()-INTERVAL '5 days','test')",
                 c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@b", branchB); c.Parameters.AddWithValue("@d", deviceA); c.Parameters.AddWithValue("@v", vehicleB); });
+            await db.ExecuteAsync(
+                "UPDATE eld_devices SET branch_id=@b WHERE company_id=@c AND id=@d",
+                c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@b", branchA); c.Parameters.AddWithValue("@d", deviceA); });
             await db.ExecuteAsync(
                 @"INSERT INTO device_installations
                     (company_id,branch_id,device_id,vehicle_id,status,device_role,is_primary,effective_from,installed_at,source)
@@ -48,6 +48,11 @@ public sealed class TelemetryBranchAuthorizationTests
                   VALUES (@c,@b,@d,'Registered','Online','other-branch-history',NOW()-INTERVAL '6 days'),
                          (@c,@a,@d,'Online','Idle','visible-branch-history',NOW())",
                 c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@b", branchB); c.Parameters.AddWithValue("@a", branchA); c.Parameters.AddWithValue("@d", deviceA); });
+
+            await LiveState(db, company, vehicleA, deviceA, $"TEL-A-{suffix}");
+            await LiveState(db, company, vehicleB, deviceB, $"TEL-B-{suffix}");
+            await Alert(db, company, vehicleA, deviceA, "branch-a-alert");
+            await Alert(db, company, vehicleB, deviceB, "branch-b-alert");
 
             var telemetry = new TelemetryLiveStateService(db);
             var states = await telemetry.ListLiveStatesAsync(company, branchA);
