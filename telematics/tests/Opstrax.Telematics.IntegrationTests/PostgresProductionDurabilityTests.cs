@@ -586,7 +586,7 @@ public sealed class PostgresProductionDurabilityTests
     }
 
 
-    // ── Durable reboot epochs (telematics/007_replay_session_epoch.sql) ────────
+    // ── Durable reboot epochs (telematics/2026_08_28_stage92_gt06_replay_session_epoch.sql) ────────
 
     /// <summary>The replay schema exactly as migrations 005 + 007 leave it.</summary>
     private const string ReplaySchemaDdl = """

@@ -8,7 +8,7 @@ namespace Opstrax.Telematics.Security.Tests;
 /// <remarks>
 /// <para>
 /// <c>PostgresReplayGuard</c> reads <c>pending_epoch_base</c> and <c>epoch_floor</c> on <b>every
-/// location frame</b>. Against a database where migration <c>telematics/007</c> has not been
+/// location frame</b>. Against a database where migration <c>2026_08_28_stage92_gt06_replay_session_epoch</c> has not been
 /// applied, that is not a degraded mode: Postgres raises <c>42703 column does not exist</c>, the
 /// exception unwinds through the read loop, and the connection dies. Every connection, every
 /// frame. The gateway would look healthy and accept no telemetry whatsoever.
@@ -65,7 +65,7 @@ public sealed class ReplaySchemaContractTests
     [Fact]
     public void TheEnrolledColumns_AreCreatedByAMigration()
     {
-        string migration = Read("database", "migrations", "telematics", "007_replay_session_epoch.sql");
+        string migration = Read("database", "migrations", "2026_08_28_stage92_gt06_replay_session_epoch.sql");
 
         Assert.Contains("ADD COLUMN IF NOT EXISTS pending_epoch_base", migration, StringComparison.Ordinal);
         Assert.Contains("ADD COLUMN IF NOT EXISTS epoch_floor", migration, StringComparison.Ordinal);
@@ -80,7 +80,7 @@ public sealed class ReplaySchemaContractTests
     [Fact]
     public void TheCrossEpochLookup_HasASupportingIndex()
     {
-        string migration = Read("database", "migrations", "telematics", "007_replay_session_epoch.sql");
+        string migration = Read("database", "migrations", "2026_08_28_stage92_gt06_replay_session_epoch.sql");
         string guard = Read("telematics", "src", "Opstrax.Telematics.Gateway",
             "Security", "Replay", "PostgresReplayGuard.cs");
 

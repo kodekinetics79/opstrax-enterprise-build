@@ -1,10 +1,12 @@
--- Telematics 007 — Reboot-safe replay epochs + cross-epoch content replay defence
+-- Stage 92 (2026-08-28) — Reboot-safe GT06 replay epochs + cross-epoch content replay defence
 -- ============================================================================
 -- PURPOSE
 --   Two additive changes to the durable replay store from telematics/005, both
 --   required by the GT06 device edge:
 --
 --   1. `pending_epoch_base` on telemetry_replay_device_state.
+--
+--   Follows telematics/005_replay_guard, which creates the table this ALTERs.
 --      A GT06 tracker restarts its 16-bit information serial at 1 every time it
 --      powers up. Migration 005's unwrap compares a candidate serial against the
 --      device's high-water mark on a circle and treats the FARTHER half as
@@ -73,7 +75,7 @@ CREATE INDEX IF NOT EXISTS idx_telemetry_replay_seen_device_content
 
 -- ── 3. Ledger ───────────────────────────────────────────────────────────────
 INSERT INTO schema_migrations (version, description)
-VALUES ('telematics_007_replay_session_epoch',
+VALUES ('2026_08_28_stage92_gt06_replay_session_epoch',
         'Reboot-safe login epochs plus cross-epoch content-hash replay defence')
 ON CONFLICT (version) DO NOTHING;
 
@@ -89,6 +91,6 @@ COMMIT;
 --   DROP INDEX IF EXISTS idx_telemetry_replay_seen_device_content;
 --   ALTER TABLE telemetry_replay_device_state DROP COLUMN IF EXISTS epoch_floor;
 --   ALTER TABLE telemetry_replay_device_state DROP COLUMN IF EXISTS pending_epoch_base;
---   DELETE FROM schema_migrations WHERE version = 'telematics_007_replay_session_epoch';
+--   DELETE FROM schema_migrations WHERE version = '2026_08_28_stage92_gt06_replay_session_epoch';
 -- COMMIT;
 -- ============================================================================

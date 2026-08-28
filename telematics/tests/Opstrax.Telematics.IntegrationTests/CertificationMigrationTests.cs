@@ -5,7 +5,7 @@ using Xunit.Abstractions;
 namespace Opstrax.Telematics.IntegrationTests;
 
 /// <summary>
-/// CERTIFICATION of migration <c>telematics/007_replay_session_epoch.sql</c> and of the durable
+/// CERTIFICATION of migration <c>telematics/2026_08_28_stage92_gt06_replay_session_epoch.sql</c> and of the durable
 /// replay subsystem that depends on it, against a disposable Postgres schema.
 /// </summary>
 /// <remarks>
@@ -23,15 +23,15 @@ public sealed class CertificationMigrationTests
     // ── Schema shape, idempotency and compatibility ───────────────────────────
 
     [Fact]
-    public async Task M1_Migration_007_is_additive_idempotent_and_creates_exactly_what_it_claims()
+    public async Task M1_Migration_stage92_is_additive_idempotent_and_creates_exactly_what_it_claims()
     {
         await using var db = await Schema.CreateAsync();
-        await db.ApplyMigrationAsync("005_replay_guard.sql");
+        await db.ApplyMigrationAsync("telematics/005_replay_guard.sql");
 
         string before = await db.ColumnsAsync("telemetry_replay_device_state");
         _out.WriteLine($"columns before 007 : {before}");
 
-        await db.ApplyMigrationAsync("007_replay_session_epoch.sql");
+        await db.ApplyMigrationAsync("2026_08_28_stage92_gt06_replay_session_epoch.sql");
         string after = await db.ColumnsAsync("telemetry_replay_device_state");
         _out.WriteLine($"columns after  007 : {after}");
 
@@ -57,13 +57,13 @@ public sealed class CertificationMigrationTests
 
         // Ledger row written once.
         Assert.Equal("1", await db.ScalarAsync(
-            "SELECT count(*)::text FROM schema_migrations WHERE version='telematics_007_replay_session_epoch'"));
+            "SELECT count(*)::text FROM schema_migrations WHERE version='2026_08_28_stage92_gt06_replay_session_epoch'"));
 
         // Idempotent: re-running changes nothing.
-        await db.ApplyMigrationAsync("007_replay_session_epoch.sql");
+        await db.ApplyMigrationAsync("2026_08_28_stage92_gt06_replay_session_epoch.sql");
         Assert.Equal(after, await db.ColumnsAsync("telemetry_replay_device_state"));
         Assert.Equal("1", await db.ScalarAsync(
-            "SELECT count(*)::text FROM schema_migrations WHERE version='telematics_007_replay_session_epoch'"));
+            "SELECT count(*)::text FROM schema_migrations WHERE version='2026_08_28_stage92_gt06_replay_session_epoch'"));
     }
 
     /// <summary>
@@ -71,11 +71,11 @@ public sealed class CertificationMigrationTests
     /// currently running. That is what makes a migration-first rollout safe.
     /// </summary>
     [Fact]
-    public async Task M2_Code_predating_007_still_works_after_007_is_applied()
+    public async Task M2_Code_predating_stage92_still_works_after_it_is_applied()
     {
         await using var db = await Schema.CreateAsync();
-        await db.ApplyMigrationAsync("005_replay_guard.sql");
-        await db.ApplyMigrationAsync("007_replay_session_epoch.sql");
+        await db.ApplyMigrationAsync("telematics/005_replay_guard.sql");
+        await db.ApplyMigrationAsync("2026_08_28_stage92_gt06_replay_session_epoch.sql");
 
         // Exactly the statements the pre-007 guard issued: a SELECT without the new columns, and
         // an INSERT that names only the old ones.
@@ -99,10 +99,10 @@ public sealed class CertificationMigrationTests
     /// 007 applied. This is the deployment-ordering hazard.
     /// </summary>
     [Fact]
-    public async Task M3_Candidate_code_fails_closed_without_migration_007()
+    public async Task M3_Candidate_code_fails_closed_without_the_stage92_migration()
     {
         await using var db = await Schema.CreateAsync();
-        await db.ApplyMigrationAsync("005_replay_guard.sql");   // deliberately NOT 007
+        await db.ApplyMigrationAsync("telematics/005_replay_guard.sql");   // deliberately NOT 007
 
         using var guard = new PostgresReplayGuard(db.ConnectionString, serialModulus: Gt06Modulus);
 
@@ -133,8 +133,8 @@ public sealed class CertificationMigrationTests
     public async Task M4_Full_device_lifecycle_on_the_migrated_schema()
     {
         await using var db = await Schema.CreateAsync();
-        await db.ApplyMigrationAsync("005_replay_guard.sql");
-        await db.ApplyMigrationAsync("007_replay_session_epoch.sql");
+        await db.ApplyMigrationAsync("telematics/005_replay_guard.sql");
+        await db.ApplyMigrationAsync("2026_08_28_stage92_gt06_replay_session_epoch.sql");
 
         using var guard = new PostgresReplayGuard(db.ConnectionString, serialModulus: Gt06Modulus);
         const string device = "cert-device-A";
@@ -197,8 +197,8 @@ public sealed class CertificationMigrationTests
     public async Task M5_Replay_state_is_isolated_per_device()
     {
         await using var db = await Schema.CreateAsync();
-        await db.ApplyMigrationAsync("005_replay_guard.sql");
-        await db.ApplyMigrationAsync("007_replay_session_epoch.sql");
+        await db.ApplyMigrationAsync("telematics/005_replay_guard.sql");
+        await db.ApplyMigrationAsync("2026_08_28_stage92_gt06_replay_session_epoch.sql");
 
         using var guard = new PostgresReplayGuard(db.ConnectionString, serialModulus: Gt06Modulus);
         DateTime t = new(2024, 1, 15, 10, 20, 30, DateTimeKind.Utc);
@@ -224,11 +224,11 @@ public sealed class CertificationMigrationTests
 
     /// <summary>Concurrency across instances is unchanged by 007: one winner, one identity.</summary>
     [Fact]
-    public async Task M6_Concurrent_duplicates_still_converge_after_007()
+    public async Task M6_Concurrent_duplicates_still_converge_after_stage92()
     {
         await using var db = await Schema.CreateAsync();
-        await db.ApplyMigrationAsync("005_replay_guard.sql");
-        await db.ApplyMigrationAsync("007_replay_session_epoch.sql");
+        await db.ApplyMigrationAsync("telematics/005_replay_guard.sql");
+        await db.ApplyMigrationAsync("2026_08_28_stage92_gt06_replay_session_epoch.sql");
 
         using var a = new PostgresReplayGuard(db.ConnectionString, serialModulus: Gt06Modulus);
         using var b = new PostgresReplayGuard(db.ConnectionString, serialModulus: Gt06Modulus);
@@ -276,12 +276,17 @@ public sealed class CertificationMigrationTests
             return s;
         }
 
-        /// <summary>Applies a migration FILE from the repository, unmodified.</summary>
-        public async Task ApplyMigrationAsync(string fileName)
+        /// <summary>
+        /// Applies a migration FILE from the repository, unmodified. The path is relative to
+        /// <c>database/migrations/</c>, because the legacy telematics migrations live in a
+        /// subdirectory while current ones are date-prefixed at the top level.
+        /// </summary>
+        public async Task ApplyMigrationAsync(string relativePath)
         {
-            string sql = await File.ReadAllTextAsync(Path.Combine(
-                RepoRoot, "database", "migrations", "telematics", fileName));
-            await ExecuteAsync(sql);
+            string full = Path.Combine(
+                new[] { RepoRoot, "database", "migrations" }
+                    .Concat(relativePath.Split('/')).ToArray());
+            await ExecuteAsync(await File.ReadAllTextAsync(full));
         }
 
         public async Task ExecuteAsync(string sql)
