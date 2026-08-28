@@ -14,7 +14,7 @@ Primary acceptance surface: visible Google Chrome
 
 ## Scope
 
-The intended cycle covers the customer-visible Device Health, Control Tower, GPS Tracking, Live Map, geofence, and OBD/J1939 paths for the isolated large-fleet tenant. Signed native telemetry at 1,100-device scale and exact-SHA staging readiness are proven. The remaining final-candidate role, branch, full-volume table/map, persistence, responsive-layout, and console/network journeys listed below are not yet proven.
+The intended cycle covers the customer-visible Device Health, Control Tower, GPS Tracking, Live Map, geofence, and OBD/J1939 paths for the isolated large-fleet tenant. Signed native telemetry at 1,100-device scale, exact-SHA staging readiness, representative branch restriction, full-volume GPS/diagnostics views and exports, persistence, and the final-candidate administrator/Executive/Driver/Customer boundaries are proven. Exact responsive-layout, recording, failed-network archive, and repeated warm-performance evidence remain open.
 
 Automated tests, API responses, and database verification are supporting evidence only. They cannot close a browser journey.
 
