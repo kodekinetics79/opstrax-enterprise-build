@@ -99,8 +99,8 @@ public sealed class LargeFleetPaginationContractTests
         Assert.Contains("LOWER(COALESCE(e.device_state,'')) NOT IN ('quarantined','suspended')", endpoints, StringComparison.Ordinal);
         Assert.Contains("idx_lvp_company_device_received", schema, StringComparison.Ordinal);
         Assert.Contains("\"delayed-gps\"", endpoints, StringComparison.Ordinal);
-        Assert.Contains("\"fixtime\" when cluster == \"gps\"", endpoints, StringComparison.Ordinal);
-        Assert.Contains("\"freshness\" when cluster == \"gps\"", endpoints, StringComparison.Ordinal);
+        Assert.Contains("\"lastcheckin\" or \"lastfix\" => cluster switch", endpoints, StringComparison.Ordinal);
+        Assert.Contains("\"freshness\" => cluster switch", endpoints, StringComparison.Ordinal);
     }
 
     [Theory]
