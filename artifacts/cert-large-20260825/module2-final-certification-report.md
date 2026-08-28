@@ -7,9 +7,9 @@ Primary acceptance surface: visible Google Chrome
 
 ## Release identity
 
-- Candidate SHA: `a0da774f932015f2444cc9e54fa610715416b785`
-- Deployed frontend SHA: `a0da774f932015f2444cc9e54fa610715416b785`
-- Deployed API SHA: `a0da774f932015f2444cc9e54fa610715416b785`
+- Candidate SHA: `a8942292c753403448cf82dbe7f548bbd1044dcf`
+- Deployed frontend SHA: `a8942292c753403448cf82dbe7f548bbd1044dcf`
+- Deployed API SHA: `a8942292c753403448cf82dbe7f548bbd1044dcf`
 - Exact-SHA runtime verdict: visible `Staging` after startup grace
 
 ## Scope
@@ -22,9 +22,9 @@ Automated tests, API responses, and database verification are supporting evidenc
 
 Final verdict: **BLOCKED**
 
-Candidate `a0da774f932015f2444cc9e54fa610715416b785` is deployed to both staging surfaces and the public readiness contract is healthy. Certification/customer-pilot GO is blocked because a fresh authenticated role session is unavailable in Chrome: the browser does not retain the issued staging role password, and guessing or extracting it from the browser password store is prohibited. Consequently the final-candidate role, scale, responsive, persistence, console/network, and adversarial journeys remain open. Provider-specific production certification remains a separate gate even if the native ingest boundary passes.
+Candidate `a8942292c753403448cf82dbe7f548bbd1044dcf` is deployed to both staging surfaces and the public readiness contract is healthy. The fresh Maintenance Manager session is now available and its formerly blocked OBD/J1939 journey passes against 200 branch-scoped records before and after a complete sign-out/sign-in cycle. Certification/customer-pilot GO remains blocked on the remaining exact-candidate role matrix, full-tenant 1,100-device/1,000-position views, responsive layouts, authorized export, console/network capture, and the two open Chrome performance misses. Provider-specific production certification remains a separate gate even if the native ingest boundary passes.
 
-No currently reproduced product P0/P1 is evidenced on `a0da774…`; closure of previously fixed customer-visible P0/P1 findings remains unproven on that exact candidate. The module stays BLOCKED until the fresh role session and complete rendered matrix are recorded.
+M2-001, M2-003 and M2-004 are closed with exact-candidate browser evidence. M2-002 and the remaining customer journeys still require exact-candidate retest. The module stays BLOCKED until the complete rendered matrix is recorded and the open timing misses are resolved or accepted for a limited pilot.
 
 ## Known market boundary
 
