@@ -175,6 +175,32 @@ public sealed class DeploymentHardeningContractTests
     }
 
     /// <summary>
+    /// The production config template must be COMMITTED, not merely present on the machine that
+    /// happens to have built it. The repository ignores <c>appsettings.*.json</c> wholesale — a
+    /// sensible default that would silently swallow this file, so that an operator cloning the
+    /// repo gets an installer referencing a file that was never checked in. That is the original
+    /// defect wearing a different hat, and existence-on-disk alone cannot detect it.
+    /// </summary>
+    [Fact]
+    public void ProductionConfigTemplate_IsExemptedFromTheAppsettingsIgnoreRule()
+    {
+        string ignore = Read(".gitignore");
+        string[] lines = ignore.Split('\n').Select(line => line.Trim()).ToArray();
+
+        Assert.Contains("appsettings.*.json", lines);
+        Assert.True(
+            lines.Contains("!telematics/deploy/appsettings.Production.json"),
+            ".gitignore ignores appsettings.*.json without exempting the telematics production " +
+            "config template, so install.sh would reference a file that never ships.");
+
+        // The exemption must come AFTER the rule it overrides, or git ignores it anyway.
+        int ignoreRule = Array.IndexOf(lines, "appsettings.*.json");
+        int exemption = Array.IndexOf(lines, "!telematics/deploy/appsettings.Production.json");
+        Assert.True(exemption > ignoreRule,
+            "the negation must follow the pattern it negates; git applies the last matching rule.");
+    }
+
+    /// <summary>
     /// The shipped production configuration is valid JSON, is the HTTPS (no-database) topology, and
     /// carries the exact placeholders the installer substitutes. A template whose placeholder text
     /// drifts from the installer's <c>sed</c> silently leaves REPLACE-ME in a running gateway.

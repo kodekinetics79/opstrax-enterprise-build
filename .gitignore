@@ -25,6 +25,12 @@ __pycache__/
 appsettings.json
 appsettings.*.json
 !appsettings.example.json
+# The telematics edge's PRODUCTION CONFIG TEMPLATE must ship: install.sh copies it to
+# /opt/opstrax/gateway and the script runs under `set -e`, so a missing file aborts a
+# provisioning run midway. It is a template, not a filled-in config — it holds no secrets, and
+# DeploymentHardeningContractTests fails the build if one is ever added. Both the HMAC secret and
+# the outbox encryption key reach the gateway through the systemd EnvironmentFile instead.
+!telematics/deploy/appsettings.Production.json
 frontend/tsconfig.tsbuildinfo
 tsconfig.tsbuildinfo
 /package-lock.json
