@@ -107,16 +107,18 @@ public class MutationPermissionTierTests
     // Seed role 3 (Fleet Manager) grants map:view + telematics:view.
     [InlineData("Fleet Manager", "map:view")]
     [InlineData("Fleet Manager", "telematics:view")]
-    // Seed role 4 (Dispatcher) grants map:view.
+    // Seed role 4 (Dispatcher) grants map:view. The authoritative product contract also grants
+    // the narrow device-registry read token; RolePermissionReconciler converges the system role
+    // on boot without widening device manage/export or telemetry aliases.
     [InlineData("Dispatcher", "map:view")]
+    [InlineData("Dispatcher", "telematics:devices:view")]
     public void RoleDefaults_MatchTheDatabaseSeed(string role, string token)
         => Assert.Contains(token, EndpointMappings.RolePermissionDefaults[role], StringComparer.OrdinalIgnoreCase);
 
     [Theory]
-    // The seed grants telematics:devices:view to NO role — the device registry is not part of
-    // any seeded operator's surface, so the fallback must not invent it either.
+    // The narrow device-registry read token remains unavailable to roles that do not own the
+    // operational Device Health surface. Dispatcher is asserted positively above.
     [InlineData("Fleet Manager", "telematics:devices:view")]
-    [InlineData("Dispatcher", "telematics:devices:view")]
     [InlineData("Maintenance Manager", "telematics:devices:view")]
     [InlineData("Read-Only Auditor", "telematics:devices:view")]
     // 'Maintenance Manager' has no seed row; its analogue 'Mechanic' (role 6) has no map/
