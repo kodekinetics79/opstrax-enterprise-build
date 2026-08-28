@@ -68,6 +68,11 @@ public sealed class TelemetryBranchAuthorizationTests
             var detail = await Invoke("DeviceDetail", Principal(company, branchA), deviceA, db, CancellationToken.None);
             var envelope = Assert.IsAssignableFrom<IValueHttpResult>(detail).Value!;
             var data = envelope.GetType().GetProperty("Data")!.GetValue(envelope)!;
+            var detailDevice = Assert.IsType<Dictionary<string, object?>>(data.GetType().GetProperty("device")!.GetValue(data));
+            Assert.True(Convert.ToInt64(detailDevice["secondsSincePing"]) >= 3_000,
+                "Single-device detail must carry the same stale-check-in signal as the paged list.");
+            Assert.Equal(1L, Convert.ToInt64(detailDevice["openAlertCount"]));
+            Assert.Equal(0L, Convert.ToInt64(detailDevice["activeFaultCount"]));
             var history = Assert.IsAssignableFrom<IEnumerable>(data.GetType().GetProperty("installationHistory")!.GetValue(data));
             var rows = history.Cast<Dictionary<string, object?>>().ToArray();
             Assert.Single(rows);
@@ -135,8 +140,8 @@ public sealed class TelemetryBranchAuthorizationTests
         c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@b", branch); c.Parameters.AddWithValue("@code", code); });
 
     private static Task<long> Device(Database db, long company, long branch, string serial) => db.InsertAsync(
-        @"INSERT INTO eld_devices(company_id,branch_id,device_serial,status,device_state,api_key_hash,hmac_secret_encrypted,hmac_key_version,created_at)
-          VALUES (@c,@b,@serial,'Active','Registered',encode(sha256(@serial::bytea),'hex'),repeat('b',32),1,NOW())",
+        @"INSERT INTO eld_devices(company_id,branch_id,device_serial,status,device_state,api_key_hash,hmac_secret_encrypted,hmac_key_version,last_seen_at,created_at)
+          VALUES (@c,@b,@serial,'Active','Registered',encode(sha256(@serial::bytea),'hex'),repeat('b',32),1,NOW()-INTERVAL '1 hour',NOW())",
         c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@b", branch); c.Parameters.AddWithValue("@serial", serial); });
 
     private static Task LiveState(Database db, long company, long vehicle, long device, string code) => db.ExecuteAsync(

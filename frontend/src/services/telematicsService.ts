@@ -552,8 +552,12 @@ function mapDeviceRow(
   const serial = String(row.device_serial ?? "");
   const secondsSincePing = row.seconds_since_ping == null ? null : Number(row.seconds_since_ping);
   const revoked = Boolean(row.revoked_at);
-  const openAlerts = alertCountBySerial.get(serial) ?? Number(row.open_alert_count ?? 0);
-  const activeFaults = faultCountBySerial.get(serial) ?? Number(row.active_fault_count ?? 0);
+  const openAlerts = Object.hasOwn(row, "open_alert_count")
+    ? Number(row.open_alert_count ?? 0)
+    : alertCountBySerial.get(serial) ?? 0;
+  const activeFaults = Object.hasOwn(row, "active_fault_count")
+    ? Number(row.active_fault_count ?? 0)
+    : faultCountBySerial.get(serial) ?? 0;
 
   const signals: HealthSignals = {
     status: String(row.status ?? ""),

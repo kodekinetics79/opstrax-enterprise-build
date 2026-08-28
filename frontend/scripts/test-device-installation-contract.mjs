@@ -22,6 +22,8 @@ assert.match(
   "Device detail must not fail when a device reader lacks GPS feed authorization",
 );
 assert.match(service, /fetchPositionsIfAuthorized\(session\)/, "Device detail must use the authorized optional position feed");
+assert.match(service, /Object\.hasOwn\(row, "open_alert_count"\)/, "Device-specific alert evidence must outrank capped auxiliary feeds");
+assert.match(service, /Object\.hasOwn\(row, "active_fault_count"\)/, "Device-specific fault evidence must outrank capped auxiliary feeds");
 assert.match(service, /function deviceRowFromDetail/, "Single-device readbacks must unwrap the nested detail envelope");
 assert.match(service, /const created = deviceRowFromDetail/, "Provision readback must preserve the returned device identity fields");
 assert.match(service, /\/installations\/\$\{current\.id\}\/remove/, "Removal must use the installation endpoint");

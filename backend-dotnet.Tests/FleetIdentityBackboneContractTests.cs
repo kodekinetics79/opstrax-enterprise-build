@@ -216,6 +216,12 @@ public sealed class FleetIdentityBackboneContractTests
         var deviceDetail = Block(routes, "private static async Task<IResult> DeviceDetail(", "private static async Task<IResult> DeviceProvision(");
         Assert.Contains("e.device_state", deviceList, StringComparison.Ordinal);
         Assert.Contains("e.device_state", deviceDetail, StringComparison.Ordinal);
+        Assert.Contains("seconds_since_ping", deviceList, StringComparison.Ordinal);
+        Assert.Contains("seconds_since_ping", deviceDetail, StringComparison.Ordinal);
+        Assert.Contains("active_fault_count", deviceDetail, StringComparison.Ordinal);
+        Assert.Contains("open_alert_count", deviceDetail, StringComparison.Ordinal);
+        Assert.Contains("canReadDiagnostics", deviceDetail, StringComparison.Ordinal);
+        Assert.Contains("canReadAlerts", deviceDetail, StringComparison.Ordinal);
         Assert.Contains("i.odometer_at_installation", deviceDetail, StringComparison.Ordinal);
         Assert.Contains("deviceState: String(row.device_state ?? \"Unknown\")", devices, StringComparison.Ordinal);
         Assert.Contains("[\"Device state\", device.deviceState || \"Unavailable\"]", Read("frontend", "src", "pages", "IotDevicesPage.tsx"), StringComparison.Ordinal);
