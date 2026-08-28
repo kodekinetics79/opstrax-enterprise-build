@@ -241,7 +241,10 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
 
   const canExport = hasPermission(config.requiredExportPermission);
   const canUpdate = hasPermission(config.requiredUpdatePermission);
-  const canView = hasDirectPermission(config.requiredViewPermission);
+  // Read destinations use the same semantic permission aliases as the route
+  // guard and backend RequirePermission policy. Direct-only checks are reserved
+  // for security-sensitive mutations such as governed imports and assignments.
+  const canView = hasPermission(config.requiredViewPermission);
   const canViewGeofences = hasPermission("map:view");
   const canViewDevices = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_VIEW);
   const canViewVehicles = hasPermission(PERMISSIONS.VEHICLES_VIEW);
