@@ -14,15 +14,17 @@ Primary acceptance surface: visible Google Chrome
 
 ## Scope
 
-This cycle covers the customer-visible Device Health, Control Tower, GPS Tracking, Live Map, geofence, and OBD/J1939 paths for the isolated large-fleet tenant. It includes signed native telemetry at 1,100-device scale, duplicate/replay controls, branch and role restrictions, paging/filtering/sorting/export, rendered performance, refresh persistence, direct-URL denial, responsive layouts, and browser console/network material-failure review.
+The intended cycle covers the customer-visible Device Health, Control Tower, GPS Tracking, Live Map, geofence, and OBD/J1939 paths for the isolated large-fleet tenant. Signed native telemetry at 1,100-device scale and exact-SHA staging readiness are proven. The remaining final-candidate role, branch, full-volume table/map, persistence, responsive-layout, and console/network journeys listed below are not yet proven.
 
 Automated tests, API responses, and database verification are supporting evidence only. They cannot close a browser journey.
 
 ## Customer outcome
 
-Final verdict: **PENDING FINAL-CANDIDATE CHROME RETEST**
+Final verdict: **BLOCKED**
 
-The verdict will be changed only after the exact candidate is deployed to both staging surfaces and the remaining role, scale, responsive, persistence, console/network, and adversarial journeys are reconciled with the defect ledger. Provider-specific production certification remains a separate gate even if the native ingest boundary passes.
+Candidate `a0da774f932015f2444cc9e54fa610715416b785` is deployed to both staging surfaces and the public readiness contract is healthy. Certification/customer-pilot GO is blocked because a fresh authenticated role session is unavailable in Chrome: the browser does not retain the issued staging role password, and guessing or extracting it from the browser password store is prohibited. Consequently the final-candidate role, scale, responsive, persistence, console/network, and adversarial journeys remain open. Provider-specific production certification remains a separate gate even if the native ingest boundary passes.
+
+No currently reproduced product P0/P1 is evidenced on `a0da774…`; closure of previously fixed customer-visible P0/P1 findings remains unproven on that exact candidate. The module stays BLOCKED until the fresh role session and complete rendered matrix are recorded.
 
 ## Known market boundary
 

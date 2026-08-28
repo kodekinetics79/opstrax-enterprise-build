@@ -41,3 +41,7 @@ Module: Telematics and Live Operations
 ## Evidence hygiene
 
 Screenshots, recordings, network failures, console failures, and timings must identify the exact candidate. No credential, raw authentication token, device secret, or readiness header is part of the customer evidence pack. A page rendering without completing its customer workflow is not a pass.
+
+## Evidence-pack identity
+
+The deployed product candidate is `a0da774f932015f2444cc9e54fa610715416b785`. Documentation commit `31d049faff2dec00eb409c0fc725c01740b635d9` and draft PR #96 preserve evidence only; they are not a different deployed product candidate and do not certify the module.
