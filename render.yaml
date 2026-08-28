@@ -108,12 +108,6 @@ services:
       # operator explicitly sets this to true after policy approval.
       - key: RetentionWorker__Enabled
         sync: false
-      # Protected-environment readiness requires the durable outbox worker to be
-      # explicitly enabled and approved.
-      - key: OutboxDispatcher__Enabled
-        value: "true"
-      - key: OutboxDispatcher__AllowProduction
-        value: "true"
       # Allowed frontend origin(s) for CORS — set to the deployed Vercel URL.
       - key: Cors__AllowedOrigins
         sync: false
