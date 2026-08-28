@@ -66,7 +66,7 @@ public static class PermissionPolicy
         Add("telematics:devices:view", "telemetry.devices.read");
         Add("alerts:view", "telemetry.alerts.read");
         Add("safety:view", "telemetry.alerts.read");
-        Add("maintenance:view", "telemetry.alerts.read");
+        Add("maintenance:view", "telemetry.alerts.read", "telematics:diagnostics:view");
         Add("reports:view", "telemetry.recommendations.read");
         Add("billing:view", "finance:view");
         Add("finance:view", "contract:read", "rate_card:read", "charge:read", "tax:read", "settlement:read", "revrec:read", "finance.invoice:read", "finance.invoice_draft:read");

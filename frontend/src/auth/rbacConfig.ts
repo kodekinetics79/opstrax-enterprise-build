@@ -295,7 +295,7 @@ const PERMISSION_GROUPS: Record<Permission, string[]> = {
   [P.TELEMATICS_GPS_EXPORT]: ["fleet.view", "fleet:view", "telematics.gps.export", "telematics:gps:export", "telematics.view", "telematics:view"],
   [P.TELEMATICS_DIAGNOSTICS_VIEW]: ["maintenance.view", "maintenance:view", "telematics.diagnostics.view", "telematics:diagnostics:view", "telematics.view", "telematics:view"],
   [P.TELEMATICS_DIAGNOSTICS_UPDATE]: ["maintenance.manage", "maintenance:manage", "telematics.diagnostics.update", "telematics:diagnostics:update", "telematics.manage", "telematics:manage"],
-  [P.TELEMATICS_DIAGNOSTICS_EXPORT]: ["maintenance.view", "maintenance:view", "telematics.diagnostics.export", "telematics:diagnostics:export", "telematics.view", "telematics:view"],
+  [P.TELEMATICS_DIAGNOSTICS_EXPORT]: ["telematics.diagnostics.export", "telematics:diagnostics:export"],
   [P.TELEMATICS_SENSORS_VIEW]: ["fleet.view", "fleet:view", "telematics.sensors.view", "telematics:sensors:view", "telematics.view", "telematics:view"],
   [P.TELEMATICS_SENSORS_UPDATE]: ["maintenance.manage", "maintenance:manage", "telematics.sensors.update", "telematics:sensors:update", "telematics.manage", "telematics:manage"],
   [P.TELEMATICS_SENSORS_EXPORT]: ["fleet.view", "fleet:view", "telematics.sensors.export", "telematics:sensors:export", "telematics.view", "telematics:view"],

@@ -178,6 +178,8 @@ public class TelemetryAliasMirrorTests
     [InlineData("alerts:view", "telemetry.alerts.read")]
     [InlineData("safety:view", "telemetry.alerts.read")]
     [InlineData("maintenance:view", "telemetry.alerts.read")]
+    [InlineData("maintenance:view", "telematics:diagnostics:view")]
+    [InlineData("maintenance:manage", "telematics:diagnostics:view")]
     [InlineData("fleet:manage", "telemetry.rules.manage")]
     public void DocumentedToken_SatisfiesTheEndpointGuard(string held, string required)
         => Assert.Null(EndpointMappings.RequirePermission(Principal(held), required));
@@ -208,6 +210,9 @@ public class TelemetryAliasMirrorTests
     [InlineData("dashboard:view", "telemetry.alerts.read")]
     [InlineData("fleet:view", "telemetry.alerts.manage")]
     [InlineData("alerts:view", "telemetry.alerts.manage")]
+    [InlineData("dispatch:view", "telematics:diagnostics:view")]
+    [InlineData("maintenance:view", "telematics:diagnostics:update")]
+    [InlineData("maintenance:view", "telematics:diagnostics:export")]
     [InlineData("fleet:view", "telemetry.rules.manage")]
     [InlineData("telemetry.rules.read", "telemetry.rules.manage")]
     [InlineData("telemetry.alerts.read", "telemetry.alerts.manage")]
