@@ -966,10 +966,27 @@ public sealed class Gt06Adapter : IProtocolAdapter
     /// trimmed), or <see langword="null"/> when the terminal id is not valid packed BCD.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Each nibble must be a decimal digit (0–9). A nibble of 0xA–0xF is not a BCD digit: emitting
     /// <c>'0' + nibble</c> for it would produce a non-digit ASCII character (':', ';', … '?') and
     /// fabricate a garbage identifier. Rather than pass that off as an IMEI, a malformed terminal id
     /// yields <see langword="null"/> so the caller treats the identity as absent.
+    /// </para>
+    /// <para>
+    /// <b>Exactly one pad nibble is removed, not every leading zero.</b> The terminal id is eight
+    /// bytes, which is sixteen nibbles, and a 15-digit IMEI is stored with a single leading pad
+    /// nibble — so the IMEI is the last fifteen digits, always. Trimming every leading zero instead
+    /// silently eats real digits from any IMEI that begins with one, and the reporting-body
+    /// prefixes that start <c>0</c> are ordinary allocations, not a curiosity. Such a device
+    /// decoded to a 14-digit string, matched nothing in the registry or the allowlist, and could
+    /// never be onboarded at all.
+    /// </para>
+    /// <para>
+    /// The change is safe for the existing fleet by construction: for any IMEI that does not begin
+    /// with a zero, trimming one nibble and trimming all leading zeros produce the same string, so
+    /// no device that resolves today decodes differently tomorrow. The only devices affected are
+    /// ones that cannot connect at present.
+    /// </para>
     /// </remarks>
     private static string? TryDecodeImei(ReadOnlySpan<byte> bcd)
     {
@@ -984,7 +1001,8 @@ public sealed class Gt06Adapter : IProtocolAdapter
             sb.Append((char)('0' + high));
             sb.Append((char)('0' + low));
         }
-        string digits = sb.ToString().TrimStart('0');
-        return digits.Length == 0 ? "0" : digits;
+
+        // 16 nibbles -> drop the single pad nibble -> the 15 digits the device actually sent.
+        return sb.ToString(1, sb.Length - 1);
     }
 }
