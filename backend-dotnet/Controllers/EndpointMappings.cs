@@ -2376,9 +2376,9 @@ public static partial class EndpointMappings
         // customer visibility links — see P41HardeningTests.
         // NEW-R1-06 reconciliation: seed role 4 (seed:32) grants a Dispatcher map:view — the live
         // board is the job. It was absent here, so the no-seeded-roles fallback silently withheld
-        // it. The seed grants this role NO telematics token, so telematics:devices:view is
-        // deliberately NOT added.
-        ["Dispatcher"]               = ["dashboard:view","vehicles:view","drivers:view","shipments:view","shipments:create","shipments:update","shipments:export","dispatch:view","dispatch:create","dispatch:update","dispatch:assign","dispatch:cancel","carriers:view","fuel:view","alerts:view","alerts:acknowledge","customers:view","reports:view","notifications:view","messages:send","map:view"],
+        // it. Device inventory is a narrow operational read required by the shipped Dispatcher
+        // Control Tower; it does not imply device mutation, diagnostics, firmware, or export.
+        ["Dispatcher"]               = ["dashboard:view","vehicles:view","drivers:view","shipments:view","shipments:create","shipments:update","shipments:export","dispatch:view","dispatch:create","dispatch:update","dispatch:assign","dispatch:cancel","carriers:view","fuel:view","alerts:view","alerts:acknowledge","customers:view","reports:view","notifications:view","messages:send","map:view","telematics:devices:view"],
         // The Driver role is PORTAL-ONLY and isolated: a driver's token carries only what the
         // mobile driver portal (/driver/*, all gated driver:self) actually needs — self service,
         // in-app messaging with dispatch, and their notifications. DVIR submission is authorized
@@ -18633,7 +18633,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var denied = RequirePermission(http, "telemetry.live_state.read");
         if (denied is not null) return denied;
         var companyId = GetCompanyId(http);
-        var summary = await telemetry.BuildSummaryAsync(companyId, ct);
+        var summary = await telemetry.BuildSummaryAsync(companyId, GetBranchId(http), ct);
         return Results.Ok(ApiResponse<object>.Ok(summary, "Telemetry live-map summary"));
     }
 
@@ -18643,7 +18643,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var denied = RequirePermission(http, "telemetry.live_state.read");
         if (denied is not null) return denied;
         var companyId = GetCompanyId(http);
-        var states = await telemetry.ListLiveStatesAsync(companyId, ct);
+        var states = await telemetry.ListLiveStatesAsync(companyId, GetBranchId(http), ct);
         return Results.Ok(ApiResponse<object>.Ok(states, "Telemetry live asset states"));
     }
 
@@ -18653,7 +18653,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var denied = RequirePermission(http, "telemetry.live_state.read");
         if (denied is not null) return denied;
         var companyId = GetCompanyId(http);
-        var state = await telemetry.GetLiveStateAsync(companyId, vehicleId, ct);
+        var state = await telemetry.GetLiveStateAsync(companyId, vehicleId, GetBranchId(http), ct);
         if (state is null) return Results.NotFound(ApiResponse<object>.Fail("Live state not found"));
         return Results.Ok(ApiResponse<object>.Ok(state, "Telemetry live asset state"));
     }
@@ -18672,15 +18672,17 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                      v.vehicle_code, d.full_name driver_name,
                      e.device_serial
               FROM telemetry_alerts ta
-              LEFT JOIN vehicles    v ON v.id=ta.vehicle_id
-              LEFT JOIN drivers     d ON d.id=ta.driver_id
-              LEFT JOIN eld_devices e ON e.id=ta.device_id
+              LEFT JOIN vehicles    v ON v.id=ta.vehicle_id AND v.company_id=ta.company_id
+              LEFT JOIN drivers     d ON d.id=ta.driver_id AND d.company_id=ta.company_id
+              LEFT JOIN eld_devices e ON e.id=ta.device_id AND e.company_id=ta.company_id
               WHERE ta.company_id=@cid AND (@status='All' OR ta.status=@status)
+                AND (@branchId::BIGINT IS NULL OR COALESCE(v.branch_id,e.branch_id)=@branchId)
               ORDER BY ta.created_at DESC LIMIT 100",
             c =>
             {
                 c.Parameters.AddWithValue("@cid",    companyId);
                 c.Parameters.AddWithValue("@status", status);
+                c.Parameters.AddWithValue("@branchId", (object?)GetBranchId(http) ?? DBNull.Value);
             }, ct);
         return Results.Ok(ApiResponse<object>.Ok(alerts, "Alerts"));
     }
@@ -18800,6 +18802,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 SELECT i.id,i.vehicle_id,i.status,i.device_role,i.is_primary
                 FROM device_installations i
                 WHERE i.company_id=e.company_id AND i.device_id=e.id
+                  AND (@branchId::BIGINT IS NULL OR i.branch_id=@branchId)
                   AND i.effective_to IS NULL AND i.status IN ('Installed','Verified')
                 ORDER BY i.effective_from DESC,i.id DESC LIMIT 1
               ) current_install ON TRUE
@@ -19425,20 +19428,23 @@ LIMIT 100000",
               FROM device_installations i
               JOIN vehicles v ON v.id=i.vehicle_id AND v.company_id=i.company_id
               WHERE i.company_id=@cid AND i.device_id=@id
+                AND (@branchId::BIGINT IS NULL OR i.branch_id=@branchId)
               ORDER BY i.effective_from DESC,i.id DESC",
-            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
         var transitions = await db.QueryAsync(
             @"SELECT id,from_state,to_state,reason_code,reason,actor_user_id,correlation_id,occurred_at
               FROM device_state_transitions WHERE company_id=@cid AND device_id=@id
+                AND (@branchId::BIGINT IS NULL OR branch_id=@branchId)
               ORDER BY occurred_at DESC,id DESC LIMIT 100",
-            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
         var installationEvidence = await db.QueryAsync(
             @"SELECT e.id,e.installation_id,e.evidence_type,e.object_key,e.sha256,e.captured_at,e.captured_by
                 FROM device_installation_evidence e
                 JOIN device_installations i ON i.id=e.installation_id AND i.company_id=e.company_id
                WHERE e.company_id=@cid AND i.device_id=@id
+                 AND (@branchId::BIGINT IS NULL OR i.branch_id=@branchId)
                ORDER BY e.captured_at DESC,e.id DESC",
-            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
         var current = history.FirstOrDefault(row =>
             row.GetValueOrDefault("effectiveTo") is null or DBNull &&
             row.GetValueOrDefault("status")?.ToString() is "Installed" or "Verified");

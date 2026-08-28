@@ -31,6 +31,20 @@ public sealed class AdminRolePermissionCatalogTests
             Assert.IsAssignableFrom<IStatusCodeHttpResult>(denied).StatusCode);
     }
 
+    [Fact]
+    public void DispatcherCanReadDevicesButCannotManageOrExportThem()
+    {
+        var dispatcher = Principal("Dispatcher", EndpointMappings.RolePermissionDefaults["Dispatcher"]);
+
+        Assert.Null(EndpointMappings.RequirePermission(dispatcher, "telemetry.devices.read"));
+        foreach (var forbidden in new[] { "telemetry.devices.manage", "telematics:devices:export" })
+        {
+            var denied = EndpointMappings.RequirePermission(dispatcher, forbidden);
+            Assert.Equal(StatusCodes.Status403Forbidden,
+                Assert.IsAssignableFrom<IStatusCodeHttpResult>(denied).StatusCode);
+        }
+    }
+
     [Theory]
     [InlineData("telematics:devices:view")]
     [InlineData("telematics:devices:export")]
