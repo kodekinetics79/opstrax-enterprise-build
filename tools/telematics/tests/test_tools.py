@@ -368,6 +368,50 @@ class CertificationHarnessTests(unittest.TestCase):
                 "https://opstrax-staging-api.onrender.com", "other.example", "staging",
             )
 
+    def test_target_refuses_current_render_production_host(self) -> None:
+        production_host = "opstrax-enterprise-build-8x41.onrender.com"
+        with self.assertRaisesRegex(ValueError, "production"):
+            certification_harness.validate_target(
+                f"https://{production_host}", production_host, "staging",
+            )
+
+    def test_preflight_requires_server_attested_staging_environment(self) -> None:
+        expected_sha = "a" * 40
+        production_response = (
+            200,
+            {"x-deployment-version": expected_sha},
+            __import__("json").dumps({
+                "status": "ready",
+                "version": expected_sha,
+                "environment": "Production",
+            }).encode("utf-8"),
+            0.125,
+        )
+        with mock.patch.object(certification_harness, "_open_json", return_value=production_response):
+            with self.assertRaisesRegex(RuntimeError, "environment mismatch"):
+                certification_harness.preflight(
+                    "https://staging.example.test", expected_sha, 30.0,
+                )
+
+    def test_preflight_preserves_verified_staging_environment_in_evidence(self) -> None:
+        expected_sha = "b" * 40
+        staging_response = (
+            200,
+            {"x-deployment-version": expected_sha},
+            __import__("json").dumps({
+                "status": "ready",
+                "version": expected_sha,
+                "environment": "Staging",
+            }).encode("utf-8"),
+            0.125,
+        )
+        with mock.patch.object(certification_harness, "_open_json", return_value=staging_response):
+            evidence = certification_harness.preflight(
+                "https://staging.example.test", expected_sha, 30.0,
+            )
+        self.assertEqual(evidence["environment"], "Staging")
+        self.assertEqual(evidence["version"], expected_sha)
+
     def test_default_plan_makes_zero_network_calls(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = self.credential_file(directory, [
