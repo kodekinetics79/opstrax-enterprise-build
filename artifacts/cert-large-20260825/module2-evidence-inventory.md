@@ -6,9 +6,9 @@ Module: Telematics and Live Operations
 
 ## Release identity
 
-- Current candidate merge SHA: `4cdb6c4cf3a37b11529007f90dd0f685cc8a58a7`
-- Staging frontend deployed SHA: `4cdb6c4cf3a37b11529007f90dd0f685cc8a58a7`
-- Staging API deployed SHA: `4cdb6c4cf3a37b11529007f90dd0f685cc8a58a7`
+- Current candidate merge SHA: `d1fcbb958183594a6ec3954d82093a682b7495e5`
+- Staging frontend deployed SHA: `d1fcbb958183594a6ec3954d82093a682b7495e5`
+- Staging API deployed SHA: `d1fcbb958183594a6ec3954d82093a682b7495e5`
 - Staging frontend: `https://opstrax-staging-certification.vercel.app`
 - Staging API readiness: `https://opstrax-staging-api.onrender.com/health/ready`
 - Production was not changed by this certification cycle.
@@ -33,8 +33,12 @@ Module: Telematics and Live Operations
 | Device `CLHQ-DEV-0200` reports Offline / 32% consistently in table and detail after **Reload Snapshot** | `4cdb6c4…` | Maintenance Manager / CL-HQ | Pass; `chrome/4cdb6c4-maintenance-device-health-parity-pass.jpg` |
 | Browser refresh plus full sign-out/sign-in retained the device result and exact runtime identity | `4cdb6c4…` | Maintenance Manager / CL-HQ | Pass; `chrome/4cdb6c4-maintenance-device-health-relogin-pass.jpg` |
 | Captured Chrome console errors and warnings for the final Device Health journey | `4cdb6c4…` | Maintenance Manager / CL-HQ | Pass; zero entries in `chrome/4cdb6c4-maintenance-console-errors.json` |
-| Tenant-wide 1,100-device and 1,000-position views | final candidate | Tenant/Fleet Administrator | Pending final Chrome retest |
-| Read-only and portal negative authorization | final candidate | Executive, Driver, Customer | Pending final Chrome retest |
+| Control Tower retained 220 branch-scoped managed devices while omitting Diagnostics and Vehicle Intelligence controls | `4cdb6c4…` | Dispatcher / CL-HQ | Pass; `chrome/4cdb6c4-dispatcher-control-tower-permissions-pass.jpg` |
+| Direct `/obd-j1939` rendered a safe permission denial without device identity leakage; captured console warning/error set was empty | `4cdb6c4…` | Dispatcher / CL-HQ | Pass; `chrome/4cdb6c4-dispatcher-obd-direct-denied-pass.jpg` and companion text snapshot |
+| Company Admin granted exact GPS and diagnostics export permissions to Executive through the customer role editor | `d1fcbb9…` | Tenant/Fleet Administrator | Pass; `chrome/d1fcbb9-admin-executive-export-grants-pass.png` |
+| GPS Tracking rendered 1,100 records and downloaded a complete 1,101-line CSV including header; permission survived refresh and relogin | `d1fcbb9…` | Executive | Pass; screenshot, zero-error JSON and `downloads/d1fcbb9-executive-gps-tracking-1100.csv` |
+| OBD/J1939 rendered 1,000 records and downloaded a complete 1,001-line CSV including header; mutation remained disabled | `d1fcbb9…` | Executive | Pass; screenshot, zero-error JSON and `downloads/d1fcbb9-executive-obd-j1939-1000.csv` |
+| Four internal telematics direct URLs rendered no internal heading or device serial and settled back to each restricted portal | `d1fcbb9…` | Driver, Customer | Pass; exact-candidate screenshots and zero-error JSON captures |
 | Responsive layouts and Live Map soak | final candidate | authorized roles | Pending final Chrome retest |
 
 ## Supporting evidence
@@ -54,4 +58,4 @@ The files added for the `4cdb6c4…` cycle are integrity-identified in `4cdb6c4-
 
 ## Evidence-pack identity
 
-The deployed product candidate is `4cdb6c4cf3a37b11529007f90dd0f685cc8a58a7`, merged by PR #101. This evidence closes M2-007 and M2-008 but does not by itself certify the module.
+The deployed product candidate is `d1fcbb958183594a6ec3954d82093a682b7495e5`, merged by PR #103. This evidence closes M2-009 but does not by itself certify the module.

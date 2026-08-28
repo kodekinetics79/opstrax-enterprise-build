@@ -1,0 +1,13 @@
+Module 2 exact-SHA staging readiness
+Date: 2026-08-28
+Candidate: d1fcbb958183594a6ec3954d82093a682b7495e5
+Frontend deployment: dpl_SuTdirAKkKnFkkpckHGjdfZdcGjS (READY)
+Stable frontend alias: https://opstrax-staging-certification.vercel.app
+Render deployment: dep-da8o4bks728c73cc1dv0 (Deploy succeeded|Live)
+Readiness: HTTP 200
+Readiness version: d1fcbb958183594a6ec3954d82093a682b7495e5
+Environment: Staging
+Database: connected
+Configuration: valid
+Fleet production contract: ready
+Credential, cookie, token, and raw security-header values are intentionally excluded.

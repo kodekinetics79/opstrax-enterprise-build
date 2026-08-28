@@ -12,8 +12,12 @@ All timings are observed in visible Google Chrome against the isolated certifica
 | `a894229…` | Maintenance Manager / CL-HQ | Vehicle sort transition | 200 diagnostics records | 1,800 ms observed wait | <= 2,000 ms | Pass |
 | `a894229…` | Maintenance Manager / CL-HQ | Exact vehicle search to 1-of-1 result | 200 diagnostics records | 2,220 ms | <= 2,000 ms | Fail by 220 ms |
 | `4cdb6c4…` | Maintenance Manager / CL-HQ | Post-deploy identity discovery during full sign-out/sign-in | one role account | 23,559 ms resource duration | <= 5,000 ms | Fail; Render Free request/cold-runtime delay, login eventually passed |
+| `d1fcbb9…` | Executive / tenant-wide | OBD/J1939 visible settle | 1,000 records | 5,788 ms | <= 5,000 ms | Fail by 788 ms |
+| `d1fcbb9…` | Executive / tenant-wide | OBD/J1939 customer CSV export | 1,000 records | 7,158 ms observed to ready state | <= 10,000 ms | Pass |
+| `d1fcbb9…` | Executive / tenant-wide | GPS Tracking visible settle | 1,100 records | 5,748 ms | <= 5,000 ms | Fail by 748 ms |
+| `d1fcbb9…` | Executive / tenant-wide | GPS customer CSV export | 1,100 records | 6,848 ms | <= 10,000 ms | Pass |
 
-Final-candidate full-tenant 1,100-device tables, 1,000-position Live Map soak, responsive viewports, authorized export, and repeated warm measurements remain required before the module verdict is closed. The two failed timing observations remain open performance findings rather than being hidden by successful API-only measurements.
+Final-candidate responsive viewports, Live Map soak, and repeated warm measurements remain required before the module verdict is closed. Full-tenant authorized exports now pass. Failed timing observations remain open performance findings rather than being hidden by successful API-only measurements.
 
 ## Supporting ingest performance
 

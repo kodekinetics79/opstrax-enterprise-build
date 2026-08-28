@@ -1,0 +1,13 @@
+Candidate: d1fcbb958183594a6ec3954d82093a682b7495e5
+Tenant: CERT-LARGE-20260825
+Primary surface: visible Google Chrome
+
+Driver CL-HQ and Customer Portal User each attempted these direct routes:
+- /telematics-control-tower
+- /gps-tracking
+- /iot-devices
+- /obd-j1939
+
+No internal telematics heading or CLHQ device serial rendered. Each session settled to its restricted portal. Captured Chrome warning/error sets were empty.
+
+Credentials, tokens, and cookies are intentionally excluded.
