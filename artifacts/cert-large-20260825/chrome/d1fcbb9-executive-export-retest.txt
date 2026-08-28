@@ -1,0 +1,27 @@
+Candidate: d1fcbb958183594a6ec3954d82093a682b7495e5
+Tenant: CERT-LARGE-20260825
+Primary surface: visible Google Chrome
+
+Company Admin
+- Signed in through the tenant login workflow.
+- Users & Roles exposed telematics:gps:export and telematics:diagnostics:export.
+- Granted only those export permissions to the existing Executive role and saved successfully.
+
+Executive
+- Fresh sign-in resolved the updated role.
+- GPS Tracking rendered 1,100 managed units and enabled Export CSV.
+- Downloaded CSV contained 1,101 rows including the header.
+- OBD/J1939 rendered 1,000 managed units and enabled Export CSV.
+- Downloaded CSV contained 1,001 rows including the header.
+- Reload Snapshot, Create Maintenance, and Manage Geofences remained disabled.
+- GPS export remained enabled after browser refresh and complete logout/login.
+- Frontend and API badges matched the exact candidate.
+- Captured Chrome warning/error sets were empty.
+
+Observed timings
+- Executive OBD visible settle: 5,788 ms.
+- Executive OBD export through ready state: 7,158 ms.
+- Executive GPS visible settle: 5,748 ms.
+- Executive GPS export: 6,848 ms.
+
+Passwords, tokens, cookies, and raw readiness security headers are intentionally excluded.

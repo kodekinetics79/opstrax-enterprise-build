@@ -1,0 +1,23 @@
+# Module 2 exact-candidate evidence SHA-256 manifest
+
+Candidate: `d1fcbb958183594a6ec3954d82093a682b7495e5`
+
+```text
+35ceb990d69d856417e4d1b08b03d23c16d8281ad619afe4120d3432a0fe14e4  chrome/d1fcbb9-admin-executive-export-grants-pass.png
+4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945  chrome/d1fcbb9-customer-console-errors.json
+905f6bfd3410d4658a672970f0cdbde845b90986a30a82d9db69041e1b853867  chrome/d1fcbb9-customer-direct-urls-confined-pass.png
+4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945  chrome/d1fcbb9-driver-console-errors.json
+50bf3d0b33d08a252bd361b495f2738cd42dbf4f5f803665af162d6ba5ce86a0  chrome/d1fcbb9-driver-customer-negative-retest.txt
+1f623d3885f3c5012c1a3fb3d8ec6674a8ed1cae1f8c5c5eb9ab519cb8451bb4  chrome/d1fcbb9-driver-direct-urls-confined-pass.png
+9bd0cae05fca8ea501911394218096eda4bf8c1dd1542487feed15a92e34e2c3  chrome/d1fcbb9-executive-export-relogin-pass.png
+550218f23db150e892c201b62774c61416d635ab76110773d936f5639ea737b8  chrome/d1fcbb9-executive-export-retest.txt
+5d68709a5f68e2f3e3fce4e8683104a42e1eae9b668aa04131a935935090d623  chrome/d1fcbb9-executive-gps-1100-export-pass.png
+4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945  chrome/d1fcbb9-executive-gps-console-errors.json
+1180ef50034f982103b434bb6e6d4f16039596e373d51563f153e031c22d0af3  chrome/d1fcbb9-executive-obd-1000-export-pass.png
+4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945  chrome/d1fcbb9-executive-obd-console-errors.json
+9cc067cb04d696d44813cff3a88a0b03d9395008fb20940eeacbec2eb5eec465  downloads/d1fcbb9-executive-gps-tracking-1100.csv
+29c37c60f106e393b0d9070ede136397c87487da64c31f50fada79819302aa67  downloads/d1fcbb9-executive-obd-j1939-1000.csv
+f6e45722fe295da0fcac9756734f87953c8098d3db9ca439b6206c10799d69b1  readiness/d1fcbb9-staging-readiness.txt
+```
+
+Passwords, tokens, cookies, one-time activation links, device credentials, and raw security headers are excluded.

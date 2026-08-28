@@ -1,0 +1,36 @@
+{
+  "candidate": "4cdb6c4cf3a37b11529007f90dd0f685cc8a58a7",
+  "tenant": "CERT-LARGE-20260825",
+  "role": "Driver CL-HQ",
+  "results": [
+    {
+      "path": "/telematics-control-tower",
+      "url": "https://opstrax-staging-certification.vercel.app/driver",
+      "portal": true,
+      "internalSerial": false,
+      "internalHeading": false
+    },
+    {
+      "path": "/gps-tracking",
+      "url": "https://opstrax-staging-certification.vercel.app/driver",
+      "portal": true,
+      "internalSerial": false,
+      "internalHeading": false
+    },
+    {
+      "path": "/iot-devices",
+      "url": "https://opstrax-staging-certification.vercel.app/driver",
+      "portal": true,
+      "internalSerial": false,
+      "internalHeading": false
+    },
+    {
+      "path": "/obd-j1939",
+      "url": "https://opstrax-staging-certification.vercel.app/driver",
+      "portal": true,
+      "internalSerial": false,
+      "internalHeading": false
+    }
+  ],
+  "consoleWarningsAndErrors": []
+}

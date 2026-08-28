@@ -47,11 +47,15 @@ The Device Health table and detail drawer use the same freshness, active-alert, 
 
 Open **GPS Tracking** to inspect the latest accepted vehicle position. Position freshness is displayed as current, delayed, stale, or no position. A newer ordered observation may advance the latest position; an older event remains historical and cannot move the vehicle backwards.
 
+GPS export is a separate least-privilege action. A Company Admin can grant `telematics:gps:export` in **Users & Roles** without granting map management. **Export CSV** downloads the complete authorized result set, not only the visible page; verify the exported row count against **Fleet managed units** after the download completes.
+
 Users with map-management permission can open **Manage Geofences**. Create geofences through the customer form, then validate entry and exit behaviour with authenticated location observations. Branch-restricted users can view only authorized assets and events.
 
 ## OBD/J1939 evidence
 
 Open **OBD/J1939** to review authenticated diagnostic observations, active faults, and operational holds. The page is evidence-oriented: a compatible device type by itself is not a diagnostic reading. Critical-fault holds must persist until an authorized resolution workflow is completed; changing or replaying a duplicate event must not clear them.
+
+Diagnostics export is governed separately by `telematics:diagnostics:export`. Granting it does not enable snapshot reload, fault mutation, or maintenance creation. **Export CSV** downloads every authorized diagnostics record; verify the exported row count against **Fleet managed units** and retain the file only in an approved customer evidence location.
 
 Administrator and Maintenance Manager roles can inspect the full permitted diagnostic evidence. Dispatcher, Driver, Executive, and Customer access depends on their permissions and branch or asset scope. A denied role receives a safe authorization result without tenant data leakage.
 
