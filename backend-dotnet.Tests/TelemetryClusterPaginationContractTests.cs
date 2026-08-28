@@ -69,7 +69,7 @@ public sealed class TelemetryClusterPaginationContractTests
         Assert.Contains("detail?: DeviceDetailRecord", page, StringComparison.Ordinal);
         Assert.Contains("Highest risk first", page, StringComparison.Ordinal);
         Assert.Contains("Freshness risk", page, StringComparison.Ordinal);
-        Assert.Contains("filterTabs: [\"All\", \"Online\", \"Watch\"", page, StringComparison.Ordinal);
+        Assert.Contains("filterTabs: [\"All\", \"Online\", \"Delayed / Watch\"", page, StringComparison.Ordinal);
         Assert.Contains("pageSize: 10_000", service, StringComparison.Ordinal);
         Assert.Contains("new Set(identities).size", service, StringComparison.Ordinal);
         Assert.DoesNotContain("while (rows.length < expectedTotal)", service, StringComparison.Ordinal);

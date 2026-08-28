@@ -27,8 +27,8 @@ assert.match(command, /Fleet managed units[\s\S]*Fleet offline \/ stale[\s\S]*Fl
 assert.match(command, /Fleet cards cover every authorized unit[\s\S]*current page/, "GPS explains mixed KPI scopes");
 assert.match(command, /Search serial, IMEI, model, category, provider, vehicle, driver, or location/, "GPS search promise matches backend-supported fields");
 assert.match(command, /Delayed \/ Watch[\s\S]*delayed-gps/, "GPS exposes the delayed-fix cohort");
-assert.match(command, /Sort GPS records[\s\S]*Freshness risk[\s\S]*Last device fix[\s\S]*Device serial/, "GPS exposes enterprise sort controls");
-assert.match(service, /sort: options\.sort \?\? "serial"[\s\S]*direction: options\.direction \?\? "asc"/, "GPS sort reaches the server page endpoint");
+assert.match(command, /Sort telemetry records[\s\S]*Highest risk first[\s\S]*Freshness risk[\s\S]*Latest fix first[\s\S]*Device serial/, "GPS exposes enterprise sort controls");
+assert.match(service, /sort: options\.sort \?\? "risk"[\s\S]*direction: options\.direction \?\? "desc"/, "Telemetry sort reaches the server page endpoint");
 assert.match(command, /columnLabels\[column\] \?\? column/, "GPS uses human-readable column labels");
 assert.match(command, /sticky left-0[\s\S]*sticky right-0/, "GPS keeps identity and actions visible during horizontal scroll");
 
@@ -44,7 +44,7 @@ assert.match(importer, /config\.atomic === true && invalid > 0/, "Atomic imports
 assert.match(command, /exportTelemetryClusterCsv\(kind,[\s\S]*Export every authorized row matching the current search and filter/, "Paged export fetches the complete authorized result set");
 assert.match(devices, /Revoke & Archive[\s\S]*Use Suspend for a reversible stop/, "Permanent credential revocation is not mislabeled as reversible archive");
 
-assert.match(service, /while \(rows\.length < expectedTotal\)/, "Cluster export traverses every server page");
+assert.match(service, /pageSize: 10_000[\s\S]*purpose: "export"[\s\S]*new Set\(identities\)\.size[\s\S]*exportComplete/, "Cluster export uses one bounded snapshot and fails closed on duplicate or incomplete identities");
 assert.match(service, /purpose: "export"/, "Cluster export declares its server-enforced export purpose");
 assert.match(service, /\^\[=\+\\-@\\t\\r\]/, "Cluster CSV neutralizes spreadsheet formulas");
 

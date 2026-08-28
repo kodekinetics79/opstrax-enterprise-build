@@ -54,7 +54,7 @@ const configs: Record<TelematicsKind, ClusterConfig> = {
     requiredViewPermission: PERMISSIONS.TELEMATICS_GPS_VIEW,
     requiredExportPermission: PERMISSIONS.TELEMATICS_GPS_EXPORT,
     requiredUpdatePermission: PERMISSIONS.TELEMATICS_GPS_VIEW,
-    filterTabs: ["All", "Online", "Watch", "Stale GPS", "Offline", "Critical"],
+    filterTabs: ["All", "Online", "Delayed / Watch", "Stale GPS", "Offline", "Critical"],
   },
   "obd-j1939": {
     eyebrow: "Telematics & IoT",
@@ -138,7 +138,7 @@ function isServerPaged(kind: TelematicsKind): kind is "gps-tracking" | "obd-j193
 function serverView(kind: "gps-tracking" | "obd-j1939", tab: string) {
   if (kind === "gps-tracking") {
     if (tab === "Online") return "online";
-    if (tab === "Watch") return "watch";
+    if (tab === "Delayed / Watch") return "delayed-gps";
     if (tab === "Stale GPS") return "stale-gps";
     if (tab === "Offline") return "offline";
     if (tab === "Critical") return "attention";
