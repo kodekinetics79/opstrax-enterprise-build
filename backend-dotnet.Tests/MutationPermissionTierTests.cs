@@ -116,11 +116,9 @@ public class MutationPermissionTierTests
         => Assert.Contains(token, EndpointMappings.RolePermissionDefaults[role], StringComparer.OrdinalIgnoreCase);
 
     [Theory]
-    // Broad/read-only roles without a reviewed operational Device Health journey remain closed.
-    [InlineData("Read-Only Auditor", "telematics:devices:view")]
-    // 'Maintenance Manager' has no seed row; its analogue 'Mechanic' (role 6) has no map/
-    // telematics grant. 'Read-only Auditor' (role 12) is audit/fleet/dashboard only — granting
-    // map:view would hand a read-only role live GPS via the live-state alias group.
+    // Exact telemetry view tokens do not justify broad module umbrellas. Maintenance Manager and
+    // Read-Only Auditor still do not receive map:view/telematics:view; their reviewed access is
+    // expressed by narrow route grants instead.
     [InlineData("Maintenance Manager", "map:view")]
     [InlineData("Read-Only Auditor", "map:view")]
     [InlineData("Maintenance Manager", "telematics:view")]

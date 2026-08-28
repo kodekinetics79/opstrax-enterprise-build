@@ -2369,7 +2369,7 @@ public static partial class EndpointMappings
         // telematics surface was bare — a Fleet Manager on a tenant without seeded roles lost the
         // live map entirely. Device inventory is also a direct, narrow read in the shipped Fleet
         // Manager catalogue and route guard; keep it explicit rather than widening a broad alias.
-        ["Fleet Manager"]            = ["dashboard:view","vehicles:view","vehicles:create","vehicles:update","vehicles:delete","vehicles:assign","vehicles:export","drivers:view","drivers:create","drivers:update","drivers:delete","drivers:assign","drivers:export","shipments:view","shipments:create","shipments:update","shipments:delete","shipments:export","dispatch:view","dispatch:create","dispatch:update","dispatch:assign","dispatch:cancel","dispatch:manage","dispatch:override","customer_portal:view","customer_portal:manage","carriers:view","carriers:manage","fuel:view","fuel:manage","billing:view","alerts:view","alerts:acknowledge","alerts:close","alerts:manage","maintenance:view","maintenance:create","maintenance:update","maintenance:close","maintenance:manage","compliance:view","compliance:update","compliance:export","compliance:manage","reports:view","reports:export","reports:manage","notifications:view","notifications:manage","messages:send","escalation:manage","map:view","telematics:view","fleet.read","fleet.manage","telematics:devices:export","telematics:devices:view"],
+        ["Fleet Manager"]            = ["dashboard:view","vehicles:view","vehicles:create","vehicles:update","vehicles:delete","vehicles:assign","vehicles:export","drivers:view","drivers:create","drivers:update","drivers:delete","drivers:assign","drivers:export","shipments:view","shipments:create","shipments:update","shipments:delete","shipments:export","dispatch:view","dispatch:create","dispatch:update","dispatch:assign","dispatch:cancel","dispatch:manage","dispatch:override","customer_portal:view","customer_portal:manage","carriers:view","carriers:manage","fuel:view","fuel:manage","billing:view","alerts:view","alerts:acknowledge","alerts:close","alerts:manage","maintenance:view","maintenance:create","maintenance:update","maintenance:close","maintenance:manage","compliance:view","compliance:update","compliance:export","compliance:manage","reports:view","reports:export","reports:manage","notifications:view","notifications:manage","messages:send","escalation:manage","map:view","telematics:view","fleet.read","fleet.manage","telematics:devices:export","telematics:devices:view","telematics:gps:view","telematics:diagnostics:view","telematics:sensors:view"],
         // NOTE: customer_portal:manage (customer tracking-link management) is a
         // SUPERVISOR-only permission by the P4.1 security model (Tenant Admin / Fleet
         // Owner / Fleet Manager). Dispatcher manages shipments/stops/POD but not
@@ -2378,7 +2378,7 @@ public static partial class EndpointMappings
         // board is the job. It was absent here, so the no-seeded-roles fallback silently withheld
         // it. Device inventory is a narrow operational read required by the shipped Dispatcher
         // Control Tower; it does not imply device mutation, diagnostics, firmware, or export.
-        ["Dispatcher"]               = ["dashboard:view","vehicles:view","drivers:view","shipments:view","shipments:create","shipments:update","shipments:export","dispatch:view","dispatch:create","dispatch:update","dispatch:assign","dispatch:cancel","carriers:view","fuel:view","alerts:view","alerts:acknowledge","customers:view","reports:view","notifications:view","messages:send","map:view","telematics:devices:view"],
+        ["Dispatcher"]               = ["dashboard:view","vehicles:view","drivers:view","shipments:view","shipments:create","shipments:update","shipments:export","dispatch:view","dispatch:create","dispatch:update","dispatch:assign","dispatch:cancel","carriers:view","fuel:view","alerts:view","alerts:acknowledge","customers:view","reports:view","notifications:view","messages:send","map:view","telematics:devices:view","telematics:gps:view"],
         // The Driver role is PORTAL-ONLY and isolated: a driver's token carries only what the
         // mobile driver portal (/driver/*, all gated driver:self) actually needs — self service,
         // in-app messaging with dispatch, and their notifications. DVIR submission is authorized
@@ -2388,18 +2388,15 @@ public static partial class EndpointMappings
         // API directly. Driver is an AUTHORITATIVE role in RolePermissionReconciler, so this list
         // is the exact grant set — stray grants are revoked, keeping the portal genuinely isolated.
         ["Driver"]                   = ["driver:self","notifications:view","messages:send"],
-        ["Safety Manager"]           = ["dashboard:view","safety:view","safety:create","safety:update","safety:review","safety:manage","safety:evidence:view","safety:evidence:export","alerts:view","alerts:acknowledge","alerts:close","compliance:view","compliance:update","compliance:export","compliance:manage","reports:view","notifications:view"],
-        // Maintenance Manager owns the shipped Device Health inspection journey. Grant the narrow
-        // inventory read only; diagnostics, mutation, firmware, export, and live GPS remain governed
-        // by their existing independent permissions.
-        ["Maintenance Manager"]      = ["dashboard:view","vehicles:view","maintenance:view","maintenance:create","maintenance:update","maintenance:close","maintenance:manage","alerts:view","alerts:acknowledge","alerts:close","compliance:view","reports:view","notifications:view","telematics:devices:view"],
+        ["Safety Manager"]           = ["dashboard:view","safety:view","safety:create","safety:update","safety:review","safety:manage","safety:evidence:view","safety:evidence:export","alerts:view","alerts:acknowledge","alerts:close","compliance:view","compliance:update","compliance:export","compliance:manage","reports:view","notifications:view","telematics:devices:view","telematics:gps:view","telematics:diagnostics:view","telematics:sensors:view"],
+        // Maintenance Manager owns the shipped Device Health, GPS, diagnostics, and sensor inspection
+        // journeys. Grant only their exact view tokens; mutation, firmware, and export remain governed
+        // by independent permissions and are not widened here.
+        ["Maintenance Manager"]      = ["dashboard:view","vehicles:view","maintenance:view","maintenance:create","maintenance:update","maintenance:close","maintenance:manage","alerts:view","alerts:acknowledge","alerts:close","compliance:view","reports:view","notifications:view","telematics:devices:view","telematics:gps:view","telematics:diagnostics:view","telematics:sensors:view"],
         ["Customer"]                 = ["customer_portal:view"],
-        // NEW-R1-06, DECLINED deliberately: the bare telematics surface is CORRECT here.
-        // The seed's 'Read-only Auditor' (role 12) is audit:view + fleet:view + dashboard:view —
-        // no map:view, no telematics token. Granting map:view would ALSO hand this read-only role
-        // telemetry.live_state.read through the live-state alias group, i.e. live GPS tracking of
-        // every driver, which neither the seed nor the role's purpose supports.
-        ["Read-Only Auditor"]        = ["dashboard:view","vehicles:view","drivers:view","shipments:view","dispatch:view","customers:view","safety:view","maintenance:view","compliance:view","alerts:view","reports:view","users:view","roles:view","settings:view","audit:view","security:view","access_review:view"],
+        // Read-only audit access follows the shipped telemetry catalogue, with exact view tokens
+        // only. Branch scoping still limits live/asset evidence; no mutation or export is granted.
+        ["Read-Only Auditor"]        = ["dashboard:view","vehicles:view","drivers:view","shipments:view","dispatch:view","customers:view","safety:view","maintenance:view","compliance:view","alerts:view","reports:view","users:view","roles:view","settings:view","audit:view","security:view","access_review:view","telematics:devices:view","telematics:gps:view","telematics:diagnostics:view","telematics:sensors:view"],
         ["Company Admin"]            = ["*"],
         ["Mechanic"]                 = ["maintenance:view","maintenance:manage","fleet:view"],
         ["Compliance Manager"]       = ["compliance:view","compliance:manage","audit:view","fleet:view","dashboard:view","security:view","access_review:view","access_review:manage"],

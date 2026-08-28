@@ -45,16 +45,58 @@ public sealed class AdminRolePermissionCatalogTests
         }
     }
 
-    [Theory]
-    [InlineData("telematics:devices:view")]
-    [InlineData("telematics:devices:export")]
-    public void SafetyManagerCannotViewOrExportDeviceRegistry(string permission)
+    [Fact]
+    public void SafetyManagerCanReadTelematicsButCannotManageOrExportDeviceRegistry()
     {
-        var denied = EndpointMappings.RequirePermission(
-            Principal("Safety Manager", EndpointMappings.RolePermissionDefaults["Safety Manager"]),
-            permission);
-        Assert.Equal(StatusCodes.Status403Forbidden,
-            Assert.IsAssignableFrom<IStatusCodeHttpResult>(denied).StatusCode);
+        var safety = Principal("Safety Manager", EndpointMappings.RolePermissionDefaults["Safety Manager"]);
+        foreach (var allowed in new[] { "telemetry.devices.read", "telematics:gps:view", "telematics:diagnostics:view", "telematics:sensors:view" })
+            Assert.Null(EndpointMappings.RequirePermission(safety, allowed));
+        foreach (var forbidden in new[] { "telemetry.devices.manage", "telematics:devices:export" })
+        {
+            var denied = EndpointMappings.RequirePermission(safety, forbidden);
+            Assert.Equal(StatusCodes.Status403Forbidden,
+                Assert.IsAssignableFrom<IStatusCodeHttpResult>(denied).StatusCode);
+        }
+    }
+
+    [Theory]
+    [InlineData("Fleet Manager", "telematics:gps:view")]
+    [InlineData("Fleet Manager", "telematics:diagnostics:view")]
+    [InlineData("Fleet Manager", "telematics:sensors:view")]
+    [InlineData("Dispatcher", "telematics:gps:view")]
+    [InlineData("Maintenance Manager", "telematics:gps:view")]
+    [InlineData("Maintenance Manager", "telematics:diagnostics:view")]
+    [InlineData("Maintenance Manager", "telematics:sensors:view")]
+    public void OperationalRolesCanOpenTheirShippedTelematicsReadRoutes(string role, string permission)
+        => Assert.Null(EndpointMappings.RequirePermission(
+            Principal(role, EndpointMappings.RolePermissionDefaults[role]), permission));
+
+    [Theory]
+    [InlineData("Driver")]
+    [InlineData("Customer")]
+    public void PortalAndPrivacyScopedRolesRemainClosedToBackOfficeTelematics(string role)
+    {
+        var principal = Principal(role, EndpointMappings.RolePermissionDefaults[role]);
+        foreach (var permission in new[] { "telemetry.devices.read", "telematics:gps:view", "telematics:diagnostics:view", "telematics:sensors:view" })
+        {
+            var denied = EndpointMappings.RequirePermission(principal, permission);
+            Assert.Equal(StatusCodes.Status403Forbidden,
+                Assert.IsAssignableFrom<IStatusCodeHttpResult>(denied).StatusCode);
+        }
+    }
+
+    [Fact]
+    public void ReadOnlyAuditorCanInspectButCannotChangeOrExportTelematics()
+    {
+        var auditor = Principal("Read-Only Auditor", EndpointMappings.RolePermissionDefaults["Read-Only Auditor"]);
+        foreach (var allowed in new[] { "telemetry.devices.read", "telematics:gps:view", "telematics:diagnostics:view", "telematics:sensors:view" })
+            Assert.Null(EndpointMappings.RequirePermission(auditor, allowed));
+        foreach (var forbidden in new[] { "telemetry.devices.manage", "telematics:devices:export", "telematics:gps:export", "telematics:diagnostics:update", "telematics:sensors:update" })
+        {
+            var denied = EndpointMappings.RequirePermission(auditor, forbidden);
+            Assert.Equal(StatusCodes.Status403Forbidden,
+                Assert.IsAssignableFrom<IStatusCodeHttpResult>(denied).StatusCode);
+        }
     }
 
     private static DefaultHttpContext Principal(string role, string[] permissions)
