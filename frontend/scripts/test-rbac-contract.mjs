@@ -284,6 +284,24 @@ assert.equal(hasPermission(BACKEND_ROLES.Dispatcher, "telemetry.devices.manage")
 assert.equal(hasPermission(BACKEND_ROLES.Dispatcher, "telematics:devices:export"), false, "backend Dispatcher must not export the device registry");
 assert.equal(hasPermission(ROLE_PERMISSIONS.maintenance_manager, "telemetry.devices.read"), true, "maintenance_manager must keep Device Health");
 assert.equal(hasPermission(BACKEND_ROLES["Maintenance Manager"], "telemetry.devices.read"), true, "backend Maintenance Manager must match the shipped Device Health surface");
+for (const permission of [
+  "telematics:gps:view",
+  "telematics:gps:export",
+  "telematics:diagnostics:view",
+  "telematics:diagnostics:update",
+  "telematics:diagnostics:export",
+]) {
+  assert.equal(
+    BACKEND_ROLES["Tenant Admin"].includes(permission),
+    true,
+    `backend Tenant Admin must directly hold shipped ${permission}`,
+  );
+  assert.equal(
+    hasPermission(BACKEND_ROLES["Tenant Admin"], permission),
+    true,
+    `backend Tenant Admin must open shipped ${permission} workflow`,
+  );
+}
 for (const [role, required] of [
   ["Fleet Manager", ["telematics:gps:view", "telematics:diagnostics:view", "telematics:sensors:view"]],
   ["Dispatcher", ["telematics:gps:view"]],
@@ -296,7 +314,16 @@ for (const [role, required] of [
   }
 }
 for (const role of ["Driver", "Customer"]) {
-  for (const permission of ["telemetry.devices.read", "telematics:gps:view", "telematics:diagnostics:view", "telematics:sensors:view"]) {
+  for (const permission of [
+    "telemetry.devices.read",
+    "telematics:devices:export",
+    "telematics:gps:view",
+    "telematics:gps:export",
+    "telematics:diagnostics:view",
+    "telematics:diagnostics:update",
+    "telematics:diagnostics:export",
+    "telematics:sensors:view",
+  ]) {
     assert.equal(hasPermission(BACKEND_ROLES[role], permission), false, `backend ${role} must remain closed to ${permission}`);
   }
 }
