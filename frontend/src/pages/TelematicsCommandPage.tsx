@@ -54,7 +54,7 @@ const configs: Record<TelematicsKind, ClusterConfig> = {
     requiredViewPermission: PERMISSIONS.TELEMATICS_GPS_VIEW,
     requiredExportPermission: PERMISSIONS.TELEMATICS_GPS_EXPORT,
     requiredUpdatePermission: PERMISSIONS.TELEMATICS_GPS_VIEW,
-    filterTabs: ["All", "Online", "Delayed / Watch", "Stale GPS", "Offline", "Critical"],
+    filterTabs: ["All", "Online", "Watch", "Stale GPS", "Offline", "Critical"],
   },
   "obd-j1939": {
     eyebrow: "Telematics & IoT",
@@ -111,6 +111,7 @@ function filterRecord(kind: TelematicsKind, record: TelematicsClusterRecord, tab
   if (tab === "All") return true;
   if (kind === "gps-tracking") {
     if (tab === "Online") return !record.offlineWarning && record.dataFreshnessStatus === "Fresh";
+    if (tab === "Watch") return record.dataFreshnessStatus === "Watch";
     if (tab === "Stale GPS") return /h ago|Stale/i.test(record.staleGps) || record.dataFreshnessStatus === "Stale";
     if (tab === "Offline") return record.offlineWarning;
     return (record.deviceHealthAvailable && record.deviceHealth < 70) || record.alertStatus === "Open";
@@ -137,7 +138,7 @@ function isServerPaged(kind: TelematicsKind): kind is "gps-tracking" | "obd-j193
 function serverView(kind: "gps-tracking" | "obd-j1939", tab: string) {
   if (kind === "gps-tracking") {
     if (tab === "Online") return "online";
-    if (tab === "Delayed / Watch") return "delayed-gps";
+    if (tab === "Watch") return "watch";
     if (tab === "Stale GPS") return "stale-gps";
     if (tab === "Offline") return "offline";
     if (tab === "Critical") return "attention";
@@ -246,8 +247,7 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
-  const [gpsSort, setGpsSort] = useState<"freshness" | "fixTime" | "vehicle" | "serial" | "provider">("freshness");
-  const [gpsDirection, setGpsDirection] = useState<"asc" | "desc">("desc");
+  const [serverSort, setServerSort] = useState<"risk" | "freshness" | "lastFix" | "vehicle" | "serial" | "provider">("risk");
   const [selected, setSelected] = useState<TelematicsClusterRecord | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -262,7 +262,7 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
   const paged = isServerPaged(kind);
   const pageSize = 50;
   const recordsQ = useQuery({
-    queryKey: ["telematics-cluster", kind, paged ? page : 1, paged ? search : "", paged ? tab : "", paged ? gpsSort : "", paged ? gpsDirection : ""],
+    queryKey: ["telematics-cluster", kind, paged ? page : 1, paged ? search : "", paged ? tab : "", paged ? serverSort : ""],
     queryFn: async (): Promise<TelemetryClusterPageResult> => {
       if (paged) {
         return telematicsService.getTelemetryClusterPage(kind, {
@@ -270,12 +270,12 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
           pageSize,
           search,
           view: serverView(kind, tab),
-          sort: kind === "gps-tracking" ? gpsSort : "serial",
-          direction: kind === "gps-tracking" ? gpsDirection : "asc",
+          sort: serverSort,
+          direction: serverSort === "vehicle" || serverSort === "serial" || serverSort === "provider" ? "asc" : "desc",
         });
       }
       const items = await config.query();
-      return { items, total: items.length, page: 1, pageSize: Math.max(1, items.length), summary: { active: items.length, offline: 0, attention: 0 } };
+      return { items, total: items.length, page: 1, pageSize: Math.max(1, items.length), summary: { active: items.length, offline: 0, attention: 0, online: 0, delayed: 0, stale: 0, noPosition: 0 } };
     },
     enabled: canView,
     staleTime: 20_000,
@@ -357,7 +357,12 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
 
   const exportMut = useMutation({
     mutationFn: async () => paged
-      ? telematicsService.exportTelemetryClusterCsv(kind, { search, view: serverView(kind, tab), sort: kind === "gps-tracking" ? gpsSort : "serial", direction: kind === "gps-tracking" ? gpsDirection : "asc" }, config.columns)
+      ? telematicsService.exportTelemetryClusterCsv(kind, {
+          search,
+          view: serverView(kind, tab),
+          sort: serverSort,
+          direction: serverSort === "vehicle" || serverSort === "serial" || serverSort === "provider" ? "asc" : "desc",
+        }, config.columns)
       : telematicsService.exportClusterCsv(rows, config.columns),
     onSuccess: (csv) => downloadCsv(`opstrax-${kind}.csv`, csv),
     onError: (error) => setNotice(apiErrorMessage(error, "The complete authorized export could not be created. Retry the export.")),
@@ -501,18 +506,23 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
             onChange={(event) => setSearchInput(event.target.value)}
             placeholder={config.searchPlaceholder}
           />
+          {paged ? <label className="min-w-48">
+            <span className="sr-only">Sort telemetry records</span>
+            <select className="field" value={serverSort} onChange={(event) => { setServerSort(event.target.value as typeof serverSort); setPage(1); }}>
+              <option value="risk">Highest risk first</option>
+              <option value="freshness">Freshness risk</option>
+              <option value="lastFix">Latest fix first</option>
+              <option value="vehicle">Vehicle</option>
+              <option value="serial">Device serial</option>
+              <option value="provider">Provider</option>
+            </select>
+          </label> : null}
           <div className="flex flex-wrap gap-2">
             {config.filterTabs.map((item) => (
               <button key={item} className={tab === item ? "btn-primary py-2 text-xs" : "btn-ghost py-2 text-xs"} onClick={() => { setTab(item); setPage(1); }}>
                 {item}
               </button>
             ))}
-            {kind === "gps-tracking" ? <>
-              <label><span className="sr-only">Sort GPS records</span><select className="field py-2 text-xs" value={gpsSort} onChange={(event) => { setGpsSort(event.target.value as typeof gpsSort); setPage(1); }}>
-                <option value="freshness">Freshness risk</option><option value="fixTime">Last device fix</option><option value="vehicle">Vehicle</option><option value="serial">Device serial</option><option value="provider">Provider</option>
-              </select></label>
-              <button className="btn-ghost py-2 text-xs" type="button" onClick={() => { setGpsDirection((value) => value === "asc" ? "desc" : "asc"); setPage(1); }} aria-label={`Sort ${gpsDirection === "asc" ? "descending" : "ascending"}`}>{gpsDirection === "asc" ? "Ascending" : "Descending"}</button>
-            </> : null}
           </div>
         </div>
 

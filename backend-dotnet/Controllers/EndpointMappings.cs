@@ -18842,9 +18842,12 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var page = int.TryParse(http.Request.Query["page"].FirstOrDefault(), out var parsedPage)
             ? Math.Max(1, parsedPage)
             : 1;
+        const int maxViewPageSize = 100;
+        const int maxExportPageSize = 10_000;
+        var pageSizeLimit = purpose == "export" ? maxExportPageSize : maxViewPageSize;
         var pageSize = int.TryParse(http.Request.Query["pageSize"].FirstOrDefault(), out var parsedPageSize)
-            ? Math.Clamp(parsedPageSize, 1, 100)
-            : 100;
+            ? Math.Clamp(parsedPageSize, 1, pageSizeLimit)
+            : purpose == "export" ? maxExportPageSize : maxViewPageSize;
         var search = http.Request.Query["search"].FirstOrDefault()?.Trim() ?? "";
         var view = http.Request.Query["view"].FirstOrDefault()?.Trim().ToLowerInvariant() ?? "all";
         if (purpose == "export" && page == 1)
@@ -18872,29 +18875,55 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             ? "DESC"
             : "ASC";
         var sortKey = http.Request.Query["sort"].FirstOrDefault()?.Trim().ToLowerInvariant() ?? "serial";
-        var priorityExpression = @"CASE
-            WHEN e.last_seen_at IS NULL THEN 4
-            WHEN e.last_seen_at < NOW() - INTERVAL '15 minutes' THEN 3
-            WHEN e.status IN ('Suspended','Malfunction') THEN 3
-            WHEN LOWER(COALESCE(e.device_state,'')) IN ('quarantined','suspended') THEN 3
-            WHEN e.status IN ('Diagnostic')" + alertAttentionClause + faultAttentionClause + @" THEN 2
+        var prioritySort = sortKey is "risk" or "priority";
+        var alertRiskRank = canReadAlerts ? "COALESCE(open_alert_risk.risk_rank,0)" : "0";
+        var faultRiskRank = canReadDiagnostics ? "COALESCE(active_fault_risk.risk_rank,0)" : "0";
+        var alertRiskAt = canReadAlerts ? "open_alert_risk.risk_at" : "NULL::TIMESTAMPTZ";
+        var faultRiskAt = canReadDiagnostics ? "active_fault_risk.risk_at" : "NULL::TIMESTAMPTZ";
+        var lifecycleRiskExpression = @"CASE
+            WHEN LOWER(COALESCE(e.device_state,'')) IN ('quarantined','suspended') THEN 650
+            WHEN e.status IN ('Suspended','Malfunction') THEN 600
+            WHEN e.status='Diagnostic' THEN 550
+            WHEN e.last_seen_at < NOW() - INTERVAL '15 minutes' THEN 500
+            WHEN e.last_seen_at IS NULL THEN 400
+            ELSE 0 END";
+        var priorityExpression = $"GREATEST({faultRiskRank},{alertRiskRank},{lifecycleRiskExpression})";
+        var priorityRecencyExpression = $"GREATEST({faultRiskAt},{alertRiskAt},e.last_seen_at,e.created_at)";
+        var positionFixExpression = "COALESCE(lp.device_fix_time,lp.event_time,lp.received_at)";
+        var gpsFreshnessRiskExpression = $@"CASE
+            WHEN lp.id IS NULL OR lp.lat NOT BETWEEN -90 AND 90 OR lp.lng NOT BETWEEN -180 AND 180 THEN 4
+            WHEN EXTRACT(EPOCH FROM (NOW()-{positionFixExpression})) > 900 THEN 3
+            WHEN EXTRACT(EPOCH FROM (NOW()-{positionFixExpression})) > 120 THEN 2
+            ELSE 0 END";
+        var diagnosticFreshnessRiskExpression = @"CASE
+            WHEN diagnostic_evidence.observed_at IS NULL THEN 4
+            WHEN EXTRACT(EPOCH FROM (NOW()-diagnostic_evidence.observed_at)) > 900 THEN 3
+            WHEN EXTRACT(EPOCH FROM (NOW()-diagnostic_evidence.observed_at)) > 120 THEN 2
             ELSE 0 END";
         var sort = sortKey switch
         {
             "provider" => "e.provider",
             "model" => "e.device_model",
             "status" => "e.status",
-            "lastcheckin" => "e.last_seen_at",
+            "lastcheckin" or "lastfix" => cluster switch
+            {
+                "gps" => positionFixExpression,
+                "diagnostics" => "diagnostic_evidence.observed_at",
+                _ => "e.last_seen_at",
+            },
             "vehicle" => "v.vehicle_code",
-            "priority" => priorityExpression,
-            "fixtime" when cluster == "gps" => "COALESCE(lp.device_fix_time,lp.event_time,lp.received_at)",
-            "freshness" when cluster == "gps" => @"CASE
-                WHEN lp.id IS NULL OR lp.lat NOT BETWEEN -90 AND 90 OR lp.lng NOT BETWEEN -180 AND 180 THEN 4
-                WHEN EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) > 900 THEN 3
-                WHEN EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) > 120 THEN 2
-                ELSE 0 END",
+            "freshness" => cluster switch
+            {
+                "gps" => gpsFreshnessRiskExpression,
+                "diagnostics" => diagnosticFreshnessRiskExpression,
+                _ => lifecycleRiskExpression,
+            },
+            "risk" or "priority" => priorityExpression,
             _ => "e.device_serial",
         };
+        var riskRecencyOrder = prioritySort
+            ? $", {priorityRecencyExpression} DESC NULLS LAST"
+            : "";
         var standardViewClause = view switch
         {
             "archived" => " AND (e.revoked_at IS NOT NULL OR e.status IN ('Revoked','Retired'))",
@@ -18924,6 +18953,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 AND EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) <= 900",
             "stale-gps" => @" AND e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired') AND lp.lat BETWEEN -90 AND 90 AND lp.lng BETWEEN -180 AND 180
                 AND EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) > 900",
+            "watch" or "delayed" => @" AND e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired') AND lp.lat BETWEEN -90 AND 90 AND lp.lng BETWEEN -180 AND 180
+                AND EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) > 120
+                AND EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) <= 900",
             "offline" => @" AND e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired') AND (
                 lp.id IS NULL OR lp.lat NOT BETWEEN -90 AND 90 OR lp.lng NOT BETWEEN -180 AND 180
                 OR e.status IN ('Suspended','Malfunction'))",
@@ -18981,7 +19013,30 @@ LEFT JOIN LATERAL (
                AND (fc.code ILIKE '%' || @search || '%' OR COALESCE(fc.description,'') ILIKE '%' || @search || '%'))",
             _ => "",
         };
-        var fromSql = @"
+        // Risk evidence is permission-scoped before it reaches ordering. Severity
+        // ranks intentionally put active operational incidents ahead of onboarding:
+        // critical/high faults and alerts must outrank a never-connected device.
+        var alertRiskJoin = canReadAlerts && prioritySort ? @"
+LEFT JOIN LATERAL (
+  SELECT MAX(CASE LOWER(COALESCE(ta.severity,''))
+               WHEN 'critical' THEN 950 WHEN 'emergency' THEN 950
+               WHEN 'high' THEN 850 WHEN 'medium' THEN 750
+               WHEN 'warning' THEN 700 ELSE 675 END) risk_rank,
+         MAX(COALESCE(ta.updated_at,ta.created_at)) risk_at
+  FROM telemetry_alerts ta
+  WHERE ta.company_id=e.company_id AND ta.device_id=e.id AND ta.status='Open'
+) open_alert_risk ON TRUE" : "";
+        var faultRiskJoin = canReadDiagnostics && prioritySort ? @"
+LEFT JOIN LATERAL (
+  SELECT MAX(CASE LOWER(COALESCE(fc.severity,''))
+               WHEN 'critical' THEN 1000 WHEN 'emergency' THEN 1000
+               WHEN 'high' THEN 900 WHEN 'medium' THEN 800
+               WHEN 'warning' THEN 725 ELSE 700 END) risk_rank,
+         MAX(COALESCE(fc.last_observed_at,fc.observed_at,fc.last_seen_at,fc.created_at)) risk_at
+  FROM fault_codes fc
+  WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active'
+) active_fault_risk ON TRUE" : "";
+        var fromPrefixSql = @"
 FROM eld_devices e
 LEFT JOIN LATERAL (
   SELECT i.id,i.vehicle_id,i.status,i.device_role,i.is_primary,i.row_version current_installation_row_version,i.activation_verified_at
@@ -18998,7 +19053,8 @@ LEFT JOIN LATERAL (
   ORDER BY da.assigned_at DESC,da.id DESC LIMIT 1
 ) active_dispatch ON TRUE
 LEFT JOIN drivers d ON d.id=active_dispatch.driver_id AND d.company_id=e.company_id
-" + positionEvidenceJoin + diagnosticEvidenceJoin + @"
+" + positionEvidenceJoin + diagnosticEvidenceJoin;
+        var whereSql = @"
 WHERE e.company_id=@cid AND e.deleted_at IS NULL
   AND (@branchId::BIGINT IS NULL OR e.branch_id=@branchId)
   AND (@search='' OR e.device_serial ILIKE '%' || @search || '%'
@@ -19009,6 +19065,11 @@ WHERE e.company_id=@cid AND e.deleted_at IS NULL
     OR COALESCE(v.vehicle_code,'') ILIKE '%' || @search || '%'
     OR COALESCE(d.full_name,'') ILIKE '%' || @search || '%'
     " + evidenceSearch + ")";
+        // Counts and summaries do not need risk-ranking joins. Keeping those joins
+        // on the item query only avoids repeating severity aggregation over the
+        // complete fleet three times per request.
+        var fromSql = fromPrefixSql + whereSql;
+        var itemFromSql = fromPrefixSql + alertRiskJoin + faultRiskJoin + whereSql;
         Action<NpgsqlCommand> bind = command =>
         {
             command.Parameters.AddWithValue("@cid", GetCompanyId(http));
@@ -19064,7 +19125,8 @@ SELECT e.id, e.device_serial, e.imei, e.device_category, e.device_model, e.provi
        " + (canReadAlerts
            ? "(SELECT COUNT(*) FROM telemetry_alerts ta WHERE ta.company_id=e.company_id AND ta.device_id=e.id AND ta.status='Open')"
            : "0") + @" open_alert_count
-" + evidenceSelect + fromSql + clusterClause + viewClause + $" ORDER BY {sort} {direction} NULLS LAST, e.device_serial LIMIT @limit OFFSET @offset",
+" + evidenceSelect + itemFromSql + clusterClause + viewClause
+            + $" ORDER BY {sort} {direction} NULLS LAST{riskRecencyOrder}, COALESCE(v.vehicle_code,'') ASC, COALESCE(e.provider,'') ASC, e.device_serial ASC, e.id ASC LIMIT @limit OFFSET @offset",
             command =>
             {
                 bind(command);
@@ -19075,6 +19137,19 @@ SELECT e.id, e.device_serial, e.imei, e.device_category, e.device_model, e.provi
         {
             "gps" => @"COUNT(*) FILTER (WHERE e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired')) active,
        COUNT(*) FILTER (WHERE e.revoked_at IS NOT NULL OR e.status IN ('Revoked','Retired')) archived,
+       COUNT(*) FILTER (WHERE e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired','Suspended','Malfunction','Diagnostic')
+         AND LOWER(COALESCE(e.device_state,'')) NOT IN ('quarantined','suspended')
+         AND lp.lat BETWEEN -90 AND 90 AND lp.lng BETWEEN -180 AND 180
+         AND EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) <= 120) online,
+       COUNT(*) FILTER (WHERE e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired')
+         AND lp.lat BETWEEN -90 AND 90 AND lp.lng BETWEEN -180 AND 180
+         AND EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) > 120
+         AND EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) <= 900) delayed,
+       COUNT(*) FILTER (WHERE e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired')
+         AND lp.lat BETWEEN -90 AND 90 AND lp.lng BETWEEN -180 AND 180
+         AND EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) > 900) stale,
+       COUNT(*) FILTER (WHERE e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired')
+         AND (lp.id IS NULL OR lp.lat NOT BETWEEN -90 AND 90 OR lp.lng NOT BETWEEN -180 AND 180)) no_position,
        COUNT(*) FILTER (WHERE e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired') AND (lp.id IS NULL OR lp.lat NOT BETWEEN -90 AND 90 OR lp.lng NOT BETWEEN -180 AND 180
          OR EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) > 900
          OR e.status IN ('Suspended','Malfunction'))) offline,
@@ -19117,6 +19192,7 @@ SELECT e.id, e.device_serial, e.imei, e.device_category, e.device_model, e.provi
             total,
             page,
             pageSize,
+            exportComplete = purpose != "export" || (page == 1 && items.Count == total),
             summary = summary ?? new Dictionary<string, object?>(),
         }, "Device page"));
     }

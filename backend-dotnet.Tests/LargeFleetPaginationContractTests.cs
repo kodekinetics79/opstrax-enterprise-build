@@ -41,7 +41,7 @@ public sealed class LargeFleetPaginationContractTests
 
         Assert.Contains("/api/telemetry/devices/page", endpoints, StringComparison.Ordinal);
         Assert.Contains("/api/telemetry/devices/export", endpoints, StringComparison.Ordinal);
-        Assert.Contains("Math.Clamp(parsedPageSize, 1, 100)", endpoints, StringComparison.Ordinal);
+        Assert.Contains("const int maxViewPageSize = 100", endpoints, StringComparison.Ordinal);
         Assert.Contains("LIMIT @limit OFFSET @offset", endpoints, StringComparison.Ordinal);
         Assert.Contains("(@branchId::BIGINT IS NULL OR e.branch_id=@branchId)", endpoints, StringComparison.Ordinal);
         Assert.Contains("LIMIT 100000", endpoints, StringComparison.Ordinal);

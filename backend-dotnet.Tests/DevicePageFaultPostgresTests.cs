@@ -87,9 +87,11 @@ public sealed class DevicePageFaultPostgresTests
                   VALUES (@c,@b,@code,'Truck','legacy-fleet-identifier',@code,'Available')",
                 c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchId); c.Parameters.AddWithValue("@code", $"V-{suffix}"); });
             var quarantinedVehicleId = await Vehicle(db, companyId, branchId, $"V-Q-{suffix}");
+            var delayedVehicleId = await Vehicle(db, companyId, branchId, $"V-D-{suffix}");
             var gpsSerial = $"GPS-{suffix}";
             var obdSerial = $"OBD-{suffix}";
             var quarantinedSerial = $"GPS-QUARANTINED-{suffix}";
+            var delayedSerial = $"GPS-DELAYED-{suffix}";
             var gpsId = await db.InsertAsync(
                 "INSERT INTO eld_devices(company_id,branch_id,device_serial,device_category,status,device_state) VALUES (@c,@b,@s,'GPS Tracker','Provisioning','Registered')",
                 c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchId); c.Parameters.AddWithValue("@s", gpsSerial); });
@@ -99,6 +101,9 @@ public sealed class DevicePageFaultPostgresTests
             var quarantinedId = await db.InsertAsync(
                 "INSERT INTO eld_devices(company_id,branch_id,device_serial,device_category,status,device_state,last_seen_at) VALUES (@c,@b,@s,'GPS Tracker','Provisioning','Quarantined',NOW())",
                 c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchId); c.Parameters.AddWithValue("@s", quarantinedSerial); });
+            var delayedId = await db.InsertAsync(
+                "INSERT INTO eld_devices(company_id,branch_id,device_serial,device_category,status,device_state,last_seen_at) VALUES (@c,@b,@s,'GPS Tracker','Provisioning','Registered',NOW())",
+                c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchId); c.Parameters.AddWithValue("@s", delayedSerial); });
             await db.ExecuteAsync(
                 @"INSERT INTO latest_vehicle_positions(company_id,vehicle_id,device_id,lat,lng,engine_status,event_time,received_at)
                   VALUES (@c,@v,@d,43.65,-79.38,'Running',NOW(),NOW())",
@@ -107,6 +112,10 @@ public sealed class DevicePageFaultPostgresTests
                 @"INSERT INTO latest_vehicle_positions(company_id,vehicle_id,device_id,lat,lng,event_time,received_at)
                   VALUES (@c,@v,@d,43.66,-79.39,NOW(),NOW())",
                 c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@v", quarantinedVehicleId); c.Parameters.AddWithValue("@d", quarantinedId); });
+            await db.ExecuteAsync(
+                @"INSERT INTO latest_vehicle_positions(company_id,vehicle_id,device_id,lat,lng,event_time,device_fix_time,received_at)
+                  VALUES (@c,@v,@d,43.67,-79.40,NOW()-INTERVAL '5 minutes',NOW()-INTERVAL '5 minutes',NOW())",
+                c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@v", delayedVehicleId); c.Parameters.AddWithValue("@d", delayedId); });
 
             var diagnostics = Principal(companyId, branchId, "telematics:diagnostics:view");
             diagnostics.Request.QueryString = new QueryString("?cluster=diagnostics&pageSize=50");
@@ -133,6 +142,16 @@ public sealed class DevicePageFaultPostgresTests
             Assert.Single(onlineItems);
             Assert.Equal(gpsSerial, onlineItems[0].GetProperty("deviceSerial").GetString());
 
+            gps.Request.QueryString = new QueryString("?cluster=gps&view=watch&pageSize=50&sort=freshness&direction=desc");
+            using var watchPayload = Payload(await Invoke("TelemetryDevicePage", gps, db, CancellationToken.None));
+            var watchData = watchPayload.RootElement.GetProperty("data");
+            Assert.Equal(1, watchData.GetProperty("total").GetInt64());
+            Assert.Equal(delayedSerial, Assert.Single(watchData.GetProperty("items").EnumerateArray()).GetProperty("deviceSerial").GetString());
+            Assert.Equal(1, watchData.GetProperty("summary").GetProperty("online").GetInt64());
+            Assert.Equal(1, watchData.GetProperty("summary").GetProperty("delayed").GetInt64());
+            Assert.Equal(0, watchData.GetProperty("summary").GetProperty("stale").GetInt64());
+            Assert.Equal(1, watchData.GetProperty("summary").GetProperty("noPosition").GetInt64());
+
             gps.Request.QueryString = new QueryString("?cluster=gps&view=attention&pageSize=50");
             using var attentionPayload = Payload(await Invoke("TelemetryDevicePage", gps, db, CancellationToken.None));
             var attentionItems = attentionPayload.RootElement.GetProperty("data").GetProperty("items").EnumerateArray().ToArray();
@@ -145,7 +164,7 @@ public sealed class DevicePageFaultPostgresTests
             Assert.Equal(1, offlineData.GetProperty("total").GetInt64());
             // Fleet summary stays scoped to the full authorized GPS cluster; only the
             // queue total/items shrink under a view filter.
-            Assert.Equal(3, offlineData.GetProperty("summary").GetProperty("active").GetInt64());
+            Assert.Equal(4, offlineData.GetProperty("summary").GetProperty("active").GetInt64());
             Assert.Equal(2, offlineData.GetProperty("summary").GetProperty("attention").GetInt64());
             Assert.Equal(obdSerial, Assert.Single(offlineData.GetProperty("items").EnumerateArray()).GetProperty("deviceSerial").GetString());
 
@@ -158,7 +177,7 @@ public sealed class DevicePageFaultPostgresTests
             var searchData = searchPayload.RootElement.GetProperty("data");
             Assert.Equal(1, searchData.GetProperty("total").GetInt64());
             // Search narrows the queue, not the full-fleet KPI denominator.
-            Assert.Equal(3, searchData.GetProperty("summary").GetProperty("active").GetInt64());
+            Assert.Equal(4, searchData.GetProperty("summary").GetProperty("active").GetInt64());
         }
         finally
         {
@@ -265,14 +284,14 @@ public sealed class DevicePageFaultPostgresTests
                 @"INSERT INTO telemetry_alerts(company_id,device_id,alert_type,severity,message,status)
                   VALUES (@cid,@device,'connectivity','High','Controlled test alert','Open')",
                 c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@device", alertId); });
-            await Fault(db, companyId, faultSerial, "P2000", "0 seconds");
+            await Fault(db, companyId, faultSerial, "P2000", "0 seconds", "Critical");
 
             var deviceOnly = Principal(companyId);
             deviceOnly.Request.QueryString = new QueryString("?view=attention&pageSize=100&sort=priority&direction=desc");
             using var deviceOnlyPayload = Payload(await Invoke("TelemetryDevicePage", deviceOnly, db, CancellationToken.None));
             var deviceOnlyData = deviceOnlyPayload.RootElement.GetProperty("data");
             Assert.Equal(2, deviceOnlyData.GetProperty("total").GetInt64());
-            Assert.Equal(neverSerial, deviceOnlyData.GetProperty("items").EnumerateArray().First().GetProperty("deviceSerial").GetString());
+            Assert.Equal(quarantinedSerial, deviceOnlyData.GetProperty("items").EnumerateArray().First().GetProperty("deviceSerial").GetString());
             Assert.Equal(5, deviceOnlyData.GetProperty("summary").GetProperty("active").GetInt64());
             Assert.Equal(1, deviceOnlyData.GetProperty("summary").GetProperty("archived").GetInt64());
             Assert.Equal(1, deviceOnlyData.GetProperty("summary").GetProperty("neverConnected").GetInt64());
@@ -290,6 +309,7 @@ public sealed class DevicePageFaultPostgresTests
             using var alertPayload = Payload(await Invoke("TelemetryDevicePage", alertReader, db, CancellationToken.None));
             var alertItems = alertPayload.RootElement.GetProperty("data").GetProperty("items").EnumerateArray().ToArray();
             Assert.Equal(3, alertItems.Length);
+            Assert.Equal(alertSerial, alertItems[0].GetProperty("deviceSerial").GetString());
             Assert.Equal(1, alertItems.Single(item => item.GetProperty("deviceSerial").GetString() == alertSerial).GetProperty("openAlertCount").GetInt64());
 
             var fullReader = Principal(companyId, null, "telematics:devices:view", "telemetry.alerts.read", "telematics:diagnostics:view");
@@ -297,13 +317,53 @@ public sealed class DevicePageFaultPostgresTests
             using var fullPayload = Payload(await Invoke("TelemetryDevicePage", fullReader, db, CancellationToken.None));
             var fullData = fullPayload.RootElement.GetProperty("data");
             Assert.Equal(4, fullData.GetProperty("total").GetInt64());
-            Assert.Equal(neverSerial, Assert.Single(fullData.GetProperty("items").EnumerateArray()).GetProperty("deviceSerial").GetString());
+            Assert.Equal(faultSerial, Assert.Single(fullData.GetProperty("items").EnumerateArray()).GetProperty("deviceSerial").GetString());
             Assert.Equal(1, fullData.GetProperty("summary").GetProperty("faulted").GetInt64());
         }
         finally
         {
             await db.ExecuteAsync("DELETE FROM telemetry_alerts WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", companyId));
             await db.ExecuteAsync("DELETE FROM fault_codes WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", companyId));
+            await db.ExecuteAsync("DELETE FROM eld_devices WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", companyId));
+            await db.ExecuteAsync("DELETE FROM companies WHERE id=@cid", c => c.Parameters.AddWithValue("@cid", companyId));
+        }
+    }
+
+    [Fact]
+    public async Task TiedLastFixesRemainStableAcrossPagesBySerialAndIdentity()
+    {
+        var db = Db();
+        var suffix = Guid.NewGuid().ToString("N")[..10];
+        var companyId = await db.InsertAsync(
+            "INSERT INTO companies(company_code,name,industry) VALUES (@code,'Stable telemetry paging','Transportation')",
+            c => c.Parameters.AddWithValue("@code", $"STP-{suffix}"));
+        try
+        {
+            var firstSerial = $"A-TIED-{suffix}";
+            var secondSerial = $"B-TIED-{suffix}";
+            foreach (var serial in new[] { secondSerial, firstSerial })
+            {
+                await db.ExecuteAsync(
+                    @"INSERT INTO eld_devices(company_id,device_serial,provider,status,device_state,last_seen_at,created_at)
+                      VALUES (@cid,@serial,'Same Provider','Provisioning','Registered',
+                              TIMESTAMPTZ '2026-08-28 00:00:00+00',TIMESTAMPTZ '2026-08-28 00:00:00+00')",
+                    c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@serial", serial); });
+            }
+
+            var http = Principal(companyId);
+            http.Request.QueryString = new QueryString("?view=all&sort=lastfix&direction=desc&pageSize=1&page=1");
+            using var firstPage = Payload(await Invoke("TelemetryDevicePage", http, db, CancellationToken.None));
+            http.Request.QueryString = new QueryString("?view=all&sort=lastfix&direction=desc&pageSize=1&page=2");
+            using var secondPage = Payload(await Invoke("TelemetryDevicePage", http, db, CancellationToken.None));
+
+            var first = Assert.Single(firstPage.RootElement.GetProperty("data").GetProperty("items").EnumerateArray());
+            var second = Assert.Single(secondPage.RootElement.GetProperty("data").GetProperty("items").EnumerateArray());
+            Assert.Equal(firstSerial, first.GetProperty("deviceSerial").GetString());
+            Assert.Equal(secondSerial, second.GetProperty("deviceSerial").GetString());
+            Assert.NotEqual(first.GetProperty("id").GetInt64(), second.GetProperty("id").GetInt64());
+        }
+        finally
+        {
             await db.ExecuteAsync("DELETE FROM eld_devices WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", companyId));
             await db.ExecuteAsync("DELETE FROM companies WHERE id=@cid", c => c.Parameters.AddWithValue("@cid", companyId));
         }
@@ -336,13 +396,14 @@ public sealed class DevicePageFaultPostgresTests
         "INSERT INTO eld_devices(company_id,branch_id,device_serial,device_category,status,device_state) VALUES (@c,@b,@s,'OBD-II','Provisioning','Registered')",
         c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchId); c.Parameters.AddWithValue("@s", serial); });
 
-    private static Task<int> Fault(Database db, long companyId, string serial, string code, string age) => db.ExecuteAsync(
-        @"INSERT INTO fault_codes(company_id,device_id,protocol,code,canonical_identity,last_observed_at,last_source_event_id,status)
-          VALUES (@c,@s,'OBD',@code,'OBD:UNKNOWN:'||@code,NOW()-CAST(@age AS INTERVAL),@event,'active')",
+    private static Task<int> Fault(Database db, long companyId, string serial, string code, string age, string severity = "Warning") => db.ExecuteAsync(
+        @"INSERT INTO fault_codes(company_id,device_id,protocol,code,canonical_identity,severity,last_observed_at,last_source_event_id,status)
+          VALUES (@c,@s,'OBD',@code,'OBD:UNKNOWN:'||@code,@severity,NOW()-CAST(@age AS INTERVAL),@event,'active')",
         c =>
         {
             c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@s", serial);
             c.Parameters.AddWithValue("@code", code); c.Parameters.AddWithValue("@age", age);
+            c.Parameters.AddWithValue("@severity", severity);
             c.Parameters.AddWithValue("@event", $"timeline-{Guid.NewGuid():N}");
         });
 
