@@ -330,7 +330,15 @@ builder.Services.AddCors(options =>
         policy.WithOrigins(origins).AllowAnyHeader().AllowAnyMethod().AllowCredentials()
             // Expose trace headers so the browser can read them cross-origin and
             // surface a trace reference for a failed request (frontend→DB tracing).
-            .WithExposedHeaders("X-Trace-Id", "X-Correlation-Id", "X-Deployment-Version", "X-CSRF-Token");
+            .WithExposedHeaders(
+                "X-Trace-Id",
+                "X-Correlation-Id",
+                "X-Deployment-Version",
+                "X-CSRF-Token",
+                // Paged fleet registers read this header in the browser. Without
+                // exposing it through CORS, Axios only sees the current page length
+                // and hides Next/Previous even when more branch records exist.
+                "X-Total-Count");
     });
 });
 
