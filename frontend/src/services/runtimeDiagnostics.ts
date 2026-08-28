@@ -32,43 +32,26 @@ function record(value: unknown): AnyRecord {
   return value && typeof value === "object" ? value as AnyRecord : {};
 }
 
-function serviceRows(deep: AnyRecord): AnyRecord[] {
-  const checks = record(deep.checks);
-  const rows = checks.services;
-  return Array.isArray(rows) ? rows.map(record) : [];
-}
-
 export function evaluateRuntimeTruth(readyValue: unknown, deepValue: unknown): RuntimeDiagnostics {
   const ready = record(readyValue);
   const deep = record(deepValue);
   const readyChecks = record(ready.checks);
-  const deepChecks = record(deep.checks);
   const database = record(readyChecks.database);
   const fleetContract = record(readyChecks.fleet_production_contract);
-  const workerContract = record(deepChecks.critical_worker_contract);
-  const services = serviceRows(deep);
-  const telemetryWorker = services.find((item) => String(item.name) === "TelemetryBackgroundService");
-  const criticalServices = services.filter((item) => item.expected_critical === true);
-  const workerContractStatus = String(workerContract.status).toLowerCase();
 
   const apiReady = String(ready.status).toLowerCase() === "ready";
   const databaseReady = String(database.status).toLowerCase() === "connected";
   const productionApi = String(ready.environment).toLowerCase() === "production";
   const databaseContractReady = !productionApi || String(fleetContract.status).toLowerCase() === "ready";
-  const criticalWorkersFresh =
-    workerContractStatus === "healthy" &&
-    criticalServices.length > 0 &&
-    criticalServices.every((item) => String(item.status).toLowerCase() === "healthy");
-  const criticalWorkersStarting =
-    workerContractStatus === "starting" &&
-    criticalServices.length > 0 &&
-    criticalServices.every((item) => ["healthy", "starting"].includes(String(item.status).toLowerCase()));
-  const telemetryFresh =
-    Boolean(telemetryWorker) &&
-    String(telemetryWorker?.status).toLowerCase() === "healthy" &&
-    !telemetryWorker?.reason;
-  const deepHealthy = String(deep.status).toLowerCase() === "healthy";
-  const verifiedLive = apiReady && databaseReady && databaseContractReady && criticalWorkersFresh && telemetryFresh && deepHealthy;
+  const workerViolations = Number(fleetContract.critical_worker_violations ?? -1);
+  const workerStartupGrace = fleetContract.critical_worker_startup_grace_active === true;
+  const criticalWorkersFresh = databaseContractReady && workerViolations === 0 && !workerStartupGrace;
+  const criticalWorkersStarting = databaseContractReady && workerViolations === 0 && workerStartupGrace;
+  // The public readiness contract already aggregates every expected critical
+  // worker, including TelemetryBackgroundService. Browser clients must not call
+  // /health/deep because that operator endpoint deliberately requires a secret.
+  const telemetryFresh = criticalWorkersFresh;
+  const verifiedLive = apiReady && databaseReady && databaseContractReady && criticalWorkersFresh;
   const frontendEnvironment = frontendBuild.environment.toLowerCase();
   const demo = frontendEnvironment.includes("demo");
   const staging = frontendEnvironment.includes("stag") || frontendEnvironment === "preview" || frontendEnvironment === "development";
@@ -77,7 +60,7 @@ export function evaluateRuntimeTruth(readyValue: unknown, deepValue: unknown): R
   if (demo) state = "Demo Data";
   else if (verifiedLive && staging) state = "Staging";
   else if (verifiedLive) state = "Live";
-  else if (apiReady && databaseReady && databaseContractReady && deepHealthy && criticalWorkersStarting) state = "Starting";
+  else if (apiReady && databaseReady && databaseContractReady && criticalWorkersStarting) state = "Starting";
   else if (!databaseReady) state = "Disconnected";
   else if (!criticalWorkersFresh || !telemetryFresh) state = "Stale";
 
@@ -101,11 +84,8 @@ export async function fetchRuntimeDiagnostics(): Promise<RuntimeDiagnostics> {
   if (!frontendBuild.apiBaseUrl && typeof window !== "undefined" && !window.location.origin) {
     throw new Error("API base URL is not configured");
   }
-  const [readyResponse, deepResponse] = await Promise.all([
-    apiClient.get("/health/ready", { validateStatus: () => true }),
-    apiClient.get("/health/deep", { validateStatus: () => true }),
-  ]);
-  return evaluateRuntimeTruth(readyResponse.data, deepResponse.data);
+  const readyResponse = await apiClient.get("/health/ready", { validateStatus: () => true });
+  return evaluateRuntimeTruth(readyResponse.data, {});
 }
 
 export function useRuntimeDiagnostics() {
