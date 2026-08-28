@@ -26,6 +26,15 @@ assert.match(loginPage, /setPassword\(\(current\) => current === nextPassword/);
 assert.match(loginPage, /setInterval\(syncBrowserFilledFields, 200\)/);
 assert.match(loginPage, /setTimeout\(\(\) => window\.clearInterval\(interval\), 2_000\)/);
 assert.match(loginPage, /onInputCapture=\{syncBrowserFilledFields\}/);
+
+// The password field must stay browser-owned at the final submit boundary.
+// A controlled empty value can visually retain Chrome's credential overlay
+// while erasing the actual input value and permanently disabling the CTA.
+assert.match(loginPage, /const submittedPassword = passwordRef\.current\?\.value \?\? password/);
+assert.match(loginPage, /defaultValue=""[\s\S]*autoComplete="current-password"/);
+assert.doesNotMatch(loginPage, /id="login-password"[\s\S]{0,180}value=\{password\}/);
+assert.match(loginPage, /setPasswordError\("Enter your password\."\)/);
+assert.doesNotMatch(loginPage, /login\.isPending \|\| !password/);
 assert.doesNotMatch(loginPage, /console\.(?:log|debug|info|warn|error)\([^\n]*(?:password|nextPassword)/i);
 assert.doesNotMatch(loginPage, /localStorage[^\n]*(?:password|nextPassword)/i);
 assert.doesNotMatch(loginPage, /sessionStorage[^\n]*(?:password|nextPassword)/i);
