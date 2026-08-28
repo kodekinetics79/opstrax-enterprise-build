@@ -60,6 +60,17 @@ public sealed class CoreFleetDriversRegressionTests
     }
 
     [Fact]
+    public void DriverDetailReturnsPersistedPortalAccessState()
+    {
+        var source = Read("backend-dotnet", "Controllers", "EndpointMappings.cs");
+        var detail = Block(source, "private static async Task<IResult> DriverDetail", "private static async Task<IResult> CustomerDetail");
+
+        Assert.Contains("LEFT JOIN users pu ON pu.id=d.user_id AND pu.company_id=d.company_id", detail);
+        Assert.Contains("portal_status", detail);
+        Assert.Contains("portal_email", detail);
+    }
+
+    [Fact]
     public void DriverNavigationUsesCanonicalRuntimePermission()
     {
         var config = Read("frontend", "src", "modules", "moduleConfig.ts");
