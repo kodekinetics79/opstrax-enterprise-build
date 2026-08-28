@@ -181,7 +181,11 @@ def _device_number(serial: str) -> int:
     return int(match.group(1))
 
 
-def _json_body(serial: str, observed_at: datetime, *, lat: float | None = None,
+def _run_tag(run_id: str) -> str:
+    return hashlib.sha256(run_id.encode("utf-8")).hexdigest()[:12]
+
+
+def _json_body(serial: str, observed_at: datetime, run_id: str, *, lat: float | None = None,
                lng: float | None = None, speed: float = 32.0, sequence: int = 0,
                odometer_miles: float | None = None) -> str:
     branch = _branch_for(serial)
@@ -191,8 +195,8 @@ def _json_body(serial: str, observed_at: datetime, *, lat: float | None = None,
     payload = {
         "accuracyMeters": 8.0,
         "batteryVoltage": 13.8,
-        "clientGeneratedId": f"cert-{serial}-{sequence:03d}",
-        "correlationId": f"CERT-LARGE-20260825:{serial}",
+        "clientGeneratedId": f"cert-{_run_tag(run_id)}-{serial}-{sequence:06d}",
+        "correlationId": f"CERT-LARGE-20260825:{_run_tag(run_id)}:{serial}",
         "engineStatus": "Moving" if speed > 0 else "Idle",
         "eventTime": observed_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
         "eventType": "position",
@@ -236,7 +240,7 @@ def validate_large_fleet_credentials(credentials: list[Credential]) -> dict[str,
     return grouped
 
 
-def _diagnostic_body(serial: str, observed_at: datetime) -> str:
+def _diagnostic_body(serial: str, observed_at: datetime, run_id: str) -> str:
     payload = {
         "bus": "CAN1",
         "controller": "ECM",
@@ -252,7 +256,7 @@ def _diagnostic_body(serial: str, observed_at: datetime) -> str:
         "pgn": 65226,
         "protocol": "J1939",
         "sourceAddress": 0,
-        "sourceEventId": f"CERT-LARGE-20260825:{serial}:DM1",
+        "sourceEventId": f"CERT-LARGE-20260825:{_run_tag(run_id)}:{serial}:DM1",
     }
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
@@ -292,7 +296,7 @@ def build_scenarios(credentials: list[Credential], run_id: str, observed_at: dat
                 nonlocal sequence
                 sequence += 1
                 event_offset = send_offset if observed_offset is None else observed_offset
-                body = _json_body(credential.serial, observed_at + timedelta(seconds=event_offset),
+                body = _json_body(credential.serial, observed_at + timedelta(seconds=event_offset), run_id,
                                   lat=lat, lng=lng, speed=speed, sequence=sequence,
                                   odometer_miles=odometer_miles)
                 scenarios.append(_scenario(credential, run_id, cohort, name, body, send_offset,
@@ -334,7 +338,7 @@ def build_scenarios(credentials: list[Credential], run_id: str, observed_at: dat
             elif cohort == "critical-j1939":
                 position("critical-gps-01", 2 * 60, outcome="Online with current position")
                 position("critical-gps-02", RECONNECT_SECONDS, outcome="Online with current position")
-                diagnostic = _diagnostic_body(credential.serial, observed_at + timedelta(seconds=15 * 60))
+                diagnostic = _diagnostic_body(credential.serial, observed_at + timedelta(seconds=15 * 60), run_id)
                 scenarios.append(_scenario(
                     credential, run_id, cohort, "critical-j1939-dm1", diagnostic, 15 * 60,
                     interface="diagnostic-native", path=DIAGNOSTIC_INGEST_PATH,
@@ -350,10 +354,10 @@ def build_scenarios(credentials: list[Credential], run_id: str, observed_at: dat
     # describes projection semantics explicitly rather than equating 200 with mutation.
     primary = grouped[next(iter(BRANCH_CENTERS))][0]
     control_offset = RECONNECT_SECONDS + 5
-    replay_body = _json_body(primary.serial, observed_at + timedelta(seconds=control_offset), sequence=99_001)
+    replay_body = _json_body(primary.serial, observed_at + timedelta(seconds=control_offset), run_id, sequence=99_001)
     replay_nonce_name = "negative-replay-pair"
     idempotency_body = _json_body(
-        primary.serial, observed_at + timedelta(seconds=control_offset + 8), sequence=99_009)
+        primary.serial, observed_at + timedelta(seconds=control_offset + 8), run_id, sequence=99_009)
     idempotency_conflict_payload = json.loads(idempotency_body)
     idempotency_conflict_payload["speedMph"] = 47.0
     idempotency_conflict_body = json.dumps(
@@ -365,31 +369,31 @@ def build_scenarios(credentials: list[Credential], run_id: str, observed_at: dat
                   nonce_name=replay_nonce_name, expected_status=(409,), expected_mutation="none",
                   chrome_outcome="No duplicate history, projection, alert, or check-in mutation"),
         _scenario(primary, run_id, "control", "out-of-order-history",
-                  _json_body(primary.serial, observed_at + timedelta(seconds=control_offset - 600), sequence=99_002),
+                  _json_body(primary.serial, observed_at + timedelta(seconds=control_offset - 600), run_id, sequence=99_002),
                   control_offset + 1, expected_mutation="history-only",
                   chrome_outcome="Latest position and odometer remain on the newer event"),
         _scenario(primary, run_id, "control", "future-fix",
-                  _json_body(primary.serial, observed_at + timedelta(seconds=control_offset + 360), sequence=99_003),
+                  _json_body(primary.serial, observed_at + timedelta(seconds=control_offset + 360), run_id, sequence=99_003),
                   control_offset + 2, expected_status=(422,), expected_mutation="none",
                   chrome_outcome="No visible state change"),
         _scenario(primary, run_id, "control", "null-island",
-                  _json_body(primary.serial, observed_at, lat=0, lng=0, sequence=99_004),
+                  _json_body(primary.serial, observed_at, run_id, lat=0, lng=0, sequence=99_004),
                   control_offset + 3, expected_status=(422,), expected_mutation="none",
                   chrome_outcome="No visible state change"),
         _scenario(primary, run_id, "control", "invalid-speed",
-                  _json_body(primary.serial, observed_at, speed=201, sequence=99_005),
+                  _json_body(primary.serial, observed_at, run_id, speed=201, sequence=99_005),
                   control_offset + 4, expected_status=(422,), expected_mutation="none",
                   chrome_outcome="No visible state change"),
         _scenario(primary, run_id, "control", "bad-signature",
-                  _json_body(primary.serial, observed_at, sequence=99_006), control_offset + 5,
+                  _json_body(primary.serial, observed_at, run_id, sequence=99_006), control_offset + 5,
                   expected_status=(401,), expected_mutation="none", chrome_outcome="No visible state change",
                   signature_mode="invalid"),
         _scenario(primary, run_id, "control", "stale-transport-timestamp",
-                  _json_body(primary.serial, observed_at, sequence=99_007), control_offset + 6,
+                  _json_body(primary.serial, observed_at, run_id, sequence=99_007), control_offset + 6,
                   expected_status=(422,), expected_mutation="none", chrome_outcome="No visible state change",
                   timestamp_offset_seconds=-120),
         _scenario(primary, run_id, "control", "unrecognized-device-key",
-                  _json_body(primary.serial, observed_at, sequence=99_008), control_offset + 7,
+                  _json_body(primary.serial, observed_at, run_id, sequence=99_008), control_offset + 7,
                   expected_status=(401,), expected_mutation="none", chrome_outcome="No visible state change",
                   api_key=f"invalid-{primary.api_key}"),
         _scenario(primary, run_id, "control", "idempotency-original",

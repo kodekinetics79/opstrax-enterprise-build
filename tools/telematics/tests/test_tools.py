@@ -343,11 +343,22 @@ class CertificationHarnessTests(unittest.TestCase):
         body = __import__("json").loads(certification_harness._diagnostic_body(
             "CLHQ-DEV-0199",
             certification_harness.datetime(2026, 8, 27, tzinfo=certification_harness.timezone.utc),
+            "CERT-LARGE-20260825-M2-UNIT",
         ))
         self.assertEqual(body["protocol"], "J1939")
         self.assertEqual(body["pgn"], 65226)
         self.assertEqual(body["lampStatus"]["redStop"], "On")
         self.assertNotIn("severity", body)
+
+    def test_repeat_runs_use_distinct_customer_event_identities(self) -> None:
+        observed_at = certification_harness.datetime(
+            2026, 8, 27, tzinfo=certification_harness.timezone.utc)
+        first = __import__("json").loads(certification_harness._json_body(
+            "CLHQ-DEV-0001", observed_at, "CERT-RUN-A", sequence=1))
+        second = __import__("json").loads(certification_harness._json_body(
+            "CLHQ-DEV-0001", observed_at, "CERT-RUN-B", sequence=1))
+        self.assertNotEqual(first["clientGeneratedId"], second["clientGeneratedId"])
+        self.assertNotEqual(first["correlationId"], second["correlationId"])
 
     def test_large_fleet_rejects_partial_or_misaligned_credentials(self) -> None:
         with self.assertRaisesRegex(ValueError, "exactly 1100"):
