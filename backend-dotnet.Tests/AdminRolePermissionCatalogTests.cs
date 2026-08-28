@@ -11,10 +11,33 @@ public sealed class AdminRolePermissionCatalogTests
     [InlineData("telematics:devices:diagnostics")]
     [InlineData("telematics:devices:export")]
     [InlineData("telematics:gps:view")]
+    [InlineData("telematics:gps:export")]
+    [InlineData("telematics:diagnostics:export")]
     public void NarrowTelematicsPermissionsRemainAvailableToCustomRoles(string permission)
     {
         Assert.Contains(permission, EndpointMappings.CustomRolePermissionCatalog,
             StringComparer.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void TenantAdminCanUseManageAndExportTheShippedGpsAndDiagnosticsSurfaces()
+    {
+        var permissions = EndpointMappings.RolePermissionDefaults["Tenant Admin"];
+        var admin = Principal("Tenant Admin", permissions);
+
+        Assert.Null(EndpointMappings.RequirePermission(admin, "telemetry.devices.read"));
+        foreach (var permission in new[]
+        {
+            "telematics:gps:view",
+            "telematics:gps:export",
+            "telematics:diagnostics:view",
+            "telematics:diagnostics:update",
+            "telematics:diagnostics:export",
+        })
+        {
+            Assert.Contains(permission, permissions, StringComparer.OrdinalIgnoreCase);
+            Assert.Null(EndpointMappings.RequirePermission(admin, permission));
+        }
     }
 
     [Fact]
@@ -77,7 +100,17 @@ public sealed class AdminRolePermissionCatalogTests
     public void PortalAndPrivacyScopedRolesRemainClosedToBackOfficeTelematics(string role)
     {
         var principal = Principal(role, EndpointMappings.RolePermissionDefaults[role]);
-        foreach (var permission in new[] { "telemetry.devices.read", "telematics:gps:view", "telematics:diagnostics:view", "telematics:sensors:view" })
+        foreach (var permission in new[]
+        {
+            "telemetry.devices.read",
+            "telematics:devices:export",
+            "telematics:gps:view",
+            "telematics:gps:export",
+            "telematics:diagnostics:view",
+            "telematics:diagnostics:update",
+            "telematics:diagnostics:export",
+            "telematics:sensors:view",
+        })
         {
             var denied = EndpointMappings.RequirePermission(principal, permission);
             Assert.Equal(StatusCodes.Status403Forbidden,
