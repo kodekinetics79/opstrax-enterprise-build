@@ -5214,8 +5214,16 @@ public static partial class EndpointMappings
         var record = await db.QuerySingleAsync(
             @"SELECT d.*, CASE WHEN d.deleted_at IS NULL THEN 'Active' ELSE 'Archived' END lifecycle_status,
                      v.vehicle_code assigned_vehicle,
-                     ROUND((d.readiness_score + d.safety_score + d.compliance_score + (100 - d.risk_score)) / 4, 1) driver_readiness_score
-              FROM drivers d LEFT JOIN vehicles v ON v.id=d.assigned_vehicle_id WHERE d.id=@id AND d.company_id=@cid" + lifecycleClause + branchClause,
+                     ROUND((d.readiness_score + d.safety_score + d.compliance_score + (100 - d.risk_score)) / 4, 1) driver_readiness_score,
+                     CASE WHEN d.user_id IS NULL       THEN 'none'
+                          WHEN pu.status = 'Active'    THEN 'active'
+                          WHEN pu.id IS NULL           THEN 'none'
+                          ELSE 'disabled' END portal_status,
+                     pu.email portal_email
+              FROM drivers d
+              LEFT JOIN vehicles v ON v.id=d.assigned_vehicle_id
+              LEFT JOIN users pu ON pu.id=d.user_id AND pu.company_id=d.company_id
+              WHERE d.id=@id AND d.company_id=@cid" + lifecycleClause + branchClause,
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct);
         if (record is null) return Results.NotFound(ApiResponse<object>.Fail("Driver not found"));
         // DEF-015: the detail view renders the license masked (last four). Full plaintext
