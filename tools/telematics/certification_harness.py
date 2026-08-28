@@ -35,6 +35,12 @@ DEVICES_PER_BRANCH = 220
 INSTALLED_PER_BRANCH = 200
 OFFLINE_SOAK_SECONDS = 16 * 60
 RECONNECT_SECONDS = 17 * 60
+# A future-timestamp negative control must remain invalid even when staging
+# backpressure stretches a run well beyond its planned schedule.  The API allows
+# no more than five minutes of device clock skew; anchor the control one day
+# beyond its submission phase instead of only six minutes beyond it.
+FUTURE_CONTROL_OFFSET_SECONDS = 24 * 60 * 60
+API_FUTURE_SKEW_SECONDS = 5 * 60
 MAX_SCENARIOS = 8_000
 DEFAULT_RATE_PER_SECOND = 20.0
 MAX_RATE_PER_SECOND = 50.0
@@ -373,7 +379,13 @@ def build_scenarios(credentials: list[Credential], run_id: str, observed_at: dat
                   control_offset + 1, expected_mutation="history-only",
                   chrome_outcome="Latest position and odometer remain on the newer event"),
         _scenario(primary, run_id, "control", "future-fix",
-                  _json_body(primary.serial, observed_at + timedelta(seconds=control_offset + 360), run_id, sequence=99_003),
+                  _json_body(
+                      primary.serial,
+                      observed_at + timedelta(
+                          seconds=control_offset + FUTURE_CONTROL_OFFSET_SECONDS),
+                      run_id,
+                      sequence=99_003,
+                  ),
                   control_offset + 2, expected_status=(422,), expected_mutation="none",
                   chrome_outcome="No visible state change"),
         _scenario(primary, run_id, "control", "null-island",
@@ -522,7 +534,26 @@ def preflight(base_url: str, expected_sha: str, timeout: float) -> dict[str, obj
     }
 
 
+def _validate_scenario_time_oracle(
+    scenario: Scenario, now: datetime | None = None,
+) -> None:
+    """Fail closed if a time-based negative control has aged into validity."""
+    if scenario.name != "future-fix":
+        return
+    try:
+        raw_event_time = json.loads(scenario.body)["eventTime"]
+        event_time = datetime.fromisoformat(str(raw_event_time).replace("Z", "+00:00"))
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise RuntimeError("future-fix control has no valid eventTime") from exc
+    current = now or datetime.now(timezone.utc)
+    if (event_time - current).total_seconds() <= API_FUTURE_SKEW_SECONDS:
+        raise RuntimeError(
+            "future-fix control aged into the API acceptance window; refusing to send"
+        )
+
+
 def execute_scenario(base_url: str, scenario: Scenario, expected_sha: str, timeout: float) -> dict[str, object]:
+    _validate_scenario_time_oracle(scenario)
     timestamp = str(int(time.time()) + scenario.timestamp_offset_seconds)
     signature = compute_signature(
         scenario.hmac_secret, "POST", scenario.path, timestamp, scenario.nonce, scenario.body,
