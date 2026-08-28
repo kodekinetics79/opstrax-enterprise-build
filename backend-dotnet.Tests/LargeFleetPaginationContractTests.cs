@@ -41,7 +41,7 @@ public sealed class LargeFleetPaginationContractTests
 
         Assert.Contains("/api/telemetry/devices/page", endpoints, StringComparison.Ordinal);
         Assert.Contains("/api/telemetry/devices/export", endpoints, StringComparison.Ordinal);
-        Assert.Contains("Math.Clamp(parsedPageSize, 1, 100)", endpoints, StringComparison.Ordinal);
+        Assert.Contains("const int maxViewPageSize = 100", endpoints, StringComparison.Ordinal);
         Assert.Contains("LIMIT @limit OFFSET @offset", endpoints, StringComparison.Ordinal);
         Assert.Contains("(@branchId::BIGINT IS NULL OR e.branch_id=@branchId)", endpoints, StringComparison.Ordinal);
         Assert.Contains("LIMIT 100000", endpoints, StringComparison.Ordinal);
@@ -69,7 +69,7 @@ public sealed class LargeFleetPaginationContractTests
         Assert.Contains("pageSize = 100", page, StringComparison.Ordinal);
         Assert.Contains("Search priority queue", page, StringComparison.Ordinal);
         Assert.Contains("Page {page} of {pageCount}", page, StringComparison.Ordinal);
-        Assert.Contains("Export devices CSV", page, StringComparison.Ordinal);
+        Assert.Contains("Export full device inventory", page, StringComparison.Ordinal);
         Assert.DoesNotContain("getGpsTrackingRecords()", page, StringComparison.Ordinal);
         Assert.DoesNotContain("getDiagnosticsRecords()", page, StringComparison.Ordinal);
         Assert.DoesNotContain("telematicsService.getDevices()", page, StringComparison.Ordinal);
@@ -98,6 +98,9 @@ public sealed class LargeFleetPaginationContractTests
         Assert.Contains("Resolve the governed device hold before returning it to service", page, StringComparison.Ordinal);
         Assert.Contains("LOWER(COALESCE(e.device_state,'')) NOT IN ('quarantined','suspended')", endpoints, StringComparison.Ordinal);
         Assert.Contains("idx_lvp_company_device_received", schema, StringComparison.Ordinal);
+        Assert.Contains("\"delayed-gps\"", endpoints, StringComparison.Ordinal);
+        Assert.Contains("\"lastcheckin\" or \"lastfix\" => cluster switch", endpoints, StringComparison.Ordinal);
+        Assert.Contains("\"freshness\" => cluster switch", endpoints, StringComparison.Ordinal);
     }
 
     [Theory]

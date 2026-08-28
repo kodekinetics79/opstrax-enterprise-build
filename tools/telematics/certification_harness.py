@@ -42,6 +42,7 @@ MAX_EXECUTION_WORKERS = 64
 KNOWN_PRODUCTION_HOSTS = {
     "osptrax-fleet-management.onrender.com",
     "opstrax-api.onrender.com",
+    "opstrax-enterprise-build-8x41.onrender.com",
 }
 BRANCH_CENTERS = {
     "CLHQ": (35.2271, -80.8431),
@@ -505,7 +506,16 @@ def preflight(base_url: str, expected_sha: str, timeout: float) -> dict[str, obj
     version = str(payload.get("version") or headers.get("x-deployment-version") or "")
     if version != expected_sha:
         raise RuntimeError(f"readiness SHA mismatch: expected {expected_sha}, observed {version or 'missing'}")
-    return {"status": status_code, "version": version, "elapsedMs": round(elapsed * 1000, 1)}
+    environment = str(payload.get("environment") or "")
+    if environment != "Staging":
+        raise RuntimeError(
+            f"readiness environment mismatch: expected Staging, observed {environment or 'missing'}")
+    return {
+        "status": status_code,
+        "version": version,
+        "environment": environment,
+        "elapsedMs": round(elapsed * 1000, 1),
+    }
 
 
 def execute_scenario(base_url: str, scenario: Scenario, expected_sha: str, timeout: float) -> dict[str, object]:

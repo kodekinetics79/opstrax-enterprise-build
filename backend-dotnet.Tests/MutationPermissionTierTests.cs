@@ -107,27 +107,31 @@ public class MutationPermissionTierTests
     // Seed role 3 (Fleet Manager) grants map:view + telematics:view.
     [InlineData("Fleet Manager", "map:view")]
     [InlineData("Fleet Manager", "telematics:view")]
-    // Seed role 4 (Dispatcher) grants map:view.
+    // Seed role 4 (Dispatcher) grants map:view. The authoritative product contract also grants
+    // the narrow device-registry read token; RolePermissionReconciler converges the system role
+    // on boot without widening device manage/export or telemetry aliases.
     [InlineData("Dispatcher", "map:view")]
+    [InlineData("Dispatcher", "telematics:devices:view")]
     public void RoleDefaults_MatchTheDatabaseSeed(string role, string token)
         => Assert.Contains(token, EndpointMappings.RolePermissionDefaults[role], StringComparer.OrdinalIgnoreCase);
 
     [Theory]
-    // The seed grants telematics:devices:view to NO role — the device registry is not part of
-    // any seeded operator's surface, so the fallback must not invent it either.
-    [InlineData("Fleet Manager", "telematics:devices:view")]
-    [InlineData("Dispatcher", "telematics:devices:view")]
-    [InlineData("Maintenance Manager", "telematics:devices:view")]
-    [InlineData("Read-Only Auditor", "telematics:devices:view")]
-    // 'Maintenance Manager' has no seed row; its analogue 'Mechanic' (role 6) has no map/
-    // telematics grant. 'Read-only Auditor' (role 12) is audit/fleet/dashboard only — granting
-    // map:view would hand a read-only role live GPS via the live-state alias group.
+    // Exact telemetry view tokens do not justify broad module umbrellas. Maintenance Manager and
+    // Read-Only Auditor still do not receive map:view/telematics:view; their reviewed access is
+    // expressed by narrow route grants instead.
     [InlineData("Maintenance Manager", "map:view")]
     [InlineData("Read-Only Auditor", "map:view")]
     [InlineData("Maintenance Manager", "telematics:view")]
     [InlineData("Read-Only Auditor", "telematics:view")]
     public void RoleDefaults_DoNotExceedTheDatabaseSeed(string role, string token)
         => Assert.DoesNotContain(token, EndpointMappings.RolePermissionDefaults[role], StringComparer.OrdinalIgnoreCase);
+
+    [Theory]
+    [InlineData("Fleet Manager")]
+    [InlineData("Dispatcher")]
+    [InlineData("Maintenance Manager")]
+    public void OperationalDeviceHealthRolesReceiveTheNarrowReadTokenDirectly(string role)
+        => Assert.Contains("telematics:devices:view", EndpointMappings.RolePermissionDefaults[role], StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// The reconciliation must not have loosened the telemetry satisfy-sets: a session holding

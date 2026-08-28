@@ -2367,18 +2367,18 @@ public static partial class EndpointMappings
         // role 3 actually grants a Fleet Manager (seed:31). These defaults are the FALLBACK the
         // middleware uses whenever a tenant's roles table has no matching row, and there the
         // telematics surface was bare — a Fleet Manager on a tenant without seeded roles lost the
-        // live map entirely. Reconciled to the seed and NOT beyond it: the seed does NOT grant
-        // this role telematics:devices:view, so the device registry stays closed to it.
-        ["Fleet Manager"]            = ["dashboard:view","vehicles:view","vehicles:create","vehicles:update","vehicles:delete","vehicles:assign","vehicles:export","drivers:view","drivers:create","drivers:update","drivers:delete","drivers:assign","drivers:export","shipments:view","shipments:create","shipments:update","shipments:delete","shipments:export","dispatch:view","dispatch:create","dispatch:update","dispatch:assign","dispatch:cancel","dispatch:manage","dispatch:override","customer_portal:view","customer_portal:manage","carriers:view","carriers:manage","fuel:view","fuel:manage","billing:view","alerts:view","alerts:acknowledge","alerts:close","alerts:manage","maintenance:view","maintenance:create","maintenance:update","maintenance:close","maintenance:manage","compliance:view","compliance:update","compliance:export","compliance:manage","reports:view","reports:export","reports:manage","notifications:view","notifications:manage","messages:send","escalation:manage","map:view","telematics:view","fleet.read","fleet.manage","telematics:devices:export"],
+        // live map entirely. Device inventory is also a direct, narrow read in the shipped Fleet
+        // Manager catalogue and route guard; keep it explicit rather than widening a broad alias.
+        ["Fleet Manager"]            = ["dashboard:view","vehicles:view","vehicles:create","vehicles:update","vehicles:delete","vehicles:assign","vehicles:export","drivers:view","drivers:create","drivers:update","drivers:delete","drivers:assign","drivers:export","shipments:view","shipments:create","shipments:update","shipments:delete","shipments:export","dispatch:view","dispatch:create","dispatch:update","dispatch:assign","dispatch:cancel","dispatch:manage","dispatch:override","customer_portal:view","customer_portal:manage","carriers:view","carriers:manage","fuel:view","fuel:manage","billing:view","alerts:view","alerts:acknowledge","alerts:close","alerts:manage","maintenance:view","maintenance:create","maintenance:update","maintenance:close","maintenance:manage","compliance:view","compliance:update","compliance:export","compliance:manage","reports:view","reports:export","reports:manage","notifications:view","notifications:manage","messages:send","escalation:manage","map:view","telematics:view","fleet.read","fleet.manage","telematics:devices:export","telematics:devices:view","telematics:gps:view","telematics:diagnostics:view","telematics:sensors:view"],
         // NOTE: customer_portal:manage (customer tracking-link management) is a
         // SUPERVISOR-only permission by the P4.1 security model (Tenant Admin / Fleet
         // Owner / Fleet Manager). Dispatcher manages shipments/stops/POD but not
         // customer visibility links — see P41HardeningTests.
         // NEW-R1-06 reconciliation: seed role 4 (seed:32) grants a Dispatcher map:view — the live
         // board is the job. It was absent here, so the no-seeded-roles fallback silently withheld
-        // it. The seed grants this role NO telematics token, so telematics:devices:view is
-        // deliberately NOT added.
-        ["Dispatcher"]               = ["dashboard:view","vehicles:view","drivers:view","shipments:view","shipments:create","shipments:update","shipments:export","dispatch:view","dispatch:create","dispatch:update","dispatch:assign","dispatch:cancel","carriers:view","fuel:view","alerts:view","alerts:acknowledge","customers:view","reports:view","notifications:view","messages:send","map:view"],
+        // it. Device inventory is a narrow operational read required by the shipped Dispatcher
+        // Control Tower; it does not imply device mutation, diagnostics, firmware, or export.
+        ["Dispatcher"]               = ["dashboard:view","vehicles:view","drivers:view","shipments:view","shipments:create","shipments:update","shipments:export","dispatch:view","dispatch:create","dispatch:update","dispatch:assign","dispatch:cancel","carriers:view","fuel:view","alerts:view","alerts:acknowledge","customers:view","reports:view","notifications:view","messages:send","map:view","telematics:devices:view","telematics:gps:view"],
         // The Driver role is PORTAL-ONLY and isolated: a driver's token carries only what the
         // mobile driver portal (/driver/*, all gated driver:self) actually needs — self service,
         // in-app messaging with dispatch, and their notifications. DVIR submission is authorized
@@ -2388,20 +2388,15 @@ public static partial class EndpointMappings
         // API directly. Driver is an AUTHORITATIVE role in RolePermissionReconciler, so this list
         // is the exact grant set — stray grants are revoked, keeping the portal genuinely isolated.
         ["Driver"]                   = ["driver:self","notifications:view","messages:send"],
-        ["Safety Manager"]           = ["dashboard:view","safety:view","safety:create","safety:update","safety:review","safety:manage","safety:evidence:view","safety:evidence:export","alerts:view","alerts:acknowledge","alerts:close","compliance:view","compliance:update","compliance:export","compliance:manage","reports:view","notifications:view"],
-        // NEW-R1-06, DECLINED deliberately: the bare telematics surface is CORRECT here.
-        // 'Maintenance Manager' has no row in database/init/002_seed.sql at all; its closest
-        // seeded analogue is 'Mechanic' (role 6: maintenance:view, maintenance:manage,
-        // dvir:review, fleet:view), which the seed grants NEITHER map:view NOR any telematics
-        // token. Adding either would widen BEYOND the seed rather than reconcile with it.
-        ["Maintenance Manager"]      = ["dashboard:view","vehicles:view","maintenance:view","maintenance:create","maintenance:update","maintenance:close","maintenance:manage","alerts:view","alerts:acknowledge","alerts:close","compliance:view","reports:view","notifications:view"],
+        ["Safety Manager"]           = ["dashboard:view","safety:view","safety:create","safety:update","safety:review","safety:manage","safety:evidence:view","safety:evidence:export","alerts:view","alerts:acknowledge","alerts:close","compliance:view","compliance:update","compliance:export","compliance:manage","reports:view","notifications:view","telematics:devices:view","telematics:gps:view","telematics:diagnostics:view","telematics:sensors:view"],
+        // Maintenance Manager owns the shipped Device Health, GPS, diagnostics, and sensor inspection
+        // journeys. Grant only their exact view tokens; mutation, firmware, and export remain governed
+        // by independent permissions and are not widened here.
+        ["Maintenance Manager"]      = ["dashboard:view","vehicles:view","maintenance:view","maintenance:create","maintenance:update","maintenance:close","maintenance:manage","alerts:view","alerts:acknowledge","alerts:close","compliance:view","reports:view","notifications:view","telematics:devices:view","telematics:gps:view","telematics:diagnostics:view","telematics:sensors:view"],
         ["Customer"]                 = ["customer_portal:view"],
-        // NEW-R1-06, DECLINED deliberately: the bare telematics surface is CORRECT here.
-        // The seed's 'Read-only Auditor' (role 12) is audit:view + fleet:view + dashboard:view —
-        // no map:view, no telematics token. Granting map:view would ALSO hand this read-only role
-        // telemetry.live_state.read through the live-state alias group, i.e. live GPS tracking of
-        // every driver, which neither the seed nor the role's purpose supports.
-        ["Read-Only Auditor"]        = ["dashboard:view","vehicles:view","drivers:view","shipments:view","dispatch:view","customers:view","safety:view","maintenance:view","compliance:view","alerts:view","reports:view","users:view","roles:view","settings:view","audit:view","security:view","access_review:view"],
+        // Read-only audit access follows the shipped telemetry catalogue, with exact view tokens
+        // only. Branch scoping still limits live/asset evidence; no mutation or export is granted.
+        ["Read-Only Auditor"]        = ["dashboard:view","vehicles:view","drivers:view","shipments:view","dispatch:view","customers:view","safety:view","maintenance:view","compliance:view","alerts:view","reports:view","users:view","roles:view","settings:view","audit:view","security:view","access_review:view","telematics:devices:view","telematics:gps:view","telematics:diagnostics:view","telematics:sensors:view"],
         ["Company Admin"]            = ["*"],
         ["Mechanic"]                 = ["maintenance:view","maintenance:manage","fleet:view"],
         ["Compliance Manager"]       = ["compliance:view","compliance:manage","audit:view","fleet:view","dashboard:view","security:view","access_review:view","access_review:manage"],
@@ -18633,7 +18628,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var denied = RequirePermission(http, "telemetry.live_state.read");
         if (denied is not null) return denied;
         var companyId = GetCompanyId(http);
-        var summary = await telemetry.BuildSummaryAsync(companyId, ct);
+        var summary = await telemetry.BuildSummaryAsync(companyId, GetBranchId(http), ct);
         return Results.Ok(ApiResponse<object>.Ok(summary, "Telemetry live-map summary"));
     }
 
@@ -18643,7 +18638,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var denied = RequirePermission(http, "telemetry.live_state.read");
         if (denied is not null) return denied;
         var companyId = GetCompanyId(http);
-        var states = await telemetry.ListLiveStatesAsync(companyId, ct);
+        var states = await telemetry.ListLiveStatesAsync(companyId, GetBranchId(http), ct);
         return Results.Ok(ApiResponse<object>.Ok(states, "Telemetry live asset states"));
     }
 
@@ -18653,7 +18648,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var denied = RequirePermission(http, "telemetry.live_state.read");
         if (denied is not null) return denied;
         var companyId = GetCompanyId(http);
-        var state = await telemetry.GetLiveStateAsync(companyId, vehicleId, ct);
+        var state = await telemetry.GetLiveStateAsync(companyId, vehicleId, GetBranchId(http), ct);
         if (state is null) return Results.NotFound(ApiResponse<object>.Fail("Live state not found"));
         return Results.Ok(ApiResponse<object>.Ok(state, "Telemetry live asset state"));
     }
@@ -18672,15 +18667,17 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                      v.vehicle_code, d.full_name driver_name,
                      e.device_serial
               FROM telemetry_alerts ta
-              LEFT JOIN vehicles    v ON v.id=ta.vehicle_id
-              LEFT JOIN drivers     d ON d.id=ta.driver_id
-              LEFT JOIN eld_devices e ON e.id=ta.device_id
+              LEFT JOIN vehicles    v ON v.id=ta.vehicle_id AND v.company_id=ta.company_id
+              LEFT JOIN drivers     d ON d.id=ta.driver_id AND d.company_id=ta.company_id
+              LEFT JOIN eld_devices e ON e.id=ta.device_id AND e.company_id=ta.company_id
               WHERE ta.company_id=@cid AND (@status='All' OR ta.status=@status)
+                AND (@branchId::BIGINT IS NULL OR COALESCE(v.branch_id,e.branch_id)=@branchId)
               ORDER BY ta.created_at DESC LIMIT 100",
             c =>
             {
                 c.Parameters.AddWithValue("@cid",    companyId);
                 c.Parameters.AddWithValue("@status", status);
+                c.Parameters.AddWithValue("@branchId", (object?)GetBranchId(http) ?? DBNull.Value);
             }, ct);
         return Results.Ok(ApiResponse<object>.Ok(alerts, "Alerts"));
     }
@@ -18695,12 +18692,19 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var affected = await db.ExecuteAsync(
             @"UPDATE telemetry_alerts
               SET status='Acknowledged', acknowledged_at=NOW(), acknowledged_by=@actor
-              WHERE id=@id AND company_id=@cid AND status='Open'",
+              WHERE id=@id AND company_id=@cid AND status='Open'
+                AND (@branchId::BIGINT IS NULL OR COALESCE(
+                    (SELECT v.branch_id FROM vehicles v
+                     WHERE v.id=telemetry_alerts.vehicle_id AND v.company_id=telemetry_alerts.company_id),
+                    (SELECT e.branch_id FROM eld_devices e
+                     WHERE e.id=telemetry_alerts.device_id AND e.company_id=telemetry_alerts.company_id)
+                )=@branchId)",
             c =>
             {
                 c.Parameters.AddWithValue("@id",    id);
                 c.Parameters.AddWithValue("@cid",   companyId);
                 c.Parameters.AddWithValue("@actor", actor);
+                c.Parameters.AddWithValue("@branchId", (object?)GetBranchId(http) ?? DBNull.Value);
             }, ct);
         if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Alert not found or already acknowledged"));
         await audit.LogAsync(http, "telemetry_alert.acknowledged", "TelemetryAlert", id, null, ct);
@@ -18718,12 +18722,19 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var affected = await db.ExecuteAsync(
             @"UPDATE telemetry_alerts
               SET status='Resolved', resolved_at=NOW(), resolved_by=@actor
-              WHERE id=@id AND company_id=@cid AND status IN ('Open','Acknowledged')",
+              WHERE id=@id AND company_id=@cid AND status IN ('Open','Acknowledged')
+                AND (@branchId::BIGINT IS NULL OR COALESCE(
+                    (SELECT v.branch_id FROM vehicles v
+                     WHERE v.id=telemetry_alerts.vehicle_id AND v.company_id=telemetry_alerts.company_id),
+                    (SELECT e.branch_id FROM eld_devices e
+                     WHERE e.id=telemetry_alerts.device_id AND e.company_id=telemetry_alerts.company_id)
+                )=@branchId)",
             c =>
             {
                 c.Parameters.AddWithValue("@id",    id);
                 c.Parameters.AddWithValue("@cid",   companyId);
                 c.Parameters.AddWithValue("@actor", actor);
+                c.Parameters.AddWithValue("@branchId", (object?)GetBranchId(http) ?? DBNull.Value);
             }, ct);
         if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Alert not found or already resolved"));
         await audit.LogAsync(http, "telemetry_alert.resolved", "TelemetryAlert", id, null, ct);
@@ -18800,6 +18811,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 SELECT i.id,i.vehicle_id,i.status,i.device_role,i.is_primary
                 FROM device_installations i
                 WHERE i.company_id=e.company_id AND i.device_id=e.id
+                  AND (@branchId::BIGINT IS NULL OR i.branch_id=@branchId)
                   AND i.effective_to IS NULL AND i.status IN ('Installed','Verified')
                 ORDER BY i.effective_from DESC,i.id DESC LIMIT 1
               ) current_install ON TRUE
@@ -18841,9 +18853,12 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var page = int.TryParse(http.Request.Query["page"].FirstOrDefault(), out var parsedPage)
             ? Math.Max(1, parsedPage)
             : 1;
+        const int maxViewPageSize = 100;
+        const int maxExportPageSize = 10_000;
+        var pageSizeLimit = purpose == "export" ? maxExportPageSize : maxViewPageSize;
         var pageSize = int.TryParse(http.Request.Query["pageSize"].FirstOrDefault(), out var parsedPageSize)
-            ? Math.Clamp(parsedPageSize, 1, 100)
-            : 100;
+            ? Math.Clamp(parsedPageSize, 1, pageSizeLimit)
+            : purpose == "export" ? maxExportPageSize : maxViewPageSize;
         var search = http.Request.Query["search"].FirstOrDefault()?.Trim() ?? "";
         var view = http.Request.Query["view"].FirstOrDefault()?.Trim().ToLowerInvariant() ?? "all";
         if (purpose == "export" && page == 1)
@@ -18871,23 +18886,55 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             ? "DESC"
             : "ASC";
         var sortKey = http.Request.Query["sort"].FirstOrDefault()?.Trim().ToLowerInvariant() ?? "serial";
-        var priorityExpression = @"CASE
-            WHEN e.last_seen_at IS NULL THEN 4
-            WHEN e.last_seen_at < NOW() - INTERVAL '15 minutes' THEN 3
-            WHEN e.status IN ('Suspended','Malfunction') THEN 3
-            WHEN LOWER(COALESCE(e.device_state,'')) IN ('quarantined','suspended') THEN 3
-            WHEN e.status IN ('Diagnostic')" + alertAttentionClause + faultAttentionClause + @" THEN 2
+        var prioritySort = sortKey is "risk" or "priority";
+        var alertRiskRank = canReadAlerts ? "COALESCE(open_alert_risk.risk_rank,0)" : "0";
+        var faultRiskRank = canReadDiagnostics ? "COALESCE(active_fault_risk.risk_rank,0)" : "0";
+        var alertRiskAt = canReadAlerts ? "open_alert_risk.risk_at" : "NULL::TIMESTAMPTZ";
+        var faultRiskAt = canReadDiagnostics ? "active_fault_risk.risk_at" : "NULL::TIMESTAMPTZ";
+        var lifecycleRiskExpression = @"CASE
+            WHEN LOWER(COALESCE(e.device_state,'')) IN ('quarantined','suspended') THEN 650
+            WHEN e.status IN ('Suspended','Malfunction') THEN 600
+            WHEN e.status='Diagnostic' THEN 550
+            WHEN e.last_seen_at < NOW() - INTERVAL '15 minutes' THEN 500
+            WHEN e.last_seen_at IS NULL THEN 400
+            ELSE 0 END";
+        var priorityExpression = $"GREATEST({faultRiskRank},{alertRiskRank},{lifecycleRiskExpression})";
+        var priorityRecencyExpression = $"GREATEST({faultRiskAt},{alertRiskAt},e.last_seen_at,e.created_at)";
+        var positionFixExpression = "COALESCE(lp.device_fix_time,lp.event_time,lp.received_at)";
+        var gpsFreshnessRiskExpression = $@"CASE
+            WHEN lp.id IS NULL OR lp.lat NOT BETWEEN -90 AND 90 OR lp.lng NOT BETWEEN -180 AND 180 THEN 4
+            WHEN EXTRACT(EPOCH FROM (NOW()-{positionFixExpression})) > 900 THEN 3
+            WHEN EXTRACT(EPOCH FROM (NOW()-{positionFixExpression})) > 120 THEN 2
+            ELSE 0 END";
+        var diagnosticFreshnessRiskExpression = @"CASE
+            WHEN diagnostic_evidence.observed_at IS NULL THEN 4
+            WHEN EXTRACT(EPOCH FROM (NOW()-diagnostic_evidence.observed_at)) > 900 THEN 3
+            WHEN EXTRACT(EPOCH FROM (NOW()-diagnostic_evidence.observed_at)) > 120 THEN 2
             ELSE 0 END";
         var sort = sortKey switch
         {
             "provider" => "e.provider",
             "model" => "e.device_model",
             "status" => "e.status",
-            "lastcheckin" => "e.last_seen_at",
+            "lastcheckin" or "lastfix" => cluster switch
+            {
+                "gps" => positionFixExpression,
+                "diagnostics" => "diagnostic_evidence.observed_at",
+                _ => "e.last_seen_at",
+            },
             "vehicle" => "v.vehicle_code",
-            "priority" => priorityExpression,
+            "freshness" => cluster switch
+            {
+                "gps" => gpsFreshnessRiskExpression,
+                "diagnostics" => diagnosticFreshnessRiskExpression,
+                _ => lifecycleRiskExpression,
+            },
+            "risk" or "priority" => priorityExpression,
             _ => "e.device_serial",
         };
+        var riskRecencyOrder = prioritySort
+            ? $", {priorityRecencyExpression} DESC NULLS LAST"
+            : "";
         var standardViewClause = view switch
         {
             "archived" => " AND (e.revoked_at IS NOT NULL OR e.status IN ('Revoked','Retired'))",
@@ -18910,8 +18957,16 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 AND LOWER(COALESCE(e.device_state,'')) NOT IN ('quarantined','suspended')
                 AND lp.lat BETWEEN -90 AND 90 AND lp.lng BETWEEN -180 AND 180
                 AND EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) <= 120",
+            "delayed-gps" => @" AND e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired','Suspended','Malfunction','Diagnostic')
+                AND LOWER(COALESCE(e.device_state,'')) NOT IN ('quarantined','suspended')
+                AND lp.lat BETWEEN -90 AND 90 AND lp.lng BETWEEN -180 AND 180
+                AND EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) > 120
+                AND EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) <= 900",
             "stale-gps" => @" AND e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired') AND lp.lat BETWEEN -90 AND 90 AND lp.lng BETWEEN -180 AND 180
                 AND EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) > 900",
+            "watch" or "delayed" => @" AND e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired') AND lp.lat BETWEEN -90 AND 90 AND lp.lng BETWEEN -180 AND 180
+                AND EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) > 120
+                AND EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) <= 900",
             "offline" => @" AND e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired') AND (
                 lp.id IS NULL OR lp.lat NOT BETWEEN -90 AND 90 OR lp.lng NOT BETWEEN -180 AND 180
                 OR e.status IN ('Suspended','Malfunction'))",
@@ -18969,7 +19024,30 @@ LEFT JOIN LATERAL (
                AND (fc.code ILIKE '%' || @search || '%' OR COALESCE(fc.description,'') ILIKE '%' || @search || '%'))",
             _ => "",
         };
-        var fromSql = @"
+        // Risk evidence is permission-scoped before it reaches ordering. Severity
+        // ranks intentionally put active operational incidents ahead of onboarding:
+        // critical/high faults and alerts must outrank a never-connected device.
+        var alertRiskJoin = canReadAlerts && prioritySort ? @"
+LEFT JOIN LATERAL (
+  SELECT MAX(CASE LOWER(COALESCE(ta.severity,''))
+               WHEN 'critical' THEN 950 WHEN 'emergency' THEN 950
+               WHEN 'high' THEN 850 WHEN 'medium' THEN 750
+               WHEN 'warning' THEN 700 ELSE 675 END) risk_rank,
+         MAX(COALESCE(ta.updated_at,ta.created_at)) risk_at
+  FROM telemetry_alerts ta
+  WHERE ta.company_id=e.company_id AND ta.device_id=e.id AND ta.status='Open'
+) open_alert_risk ON TRUE" : "";
+        var faultRiskJoin = canReadDiagnostics && prioritySort ? @"
+LEFT JOIN LATERAL (
+  SELECT MAX(CASE LOWER(COALESCE(fc.severity,''))
+               WHEN 'critical' THEN 1000 WHEN 'emergency' THEN 1000
+               WHEN 'high' THEN 900 WHEN 'medium' THEN 800
+               WHEN 'warning' THEN 725 ELSE 700 END) risk_rank,
+         MAX(COALESCE(fc.last_observed_at,fc.observed_at,fc.last_seen_at,fc.created_at)) risk_at
+  FROM fault_codes fc
+  WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active'
+) active_fault_risk ON TRUE" : "";
+        var fromPrefixSql = @"
 FROM eld_devices e
 LEFT JOIN LATERAL (
   SELECT i.id,i.vehicle_id,i.status,i.device_role,i.is_primary,i.row_version current_installation_row_version,i.activation_verified_at
@@ -18986,7 +19064,8 @@ LEFT JOIN LATERAL (
   ORDER BY da.assigned_at DESC,da.id DESC LIMIT 1
 ) active_dispatch ON TRUE
 LEFT JOIN drivers d ON d.id=active_dispatch.driver_id AND d.company_id=e.company_id
-" + positionEvidenceJoin + diagnosticEvidenceJoin + @"
+" + positionEvidenceJoin + diagnosticEvidenceJoin;
+        var whereSql = @"
 WHERE e.company_id=@cid AND e.deleted_at IS NULL
   AND (@branchId::BIGINT IS NULL OR e.branch_id=@branchId)
   AND (@search='' OR e.device_serial ILIKE '%' || @search || '%'
@@ -18997,6 +19076,11 @@ WHERE e.company_id=@cid AND e.deleted_at IS NULL
     OR COALESCE(v.vehicle_code,'') ILIKE '%' || @search || '%'
     OR COALESCE(d.full_name,'') ILIKE '%' || @search || '%'
     " + evidenceSearch + ")";
+        // Counts and summaries do not need risk-ranking joins. Keeping those joins
+        // on the item query only avoids repeating severity aggregation over the
+        // complete fleet three times per request.
+        var fromSql = fromPrefixSql + whereSql;
+        var itemFromSql = fromPrefixSql + alertRiskJoin + faultRiskJoin + whereSql;
         Action<NpgsqlCommand> bind = command =>
         {
             command.Parameters.AddWithValue("@cid", GetCompanyId(http));
@@ -19052,7 +19136,8 @@ SELECT e.id, e.device_serial, e.imei, e.device_category, e.device_model, e.provi
        " + (canReadAlerts
            ? "(SELECT COUNT(*) FROM telemetry_alerts ta WHERE ta.company_id=e.company_id AND ta.device_id=e.id AND ta.status='Open')"
            : "0") + @" open_alert_count
-" + evidenceSelect + fromSql + clusterClause + viewClause + $" ORDER BY {sort} {direction} NULLS LAST, e.device_serial LIMIT @limit OFFSET @offset",
+" + evidenceSelect + itemFromSql + clusterClause + viewClause
+            + $" ORDER BY {sort} {direction} NULLS LAST{riskRecencyOrder}, COALESCE(v.vehicle_code,'') ASC, COALESCE(e.provider,'') ASC, e.device_serial ASC, e.id ASC LIMIT @limit OFFSET @offset",
             command =>
             {
                 bind(command);
@@ -19063,6 +19148,19 @@ SELECT e.id, e.device_serial, e.imei, e.device_category, e.device_model, e.provi
         {
             "gps" => @"COUNT(*) FILTER (WHERE e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired')) active,
        COUNT(*) FILTER (WHERE e.revoked_at IS NOT NULL OR e.status IN ('Revoked','Retired')) archived,
+       COUNT(*) FILTER (WHERE e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired','Suspended','Malfunction','Diagnostic')
+         AND LOWER(COALESCE(e.device_state,'')) NOT IN ('quarantined','suspended')
+         AND lp.lat BETWEEN -90 AND 90 AND lp.lng BETWEEN -180 AND 180
+         AND EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) <= 120) online,
+       COUNT(*) FILTER (WHERE e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired')
+         AND lp.lat BETWEEN -90 AND 90 AND lp.lng BETWEEN -180 AND 180
+         AND EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) > 120
+         AND EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) <= 900) delayed,
+       COUNT(*) FILTER (WHERE e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired')
+         AND lp.lat BETWEEN -90 AND 90 AND lp.lng BETWEEN -180 AND 180
+         AND EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) > 900) stale,
+       COUNT(*) FILTER (WHERE e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired')
+         AND (lp.id IS NULL OR lp.lat NOT BETWEEN -90 AND 90 OR lp.lng NOT BETWEEN -180 AND 180)) no_position,
        COUNT(*) FILTER (WHERE e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired') AND (lp.id IS NULL OR lp.lat NOT BETWEEN -90 AND 90 OR lp.lng NOT BETWEEN -180 AND 180
          OR EXTRACT(EPOCH FROM (NOW()-COALESCE(lp.device_fix_time,lp.event_time,lp.received_at))) > 900
          OR e.status IN ('Suspended','Malfunction'))) offline,
@@ -19105,6 +19203,7 @@ SELECT e.id, e.device_serial, e.imei, e.device_category, e.device_model, e.provi
             total,
             page,
             pageSize,
+            exportComplete = purpose != "export" || (page == 1 && items.Count == total),
             summary = summary ?? new Dictionary<string, object?>(),
         }, "Device page"));
     }
@@ -19425,20 +19524,23 @@ LIMIT 100000",
               FROM device_installations i
               JOIN vehicles v ON v.id=i.vehicle_id AND v.company_id=i.company_id
               WHERE i.company_id=@cid AND i.device_id=@id
+                AND (@branchId::BIGINT IS NULL OR i.branch_id=@branchId)
               ORDER BY i.effective_from DESC,i.id DESC",
-            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
         var transitions = await db.QueryAsync(
             @"SELECT id,from_state,to_state,reason_code,reason,actor_user_id,correlation_id,occurred_at
               FROM device_state_transitions WHERE company_id=@cid AND device_id=@id
+                AND (@branchId::BIGINT IS NULL OR branch_id=@branchId)
               ORDER BY occurred_at DESC,id DESC LIMIT 100",
-            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
         var installationEvidence = await db.QueryAsync(
             @"SELECT e.id,e.installation_id,e.evidence_type,e.object_key,e.sha256,e.captured_at,e.captured_by
                 FROM device_installation_evidence e
                 JOIN device_installations i ON i.id=e.installation_id AND i.company_id=e.company_id
                WHERE e.company_id=@cid AND i.device_id=@id
+                 AND (@branchId::BIGINT IS NULL OR i.branch_id=@branchId)
                ORDER BY e.captured_at DESC,e.id DESC",
-            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
         var current = history.FirstOrDefault(row =>
             row.GetValueOrDefault("effectiveTo") is null or DBNull &&
             row.GetValueOrDefault("status")?.ToString() is "Installed" or "Verified");

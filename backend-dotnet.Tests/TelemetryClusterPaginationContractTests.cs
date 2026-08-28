@@ -25,7 +25,8 @@ public sealed class TelemetryClusterPaginationContractTests
         Assert.Contains("p.company_id=e.company_id AND p.device_id=e.id", source, StringComparison.Ordinal);
         Assert.DoesNotContain("p.vehicle_id=current_install.vehicle_id", source, StringComparison.Ordinal);
         Assert.Contains("LIMIT @limit OFFSET @offset", source, StringComparison.Ordinal);
-        Assert.Contains("Math.Clamp(parsedPageSize, 1, 100)", source, StringComparison.Ordinal);
+        Assert.Contains("const int maxViewPageSize = 100", source, StringComparison.Ordinal);
+        Assert.Contains("const int maxExportPageSize = 10_000", source, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -41,6 +42,13 @@ public sealed class TelemetryClusterPaginationContractTests
         Assert.Contains("CASE WHEN lp.engine_status IS NOT NULL OR lp.odometer_miles IS NOT NULL", source, StringComparison.Ordinal);
         Assert.Contains("GREATEST(", source, StringComparison.Ordinal);
         Assert.Contains("diagnostic_evidence.observed_at", source, StringComparison.Ordinal);
+        Assert.Contains("\"watch\" or \"delayed\"", source, StringComparison.Ordinal);
+        Assert.Contains("WHEN 'critical' THEN 1000", source, StringComparison.Ordinal);
+        Assert.Contains("WHEN 'high' THEN 850", source, StringComparison.Ordinal);
+        Assert.Contains("WHEN e.last_seen_at IS NULL THEN 400", source, StringComparison.Ordinal);
+        Assert.Contains("priorityRecencyExpression", source, StringComparison.Ordinal);
+        Assert.Contains("e.device_serial ASC, e.id ASC", source, StringComparison.Ordinal);
+        Assert.Contains("no_position", source, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -50,7 +58,7 @@ public sealed class TelemetryClusterPaginationContractTests
         var page = Read("frontend", "src", "pages", "TelematicsCommandPage.tsx");
 
         Assert.Contains("getTelemetryClusterPage", service, StringComparison.Ordinal);
-        Assert.Contains("pageSize: Math.min(100, Math.max(1, options.pageSize ?? 50))", service, StringComparison.Ordinal);
+        Assert.Contains("Math.min(options.purpose === \"export\" ? 10_000 : 100", service, StringComparison.Ordinal);
         Assert.Contains("|| !requiredEvidenceAvailable", service, StringComparison.Ordinal);
         Assert.Contains("recordsQ.data?.summary.offline", page, StringComparison.Ordinal);
         Assert.Contains("recordsQ.data?.summary.attention", page, StringComparison.Ordinal);
@@ -59,6 +67,12 @@ public sealed class TelemetryClusterPaginationContractTests
         Assert.Contains(">Next</button>", page, StringComparison.Ordinal);
         Assert.Contains("enabled: canView && Boolean(selected?.deviceId) && !paged", page, StringComparison.Ordinal);
         Assert.Contains("detail?: DeviceDetailRecord", page, StringComparison.Ordinal);
+        Assert.Contains("Highest risk first", page, StringComparison.Ordinal);
+        Assert.Contains("Freshness risk", page, StringComparison.Ordinal);
+        Assert.Contains("filterTabs: [\"All\", \"Online\", \"Delayed / Watch\"", page, StringComparison.Ordinal);
+        Assert.Contains("pageSize: 10_000", service, StringComparison.Ordinal);
+        Assert.Contains("new Set(identities).size", service, StringComparison.Ordinal);
+        Assert.DoesNotContain("while (rows.length < expectedTotal)", service, StringComparison.Ordinal);
     }
 
     [Theory]

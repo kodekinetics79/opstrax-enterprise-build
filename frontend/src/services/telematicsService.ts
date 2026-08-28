@@ -209,6 +209,8 @@ export type TelemetryClusterPageOptions = {
   search?: string;
   view?: string;
   purpose?: "view" | "export";
+  sort?: "risk" | "freshness" | "lastFix" | "vehicle" | "serial" | "provider";
+  direction?: "asc" | "desc";
 };
 
 export type TelemetryClusterPageResult = {
@@ -216,7 +218,16 @@ export type TelemetryClusterPageResult = {
   total: number;
   page: number;
   pageSize: number;
-  summary: { active: number; offline: number; attention: number };
+  exportComplete?: boolean;
+  summary: {
+    active: number;
+    offline: number;
+    attention: number;
+    online: number;
+    delayed: number;
+    stale: number;
+    noPosition: number;
+  };
 };
 
 // ── Wire-format normalization ─────────────────────────────────────────────────────────
@@ -367,6 +378,7 @@ export type TelematicsClusterRecord = {
   id: string;
   deviceId: string | number;
   deviceName: string;
+  serialNumber: string;
   deviceType: string;
   provider: string;
   vehicleId: string;
@@ -1009,6 +1021,7 @@ function toClusterRecord(
     id: `${protocolType.toLowerCase()}-${device.id}`,
     deviceId: device.id,
     deviceName: device.deviceName,
+    serialNumber: device.serialNumber,
     deviceType: device.deviceType,
     provider: device.provider,
     vehicleId: device.assignedVehicleId,
@@ -1103,6 +1116,7 @@ function toColdChainClusterRecord(
     id: `cold-chain-${device.id}`,
     deviceId: device.id,
     deviceName: device.name || device.deviceCode,
+    serialNumber: device.deviceCode,
     deviceType: "Cold-chain sensor",
     provider: device.sourceChannel ? String(device.sourceChannel) : "Cold-chain service",
     vehicleId: "",
@@ -1230,6 +1244,7 @@ export const telematicsService = {
       total: number;
       page: number;
       pageSize: number;
+      exportComplete?: boolean;
       summary?: AnyRecord;
     }>(apiClient.get("/api/telemetry/devices/page", {
       params: {
@@ -1269,17 +1284,18 @@ export const telematicsService = {
       total: number;
       page: number;
       pageSize: number;
+      exportComplete?: boolean;
       summary?: AnyRecord;
     }>(apiClient.get("/api/telemetry/devices/page", {
       params: {
         page: options.page ?? 1,
-        pageSize: Math.min(100, Math.max(1, options.pageSize ?? 50)),
+        pageSize: Math.min(options.purpose === "export" ? 10_000 : 100, Math.max(1, options.pageSize ?? 50)),
         search: options.search?.trim() || undefined,
         view: options.view ?? "all",
         cluster: kind === "obd-j1939" ? "diagnostics" : "gps",
         purpose: options.purpose ?? "view",
-        sort: "serial",
-        direction: "asc",
+        sort: options.sort ?? "risk",
+        direction: options.direction ?? "desc",
       },
     }));
     const normalized = (payload.items ?? []).map(normalizeKeys);
@@ -1322,10 +1338,15 @@ export const telematicsService = {
       total: Number(payload.total ?? 0),
       page: Number(payload.page ?? 1),
       pageSize: Number(payload.pageSize ?? 50),
+      exportComplete: payload.exportComplete,
       summary: {
         active: Number(summary.active ?? 0),
         offline: Number(summary.offline ?? 0),
         attention: Number(summary.attention ?? 0),
+        online: Number(summary.online ?? 0),
+        delayed: Number(summary.delayed ?? 0),
+        stale: Number(summary.stale ?? 0),
+        noPosition: Number(summary.noPosition ?? summary.no_position ?? 0),
       },
     };
   },
@@ -1814,25 +1835,28 @@ export const telematicsService = {
 
   async exportTelemetryClusterCsv(
     kind: "gps-tracking" | "obd-j1939",
-    options: Pick<TelemetryClusterPageOptions, "search" | "view">,
+    options: Pick<TelemetryClusterPageOptions, "search" | "view" | "sort" | "direction">,
     columns: string[],
   ) {
-    const rows: TelematicsClusterRecord[] = [];
-    let page = 1;
-    let expectedTotal = 0;
-    do {
-      const batch = await this.getTelemetryClusterPage(kind, { ...options, page, pageSize: 100, purpose: "export" });
-      expectedTotal = batch.total;
-      rows.push(...batch.items);
-      if (batch.items.length === 0 && rows.length < expectedTotal) {
-        throw new Error(`Export stopped after ${rows.length} of ${expectedTotal} authorized rows. Retry the export.`);
-      }
-      page += 1;
-    } while (rows.length < expectedTotal);
-    if (rows.length !== expectedTotal) {
-      throw new Error(`Export changed during pagination (${rows.length} rows read; ${expectedTotal} expected). Retry the export.`);
+    // One bounded server query gives the export a single item snapshot. Walking
+    // mutable OFFSET pages could otherwise duplicate or omit identities when a
+    // device changes state between requests.
+    const batch = await this.getTelemetryClusterPage(kind, {
+      ...options,
+      page: 1,
+      pageSize: 10_000,
+      purpose: "export",
+      sort: "serial",
+      direction: "asc",
+    });
+    const identities = batch.items.map((row) => String(row.deviceId));
+    if (new Set(identities).size !== identities.length) {
+      throw new Error("Export contained duplicate device identities. Retry the export.");
     }
-    return this.exportClusterCsv(rows, columns);
+    if (!batch.exportComplete || batch.items.length !== batch.total) {
+      throw new Error(`Export snapshot is incomplete (${batch.items.length} of ${batch.total} authorized rows). Narrow the filter or contact support.`);
+    }
+    return this.exportClusterCsv(batch.items, columns);
   },
 
   exportClusterCsv(rows: TelematicsClusterRecord[], columns: string[]) {
