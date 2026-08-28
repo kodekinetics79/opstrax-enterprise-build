@@ -23,17 +23,26 @@ jobs:
     steps:
       - name: Ping backend /health (waking it if asleep)
         run: |
-          # --max-time 90 tolerates a full cold-start wake. Retry a couple times
-          # so a single slow wake doesn't fail the run.
-          for attempt in 1 2 3; do
-            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 90 \
-              https://osptrax-fleet-management.onrender.com/health || echo 000)
-            echo "attempt $attempt -> HTTP $code"
-            if [ "$code" = "200" ]; then
-              echo "Backend is awake."
-              exit 0
+          # Liveness is enough to wake an instance; readiness is certified by the
+          # staging release workflow after the worker startup grace has elapsed.
+          failed=0
+          for origin in \
+            https://opstrax-enterprise-build-8x41.onrender.com \
+            https://opstrax-staging-api.onrender.com; do
+            healthy=false
+            for attempt in 1 2 3; do
+              code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 90 \
+                "$origin/health" || echo 000)
+              echo "$origin attempt $attempt -> HTTP $code"
+              if [ "$code" = "200" ]; then
+                healthy=true
+                break
+              fi
+              sleep 10
+            done
+            if [ "$healthy" != "true" ]; then
+              echo "$origin did not return HTTP 200 after 3 attempts."
+              failed=1
             fi
-            sleep 10
           done
-          echo "Backend did not return 200 after 3 attempts."
-          exit 1
+          exit "$failed"

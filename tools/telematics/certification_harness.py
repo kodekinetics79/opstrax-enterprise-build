@@ -9,6 +9,7 @@ credential files, and an acknowledgement. It never reads or writes the database.
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 import csv
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
@@ -37,6 +38,7 @@ RECONNECT_SECONDS = 17 * 60
 MAX_SCENARIOS = 8_000
 DEFAULT_RATE_PER_SECOND = 20.0
 MAX_RATE_PER_SECOND = 50.0
+MAX_EXECUTION_WORKERS = 64
 KNOWN_PRODUCTION_HOSTS = {
     "osptrax-fleet-management.onrender.com",
     "opstrax-api.onrender.com",
@@ -542,6 +544,91 @@ def execute_scenario(base_url: str, scenario: Scenario, expected_sha: str, timeo
     }
 
 
+def _wait_for_submission_slot(due: float, next_rate_slot: float) -> float:
+    """Wait for the later of the phase due time, rate slot, and current time.
+
+    Including the current time deliberately discards pacing debt after endpoint
+    backpressure. A delayed run therefore extends instead of submitting a burst
+    to catch up with an obsolete schedule.
+    """
+    now = time.monotonic()
+    target = max(due, next_rate_slot, now)
+    delay = target - now
+    if delay > 0:
+        time.sleep(delay)
+    return time.monotonic()
+
+
+def execute_scenarios(
+    base_url: str,
+    scenarios: list[Scenario],
+    expected_sha: str,
+    timeout: float,
+    rate_per_second: float,
+) -> tuple[int, int]:
+    """Execute at the planned submission rate without serializing on response latency.
+
+    The rate remains a hard submission ceiling. Bounded workers and pending futures
+    prevent an unhealthy endpoint from creating an unbounded local queue.
+    """
+    worker_count = min(MAX_EXECUTION_WORKERS, max(4, int(rate_per_second * 4)))
+    pending_limit = worker_count * 2
+    execution_started = time.monotonic()
+    next_rate_slot = execution_started
+    completed = 0
+    failed = 0
+    pending: dict[Future[dict[str, object]], Scenario] = {}
+    inflight_by_serial: dict[str, Future[dict[str, object]]] = {}
+
+    def record(done: set[Future[dict[str, object]]]) -> None:
+        nonlocal completed, failed
+        for future in done:
+            scenario = pending.pop(future)
+            if inflight_by_serial.get(scenario.serial) is future:
+                del inflight_by_serial[scenario.serial]
+            try:
+                result = future.result()
+            except (OSError, RuntimeError) as exc:
+                result = {
+                    "name": scenario.name,
+                    "deviceSerial": scenario.serial,
+                    "cohort": scenario.cohort,
+                    "interface": scenario.interface,
+                    "passed": False,
+                    "error": str(exc),
+                }
+            print(json.dumps(result, sort_keys=True), flush=True)
+            completed += 1
+            failed += 0 if result.get("passed") else 1
+
+    with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="cert-telemetry") as executor:
+        for scenario in scenarios:
+            # Each device's events form an ordered certification story. In
+            # particular, replay-original must commit before replay-duplicate.
+            # Wait in the scheduler rather than occupying a worker with a
+            # predecessor wait, which could starve the bounded pool.
+            previous = inflight_by_serial.get(scenario.serial)
+            if previous is not None and previous in pending:
+                done, _ = wait({previous}, return_when=FIRST_COMPLETED)
+                record(done)
+
+            due = execution_started + scenario.send_offset_seconds
+            _wait_for_submission_slot(due, next_rate_slot)
+            future = executor.submit(execute_scenario, base_url, scenario, expected_sha, timeout)
+            pending[future] = scenario
+            inflight_by_serial[scenario.serial] = future
+            next_rate_slot = time.monotonic() + (1.0 / rate_per_second)
+            if len(pending) >= pending_limit:
+                done, _ = wait(pending, return_when=FIRST_COMPLETED)
+                record(done)
+
+        while pending:
+            done, _ = wait(pending, return_when=FIRST_COMPLETED)
+            record(done)
+
+    return completed, failed
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--credentials", action="append", required=True, help="mode-0600 one-time credential CSV; repeatable")
@@ -585,21 +672,10 @@ def main(argv: list[str] | None = None) -> int:
         if abs((datetime.now(timezone.utc) - observed_at.astimezone(timezone.utc)).total_seconds()) > 60:
             raise ValueError("execute mode requires --observed-at within 60 seconds of current UTC")
 
-        print(json.dumps({"preflight": preflight(base_url, args.expected_sha, args.timeout)}, sort_keys=True))
-        failed = 0
-        execution_started = time.monotonic()
-        next_rate_slot = execution_started
-        for scenario in scenarios:
-            due = execution_started + scenario.send_offset_seconds
-            next_rate_slot = max(next_rate_slot, due)
-            delay = next_rate_slot - time.monotonic()
-            if delay > 0:
-                time.sleep(delay)
-            result = execute_scenario(base_url, scenario, args.expected_sha, args.timeout)
-            print(json.dumps(result, sort_keys=True))
-            failed += 0 if result["passed"] else 1
-            next_rate_slot = max(next_rate_slot, time.monotonic()) + (1.0 / args.rate_per_second)
-        print(json.dumps({"completed": len(scenarios), "failed": failed, "runId": args.run_id}, sort_keys=True))
+        print(json.dumps({"preflight": preflight(base_url, args.expected_sha, args.timeout)}, sort_keys=True), flush=True)
+        completed, failed = execute_scenarios(
+            base_url, scenarios, args.expected_sha, args.timeout, args.rate_per_second)
+        print(json.dumps({"completed": completed, "failed": failed, "runId": args.run_id}, sort_keys=True), flush=True)
         return 0 if failed == 0 else 1
     except (OSError, ValueError, RuntimeError) as exc:
         print(f"certification harness refused: {exc}", file=sys.stderr)

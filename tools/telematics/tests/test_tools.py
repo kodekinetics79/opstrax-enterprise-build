@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -398,6 +399,83 @@ class CertificationHarnessTests(unittest.TestCase):
                 ])
             self.assertEqual(status, 2)
             self.assertIn("execute mode requires", stderr.getvalue())
+
+    def test_execute_scenarios_serializes_same_device_replay_pair(self) -> None:
+        def scenario(name: str) -> certification_harness.Scenario:
+            return certification_harness.Scenario(
+                name=name,
+                serial="CLHQ-DEV-0001",
+                api_key="api-key",
+                hmac_secret="hmac-secret",
+                nonce=f"nonce-{name}",
+                body="{}",
+                expected_status=(200,),
+                chrome_outcome="test",
+            )
+
+        original_started = threading.Event()
+        release_original = threading.Event()
+        duplicate_started = threading.Event()
+        call_order: list[str] = []
+        result: list[tuple[int, int]] = []
+
+        def execute(_base_url: str, row: certification_harness.Scenario,
+                    _expected_sha: str, _timeout: float) -> dict[str, object]:
+            call_order.append(f"{row.name}:start")
+            if row.name == "replay-original":
+                original_started.set()
+                self.assertTrue(release_original.wait(2))
+                call_order.append(f"{row.name}:finish")
+            else:
+                duplicate_started.set()
+                call_order.append(f"{row.name}:finish")
+            return {"name": row.name, "passed": True}
+
+        def run() -> None:
+            result.append(certification_harness.execute_scenarios(
+                "https://staging.example.test",
+                [scenario("replay-original"), scenario("replay-duplicate")],
+                "a" * 40,
+                1.0,
+                50.0,
+            ))
+
+        with mock.patch.object(certification_harness, "execute_scenario", side_effect=execute), \
+                redirect_stdout(io.StringIO()):
+            runner = threading.Thread(target=run)
+            runner.start()
+            self.assertTrue(original_started.wait(1))
+            self.assertFalse(duplicate_started.wait(0.1))
+            release_original.set()
+            runner.join(2)
+
+        self.assertFalse(runner.is_alive())
+        self.assertEqual(result, [(2, 0)])
+        self.assertEqual(call_order, [
+            "replay-original:start",
+            "replay-original:finish",
+            "replay-duplicate:start",
+            "replay-duplicate:finish",
+        ])
+
+    def test_submission_pacing_discards_backpressure_debt(self) -> None:
+        clock = {"now": 10.0}
+        sleeps: list[float] = []
+
+        def sleep(seconds: float) -> None:
+            sleeps.append(seconds)
+            clock["now"] += seconds
+
+        with mock.patch.object(certification_harness.time, "monotonic",
+                               side_effect=lambda: clock["now"]), \
+                mock.patch.object(certification_harness.time, "sleep", side_effect=sleep):
+            first_submission = certification_harness._wait_for_submission_slot(0.0, 1.0)
+            next_rate_slot = first_submission + 1.0
+            second_submission = certification_harness._wait_for_submission_slot(0.0, next_rate_slot)
+
+        self.assertEqual(first_submission, 10.0)
+        self.assertEqual(second_submission, 11.0)
+        self.assertEqual(sleeps, [1.0])
 
 
 if __name__ == "__main__":

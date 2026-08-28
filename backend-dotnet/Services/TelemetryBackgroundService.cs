@@ -13,7 +13,10 @@ public sealed class TelemetryBackgroundService(
     ServiceRunTracker tracker) : BackgroundService
 {
     private static readonly TimeSpan CheckInterval = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan BacklogInterval = TimeSpan.FromSeconds(15);
     private const string SvcName = "TelemetryBackgroundService";
+    internal const int MaxStaleAlertsPerTick = 100;
+    internal const int ProgressHeartbeatBatchSize = 10;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -24,8 +27,13 @@ public sealed class TelemetryBackgroundService(
         {
             var sw    = System.Diagnostics.Stopwatch.StartNew();
             var runId = await tracker.BeginAsync(SvcName, stoppingToken);
+            var staleAlertsProcessed = 0;
             try
             {
+                // Publish liveness before the bounded cross-tenant scan. At large-fleet
+                // volume even a bounded tick can span several readiness probes.
+                await ReportProgressAsync(runId, stoppingToken);
+
                 // Cross-tenant worker (all-company positions/nonces, filtered by company_id):
                 // run the whole tick under the platform-admin bypass scope.
                 using (var tickScope = scopeFactory.CreateScope())
@@ -33,13 +41,14 @@ public sealed class TelemetryBackgroundService(
                     var tickDb = tickScope.ServiceProvider.GetRequiredService<Database>();
                     await tickDb.RunInSystemScopeAsync(async () =>
                     {
-                        await CheckStaleDevicesAsync(stoppingToken);
+                        staleAlertsProcessed = await CheckStaleDevicesAsync(runId, stoppingToken);
+                        await ReportProgressAsync(runId, stoppingToken);
                         await RecomputeVehicleDeviceStatusAsync(stoppingToken);
                         await PruneExpiredNoncesAsync(stoppingToken);
                     }, stoppingToken);
                 }
                 sw.Stop();
-                await tracker.CompleteAsync(runId, SvcName, 0, (int)sw.ElapsedMilliseconds, stoppingToken);
+                await tracker.CompleteAsync(runId, SvcName, staleAlertsProcessed, (int)sw.ElapsedMilliseconds, stoppingToken);
             }
             catch (OperationCanceledException) { break; }
             catch (Exception ex)
@@ -49,9 +58,21 @@ public sealed class TelemetryBackgroundService(
                 await tracker.FailAsync(runId, SvcName, ex, (int)sw.ElapsedMilliseconds, stoppingToken);
             }
 
-            try { await Task.Delay(CheckInterval, stoppingToken); }
+            // A full batch means more stale rows may remain. Drain that backlog in
+            // small bursts instead of either monopolising a cold-start instance or
+            // delaying subsequent alerts by five minutes per batch.
+            var nextInterval = staleAlertsProcessed >= MaxStaleAlertsPerTick
+                ? BacklogInterval
+                : CheckInterval;
+            try { await Task.Delay(nextInterval, stoppingToken); }
             catch (OperationCanceledException) { break; }
         }
+    }
+
+    private async Task ReportProgressAsync(long runId, CancellationToken ct)
+    {
+        await tracker.HeartbeatAsync(SvcName, runId, ct);
+        await tracker.PulseAsync(SvcName, ct);
     }
 
     // Recompute vehicles.device_status from real telemetry freshness. Previously device_status was
@@ -82,14 +103,17 @@ public sealed class TelemetryBackgroundService(
             logger.LogDebug("Recomputed device_status for {Count} vehicles from telemetry freshness", updated);
     }
 
-    private async Task CheckStaleDevicesAsync(CancellationToken ct)
+    private async Task<int> CheckStaleDevicesAsync(long runId, CancellationToken ct)
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<Database>();
         var telemetry = scope.ServiceProvider.GetRequiredService<TelemetryLiveStateService>();
         var ai = scope.ServiceProvider.GetRequiredService<PostgresAiFoundationService>();
 
-        // Join telemetry_rules to get per-tenant stale threshold (default 900s = 15 min)
+        // Join telemetry_rules to get per-tenant stale threshold (default 900s = 15 min).
+        // Exclude open alerts in SQL and bound the batch. The previous implementation
+        // loaded the entire fleet and issued a COUNT query per row, which produced a
+        // cold-start N+1 storm for large certification tenants.
         var stale = await db.QueryAsync(
             @"SELECT lvp.company_id, lvp.vehicle_id, lvp.device_id,
                      EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT seconds_stale,
@@ -97,10 +121,20 @@ public sealed class TelemetryBackgroundService(
               FROM latest_vehicle_positions lvp
               LEFT JOIN telemetry_rules tr
                 ON tr.company_id=lvp.company_id AND tr.rule_type='stale_device' AND tr.enabled=TRUE
-              WHERE EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT > COALESCE(tr.threshold_value, 900)",
+              WHERE EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT > COALESCE(tr.threshold_value, 900)
+                AND NOT EXISTS (
+                  SELECT 1 FROM telemetry_alerts ta
+                  WHERE ta.company_id=lvp.company_id
+                    AND ta.vehicle_id=lvp.vehicle_id
+                    AND ta.alert_type='stale_device'
+                    AND ta.status='Open'
+                )
+              ORDER BY lvp.received_at, lvp.company_id, lvp.vehicle_id
+              LIMIT 100",
             ct: ct);
 
         var companiesToRefresh = new HashSet<long>();
+        var processed = 0;
         foreach (var pos in stale)
         {
             var companyId = Convert.ToInt64(pos["companyId"]);
@@ -108,14 +142,7 @@ public sealed class TelemetryBackgroundService(
             var seconds   = Convert.ToInt64(pos["secondsStale"]);
             companiesToRefresh.Add(companyId);
 
-            // Idempotent: skip if an open stale_device alert already exists
-            var open = await db.ScalarLongAsync(
-                "SELECT COUNT(*) FROM telemetry_alerts WHERE company_id=@cid AND vehicle_id=@vid AND alert_type='stale_device' AND status='Open'",
-                c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@vid", vehicleId); }, ct);
-
-            if (open == 0)
-            {
-                var alertId = await db.InsertAsync(
+            var alertId = await db.InsertAsync(
                     @"INSERT INTO telemetry_alerts (company_id, vehicle_id, device_id, alert_type, severity, message, status)
                       VALUES (@cid, @vid, @did, 'stale_device', 'Warning', @msg, 'Open')
                       RETURNING id",
@@ -127,9 +154,9 @@ public sealed class TelemetryBackgroundService(
                         c.Parameters.AddWithValue("@msg", $"No telemetry received for {seconds / 60} minutes (background check)");
                     }, ct);
 
-                logger.LogInformation("Stale-device alert created: company={CompanyId} vehicle={VehicleId}", companyId, vehicleId);
+            logger.LogDebug("Stale-device alert created: company={CompanyId} vehicle={VehicleId}", companyId, vehicleId);
 
-                var recommendation = ai.CreateRecommendation(
+            var recommendation = ai.CreateRecommendation(
                     companyId.ToString(),
                     "telemetry.stale_device",
                     $"Stale telemetry for vehicle {vehicleId}",
@@ -144,7 +171,7 @@ public sealed class TelemetryBackgroundService(
                     ActorTypes.System,
                     "telemetry-background");
 
-                await db.ExecuteAsync(
+            await db.ExecuteAsync(
                     "UPDATE telemetry_alerts SET ai_recommendation_id=@rid, updated_at=NOW() WHERE id=@id AND company_id=@cid",
                     c =>
                     {
@@ -153,14 +180,18 @@ public sealed class TelemetryBackgroundService(
                         c.Parameters.AddWithValue("@cid", companyId);
                     }, ct);
 
-                await telemetry.RefreshVehicleAsync(companyId, vehicleId, ct);
-            }
+            await telemetry.RefreshVehicleAsync(companyId, vehicleId, ct);
+            processed++;
+            if (processed % ProgressHeartbeatBatchSize == 0)
+                await ReportProgressAsync(runId, ct);
         }
 
         foreach (var companyId in companiesToRefresh)
         {
             await telemetry.RefreshCompanyAsync(companyId, ct);
         }
+
+        return processed;
     }
 
     private async Task PruneExpiredNoncesAsync(CancellationToken ct)

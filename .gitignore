@@ -41,3 +41,11 @@ tests/load/results/
 tools/launch/.env.local
 tools/launch/generated/
 tools/telematics/captures/
+
+# Browser-first certification secrets and raw telemetry execution material.
+# These files can contain device credentials, signed payload markers, or
+# response fingerprints and must never be swept into a source commit.
+/secure-credentials/
+/telemetry-plan*.json
+/telemetry-execution*.jsonl
+/telemetry-execution*.stderr

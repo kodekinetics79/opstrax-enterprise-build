@@ -128,6 +128,42 @@ public sealed class TenantIsolationAdversarialTests
     }
 
     [Fact]
+    public void BranchObjectsAndGenericOperationalModulesEnforceAuthenticatedBranch()
+    {
+        var source = EndpointSource();
+        var branchDetail = Block(source,
+            "private static async Task<IResult> BranchDetail(",
+            "private static async Task<IResult> CreateBranch(");
+        var branchCreate = Block(source,
+            "private static async Task<IResult> CreateBranch(",
+            "private static async Task<IResult> UpdateBranch(");
+        var branchUpdate = Block(source,
+            "private static async Task<IResult> UpdateBranch(",
+            "// Appends a branch filter");
+        var moduleList = Block(source,
+            "private static async Task<IResult> LoadModule(",
+            "private static async Task<IResult> LoadModuleDetail(");
+        var moduleDetail = Block(source,
+            "private static async Task<IResult> LoadModuleDetail(",
+            "private static string ModuleBranchPredicate(");
+        var moduleScope = Block(source,
+            "private static string ModuleBranchPredicate(",
+            "private static void BindModuleScope(");
+
+        Assert.Contains("(@branchId::BIGINT IS NULL OR b.id=@branchId)", branchDetail, StringComparison.Ordinal);
+        Assert.Contains("GetBranchId(http) is not null", branchCreate, StringComparison.Ordinal);
+        Assert.Contains("(@branchId::BIGINT IS NULL OR id=@branchId)", branchUpdate, StringComparison.Ordinal);
+        Assert.Contains("ModuleBranchPredicate", moduleList, StringComparison.Ordinal);
+        Assert.Contains("branchId is null", moduleList, StringComparison.Ordinal);
+        Assert.Contains("ModuleBranchPredicate", moduleDetail, StringComparison.Ordinal);
+        Assert.Contains("(\"route-planning\", \"routes\")", moduleScope, StringComparison.Ordinal);
+        Assert.Contains("(\"hos-eld\", \"hos_logs\")", moduleScope, StringComparison.Ordinal);
+        Assert.Contains("(\"user-management\", \"users\")", moduleScope, StringComparison.Ordinal);
+        Assert.Contains("module_vehicle.branch_id=@branchId", moduleScope, StringComparison.Ordinal);
+        Assert.Contains("module_driver.branch_id=@branchId", moduleScope, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ComplianceHosGeofenceAndProofReads_UseAuthenticatedTenantPredicates()
     {
         var source = EndpointSource();

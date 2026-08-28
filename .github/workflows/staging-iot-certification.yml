@@ -80,6 +80,7 @@ jobs:
       CERT_TRIP_ID: ${{ inputs.trip_id || vars.E2E_IOT_TRIP_ID }}
       CERT_DEVICE_CATEGORY: ${{ inputs.device_category || vars.E2E_IOT_DEVICE_CATEGORY }}
       CERT_DEVICE_ROLE: ${{ inputs.device_role || vars.E2E_IOT_DEVICE_ROLE }}
+      CERT_DIAGNOSTICS_KEY: ${{ secrets.DIAGNOSTICS_KEY }}
     steps:
       - name: Validate exact candidate input
         run: |
@@ -101,13 +102,18 @@ jobs:
           node - <<'NODE'
           const api = process.env.API_BASE_URL;
           const expected = process.env.CANDIDATE_SHA;
+          const diagnosticsKey = process.env.CERT_DIAGNOSTICS_KEY;
+          if (!diagnosticsKey) throw new Error('Staging DIAGNOSTICS_KEY secret is required');
           const parsed = new URL(api);
           if (parsed.protocol !== 'https:' || parsed.pathname !== '/' || parsed.username || parsed.password) {
             throw new Error('api_base_url must be an HTTPS API origin without credentials or a path prefix');
           }
           const health = {};
           for (const route of ['/health/live', '/health/ready', '/health/deep']) {
-            const response = await fetch(`${parsed.origin}${route}`);
+            const headers = route === '/health/deep'
+              ? { 'X-Diagnostics-Key': diagnosticsKey }
+              : {};
+            const response = await fetch(`${parsed.origin}${route}`, { headers });
             const body = await response.json();
             if (response.status !== 200) throw new Error(`${route} returned HTTP ${response.status}`);
             if (body.version !== expected) throw new Error(`${route} reports ${body.version}, expected exact SHA ${expected}`);

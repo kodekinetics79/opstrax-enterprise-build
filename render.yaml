@@ -35,6 +35,10 @@ services:
         sync: false
       - key: Jwt__Key
         sync: false
+      # Authenticates protected /health/deep automation. Keep synchronized with
+      # the deployment environment secret used by certification workflows.
+      - key: DIAGNOSTICS_KEY
+        sync: false
       # The legacy fleet-wide telemetry device/gateway secret env keys were REMOVED
       # deliberately. The device one was never consumed by ingest, and the gateway one was
       # retired as a cross-tenant skeleton key: ConfigValidationService treats its mere
@@ -104,6 +108,12 @@ services:
       # operator explicitly sets this to true after policy approval.
       - key: RetentionWorker__Enabled
         sync: false
+      # Protected-environment readiness requires the durable outbox worker to be
+      # explicitly enabled and approved.
+      - key: OutboxDispatcher__Enabled
+        value: "true"
+      - key: OutboxDispatcher__AllowProduction
+        value: "true"
       # Allowed frontend origin(s) for CORS — set to the deployed Vercel URL.
       - key: Cors__AllowedOrigins
         sync: false

@@ -13,6 +13,44 @@ namespace Opstrax.Api.Services;
 
 public sealed class SecuritySettingsService(Database db, AuditService audit)
 {
+    public async Task<long> CountMfaEnrollmentBlockersAsync(
+        long companyId,
+        SecuritySettings proposed,
+        CancellationToken ct = default)
+    {
+        if (!proposed.MfaRequired) return 0;
+
+        static string NormalizeRole(string value) => string.Join('_', value.Trim().ToLowerInvariant()
+            .Split([' ', '-', '_'], StringSplitOptions.RemoveEmptyEntries));
+
+        var configuredRoles = proposed.MfaRequiredRoles
+            .Where(static role => !string.IsNullOrWhiteSpace(role))
+            .Select(NormalizeRole)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var allRoles = configuredRoles.Length == 0 || configuredRoles.Contains("*", StringComparer.Ordinal);
+
+        return await db.ScalarLongAsync(
+            @"SELECT COUNT(*)
+                FROM users u
+               WHERE u.company_id=@cid
+                 AND LOWER(COALESCE(u.status,''))='active'
+                 AND (@allRoles OR
+                      TRIM(BOTH '_' FROM REGEXP_REPLACE(LOWER(TRIM(COALESCE(u.role_name,''))), '[^a-z0-9]+', '_', 'g')) = ANY(@roles))
+                 AND NOT EXISTS (
+                     SELECT 1
+                       FROM user_mfa_status ums
+                      WHERE ums.user_id=u.id
+                        AND ums.mfa_enabled=TRUE
+                        AND ums.mfa_secret IS NOT NULL)",
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid", companyId);
+                c.Parameters.AddWithValue("@allRoles", allRoles);
+                c.Parameters.AddWithValue("@roles", configuredRoles);
+            }, ct);
+    }
+
     // Default policy returned when no settings row exists yet
     public static SecuritySettings Defaults(long companyId) => new()
     {
