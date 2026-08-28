@@ -19487,10 +19487,23 @@ LIMIT 100000",
         if (denied is not null) return denied;
         var companyId = GetCompanyId(http);
         var branchId = GetBranchId(http);
+        var permissions = http.Items.TryGetValue(AuthPermissionsItemKey, out var permissionValue) && permissionValue is string[] heldPermissions
+            ? heldPermissions
+            : [];
+        var canReadDiagnostics = HasPermission(permissions, "telematics:diagnostics:view")
+            || HasPermission(permissions, "maintenance:view");
+        var canReadAlerts = HasPermission(permissions, "telemetry.alerts.read");
         var device = await db.QuerySingleAsync(
             @"SELECT e.id, e.device_serial, e.imei, e.device_category, e.device_model, e.provider, e.status, e.device_state,
                      current_install.vehicle_id, active_dispatch.driver_id, e.firmware_version, e.notes,
                      e.last_seen_at, e.revoked_at, e.created_at, e.row_version,
+                     EXTRACT(EPOCH FROM (NOW() - e.last_seen_at))::BIGINT seconds_since_ping,
+                     " + (canReadDiagnostics
+                         ? "(SELECT COUNT(*) FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active')"
+                         : "0") + @" active_fault_count,
+                     " + (canReadAlerts
+                         ? "(SELECT COUNT(*) FROM telemetry_alerts ta WHERE ta.company_id=e.company_id AND ta.device_id=e.id AND ta.status='Open')"
+                         : "0") + @" open_alert_count,
                      current_install.id current_installation_id,
                      current_install.status current_installation_status,
                      current_install.device_role,current_install.is_primary,
