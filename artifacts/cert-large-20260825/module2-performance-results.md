@@ -11,6 +11,7 @@ All timings are observed in visible Google Chrome against the isolated certifica
 | `a894229…` | Maintenance Manager / CL-HQ | Next-page transition | 200 diagnostics records / 50 per page | 2,500 ms observed wait; page 2 rendered | <= 3,000 ms | Pass |
 | `a894229…` | Maintenance Manager / CL-HQ | Vehicle sort transition | 200 diagnostics records | 1,800 ms observed wait | <= 2,000 ms | Pass |
 | `a894229…` | Maintenance Manager / CL-HQ | Exact vehicle search to 1-of-1 result | 200 diagnostics records | 2,220 ms | <= 2,000 ms | Fail by 220 ms |
+| `4cdb6c4…` | Maintenance Manager / CL-HQ | Post-deploy identity discovery during full sign-out/sign-in | one role account | 23,559 ms resource duration | <= 5,000 ms | Fail; Render Free request/cold-runtime delay, login eventually passed |
 
 Final-candidate full-tenant 1,100-device tables, 1,000-position Live Map soak, responsive viewports, authorized export, and repeated warm measurements remain required before the module verdict is closed. The two failed timing observations remain open performance findings rather than being hidden by successful API-only measurements.
 
