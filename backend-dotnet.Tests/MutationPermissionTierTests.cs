@@ -116,10 +116,7 @@ public class MutationPermissionTierTests
         => Assert.Contains(token, EndpointMappings.RolePermissionDefaults[role], StringComparer.OrdinalIgnoreCase);
 
     [Theory]
-    // The narrow device-registry read token remains unavailable to roles that do not own the
-    // operational Device Health surface. Dispatcher is asserted positively above.
-    [InlineData("Fleet Manager", "telematics:devices:view")]
-    [InlineData("Maintenance Manager", "telematics:devices:view")]
+    // Broad/read-only roles without a reviewed operational Device Health journey remain closed.
     [InlineData("Read-Only Auditor", "telematics:devices:view")]
     // 'Maintenance Manager' has no seed row; its analogue 'Mechanic' (role 6) has no map/
     // telematics grant. 'Read-only Auditor' (role 12) is audit/fleet/dashboard only — granting
@@ -130,6 +127,13 @@ public class MutationPermissionTierTests
     [InlineData("Read-Only Auditor", "telematics:view")]
     public void RoleDefaults_DoNotExceedTheDatabaseSeed(string role, string token)
         => Assert.DoesNotContain(token, EndpointMappings.RolePermissionDefaults[role], StringComparer.OrdinalIgnoreCase);
+
+    [Theory]
+    [InlineData("Fleet Manager")]
+    [InlineData("Dispatcher")]
+    [InlineData("Maintenance Manager")]
+    public void OperationalDeviceHealthRolesReceiveTheNarrowReadTokenDirectly(string role)
+        => Assert.Contains("telematics:devices:view", EndpointMappings.RolePermissionDefaults[role], StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// The reconciliation must not have loosened the telemetry satisfy-sets: a session holding

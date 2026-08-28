@@ -2367,9 +2367,9 @@ public static partial class EndpointMappings
         // role 3 actually grants a Fleet Manager (seed:31). These defaults are the FALLBACK the
         // middleware uses whenever a tenant's roles table has no matching row, and there the
         // telematics surface was bare — a Fleet Manager on a tenant without seeded roles lost the
-        // live map entirely. Reconciled to the seed and NOT beyond it: the seed does NOT grant
-        // this role telematics:devices:view, so the device registry stays closed to it.
-        ["Fleet Manager"]            = ["dashboard:view","vehicles:view","vehicles:create","vehicles:update","vehicles:delete","vehicles:assign","vehicles:export","drivers:view","drivers:create","drivers:update","drivers:delete","drivers:assign","drivers:export","shipments:view","shipments:create","shipments:update","shipments:delete","shipments:export","dispatch:view","dispatch:create","dispatch:update","dispatch:assign","dispatch:cancel","dispatch:manage","dispatch:override","customer_portal:view","customer_portal:manage","carriers:view","carriers:manage","fuel:view","fuel:manage","billing:view","alerts:view","alerts:acknowledge","alerts:close","alerts:manage","maintenance:view","maintenance:create","maintenance:update","maintenance:close","maintenance:manage","compliance:view","compliance:update","compliance:export","compliance:manage","reports:view","reports:export","reports:manage","notifications:view","notifications:manage","messages:send","escalation:manage","map:view","telematics:view","fleet.read","fleet.manage","telematics:devices:export"],
+        // live map entirely. Device inventory is also a direct, narrow read in the shipped Fleet
+        // Manager catalogue and route guard; keep it explicit rather than widening a broad alias.
+        ["Fleet Manager"]            = ["dashboard:view","vehicles:view","vehicles:create","vehicles:update","vehicles:delete","vehicles:assign","vehicles:export","drivers:view","drivers:create","drivers:update","drivers:delete","drivers:assign","drivers:export","shipments:view","shipments:create","shipments:update","shipments:delete","shipments:export","dispatch:view","dispatch:create","dispatch:update","dispatch:assign","dispatch:cancel","dispatch:manage","dispatch:override","customer_portal:view","customer_portal:manage","carriers:view","carriers:manage","fuel:view","fuel:manage","billing:view","alerts:view","alerts:acknowledge","alerts:close","alerts:manage","maintenance:view","maintenance:create","maintenance:update","maintenance:close","maintenance:manage","compliance:view","compliance:update","compliance:export","compliance:manage","reports:view","reports:export","reports:manage","notifications:view","notifications:manage","messages:send","escalation:manage","map:view","telematics:view","fleet.read","fleet.manage","telematics:devices:export","telematics:devices:view"],
         // NOTE: customer_portal:manage (customer tracking-link management) is a
         // SUPERVISOR-only permission by the P4.1 security model (Tenant Admin / Fleet
         // Owner / Fleet Manager). Dispatcher manages shipments/stops/POD but not
@@ -2389,12 +2389,10 @@ public static partial class EndpointMappings
         // is the exact grant set — stray grants are revoked, keeping the portal genuinely isolated.
         ["Driver"]                   = ["driver:self","notifications:view","messages:send"],
         ["Safety Manager"]           = ["dashboard:view","safety:view","safety:create","safety:update","safety:review","safety:manage","safety:evidence:view","safety:evidence:export","alerts:view","alerts:acknowledge","alerts:close","compliance:view","compliance:update","compliance:export","compliance:manage","reports:view","notifications:view"],
-        // NEW-R1-06, DECLINED deliberately: the bare telematics surface is CORRECT here.
-        // 'Maintenance Manager' has no row in database/init/002_seed.sql at all; its closest
-        // seeded analogue is 'Mechanic' (role 6: maintenance:view, maintenance:manage,
-        // dvir:review, fleet:view), which the seed grants NEITHER map:view NOR any telematics
-        // token. Adding either would widen BEYOND the seed rather than reconcile with it.
-        ["Maintenance Manager"]      = ["dashboard:view","vehicles:view","maintenance:view","maintenance:create","maintenance:update","maintenance:close","maintenance:manage","alerts:view","alerts:acknowledge","alerts:close","compliance:view","reports:view","notifications:view"],
+        // Maintenance Manager owns the shipped Device Health inspection journey. Grant the narrow
+        // inventory read only; diagnostics, mutation, firmware, export, and live GPS remain governed
+        // by their existing independent permissions.
+        ["Maintenance Manager"]      = ["dashboard:view","vehicles:view","maintenance:view","maintenance:create","maintenance:update","maintenance:close","maintenance:manage","alerts:view","alerts:acknowledge","alerts:close","compliance:view","reports:view","notifications:view","telematics:devices:view"],
         ["Customer"]                 = ["customer_portal:view"],
         // NEW-R1-06, DECLINED deliberately: the bare telematics surface is CORRECT here.
         // The seed's 'Read-only Auditor' (role 12) is audit:view + fleet:view + dashboard:view —

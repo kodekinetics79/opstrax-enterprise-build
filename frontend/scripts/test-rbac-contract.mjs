@@ -277,10 +277,13 @@ assert.equal(hasPermission(["fleet:view"], "telemetry.alerts.read"), false, "fle
 // ── 4. Internal roles keep the telemetry surfaces they hold legitimately ──
 assert.equal(hasPermission(ROLE_PERMISSIONS.fleet_manager, "telemetry.live_state.read"), true, "fleet_manager must keep the live map");
 assert.equal(hasPermission(ROLE_PERMISSIONS.fleet_manager, "telemetry.devices.read"), true, "fleet_manager must keep device surfaces");
+assert.equal(hasPermission(BACKEND_ROLES["Fleet Manager"], "telemetry.devices.read"), true, "backend Fleet Manager must match the shipped Device Health surface");
 assert.equal(hasPermission(ROLE_PERMISSIONS.dispatcher, "telemetry.devices.read"), true, "dispatcher must keep device surfaces (telematics:devices:view)");
 assert.equal(hasPermission(BACKEND_ROLES.Dispatcher, "telemetry.devices.read"), true, "backend Dispatcher must match the shipped read-only device surface");
 assert.equal(hasPermission(BACKEND_ROLES.Dispatcher, "telemetry.devices.manage"), false, "backend Dispatcher device access must remain read-only");
 assert.equal(hasPermission(BACKEND_ROLES.Dispatcher, "telematics:devices:export"), false, "backend Dispatcher must not export the device registry");
+assert.equal(hasPermission(ROLE_PERMISSIONS.maintenance_manager, "telemetry.devices.read"), true, "maintenance_manager must keep Device Health");
+assert.equal(hasPermission(BACKEND_ROLES["Maintenance Manager"], "telemetry.devices.read"), true, "backend Maintenance Manager must match the shipped Device Health surface");
 assert.equal(hasPermission(ROLE_PERMISSIONS.tenant_admin, "audit:view"), true, "tenant_admin must keep audit:view (direct grant)");
 // No role may lose a permission it holds by DIRECT grant.
 for (const [name, owned] of Object.entries({ ...ROLE_PERMISSIONS, ...BACKEND_ROLES, ...DB_SEED_ROLES })) {
