@@ -262,6 +262,48 @@ class CertificationHarnessTests(unittest.TestCase):
         self.assertNotEqual(original.body, conflict.body)
         self.assertEqual(conflict.expected_status, (409,))
 
+    def test_future_fix_control_cannot_age_into_the_api_acceptance_window(self) -> None:
+        observed = certification_harness.datetime(
+            2026, 8, 27, 5, 15, tzinfo=certification_harness.timezone.utc)
+        scenarios = certification_harness.build_scenarios(
+            self.large_credentials(), "RUN-FUTURE-CONTROL", observed)
+        future_fix = next(row for row in scenarios if row.name == "future-fix")
+        event_time = certification_harness.datetime.fromisoformat(
+            __import__("json").loads(future_fix.body)["eventTime"].replace("Z", "+00:00"))
+        scheduled_submission = observed + certification_harness.timedelta(
+            seconds=future_fix.send_offset_seconds)
+
+        self.assertEqual(future_fix.expected_status, (422,))
+        self.assertEqual(future_fix.expected_mutation, "none")
+        self.assertGreaterEqual(
+            (event_time - scheduled_submission).total_seconds(),
+            certification_harness.FUTURE_CONTROL_OFFSET_SECONDS - 2,
+        )
+        self.assertGreater(
+            certification_harness.FUTURE_CONTROL_OFFSET_SECONDS,
+            certification_harness.RECONNECT_SECONDS + 5 * 60,
+        )
+
+    def test_aged_future_fix_fails_closed_before_submission(self) -> None:
+        observed = certification_harness.datetime(
+            2026, 8, 27, 5, 15, tzinfo=certification_harness.timezone.utc)
+        scenarios = certification_harness.build_scenarios(
+            self.large_credentials(), "RUN-AGED-CONTROL", observed)
+        future_fix = next(row for row in scenarios if row.name == "future-fix")
+        body = __import__("json").loads(future_fix.body)
+        body["eventTime"] = "2026-08-27T05:19:59Z"
+        aged = certification_harness.replace(
+            future_fix,
+            body=__import__("json").dumps(body, sort_keys=True, separators=(",", ":")),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "aged into the API acceptance window"):
+            certification_harness._validate_scenario_time_oracle(
+                aged,
+                certification_harness.datetime(
+                    2026, 8, 27, 5, 15, tzinfo=certification_harness.timezone.utc),
+            )
+
     def test_exact_per_branch_cohort_plan_and_never_connected_invariant(self) -> None:
         credentials = self.large_credentials()
         grouped = certification_harness.validate_large_fleet_credentials(credentials)
