@@ -57,6 +57,8 @@ Administrator and Maintenance Manager roles can inspect the full permitted diagn
 
 Every native device request is signed and subject to timestamp and nonce validation. Reusing the same transport nonce is rejected. An exact retry with a fresh nonce and the same stable event identity is acknowledged without creating another event. Reusing that identity with altered content or from another device is rejected.
 
+For certification, migration, and controlled replay exercises, every execution must also use a unique run identifier when generating customer event identities, correlation identities, and diagnostic source identities. Repeating a complete dataset with a new run identifier represents new observations; deliberate retry cases retain the same event identity so idempotency can be proved. Never alter an existing event identity merely to bypass a conflict—the conflict must be reconciled as duplicate, replay, or data corruption before continuing.
+
 ## Pilot acceptance
 
 Customer acceptance is browser-first. For the certification tenant, validate Device Health, GPS Tracking, geofences, OBD/J1939 evidence, exports, assignment history, lifecycle actions, direct URLs, role restrictions, persistence, console errors, failed requests, and responsive layouts in visible Chrome. API responses, automated tests, and database queries support that evidence but do not replace it.
