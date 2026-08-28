@@ -13,6 +13,7 @@ using Opstrax.Telematics.Gateway.Buffering;
 using Opstrax.Telematics.Gateway.Eventing;
 using Opstrax.Telematics.Gateway.Observability;
 using Opstrax.Telematics.Gateway.Projection;
+using Opstrax.Telematics.Gateway.Security;
 using Opstrax.Telematics.Gateway.Security.Auth;
 using Opstrax.Telematics.Gateway.Security.Replay;
 using Opstrax.Telematics.Protocols.Gt06;
@@ -86,6 +87,28 @@ internal sealed class GatewayConnection
     /// <summary>Registry-resolved owner for this session. Null until a login resolves. NEVER derived from a packet.</summary>
     private ResolvedDeviceOwner? _owner;
 
+    /// <summary>
+    /// The IMEI claim that bound this session, kept so a later login can be compared against it
+    /// WITHOUT going back to the registry. One socket carries one device for its whole life, so a
+    /// second login is either that same device re-introducing itself or an attempt to re-point the
+    /// session — and the second must never reach the registry or the authenticator at all.
+    /// </summary>
+    private string? _boundImeiClaim;
+
+    /// <summary>Tracks which socket is authoritative for a device across the whole gateway.</summary>
+    private readonly ActiveDeviceSessionRegistry _sessions;
+
+    /// <summary>Device key this session holds a lease on, and the lease id. Null until login binds.</summary>
+    private string? _leaseKey;
+    private long _leaseId;
+
+    /// <summary>
+    /// Cancelled when this session must stop: host shutdown, or a newer socket taking ownership of
+    /// the same device. The read loop runs on this token rather than the host token so a displaced
+    /// session dies promptly instead of lingering until its idle timeout.
+    /// </summary>
+    private CancellationTokenSource? _sessionCts;
+
     /// <summary>Whether the opening bytes have been positively identified as GT06.</summary>
     private bool _protocolIdentified;
 
@@ -99,11 +122,13 @@ internal sealed class GatewayConnection
         IEventBackbone backbone,
         IStoreAndForwardBuffer forwardBuffer,
         GatewayOptions options,
+        ActiveDeviceSessionRegistry sessions,
         GatewayMetrics metrics,
         ILogger logger)
     {
         _client = client;
         _adapter = adapter;
+        _sessions = sessions ?? throw new ArgumentNullException(nameof(sessions));
         _registry = registry;
         _authenticator = authenticator;
         _replayGuard = replayGuard;
@@ -148,6 +173,12 @@ internal sealed class GatewayConnection
         _logger.LogDebug("Connection accepted from {RemoteEndpoint} (correlation {CorrelationId}).",
             _remoteEndpoint, _correlationId);
 
+        // The session token is the host token PLUS "a newer socket took this device". Everything
+        // below runs on it, so displacing this session actually unblocks the socket read instead of
+        // leaving a stale owner draining bytes until the idle timeout.
+        using var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+        _sessionCts = sessionCts;
+
         // The pump runs for the connection's whole life and is awaited in the finally block, so
         // queued events are still published even when the read loop ends abruptly.
         Task pump = Task.Run(PublishPumpAsync, CancellationToken.None);
@@ -156,7 +187,7 @@ internal sealed class GatewayConnection
         {
             using (_client)
             {
-                await ReadLoopAsync(_client.GetStream(), stoppingToken).ConfigureAwait(false);
+                await ReadLoopAsync(_client.GetStream(), sessionCts.Token).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException)
@@ -178,6 +209,15 @@ internal sealed class GatewayConnection
         }
         finally
         {
+            // Release the device lease BEFORE anything else can fail. Release is lease-checked, so
+            // if a newer socket already displaced this one it owns the registry entry and this call
+            // is a no-op — the old session can never evict the new one on its way out.
+            if (_leaseKey is { } leaseKey)
+            {
+                _sessions.Release(leaseKey, _leaseId);
+                _leaseKey = null;
+            }
+
             // Graceful drain: stop accepting new events, then let the pump finish publishing
             // everything already decoded before this connection is considered done.
             _publishChannel.Writer.TryComplete();
@@ -264,17 +304,19 @@ internal sealed class GatewayConnection
             IReadOnlyList<DecodedMessage> messages;
             int consumed;
             long decodeStart = Stopwatch.GetTimestamp();
+            FrameDecodeStats frameStats;
             try
             {
                 // Decode is span-based and synchronous; nothing it returns aliases the
                 // accumulator (DecodedMessage copies its raw frame), so it is safe to
                 // compact the buffer and then await.
-                messages = _adapter.Decode(_accumulator.AsSpan(0, _accumulated), out consumed);
+                messages = _adapter.Decode(_accumulator.AsSpan(0, _accumulated), out consumed, out frameStats);
             }
             catch (ProtocolException ex)
             {
                 // Impossible framing — a hostile or hopelessly corrupt stream. Fail closed:
                 // drop THIS connection only. Never fabricate an event out of corrupt bytes.
+                _metrics.IncrementMalformedFrames();
                 _metrics.IncrementMalformedConnectionsDropped();
                 _logger.LogWarning(ex,
                     "Dropping connection {RemoteEndpoint}: malformed {Protocol} framing at offset {Offset}.",
@@ -284,6 +326,13 @@ internal sealed class GatewayConnection
 
             if (consumed > 0)
                 Consume(consumed);
+
+            // Counted from the decoder's own report so a CRC-invalid frame is visible as a frame
+            // that ARRIVED and was rejected, rather than as silence. A bad-CRC frame contributes to
+            // FramesReceived and CrcFailures and to nothing else: it produced no message, so it can
+            // reach neither normalization, nor the replay ledger, nor storage, nor an ACK.
+            _metrics.AddFramesReceived(frameStats.FramesRead);
+            _metrics.AddCrcFailures(frameStats.CrcFailures);
 
             if (messages.Count > 0)
             {
@@ -299,7 +348,13 @@ internal sealed class GatewayConnection
             foreach (DecodedMessage message in messages)
             {
                 _metrics.IncrementFramesDecoded();
+                _metrics.RecordDecodedMessage(message.MessageType);
                 await HandleMessageAsync(message, stream, receivedAtUtc, stoppingToken).ConfigureAwait(false);
+
+                // A refused or displaced session stops mid-batch: the remaining frames in this read
+                // belong to a session that is no longer entitled to be served.
+                if (_closeRequested || stoppingToken.IsCancellationRequested)
+                    break;
             }
 
             // A refused login (rejected/quarantined) tears the connection down here rather than
@@ -370,6 +425,7 @@ internal sealed class GatewayConnection
             // Count the decision BEFORE emitting it: a consumer that has already seen the
             // rejection must never observe a counter that has not caught up with it.
             _metrics.IncrementUnknownDeviceRejections();
+            _metrics.IncrementFramesRejected();
 
             await PublishRejectionAsync(
                 message, RejectionReasons.UnidentifiedSession, message.Identity, receivedAtUtc, cancellationToken)
@@ -507,6 +563,61 @@ internal sealed class GatewayConnection
         DeviceIdentityRef? claim = message.Identity;
         string masked = DeviceIdentifier.Mask(claim?.Imei);
 
+        // ── One socket → one immutable device, for the socket's whole life. ──────────────
+        // GT06 announces the IMEI once, at login; every later frame on this socket is anonymous and
+        // is attributed to whatever this session is bound to. So if a bound session could be
+        // re-pointed by a second login, an attacker who owns (or can reach) one admitted device
+        // could log in as it, then log in again as a DIFFERENT tenant's vehicle, and every
+        // subsequent anonymous fix would be published under that vehicle. The bind therefore
+        // happens once and is never revisited.
+        //
+        // This is checked on the CLAIM, before any registry or authenticator work, so a mismatched
+        // claim cannot even probe the registry from an already-bound socket.
+        if (_owner is not null)
+        {
+            bool sameClaim =
+                _boundImeiClaim is not null &&
+                claim?.Imei is { Length: > 0 } repeated &&
+                string.Equals(_boundImeiClaim, repeated, StringComparison.Ordinal);
+
+            if (sameClaim)
+            {
+                // Idempotent re-login: the device did not see our first ACK (a common outcome when
+                // a cell bearer stalls mid-handshake) and is re-introducing itself. The identity is
+                // ALREADY correct and is left exactly as it is — no re-resolution, no re-auth, no
+                // rebind. Answering keeps the device from wedging in a login retry loop.
+                _logger.LogDebug(
+                    "Re-login for the already-bound device {Imei} on {RemoteEndpoint}; identity unchanged, re-acknowledging.",
+                    masked, _remoteEndpoint);
+
+                await SendAckIfRequiredAsync(message, stream, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            // A different device on a socket that already belongs to one. Not a protocol event.
+            _metrics.IncrementSessionIdentityViolations();
+            _metrics.IncrementUnknownDeviceRejections();
+            _metrics.IncrementFramesRejected();
+            TelematicsInstrumentation.AuthFailures.Add(1, new TagList
+            {
+                { TelematicsInstrumentation.MetricLabels.Protocol, ProtocolLabel },
+                { TelematicsInstrumentation.MetricLabels.Reason, RejectionReasons.SessionIdentityChange },
+            });
+
+            _logger.LogWarning(
+                "Refusing login from {RemoteEndpoint} claiming IMEI {Imei}: this socket is already bound to a " +
+                "different device. One connection carries one identity for its lifetime; no acknowledgement is " +
+                "sent, the binding is unchanged, and the connection is closing.",
+                _remoteEndpoint, masked);
+
+            await PublishRejectionAsync(
+                    message, RejectionReasons.SessionIdentityChange, claim, receivedAtUtc, cancellationToken)
+                .ConfigureAwait(false);
+
+            _closeRequested = true;
+            return;
+        }
+
         ResolvedDeviceTrust? resolved = null;
         if (claim is { } identity && identity.HasAnyIdentifier)
         {
@@ -545,10 +656,23 @@ internal sealed class GatewayConnection
             if (auth.IsAuthenticated)
             {
                 _owner = owner;
+                _boundImeiClaim = claim?.Imei;
 
                 _logger.LogInformation(
                     "Device {Imei} bound to tenant {TenantId} / company {CompanyId} as device {DeviceId} (vehicle {VehicleId}); trust tier {TrustTier}.",
                     masked, owner.TenantId, owner.CompanyId, owner.DeviceId, owner.VehicleId, auth.TrustTier);
+
+                // ── One device → one authoritative socket. ───────────────────────────────
+                // A roaming tracker whose bearer dropped without a FIN reconnects while the gateway
+                // still holds its previous, half-open socket. The newest admitted login wins: it
+                // becomes authoritative and the socket it displaced is cancelled, so the two never
+                // publish under the same device concurrently.
+                TakeDeviceSession(owner.DeviceId, masked);
+
+                // A successful login is also the boundary at which a rebooted device may legitimately
+                // restart its 16-bit frame counter from 1. Opening a replay epoch here lets the guard
+                // accept that without forgetting a single durable row of replay history.
+                await BeginReplayEpochAsync(owner.DeviceId, cancellationToken).ConfigureAwait(false);
 
                 await SendAckIfRequiredAsync(message, stream, cancellationToken).ConfigureAwait(false);
                 return;
@@ -562,6 +686,7 @@ internal sealed class GatewayConnection
                 _remoteEndpoint, masked, auth.Outcome, auth.Code, auth.Detail);
 
             _metrics.IncrementUnknownDeviceRejections();
+            _metrics.IncrementFramesRejected();
             TelematicsInstrumentation.AuthFailures.Add(1, new TagList
             {
                 { TelematicsInstrumentation.MetricLabels.Protocol, ProtocolLabel },
@@ -583,6 +708,7 @@ internal sealed class GatewayConnection
         // Count the decision BEFORE emitting it: a consumer that has already seen the rejection
         // must never observe a counter that has not caught up with it.
         _metrics.IncrementUnknownDeviceRejections();
+        _metrics.IncrementFramesRejected();
         TelematicsInstrumentation.UnknownDevices.Add(1, new TagList
         {
             { TelematicsInstrumentation.MetricLabels.Protocol, ProtocolLabel },
@@ -596,6 +722,65 @@ internal sealed class GatewayConnection
         _closeRequested = true;
     }
 
+    /// <summary>
+    /// Claims the authoritative session for <paramref name="deviceId"/> and tears down whichever
+    /// socket held it before.
+    /// </summary>
+    /// <remarks>
+    /// The displaced session is cancelled, not deleted: it observes its own token, unwinds through
+    /// its normal drain (publishing anything it had already decoded) and then calls
+    /// <see cref="ActiveDeviceSessionRegistry.Release(string, long)"/> with ITS lease id, which no
+    /// longer matches — so its cleanup cannot remove the entry this session just installed.
+    /// </remarks>
+    private void TakeDeviceSession(string deviceId, string maskedImei)
+    {
+        CancellationTokenSource? sessionCts = _sessionCts;
+        if (sessionCts is null) return; // Not running under RunAsync (unit-constructed); nothing to lease.
+
+        SessionAcquisition acquisition = _sessions.Acquire(deviceId, sessionCts);
+        _leaseKey = deviceId;
+        _leaseId = acquisition.LeaseId;
+
+        if (acquisition.DisplacedSession is not { } displaced) return;
+
+        _metrics.IncrementDuplicateSessionsDisplaced();
+        _logger.LogWarning(
+            "Device {Imei} authenticated on {RemoteEndpoint} while an earlier session for the same device was " +
+            "still live; the earlier session is being closed. This connection is now the only authoritative one.",
+            maskedImei, _remoteEndpoint);
+
+        try
+        {
+            displaced.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // The displaced connection finished on its own between the swap and this cancel.
+            // Its lease is already stale, so there is nothing left to stop.
+        }
+    }
+
+    /// <summary>
+    /// Tells the replay guard that a fresh, authenticated session has begun for this device, so a
+    /// counter that restarts at 1 after a power cycle reads as forward progress rather than as ten
+    /// thousand stale frames.
+    /// </summary>
+    private async Task BeginReplayEpochAsync(string deviceId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _replayGuard.BeginSessionEpochAsync(deviceId, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Failing to open an epoch is not a reason to refuse a device: the guard simply stays on
+            // the previous epoch, which is the STRICTER behaviour (a reset counter reads as
+            // out-of-order). Never the weaker one.
+            _logger.LogError(ex,
+                "Could not open a replay epoch for device {DeviceId}; continuing on the previous epoch.", deviceId);
+        }
+    }
+
     private async Task SendAckIfRequiredAsync(DecodedMessage message, NetworkStream stream, CancellationToken cancellationToken)
     {
         if (!message.RequiresAck)
@@ -605,7 +790,11 @@ internal sealed class GatewayConnection
         if (ack.Length == 0)
             return;
 
+        // Written to THIS connection's own stream, which is the only stream this object ever holds.
+        // There is no shared writer and no route by which one device's acknowledgement could be
+        // emitted onto another device's socket.
         await stream.WriteAsync(ack, cancellationToken).ConfigureAwait(false);
+        _metrics.IncrementAcksSent();
 
         _logger.LogDebug("Acked {MessageType} (serial {Serial}) on {RemoteEndpoint}.",
             message.MessageType, message.ProtocolMessageId, _remoteEndpoint);

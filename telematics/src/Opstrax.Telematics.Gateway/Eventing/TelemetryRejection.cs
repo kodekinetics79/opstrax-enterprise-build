@@ -55,4 +55,11 @@ internal static class RejectionReasons
 
     /// <summary>A telemetry frame arrived on a connection that never completed a successful login.</summary>
     public const string UnidentifiedSession = "unidentified-session";
+
+    /// <summary>
+    /// A login tried to re-point an already-bound socket at a different device. One connection
+    /// carries one identity for its lifetime, so the claim is refused and the existing binding is
+    /// left untouched.
+    /// </summary>
+    public const string SessionIdentityChange = "session-identity-change";
 }

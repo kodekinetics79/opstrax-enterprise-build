@@ -10,6 +10,7 @@ using Opstrax.Telematics.Gateway.Buffering;
 using Opstrax.Telematics.Gateway.Edge;
 using Opstrax.Telematics.Gateway.Observability;
 using Opstrax.Telematics.Gateway.Projection;
+using Opstrax.Telematics.Gateway.Security;
 using Opstrax.Telematics.Gateway.Security.Auth;
 using Opstrax.Telematics.Gateway.Security.Replay;
 using Opstrax.Telematics.Protocols.Gt06;
@@ -65,12 +66,14 @@ internal sealed class TcpGatewayService : BackgroundService
         Gt06Adapter adapter,
         IStoreAndForwardBuffer forwardBuffer,
         GatewayMetrics metrics,
-        ILoggerFactory loggerFactory)
+        ILoggerFactory loggerFactory,
+        ActiveDeviceSessionRegistry? sessions = null)
         : this(
             options,
             new CanonicalConnectionHandlerFactory(
                 backbone, registry, authenticator, replayGuard, projectionStore, adapter, forwardBuffer,
                 options ?? throw new ArgumentNullException(nameof(options)),
+                sessions ?? new ActiveDeviceSessionRegistry(),
                 metrics ?? throw new ArgumentNullException(nameof(metrics)),
                 loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory))),
             metrics,

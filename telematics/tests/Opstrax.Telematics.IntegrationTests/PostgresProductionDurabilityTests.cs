@@ -29,7 +29,9 @@ public sealed class PostgresProductionDurabilityTests
                 UNIQUE(device_id,unwrapped_serial,content_hash));
             CREATE TABLE telemetry_replay_device_state(
                 device_id text PRIMARY KEY, last_raw_serial bigint NOT NULL,
-                high_water_unwrapped bigint NOT NULL, updated_at timestamptz NOT NULL DEFAULT now());
+                high_water_unwrapped bigint NOT NULL,
+                pending_epoch_base bigint NULL, epoch_floor bigint NOT NULL DEFAULT 0,
+                updated_at timestamptz NOT NULL DEFAULT now());
             """);
 
         using var firstInstance = new PostgresReplayGuard(
@@ -69,7 +71,9 @@ public sealed class PostgresProductionDurabilityTests
                 UNIQUE(device_id,unwrapped_serial,content_hash));
             CREATE TABLE telemetry_replay_device_state(
                 device_id text PRIMARY KEY, last_raw_serial bigint NOT NULL,
-                high_water_unwrapped bigint NOT NULL, updated_at timestamptz NOT NULL DEFAULT now());
+                high_water_unwrapped bigint NOT NULL,
+                pending_epoch_base bigint NULL, epoch_floor bigint NOT NULL DEFAULT 0,
+                updated_at timestamptz NOT NULL DEFAULT now());
             INSERT INTO telemetry_replay_seen
                 (device_id,serial,unwrapped_serial,content_hash,event_id,seen_at)
             VALUES
@@ -579,6 +583,193 @@ public sealed class PostgresProductionDurabilityTests
         };
         return new StoreAndForwardEntry(
             TelematicsTopics.TelemetryNormalized, $"{companyId}:{deviceId}", envelope, DateTimeOffset.UtcNow);
+    }
+
+
+    // ── Durable reboot epochs (telematics/007_replay_session_epoch.sql) ────────
+
+    /// <summary>The replay schema exactly as migrations 005 + 007 leave it.</summary>
+    private const string ReplaySchemaDdl = """
+        CREATE TABLE telemetry_replay_seen(
+            id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            device_id text NOT NULL, serial bigint NOT NULL,
+            unwrapped_serial bigint NOT NULL, content_hash text NOT NULL,
+            event_id uuid NOT NULL, device_fix_time timestamptz NULL,
+            seen_at timestamptz NOT NULL DEFAULT now(),
+            UNIQUE(device_id,unwrapped_serial,content_hash));
+        CREATE INDEX idx_telemetry_replay_seen_device_content
+            ON telemetry_replay_seen (device_id, content_hash);
+        CREATE TABLE telemetry_replay_device_state(
+            device_id text PRIMARY KEY, last_raw_serial bigint NOT NULL,
+            high_water_unwrapped bigint NOT NULL,
+            pending_epoch_base bigint NULL, epoch_floor bigint NOT NULL DEFAULT 0,
+            updated_at timestamptz NOT NULL DEFAULT now());
+        """;
+
+    /// <summary>
+    /// The durable form of the GT06 reboot defect: serial 10 000, an authenticated reconnect, then
+    /// serial 1. Every post-reboot frame must be accepted, and the replay history must survive.
+    /// </summary>
+    [Fact]
+    public async Task DurableReplay_AcceptsAPostRebootCounterResetWithoutLosingHistory()
+    {
+        await using var database = await IsolatedSchema.CreateAsync();
+        await database.ExecuteAsync(ReplaySchemaDdl);
+
+        using var guard = new PostgresReplayGuard(database.ScopedConnectionString, serialModulus: 65_536);
+        const string device = "reboot-device";
+
+        Assert.Equal(ReplayOutcome.Accept,
+            (await guard.CheckAsync(device, 10_000, "pre-reboot", DateTime.MinValue)).Outcome);
+
+        long rowsBefore = await database.ScalarLongAsync(
+            $"SELECT count(*) FROM telemetry_replay_seen WHERE device_id='{device}'");
+        long highWaterBefore = await database.ScalarLongAsync(
+            $"SELECT high_water_unwrapped FROM telemetry_replay_device_state WHERE device_id='{device}'");
+
+        await guard.BeginSessionEpochAsync(device);
+
+        for (int serial = 1; serial <= 200; serial++)
+        {
+            ReplayDecision decision = await guard.CheckAsync(device, serial, $"post-{serial}", DateTime.MinValue);
+            Assert.Equal(ReplayOutcome.Accept, decision.Outcome);
+        }
+
+        // Durable history was PRESERVED, not truncated, and the mark only moved forward.
+        long rowsAfter = await database.ScalarLongAsync(
+            $"SELECT count(*) FROM telemetry_replay_seen WHERE device_id='{device}'");
+        Assert.Equal(rowsBefore + 200, rowsAfter);
+        Assert.Equal(1, await database.ScalarLongAsync(
+            $"SELECT count(*) FROM telemetry_replay_seen WHERE device_id='{device}' AND content_hash='pre-reboot'"));
+
+        long highWaterAfter = await database.ScalarLongAsync(
+            $"SELECT high_water_unwrapped FROM telemetry_replay_device_state WHERE device_id='{device}'");
+        Assert.True(highWaterAfter > highWaterBefore,
+            "an epoch must move the durable high-water mark forward, never backwards");
+    }
+
+    /// <summary>
+    /// The attack an epoch boundary would otherwise open, against the durable ledger: a frame
+    /// captured before the power cycle receives a new unwrapped serial in the new epoch, so the
+    /// UNIQUE (device,unwrapped_serial,content_hash) key cannot see it. The content digest, scoped
+    /// below the epoch floor, is what rejects it.
+    /// </summary>
+    [Fact]
+    public async Task DurableReplay_RejectsAPreRebootFrameReplayedAfterTheReconnect()
+    {
+        await using var database = await IsolatedSchema.CreateAsync();
+        await database.ExecuteAsync(ReplaySchemaDdl);
+
+        using var guard = new PostgresReplayGuard(database.ScopedConnectionString, serialModulus: 65_536);
+        const string device = "replay-device";
+
+        ReplayDecision original = await guard.CheckAsync(device, 9_000, "captured-frame", DateTime.MinValue);
+        Assert.Equal(ReplayOutcome.Accept, original.Outcome);
+
+        await guard.BeginSessionEpochAsync(device);
+        Assert.Equal(ReplayOutcome.Accept,
+            (await guard.CheckAsync(device, 1, "post-reboot-1", DateTime.MinValue)).Outcome);
+
+        // Serial 9 000 is comfortably AHEAD of the new epoch's mark, so the sequence arm cannot
+        // reject this; only the cross-epoch content check can.
+        ReplayDecision replayed = await guard.CheckAsync(device, 9_000, "captured-frame", DateTime.MinValue);
+
+        Assert.Equal(ReplayOutcome.DuplicateReplay, replayed.Outcome);
+        Assert.Equal(original.EventId, replayed.EventId);
+
+        // The replay created no second durable occurrence.
+        Assert.Equal(1, await database.ScalarLongAsync(
+            $"SELECT count(*) FROM telemetry_replay_seen WHERE device_id='{device}' AND content_hash='captured-frame'"));
+    }
+
+    /// <summary>A duplicate inside the NEW epoch is still a duplicate and keeps its stored identity.</summary>
+    [Fact]
+    public async Task DurableReplay_RecognisesADuplicateInsideTheNewEpoch()
+    {
+        await using var database = await IsolatedSchema.CreateAsync();
+        await database.ExecuteAsync(ReplaySchemaDdl);
+
+        using var guard = new PostgresReplayGuard(database.ScopedConnectionString, serialModulus: 65_536);
+        const string device = "epoch-duplicate-device";
+
+        await guard.CheckAsync(device, 10_000, "pre-reboot", DateTime.MinValue);
+        await guard.BeginSessionEpochAsync(device);
+
+        ReplayDecision first = await guard.CheckAsync(device, 1, "post-reboot-1", DateTime.MinValue);
+        ReplayDecision retry = await guard.CheckAsync(device, 1, "post-reboot-1", DateTime.MinValue);
+
+        Assert.Equal(ReplayOutcome.Accept, first.Outcome);
+        Assert.Equal(ReplayOutcome.DuplicateReplay, retry.Outcome);
+        Assert.Equal(first.EventId, retry.EventId);
+    }
+
+    /// <summary>
+    /// A reboot that resumes at a HIGH serial is accepted too — the case a fix that merely nudges
+    /// the unwrap origin would miss, because the nearer-half rule still maps a high serial backwards.
+    /// </summary>
+    [Theory]
+    [InlineData(1)]
+    [InlineData(32_768)]
+    [InlineData(40_000)]
+    [InlineData(65_535)]
+    public async Task DurableReplay_AcceptsARebootResumingAtAnySerialInTheRange(int resumeSerial)
+    {
+        await using var database = await IsolatedSchema.CreateAsync();
+        await database.ExecuteAsync(ReplaySchemaDdl);
+
+        using var guard = new PostgresReplayGuard(database.ScopedConnectionString, serialModulus: 65_536);
+        string device = $"resume-device-{resumeSerial}";
+
+        await guard.CheckAsync(device, 60_000, "pre-reboot", DateTime.MinValue);
+        await guard.BeginSessionEpochAsync(device);
+
+        Assert.Equal(ReplayOutcome.Accept,
+            (await guard.CheckAsync(device, resumeSerial, "post-reboot", DateTime.MinValue)).Outcome);
+    }
+
+    /// <summary>
+    /// An epoch stamp is consumed exactly once. A single login may open one generation; it must not
+    /// leave a standing licence for every later frame to jump a generation.
+    /// </summary>
+    [Fact]
+    public async Task DurableReplay_ConsumesAPendingEpochExactlyOnce()
+    {
+        await using var database = await IsolatedSchema.CreateAsync();
+        await database.ExecuteAsync(ReplaySchemaDdl);
+
+        using var guard = new PostgresReplayGuard(database.ScopedConnectionString, serialModulus: 65_536);
+        const string device = "single-epoch-device";
+
+        await guard.CheckAsync(device, 10_000, "pre-reboot", DateTime.MinValue);
+        await guard.BeginSessionEpochAsync(device);
+        await guard.CheckAsync(device, 1, "post-reboot-1", DateTime.MinValue);
+
+        Assert.Equal("", await database.ScalarStringAsync(
+            $"SELECT coalesce(pending_epoch_base::text,'') FROM telemetry_replay_device_state WHERE device_id='{device}'"));
+
+        // With the epoch spent, ordinary sequence rules are back in force.
+        Assert.Equal(ReplayOutcome.OutOfOrder,
+            (await guard.CheckAsync(device, 0, "novel-but-behind", DateTime.MinValue)).Outcome);
+    }
+
+    /// <summary>
+    /// Opening an epoch for a device with no durable state is a no-op — its first frame already
+    /// bootstraps its own generation.
+    /// </summary>
+    [Fact]
+    public async Task DurableReplay_EpochForAnUnknownDeviceIsANoOp()
+    {
+        await using var database = await IsolatedSchema.CreateAsync();
+        await database.ExecuteAsync(ReplaySchemaDdl);
+
+        using var guard = new PostgresReplayGuard(database.ScopedConnectionString, serialModulus: 65_536);
+
+        await guard.BeginSessionEpochAsync("never-seen");
+        Assert.Equal(0, await database.ScalarLongAsync(
+            "SELECT count(*) FROM telemetry_replay_device_state WHERE device_id='never-seen'"));
+
+        Assert.Equal(ReplayOutcome.Accept,
+            (await guard.CheckAsync("never-seen", 1, "first-frame", DateTime.MinValue)).Outcome);
     }
 
     private sealed class IsolatedSchema : IAsyncDisposable

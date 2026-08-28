@@ -5,6 +5,7 @@ using Opstrax.Telematics.Contracts.Identity;
 using Opstrax.Telematics.Gateway.Buffering;
 using Opstrax.Telematics.Gateway.Forwarding;
 using Opstrax.Telematics.Gateway.Projection;
+using Opstrax.Telematics.Gateway.Security;
 using Opstrax.Telematics.Gateway.Security.Auth;
 using Opstrax.Telematics.Gateway.Security.Replay;
 using Opstrax.Telematics.Protocols.Gt06;
@@ -45,6 +46,7 @@ internal sealed class CanonicalConnectionHandlerFactory : IConnectionHandlerFact
     private readonly Gt06Adapter _adapter;
     private readonly IStoreAndForwardBuffer _forwardBuffer;
     private readonly GatewayOptions _options;
+    private readonly ActiveDeviceSessionRegistry _sessions;
     private readonly GatewayMetrics _metrics;
     private readonly ILoggerFactory _loggerFactory;
 
@@ -58,9 +60,11 @@ internal sealed class CanonicalConnectionHandlerFactory : IConnectionHandlerFact
         Gt06Adapter adapter,
         IStoreAndForwardBuffer forwardBuffer,
         GatewayOptions options,
+        ActiveDeviceSessionRegistry sessions,
         GatewayMetrics metrics,
         ILoggerFactory loggerFactory)
     {
+        _sessions = sessions ?? throw new ArgumentNullException(nameof(sessions));
         _backbone = backbone ?? throw new ArgumentNullException(nameof(backbone));
         _registry = registry ?? throw new ArgumentNullException(nameof(registry));
         _authenticator = authenticator ?? throw new ArgumentNullException(nameof(authenticator));
@@ -89,6 +93,7 @@ internal sealed class CanonicalConnectionHandlerFactory : IConnectionHandlerFact
             _backbone,
             _forwardBuffer,
             _options,
+            _sessions,
             _metrics,
             _loggerFactory.CreateLogger<GatewayConnection>());
 
@@ -110,6 +115,7 @@ internal sealed class ForwardingConnectionHandlerFactory : IConnectionHandlerFac
     private readonly IForwardOutbox _outbox;
     private readonly GatewayOptions _options;
     private readonly string? _edgeInstance;
+    private readonly ActiveDeviceSessionRegistry _sessions;
     private readonly GatewayMetrics _metrics;
     private readonly EdgeMetrics _edgeMetrics;
     private readonly ILoggerFactory _loggerFactory;
@@ -123,10 +129,12 @@ internal sealed class ForwardingConnectionHandlerFactory : IConnectionHandlerFac
         IForwardOutbox outbox,
         GatewayOptions options,
         EdgeOptions edgeOptions,
+        ActiveDeviceSessionRegistry sessions,
         GatewayMetrics metrics,
         EdgeMetrics edgeMetrics,
         ILoggerFactory loggerFactory)
     {
+        _sessions = sessions ?? throw new ArgumentNullException(nameof(sessions));
         _router = router ?? throw new ArgumentNullException(nameof(router));
         _allowlist = allowlist ?? throw new ArgumentNullException(nameof(allowlist));
         _replayGuard = replayGuard ?? throw new ArgumentNullException(nameof(replayGuard));
@@ -158,6 +166,7 @@ internal sealed class ForwardingConnectionHandlerFactory : IConnectionHandlerFac
             _outbox,
             _options,
             _edgeInstance,
+            _sessions,
             _metrics,
             _edgeMetrics,
             _loggerFactory.CreateLogger<ForwardingConnection>());

@@ -16,6 +16,7 @@ using Opstrax.Telematics.Gateway.Identity;
 using Opstrax.Telematics.Gateway.Infrastructure;
 using Opstrax.Telematics.Gateway.Observability;
 using Opstrax.Telematics.Gateway.Projection;
+using Opstrax.Telematics.Gateway.Security;
 using Opstrax.Telematics.Gateway.Security.Auth;
 using Opstrax.Telematics.Gateway.Security.Replay;
 using Opstrax.Telematics.Protocols.Gt06;
@@ -52,6 +53,10 @@ GatewayOptions options =
     ?? new GatewayOptions();
 
 builder.Services.AddSingleton(options);
+
+// One per process: the map of which socket is currently authoritative for each device. Shared by
+// both egress topologies so the "latest admitted login wins" policy holds whichever one is running.
+builder.Services.AddSingleton<ActiveDeviceSessionRegistry>();
 
 EdgeOptions edge =
     builder.Configuration.GetSection(EdgeOptions.SectionName).Get<EdgeOptions>()
@@ -165,6 +170,7 @@ builder.Services.AddSingleton<IConnectionHandlerFactory>(sp => new CanonicalConn
     sp.GetRequiredService<Gt06Adapter>(),
     sp.GetRequiredService<IStoreAndForwardBuffer>(),
     options,
+    sp.GetRequiredService<ActiveDeviceSessionRegistry>(),
     sp.GetRequiredService<GatewayMetrics>(),
     sp.GetRequiredService<ILoggerFactory>()));
 
@@ -238,6 +244,7 @@ static void ConfigureForwardingEdge(
         sp.GetRequiredService<IForwardOutbox>(),
         options,
         edge,
+        sp.GetRequiredService<ActiveDeviceSessionRegistry>(),
         sp.GetRequiredService<GatewayMetrics>(),
         sp.GetRequiredService<EdgeMetrics>(),
         sp.GetRequiredService<ILoggerFactory>()));

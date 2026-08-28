@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
 using Opstrax.Telematics.Gateway.Edge;
 
@@ -131,5 +132,129 @@ public sealed class DeploymentHardeningContractTests
 
         Assert.DoesNotContain("Telemetry__GatewaySecret", text, StringComparison.Ordinal);
         Assert.DoesNotContain("Telemetry__DeviceSecret", text, StringComparison.Ordinal);
+    }
+
+    // ── DEF-P1-15: the installer must be able to install what it references ────
+
+    /// <summary>
+    /// Every file <c>install.sh</c> installs must actually ship. The script runs under
+    /// <c>set -euo pipefail</c>, so a missing artifact is not a warning — the run aborts at
+    /// "Writing configuration", after it has already created the service account, the state
+    /// directories and the outbox, leaving a half-provisioned box.
+    /// </summary>
+    [Fact]
+    public void Installer_OnlyInstallsFilesThatShipAlongsideIt()
+    {
+        string script = Read("telematics", "deploy", "install.sh");
+        string deployDir = Path.Combine(RepoRoot, "telematics", "deploy");
+
+        var missing = new List<string>();
+        foreach (string line in script.Split('\n'))
+        {
+            string trimmed = line.Trim();
+            if (!trimmed.StartsWith("install ", StringComparison.Ordinal)) continue;
+            if (!trimmed.Contains("$HERE/", StringComparison.Ordinal)) continue;
+
+            foreach (string token in trimmed.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (!token.Contains("$HERE/", StringComparison.Ordinal)) continue;
+
+                // Resolve "$HERE/<name>" (the deploy directory), stripping quotes and any
+                // ${SERVICE} expansion the script performs.
+                string name = token.Trim('"').Replace("$HERE/", string.Empty, StringComparison.Ordinal)
+                    .Replace("${SERVICE}", "opstrax-telematics-gateway", StringComparison.Ordinal);
+                if (name.Length == 0) continue;
+
+                if (!File.Exists(Path.Combine(deployDir, name)))
+                    missing.Add(name);
+            }
+        }
+
+        Assert.True(missing.Count == 0,
+            "install.sh installs files that are not present in telematics/deploy: " + string.Join(", ", missing));
+    }
+
+    /// <summary>
+    /// The shipped production configuration is valid JSON, is the HTTPS (no-database) topology, and
+    /// carries the exact placeholders the installer substitutes. A template whose placeholder text
+    /// drifts from the installer's <c>sed</c> silently leaves REPLACE-ME in a running gateway.
+    /// </summary>
+    [Fact]
+    public void ProductionConfigTemplate_IsValidAndCarriesTheInstallersPlaceholders()
+    {
+        string json = Read("telematics", "deploy", "appsettings.Production.json");
+        using JsonDocument document = JsonDocument.Parse(json, new JsonDocumentOptions
+        {
+            CommentHandling = JsonCommentHandling.Skip,
+            AllowTrailingCommas = true,
+        });
+
+        JsonElement gateway = document.RootElement.GetProperty("Gateway");
+        JsonElement forward = gateway.GetProperty("Edge").GetProperty("Forward");
+
+        // The public edge holds no database credentials: HTTPS forwarding, OpsTrax owns identity.
+        Assert.Equal("Https", gateway.GetProperty("Edge").GetProperty("Egress").GetString());
+
+        // Exactly the three values install.sh rewrites.
+        Assert.Equal("REPLACE-ME", forward.GetProperty("GatewayId").GetString());
+        Assert.Equal(5023, gateway.GetProperty("ListenPort").GetInt32());
+        Assert.Contains("REPLACE-ME", forward.GetProperty("BaseUrl").GetString());
+
+        string script = Read("telematics", "deploy", "install.sh");
+        Assert.Contains("\\\"GatewayId\\\": \\\"REPLACE-ME\\\"", script, StringComparison.Ordinal);
+        Assert.Contains("\\\"ListenPort\\\": 5023", script, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// No secret may live in the committed configuration. Both the HMAC secret and the outbox
+    /// encryption key are supplied through the systemd EnvironmentFile; a value here would be
+    /// committed to git, copied into backups and shipped to every edge box.
+    /// </summary>
+    [Fact]
+    public void ProductionConfigTemplate_ContainsNoSecretValues()
+    {
+        string json = Read("telematics", "deploy", "appsettings.Production.json");
+        using JsonDocument document = JsonDocument.Parse(json, new JsonDocumentOptions
+        {
+            CommentHandling = JsonCommentHandling.Skip,
+            AllowTrailingCommas = true,
+        });
+
+        var offenders = new List<string>();
+        CollectSecretKeys(document.RootElement, string.Empty, offenders);
+        Assert.True(offenders.Count == 0,
+            "secret-bearing keys must never appear in committed config: " + string.Join(", ", offenders));
+
+        // And the environment-variable route is the one actually documented.
+        string script = Read("telematics", "deploy", "install.sh");
+        Assert.Contains("Gateway__Edge__Forward__Secret", script, StringComparison.Ordinal);
+        Assert.Contains("Gateway__StoreForwardEncryptionKey", script, StringComparison.Ordinal);
+    }
+
+    private static void CollectSecretKeys(JsonElement element, string path, List<string> offenders)
+    {
+        string[] secretNames = { "secret", "password", "apikey", "token", "connectionstring", "storeforwardencryptionkey" };
+
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                foreach (JsonProperty property in element.EnumerateObject())
+                {
+                    // "//"-prefixed keys are documentation, not configuration.
+                    if (property.Name.StartsWith("//", StringComparison.Ordinal)) continue;
+
+                    if (secretNames.Contains(property.Name.ToLowerInvariant()))
+                        offenders.Add($"{path}/{property.Name}");
+
+                    CollectSecretKeys(property.Value, $"{path}/{property.Name}", offenders);
+                }
+                break;
+
+            case JsonValueKind.Array:
+                int index = 0;
+                foreach (JsonElement item in element.EnumerateArray())
+                    CollectSecretKeys(item, $"{path}[{index++}]", offenders);
+                break;
+        }
     }
 }
