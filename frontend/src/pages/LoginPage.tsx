@@ -462,6 +462,7 @@ export function LoginPage() {
   const [email, setEmail]           = useState("");
   const [password, setPassword]     = useState("");
   const [showPassword, setShowPass] = useState(false);
+  const [passwordError, setPasswordError] = useState("");
   const [companyCodeError, setCompanyCodeError] = useState("");
   const [emailError, setEmailError] = useState("");
   // Identifier-first: "identify" collects the email; "authenticate" reveals the
@@ -516,6 +517,7 @@ export function LoginPage() {
     // password, and return focus for a deliberate retry.
     onError: () => {
       setPassword("");
+      if (passwordRef.current) passwordRef.current.value = "";
       requestAnimationFrame(() => passwordRef.current?.focus());
     },
   });
@@ -539,6 +541,7 @@ export function LoginPage() {
         setMfaChallenge(null);
         setStep("authenticate");
         setPassword("");
+        if (passwordRef.current) passwordRef.current.value = "";
         requestAnimationFrame(() => passwordRef.current?.focus());
         return;
       }
@@ -600,6 +603,7 @@ export function LoginPage() {
     setStep("identify");
     setSsoConn(null);
     setPassword("");
+    setPasswordError("");
     setMfaChallenge(null);
     setMfaCode("");
     login.reset();
@@ -617,8 +621,19 @@ export function LoginPage() {
     if (step === "identify") { continueWithEmail(); return; }
     if (step === "mfa") { if (mfaCode.trim()) mfaVerify.mutate(mfaCode.trim()); return; }
     if (ssoConn) { goToSso(); return; }
-    if (companyCode.trim() && email.trim() && password) {
-      login.mutate({ companyCode: companyCode.trim(), email: email.trim(), password });
+    // Read the submitted password from the browser-owned input. Chrome may
+    // render a saved credential without emitting React's change event; keeping
+    // this field uncontrolled prevents a render with empty state from erasing
+    // that native autofill before submission.
+    const submittedPassword = passwordRef.current?.value ?? password;
+    if (!submittedPassword) {
+      setPasswordError("Enter your password.");
+      passwordRef.current?.focus();
+      return;
+    }
+    setPasswordError("");
+    if (companyCode.trim() && email.trim()) {
+      login.mutate({ companyCode: companyCode.trim(), email: email.trim(), password: submittedPassword });
     }
   };
 
@@ -893,10 +908,12 @@ export function LoginPage() {
                           <div className="relative">
                             <input
                               ref={passwordRef} id="login-password" name="password" type={showPassword ? "text" : "password"}
-                              value={password} onChange={(e) => setPassword(e.target.value)}
+                              defaultValue="" onChange={(e) => { setPassword(e.target.value); if (passwordError) setPasswordError(""); }}
                               onFocus={syncBrowserFilledFields}
                               onBlur={syncBrowserFilledFields}
                               autoComplete="current-password" placeholder="••••••••"
+                              aria-invalid={passwordError ? true : undefined}
+                              aria-describedby={passwordError ? "login-password-error" : undefined}
                               className="login2-field pr-20" />
                             <button type="button" onClick={() => setShowPass((v) => !v)}
                               aria-label={showPassword ? "Hide password" : "Show password"} aria-pressed={showPassword}
@@ -904,6 +921,9 @@ export function LoginPage() {
                               {showPassword ? "Hide" : "Show"}
                             </button>
                           </div>
+                          {passwordError && (
+                            <p id="login-password-error" role="alert" className="mt-1.5 text-xs font-medium text-red-600">{passwordError}</p>
+                          )}
                         </div>
                       )}
                     </div>
@@ -916,7 +936,7 @@ export function LoginPage() {
                     disabled={
                       step === "identify" ? (identifying || !companyCode.trim() || !email.trim())
                         : step === "mfa" ? (mfaVerify.isPending || mfaCode.trim().length !== 6)
-                          : (login.isPending || !password)
+                          : login.isPending
                     }>
                     {step === "identify"
                       ? (identifying
