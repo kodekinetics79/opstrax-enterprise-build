@@ -6,9 +6,9 @@ Module: Telematics and Live Operations
 
 ## Release identity
 
-- Final candidate merge SHA: `a0da774f932015f2444cc9e54fa610715416b785`
-- Staging frontend deployed SHA: `a0da774f932015f2444cc9e54fa610715416b785`
-- Staging API deployed SHA: `a0da774f932015f2444cc9e54fa610715416b785`
+- Current candidate merge SHA: `a8942292c753403448cf82dbe7f548bbd1044dcf`
+- Staging frontend deployed SHA: `a8942292c753403448cf82dbe7f548bbd1044dcf`
+- Staging API deployed SHA: `a8942292c753403448cf82dbe7f548bbd1044dcf`
 - Staging frontend: `https://opstrax-staging-certification.vercel.app`
 - Staging API readiness: `https://opstrax-staging-api.onrender.com/health/ready`
 - Production was not changed by this certification cycle.
@@ -24,7 +24,9 @@ Module: Telematics and Live Operations
 | Diagnostics and Vehicle Intelligence actions were absent when the Dispatcher lacked permission | `d0e01c9…` | Dispatcher / CL-HQ | Pass |
 | Direct `/obd-j1939` navigation rendered a safe permission denial without diagnostic data | `d0e01c9…` | Dispatcher / CL-HQ | Pass |
 | GPS search for immutable serial `CLHQ-DEV-0138` rendered one matching record and separated serial from model in the detail drawer | `d0e01c9…` | Dispatcher / CL-HQ | Pass |
-| Maintenance Manager navigation/page permission parity | `a0da774…` | Maintenance Manager / CL-HQ | Fresh-login retest blocked because Chrome does not retain the authorized role password |
+| Maintenance Manager navigation/page/API permission parity; 200 branch-scoped records, four pages, sort/search/filter and least-privilege disabled actions | `a894229…` | Maintenance Manager / CL-HQ | Pass; `chrome/a894229-maintenance-obd-exact-staging-pass.png` and companion text snapshot |
+| Sign out, fresh sign in, direct return to OBD/J1939 and persisted 200-record branch result | `a894229…` | Maintenance Manager / CL-HQ | Pass; `chrome/a894229-maintenance-obd-logout-relogin-pass.png` |
+| Exact frontend/API full SHA and `Staging` runtime badge after environment correction | `a894229…` | Maintenance Manager / CL-HQ | Pass |
 | Tenant-wide 1,100-device and 1,000-position views | final candidate | Tenant/Fleet Administrator | Pending final Chrome retest |
 | Read-only and portal negative authorization | final candidate | Executive, Driver, Customer | Pending final Chrome retest |
 | Responsive layouts and Live Map soak | final candidate | authorized roles | Pending final Chrome retest |
@@ -44,4 +46,4 @@ Screenshots, recordings, network failures, console failures, and timings must id
 
 ## Evidence-pack identity
 
-The deployed product candidate is `a0da774f932015f2444cc9e54fa610715416b785`. Documentation commit `31d049faff2dec00eb409c0fc725c01740b635d9` and draft PR #96 preserve evidence only; they are not a different deployed product candidate and do not certify the module.
+The deployed product candidate is `a8942292c753403448cf82dbe7f548bbd1044dcf`, merged by PR #96. This evidence closes M2-004 but does not by itself certify the module.

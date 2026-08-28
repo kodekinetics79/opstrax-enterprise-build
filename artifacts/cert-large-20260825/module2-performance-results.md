@@ -6,8 +6,13 @@ All timings are observed in visible Google Chrome against the isolated certifica
 |---|---|---|---:|---:|---:|---|
 | `d0e01c9…` | Dispatcher / CL-HQ | GPS Tracking cold visible settle through rendered page rows | 220 devices | 3,232 ms | <= 5,000 ms | Pass |
 | `d0e01c9…` | Dispatcher / CL-HQ | Search `CLHQ-DEV-0138` through rendered 1-of-1 result | 220 devices | 1,626 ms | <= 2,000 ms | Pass |
+| `a894229…` | Maintenance Manager / CL-HQ | OBD/J1939 cold navigation through initial rendered response | 200 diagnostics records | 3,934 ms | <= 5,000 ms | Pass |
+| `a894229…` | Maintenance Manager / CL-HQ | OBD/J1939 post-deploy cold settle through table rows | 200 diagnostics records | 8,796 ms | <= 5,000 ms | Fail; Render Free cold/start transition |
+| `a894229…` | Maintenance Manager / CL-HQ | Next-page transition | 200 diagnostics records / 50 per page | 2,500 ms observed wait; page 2 rendered | <= 3,000 ms | Pass |
+| `a894229…` | Maintenance Manager / CL-HQ | Vehicle sort transition | 200 diagnostics records | 1,800 ms observed wait | <= 2,000 ms | Pass |
+| `a894229…` | Maintenance Manager / CL-HQ | Exact vehicle search to 1-of-1 result | 200 diagnostics records | 2,220 ms | <= 2,000 ms | Fail by 220 ms |
 
-Final-candidate full-tenant 1,100-device tables, 1,000-position Live Map soak, responsive viewports, export, and repeated refresh measurements remain required before the module verdict is closed.
+Final-candidate full-tenant 1,100-device tables, 1,000-position Live Map soak, responsive viewports, authorized export, and repeated warm measurements remain required before the module verdict is closed. The two failed timing observations remain open performance findings rather than being hidden by successful API-only measurements.
 
 ## Supporting ingest performance
 
