@@ -1,5 +1,7 @@
 # Module 1 role and journey matrix
 
+> 2026-08-28 addendum (`4960df41edd4399d3b6c7b07fe8145936cf1905b`): all 25 accounts are active. Customer Portal login and fleet/admin/device direct-URL redirects pass. Driver `CLHQ-D-0001` is linked to the Driver login, survives refresh/logout/login, and safely redirects direct fleet/admin URLs. Executive tenant-wide 1,000-vehicle/1,250-driver read-only and admin/assignment denial journeys pass. See `module1-current-sha-4960df4-browser-cycle.md` for current artifacts and timings. Rows below describe the earlier evidence cut where Customer and positive Driver linkage were still blocked.
+
 Evidence cut: 2026-08-26
 Tenant: `CERT-LARGE-20260825`
 Latest deployed candidate exercised: `7e98a39d66d67dbd5bb5419602532d7ec1aa23d1`

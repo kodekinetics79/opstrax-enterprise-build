@@ -1,5 +1,7 @@
 # Module 1 competitor assessment
 
+> 2026-08-28 addendum: current staging SHA `4960df41edd4399d3b6c7b07fe8145936cf1905b` closes the Customer-account and positive Driver-portal gaps. Fleet Manager can see/revoke the linked Driver identity; Driver, Executive and Customer direct-URL boundaries pass with empty clean-session consoles. The remaining competitive gaps are exact responsive evidence, document/expiry proof, controlled vehicle/driver correction cycles, and recording/HAR preservation—not account availability.
+
 Assessment date: 2026-08-26
 Scope: Fleet Identity & Asset Master only
 Latest deployed OpsTrax candidate exercised: `5d7c16517e2d8a414f698d7382754c4280e241ca`

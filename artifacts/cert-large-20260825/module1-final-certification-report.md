@@ -1,5 +1,7 @@
 # Module 1 final certification report
 
+> 2026-08-28 current-SHA addendum: the authoritative deployed staging candidate is now `4960df41edd4399d3b6c7b07fe8145936cf1905b`. All 25 role accounts exist; Customer Portal login and direct-URL isolation pass; the Driver account is linked to `CLHQ-D-0001`; and PR #90 fixed the stale Driver portal status shown to Fleet Manager. Exact current evidence and performance observations are in `module1-current-sha-4960df4-browser-cycle.md`. The historical report below remains preserved as the 2026-08-26 evidence cut. The verdict remains **BLOCKED / pilot-capable, not CERTIFIED** until the remaining viewport, document/expiry, vehicle/driver correction, recording and HAR gates are closed.
+
 Date: 2026-08-26
 
 Module: Fleet Identity & Asset Master — Large-Fleet Client Certification

@@ -1,0 +1,23 @@
+[
+  {
+    "path": "/vehicles",
+    "url": "https://opstrax-staging-certification.vercel.app/driver",
+    "driverHome": true,
+    "fleetLeak": false,
+    "domLength": 1152
+  },
+  {
+    "path": "/iot-devices",
+    "url": "https://opstrax-staging-certification.vercel.app/driver",
+    "driverHome": true,
+    "fleetLeak": false,
+    "domLength": 1152
+  },
+  {
+    "path": "/admin",
+    "url": "https://opstrax-staging-certification.vercel.app/driver",
+    "driverHome": true,
+    "fleetLeak": false,
+    "domLength": 1152
+  }
+]
