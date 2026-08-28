@@ -7,9 +7,9 @@ Primary acceptance surface: visible Google Chrome
 
 ## Release identity
 
-- Candidate SHA: `a8942292c753403448cf82dbe7f548bbd1044dcf`
-- Deployed frontend SHA: `a8942292c753403448cf82dbe7f548bbd1044dcf`
-- Deployed API SHA: `a8942292c753403448cf82dbe7f548bbd1044dcf`
+- Candidate SHA: `4cdb6c4cf3a37b11529007f90dd0f685cc8a58a7`
+- Deployed frontend SHA: `4cdb6c4cf3a37b11529007f90dd0f685cc8a58a7`
+- Deployed API SHA: `4cdb6c4cf3a37b11529007f90dd0f685cc8a58a7`
 - Exact-SHA runtime verdict: visible `Staging` after startup grace
 
 ## Scope
@@ -22,9 +22,9 @@ Automated tests, API responses, and database verification are supporting evidenc
 
 Final verdict: **BLOCKED**
 
-Candidate `a8942292c753403448cf82dbe7f548bbd1044dcf` is deployed to both staging surfaces and the public readiness contract is healthy. The fresh Maintenance Manager session is now available and its formerly blocked OBD/J1939 journey passes against 200 branch-scoped records before and after a complete sign-out/sign-in cycle. Certification/customer-pilot GO remains blocked on the remaining exact-candidate role matrix, full-tenant 1,100-device/1,000-position views, responsive layouts, authorized export, console/network capture, and the two open Chrome performance misses. Provider-specific production certification remains a separate gate even if the native ingest boundary passes.
+Candidate `4cdb6c4cf3a37b11529007f90dd0f685cc8a58a7` is deployed to both staging surfaces and the public readiness contract is healthy. The fresh Maintenance Manager session now passes both OBD/J1939 and Device Health: the formerly blocked detail opens without GPS permission, and the selected device remains consistently Offline / 32% in the table, detail drawer, snapshot reload, browser refresh, and full sign-out/sign-in cycle. The exact frontend/API runtime badge matches and the captured Chrome console warning/error set is empty. Certification/customer-pilot GO remains blocked on the remaining exact-candidate role matrix, full-tenant 1,100-device/1,000-position views, responsive layouts, authorized export, complete failed-network capture, and the open Chrome performance misses. Provider-specific production certification remains a separate gate even if the native ingest boundary passes.
 
-M2-001, M2-003 and M2-004 are closed with exact-candidate browser evidence. M2-002 and the remaining customer journeys still require exact-candidate retest. The module stays BLOCKED until the complete rendered matrix is recorded and the open timing misses are resolved or accepted for a limited pilot.
+M2-001, M2-003, M2-004, M2-007 and M2-008 are closed with exact-candidate browser evidence. M2-002 and the remaining customer journeys still require exact-candidate retest. The module stays BLOCKED until the complete rendered matrix is recorded and the open timing misses are resolved or accepted for a limited pilot.
 
 ## Known market boundary
 

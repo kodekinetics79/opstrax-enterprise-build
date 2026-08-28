@@ -6,9 +6,9 @@ Module: Telematics and Live Operations
 
 ## Release identity
 
-- Current candidate merge SHA: `a8942292c753403448cf82dbe7f548bbd1044dcf`
-- Staging frontend deployed SHA: `a8942292c753403448cf82dbe7f548bbd1044dcf`
-- Staging API deployed SHA: `a8942292c753403448cf82dbe7f548bbd1044dcf`
+- Current candidate merge SHA: `4cdb6c4cf3a37b11529007f90dd0f685cc8a58a7`
+- Staging frontend deployed SHA: `4cdb6c4cf3a37b11529007f90dd0f685cc8a58a7`
+- Staging API deployed SHA: `4cdb6c4cf3a37b11529007f90dd0f685cc8a58a7`
 - Staging frontend: `https://opstrax-staging-certification.vercel.app`
 - Staging API readiness: `https://opstrax-staging-api.onrender.com/health/ready`
 - Production was not changed by this certification cycle.
@@ -25,8 +25,14 @@ Module: Telematics and Live Operations
 | Direct `/obd-j1939` navigation rendered a safe permission denial without diagnostic data | `d0e01c9…` | Dispatcher / CL-HQ | Pass |
 | GPS search for immutable serial `CLHQ-DEV-0138` rendered one matching record and separated serial from model in the detail drawer | `d0e01c9…` | Dispatcher / CL-HQ | Pass |
 | Maintenance Manager navigation/page/API permission parity; 200 branch-scoped records, four pages, sort/search/filter and least-privilege disabled actions | `a894229…` | Maintenance Manager / CL-HQ | Pass; `chrome/a894229-maintenance-obd-exact-staging-pass.png` and companion text snapshot |
+| Permission-scoped Control Tower and Device Health rendered 220 CL-HQ devices without manufacturing restricted GPS evidence | `a894229…` | Maintenance Manager / CL-HQ | Pass; `chrome/a894229-maintenance-control-tower-pass.png` and `chrome/a894229-maintenance-device-health-pass.png` |
 | Sign out, fresh sign in, direct return to OBD/J1939 and persisted 200-record branch result | `a894229…` | Maintenance Manager / CL-HQ | Pass; `chrome/a894229-maintenance-obd-logout-relogin-pass.png` |
 | Exact frontend/API full SHA and `Staging` runtime badge after environment correction | `a894229…` | Maintenance Manager / CL-HQ | Pass |
+| Render exact-commit deployment reported `Deploy succeeded|Live`; public readiness returned HTTP 200 with matching deployment header/body and `Staging` | `4cdb6c4…` | staging foundation | Pass; `chrome/4cdb6c4-render-deploy-succeeded.jpg` and `chrome/4cdb6c4-staging-readiness.txt` |
+| Device Health detail opens without live-position permission and truthfully reports no live snapshot | `4cdb6c4…` | Maintenance Manager / CL-HQ | Pass; `chrome/4cdb6c4-maintenance-device-health-parity-pass.jpg` and companion text snapshot |
+| Device `CLHQ-DEV-0200` reports Offline / 32% consistently in table and detail after **Reload Snapshot** | `4cdb6c4…` | Maintenance Manager / CL-HQ | Pass; `chrome/4cdb6c4-maintenance-device-health-parity-pass.jpg` |
+| Browser refresh plus full sign-out/sign-in retained the device result and exact runtime identity | `4cdb6c4…` | Maintenance Manager / CL-HQ | Pass; `chrome/4cdb6c4-maintenance-device-health-relogin-pass.jpg` |
+| Captured Chrome console errors and warnings for the final Device Health journey | `4cdb6c4…` | Maintenance Manager / CL-HQ | Pass; zero entries in `chrome/4cdb6c4-maintenance-console-errors.json` |
 | Tenant-wide 1,100-device and 1,000-position views | final candidate | Tenant/Fleet Administrator | Pending final Chrome retest |
 | Read-only and portal negative authorization | final candidate | Executive, Driver, Customer | Pending final Chrome retest |
 | Responsive layouts and Live Map soak | final candidate | authorized roles | Pending final Chrome retest |
@@ -44,6 +50,8 @@ Module: Telematics and Live Operations
 
 Screenshots, recordings, network failures, console failures, and timings must identify the exact candidate. No credential, raw authentication token, device secret, or readiness header is part of the customer evidence pack. A page rendering without completing its customer workflow is not a pass.
 
+The files added for the `4cdb6c4…` cycle are integrity-identified in `4cdb6c4-module2-browser-evidence-sha256.md`.
+
 ## Evidence-pack identity
 
-The deployed product candidate is `a8942292c753403448cf82dbe7f548bbd1044dcf`, merged by PR #96. This evidence closes M2-004 but does not by itself certify the module.
+The deployed product candidate is `4cdb6c4cf3a37b11529007f90dd0f685cc8a58a7`, merged by PR #101. This evidence closes M2-007 and M2-008 but does not by itself certify the module.

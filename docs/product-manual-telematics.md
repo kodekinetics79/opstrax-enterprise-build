@@ -41,6 +41,8 @@ After every assignment change, refresh the page, sign out and back in, and confi
 
 Status must remain honest when telemetry is absent. OpsTrax shows an empty or unavailable value instead of manufacturing a position, signal, diagnostic, or history reading.
 
+The Device Health table and detail drawer use the same freshness, active-alert, and active-fault evidence. A snapshot reload must not change an Offline row into an Online detail unless a newer authenticated observation was actually accepted. Roles without live-position permission can still inspect permitted device identity, readiness, assignment, installation, and history; the detail shows that no live snapshot is available and does not fail or disclose GPS data.
+
 ## GPS and geofences
 
 Open **GPS Tracking** to inspect the latest accepted vehicle position. Position freshness is displayed as current, delayed, stale, or no position. A newer ordered observation may advance the latest position; an older event remains historical and cannot move the vehicle backwards.
