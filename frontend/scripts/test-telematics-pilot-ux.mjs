@@ -21,8 +21,17 @@ assert.match(command, /canViewGeofences = hasPermission\("map:view"\)/, "Geofenc
 assert.match(command, /kind === "gps-tracking"[\s\S]*navigate\("\/geofences"\)[\s\S]*Manage Geofences/, "GPS exposes geofence management");
 assert.match(service, /serialNumber: device\.serialNumber/, "GPS cluster retains the immutable serial for same-model device uniqueness");
 assert.match(command, /row\.serialNumber[\s\S]*row\.deviceName/, "GPS renders serial prominently and model secondarily");
+assert.match(command, /"obd-j1939"[\s\S]*columns: \["serialNumber", "vehicleCode", "deviceName"/, "OBD/J1939 table leads with immutable device serial");
+assert.match(command, /canViewDevices = hasPermission\(PERMISSIONS\.TELEMATICS_DEVICES_VIEW\)[\s\S]*canViewVehicles = hasPermission\(PERMISSIONS\.VEHICLES_VIEW\)[\s\S]*canViewJobs = hasDirectPermission\(PERMISSIONS\.SHIPMENTS_VIEW\)[\s\S]*canViewMap = hasPermission\(PERMISSIONS\.TELEMETRY_LIVE_STATE_READ\)/, "Telemetry drilldown controls follow their destination permissions");
+assert.match(command, /Device serial", row\.serialNumber[\s\S]*Device model", row\.deviceName/, "Telemetry detail keeps immutable serial primary and model secondary");
 assert.match(controlTower, /device: device\.serialNumber, model: device\.deviceName/, "Control Tower separates immutable serial from display model");
 assert.match(controlTower, /Export full device inventory/, "Control Tower export states that it is not the filtered queue");
+assert.match(controlTower, /canViewDevices = hasPermission\(PERMISSIONS\.TELEMATICS_DEVICES_VIEW\)/, "Control Tower checks Device Health destination access");
+assert.match(controlTower, /canViewGps = hasPermission\(PERMISSIONS\.TELEMATICS_GPS_VIEW\)/, "Control Tower checks GPS destination access");
+assert.match(controlTower, /canViewDiagnostics = hasPermission\(PERMISSIONS\.TELEMATICS_DIAGNOSTICS_VIEW\)/, "Control Tower checks diagnostics destination access");
+assert.match(controlTower, /\{canViewGps \? <button[\s\S]*GPS<\/button> : null\}/, "Control Tower hides GPS navigation when permission is absent");
+assert.match(controlTower, /\{canViewDiagnostics \? <button[\s\S]*Diagnostics<\/button> : null\}/, "Control Tower hides diagnostics navigation when permission is absent");
+assert.match(controlTower, /\{canViewDevices \? <button[\s\S]*Device Health<\/button> : null\}/, "Control Tower hides Device Health navigation when permission is absent");
 assert.match(command, /Fleet managed units[\s\S]*Fleet offline \/ stale[\s\S]*Fleet needs action[\s\S]*Current page health/, "GPS KPI labels state fleet and page scope truthfully");
 assert.match(command, /Fleet cards cover every authorized unit[\s\S]*current page/, "GPS explains mixed KPI scopes");
 assert.match(command, /Search serial, IMEI, model, category, provider, vehicle, driver, or location/, "GPS search promise matches backend-supported fields");

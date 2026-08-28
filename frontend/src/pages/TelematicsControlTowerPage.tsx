@@ -63,6 +63,9 @@ export function TelematicsControlTowerPage() {
   const navigate = useNavigate();
   const hasPermission = useHasPermission();
   const canExport = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_EXPORT);
+  const canViewDevices = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_VIEW);
+  const canViewGps = hasPermission(PERMISSIONS.TELEMATICS_GPS_VIEW);
+  const canViewDiagnostics = hasPermission(PERMISSIONS.TELEMATICS_DIAGNOSTICS_VIEW);
   const [search, setSearch] = useState("");
   const [settledSearch, setSettledSearch] = useState("");
   const [view, setView] = useState("attention");
@@ -138,8 +141,8 @@ export function TelematicsControlTowerPage() {
         <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {[
             { label: "Check-in evidence", count: denominator - (summary?.neverConnected ?? 0), definition: "Device has reported at least one check-in." },
-            { label: "Current position", count: null, definition: "Open GPS for permission-scoped position freshness." },
-            { label: "Known provenance", count: null, definition: "Open GPS for provider and source evidence." },
+            { label: "Current position", count: null, definition: canViewGps ? "Open GPS for permission-scoped position freshness." : "Position evidence is not available to this role." },
+            { label: "Known provenance", count: null, definition: canViewGps ? "Open GPS for provider and source evidence." : "Position provenance is not available to this role." },
             { label: "Health evidence", count: denominator - (summary?.neverConnected ?? 0), definition: "A device check-in provides the baseline health evidence." },
           ].map((item) => (
             <div key={item.label} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
@@ -159,9 +162,9 @@ export function TelematicsControlTowerPage() {
           </div>
           <div className="flex flex-wrap gap-2">
             {canExport ? <button className="btn-ghost" onClick={() => void telematicsService.exportDevices()}><Download className="h-4 w-4" /> Export full device inventory</button> : null}
-            <button className="btn-ghost" onClick={() => navigate("/gps-tracking")}><MapPinned className="h-4 w-4" /> GPS</button>
-            <button className="btn-ghost" onClick={() => navigate("/obd-j1939")}><Gauge className="h-4 w-4" /> Diagnostics</button>
-            <button className="btn-primary" onClick={() => navigate("/iot-devices")}><Wrench className="h-4 w-4" /> Device Health</button>
+            {canViewGps ? <button className="btn-ghost" onClick={() => navigate("/gps-tracking")}><MapPinned className="h-4 w-4" /> GPS</button> : null}
+            {canViewDiagnostics ? <button className="btn-ghost" onClick={() => navigate("/obd-j1939")}><Gauge className="h-4 w-4" /> Diagnostics</button> : null}
+            {canViewDevices ? <button className="btn-primary" onClick={() => navigate("/iot-devices")}><Wrench className="h-4 w-4" /> Device Health</button> : null}
           </div>
         </div>
 
@@ -207,9 +210,9 @@ export function TelematicsControlTowerPage() {
       </section>
 
       <section className="grid gap-3 md:grid-cols-3">
-        <button className="rounded-xl border border-slate-200 bg-white p-4 text-left hover:border-teal-400" onClick={() => navigate('/iot-devices')}><ShieldCheck className="h-5 w-5 text-teal-700" /><h3 className="mt-3 font-semibold">Trust & lifecycle</h3><p className="mt-1 text-sm text-slate-500">Provision, assign, rotate credentials, and inspect evidence-backed health.</p></button>
-        <button className="rounded-xl border border-slate-200 bg-white p-4 text-left hover:border-teal-400" onClick={() => navigate('/gps-tracking')}><MapPinned className="h-5 w-5 text-teal-700" /><h3 className="mt-3 font-semibold">Location truth</h3><p className="mt-1 text-sm text-slate-500">Separate device fix time, ingress time, freshness, and operational position.</p></button>
-        <button className="rounded-xl border border-slate-200 bg-white p-4 text-left hover:border-teal-400" onClick={() => navigate('/obd-j1939')}><Gauge className="h-5 w-5 text-teal-700" /><h3 className="mt-3 font-semibold">Vehicle intelligence</h3><p className="mt-1 text-sm text-slate-500">Review immutable OBD/J1939 evidence before maintenance or safety action.</p></button>
+        {canViewDevices ? <button className="rounded-xl border border-slate-200 bg-white p-4 text-left hover:border-teal-400" onClick={() => navigate('/iot-devices')}><ShieldCheck className="h-5 w-5 text-teal-700" /><h3 className="mt-3 font-semibold">Trust & lifecycle</h3><p className="mt-1 text-sm text-slate-500">Provision, assign, rotate credentials, and inspect evidence-backed health.</p></button> : null}
+        {canViewGps ? <button className="rounded-xl border border-slate-200 bg-white p-4 text-left hover:border-teal-400" onClick={() => navigate('/gps-tracking')}><MapPinned className="h-5 w-5 text-teal-700" /><h3 className="mt-3 font-semibold">Location truth</h3><p className="mt-1 text-sm text-slate-500">Separate device fix time, ingress time, freshness, and operational position.</p></button> : null}
+        {canViewDiagnostics ? <button className="rounded-xl border border-slate-200 bg-white p-4 text-left hover:border-teal-400" onClick={() => navigate('/obd-j1939')}><Gauge className="h-5 w-5 text-teal-700" /><h3 className="mt-3 font-semibold">Vehicle intelligence</h3><p className="mt-1 text-sm text-slate-500">Review immutable OBD/J1939 evidence before maintenance or safety action.</p></button> : null}
       </section>
     </div>
   );

@@ -20,9 +20,11 @@ test("production application code cannot import synthetic fleet records", () => 
 test("runtime Live is fail-closed on API, database, worker and telemetry truth", () => {
   const policy = read("frontend/src/services/runtimeDiagnostics.ts");
   const shell = read("frontend/src/layouts/AppShell.tsx");
-  for (const evidence of ["apiReady", "databaseReady", "databaseContractReady", "criticalWorkersFresh", "telemetryFresh", "deepHealthy"]) {
+  for (const evidence of ["apiReady", "databaseReady", "databaseContractReady", "criticalWorkersFresh", "telemetryFresh"]) {
     assert.match(policy, new RegExp(`verifiedLive[^;]+${evidence}`), `Live policy omits ${evidence}`);
   }
+  assert.match(policy, /apiClient\.get\("\/health\/ready"/, "browser runtime truth must use the public readiness contract");
+  assert.doesNotMatch(policy, /apiClient\.get\("\/health\/deep"/, "browser runtime truth must not call protected operator health");
   assert.doesNotMatch(shell, />\s*Live\s*</, "global shell still renders an unconditional Live label");
   assert.match(shell, /runtimeState === "Live"/);
   assert.match(shell, /tenantIsExplicitlySynthetic \? "Demo Data"/);

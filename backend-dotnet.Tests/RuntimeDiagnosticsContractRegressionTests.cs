@@ -3,16 +3,19 @@ namespace Opstrax.Tests;
 public sealed class RuntimeDiagnosticsContractRegressionTests
 {
     [Fact]
-    public void Frontend_AcceptsTheHealthyCriticalWorkerContractReturnedByDeepHealth()
+    public void Frontend_AcceptsTheCriticalWorkerAggregateReturnedByPublicReadiness()
     {
         var root = FindRoot();
         var frontend = File.ReadAllText(Path.Combine(root, "frontend", "src", "services", "runtimeDiagnostics.ts"));
         var program = File.ReadAllText(Path.Combine(root, "backend-dotnet", "Program.cs"));
 
-        Assert.Contains("workerContractStatus === \"healthy\"", frontend, StringComparison.Ordinal);
-        Assert.DoesNotContain("workerContract.status).toLowerCase() === \"valid\"", frontend, StringComparison.Ordinal);
-        Assert.Contains("workerContractStatus === \"starting\"", frontend, StringComparison.Ordinal);
+        Assert.Contains("critical_worker_violations", frontend, StringComparison.Ordinal);
+        Assert.Contains("critical_worker_startup_grace_active", frontend, StringComparison.Ordinal);
+        Assert.Contains("apiClient.get(\"/health/ready\"", frontend, StringComparison.Ordinal);
+        Assert.DoesNotContain("apiClient.get(\"/health/deep\"", frontend, StringComparison.Ordinal);
         Assert.Contains("state = \"Starting\"", frontend, StringComparison.Ordinal);
+        Assert.Contains("critical_worker_violations", program, StringComparison.Ordinal);
+        Assert.Contains("critical_worker_startup_grace_active", program, StringComparison.Ordinal);
         Assert.Contains("startupGraceActive ? \"starting\" : \"healthy\"", program, StringComparison.Ordinal);
     }
 
