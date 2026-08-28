@@ -150,6 +150,65 @@ groups:
     for: 10m
     labels: { severity: page, stage: "{{ $labels.stage }}" }
 
+  # Frame integrity — wire corruption, as a RATE not a count.
+  # A cellular fleet always corrupts a few frames; a fixed threshold either never fires or fires
+  # constantly depending on fleet size, which is how a corruption alert gets muted.
+  - alert: TelematicsCrcFailureRateHigh
+    expr: |
+      sum(rate(opstrax_telematics_crc_failures_total[10m]))
+      / clamp_min(sum(rate(opstrax_telematics_frames_received_total[10m])), 1) > 0.02
+    for: 10m
+    labels: { severity: ticket, stage: gateway }
+    annotations:
+      summary: "Over 2% of GT06 frames are failing CRC"
+      hint: "Bad link, a corrupting middlebox, or a framing bug. CRC-invalid frames are never acked, so the devices are retransmitting."
+
+  # Session identity — this should never be non-zero.
+  # A device does not re-introduce itself as a different device. Any occurrence is a badly broken
+  # tracker or an attempt to attribute traffic to another tenant's vehicle.
+  - alert: TelematicsSessionIdentityViolation
+    expr: increase(opstrax_telematics_session_identity_violations_total[5m]) > 0
+    for: 0m
+    labels: { severity: page, stage: identity }
+    annotations:
+      summary: "A login tried to re-identify an already-bound connection"
+      hint: "The binding was refused and the connection closed, so no data was misattributed. Find the source IP range and the claimed IMEI in the gateway log."
+
+  # Fix continuity — the shape of the spike is the diagnosis.
+  # Few devices: investigate them individually (spoofing, tampering, a unit moved between vehicles).
+  # MANY devices at once: that is not a fleet of teleporting trucks, it is a decoder or
+  # coordinate-handling regression that just shipped. Alert on DISTINCT DEVICES so one tampered
+  # unit reporting continuously cannot masquerade as a fleet event, and a real fleet event cannot
+  # hide inside one device's noise.
+  # NOTE: deliberately NOT count-by-device_id. There is no device_id label anywhere in this
+  # system, because whoever chooses the IMEIs would then choose the Prometheus cardinality. The
+  # distinct-device count is aggregated in-process and exported as a single-series gauge.
+  - alert: TelematicsFleetWideTeleportSpike
+    expr: opstrax_telematics_teleport_distinct_devices > 5
+    for: 5m
+    labels: { severity: page, stage: decode }
+    annotations:
+      summary: "Multiple devices reporting physically impossible displacement at once"
+      hint: "Suspect the most recent decoder or coordinate-handling deploy before suspecting the fleet. Fixes are FLAGGED, not dropped, so nothing is lost while you investigate."
+
+  - alert: TelematicsTeleportSuspected
+    expr: increase(opstrax_telematics_teleport_suspected_total[30m]) > 0
+    for: 15m
+    labels: { severity: ticket, stage: decode }
+    annotations:
+      summary: "A device is reporting positions it could not physically have reached"
+
+  # Decoder-fault signature on the forwarding edge.
+  # A frame refused by normalization is acknowledged and discarded, so the device drops its only
+  # copy. Right when the DEVICE sent garbage, wrong when OUR DECODER made it garbage.
+  - alert: TelematicsInvalidCoordinateRejectionsRising
+    expr: increase(opstrax_telematics_packets_rejected_total{reason="invalid-coordinates"}[15m]) > 0
+    for: 15m
+    labels: { severity: ticket, stage: decode }
+    annotations:
+      summary: "Frames are being discarded for invalid coordinates"
+      hint: "These fixes are unrecoverable once acknowledged. Treat a sustained rate as a decoder fault until proven otherwise."
+
   # SLO 8 — unknown-device spike (3x baseline)
   - alert: TelematicsUnknownDeviceSpike
     expr: |

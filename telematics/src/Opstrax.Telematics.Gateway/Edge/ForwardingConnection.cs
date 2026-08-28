@@ -4,6 +4,8 @@ using System.Security.Cryptography;
 using Microsoft.Extensions.Logging;
 using Opstrax.Telematics.Contracts.Adapters;
 using Opstrax.Telematics.Gateway.Forwarding;
+using Opstrax.Telematics.Gateway.Observability;
+using Opstrax.Telematics.Gateway.Quality;
 using Opstrax.Telematics.Gateway.Security;
 using Opstrax.Telematics.Gateway.Security.Replay;
 
@@ -66,6 +68,9 @@ internal sealed class ForwardingConnection
     /// <summary>Tracks which socket is authoritative for a device across the whole gateway.</summary>
     private readonly ActiveDeviceSessionRegistry _sessions;
 
+    /// <summary>Flags fixes that could not physically follow the device's previous position.</summary>
+    private readonly FixPlausibilityGuard _plausibility;
+
     /// <summary>Device key this session holds a lease on, and the lease id. Null until a bind succeeds.</summary>
     private string? _leaseKey;
     private long _leaseId;
@@ -93,11 +98,13 @@ internal sealed class ForwardingConnection
         GatewayOptions options,
         string? edgeInstance,
         ActiveDeviceSessionRegistry sessions,
+        FixPlausibilityGuard plausibility,
         GatewayMetrics metrics,
         EdgeMetrics edgeMetrics,
         ILogger logger)
     {
         _sessions = sessions ?? throw new ArgumentNullException(nameof(sessions));
+        _plausibility = plausibility ?? throw new ArgumentNullException(nameof(plausibility));
         _client = client ?? throw new ArgumentNullException(nameof(client));
         _router = router ?? throw new ArgumentNullException(nameof(router));
         _allowlist = allowlist ?? throw new ArgumentNullException(nameof(allowlist));
@@ -264,6 +271,11 @@ internal sealed class ForwardingConnection
             _metrics.AddFramesReceived(frameStats.FramesRead);
             _metrics.AddCrcFailures(frameStats.CrcFailures);
 
+            if (frameStats.FramesRead > 0)
+                TelematicsInstrumentation.FramesReceived.Add(frameStats.FramesRead, FrameIntegrityLabels);
+            if (frameStats.CrcFailures > 0)
+                TelematicsInstrumentation.CrcFailures.Add(frameStats.CrcFailures, FrameIntegrityLabels);
+
             foreach (DecodedMessage message in messages)
             {
                 _metrics.IncrementFramesDecoded();
@@ -395,6 +407,7 @@ internal sealed class ForwardingConnection
                 return true; // Same device re-introducing itself: identity already correct, unchanged.
 
             _metrics.IncrementSessionIdentityViolations();
+            TelematicsInstrumentation.SessionIdentityViolations.Add(1, FrameIntegrityLabels);
             _edgeMetrics.IncrementAllowlistRefusals();
             _metrics.IncrementUnknownDeviceRejections();
             _metrics.IncrementFramesRejected();
@@ -455,6 +468,7 @@ internal sealed class ForwardingConnection
         if (acquisition.DisplacedSession is not { } displaced) return;
 
         _metrics.IncrementDuplicateSessionsDisplaced();
+        TelematicsInstrumentation.DuplicateSessionsDisplaced.Add(1, FrameIntegrityLabels);
         _logger.LogWarning(
             "Device {Imei} was admitted on {RemoteEndpoint} while an earlier session for the same device was " +
             "still live; the earlier session is being closed. This connection is now the only authoritative one.",
@@ -507,8 +521,16 @@ internal sealed class ForwardingConnection
             else
             {
                 _edgeMetrics.IncrementNormalizationRejections();
+                _edgeMetrics.RecordNormalizationRejection(normalized.Rejection);
+
+                // Named, not just counted. This frame is about to be acknowledged and dropped, so
+                // the device will discard its only copy — right when the DEVICE sent something
+                // unusable, wrong when OUR DECODER made it unusable, and the aggregate counter
+                // cannot tell those apart.
                 _logger.LogWarning(
-                    "Discarding a {Protocol} frame from {Imei}: {Reason}.",
+                    "Discarding a {Protocol} frame from {Imei}: {Reason}. It will be acknowledged, so the device " +
+                    "drops its copy and this fix is unrecoverable. A rising {Reason} rate is a decoder fault until " +
+                    "proven otherwise.",
                     protocol, DeviceIdentifier.Mask(imei), normalized.Rejection);
             }
 
@@ -516,6 +538,31 @@ internal sealed class ForwardingConnection
             // withholding the ACK would wedge the device retrying it forever.
             await SendAckIfRequiredAsync(message, stream, cancellationToken).ConfigureAwait(false);
             return;
+        }
+
+        // ── Fix continuity: flagged and counted, still forwarded ────────────────
+        // The edge asserts no ownership and cannot annotate the canonical event, so its
+        // contribution is the counter and the log line. The fix goes to OpsTrax either way: a
+        // plausibility heuristic at the edge must not be the thing that loses a real position.
+        PlausibilityVerdict plausibility = _plausibility.Evaluate(
+            imei, observation.Lat, observation.Lng, observation.FixTimeUtc, observation.SpeedKph);
+
+        if (plausibility.TeleportSuspected)
+        {
+            _metrics.IncrementTeleportsSuspected();
+            TelematicsInstrumentation.TeleportSuspected.Add(1, FrameIntegrityLabels);
+            _logger.LogWarning(
+                "A {Protocol} fix from {Imei} implies {ImpliedSpeedKph:F0} km/h over {DistanceKm:F1} km since its " +
+                "previous position. Forwarding it anyway and flagging. Many devices at once means a decoder change, " +
+                "not a fleet of teleporting vehicles.",
+                protocol, DeviceIdentifier.Mask(imei), plausibility.ImpliedSpeedKph,
+                (plausibility.DistanceMetres ?? 0) / 1000.0);
+        }
+
+        if (plausibility.ImpossibleSpeed)
+        {
+            _metrics.IncrementImpossibleSpeeds();
+            TelematicsInstrumentation.ImpossibleSpeed.Add(1, FrameIntegrityLabels);
         }
 
         // ── Replay defence, before anything is sent ─────────────────────────────
@@ -627,6 +674,19 @@ internal sealed class ForwardingConnection
         _logger.LogDebug("Acked {MessageType} (serial {Serial}) on {RemoteEndpoint}.",
             message.MessageType, message.ProtocolMessageId, _remoteEndpoint);
     }
+
+    /// <summary>Protocol-only labels for frame-integrity and session-safety series.</summary>
+    /// <remarks>
+    /// No tenant label: this edge resolves no tenant at all, and a frame that failed its checksum
+    /// has no trustworthy identity to attribute to one.
+    /// </remarks>
+    private System.Diagnostics.TagList FrameIntegrityLabels => new()
+    {
+        {
+            TelematicsInstrumentation.MetricLabels.Protocol,
+            _adapter?.Metadata.Name.ToLowerInvariant() ?? "unidentified"
+        },
+    };
 
     /// <summary>SHA-256 hex digest of the raw frame — the opaque content hash the replay guard dedups on.</summary>
     private static string HashFrame(IReadOnlyList<byte> rawFrame)

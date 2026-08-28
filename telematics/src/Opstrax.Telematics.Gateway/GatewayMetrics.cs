@@ -34,6 +34,8 @@ internal sealed class GatewayMetrics
     private long _framesRejected;
     private long _sessionIdentityViolations;
     private long _duplicateSessionsDisplaced;
+    private long _teleportsSuspected;
+    private long _impossibleSpeeds;
 
     /// <summary>Connections accepted and handed to a connection task.</summary>
     public long ConnectionsAccepted => Interlocked.Read(ref _connectionsAccepted);
@@ -227,4 +229,21 @@ internal sealed class GatewayMetrics
 
     /// <summary>Records a session torn down because the device authenticated on a newer socket.</summary>
     public void IncrementDuplicateSessionsDisplaced() => Interlocked.Increment(ref _duplicateSessionsDisplaced);
+
+    /// <summary>
+    /// Fixes whose displacement from the device's previous position is impossible in the elapsed
+    /// time. A slow trickle is spoofing, tampering, or a device moved between vehicles. A sudden
+    /// spike <em>across many devices at once</em> is not a fleet of teleporting trucks — it is a
+    /// decoder regression that just shipped, and it is the single most valuable alert here.
+    /// </summary>
+    public long TeleportsSuspected => Interlocked.Read(ref _teleportsSuspected);
+
+    /// <summary>Fixes whose device-reported ground speed exceeds the physical ceiling.</summary>
+    public long ImpossibleSpeeds => Interlocked.Read(ref _impossibleSpeeds);
+
+    /// <summary>Records a fix flagged as an impossible displacement. The fix is flagged, never dropped.</summary>
+    public void IncrementTeleportsSuspected() => Interlocked.Increment(ref _teleportsSuspected);
+
+    /// <summary>Records a fix whose reported speed exceeds the physical ceiling.</summary>
+    public void IncrementImpossibleSpeeds() => Interlocked.Increment(ref _impossibleSpeeds);
 }

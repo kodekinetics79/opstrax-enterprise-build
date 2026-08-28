@@ -13,6 +13,7 @@ using Opstrax.Telematics.Gateway.Buffering;
 using Opstrax.Telematics.Gateway.Eventing;
 using Opstrax.Telematics.Gateway.Observability;
 using Opstrax.Telematics.Gateway.Projection;
+using Opstrax.Telematics.Gateway.Quality;
 using Opstrax.Telematics.Gateway.Security;
 using Opstrax.Telematics.Gateway.Security.Auth;
 using Opstrax.Telematics.Gateway.Security.Replay;
@@ -98,6 +99,9 @@ internal sealed class GatewayConnection
     /// <summary>Tracks which socket is authoritative for a device across the whole gateway.</summary>
     private readonly ActiveDeviceSessionRegistry _sessions;
 
+    /// <summary>Raises the fix-continuity quality flags the canonical event has always carried.</summary>
+    private readonly FixPlausibilityGuard _plausibility;
+
     /// <summary>Device key this session holds a lease on, and the lease id. Null until login binds.</summary>
     private string? _leaseKey;
     private long _leaseId;
@@ -123,10 +127,12 @@ internal sealed class GatewayConnection
         IStoreAndForwardBuffer forwardBuffer,
         GatewayOptions options,
         ActiveDeviceSessionRegistry sessions,
+        FixPlausibilityGuard plausibility,
         GatewayMetrics metrics,
         ILogger logger)
     {
         _client = client;
+        _plausibility = plausibility ?? throw new ArgumentNullException(nameof(plausibility));
         _adapter = adapter;
         _sessions = sessions ?? throw new ArgumentNullException(nameof(sessions));
         _registry = registry;
@@ -334,6 +340,15 @@ internal sealed class GatewayConnection
             _metrics.AddFramesReceived(frameStats.FramesRead);
             _metrics.AddCrcFailures(frameStats.CrcFailures);
 
+            // Also exported: GatewayMetrics is process-local and nothing scrapes it, so a counter
+            // that only lives there cannot reach an on-call engineer. FrameIntegrityLabels are
+            // deliberately protocol-only — no company_id, because a frame that failed its checksum
+            // has no trustworthy identity to attribute to a tenant.
+            if (frameStats.FramesRead > 0)
+                TelematicsInstrumentation.FramesReceived.Add(frameStats.FramesRead, FrameIntegrityLabels);
+            if (frameStats.CrcFailures > 0)
+                TelematicsInstrumentation.CrcFailures.Add(frameStats.CrcFailures, FrameIntegrityLabels);
+
             if (messages.Count > 0)
             {
                 double decodeMs = Stopwatch.GetElapsedTime(decodeStart).TotalMilliseconds;
@@ -471,6 +486,8 @@ internal sealed class GatewayConnection
             receivedAtUtc,
             _correlationId);
 
+        evt = ApplyPlausibility(evt, owner);
+
         // ── Replay / sequence defence, keyed on the REGISTRY-resolved device id ──────
         long serial = message.ProtocolMessageId ?? 0;
         string contentHash = HashFrame(message.RawFrame);
@@ -541,6 +558,78 @@ internal sealed class GatewayConnection
             });
     }
 
+    /// <summary>
+    /// Raises the fix-continuity quality flags on a decoded event.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="Contracts.Quality.QualityFlags.TeleportSuspected"/> and
+    /// <see cref="Contracts.Quality.QualityFlags.ImpossibleSpeed"/> are part of the canonical
+    /// contract and the projection has been persisting both on every row since it was written.
+    /// Nothing produced them, so every stored event asserted a clean bill of health nobody had
+    /// checked. This is where they come from.
+    /// </para>
+    /// <para>
+    /// <b>Flagged, never dropped.</b> The event is published either way. A vehicle really can be
+    /// craned onto a ship, and a plausibility heuristic that deletes evidence is a data-loss
+    /// mechanism wearing a safety badge. Downstream trust scoring decides what the flag is worth.
+    /// </para>
+    /// </remarks>
+    private CanonicalTelemetryEvent ApplyPlausibility(CanonicalTelemetryEvent evt, ResolvedDeviceOwner owner)
+    {
+        if (evt.Location is not { } location)
+            return evt;
+
+        PlausibilityVerdict verdict = _plausibility.Evaluate(
+            owner.DeviceId, location.Lat, location.Lng, evt.OccurredAtDeviceUtc, location.SpeedKph);
+
+        if (!verdict.IsSuspect)
+            return evt;
+
+        if (verdict.TeleportSuspected)
+        {
+            _metrics.IncrementTeleportsSuspected();
+            TelematicsInstrumentation.TeleportSuspected.Add(1, FrameIntegrityLabels);
+            _logger.LogWarning(
+                "Fix for device {DeviceId} implies {ImpliedSpeedKph:F0} km/h over {DistanceKm:F1} km since its " +
+                "previous position, above the {CeilingKph:F0} km/h ceiling. The fix is published and FLAGGED, not " +
+                "dropped. Many devices flagging at once points at a decoder change, not at the fleet.",
+                owner.DeviceId, verdict.ImpliedSpeedKph, (verdict.DistanceMetres ?? 0) / 1000.0,
+                _plausibility.MaxGroundSpeedKph);
+        }
+
+        if (verdict.ImpossibleSpeed)
+        {
+            _metrics.IncrementImpossibleSpeeds();
+            TelematicsInstrumentation.ImpossibleSpeed.Add(1, FrameIntegrityLabels);
+            _logger.LogWarning(
+                "Device {DeviceId} reported a ground speed above the {CeilingKph:F0} km/h ceiling; the fix is " +
+                "published and FLAGGED.", owner.DeviceId, _plausibility.MaxGroundSpeedKph);
+        }
+
+        return evt with
+        {
+            Quality = evt.Quality with
+            {
+                TeleportSuspected = evt.Quality.TeleportSuspected || verdict.TeleportSuspected,
+                ImpossibleSpeed = evt.Quality.ImpossibleSpeed || verdict.ImpossibleSpeed,
+            },
+        };
+    }
+
+    /// <summary>
+    /// Protocol-only labels for frame-integrity and session-safety series.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately carries no <c>company_id</c>. A frame that failed its checksum, or a login that
+    /// tried to re-identify a socket, has no trustworthy identity — attributing either to a tenant
+    /// would put an attacker in control of which tenant's series lights up.
+    /// </remarks>
+    private static TagList FrameIntegrityLabels => new()
+    {
+        { TelematicsInstrumentation.MetricLabels.Protocol, ProtocolLabel },
+    };
+
     private static TagList ReplayLabels(long companyId) => new()
     {
         { TelematicsInstrumentation.MetricLabels.Protocol, ProtocolLabel },
@@ -598,6 +687,7 @@ internal sealed class GatewayConnection
             _metrics.IncrementSessionIdentityViolations();
             _metrics.IncrementUnknownDeviceRejections();
             _metrics.IncrementFramesRejected();
+            TelematicsInstrumentation.SessionIdentityViolations.Add(1, FrameIntegrityLabels);
             TelematicsInstrumentation.AuthFailures.Add(1, new TagList
             {
                 { TelematicsInstrumentation.MetricLabels.Protocol, ProtocolLabel },
@@ -744,6 +834,7 @@ internal sealed class GatewayConnection
         if (acquisition.DisplacedSession is not { } displaced) return;
 
         _metrics.IncrementDuplicateSessionsDisplaced();
+        TelematicsInstrumentation.DuplicateSessionsDisplaced.Add(1, FrameIntegrityLabels);
         _logger.LogWarning(
             "Device {Imei} authenticated on {RemoteEndpoint} while an earlier session for the same device was " +
             "still live; the earlier session is being closed. This connection is now the only authoritative one.",

@@ -6,6 +6,7 @@ using Opstrax.Telematics.Contracts.Adapters;
 using Opstrax.Telematics.Gateway;
 using Opstrax.Telematics.Gateway.Edge;
 using Opstrax.Telematics.Gateway.Forwarding;
+using Opstrax.Telematics.Gateway.Quality;
 using Opstrax.Telematics.Gateway.Security;
 using Opstrax.Telematics.Gateway.Security.Replay;
 using Opstrax.Telematics.Protocols.Gt06;
@@ -431,7 +432,8 @@ public sealed class EdgeForwardingConnectionTests
         public static async Task<EdgeHarness> StartAsync(
             Action<StubForwarder>? configureForwarder = null,
             IForwardOutbox? outbox = null,
-            ActiveDeviceSessionRegistry? sessions = null)
+            ActiveDeviceSessionRegistry? sessions = null,
+            FixPlausibilityGuard? plausibility = null)
         {
             var options = new GatewayOptions
             {
@@ -466,6 +468,7 @@ public sealed class EdgeForwardingConnectionTests
                 options,
                 new EdgeOptions { Egress = EgressMode.Https, Forward = { EdgeInstance = "test-edge" } },
                 sessions ?? new ActiveDeviceSessionRegistry(),
+                plausibility ?? new FixPlausibilityGuard(),
                 gatewayMetrics,
                 metrics,
                 NullLoggerFactory.Instance);

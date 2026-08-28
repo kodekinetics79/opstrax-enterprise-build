@@ -54,6 +54,15 @@ public sealed class ObservabilityInstrumentationTests
             "opstrax_telematics_decode_latency_ms",
             "opstrax_telematics_e2e_latency_ms",
             "opstrax_telematics_active_connections",
+
+            // Frame integrity and session safety. Without these the operator-facing counters exist
+            // only inside GatewayMetrics, which nothing scrapes.
+            "opstrax_telematics_frames_received",
+            "opstrax_telematics_crc_failures",
+            "opstrax_telematics_session_identity_violations",
+            "opstrax_telematics_duplicate_sessions_displaced",
+            "opstrax_telematics_teleport_suspected",
+            "opstrax_telematics_impossible_speed",
         };
 
         Assert.All(required, name => Assert.Contains(name, published));
