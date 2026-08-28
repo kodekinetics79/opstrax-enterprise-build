@@ -195,7 +195,7 @@ public sealed class TelemetryLiveStateService(Database db)
                 @"SELECT lsa.*,
                      EXTRACT(EPOCH FROM (NOW() - lsa.received_at))::BIGINT seconds_since_ping
               FROM telemetry_live_asset_states lsa
-              LEFT JOIN vehicles v ON v.id=lsa.vehicle_id AND v.company_id=lsa.company_id
+              JOIN vehicles v ON v.id=lsa.vehicle_id AND v.company_id=lsa.company_id
               WHERE lsa.company_id=@cid AND (@branchId::BIGINT IS NULL OR v.branch_id=@branchId)
               ORDER BY CASE lsa.risk_level WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 ELSE 3 END,
                        lsa.open_alert_count DESC,
@@ -213,7 +213,7 @@ public sealed class TelemetryLiveStateService(Database db)
             @"SELECT lsa.*,
                      EXTRACT(EPOCH FROM (NOW() - lsa.received_at))::BIGINT seconds_since_ping
               FROM telemetry_live_asset_states lsa
-              LEFT JOIN vehicles v ON v.id=lsa.vehicle_id AND v.company_id=lsa.company_id
+              JOIN vehicles v ON v.id=lsa.vehicle_id AND v.company_id=lsa.company_id
               WHERE lsa.company_id=@cid AND lsa.vehicle_id=@vid
                 AND (@branchId::BIGINT IS NULL OR v.branch_id=@branchId)
               LIMIT 1",
@@ -398,9 +398,9 @@ public sealed class TelemetryLiveStateService(Database db)
                      COALESCE((SELECT ta.alert_type FROM telemetry_alerts ta WHERE ta.company_id=@cid AND ta.vehicle_id=@vid ORDER BY ta.created_at DESC LIMIT 1), 'clear') last_alert_type,
                      EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT stale_seconds
               FROM latest_vehicle_positions lvp
-              LEFT JOIN vehicles v ON v.id=lvp.vehicle_id
-              LEFT JOIN drivers d ON d.id=lvp.driver_id
-              LEFT JOIN eld_devices e ON e.id=lvp.device_id
+              JOIN vehicles v ON v.id=lvp.vehicle_id AND v.company_id=lvp.company_id
+              LEFT JOIN drivers d ON d.id=lvp.driver_id AND d.company_id=lvp.company_id
+              LEFT JOIN eld_devices e ON e.id=lvp.device_id AND e.company_id=lvp.company_id
               WHERE lvp.company_id=@cid AND lvp.vehicle_id=@vid
               LIMIT 1",
             c =>

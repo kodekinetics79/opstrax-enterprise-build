@@ -51,8 +51,8 @@ public sealed class TelemetryBranchAuthorizationTests
 
             await LiveState(db, company, vehicleA, deviceA, $"TEL-A-{suffix}");
             await LiveState(db, company, vehicleB, deviceB, $"TEL-B-{suffix}");
-            await Alert(db, company, vehicleA, deviceA, "branch-a-alert");
-            await Alert(db, company, vehicleB, deviceB, "branch-b-alert");
+            var alertA = await Alert(db, company, vehicleA, deviceA, "branch-a-alert");
+            var alertB = await Alert(db, company, vehicleB, deviceB, "branch-b-alert");
 
             var telemetry = new TelemetryLiveStateService(db);
             var states = await telemetry.ListLiveStatesAsync(company, branchA);
@@ -77,6 +77,23 @@ public sealed class TelemetryBranchAuthorizationTests
             var transitionRows = transitions.Cast<Dictionary<string, object?>>().ToArray();
             Assert.Contains(transitionRows, row => row["reasonCode"]?.ToString() == "visible-branch-history");
             Assert.DoesNotContain(transitionRows, row => row["reasonCode"]?.ToString() == "other-branch-history");
+
+            var branchPrincipal = Principal(company, branchA);
+            var audit = new AuditService(db);
+            Assert.Equal(StatusCodes.Status404NotFound, Status(await Invoke(
+                "TelemetryAlertAcknowledge", branchPrincipal, alertB, db, audit, telemetry, CancellationToken.None)));
+            Assert.Equal(StatusCodes.Status404NotFound, Status(await Invoke(
+                "TelemetryAlertResolve", branchPrincipal, alertB, db, audit, telemetry, CancellationToken.None)));
+            Assert.Equal(StatusCodes.Status200OK, Status(await Invoke(
+                "TelemetryAlertAcknowledge", branchPrincipal, alertA, db, audit, telemetry, CancellationToken.None)));
+            Assert.Equal(StatusCodes.Status200OK, Status(await Invoke(
+                "TelemetryAlertResolve", branchPrincipal, alertA, db, audit, telemetry, CancellationToken.None)));
+
+            var alertStatuses = await db.QueryAsync(
+                "SELECT id,status FROM telemetry_alerts WHERE company_id=@c AND id IN (@a,@b) ORDER BY id",
+                c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@a", alertA); c.Parameters.AddWithValue("@b", alertB); });
+            Assert.Equal("Resolved", alertStatuses.Single(row => Convert.ToInt64(row["id"]) == alertA)["status"]);
+            Assert.Equal("Open", alertStatuses.Single(row => Convert.ToInt64(row["id"]) == alertB)["status"]);
         }
         finally
         {
@@ -93,9 +110,12 @@ public sealed class TelemetryBranchAuthorizationTests
         http.Items[EndpointMappings.AuthBranchIdItemKey] = branch;
         http.Items[EndpointMappings.AuthUserIdItemKey] = 1L;
         http.Items[EndpointMappings.AuthRoleItemKey] = "Dispatcher";
-        http.Items[EndpointMappings.AuthPermissionsItemKey] = new[] { "telematics:devices:view", "map:view", "alerts:view" };
+        http.Items[EndpointMappings.AuthPermissionsItemKey] = new[] { "telematics:devices:view", "map:view", "alerts:view", "alerts:manage" };
         return http;
     }
+
+    private static int Status(IResult result)
+        => Assert.IsAssignableFrom<IStatusCodeHttpResult>(result).StatusCode ?? StatusCodes.Status200OK;
 
     private static async Task<IResult> Invoke(string name, params object[] args)
     {
@@ -124,7 +144,7 @@ public sealed class TelemetryBranchAuthorizationTests
           VALUES (@c,@v,@d,@code,@code,40,-74,NOW())",
         c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@v", vehicle); c.Parameters.AddWithValue("@d", device); c.Parameters.AddWithValue("@code", code); });
 
-    private static Task Alert(Database db, long company, long vehicle, long device, string message) => db.ExecuteAsync(
+    private static Task<long> Alert(Database db, long company, long vehicle, long device, string message) => db.InsertAsync(
         @"INSERT INTO telemetry_alerts(company_id,vehicle_id,device_id,alert_type,severity,message,status)
           VALUES (@c,@v,@d,'branch-test','Warning',@message,'Open')",
         c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@v", vehicle); c.Parameters.AddWithValue("@d", device); c.Parameters.AddWithValue("@message", message); });

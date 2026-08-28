@@ -18692,12 +18692,19 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var affected = await db.ExecuteAsync(
             @"UPDATE telemetry_alerts
               SET status='Acknowledged', acknowledged_at=NOW(), acknowledged_by=@actor
-              WHERE id=@id AND company_id=@cid AND status='Open'",
+              WHERE id=@id AND company_id=@cid AND status='Open'
+                AND (@branchId::BIGINT IS NULL OR COALESCE(
+                    (SELECT v.branch_id FROM vehicles v
+                     WHERE v.id=telemetry_alerts.vehicle_id AND v.company_id=telemetry_alerts.company_id),
+                    (SELECT e.branch_id FROM eld_devices e
+                     WHERE e.id=telemetry_alerts.device_id AND e.company_id=telemetry_alerts.company_id)
+                )=@branchId)",
             c =>
             {
                 c.Parameters.AddWithValue("@id",    id);
                 c.Parameters.AddWithValue("@cid",   companyId);
                 c.Parameters.AddWithValue("@actor", actor);
+                c.Parameters.AddWithValue("@branchId", (object?)GetBranchId(http) ?? DBNull.Value);
             }, ct);
         if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Alert not found or already acknowledged"));
         await audit.LogAsync(http, "telemetry_alert.acknowledged", "TelemetryAlert", id, null, ct);
@@ -18715,12 +18722,19 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var affected = await db.ExecuteAsync(
             @"UPDATE telemetry_alerts
               SET status='Resolved', resolved_at=NOW(), resolved_by=@actor
-              WHERE id=@id AND company_id=@cid AND status IN ('Open','Acknowledged')",
+              WHERE id=@id AND company_id=@cid AND status IN ('Open','Acknowledged')
+                AND (@branchId::BIGINT IS NULL OR COALESCE(
+                    (SELECT v.branch_id FROM vehicles v
+                     WHERE v.id=telemetry_alerts.vehicle_id AND v.company_id=telemetry_alerts.company_id),
+                    (SELECT e.branch_id FROM eld_devices e
+                     WHERE e.id=telemetry_alerts.device_id AND e.company_id=telemetry_alerts.company_id)
+                )=@branchId)",
             c =>
             {
                 c.Parameters.AddWithValue("@id",    id);
                 c.Parameters.AddWithValue("@cid",   companyId);
                 c.Parameters.AddWithValue("@actor", actor);
+                c.Parameters.AddWithValue("@branchId", (object?)GetBranchId(http) ?? DBNull.Value);
             }, ct);
         if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Alert not found or already resolved"));
         await audit.LogAsync(http, "telemetry_alert.resolved", "TelemetryAlert", id, null, ct);

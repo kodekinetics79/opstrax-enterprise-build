@@ -16,15 +16,15 @@ public class Stage12TelemetryTests
     {
         var db = CreateDatabase();
         var schema = new TelemetrySchemaService(db);
-        var companyId = NextCompanyId();
-        var vehicleId = await GetAnyVehicleIdAsync(db);
-        var driverId = await GetAnyDriverIdAsync(db);
+        long companyId = 0;
         var liveState = new TelemetryLiveStateService(db);
         var ai = new PostgresAiFoundationService(db, new AmbientCorrelationContext());
 
         try
         {
             await schema.EnsureAsync();
+            var fixture = await CreateTenantFixtureAsync(db, "SUMMARY");
+            (companyId, _, var vehicleId, var driverId) = fixture;
             await SeedTelemetryAsync(db, companyId, vehicleId, driverId, staleMinutes: 2, speedMph: 78m);
 
             // Exercise the company-level worker path. Database rows are normalized to
@@ -99,15 +99,17 @@ public class Stage12TelemetryTests
     {
         var db = CreateDatabase();
         var schema = new TelemetrySchemaService(db);
-        var companyA = NextCompanyId();
-        var companyB = NextCompanyId();
-        var vehicleId = await GetAnyVehicleIdAsync(db);
-        var driverId = await GetAnyDriverIdAsync(db);
+        long companyA = 0;
+        long companyB = 0;
         var liveState = new TelemetryLiveStateService(db);
 
         try
         {
             await schema.EnsureAsync();
+            var fixtureA = await CreateTenantFixtureAsync(db, "STALE-A");
+            var fixtureB = await CreateTenantFixtureAsync(db, "STALE-B");
+            (companyA, _, var vehicleId, var driverId) = fixtureA;
+            (companyB, _, _, _) = fixtureB;
             await SeedTelemetryAsync(db, companyA, vehicleId, driverId, staleMinutes: 25, speedMph: 12m);
             await liveState.RefreshVehicleAsync(companyA, vehicleId);
 
@@ -116,6 +118,9 @@ public class Stage12TelemetryTests
             Assert.Equal("stale", state!["telemetryStatus"]?.ToString());
             Assert.Equal("high", state["riskLevel"]?.ToString());
             Assert.Contains("heartbeat", state["nextAction"]?.ToString() ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+
+            await liveState.RefreshVehicleAsync(companyB, vehicleId);
+            Assert.Null(await liveState.GetLiveStateAsync(companyB, vehicleId));
 
             var otherSummary = await liveState.BuildSummaryAsync(companyB);
             Assert.Empty((IReadOnlyList<Dictionary<string, object?>>)otherSummary["entities"]!);
@@ -221,15 +226,24 @@ public class Stage12TelemetryTests
             });
     }
 
-    private static async Task<long> GetAnyVehicleIdAsync(Database db)
-        => await db.ScalarLongAsync("SELECT id FROM vehicles ORDER BY id LIMIT 1");
-
-    private static async Task<long> GetAnyDriverIdAsync(Database db)
-        => await db.ScalarLongAsync("SELECT id FROM drivers ORDER BY id LIMIT 1");
-
-    private static long NextCompanyId() => Interlocked.Increment(ref _nextCompanyId);
-
-    private static long _nextCompanyId = 69000;
+    private static async Task<(long CompanyId, long BranchId, long VehicleId, long DriverId)> CreateTenantFixtureAsync(Database db, string label)
+    {
+        var suffix = $"{label}-{Guid.NewGuid():N}"[..Math.Min(label.Length + 11, label.Length + 33)];
+        var companyId = await db.InsertAsync(
+            "INSERT INTO companies(company_code,name,industry) VALUES (@code,'Telemetry integration','Transportation')",
+            c => c.Parameters.AddWithValue("@code", $"TEL-{suffix}"));
+        var branchId = await db.InsertAsync(
+            "INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,@code,@code,'Active')",
+            c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@code", $"BR-{suffix}"); });
+        var vehicleId = await db.InsertAsync(
+            @"INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,vin_exception_type,alternate_identifier,status,availability_status,out_of_service)
+              VALUES (@c,@b,@code,'Truck','legacy-fleet-identifier',@code,'Available','available',FALSE)",
+            c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchId); c.Parameters.AddWithValue("@code", $"VEH-{suffix}"); });
+        var driverId = await db.InsertAsync(
+            "INSERT INTO drivers(company_id,branch_id,driver_code,full_name,status) VALUES (@c,@b,@code,'Telemetry Driver','Available')",
+            c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchId); c.Parameters.AddWithValue("@code", $"DRV-{suffix}"); });
+        return (companyId, branchId, vehicleId, driverId);
+    }
 
     private static async Task CleanupTenantAsync(Database db, long companyId)
     {
@@ -240,6 +254,10 @@ public class Stage12TelemetryTests
         await DeleteIfExistsAsync(db, "eld_devices", "company_id", companyId);
         await DeleteIfExistsAsync(db, "location_events", "company_id", companyId);
         await DeleteIfExistsAsync(db, "ai_recommendations", "tenant_id", companyId);
+        await DeleteIfExistsAsync(db, "drivers", "company_id", companyId);
+        await DeleteIfExistsAsync(db, "vehicles", "company_id", companyId);
+        await DeleteIfExistsAsync(db, "branches", "company_id", companyId);
+        await DeleteIfExistsAsync(db, "companies", "id", companyId);
     }
 
     private static async Task DeleteIfExistsAsync(Database db, string table, string tenantColumn, long tenantId)
