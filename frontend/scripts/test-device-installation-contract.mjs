@@ -16,6 +16,12 @@ assert.doesNotMatch(service, /imei:\s*""/, "Device mapping must not erase IMEI r
 assert.match(service, /detail\.current_installation/, "Device detail must consume the current installation");
 assert.match(service, /detail\.installation_history/, "Device detail must consume installation history");
 assert.match(service, /detail\.assignment_history/, "Device detail must consume assignment history");
+assert.match(
+  service,
+  /function fetchPositionsIfAuthorized[\s\S]*?canReadEntitledFeed\(session, "telemetry\.live_state\.read", "telematics"\)[\s\S]*?\? fetchPositions\(\) : \[\]/,
+  "Device detail must not fail when a device reader lacks GPS feed authorization",
+);
+assert.match(service, /fetchPositionsIfAuthorized\(session\)/, "Device detail must use the authorized optional position feed");
 assert.match(service, /function deviceRowFromDetail/, "Single-device readbacks must unwrap the nested detail envelope");
 assert.match(service, /const created = deviceRowFromDetail/, "Provision readback must preserve the returned device identity fields");
 assert.match(service, /\/installations\/\$\{current\.id\}\/remove/, "Removal must use the installation endpoint");

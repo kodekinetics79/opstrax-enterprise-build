@@ -1204,6 +1204,10 @@ async function fetchPositions(): Promise<AnyRecord[]> {
   return (await unwrap<AnyRecord[]>(apiClient.get("/api/telemetry/positions"))).map(normalizeKeys);
 }
 
+async function fetchPositionsIfAuthorized(session: UserSession | null): Promise<AnyRecord[]> {
+  return canReadEntitledFeed(session, "telemetry.live_state.read", "telematics") ? fetchPositions() : [];
+}
+
 // Assemble scoped DeviceCommandRecord[] from the live device + fault + alert feeds.
 async function loadScopedDevices(session: UserSession | null): Promise<DeviceCommandRecord[]> {
   const [rows, faults, alerts] = await Promise.all([
@@ -1360,7 +1364,7 @@ export const telematicsService = {
       canReadEntitledFeed(session, "telemetry.alerts.read", "telematics")
         ? unwrap<AnyRecord[]>(apiClient.get("/api/telemetry/alerts", { params: { status: "All" } })).then((rows) => rows.map(normalizeKeys))
         : Promise.resolve([]),
-      fetchPositions(),
+      fetchPositionsIfAuthorized(session),
     ]);
 
     const detail = normalizeKeys(detailPayload);
