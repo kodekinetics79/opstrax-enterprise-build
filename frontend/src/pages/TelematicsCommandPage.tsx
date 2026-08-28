@@ -60,7 +60,7 @@ const configs: Record<TelematicsKind, ClusterConfig> = {
     eyebrow: "Telematics & IoT",
     title: "OBD / J1939",
     description: "Received OBD/J1939/CAN evidence with explicit protocol identity, active DTCs, freshness, and maintenance escalation. DTCs are not assumed to be emissions faults.",
-    columns: ["vehicleCode", "deviceName", "protocolType", "troubleCodes", "engineStatus", "odometer", "fuelLevel", "batteryVoltage", "lastEngineDataAt", "dataFreshnessStatus"],
+    columns: ["serialNumber", "vehicleCode", "deviceName", "protocolType", "troubleCodes", "engineStatus", "odometer", "fuelLevel", "batteryVoltage", "lastEngineDataAt", "dataFreshnessStatus"],
     emptyTitle: "No diagnostics records found",
     emptySubtitle: "No engine or bus diagnostics are visible for the current filters.",
     searchPlaceholder: "Search vehicle, protocol, driver, fault code, freshness, or provider...",
@@ -243,6 +243,10 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
   const canUpdate = hasPermission(config.requiredUpdatePermission);
   const canView = hasDirectPermission(config.requiredViewPermission);
   const canViewGeofences = hasPermission("map:view");
+  const canViewDevices = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_VIEW);
+  const canViewVehicles = hasPermission(PERMISSIONS.VEHICLES_VIEW);
+  const canViewJobs = hasDirectPermission(PERMISSIONS.SHIPMENTS_VIEW);
+  const canViewMap = hasPermission(PERMISSIONS.TELEMETRY_LIVE_STATE_READ);
   const [tab, setTab] = useState(config.filterTabs[0]);
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
@@ -339,6 +343,7 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
     return records.filter((record) => {
       const haystack = [
         record.vehicleCode,
+        record.serialNumber,
         record.deviceName,
         record.driverName,
         record.locationLabel,
@@ -564,9 +569,9 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
                         <button className="btn-ghost h-8 px-3" onClick={() => setSelected(row)}>
                           {kind === "gps-tracking" ? "Inspect position" : kind === "obd-j1939" ? "View diagnostics" : "View sensor"}
                         </button>
-                        <button className="btn-ghost h-8 px-3" onClick={() => navigate("/iot-devices")}>View device</button>
-                        <button className="btn-ghost h-8 px-3" onClick={() => navigate("/vehicles")}>View vehicle</button>
-                        {row.shipmentId !== "No active shipment" ? (
+                        {canViewDevices ? <button className="btn-ghost h-8 px-3" onClick={() => navigate("/iot-devices")}>View device</button> : null}
+                        {canViewVehicles ? <button className="btn-ghost h-8 px-3" onClick={() => navigate("/vehicles")}>View vehicle</button> : null}
+                        {canViewJobs && row.shipmentId !== "No active shipment" ? (
                           <button className="btn-ghost h-8 px-3" onClick={() => navigate("/jobs")}>Open trip</button>
                         ) : null}
                         <button
@@ -637,6 +642,10 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
                 row={selectedRecord}
                 detail={detailQ.data}
                 canUpdate={canUpdate}
+                canViewDevices={canViewDevices}
+                canViewVehicles={canViewVehicles}
+                canViewJobs={canViewJobs}
+                canViewMap={canViewMap}
                 onRefresh={() => canUpdate && refreshMut.mutate(selectedRecord.deviceId)}
                 onMaintenance={() => canUpdate && maintenanceMut.mutate(selectedRecord)}
               />
@@ -653,6 +662,10 @@ function TelematicsDetailDrawer({
   row,
   detail,
   canUpdate,
+  canViewDevices,
+  canViewVehicles,
+  canViewJobs,
+  canViewMap,
   onRefresh,
   onMaintenance,
 }: {
@@ -660,6 +673,10 @@ function TelematicsDetailDrawer({
   row: TelematicsClusterRecord;
   detail?: DeviceDetailRecord;
   canUpdate: boolean;
+  canViewDevices: boolean;
+  canViewVehicles: boolean;
+  canViewJobs: boolean;
+  canViewMap: boolean;
   onRefresh: () => void;
   onMaintenance: () => void;
 }) {
@@ -672,6 +689,7 @@ function TelematicsDetailDrawer({
       <div className="mt-3 flex flex-wrap items-start justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold text-white">{row.vehicleCode}</h2>
+          <p className="mt-1 font-mono text-sm font-semibold text-teal-200">{row.serialNumber}</p>
           <p className="mt-1 text-sm text-slate-400">{row.deviceName} · {row.driverName} · {row.routeAssociation}</p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -681,10 +699,10 @@ function TelematicsDetailDrawer({
       </div>
 
       <div className="mt-6 flex flex-wrap gap-3">
-        <button className="btn-ghost" disabled={!row.positionAvailable} title={row.positionAvailable ? "Open the current position on the fleet map." : "Map unavailable because this record has no valid position."} onClick={() => row.positionAvailable && window.location.assign(`/map-view`)}><MapPinned className="h-4 w-4" /> {row.positionAvailable ? "View on map" : "No valid map fix"}</button>
-        <button className="btn-ghost" onClick={() => window.location.assign(`/iot-devices`)}><Truck className="h-4 w-4" /> View device</button>
-        <button className="btn-ghost" onClick={() => window.location.assign(`/vehicles`)}><Truck className="h-4 w-4" /> View vehicle</button>
-        {row.shipmentId !== "No active shipment" ? <button className="btn-ghost" onClick={() => window.location.assign(`/jobs`)}><Truck className="h-4 w-4" /> Open trip</button> : null}
+        {canViewMap ? <button className="btn-ghost" disabled={!row.positionAvailable} title={row.positionAvailable ? "Open the current position on the fleet map." : "Map unavailable because this record has no valid position."} onClick={() => row.positionAvailable && window.location.assign(`/map-view`)}><MapPinned className="h-4 w-4" /> {row.positionAvailable ? "View on map" : "No valid map fix"}</button> : null}
+        {canViewDevices ? <button className="btn-ghost" onClick={() => window.location.assign(`/iot-devices`)}><Truck className="h-4 w-4" /> View device</button> : null}
+        {canViewVehicles ? <button className="btn-ghost" onClick={() => window.location.assign(`/vehicles`)}><Truck className="h-4 w-4" /> View vehicle</button> : null}
+        {canViewJobs && row.shipmentId !== "No active shipment" ? <button className="btn-ghost" onClick={() => window.location.assign(`/jobs`)}><Truck className="h-4 w-4" /> Open trip</button> : null}
         <button className="btn-ghost" disabled={!canUpdate} title={permissionTitle(canUpdate, "Reload the latest server snapshot.")} onClick={onRefresh}><RefreshCw className="h-4 w-4" /> Reload snapshot</button>
         {kind !== "gps-tracking" ? <button className="btn-primary" disabled={!canUpdate} title={permissionTitle(canUpdate, "Create a maintenance follow-up.")} onClick={onMaintenance}><Wrench className="h-4 w-4" /> Create maintenance</button> : null}
       </div>
@@ -702,7 +720,8 @@ function TelematicsDetailDrawer({
           ["Operational use", row.routingReadiness],
         ]} />
         <InfoPanel title="Vehicle / Device" items={[
-          ["Device", row.deviceName],
+          ["Device serial", row.serialNumber],
+          ["Device model", row.deviceName],
           ["Provider", row.provider],
           ["Vehicle", row.vehicleCode],
           ["Driver", row.driverName],
