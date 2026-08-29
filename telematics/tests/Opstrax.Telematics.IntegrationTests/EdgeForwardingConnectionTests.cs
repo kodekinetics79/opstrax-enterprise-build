@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
+using System.Collections.Concurrent;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Opstrax.Telematics.Contracts.Adapters;
 using Opstrax.Telematics.Gateway;
@@ -399,6 +401,92 @@ public sealed class EdgeForwardingConnectionTests
         catch (IOException) { return true; }
     }
 
+
+    // ── Logging templates are only validated when something formats them ──────
+
+    /// <summary>
+    /// A message template whose placeholder count does not match its argument count throws
+    /// <see cref="FormatException"/> when it is formatted, and that exception surfaces inside the
+    /// connection's own catch-all, which closes the socket. A discarded frame becomes a dropped
+    /// device.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is invisible to every other test in the suite because they inject
+    /// <c>NullLoggerFactory</c>, which never formats anything. A malformed template is therefore
+    /// not a logging cosmetic — it is a live defect that only appears once a real logger is
+    /// attached, which is to say only in production, or under a device simulator.
+    /// </para>
+    /// <para>
+    /// The frame below is dated beyond the accepted clock window on purpose: that is the branch
+    /// that logs the rejection, and it is exactly how a GT06 simulator found the original bug.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task ANormalizationRejection_FormatsItsLogMessage_AndKeepsTheConnection()
+    {
+        var recorder = new RecordingLoggerFactory();
+        await using EdgeHarness harness = await EdgeHarness.StartAsync(loggerFactory: recorder);
+        using TcpClient client = await harness.ConnectAsync();
+        NetworkStream stream = client.GetStream();
+
+        await stream.WriteAsync(BuildLoginFrame(AllowedImei));
+        await ReadExactlyAsync(stream, 10);
+
+        // A device clock an hour into the future: refused by the clock window, which is the path
+        // that emits the rejection log line.
+        await stream.WriteAsync(BuildLocationFrame(serial: 2, fixTime: DateTime.UtcNow.AddHours(1)));
+
+        await WaitForAsync(() => harness.Metrics.NormalizationRejections >= 1);
+
+        Assert.Equal(1, harness.Metrics.NormalizationRejections);
+        Assert.Equal(1, harness.Metrics.RejectedDeviceTimeOutOfWindow);
+
+        // Every message the gateway emitted formatted cleanly...
+        Assert.Empty(recorder.FormatFailures);
+        // ...and the frame was discarded without costing the connection.
+        Assert.False(await PeerClosedWithinAsync(stream, TimeSpan.FromMilliseconds(400)),
+            "a rejected frame must not drop the connection");
+    }
+
+    /// <summary>
+    /// A logger factory that actually renders every message, so a malformed template fails the
+    /// test instead of being silently swallowed.
+    /// </summary>
+    private sealed class RecordingLoggerFactory : ILoggerFactory
+    {
+        private readonly ConcurrentQueue<string> _failures = new();
+
+        public IReadOnlyCollection<string> FormatFailures => _failures;
+
+        public ILogger CreateLogger(string categoryName) => new RecordingLogger(categoryName, _failures);
+
+        public void AddProvider(ILoggerProvider provider) { }
+
+        public void Dispose() { }
+
+        private sealed class RecordingLogger(string category, ConcurrentQueue<string> failures) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
+                Exception? exception, Func<TState, Exception?, string> formatter)
+            {
+                try
+                {
+                    // Rendering is the whole point: this is what NullLogger skips.
+                    _ = formatter(state, exception);
+                }
+                catch (Exception ex)
+                {
+                    failures.Enqueue($"{category}: {ex.GetType().Name}: {ex.Message}");
+                }
+            }
+        }
+    }
+
     private sealed class EdgeHarness : IAsyncDisposable
     {
         private readonly string? _outboxDirectory;
@@ -433,7 +521,8 @@ public sealed class EdgeForwardingConnectionTests
             Action<StubForwarder>? configureForwarder = null,
             IForwardOutbox? outbox = null,
             ActiveDeviceSessionRegistry? sessions = null,
-            FixPlausibilityGuard? plausibility = null)
+            FixPlausibilityGuard? plausibility = null,
+            ILoggerFactory? loggerFactory = null)
         {
             var options = new GatewayOptions
             {
@@ -471,7 +560,7 @@ public sealed class EdgeForwardingConnectionTests
                 plausibility ?? new FixPlausibilityGuard(),
                 gatewayMetrics,
                 metrics,
-                NullLoggerFactory.Instance);
+                loggerFactory ?? (ILoggerFactory)NullLoggerFactory.Instance);
 
             var service = new TcpGatewayService(options, factory, gatewayMetrics, NullLoggerFactory.Instance);
             await service.StartAsync(CancellationToken.None);
