@@ -529,8 +529,8 @@ internal sealed class ForwardingConnection
                 // cannot tell those apart.
                 _logger.LogWarning(
                     "Discarding a {Protocol} frame from {Imei}: {Reason}. It will be acknowledged, so the device " +
-                    "drops its copy and this fix is unrecoverable. A rising {Reason} rate is a decoder fault until " +
-                    "proven otherwise.",
+                    "drops its copy and this fix is unrecoverable. A rising rate of this rejection is a decoder " +
+                    "fault until proven otherwise.",
                     protocol, DeviceIdentifier.Mask(imei), normalized.Rejection);
             }
 
