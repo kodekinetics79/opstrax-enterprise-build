@@ -1,4 +1,5 @@
 using Opstrax.Api.Data;
+using Opstrax.Api.Foundation;
 using Opstrax.Api.Observability;
 
 namespace Opstrax.Api.Services;
@@ -21,10 +22,17 @@ public sealed class FleetProductionReadinessService
         "EscalationBackgroundService",
         "ScheduledReportBackgroundService",
         "RetentionEnforcementService",
-        "OutboxDispatcherBackgroundService",
     ];
 
-    internal static readonly TimeSpan CriticalWorkerStartupGrace = TimeSpan.FromMinutes(2);
+    // Protected-environment startup launches all cross-tenant workers together. On
+    // a small Render instance their first system-scope transactions can serialize
+    // behind database warm-up and one worker may take a little over two minutes to
+    // publish its first independently committed heartbeat. A two-minute grace made
+    // readiness return 503 just as the process became usable, so Render killed and
+    // restarted it forever. Five minutes still fails closed well inside the normal
+    // ten-minute freshness window while allowing the first production cycle to
+    // establish liveness.
+    internal static readonly TimeSpan CriticalWorkerStartupGrace = TimeSpan.FromMinutes(5);
     internal static readonly TimeSpan CriticalWorkerFreshness = TimeSpan.FromMinutes(10);
     internal static int CriticalWorkerFailureThreshold(string serviceName) =>
         string.Equals(serviceName, "RetentionEnforcementService", StringComparison.Ordinal) ? 1 : 3;
@@ -33,20 +41,37 @@ public sealed class FleetProductionReadinessService
     private readonly ILogger<FleetProductionReadinessService> log;
     private readonly TimeProvider timeProvider;
     private readonly DateTimeOffset processStartedAt;
+    internal IReadOnlyList<string> ExpectedCriticalWorkerNames { get; }
 
     public FleetProductionReadinessService(Database db, ILogger<FleetProductionReadinessService> log)
-        : this(db, log, TimeProvider.System, new DateTimeOffset(BuildInfo.StartedAtUtc)) { }
+        : this(db, log, TimeProvider.System, new DateTimeOffset(BuildInfo.StartedAtUtc), CriticalWorkerNames) { }
+
+    public FleetProductionReadinessService(
+        Database db,
+        ILogger<FleetProductionReadinessService> log,
+        OutboxDispatcherOptions outboxOptions,
+        IHostEnvironment environment)
+        : this(
+            db,
+            log,
+            TimeProvider.System,
+            new DateTimeOffset(BuildInfo.StartedAtUtc),
+            outboxOptions.Enabled && (!(environment.IsProduction() || environment.IsStaging()) || outboxOptions.AllowProduction)
+                ? [.. CriticalWorkerNames, "OutboxDispatcherBackgroundService"]
+                : CriticalWorkerNames) { }
 
     internal FleetProductionReadinessService(
         Database db,
         ILogger<FleetProductionReadinessService> log,
         TimeProvider timeProvider,
-        DateTimeOffset processStartedAt)
+        DateTimeOffset processStartedAt,
+        IReadOnlyList<string>? expectedCriticalWorkerNames = null)
     {
         this.db = db;
         this.log = log;
         this.timeProvider = timeProvider;
         this.processStartedAt = processStartedAt;
+        ExpectedCriticalWorkerNames = expectedCriticalWorkerNames ?? CriticalWorkerNames;
     }
 
     internal bool CriticalWorkerStartupGraceActive =>
@@ -66,7 +91,7 @@ public sealed class FleetProductionReadinessService
             // system transaction while retaining the restricted database identity.
             var row = await db.QuerySingleInSystemScopeAsync(Sql, command =>
             {
-                command.Parameters.AddWithValue("@criticalWorkers", CriticalWorkerNames);
+                command.Parameters.AddWithValue("@criticalWorkers", ExpectedCriticalWorkerNames.ToArray());
                 command.Parameters.AddWithValue("@processStartedAt", processStartedAt.UtcDateTime);
             }, ct);
             if (row is null)

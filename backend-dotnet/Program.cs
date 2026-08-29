@@ -1202,7 +1202,7 @@ app.MapGet("/health/deep", async (
     var servicesDegraded = false;
     if (dbOk)
     {
-        var expectedWorkers = FleetProductionReadinessService.CriticalWorkerNames.ToHashSet(StringComparer.Ordinal);
+        var expectedWorkers = fleetContract.ExpectedCriticalWorkerNames.ToHashSet(StringComparer.Ordinal);
         var observedExpectedWorkers = new HashSet<string>(StringComparer.Ordinal);
         var startupGraceActive = fleetContract.CriticalWorkerStartupGraceActive;
         var staleBefore = DateTime.UtcNow - FleetProductionReadinessService.CriticalWorkerFreshness;
@@ -1248,7 +1248,7 @@ app.MapGet("/health/deep", async (
         }
         catch { heartbeatLedgerReadable = false; }
 
-        foreach (var missing in FleetProductionReadinessService.CriticalWorkerNames
+        foreach (var missing in fleetContract.ExpectedCriticalWorkerNames
                      .Where(name => !observedExpectedWorkers.Contains(name)))
         {
             var status = startupGraceActive ? "starting" : "degraded";
@@ -1267,7 +1267,7 @@ app.MapGet("/health/deep", async (
         checks["critical_worker_contract"] = new
         {
             status = servicesDegraded ? "invalid" : startupGraceActive ? "starting" : "healthy",
-            expected_count = FleetProductionReadinessService.CriticalWorkerNames.Length,
+            expected_count = fleetContract.ExpectedCriticalWorkerNames.Count,
             observed_count = observedExpectedWorkers.Count,
             heartbeat_ledger_readable = heartbeatLedgerReadable,
             startup_grace_active = startupGraceActive,

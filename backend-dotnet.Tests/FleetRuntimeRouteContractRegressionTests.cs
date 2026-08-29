@@ -63,6 +63,16 @@ public sealed class FleetRuntimeRouteContractRegressionTests
     }
 
     [Fact]
+    public void ProductionReadinessStartupGraceCoversSerializedWorkerWarmup()
+    {
+        Assert.Equal(TimeSpan.FromMinutes(5),
+            Opstrax.Api.Services.FleetProductionReadinessService.CriticalWorkerStartupGrace);
+        Assert.True(
+            Opstrax.Api.Services.FleetProductionReadinessService.CriticalWorkerStartupGrace
+            < Opstrax.Api.Services.FleetProductionReadinessService.CriticalWorkerFreshness);
+    }
+
+    [Fact]
     public void Stage55RepairsAuthorizationPolicyAndPrivilegeDriftExactly()
     {
         var sql = Read("database", "migrations", "2026_07_30_stage55_fleet_runtime_route_contract.sql");
