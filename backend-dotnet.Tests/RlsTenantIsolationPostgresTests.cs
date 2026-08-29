@@ -317,8 +317,12 @@ public sealed class RlsTenantIsolationPostgresTests
 
             await SeedFreshCriticalWorkersAsync(owner);
             await owner.ExecuteAsync(
-                "UPDATE service_heartbeats SET last_heartbeat_at=NOW()-INTERVAL '3 minutes' WHERE service_name=@name",
-                c => c.Parameters.AddWithValue("@name", FleetProductionReadinessService.CriticalWorkerNames[1]));
+                "UPDATE service_heartbeats SET last_heartbeat_at=@heartbeat WHERE service_name=@name",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@heartbeat", now.UtcDateTime - FleetProductionReadinessService.CriticalWorkerStartupGrace - TimeSpan.FromMinutes(1));
+                    c.Parameters.AddWithValue("@name", FleetProductionReadinessService.CriticalWorkerNames[1]);
+                });
             var priorProcessHeartbeat = await afterGrace.CheckAsync();
             Assert.False(priorProcessHeartbeat.Ready);
             Assert.Equal(1, priorProcessHeartbeat.CriticalWorkerViolations);

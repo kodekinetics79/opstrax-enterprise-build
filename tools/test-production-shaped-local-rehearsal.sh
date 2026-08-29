@@ -148,7 +148,10 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 curl -fsS "$live_url" >"$rehearsal_tmp/live.json"
-for _ in $(seq 1 150); do
+# The production contract deliberately allows five minutes for serialized worker
+# warm-up. Give the rehearsal enough time to prove the post-grace state rather
+# than failing while every expected worker is healthy but the grace is active.
+for _ in $(seq 1 390); do
   curl -sS "$ready_url" >"$rehearsal_tmp/ready.json"
   curl -sS -H "X-Diagnostics-Key: $diagnostics_key" "$deep_url" >"$rehearsal_tmp/deep.json"
   if jq -e '.status=="ready"' "$rehearsal_tmp/ready.json" >/dev/null 2>&1 \

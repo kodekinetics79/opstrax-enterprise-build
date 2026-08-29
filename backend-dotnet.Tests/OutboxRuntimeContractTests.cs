@@ -15,7 +15,7 @@ public sealed class OutboxRuntimeContractTests
     }
 
     [Fact]
-    public void Dispatcher_IsTrackedAsCriticalWorker()
+    public void Dispatcher_IsTrackedOnlyWhenItIsActuallyRegistered()
     {
         var worker = Read("backend-dotnet", "Services", "OutboxDispatcherBackgroundService.cs");
         var readiness = Read("backend-dotnet", "Services", "FleetProductionReadinessService.cs");
@@ -24,6 +24,8 @@ public sealed class OutboxRuntimeContractTests
         Assert.Contains("tracker.BeginAsync(ServiceName", worker, StringComparison.Ordinal);
         Assert.Contains("tracker.CompleteAsync(runId, ServiceName", worker, StringComparison.Ordinal);
         Assert.Contains("tracker.FailAsync(runId, ServiceName", worker, StringComparison.Ordinal);
+        Assert.Contains("outboxOptions.Enabled", readiness, StringComparison.Ordinal);
+        Assert.Contains("outboxOptions.AllowProduction", readiness, StringComparison.Ordinal);
         Assert.Contains("\"OutboxDispatcherBackgroundService\"", readiness, StringComparison.Ordinal);
     }
 
