@@ -48,6 +48,22 @@ Record before first live test:
 - Reference GPS source.
 - Ability to preserve sanitized gateway/API/browser evidence.
 
+## Isolated staging listener admission
+
+The controlled listener configuration is `telematics/fly.staging-certification.toml`.
+It is physically and logically separate from any existing provider- or production-configured
+gateway, exposes raw TCP port `5023`, and forwards only to the OpsTrax certification-staging API.
+
+The listener starts **fail closed with an empty device allowlist**. Do not add an IMEI merely
+because a label or photo is available. Admission requires the exact physical candidate in hand,
+the hardware-qualification record above, and a controlled operator-confirmed IMEI. Enrolling an
+IMEI enables only protocol-identification and bench evidence; it does not certify the device.
+
+The separately stored gateway HMAC and outbox-encryption secrets must never be committed. The
+public listener address, deployed OpsTrax SHA, sanitized configuration hash and provider release
+identity belong in the run evidence. Existing endpoints configured for another API are not valid
+staging evidence and must not be handed to the certification operator.
+
 ## Real-hardware acceptance matrix
 
 | Area | Required result |

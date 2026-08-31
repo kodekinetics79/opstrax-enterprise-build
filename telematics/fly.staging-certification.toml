@@ -1,0 +1,52 @@
+# Wave 1 G1B isolated certification-staging raw-TCP edge.
+#
+# This app is deliberately separate from the existing provider-configured gateway.
+# It forwards normalized observations only to the certification-staging API and
+# starts with an empty device allowlist. An exact physical candidate must be
+# enrolled separately before any frame can pass admission.
+
+app = "opstrax-telematics-staging-cert"
+primary_region = "iad"
+
+[build]
+  dockerfile = "telematics/Dockerfile"
+
+[env]
+  DOTNET_ENVIRONMENT = "Staging"
+  Gateway__ListenAddress = "0.0.0.0"
+  Gateway__ListenPort = "5023"
+
+  Gateway__Edge__Egress = "Https"
+  Gateway__Edge__Forward__BaseUrl = "https://opstrax-staging-api.onrender.com"
+  Gateway__Edge__Forward__GatewayId = "wave1-g1b-staging-iad-1"
+  Gateway__Edge__Forward__EdgeInstance = "fly-iad-cert-1"
+
+  Gateway__Edge__Allowlist__Path = "/var/lib/opstrax-gateway/imei-allowlist.txt"
+  Gateway__Edge__Outbox__Path = "/var/lib/opstrax-gateway/outbox"
+  Gateway__Edge__Protocols__Gt06 = "true"
+  Gateway__Edge__Protocols__PacificTrack__Enabled = "false"
+
+[[mounts]]
+  source = "opstrax_staging_cert_outbox"
+  destination = "/var/lib/opstrax-gateway"
+
+[[services]]
+  protocol = "tcp"
+  internal_port = 5023
+
+  [[services.ports]]
+    port = 5023
+
+  [services.concurrency]
+    type = "connections"
+    hard_limit = 100
+    soft_limit = 75
+
+  [[services.tcp_checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "20s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
