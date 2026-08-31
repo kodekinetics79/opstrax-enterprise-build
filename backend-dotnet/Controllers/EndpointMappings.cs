@@ -4645,6 +4645,19 @@ public static partial class EndpointMappings
         }));
     }
 
+    // Keep roster and detail operational badges on the same existing policy. This
+    // SELECT-only fragment requires the tenant-bound current_device/current_camera
+    // joins below; it must not replace any route's authorization or scope predicates.
+    private const string VehicleOperationalProjectionSql = @"
+                     CASE WHEN current_device.device_id IS NOT NULL OR current_camera.device_id IS NOT NULL
+                          THEN ROUND((v.readiness_score + v.data_quality_score + (100 - v.risk_score)) / 3, 1)
+                          ELSE NULL END fleet_readiness_score,
+                     CASE WHEN v.risk_score >= 70 OR v.status IN ('Delayed','Maintenance') THEN 'High'
+                          WHEN v.risk_score >= 40 OR current_device.device_id IS NULL
+                               OR current_device.last_seen_at IS NULL
+                               OR current_device.last_seen_at<NOW()-INTERVAL '15 minutes' THEN 'Medium'
+                          ELSE 'Low' END risk_heat_score";
+
     private static Task<IResult> Vehicles(HttpContext http, Database db, CancellationToken ct)
     {
         if (RequirePermission(http, "vehicles:view") is { } denied) return Task.FromResult(denied);
@@ -4659,15 +4672,7 @@ public static partial class EndpointMappings
                      current_device.device_id current_device_id,current_device.last_seen_at device_last_seen_at,
                      current_device.device_state current_device_status,
                      current_camera.device_id current_camera_id,current_camera.last_seen_at camera_last_seen_at,
-                     current_camera.device_state current_camera_status,
-                     CASE WHEN current_device.device_id IS NOT NULL OR current_camera.device_id IS NOT NULL
-                          THEN ROUND((v.readiness_score + v.data_quality_score + (100 - v.risk_score)) / 3, 1)
-                          ELSE NULL END fleet_readiness_score,
-                     CASE WHEN v.risk_score >= 70 OR v.status IN ('Delayed','Maintenance') THEN 'High'
-                          WHEN v.risk_score >= 40 OR current_device.device_id IS NULL
-                               OR current_device.last_seen_at IS NULL
-                               OR current_device.last_seen_at<NOW()-INTERVAL '15 minutes' THEN 'Medium'
-                          ELSE 'Low' END risk_heat_score,
+                     current_camera.device_state current_camera_status," + VehicleOperationalProjectionSql + @",
                      CASE WHEN v.status='Maintenance' THEN 'Create maintenance review'
                           WHEN v.assigned_driver_id IS NULL THEN 'Assign best available driver'
                           WHEN current_device.device_id IS NULL THEN 'Install and commission a telemetry device'
@@ -5137,8 +5142,7 @@ public static partial class EndpointMappings
                      current_device.device_id current_device_id,current_device.last_seen_at device_last_seen_at,
                      current_device.device_state current_device_status,
                      current_camera.device_id current_camera_id,current_camera.last_seen_at camera_last_seen_at,
-                     current_camera.device_state current_camera_status,
-                     ROUND((v.readiness_score + v.data_quality_score + (100 - v.risk_score)) / 3, 1) fleet_readiness_score
+                     current_camera.device_state current_camera_status," + VehicleOperationalProjectionSql + @"
               FROM vehicles v
               LEFT JOIN drivers d ON d.id=v.assigned_driver_id AND d.company_id=v.company_id
               LEFT JOIN LATERAL (
