@@ -18,6 +18,76 @@ public sealed class CoreFleetIdentityConflictPostgresTests
     private const string SharedValidVin = "1HGCM82633A004352";
     private const string UpdateSharedValidVin = "1M8GDM9AXKP042788";
 
+    [Theory]
+    [InlineData("year", "1949", "year must be a number between 1950 and 2100.")]
+    [InlineData("year", "2101", "year must be a number between 1950 and 2100.")]
+    [InlineData("year", "2020.5", "year must be a number between 1950 and 2100.")]
+    [InlineData("odometerMiles", "-1", "odometerMiles must be a non-negative number.")]
+    public async Task NumericValidation_CreateUpdateAndImportRejectWithoutPersistence(string key, string invalid, string error)
+    {
+        var db = Db();
+        var companyId = await SeedCompany(db);
+        try
+        {
+            await SeedImportBranch(db, companyId);
+            var body = new Dictionary<string, object?>
+            {
+                ["vehicleCode"] = "NUMERIC-INVALID", ["type"] = "Truck",
+                ["vinExceptionType"] = "legacy-fleet-identifier", ["alternateIdentifier"] = "NUMERIC-INVALID",
+                ["year"] = 2020, ["odometerMiles"] = 0m, [key] = invalid,
+            };
+            var created = await Invoke("CreateVehicle", Principal(companyId), body, db, new AuditService(db), CancellationToken.None);
+            Assert.Equal(400, ((IStatusCodeHttpResult)created).StatusCode);
+            using (var payload = Payload(created)) Assert.Contains(error, payload.RootElement.ToString());
+            Assert.Equal(0, await Count(db, "vehicles", companyId));
+
+            var id = await InsertVehicle(db, companyId, "NUMERIC-EXISTING");
+            await db.ExecuteAsync("UPDATE vehicles SET year=2020,odometer_miles=10 WHERE id=@id", c => c.Parameters.AddWithValue("@id", id));
+            var updated = await UpdateVehicle(companyId, id, new() { [key] = invalid });
+            Assert.Equal(400, ((IStatusCodeHttpResult)updated).StatusCode);
+            Assert.Equal(1, await db.ScalarLongAsync("SELECT COUNT(*) FROM vehicles WHERE id=@id AND year=2020 AND odometer_miles=10", c => c.Parameters.AddWithValue("@id", id)));
+
+            body["branchCode"] = "MAIN";
+            var import = JsonSerializer.Deserialize<Dictionary<string, object?>>(JsonSerializer.Serialize(new { rows = new[] { body } }))!;
+            await AssertImportPreviewConflict("VehiclesImportPreview", Principal(companyId), import, error);
+            await AssertImportCommitConflict("VehiclesImportCommit", Principal(companyId), import, error);
+            Assert.Equal(1, await Count(db, "vehicles", companyId));
+        }
+        finally { await Cleanup(db, companyId); }
+    }
+
+    [Theory]
+    [InlineData("1950", "0")]
+    [InlineData("2100", "1.5")]
+    public async Task NumericValidation_ValidBoundariesCreateAndUpdate(string year, string odometer)
+    {
+        var db = Db();
+        var companyId = await SeedCompany(db);
+        try
+        {
+            var body = new Dictionary<string, object?>
+            {
+                ["vehicleCode"] = "NUMERIC-VALID", ["type"] = "Truck",
+                ["vinExceptionType"] = "legacy-fleet-identifier", ["alternateIdentifier"] = "NUMERIC-VALID",
+                ["year"] = year, ["odometerMiles"] = odometer,
+            };
+            var result = await Invoke("CreateVehicle", Principal(companyId), body, db, new AuditService(db), CancellationToken.None);
+            Assert.True(IsCreated(result));
+            using var payload = Payload(result);
+            var id = payload.RootElement.GetProperty("data").GetProperty("id").GetInt64();
+            Assert.Equal(1, await db.ScalarLongAsync("SELECT COUNT(*) FROM vehicles WHERE id=@id AND year=@year AND odometer_miles=@odo", c =>
+            {
+                c.Parameters.AddWithValue("@id", id);
+                c.Parameters.AddWithValue("@year", int.Parse(year));
+                c.Parameters.AddWithValue("@odo", decimal.Parse(odometer, System.Globalization.CultureInfo.InvariantCulture));
+            }));
+            var updated = await UpdateVehicle(companyId, id, new() { ["year"] = "2020", ["odometerMiles"] = "0" });
+            Assert.True(IsOk(updated));
+            Assert.Equal(1, await db.ScalarLongAsync("SELECT COUNT(*) FROM vehicles WHERE id=@id AND year=2020 AND odometer_miles=0", c => c.Parameters.AddWithValue("@id", id)));
+        }
+        finally { await Cleanup(db, companyId); }
+    }
+
     [Fact]
     public async Task VehicleCreate_ArchivedCode_ReturnsStableConflict()
     {

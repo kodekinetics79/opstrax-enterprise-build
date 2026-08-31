@@ -5802,6 +5802,7 @@ public static partial class EndpointMappings
         if (string.IsNullOrWhiteSpace(code))
             return Results.BadRequest(ApiResponse<object>.Fail("Vehicle validation failed", ["Vehicle code is required."]));
         var errors = new List<string>();
+        errors.AddRange(ValidateAndNormalizeVehicleNumbers(body));
         errors.AddRange(ValidateAndNormalizeVehicleIdentity(body));
         var vin = Get(body, "vin") is DBNull ? null : Get(body, "vin")?.ToString()?.Trim();
         // Vehicle codes remain reserved after soft deletion because the database's
@@ -5869,6 +5870,9 @@ public static partial class EndpointMappings
             "SELECT vin,vin_exception_type,alternate_identifier FROM vehicles WHERE id=@id AND company_id=@cid AND deleted_at IS NULL" + (branchId is null ? "" : " AND branch_id=@branchId"),
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct);
         if (currentIdentity is null) return Results.NotFound(ApiResponse<object>.Fail("Vehicle not found"));
+        var numericErrors = ValidateAndNormalizeVehicleNumbers(body);
+        if (numericErrors.Count > 0)
+            return Results.BadRequest(ApiResponse<object>.Fail("Vehicle validation failed", numericErrors.ToArray()));
         var identityWasSubmitted = Get(body, "vin") is not DBNull || Get(body, "vinExceptionType") is not DBNull ||
                                    Get(body, "alternateIdentifier") is not DBNull;
         if (identityWasSubmitted)
@@ -12141,8 +12145,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     // bind to integer/numeric columns instead of failing as text parameters.
     private static Dictionary<string, object?> CleanVehicleImportRow(Dictionary<string, object?> row)
     {
-        long? year = long.TryParse(ImportStr(row, "year"), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var y) ? y : null;
-        decimal? odo = decimal.TryParse(ImportStr(row, "odometerMiles"), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var o) ? o : null;
+        long? year = long.TryParse(VehicleNumberText(row, "year"), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var y) ? y : null;
+        decimal? odo = decimal.TryParse(VehicleNumberText(row, "odometerMiles"), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var o) ? o : null;
         return new Dictionary<string, object?>
         {
             ["vehicleCode"] = ImportStr(row, "vehicleCode"),
@@ -12167,14 +12171,43 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var code = ImportStr(row, "vehicleCode");
         if (code is null) errors.Add("vehicleCode is required.");
         else if (!seenCodes.Add(code)) errors.Add($"Duplicate vehicleCode '{code}' earlier in this file.");
-        var yearRaw = ImportStr(row, "year");
-        if (yearRaw is not null && (!long.TryParse(yearRaw, out var yr) || yr < 1950 || yr > 2100))
-            errors.Add("year must be a number between 1950 and 2100.");
-        var odoRaw = ImportStr(row, "odometerMiles");
-        if (odoRaw is not null && (!decimal.TryParse(odoRaw, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var od) || od < 0))
-            errors.Add("odometerMiles must be a non-negative number.");
+        errors.AddRange(ValidateAndNormalizeVehicleNumbers(row));
         errors.AddRange(ValidateAndNormalizeVehicleIdentity(row));
         return errors;
+    }
+
+    // Manual create/update and CSV imports share the existing import limits.
+    // Normalize valid values before binding so string and JSON numeric inputs agree.
+    private static List<string> ValidateAndNormalizeVehicleNumbers(Dictionary<string, object?> body)
+    {
+        var errors = new List<string>();
+        var culture = System.Globalization.CultureInfo.InvariantCulture;
+        foreach (var key in new[] { "year", "odometerMiles" })
+        {
+            if (!body.ContainsKey(key)) continue; // Preserve partial-update semantics.
+            var raw = VehicleNumberText(body, key);
+            if (string.IsNullOrWhiteSpace(raw)) { body[key] = null; continue; }
+            if (key == "year")
+            {
+                if (!long.TryParse(raw, System.Globalization.NumberStyles.Integer, culture, out var year) || year < 1950 || year > 2100)
+                    errors.Add("year must be a number between 1950 and 2100.");
+                else body[key] = year;
+            }
+            else
+            {
+                if (!decimal.TryParse(raw, System.Globalization.NumberStyles.Any, culture, out var odometer) || odometer < 0)
+                    errors.Add("odometerMiles must be a non-negative number.");
+                else body[key] = odometer;
+            }
+        }
+        return errors;
+    }
+
+    private static string? VehicleNumberText(Dictionary<string, object?> body, string key)
+    {
+        var value = Get(body, key);
+        return value is null or DBNull ? null :
+            (value is IFormattable formatted ? formatted.ToString(null, System.Globalization.CultureInfo.InvariantCulture) : value.ToString())?.Trim();
     }
 
     private sealed record ExistingVehicleImportIdentity(long Id, string VehicleCode, string? Vin, long? BranchId);
