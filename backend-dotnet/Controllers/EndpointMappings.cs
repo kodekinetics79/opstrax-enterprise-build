@@ -1830,8 +1830,7 @@ public static partial class EndpointMappings
             RequireAnyDirectPermission(http, "compliance:update", "compliance:manage") is { } denied ? Task.FromResult(denied) : ComplianceViolationStatus(http, id, "Acknowledged", "compliance.violation_acknowledged", db, audit, ct));
         app.MapPost("/api/compliance/violations/{id:long}/resolve", (HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) =>
             RequireAnyDirectPermission(http, "compliance:update", "compliance:manage") is { } denied ? Task.FromResult(denied) : ComplianceViolationStatus(http, id, "Resolved", "compliance.violation_resolved", db, audit, ct));
-        app.MapGet("/api/compliance/documents", (HttpContext http, Database db, CancellationToken ct) =>
-            RequirePermission(http, "compliance:view") is { } denied ? Task.FromResult(denied) : OkRows(db, @"SELECT d.*, e.name entity_name FROM documents d LEFT JOIN (SELECT id, company_id, branch_id, full_name name FROM drivers UNION ALL SELECT id, company_id, branch_id, vehicle_code name FROM vehicles) e ON e.id=d.entity_id AND e.company_id=d.company_id WHERE d.company_id=@cid AND d.deleted_at IS NULL AND (@branchId::BIGINT IS NULL OR e.branch_id=@branchId) ORDER BY d.expires_at LIMIT 50", c => BindComplianceScope(c, http), ct: ct));
+        app.MapGet("/api/compliance/documents", ComplianceDocuments);
         app.MapGet("/api/compliance/audit-packages", (HttpContext http, Database db, CancellationToken ct) =>
             RequirePermission(http, "compliance:view") is { } denied ? Task.FromResult(denied) : OkRows(db, "SELECT cap.*, cp.profile_name FROM compliance_audit_packages cap LEFT JOIN compliance_profiles cp ON cp.id=cap.profile_id WHERE cap.company_id=@cid AND @branchId::BIGINT IS NULL ORDER BY cap.created_at DESC", c => BindComplianceScope(c, http), ct: ct));
         app.MapGet("/api/compliance/audit-packages/{id:long}", (HttpContext http, long id, Database db, CancellationToken ct) =>
@@ -14528,6 +14527,15 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     }
 
     // ===== BATCH 6 HANDLERS =================================================
+
+    internal static Task<IResult> ComplianceDocuments(HttpContext http, Database db, CancellationToken ct)
+    {
+        if (RequirePermission(http, "compliance:view") is { } denied) return Task.FromResult(denied);
+        // Entity IDs are unique only within their own master table. Reuse the vault's
+        // typed ownership rules so a colliding driver ID cannot authorize a vehicle document.
+        return OkRows(db, DocumentsBaseSql + " WHERE d.company_id=@cid AND d.deleted_at IS NULL" +
+            DocumentBranchScopeSql + " ORDER BY d.expires_at LIMIT 50", c => BindDocumentScope(c, http), ct: ct);
+    }
 
     private static void BindComplianceScope(NpgsqlCommand command, HttpContext http)
     {
