@@ -664,11 +664,13 @@ public sealed class Module1DocumentLifecycleMutationPostgresTests
         public void Dispose() { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }
     }
 
-    private sealed class StaticFormFeature(IFormCollection form) : IFormFeature
+    private sealed class StaticFormFeature : IFormFeature
     {
+        private readonly IFormCollection originalForm;
+        public StaticFormFeature(IFormCollection form) { originalForm = form; Form = form; }
         public bool HasFormContentType => true;
-        public IFormCollection Form { get; set; } = form;
-        public IFormCollection ReadForm() => Form;
-        public Task<IFormCollection> ReadFormAsync(CancellationToken cancellationToken) => Task.FromResult(Form);
+        public IFormCollection? Form { get; set; }
+        public IFormCollection ReadForm() => Form ?? originalForm;
+        public Task<IFormCollection> ReadFormAsync(CancellationToken cancellationToken) => Task.FromResult(ReadForm());
     }
 }
