@@ -12,6 +12,7 @@ import { downloadServerExport } from "@/services/fleetDomainApi";
 import { PERMISSIONS, useHasPermission } from "@/hooks/usePermission";
 import { useAuth } from "@/hooks/useAuth";
 import { scopeRowsForSession } from "@/auth/accessScope";
+import { apiErrorMessage } from "@/utils/apiErrorMessage";
 import { labelize, LoadingState, ErrorState, EmptyState } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 
@@ -279,7 +280,7 @@ export function VehiclesPage() {
 
       {actionError instanceof Error ? (
         <div role="alert" className="shrink-0 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
-          {actionError.message || "The vehicle action could not be completed."}
+          {apiErrorMessage(actionError, "The vehicle action could not be completed.")}
         </div>
       ) : null}
       {exportError ? <div role="alert" className="shrink-0 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{exportError} No partial-page fallback was downloaded.</div> : null}
@@ -437,7 +438,7 @@ export function VehiclesPage() {
       )}
 
       {editing && canManageFleet && (
-        <VehicleFormModal title={isCreating ? "New vehicle" : "Edit vehicle"} initial={editing} saving={save.isPending} serverError={save.error instanceof Error ? save.error.message : undefined}
+        <VehicleFormModal title={isCreating ? "New vehicle" : "Edit vehicle"} initial={editing} saving={save.isPending} serverError={save.error ? apiErrorMessage(save.error, "The vehicle could not be saved. Please try again.") : undefined}
           onClose={() => { setEditing(null); setIsCreating(false); }} onSave={(p) => save.mutate(p)} />
       )}
       {assignmentVehicle && canAssign ? (
@@ -998,7 +999,7 @@ function VehicleFormModal({ title, initial, saving, serverError, onClose, onSave
           </div>
         )}
         {serverError ? (
-          <div role="alert" className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          <div role="alert" aria-live="assertive" className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
             {serverError}
           </div>
         ) : null}
