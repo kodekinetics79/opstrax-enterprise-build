@@ -9039,7 +9039,7 @@ public static partial class EndpointMappings
                 entity_id=COALESCE(@entityId,entity_id), document_type=COALESCE(@type,document_type), category=COALESCE(@category,category), country_code=COALESCE(@country,country_code),
                 issuing_authority=COALESCE(@authority,issuing_authority), issued_at=COALESCE(@issued,issued_at), expires_at=COALESCE(@expires,expires_at), status=COALESCE(@status,status),
                 renewal_status=COALESCE(@renewal,renewal_status), risk_score=COALESCE(@risk,risk_score), recommended_action=COALESCE(@action,recommended_action), notes=COALESCE(@notes,notes)
-              WHERE id=@id AND company_id=@cid", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); BindDocument(c, body); }, ct);
+              WHERE id=@id AND company_id=@cid", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); BindDocument(c, body, generateDocumentNumber: false); }, ct);
         if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Document not found"));
         await audit.LogAsync(http, "document.updated", "Document", id, ct: ct);
         await AddDocumentEvent(db, GetCompanyId(http), id, "Document updated", "Document metadata updated", ct);
@@ -13026,7 +13026,12 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
     {
         foreach (var key in new[] { "issuedAt", "expiresAt" })
         {
-            if (body.ContainsKey(key) && !IsBlank(Get(body, key)) && DateTime.TryParse(Get(body, key)?.ToString(), out var value))
+            if (!body.ContainsKey(key)) continue;
+            // Optional blank dates must bind as SQL NULL, not text. On update,
+            // COALESCE preserves the persisted date rather than clearing it.
+            if (IsBlank(Get(body, key)))
+                body[key] = DBNull.Value;
+            else if (DateTime.TryParse(Get(body, key)?.ToString(), out var value))
                 body[key] = value.Date;
         }
     }
@@ -13062,10 +13067,12 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         return count == 1 ? null : "The selected record is not available in your tenant and branch.";
     }
 
-    private static void BindDocument(NpgsqlCommand c, Dictionary<string, object?> body)
+    private static void BindDocument(NpgsqlCommand c, Dictionary<string, object?> body, bool generateDocumentNumber = true)
     {
         c.Parameters.AddWithValue("@title", Get(body, "title"));
-        c.Parameters.AddWithValue("@number", !IsBlank(Get(body, "documentNumber")) ? Get(body, "documentNumber") : $"DOC-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}");
+        // Generate an identifier only for creation; partial edits must not rename it.
+        c.Parameters.AddWithValue("@number", !IsBlank(Get(body, "documentNumber")) ? Get(body, "documentNumber")
+            : generateDocumentNumber ? $"DOC-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}" : DBNull.Value);
         c.Parameters.AddWithValue("@entityType", Get(body, "entityType"));
         c.Parameters.AddWithValue("@entityId", Get(body, "entityId"));
         c.Parameters.AddWithValue("@type", Get(body, "documentType"));
