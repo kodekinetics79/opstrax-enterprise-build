@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity, ArchiveRestore, ArrowUpRight, Boxes, Camera, ChevronRight, Cpu, Download, Gauge, Info,
@@ -14,7 +14,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { scopeRowsForSession } from "@/auth/accessScope";
 import { apiErrorMessage } from "@/utils/apiErrorMessage";
 import { labelize, LoadingState, ErrorState, EmptyState } from "@/components/ui";
-import type { AnyRecord } from "@/types";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import type { AnyRecord, UserSession } from "@/types";
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -113,6 +114,27 @@ const FIELDS: VehicleField[] = [
 
 const FILTERS = ["All", "Moving", "Available", "On Route", "Maintenance", "At risk", "Archived"] as const;
 
+// An uncertain write survives SPA navigation/remounts in this document. Only a
+// full reload clears it; this is not cross-tab exclusion or server idempotency.
+let vehicleLifecycleRefreshRequired = false;
+let vehicleLifecyclePending = false;
+const vehicleLifecycleListeners = new Set<() => void>();
+const subscribeVehicleLifecycle = (listener: () => void) => {
+  vehicleLifecycleListeners.add(listener);
+  return () => { vehicleLifecycleListeners.delete(listener); };
+};
+// Primitive snapshot is stable between transitions; no identity or credentials.
+const vehicleLifecycleSnapshot = () => (vehicleLifecyclePending ? 1 : 0) | (vehicleLifecycleRefreshRequired ? 2 : 0);
+const notifyVehicleLifecycle = () => { vehicleLifecycleListeners.forEach((listener) => listener()); };
+
+type VehicleArchiveTarget = Readonly<{
+  id: string;
+  code: string;
+  companyId: string;
+  session: UserSession;
+  opener: HTMLElement | null;
+}>;
+
 /* ------------------------------------------------------------------ page */
 
 export function VehiclesPage() {
@@ -131,6 +153,19 @@ export function VehiclesPage() {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("All");
   const [selectedId, setSelectedId] = useState<string | number | null>(null);
+  const [archiveTarget, setArchiveTarget] = useState<VehicleArchiveTarget | null>(null);
+  const [lifecycleGuardError, setLifecycleGuardError] = useState<string | null>(() => vehicleLifecycleRefreshRequired
+    ? "A previous vehicle lifecycle outcome could not be confirmed. Reload the vehicle status before another lifecycle action."
+    : null);
+  const [localLifecycleNeedsRefresh, setLifecycleNeedsRefresh] = useState(vehicleLifecycleRefreshRequired);
+  const lifecycleDocumentState = useSyncExternalStore(subscribeVehicleLifecycle, vehicleLifecycleSnapshot, vehicleLifecycleSnapshot);
+  const lifecycleNeedsRefresh = localLifecycleNeedsRefresh || (lifecycleDocumentState & 2) !== 0;
+  const lifecycleRecoveryError = lifecycleGuardError ?? (lifecycleNeedsRefresh
+    ? "A previous vehicle lifecycle outcome could not be confirmed. Reload the vehicle status before another lifecycle action."
+    : null);
+  // React state alone cannot stop two activations before the next render.
+  const lifecycleInFlight = useRef(false);
+  const lifecycleRefreshRequired = useRef(vehicleLifecycleRefreshRequired);
   const [assignmentVehicle, setAssignmentVehicle] = useState<AnyRecord | null>(null);
   const [editing, setEditing] = useState<AnyRecord | null>(null);
   const [isCreating, setIsCreating] = useState(false);
@@ -210,11 +245,39 @@ export function VehiclesPage() {
   });
   const remove = useMutation({
     mutationFn: (id: string | number) => vehiclesApi.archive(id),
-    onSuccess: async () => { setSelectedId(null); await queryClient.invalidateQueries({ queryKey: ["vehicles"] }); },
+    retry: false,
+    onSuccess: async () => {
+      setArchiveTarget(null); setLifecycleGuardError(null); setSelectedId(null);
+      await queryClient.invalidateQueries({ queryKey: ["vehicles"] });
+    },
+    onError: (error) => {
+      vehicleLifecycleRefreshRequired = true;
+      notifyVehicleLifecycle();
+      lifecycleRefreshRequired.current = true;
+      setLifecycleNeedsRefresh(true);
+      setLifecycleGuardError(`${apiErrorMessage(error, "The archive outcome could not be confirmed.")} Cancel this confirmation, then reload the vehicle status before another lifecycle action.`);
+    },
+    onSettled: () => {
+      lifecycleInFlight.current = false; vehicleLifecyclePending = false; notifyVehicleLifecycle();
+    },
   });
   const reactivate = useMutation({
     mutationFn: (id: string | number) => vehiclesApi.reactivate(id),
-    onSuccess: async () => { setSelectedId(null); await queryClient.invalidateQueries({ queryKey: ["vehicles"] }); },
+    retry: false,
+    onSuccess: async () => {
+      setLifecycleGuardError(null); setSelectedId(null);
+      await queryClient.invalidateQueries({ queryKey: ["vehicles"] });
+    },
+    onError: (error) => {
+      vehicleLifecycleRefreshRequired = true;
+      notifyVehicleLifecycle();
+      lifecycleRefreshRequired.current = true;
+      setLifecycleNeedsRefresh(true);
+      setLifecycleGuardError(`${apiErrorMessage(error, "The reactivation outcome could not be confirmed.")} Reload the vehicle status before another lifecycle action.`);
+    },
+    onSettled: () => {
+      lifecycleInFlight.current = false; vehicleLifecyclePending = false; notifyVehicleLifecycle();
+    },
   });
   const assign = useMutation({
     mutationFn: ({ vehicleId, driverId }: { vehicleId: string | number; driverId: string | number }) =>
@@ -227,15 +290,84 @@ export function VehiclesPage() {
     },
   });
   const actionError = save.error ?? remove.error ?? reactivate.error ?? assign.error;
+  const lifecycleBusy = (lifecycleDocumentState & 1) !== 0 || remove.isPending || reactivate.isPending;
 
-  if (list.isLoading) return <LoadingState />;
-  if (list.isError) return <ErrorState message={list.error instanceof Error ? list.error.message : "Unable to load vehicles."} />;
+  // A background list error must not detach an open confirmation or pending outcome.
+  if (list.isLoading && !archiveTarget && !lifecycleBusy && !lifecycleNeedsRefresh) return <LoadingState />;
+  if (list.isError && !archiveTarget && !lifecycleBusy && !lifecycleNeedsRefresh) return <ErrorState message={list.error instanceof Error ? list.error.message : "Unable to load vehicles."} />;
 
   const detailEnvelope = detail.data as AnyRecord | undefined;
   const selectedDetailRecord = detailEnvelope?.record as AnyRecord | undefined;
   const selectedRecord = selectedDetailRecord
     ? selectedDetailRecord
     : rows.find((r) => String(r.id) === String(selectedId)) || null;
+
+  const lifecycleSelectionValid = (archived: boolean) => {
+    if (!session || !selectedRecord || !selectedDetailRecord || selectedRecord !== selectedDetailRecord
+      || String(selectedDetailRecord.id) !== String(selectedId) || detail.isLoading || detail.isFetching) return false;
+    const companyId = String(session?.company?.id ?? "");
+    const id = String(selectedRecord?.id ?? "");
+    const code = g(selectedRecord, "vehicleCode", "vehicle_code");
+    const deletedAt = selectedRecord && ("deletedAt" in selectedRecord ? selectedRecord.deletedAt : selectedRecord.deleted_at);
+    return /^[1-9][0-9]*$/.test(companyId) && /^[1-9][0-9]*$/.test(id)
+      && selectedId != null && id === String(selectedId)
+      && String(g(selectedRecord, "companyId", "company_id") ?? "") === companyId
+      && typeof code === "string" && code.trim().length > 0
+      && archivedView === archived && !detail.isError
+      && (archived ? typeof deletedAt === "string" && Number.isFinite(Date.parse(deletedAt)) : deletedAt === null);
+  };
+  const openArchive = () => {
+    if (vehicleLifecycleRefreshRequired || vehicleLifecyclePending || lifecycleRefreshRequired.current || lifecycleInFlight.current || lifecycleBusy || archiveTarget || save.isPending || assign.isPending) return;
+    if (!canDelete || !lifecycleSelectionValid(false) || !session || !selectedRecord) {
+      setLifecycleGuardError("The vehicle or your access has changed. Close this view and reopen the vehicle before archiving.");
+      return;
+    }
+    remove.reset(); reactivate.reset(); setLifecycleGuardError(null);
+    setArchiveTarget(Object.freeze({
+      id: String(selectedRecord.id), code: String(g(selectedRecord, "vehicleCode", "vehicle_code")),
+      companyId: String(session.company.id), session,
+      opener: document.activeElement instanceof HTMLElement ? document.activeElement : null,
+    }));
+  };
+  const cancelArchive = () => {
+    if (vehicleLifecyclePending || lifecycleInFlight.current || lifecycleBusy) return;
+    remove.reset();
+    if (!lifecycleNeedsRefresh) setLifecycleGuardError(null);
+    setArchiveTarget(null);
+  };
+  const confirmArchive = () => {
+    if (vehicleLifecycleRefreshRequired || vehicleLifecyclePending || lifecycleRefreshRequired.current || lifecycleInFlight.current || lifecycleBusy || !archiveTarget || save.isPending || assign.isPending) return;
+    if (!selectedRecord || !canDelete || !lifecycleSelectionValid(false) || session !== archiveTarget.session
+      || String(session?.company?.id ?? "") !== archiveTarget.companyId
+      || String(selectedId) !== archiveTarget.id
+      || String(g(selectedRecord, "vehicleCode", "vehicle_code")) !== archiveTarget.code) {
+      setLifecycleGuardError("The vehicle or your access has changed. Cancel and reopen the vehicle before archiving.");
+      return;
+    }
+    setLifecycleGuardError(null);
+    lifecycleInFlight.current = true;
+    vehicleLifecyclePending = true; notifyVehicleLifecycle();
+    remove.mutate(archiveTarget.id);
+  };
+  const reactivateSelected = () => {
+    if (vehicleLifecycleRefreshRequired || vehicleLifecyclePending || lifecycleRefreshRequired.current || lifecycleInFlight.current || lifecycleBusy || archiveTarget || save.isPending || assign.isPending) return;
+    if (!canUpdate || !lifecycleSelectionValid(true) || !selectedRecord) {
+      setLifecycleGuardError("The vehicle or your access has changed. Close this view and reopen the archived vehicle before reactivating.");
+      return;
+    }
+    remove.reset(); reactivate.reset(); setLifecycleGuardError(null);
+    lifecycleInFlight.current = true;
+    vehicleLifecyclePending = true; notifyVehicleLifecycle();
+    reactivate.mutate(String(selectedRecord.id));
+  };
+  const closeVehicle = () => {
+    if (archiveTarget || vehicleLifecyclePending || lifecycleInFlight.current || lifecycleBusy) return;
+    if (!lifecycleNeedsRefresh) setLifecycleGuardError(null);
+    remove.reset(); reactivate.reset(); setSelectedId(null);
+  };
+  const reloadLifecycleStatus = () => {
+    if ((vehicleLifecycleRefreshRequired || lifecycleRefreshRequired.current) && !vehicleLifecyclePending && !lifecycleInFlight.current && !lifecycleBusy) window.location.reload();
+  };
 
   return (
     <div className="fleet-console flex h-full min-h-0 flex-col gap-3">
@@ -283,6 +415,12 @@ export function VehiclesPage() {
           {apiErrorMessage(actionError, "The vehicle action could not be completed.")}
         </div>
       ) : null}
+      {lifecycleNeedsRefresh && !selectedRecord && !archiveTarget ? (
+        <div role="alert" className="shrink-0 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
+          <p>{lifecycleRecoveryError}</p>
+          <button type="button" disabled={lifecycleBusy} className="btn-ghost mt-2" onClick={reloadLifecycleStatus}>Reload vehicle status</button>
+        </div>
+      ) : null}
       {exportError ? <div role="alert" className="shrink-0 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{exportError} No partial-page fallback was downloaded.</div> : null}
 
       {/* ── Clay KPI tiles ───────────────────────────────────────────────── */}
@@ -307,7 +445,7 @@ export function VehiclesPage() {
           </div>
           <div className="fc-seg flex flex-wrap items-center gap-1 p-1">
             {FILTERS.map((f) => (
-              <button key={f} type="button" onClick={() => { setFilter(f); setOffset(0); setSelectedId(null); }}
+              <button key={f} type="button" onClick={() => { if (archiveTarget || lifecycleInFlight.current) return; setFilter(f); setOffset(0); setSelectedId(null); }}
                 className={`fc-seg-btn ${filter === f ? "fc-seg-btn-active" : ""}`}>
                 {f}
               </button>
@@ -342,7 +480,7 @@ export function VehiclesPage() {
                     const fresh = freshness(g(row, "lastSeenAt", "last_seen_at"));
                     const moving = isMoving(row);
                     return (
-                      <tr key={String(row.id)} onClick={() => setSelectedId(row.id as string)}
+                      <tr key={String(row.id)} onClick={() => { if (!archiveTarget && !lifecycleInFlight.current) setSelectedId(row.id as string); }}
                         className="group cursor-pointer transition hover:bg-sky-50/50">
                         <td className="px-5 py-3">
                           <div className="flex items-center gap-2.5">
@@ -428,14 +566,31 @@ export function VehiclesPage() {
         <VehicleDrawer
           record={selectedRecord} detail={detail.data} loading={detail.isLoading}
           canUpdate={canUpdate && !archivedView} canDelete={canDelete && !archivedView} canAssign={canAssign && !archivedView} canReactivate={canUpdate && archivedView} assigning={assign.isPending}
-          onClose={() => setSelectedId(null)}
-          onEdit={() => { if (canUpdate) { setIsCreating(false); setEditing(selectedRecord); } }}
-          onDelete={() => canDelete && window.confirm(`Archive ${String(g(selectedRecord, "vehicleCode", "vehicle_code") ?? "this vehicle")}? It will leave the active fleet registry; the server may block archival while operational records still depend on it.`) && remove.mutate(String(selectedRecord.id))}
-          onReactivate={() => canUpdate && reactivate.mutate(String(selectedRecord.id))}
-          onAssign={() => canAssign && setAssignmentVehicle(selectedRecord)}
-          onNavigate={navigate}
+          lifecycleBusy={lifecycleBusy}
+          lifecycleNeedsRefresh={lifecycleNeedsRefresh}
+          lifecycleError={archiveTarget ? null : lifecycleRecoveryError ?? (reactivate.error ? apiErrorMessage(reactivate.error, "The vehicle could not be reactivated. Refresh its status before trying again.") : null)}
+          onClose={closeVehicle}
+          onEdit={() => { if (canUpdate && !archiveTarget && !lifecycleInFlight.current) { setIsCreating(false); setEditing(selectedRecord); } }}
+          onDelete={openArchive}
+          onReactivate={reactivateSelected}
+          onAssign={() => { if (canAssign && !archiveTarget && !lifecycleInFlight.current) setAssignmentVehicle(selectedRecord); }}
+          onNavigate={(route) => { if (!archiveTarget && !lifecycleInFlight.current) navigate(route); }}
         />
       )}
+
+      {archiveTarget ? (
+        <ConfirmDialog
+          title="Archive vehicle"
+          message={`Archive ${archiveTarget.code}? It will leave the active fleet registry; the server may block archival while operational records still depend on it.`}
+          confirmLabel={lifecycleNeedsRefresh ? "Reload vehicle status" : "Archive vehicle"}
+          variant={lifecycleNeedsRefresh ? "default" : "danger"}
+          busy={lifecycleBusy}
+          error={lifecycleRecoveryError ?? (remove.error ? apiErrorMessage(remove.error, "The archive outcome could not be confirmed. Cancel and refresh the vehicle status before trying again.") : null)}
+          returnFocusTo={lifecycleNeedsRefresh ? null : archiveTarget.opener}
+          onConfirm={lifecycleNeedsRefresh ? reloadLifecycleStatus : confirmArchive}
+          onCancel={cancelArchive}
+        />
+      ) : null}
 
       {editing && canManageFleet && (
         <VehicleFormModal title={isCreating ? "New vehicle" : "Edit vehicle"} initial={editing} saving={save.isPending} serverError={save.error ? apiErrorMessage(save.error, "The vehicle could not be saved. Please try again.") : undefined}
@@ -619,9 +774,10 @@ function DriverAssignmentModal({ vehicle, drivers, saving, serverError, onClose,
 
 /* ------------------------------------------------------------------ drawer */
 
-function VehicleDrawer({ record, detail, loading, canUpdate, canDelete, canAssign, canReactivate, assigning, onClose, onEdit, onDelete, onReactivate, onAssign, onNavigate }: {
+function VehicleDrawer({ record, detail, loading, canUpdate, canDelete, canAssign, canReactivate, assigning, lifecycleBusy, lifecycleNeedsRefresh, lifecycleError, onClose, onEdit, onDelete, onReactivate, onAssign, onNavigate }: {
   record: AnyRecord; detail?: AnyRecord; loading: boolean;
   canUpdate: boolean; canDelete: boolean; canAssign: boolean; canReactivate: boolean; assigning: boolean;
+  lifecycleBusy: boolean; lifecycleNeedsRefresh: boolean; lifecycleError: string | null;
   onClose: () => void; onEdit: () => void; onDelete: () => void; onReactivate: () => void; onAssign: () => void; onNavigate: (r: string) => void;
 }) {
   const code = String(g(record, "vehicleCode", "vehicle_code") ?? `Vehicle ${record.id}`);
@@ -664,15 +820,21 @@ function VehicleDrawer({ record, detail, loading, canUpdate, canDelete, canAssig
                 <RiskChip tier={riskTier(record)} />
               </div>
             </div>
-            <button type="button" aria-label="Close" onClick={onClose} className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"><X className="h-5 w-5" /></button>
+            <button type="button" aria-label="Close" disabled={lifecycleBusy} onClick={onClose} className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"><X className="h-5 w-5" /></button>
           </div>
           <div className="mt-4 flex flex-wrap gap-2">
-            {canUpdate ? <button type="button" onClick={onEdit} className="btn-primary h-9 px-3 text-xs"><Wrench className="h-3.5 w-3.5" /> Edit</button> : null}
-            {canAssign ? <button type="button" disabled={assigning} onClick={onAssign} className="btn-ghost h-9 px-3 text-xs"><UserCheck className="h-3.5 w-3.5" /> {g(record, "assignedDriverId", "assigned_driver_id") ? "Reassign driver" : "Assign driver"}</button> : null}
-            <button type="button" onClick={() => onNavigate("/map-view")} className="btn-ghost h-9 px-3 text-xs"><MapPin className="h-3.5 w-3.5" /> Live map</button>
-            {canDelete ? <button type="button" onClick={onDelete} className="ml-auto inline-flex h-9 items-center gap-1.5 rounded-xl border border-rose-200 px-3 text-xs font-semibold text-rose-600 transition hover:bg-rose-50"><Trash2 className="h-3.5 w-3.5" /> Archive vehicle</button> : null}
-            {canReactivate ? <button type="button" onClick={onReactivate} className="ml-auto btn-primary h-9 px-3 text-xs"><ArchiveRestore className="h-3.5 w-3.5" /> Reactivate vehicle</button> : null}
+            {canUpdate ? <button type="button" disabled={lifecycleBusy} onClick={onEdit} className="btn-primary h-9 px-3 text-xs"><Wrench className="h-3.5 w-3.5" /> Edit</button> : null}
+            {canAssign ? <button type="button" disabled={assigning || lifecycleBusy} onClick={onAssign} className="btn-ghost h-9 px-3 text-xs"><UserCheck className="h-3.5 w-3.5" /> {g(record, "assignedDriverId", "assigned_driver_id") ? "Reassign driver" : "Assign driver"}</button> : null}
+            <button type="button" disabled={lifecycleBusy} onClick={() => onNavigate("/map-view")} className="btn-ghost h-9 px-3 text-xs"><MapPin className="h-3.5 w-3.5" /> Live map</button>
+            {canDelete ? <button type="button" disabled={lifecycleBusy || lifecycleNeedsRefresh} onClick={onDelete} className="ml-auto inline-flex h-9 items-center gap-1.5 rounded-xl border border-rose-200 px-3 text-xs font-semibold text-rose-600 transition hover:bg-rose-50"><Trash2 className="h-3.5 w-3.5" /> Archive vehicle</button> : null}
+            {canReactivate ? <button type="button" disabled={lifecycleBusy || lifecycleNeedsRefresh} onClick={onReactivate} className="ml-auto btn-primary h-9 px-3 text-xs"><ArchiveRestore className="h-3.5 w-3.5" /> {lifecycleBusy ? "Reactivating..." : "Reactivate vehicle"}</button> : null}
           </div>
+          {lifecycleError ? (
+            <div role="alert" className="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
+              <p>{lifecycleError}</p>
+              {lifecycleNeedsRefresh ? <button type="button" disabled={lifecycleBusy} className="btn-ghost mt-2" onClick={() => window.location.reload()}>Reload vehicle status</button> : null}
+            </div>
+          ) : null}
         </div>
 
         <div className="space-y-5 p-6">
