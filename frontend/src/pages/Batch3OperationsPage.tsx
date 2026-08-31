@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, useMemo, useState } from "react";
+import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ClipboardCheck, Download, FilePlus2, Hammer, PenTool, Plus, Sparkles, Wrench, X } from "lucide-react";
 import { AiInsightCard, DataTable, EmptyState, KpiCard, LoadingState, PageHeader, RiskBadge, StatusBadge, exportCsv, labelize } from "@/components/ui";
@@ -22,7 +22,10 @@ import { dvirApi } from "@/services/dvirApi";
 import { maintenanceApi } from "@/services/maintenanceApi";
 import { workOrdersApi } from "@/services/workOrdersApi";
 import { apiErrorMessage } from "@/utils/apiErrorMessage";
-import type { AnyRecord } from "@/types";
+import { DocumentEditor } from "@/components/DocumentEditor";
+import { documentExport, documentOrigin, documentScore, documentVersion, presentDocument } from "@/utils/documentLifecycle";
+import { documentFailureNeedsReload, documentWriteFence } from "@/utils/documentWriteFence";
+import type { AnyRecord, UserSession } from "@/types";
 
 type Batch3Kind = "maintenance" | "work-orders" | "dvir" | "documents";
 
@@ -97,7 +100,7 @@ const configs = {
     queryKey: "documents",
     eyebrow: "Documents",
     title: "Compliance document vault",
-    description: "Document lifecycle control for vehicles, drivers, assets, contracts, work orders, inspections and compliance packages with expiry intelligence.",
+    description: "Document dates and recorded workflows for vehicles, drivers and assets. Date-window indicators are not proof of legal compliance or insurance coverage.",
     icon: <FilePlus2 />,
     useRows: useDocuments,
     useSummary: useDocumentSummary,
@@ -106,11 +109,11 @@ const configs = {
     idLabel: "Document #",
     createLabel: "Upload Document",
     kpis: [
-      ["Total Documents", "totalDocuments"], ["Expiring Soon", "expiringSoon"], ["Expired", "expired"], ["Missing Critical", "missingCriticalDocuments"],
+      ["Total Documents", "totalDocuments"], ["Expiring Soon (UTC dates)", "expiringSoon"], ["Expired (UTC dates)", "expired"], ["Recorded High Risk", "missingCriticalDocuments"],
       ["Vehicle Documents", "vehicleDocuments"], ["Driver Documents", "driverDocuments"], ["Compliance Docs", "complianceDocuments"], ["Pending Renewal", "pendingRenewal"],
-      ["Uploaded This Month", "uploadedThisMonth"], ["Audit Package Docs", "auditPackageDocuments"], ["Cross-Border Gaps", "crossBorderMissingDocs"], ["Completeness", "dataCompletenessScore"],
+      ["Uploaded This Month", "uploadedThisMonth"], ["Audit Package Docs", "auditPackageDocuments"], ["Non-US Documents", "crossBorderMissingDocs"], ["Risk-derived Indicator", "dataCompletenessScore"],
     ],
-    columns: ["documentNumber", "documentType", "category", "entityType", "entityName", "countryCode", "issuingAuthority", "issuedAt", "expiresAt", "status", "renewalStatus", "documentExpiryRiskScore", "recommendedAction"],
+    columns: ["documentNumber", "documentType", "entityType", "entityName", "issuedAt", "expiresAt", "lifecycleOrigin", "displayedState", "displayedRenewal", "assessmentScore", "assessmentDateUtc", "displayedRecommendation"],
     fields: [["title", "Title"], ["documentNumber", "Document Number"], ["entityType", "Entity Type"], ["entityId", "Entity ID"], ["documentType", "Document Type"], ["category", "Category"], ["countryCode", "Country"], ["issuingAuthority", "Issuing Authority"], ["issuedAt", "Issued At"], ["expiresAt", "Expires At"], ["status", "Status"], ["renewalStatus", "Renewal Status"], ["riskScore", "Risk Score"], ["recommendedAction", "Recommended Action"], ["notes", "Notes"]],
     actions: ["renew"],
     detailSections: [["Timeline", "timeline", ["eventTitle", "eventDescription", "occurredAt"]]],
@@ -170,31 +173,100 @@ export function Batch3OperationsPage({ kind }: { kind: Batch3Kind }) {
   const [editing, setEditing] = useState<AnyRecord | null>(null);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("All");
+  const [documentUiError, setDocumentUiError] = useState<string | null>(null);
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
+  const editingContext = useRef<{ session: UserSession; id?: string; rowVersion?: string } | null>(null);
+  const fence = useSyncExternalStore(documentWriteFence.subscribe, () => documentWriteFence.snapshot(session), () => documentWriteFence.snapshot(null));
   const detail = config.useDetail(selected?.id as string | number | undefined);
+  const currentDocument = detail.data?.record as AnyRecord | undefined;
+  const documentDetailReady = kind !== "documents" || Boolean(session && selected?.id && !detail.isFetching && !detail.isError
+    && String(currentDocument?.id) === String(selected.id) && String(currentDocument?.companyId) === String(session.company.id));
+  useEffect(() => {
+    if (kind === "documents" && editingContext.current?.session !== session) {
+      editingContext.current = null; setEditing(null); setSelected(null); setDocumentUiError(null);
+    }
+  }, [kind, session]);
   const qc = useQueryClient();
   const invalidate = async () => {
     await qc.invalidateQueries({ queryKey: [config.queryKey] });
-    await qc.invalidateQueries({ queryKey: [config.queryKey, "summary"] });
-    if (selected?.id) await qc.invalidateQueries({ queryKey: [config.queryKey, "detail", selected.id] });
+  };
+
+  const documentWrite = async (actor: UserSession, target: string, operation: () => Promise<AnyRecord>) => {
+    if (sessionRef.current !== actor) throw new Error("Your session changed. Reload the document before saving.");
+    const owner = documentWriteFence.begin(actor, target);
+    try {
+      const result = await operation();
+      documentWriteFence.finish(actor, owner, false);
+      return result;
+    } catch (failure) {
+      documentWriteFence.finish(actor, owner, documentFailureNeedsReload(failure));
+      throw failure;
+    }
+  };
+
+  const openEditor = (record?: AnyRecord) => {
+    if (kind !== "documents") { save.reset(); setEditing(record ?? defaultForm(kind)); return; }
+    if (!session || fence.pending || fence.requiresReload || (record && !documentDetailReady)) return;
+    try {
+      editingContext.current = { session, ...(record ? { id: String(record.id), rowVersion: documentVersion(record.rowVersion) } : {}) };
+      setDocumentUiError(null); save.reset(); setEditing(record ?? defaultForm(kind));
+    } catch (failure) {
+      editingContext.current = null;
+      setDocumentUiError(apiErrorMessage(failure, "Reload the document before editing."));
+    }
   };
 
   const save = useMutation({
-    mutationFn: (payload: AnyRecord) => payload.id
-      ? config.api.update(payload.id as string | number, payload)
-      : kind === "documents"
-        ? documentsApi.upload(payload)
-        : config.api.create(payload),
-    onSuccess: async () => { setEditing(null); await invalidate(); },
+    onMutate: () => ({ session: sessionRef.current }),
+    mutationFn: (payload: AnyRecord) => {
+      if (kind !== "documents") {
+        const api = config.api as { update: (id: string | number, body: AnyRecord) => Promise<AnyRecord>; create: (body: AnyRecord) => Promise<AnyRecord> };
+        return payload.id ? api.update(payload.id as string | number, payload) : api.create(payload);
+      }
+      const context = editingContext.current;
+      if (!context || context.session !== sessionRef.current) throw new Error("Your session changed. Reopen the document before saving.");
+      if (context.id && payload.expectedVersion !== context.rowVersion) throw new Error("Reload this document before saving; its version changed.");
+      return documentWrite(context.session, context.id ?? "new-upload", () => context.id ? documentsApi.update(context.id, payload, context.session) : documentsApi.upload(payload, context.session));
+    },
+    onSuccess: async (_data, _payload, context) => {
+      if (context?.session !== sessionRef.current) return;
+      editingContext.current = null; setDocumentUiError(null); setEditing(null); await invalidate();
+    },
   });
 
   const action = useMutation({
-    mutationFn: ({ type, row }: { type: string; row: AnyRecord }) => runAction(kind, type, row),
-    onSuccess: invalidate,
+    onMutate: () => ({ session: sessionRef.current }),
+    mutationFn: ({ type, row }: { type: string; row: AnyRecord }) => {
+      if (kind !== "documents") return runAction(kind, type, row);
+      if (!session || !documentDetailReady || String(row.companyId) !== String(session.company.id) || String(row.id) !== String(currentDocument?.id)) throw new Error("Reload the selected document before changing its workflow.");
+      return documentWrite(session, String(row.id), () => runAction(kind, type, row, session));
+    },
+    onSuccess: async (_data, _payload, context) => {
+      if (context?.session === sessionRef.current) { setDocumentUiError(null); await invalidate(); }
+    },
   });
+
+  const reloadDocument = async () => {
+    const context = editingContext.current;
+    const actor = context?.session ?? session;
+    const id = context?.id ?? String(selected?.id ?? "");
+    if (!actor || actor !== sessionRef.current || !id || fence.pending) throw new Error("Reopen the original document in the current session.");
+    const result = await documentsApi.detail(id, actor);
+    const record = result.record as AnyRecord;
+    if (sessionRef.current !== actor || String(record?.id) !== id || String(record?.companyId) !== String(actor.company.id)) throw new Error("The document is no longer available in this session.");
+    const rowVersion = documentVersion(record.rowVersion);
+    documentWriteFence.reconcile(actor, id);
+    if (context) editingContext.current = { session: actor, id, rowVersion };
+    setDocumentUiError(null); save.reset(); action.reset(); await invalidate();
+    return record;
+  };
 
   const statusLower = status.toLowerCase();
 
-  const rows = useMemo(() => (rowsQuery.data || []).filter((row) => {
+  const rows = useMemo(() => (rowsQuery.data || [])
+    .filter(row => kind !== "documents" || String(row.companyId) === String(session?.company.id))
+    .map(row => kind === "documents" ? presentDocument(row) : row).filter((row) => {
     // Expanded search fields to ensure searching by driver, customer or document entity feels responsive
     const searchLower = search.toLowerCase();
     const matchesSearch = !search || 
@@ -208,12 +280,12 @@ export function Batch3OperationsPage({ kind }: { kind: Batch3Kind }) {
       String(row.title || row.description || "").toLowerCase().includes(searchLower);
 
     // Intelligent status filtering: "Active" should surface items needing attention (not closed/completed)
-    const rowStatus = String(row.status || row.inspectionStatus || row.renewalStatus || "").toLowerCase();
+    const rowStatus = String(kind === "documents" ? row.displayedState : row.status || row.inspectionStatus || row.renewalStatus || "").toLowerCase();
     const matchesStatus = status === "All" || 
-      (status === "Active" ? !/closed|completed|expired|resolved/i.test(rowStatus) : rowStatus.includes(statusLower));
+      (kind === "documents" ? rowStatus === statusLower : status === "Active" ? !/closed|completed|expired|resolved/i.test(rowStatus) : rowStatus.includes(statusLower));
 
     return matchesSearch && matchesStatus;
-  }), [rowsQuery.data, search, status, statusLower]);
+  }), [rowsQuery.data, search, status, statusLower, kind, session?.company.id]);
 
   if (rowsQuery.isLoading || summary.isLoading) return <LoadingState />;
   if (rowsQuery.isError || summary.isError) {
@@ -231,9 +303,9 @@ export function Batch3OperationsPage({ kind }: { kind: Batch3Kind }) {
           <>
             <button
               className="btn-primary"
-              disabled={!hasPermission(kind === "documents" ? "compliance:manage" : kind === "work-orders" || kind === "maintenance" ? "maintenance:create" : "maintenance:update")}
+              disabled={(kind === "documents" && (fence.pending || fence.requiresReload)) || !hasPermission(kind === "documents" ? "compliance:manage" : kind === "work-orders" || kind === "maintenance" ? "maintenance:create" : "maintenance:update")}
               title={!hasPermission(kind === "documents" ? "compliance:manage" : kind === "work-orders" || kind === "maintenance" ? "maintenance:create" : "maintenance:update") ? "You do not have permission to perform this action." : `Create a new ${config.eyebrow.toLowerCase()} record.`}
-              onClick={() => setEditing(defaultForm(kind))}
+              onClick={() => openEditor()}
             >
               <Plus className="h-4 w-4" /> {config.createLabel}
             </button>
@@ -241,7 +313,7 @@ export function Batch3OperationsPage({ kind }: { kind: Batch3Kind }) {
               className="btn-ghost"
               disabled={!hasPermission(exportPermission)}
               title={!hasPermission(exportPermission) ? "You do not have permission to perform this action." : "Export the current filtered records."}
-              onClick={() => hasPermission(exportPermission) && exportCsv(kind, rows)}
+              onClick={() => hasPermission(exportPermission) && exportCsv(kind, kind === "documents" ? rows.map(documentExport) : rows)}
             >
               <Download className="h-4 w-4" /> Export Report
             </button>
@@ -249,15 +321,17 @@ export function Batch3OperationsPage({ kind }: { kind: Batch3Kind }) {
         }
       />
       <div className="grid gap-4 md:grid-cols-4 xl:grid-cols-6">
-        {config.kpis.map(([label, key]) => <KpiCard key={key} label={label} value={String(s[key] ?? 0)} icon={config.icon} status={/overdue|critical|unsafe|expired|missing|risk/i.test(label) ? "Review" : "Active"} />)}
+        {config.kpis.map(([label, key]) => <KpiCard key={key} label={label} value={String(s[key] ?? (kind === "documents" ? "Unknown" : 0))} icon={config.icon} status={kind === "documents" ? "Recorded indicator" : /overdue|critical|unsafe|expired|missing|risk/i.test(label) ? "Review" : "Active"} />)}
       </div>
-      {action.isError ? <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{(action.error as Error)?.message || "The requested document action could not be completed."}</p> : null}
+      {action.isError ? <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{kind === "documents" ? apiErrorMessage(action.error, "The document action could not be completed. Reload before trying again.") : (action.error as Error)?.message || "The requested action could not be completed."}</p> : null}
+      {kind === "documents" && documentUiError ? <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{documentUiError}</p> : null}
+      {kind === "documents" && fence.requiresReload && !editing ? <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">A document change requires reconciliation; no automatic retry was sent. {fence.target === "new-upload" ? "Refresh the vault and check the intended document number before attempting another upload." : "Select the original document and reload its current state before another write."}{fence.target !== "new-upload" && String(selected?.id) === fence.target ? <button type="button" className="btn-ghost ml-3" disabled={fence.pending} onClick={() => void reloadDocument().catch(failure => setDocumentUiError(apiErrorMessage(failure, "The current document could not be loaded. No retry was sent.")))}>Reload current document</button> : null}</div> : null}
       <div className="panel flex flex-col gap-3 p-4 xl:flex-row xl:items-center">
         <input className="field xl:max-w-md" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={`Search ${config.eyebrow.toLowerCase()} by entity, status, country, vendor, risk...`} />
         <select className="field xl:max-w-[180px]" value={status} onChange={(e) => setStatus(e.target.value)}>
-          <option>All</option><option>Open</option><option>Active</option><option>Scheduled</option><option>In Progress</option><option>Pending</option><option>Overdue</option><option>Expired</option><option>Completed</option>
+          {kind === "documents" ? ["All", "Active", "Expiring", "Expired", "Unknown"].map(value => <option key={value}>{value}</option>) : <><option>All</option><option>Open</option><option>Active</option><option>Scheduled</option><option>In Progress</option><option>Pending</option><option>Overdue</option><option>Expired</option><option>Completed</option></>}
         </select>
-        <span className="badge"><Sparkles className="h-3.5 w-3.5" /> AI recommendations active</span>
+        <span className="badge">{kind === "documents" ? "UTC date assessment / recorded workflow" : <><Sparkles className="h-3.5 w-3.5" /> AI recommendations active</>}</span>
       </div>
       {!rows.length ? (
         <EmptyState title={`No ${config.eyebrow.toLowerCase()} records`} subtitle="Try another filter or create the first record." />
@@ -267,20 +341,21 @@ export function Batch3OperationsPage({ kind }: { kind: Batch3Kind }) {
       <DetailDrawer
         kind={kind}
         config={config}
-        detail={detail.data}
+        detail={kind === "documents" && !documentDetailReady ? undefined : detail.data}
         permissions={session?.permissions || []}
         canExport={hasPermission(exportPermission)}
         loading={detail.isLoading}
+        actionsBlocked={kind === "documents" && (!documentDetailReady || fence.pending || fence.requiresReload)}
         onClose={() => setSelected(null)}
-        onEdit={(record) => setEditing(record)}
+        onEdit={openEditor}
         onAction={(type, row) => action.mutate({ type, row })}
       />
-      {editing ? <RecordModal title={config.createLabel} fields={config.fields} initial={editing} saving={save.isPending} error={save.isError ? (kind === "documents" ? apiErrorMessage(save.error, "The document could not be saved. Review the fields and try again.") : (save.error as Error)?.message || "The document could not be saved. Review the fields and try again.") : null} requireFile={kind === "documents" && !editing.id} onClose={() => { save.reset(); setEditing(null); }} onSave={(payload) => save.mutate(payload)} /> : null}
+      {editing ? kind === "documents" ? <DocumentEditor initial={editing} fields={config.fields} saving={fence.pending} requiresReload={fence.requiresReload} error={save.isError ? apiErrorMessage(save.error, "The document could not be saved. Review the fields and try again.") : null} onClose={() => { if (!fence.pending) { save.reset(); setDocumentUiError(null); setEditing(null); editingContext.current = null; } }} onSave={payload => save.mutate(payload)} onReload={reloadDocument} /> : <RecordModal title={config.createLabel} fields={config.fields} initial={editing} saving={save.isPending} error={save.isError ? (save.error as Error)?.message || "The record could not be saved. Review the fields and try again." : null} onClose={() => { save.reset(); setEditing(null); }} onSave={(payload) => save.mutate(payload)} /> : null}
     </div>
   );
 }
 
-function DetailDrawer({ kind, config, detail, loading, onClose, onEdit, onAction, permissions, canExport }: { kind: Batch3Kind; config: (typeof configs)[Batch3Kind]; detail?: AnyRecord; loading: boolean; onClose: () => void; onEdit: (record: AnyRecord) => void; onAction: (type: string, row: AnyRecord) => void; permissions: string[]; canExport: boolean }) {
+function DetailDrawer({ kind, config, detail, loading, onClose, onEdit, onAction, permissions, canExport, actionsBlocked }: { kind: Batch3Kind; config: (typeof configs)[Batch3Kind]; detail?: AnyRecord; loading: boolean; onClose: () => void; onEdit: (record: AnyRecord) => void; onAction: (type: string, row: AnyRecord) => void; permissions: string[]; canExport: boolean; actionsBlocked: boolean }) {
   const record = detail?.record as AnyRecord | undefined;
   if (!record && !loading) return null;
   if (!record) return null;
@@ -294,11 +369,11 @@ function DetailDrawer({ kind, config, detail, loading, onClose, onEdit, onAction
         <button className="float-right icon-btn" onClick={onClose}><X className="h-5 w-5" /></button>
         <p className="section-title text-teal-300">{config.eyebrow} Detail</p>
         <h2 className="mt-3 text-2xl font-semibold text-white">{String(record.documentNumber || record.reportNumber || record.workOrderNumber || record.serviceType || record.title || `Record ${record.id}`)}</h2>
-        <div className="mt-4 flex flex-wrap gap-2"><StatusBadge status={record.status || record.inspectionStatus || record.renewalStatus} /><RiskBadge risk={record.priority || record.riskScore || record.documentExpiryRiskScore || record.defectSeverityScore} /><span className="badge">{config.idLabel}: {String(record.id)}</span></div>
+        <div className="mt-4 flex flex-wrap gap-2">{kind === "documents" ? <><span className="badge">{String(presentDocument(record).displayedState)}</span><span className="badge">Score: {String(presentDocument(record).assessmentScore)}</span><span className="badge">{documentOrigin(record.lifecycleMode)}</span></> : <><StatusBadge status={record.status || record.inspectionStatus || record.renewalStatus} /><RiskBadge risk={record.priority || record.riskScore || record.documentExpiryRiskScore || record.defectSeverityScore} /></>}<span className="badge">{config.idLabel}: {String(record.id)}</span></div>
         <div className="mt-5 flex flex-wrap gap-3">
           <button
             className="btn-primary"
-            disabled={!hasPermission(getBatch3Permission(kind, "update"))}
+            disabled={actionsBlocked || !hasPermission(getBatch3Permission(kind, "update"))}
             title={!hasPermission(getBatch3Permission(kind, "update")) ? "You do not have permission to perform this action." : "Edit this record."}
             onClick={() => onEdit(record)}
           >
@@ -310,11 +385,11 @@ function DetailDrawer({ kind, config, detail, loading, onClose, onEdit, onAction
               <button
                 key={type}
                 className="btn-ghost"
-                disabled={!allowed}
+                disabled={actionsBlocked || !allowed}
                 title={!allowed ? "You do not have permission to perform this action." : `Run ${labelize(type)}.`}
                 onClick={() => onAction(type, record)}
               >
-                {labelize(type)}
+                {kind === "documents" && type === "renew" ? "Queue renewal (internal marker)" : labelize(type)}
               </button>
             );
           })}
@@ -322,15 +397,17 @@ function DetailDrawer({ kind, config, detail, loading, onClose, onEdit, onAction
             className="btn-ghost"
             disabled={!canExport}
             title={!canExport ? "You do not have permission to perform this action." : "Export this record."}
-            onClick={() => canExport && exportCsv(config.eyebrow, record ? [record] : [])}
+            onClick={() => canExport && exportCsv(config.eyebrow, record ? [kind === "documents" ? documentExport(record) : record] : [])}
           >
             <Download className="h-4 w-4" /> Export Record
           </button>
         </div>
         <div className="mt-6 grid gap-4 lg:grid-cols-3">
-          <InfoPanel title="Primary Evidence" record={record} keys={Object.keys(record).slice(0, 12)} />
-          <InfoPanel title="Risk & Recommended Action" record={record} keys={["riskScore", "maintenanceRiskHeatScore", "repairPriorityScore", "defectSeverityScore", "documentExpiryRiskScore", "recommendedAction"]} />
-          <InfoPanel title="Compliance / Country Ready" record={record} keys={["countryCode", "safeToOperate", "renewalStatus", "costApprovalStatus", "vendorName", "issuingAuthority"]} />
+          {kind === "documents" ? <>
+            <InfoPanel title="Document metadata" record={record} keys={["title", "documentNumber", "entityType", "entityName", "issuedAt", "expiresAt", "countryCode", "issuingAuthority"]} />
+            <InfoPanel title="Stored workflow" record={{ ...record, recordedScore: documentScore(record.riskScore), origin: documentOrigin(record.lifecycleMode) }} keys={["origin", "status", "renewalStatus", "recordedScore", "recommendedAction", "lifecycleAssessedOn"]} />
+            <InfoPanel title="Current date assessment (UTC)" record={{ ...(record.currentDateAssessment as AnyRecord ?? {}), assessmentScore: documentScore((record.currentDateAssessment as AnyRecord | undefined)?.riskScore) }} keys={["status", "renewalStatus", "assessmentScore", "recommendedAction", "assessmentDate", "policyVersion"]} />
+          </> : <><InfoPanel title="Primary Evidence" record={record} keys={Object.keys(record).slice(0, 12)} /><InfoPanel title="Risk & Recommended Action" record={record} keys={["riskScore", "maintenanceRiskHeatScore", "repairPriorityScore", "defectSeverityScore", "documentExpiryRiskScore", "recommendedAction"]} /><InfoPanel title="Compliance / Country Ready" record={record} keys={["countryCode", "safeToOperate", "renewalStatus", "costApprovalStatus", "vendorName", "issuingAuthority"]} /></>}
         </div>
         {config.detailSections.map(([title, key, columns]) => <Grid key={title} title={title} rows={(detail?.[key] as AnyRecord[]) || []} columns={columns} />)}
         <Grid title="Timeline / Audit Trail" rows={((detail?.timeline as AnyRecord[]) || (detail?.auditTrail as AnyRecord[]) || []) as AnyRecord[]} columns={["eventTitle", "eventDescription", "actionName", "actorName", "occurredAt", "createdAt"]} />
@@ -370,10 +447,10 @@ function defaultForm(kind: Batch3Kind): AnyRecord {
   if (kind === "maintenance") return { serviceType: "PM-A Service", priority: "High", status: "Open", dueDate: new Date().toISOString().slice(0, 10), estimatedCost: "" };
   if (kind === "work-orders") return { workOrderNumber: `WO-NEW-${Date.now()}`, issueType: "Preventive", title: "", priority: "High", status: "Open", vendorName: "", estimatedCost: "" };
   if (kind === "dvir") return { reportNumber: `DVIR-NEW-${Date.now()}`, countryCode: "US", inspectionType: "Pre-Trip", inspectionStatus: "Submitted", defectsFound: 0, safeToOperate: true, driverSignatureStatus: "Pending", mechanicReviewStatus: "Pending", repairCertificationStatus: "Pending" };
-  return { title: "", documentNumber: `DOC-NEW-${Date.now()}`, entityType: "vehicle", documentType: "Insurance", category: "Insurance", countryCode: "US", status: "Active", renewalStatus: "Current", issuedAt: new Date().toISOString().slice(0, 10), expiresAt: new Date(Date.now() + 45 * 86400000).toISOString().slice(0, 10) };
+  return { title: "", documentNumber: `DOC-NEW-${Date.now()}`, entityType: "vehicle", documentType: "Insurance", category: "Insurance", countryCode: "US", issuedAt: new Date().toISOString().slice(0, 10), expiresAt: new Date(Date.now() + 45 * 86400000).toISOString().slice(0, 10) };
 }
 
-async function runAction(kind: Batch3Kind, type: string, row: AnyRecord) {
+async function runAction(kind: Batch3Kind, type: string, row: AnyRecord, documentSession?: UserSession) {
   const id = row.id as string | number;
   if (kind === "maintenance") {
     if (type === "schedule") return maintenanceApi.schedule(id);
@@ -394,6 +471,6 @@ async function runAction(kind: Batch3Kind, type: string, row: AnyRecord) {
     if (type === "certifyRepair") return dvirApi.certifyRepair(id, rowVersion);
     throw new Error("Unsupported DVIR action");
   }
-  if (type === "renew") return documentsApi.renew(id);
+  if (type === "renew" && documentSession) return documentsApi.renew(id, documentVersion(row.rowVersion), documentSession);
   throw new Error("Unsupported document action");
 }

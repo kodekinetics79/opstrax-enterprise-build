@@ -255,6 +255,60 @@ jobs:
           done
           NEON_PG_URI='postgresql://zayra:zayra@127.0.0.1:5433/opstrax_local?sslmode=disable' \
             ./tools/apply-neon-predeploy-migrations.sh
+      - name: Prove the bounded document release hold
+        run: |
+          if NEON_PG_URI='postgresql://owner:secret@ep-empty-king-awv39an5.c-12.us-east-1.aws.neon.tech:5432/opstrax_staging?sslmode=disable&channel_binding=require' \
+            python3 tools/psql-neon-env.py --print-safe-target >"$RUNNER_TEMP/unsafe-neon.out" 2>"$RUNNER_TEMP/unsafe-neon.err"; then
+            echo "ERROR: unsafe Neon TLS settings were accepted" >&2
+            exit 1
+          fi
+          grep -q 'require sslmode' "$RUNNER_TEMP/unsafe-neon.err"
+          NEON_PG_URI='postgresql://owner:secret@ep-empty-king-awv39an5.c-12.us-east-1.aws.neon.tech:5432/opstrax_staging?sslmode=require&channel_binding=require' \
+            python3 tools/psql-neon-env.py --print-safe-target | grep -q $'ep-empty-king-awv39an5.c-12.us-east-1.aws.neon.tech\t5432\topstrax_staging\towner'
+          grep -q "prolang FROM fn)=(SELECT oid FROM pg_language WHERE lanname='plpgsql')" tools/manage-document-write-hold.sh
+          grep -q 'AS locked_catalog_exact' tools/manage-document-write-hold.sh
+          cleanup_hold() { ./tools/manage-document-write-hold.sh disable >/dev/null 2>&1 || true; }
+          trap cleanup_hold EXIT
+          export OPSTRAX_RELEASE_HOLD_TARGET=local-test
+          export NEON_PG_URI='postgresql://zayra:zayra@127.0.0.1:5433/opstrax_local?sslmode=disable'
+          ./tools/manage-document-write-hold.sh enable | tee "$RUNNER_TEMP/document-hold-enabled.json"
+          grep -q '"holdActive":true' "$RUNNER_TEMP/document-hold-enabled.json"
+          psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -v ON_ERROR_STOP=1 -tAc "SET ROLE opstrax_app; SELECT count(*) FROM documents" >/dev/null
+          for statement in \
+            "INSERT INTO documents(company_id,title) VALUES (1,'blocked')" \
+            "UPDATE documents SET title=title WHERE false" \
+            "DELETE FROM documents WHERE false"; do
+            if psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -v ON_ERROR_STOP=1 \
+              -c "SET ROLE opstrax_app; $statement" >"$RUNNER_TEMP/document-hold-write.log" 2>&1; then
+              echo "ERROR: restricted document write was not blocked" >&2
+              exit 1
+            fi
+            grep -q 'temporarily paused for a controlled staging release' "$RUNNER_TEMP/document-hold-write.log"
+          done
+          psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -v ON_ERROR_STOP=1 \
+            -c 'ALTER FUNCTION public.opstrax_document_release_hold() PARALLEL SAFE'
+          if ./tools/manage-document-write-hold.sh status >"$RUNNER_TEMP/document-hold-tamper.out" 2>"$RUNNER_TEMP/document-hold-tamper.err"; then
+            echo "ERROR: modified function catalog was accepted" >&2
+            exit 1
+          fi
+          grep -q 'unexpected or incomplete' "$RUNNER_TEMP/document-hold-tamper.err"
+          psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -v ON_ERROR_STOP=1 \
+            -c 'ALTER FUNCTION public.opstrax_document_release_hold() PARALLEL UNSAFE'
+          ./tools/manage-document-write-hold.sh status | grep -q '"catalogState":"exact"'
+          psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -v ON_ERROR_STOP=1 \
+            -c 'ALTER TABLE public.documents DISABLE TRIGGER trg_opstrax_document_release_hold'
+          if ./tools/manage-document-write-hold.sh status >"$RUNNER_TEMP/document-hold-trigger-tamper.out" 2>"$RUNNER_TEMP/document-hold-trigger-tamper.err"; then
+            echo "ERROR: disabled release-hold trigger was accepted" >&2
+            exit 1
+          fi
+          grep -q 'unexpected or incomplete' "$RUNNER_TEMP/document-hold-trigger-tamper.err"
+          psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -v ON_ERROR_STOP=1 \
+            -c 'ALTER TABLE public.documents ENABLE TRIGGER trg_opstrax_document_release_hold'
+          ./tools/manage-document-write-hold.sh status | grep -q '"catalogState":"exact"'
+          ./tools/manage-document-write-hold.sh disable | tee "$RUNNER_TEMP/document-hold-disabled.json"
+          trap - EXIT
+          grep -q '"holdActive":false' "$RUNNER_TEMP/document-hold-disabled.json"
+          psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_local -v ON_ERROR_STOP=1 -c "UPDATE documents SET title=title WHERE false"
       # ── Migration-pure oracle ────────────────────────────────────────────────
       # The opstrax_local database above is DEV-SHAPED on purpose: the next step boots
       # the app, which runs every runtime *SchemaService and creates the very columns
@@ -593,6 +647,8 @@ jobs:
           test -f backend-dotnet.Tests/TenantRlsCoverageReadinessRegressionTests.cs
           test -f backend-dotnet.Tests/FleetRuntimeRouteContractRegressionTests.cs
           bash -n tools/apply-neon-predeploy-migrations.sh
+          bash -n tools/manage-document-write-hold.sh
+          python3 -m py_compile tools/psql-neon-env.py
           tools/test-safety-pilot-evidence-collector.sh
           tools/test-safety-pilot-external-ops-evidence.sh
           tools/test-dr-restore-drill-contract.sh

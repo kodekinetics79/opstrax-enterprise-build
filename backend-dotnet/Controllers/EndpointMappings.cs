@@ -1271,7 +1271,9 @@ public static partial class EndpointMappings
         app.MapGet("/api/documents/expiring", (HttpContext http, Database db, CancellationToken ct) =>
         {
             if (RequirePermission(http, "compliance:view") is { } denied) return Task.FromResult(denied);
-            return OkRows(db, DocumentsBaseSql + " WHERE d.company_id=@cid AND d.deleted_at IS NULL" + DocumentBranchScopeSql + " AND (d.status IN ('Expiring','Expired') OR d.expires_at <= CURRENT_DATE + 30 * INTERVAL '1 day') ORDER BY d.expires_at", c => BindDocumentScope(c, http), ct: ct);
+            var today = DateOnly.FromDateTime(DateTime.UtcNow);
+            return DocumentRows(db, DocumentsBaseSql + " WHERE d.company_id=@cid AND d.deleted_at IS NULL" + DocumentBranchScopeSql + " AND d.expires_at <= @today::date + 30 ORDER BY d.expires_at",
+                c => { BindDocumentScope(c, http); c.Parameters.AddWithValue("@today", today); }, today, ct);
         });
         app.MapGet("/api/documents/recommendations", (HttpContext http, Database db, CancellationToken ct) =>
         {
@@ -1281,22 +1283,13 @@ public static partial class EndpointMappings
         });
         app.MapGet("/api/documents", Documents);
         app.MapGet("/api/documents/{id:long}", DocumentDetail);
-        app.MapPost("/api/documents", (HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) =>
-        {
-            var denied = RequirePermission(http, "compliance:manage");
-            return denied is not null ? Task.FromResult(denied) : CreateDocument(http, body, db, audit, ct);
-        });
-        app.MapPut("/api/documents/{id:long}", (HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) =>
-        {
-            var denied = RequirePermission(http, "compliance:manage");
-            return denied is not null ? Task.FromResult(denied) : UpdateDocument(http, id, body, db, audit, ct);
-        });
+        app.MapPost("/api/documents", (HttpContext http, JsonElement body, Database db, AuditService audit, CancellationToken ct) =>
+            DocumentJsonMutation(http, body, DocumentWriteKind.Create, parsed => CreateDocument(http, parsed, db, audit, ct)));
+        app.MapPut("/api/documents/{id:long}", (HttpContext http, long id, JsonElement body, Database db, AuditService audit, CancellationToken ct) =>
+            DocumentJsonMutation(http, body, DocumentWriteKind.Update, parsed => UpdateDocument(http, id, parsed, db, audit, ct)));
         app.MapDelete("/api/documents/{id:long}", DeleteDocument);
-        app.MapPost("/api/documents/{id:long}/renew", (HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) =>
-        {
-            var denied = RequirePermission(http, "compliance:manage");
-            return denied is not null ? Task.FromResult(denied) : DocumentRenew(http, id, db, audit, ct);
-        });
+        app.MapPost("/api/documents/{id:long}/renew", (HttpContext http, long id, JsonElement body, Database db, AuditService audit, CancellationToken ct) =>
+            DocumentJsonMutation(http, body, DocumentWriteKind.Renew, parsed => DocumentRenew(http, id, parsed, db, audit, ct)));
         app.MapGet("/api/documents/{id:long}/timeline", DocumentTimeline);
 
         // ── Real file upload/download (durable object storage) ──────────────────
@@ -8485,7 +8478,7 @@ public static partial class EndpointMappings
           LEFT JOIN work_orders wo ON wo.dvir_report_id=dr.id";
 
     private const string DocumentsBaseSql =
-        @"SELECT d.*, d.risk_score document_expiry_risk_score,
+        @"SELECT d.*, d.xmin::text row_version, d.risk_score document_expiry_risk_score,
                  COALESCE(d.recommended_action, 'Keep document in active vault') recommended_action,
                  CASE
                    WHEN d.entity_type='vehicle' THEN (SELECT vehicle_code FROM vehicles WHERE id=d.entity_id AND company_id=d.company_id)
@@ -8946,29 +8939,30 @@ public static partial class EndpointMappings
     private static Task<IResult> Documents(HttpContext http, Database db, CancellationToken ct)
     {
         if (RequirePermission(http, "compliance:view") is { } denied) return Task.FromResult(denied);
-        return OkRows(db, DocumentsBaseSql + " WHERE d.company_id=@cid AND d.deleted_at IS NULL" + DocumentBranchScopeSql + " ORDER BY d.expires_at, d.id DESC",
-            c => BindDocumentScope(c, http), ct: ct);
+        return DocumentRows(db, DocumentsBaseSql + " WHERE d.company_id=@cid AND d.deleted_at IS NULL" + DocumentBranchScopeSql + " ORDER BY d.expires_at, d.id DESC",
+            c => BindDocumentScope(c, http), DateOnly.FromDateTime(DateTime.UtcNow), ct);
     }
 
     private static async Task<IResult> DocumentsSummary(HttpContext http, Database db, CancellationToken ct)
     {
         if (RequirePermission(http, "compliance:view") is { } denied) return denied;
         var companyId = GetCompanyId(http);
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
         var row = await db.QuerySingleAsync(
             @"SELECT COUNT(*) total_documents,
-                     SUM(CASE WHEN d.status='Expiring' OR d.expires_at BETWEEN CURRENT_DATE AND CURRENT_DATE + 30 * INTERVAL '1 day' THEN 1 ELSE 0 END) expiring_soon,
-                     SUM(CASE WHEN d.status='Expired' OR d.expires_at < CURRENT_DATE THEN 1 ELSE 0 END) expired,
+                     SUM(CASE WHEN d.expires_at BETWEEN @today::date AND @today::date + 30 THEN 1 ELSE 0 END) expiring_soon,
+                     SUM(CASE WHEN d.expires_at < @today::date THEN 1 ELSE 0 END) expired,
                      SUM(CASE WHEN d.risk_score >= 80 THEN 1 ELSE 0 END) missing_critical_documents,
                      SUM(CASE WHEN d.entity_type='vehicle' THEN 1 ELSE 0 END) vehicle_documents,
                      SUM(CASE WHEN d.entity_type='driver' THEN 1 ELSE 0 END) driver_documents,
                      SUM(CASE WHEN d.category LIKE '%Compliance%' OR d.document_type LIKE '%Inspection%' THEN 1 ELSE 0 END) compliance_documents,
-                     SUM(CASE WHEN d.renewal_status='Renewal Required' THEN 1 ELSE 0 END) pending_renewal,
+                     SUM(CASE WHEN d.renewal_status IN ('Renewal Required','Renewal Queued') THEN 1 ELSE 0 END) pending_renewal,
                      SUM(CASE WHEN d.created_at >= NOW() - 30 * INTERVAL '1 day' THEN 1 ELSE 0 END) uploaded_this_month,
                      SUM(CASE WHEN d.category LIKE '%Audit%' THEN 1 ELSE 0 END) audit_package_documents,
                      SUM(CASE WHEN d.country_code <> 'US' THEN 1 ELSE 0 END) cross_border_missing_docs,
                      CONCAT(ROUND(100 - AVG(LEAST(d.risk_score,95)),1),'%') data_completeness_score
               FROM documents d WHERE d.company_id=@cid AND d.deleted_at IS NULL" + DocumentBranchScopeSql,
-            c => BindDocumentScope(c, http), ct);
+            c => { BindDocumentScope(c, http); c.Parameters.AddWithValue("@today", today); }, ct);
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
     }
 
@@ -8976,9 +8970,11 @@ public static partial class EndpointMappings
     {
         if (RequirePermission(http, "compliance:view") is { } denied) return denied;
         var companyId = GetCompanyId(http);
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
         var record = (await db.QueryAsync(DocumentsBaseSql + " WHERE d.id=@id AND d.company_id=@cid AND d.deleted_at IS NULL" + DocumentBranchScopeSql,
             c => { c.Parameters.AddWithValue("@id", id); BindDocumentScope(c, http); }, ct)).FirstOrDefault();
         if (record is null) return Results.NotFound(ApiResponse<object>.Fail("Document not found"));
+        AddDocumentAssessment(record, today);
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             record,
@@ -8988,186 +8984,21 @@ public static partial class EndpointMappings
         }));
     }
 
-    private static async Task<IResult> CreateDocument(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
-    {
-        RemoveCustomerDocumentFileReference(body);
-        var errors = ValidateDocument(body);
-        if (errors.Count > 0) return Results.BadRequest(ApiResponse<object>.Fail("Document validation failed", errors.ToArray()));
-        var companyId = GetCompanyId(http);
-        var entityType = Get(body, "entityType")?.ToString()?.Trim().ToLowerInvariant();
-        var entityId = ToNullableLong(Get(body, "entityId")?.ToString());
-        var entityError = await ValidateDocumentEntityAsync(http, entityType, entityId, db, ct);
-        if (entityError is not null || entityType is null || entityId is null)
-            return Results.BadRequest(ApiResponse<object>.Fail("Document validation failed", [entityError ?? "Choose a valid vehicle, driver, or asset."]));
-        body["entityType"] = entityType;
-        body["entityId"] = entityId.Value;
-        NormalizeDocumentDates(body);
-        var id = await db.InsertAsync(
-            @"INSERT INTO documents (company_id, title, document_number, entity_type, entity_id, document_type, category, country_code, issuing_authority, issued_at, expires_at, status, renewal_status, risk_score, recommended_action, notes)
-              VALUES (@cid, @title, @number, @entityType, @entityId, @type, @category, @country, @authority, @issued, @expires, COALESCE(@status,'Active'), COALESCE(@renewal,'Current'), COALESCE(@risk,25), COALESCE(@action,'Keep active in vault'), @notes)",
-            c => { c.Parameters.AddWithValue("@cid", companyId); BindDocument(c, body); }, ct);
-        await audit.LogAsync(http, "document.created", "Document", id, ct: ct);
-        await AddDocumentEvent(db, GetCompanyId(http), id, "Document created", "Document metadata entered into vault", ct);
-        return Results.Created($"/api/documents/{id}", ApiResponse<object>.Ok(new { id }, "Document created"));
-    }
+    private static Task<IResult> CreateDocument(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
+        => CreateLifecycleDocument(http, body, db, audit, ct);
 
-    private static async Task<IResult> UpdateDocument(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
-    {
-        RemoveCustomerDocumentFileReference(body);
-        var existing = await db.QuerySingleAsync(
-            "SELECT d.entity_type, d.entity_id, d.issued_at, d.expires_at FROM documents d WHERE d.id=@id AND d.company_id=@cid AND d.deleted_at IS NULL" + DocumentBranchScopeSql,
-            c => { c.Parameters.AddWithValue("@id", id); BindDocumentScope(c, http); }, ct);
-        if (existing is null) return Results.NotFound(ApiResponse<object>.Fail("Document not found"));
+    private static Task<IResult> UpdateDocument(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
+        => UpdateLifecycleDocument(http, id, body, db, audit, ct);
 
-        var errors = ValidateDocumentDateFields(body);
-        if (errors.Count > 0) return Results.BadRequest(ApiResponse<object>.Fail("Document validation failed", errors.ToArray()));
-        var entityType = !IsBlank(Get(body, "entityType")) ? Get(body, "entityType")?.ToString()?.Trim().ToLowerInvariant() : existing["entityType"]?.ToString();
-        var entityId = !IsBlank(Get(body, "entityId")) ? ToNullableLong(Get(body, "entityId")?.ToString()) : ToNullableLong(existing["entityId"]?.ToString());
-        var entityError = await ValidateDocumentEntityAsync(http, entityType, entityId, db, ct);
-        if (entityError is not null || entityType is null || entityId is null)
-            return Results.BadRequest(ApiResponse<object>.Fail("Document validation failed", [entityError ?? "Choose a valid vehicle, driver, or asset."]));
-        body["entityType"] = entityType;
-        body["entityId"] = entityId.Value;
-        NormalizeDocumentDates(body);
-        var effectiveIssued = body.TryGetValue("issuedAt", out var newIssued) && !IsBlank(newIssued) ? newIssued : existing["issuedAt"];
-        var effectiveExpires = body.TryGetValue("expiresAt", out var newExpires) && !IsBlank(newExpires) ? newExpires : existing["expiresAt"];
-        if (!IsBlank(effectiveIssued) && !IsBlank(effectiveExpires) &&
-            DateTime.TryParse(effectiveIssued?.ToString(), out var issued) && DateTime.TryParse(effectiveExpires?.ToString(), out var expires) && expires < issued)
-            return Results.BadRequest(ApiResponse<object>.Fail("Document validation failed", ["Document expiry date cannot be before issued date."]));
-        var affected = await db.ExecuteAsync(
-            @"UPDATE documents SET title=COALESCE(@title,title), document_number=COALESCE(@number,document_number), entity_type=COALESCE(@entityType,entity_type),
-                entity_id=COALESCE(@entityId,entity_id), document_type=COALESCE(@type,document_type), category=COALESCE(@category,category), country_code=COALESCE(@country,country_code),
-                issuing_authority=COALESCE(@authority,issuing_authority), issued_at=COALESCE(@issued,issued_at), expires_at=COALESCE(@expires,expires_at), status=COALESCE(@status,status),
-                renewal_status=COALESCE(@renewal,renewal_status), risk_score=COALESCE(@risk,risk_score), recommended_action=COALESCE(@action,recommended_action), notes=COALESCE(@notes,notes)
-              WHERE id=@id AND company_id=@cid", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); BindDocument(c, body, generateDocumentNumber: false); }, ct);
-        if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Document not found"));
-        await audit.LogAsync(http, "document.updated", "Document", id, ct: ct);
-        await AddDocumentEvent(db, GetCompanyId(http), id, "Document updated", "Document metadata updated", ct);
-        return Results.Ok(ApiResponse<object>.Ok(new { id }, "Document updated"));
-    }
-
-    private static async Task<IResult> DeleteDocument(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct)
+    private static Task<IResult> DeleteDocument(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct)
     {
-        if (RequirePermission(http, "compliance:manage") is { } denied) return denied;
-        var affected = await db.ExecuteAsync(
-            "UPDATE documents d SET deleted_at=NOW() WHERE d.id=@id AND d.company_id=@cid AND d.deleted_at IS NULL" + DocumentBranchScopeSql,
-            c => { c.Parameters.AddWithValue("@id", id); BindDocumentScope(c, http); }, ct);
-        if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Document not found"));
-        await audit.LogAsync(http, "document.deleted", "Document", id, ct: ct);
-        return Results.Ok(ApiResponse<object>.Ok(new { id }, "Document deleted"));
+        if (RequirePermission(http, "compliance:manage") is { } denied) return Task.FromResult(denied);
+        return DeleteLifecycleDocument(http, id, db, audit, ct);
     }
 
     // POST /api/documents/upload — real multipart upload to durable object storage.
-    private static async Task<IResult> DocumentUpload(
-        HttpContext http, Opstrax.Api.Storage.FileStorageService files, Database db, AuditService audit, CancellationToken ct)
-    {
-        var denied = RequirePermission(http, "compliance:manage");
-        if (denied is not null) return denied;
-
-        if (!http.Request.HasFormContentType)
-            return Results.BadRequest(ApiResponse<object>.Fail("multipart/form-data with a 'file' field is required"));
-
-        var form = await http.Request.ReadFormAsync(ct);
-        var file = form.Files["file"] ?? form.Files.FirstOrDefault();
-        if (file is null || file.Length == 0)
-            return Results.BadRequest(ApiResponse<object>.Fail("No file uploaded"));
-
-        var companyId = GetCompanyId(http);
-        var branchId = GetBranchId(http);
-        var entityType = form["entityType"].FirstOrDefault()?.Trim().ToLowerInvariant();
-        var entityId = ToNullableLong(form["entityId"].FirstOrDefault());
-        if (entityType is not ("vehicle" or "driver" or "asset") || entityId is null)
-            return Results.BadRequest(ApiResponse<object>.Fail("Choose a vehicle, driver, or asset before uploading."));
-
-        var entityTable = entityType switch
-        {
-            "vehicle" => "vehicles",
-            "driver" => "drivers",
-            _ => "fleet_tms_assets"
-        };
-        var entityExists = await db.ScalarLongAsync(
-            $"SELECT COUNT(*) FROM {entityTable} WHERE id=@entityId AND company_id=@companyId" +
-            (entityType is "vehicle" or "driver" ? " AND deleted_at IS NULL" : "") +
-            (branchId is not null ? " AND branch_id=@branchId" : ""),
-            c =>
-            {
-                c.Parameters.AddWithValue("@entityId", entityId.Value);
-                c.Parameters.AddWithValue("@companyId", companyId);
-                if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId.Value);
-            }, ct);
-        if (entityExists != 1)
-            return Results.BadRequest(ApiResponse<object>.Fail("The selected record is not available in your tenant and branch."));
-
-        var issuedRaw = form["issuedAt"].FirstOrDefault()?.Trim();
-        var expiresRaw = form["expiresAt"].FirstOrDefault()?.Trim();
-        if (!string.IsNullOrWhiteSpace(issuedRaw) && !DateTime.TryParse(issuedRaw, out _))
-            return Results.BadRequest(ApiResponse<object>.Fail("Document issued date is invalid."));
-        if (!string.IsNullOrWhiteSpace(expiresRaw) && !DateTime.TryParse(expiresRaw, out _))
-            return Results.BadRequest(ApiResponse<object>.Fail("Document expiry date is invalid."));
-        DateTime? issuedAt = DateTime.TryParse(issuedRaw, out var parsedIssued) ? parsedIssued.Date : null;
-        DateTime? expiresAt = DateTime.TryParse(expiresRaw, out var parsedExpiry) ? parsedExpiry.Date : null;
-        if (issuedAt is not null && expiresAt is not null && expiresAt < issuedAt)
-            return Results.BadRequest(ApiResponse<object>.Fail("Document expiry date cannot be before issued date."));
-        var derivedStatus = expiresAt is not null && expiresAt.Value.Date < DateTime.UtcNow.Date
-            ? "Expired"
-            : expiresAt is not null && expiresAt.Value.Date <= DateTime.UtcNow.Date.AddDays(30)
-                ? "Expiring"
-                : form["status"].FirstOrDefault() ?? "Active";
-        var renewalStatus = derivedStatus is "Expired" or "Expiring"
-            ? "Renewal Required"
-            : form["renewalStatus"].FirstOrDefault() ?? "Current";
-        Opstrax.Api.Storage.FileStorageService.UploadResult stored;
-        try
-        {
-            await using var s = file.OpenReadStream();
-            stored = await files.UploadAsync(companyId, "documents", file.FileName, file.ContentType ?? "application/octet-stream", s, ct);
-        }
-        catch (ArgumentException ex) // validation (size/type/empty)
-        {
-            LogSafeEndpointFailure(http, ex, "document.upload");
-            return Results.BadRequest(ApiResponse<object>.Fail("Upload rejected"));
-        }
-
-        long id;
-        try
-        {
-            id = await db.InsertAsync(
-                @"INSERT INTO documents (company_id, title, document_number, entity_type, entity_id, document_type, category, country_code, issuing_authority, issued_at, expires_at, status, renewal_status, file_url, risk_score, recommended_action, notes)
-                  VALUES (@cid, @title, @number, @entityType, @entityId, @type, @category, @country, @authority, @issued, @expires, @status, @renewal, @file, @risk, @action, @notes)",
-                c =>
-                {
-                    c.Parameters.AddWithValue("@cid", companyId);
-                    c.Parameters.AddWithValue("@title", (object?)(form["title"].FirstOrDefault() ?? file.FileName) ?? DBNull.Value);
-                    c.Parameters.AddWithValue("@number", (object?)(form["documentNumber"].FirstOrDefault() ?? $"DOC-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}") ?? DBNull.Value);
-                    c.Parameters.AddWithValue("@entityType", entityType);
-                    c.Parameters.AddWithValue("@entityId", entityId.Value);
-                    c.Parameters.AddWithValue("@type", (object?)(form["documentType"].FirstOrDefault() ?? "General") ?? DBNull.Value);
-                    c.Parameters.AddWithValue("@category", (object?)(form["category"].FirstOrDefault() ?? "Uploaded") ?? DBNull.Value);
-                    c.Parameters.AddWithValue("@country", (object?)form["countryCode"].FirstOrDefault() ?? DBNull.Value);
-                    c.Parameters.AddWithValue("@authority", (object?)form["issuingAuthority"].FirstOrDefault() ?? DBNull.Value);
-                    c.Parameters.AddWithValue("@issued", (object?)issuedAt ?? DBNull.Value);
-                    c.Parameters.AddWithValue("@expires", (object?)expiresAt ?? DBNull.Value);
-                    c.Parameters.AddWithValue("@status", derivedStatus);
-                    c.Parameters.AddWithValue("@renewal", renewalStatus);
-                    c.Parameters.AddWithValue("@file", stored.Reference); // objkey:tenant/{cid}/...
-                    c.Parameters.AddWithValue("@risk", derivedStatus == "Expired" ? 90 : derivedStatus == "Expiring" ? 60 : 25);
-                    c.Parameters.AddWithValue("@action", derivedStatus is "Expired" or "Expiring" ? "Renew document" : "Keep active in vault");
-                    c.Parameters.AddWithValue("@notes", (object?)(form["notes"].FirstOrDefault() ?? $"Uploaded {stored.Size} bytes ({stored.ContentType})") ?? DBNull.Value);
-                }, ct);
-        }
-        catch
-        {
-            await files.DeleteAsync(stored.Reference, ct);
-            throw;
-        }
-
-        await audit.LogAsync(http, "document.uploaded", "Document", id,
-            System.Text.Json.JsonSerializer.Serialize(new { size = stored.Size, contentType = stored.ContentType, provider = files.Provider }), ct: ct);
-        await AddDocumentEvent(db, companyId, id, "Document uploaded", $"File stored to {files.Provider} ({stored.Size} bytes)", ct);
-
-        return Results.Created($"/api/documents/{id}", ApiResponse<object>.Ok(
-            new { id, size = stored.Size, contentType = stored.ContentType }, "Document uploaded"));
-    }
+    private static Task<IResult> DocumentUpload(HttpContext http, Opstrax.Api.Storage.FileStorageService files, Database db, AuditService audit, CancellationToken ct)
+        => UploadLifecycleDocument(http, files, db, audit, ct);
 
     // GET /api/documents/{id}/download — resolve the stored file to a signed URL
     // (redirect) or stream via proxy. Tenant-scoped: only the owning tenant's rows.
@@ -9231,15 +9062,8 @@ public static partial class EndpointMappings
     private static long? ToNullableLong(string? s) =>
         long.TryParse(s, out var v) ? v : null;
 
-    private static async Task<IResult> DocumentRenew(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct)
-    {
-        var affected = await db.ExecuteAsync("UPDATE documents d SET renewal_status='Renewal Queued', status='Expiring', recommended_action='Renewal queued by OpsTrax advisor' WHERE d.id=@id AND d.company_id=@cid AND d.deleted_at IS NULL" + DocumentBranchScopeSql,
-            c => { c.Parameters.AddWithValue("@id", id); BindDocumentScope(c, http); }, ct);
-        if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Document not found"));
-        await AddDocumentEvent(db, GetCompanyId(http), id, "Renewal queued", "Document renewal placeholder triggered", ct);
-        await audit.LogAsync(http, "document.renewal.queued", "Document", id, ct: ct);
-        return Results.Ok(ApiResponse<object>.Ok(new { id }, "Document renewal queued"));
-    }
+    private static Task<IResult> DocumentRenew(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
+        => UpdateLifecycleDocument(http, id, body, db, audit, ct, renew: true);
 
     private static async Task<IResult> DocumentTimeline(HttpContext http, long id, Database db, CancellationToken ct)
     {
@@ -14540,8 +14364,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (RequirePermission(http, "compliance:view") is { } denied) return Task.FromResult(denied);
         // Entity IDs are unique only within their own master table. Reuse the vault's
         // typed ownership rules so a colliding driver ID cannot authorize a vehicle document.
-        return OkRows(db, DocumentsBaseSql + " WHERE d.company_id=@cid AND d.deleted_at IS NULL" +
-            DocumentBranchScopeSql + " ORDER BY d.expires_at LIMIT 50", c => BindDocumentScope(c, http), ct: ct);
+        return DocumentRows(db, DocumentsBaseSql + " WHERE d.company_id=@cid AND d.deleted_at IS NULL" +
+            DocumentBranchScopeSql + " ORDER BY d.expires_at LIMIT 50", c => BindDocumentScope(c, http), DateOnly.FromDateTime(DateTime.UtcNow), ct);
     }
 
     private static void BindComplianceScope(NpgsqlCommand command, HttpContext http)

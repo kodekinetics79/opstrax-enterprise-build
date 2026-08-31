@@ -25,6 +25,8 @@ public sealed class TenantScope : IAsyncDisposable
 {
     internal NpgsqlConnection Connection { get; }
     internal NpgsqlTransaction Transaction { get; }
+    // Factory-owned identity, never populated from an HTTP body or a system scope.
+    internal long? CompanyId { get; }
     private bool _completed;
     private readonly Func<CancellationToken, Task>? _refreshTenantTicket;
     private readonly TimeSpan _ticketRefreshInterval;
@@ -40,10 +42,12 @@ public sealed class TenantScope : IAsyncDisposable
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
         Func<CancellationToken, Task>? refreshTenantTicket = null,
-        TimeSpan? ticketRefreshInterval = null)
+        TimeSpan? ticketRefreshInterval = null,
+        long? companyId = null)
     {
         Connection = connection;
         Transaction = transaction;
+        CompanyId = companyId;
         _refreshTenantTicket = refreshTenantTicket;
         _ticketRefreshInterval = ticketRefreshInterval ?? TimeSpan.Zero;
         _refreshAfterTimestamp = NextRefreshTimestamp(_ticketRefreshInterval);
@@ -259,6 +263,54 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
             return result;
         }
         finally { _scopes.Current = null; }
+    }
+
+    // Canonical document mutations need a committed business result before the HTTP
+    // result is returned. Suspend (never complete/dispose) the request's outer scope.
+    // This uses the SAME restricted application pool and signed tenant authority.
+    // It costs a second pooled connection while an outer request scope is held.
+    public async Task<T> RunInDocumentTransactionAsync<T>(long companyId, Func<Task<T>> body,
+        Func<CancellationToken, Task>? afterConfirmedRollback = null, CancellationToken ct = default)
+    {
+        var priorScope = _scopes.Current;
+        if (companyId <= 0 || (RlsEnforced && (priorScope is null || priorScope.CompanyId != companyId)))
+            throw new InvalidOperationException("Document mutation requires the matching authenticated tenant scope.");
+        await using var scope = await BeginTenantScopeAsync(companyId, ct);
+        _scopes.Current = scope;
+        var commitAttempted = false;
+        try
+        {
+            var result = await body();
+            commitAttempted = true;
+            await scope.CompleteAsync(ct);
+            return result;
+        }
+        catch (Exception failure)
+        {
+            // Commit may have reached PostgreSQL even if its acknowledgment was lost.
+            // Never compensate an object after attempting it, including on cancellation.
+            if (commitAttempted)
+                throw new DocumentTransactionUncertainException("Document commit outcome is uncertain. Reload and reconcile before retrying.", failure);
+            using var rollbackTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            try { await scope.Transaction.RollbackAsync(rollbackTimeout.Token); }
+            catch (Exception rollbackFailure)
+            {
+                throw new DocumentTransactionUncertainException("Document rollback was not confirmed. Reload and reconcile before retrying.", rollbackFailure);
+            }
+            if (afterConfirmedRollback is not null)
+            {
+                // This callback is object-storage compensation only. The inner DB
+                // transaction is rolled back; callers must not execute DB commands here.
+                using var cleanupTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                try { await afterConfirmedRollback(cleanupTimeout.Token); }
+                catch (Exception cleanupFailure)
+                {
+                    throw new DocumentTransactionUncertainException("Document writes rolled back, but uploaded-file cleanup needs reconciliation.", cleanupFailure);
+                }
+            }
+            throw;
+        }
+        finally { _scopes.Current = priorScope; }
     }
 
     // Runs a cross-tenant/system mutation as one transaction even when RLS is disabled.
@@ -501,7 +553,7 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
                     "SELECT set_config('app.current_tenant_id', @cid, true)", connection, tx);
                 legacy.Parameters.AddWithValue("@cid", companyId.ToString());
                 await legacy.ExecuteNonQueryAsync(ct);
-                return new TenantScope(connection, tx);
+                return new TenantScope(connection, tx, companyId: companyId);
             }
 
             int backendPid;
@@ -559,7 +611,7 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
                     renew.Parameters.AddWithValue("@ticket", renewedTicket);
                     await renew.ExecuteNonQueryAsync(refreshCt);
                 },
-                refreshInterval);
+                refreshInterval, companyId);
         }
         catch
         {

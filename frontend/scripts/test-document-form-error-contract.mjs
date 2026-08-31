@@ -38,26 +38,29 @@ assert.equal(apiErrorMessage(undefined, fallback), fallback);
 console.log("Document API error envelope behavior passed.");
 
 const page = readFileSync(new URL("../src/pages/Batch3OperationsPage.tsx", import.meta.url), "utf8");
-const modalCall = page.match(/<RecordModal\b[^\n]+/u)?.[0];
-assert.ok(modalCall, "the existing document RecordModal wiring must be found");
-assert.match(modalCall,
-  /error=\{save\.isError\s*\?\s*\(?kind\s*===\s*"documents"\s*\?\s*apiErrorMessage\(save\.error,/u,
+const documentEditorCall = page.match(/<DocumentEditor\b[^\n]+/u)?.[0];
+assert.ok(documentEditorCall, "the dedicated document editor wiring must be found");
+assert.match(documentEditorCall,
+  /error=\{save\.isError\s*\?\s*apiErrorMessage\(save\.error,/u,
   "document save errors must use the handled API envelope instead of generic Axios status text");
 assert.match(page, /import\s*\{\s*apiErrorMessage\s*\}\s*from\s*["']@\/utils\/apiErrorMessage["']/u,
   "the form must reuse the existing error helper");
-assert.match(modalCall, /:\s*\(save\.error as Error\)\?\.message/u,
+const modalCall = page.match(/<RecordModal\b[^\n]+/u)?.[0];
+assert.ok(modalCall, "the non-document workflow RecordModal must remain wired");
+assert.match(modalCall, /\(save\.error as Error\)\?\.message/u,
   "the bounded documents fix must preserve the other workflow error branch");
-assert.match(page, /onSuccess:\s*async\s*\(\)\s*=>\s*\{\s*setEditing\(null\);/u,
+assert.match(page, /onSuccess:\s*async[\s\S]{0,400}setEditing\(null\);\s*await invalidate\(\);/u,
   "successful saves retain their existing close path");
 const saveMutation = page.slice(page.indexOf("const save = useMutation("), page.indexOf("const action = useMutation("));
 assert.doesNotMatch(saveMutation, /onError\s*:/u,
   "a rejection must not introduce a close/reset callback that discards correction input");
-const form = page.slice(page.indexOf("function RecordModal("), page.indexOf("function InfoPanel("));
-assert.match(form, /\{error\s*\?\s*<p role="alert"[^>]*>\{error\}<\/p>/u,
+const form = readFileSync(new URL("../src/components/DocumentEditor.tsx", import.meta.url), "utf8");
+assert.match(form, /\{error\s*\|\|\s*localError\s*\?\s*<p role="alert"[^>]*>\{localError\s*\|\|\s*error\}<\/p>/u,
   "the rejection must render as React text in the existing accessible alert");
 assert.doesNotMatch(form, /dangerouslySetInnerHTML/u,
   "server text must not become executable/raw HTML");
 assert.match(form, /useState<AnyRecord>\(initial\)/u,
   "the correction form retains its local input state");
-assert.match(form, /onSave\(form\)/u, "correction resubmits the retained form");
+assert.match(form, /onSave\(documentPayload\(form,\s*intent,\s*reason,\s*replaceQueue\)\)/u,
+  "correction resubmits only the explicit document payload");
 console.log("Document form error contract passed.");

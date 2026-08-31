@@ -76,6 +76,11 @@ if [ -z "${NEON_PG_URI:-}" ]; then
   exit 1
 fi
 command -v psql >/dev/null || { echo "ERROR: psql not found. brew install libpq (or run via docker exec)." >&2; exit 1; }
+command -v python3 >/dev/null || { echo "ERROR: python3 is required for secret-safe URI parsing." >&2; exit 1; }
+
+# Parse the URI from the environment and exec psql with individual libpq
+# variables. The full credential never enters a process argument or receipt.
+psql_neon() { python3 tools/psql-neon-env.py "$@"; }
 
 MIGRATIONS=(
   # The dated migrations are additive overlays. A genuinely empty Neon database
@@ -217,12 +222,13 @@ MIGRATIONS=(
   # requires both at boot, so a gateway shipped ahead of this migration refuses to
   # start rather than accepting no telemetry while reporting healthy.
   2026_08_28_stage92_gt06_replay_session_epoch
+  # Document-only origin tracking; legacy rows retain every stored workflow value.
+  2026_08_31_stage93_document_lifecycle_provenance
 )
 
-echo "Target host: $(printf '%s' "$NEON_PG_URI" | sed -E 's|.*@([^/:?]+).*|\1|')"
-echo "Pre-check: read-only connectivity…"
-psql "$NEON_PG_URI" -tA -c "SELECT current_database(), version()" | head -1
-stage58_already_applied=$(psql "$NEON_PG_URI" -tA -c "SELECT CASE WHEN to_regclass('public.schema_migrations') IS NOT NULL THEN (SELECT COUNT(*) FROM schema_migrations WHERE version='2026_07_31_stage58_nonforgeable_tenant_ticket') ELSE 0 END" 2>/dev/null || echo 0)
+echo "Pre-check: validated read-only database identity…"
+psql_neon -tA -c "SELECT current_database(), session_user, inet_server_addr(), inet_server_port(), version()" | head -1
+stage58_already_applied=$(psql_neon -tA -c "SELECT CASE WHEN to_regclass('public.schema_migrations') IS NOT NULL THEN (SELECT COUNT(*) FROM schema_migrations WHERE version='2026_07_31_stage58_nonforgeable_tenant_ticket') ELSE 0 END" 2>/dev/null || echo 0)
 
 for m in "${MIGRATIONS[@]}"; do
   f="database/migrations/$m.sql"
@@ -241,7 +247,7 @@ for m in "${MIGRATIONS[@]}"; do
     continue
   fi
   # Skip if already registered in the ledger (ledger may not exist before stage23 — treat as not applied).
-  applied=$(psql "$NEON_PG_URI" -tA -c "SELECT COUNT(*) FROM schema_migrations WHERE version='$ledger_version'" 2>/dev/null || echo 0)
+  applied=$(psql_neon -tA -c "SELECT COUNT(*) FROM schema_migrations WHERE version='$ledger_version'" 2>/dev/null || echo 0)
   # Some established environments and production-shaped tests predate Stage23's
   # ledger but already contain the complete canonical predecessor. Replaying
   # 001_schema.sql there is unsafe because its two circular foreign keys are
@@ -250,7 +256,7 @@ for m in "${MIGRATIONS[@]}"; do
   # then records database_init_001_schema in the authoritative ledger. A genuinely
   # empty Neon database fails this probe and still receives 001_schema.sql.
   if [ "$m" = "../init/001_schema" ] && [ "$applied" != "1" ]; then
-    predecessor_materialized=$(psql "$NEON_PG_URI" -tA -v ON_ERROR_STOP=1 -c "
+    predecessor_materialized=$(psql_neon -tA -v ON_ERROR_STOP=1 -c "
       SELECT CASE WHEN
         to_regclass('public.companies') IS NOT NULL
         AND to_regclass('public.drivers') IS NOT NULL
@@ -317,17 +323,17 @@ for m in "${MIGRATIONS[@]}"; do
   else
     echo "── applying $m"
   fi
-  psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f "$f"
+  psql_neon -v ON_ERROR_STOP=1 -q -f "$f"
   # stage21 precedes the ledger; later migrations must register successfully so a
   # failed bookkeeping write cannot masquerade as a complete deploy on the next run.
-  if [ "$(psql "$NEON_PG_URI" -tA -c "SELECT to_regclass('public.schema_migrations') IS NOT NULL")" = "t" ]; then
-    psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -c "INSERT INTO schema_migrations (version, description) VALUES ('$ledger_version', 'applied by apply-neon-predeploy-migrations.sh') ON CONFLICT (version) DO NOTHING"
+  if [ "$(psql_neon -tA -c "SELECT to_regclass('public.schema_migrations') IS NOT NULL")" = "t" ]; then
+    psql_neon -v ON_ERROR_STOP=1 -q -c "INSERT INTO schema_migrations (version, description) VALUES ('$ledger_version', 'applied by apply-neon-predeploy-migrations.sh') ON CONFLICT (version) DO NOTHING"
   fi
 done
 
 # Required owner schemas and pilot-wave migrations are release gates, not optional seed packs.
 # Verify their ledgers and critical objects before the terminal Stage58 reconciliation.
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 <<'SQL'
+psql_neon -v ON_ERROR_STOP=1 <<'SQL'
 DO $verify_pilot_wave$
 BEGIN
   IF EXISTS (
@@ -622,13 +628,13 @@ echo "Owner integrity: Stage42 gateway schema plus pilot ledgers and critical co
 
 if [ "$stage58_already_applied" = "1" ]; then
   echo "Reapplying terminal Stage58 without a legacy-policy window…"
-  psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_07_31_stage58_nonforgeable_tenant_ticket.sql
-  psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_07_31_stage59_data_protection_key_ring.sql
+  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_07_31_stage58_nonforgeable_tenant_ticket.sql
+  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_07_31_stage59_data_protection_key_ring.sql
   echo "Reapplying Stage67 device-credential boundary after Stage58…"
-  psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_02_stage67_telematics_diagnostics_integrity.sql
+  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_02_stage67_telematics_diagnostics_integrity.sql
   echo "Applying terminal Stage76 telemetry ACL reconciliation…"
-  psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_11_stage76_telematics_security_hardening.sql
-  psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 <<'SQL'
+  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_11_stage76_telematics_security_hardening.sql
+  psql_neon -v ON_ERROR_STOP=1 <<'SQL'
 DO $stage58_rerun$
 BEGIN
   IF (SELECT count(*) FROM pg_policies WHERE schemaname='public' AND roles='{public}'::name[])<>0
@@ -649,14 +655,14 @@ fi
 
 echo
 echo "Post-check: auth-critical columns…"
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -tA -c "
+psql_neon -v ON_ERROR_STOP=1 -tA -c "
   SELECT
     'users.customer_id: ' || COUNT(*) FILTER (WHERE column_name='customer_id') ||
     ' | users.branch_id: ' || COUNT(*) FILTER (WHERE column_name='branch_id')
   FROM information_schema.columns WHERE table_name='users' AND column_name IN ('customer_id','branch_id')"
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -tA -c "SELECT 'branches table: ' || COUNT(*) FROM information_schema.tables WHERE table_name='branches'"
+psql_neon -v ON_ERROR_STOP=1 -tA -c "SELECT 'branches table: ' || COUNT(*) FROM information_schema.tables WHERE table_name='branches'"
 echo "Post-check: customer feedback service contract…"
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 <<'SQL'
+psql_neon -v ON_ERROR_STOP=1 <<'SQL'
 DO $verify$
 DECLARE
   missing_columns TEXT[];
@@ -685,7 +691,7 @@ SQL
 echo "customer_feedback: 6/6 columns + ix_customer_feedback_company_customer"
 echo "Post-check: durable one-time MFA challenge ledger…"
 if [ "$stage58_already_applied" != "1" ]; then
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 <<'SQL'
+psql_neon -v ON_ERROR_STOP=1 <<'SQL'
 DO $verify$
 DECLARE
   table_oid OID := to_regclass('public.mfa_login_challenge_consumptions');
@@ -758,7 +764,7 @@ else
 fi
 echo "Post-check: complete Fleet production schema/RLS contract…"
 if [ "$stage58_already_applied" != "1" ]; then
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 <<'SQL'
+psql_neon -v ON_ERROR_STOP=1 <<'SQL'
 DO $verify$
 DECLARE
   required_tables TEXT[] := ARRAY[
@@ -897,7 +903,7 @@ else
 fi
 echo "Post-check: production runtime worker support…"
 if [ "$stage58_already_applied" != "1" ]; then
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 <<'SQL'
+psql_neon -v ON_ERROR_STOP=1 <<'SQL'
 DO $verify$
 DECLARE
   required TEXT[] := ARRAY[
@@ -980,7 +986,7 @@ else
   echo "runtime worker: terminal Stage58 policy contract already active — legacy pre-terminal policy check skipped"
 fi
 echo "Post-check: Fleet master identity uniqueness…"
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 <<'SQL'
+psql_neon -v ON_ERROR_STOP=1 <<'SQL'
 DO $verify$
 DECLARE
   invalid TEXT[];
@@ -1029,12 +1035,12 @@ terminal_file="database/migrations/${terminal_migration}.sql"
 # contracts. Every tenant table now exists, including Stage60-63 additions, so
 # Stage58 can atomically replace all legacy/public GUC policies before the first
 # production-wide policy scan. There is no post-scan legacy-policy window.
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f "$terminal_file"
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_07_31_stage59_data_protection_key_ring.sql
+psql_neon -v ON_ERROR_STOP=1 -q -f "$terminal_file"
+psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_07_31_stage59_data_protection_key_ring.sql
 
 echo "Post-check: production-wide tenant RLS coverage…"
 if [ "$stage58_already_applied" != "1" ]; then
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 <<'SQL'
+psql_neon -v ON_ERROR_STOP=1 <<'SQL'
 DO $verify$
 DECLARE
   violations TEXT[];
@@ -1148,7 +1154,7 @@ BEGIN
 END
 $verify$;
 SQL
-tenant_rls_count=$(psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -tA -c "
+tenant_rls_count=$(psql_neon -v ON_ERROR_STOP=1 -tA -c "
   SELECT COUNT(*) FROM pg_class cls JOIN pg_namespace ns ON ns.oid=cls.relnamespace
   WHERE ns.nspname='public' AND cls.relkind IN ('r','p')
     AND cls.relname NOT IN ('platform_invoices','gps_gateway_replay','platform_impersonation_sessions','roles','report_catalog')
@@ -1161,7 +1167,7 @@ else
   echo "tenant RLS: terminal Stage58 policy contract already active — legacy pre-terminal policy check skipped"
 fi
 echo "Post-check: Fleet cold-chain/runtime-route/asset/workforce integrity contracts…"
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 <<'SQL'
+psql_neon -v ON_ERROR_STOP=1 <<'SQL'
 DO $verify$
 DECLARE invalid TEXT[];
 BEGIN
@@ -1255,7 +1261,7 @@ $verify$;
 SQL
 echo "Fleet integrity: Stage54/55/56/57 exact indexes, authorization/workforce evidence, and ledgers verified"
 echo "Verifying terminal Stage58/59 non-forgeable tenant boundary…"
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 <<'SQL'
+psql_neon -v ON_ERROR_STOP=1 <<'SQL'
 DO $verify_stage58$
 BEGIN
   IF (SELECT count(*) FROM schema_migrations WHERE version='2026_07_31_stage58_nonforgeable_tenant_ticket')<>1 THEN
@@ -1367,8 +1373,8 @@ $verify_stage58$;
 SQL
 echo "Stage58: signed transaction tickets, exact roles/policies/grants, and control-plane separation verified"
 echo "Reapplying Stage67 least-privilege device credential boundary after terminal reconciliation…"
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_02_stage67_telematics_diagnostics_integrity.sql
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q <<'SQL'
+psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_02_stage67_telematics_diagnostics_integrity.sql
+psql_neon -v ON_ERROR_STOP=1 -q <<'SQL'
 DO $verify_stage67_credentials$
 BEGIN
   IF has_column_privilege('opstrax_app','eld_devices','api_key_hash','SELECT')
@@ -1383,8 +1389,8 @@ END
 $verify_stage67_credentials$;
 SQL
 echo "Applying terminal Stage76 telemetry default-deny/runtime ACL reconciliation…"
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_11_stage76_telematics_security_hardening.sql
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q <<'SQL'
+psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_11_stage76_telematics_security_hardening.sql
+psql_neon -v ON_ERROR_STOP=1 -q <<'SQL'
 DO $verify_stage76_terminal$
 BEGIN
   IF (SELECT count(*) FROM schema_migrations
@@ -1441,6 +1447,6 @@ $verify_stage76_terminal$;
 SQL
 echo
 echo "Ledger:"
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -tA -c "SELECT version FROM schema_migrations ORDER BY version"
+psql_neon -v ON_ERROR_STOP=1 -tA -c "SELECT version FROM schema_migrations ORDER BY version"
 echo
 echo "✅ Neon predeploy chain is prepared with Stage76 terminal; deployment still requires exact-SHA release evidence."
