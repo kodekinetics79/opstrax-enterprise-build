@@ -34,4 +34,12 @@ const form = page.slice(page.indexOf("function VehicleFormModal("));
 assert.match(form, /role="alert" aria-live="assertive"/, "the correction message must be announced");
 assert.match(page, /onSuccess: async \(\) => \{ setEditing\(null\)/,
   "the form must only close automatically after a successful save");
+assert.match(page, /onClose=\{\(\) => \{ if \(save\.isPending\) return; save\.reset\(\); setEditing\(null\); setIsCreating\(false\); \}\}/,
+  "dismissal must block while saving, then clear settled errors before another form can open");
+assert.match(form, /aria-label="Close" disabled=\{saving\}/, "Close must visibly disable during save");
+assert.match(form, /disabled=\{saving\} onClick=\{onClose\}[^>]*>Cancel/, "Cancel must visibly disable during save");
+assert.match(form, /max-h-\[calc\(100dvh-2rem\)\]/,
+  "the form must fit the dynamic viewport with its outer padding");
+assert.match(form, /overflow-y-auto overscroll-contain/,
+  "long mobile forms need their own scroll container so footer controls remain reachable");
 console.log("Vehicle form error contract passed.");

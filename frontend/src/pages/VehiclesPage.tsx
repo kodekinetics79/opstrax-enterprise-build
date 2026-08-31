@@ -439,7 +439,7 @@ export function VehiclesPage() {
 
       {editing && canManageFleet && (
         <VehicleFormModal title={isCreating ? "New vehicle" : "Edit vehicle"} initial={editing} saving={save.isPending} serverError={save.error ? apiErrorMessage(save.error, "The vehicle could not be saved. Please try again.") : undefined}
-          onClose={() => { setEditing(null); setIsCreating(false); }} onSave={(p) => save.mutate(p)} />
+          onClose={() => { if (save.isPending) return; save.reset(); setEditing(null); setIsCreating(false); }} onSave={(p) => save.mutate(p)} />
       )}
       {assignmentVehicle && canAssign ? (
         <DriverAssignmentModal
@@ -965,13 +965,13 @@ function VehicleFormModal({ title, initial, saving, serverError, onClose, onSave
   };
   return (
     <div className="fixed inset-0 z-[60] grid place-items-center bg-slate-900/40 p-4 backdrop-blur-sm" onClick={onClose}>
-      <form onClick={(e) => e.stopPropagation()} onSubmit={submit} className="fc-neumo w-full max-w-xl p-6 anim-fade-up">
+      <form onClick={(e) => e.stopPropagation()} onSubmit={submit} className="fc-neumo max-h-[calc(100dvh-2rem)] w-full max-w-xl overflow-y-auto overscroll-contain p-6 anim-fade-up">
         <div className="flex items-start justify-between">
           <div>
             <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">Fleet</div>
             <h2 className="mt-1 text-xl font-black tracking-tight text-slate-900">{title}</h2>
           </div>
-          <button type="button" aria-label="Close" onClick={onClose} className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"><X className="h-5 w-5" /></button>
+          <button type="button" aria-label="Close" disabled={saving} onClick={onClose} className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:cursor-wait disabled:opacity-50"><X className="h-5 w-5" /></button>
         </div>
         <div className="mt-6 grid gap-4 sm:grid-cols-2">
           {FIELDS.map((f) => (
@@ -1004,7 +1004,7 @@ function VehicleFormModal({ title, initial, saving, serverError, onClose, onSave
           </div>
         ) : null}
         <div className="mt-6 flex justify-end gap-3">
-          <button type="button" onClick={onClose} className="btn-ghost h-11">Cancel</button>
+          <button type="button" disabled={saving} onClick={onClose} className="btn-ghost h-11 disabled:cursor-wait disabled:opacity-50">Cancel</button>
           <button type="submit" disabled={saving} className="btn-primary h-11"><Save className="h-4 w-4" /> {saving ? "Saving…" : "Save vehicle"}</button>
         </div>
       </form>
