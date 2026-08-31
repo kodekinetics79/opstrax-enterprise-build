@@ -547,7 +547,7 @@ export function AppShell() {
       <div className="flex h-screen flex-col overflow-hidden xl:pl-[296px]">
 
         {/* ── Header ── */}
-        <header className="glass-nav shell-header z-20 shrink-0 border-b">
+        <header className="glass-nav shell-header relative z-40 shrink-0 border-b">
           <div className="mx-auto max-w-[1800px] px-4 md:px-6">
             <div className="flex h-[54px] items-center gap-3">
 
@@ -670,7 +670,7 @@ export function AppShell() {
                   </button>
 
                   {notifOpen && (
-                    <div className="panel anim-slide-right absolute right-0 top-full z-50 mt-2 w-[300px] overflow-hidden p-0">
+                    <div style={{ position: "absolute" }} className="panel anim-slide-right absolute right-0 top-full z-50 mt-2 w-[300px] overflow-hidden p-0">
                       <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
                         <p className="section-title">Notifications</p>
                         <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-bold text-slate-500">
@@ -730,7 +730,7 @@ export function AppShell() {
                     <ChevronDown className="hidden h-3 w-3 shrink-0 text-slate-400 lg:block" />
                   </button>
                   {profileOpen && (
-                    <div className="panel absolute right-0 top-full z-50 mt-2 w-56 overflow-hidden p-0 shadow-lg">
+                    <div style={{ position: "absolute" }} className="panel absolute right-0 top-full z-50 mt-2 w-56 overflow-hidden p-0 shadow-lg">
                       {/* User info */}
                       <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-100 bg-slate-50">
                         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-linear-to-br from-teal-100 to-blue-100 text-[14px] font-extrabold text-teal-700">
