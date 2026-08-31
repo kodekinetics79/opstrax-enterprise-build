@@ -21,6 +21,7 @@ import { documentsApi } from "@/services/documentsApi";
 import { dvirApi } from "@/services/dvirApi";
 import { maintenanceApi } from "@/services/maintenanceApi";
 import { workOrdersApi } from "@/services/workOrdersApi";
+import { apiErrorMessage } from "@/utils/apiErrorMessage";
 import type { AnyRecord } from "@/types";
 
 type Batch3Kind = "maintenance" | "work-orders" | "dvir" | "documents";
@@ -274,7 +275,7 @@ export function Batch3OperationsPage({ kind }: { kind: Batch3Kind }) {
         onEdit={(record) => setEditing(record)}
         onAction={(type, row) => action.mutate({ type, row })}
       />
-      {editing ? <RecordModal title={config.createLabel} fields={config.fields} initial={editing} saving={save.isPending} error={save.isError ? (save.error as Error)?.message || "The document could not be saved. Review the fields and try again." : null} requireFile={kind === "documents" && !editing.id} onClose={() => { save.reset(); setEditing(null); }} onSave={(payload) => save.mutate(payload)} /> : null}
+      {editing ? <RecordModal title={config.createLabel} fields={config.fields} initial={editing} saving={save.isPending} error={save.isError ? (kind === "documents" ? apiErrorMessage(save.error, "The document could not be saved. Review the fields and try again.") : (save.error as Error)?.message || "The document could not be saved. Review the fields and try again.") : null} requireFile={kind === "documents" && !editing.id} onClose={() => { save.reset(); setEditing(null); }} onSave={(payload) => save.mutate(payload)} /> : null}
     </div>
   );
 }
