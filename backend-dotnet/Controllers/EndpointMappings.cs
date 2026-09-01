@@ -1169,7 +1169,11 @@ public static partial class EndpointMappings
         app.MapGet("/api/maintenance/recommendations", (HttpContext http, Database db, CancellationToken ct) =>
         {
             if (RequirePermission(http, "maintenance:view") is { } denied) return Task.FromResult(denied);
-            return OkRows(db, "SELECT * FROM ai_recommendations WHERE module_key='maintenance' AND company_id=@cid ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+            // ai_recommendations has no durable branch-owned relation. A branch-bound
+            // principal must not inherit tenant-wide maintenance narratives.
+            return GetBranchId(http) is null
+                ? OkRows(db, "SELECT * FROM ai_recommendations WHERE module_key='maintenance' AND company_id=@cid ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct)
+                : BranchBoundMaintenanceRecommendations();
         });
         app.MapGet("/api/maintenance", MaintenanceItems);
         app.MapGet("/api/maintenance/{id:long}", MaintenanceDetail);
@@ -5158,7 +5162,9 @@ public static partial class EndpointMappings
         {
             record,
             timeline = await EntityTimeline(db, "Vehicle", id, GetCompanyId(http), ct),
-            recommendations = await TenantModuleRecommendations(db, GetCompanyId(http), "vehicles", ct),
+            recommendations = GetBranchId(http) is null ?
+                await TenantModuleRecommendations(db, GetCompanyId(http), "vehicles", ct)
+                : [],
             documents = await db.QueryAsync("SELECT * FROM vehicle_documents WHERE vehicle_id=@id ORDER BY expiry_date", c => c.Parameters.AddWithValue("@id", id), ct),
             maintenance = await db.QueryAsync("SELECT * FROM maintenance_items WHERE vehicle_id=@id ORDER BY due_date LIMIT 8", c => c.Parameters.AddWithValue("@id", id), ct),
             currentDevices = await db.QueryAsync(
@@ -5239,7 +5245,9 @@ public static partial class EndpointMappings
                   LIMIT 1",
                 c => c.Parameters.AddWithValue("@id", id), ct),
             timeline = await EntityTimeline(db, "Driver", id, GetCompanyId(http), ct),
-            recommendations = await TenantModuleRecommendations(db, GetCompanyId(http), "drivers", ct),
+            recommendations = GetBranchId(http) is null ?
+                await TenantModuleRecommendations(db, GetCompanyId(http), "drivers", ct)
+                : [],
             documents = await db.QueryAsync("SELECT * FROM driver_documents WHERE driver_id=@id ORDER BY expiry_date", c => c.Parameters.AddWithValue("@id", id), ct),
             certifications = await db.QueryAsync("SELECT * FROM driver_certifications WHERE driver_id=@id ORDER BY expiry_date", c => c.Parameters.AddWithValue("@id", id), ct),
             hos = await db.QueryAsync("SELECT * FROM hos_logs WHERE driver_id=@id ORDER BY log_date DESC LIMIT 8", c => c.Parameters.AddWithValue("@id", id), ct),
@@ -8456,8 +8464,106 @@ public static partial class EndpointMappings
                       WHEN mi.due_date <= CURRENT_DATE + 7 * INTERVAL '1 day' THEN 'Due Soon'
                       ELSE 'Scheduled' END downtime_risk_badge
           FROM maintenance_items mi
-          LEFT JOIN vehicles v ON v.id=mi.vehicle_id
-          LEFT JOIN assets a ON a.id=mi.asset_id";
+          LEFT JOIN vehicles v ON v.id=mi.vehicle_id AND v.company_id=mi.company_id
+          LEFT JOIN assets a ON a.id=mi.asset_id AND a.company_id=mi.company_id";
+
+    // Legacy maintenance rows do not carry branch_id. For branch-bound principals,
+    // every present owner must resolve to a live master in the exact signed branch.
+    // This excludes null, dangling, deleted, foreign and mixed-owner records.
+    private const string MaintenanceBranchScopeSql = @"
+          AND (@branchId::BIGINT IS NULL OR (
+               (mi.vehicle_id IS NOT NULL OR mi.asset_id IS NOT NULL)
+               AND (mi.vehicle_id IS NULL OR EXISTS (
+                   SELECT 1 FROM vehicles v_scope
+                   WHERE v_scope.id=mi.vehicle_id AND v_scope.company_id=mi.company_id
+                     AND v_scope.branch_id=@branchId AND v_scope.deleted_at IS NULL))
+               AND (mi.asset_id IS NULL OR EXISTS (
+                   SELECT 1 FROM assets a_scope
+                   WHERE a_scope.id=mi.asset_id AND a_scope.company_id=mi.company_id
+                     AND a_scope.deleted_at IS NULL
+                     AND (a_scope.assigned_vehicle_id IS NOT NULL OR a_scope.assigned_driver_id IS NOT NULL)
+                     AND (a_scope.assigned_vehicle_id IS NULL OR EXISTS (
+                         SELECT 1 FROM vehicles av_scope
+                         WHERE av_scope.id=a_scope.assigned_vehicle_id
+                           AND av_scope.company_id=a_scope.company_id
+                           AND av_scope.branch_id=@branchId AND av_scope.deleted_at IS NULL))
+                     AND (a_scope.assigned_driver_id IS NULL OR EXISTS (
+                         SELECT 1 FROM drivers ad_scope
+                         WHERE ad_scope.id=a_scope.assigned_driver_id
+                           AND ad_scope.company_id=a_scope.company_id
+                           AND ad_scope.branch_id=@branchId AND ad_scope.deleted_at IS NULL))))))";
+
+    // Summary work-order counts follow the same fail-closed owner rule. A linked
+    // maintenance item is also treated as a present owner and must itself be in scope.
+    private const string WorkOrderBranchScopeSql = @"
+          AND (@branchId::BIGINT IS NULL OR (
+               (wo.vehicle_id IS NOT NULL OR wo.asset_id IS NOT NULL OR wo.maintenance_item_id IS NOT NULL)
+               AND (wo.vehicle_id IS NULL OR EXISTS (
+                   SELECT 1 FROM vehicles v_scope
+                   WHERE v_scope.id=wo.vehicle_id AND v_scope.company_id=wo.company_id
+                     AND v_scope.branch_id=@branchId AND v_scope.deleted_at IS NULL))
+               AND (wo.asset_id IS NULL OR EXISTS (
+                   SELECT 1 FROM assets a_scope
+                   WHERE a_scope.id=wo.asset_id AND a_scope.company_id=wo.company_id
+                     AND a_scope.deleted_at IS NULL
+                     AND (a_scope.assigned_vehicle_id IS NOT NULL OR a_scope.assigned_driver_id IS NOT NULL)
+                     AND (a_scope.assigned_vehicle_id IS NULL OR EXISTS (
+                         SELECT 1 FROM vehicles av_scope
+                         WHERE av_scope.id=a_scope.assigned_vehicle_id
+                           AND av_scope.company_id=a_scope.company_id
+                           AND av_scope.branch_id=@branchId AND av_scope.deleted_at IS NULL))
+                     AND (a_scope.assigned_driver_id IS NULL OR EXISTS (
+                         SELECT 1 FROM drivers ad_scope
+                         WHERE ad_scope.id=a_scope.assigned_driver_id
+                           AND ad_scope.company_id=a_scope.company_id
+                           AND ad_scope.branch_id=@branchId AND ad_scope.deleted_at IS NULL))))
+               AND (wo.maintenance_item_id IS NULL OR EXISTS (
+                   SELECT 1 FROM maintenance_items mi_scope
+                   WHERE mi_scope.id=wo.maintenance_item_id AND mi_scope.company_id=wo.company_id
+                     AND mi_scope.deleted_at IS NULL
+                     AND (mi_scope.vehicle_id IS NOT NULL OR mi_scope.asset_id IS NOT NULL)
+                     AND (mi_scope.vehicle_id IS NULL OR EXISTS (
+                         SELECT 1 FROM vehicles vm_scope
+                         WHERE vm_scope.id=mi_scope.vehicle_id AND vm_scope.company_id=mi_scope.company_id
+                           AND vm_scope.branch_id=@branchId AND vm_scope.deleted_at IS NULL))
+                     AND (mi_scope.asset_id IS NULL OR EXISTS (
+                         SELECT 1 FROM assets am_scope
+                         WHERE am_scope.id=mi_scope.asset_id AND am_scope.company_id=mi_scope.company_id
+                           AND am_scope.deleted_at IS NULL
+                           AND (am_scope.assigned_vehicle_id IS NOT NULL OR am_scope.assigned_driver_id IS NOT NULL)
+                           AND (am_scope.assigned_vehicle_id IS NULL OR EXISTS (
+                               SELECT 1 FROM vehicles avm_scope
+                               WHERE avm_scope.id=am_scope.assigned_vehicle_id
+                                 AND avm_scope.company_id=am_scope.company_id
+                                 AND avm_scope.branch_id=@branchId AND avm_scope.deleted_at IS NULL))
+                           AND (am_scope.assigned_driver_id IS NULL OR EXISTS (
+                               SELECT 1 FROM drivers adm_scope
+                               WHERE adm_scope.id=am_scope.assigned_driver_id
+                                 AND adm_scope.company_id=am_scope.company_id
+                                 AND adm_scope.branch_id=@branchId AND adm_scope.deleted_at IS NULL))))))))";
+
+    private const string MaintenanceScheduleBranchScopeSql = @"
+          AND (@branchId::BIGINT IS NULL OR (
+               (ms.vehicle_id IS NOT NULL OR ms.asset_id IS NOT NULL)
+               AND (ms.vehicle_id IS NULL OR EXISTS (
+                   SELECT 1 FROM vehicles v_scope
+                   WHERE v_scope.id=ms.vehicle_id AND v_scope.company_id=ms.company_id
+                     AND v_scope.branch_id=@branchId AND v_scope.deleted_at IS NULL))
+               AND (ms.asset_id IS NULL OR EXISTS (
+                   SELECT 1 FROM assets a_scope
+                   WHERE a_scope.id=ms.asset_id AND a_scope.company_id=ms.company_id
+                     AND a_scope.deleted_at IS NULL
+                     AND (a_scope.assigned_vehicle_id IS NOT NULL OR a_scope.assigned_driver_id IS NOT NULL)
+                     AND (a_scope.assigned_vehicle_id IS NULL OR EXISTS (
+                         SELECT 1 FROM vehicles av_scope
+                         WHERE av_scope.id=a_scope.assigned_vehicle_id
+                           AND av_scope.company_id=a_scope.company_id
+                           AND av_scope.branch_id=@branchId AND av_scope.deleted_at IS NULL))
+                     AND (a_scope.assigned_driver_id IS NULL OR EXISTS (
+                         SELECT 1 FROM drivers ad_scope
+                         WHERE ad_scope.id=a_scope.assigned_driver_id
+                           AND ad_scope.company_id=a_scope.company_id
+                           AND ad_scope.branch_id=@branchId AND ad_scope.deleted_at IS NULL))))))";
 
     private const string WorkOrdersBaseSql =
         @"SELECT wo.*, COALESCE(wo.work_order_number,wo.work_order_code) work_order_number, wo.risk_score repair_priority_score,
@@ -8498,56 +8604,87 @@ public static partial class EndpointMappings
                (d.entity_type='driver' AND EXISTS (SELECT 1 FROM drivers dr_scope WHERE dr_scope.id=d.entity_id AND dr_scope.company_id=d.company_id AND dr_scope.branch_id=@branchId AND dr_scope.deleted_at IS NULL)) OR
                (d.entity_type='asset' AND EXISTS (SELECT 1 FROM fleet_tms_assets a_scope WHERE a_scope.id=d.entity_id AND a_scope.company_id=d.company_id AND a_scope.branch_id=@branchId)))";
 
+    private static Task<IResult> BranchBoundMaintenanceRecommendations()
+        => Task.FromResult<IResult>(Results.Ok(ApiResponse<object>.Ok(Array.Empty<object>())));
+
     private static Task<IResult> MaintenanceItems(HttpContext http, Database db, CancellationToken ct)
     {
         // DEF-006 sweep: this list was reachable by any authenticated principal AND read
         // maintenance_items across every tenant. Gated + company-scoped now.
         if (RequirePermission(http, "maintenance:view") is { } denied) return Task.FromResult(denied);
-        return OkRows(db, MaintenanceBaseSql + " WHERE mi.company_id=@cid AND mi.deleted_at IS NULL ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Medium','Low'], mi.priority), mi.due_date, mi.id DESC",
-            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+        return OkRows(db, MaintenanceBaseSql + " WHERE mi.company_id=@cid AND mi.deleted_at IS NULL" + MaintenanceBranchScopeSql + " ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Medium','Low'], mi.priority), mi.due_date, mi.id DESC",
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid", GetCompanyId(http));
+                c.Parameters.AddWithValue("@branchId", (object?)GetBranchId(http) ?? DBNull.Value);
+            }, ct: ct);
     }
 
     private static async Task<IResult> MaintenanceSummary(HttpContext http, Database db, CancellationToken ct)
     {
         if (RequirePermission(http, "maintenance:view") is { } denied) return denied;
         var row = await db.QuerySingleAsync(
-            @"SELECT SUM(CASE WHEN mi.status IN ('Open','Scheduled','In Progress') OR mi.due_date <= CURRENT_DATE + 14 * INTERVAL '1 day' THEN 1 ELSE 0 END) maintenance_due,
+            @"WITH scoped_maintenance AS (
+                SELECT mi.* FROM maintenance_items mi
+                WHERE mi.company_id=@cid AND mi.deleted_at IS NULL" + MaintenanceBranchScopeSql + @"
+              )
+              SELECT SUM(CASE WHEN mi.status IN ('Open','Scheduled','In Progress') OR mi.due_date <= CURRENT_DATE + 14 * INTERVAL '1 day' THEN 1 ELSE 0 END) maintenance_due,
                      SUM(CASE WHEN mi.status='Overdue' OR mi.due_date < CURRENT_DATE THEN 1 ELSE 0 END) overdue_services,
                      SUM(CASE WHEN mi.priority='Critical' OR mi.risk_score >= 80 THEN 1 ELSE 0 END) critical_maintenance,
-                     (SELECT COUNT(*) FROM vehicles WHERE status='Maintenance' AND company_id=@cid) vehicles_out_of_service,
+                     (SELECT COUNT(*) FROM vehicles v_scope WHERE v_scope.status='Maintenance' AND v_scope.company_id=@cid
+                       AND (@branchId::BIGINT IS NULL OR (v_scope.deleted_at IS NULL AND v_scope.branch_id=@branchId))) vehicles_out_of_service,
                      CONCAT(ROUND(AVG(CASE WHEN wo.status='Completed' THEN wo.downtime_hours ELSE NULL END),1),'h') average_downtime,
                      CONCAT(ROUND(100 * SUM(CASE WHEN mi.status NOT IN ('Overdue','Deleted') THEN 1 ELSE 0 END) / NULLIF(COUNT(*),0),1),'%') pm_compliance,
-                     (SELECT COUNT(*) FROM work_orders WHERE deleted_at IS NULL AND status NOT IN ('Completed','Cancelled','Deleted') AND company_id=@cid) open_work_orders,
+                     (SELECT COUNT(*) FROM work_orders wo WHERE wo.deleted_at IS NULL
+                       AND wo.status NOT IN ('Completed','Cancelled','Deleted') AND wo.company_id=@cid" + WorkOrderBranchScopeSql + @") open_work_orders,
                      CONCAT('$', TO_CHAR((COALESCE(SUM(mi.estimated_cost),0))::numeric, 'FM9,999,999,999')) estimated_maintenance_cost,
                      SUM(CASE WHEN mi.service_type IN ('Brake Inspection','Tire Rotation') THEN 1 ELSE 0 END) repeat_issues,
                      SUM(CASE WHEN mi.due_date BETWEEN CURRENT_DATE AND CURRENT_DATE + 7 * INTERVAL '1 day' THEN 1 ELSE 0 END) service_due_this_week,
                      SUM(CASE WHEN mi.asset_id IS NOT NULL THEN 1 ELSE 0 END) asset_maintenance_due,
                      SUM(CASE WHEN mi.risk_score >= 70 THEN 1 ELSE 0 END) warranty_risk_placeholder,
                      ROUND(100 - AVG(LEAST(mi.risk_score,95)),1) maintenance_readiness_score
-              FROM maintenance_items mi
-              LEFT JOIN work_orders wo ON wo.maintenance_item_id=mi.id
-              WHERE mi.company_id=@cid AND mi.deleted_at IS NULL",
-            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct);
+              FROM scoped_maintenance mi
+              LEFT JOIN work_orders wo ON wo.maintenance_item_id=mi.id AND wo.company_id=mi.company_id
+                AND (@branchId::BIGINT IS NULL OR wo.deleted_at IS NULL)" + WorkOrderBranchScopeSql,
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid", GetCompanyId(http));
+                c.Parameters.AddWithValue("@branchId", (object?)GetBranchId(http) ?? DBNull.Value);
+            }, ct);
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
     }
 
     private static async Task<IResult> MaintenanceDetail(HttpContext http, long id, Database db, CancellationToken ct)
     {
         if (RequirePermission(http, "maintenance:view") is { } denied) return denied;
-        var record = (await db.QueryAsync(MaintenanceBaseSql + " WHERE mi.id=@id AND mi.company_id=@cid",
-            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct)).FirstOrDefault();
+        var record = (await db.QueryAsync(MaintenanceBaseSql + " WHERE mi.id=@id AND mi.company_id=@cid AND (@branchId::BIGINT IS NULL OR mi.deleted_at IS NULL)" + MaintenanceBranchScopeSql,
+            c =>
+            {
+                c.Parameters.AddWithValue("@id", id);
+                c.Parameters.AddWithValue("@cid", GetCompanyId(http));
+                c.Parameters.AddWithValue("@branchId", (object?)GetBranchId(http) ?? DBNull.Value);
+            }, ct)).FirstOrDefault();
         if (record is null) return Results.NotFound(ApiResponse<object>.Fail("Maintenance item not found"));
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             record,
-            schedules = await db.QueryAsync("SELECT * FROM maintenance_schedules WHERE (vehicle_id=@vehicleId::BIGINT OR asset_id=@assetId::BIGINT) AND deleted_at IS NULL ORDER BY next_due_date LIMIT 8", c =>
+            schedules = await db.QueryAsync("SELECT ms.* FROM maintenance_schedules ms WHERE ms.company_id=@cid AND (ms.vehicle_id=@vehicleId::BIGINT OR ms.asset_id=@assetId::BIGINT) AND ms.deleted_at IS NULL" + MaintenanceScheduleBranchScopeSql + " ORDER BY ms.next_due_date LIMIT 8", c =>
             {
+                c.Parameters.AddWithValue("@cid", GetCompanyId(http));
                 c.Parameters.AddWithValue("@vehicleId", record["vehicleId"] ?? (object)DBNull.Value);
                 c.Parameters.AddWithValue("@assetId",   record["assetId"]   ?? (object)DBNull.Value);
+                c.Parameters.AddWithValue("@branchId", (object?)GetBranchId(http) ?? DBNull.Value);
             }, ct),
-            workOrders = await db.QueryAsync("SELECT * FROM work_orders WHERE maintenance_item_id=@id AND deleted_at IS NULL ORDER BY created_date DESC", c => c.Parameters.AddWithValue("@id", id), ct),
+            workOrders = await db.QueryAsync("SELECT wo.* FROM work_orders wo WHERE wo.maintenance_item_id=@id AND wo.company_id=@cid AND wo.deleted_at IS NULL" + WorkOrderBranchScopeSql + " ORDER BY wo.created_date DESC", c =>
+            {
+                c.Parameters.AddWithValue("@id", id);
+                c.Parameters.AddWithValue("@cid", GetCompanyId(http));
+                c.Parameters.AddWithValue("@branchId", (object?)GetBranchId(http) ?? DBNull.Value);
+            }, ct),
             timeline = await EntityTimeline(db, "Maintenance", id, GetCompanyId(http), ct),
-            recommendations = await TenantModuleRecommendations(db, GetCompanyId(http), "maintenance", ct),
+            recommendations = GetBranchId(http) is null
+                ? await TenantModuleRecommendations(db, GetCompanyId(http), "maintenance", ct)
+                : [],
             auditTrail = await TenantAuditRows(db, GetCompanyId(http), "Maintenance", id, ct)
         }));
     }
@@ -9765,6 +9902,16 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         {
             // DEF-006: gate with the owning module's read permission.
             if (RequirePermission(http, permission) is { } denied) return denied;
+            var entityType = module switch
+            {
+                "vehicles" => "Vehicle",
+                "drivers" => "Driver",
+                _ => null,
+            };
+            if (entityType is not null && !await EntityInAuthorizedScope(http, entityType, id, db, ct))
+                return Results.NotFound(ApiResponse<object>.Fail($"{entityType} not found"));
+            if (entityType is not null && GetBranchId(http) is not null)
+                return Results.Ok(ApiResponse<object>.Ok(Array.Empty<object>()));
             return Results.Ok(ApiResponse<object>.Ok(
                 await TenantModuleRecommendations(db, GetCompanyId(http), module, ct)));
         };
