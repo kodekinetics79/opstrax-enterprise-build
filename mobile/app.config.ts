@@ -31,7 +31,6 @@ const config: ExpoConfig = {
   orientation: "portrait",
   ...(hasBundledAssets ? { icon: "./assets/icon.png" } : {}),
   userInterfaceStyle: "dark",
-  scheme: STAGE === "production" ? "opstrax" : `opstrax-${STAGE.replace(/[^a-z0-9-]+/g, "-")}`,
   plugins: [
     "expo-secure-store",
     [
@@ -43,6 +42,7 @@ const config: ExpoConfig = {
       },
     ],
     "expo-location",
+    "./plugins/with-no-inbound-linking",
   ],
   ios: {
     supportsTablet: true,

@@ -28,8 +28,8 @@
       "name": "image-size",
       "severity": "high",
       "via": [
-        { "source": 1138808, "name": "image-size", "dependency": "image-size", "severity": "high", "url": "https://github.com/advisories/GHSA-w3rx-r6r6-pgpr" },
-        { "source": 1138809, "name": "image-size", "dependency": "image-size", "severity": "high", "url": "https://github.com/advisories/GHSA-5p2g-fcmc-qvqq" }
+        { "source": 1138808, "name": "image-size", "dependency": "image-size", "severity": "high", "url": "https://github.com/advisories/GHSA-w3rx-r6r6-pgpr", "range": "<=2.0.2" },
+        { "source": 1138809, "name": "image-size", "dependency": "image-size", "severity": "high", "url": "https://github.com/advisories/GHSA-5p2g-fcmc-qvqq", "range": "<=2.0.2" }
       ]
     },
     "metro": { "name": "metro", "severity": "high", "via": ["image-size", "metro-config", "metro-transform-worker"] },
