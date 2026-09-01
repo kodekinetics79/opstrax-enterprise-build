@@ -196,6 +196,21 @@ public sealed class EnterpriseJourneyHardeningTests
         Assert.Contains("exportCsv(\"service-history\", await serviceHistoryApi())", page);
         Assert.Contains("exportCsv(\"downtime\", await downtimeApi())", page);
         Assert.Contains("exportCsv(\"preventive-maintenance\", await pmApi())", page);
+        Assert.Contains("const canExport = hasPermission(\"reports:export\")", page);
+        Assert.Contains("if (!canExport) return", page);
+        Assert.Contains("{canExport && <button", page);
+
+        var command = Read("frontend", "src", "pages", "MaintenanceCommandPage.tsx");
+        Assert.Contains("const canExport = hasPermission(\"reports:export\")", command);
+        Assert.Contains("{canExport && <button", command);
+        Assert.Contains("exportCsv(\"maintenance-defects\"", command);
+
+        var endpoints = Read("backend-dotnet", "Controllers", "EndpointMappings.cs");
+        var recommendations = Block(endpoints,
+            "app.MapGet(\"/api/maintenance/recommendations\"",
+            "app.MapGet(\"/api/maintenance\", MaintenanceItems)");
+        Assert.Contains("RequirePermission(http, \"maintenance:view\")", recommendations);
+        Assert.DoesNotContain("telemetry.recommendations.read", recommendations);
     }
 
     private static string Block(string source, string startMarker, string endMarker)

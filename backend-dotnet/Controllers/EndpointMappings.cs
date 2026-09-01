@@ -2388,9 +2388,11 @@ public static partial class EndpointMappings
         ["Driver"]                   = ["driver:self","notifications:view","messages:send"],
         ["Safety Manager"]           = ["dashboard:view","safety:view","safety:create","safety:update","safety:review","safety:manage","safety:evidence:view","safety:evidence:export","alerts:view","alerts:acknowledge","alerts:close","compliance:view","compliance:update","compliance:export","compliance:manage","reports:view","notifications:view","telematics:devices:view","telematics:gps:view","telematics:diagnostics:view","telematics:sensors:view"],
         // Maintenance Manager owns the shipped Device Health, GPS, diagnostics, and sensor inspection
-        // journeys. Grant only their exact view tokens; mutation, firmware, and export remain governed
-        // by independent permissions and are not widened here.
-        ["Maintenance Manager"]      = ["dashboard:view","vehicles:view","maintenance:view","maintenance:create","maintenance:update","maintenance:close","maintenance:manage","alerts:view","alerts:acknowledge","alerts:close","compliance:view","reports:view","notifications:view","telematics:devices:view","telematics:gps:view","telematics:diagnostics:view","telematics:sensors:view"],
+        // journeys. Grant only their exact view tokens; mutation, firmware, report aggregation, and
+        // export remain governed by independent permissions and are not widened here. In particular,
+        // reports:view is deliberately absent: the legacy reporting surface contains tenant-wide
+        // driver/vehicle datasets and must not be reachable by a branch-bound maintenance persona.
+        ["Maintenance Manager"]      = ["dashboard:view","vehicles:view","maintenance:view","maintenance:create","maintenance:update","maintenance:close","maintenance:manage","alerts:view","alerts:acknowledge","alerts:close","compliance:view","notifications:view","telematics:devices:view","telematics:gps:view","telematics:diagnostics:view","telematics:sensors:view"],
         ["Customer"]                 = ["customer_portal:view"],
         // Read-only audit access follows the shipped telemetry catalogue, with exact view tokens
         // only. Branch scoping still limits live/asset evidence; no mutation or export is granted.

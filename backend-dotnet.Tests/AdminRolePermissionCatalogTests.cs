@@ -1,5 +1,14 @@
 using Opstrax.Api.Controllers;
+using Opstrax.Api.Data;
+using Opstrax.Api.Foundation;
+using System.Net;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Opstrax.Api.Tests;
 
@@ -93,6 +102,92 @@ public sealed class AdminRolePermissionCatalogTests
     public void OperationalRolesCanOpenTheirShippedTelematicsReadRoutes(string role, string permission)
         => Assert.Null(EndpointMappings.RequirePermission(
             Principal(role, EndpointMappings.RolePermissionDefaults[role]), permission));
+
+    [Fact]
+    public void MaintenanceManagerCannotEnterTenantWideReportingSurfaces()
+    {
+        var permissions = EndpointMappings.RolePermissionDefaults["Maintenance Manager"];
+        Assert.DoesNotContain("reports:view", permissions, StringComparer.OrdinalIgnoreCase);
+        Assert.DoesNotContain("reports:export", permissions, StringComparer.OrdinalIgnoreCase);
+        Assert.DoesNotContain("reports:manage", permissions, StringComparer.OrdinalIgnoreCase);
+        Assert.DoesNotContain("telemetry.recommendations.read", permissions, StringComparer.OrdinalIgnoreCase);
+
+        var principal = Principal("Maintenance Manager", permissions);
+        Assert.Null(EndpointMappings.RequirePermission(principal, "maintenance:view"));
+        foreach (var forbidden in new[] { "reports:view", "reports:export", "reports:manage" })
+        {
+            var denied = EndpointMappings.RequirePermission(principal, forbidden);
+            Assert.Equal(StatusCodes.Status403Forbidden,
+                Assert.IsAssignableFrom<IStatusCodeHttpResult>(denied).StatusCode);
+        }
+    }
+
+    [Fact]
+    public async Task MaintenanceManagerIsDeniedByRegisteredReportingRoutesBeforeDatabaseAccess()
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseKestrel().UseUrls("http://127.0.0.1:0");
+        var database = new Database(new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?>
+            {
+                ["ConnectionStrings:DefaultConnection"] =
+                    "Host=127.0.0.1;Port=1;Database=authorization_guard;Username=none;Password=none;Timeout=1"
+            }).Build());
+        foreach (var serviceType in typeof(EndpointMappings).Assembly.GetTypes().Where(type =>
+                     !type.IsGenericTypeDefinition &&
+                     (type.Name.EndsWith("Service", StringComparison.Ordinal) ||
+                      type.Name.EndsWith("Registry", StringComparison.Ordinal) ||
+                      (type.IsInterface && type.Namespace?.StartsWith("Opstrax.Api", StringComparison.Ordinal) == true))))
+        {
+            builder.Services.AddSingleton(serviceType, _ =>
+                throw new InvalidOperationException($"{serviceType.Name} must not be resolved by an authorization-denied route."));
+        }
+        builder.Services.AddSingleton<ICorrelationContext>(_ => null!);
+        builder.Services.AddSingleton<IAuthorizationDecisionService>(_ => null!);
+        builder.Services.AddSingleton<IAuditLogService>(_ => null!);
+        builder.Services.AddSingleton(database);
+
+        var app = builder.Build();
+        app.Use(async (context, next) =>
+        {
+            context.Items[EndpointMappings.AuthCompanyIdItemKey] = 7001L;
+            context.Items[EndpointMappings.AuthBranchIdItemKey] = 7011L;
+            context.Items[EndpointMappings.AuthUserIdItemKey] = 7021L;
+            context.Items[EndpointMappings.AuthRoleItemKey] = "Maintenance Manager";
+            context.Items[EndpointMappings.AuthPermissionsItemKey] =
+                EndpointMappings.RolePermissionDefaults["Maintenance Manager"];
+            await next();
+        });
+        app.MapOpsTraxEndpoints();
+
+        try
+        {
+            await app.StartAsync();
+            var address = app.Services.GetRequiredService<IServer>()
+                .Features.Get<IServerAddressesFeature>()!.Addresses.Single();
+            using var client = new HttpClient { BaseAddress = new Uri(address) };
+
+            foreach (var path in new[]
+            {
+                "/api/reports/scheduled",
+                "/api/reports/ai/recommendations",
+                "/api/predictions/driver-risk",
+                "/api/carbon-emissions",
+            })
+            {
+                using var response = await client.GetAsync(path);
+                var body = await response.Content.ReadAsStringAsync();
+                Assert.True(response.StatusCode == HttpStatusCode.Forbidden,
+                    $"{path} returned {(int)response.StatusCode} {response.StatusCode}: {body}");
+            }
+        }
+        finally
+        {
+            if (app.Lifetime.ApplicationStarted.IsCancellationRequested)
+                await app.StopAsync();
+            await app.DisposeAsync();
+        }
+    }
 
     [Theory]
     [InlineData("Driver")]
