@@ -9,7 +9,10 @@ app = "opstrax-telematics-staging-cert"
 primary_region = "iad"
 
 [build]
-  dockerfile = "telematics/Dockerfile"
+  # Fly resolves this path from the directory containing this manifest.
+  # The build context remains the repository root so Dockerfile COPY paths
+  # such as telematics/src/... continue to resolve.
+  dockerfile = "Dockerfile"
 
 [env]
   DOTNET_ENVIRONMENT = "Staging"

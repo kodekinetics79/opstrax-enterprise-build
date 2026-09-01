@@ -127,6 +127,8 @@ jobs:
         run: |
           python3 -m unittest discover -s tools/telematics/tests -p 'test_*.py' -v
           python3 tools/telematics/fingerprint.py --self-test
+      - name: Validate isolated Fly certification deployment contract
+        run: node --test tools/telematics/tests/test_fly_staging_config.mjs
 
   playwright-public-tests:
     runs-on: ubuntu-latest
