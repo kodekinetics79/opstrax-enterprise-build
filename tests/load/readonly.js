@@ -14,7 +14,7 @@ export const options = {
       timeUnit: "1s",
       duration: `${duration}s`,
       preAllocatedVUs: Math.min(maxVus, Math.max(2, rate)),
-      maxVUs,
+      maxVUs: maxVus,
       gracefulStop: "10s",
     },
   },

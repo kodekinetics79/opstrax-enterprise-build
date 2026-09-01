@@ -78,6 +78,8 @@ test("k6 workload contains GET only and bounded response handling", () => {
   assert.doesNotMatch(source, /http\.(post|put|patch|del|delete)\s*\(/i);
   assert.match(source, /discardResponseBodies:\s*true/);
   assert.match(source, /redirects:\s*0/g);
+  assert.match(source, /maxVUs:\s*maxVus/);
+  assert.doesNotMatch(source, /^\s*maxVUs,\s*$/m);
 });
 
 test("tracked credential template is blank", () => {
