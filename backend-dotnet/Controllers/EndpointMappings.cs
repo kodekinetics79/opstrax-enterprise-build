@@ -21824,6 +21824,15 @@ LIMIT 100000",
             !DateOnly.TryParseExact(body.ScheduledAt.Trim(), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var dueDate))
             return Results.BadRequest(ApiResponse<object>.Fail("scheduledAt is required in YYYY-MM-DD format"));
 
+        return await db.RunInTenantTransactionAsync<IResult>(companyId, async () =>
+        {
+        // Serialize the duplicate decision and insert for this tenant/vehicle/service
+        // across API instances. The lock is transaction-scoped, so a concurrent
+        // request re-checks only after the winning insert commits.
+        var workOrderLockKey = $"maintenance-work-order:{companyId}:{body.VehicleId}:{serviceType.ToLowerInvariant()}";
+        await db.ExecuteAsync("SELECT pg_advisory_xact_lock(hashtextextended(@lockKey,0))",
+            c => c.Parameters.AddWithValue("@lockKey", workOrderLockKey), ct);
+
         var vehicleExists = await db.ScalarLongAsync(
             @"SELECT COUNT(*) FROM vehicles
               WHERE id=@id AND company_id=@cid AND deleted_at IS NULL
@@ -21875,6 +21884,7 @@ LIMIT 100000",
         await audit.LogAsync(http, "work_order.created", "WorkOrder", woId, $"vehicle:{body.VehicleId} type:{serviceType}", ct);
         return Results.Created($"/api/maintenance/work-orders/{woId}",
             ApiResponse<object>.Ok(new { id = woId, workOrderCode = woCode }, "Work order created"));
+        });
     }
 
     // POST /api/maintenance/work-orders/{id}/assign

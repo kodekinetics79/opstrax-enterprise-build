@@ -1772,20 +1772,21 @@ export const telematicsService = {
     return mapDeviceRow(updated, new Map(), new Map(), session);
   },
 
-  async createMaintenanceTask(deviceId: string | number, note: string) {
+  async createMaintenanceTask(deviceId: string | number, sourceTitle: string) {
     const session = getSession();
     ensureManagementAccess(session);
-    // The telematics layer has no maintenance-task endpoint of its own; the CALLER
-    // persists the task via maintenanceApi.create. Here we resolve the real device so
+    // The telematics layer has no maintenance-task endpoint of its own; the caller
+    // persists the task through the governed work-order API. Here we resolve the real device so
     // the returned title/note reference the actual unit (no fabricated data). The task
     // itself is created against the real maintenance API downstream.
     const device = deviceRowFromDetail(await unwrap<AnyRecord>(apiClient.get(`/api/telemetry/devices/${deviceId}`)));
     const label = String(device.vehicle_code ?? device.device_serial ?? deviceId);
     return {
       success: true as const,
+      vehicleId: String(device.vehicle_id ?? ""),
       vehicleCode: String(device.vehicle_code ?? ""),
       title: `Telematics follow-up for ${label}`,
-      note,
+      note: `Created from ${sourceTitle}; the device assignment was re-read at handoff as ${label}. Telemetry and diagnostic evidence is point-in-time and must be revalidated before service.`,
     };
   },
 

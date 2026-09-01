@@ -241,6 +241,7 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
 
   const canExport = hasPermission(config.requiredExportPermission);
   const canUpdate = hasPermission(config.requiredUpdatePermission);
+  const canCreateMaintenance = canUpdate && hasPermission(PERMISSIONS.MAINTENANCE_CREATE);
   // Read destinations use the same semantic permission aliases as the route
   // guard and backend RequirePermission policy. Direct-only checks are reserved
   // for security-sensitive mutations such as governed imports and assignments.
@@ -323,20 +324,26 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
   });
   const maintenanceMut = useMutation({
     mutationFn: async (record: TelematicsClusterRecord) => {
-      const maintenance = await telematicsService.createMaintenanceTask(record.deviceId, `Created from ${config.title} for ${record.vehicleCode}`);
-      await maintenanceApi.create({
-        vehicleCode: record.vehicleCode,
+      const maintenance = await telematicsService.createMaintenanceTask(record.deviceId, config.title);
+      const vehicleId = Number(maintenance.vehicleId);
+      if (!Number.isSafeInteger(vehicleId) || vehicleId <= 0) {
+        throw new Error("A current vehicle assignment is required before creating a maintenance follow-up.");
+      }
+      return maintenanceApi.createWorkOrder({
+        vehicleId,
         title: maintenance.title,
+        serviceType: kind === "obd-j1939" ? "Telematics diagnostic review" : "Telematics sensor review",
+        description: maintenance.note,
         priority: record.deviceHealthAvailable && record.deviceHealth < 70 ? "High" : "Medium",
-        status: "Scheduled",
         estimatedCost: 0,
-        notes: maintenance.note,
+        scheduledAt: new Date().toISOString().slice(0, 10),
       });
-      return maintenance;
     },
+    onMutate: () => setNotice(null),
     onSuccess: () => {
       setNotice("Maintenance follow-up created.");
     },
+    onError: () => setNotice(null),
   });
 
   const rows = useMemo(() => {
@@ -467,7 +474,9 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
 
       {refreshMut.isError || maintenanceMut.isError ? (
         <div role="alert" className="panel border border-rose-300 bg-rose-50 p-4 text-sm text-rose-800">
-          {refreshMut.error instanceof Error ? refreshMut.error.message : maintenanceMut.error instanceof Error ? maintenanceMut.error.message : "The requested action was not completed."}
+          {refreshMut.isError
+            ? apiErrorMessage(refreshMut.error, "The telemetry refresh was not completed.")
+            : apiErrorMessage(maintenanceMut.error, "The maintenance follow-up was not created.")}
         </div>
       ) : null}
 
@@ -589,9 +598,9 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
                           <>
                             <button
                               className="btn-primary h-8 px-3"
-                              disabled={!canUpdate || maintenanceMut.isPending}
-                              title={permissionTitle(canUpdate, "Create a maintenance follow-up.")}
-                              onClick={() => canUpdate && maintenanceMut.mutate(row)}
+                              disabled={!canCreateMaintenance || maintenanceMut.isPending}
+                              title={permissionTitle(canCreateMaintenance, "Create a maintenance follow-up.")}
+                              onClick={() => canCreateMaintenance && maintenanceMut.mutate(row)}
                             >
                               Create Maintenance
                             </button>
@@ -601,9 +610,9 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
                           <>
                             <button
                               className="btn-primary h-8 px-3"
-                              disabled={!canUpdate || maintenanceMut.isPending}
-                              title={permissionTitle(canUpdate, "Create a maintenance task for this sensor.")}
-                              onClick={() => canUpdate && maintenanceMut.mutate(row)}
+                              disabled={!canCreateMaintenance || maintenanceMut.isPending}
+                              title={permissionTitle(canCreateMaintenance, "Create a maintenance task for this sensor.")}
+                              onClick={() => canCreateMaintenance && maintenanceMut.mutate(row)}
                             >
                               Create Task
                             </button>
@@ -645,12 +654,14 @@ export function TelematicsCommandPage({ kind }: { kind: TelematicsKind }) {
                 row={selectedRecord}
                 detail={detailQ.data}
                 canUpdate={canUpdate}
+                canCreateMaintenance={canCreateMaintenance}
+                isMaintenancePending={maintenanceMut.isPending}
                 canViewDevices={canViewDevices}
                 canViewVehicles={canViewVehicles}
                 canViewJobs={canViewJobs}
                 canViewMap={canViewMap}
                 onRefresh={() => canUpdate && refreshMut.mutate(selectedRecord.deviceId)}
-                onMaintenance={() => canUpdate && maintenanceMut.mutate(selectedRecord)}
+                onMaintenance={() => canCreateMaintenance && maintenanceMut.mutate(selectedRecord)}
               />
             )}
           </aside>
@@ -665,6 +676,8 @@ function TelematicsDetailDrawer({
   row,
   detail,
   canUpdate,
+  canCreateMaintenance,
+  isMaintenancePending,
   canViewDevices,
   canViewVehicles,
   canViewJobs,
@@ -676,6 +689,8 @@ function TelematicsDetailDrawer({
   row: TelematicsClusterRecord;
   detail?: DeviceDetailRecord;
   canUpdate: boolean;
+  canCreateMaintenance: boolean;
+  isMaintenancePending: boolean;
   canViewDevices: boolean;
   canViewVehicles: boolean;
   canViewJobs: boolean;
@@ -707,7 +722,7 @@ function TelematicsDetailDrawer({
         {canViewVehicles ? <button className="btn-ghost" onClick={() => window.location.assign(`/vehicles`)}><Truck className="h-4 w-4" /> View vehicle</button> : null}
         {canViewJobs && row.shipmentId !== "No active shipment" ? <button className="btn-ghost" onClick={() => window.location.assign(`/jobs`)}><Truck className="h-4 w-4" /> Open trip</button> : null}
         <button className="btn-ghost" disabled={!canUpdate} title={permissionTitle(canUpdate, "Reload the latest server snapshot.")} onClick={onRefresh}><RefreshCw className="h-4 w-4" /> Reload snapshot</button>
-        {kind !== "gps-tracking" ? <button className="btn-primary" disabled={!canUpdate} title={permissionTitle(canUpdate, "Create a maintenance follow-up.")} onClick={onMaintenance}><Wrench className="h-4 w-4" /> Create maintenance</button> : null}
+        {kind !== "gps-tracking" ? <button className="btn-primary" disabled={!canCreateMaintenance || isMaintenancePending} title={permissionTitle(canCreateMaintenance, "Create a maintenance follow-up.")} onClick={onMaintenance}><Wrench className="h-4 w-4" /> Create maintenance</button> : null}
       </div>
 
       <div className="mt-6 grid gap-4 lg:grid-cols-3">
