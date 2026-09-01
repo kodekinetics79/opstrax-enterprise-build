@@ -1,13 +1,13 @@
 # OpsTrax Master Commercialization & Certification Action Plan
 
 **Status:** CONTROLLED MASTER - ACTIVE  
-**Version:** 1.0  
-**Effective date:** 2026-08-30  
+**Version:** 1.1
+**Effective date:** 2026-09-01
 **Executive owner:** CTO Office / OpsTrax Commercialization Program  
 **Technical baseline:** `main@155b54a3451c2a4618b4fc6a87fd59f0e68f425d`  
 **Parent tracker:** #110  
 **Active Gate A:** #108 / PR #113 - M1/M2 current-SHA certification closeout  
-**Active Gate B:** #109 / PR #114 - GT06 physical compatibility certification
+**Deferred Gate B:** #109 / PR #114 - GT06 physical compatibility certification; NO-GO / closed without certification under `CR-2026-09-01-01`
 
 ## Master rule
 This document governs commercialization sequencing. Work may be refined inside a phase, but no phase may be skipped, broadened, or declared complete without the stated acceptance evidence. Any sequence/gate change requires CTO change control.
@@ -62,7 +62,7 @@ Any SME can raise a RED finding. Only the CTO may waive a gate, and every waiver
 | Wave | Critical workstreams | Exit result |
 |---|---|---|
 | 0 - Control | Truth matrix, baseline freeze, master plan, GitHub evidence lanes | Controlled program |
-| 1 - Certify what exists | A: M1/M2 current-SHA closeout; B: GT06 physical certification | Certified/limited core + first certified-compatible GPS family |
+| 1 - Certify what exists | A: M1/M2 current-SHA closeout; B: GT06 physical certification deferred under `CR-2026-09-01-01` | Limited core only; no certified-compatible GPS family claim |
 | 2 - Connect and comply | A: Samsara production certification; B: certified ELD partner selection/integration | Commercial BYOT + regulated ELD source |
 | 3 - HOS and cameras | A: OpsTrax HOS workflow; B: dual-facing camera integration | Operational HOS + real camera/video path |
 | 4 - Safety/ecosystem | A: Video Safety; B: Geotab/Motive prioritized connectors | Competitive safety + provider breadth |
@@ -89,8 +89,10 @@ Required closeout:
 
 Exit: 0 P0/P1; 0 tenant/branch leakage; 0 Driver/Customer internal-route exposure; 0 fabricated telemetry/diagnostics; exact-SHA evidence; customer journeys persist after refresh/logout-login; limitations declared.
 
-## Gate 1B - GT06 physical certification
+## Gate 1B - GT06 physical certification - NO-GO / DEFERRED / CLOSED WITHOUT CERTIFICATION
 Governance: #109 / PR #114 / `cert/gt06-physical-compatibility`.
+
+`CR-2026-09-01-01` removes this gate from the active Wave 1 exit boundary because no authorized physical GT06 production candidate is available. The software harness remains at PILOT and may be retained in isolated staging, but this disposition is not a compatibility pass, waiver of physical evidence, supported-device listing, or permission to make a certified-hardware claim. Re-entry requires an exact physical manufacturer/model/hardware-revision/firmware combination, controlled enrollment, the mandatory Appendix B specialists, and completion of every stage below.
 
 Certification stages:
 1. Candidate - exact manufacturer/model/hardware revision/firmware/modem/radio/procurement identity.
@@ -105,7 +107,9 @@ Certification stages:
 
 Physical hardware, SIM/data service, safe bench/vehicle access and the exact production candidate are external evidence dependencies. Simulator results cannot close them.
 
-# WAVE 2
+# WAVE 2 - INACTIVE / QUEUED
+
+The G1B deferral does not itself activate Wave 2. Activation requires formal G1A GO or LIMITED GO after its remaining acceptance work, including A-02 restricted-role branch-isolation evidence, is independently accepted and recorded.
 
 ## Samsara production certification
 - Customer-managed Connect -> Authenticate -> Discover -> Map -> Validate -> Sync -> Monitor -> Disconnect/Reconnect flow.
@@ -218,9 +222,9 @@ Revenue activates package-by-package as gates pass; the whole roadmap does not n
 3. Run M1 visible-Chrome role/journey closeout on the large-fleet tenant.
 4. Run M2 Device Health/GPS/Live Map/geofence/OBD closeout.
 5. Fix only observed gate defects and repeat identical journeys.
-6. Procure/freeze 2-3 identical GT06 production candidates with exact identity/compliance evidence.
-7. Prepare isolated gateway bench/evidence environment.
-8. Run GT06 bench -> controlled route -> recovery -> soak certification.
+6. Keep GT06 procurement/freeze for 2-3 identical production candidates in the deferred hardware backlog under `CR-2026-09-01-01`.
+7. Preserve the isolated GT06 gateway configuration/evidence fail-closed and stopped while no physical test window is scheduled; enroll no unidentified device.
+8. Re-open GT06 bench -> controlled route -> recovery -> soak certification only when the exact physical evidence dependency is available.
 9. Prepare Samsara real-account onboarding/acceptance plan so Wave 2 can start immediately after Wave 1.
 10. Begin ELD partner due diligence without building an in-house ELD.
 
@@ -229,9 +233,9 @@ Revenue activates package-by-package as gates pass; the whole roadmap does not n
 |---|---|---|---|
 | G0 Program control | GREEN | Master plan + #110 + truth matrix | Active/complete |
 | G1A M1/M2 certification | ACTIVE - AMBER | #108 / PR #113 | Active now |
-| G1B GT06 physical certification | ACTIVE - AMBER | #109 / PR #114 | Active now |
-| G2A Samsara production | QUEUED | Future issue/PR | After G1 materially green |
-| G2B Certified ELD partner | QUEUED | Future issue/PR | After G1 materially green |
+| G1B GT06 physical certification | NO-GO / DEFERRED - CLOSED WITHOUT CERTIFICATION | #109 / PR #114 / `CR-2026-09-01-01` | Re-open only with exact authorized physical hardware |
+| G2A Samsara production | QUEUED | Future issue/PR | After G1A formal GO/LIMITED GO; G1B remains excluded |
+| G2B Certified ELD partner | QUEUED | Future issue/PR | After G1A formal GO/LIMITED GO; G1B remains excluded |
 | G3A HOS | LOCKED | Future issue/PR | After ELD source selected/integrated |
 | G3B Dual camera | LOCKED | Future issue/PR | After partner selected |
 | G4 Video/provider ecosystem | LOCKED | Future issue/PR | After G3 passes |

@@ -3,6 +3,7 @@
 Baseline: `155b54a3451c2a4618b4fc6a87fd59f0e68f425d`  
 Program tracker: #110  
 Current certification closeout: #108
+Approved sequence change: `CR-2026-09-01-01` defers #109/#114 without certification
 
 ## Status vocabulary
 
@@ -24,7 +25,7 @@ Only these statuses are permitted in sales, product, certification and roadmap m
 | Device registry and lifecycle | PILOT | Provision/install/commission/transfer/suspend/revoke/archive/history exist. |
 | Native authenticated telemetry ingest | PRODUCTION READY | Signed ingest, timestamp/nonce/replay controls, tenant-bound resolution and ordered projections exist. Provider/device evidence is separate. |
 | Protocol gateway architecture | PRODUCTION READY | Real TCP/protocol-gateway path exists; each protocol/device family requires separate compatibility certification. |
-| GT06 protocol software | PILOT | Strong parser/session/replay/concurrency evidence. Physical-device certification required under #109. |
+| GT06 protocol software | PILOT | Strong parser/session/replay/concurrency evidence and an isolated exact-SHA test listener exist. #109/#114 were closed as deferred under `CR-2026-09-01-01`; no physical GT06 combination is certified or production supported. |
 | GPS / latest position / live state | PILOT | Real persistence/SSE/maps; production usefulness depends on a commissioned real feed. |
 | Geofences / telemetry alerts | PILOT | Real evaluation and persistence; closeout evidence pending. |
 | Telemetry provenance / quality controls | PRODUCTION READY | Device-fix time, gateway receipt, source/provider/protocol and quality/trust controls exist. |
@@ -49,9 +50,9 @@ Only these statuses are permitted in sales, product, certification and roadmap m
 
 A capability may move upward only after the owning release gate has evidence. A UI route, schema table, mock fixture, simulator or passing unit test alone cannot promote a capability to PILOT, PRODUCTION READY or CERTIFIED.
 
-## Current active release gates
+## Current active and deferred release gates
 
 1. #108 — close Module 1 and Module 2 against a frozen exact SHA using real persisted data and visible Chrome.
-2. #109 — physically certify one exact GT06 model/firmware combination.
+2. #109 / PR #114 — **NO-GO / DEFERRED / CLOSED WITHOUT CERTIFICATION** under `CR-2026-09-01-01`; re-open only when an authorized exact physical GT06 candidate is available.
 
-Do not begin another broad application audit while these gates are open. Later capability tracks must remain subordinate to #110.
+Do not begin another broad application audit while #108 remains open. Wave 2 remains queued until G1A receives formal GO or LIMITED GO after its remaining acceptance evidence, including A-02, is independently accepted. Later capability tracks remain subordinate to #110.
