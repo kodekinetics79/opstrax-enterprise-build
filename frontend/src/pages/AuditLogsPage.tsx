@@ -58,6 +58,29 @@ function ExportStatusBadge({ status }: { status: string }) {
   return <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${cls}`}>{status}</span>;
 }
 
+function displayText(value: unknown) {
+  const text = String(value ?? "").trim();
+  return text || "Not recorded";
+}
+
+function formatDateOnly(value: unknown) {
+  if (!value) return "Not recorded";
+  const [year, month, day] = String(value).slice(0, 10).split("-").map(Number);
+  if (!year || !month || !day) return "Not recorded";
+  return new Date(year, month - 1, day).toLocaleDateString();
+}
+
+function formatDateTime(value: unknown) {
+  if (!value) return "Not recorded";
+  const date = new Date(String(value));
+  return Number.isNaN(date.getTime()) ? "Not recorded" : date.toLocaleString();
+}
+
+function exportFormat(record: AnyRecord) {
+  const value = String(record.exportFormat ?? "").trim();
+  return value || "Not recorded";
+}
+
 export function AuditLogsPage() {
   const { session } = useAuth();
   const hasPermission = useHasPermission();
@@ -520,15 +543,15 @@ export function AuditLogsPage() {
               <tbody className="divide-y divide-slate-100">
                 {exports_.map((e, i) => (
                   <tr key={i} className="transition hover:bg-slate-50">
-                    <td className="px-4 py-3 text-slate-700">{String(e.requested_by_name ?? "")}</td>
+                    <td className="px-4 py-3 text-slate-700">{displayText(e.requestedByName)}</td>
                     <td className="px-4 py-3 text-xs text-slate-500">
-                      {e.date_range_start ? new Date(String(e.date_range_start)).toLocaleDateString() : "—"}
+                      {formatDateOnly(e.dateFrom)}
                       {" – "}
-                      {e.date_range_end ? new Date(String(e.date_range_end)).toLocaleDateString() : "—"}
+                      {formatDateOnly(e.dateTo)}
                     </td>
-                    <td className="px-4 py-3 font-mono text-xs font-bold text-emerald-700">{String(e.export_format ?? "")}</td>
-                    <td className="px-4 py-3"><ExportStatusBadge status={String(e.status ?? "")} /></td>
-                    <td className="px-4 py-3 text-xs text-slate-400">{e.createdAt ? new Date(String(e.createdAt)).toLocaleString() : "—"}</td>
+                    <td className="px-4 py-3 font-mono text-xs font-bold text-emerald-700">{exportFormat(e)}</td>
+                    <td className="px-4 py-3"><ExportStatusBadge status={displayText(e.status)} /></td>
+                    <td className="px-4 py-3 text-xs text-slate-400">{formatDateTime(e.createdAt)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -587,13 +610,13 @@ export function AuditLogsPage() {
                   {exports_.slice(0, 6).map((e, i) => (
                     <li key={i} className="flex items-center justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="truncate text-xs font-semibold text-slate-700">{String(e.requested_by_name ?? "—")}</p>
+                        <p className="truncate text-xs font-semibold text-slate-700">{displayText(e.requestedByName)}</p>
                         <p className="truncate text-[11px] text-slate-400">
-                          {String(e.export_format ?? "")}
-                          {e.createdAt ? ` · ${new Date(String(e.createdAt)).toLocaleDateString()}` : ""}
+                          {exportFormat(e)}
+                          {` · ${formatDateTime(e.createdAt)}`}
                         </p>
                       </div>
-                      <ExportStatusBadge status={String(e.status ?? "")} />
+                      <ExportStatusBadge status={displayText(e.status)} />
                     </li>
                   ))}
                 </ul>

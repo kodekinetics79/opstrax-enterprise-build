@@ -10,7 +10,8 @@ public sealed class AuditExportRequestRuntimeContractTests
         var runtimeSchema = Read("backend-dotnet", "Services", "Batch7SchemaService.cs");
         var canonicalSchema = Read("database", "init", "001_schema.sql");
 
-        Assert.Contains("ORDER BY created_at DESC", EndpointMappings.AuditExportRequestsListSql);
+        Assert.Contains("ORDER BY request.created_at DESC", EndpointMappings.AuditExportRequestsListSql);
+        Assert.Contains("AS export_format", EndpointMappings.AuditExportRequestsListSql);
         Assert.DoesNotContain("requested_at", EndpointMappings.AuditExportRequestsListSql);
         AssertAuditExportRequestSchemaUsesCreatedAt(runtimeSchema);
         AssertAuditExportRequestSchemaUsesCreatedAt(canonicalSchema);
@@ -21,8 +22,14 @@ public sealed class AuditExportRequestRuntimeContractTests
     {
         var page = Read("frontend", "src", "pages", "AuditLogsPage.tsx");
 
-        Assert.Contains("e.createdAt", page);
+        foreach (var field in new[] { "e.requestedByName", "e.dateFrom", "e.dateTo", "e.createdAt", "record.exportFormat" })
+            Assert.Contains(field, page);
         Assert.DoesNotContain("e.requested_at", page);
+        Assert.DoesNotContain("e.requested_by_name", page);
+        Assert.DoesNotContain("e.date_range_start", page);
+        Assert.DoesNotContain("e.date_range_end", page);
+        Assert.DoesNotContain("e.export_format", page);
+        Assert.Contains("Not recorded", page);
     }
 
     private static void AssertAuditExportRequestSchemaUsesCreatedAt(string source)

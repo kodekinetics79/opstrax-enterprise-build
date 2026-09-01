@@ -29,8 +29,13 @@ public static partial class EndpointMappings
     // Set (non-null) by the auth middleware ONLY for customer-portal users (users bound
     // to a customer_id). Internal endpoints reject any principal carrying this.
     public const string AuthCustomerIdItemKey = "opstrax.auth.customer_id";
-    internal const string AuditExportRequestsListSql =
-        "SELECT * FROM audit_export_requests WHERE tenant_id=@tenantId ORDER BY created_at DESC LIMIT 20";
+    internal const string AuditExportRequestsListSql = @"
+        SELECT request.*,
+               COALESCE(request.filters_json->>'exportFormat', request.filters_json->>'format') AS export_format
+          FROM audit_export_requests request
+         WHERE request.tenant_id=@tenantId
+         ORDER BY request.created_at DESC
+         LIMIT 20";
     private static readonly HashSet<string> AllowedUserStatuses = new(StringComparer.OrdinalIgnoreCase)
     {
         "Active", "Inactive", "Pending", "Suspended"
