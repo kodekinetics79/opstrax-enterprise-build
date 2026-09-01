@@ -85,4 +85,7 @@ assert.match(shell, /\{canViewUserManagement && \([\s\S]*navigate\("\/user-manag
 assert.match(shell, /onClick=\{\(\) => setNotifOpen\(\(v\) => !v\)\}/);
 assert.match(shell, /profileRef\.current && !profileRef\.current\.contains\(e\.target as Node\)/);
 assert.match(shell, /notifRef\.current && !notifRef\.current\.contains\(e\.target as Node\)/);
+assert.match(shell, /ref=\{profileTriggerRef\}[\s\S]*aria-label="Open account menu"[\s\S]*aria-expanded=\{profileOpen\}[\s\S]*aria-haspopup="dialog"[\s\S]*aria-controls="tenant-account-menu"/, "account trigger exposes popup state and relationship");
+assert.match(shell, /id="tenant-account-menu"[\s\S]*role="dialog"[\s\S]*aria-label="Account menu"/, "account popup exposes an accessible dialog name");
+assert.match(shell, /event\.key !== "Escape"[\s\S]*setProfileOpen\(false\)[\s\S]*profileTriggerRef\.current\?\.focus\(\)/, "Escape closes the account popup and restores trigger focus");
 console.log("Shell menu declared positioning/stacking and handler contracts passed (static AST/model only; no browser geometry, hit-test, auth or accessibility claim).");
