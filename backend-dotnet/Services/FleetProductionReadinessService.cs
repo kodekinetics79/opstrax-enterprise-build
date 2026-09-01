@@ -41,6 +41,7 @@ public sealed class FleetProductionReadinessService
     private readonly ILogger<FleetProductionReadinessService> log;
     private readonly TimeProvider timeProvider;
     private readonly DateTimeOffset processStartedAt;
+    private readonly PositiveReadinessCache<FleetProductionContractResult> positiveCache;
     internal IReadOnlyList<string> ExpectedCriticalWorkerNames { get; }
 
     public FleetProductionReadinessService(Database db, ILogger<FleetProductionReadinessService> log)
@@ -72,6 +73,13 @@ public sealed class FleetProductionReadinessService
         this.timeProvider = timeProvider;
         this.processStartedAt = processStartedAt;
         ExpectedCriticalWorkerNames = expectedCriticalWorkerNames ?? CriticalWorkerNames;
+        positiveCache = new(
+            PositiveReadinessCache<FleetProductionContractResult>.DefaultDuration,
+            // Never extend startup grace through the cache when a worker has not
+            // yet published a clean heartbeat. Once every raw worker check is
+            // clean, the positive result is safe to reuse for the bounded TTL.
+            result => result.Ready && result.RawCriticalWorkerViolations == 0,
+            timeProvider);
     }
 
     internal bool CriticalWorkerStartupGraceActive =>
@@ -80,7 +88,10 @@ public sealed class FleetProductionReadinessService
     internal int CriticalWorkerStartupGraceRemainingSeconds => Math.Max(0,
         (int)Math.Ceiling((CriticalWorkerStartupGrace - (timeProvider.GetUtcNow() - processStartedAt)).TotalSeconds));
 
-    public async Task<FleetProductionContractResult> CheckAsync(CancellationToken ct = default)
+    public Task<FleetProductionContractResult> CheckAsync(CancellationToken ct = default) =>
+        positiveCache.GetOrRefreshAsync(CheckUncachedAsync, ct);
+
+    private async Task<FleetProductionContractResult> CheckUncachedAsync(CancellationToken ct)
     {
         try
         {
