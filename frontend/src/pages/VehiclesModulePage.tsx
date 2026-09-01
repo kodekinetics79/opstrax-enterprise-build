@@ -147,7 +147,7 @@ export function VehiclesModulePage() {
           <EntityImportExport
             config={VEHICLE_IMPORT_EXPORT}
             canImport={canManageFleet}
-            canExport={hasPermission("vehicles:view")}
+            canExport={hasPermission(PERMISSIONS.VEHICLES_EXPORT)}
           />
           {/* Single-add sat only on the roster tab, so the Overview offered bulk import
               but no way to add one record — users reasonably concluded it was missing.
