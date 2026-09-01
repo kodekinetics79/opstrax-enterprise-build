@@ -94,6 +94,9 @@ jobs:
         working-directory: mobile
       - run: npm run test:contracts
         working-directory: mobile
+      - name: Verify generated native projects expose no inbound URL registration
+        run: npm run test:no-inbound-linking
+        working-directory: mobile
       - name: Fail closed on new mobile advisories while tracking the reviewed Expo 56 chain
         run: |
           npm audit --json > "$RUNNER_TEMP/mobile-audit.json" || true
