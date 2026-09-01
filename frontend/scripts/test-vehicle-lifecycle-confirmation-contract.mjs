@@ -97,6 +97,18 @@ assert.match(page, /returnFocusTo=\{/, "the page must supply the opener captured
 assert.match(page, /document\.activeElement instanceof HTMLElement/, "capture actual opener before state update");
 assert.match(page, /busy=\{lifecycleBusy\}/, "pending supplied to dialog; settled uncertainty may be dismissed with retained latch");
 assert.match(page, /apiErrorMessage\(/, "handled lifecycle errors use the existing safe envelope renderer");
+assert.match(page, /const lifecycleSelectionPreparing = selectedId != null && \(detail\.isLoading \|\| detail\.isFetching\)/,
+  "lifecycle busy semantics describe only an active authoritative-detail request");
+assert.match(page, /const lifecycleSelectionUnavailable = selectedId != null && !lifecycleSelectionPreparing[\s\S]*detail\.isError \|\| !selectedDetailRecord/,
+  "terminal detail failure is a fail-closed unavailable state rather than false busy");
+assert.match(page, /lifecycleSelectionPreparing=\{lifecycleSelectionPreparing\}[\s\S]*lifecycleSelectionUnavailable=\{lifecycleSelectionUnavailable\}/,
+  "pending and unavailable lifecycle states are supplied independently to the drawer");
+assert.equal([...page.matchAll(/disabled=\{lifecycleBusy \|\| lifecycleSelectionPreparing \|\| lifecycleSelectionUnavailable \|\| lifecycleNeedsRefresh\}/g)].length, 2,
+  "both Archive and Reactivate remain disabled until authoritative detail is ready");
+assert.equal([...page.matchAll(/aria-busy=\{lifecycleSelectionPreparing \? true : undefined\}/g)].length, 2,
+  "both lifecycle controls expose busy only while a request is active");
+assert.match(page, /Status unavailable[\s\S]*Retry status check/,
+  "terminal detail failure is truthful and provides an explicit retry path");
 assert.match(shared, /event\.key === "Escape" && !busyRef\.current/);
 assert.match(shared, /onClick=\{\(\) => \{ if \(!busy\) onCancel\(\); \}\}/);
 assert.match(shared, /opener && opener\.isConnected/);

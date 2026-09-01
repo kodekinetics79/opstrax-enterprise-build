@@ -301,6 +301,12 @@ export function VehiclesPage() {
   const selectedRecord = selectedDetailRecord
     ? selectedDetailRecord
     : rows.find((r) => String(r.id) === String(selectedId)) || null;
+  const lifecycleSelectionPreparing = selectedId != null && (detail.isLoading || detail.isFetching);
+  const lifecycleSelectionUnavailable = selectedId != null && !lifecycleSelectionPreparing
+    && (detail.isError || !selectedDetailRecord);
+  const lifecycleStatusError = lifecycleSelectionUnavailable
+    ? apiErrorMessage(detail.error, "Authoritative vehicle status is unavailable. Retry before a lifecycle action.")
+    : null;
 
   const lifecycleSelectionValid = (archived: boolean) => {
     if (!session || !selectedRecord || !selectedDetailRecord || selectedRecord !== selectedDetailRecord
@@ -567,12 +573,16 @@ export function VehiclesPage() {
           record={selectedRecord} detail={detail.data} loading={detail.isLoading}
           canUpdate={canUpdate && !archivedView} canDelete={canDelete && !archivedView} canAssign={canAssign && !archivedView} canReactivate={canUpdate && archivedView} assigning={assign.isPending}
           lifecycleBusy={lifecycleBusy}
+          lifecycleSelectionPreparing={lifecycleSelectionPreparing}
+          lifecycleSelectionUnavailable={lifecycleSelectionUnavailable}
+          lifecycleStatusError={lifecycleStatusError}
           lifecycleNeedsRefresh={lifecycleNeedsRefresh}
           lifecycleError={archiveTarget ? null : lifecycleRecoveryError ?? (reactivate.error ? apiErrorMessage(reactivate.error, "The vehicle could not be reactivated. Refresh its status before trying again.") : null)}
           onClose={closeVehicle}
           onEdit={() => { if (canUpdate && !archiveTarget && !lifecycleInFlight.current) { setIsCreating(false); setEditing(selectedRecord); } }}
           onDelete={openArchive}
           onReactivate={reactivateSelected}
+          onRetryLifecycleStatus={() => { void detail.refetch(); }}
           onAssign={() => { if (canAssign && !archiveTarget && !lifecycleInFlight.current) setAssignmentVehicle(selectedRecord); }}
           onNavigate={(route) => { if (!archiveTarget && !lifecycleInFlight.current) navigate(route); }}
         />
@@ -774,11 +784,13 @@ function DriverAssignmentModal({ vehicle, drivers, saving, serverError, onClose,
 
 /* ------------------------------------------------------------------ drawer */
 
-function VehicleDrawer({ record, detail, loading, canUpdate, canDelete, canAssign, canReactivate, assigning, lifecycleBusy, lifecycleNeedsRefresh, lifecycleError, onClose, onEdit, onDelete, onReactivate, onAssign, onNavigate }: {
+function VehicleDrawer({ record, detail, loading, canUpdate, canDelete, canAssign, canReactivate, assigning, lifecycleBusy, lifecycleSelectionPreparing, lifecycleSelectionUnavailable, lifecycleStatusError, lifecycleNeedsRefresh, lifecycleError, onClose, onEdit, onDelete, onReactivate, onRetryLifecycleStatus, onAssign, onNavigate }: {
   record: AnyRecord; detail?: AnyRecord; loading: boolean;
   canUpdate: boolean; canDelete: boolean; canAssign: boolean; canReactivate: boolean; assigning: boolean;
-  lifecycleBusy: boolean; lifecycleNeedsRefresh: boolean; lifecycleError: string | null;
-  onClose: () => void; onEdit: () => void; onDelete: () => void; onReactivate: () => void; onAssign: () => void; onNavigate: (r: string) => void;
+  lifecycleBusy: boolean; lifecycleSelectionPreparing: boolean; lifecycleSelectionUnavailable: boolean;
+  lifecycleStatusError: string | null; lifecycleNeedsRefresh: boolean; lifecycleError: string | null;
+  onClose: () => void; onEdit: () => void; onDelete: () => void; onReactivate: () => void; onRetryLifecycleStatus: () => void;
+  onAssign: () => void; onNavigate: (r: string) => void;
 }) {
   const code = String(g(record, "vehicleCode", "vehicle_code") ?? `Vehicle ${record.id}`);
   const recs = (detail?.recommendations as AnyRecord[]) || [];
@@ -826,9 +838,15 @@ function VehicleDrawer({ record, detail, loading, canUpdate, canDelete, canAssig
             {canUpdate ? <button type="button" disabled={lifecycleBusy} onClick={onEdit} className="btn-primary h-9 px-3 text-xs"><Wrench className="h-3.5 w-3.5" /> Edit</button> : null}
             {canAssign ? <button type="button" disabled={assigning || lifecycleBusy} onClick={onAssign} className="btn-ghost h-9 px-3 text-xs"><UserCheck className="h-3.5 w-3.5" /> {g(record, "assignedDriverId", "assigned_driver_id") ? "Reassign driver" : "Assign driver"}</button> : null}
             <button type="button" disabled={lifecycleBusy} onClick={() => onNavigate("/map-view")} className="btn-ghost h-9 px-3 text-xs"><MapPin className="h-3.5 w-3.5" /> Live map</button>
-            {canDelete ? <button type="button" disabled={lifecycleBusy || lifecycleNeedsRefresh} onClick={onDelete} className="ml-auto inline-flex h-9 items-center gap-1.5 rounded-xl border border-rose-200 px-3 text-xs font-semibold text-rose-600 transition hover:bg-rose-50"><Trash2 className="h-3.5 w-3.5" /> Archive vehicle</button> : null}
-            {canReactivate ? <button type="button" disabled={lifecycleBusy || lifecycleNeedsRefresh} onClick={onReactivate} className="ml-auto btn-primary h-9 px-3 text-xs"><ArchiveRestore className="h-3.5 w-3.5" /> {lifecycleBusy ? "Reactivating..." : "Reactivate vehicle"}</button> : null}
+            {canDelete ? <button type="button" disabled={lifecycleBusy || lifecycleSelectionPreparing || lifecycleSelectionUnavailable || lifecycleNeedsRefresh} aria-busy={lifecycleSelectionPreparing ? true : undefined} onClick={onDelete} className="ml-auto inline-flex h-9 items-center gap-1.5 rounded-xl border border-rose-200 px-3 text-xs font-semibold text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"><Trash2 className="h-3.5 w-3.5" /> {lifecycleSelectionPreparing ? "Checking status…" : lifecycleSelectionUnavailable ? "Status unavailable" : "Archive vehicle"}</button> : null}
+            {canReactivate ? <button type="button" disabled={lifecycleBusy || lifecycleSelectionPreparing || lifecycleSelectionUnavailable || lifecycleNeedsRefresh} aria-busy={lifecycleSelectionPreparing ? true : undefined} onClick={onReactivate} className="ml-auto btn-primary h-9 px-3 text-xs"><ArchiveRestore className="h-3.5 w-3.5" /> {lifecycleSelectionPreparing ? "Checking status…" : lifecycleSelectionUnavailable ? "Status unavailable" : lifecycleBusy ? "Reactivating..." : "Reactivate vehicle"}</button> : null}
           </div>
+          {lifecycleStatusError ? (
+            <div role="alert" className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+              <p>{lifecycleStatusError}</p>
+              <button type="button" disabled={lifecycleBusy || lifecycleSelectionPreparing} className="btn-ghost mt-2" onClick={onRetryLifecycleStatus}>Retry status check</button>
+            </div>
+          ) : null}
           {lifecycleError ? (
             <div role="alert" className="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
               <p>{lifecycleError}</p>
