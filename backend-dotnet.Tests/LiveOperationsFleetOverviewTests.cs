@@ -208,6 +208,15 @@ public sealed class LiveOperationsFleetOverviewTests
         Assert.Contains("placeholder=\"Search vehicle or driver\"", page, StringComparison.Ordinal);
         Assert.Contains("aria-label=\"Sort fleet\"", page, StringComparison.Ordinal);
         Assert.Contains("setSortOrder", page, StringComparison.Ordinal);
+        Assert.Contains("Operational available", page, StringComparison.Ordinal);
+        Assert.Contains("Telemetry offline", page, StringComparison.Ordinal);
+        Assert.Contains("Dispatch restricted", page, StringComparison.Ordinal);
+        Assert.Contains("All command states", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("All live states", page, StringComparison.Ordinal);
+        Assert.Contains("Command-state buckets are mutually exclusive", page, StringComparison.Ordinal);
+        Assert.Contains("Operational states do not prove connectivity", page, StringComparison.Ordinal);
+        Assert.Contains("Fleet Registry availability is a separate master-data summary", page, StringComparison.Ordinal);
+        Assert.Contains(">Command state</th>", page, StringComparison.Ordinal);
         Assert.DoesNotContain("vehiclesApi.list()", page, StringComparison.Ordinal);
     }
 
