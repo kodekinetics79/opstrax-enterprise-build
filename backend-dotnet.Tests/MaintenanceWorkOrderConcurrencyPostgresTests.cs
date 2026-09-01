@@ -23,7 +23,7 @@ public sealed class MaintenanceWorkOrderConcurrencyPostgresTests
         try
         {
             vehicleId = await setup.InsertAsync(
-                "INSERT INTO vehicles(company_id,vehicle_code,type,status,availability_status,out_of_service,readiness_score,risk_score) VALUES (@c,@code,'Truck','Available','available',false,95,5)",
+                "INSERT INTO vehicles(company_id,vehicle_code,type,vin_exception_type,alternate_identifier,status,availability_status,out_of_service,readiness_score,risk_score) VALUES (@c,@code,'Truck','legacy-fleet-identifier',@code,'Available','available',false,95,5)",
                 c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@code", $"MWO-V-{companyId}"); });
 
             var dbA = Db();
