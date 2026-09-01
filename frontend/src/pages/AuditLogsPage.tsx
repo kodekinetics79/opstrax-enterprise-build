@@ -528,7 +528,7 @@ export function AuditLogsPage() {
                     </td>
                     <td className="px-4 py-3 font-mono text-xs font-bold text-emerald-700">{String(e.export_format ?? "")}</td>
                     <td className="px-4 py-3"><ExportStatusBadge status={String(e.status ?? "")} /></td>
-                    <td className="px-4 py-3 text-xs text-slate-400">{e.requested_at ? new Date(String(e.requested_at)).toLocaleString() : "—"}</td>
+                    <td className="px-4 py-3 text-xs text-slate-400">{e.createdAt ? new Date(String(e.createdAt)).toLocaleString() : "—"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -590,7 +590,7 @@ export function AuditLogsPage() {
                         <p className="truncate text-xs font-semibold text-slate-700">{String(e.requested_by_name ?? "—")}</p>
                         <p className="truncate text-[11px] text-slate-400">
                           {String(e.export_format ?? "")}
-                          {e.requested_at ? ` · ${new Date(String(e.requested_at)).toLocaleDateString()}` : ""}
+                          {e.createdAt ? ` · ${new Date(String(e.createdAt)).toLocaleDateString()}` : ""}
                         </p>
                       </div>
                       <ExportStatusBadge status={String(e.status ?? "")} />

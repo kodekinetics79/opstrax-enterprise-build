@@ -29,6 +29,8 @@ public static partial class EndpointMappings
     // Set (non-null) by the auth middleware ONLY for customer-portal users (users bound
     // to a customer_id). Internal endpoints reject any principal carrying this.
     public const string AuthCustomerIdItemKey = "opstrax.auth.customer_id";
+    internal const string AuditExportRequestsListSql =
+        "SELECT * FROM audit_export_requests WHERE tenant_id=@tenantId ORDER BY created_at DESC LIMIT 20";
     private static readonly HashSet<string> AllowedUserStatuses = new(StringComparer.OrdinalIgnoreCase)
     {
         "Active", "Inactive", "Pending", "Suspended"
@@ -2056,7 +2058,7 @@ public static partial class EndpointMappings
             if (denied is not null) return denied;
             var tenantId = GetCompanyId(http);
             return await OkRows(db,
-                "SELECT * FROM audit_export_requests WHERE tenant_id=@tenantId ORDER BY requested_at DESC LIMIT 20",
+                AuditExportRequestsListSql,
                 c => c.Parameters.AddWithValue("@tenantId", tenantId),
                 ct: ct);
         });
