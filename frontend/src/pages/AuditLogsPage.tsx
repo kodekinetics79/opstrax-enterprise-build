@@ -235,7 +235,7 @@ export function AuditLogsPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-extrabold text-slate-900">Audit Logs</h1>
-          <p className="mt-0.5 text-sm text-slate-500">Immutable record of all system actions across all modules</p>
+          <p className="mt-0.5 text-sm text-slate-500">Operational record of recorded system activity for internal review</p>
         </div>
         <button
           className="btn-primary flex items-center gap-2"

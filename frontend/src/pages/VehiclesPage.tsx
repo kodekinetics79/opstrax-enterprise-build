@@ -13,6 +13,7 @@ import { PERMISSIONS, useHasPermission } from "@/hooks/usePermission";
 import { useAuth } from "@/hooks/useAuth";
 import { scopeRowsForSession } from "@/auth/accessScope";
 import { apiErrorMessage } from "@/utils/apiErrorMessage";
+import { resolveAuthorizedSummaryCount } from "@/utils/vehicleSummaryPresentation";
 import { labelize, LoadingState, ErrorState, EmptyState } from "@/components/ui";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import type { AnyRecord, UserSession } from "@/types";
@@ -216,18 +217,14 @@ export function VehiclesPage() {
 
   const sum = (summary.data as AnyRecord) || {};
   const readinessRows = rows.filter(hasReadinessEvidence);
-  const summaryReadiness = Number(g(sum, "fleetReadinessScore", "fleet_readiness_score"));
   const evidencedScores = readinessRows.map(vehicleReadiness).filter((score): score is number => score != null);
   const readiness = readinessRows.length === 0
     ? null
-    : Math.round(Number.isFinite(summaryReadiness)
-      ? summaryReadiness
-      : evidencedScores.reduce((total, score) => total + score, 0) / Math.max(evidencedScores.length, 1));
+    : Math.round(evidencedScores.reduce((total, score) => total + score, 0) / Math.max(evidencedScores.length, 1));
   const available = rows.filter((r) => /available/i.test(String(g(r, "status")))).length;
   const moving = rows.filter(isMoving).length;
-  const atRisk = num(g(sum, "atRisk", "at_risk")) || rows.filter((r) => riskTier(r) === "High").length;
-  const deviceEx = num(g(sum, "deviceExceptions", "device_exceptions")) ||
-    rows.filter((r) => !/online/i.test(vehicleDeviceStatus(r)) || !/online|recording/i.test(vehicleCameraStatus(r))).length;
+  const atRisk = resolveAuthorizedSummaryCount(summary.isSuccess, g(sum, "atRisk", "at_risk"));
+  const deviceEx = resolveAuthorizedSummaryCount(summary.isSuccess, g(sum, "deviceExceptions", "device_exceptions"));
 
   useEffect(() => {
     if (searchParams.get("new") !== "1") return;
@@ -393,9 +390,13 @@ export function VehiclesPage() {
             <h1 className="mt-1 text-[26px] font-black leading-none tracking-tight text-slate-950">Vehicles</h1>
             <p className="mt-1.5 text-[12.5px] font-medium text-slate-500">
               <span className="font-bold text-slate-700 tabular-nums">{rows.length}</span> on this page ·{" "}
-              <span className="font-bold text-emerald-600 tabular-nums">{moving}</span> moving ·{" "}
-              <span className="font-bold text-sky-600 tabular-nums">{available}</span> available ·{" "}
-              <span className="font-bold text-rose-600 tabular-nums">{atRisk}</span> need attention
+              <span className="font-bold text-emerald-600 tabular-nums">{moving}</span> moving on page ·{" "}
+              <span className="font-bold text-sky-600 tabular-nums">{available}</span> available on page ·{" "}
+              {atRisk == null ? (
+                <span className="font-bold text-slate-500">attention unavailable in authorized scope</span>
+              ) : (
+                <><span className="font-bold text-rose-600 tabular-nums">{atRisk}</span> need attention in authorized scope</>
+              )}
             </p>
           </div>
           <div className="ml-auto flex flex-wrap items-center gap-2.5">
@@ -431,10 +432,10 @@ export function VehiclesPage() {
 
       {/* ── Clay KPI tiles ───────────────────────────────────────────────── */}
       <div className="grid shrink-0 grid-cols-2 gap-3 xl:grid-cols-4">
-        <ClayStat Icon={Gauge}      tone="fc-clay-teal"    iconCls="text-teal-700"    label="Fleet readiness"      value={readiness == null ? "Unknown" : `${readiness}%`} meter={readiness ?? undefined} caption={`${readinessRows.length} assessed · ${rows.length - readinessRows.length} unknown`} />
-        <ClayStat Icon={Navigation} tone="fc-clay-emerald" iconCls="text-emerald-700" label="Moving now"           value={moving}          meter={rows.length ? (moving / rows.length) * 100 : 0} caption={`${available} available idle`} />
-        <ClayStat Icon={ShieldAlert} tone="fc-clay-red"    iconCls="text-rose-700"    label="At risk"              value={atRisk}          alert={atRisk > 0} caption="High risk or down" />
-        <ClayStat Icon={Cpu}        tone="fc-clay-amber"   iconCls="text-amber-700"   label="Device / camera gaps" value={deviceEx}        alert={deviceEx > 0} caption="Telematics blind spots" />
+        <ClayStat Icon={Gauge}      tone="fc-clay-teal"    iconCls="text-teal-700"    label="Page readiness"      value={readiness == null ? "Unknown" : `${readiness}%`} meter={readiness ?? undefined} caption={`${readinessRows.length} assessed on this page · ${rows.length - readinessRows.length} unknown`} />
+        <ClayStat Icon={Navigation} tone="fc-clay-emerald" iconCls="text-emerald-700" label="Moving on page"      value={moving}          meter={rows.length ? (moving / rows.length) * 100 : 0} caption={`${available} available on this page`} />
+        <ClayStat Icon={ShieldAlert} tone="fc-clay-red"    iconCls="text-rose-700"    label="Authorized scope at risk" value={atRisk == null ? "Unknown" : atRisk} alert={atRisk != null && atRisk > 0} caption="Tenant or permitted branch summary" />
+        <ClayStat Icon={Cpu}        tone="fc-clay-amber"   iconCls="text-amber-700"   label="Authorized scope device / camera gaps" value={deviceEx == null ? "Unknown" : deviceEx} alert={deviceEx != null && deviceEx > 0} caption="Tenant or permitted branch summary" />
       </div>
 
       {/* ── Lifecycle band — replacement pressure + operational gaps ──────── */}
@@ -559,8 +560,8 @@ export function VehiclesPage() {
           </div>
         ) : (
           <div className="flex shrink-0 items-center gap-4 px-5 py-3 text-[11.5px] font-semibold text-slate-500">
-            <span className="inline-flex items-center gap-2"><span className="deck-led deck-led-emerald" /> {moving} moving</span>
-            <span className="inline-flex items-center gap-2"><span className={`deck-led ${deviceEx > 0 ? "deck-led-amber" : "deck-led-slate"}`} /> {deviceEx} device gaps</span>
+            <span className="inline-flex items-center gap-2"><span className="deck-led deck-led-emerald" /> {moving} moving on page</span>
+            <span className="inline-flex items-center gap-2"><span className={`deck-led ${deviceEx != null && deviceEx > 0 ? "deck-led-amber" : "deck-led-slate"}`} /> {deviceEx == null ? "Device gaps unavailable" : `${deviceEx} device gaps in authorized scope`}</span>
             <button type="button" onClick={() => navigate("/iot-devices")} className="ml-auto inline-flex items-center gap-1 font-bold text-teal-700 hover:underline">
               Device health <ChevronRight className="h-3 w-3" />
             </button>
