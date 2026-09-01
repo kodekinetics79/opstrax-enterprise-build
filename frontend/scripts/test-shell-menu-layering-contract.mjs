@@ -78,6 +78,10 @@ assert.doesNotMatch(panelRule, /position\s*:[^;]*!important/, "important global 
 assert.match(shell, /onClick=\{\(\) => \{ void logout\(\)\.finally\(\(\) => setProfileOpen\(false\)\); \}\}/);
 assert.match(shell, /navigate\("\/settings"\); setProfileOpen\(false\)/);
 assert.match(shell, /navigate\("\/user-management"\); setProfileOpen\(false\)/);
+assert.match(shell, /const canViewSettings = hasPermission\(PERMISSIONS\.SETTINGS_VIEW\)/, "profile Settings visibility follows its route permission");
+assert.match(shell, /const canViewUserManagement = \[[\s\S]*PERMISSIONS\.USERS_VIEW,[\s\S]*PERMISSIONS\.ROLES_VIEW,[\s\S]*PERMISSIONS\.SETTINGS_VIEW,[\s\S]*\]\.some\(hasDirectPermission\)/, "profile User Management visibility follows the route's direct grants");
+assert.match(shell, /\{canViewSettings && \([\s\S]*navigate\("\/settings"\)/, "restricted users are not shown Settings");
+assert.match(shell, /\{canViewUserManagement && \([\s\S]*navigate\("\/user-management"\)/, "restricted users are not shown User Management");
 assert.match(shell, /onClick=\{\(\) => setNotifOpen\(\(v\) => !v\)\}/);
 assert.match(shell, /profileRef\.current && !profileRef\.current\.contains\(e\.target as Node\)/);
 assert.match(shell, /notifRef\.current && !notifRef\.current\.contains\(e\.target as Node\)/);

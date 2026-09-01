@@ -9,7 +9,7 @@ import { WorkspaceExperience } from "@/components/WorkspaceExperience";
 import { modules, moduleIcons } from "@/modules/moduleConfig";
 import { useAuth } from "@/hooks/useAuth";
 import { useFlag } from "@/hooks/useFeatureFlags";
-import { useHasDirectPermission, useHasPermission } from "@/hooks/usePermission";
+import { PERMISSIONS, useHasDirectPermission, useHasPermission } from "@/hooks/usePermission";
 import { useDialogFocus } from "@/hooks/useDialogFocus";
 import { moduleAvailableForCountry, useTenantCountry } from "@/hooks/useTenantRegion";
 import { getLandingRouteForSession } from "@/auth/sessionRouting";
@@ -288,6 +288,12 @@ export function AppShell() {
   const navigate = useNavigate();
   const hasPermission = useHasPermission();
   const hasDirectPermission = useHasDirectPermission();
+  const canViewSettings = hasPermission(PERMISSIONS.SETTINGS_VIEW);
+  const canViewUserManagement = [
+    PERMISSIONS.USERS_VIEW,
+    PERMISSIONS.ROLES_VIEW,
+    PERMISSIONS.SETTINGS_VIEW,
+  ].some(hasDirectPermission);
   const tenantCountry = useTenantCountry();
   const runtimeQuery = useRuntimeDiagnostics();
   const tenantIsExplicitlySynthetic = /\b(demo|synthetic|test)\b/i.test(String(session?.company?.name ?? ""));
@@ -743,22 +749,26 @@ export function AppShell() {
                       </div>
                       {/* Actions */}
                       <div className="py-1">
-                        <button
-                          type="button"
-                          className="flex w-full items-center gap-3 px-4 py-2.5 text-[13px] text-slate-700 hover:bg-slate-50 transition"
-                          onClick={() => { navigate("/settings"); setProfileOpen(false); }}
-                        >
-                          <Settings className="h-4 w-4 text-slate-400" />
-                          Settings
-                        </button>
-                        <button
-                          type="button"
-                          className="flex w-full items-center gap-3 px-4 py-2.5 text-[13px] text-slate-700 hover:bg-slate-50 transition"
-                          onClick={() => { navigate("/user-management"); setProfileOpen(false); }}
-                        >
-                          <User className="h-4 w-4 text-slate-400" />
-                          User Management
-                        </button>
+                        {canViewSettings && (
+                          <button
+                            type="button"
+                            className="flex w-full items-center gap-3 px-4 py-2.5 text-[13px] text-slate-700 hover:bg-slate-50 transition"
+                            onClick={() => { navigate("/settings"); setProfileOpen(false); }}
+                          >
+                            <Settings className="h-4 w-4 text-slate-400" />
+                            Settings
+                          </button>
+                        )}
+                        {canViewUserManagement && (
+                          <button
+                            type="button"
+                            className="flex w-full items-center gap-3 px-4 py-2.5 text-[13px] text-slate-700 hover:bg-slate-50 transition"
+                            onClick={() => { navigate("/user-management"); setProfileOpen(false); }}
+                          >
+                            <User className="h-4 w-4 text-slate-400" />
+                            User Management
+                          </button>
+                        )}
                       </div>
                       <div className="border-t border-slate-100 py-1">
                         <button
