@@ -267,12 +267,20 @@ public sealed class MotiveOAuthCallbackPostgresTests
     [InlineData("denied", "denied", "integration.oauth.denied")]
     [InlineData("exchange_failed", "token_exchange_failed", "integration.oauth.token_exchange_failed")]
     [InlineData("probe_failed", "scope_verification_failed", "integration.oauth.scope_verification_failed")]
+    [InlineData("exchange_oversized", "token_exchange_failed", "integration.oauth.token_exchange_failed")]
+    [InlineData("probe_oversized", "scope_verification_failed", "integration.oauth.scope_verification_failed")]
     public async Task UnsuccessfulCallback_ClearsOldAndNewCredentials_AndAuditsTheOutcome(
         string failure, string expectedOutcome, string expectedAudit)
     {
         await using var fixture = await Fixture.CreateAsync();
         var runtime = fixture.Runtime((_, request, _) => Task.FromResult(
-            failure == "exchange_failed" && request.RequestUri!.AbsolutePath == "/oauth/token"
+            failure == "exchange_oversized" && request.RequestUri!.AbsolutePath == "/oauth/token"
+                || failure == "probe_oversized" && request.RequestUri!.AbsolutePath == "/v1/eld_devices"
+                ? new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new MotiveStreamingFixture(new MotiveReadFixture([], unending: true)),
+                }
+                : failure == "exchange_failed" && request.RequestUri!.AbsolutePath == "/oauth/token"
                 ? Json(HttpStatusCode.BadRequest, "{\"error\":\"invalid_grant\"}")
                 : failure == "probe_failed" && request.RequestUri!.AbsolutePath == "/v1/eld_devices"
                     ? Json(HttpStatusCode.Forbidden, "{\"error\":\"insufficient_scope\"}")
