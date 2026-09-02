@@ -160,7 +160,9 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
                         c.Parameters.AddWithValue("@lng", (decimal)r.Lng);
                         c.Parameters.AddWithValue("@spd", (decimal)r.SpeedMph);
                         c.Parameters.AddWithValue("@hdg", (short)Math.Clamp(r.Heading, 0, 359));
-                        c.Parameters.AddWithValue("@eng", (object?)r.EngineState ?? "Running");
+                        // Missing engine evidence must agree with history; a GPS fix
+                        // alone cannot establish that the engine is running.
+                        c.Parameters.AddWithValue("@eng", (object?)r.EngineState ?? DBNull.Value);
                         c.Parameters.AddWithValue("@odo", (object?)(r.OdometerMiles is { } o ? (decimal)o : (object?)null) ?? DBNull.Value);
                         c.Parameters.AddWithValue("@etime", r.EventTime);
                         c.Parameters.AddWithValue("@telemetryStatus", telemetryStatus);
@@ -449,6 +451,7 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
             if (v.TryGetProperty("engineStates", out var es))
                 engine = es.ValueKind == JsonValueKind.Object && es.TryGetProperty("value", out var ev) ? ev.GetString()
                        : es.ValueKind == JsonValueKind.String ? es.GetString() : null;
+            if (string.IsNullOrWhiteSpace(engine)) engine = null;
 
             list.Add(new SamsaraGps(id!, name, lat, lng, speed, heading, time, odoMiles, engine));
         }
