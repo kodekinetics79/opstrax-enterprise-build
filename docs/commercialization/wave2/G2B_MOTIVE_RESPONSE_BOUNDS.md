@@ -1,9 +1,11 @@
 # G2B Motive response-size hardening — 2026-09-02
 
-Local follow-up to reviewed PR #118 head
+Follow-up to reviewed PR #118 head
 `b4bdf5a42aa78fab20905a20b7538ca7bcbaae5d`, isolated on
-`wave2/motive-response-bounds`. This does not change PR #118's exact-head evidence,
-deploy an application, configure a provider, or close a commercialization gate.
+`wave2/motive-response-bounds` and based on merged main
+`865e990d847bc4bf7b84d147d0020af8ebd45f9e`. This does not change PR #118's
+exact-head evidence, deploy an application, configure a provider, or close a
+commercialization gate.
 
 ## Observation and fix
 
@@ -54,6 +56,13 @@ AI SDET reproduced the 48 and 22 case suites; independent AI AppSec reviewed
 the final source and tests and found the prior unbounded-response issue resolved.
 Both reviews support local code readiness only, not qualified-human acceptance.
 
+The original locally tested implementation is
+`f17797b3db0b87688df4da0d5038a1a0a8b9bf15`. Rebasing it onto PR #118's merge
+commit preserved the complete tree: the merge tree equals the reviewed PR head,
+and the rebased follow-up had no file differences from the tested implementation.
+Only this evidence document was then corrected to record the approved merge and
+deployment safeguard. The application and test sources are unchanged.
+
 The automatic timeout test completed in 20 seconds. It proves autonomous
 stalled-body termination but does not separately time the 25-second aggregate
 budget across multiple slow successful probes; that aggregate limit is retained
@@ -64,9 +73,17 @@ before any release claim for this new follow-up.
 
 PR #118 itself has eleven successful hosted checks in
 [run 33659778571](https://github.com/kodekinetics79/opstrax-enterprise-build/actions/runs/33659778571).
-Its merge remains separately blocked because production Render service
-`Osptrax Fleet Management` auto-deploys `main` on commit; the requested
-deployment-safeguard approval has not been received. No settings were changed.
+The user subsequently approved setting production Render service
+`Osptrax Fleet Management` (`srv-d93dha0k1i2s73dm6ub0`) Auto-Deploy to **Off**.
+The saved setting was verified after a full reload before PR #118 was merged at
+2026-09-02T18:01:06Z as `865e990d847bc4bf7b84d147d0020af8ebd45f9e`.
+The post-merge deployment page showed no new deployment and production remained
+on controlled baseline `155b54a3451c2a4618b4fc6a87fd59f0e68f425d`.
+The separate main CI run is
+[33664632681](https://github.com/kodekinetics79/opstrax-enterprise-build/actions/runs/33664632681);
+its outcome must be checked directly, not inferred from PR #118's prior checks.
+No deployment is authorized by this follow-up. Its own hosted CI must attest the
+exact published head before any merge-readiness claim.
 Frozen G1A frontend/API remains
 `e2230425a8e14249d2c0f477a7ec7b713a6ab27e`. Neither this local fix nor a future
 code merge constitutes provider, pilot, ELD, or device certification.
