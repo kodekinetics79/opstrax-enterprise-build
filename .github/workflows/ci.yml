@@ -52,7 +52,7 @@ jobs:
       - run: npm audit --omit=dev --audit-level=low
         working-directory: backend
       - name: Regress query parser security and Express compatibility
-        run: node tools/launch/test_query_parser_security.mjs backend
+        run: node tools/security/test_query_parser_security.mjs backend
       - run: npm run build
         working-directory: backend
       - name: Regress Node tenant and authentication boundaries
@@ -72,7 +72,7 @@ jobs:
       - run: npm audit --omit=dev --audit-level=low
         working-directory: services/node-events
       - name: Regress query parser security and Express compatibility
-        run: node tools/launch/test_query_parser_security.mjs services/node-events
+        run: node tools/security/test_query_parser_security.mjs services/node-events
       - run: npm run check
         working-directory: services/node-events
 

@@ -33,7 +33,7 @@ constructor/isBuffer handling. We do not claim either was exploited in OpsTrax.
 - CI now runs parser regression cases in each affected job and the existing
   backend boundary regressions after its build. The audit threshold remains low.
 
-Commands: `node tools/launch/test_query_parser_security.mjs`,
+Commands: `node tools/security/test_query_parser_security.mjs`,
 `npm run build --prefix backend`, `npm run check --prefix services/node-events`,
 and `node --test backend/tests/security-hardening.test.js`. Audit commands run in
 each package directory. Fixtures and HTTP traffic are local, not customer data.
@@ -43,6 +43,12 @@ both clean audits, checked effective resolution through Express and body-parser,
 and found no merge-blocking issue in this dependency change. A low-severity test
 cleanup diagnostic was corrected so a failed local listener is not masked by a
 second shutdown error. This is independent AI review, not human certification.
+
+Hosted run `33659573606` confirmed both repaired Node jobs pass, but exposed a
+test-placement mistake: the zero-install launch-tooling glob also discovered
+the new suite without its package dependencies. The suite was moved to
+`tools/security`, retaining mandatory execution after each Node package install.
+No audit or test was disabled; the zero-install launch suite remains separate.
 
 ## Release boundary
 

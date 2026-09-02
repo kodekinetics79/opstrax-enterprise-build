@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { test } from "node:test";
 
+// This suite requires installed dependencies; keep it outside tools/launch's zero-install glob.
 // Express 4/body-parser still constrain qs to the vulnerable 6.15 minor.
 // Keep the override until both upstream ranges include the patched release.
 // https://github.com/advisories/GHSA-x5fp-wj9c-mxmx
