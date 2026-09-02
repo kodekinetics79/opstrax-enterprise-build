@@ -61,7 +61,7 @@ public sealed class ConnectorRegistry
         "privatekey", "hmacsecret", "accesstoken", "refreshtoken", "webhooksecret",
         "apikeysecret", "authsecret", "bearertoken", "consumersecret",
         "secretkey", "signingkey", "signingsecret", "connectionstring", "passphrase",
-        "authorization",
+        "authorization", "oauthstatehash",
     };
 
     // Free-form containers preserve their JSON shape for connector compatibility, but every

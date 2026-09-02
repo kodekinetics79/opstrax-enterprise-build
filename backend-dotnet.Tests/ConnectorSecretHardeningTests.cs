@@ -32,6 +32,7 @@ public sealed class ConnectorSecretHardeningTests
     [InlineData("connectionString")]
     [InlineData("passphrase")]
     [InlineData("authorization")]
+    [InlineData("oauthStateHash")]
     public void SensitiveRegistry_RecognizesProviderCredentialAliases(string key)
         => Assert.True(ConnectorRegistry.IsSensitive(key));
 

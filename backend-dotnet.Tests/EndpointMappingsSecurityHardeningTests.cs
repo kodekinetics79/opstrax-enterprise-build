@@ -284,6 +284,10 @@ public sealed class EndpointMappingsSecurityHardeningTests
         new("GET /api/auth/sso/callback", PublicReason.PreSessionAuth,
             "OIDC code exchange bound to the data-protected opstrax_sso_flow cookie: "
             + "FixedTimeEquals on state, nonce, 600s expiry, issuer validated against discovery"),
+        new("GET /api/integrations/motive/oauth/callback", PublicReason.PreSessionAuth,
+            "data-protected ten-minute Motive state is tenant/integration/generation-bound, "
+            + "constant-time hash checked and atomically claimed once before provider I/O; "
+            + "active actor permissions and module entitlement are revalidated in a short system transaction"),
         new("POST /api/auth/mfa/login-verify", PublicReason.PreSessionAuth,
             "HMAC-signed MfaChallengeService token (Jwt:Key) is the credential; "
             + "MfaChallengeConsumptionService makes it single-use"),

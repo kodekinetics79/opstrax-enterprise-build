@@ -100,6 +100,13 @@ export type IntegrationTestResult = {
   details?: Record<string, unknown> | null;
 };
 
+export type MotiveOAuthStartResult = {
+  authorizationUrl: string;
+  redirectUri: string;
+  scopes: string[];
+  expiresAt: string;
+};
+
 export const integrationsApi = {
   list: () => unwrap<IntegrationsPayload>(apiClient.get("/api/integrations")),
   detail: (id: number | string) =>
@@ -116,6 +123,10 @@ export const integrationsApi = {
   // true result (success only when the provider accepts the credentials).
   testConnection: (id: number | string) =>
     unwrap<IntegrationTestResult>(apiClient.post(`/api/integrations/${id}/test-connection`, {})),
+  startMotiveOAuth: (id: number | string) =>
+    unwrap<MotiveOAuthStartResult>(apiClient.post(`/api/integrations/${id}/oauth/motive/start`, {})),
+  preflightMotiveOAuth: (id: number | string, state: string) =>
+    unwrap<{ ready: boolean }>(apiClient.post(`/api/integrations/${id}/oauth/motive/preflight`, { state })),
   // Provider-specific live action (e.g. Twilio { action: "send-test", to, body }).
   runAction: (id: number | string, body: Record<string, unknown>) =>
     unwrap<IntegrationTestResult>(apiClient.post(`/api/integrations/${id}/run-action`, body)),

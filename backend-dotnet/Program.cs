@@ -145,6 +145,13 @@ builder.Services.AddSingleton<Opstrax.Api.Services.Connectors.IConnector, Opstra
 builder.Services.AddSingleton<Opstrax.Api.Services.Connectors.IConnector, Opstrax.Api.Services.Connectors.GoogleMapsConnector>();
 // Samsara — deep integration: real GPS/telemetry sync into latest_vehicle_positions.
 builder.Services.AddSingleton<Opstrax.Api.Services.Connectors.IConnector, Opstrax.Api.Services.Connectors.SamsaraConnector>();
+// Motive — controlled G2B OAuth + read-only ELD/HOS evidence adapter.
+builder.Services.AddHttpClient("motive-oauth")
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+builder.Services.AddHttpClient("motive")
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+builder.Services.AddSingleton<Opstrax.Api.Services.Connectors.IConnector, Opstrax.Api.Services.Connectors.MotiveConnector>();
+builder.Services.AddSingleton<Opstrax.Api.Services.Connectors.MotiveOAuthService>();
 builder.Services.AddSingleton<Opstrax.Api.Services.Connectors.GenericHttpConnector>();
 builder.Services.AddSingleton<Opstrax.Api.Services.Connectors.ConnectorRegistry>();
 // Server-side Google Maps (geocoding/routing) using the tenant's stored Maps key.
@@ -649,6 +656,15 @@ app.UseWhen(
                 scopes.Current = sys;
                 try { await next(); await sys.CompleteAsync(context.RequestAborted); }
                 finally { scopes.Current = null; }
+            }
+            // Motive redirects here without an OpsTrax bearer session. The handler
+            // validates its protected one-time state and opens only short system
+            // transactions around DB reads/writes; provider network calls must never
+            // hold a request-length database transaction or pooled connection.
+            if (string.Equals(path, "/api/integrations/motive/oauth/callback", StringComparison.OrdinalIgnoreCase))
+            {
+                await next();
+                return;
             }
             if (string.Equals(path, "/api/auth/login", StringComparison.OrdinalIgnoreCase) ||
                 // Second-factor login completion is pre-session too: it validates a challenge, reads

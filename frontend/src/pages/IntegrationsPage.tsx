@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import {
   Activity,
   AlertTriangle,
@@ -164,6 +164,9 @@ function integrationFields(record: IntegrationRecord): ConfigField[] {
       },
     ];
   }
+  // Motive uses a server-side OAuth code exchange. Provider client credentials
+  // and access/refresh tokens must never be typed into or returned to this form.
+  if (record.key === "motive") return [];
   return categoryFields(record.category);
 }
 
@@ -349,7 +352,9 @@ function ConfigDrawer({
 
   const testMut = useMutation({
     mutationFn: async () => {
-      await integrationsApi.configure(integration.id, buildConfigPayload(integration, form));
+      if (integration.key !== "motive") {
+        await integrationsApi.configure(integration.id, buildConfigPayload(integration, form));
+      }
       return integrationsApi.testConnection(integration.id);
     },
     onSuccess: async (result: IntegrationTestResult) => {
@@ -362,6 +367,26 @@ function ConfigDrawer({
         message: error instanceof Error ? error.message : "Connection test failed. Please try again.",
       });
       void qc.invalidateQueries({ queryKey: ["integrations"] });
+    },
+  });
+
+  const motiveOAuthMut = useMutation({
+    mutationFn: async () => {
+      const result = await integrationsApi.startMotiveOAuth(integration.id);
+      const state = new URL(result.authorizationUrl).searchParams.get("state");
+      if (!state) throw new Error("Motive authorization returned no security state.");
+      const preflight = await integrationsApi.preflightMotiveOAuth(integration.id, state);
+      if (!preflight.ready) throw new Error("Motive browser security preflight did not pass.");
+      return result;
+    },
+    onSuccess: (result) => {
+      window.location.assign(result.authorizationUrl);
+    },
+    onError: (error) => {
+      setTestResult({
+        success: false,
+        message: error instanceof Error ? error.message : "Motive authorization could not be started.",
+      });
     },
   });
 
@@ -455,7 +480,7 @@ function ConfigDrawer({
           className="flex flex-col gap-4"
           onSubmit={(event) => {
             event.preventDefault();
-            if (!canConfigure) return;
+            if (!canConfigure || integration.key === "motive") return;
             void saveMut.mutateAsync(buildConfigPayload(integration, form));
           }}
         >
@@ -488,7 +513,20 @@ function ConfigDrawer({
               <Settings2 className="h-4 w-4 text-slate-400" />
             </div>
 
-            {fields.map((field) => {
+            {integration.key === "motive" ? (
+              <div className="rounded-xl border border-blue-200 bg-blue-50/70 p-4">
+                <p className="text-sm font-bold text-slate-800">Motive OAuth 2.0</p>
+                <p className="mt-1 text-xs leading-5 text-slate-600">
+                  OpsTrax requests only nine read-only company, vehicle, ELD, location, HOS, and inspection scopes. Provider client credentials and tokens remain server-side and encrypted.
+                </p>
+                <p className="mt-2 text-xs font-semibold text-blue-700">
+                  No messaging, dispatch, card, camera, write, or webhook-management permission is requested.
+                </p>
+                <p className="mt-2 text-xs leading-5 text-slate-600">
+                  Controlled access test only: automatic refresh and data sync are not enabled. Reauthorize after the short-lived access token expires. Passing this test is not ELD certification or pilot approval.
+                </p>
+              </div>
+            ) : fields.map((field) => {
               const secretSet = isSecretField(field.key) && isRedactedValue(integration.config[field.key]);
               const inputId = `integration-${integration.id}-${field.key}`;
               return (
@@ -638,6 +676,34 @@ function ConfigDrawer({
           {!adapterAvailable ? (
             <div className="flex justify-end border-t border-slate-100 pt-3">
               <button type="button" className="btn-ghost" onClick={onClose}>Close</button>
+            </div>
+          ) : canManage && integration.key === "motive" ? (
+            <div className="flex flex-wrap items-center gap-3 border-t border-slate-100 pt-3">
+              <button
+                type="button"
+                className="btn-primary flex-1"
+                disabled={motiveOAuthMut.isPending || testMut.isPending}
+                onClick={() => {
+                  setTestResult(null);
+                  motiveOAuthMut.mutate();
+                }}
+              >
+                {motiveOAuthMut.isPending ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
+                {motiveOAuthMut.isPending ? "Preparing authorization..." : "Authorize with Motive"}
+              </button>
+              <button
+                type="button"
+                className="btn-ghost"
+                disabled={testMut.isPending || motiveOAuthMut.isPending || !isRedactedValue(integration.config.accessToken)}
+                onClick={() => {
+                  setTestResult(null);
+                  testMut.mutate();
+                }}
+              >
+                {testMut.isPending ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
+                {testMut.isPending ? "Testing..." : "Retest scopes"}
+              </button>
+              <button type="button" className="btn-ghost" onClick={onClose}>Cancel</button>
             </div>
           ) : canManage ? (
             <div className="flex flex-wrap items-center gap-3 border-t border-slate-100 pt-3">
@@ -1306,6 +1372,8 @@ export function IntegrationsPage() {
   const hasPermission = useHasPermission();
   const canManage = hasPermission("telematics:providers:manage");
   const qc = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const motiveOAuthOutcome = searchParams.get("motiveOAuth");
 
   const [categoryFilter, setCategoryFilter] = useState<string>("All");
   const [statusFilter, setStatusFilter] = useState<string>("All");
@@ -1331,6 +1399,24 @@ export function IntegrationsPage() {
 
   const payload = q.data;
   const integrations = payload?.records ?? [];
+  const motiveRecord = integrations.find((record) => record.key === "motive");
+  // A URL result is a navigation hint, not proof. Success also requires the
+  // server-persisted current connection verdict and OAuth verification status.
+  const motiveOAuthVerified = motiveOAuthOutcome === "connected"
+    && motiveRecord?.lastTestOk === true
+    && motiveRecord.config.oauthStatus === "verified";
+  const motiveOAuthMessage = motiveOAuthVerified
+    ? "Motive authorization and nine read-only endpoint probes are recorded as successful. Data sync, automatic token refresh, and certification remain pending."
+    : ({
+        denied: "Motive authorization was not granted. No Motive tokens were retained.",
+        invalid_state: "This Motive authorization link is invalid, expired, or already used. Start a new authorization from Configure.",
+        browser_mismatch: "Motive authorization must finish in the browser that started it. The security cookie may have been blocked; no account was connected. Restart from Configure in the same browser.",
+        invalidated: "Motive authorization was invalidated by a newer configuration or disconnect. No stale result was applied.",
+        authorization_revoked: "Motive authorization was stopped because the initiating user no longer has the required access or entitlement.",
+        token_exchange_failed: "Motive authorization could not be exchanged for an access token. Review the connector message and authorize again.",
+        scope_verification_failed: "Motive did not pass all required read-only endpoint probes. No Motive tokens were retained.",
+      } as Record<string, string>)[motiveOAuthOutcome ?? ""]
+      ?? "Motive returned to OpsTrax, but no successful current verification is recorded. Review the connector before continuing.";
   const activity = payload?.activity ?? [];
   const summary = payload?.summary ?? {
     total: integrations.length,
@@ -1527,6 +1613,16 @@ export function IntegrationsPage() {
           </>
         }
       />
+
+      {motiveOAuthOutcome && (
+        <div role="status" aria-live="polite" className={`flex items-start gap-3 rounded-xl border px-4 py-3 ${motiveOAuthVerified ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-900"}`}>
+          <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
+          <p className="min-w-0 flex-1 text-sm">{motiveOAuthMessage}</p>
+          <button type="button" aria-label="Dismiss Motive authorization result" className="icon-btn" onClick={() => setSearchParams((current) => { current.delete("motiveOAuth"); return current; }, { replace: true })}>
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <KpiCard label="Connectors" value={summary.total} icon={<Layers className="h-5 w-5" />} delta={`${summary.categories} categories`} />

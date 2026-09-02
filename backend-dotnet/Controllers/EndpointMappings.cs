@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.DependencyInjection;
@@ -14,6 +15,7 @@ using Opstrax.Api.DTOs;
 using Opstrax.Api.Observability;
 using Opstrax.Api.Security;
 using Opstrax.Api.Services;
+using Opstrax.Api.Services.Connectors;
 
 namespace Opstrax.Api.Controllers;
 
@@ -988,6 +990,9 @@ public static partial class EndpointMappings
         app.MapPost("/api/integrations/{id:long}/disconnect", DisconnectIntegration);
         app.MapPost("/api/integrations/{id:long}/sync", IntegrationSync);
         app.MapPost("/api/integrations/{id:long}/configure", ConfigureIntegration);
+        app.MapPost("/api/integrations/{id:long}/oauth/motive/start", MotiveOAuthStart);
+        app.MapPost("/api/integrations/{id:long}/oauth/motive/preflight", MotiveOAuthPreflight);
+        app.MapGet("/api/integrations/motive/oauth/callback", MotiveOAuthCallback);
         // Real connectivity: performs an actual handshake with the provider and only
         // marks the connector Connected when the provider accepts the credentials.
         app.MapPost("/api/integrations/{id:long}/test-connection", IntegrationTestConnection);
@@ -11459,6 +11464,10 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (string.IsNullOrWhiteSpace(name))
             return Results.BadRequest(ApiResponse<object>.Fail("Integration name is required"));
         var key = IntegrationSlug(name);
+        if (string.Equals(key, "motive", StringComparison.OrdinalIgnoreCase))
+            return Results.Json(ApiResponse<object>.Fail(
+                "Motive is a reserved catalog provider. Use its audited OAuth authorization flow."),
+                statusCode: StatusCodes.Status422UnprocessableEntity);
         if (await db.ScalarLongAsync("SELECT COUNT(*) FROM integrations WHERE company_id=@cid AND integration_key=@k",
                 c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@k", key); }, ct) > 0)
             return Results.Conflict(ApiResponse<object>.Fail($"An integration with key '{key}' already exists"));
@@ -11484,8 +11493,15 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (IntegrationsManageGuard(http) is { } denied) return denied;
         if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
         var companyId = GetCompanyId(http);
+        var oauthConfigRejected = false;
         var updated = await RunLockedIntegrationMutationAsync(db, companyId, id, async existing =>
         {
+            if (string.Equals(existing.GetValueOrDefault("integrationKey")?.ToString(), "motive", StringComparison.OrdinalIgnoreCase)
+                && body.Keys.Any(key => string.Equals(key, "config", StringComparison.OrdinalIgnoreCase)))
+            {
+                oauthConfigRejected = true;
+                return 0;
+            }
             var protectedConfig = ProtectIntegrationConfig(
                 body, connectors, existing.GetValueOrDefault("configJson"), merge: true);
             // COALESCE keeps any field the caller omits; JSON columns replace when
@@ -11517,6 +11533,10 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                   WHERE company_id=@cid AND id=@id",
                 c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); BindIntegration(c, body, null, null, protectedConfig); }, ct);
         }, ct);
+        if (oauthConfigRejected)
+            return Results.Json(ApiResponse<object>.Fail(
+                "Motive credentials can be changed only through the audited OAuth authorization flow."),
+                statusCode: StatusCodes.Status422UnprocessableEntity);
         if (!updated) return Results.NotFound(ApiResponse<object>.Fail("Integration not found"));
         await audit.LogAsync(http, "integration.updated", "Integration", id, ct: ct);
         return await IntegrationDetail(http, id, db, connectors, ct);
@@ -11679,10 +11699,16 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
         var companyId = GetCompanyId(http);
         var adapterUnavailable = false;
+        var oauthOnly = false;
         var configured = await RunLockedIntegrationMutationAsync(db, companyId, id, async existing =>
         {
             var isCustom = existing.TryGetValue("isCustom", out var customRaw) && customRaw is bool custom && custom;
             var integrationKey = existing.GetValueOrDefault("integrationKey")?.ToString();
+            if (string.Equals(integrationKey, "motive", StringComparison.OrdinalIgnoreCase))
+            {
+                oauthOnly = true;
+                return 0;
+            }
             if (!isCustom && !connectors.HasAdapter(integrationKey))
             {
                 adapterUnavailable = true;
@@ -11718,6 +11744,10 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (adapterUnavailable)
             return Results.Json(ApiResponse<object>.Fail(
                 "This catalog provider has no provider-specific adapter in this build. No credentials were stored."),
+                statusCode: StatusCodes.Status422UnprocessableEntity);
+        if (oauthOnly)
+            return Results.Json(ApiResponse<object>.Fail(
+                "Motive credentials can be changed only through the audited OAuth authorization flow."),
                 statusCode: StatusCodes.Status422UnprocessableEntity);
         if (!configured) return Results.NotFound(ApiResponse<object>.Fail("Integration not found"));
         await audit.LogAsync(http, "integration.configured", "Integration", id, ct: ct);
@@ -11799,6 +11829,414 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             detailsJson: System.Text.Json.JsonSerializer.Serialize(new { action, ok = result.Success, message = result.Message }), ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { success = result.Success, message = result.Message, details = result.Details },
             result.Success ? "Action completed" : "Action failed"));
+    }
+
+    // ── Motive OAuth 2.0 ────────────────────────────────────────────────────────
+    // Start is tenant-authenticated. Callback is pre-session but bound to a protected,
+    // ten-minute, generation-specific state whose encrypted hash is stored once in the
+    // tenant integration row. Provider app secrets never enter the browser response.
+    private static async Task<IResult> MotiveOAuthStart(
+        HttpContext http,
+        long id,
+        Database db,
+        AuditService audit,
+        ConnectorRegistry connectors,
+        MotiveOAuthService oauth,
+        CancellationToken ct)
+    {
+        if (IntegrationsManageGuard(http) is { } denied) return denied;
+        if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
+        if (!oauth.TryGetSettings(out var settings, out var settingsError))
+            return Results.Json(ApiResponse<object>.Fail(settingsError ?? "Motive OAuth is not configured."),
+                statusCode: StatusCodes.Status503ServiceUnavailable);
+
+        var companyId = GetCompanyId(http);
+        var actorUserId = GetUserId(http);
+        var wrongProvider = false;
+        string? authorizationUrl = null;
+        string? browserNonce = null;
+        DateTimeOffset? expiresAt = null;
+
+        var started = await RunLockedIntegrationMutationAsync(db, companyId, id, async existing =>
+        {
+            var integrationKey = existing.GetValueOrDefault("integrationKey")?.ToString();
+            if (!string.Equals(integrationKey, "motive", StringComparison.OrdinalIgnoreCase)
+                || !connectors.HasAdapter(integrationKey))
+            {
+                wrongProvider = true;
+                return 0;
+            }
+
+            var currentGeneration = existing.TryGetValue("operationGeneration", out var generationRaw)
+                && long.TryParse(generationRaw?.ToString(), out var parsedGeneration)
+                    ? parsedGeneration
+                    : 0L;
+            var nextGeneration = currentGeneration + 1;
+            var state = oauth.CreateState(companyId, id, actorUserId, nextGeneration);
+            using var patch = JsonDocument.Parse(JsonSerializer.Serialize(new
+            {
+                accessToken = (string?)null,
+                refreshToken = (string?)null,
+                tokenType = (string?)null,
+                tokenExpiresAt = (string?)null,
+                oauthStateHash = state.StateHash,
+                oauthStateExpiresAt = state.Payload.ExpiresAt.ToString("O"),
+                oauthStateConsumedAt = (string?)null,
+                oauthStatus = "authorization_pending",
+                requestedScopes = string.Join(' ', settings!.Scopes),
+                verifiedScopes = (string?)null,
+                grantedScopes = (string?)null,
+            }));
+            var merged = connectors.MergeConfigForStorage(
+                patch.RootElement, existing.GetValueOrDefault("configJson"));
+            authorizationUrl = oauth.BuildAuthorizationUrl(settings!, state.State);
+            browserNonce = state.Payload.Nonce;
+            expiresAt = state.Payload.ExpiresAt;
+
+            return await db.ExecuteAsync(
+                @"UPDATE integrations SET config_json=@config::jsonb,status='Pending',
+                      last_tested_at=NULL,last_test_ok=NULL,last_test_message=NULL,
+                      operation_generation=@generation,operation_lease_token=NULL,
+                      operation_lease_expires_at=NULL,updated_at=NOW()
+                  WHERE company_id=@cid AND id=@id",
+                command =>
+                {
+                    command.Parameters.AddWithValue("@config", merged);
+                    command.Parameters.AddWithValue("@generation", nextGeneration);
+                    command.Parameters.AddWithValue("@cid", companyId);
+                    command.Parameters.AddWithValue("@id", id);
+                }, ct);
+        }, ct);
+
+        if (wrongProvider)
+            return Results.Json(ApiResponse<object>.Fail("This OAuth route is available only for the Motive adapter."),
+                statusCode: StatusCodes.Status422UnprocessableEntity);
+        if (!started || authorizationUrl is null || expiresAt is null || browserNonce is null)
+            return Results.NotFound(ApiResponse<object>.Fail("Motive integration not found"));
+
+        http.Response.Headers.CacheControl = "no-store";
+        http.Response.Cookies.Append(MotiveOAuthService.FlowCookieName,
+            browserNonce, MotiveOAuthService.FlowCookieOptions());
+        await audit.LogAsync(http, "integration.oauth.started", "Integration", id,
+            detailsJson: JsonSerializer.Serialize(new
+            {
+                provider = "Motive",
+                redirectUri = settings!.RedirectUri,
+                scopes = settings.Scopes,
+                expiresAt,
+            }), ct: ct);
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            authorizationUrl,
+            redirectUri = settings.RedirectUri,
+            scopes = settings.Scopes,
+            expiresAt,
+        }, "Motive authorization is ready"));
+    }
+
+    // Non-consuming browser-correlation check before leaving OpsTrax. A browser
+    // that blocks this cookie never reaches a provider grant through the UI.
+    private static async Task<IResult> MotiveOAuthPreflight(
+        HttpContext http, long id, JsonElement body, Database db,
+        MotiveOAuthService oauth, CancellationToken ct)
+    {
+        if (IntegrationsManageGuard(http) is { } denied) return denied;
+        if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
+        http.Response.Headers.CacheControl = "no-store";
+        var encoded = body.ValueKind == JsonValueKind.Object
+            && body.TryGetProperty("state", out var raw) && raw.ValueKind == JsonValueKind.String
+                ? raw.GetString() : null;
+        if (!oauth.TryReadState(encoded, out var state) || state is null
+            || state.CompanyId != GetCompanyId(http) || state.ActorUserId != GetUserId(http)
+            || state.IntegrationId != id
+            || !MotiveOAuthService.MatchesBrowserNonce(
+                http.Request.Cookies[MotiveOAuthService.FlowCookieName], state))
+            return Results.Json(ApiResponse<object>.Fail(
+                "Motive authorization cannot start because browser security correlation failed. Use the same browser and a deployment that supports secure API cookies."),
+                statusCode: StatusCodes.Status409Conflict);
+        return Results.Ok(ApiResponse<object>.Ok(new { ready = true }));
+    }
+
+    private static async Task<IResult> MotiveOAuthCallback(
+        HttpContext http,
+        Database db,
+        AuditService audit,
+        ConnectorRegistry connectors,
+        MotiveOAuthService oauth,
+        CancellationToken ct)
+    {
+        http.Response.Headers.CacheControl = "no-store";
+        http.Response.Headers["Pragma"] = "no-cache";
+        http.Response.Headers["Referrer-Policy"] = "no-referrer";
+
+        if (!oauth.TryGetSettings(out var settings, out var settingsError))
+            return Results.Problem(settingsError ?? "Motive OAuth is not configured.", statusCode: 503);
+
+        var stateRaw = http.Request.Query["state"].FirstOrDefault();
+        if (!oauth.TryReadState(stateRaw, out var state) || state is null)
+            return Results.Redirect(MotiveOAuthService.ResultRedirect(settings!, "invalid_state"));
+        if (!MotiveOAuthService.MatchesBrowserNonce(
+                http.Request.Cookies[MotiveOAuthService.FlowCookieName], state))
+            return Results.Redirect(MotiveOAuthService.ResultRedirect(settings!, "browser_mismatch"));
+
+        async Task<bool> AuthorityIsCurrentAsync()
+        {
+            var actor = await db.QuerySingleAsync(
+                @"SELECT u.role_name,u.role_id,u.permissions_json,
+                         r.permissions_json role_permissions_json
+                  FROM users u
+                  LEFT JOIN roles r ON r.id=u.role_id AND (r.company_id IS NULL OR r.company_id=u.company_id)
+                  WHERE u.company_id=@cid AND u.id=@uid AND u.status='Active'
+                  LIMIT 1",
+                command =>
+                {
+                    command.Parameters.AddWithValue("@cid", state.CompanyId);
+                    command.Parameters.AddWithValue("@uid", state.ActorUserId);
+                }, ct);
+            if (actor is null) return false;
+            var roleId = actor.TryGetValue("roleId", out var roleRaw) && roleRaw is not null and not DBNull
+                ? Convert.ToInt64(roleRaw) : 0L;
+            var permissions = await ResolveEffectivePermissionsAsync(
+                roleId, actor.GetValueOrDefault("roleName")?.ToString() ?? string.Empty,
+                actor.GetValueOrDefault("rolePermissionsJson"), actor.GetValueOrDefault("permissionsJson"), db, ct);
+            return (HasPermission(permissions, "integrations:manage")
+                || HasPermission(permissions, "telematics:providers:manage"))
+                && (await new EntitlementService(db).CheckModuleAsync(
+                    state.CompanyId, RevenueSchemaService.Modules.Integrations, ct)).Allowed;
+        }
+
+        async Task<bool> RunStateBoundMutationAsync(
+            string expectedStatus,
+            Func<Dictionary<string, object?>, IReadOnlyDictionary<string, string?>, Task<int>> mutation)
+            => await db.RunInSystemTransactionAsync(async () =>
+            {
+                var row = await db.QuerySingleAsync(
+                    @"SELECT integration_key,config_json,operation_generation FROM integrations
+                      WHERE company_id=@cid AND id=@id FOR UPDATE",
+                    command =>
+                    {
+                        command.Parameters.AddWithValue("@cid", state.CompanyId);
+                        command.Parameters.AddWithValue("@id", state.IntegrationId);
+                    }, ct);
+                if (row is null
+                    || !string.Equals(row.GetValueOrDefault("integrationKey")?.ToString(), "motive", StringComparison.OrdinalIgnoreCase)
+                    || !long.TryParse(row.GetValueOrDefault("operationGeneration")?.ToString(), out var generation)
+                    || generation != state.OperationGeneration)
+                    return false;
+
+                var config = connectors.DecryptConfig(row.GetValueOrDefault("configJson"));
+                var expectedHash = config.GetValueOrDefault("oauthStateHash");
+                var expectedExpiry = config.GetValueOrDefault("oauthStateExpiresAt");
+                if (!CryptographicOperations.FixedTimeEquals(
+                        Encoding.UTF8.GetBytes(expectedHash ?? string.Empty),
+                        Encoding.UTF8.GetBytes(MotiveOAuthService.HashState(stateRaw!)))
+                    || !DateTimeOffset.TryParse(expectedExpiry, out var storedExpiry)
+                    || storedExpiry <= DateTimeOffset.UtcNow
+                    || !string.Equals(config.GetValueOrDefault("oauthStatus"), expectedStatus, StringComparison.Ordinal))
+                    return false;
+                return await mutation(row, config) > 0;
+            }, ct);
+
+        // Claim the one-time state before any provider network call. The transaction is
+        // short and also revalidates that the initiating user still belongs to the
+        // tenant, is active, retains provider-management authority, and remains entitled.
+        var consumeResult = "invalid_state";
+        var consumed = await RunStateBoundMutationAsync(
+            "authorization_pending",
+            async (row, _) =>
+            {
+                var entitled = await AuthorityIsCurrentAsync();
+
+                http.Items[AuthCompanyIdItemKey] = state.CompanyId;
+                http.Items[AuthUserIdItemKey] = state.ActorUserId;
+                if (!entitled)
+                {
+                    using var rejectedPatch = JsonDocument.Parse(
+                        "{\"oauthStateHash\":null,\"oauthStateExpiresAt\":null,\"oauthStateConsumedAt\":null,\"oauthStatus\":\"authorization_revoked\"}");
+                    var rejectedConfig = connectors.MergeConfigForStorage(
+                        rejectedPatch.RootElement, row.GetValueOrDefault("configJson"));
+                    var rejected = await db.ExecuteAsync(
+                        @"UPDATE integrations SET config_json=@config::jsonb,status='Error',
+                              last_tested_at=NOW(),last_test_ok=false,
+                              last_test_message='Motive authorization authority was revoked before completion.',updated_at=NOW()
+                          WHERE company_id=@cid AND id=@id AND operation_generation=@generation",
+                        command =>
+                        {
+                            command.Parameters.AddWithValue("@config", rejectedConfig);
+                            command.Parameters.AddWithValue("@cid", state.CompanyId);
+                            command.Parameters.AddWithValue("@id", state.IntegrationId);
+                            command.Parameters.AddWithValue("@generation", state.OperationGeneration);
+                        }, ct);
+                    if (rejected > 0)
+                        await audit.LogAsync(http, "integration.oauth.authorization_revoked", "Integration",
+                            state.IntegrationId, detailsJson: "{\"provider\":\"Motive\"}", ct: ct);
+                    consumeResult = "authorization_revoked";
+                    return rejected;
+                }
+
+                using var consumedPatch = JsonDocument.Parse(JsonSerializer.Serialize(new
+                {
+                    oauthStateConsumedAt = DateTimeOffset.UtcNow.ToString("O"),
+                    oauthStatus = "exchange_in_progress",
+                }));
+                var claimedConfig = connectors.MergeConfigForStorage(
+                    consumedPatch.RootElement, row.GetValueOrDefault("configJson"));
+                var claimed = await db.ExecuteAsync(
+                    @"UPDATE integrations SET config_json=@config::jsonb,updated_at=NOW()
+                      WHERE company_id=@cid AND id=@id AND operation_generation=@generation",
+                    command =>
+                    {
+                        command.Parameters.AddWithValue("@config", claimedConfig);
+                        command.Parameters.AddWithValue("@cid", state.CompanyId);
+                        command.Parameters.AddWithValue("@id", state.IntegrationId);
+                        command.Parameters.AddWithValue("@generation", state.OperationGeneration);
+                    }, ct);
+                if (claimed > 0)
+                    await audit.LogAsync(http, "integration.oauth.callback.claimed", "Integration",
+                        state.IntegrationId, detailsJson: "{\"provider\":\"Motive\"}", ct: ct);
+                consumeResult = "consumed";
+                return claimed;
+            });
+        if (consumed)
+            http.Response.Cookies.Delete(MotiveOAuthService.FlowCookieName, MotiveOAuthService.FlowCookieOptions());
+        if (!consumed || !string.Equals(consumeResult, "consumed", StringComparison.Ordinal))
+            return Results.Redirect(MotiveOAuthService.ResultRedirect(settings!, consumeResult));
+
+        var providerError = http.Request.Query["error"].FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(providerError))
+        {
+            var denied = await RunStateBoundMutationAsync(
+                "exchange_in_progress",
+                async (row, _) =>
+                {
+                    using var deniedPatch = JsonDocument.Parse(
+                        "{\"accessToken\":null,\"refreshToken\":null,\"tokenType\":null,\"tokenExpiresAt\":null,\"oauthStateHash\":null,\"oauthStateExpiresAt\":null,\"oauthStateConsumedAt\":null,\"oauthStatus\":\"authorization_denied\"}");
+                    var deniedConfig = connectors.MergeConfigForStorage(
+                        deniedPatch.RootElement, row.GetValueOrDefault("configJson"));
+                    var affected = await db.ExecuteAsync(
+                        @"UPDATE integrations SET config_json=@config::jsonb,status='Disconnected',
+                              last_tested_at=NOW(),last_test_ok=false,
+                              last_test_message='Motive authorization was not granted.',updated_at=NOW()
+                          WHERE company_id=@cid AND id=@id AND operation_generation=@generation",
+                        command =>
+                        {
+                            command.Parameters.AddWithValue("@config", deniedConfig);
+                            command.Parameters.AddWithValue("@cid", state.CompanyId);
+                            command.Parameters.AddWithValue("@id", state.IntegrationId);
+                            command.Parameters.AddWithValue("@generation", state.OperationGeneration);
+                        }, ct);
+                    if (affected > 0)
+                        await audit.LogAsync(http, "integration.oauth.denied", "Integration", state.IntegrationId,
+                            detailsJson: "{\"provider\":\"Motive\"}", ct: ct);
+                    return affected;
+                });
+            return Results.Redirect(MotiveOAuthService.ResultRedirect(
+                settings!, denied ? "denied" : "invalidated"));
+        }
+
+        var code = http.Request.Query["code"].FirstOrDefault();
+        var exchange = await oauth.ExchangeCodeAsync(settings!, code ?? string.Empty, ct);
+        if (exchange.Tokens is null)
+        {
+            var exchangeFailure = await RunStateBoundMutationAsync(
+                "exchange_in_progress",
+                async (row, _) =>
+                {
+                    using var failedPatch = JsonDocument.Parse(
+                        "{\"accessToken\":null,\"refreshToken\":null,\"tokenType\":null,\"tokenExpiresAt\":null,\"oauthStateHash\":null,\"oauthStateExpiresAt\":null,\"oauthStateConsumedAt\":null,\"oauthStatus\":\"token_exchange_failed\"}");
+                    var failedConfig = connectors.MergeConfigForStorage(
+                        failedPatch.RootElement, row.GetValueOrDefault("configJson"));
+                    var affected = await db.ExecuteAsync(
+                        @"UPDATE integrations SET config_json=@config::jsonb,status='Error',
+                              last_tested_at=NOW(),last_test_ok=false,last_test_message=@message,updated_at=NOW()
+                          WHERE company_id=@cid AND id=@id AND operation_generation=@generation",
+                        command =>
+                        {
+                            command.Parameters.AddWithValue("@config", failedConfig);
+                            command.Parameters.AddWithValue("@message", exchange.Error ?? "Motive token exchange failed.");
+                            command.Parameters.AddWithValue("@cid", state.CompanyId);
+                            command.Parameters.AddWithValue("@id", state.IntegrationId);
+                            command.Parameters.AddWithValue("@generation", state.OperationGeneration);
+                        }, ct);
+                    if (affected > 0)
+                        await audit.LogAsync(http, "integration.oauth.token_exchange_failed", "Integration",
+                            state.IntegrationId, detailsJson: "{\"provider\":\"Motive\"}", ct: ct);
+                    return affected;
+                });
+            return Results.Redirect(MotiveOAuthService.ResultRedirect(
+                settings!, exchangeFailure ? "token_exchange_failed" : "invalidated"));
+        }
+
+        var tokenConfig = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["accessToken"] = exchange.Tokens.AccessToken,
+            ["tokenType"] = exchange.Tokens.TokenType,
+            ["tokenExpiresAt"] = exchange.Tokens.ExpiresAt.ToString("O"),
+        };
+        var testResult = await connectors.Resolve("motive").TestConnectionAsync(tokenConfig, ct);
+
+        var finalOutcome = "invalidated";
+        var finalized = await RunStateBoundMutationAsync(
+            "exchange_in_progress",
+            async (row, _) =>
+            {
+                // Authority can change while provider HTTP is in flight. Recheck
+                // immediately before retaining any token in the final transaction.
+                var authorityCurrent = await AuthorityIsCurrentAsync();
+                var verified = authorityCurrent && testResult.Success;
+                finalOutcome = !authorityCurrent ? "authorization_revoked"
+                    : verified ? "connected" : "scope_verification_failed";
+                using var resultPatch = JsonDocument.Parse(JsonSerializer.Serialize(new
+                {
+                    accessToken = verified ? exchange.Tokens.AccessToken : null,
+                    // Motive refresh tokens rotate on use. Until a single-use rotation
+                    // workflow is implemented, deliberately discard rather than retain it.
+                    refreshToken = (string?)null,
+                    tokenType = verified ? exchange.Tokens.TokenType : null,
+                    tokenExpiresAt = verified ? exchange.Tokens.ExpiresAt.ToString("O") : null,
+                    oauthStateHash = (string?)null,
+                    oauthStateExpiresAt = (string?)null,
+                    oauthStateConsumedAt = (string?)null,
+                    oauthStatus = verified ? "verified" : finalOutcome,
+                    oauthAuthorizedAt = verified ? DateTimeOffset.UtcNow.ToString("O") : null,
+                    verifiedScopes = verified ? string.Join(' ', settings!.Scopes) : null,
+                    grantedScopes = (string?)null,
+                }));
+                var storedConfig = connectors.MergeConfigForStorage(
+                    resultPatch.RootElement, row.GetValueOrDefault("configJson"));
+                var affected = await db.ExecuteAsync(
+                    @"UPDATE integrations SET config_json=@config::jsonb,status=@status,
+                          last_tested_at=NOW(),last_test_ok=@ok,last_test_message=@message,updated_at=NOW()
+                      WHERE company_id=@cid AND id=@id AND operation_generation=@generation",
+                    command =>
+                    {
+                        command.Parameters.AddWithValue("@config", storedConfig);
+                        command.Parameters.AddWithValue("@status", verified ? "Connected" : "Error");
+                        command.Parameters.AddWithValue("@ok", verified);
+                        command.Parameters.AddWithValue("@message", authorityCurrent ? testResult.Message
+                            : "Motive authorization authority was revoked before completion.");
+                        command.Parameters.AddWithValue("@cid", state.CompanyId);
+                        command.Parameters.AddWithValue("@id", state.IntegrationId);
+                        command.Parameters.AddWithValue("@generation", state.OperationGeneration);
+                    }, ct);
+                if (affected > 0)
+                    await audit.LogAsync(http,
+                        verified ? "integration.oauth.verified" : "integration.oauth." + finalOutcome,
+                        "Integration", state.IntegrationId,
+                        detailsJson: JsonSerializer.Serialize(new
+                        {
+                            provider = "Motive",
+                            verified,
+                            verifiedEndpointCount = testResult.Details?.GetValueOrDefault("verifiedEndpointCount") ?? 0,
+                            writeScopesRequested = false,
+                            refreshTokenPersisted = false,
+                        }), ct: ct);
+                return affected;
+            });
+        if (!finalized)
+            return Results.Redirect(MotiveOAuthService.ResultRedirect(settings!, "invalidated"));
+
+        return Results.Redirect(MotiveOAuthService.ResultRedirect(settings!, finalOutcome));
     }
 
     // ── GET /api/maps/geocode?address=... ──────────────────────────────────────────

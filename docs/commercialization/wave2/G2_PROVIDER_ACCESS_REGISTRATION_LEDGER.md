@@ -16,6 +16,8 @@ On 2026-09-02, the Motive developer-registration form accepted the program-owner
 
 ## Submission-build rule
 
+The subsequent owner-requested Motive configuration/test preparation is recorded in [G2B Motive OAuth smoke-test readiness](G2B_MOTIVE_OAUTH_SMOKE_READINESS.md). A later Chrome inspection showed 57/59 portal permissions selected and the callback still blank. The narrow software harness requests nine read-only scopes, but no portal settings, secrets, live grant, or provider test have been completed. This candidate-evaluation preparation does not select a production partner, activate Wave 4, close G2B, or replace G2A Samsara.
+
 Provider applications may describe OpsTrax as a connected-fleet platform seeking integration access. They must not state that an unverified connector, ELD/HOS product, camera pipeline, device family, or marketplace app is certified or production ready.
 
 Before any app submission, retain:
