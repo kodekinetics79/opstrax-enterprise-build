@@ -16,6 +16,18 @@ function assertOrdered(source, markers) {
   }
 }
 
+test("installed parser regressions stay outside zero-install launch tooling", () => {
+  const workflow = read(".github/workflows/ci.yml");
+  const suite = "tools/security/test_query_parser_security.mjs";
+  assert.ok(fs.existsSync(path.join(repository, suite)));
+  assert.equal(fs.existsSync(path.join(repository, "tools/launch/test_query_parser_security.mjs")), false);
+  const backend = workflow.slice(workflow.indexOf("  node-backend-build:"), workflow.indexOf("  demo-node-events-check:"));
+  const events = workflow.slice(workflow.indexOf("  demo-node-events-check:"), workflow.indexOf("  mobile-build-test:"));
+  for (const [job, target] of [[backend, "backend"], [events, "services/node-events"]]) {
+    assertOrdered(job, ["npm ci --no-audit --no-fund", "npm audit --omit=dev --audit-level=low", `node ${suite} ${target}`]);
+  }
+});
+
 test("CI reapplies Stage76 after Stage58, Stage59 and Stage67", () => {
   const workflow = read(".github/workflows/ci.yml");
   const terminalStep = workflow.slice(

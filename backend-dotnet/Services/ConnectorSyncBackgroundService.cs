@@ -23,10 +23,7 @@ public sealed class ConnectorSyncBackgroundService(
         {
             try
             {
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<Database>();
-                var connectors = scope.ServiceProvider.GetRequiredService<ConnectorRegistry>();
-                await db.RunInSystemScopeAsync(() => SyncOnceAsync(db, connectors, stoppingToken), stoppingToken);
+                await SyncOnceAsync(scopeFactory, logger, stoppingToken);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -36,52 +33,96 @@ public sealed class ConnectorSyncBackgroundService(
         }
     }
 
-    internal static async Task SyncOnceAsync(Database db, ConnectorRegistry connectors, CancellationToken ct)
+    internal static async Task SyncOnceAsync(
+        IServiceScopeFactory scopeFactory,
+        ILogger logger,
+        CancellationToken ct)
     {
-        var rows = await db.QueryAsync(
-            @"SELECT id, company_id, integration_key, config_json FROM integrations
-              WHERE (status='Connected'
-                     OR (status='Error' AND updated_at <= NOW() - INTERVAL '15 minutes'))
-                AND integration_key = ANY(@keys)",
-            c => c.Parameters.AddWithValue("@keys", SyncCapable), ct);
+        List<Dictionary<string, object?>> rows;
+        using (var discoveryScope = scopeFactory.CreateScope())
+        {
+            var discoveryDb = discoveryScope.ServiceProvider.GetRequiredService<Database>();
+            rows = await SelectCandidateRowsAsync(discoveryDb, 500, ct);
+        }
 
-        foreach (var row in rows)
+        // Each tenant gets its own DI/database scope and bounded provider budget.
+        // Four-way concurrency prevents one slow provider account from serially
+        // starving every tenant while keeping outbound pressure controlled.
+        await Parallel.ForEachAsync(
+            rows,
+            new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = ct },
+            async (row, token) =>
         {
             var id = Convert.ToInt64(row["id"]);
             var companyId = Convert.ToInt64(row["companyId"]);
+            ConnectorOperationContext? operation = null;
+            using var itemScope = scopeFactory.CreateScope();
+            var db = itemScope.ServiceProvider.GetRequiredService<Database>();
+            var connectors = itemScope.ServiceProvider.GetRequiredService<ConnectorRegistry>();
             try
             {
-                var connector = connectors.Resolve(row["integrationKey"]?.ToString());
-                var config = connectors.DecryptConfig(row["configJson"]);
-                var stored = ConnectorRegistry.RedactConfig(row["configJson"]);
+                operation = await ConnectorOperationLease.TryAcquireAsync(
+                    db, companyId, id, ["Connected", "Error"], TimeSpan.FromSeconds(90), token,
+                    isSyncOperation: true);
+                if (operation is null) return;
+
+                var connector = connectors.Resolve(operation.IntegrationKey);
+                var config = connectors.DecryptConfig(operation.ConfigJson);
+                var stored = ConnectorRegistry.RedactConfig(operation.ConfigJson);
                 var cursor = stored.TryGetValue("syncCursor", out var cv) ? cv?.ToString() : null;
 
                 using var body = System.Text.Json.JsonDocument.Parse(
-                    System.Text.Json.JsonSerializer.Serialize(new { action = "sync", companyId, cursor }));
-                var result = await connector.RunActionAsync("sync", config, body.RootElement, ct);
+                    System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        action = "sync",
+                        companyId,
+                        integrationId = id,
+                        operationGeneration = operation.Generation,
+                        operationLeaseToken = operation.LeaseToken,
+                        cursor,
+                        maxPages = 5,
+                        maxDurationSeconds = 60,
+                    }));
+                var result = await connector.RunActionAsync("sync", config, body.RootElement, token);
 
                 var nextCursor = result.Details?.GetValueOrDefault("nextCursor")?.ToString();
-                await db.ExecuteAsync(
-                    @"UPDATE integrations SET
-                          status = CASE WHEN @ok THEN 'Connected' ELSE 'Error' END,
-                          last_sync_at = CASE WHEN @ok THEN NOW() ELSE last_sync_at END,
-                          config_json = CASE WHEN @cursor IS NULL THEN config_json
-                                             ELSE COALESCE(config_json,'{}'::jsonb) || jsonb_build_object('syncCursor', @cursor::text) END,
-                          updated_at = NOW()
-                      WHERE company_id=@cid AND id=@id",
-                    c =>
-                    {
-                        c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id);
-                        c.Parameters.AddWithValue("@ok", result.Success);
-                        c.Parameters.AddWithValue("@cursor", (object?)nextCursor ?? DBNull.Value);
-                    }, ct);
+                await ConnectorOperationLease.CompleteSyncAsync(db, operation, result, nextCursor, token);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                await db.ExecuteAsync(
-                    "UPDATE integrations SET status='Error', updated_at=NOW() WHERE company_id=@cid AND id=@id",
-                    c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); }, ct);
+                logger.LogWarning(ex, "Connector sync failed for integration {Integration} in company {Company}", id, companyId);
+                if (operation is not null)
+                    await ConnectorOperationLease.ReleaseAsErrorAsync(db, operation, token);
             }
-        }
+        });
+    }
+
+    internal static Task<List<Dictionary<string, object?>>> SelectCandidateRowsAsync(
+        Database db,
+        int requestedLimit,
+        CancellationToken ct,
+        long[]? companyIds = null)
+    {
+        var limit = Math.Clamp(requestedLimit, 1, 500);
+        // Every lease acquisition records operation_last_attempt_at, including failed
+        // attempts. Ordering by that durable fairness clock rotates a repeatedly failing
+        // prefix behind tenants that have not yet had a turn; last_sync_at is only the
+        // compatibility fallback for rows created before Stage 95.
+        return db.RunInSystemScopeAsync(
+            () => db.QueryAsync(
+                @"SELECT id,company_id FROM integrations
+                  WHERE (status='Connected'
+                         OR (status='Error' AND updated_at <= NOW() - INTERVAL '15 minutes'))
+                    AND integration_key = ANY(@keys)
+                    AND (@allCompanies OR company_id = ANY(@companyIds))
+                  ORDER BY COALESCE(operation_last_attempt_at,last_sync_at,'epoch'::timestamptz),id
+                  LIMIT @limit",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@keys", SyncCapable);
+                    c.Parameters.AddWithValue("@allCompanies", companyIds is null);
+                    c.Parameters.AddWithValue("@companyIds", companyIds ?? Array.Empty<long>());
+                    c.Parameters.AddWithValue("@limit", limit);
+                }, ct), ct);
     }
 }

@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.DependencyInjection;
@@ -14,6 +15,7 @@ using Opstrax.Api.DTOs;
 using Opstrax.Api.Observability;
 using Opstrax.Api.Security;
 using Opstrax.Api.Services;
+using Opstrax.Api.Services.Connectors;
 
 namespace Opstrax.Api.Controllers;
 
@@ -972,8 +974,9 @@ public static partial class EndpointMappings
 
         // ── Integrations ──
         // ── Integrations control-tower (full CRUD) ────────────────────────────────
-        // The connectivity/config utility room. Every connector — built-in or custom —
-        // is editable and CRUD-able. Reads return the full record shape the UI needs
+        // The connectivity/config utility room. Tenant-created connectors are editable;
+        // built-in catalog providers accept credentials only when this build registers a
+        // provider-specific adapter. Reads return the full record shape the UI needs
         // (records + summary + activity). Permission: integrations:view / :manage, with
         // telematics:providers:manage accepted as a legacy alias for manage.
         app.MapGet("/api/integrations", IntegrationsList);
@@ -984,9 +987,12 @@ public static partial class EndpointMappings
         // "Connect" performs the same real provider handshake as test-connection; no route
         // may assert Connected based only on a button click.
         app.MapPost("/api/integrations/{id:long}/connect", IntegrationTestConnection);
-        app.MapPost("/api/integrations/{id:long}/disconnect", (HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) => SetIntegrationStatus(http, id, "Disconnected", "integration.disconnected", db, audit, ct));
+        app.MapPost("/api/integrations/{id:long}/disconnect", DisconnectIntegration);
         app.MapPost("/api/integrations/{id:long}/sync", IntegrationSync);
         app.MapPost("/api/integrations/{id:long}/configure", ConfigureIntegration);
+        app.MapPost("/api/integrations/{id:long}/oauth/motive/start", MotiveOAuthStart);
+        app.MapPost("/api/integrations/{id:long}/oauth/motive/preflight", MotiveOAuthPreflight);
+        app.MapGet("/api/integrations/motive/oauth/callback", MotiveOAuthCallback);
         // Real connectivity: performs an actual handshake with the provider and only
         // marks the connector Connected when the provider accepts the credentials.
         app.MapPost("/api/integrations/{id:long}/test-connection", IntegrationTestConnection);
@@ -11210,7 +11216,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
           description, logo, sync_label, last_sync_at, related_systems_json,
           connected_to_json, managed_by, scope, config_json,
           COALESCE(is_custom,false) is_custom, updated_at,
-          last_tested_at, last_test_ok, last_test_message";
+          last_tested_at, last_test_ok, last_test_message,
+          sync_last_attempt_at, sync_last_completed_at, sync_last_ok,
+          provider_last_event_at";
 
     // Server-side module-entitlement gate for the connector / Integration Hub surface.
     // RBAC alone let a package_allowlist tenant WITHOUT the Integrations add-on read and
@@ -11227,7 +11235,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 statusCode: StatusCodes.Status403Forbidden);
     }
 
-    private static async Task<IResult> IntegrationsList(HttpContext http, Database db, CancellationToken ct)
+    private static async Task<IResult> IntegrationsList(HttpContext http, Database db,
+        Opstrax.Api.Services.Connectors.ConnectorRegistry connectors, CancellationToken ct)
     {
         if (IntegrationsViewGuard(http) is { } denied) return denied;
         if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
@@ -11257,7 +11266,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         // parsed arrays/objects). Without this the page's `record.relatedSystems.length`
         // etc. throw at render because the DB returns related_systems_json as a JSON
         // STRING under `relatedSystemsJson`, not a `relatedSystems` array.
-        var shapedRecords = records.Select(r => ShapeIntegration(r, companyId)).ToList();
+        var shapedRecords = records.Select(r => ShapeIntegration(r, companyId, connectors)).ToList();
         var shapedActivity = activity.Select(ShapeIntegrationActivity).ToList();
         return Results.Ok(ApiResponse<object>.Ok(new
         {
@@ -11310,7 +11319,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         catch { return new(); }
     }
 
-    private static object ShapeIntegration(Dictionary<string, object?> row, long companyId)
+    private static object ShapeIntegration(Dictionary<string, object?> row, long companyId,
+        Opstrax.Api.Services.Connectors.ConnectorRegistry connectors)
     {
         string Str(string k) => row.TryGetValue(k, out var v) && v is not null ? v.ToString() ?? "" : "";
         var name = Str("providerName");
@@ -11319,6 +11329,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             key = System.Text.RegularExpressions.Regex.Replace(name.ToLowerInvariant(), "\\s+", "-");
         var lastSyncAt = row.TryGetValue("lastSyncAt", out var ls) && ls is not null ? ls : null;
         var syncLabel = Str("syncLabel");
+        var isCustom = row.TryGetValue("isCustom", out var ic) && ic is bool b && b;
         return new
         {
             id = row.TryGetValue("id", out var idv) && idv is not null ? Convert.ToInt64(idv) : 0L,
@@ -11343,11 +11354,20 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             config = Opstrax.Api.Services.Connectors.ConnectorRegistry.RedactConfig(row.GetValueOrDefault("configJson")),
             // Lets the UI show edit/delete only on tenant-created (custom) connectors;
             // built-in catalog connectors are reset, not deleted.
-            isCustom = row.TryGetValue("isCustom", out var ic) && ic is bool b && b,
+            isCustom,
+            // Built-in catalog presence is not connector capability. Only a registered
+            // provider adapter (or a tenant-created generic connector) is configurable.
+            adapterAvailable = isCustom || connectors.HasAdapter(key),
             // Connector health signal from the last real handshake.
             lastTestedAt = row.GetValueOrDefault("lastTestedAt"),
             lastTestOk = row.TryGetValue("lastTestOk", out var lto) && lto is bool tb ? tb : (bool?)null,
             lastTestMessage = row.GetValueOrDefault("lastTestMessage")?.ToString(),
+            // Data-sync clocks exclude connection handshakes, which are represented
+            // independently by lastTestedAt/lastTestOk above.
+            syncLastAttemptAt = row.GetValueOrDefault("syncLastAttemptAt"),
+            syncLastCompletedAt = row.GetValueOrDefault("syncLastCompletedAt"),
+            syncLastOk = row.TryGetValue("syncLastOk", out var slo) && slo is bool sb ? sb : (bool?)null,
+            providerLastEventAt = row.GetValueOrDefault("providerLastEventAt"),
         };
     }
 
@@ -11389,7 +11409,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         };
     }
 
-    private static async Task<IResult> IntegrationDetail(HttpContext http, long id, Database db, CancellationToken ct)
+    private static async Task<IResult> IntegrationDetail(HttpContext http, long id, Database db,
+        Opstrax.Api.Services.Connectors.ConnectorRegistry connectors, CancellationToken ct)
     {
         if (IntegrationsViewGuard(http) is { } denied) return denied;
         if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
@@ -11406,9 +11427,28 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         // Shape to the frontend IntegrationDetailPayload contract (parsed arrays/objects).
         return Results.Ok(ApiResponse<object>.Ok(new
         {
-            record = ShapeIntegration(record, companyId),
+            record = ShapeIntegration(record, companyId, connectors),
             activity = activity.Select(ShapeIntegrationActivity).ToList(),
         }));
+    }
+
+    private static async Task<IResult?> RequireAvailableIntegrationAdapterAsync(
+        Database db,
+        long companyId,
+        long id,
+        Opstrax.Api.Services.Connectors.ConnectorRegistry connectors,
+        CancellationToken ct)
+    {
+        var row = await db.QuerySingleAsync(
+            "SELECT integration_key,COALESCE(is_custom,false) is_custom FROM integrations WHERE company_id=@cid AND id=@id LIMIT 1",
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); }, ct);
+        if (row is null) return Results.NotFound(ApiResponse<object>.Fail("Integration not found"));
+        var isCustom = row.TryGetValue("isCustom", out var customRaw) && customRaw is bool custom && custom;
+        var integrationKey = row.GetValueOrDefault("integrationKey")?.ToString();
+        if (isCustom || connectors.HasAdapter(integrationKey)) return null;
+        return Results.Json(ApiResponse<object>.Fail(
+            "This catalog provider has no provider-specific adapter in this build."),
+            statusCode: StatusCodes.Status422UnprocessableEntity);
     }
 
     private static string IntegrationSlug(string name) =>
@@ -11424,6 +11464,10 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (string.IsNullOrWhiteSpace(name))
             return Results.BadRequest(ApiResponse<object>.Fail("Integration name is required"));
         var key = IntegrationSlug(name);
+        if (string.Equals(key, "motive", StringComparison.OrdinalIgnoreCase))
+            return Results.Json(ApiResponse<object>.Fail(
+                "Motive is a reserved catalog provider. Use its audited OAuth authorization flow."),
+                statusCode: StatusCodes.Status422UnprocessableEntity);
         if (await db.ScalarLongAsync("SELECT COUNT(*) FROM integrations WHERE company_id=@cid AND integration_key=@k",
                 c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@k", key); }, ct) > 0)
             return Results.Conflict(ApiResponse<object>.Fail($"An integration with key '{key}' already exists"));
@@ -11440,7 +11484,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             c => { c.Parameters.AddWithValue("@cid", companyId); BindIntegration(c, body, name, key, protectedConfig); }, ct);
         await audit.LogAsync(http, "integration.created", "Integration", id,
             detailsJson: System.Text.Json.JsonSerializer.Serialize(new { key, name }), ct: ct);
-        return await IntegrationDetail(http, id, db, ct);
+        return await IntegrationDetail(http, id, db, connectors, ct);
     }
 
     private static async Task<IResult> UpdateIntegration(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit,
@@ -11449,32 +11493,81 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (IntegrationsManageGuard(http) is { } denied) return denied;
         if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
         var companyId = GetCompanyId(http);
-        var existing = await db.QuerySingleAsync("SELECT config_json FROM integrations WHERE company_id=@cid AND id=@id",
-            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); }, ct);
-        if (existing is null) return Results.NotFound(ApiResponse<object>.Fail("Integration not found"));
-        var protectedConfig = ProtectIntegrationConfig(
-            body, connectors, existing.GetValueOrDefault("configJson"), merge: true);
-
-        // COALESCE keeps any field the caller omits; JSON columns replace when provided.
-        await db.ExecuteAsync(
-            @"UPDATE integrations SET
-                  provider_name = COALESCE(@name, provider_name),
-                  category      = COALESCE(@cat, category),
-                  description   = COALESCE(@desc, description),
-                  logo          = COALESCE(@logo, logo),
-                  managed_by    = COALESCE(@managed, managed_by),
-                  scope         = COALESCE(@scope, scope),
-                  related_systems_json = COALESCE(@related::jsonb, related_systems_json),
-                  connected_to_json    = COALESCE(@connected::jsonb, connected_to_json),
-                  config_json          = COALESCE(@config::jsonb, config_json),
-                  updated_at = NOW()
-              WHERE company_id=@cid AND id=@id",
-            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); BindIntegration(c, body, null, null, protectedConfig); }, ct);
+        var oauthConfigRejected = false;
+        var updated = await RunLockedIntegrationMutationAsync(db, companyId, id, async existing =>
+        {
+            if (string.Equals(existing.GetValueOrDefault("integrationKey")?.ToString(), "motive", StringComparison.OrdinalIgnoreCase)
+                && body.Keys.Any(key => string.Equals(key, "config", StringComparison.OrdinalIgnoreCase)))
+            {
+                oauthConfigRejected = true;
+                return 0;
+            }
+            var protectedConfig = ProtectIntegrationConfig(
+                body, connectors, existing.GetValueOrDefault("configJson"), merge: true);
+            // COALESCE keeps any field the caller omits; JSON columns replace when
+            // provided. A credential-bearing edit must be re-verified before the
+            // worker may use it.
+            return await db.ExecuteAsync(
+                @"UPDATE integrations SET
+                      provider_name = COALESCE(@name, provider_name),
+                      category      = COALESCE(@cat, category),
+                      description   = COALESCE(@desc, description),
+                      logo          = COALESCE(@logo, logo),
+                      managed_by    = COALESCE(@managed, managed_by),
+                      scope         = COALESCE(@scope, scope),
+                      related_systems_json = COALESCE(@related::jsonb, related_systems_json),
+                      connected_to_json    = COALESCE(@connected::jsonb, connected_to_json),
+                      config_json          = COALESCE(@config::jsonb, config_json),
+                      status=CASE WHEN @config IS NULL THEN status ELSE 'Pending' END,
+                      last_tested_at=CASE WHEN @config IS NULL THEN last_tested_at ELSE NULL END,
+                      last_test_ok=CASE WHEN @config IS NULL THEN last_test_ok ELSE NULL END,
+                      last_test_message=CASE WHEN @config IS NULL THEN last_test_message ELSE NULL END,
+                      sync_last_attempt_at=CASE WHEN @config IS NULL THEN sync_last_attempt_at ELSE NULL END,
+                      sync_last_completed_at=CASE WHEN @config IS NULL THEN sync_last_completed_at ELSE NULL END,
+                      sync_last_ok=CASE WHEN @config IS NULL THEN sync_last_ok ELSE NULL END,
+                      provider_last_event_at=CASE WHEN @config IS NULL THEN provider_last_event_at ELSE NULL END,
+                      operation_generation = operation_generation + 1,
+                      operation_lease_token = NULL,
+                      operation_lease_expires_at = NULL,
+                      updated_at = NOW()
+                  WHERE company_id=@cid AND id=@id",
+                c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); BindIntegration(c, body, null, null, protectedConfig); }, ct);
+        }, ct);
+        if (oauthConfigRejected)
+            return Results.Json(ApiResponse<object>.Fail(
+                "Motive credentials can be changed only through the audited OAuth authorization flow."),
+                statusCode: StatusCodes.Status422UnprocessableEntity);
+        if (!updated) return Results.NotFound(ApiResponse<object>.Fail("Integration not found"));
         await audit.LogAsync(http, "integration.updated", "Integration", id, ct: ct);
-        return await IntegrationDetail(http, id, db, ct);
+        return await IntegrationDetail(http, id, db, connectors, ct);
     }
 
-    private static async Task<IResult> RemoveIntegration(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct)
+    // Serializes every read/merge/write configuration mutation with disconnect/reset.
+    // The row lock is held in the same tenant transaction through the callback. If
+    // configuration wins, disconnect waits and clears its result; if disconnect wins,
+    // configuration reads the already-cleared state and cannot resurrect an old secret.
+    internal static Task<bool> RunLockedIntegrationMutationAsync(
+        Database db,
+        long companyId,
+        long id,
+        Func<Dictionary<string, object?>, Task<int>> mutation,
+        CancellationToken ct = default) =>
+        db.RunInTenantTransactionAsync(companyId, async () =>
+        {
+            var existing = await db.QuerySingleAsync(
+                @"SELECT config_json,operation_generation,integration_key,COALESCE(is_custom,false) is_custom FROM integrations
+                  WHERE company_id=@cid AND id=@id
+                  FOR UPDATE",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@cid", companyId);
+                    c.Parameters.AddWithValue("@id", id);
+                }, ct);
+            return existing is not null && await mutation(existing) > 0;
+        }, ct);
+
+    private static async Task<IResult> RemoveIntegration(HttpContext http, long id, Database db, AuditService audit,
+        Opstrax.Api.Services.Connectors.ConnectorRegistry connectors, CancellationToken ct)
     {
         if (IntegrationsManageGuard(http) is { } denied) return denied;
         if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
@@ -11495,28 +11588,50 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         // Built-in: reset to a clean disconnected state rather than delete (stays discoverable).
         await db.ExecuteAsync(
             @"UPDATE integrations SET status='Disconnected', config_json='{}'::jsonb,
-                  connected_to_json='[]'::jsonb, last_sync_at=NULL, sync_label='Never', updated_at=NOW()
+                  connected_to_json='[]'::jsonb, last_sync_at=NULL, sync_label='Never',
+                  sync_last_attempt_at=NULL,sync_last_completed_at=NULL,sync_last_ok=NULL,
+                  provider_last_event_at=NULL,
+                  operation_generation=operation_generation+1,
+                  operation_lease_token=NULL,operation_lease_expires_at=NULL,updated_at=NOW()
               WHERE company_id=@cid AND id=@id",
             c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); }, ct);
         await audit.LogAsync(http, "integration.reset", "Integration", id, ct: ct);
-        return await IntegrationDetail(http, id, db, ct);
+        return await IntegrationDetail(http, id, db, connectors, ct);
     }
 
-    private static async Task<IResult> SetIntegrationStatus(HttpContext http, long id, string status, string action, Database db, AuditService audit, CancellationToken ct)
+    private static async Task<IResult> DisconnectIntegration(HttpContext http, long id, Database db, AuditService audit,
+        Opstrax.Api.Services.Connectors.ConnectorRegistry connectors, CancellationToken ct)
     {
         if (IntegrationsManageGuard(http) is { } denied) return denied;
         if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
         var companyId = GetCompanyId(http);
         var affected = await db.ExecuteAsync(
-            @"UPDATE integrations SET status=@status,
-                  last_sync_at = CASE WHEN @status='Connected' THEN NOW() ELSE last_sync_at END,
-                  sync_label   = CASE WHEN @status='Connected' THEN 'Just now' ELSE sync_label END,
+            @"UPDATE integrations SET status='Disconnected',
+                  config_json='{}'::jsonb,
+                  last_sync_at=NULL,
+                  sync_label='Never',
+                  last_tested_at=NULL,
+                  last_test_ok=NULL,
+                  last_test_message=NULL,
+                  sync_last_attempt_at=NULL,
+                  sync_last_completed_at=NULL,
+                  sync_last_ok=NULL,
+                  provider_last_event_at=NULL,
+                  operation_generation=operation_generation+1,
+                  operation_lease_token=NULL,
+                  operation_lease_expires_at=NULL,
                   updated_at = NOW()
               WHERE company_id=@cid AND id=@id",
-            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@status", status); }, ct);
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); }, ct);
         if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Integration not found"));
-        await audit.LogAsync(http, action, "Integration", id, ct: ct);
-        return await IntegrationDetail(http, id, db, ct);
+        await audit.LogAsync(http, "integration.disconnected", "Integration", id,
+            detailsJson: System.Text.Json.JsonSerializer.Serialize(new
+            {
+                storedCredentialsRemoved = true,
+                syncCursorRemoved = true,
+                providerCredentialRevocationRequired = true,
+            }), ct: ct);
+        return await IntegrationDetail(http, id, db, connectors, ct);
     }
 
     private static async Task<IResult> IntegrationSync(HttpContext http, long id, Database db, AuditService audit,
@@ -11525,42 +11640,51 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (IntegrationsManageGuard(http) is { } denied) return denied;
         if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
         var companyId = GetCompanyId(http);
-        var row = await db.QuerySingleAsync(
-            "SELECT integration_key, config_json FROM integrations WHERE company_id=@cid AND id=@id LIMIT 1",
-            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); }, ct);
-        if (row is null) return Results.NotFound(ApiResponse<object>.Fail("Integration not found"));
+        if (await RequireAvailableIntegrationAdapterAsync(db, companyId, id, connectors, ct) is { } unavailable)
+            return unavailable;
+        var operation = await Opstrax.Api.Services.Connectors.ConnectorOperationLease.TryAcquireAsync(
+            db, companyId, id, ["Connected"], TimeSpan.FromSeconds(90), ct,
+            isSyncOperation: true);
+        if (operation is null)
+            return Results.Conflict(ApiResponse<object>.Fail(
+                "Verify the provider connection and wait for any active connector operation before running a sync."));
 
-        var key = row.GetValueOrDefault("integrationKey")?.ToString();
-        var connector = connectors.Resolve(key);
-        var config = connectors.DecryptConfig(row.GetValueOrDefault("configJson"));
+        var connector = connectors.Resolve(operation.IntegrationKey);
+        var config = connectors.DecryptConfig(operation.ConfigJson);
 
         // Connectors that implement a real "sync" action (e.g. Samsara → live positions)
         // run the actual data pull. The tenant + last cursor are passed in the action body;
         // the returned nextCursor is persisted so the next sync is incremental. Connectors
         // with no sync action return an honest unsupported result and never claim Connected.
-        var storedConfig = Opstrax.Api.Services.Connectors.ConnectorRegistry.RedactConfig(row.GetValueOrDefault("configJson"));
+        var storedConfig = Opstrax.Api.Services.Connectors.ConnectorRegistry.RedactConfig(operation.ConfigJson);
         var cursor = storedConfig.TryGetValue("syncCursor", out var cv) ? cv?.ToString() : null;
         using var bodyDoc = System.Text.Json.JsonDocument.Parse(
-            System.Text.Json.JsonSerializer.Serialize(new { action = "sync", companyId, cursor }));
+            System.Text.Json.JsonSerializer.Serialize(new
+            {
+                action = "sync",
+                companyId,
+                integrationId = id,
+                operationGeneration = operation.Generation,
+                operationLeaseToken = operation.LeaseToken,
+                cursor,
+                maxPages = 20,
+                maxDurationSeconds = 75,
+            }));
         var result = await connector.RunActionAsync("sync", config, bodyDoc.RootElement, ct);
 
         if (result.Message.Contains("not supported", StringComparison.OrdinalIgnoreCase))
+        {
+            await Opstrax.Api.Services.Connectors.ConnectorOperationLease.ReleaseAsErrorAsync(db, operation, ct);
             return Results.Json(ApiResponse<object>.Fail("Connector sync is not supported"), statusCode: StatusCodes.Status422UnprocessableEntity);
+        }
 
         // Persist cursor + status from the real sync result.
         var nextCursor = result.Details?.GetValueOrDefault("nextCursor")?.ToString();
-        await db.ExecuteAsync(
-            @"UPDATE integrations SET
-                  status = CASE WHEN @ok THEN 'Connected' ELSE 'Error' END,
-                  last_sync_at = CASE WHEN @ok THEN NOW() ELSE last_sync_at END,
-                  sync_label   = CASE WHEN @ok THEN 'Just now' ELSE sync_label END,
-                  config_json = CASE WHEN @cursor IS NULL THEN config_json
-                                     ELSE COALESCE(config_json,'{}'::jsonb) || jsonb_build_object('syncCursor', @cursor::text) END,
-                  updated_at = NOW()
-              WHERE company_id=@cid AND id=@id",
-            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id);
-                   c.Parameters.AddWithValue("@ok", result.Success);
-                   c.Parameters.AddWithValue("@cursor", (object?)nextCursor ?? DBNull.Value); }, ct);
+        var affected = await Opstrax.Api.Services.Connectors.ConnectorOperationLease.CompleteSyncAsync(
+            db, operation, result, nextCursor, ct);
+        if (affected == 0)
+            return Results.Conflict(ApiResponse<object>.Fail(
+                "The connector operation was invalidated before completion; stale sync state was not committed."));
         await audit.LogAsync(http, result.Success ? "integration.synced" : "integration.sync.failed", "Integration", id,
             detailsJson: System.Text.Json.JsonSerializer.Serialize(new { message = result.Message }), ct: ct);
 
@@ -11574,24 +11698,60 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (IntegrationsManageGuard(http) is { } denied) return denied;
         if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
         var companyId = GetCompanyId(http);
-        var existing = await db.QuerySingleAsync(
-            "SELECT config_json FROM integrations WHERE company_id=@cid AND id=@id",
-            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); }, ct);
-        if (existing is null) return Results.NotFound(ApiResponse<object>.Fail("Integration not found"));
-        // Recursive merge preserves omitted/masked stored credentials and encrypts every
-        // changed sensitive leaf before persistence. Replace with the complete protected
-        // object; a shallow jsonb || merge would drop nested secrets.
-        var configJson = connectors.MergeConfigForStorage(body, existing.GetValueOrDefault("configJson"));
-        var affected = await db.ExecuteAsync(
-            @"UPDATE integrations SET
-                  config_json = @config::jsonb,
-                  status = CASE WHEN status='Disconnected' THEN 'Pending' ELSE status END,
-                  updated_at = NOW()
-              WHERE company_id=@cid AND id=@id",
-            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@config", configJson); }, ct);
-        if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Integration not found"));
+        var adapterUnavailable = false;
+        var oauthOnly = false;
+        var configured = await RunLockedIntegrationMutationAsync(db, companyId, id, async existing =>
+        {
+            var isCustom = existing.TryGetValue("isCustom", out var customRaw) && customRaw is bool custom && custom;
+            var integrationKey = existing.GetValueOrDefault("integrationKey")?.ToString();
+            if (string.Equals(integrationKey, "motive", StringComparison.OrdinalIgnoreCase))
+            {
+                oauthOnly = true;
+                return 0;
+            }
+            if (!isCustom && !connectors.HasAdapter(integrationKey))
+            {
+                adapterUnavailable = true;
+                return 0;
+            }
+            // Recursive merge preserves omitted/masked stored credentials and encrypts
+            // every changed sensitive leaf. The row lock ensures the stored snapshot
+            // cannot be invalidated by disconnect between this merge and its write.
+            var configJson = connectors.MergeConfigForStorage(body, existing.GetValueOrDefault("configJson"));
+            return await db.ExecuteAsync(
+                @"UPDATE integrations SET
+                      config_json = @config::jsonb,
+                      status = 'Pending',
+                      last_tested_at = NULL,
+                      last_test_ok = NULL,
+                      last_test_message = NULL,
+                      sync_last_attempt_at = NULL,
+                      sync_last_completed_at = NULL,
+                      sync_last_ok = NULL,
+                      provider_last_event_at = NULL,
+                      operation_generation = operation_generation + 1,
+                      operation_lease_token = NULL,
+                      operation_lease_expires_at = NULL,
+                      updated_at = NOW()
+                  WHERE company_id=@cid AND id=@id",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@cid", companyId);
+                    c.Parameters.AddWithValue("@id", id);
+                    c.Parameters.AddWithValue("@config", configJson);
+                }, ct);
+        }, ct);
+        if (adapterUnavailable)
+            return Results.Json(ApiResponse<object>.Fail(
+                "This catalog provider has no provider-specific adapter in this build. No credentials were stored."),
+                statusCode: StatusCodes.Status422UnprocessableEntity);
+        if (oauthOnly)
+            return Results.Json(ApiResponse<object>.Fail(
+                "Motive credentials can be changed only through the audited OAuth authorization flow."),
+                statusCode: StatusCodes.Status422UnprocessableEntity);
+        if (!configured) return Results.NotFound(ApiResponse<object>.Fail("Integration not found"));
         await audit.LogAsync(http, "integration.configured", "Integration", id, ct: ct);
-        return await IntegrationDetail(http, id, db, ct);
+        return await IntegrationDetail(http, id, db, connectors, ct);
     }
 
     // ── POST /api/integrations/{id}/test-connection ────────────────────────────────
@@ -11604,32 +11764,29 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (IntegrationsManageGuard(http) is { } denied) return denied;
         if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
         var companyId = GetCompanyId(http);
-        var row = await db.QuerySingleAsync(
-            "SELECT integration_key, provider_name, config_json FROM integrations WHERE company_id=@cid AND id=@id LIMIT 1",
-            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); }, ct);
-        if (row is null) return Results.NotFound(ApiResponse<object>.Fail("Integration not found"));
+        if (await RequireAvailableIntegrationAdapterAsync(db, companyId, id, connectors, ct) is { } unavailable)
+            return unavailable;
+        var operation = await Opstrax.Api.Services.Connectors.ConnectorOperationLease.TryAcquireAsync(
+            db, companyId, id, ["Pending", "Disconnected", "Connected", "Error"], TimeSpan.FromSeconds(45), ct);
+        if (operation is null)
+            return Results.Conflict(ApiResponse<object>.Fail(
+                "Another connector operation is active. Wait for it to finish, then test again."));
 
-        var key = row.GetValueOrDefault("integrationKey")?.ToString();
-        var connector = connectors.Resolve(key);
-        var config = connectors.DecryptConfig(row.GetValueOrDefault("configJson"));
+        var connector = connectors.Resolve(operation.IntegrationKey);
+        var config = connectors.DecryptConfig(operation.ConfigJson);
 
         var result = await connector.TestConnectionAsync(config, ct);
 
         // Persist the verdict as real status; keep a disconnected connector disconnected
         // on failure rather than faking progress.
         var newStatus = result.Success ? "Connected" : "Error";
-        await db.ExecuteAsync(
-            @"UPDATE integrations SET status=@status,
-                  last_sync_at = CASE WHEN @ok THEN NOW() ELSE last_sync_at END,
-                  sync_label   = CASE WHEN @ok THEN 'Just now' ELSE sync_label END,
-                  last_tested_at = NOW(), last_test_ok = @ok, last_test_message = @msg,
-                  updated_at = NOW()
-              WHERE company_id=@cid AND id=@id",
-            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id);
-                   c.Parameters.AddWithValue("@status", newStatus); c.Parameters.AddWithValue("@ok", result.Success);
-                   c.Parameters.AddWithValue("@msg", (object?)result.Message ?? DBNull.Value); }, ct);
+        var affected = await Opstrax.Api.Services.Connectors.ConnectorOperationLease.CompleteTestAsync(
+            db, operation, result, ct);
+        if (affected == 0)
+            return Results.Conflict(ApiResponse<object>.Fail(
+                "The connector was changed or disconnected while the test ran; the stale provider result was discarded."));
         await audit.LogAsync(http, result.Success ? "integration.test.passed" : "integration.test.failed", "Integration", id,
-            detailsJson: System.Text.Json.JsonSerializer.Serialize(new { provider = row.GetValueOrDefault("providerName"), message = result.Message }), ct: ct);
+            detailsJson: System.Text.Json.JsonSerializer.Serialize(new { provider = connector.DisplayName, message = result.Message }), ct: ct);
 
         return Results.Ok(ApiResponse<object>.Ok(new
         {
@@ -11648,8 +11805,17 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (IntegrationsManageGuard(http) is { } denied) return denied;
         if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
         var companyId = GetCompanyId(http);
+        if (await RequireAvailableIntegrationAdapterAsync(db, companyId, id, connectors, ct) is { } unavailable)
+            return unavailable;
         var action = body.ValueKind == System.Text.Json.JsonValueKind.Object && body.TryGetProperty("action", out var a) ? a.GetString() : null;
         if (string.IsNullOrWhiteSpace(action)) return Results.BadRequest(ApiResponse<object>.Fail("An 'action' is required."));
+        // Sync carries tenant scope into a system-RLS transaction. Never allow the
+        // generic action body to provide that scope: the dedicated /sync route builds
+        // companyId from the authenticated tenant and the stored connector cursor.
+        if (action.Equals("sync", StringComparison.OrdinalIgnoreCase) ||
+            action.Equals("sync-telemetry", StringComparison.OrdinalIgnoreCase))
+            return Results.Json(ApiResponse<object>.Fail("Use the tenant-scoped integration sync endpoint"),
+                statusCode: StatusCodes.Status422UnprocessableEntity);
 
         var row = await db.QuerySingleAsync(
             "SELECT integration_key, config_json FROM integrations WHERE company_id=@cid AND id=@id LIMIT 1",
@@ -11663,6 +11829,414 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             detailsJson: System.Text.Json.JsonSerializer.Serialize(new { action, ok = result.Success, message = result.Message }), ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { success = result.Success, message = result.Message, details = result.Details },
             result.Success ? "Action completed" : "Action failed"));
+    }
+
+    // ── Motive OAuth 2.0 ────────────────────────────────────────────────────────
+    // Start is tenant-authenticated. Callback is pre-session but bound to a protected,
+    // ten-minute, generation-specific state whose encrypted hash is stored once in the
+    // tenant integration row. Provider app secrets never enter the browser response.
+    private static async Task<IResult> MotiveOAuthStart(
+        HttpContext http,
+        long id,
+        Database db,
+        AuditService audit,
+        ConnectorRegistry connectors,
+        MotiveOAuthService oauth,
+        CancellationToken ct)
+    {
+        if (IntegrationsManageGuard(http) is { } denied) return denied;
+        if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
+        if (!oauth.TryGetSettings(out var settings, out var settingsError))
+            return Results.Json(ApiResponse<object>.Fail(settingsError ?? "Motive OAuth is not configured."),
+                statusCode: StatusCodes.Status503ServiceUnavailable);
+
+        var companyId = GetCompanyId(http);
+        var actorUserId = GetUserId(http);
+        var wrongProvider = false;
+        string? authorizationUrl = null;
+        string? browserNonce = null;
+        DateTimeOffset? expiresAt = null;
+
+        var started = await RunLockedIntegrationMutationAsync(db, companyId, id, async existing =>
+        {
+            var integrationKey = existing.GetValueOrDefault("integrationKey")?.ToString();
+            if (!string.Equals(integrationKey, "motive", StringComparison.OrdinalIgnoreCase)
+                || !connectors.HasAdapter(integrationKey))
+            {
+                wrongProvider = true;
+                return 0;
+            }
+
+            var currentGeneration = existing.TryGetValue("operationGeneration", out var generationRaw)
+                && long.TryParse(generationRaw?.ToString(), out var parsedGeneration)
+                    ? parsedGeneration
+                    : 0L;
+            var nextGeneration = currentGeneration + 1;
+            var state = oauth.CreateState(companyId, id, actorUserId, nextGeneration);
+            using var patch = JsonDocument.Parse(JsonSerializer.Serialize(new
+            {
+                accessToken = (string?)null,
+                refreshToken = (string?)null,
+                tokenType = (string?)null,
+                tokenExpiresAt = (string?)null,
+                oauthStateHash = state.StateHash,
+                oauthStateExpiresAt = state.Payload.ExpiresAt.ToString("O"),
+                oauthStateConsumedAt = (string?)null,
+                oauthStatus = "authorization_pending",
+                requestedScopes = string.Join(' ', settings!.Scopes),
+                verifiedScopes = (string?)null,
+                grantedScopes = (string?)null,
+            }));
+            var merged = connectors.MergeConfigForStorage(
+                patch.RootElement, existing.GetValueOrDefault("configJson"));
+            authorizationUrl = oauth.BuildAuthorizationUrl(settings!, state.State);
+            browserNonce = state.Payload.Nonce;
+            expiresAt = state.Payload.ExpiresAt;
+
+            return await db.ExecuteAsync(
+                @"UPDATE integrations SET config_json=@config::jsonb,status='Pending',
+                      last_tested_at=NULL,last_test_ok=NULL,last_test_message=NULL,
+                      operation_generation=@generation,operation_lease_token=NULL,
+                      operation_lease_expires_at=NULL,updated_at=NOW()
+                  WHERE company_id=@cid AND id=@id",
+                command =>
+                {
+                    command.Parameters.AddWithValue("@config", merged);
+                    command.Parameters.AddWithValue("@generation", nextGeneration);
+                    command.Parameters.AddWithValue("@cid", companyId);
+                    command.Parameters.AddWithValue("@id", id);
+                }, ct);
+        }, ct);
+
+        if (wrongProvider)
+            return Results.Json(ApiResponse<object>.Fail("This OAuth route is available only for the Motive adapter."),
+                statusCode: StatusCodes.Status422UnprocessableEntity);
+        if (!started || authorizationUrl is null || expiresAt is null || browserNonce is null)
+            return Results.NotFound(ApiResponse<object>.Fail("Motive integration not found"));
+
+        http.Response.Headers.CacheControl = "no-store";
+        http.Response.Cookies.Append(MotiveOAuthService.FlowCookieName,
+            browserNonce, MotiveOAuthService.FlowCookieOptions());
+        await audit.LogAsync(http, "integration.oauth.started", "Integration", id,
+            detailsJson: JsonSerializer.Serialize(new
+            {
+                provider = "Motive",
+                redirectUri = settings!.RedirectUri,
+                scopes = settings.Scopes,
+                expiresAt,
+            }), ct: ct);
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            authorizationUrl,
+            redirectUri = settings.RedirectUri,
+            scopes = settings.Scopes,
+            expiresAt,
+        }, "Motive authorization is ready"));
+    }
+
+    // Non-consuming browser-correlation check before leaving OpsTrax. A browser
+    // that blocks this cookie never reaches a provider grant through the UI.
+    private static async Task<IResult> MotiveOAuthPreflight(
+        HttpContext http, long id, JsonElement body, Database db,
+        MotiveOAuthService oauth, CancellationToken ct)
+    {
+        if (IntegrationsManageGuard(http) is { } denied) return denied;
+        if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
+        http.Response.Headers.CacheControl = "no-store";
+        var encoded = body.ValueKind == JsonValueKind.Object
+            && body.TryGetProperty("state", out var raw) && raw.ValueKind == JsonValueKind.String
+                ? raw.GetString() : null;
+        if (!oauth.TryReadState(encoded, out var state) || state is null
+            || state.CompanyId != GetCompanyId(http) || state.ActorUserId != GetUserId(http)
+            || state.IntegrationId != id
+            || !MotiveOAuthService.MatchesBrowserNonce(
+                http.Request.Cookies[MotiveOAuthService.FlowCookieName], state))
+            return Results.Json(ApiResponse<object>.Fail(
+                "Motive authorization cannot start because browser security correlation failed. Use the same browser and a deployment that supports secure API cookies."),
+                statusCode: StatusCodes.Status409Conflict);
+        return Results.Ok(ApiResponse<object>.Ok(new { ready = true }));
+    }
+
+    private static async Task<IResult> MotiveOAuthCallback(
+        HttpContext http,
+        Database db,
+        AuditService audit,
+        ConnectorRegistry connectors,
+        MotiveOAuthService oauth,
+        CancellationToken ct)
+    {
+        http.Response.Headers.CacheControl = "no-store";
+        http.Response.Headers["Pragma"] = "no-cache";
+        http.Response.Headers["Referrer-Policy"] = "no-referrer";
+
+        if (!oauth.TryGetSettings(out var settings, out var settingsError))
+            return Results.Problem(settingsError ?? "Motive OAuth is not configured.", statusCode: 503);
+
+        var stateRaw = http.Request.Query["state"].FirstOrDefault();
+        if (!oauth.TryReadState(stateRaw, out var state) || state is null)
+            return Results.Redirect(MotiveOAuthService.ResultRedirect(settings!, "invalid_state"));
+        if (!MotiveOAuthService.MatchesBrowserNonce(
+                http.Request.Cookies[MotiveOAuthService.FlowCookieName], state))
+            return Results.Redirect(MotiveOAuthService.ResultRedirect(settings!, "browser_mismatch"));
+
+        async Task<bool> AuthorityIsCurrentAsync()
+        {
+            var actor = await db.QuerySingleAsync(
+                @"SELECT u.role_name,u.role_id,u.permissions_json,
+                         r.permissions_json role_permissions_json
+                  FROM users u
+                  LEFT JOIN roles r ON r.id=u.role_id AND (r.company_id IS NULL OR r.company_id=u.company_id)
+                  WHERE u.company_id=@cid AND u.id=@uid AND u.status='Active'
+                  LIMIT 1",
+                command =>
+                {
+                    command.Parameters.AddWithValue("@cid", state.CompanyId);
+                    command.Parameters.AddWithValue("@uid", state.ActorUserId);
+                }, ct);
+            if (actor is null) return false;
+            var roleId = actor.TryGetValue("roleId", out var roleRaw) && roleRaw is not null and not DBNull
+                ? Convert.ToInt64(roleRaw) : 0L;
+            var permissions = await ResolveEffectivePermissionsAsync(
+                roleId, actor.GetValueOrDefault("roleName")?.ToString() ?? string.Empty,
+                actor.GetValueOrDefault("rolePermissionsJson"), actor.GetValueOrDefault("permissionsJson"), db, ct);
+            return (HasPermission(permissions, "integrations:manage")
+                || HasPermission(permissions, "telematics:providers:manage"))
+                && (await new EntitlementService(db).CheckModuleAsync(
+                    state.CompanyId, RevenueSchemaService.Modules.Integrations, ct)).Allowed;
+        }
+
+        async Task<bool> RunStateBoundMutationAsync(
+            string expectedStatus,
+            Func<Dictionary<string, object?>, IReadOnlyDictionary<string, string?>, Task<int>> mutation)
+            => await db.RunInSystemTransactionAsync(async () =>
+            {
+                var row = await db.QuerySingleAsync(
+                    @"SELECT integration_key,config_json,operation_generation FROM integrations
+                      WHERE company_id=@cid AND id=@id FOR UPDATE",
+                    command =>
+                    {
+                        command.Parameters.AddWithValue("@cid", state.CompanyId);
+                        command.Parameters.AddWithValue("@id", state.IntegrationId);
+                    }, ct);
+                if (row is null
+                    || !string.Equals(row.GetValueOrDefault("integrationKey")?.ToString(), "motive", StringComparison.OrdinalIgnoreCase)
+                    || !long.TryParse(row.GetValueOrDefault("operationGeneration")?.ToString(), out var generation)
+                    || generation != state.OperationGeneration)
+                    return false;
+
+                var config = connectors.DecryptConfig(row.GetValueOrDefault("configJson"));
+                var expectedHash = config.GetValueOrDefault("oauthStateHash");
+                var expectedExpiry = config.GetValueOrDefault("oauthStateExpiresAt");
+                if (!CryptographicOperations.FixedTimeEquals(
+                        Encoding.UTF8.GetBytes(expectedHash ?? string.Empty),
+                        Encoding.UTF8.GetBytes(MotiveOAuthService.HashState(stateRaw!)))
+                    || !DateTimeOffset.TryParse(expectedExpiry, out var storedExpiry)
+                    || storedExpiry <= DateTimeOffset.UtcNow
+                    || !string.Equals(config.GetValueOrDefault("oauthStatus"), expectedStatus, StringComparison.Ordinal))
+                    return false;
+                return await mutation(row, config) > 0;
+            }, ct);
+
+        // Claim the one-time state before any provider network call. The transaction is
+        // short and also revalidates that the initiating user still belongs to the
+        // tenant, is active, retains provider-management authority, and remains entitled.
+        var consumeResult = "invalid_state";
+        var consumed = await RunStateBoundMutationAsync(
+            "authorization_pending",
+            async (row, _) =>
+            {
+                var entitled = await AuthorityIsCurrentAsync();
+
+                http.Items[AuthCompanyIdItemKey] = state.CompanyId;
+                http.Items[AuthUserIdItemKey] = state.ActorUserId;
+                if (!entitled)
+                {
+                    using var rejectedPatch = JsonDocument.Parse(
+                        "{\"oauthStateHash\":null,\"oauthStateExpiresAt\":null,\"oauthStateConsumedAt\":null,\"oauthStatus\":\"authorization_revoked\"}");
+                    var rejectedConfig = connectors.MergeConfigForStorage(
+                        rejectedPatch.RootElement, row.GetValueOrDefault("configJson"));
+                    var rejected = await db.ExecuteAsync(
+                        @"UPDATE integrations SET config_json=@config::jsonb,status='Error',
+                              last_tested_at=NOW(),last_test_ok=false,
+                              last_test_message='Motive authorization authority was revoked before completion.',updated_at=NOW()
+                          WHERE company_id=@cid AND id=@id AND operation_generation=@generation",
+                        command =>
+                        {
+                            command.Parameters.AddWithValue("@config", rejectedConfig);
+                            command.Parameters.AddWithValue("@cid", state.CompanyId);
+                            command.Parameters.AddWithValue("@id", state.IntegrationId);
+                            command.Parameters.AddWithValue("@generation", state.OperationGeneration);
+                        }, ct);
+                    if (rejected > 0)
+                        await audit.LogAsync(http, "integration.oauth.authorization_revoked", "Integration",
+                            state.IntegrationId, detailsJson: "{\"provider\":\"Motive\"}", ct: ct);
+                    consumeResult = "authorization_revoked";
+                    return rejected;
+                }
+
+                using var consumedPatch = JsonDocument.Parse(JsonSerializer.Serialize(new
+                {
+                    oauthStateConsumedAt = DateTimeOffset.UtcNow.ToString("O"),
+                    oauthStatus = "exchange_in_progress",
+                }));
+                var claimedConfig = connectors.MergeConfigForStorage(
+                    consumedPatch.RootElement, row.GetValueOrDefault("configJson"));
+                var claimed = await db.ExecuteAsync(
+                    @"UPDATE integrations SET config_json=@config::jsonb,updated_at=NOW()
+                      WHERE company_id=@cid AND id=@id AND operation_generation=@generation",
+                    command =>
+                    {
+                        command.Parameters.AddWithValue("@config", claimedConfig);
+                        command.Parameters.AddWithValue("@cid", state.CompanyId);
+                        command.Parameters.AddWithValue("@id", state.IntegrationId);
+                        command.Parameters.AddWithValue("@generation", state.OperationGeneration);
+                    }, ct);
+                if (claimed > 0)
+                    await audit.LogAsync(http, "integration.oauth.callback.claimed", "Integration",
+                        state.IntegrationId, detailsJson: "{\"provider\":\"Motive\"}", ct: ct);
+                consumeResult = "consumed";
+                return claimed;
+            });
+        if (consumed)
+            http.Response.Cookies.Delete(MotiveOAuthService.FlowCookieName, MotiveOAuthService.FlowCookieOptions());
+        if (!consumed || !string.Equals(consumeResult, "consumed", StringComparison.Ordinal))
+            return Results.Redirect(MotiveOAuthService.ResultRedirect(settings!, consumeResult));
+
+        var providerError = http.Request.Query["error"].FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(providerError))
+        {
+            var denied = await RunStateBoundMutationAsync(
+                "exchange_in_progress",
+                async (row, _) =>
+                {
+                    using var deniedPatch = JsonDocument.Parse(
+                        "{\"accessToken\":null,\"refreshToken\":null,\"tokenType\":null,\"tokenExpiresAt\":null,\"oauthStateHash\":null,\"oauthStateExpiresAt\":null,\"oauthStateConsumedAt\":null,\"oauthStatus\":\"authorization_denied\"}");
+                    var deniedConfig = connectors.MergeConfigForStorage(
+                        deniedPatch.RootElement, row.GetValueOrDefault("configJson"));
+                    var affected = await db.ExecuteAsync(
+                        @"UPDATE integrations SET config_json=@config::jsonb,status='Disconnected',
+                              last_tested_at=NOW(),last_test_ok=false,
+                              last_test_message='Motive authorization was not granted.',updated_at=NOW()
+                          WHERE company_id=@cid AND id=@id AND operation_generation=@generation",
+                        command =>
+                        {
+                            command.Parameters.AddWithValue("@config", deniedConfig);
+                            command.Parameters.AddWithValue("@cid", state.CompanyId);
+                            command.Parameters.AddWithValue("@id", state.IntegrationId);
+                            command.Parameters.AddWithValue("@generation", state.OperationGeneration);
+                        }, ct);
+                    if (affected > 0)
+                        await audit.LogAsync(http, "integration.oauth.denied", "Integration", state.IntegrationId,
+                            detailsJson: "{\"provider\":\"Motive\"}", ct: ct);
+                    return affected;
+                });
+            return Results.Redirect(MotiveOAuthService.ResultRedirect(
+                settings!, denied ? "denied" : "invalidated"));
+        }
+
+        var code = http.Request.Query["code"].FirstOrDefault();
+        var exchange = await oauth.ExchangeCodeAsync(settings!, code ?? string.Empty, ct);
+        if (exchange.Tokens is null)
+        {
+            var exchangeFailure = await RunStateBoundMutationAsync(
+                "exchange_in_progress",
+                async (row, _) =>
+                {
+                    using var failedPatch = JsonDocument.Parse(
+                        "{\"accessToken\":null,\"refreshToken\":null,\"tokenType\":null,\"tokenExpiresAt\":null,\"oauthStateHash\":null,\"oauthStateExpiresAt\":null,\"oauthStateConsumedAt\":null,\"oauthStatus\":\"token_exchange_failed\"}");
+                    var failedConfig = connectors.MergeConfigForStorage(
+                        failedPatch.RootElement, row.GetValueOrDefault("configJson"));
+                    var affected = await db.ExecuteAsync(
+                        @"UPDATE integrations SET config_json=@config::jsonb,status='Error',
+                              last_tested_at=NOW(),last_test_ok=false,last_test_message=@message,updated_at=NOW()
+                          WHERE company_id=@cid AND id=@id AND operation_generation=@generation",
+                        command =>
+                        {
+                            command.Parameters.AddWithValue("@config", failedConfig);
+                            command.Parameters.AddWithValue("@message", exchange.Error ?? "Motive token exchange failed.");
+                            command.Parameters.AddWithValue("@cid", state.CompanyId);
+                            command.Parameters.AddWithValue("@id", state.IntegrationId);
+                            command.Parameters.AddWithValue("@generation", state.OperationGeneration);
+                        }, ct);
+                    if (affected > 0)
+                        await audit.LogAsync(http, "integration.oauth.token_exchange_failed", "Integration",
+                            state.IntegrationId, detailsJson: "{\"provider\":\"Motive\"}", ct: ct);
+                    return affected;
+                });
+            return Results.Redirect(MotiveOAuthService.ResultRedirect(
+                settings!, exchangeFailure ? "token_exchange_failed" : "invalidated"));
+        }
+
+        var tokenConfig = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["accessToken"] = exchange.Tokens.AccessToken,
+            ["tokenType"] = exchange.Tokens.TokenType,
+            ["tokenExpiresAt"] = exchange.Tokens.ExpiresAt.ToString("O"),
+        };
+        var testResult = await connectors.Resolve("motive").TestConnectionAsync(tokenConfig, ct);
+
+        var finalOutcome = "invalidated";
+        var finalized = await RunStateBoundMutationAsync(
+            "exchange_in_progress",
+            async (row, _) =>
+            {
+                // Authority can change while provider HTTP is in flight. Recheck
+                // immediately before retaining any token in the final transaction.
+                var authorityCurrent = await AuthorityIsCurrentAsync();
+                var verified = authorityCurrent && testResult.Success;
+                finalOutcome = !authorityCurrent ? "authorization_revoked"
+                    : verified ? "connected" : "scope_verification_failed";
+                using var resultPatch = JsonDocument.Parse(JsonSerializer.Serialize(new
+                {
+                    accessToken = verified ? exchange.Tokens.AccessToken : null,
+                    // Motive refresh tokens rotate on use. Until a single-use rotation
+                    // workflow is implemented, deliberately discard rather than retain it.
+                    refreshToken = (string?)null,
+                    tokenType = verified ? exchange.Tokens.TokenType : null,
+                    tokenExpiresAt = verified ? exchange.Tokens.ExpiresAt.ToString("O") : null,
+                    oauthStateHash = (string?)null,
+                    oauthStateExpiresAt = (string?)null,
+                    oauthStateConsumedAt = (string?)null,
+                    oauthStatus = verified ? "verified" : finalOutcome,
+                    oauthAuthorizedAt = verified ? DateTimeOffset.UtcNow.ToString("O") : null,
+                    verifiedScopes = verified ? string.Join(' ', settings!.Scopes) : null,
+                    grantedScopes = (string?)null,
+                }));
+                var storedConfig = connectors.MergeConfigForStorage(
+                    resultPatch.RootElement, row.GetValueOrDefault("configJson"));
+                var affected = await db.ExecuteAsync(
+                    @"UPDATE integrations SET config_json=@config::jsonb,status=@status,
+                          last_tested_at=NOW(),last_test_ok=@ok,last_test_message=@message,updated_at=NOW()
+                      WHERE company_id=@cid AND id=@id AND operation_generation=@generation",
+                    command =>
+                    {
+                        command.Parameters.AddWithValue("@config", storedConfig);
+                        command.Parameters.AddWithValue("@status", verified ? "Connected" : "Error");
+                        command.Parameters.AddWithValue("@ok", verified);
+                        command.Parameters.AddWithValue("@message", authorityCurrent ? testResult.Message
+                            : "Motive authorization authority was revoked before completion.");
+                        command.Parameters.AddWithValue("@cid", state.CompanyId);
+                        command.Parameters.AddWithValue("@id", state.IntegrationId);
+                        command.Parameters.AddWithValue("@generation", state.OperationGeneration);
+                    }, ct);
+                if (affected > 0)
+                    await audit.LogAsync(http,
+                        verified ? "integration.oauth.verified" : "integration.oauth." + finalOutcome,
+                        "Integration", state.IntegrationId,
+                        detailsJson: JsonSerializer.Serialize(new
+                        {
+                            provider = "Motive",
+                            verified,
+                            verifiedEndpointCount = testResult.Details?.GetValueOrDefault("verifiedEndpointCount") ?? 0,
+                            writeScopesRequested = false,
+                            refreshTokenPersisted = false,
+                        }), ct: ct);
+                return affected;
+            });
+        if (!finalized)
+            return Results.Redirect(MotiveOAuthService.ResultRedirect(settings!, "invalidated"));
+
+        return Results.Redirect(MotiveOAuthService.ResultRedirect(settings!, finalOutcome));
     }
 
     // ── GET /api/maps/geocode?address=... ──────────────────────────────────────────

@@ -93,6 +93,9 @@ public sealed class TelemetryLaunchHardeningTests
         var update = Block(endpoints, "private static async Task<IResult> UpdateIntegration", "private static async Task<IResult> RemoveIntegration");
         var sync = Block(endpoints, "private static async Task<IResult> IntegrationSync", "private static async Task<IResult> ConfigureIntegration");
         var configure = Block(endpoints, "private static async Task<IResult> ConfigureIntegration", "// ── POST /api/integrations/{id}/test-connection");
+        var testConnection = Block(endpoints, "private static async Task<IResult> IntegrationTestConnection", "// ── POST /api/integrations/{id}/run-action");
+        var runAction = Block(endpoints, "private static async Task<IResult> IntegrationRunAction", "// ── GET /api/maps/geocode");
+        var operationLease = Read("backend-dotnet", "Services", "Connectors", "ConnectorOperationLease.cs");
 
         Assert.Contains("ProtectIntegrationConfig", create, StringComparison.Ordinal);
         Assert.Contains("'Disconnected'", create, StringComparison.Ordinal);
@@ -106,6 +109,137 @@ public sealed class TelemetryLaunchHardeningTests
         Assert.Contains("MergeConfigForStorage", configure, StringComparison.Ordinal);
         Assert.Contains("config_json = @config::jsonb", configure, StringComparison.Ordinal);
         Assert.DoesNotContain("config_json,'{}'::jsonb) ||", configure, StringComparison.Ordinal);
+        Assert.Contains("ConnectorOperationLease.CompleteTestAsync", testConnection, StringComparison.Ordinal);
+        Assert.Contains("last_tested_at=NOW()", operationLease, StringComparison.Ordinal);
+        Assert.Contains("CASE WHEN @ok THEN 'Connected' ELSE 'Error' END", operationLease, StringComparison.Ordinal);
+        Assert.DoesNotContain("last_sync_at", testConnection, StringComparison.Ordinal);
+        Assert.DoesNotContain("sync_label", testConnection, StringComparison.Ordinal);
+        Assert.Contains("action.Equals(\"sync\"", runAction, StringComparison.Ordinal);
+        Assert.Contains("action.Equals(\"sync-telemetry\"", runAction, StringComparison.Ordinal);
+        Assert.Contains("Status422UnprocessableEntity", runAction, StringComparison.Ordinal);
+        Assert.Contains("Use the tenant-scoped integration sync endpoint", runAction, StringComparison.Ordinal);
+        AssertOrdered(runAction, "action.Equals(\"sync\"", "connector.RunActionAsync");
+    }
+
+    [Fact]
+    public void SamsaraCatalogStartsUnverifiedAndLegacyFixtureResetIsExact()
+    {
+        var dotnetCatalog = Block(Read("backend-dotnet", "Seed", "IntegrationCatalog.cs"),
+            "new(\"samsara\"", "new(\"geotab\"");
+        var nodeCatalog = Block(Read("backend", "src", "modules", "integrations", "integrations.registry.ts"),
+            "key: \"samsara\"", "key: \"geotab\"");
+        var initSeed = Read("database", "init", "002_seed.sql");
+        var migration = Read("database", "migrations", "2026_09_02_stage94_samsara_provider_truth.sql");
+
+        foreach (var catalog in new[] { dotnetCatalog, nodeCatalog })
+        {
+            Assert.Contains("Disconnected", catalog, StringComparison.Ordinal);
+            Assert.Contains("Never", catalog, StringComparison.Ordinal);
+            Assert.Contains("Odometer", catalog, StringComparison.Ordinal);
+            Assert.DoesNotContain("Connected", catalog, StringComparison.Ordinal);
+            Assert.DoesNotContain("Real-time", catalog, StringComparison.Ordinal);
+            Assert.DoesNotContain("providerAccountId", catalog, StringComparison.Ordinal);
+            Assert.DoesNotContain("Dashcam", catalog, StringComparison.Ordinal);
+        }
+
+        Assert.Contains("(1,'Samsara Import Adapter','Telematics','Disconnected')", initSeed, StringComparison.Ordinal);
+        Assert.Contains("integration_key = 'samsara'", migration, StringComparison.Ordinal);
+        Assert.Contains("config_json = '{\"providerAccountId\":\"sam-1001\"}'::jsonb", migration, StringComparison.Ordinal);
+        Assert.Contains("last_sync_at = TIMESTAMPTZ '2026-06-24T14:14:00Z'", migration, StringComparison.Ordinal);
+        Assert.Contains("last_test_ok IS NULL", migration, StringComparison.Ordinal);
+        Assert.Contains("provider_name = 'Samsara Import Adapter'", migration, StringComparison.Ordinal);
+        Assert.DoesNotContain("WHERE integration_key = 'samsara';", migration, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EveryBuiltInCatalogEntryIsNormalizedToUnverifiedRuntimeTruth()
+    {
+        var catalog = Opstrax.Api.Seed.IntegrationCatalog.Entries;
+
+        Assert.NotEmpty(catalog);
+        Assert.All(catalog, entry =>
+        {
+            Assert.Equal("Disconnected", entry.Status);
+            Assert.Equal("Never", entry.SyncLabel);
+            Assert.Null(entry.LastSyncAt);
+            Assert.Empty(Assert.IsAssignableFrom<IReadOnlyDictionary<string, object?>>(entry.Config));
+        });
+
+        var nodeCatalog = Read("backend", "src", "modules", "integrations", "integrations.registry.ts");
+        Assert.Contains("integrationCatalogDefinitions.map", nodeCatalog, StringComparison.Ordinal);
+        Assert.Contains("status: \"Disconnected\"", nodeCatalog, StringComparison.Ordinal);
+        Assert.Contains("sync: \"Never\"", nodeCatalog, StringComparison.Ordinal);
+        Assert.Contains("lastSyncAt: null", nodeCatalog, StringComparison.Ordinal);
+        Assert.Contains("config: {}", nodeCatalog, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CatalogOnlyProvidersCannotAcceptCredentialsOrAppearConnectable()
+    {
+        var endpoints = Read("backend-dotnet", "Controllers", "EndpointMappings.cs");
+        var configure = Block(endpoints, "private static async Task<IResult> ConfigureIntegration", "// ── POST /api/integrations/{id}/test-connection");
+        var registry = Read("backend-dotnet", "Services", "Connectors", "ConnectorRegistry.cs");
+        var api = Read("frontend", "src", "services", "integrationsApi.ts");
+        var page = Read("frontend", "src", "pages", "IntegrationsPage.tsx");
+
+        Assert.Contains("public bool HasAdapter", registry, StringComparison.Ordinal);
+        Assert.Contains("adapterAvailable = isCustom || connectors.HasAdapter(key)", endpoints, StringComparison.Ordinal);
+        Assert.Contains("!connectors.HasAdapter(integrationKey)", configure, StringComparison.Ordinal);
+        AssertOrdered(configure, "!connectors.HasAdapter(integrationKey)", "MergeConfigForStorage");
+        Assert.Contains("No credentials were stored", configure, StringComparison.Ordinal);
+        Assert.Contains("Status422UnprocessableEntity", configure, StringComparison.Ordinal);
+        Assert.Equal(3, Count(endpoints, "RequireAvailableIntegrationAdapterAsync(db, companyId, id, connectors, ct)"));
+        Assert.Contains("adapterAvailable: boolean", api, StringComparison.Ordinal);
+        Assert.Contains("if (record.adapterAvailable !== true) return []", page, StringComparison.Ordinal);
+        Assert.Contains("Adapter unavailable — evaluation only", page, StringComparison.Ordinal);
+        Assert.Contains("OpsTrax will not accept credentials for it", page, StringComparison.Ordinal);
+        Assert.Contains("No credentials can be stored and no connection is claimed", page, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SamsaraLifecycleIsFailClosedAcrossDisconnectSyncAndProviderMappingUi()
+    {
+        var endpoints = Read("backend-dotnet", "Controllers", "EndpointMappings.cs");
+        var disconnect = Block(endpoints, "private static async Task<IResult> DisconnectIntegration", "private static async Task<IResult> IntegrationSync");
+        var sync = Block(endpoints, "private static async Task<IResult> IntegrationSync", "private static async Task<IResult> ConfigureIntegration");
+        var worker = Read("backend-dotnet", "Services", "ConnectorSyncBackgroundService.cs");
+        var operationLease = Read("backend-dotnet", "Services", "Connectors", "ConnectorOperationLease.cs");
+        var syncFreshnessMigration = Read("database", "migrations", "2026_09_02_stage96_connector_sync_freshness.sql");
+        var page = Read("frontend", "src", "pages", "IntegrationsPage.tsx");
+        var freshness = Read("frontend", "src", "lib", "connectorFreshness.ts");
+        var api = Read("frontend", "src", "services", "integrationsApi.ts");
+        var telemetry = Read("frontend", "src", "services", "telematicsService.ts");
+
+        Assert.Contains("config_json='{}'::jsonb", disconnect, StringComparison.Ordinal);
+        Assert.Contains("last_sync_at=NULL", disconnect, StringComparison.Ordinal);
+        Assert.Contains("last_tested_at=NULL", disconnect, StringComparison.Ordinal);
+        Assert.Contains("providerCredentialRevocationRequired = true", disconnect, StringComparison.Ordinal);
+        Assert.Contains("TryAcquireAsync", sync, StringComparison.Ordinal);
+        Assert.Contains("[\"Connected\"]", sync, StringComparison.Ordinal);
+        Assert.Contains("operation_generation=operation_generation+1", disconnect, StringComparison.Ordinal);
+        Assert.Contains("operation_lease_token=NULL", disconnect, StringComparison.Ordinal);
+        Assert.Contains("operation_generation=@generation", operationLease, StringComparison.Ordinal);
+        Assert.Contains("AssertCurrentForWriteAsync", operationLease, StringComparison.Ordinal);
+        Assert.Contains("MaxDegreeOfParallelism = 4", worker, StringComparison.Ordinal);
+        Assert.Contains("maxPages = 5", worker, StringComparison.Ordinal);
+        Assert.Contains("operation_last_attempt_at", operationLease, StringComparison.Ordinal);
+        Assert.Contains("syncLastAttemptAt = row.GetValueOrDefault", endpoints, StringComparison.Ordinal);
+        Assert.Contains("syncLastCompletedAt = row.GetValueOrDefault", endpoints, StringComparison.Ordinal);
+        Assert.Contains("isSyncOperation: true", sync, StringComparison.Ordinal);
+        Assert.Contains("sync_last_attempt_at", syncFreshnessMigration, StringComparison.Ordinal);
+        Assert.Contains("sync_last_completed_at", syncFreshnessMigration, StringComparison.Ordinal);
+
+        Assert.Contains("key: \"apiToken\"", page, StringComparison.Ordinal);
+        Assert.Contains("onConnect={() => setConfigTarget(integration)}", page, StringComparison.Ordinal);
+        Assert.Contains("provider portal", page, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Discover → Map → Validate", page, StringComparison.Ordinal);
+        Assert.Contains("to=\"/iot-devices\"", page, StringComparison.Ordinal);
+        Assert.Contains("Last successful sync", page, StringComparison.Ordinal);
+        Assert.Contains("Sync attempt stale", freshness, StringComparison.Ordinal);
+        Assert.Contains("role=\"status\"", page, StringComparison.Ordinal);
+        Assert.Contains("unwrap<IntegrationTestResult>(apiClient.post(`/api/integrations/${id}/sync`", api, StringComparison.Ordinal);
+        Assert.DoesNotContain("isMatchedToDevice: true", telemetry, StringComparison.Ordinal);
+        Assert.Contains("no persisted provider-device mapping has been verified", telemetry, StringComparison.Ordinal);
     }
 
     [Fact]

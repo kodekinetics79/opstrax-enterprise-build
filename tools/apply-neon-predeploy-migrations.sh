@@ -224,6 +224,18 @@ MIGRATIONS=(
   2026_08_28_stage92_gt06_replay_session_epoch
   # Document-only origin tracking; legacy rows retain every stored workflow value.
   2026_08_31_stage93_document_lifecycle_provenance
+  # Remove only the exact fabricated Samsara catalog/seed fixtures. Real tenant
+  # credentials, successful handshakes, and provider-derived data are untouched.
+  2026_09_02_stage94_samsara_provider_truth
+  # Provider calls are generation-bound; disconnect/configure invalidate the
+  # committed lease so stale handshakes and telemetry cannot write afterward.
+  2026_09_02_stage95_connector_operation_lease
+  # Keep scheduler fairness separate from customer-visible data-sync freshness,
+  # and retain the newest authentic provider-event clock for stale-feed truth.
+  2026_09_02_stage96_connector_sync_freshness
+  # Catalog entries are opportunities, not evidence. Reset never-verified built-in
+  # rows to an honest disconnected/pending state without deleting tenant config.
+  2026_09_02_stage97_integration_catalog_truth
 )
 
 echo "Pre-check: validated read-only database identity…"

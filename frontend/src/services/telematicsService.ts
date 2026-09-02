@@ -850,13 +850,15 @@ function deriveProviderIntegrationAudit(
     .map((provider) => ({
       ...provider,
       id: `provider-audit-${provider.id}-${device.id}`,
-      isMatchedToDevice: true,
+      // A catalog-name match is discovery evidence only. It does not prove that this
+      // persisted device is installed/mapped to the provider record.
+      isMatchedToDevice: false,
       matchConfidence: confidence,
-      visibilitySource: "connected",
+      visibilitySource: "unmatched",
       auditMessage:
         confidence === "exact"
-          ? "Provider identity matches the device provider field."
-          : "Provider identity partially matches the device provider field.",
+          ? "Provider name matches the device field, but no persisted provider-device mapping has been verified."
+          : "Provider name is similar to the device field, but no persisted provider-device mapping has been verified.",
     }));
 }
 

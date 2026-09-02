@@ -3,8 +3,9 @@ using System.Text.Json;
 
 namespace Opstrax.Api.Services.Connectors;
 
-// Generic HTTP / Webhook connector — the fallback for ANY connector (including
-// user-created custom ones) that exposes an HTTP endpoint. TestConnection issues a
+// Generic HTTP / Webhook connector — the fallback for user-created custom connectors
+// that expose an HTTP endpoint. Built-in catalog providers fail closed until their
+// provider-specific adapter exists. TestConnection issues a
 // real request to the configured URL and reports the actual reachability + status,
 // so even a custom connector you add is genuinely testable against its live system.
 //
@@ -15,8 +16,8 @@ namespace Opstrax.Api.Services.Connectors;
 //   authScheme                  — scheme prefix (default "Bearer"; use "" for raw key)
 //   method                      — HEAD | GET | POST (default GET)
 //
-// This is the registry's DEFAULT (it has no fixed Keys) — the registry falls back to
-// it when no provider-specific connector matches the integration_key.
+// This has no fixed Keys; the registry uses it only when a key is neither a registered
+// provider connector nor a built-in catalog definition.
 public sealed class GenericHttpConnector(IHttpClientFactory httpFactory, ILogger<GenericHttpConnector> logger) : IConnector
 {
     // Empty — this is resolved as the fallback, not by key match.
