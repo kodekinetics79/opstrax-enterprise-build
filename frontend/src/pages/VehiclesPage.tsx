@@ -140,7 +140,7 @@ type VehicleArchiveTarget = Readonly<{
 
 /* ------------------------------------------------------------------ page */
 
-export function VehiclesPage() {
+export function VehiclesPage({ embedded = false }: { embedded?: boolean }) {
   const navigate = useNavigate();
   const { session } = useAuth();
   const hasPermission = useHasPermission();
@@ -378,7 +378,7 @@ export function VehiclesPage() {
     <div className="fleet-console flex h-full min-h-0 flex-col gap-3">
 
       {/* ── Console rail — brushed header with screws + primary actions ───── */}
-      <header className="fc-rail relative shrink-0 px-5 py-3.5 pl-7 pr-7">
+      {!embedded && <header className="fc-rail relative shrink-0 px-5 py-3.5 pl-7 pr-7">
         <Screw className="left-2.5 top-2.5" slot="20deg" />
         <Screw className="right-2.5 top-2.5" slot="-38deg" />
         <Screw className="bottom-2.5 left-2.5" slot="62deg" />
@@ -417,7 +417,7 @@ export function VehiclesPage() {
             ) : null}
           </div>
         </div>
-      </header>
+      </header>}
 
       {actionError instanceof Error ? (
         <div role="alert" className="shrink-0 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">

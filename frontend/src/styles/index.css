@@ -36,8 +36,12 @@
 
   /* Radii */
   --r-card:  18px;
-  --r-btn:   12px;
-  --r-field: 12px;
+  --r-btn:   8px;
+  --r-field: 8px;
+  --control-standard: 34px;
+  --control-compact: 32px;
+  --control-cta: 38px;
+  --control-touch: 44px;
 
   /* Shadows – clean, not glow */
   --shadow-card:     0 1px 2px rgba(15,23,42,.04),
@@ -259,6 +263,50 @@ body {
 }
 
 /* ---------- BUTTONS ---------- */
+/* Geometry belongs below utilities in the cascade: icon insets and explicit
+   compact callsites must be able to override it. Visual identity stays intact. */
+@layer components {
+  .btn-primary, .btn-secondary, .btn-ghost, .btn-danger {
+    min-height: var(--control-standard);
+    padding: 7px 12px;
+    font-size: 13px;
+    line-height: 18px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .btn-compact { min-height: var(--control-compact); padding: 6px 12px; }
+  .btn-cta { min-height: var(--control-cta); padding: 9px 16px; }
+  .icon-btn { padding: 7px; }
+  .field {
+    min-height: var(--control-standard);
+    min-width: 0;
+    width: 100%;
+    padding: 7px 12px;
+    font-size: 14px;
+    line-height: 18px;
+  }
+}
+
+.btn-primary, .btn-secondary, .btn-ghost, .btn-danger {
+  min-width: 0;
+  max-width: 100%;
+  justify-content: center;
+}
+.btn-primary > svg, .btn-secondary > svg, .btn-ghost > svg,
+.btn-danger > svg, .icon-btn > svg { flex-shrink: 0; }
+.icon-btn {
+  min-height: var(--control-compact);
+  min-width: var(--control-compact);
+  flex-shrink: 0;
+}
+@media (any-pointer: coarse) {
+  .btn-primary, .btn-secondary, .btn-ghost, .btn-danger, .icon-btn, .field:not(textarea),
+  .filter-chip, .fc-seg-btn, .deck-seg-btn, .fc-pager-btn {
+    min-height: var(--control-touch);
+  }
+  .icon-btn { min-width: var(--control-touch); }
+}
+
 .btn-primary {
   display: inline-flex;
   align-items: center;
@@ -266,13 +314,10 @@ body {
   border-radius: var(--r-btn);
   border: 1px solid rgba(13,148,136,.20);
   background: linear-gradient(135deg, #0d9488 0%, #14b8a6 36%, #2563eb 100%);
-  padding: .72rem 1.15rem;
   color: #ffffff;
-  font-size: .855rem;
   font-weight: 700;
   letter-spacing: .01em;
   cursor: pointer;
-  white-space: nowrap;
   box-shadow: var(--shadow-btn);
   transition: transform .15s ease, filter .15s ease, box-shadow .15s ease;
 }
@@ -291,12 +336,9 @@ body {
   border-radius: var(--r-btn);
   border: 1px solid var(--border);
   background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
-  padding: .68rem .96rem;
   color: var(--text-secondary);
-  font-size: .83rem;
   font-weight: 600;
   cursor: pointer;
-  white-space: nowrap;
   box-shadow: 0 1px 2px rgba(0,0,0,.04);
   transition: background .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease, transform .15s ease;
 }
@@ -315,12 +357,9 @@ body {
   border-radius: var(--r-btn);
   border: 1px solid var(--border);
   background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
-  padding: .68rem 1rem;
   color: var(--text-secondary);
-  font-size: .845rem;
   font-weight: 700;
   cursor: pointer;
-  white-space: nowrap;
   box-shadow: 0 1px 2px rgba(15,23,42,.04);
   transition: background .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease, transform .15s ease;
 }
@@ -342,13 +381,10 @@ body {
   border-radius: var(--r-btn);
   border: 1px solid rgba(220,38,38,.25);
   background: linear-gradient(135deg, #dc2626 0%, #ef4444 100%);
-  padding: .72rem 1.15rem;
   color: #ffffff;
-  font-size: .855rem;
   font-weight: 700;
   letter-spacing: .01em;
   cursor: pointer;
-  white-space: nowrap;
   box-shadow: 0 3px 10px rgba(220,38,38,.22), 0 1px 2px rgba(0,0,0,.08);
   transition: transform .15s ease, filter .15s ease, box-shadow .15s ease;
 }
@@ -367,7 +403,6 @@ body {
   border-radius: var(--r-btn);
   border: 1px solid var(--border);
   background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
-  padding: .62rem;
   color: var(--text-muted);
   cursor: pointer;
   box-shadow: 0 1px 2px rgba(0,0,0,.04);
@@ -384,26 +419,27 @@ body {
   display: inline-flex;
   align-items: center;
   gap: .38rem;
-  border-radius: 999px;
+  border-radius: 6px;
   border: 1px solid var(--border);
   background: linear-gradient(180deg, #ffffff, #f8fafc);
-  padding: .32rem .75rem;
+  padding: 3px 8px;
   color: var(--text-secondary);
-  font-size: .78rem;
+  font-size: 12px;
+  line-height: 18px;
+  min-width: 0;
+  max-width: 100%;
   font-weight: 600;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
   box-shadow: 0 1px 2px rgba(15,23,42,.04);
 }
 
 /* ---------- FIELD ---------- */
 .field {
-  width: 100%;
   border-radius: var(--r-field);
   border: 1px solid var(--border-strong);
   background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
-  padding: .78rem .98rem;
   color: var(--text-primary);
-  font-size: .875rem;
   font-family: inherit;
   outline: none;
   box-shadow: 0 1px 2px rgba(0,0,0,.04);
