@@ -9,7 +9,8 @@ public sealed record ConnectorOperationContext(
     Guid LeaseToken,
     string IntegrationKey,
     object? ConfigJson,
-    string Status);
+    string Status,
+    bool IsSyncOperation);
 
 public sealed class StaleConnectorOperationException(string message) : InvalidOperationException(message);
 
@@ -25,7 +26,8 @@ public static class ConnectorOperationLease
         long integrationId,
         string[] allowedStatuses,
         TimeSpan duration,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool isSyncOperation = false)
     {
         var token = Guid.NewGuid();
         var leaseSeconds = Math.Clamp((int)Math.Ceiling(duration.TotalSeconds), 10, 180);
@@ -36,6 +38,7 @@ public static class ConnectorOperationLease
                       operation_lease_token=@token,
                       operation_lease_expires_at=NOW() + (@leaseSeconds * INTERVAL '1 second'),
                       operation_last_attempt_at=NOW(),
+                      sync_last_attempt_at=CASE WHEN @isSyncOperation THEN NOW() ELSE sync_last_attempt_at END,
                       updated_at=NOW()
                   WHERE company_id=@cid AND id=@id
                     AND status = ANY(@statuses)
@@ -49,6 +52,7 @@ public static class ConnectorOperationLease
                     c.Parameters.AddWithValue("@cid", companyId);
                     c.Parameters.AddWithValue("@id", integrationId);
                     c.Parameters.AddWithValue("@statuses", allowedStatuses);
+                    c.Parameters.AddWithValue("@isSyncOperation", isSyncOperation);
                 }, ct);
             if (row is null) return null;
             return new ConnectorOperationContext(
@@ -58,7 +62,8 @@ public static class ConnectorOperationLease
                 (Guid)row["operationLeaseToken"]!,
                 row["integrationKey"]?.ToString() ?? "",
                 row.GetValueOrDefault("configJson"),
-                row["status"]?.ToString() ?? "");
+                row["status"]?.ToString() ?? "",
+                isSyncOperation);
         }, ct);
     }
 
@@ -113,6 +118,7 @@ public static class ConnectorOperationLease
                       status=CASE WHEN @ok THEN 'Connected' ELSE 'Error' END,
                       last_sync_at=CASE WHEN @ok THEN NOW() ELSE last_sync_at END,
                       sync_label=CASE WHEN @ok THEN 'Just now' ELSE sync_label END,
+                      sync_last_completed_at=NOW(),sync_last_ok=@ok,
                       config_json=CASE WHEN @cursor IS NULL THEN config_json
                                        ELSE COALESCE(config_json,'{}'::jsonb) || jsonb_build_object('syncCursor',@cursor::text) END,
                       operation_lease_token=NULL,operation_lease_expires_at=NULL,updated_at=NOW()
@@ -133,11 +139,17 @@ public static class ConnectorOperationLease
         CancellationToken ct) => db.RunInSystemTransactionAsync(async () =>
             await db.ExecuteAsync(
                 @"UPDATE integrations SET status='Error',
+                      sync_last_completed_at=CASE WHEN @isSyncOperation THEN NOW() ELSE sync_last_completed_at END,
+                      sync_last_ok=CASE WHEN @isSyncOperation THEN false ELSE sync_last_ok END,
                       operation_lease_token=NULL,operation_lease_expires_at=NULL,updated_at=NOW()
                   WHERE company_id=@cid AND id=@id
                     AND operation_generation=@generation
                     AND operation_lease_token=@token",
-                c => Bind(c, operation), ct), ct);
+                c =>
+                {
+                    Bind(c, operation);
+                    c.Parameters.AddWithValue("@isSyncOperation", operation.IsSyncOperation);
+                }, ct), ct);
 
     private static void Bind(Npgsql.NpgsqlCommand command, ConnectorOperationContext operation)
     {

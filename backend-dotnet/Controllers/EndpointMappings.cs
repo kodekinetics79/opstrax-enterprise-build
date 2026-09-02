@@ -11210,7 +11210,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
           description, logo, sync_label, last_sync_at, related_systems_json,
           connected_to_json, managed_by, scope, config_json,
           COALESCE(is_custom,false) is_custom, updated_at,
-          last_tested_at, last_test_ok, last_test_message";
+          last_tested_at, last_test_ok, last_test_message,
+          sync_last_attempt_at, sync_last_completed_at, sync_last_ok,
+          provider_last_event_at";
 
     // Server-side module-entitlement gate for the connector / Integration Hub surface.
     // RBAC alone let a package_allowlist tenant WITHOUT the Integrations add-on read and
@@ -11348,6 +11350,12 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             lastTestedAt = row.GetValueOrDefault("lastTestedAt"),
             lastTestOk = row.TryGetValue("lastTestOk", out var lto) && lto is bool tb ? tb : (bool?)null,
             lastTestMessage = row.GetValueOrDefault("lastTestMessage")?.ToString(),
+            // Data-sync clocks exclude connection handshakes, which are represented
+            // independently by lastTestedAt/lastTestOk above.
+            syncLastAttemptAt = row.GetValueOrDefault("syncLastAttemptAt"),
+            syncLastCompletedAt = row.GetValueOrDefault("syncLastCompletedAt"),
+            syncLastOk = row.TryGetValue("syncLastOk", out var slo) && slo is bool sb ? sb : (bool?)null,
+            providerLastEventAt = row.GetValueOrDefault("providerLastEventAt"),
         };
     }
 
@@ -11471,6 +11479,10 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                       last_tested_at=CASE WHEN @config IS NULL THEN last_tested_at ELSE NULL END,
                       last_test_ok=CASE WHEN @config IS NULL THEN last_test_ok ELSE NULL END,
                       last_test_message=CASE WHEN @config IS NULL THEN last_test_message ELSE NULL END,
+                      sync_last_attempt_at=CASE WHEN @config IS NULL THEN sync_last_attempt_at ELSE NULL END,
+                      sync_last_completed_at=CASE WHEN @config IS NULL THEN sync_last_completed_at ELSE NULL END,
+                      sync_last_ok=CASE WHEN @config IS NULL THEN sync_last_ok ELSE NULL END,
+                      provider_last_event_at=CASE WHEN @config IS NULL THEN provider_last_event_at ELSE NULL END,
                       operation_generation = operation_generation + 1,
                       operation_lease_token = NULL,
                       operation_lease_expires_at = NULL,
@@ -11529,6 +11541,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         await db.ExecuteAsync(
             @"UPDATE integrations SET status='Disconnected', config_json='{}'::jsonb,
                   connected_to_json='[]'::jsonb, last_sync_at=NULL, sync_label='Never',
+                  sync_last_attempt_at=NULL,sync_last_completed_at=NULL,sync_last_ok=NULL,
+                  provider_last_event_at=NULL,
                   operation_generation=operation_generation+1,
                   operation_lease_token=NULL,operation_lease_expires_at=NULL,updated_at=NOW()
               WHERE company_id=@cid AND id=@id",
@@ -11550,6 +11564,10 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                   last_tested_at=NULL,
                   last_test_ok=NULL,
                   last_test_message=NULL,
+                  sync_last_attempt_at=NULL,
+                  sync_last_completed_at=NULL,
+                  sync_last_ok=NULL,
+                  provider_last_event_at=NULL,
                   operation_generation=operation_generation+1,
                   operation_lease_token=NULL,
                   operation_lease_expires_at=NULL,
@@ -11574,7 +11592,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
         var companyId = GetCompanyId(http);
         var operation = await Opstrax.Api.Services.Connectors.ConnectorOperationLease.TryAcquireAsync(
-            db, companyId, id, ["Connected"], TimeSpan.FromSeconds(90), ct);
+            db, companyId, id, ["Connected"], TimeSpan.FromSeconds(90), ct,
+            isSyncOperation: true);
         if (operation is null)
             return Results.Conflict(ApiResponse<object>.Fail(
                 "Verify the provider connection and wait for any active connector operation before running a sync."));
@@ -11641,6 +11660,10 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                       last_tested_at = NULL,
                       last_test_ok = NULL,
                       last_test_message = NULL,
+                      sync_last_attempt_at = NULL,
+                      sync_last_completed_at = NULL,
+                      sync_last_ok = NULL,
+                      provider_last_event_at = NULL,
                       operation_generation = operation_generation + 1,
                       operation_lease_token = NULL,
                       operation_lease_expires_at = NULL,

@@ -59,6 +59,12 @@ public sealed class Batch7SchemaService(Database db, IConfiguration? configurati
         new("integrations", "operation_lease_token",      "UUID NULL"),
         new("integrations", "operation_lease_expires_at", "TIMESTAMPTZ NULL"),
         new("integrations", "operation_last_attempt_at",  "TIMESTAMPTZ NULL"),
+        // Sync-specific customer-health clocks. operation_last_attempt_at also
+        // includes handshakes and remains an internal scheduler-fairness control.
+        new("integrations", "sync_last_attempt_at",       "TIMESTAMPTZ NULL"),
+        new("integrations", "sync_last_completed_at",     "TIMESTAMPTZ NULL"),
+        new("integrations", "sync_last_ok",               "BOOLEAN NULL"),
+        new("integrations", "provider_last_event_at",     "TIMESTAMPTZ NULL"),
         // Enrich audit_logs with severity + module context
         new("audit_logs", "severity",     "VARCHAR(40) NOT NULL DEFAULT 'Info'"),
         new("audit_logs", "module_key",   "VARCHAR(100) NULL"),

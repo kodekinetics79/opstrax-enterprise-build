@@ -62,7 +62,8 @@ public sealed class ConnectorSyncBackgroundService(
             try
             {
                 operation = await ConnectorOperationLease.TryAcquireAsync(
-                    db, companyId, id, ["Connected", "Error"], TimeSpan.FromSeconds(90), token);
+                    db, companyId, id, ["Connected", "Error"], TimeSpan.FromSeconds(90), token,
+                    isSyncOperation: true);
                 if (operation is null) return;
 
                 var connector = connectors.Resolve(operation.IntegrationKey);

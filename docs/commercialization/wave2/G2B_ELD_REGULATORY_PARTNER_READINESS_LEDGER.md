@@ -16,7 +16,7 @@
 
 The official FMCSA ELD site describes the registered list as devices **self-certified by providers**. The official list states that listed devices are self-certified by the manufacturer and that FMCSA does not endorse any ELD. FMCSA also maintains a revoked list and may remove a model/version that does not meet the rule.
 
-Official sources:
+Official sources (URLs reviewed on 2026-09-02; official status must be recaptured on the actual candidate decision date):
 
 - [FMCSA ELD portal and registered/self-certified list](https://eld.fmcsa.dot.gov/)
 - [FMCSA registered device list](https://eld.fmcsa.dot.gov/List/GetListOfELDs?listType=Registered)
@@ -40,7 +40,7 @@ No item above is currently recorded for a selected partner/device; therefore the
 
 Transport Canada states that both ELD hardware and software/app must be tested and certified by a third-party certification body accredited by the Minister of Transport. The official device list identifies certified and revoked records and states that the certification body retains authority over a model's certification status.
 
-Official sources:
+Official sources (URLs reviewed on 2026-09-02; official status must be recaptured on the actual candidate decision date):
 
 - [Transport Canada ELD program](https://tc.canada.ca/en/road-transportation/electronic-logging-devices)
 - [Transport Canada certification of ELDs](https://tc.canada.ca/en/road-transportation/electronic-logging-devices/certification-electronic-logging-devices)
@@ -74,6 +74,8 @@ Before a candidate may move from research to selection, the owning issue must co
 | Technical integration | Versioned API contract, canonical identity/lineage, retry/idempotency, audit and recovery evidence | MISSING |
 | Field evidence | Exact device/vehicle/app workflow with authentic records and transfer behavior | MISSING |
 | Independent acceptance | Appendix B two-perspective P0 review plus SDET/Security/Fleet Product acceptance | MISSING |
+
+The jurisdiction-separated hard gates, weighted assessment, provider questionnaire, evidence register and exclusion/selection record are prepared in `G2B_ELD_PARTNER_DECISION_SCORECARD.md`. The instrument is ready for candidate evidence; its existence is not a provider selection or certification result.
 
 ## Decision rule
 

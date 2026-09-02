@@ -159,7 +159,9 @@ public sealed class TelemetryLaunchHardeningTests
         var sync = Block(endpoints, "private static async Task<IResult> IntegrationSync", "private static async Task<IResult> ConfigureIntegration");
         var worker = Read("backend-dotnet", "Services", "ConnectorSyncBackgroundService.cs");
         var operationLease = Read("backend-dotnet", "Services", "Connectors", "ConnectorOperationLease.cs");
+        var syncFreshnessMigration = Read("database", "migrations", "2026_09_02_stage96_connector_sync_freshness.sql");
         var page = Read("frontend", "src", "pages", "IntegrationsPage.tsx");
+        var freshness = Read("frontend", "src", "lib", "connectorFreshness.ts");
         var api = Read("frontend", "src", "services", "integrationsApi.ts");
         var telemetry = Read("frontend", "src", "services", "telematicsService.ts");
 
@@ -175,12 +177,21 @@ public sealed class TelemetryLaunchHardeningTests
         Assert.Contains("AssertCurrentForWriteAsync", operationLease, StringComparison.Ordinal);
         Assert.Contains("MaxDegreeOfParallelism = 4", worker, StringComparison.Ordinal);
         Assert.Contains("maxPages = 5", worker, StringComparison.Ordinal);
+        Assert.Contains("operation_last_attempt_at", operationLease, StringComparison.Ordinal);
+        Assert.Contains("syncLastAttemptAt = row.GetValueOrDefault", endpoints, StringComparison.Ordinal);
+        Assert.Contains("syncLastCompletedAt = row.GetValueOrDefault", endpoints, StringComparison.Ordinal);
+        Assert.Contains("isSyncOperation: true", sync, StringComparison.Ordinal);
+        Assert.Contains("sync_last_attempt_at", syncFreshnessMigration, StringComparison.Ordinal);
+        Assert.Contains("sync_last_completed_at", syncFreshnessMigration, StringComparison.Ordinal);
 
         Assert.Contains("key: \"apiToken\"", page, StringComparison.Ordinal);
         Assert.Contains("onConnect={() => setConfigTarget(integration)}", page, StringComparison.Ordinal);
         Assert.Contains("provider portal", page, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Discover → Map → Validate", page, StringComparison.Ordinal);
         Assert.Contains("to=\"/iot-devices\"", page, StringComparison.Ordinal);
+        Assert.Contains("Last successful sync", page, StringComparison.Ordinal);
+        Assert.Contains("Sync attempt stale", freshness, StringComparison.Ordinal);
+        Assert.Contains("role=\"status\"", page, StringComparison.Ordinal);
         Assert.Contains("unwrap<IntegrationTestResult>(apiClient.post(`/api/integrations/${id}/sync`", api, StringComparison.Ordinal);
         Assert.DoesNotContain("isMatchedToDevice: true", telemetry, StringComparison.Ordinal);
         Assert.Contains("no persisted provider-device mapping has been verified", telemetry, StringComparison.Ordinal);

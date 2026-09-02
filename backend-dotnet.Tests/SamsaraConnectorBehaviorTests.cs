@@ -44,6 +44,48 @@ public sealed class SamsaraConnectorBehaviorTests
         Assert.False(result.Success);
         Assert.Contains("did not advance", result.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Single(handler.Requests);
+        Assert.Null(result.Details!["nextCursor"]);
+    }
+
+    [Fact]
+    public async Task Sync_MultiPageCursorCycleFailsWithoutPublishingCyclicCursor()
+    {
+        var cursors = new Queue<string>(["A", "B", "A"]);
+        var handler = new ScriptedHandler(_ => Json(HttpStatusCode.OK,
+            $$$"""{"data":[],"pagination":{"endCursor":"{{{cursors.Dequeue()}}}","hasNextPage":true}}"""));
+        var connector = Connector(handler);
+        using var body = OperationBody();
+
+        var result = await connector.RunActionAsync("sync", Config(), body.RootElement, CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.Contains("did not advance", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(3, handler.Requests.Count);
+        Assert.Equal(3, Convert.ToInt32(result.Details!["pagesCommitted"]));
+        Assert.Null(result.Details["nextCursor"]);
+    }
+
+    [Fact]
+    public async Task Sync_ProviderTimeoutReturnsLastCommittedPageCursorWithCorrectCause()
+    {
+        var request = 0;
+        var handler = new ScriptedHandler(_ =>
+        {
+            request++;
+            if (request == 2) throw new TaskCanceledException("provider request timed out");
+            return Json(HttpStatusCode.OK,
+                """{"data":[],"pagination":{"endCursor":"cursor-1","hasNextPage":true}}""");
+        });
+        var connector = Connector(handler);
+        using var body = OperationBody();
+
+        var result = await connector.RunActionAsync("sync", Config(), body.RootElement, CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.Equal("cursor-1", result.Details!["nextCursor"]?.ToString());
+        Assert.Equal(1, Convert.ToInt32(result.Details["pagesCommitted"]));
+        Assert.Equal(true, result.Details["boundedPartial"]);
+        Assert.Contains("provider request timed out", result.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -62,6 +104,40 @@ public sealed class SamsaraConnectorBehaviorTests
 
         Assert.True(result.Success, result.Message);
         Assert.Equal(2, handler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task Sync_HonorsHttpDateRetryAfterWithoutRejectingTheProviderResponse()
+    {
+        var rateLimited = Json((HttpStatusCode)429, "{}");
+        rateLimited.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(DateTimeOffset.UtcNow);
+        var responses = new Queue<HttpResponseMessage>(
+        [
+            rateLimited,
+            Json(HttpStatusCode.OK, """{"data":[],"pagination":{"endCursor":null,"hasNextPage":false}}"""),
+        ]);
+        var handler = new ScriptedHandler(_ => responses.Dequeue());
+        var connector = Connector(handler);
+        using var body = OperationBody();
+
+        var result = await connector.RunActionAsync("sync", Config(), body.RootElement, CancellationToken.None);
+
+        Assert.True(result.Success, result.Message);
+        Assert.Equal(2, handler.Requests.Count);
+    }
+
+    [Fact]
+    public void RetryDelay_HonorsFutureHttpDateAndCapsAtTenSeconds()
+    {
+        var now = new DateTimeOffset(2026, 9, 2, 12, 0, 0, TimeSpan.Zero);
+
+        var future = SamsaraSync.ResolveRetryDelay(
+            new System.Net.Http.Headers.RetryConditionHeaderValue(now.AddSeconds(4)), 0, now);
+        var capped = SamsaraSync.ResolveRetryDelay(
+            new System.Net.Http.Headers.RetryConditionHeaderValue(now.AddMinutes(2)), 0, now);
+
+        Assert.Equal(TimeSpan.FromSeconds(4), future);
+        Assert.Equal(TimeSpan.FromSeconds(10), capped);
     }
 
     [Fact]

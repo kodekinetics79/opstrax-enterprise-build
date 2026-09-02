@@ -46,6 +46,12 @@ export type IntegrationRecord = {
   lastTestedAt?: string | null;
   lastTestOk?: boolean | null;
   lastTestMessage?: string | null;
+  // Sync-specific clocks exclude connection handshakes and keep attempts separate
+  // from the last successful data sync.
+  syncLastAttemptAt?: string | null;
+  syncLastCompletedAt?: string | null;
+  syncLastOk?: boolean | null;
+  providerLastEventAt?: string | null;
 };
 
 export type IntegrationActivity = {

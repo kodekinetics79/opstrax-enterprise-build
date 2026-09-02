@@ -37,6 +37,7 @@ import {
   StatusBadge,
 } from "@/components/ui";
 import { useHasPermission } from "@/hooks/usePermission";
+import { connectorAttemptHealth } from "@/lib/connectorFreshness";
 import {
   integrationsApi,
   type IntegrationCategory,
@@ -1014,12 +1015,20 @@ function ConnectorCard({
   const meta = CATEGORY_META[integration.category];
   const primaryLabel =
     integration.status === "Pending" ? "Authorize" : isError ? "Reconnect" : "Connect";
+  const attemptHealth = connectorAttemptHealth(integration);
+  const healthAccent = attemptHealth?.state === "error"
+    ? "bg-red-400/70"
+    : attemptHealth?.state === "stale" || attemptHealth?.state === "awaiting"
+      ? "bg-amber-400/70"
+      : attemptHealth?.state === "in-progress"
+        ? "bg-sky-400/70"
+        : null;
 
   return (
     <div className="clay-card card-hover flex flex-col gap-3 p-4">
       <span
         className={`pointer-events-none absolute inset-x-0 top-0 h-1 rounded-t-(--r-clay) ${
-          isConnected ? "bg-emerald-400/70" : isError ? "bg-red-400/70" : integration.status === "Pending" ? "bg-amber-400/70" : "bg-slate-300/70"
+          isError ? "bg-red-400/70" : healthAccent ?? (isConnected ? "bg-emerald-400/70" : integration.status === "Pending" ? "bg-amber-400/70" : "bg-slate-300/70")
         }`}
       />
       <div className="flex items-start gap-3">
@@ -1053,9 +1062,21 @@ function ConnectorCard({
       )}
 
       <div className="flex items-center justify-between gap-2 rounded-xl border border-slate-200/70 bg-slate-50 px-3 py-2 shadow-[inset_0_1px_3px_rgba(148,163,184,.18)]">
-        <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Last sync</span>
-        <span className="text-[11px] font-semibold text-slate-600">{integration.sync}</span>
+        <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Last successful sync</span>
+        <span className="text-[11px] font-semibold text-slate-600">
+          {integration.lastSyncAt ? formatRelativeTime(integration.lastSyncAt) : "Never"}
+        </span>
       </div>
+
+      {attemptHealth ? (
+        <div className={`rounded-xl border px-3 py-2 ${attemptHealth.tone}`} title={attemptHealth.detail}>
+          <span className="block text-[11px] font-semibold">{attemptHealth.label}</span>
+          <span className="sr-only">{attemptHealth.detail}</span>
+          <span role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+            {attemptHealth.announcement}
+          </span>
+        </div>
+      ) : null}
 
       {/* Connector health from the last real handshake (credentials verified vs failed). */}
       {integration.lastTestedAt ? (
@@ -1260,6 +1281,10 @@ export function IntegrationsPage() {
   const q = useQuery<IntegrationsPayload>({
     queryKey: ["integrations"],
     queryFn: integrationsApi.list,
+    // Keep an already-open operations screen honest as worker attempts age or fail.
+    // The minute cadence is bounded and well within the 5m+60s pilot visibility floor.
+    refetchInterval: 60_000,
+    refetchIntervalInBackground: true,
   });
 
   const payload = q.data;

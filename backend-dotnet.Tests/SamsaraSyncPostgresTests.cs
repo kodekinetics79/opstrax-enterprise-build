@@ -339,13 +339,14 @@ public sealed class SamsaraSyncPostgresTests
                 db, operation!, ConnectorResult.Ok("stale provider success"), CancellationToken.None);
             Assert.Equal(0, staleHandshakeRows);
             var disconnected = await db.QuerySingleAsync(
-                "SELECT status FROM integrations WHERE company_id=@cid AND id=@id",
+                "SELECT status,provider_last_event_at FROM integrations WHERE company_id=@cid AND id=@id",
                 c =>
                 {
                     c.Parameters.AddWithValue("@cid", companyId);
                     c.Parameters.AddWithValue("@id", integrationId);
                 });
             Assert.Equal("Disconnected", disconnected?["status"]?.ToString());
+            Assert.Null(disconnected?["providerLastEventAt"]);
 
             var observedAt = DateTimeOffset.UtcNow.AddMinutes(-1).ToString("O");
             var feed = $$$"""
@@ -369,6 +370,131 @@ public sealed class SamsaraSyncPostgresTests
         }
         finally
         {
+            await db.ExecuteAsync("DELETE FROM integrations WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", companyId));
+            await db.ExecuteAsync("DELETE FROM companies WHERE id=@cid", c => c.Parameters.AddWithValue("@cid", companyId));
+        }
+    }
+
+    [Fact]
+    public async Task HandshakeAndSyncMaintainIndependentDurableHealthClocks()
+    {
+        var db = CreateDatabase();
+        var suffix = Guid.NewGuid().ToString("N");
+        var companyId = await db.InsertAsync(
+            "INSERT INTO companies(company_code,name,industry) VALUES(@code,'Connector health clocks','Transportation') RETURNING id",
+            c => c.Parameters.AddWithValue("@code", $"SHC-{suffix[..10]}"));
+        var integrationId = await db.InsertAsync(
+            @"INSERT INTO integrations(company_id,provider_name,category,status,integration_key,config_json)
+              VALUES(@cid,'Samsara','Telematics & ELD','Connected','samsara','{}'::jsonb) RETURNING id",
+            c => c.Parameters.AddWithValue("@cid", companyId));
+
+        try
+        {
+            var handshake = await ConnectorOperationLease.TryAcquireAsync(
+                db, companyId, integrationId, ["Connected"], TimeSpan.FromSeconds(30), CancellationToken.None);
+            Assert.NotNull(handshake);
+            Assert.Equal(1, await ConnectorOperationLease.CompleteTestAsync(
+                db, handshake!, ConnectorResult.Fail("provider handshake failed"), CancellationToken.None));
+
+            var afterHandshake = await db.QuerySingleAsync(
+                @"SELECT operation_last_attempt_at,sync_last_attempt_at,sync_last_completed_at,sync_last_ok
+                  FROM integrations WHERE company_id=@cid AND id=@id",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@cid", companyId);
+                    c.Parameters.AddWithValue("@id", integrationId);
+                });
+            Assert.NotNull(afterHandshake?["operationLastAttemptAt"]);
+            Assert.Null(afterHandshake?["syncLastAttemptAt"]);
+            Assert.Null(afterHandshake?["syncLastCompletedAt"]);
+            Assert.Null(afterHandshake?["syncLastOk"]);
+
+            var sync = await ConnectorOperationLease.TryAcquireAsync(
+                db, companyId, integrationId, ["Error"], TimeSpan.FromSeconds(30), CancellationToken.None,
+                isSyncOperation: true);
+            Assert.NotNull(sync);
+            Assert.Equal(1, await ConnectorOperationLease.CompleteSyncAsync(
+                db, sync!, ConnectorResult.Fail("bounded sync ended after a complete page"), "cursor-1", CancellationToken.None));
+
+            var afterSync = await db.QuerySingleAsync(
+                @"SELECT sync_last_attempt_at,sync_last_completed_at,sync_last_ok,config_json->>'syncCursor' sync_cursor
+                  FROM integrations WHERE company_id=@cid AND id=@id",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@cid", companyId);
+                    c.Parameters.AddWithValue("@id", integrationId);
+                });
+            Assert.NotNull(afterSync?["syncLastAttemptAt"]);
+            Assert.NotNull(afterSync?["syncLastCompletedAt"]);
+            Assert.Equal(false, afterSync?["syncLastOk"]);
+            Assert.Equal("cursor-1", afterSync?["syncCursor"]?.ToString());
+
+            var integrityFailure = await ConnectorOperationLease.TryAcquireAsync(
+                db, companyId, integrationId, ["Error"], TimeSpan.FromSeconds(30), CancellationToken.None,
+                isSyncOperation: true);
+            Assert.NotNull(integrityFailure);
+            Assert.Equal(1, await ConnectorOperationLease.CompleteSyncAsync(
+                db, integrityFailure!, ConnectorResult.Fail("pagination cycle"), null, CancellationToken.None));
+            var afterIntegrityFailure = await db.QuerySingleAsync(
+                "SELECT config_json->>'syncCursor' sync_cursor FROM integrations WHERE company_id=@cid AND id=@id",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@cid", companyId);
+                    c.Parameters.AddWithValue("@id", integrationId);
+                });
+            Assert.Equal("cursor-1", afterIntegrityFailure?["syncCursor"]?.ToString());
+        }
+        finally
+        {
+            await db.ExecuteAsync("DELETE FROM integrations WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", companyId));
+            await db.ExecuteAsync("DELETE FROM companies WHERE id=@cid", c => c.Parameters.AddWithValue("@cid", companyId));
+        }
+    }
+
+    [Fact]
+    public async Task ProviderEventFreshnessAdvancesMonotonicallyInsideFencedPageTransaction()
+    {
+        var db = CreateDatabase();
+        var suffix = Guid.NewGuid().ToString("N");
+        var companyId = await db.InsertAsync(
+            "INSERT INTO companies(company_code,name,industry) VALUES(@code,'Provider freshness clock','Transportation') RETURNING id",
+            c => c.Parameters.AddWithValue("@code", $"PFC-{suffix[..10]}"));
+        var integrationId = await db.InsertAsync(
+            @"INSERT INTO integrations(company_id,provider_name,category,status,integration_key,config_json)
+              VALUES(@cid,'Samsara','Telematics & ELD','Connected','samsara','{}'::jsonb) RETURNING id",
+            c => c.Parameters.AddWithValue("@cid", companyId));
+
+        try
+        {
+            var operation = await ConnectorOperationLease.TryAcquireAsync(
+                db, companyId, integrationId, ["Connected"], TimeSpan.FromSeconds(180), CancellationToken.None,
+                isSyncOperation: true);
+            Assert.NotNull(operation);
+            var newest = DateTimeOffset.UtcNow.AddMinutes(-1);
+            var older = newest.AddHours(-2);
+            string Feed(string id, DateTimeOffset observedAt) => $$$"""
+                {"data":[{"id":"{{{id}}}","gps":{"time":"{{{observedAt:O}}}","latitude":34.05,"longitude":-118.24,"headingDegrees":90,"speedMilesPerHour":40}}],"pagination":{"hasNextPage":false}}
+                """;
+
+            await Sync(db, Feed($"newest-{suffix}", newest)).RunAsync(operation!, null, CancellationToken.None);
+            await Sync(db, Feed($"older-{suffix}", older)).RunAsync(operation!, null, CancellationToken.None);
+
+            var row = await db.QuerySingleAsync(
+                "SELECT provider_last_event_at FROM integrations WHERE company_id=@cid AND id=@id",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@cid", companyId);
+                    c.Parameters.AddWithValue("@id", integrationId);
+                });
+            Assert.Equal(newest.UtcDateTime, Convert.ToDateTime(row?["providerLastEventAt"]).ToUniversalTime());
+            Assert.Equal(2, await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM location_events WHERE company_id=@cid AND source_channel='samsara-api'",
+                c => c.Parameters.AddWithValue("@cid", companyId)));
+        }
+        finally
+        {
+            await db.ExecuteAsync("DELETE FROM location_events WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", companyId));
+            await db.ExecuteAsync("DELETE FROM eld_devices WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", companyId));
             await db.ExecuteAsync("DELETE FROM integrations WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", companyId));
             await db.ExecuteAsync("DELETE FROM companies WHERE id=@cid", c => c.Parameters.AddWithValue("@cid", companyId));
         }

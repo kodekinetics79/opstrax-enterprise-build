@@ -6,6 +6,9 @@ const command = fs.readFileSync(new URL("../src/pages/TelematicsCommandPage.tsx"
 const importer = fs.readFileSync(new URL("../src/components/EntityImportExport.tsx", import.meta.url), "utf8");
 const service = fs.readFileSync(new URL("../src/services/telematicsService.ts", import.meta.url), "utf8");
 const controlTower = fs.readFileSync(new URL("../src/pages/TelematicsControlTowerPage.tsx", import.meta.url), "utf8");
+const integrations = fs.readFileSync(new URL("../src/pages/IntegrationsPage.tsx", import.meta.url), "utf8");
+const integrationsApi = fs.readFileSync(new URL("../src/services/integrationsApi.ts", import.meta.url), "utf8");
+const connectorFreshness = fs.readFileSync(new URL("../src/lib/connectorFreshness.ts", import.meta.url), "utf8");
 
 assert.match(devices, /aria-label=\{`\$\{canManageDeviceLifecycle \? "Manage" : "View details for"\} \$\{row\.deviceName\}`\}/, "The row action identifies the selected device without overstating read-only authority");
 assert.match(devices, /aria-haspopup="dialog"[\s\S]*onClick=\{\(\) => setSelectedId\(row\.id\)\}/, "The row action opens the durable detail/action drawer");
@@ -70,5 +73,11 @@ assert.match(devices, /Revoke & Archive[\s\S]*Use Suspend for a reversible stop/
 assert.match(service, /pageSize: 10_000[\s\S]*purpose: "export"[\s\S]*new Set\(identities\)\.size[\s\S]*exportComplete/, "Cluster export uses one bounded snapshot and fails closed on duplicate or incomplete identities");
 assert.match(service, /purpose: "export"/, "Cluster export declares its server-enforced export purpose");
 assert.match(service, /\^\[=\+\\-@\\t\\r\]/, "Cluster CSV neutralizes spreadsheet formulas");
+assert.match(integrationsApi, /syncLastAttemptAt\?: string \| null[\s\S]*syncLastCompletedAt\?: string \| null[\s\S]*syncLastOk\?: boolean \| null[\s\S]*providerLastEventAt\?: string \| null/, "Integration records expose sync-specific and provider-event freshness truth");
+assert.match(integrations, /Last successful sync[\s\S]*attemptHealth\.label[\s\S]*role="status"[\s\S]*attemptHealth\.announcement/, "Connector cards keep changing relative time outside a stable accessible state announcement");
+assert.match(integrations, /integration\.lastSyncAt \? formatRelativeTime\(integration\.lastSyncAt\) : "Never"/, "Last-success copy is derived from the timestamp rather than a persisted relative label");
+assert.match(integrations, /refetchInterval: 60_000[\s\S]*refetchIntervalInBackground: true/, "An already-open connector screen re-evaluates worker freshness on a bounded cadence");
+assert.match(connectorFreshness, /integration\.key !== "samsara"[\s\S]*CONNECTOR_STALE_AFTER_MS/, "Polling freshness is not incorrectly applied to connectors without the Samsara polling contract");
+assert.match(connectorFreshness, /CONNECTOR_STALE_AFTER_MS = 15 \* 60 \* 1000[\s\S]*Sync attempt stale/, "Connector freshness uses the approved pilot threshold");
 
 console.log("Telematics customer-pilot UX contract passed.");

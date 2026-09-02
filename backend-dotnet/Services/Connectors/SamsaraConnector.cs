@@ -99,19 +99,43 @@ public sealed class SamsaraConnector(
         if (integrationId <= 0 || operationGeneration < 0 || !Guid.TryParse(operationLeaseTokenRaw, out var operationLeaseToken))
             return ConnectorResult.Fail("Sync requires a valid generation-bound connector operation lease.");
         var operation = new ConnectorOperationContext(
-            companyId, integrationId, operationGeneration, operationLeaseToken, "samsara", null, "Connected");
+            companyId, integrationId, operationGeneration, operationLeaseToken, "samsara", null, "Connected",
+            IsSyncOperation: true);
         var afterCursor = body is { } b2 && b2.TryGetProperty("cursor", out var cur) ? cur.GetString() : null;
+        var cursor = afterCursor;
+        var positionsWritten = 0;
+        var vehiclesSeen = 0;
+        var unmatched = 0;
+        var historicalOnly = 0;
+        var rejected = 0;
+        var hasNextPage = false;
+        var pagesCommitted = 0;
+        var paginationIntegrityFailure = false;
+        var requestedDurationSeconds = body is { } bmd && bmd.TryGetProperty("maxDurationSeconds", out var mds) && mds.TryGetInt32(out var requestedSeconds)
+            ? requestedSeconds
+            : configuration.GetValue("Samsara:MaxDurationSeconds", 60);
+        var maxDurationSeconds = Math.Clamp(requestedDurationSeconds, 10, 90);
+        using var boundedCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        boundedCts.CancelAfter(TimeSpan.FromSeconds(maxDurationSeconds));
+
+        ConnectorResult FailureWithCommittedProgress(string message, bool persistCursor = true) => ConnectorResult.Fail(
+            message,
+            new Dictionary<string, object?>
+            {
+                ["positionsWritten"] = positionsWritten,
+                ["vehiclesSeen"] = vehiclesSeen,
+                ["unmatched"] = unmatched,
+                ["historicalOnly"] = historicalOnly,
+                ["rejected"] = rejected,
+                ["nextCursor"] = persistCursor && pagesCommitted > 0 ? cursor : null,
+                ["hasNextPage"] = hasNextPage,
+                ["boundedPartial"] = pagesCommitted > 0,
+                ["pagesCommitted"] = pagesCommitted,
+            });
 
         try
         {
             var sync = new SamsaraSync(Client(token!), scopeFactory, logger);
-            var cursor = afterCursor;
-            var positionsWritten = 0;
-            var vehiclesSeen = 0;
-            var unmatched = 0;
-            var historicalOnly = 0;
-            var rejected = 0;
-            var hasNextPage = false;
             var seenCursors = new HashSet<string>(StringComparer.Ordinal);
             if (!string.IsNullOrWhiteSpace(cursor)) seenCursors.Add(cursor);
             var completed = false;
@@ -120,13 +144,7 @@ public sealed class SamsaraConnector(
                 ? requestedPages
                 : configuredMaxPages;
             var maxPages = Math.Clamp(requestedMaxPages, 1, configuredMaxPages);
-            var requestedDurationSeconds = body is { } bmd && bmd.TryGetProperty("maxDurationSeconds", out var mds) && mds.TryGetInt32(out var requestedSeconds)
-                ? requestedSeconds
-                : configuration.GetValue("Samsara:MaxDurationSeconds", 60);
-            var maxDurationSeconds = Math.Clamp(requestedDurationSeconds, 10, 90);
             var interPageDelayMs = Math.Clamp(configuration.GetValue("Samsara:InterPageDelayMs", 100), 0, 1_000);
-            using var boundedCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            boundedCts.CancelAfter(TimeSpan.FromSeconds(maxDurationSeconds));
             var runCt = boundedCts.Token;
             // Drain the cursor backlog in the same run instead of waiting five minutes
             // between pages. The cap prevents a permanently advancing feed from owning a
@@ -140,14 +158,22 @@ public sealed class SamsaraConnector(
                 historicalOnly += pageSummary.HistoricalOnly;
                 rejected += pageSummary.Rejected;
                 hasNextPage = pageSummary.HasNextPage;
-                if (!string.IsNullOrWhiteSpace(pageSummary.NextCursor)) cursor = pageSummary.NextCursor;
+                pagesCommitted++;
                 if (!hasNextPage)
                 {
+                    if (!string.IsNullOrWhiteSpace(pageSummary.NextCursor)) cursor = pageSummary.NextCursor;
                     completed = true;
                     break;
                 }
-                if (string.IsNullOrWhiteSpace(cursor) || !seenCursors.Add(cursor))
+                var candidateCursor = pageSummary.NextCursor;
+                if (string.IsNullOrWhiteSpace(candidateCursor) || !seenCursors.Add(candidateCursor))
+                {
+                    paginationIntegrityFailure = true;
                     throw new InvalidOperationException("Samsara pagination did not advance its cursor.");
+                }
+                // Promote only after the cycle/repeat guard. Pagination-integrity
+                // failures deliberately retain the pre-run durable cursor.
+                cursor = candidateCursor;
                 if (interPageDelayMs > 0)
                     await Task.Delay(TimeSpan.FromMilliseconds(interPageDelayMs), runCt);
             }
@@ -170,18 +196,29 @@ public sealed class SamsaraConnector(
                     ["boundedPartial"] = boundedPartial,
                 });
         }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested && boundedCts.IsCancellationRequested)
         {
-            return ConnectorResult.Fail("Samsara sync reached its bounded run duration; retry safely replays from the stored cursor.");
+            return FailureWithCommittedProgress(
+                "Samsara sync reached its bounded run duration. Complete page transactions were retained and their latest cursor will resume the remaining backlog; no partial page is claimed.");
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             throw;
         }
+        catch (TaskCanceledException)
+        {
+            return FailureWithCommittedProgress(
+                "A Samsara provider request timed out. Complete page transactions were retained and their latest cursor will resume on a later run; no in-run transport retry or partial page is claimed.");
+        }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Samsara sync failed for company {Company}", companyId);
-            return ConnectorResult.Fail($"Samsara sync failed: {ex.Message}");
+            return FailureWithCommittedProgress(
+                $"Samsara sync failed: {ex.Message}. Complete page transactions were retained; " +
+                (paginationIntegrityFailure
+                    ? "the pre-run durable cursor was preserved because pagination integrity failed."
+                    : "their latest cursor will resume on a later run; no partial page is claimed."),
+                persistCursor: !paginationIntegrityFailure);
         }
     }
 }

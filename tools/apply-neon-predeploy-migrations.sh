@@ -230,6 +230,9 @@ MIGRATIONS=(
   # Provider calls are generation-bound; disconnect/configure invalidate the
   # committed lease so stale handshakes and telemetry cannot write afterward.
   2026_09_02_stage95_connector_operation_lease
+  # Keep scheduler fairness separate from customer-visible data-sync freshness,
+  # and retain the newest authentic provider-event clock for stale-feed truth.
+  2026_09_02_stage96_connector_sync_freshness
 )
 
 echo "Pre-check: validated read-only database identity…"

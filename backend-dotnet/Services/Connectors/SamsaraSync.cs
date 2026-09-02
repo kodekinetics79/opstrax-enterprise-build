@@ -1,3 +1,4 @@
+using System.Net.Http.Headers;
 using System.Text.Json;
 using Opstrax.Api.Data;
 using Opstrax.Api.Services;
@@ -185,6 +186,28 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
                     touchedVehicles.Add(identity.VehicleId);
                 }
             }
+
+            // This is provider-event freshness, not request/scheduler freshness.
+            // Advance it only from authentic, parse-valid event timestamps committed
+            // in the same fenced page transaction; old/backfill pages cannot regress it.
+            var newestProviderEventAt = readings.Max(r => r.EventTime);
+            await db.ExecuteAsync(
+                @"UPDATE integrations SET
+                      provider_last_event_at=CASE
+                        WHEN provider_last_event_at IS NULL OR provider_last_event_at < @eventAt THEN @eventAt
+                        ELSE provider_last_event_at END
+                  WHERE company_id=@cid AND id=@id
+                    AND operation_generation=@generation
+                    AND operation_lease_token=@token
+                    AND operation_lease_expires_at > NOW()",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@eventAt", newestProviderEventAt);
+                    c.Parameters.AddWithValue("@cid", operation.CompanyId);
+                    c.Parameters.AddWithValue("@id", operation.IntegrationId);
+                    c.Parameters.AddWithValue("@generation", operation.Generation);
+                    c.Parameters.AddWithValue("@token", operation.LeaseToken);
+                }, ct);
             return true;
         }, ct);
 
@@ -280,10 +303,23 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
         {
             var response = await client.GetAsync(url, ct);
             if ((int)response.StatusCode is not (429 or >= 500) || attempt >= 4) return response;
-            var retryAfter = response.Headers.RetryAfter?.Delta ?? TimeSpan.FromMilliseconds(250 * Math.Pow(2, attempt));
+            var retryAfter = ResolveRetryDelay(response.Headers.RetryAfter, attempt, DateTimeOffset.UtcNow);
             response.Dispose();
-            await Task.Delay(retryAfter > TimeSpan.FromSeconds(10) ? TimeSpan.FromSeconds(10) : retryAfter, ct);
+            await Task.Delay(retryAfter, ct);
         }
+    }
+
+    internal static TimeSpan ResolveRetryDelay(
+        RetryConditionHeaderValue? retryAfterHeader,
+        int attempt,
+        DateTimeOffset now)
+    {
+        var retryAfter = retryAfterHeader?.Delta
+            ?? (retryAfterHeader?.Date is { } retryDate
+                ? retryDate - now
+                : TimeSpan.FromMilliseconds(250 * Math.Pow(2, attempt)));
+        if (retryAfter < TimeSpan.Zero) retryAfter = TimeSpan.Zero;
+        return retryAfter > TimeSpan.FromSeconds(10) ? TimeSpan.FromSeconds(10) : retryAfter;
     }
 
     // Upsert only the discovered provider device. Asset ownership is never read from
