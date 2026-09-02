@@ -233,6 +233,9 @@ MIGRATIONS=(
   # Keep scheduler fairness separate from customer-visible data-sync freshness,
   # and retain the newest authentic provider-event clock for stale-feed truth.
   2026_09_02_stage96_connector_sync_freshness
+  # Catalog entries are opportunities, not evidence. Reset never-verified built-in
+  # rows to an honest disconnected/pending state without deleting tenant config.
+  2026_09_02_stage97_integration_catalog_truth
 )
 
 echo "Pre-check: validated read-only database identity…"

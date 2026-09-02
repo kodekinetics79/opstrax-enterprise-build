@@ -454,11 +454,11 @@ INSERT INTO notifications (company_id, title, body, status) VALUES
 
 INSERT INTO integrations (company_id, provider_name, category, status) VALUES
 (1,'Samsara Import Adapter','Telematics','Disconnected'),
-(1,'Motive ELD Bridge','ELD','Ready'),
-(1,'QuickBooks Sync','Finance','Connected'),
-(1,'Twilio ETA Messaging','Communications','Connected'),
-(1,'Stripe Billing','Subscription','Connected'),
-(1,'Azure Blob Documents','Documents','Connected');
+(1,'Motive ELD Bridge','ELD','Disconnected'),
+(1,'QuickBooks Sync','Finance','Disconnected'),
+(1,'Twilio ETA Messaging','Communications','Disconnected'),
+(1,'Stripe Billing','Subscription','Disconnected'),
+(1,'Azure Blob Documents','Documents','Disconnected');
 
 INSERT INTO subscription_plans (company_id, plan_name, billing_status, seats, monthly_amount) VALUES
 (1,'OpsTrax Enterprise Command','Active',75,3499.00);

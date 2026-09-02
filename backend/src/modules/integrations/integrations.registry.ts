@@ -1,6 +1,6 @@
 import type { IntegrationRecord } from "./integrations.types";
 
-export const integrationCatalog: Omit<IntegrationRecord, "tenantId">[] = [
+const integrationCatalogDefinitions: Omit<IntegrationRecord, "tenantId">[] = [
   {
     id: 1,
     key: "sap-s4hana",
@@ -499,3 +499,14 @@ export const integrationCatalog: Omit<IntegrationRecord, "tenantId">[] = [
     config: {},
   },
 ];
+
+// Catalog presence is not provider connectivity. Never expose historical demo
+// statuses, timestamps, or example config as tenant operational truth.
+export const integrationCatalog: Omit<IntegrationRecord, "tenantId">[] =
+  integrationCatalogDefinitions.map((entry) => ({
+    ...entry,
+    status: "Disconnected",
+    sync: "Never",
+    lastSyncAt: null,
+    config: {},
+  }));

@@ -136,9 +136,9 @@ builder.Services.AddSingleton<OidcLoginService>(); // OIDC SSO login (discovery 
 builder.Services.AddScoped<AuditService>();
 
 // ── Integration connector framework (real, testable third-party connectivity) ──
-// Provider-specific connectors do a genuine API handshake; anything without a specific
-// connector falls back to GenericHttpConnector (probes the configured URL). All are
-// live-testable via POST /api/integrations/{id}/test-connection.
+// Provider-specific connectors do a genuine API handshake. User-created custom
+// connectors may use the generic HTTP probe; built-in catalog providers without an
+// adapter fail closed so a reachable URL cannot masquerade as provider integration.
 builder.Services.AddSingleton<Opstrax.Api.Services.Connectors.IConnector, Opstrax.Api.Services.Connectors.TwilioConnector>();
 builder.Services.AddSingleton<Opstrax.Api.Services.Connectors.IConnector, Opstrax.Api.Services.Connectors.SlackConnector>();
 builder.Services.AddSingleton<Opstrax.Api.Services.Connectors.IConnector, Opstrax.Api.Services.Connectors.SendGridConnector>();

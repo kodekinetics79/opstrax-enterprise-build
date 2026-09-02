@@ -77,6 +77,8 @@ Before a candidate may move from research to selection, the owning issue must co
 
 The jurisdiction-separated hard gates, weighted assessment, provider questionnaire, evidence register and exclusion/selection record are prepared in `G2B_ELD_PARTNER_DECISION_SCORECARD.md`. The instrument is ready for candidate evidence; its existence is not a provider selection or certification result.
 
+Provider developer-program and sandbox acquisition is tracked in `G2_PROVIDER_ACCESS_REGISTRATION_LEDGER.md`. Registration remains administrative dependency work under G2A/G2B and does not activate another provider connector, HOS, camera, or video-safety gate.
+
 ## Decision rule
 
 Repository code, research and AI-assisted reviews may prepare the decision packet, but they are not qualified-human regulatory approvals. The implementer may not self-certify. No candidate may be called “certified,” no regulated package may be sold, and G3A HOS may not activate until the exact partner/device/jurisdiction boundary, commercial rights, official status and mandatory independent acceptance exist.

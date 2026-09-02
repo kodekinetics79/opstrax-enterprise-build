@@ -152,6 +152,28 @@ public sealed class TelemetryLaunchHardeningTests
     }
 
     [Fact]
+    public void EveryBuiltInCatalogEntryIsNormalizedToUnverifiedRuntimeTruth()
+    {
+        var catalog = Opstrax.Api.Seed.IntegrationCatalog.Entries;
+
+        Assert.NotEmpty(catalog);
+        Assert.All(catalog, entry =>
+        {
+            Assert.Equal("Disconnected", entry.Status);
+            Assert.Equal("Never", entry.SyncLabel);
+            Assert.Null(entry.LastSyncAt);
+            Assert.Empty(Assert.IsAssignableFrom<IReadOnlyDictionary<string, object?>>(entry.Config));
+        });
+
+        var nodeCatalog = Read("backend", "src", "modules", "integrations", "integrations.registry.ts");
+        Assert.Contains("integrationCatalogDefinitions.map", nodeCatalog, StringComparison.Ordinal);
+        Assert.Contains("status: \"Disconnected\"", nodeCatalog, StringComparison.Ordinal);
+        Assert.Contains("sync: \"Never\"", nodeCatalog, StringComparison.Ordinal);
+        Assert.Contains("lastSyncAt: null", nodeCatalog, StringComparison.Ordinal);
+        Assert.Contains("config: {}", nodeCatalog, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void SamsaraLifecycleIsFailClosedAcrossDisconnectSyncAndProviderMappingUi()
     {
         var endpoints = Read("backend-dotnet", "Controllers", "EndpointMappings.cs");

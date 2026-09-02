@@ -51,3 +51,19 @@ public interface IConnector
         JsonElement? body, CancellationToken ct)
         => Task.FromResult(ConnectorResult.Fail($"Action '{action}' is not supported by {DisplayName}."));
 }
+
+/// <summary>
+/// Fail-closed result for a named marketplace entry whose provider adapter has not
+/// been implemented in this build. A generic HTTP 200 is never enough to label a
+/// built-in provider connected.
+/// </summary>
+public sealed class CatalogOnlyConnector(string displayName) : IConnector
+{
+    public IReadOnlyCollection<string> Keys { get; } = Array.Empty<string>();
+    public string DisplayName { get; } = displayName;
+
+    public Task<ConnectorResult> TestConnectionAsync(
+        IReadOnlyDictionary<string, string?> config, CancellationToken ct) =>
+        Task.FromResult(ConnectorResult.Fail(
+            $"{DisplayName} is listed for evaluation, but its provider-specific adapter is not available in this build. Catalog presence is not a verified connection."));
+}

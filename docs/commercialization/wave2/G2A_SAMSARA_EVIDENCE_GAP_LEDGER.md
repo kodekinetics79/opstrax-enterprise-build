@@ -8,6 +8,8 @@
 ## Candidate control
 
 - Branch: `wave2/g2a-samsara-readiness`
+
+Alternative provider registrations are tracked in `G2_PROVIDER_ACCESS_REGISTRATION_LEDGER.md`. Samsara remains open as the current G2A provider candidate; registering Geotab, Motive, or Platform Science acquires options but does not certify or activate another connector workstream.
 - Activation baseline: `1357687ee8d5e0a2be4f36e8cfd8f70770b2f42c`
 - Latest protected implementation candidate: `1792c9b1882db51c7c43676aba0448bb4d6a346d` in PR #118; all 11 hosted controls passed in workflow run `33628368029`, including 550 PostgreSQL tests, production rehearsal and exact-SHA evidence packaging.
 - The two-scope handshake and fail-closed pagination-envelope hardening described below is a replacement working tree, not an exact candidate until committed. Its commit must be rebound to its own hosted CI and exact-SHA evidence in Issue #115 before any deployment or field claim.

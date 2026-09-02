@@ -1,13 +1,15 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Opstrax.Api.Seed;
 using Opstrax.Api.Security;
 
 namespace Opstrax.Api.Services.Connectors;
 
 // Resolves the right IConnector for an integration_key and centralizes credential
-// crypto. Provider-specific connectors (Twilio, …) are matched by key; anything else
-// falls back to the GenericHttpConnector so every connector — including user-created
-// custom ones — is testable against its real endpoint.
+// crypto. Provider-specific connectors (Twilio, …) are matched by key. User-created
+// custom connectors fall back to GenericHttpConnector, while catalog-only providers
+// fail closed until a provider-specific adapter exists; endpoint reachability is not
+// provider integration evidence.
 public sealed class ConnectorRegistry
 {
     private readonly Dictionary<string, IConnector> _byKey;
@@ -33,7 +35,13 @@ public sealed class ConnectorRegistry
     }
 
     public IConnector Resolve(string? integrationKey)
-        => integrationKey is not null && _byKey.TryGetValue(integrationKey, out var c) ? c : _fallback;
+    {
+        if (integrationKey is not null && _byKey.TryGetValue(integrationKey, out var connector))
+            return connector;
+        return IntegrationCatalog.IsBuiltInKey(integrationKey)
+            ? new CatalogOnlyConnector(IntegrationCatalog.DisplayNameFor(integrationKey))
+            : _fallback;
+    }
 
     // Config keys whose VALUES are secrets: encrypted at rest, decrypted only for the
     // outbound call, and redacted when the config is returned to the client. apiToken is

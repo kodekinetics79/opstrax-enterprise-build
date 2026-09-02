@@ -43,6 +43,22 @@ public sealed class ConnectorSecretHardeningTests
         => Assert.False(ConnectorRegistry.IsSensitive(key));
 
     [Fact]
+    public async Task Registry_FailsClosedForCatalogOnlyProviderButKeepsCustomHttpFallback()
+    {
+        var registry = Registry(new TestKeyProvider(), Environments.Staging);
+
+        var catalog = registry.Resolve("geotab");
+        var catalogResult = await catalog.TestConnectionAsync(
+            new Dictionary<string, string?> { ["baseUrl"] = "https://example.com" },
+            CancellationToken.None);
+
+        Assert.IsType<CatalogOnlyConnector>(catalog);
+        Assert.False(catalogResult.Success);
+        Assert.Contains("provider-specific adapter", catalogResult.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.IsType<GenericHttpConnector>(registry.Resolve("tenant-custom-webhook"));
+    }
+
+    [Fact]
     public void ProtectedEnvironment_RecursivelyEncryptsDecryptsAndRedactsSecrets()
     {
         var registry = Registry(new TestKeyProvider(), Environments.Staging);
