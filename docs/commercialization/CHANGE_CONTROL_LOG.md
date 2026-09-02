@@ -2,6 +2,41 @@
 
 This log records approved changes to the sequencing, gate boundaries, evidence requirements, or commercial claims governed by the Master Commercialization & Certification Action Plan. A change record never substitutes for evidence that the affected capability would otherwise require.
 
+## CR-2026-09-02-01 - Activate Wave 2 G2A/G2B
+
+| Field | Record |
+|---|---|
+| Classification | Class 2 sequence activation |
+| Approved | 2026-09-02T00:12:47-04:00 (`2026-09-02T04:12:47Z`) by explicit CTO/program owner overnight-continuation authority |
+| Entry baseline | `main@a7137a4060e4683d52a17770874e84ea8532e47d` after merged PR #113 and closed Issue #108 |
+| Accountable owner | CTO/program owner (`kodekinetics79`) for both #115 and #116 |
+| Execution owner | CTO-delegated Codex execution agent for bounded readiness work. The execution agent is not a qualified-human provider, regulatory, security or customer-workflow signatory. |
+| Approval / quorum basis | The Appendix B qualified-human reviewer roster is not available or assigned at activation and is explicitly disclosed as a dependency. The CTO uses sequence authority to start non-certifying readiness only; this does not waive independent human acceptance of critical claims or final gate closure. Two independent AI-assisted governance reviews are supporting analysis only. |
+| Resource confirmation | Repository, GitHub and isolated staging access are available. An authorized real Samsara account/API path is not confirmed. An ELD partner, exact certified device boundary, commercial integration rights and regulatory field reviewers are not confirmed. Bounded readiness may proceed; provider/regulatory-dependent acceptance and closure may not. |
+| Active workstream A | G2A Samsara production connector certification — Issue #115 |
+| Active workstream B | G2B certified ELD partner selection and integration — Issue #116 |
+| Decision | Activate Wave 2 with exactly these two major workstreams. No third major gate may be activated without a new CTO concurrency decision. |
+| Capability effect | None at activation. Samsara remains **PILOT**; HOS structures remain **DEVELOPMENT**; Certified ELD/HOS remains **ROADMAP**. Activation is permission to gather evidence, not a capability promotion. |
+| G1A boundary | The 30-day controlled-pilot LIMITED GO in `CR-2026-09-01-02` remains exact-SHA, tenant, vehicle, stop-trigger and expiry restricted. Wave 2 work may not broaden that pilot. |
+| G1B boundary | `CR-2026-09-01-01` remains in force. GT06 stays PILOT / not certified until the CTO returns with the sourced exact physical candidate and completes the full re-entry stages. |
+
+### G2A non-negotiable evidence dependency
+
+A real authorized Samsara customer/admin account, API application/token path and provider responses are required for production certification. Existing source code, mocks, schemas, UI routes or unit tests may support readiness work but cannot close #115 or justify a production-certified provider claim. Evidence must cover customer-managed connect/authenticate/discover/map/validate/sync/monitor/disconnect/reconnect, deterministic reconciliation, provenance, freshness, backfill, rate limits, recovery, secrets and tenant isolation.
+
+### G2B non-negotiable evidence dependency
+
+Partner/device certification status must be independently verified against current official regulatory sources for the selected jurisdiction. U.S. and Canadian paths remain separate. A real authorized provider relationship/account, applicable certified device boundary, commercial integration rights and end-to-end regulatory workflow evidence are required before any ELD/HOS promotion. An ordinary GPS tracker, schema, mock, partner shortlist or HOS UI cannot be represented as an ELD.
+
+### Execution controls
+
+1. Apply Appendix B to #115 and #116; implementation authors may submit evidence but may not self-certify critical provider, security, regulatory or customer-workflow claims.
+2. Use Observe -> Evidence -> Root Cause -> Fix -> Test -> Exact-SHA Deploy -> Same Journey Retest -> Close for every defect.
+3. Keep provider secrets and customer/regulatory evidence redacted; do not copy credentials into issues, commits or artifacts.
+4. Do not claim missing provider, device, commercial-rights or regulatory evidence through simulation or AI review.
+5. Keep the Capability Truth Matrix unchanged until an owning gate formally closes.
+6. When an indispensable external dependency is unavailable, stop all provider/regulatory-dependent validation, gate closure and capability promotion in the affected lane. Explicitly bounded non-certifying readiness may continue in that lane only while it neither simulates nor represents the missing evidence or authority; fully pause when further useful work would depend on or fabricate that dependency. The other lane may continue within its own boundary.
+
 ## CR-2026-09-01-02 - Time-limited G1A controlled-pilot LIMITED GO
 
 | Field | Record |
