@@ -10,6 +10,11 @@ This lane performs exactly two `GET` requests per iteration: public liveness and
 
 Values may be lowered but cannot exceed their profile cap. The global hard cap is therefore 20 HTTP requests/s, 10 minutes, and 50 virtual users.
 
+Every run enforces the versioned API latency SLO of p95 < 500 ms on the
+aggregate workload and independently on the public-health and authenticated-read
+surfaces. It also fails if the configured arrival rate drops any iterations; a
+fast liveness request therefore cannot mask a slow tenant fleet read.
+
 ```bash
 install -m 600 tests/load/.env.local.example tests/load/.env.local
 node --test tests/load/test_load_guard.mjs

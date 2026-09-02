@@ -80,6 +80,11 @@ test("k6 workload contains GET only and bounded response handling", () => {
   assert.match(source, /redirects:\s*0/g);
   assert.match(source, /maxVUs:\s*maxVus/);
   assert.doesNotMatch(source, /^\s*maxVUs,\s*$/m);
+  assert.match(source, /dropped_iterations:\s*\["count==0"\]/);
+  assert.match(source, /http_req_duration:\s*\["p\(95\)<500",\s*"p\(99\)<5000"\]/);
+  assert.match(source, /"http_req_duration\{surface:public-health\}"/);
+  assert.match(source, /"http_req_duration\{surface:authenticated-read\}"/);
+  assert.doesNotMatch(source, /p\(95\)<2000/);
 });
 
 test("tracked credential template is blank", () => {
@@ -99,4 +104,15 @@ test("runtime env file must be mode 0600", () => {
   } finally {
     fs.rmSync(temporary, { recursive: true });
   }
+});
+
+test("staging workflow uses protected auth state without logging bearer credentials", () => {
+  const workflow = fs.readFileSync(path.resolve(directory, "../../.github/workflows/staging-load-certification.yml"), "utf8");
+  assert.match(workflow, /environment:\s*Staging/);
+  assert.match(workflow, /secrets\.E2E_TENANT_AUTH_STATE_B64/);
+  assert.match(workflow, /grafana\/setup-k6-action@db07bd9765aac508ef18982e52ab937fe633a065/);
+  assert.match(workflow, /k6-version:\s*'2\.2\.0'/);
+  assert.match(workflow, /node tests\/load\/run_load\.mjs --execute/);
+  assert.match(workflow, /opstrax-staging-api\.onrender\.com/);
+  assert.doesNotMatch(workflow, /echo\s+["']?\$LOAD_BEARER_TOKEN|printf[^\n]*LOAD_BEARER_TOKEN/);
 });

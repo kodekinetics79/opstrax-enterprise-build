@@ -20,8 +20,14 @@ export const options = {
   },
   thresholds: {
     checks: ["rate>0.99"],
+    dropped_iterations: ["count==0"],
     http_req_failed: ["rate<0.01"],
-    http_req_duration: ["p(95)<2000", "p(99)<5000"],
+    // The versioned product SLO in docs/RELIABILITY_RUNBOOK.md is p95 < 500 ms.
+    // Keep the aggregate and each customer-facing surface independently below it
+    // so a fast health check cannot conceal a slow authenticated fleet read.
+    http_req_duration: ["p(95)<500", "p(99)<5000"],
+    "http_req_duration{surface:public-health}": ["p(95)<500", "p(99)<5000"],
+    "http_req_duration{surface:authenticated-read}": ["p(95)<500", "p(99)<5000"],
   },
 };
 
