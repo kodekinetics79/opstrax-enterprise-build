@@ -2,8 +2,9 @@
 
 Baseline: `155b54a3451c2a4618b4fc6a87fd59f0e68f425d`  
 Program tracker: #110  
-Current controlled-pilot lane: #108 / PR #113
-Approved changes: `CR-2026-09-01-01` defers #109/#114 without certification; `CR-2026-09-01-02` grants a 30-day G1A controlled-pilot LIMITED GO
+Current controlled-pilot lane: closed #108 / merged PR #113 under `CR-2026-09-01-02`
+Active Wave 2 lanes: #115 Samsara production connector; #116 certified ELD partner
+Approved changes: `CR-2026-09-01-01` defers #109/#114 without certification; `CR-2026-09-01-02` grants a 30-day G1A controlled-pilot LIMITED GO; `CR-2026-09-02-01` activates G2A/G2B without capability promotion
 
 ## Status vocabulary
 
@@ -50,10 +51,11 @@ Only these statuses are permitted in sales, product, certification and roadmap m
 
 A capability may move upward only after the owning release gate has evidence. A UI route, schema table, mock fixture, simulator or passing unit test alone cannot promote a capability to PILOT, PRODUCTION READY or CERTIFIED.
 
-## Current limited and deferred release gates
+## Current active, limited and deferred release gates
 
 1. #108 / PR #113 — **LIMITED GO / 30-DAY CONTROLLED PILOT** for exact `e2230425...` under `CR-2026-09-01-02`; one isolated tenant, max 10 vehicles, automatic expiry 2026-10-01 23:57:43 America/New_York. M1/M2 remain PILOT.
 2. #109 / PR #114 — **NO-GO / DEFERRED / CLOSED WITHOUT CERTIFICATION** under `CR-2026-09-01-01`; re-open only when an authorized exact physical GT06 candidate is available.
-3. Wave 2 remains **QUEUED / NOT ACTIVATED**; `CR-2026-09-01-02` requires a separate CTO activation record.
+3. #115 — **ACTIVE / AMBER** G2A Samsara production connector certification under `CR-2026-09-02-01`; Samsara remains PILOT pending real-account evidence and gate closure.
+4. #116 — **ACTIVE / AMBER** G2B certified ELD partner selection/integration under `CR-2026-09-02-01`; Certified ELD/HOS remains ROADMAP and HOS structures DEVELOPMENT pending official regulatory, real partner/device, commercial-rights and end-to-end evidence.
 
-Do not broaden the controlled pilot or repeat an application-wide audit. Continue defect-by-defect evidence under #110. Qualified-human Appendix B acceptance and representative final-SHA performance evidence remain outstanding for unqualified G1A GO; the GT06 physical-device sequence remains deferred until the sourced exact device is available.
+Do not broaden the controlled pilot or repeat an application-wide audit. Continue defect-by-defect evidence under #110, #115 and #116 with at most these two active major Wave 2 lanes. Qualified-human Appendix B acceptance and representative final-SHA performance evidence remain outstanding for unqualified G1A GO; the GT06 physical-device sequence remains deferred until the sourced exact device is available.

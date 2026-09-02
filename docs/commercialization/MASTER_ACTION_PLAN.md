@@ -1,13 +1,15 @@
 # OpsTrax Master Commercialization & Certification Action Plan
 
 **Status:** CONTROLLED MASTER - ACTIVE  
-**Version:** 1.1
-**Effective date:** 2026-09-01
+**Version:** 1.2
+**Effective date:** 2026-09-02
 **Executive owner:** CTO Office / OpsTrax Commercialization Program  
 **Technical baseline:** `main@155b54a3451c2a4618b4fc6a87fd59f0e68f425d`  
 **Parent tracker:** #110  
 **Limited Gate A:** #108 / PR #113 - 30-day controlled-pilot LIMITED GO under `CR-2026-09-01-02`
 **Deferred Gate B:** #109 / PR #114 - GT06 physical compatibility certification; NO-GO / closed without certification under `CR-2026-09-01-01`
+**Active Wave 2 Gate A:** #115 - Samsara production connector certification under `CR-2026-09-02-01`
+**Active Wave 2 Gate B:** #116 - certified ELD partner selection and integration under `CR-2026-09-02-01`
 
 ## Master rule
 This document governs commercialization sequencing. Work may be refined inside a phase, but no phase may be skipped, broadened, or declared complete without the stated acceptance evidence. Any sequence/gate change requires CTO change control.
@@ -27,7 +29,7 @@ Graduate OpsTrax from pilot-capable fleet/TMS software with a strong telematics 
 - No unresolved P0/P1 at CERTIFIED/PRODUCTION READY status.
 - Maximum two active critical commercialization tracks unless CTO explicitly authorizes more.
 
-## Capability truth at v1.0
+## Capability truth at v1.2 activation
 | Capability | Status | Primary gap |
 |---|---|---|
 | Fleet Identity / Asset Master | PILOT | Current-SHA closeout: responsive, correction, document/expiry, performance evidence |
@@ -36,7 +38,8 @@ Graduate OpsTrax from pilot-capable fleet/TMS software with a strong telematics 
 | Samsara connector | PILOT | Real-account onboarding/mapping/reconciliation/backfill/sync-health certification |
 | J1939 | DEVELOPMENT/PILOT | Acquisition/transport, broader PGNs, real-hardware evidence |
 | Pacific Track / PT40 | DEVELOPMENT | Real capture, fingerprint, vendor parser, bench/field certification |
-| ELD/HOS | DEVELOPMENT | Certified partner/device + complete operational/regulatory workflow |
+| HOS data structures / alert concepts | DEVELOPMENT | Certified source plus complete operational/regulatory workflow |
+| Certified ELD/HOS product | ROADMAP | Certified partner/device, commercial rights and jurisdiction-specific end-to-end evidence |
 | Dual-facing camera | ROADMAP | Partner selection and secure event/video integration |
 | Video Safety | ROADMAP | AI event/incident/coaching/retention workflow |
 | Geotab/Motive/OEM | ROADMAP | Provider-specific production connectors |
@@ -109,9 +112,9 @@ Certification stages:
 
 Physical hardware, SIM/data service, safe bench/vehicle access and the exact production candidate are external evidence dependencies. Simulator results cannot close them.
 
-# WAVE 2 - INACTIVE / QUEUED
+# ACTIVE WAVE 2
 
-The G1B deferral does not itself activate Wave 2. Although `CR-2026-09-01-02` records a time-limited G1A LIMITED GO, that record explicitly does not activate G2A/G2B. Wave 2 requires a separate CTO activation record confirming the real provider/partner dependencies, resources, gate owners, and commercial boundaries; G1B remains excluded and deferred.
+`CR-2026-09-02-01` activates exactly two major workstreams after G1A LIMITED GO, merged PR #113 and closed #108: G2A under #115 and G2B under #116. Activation does not promote any capability. Real provider/account/device/commercial-rights/regulatory evidence remains mandatory, and G1B remains excluded and deferred.
 
 ## Samsara production certification
 - Customer-managed Connect -> Authenticate -> Discover -> Map -> Validate -> Sync -> Monitor -> Disconnect/Reconnect flow.
@@ -219,25 +222,25 @@ Revenue activates package-by-package as gates pass; the whole roadmap does not n
 - Video Safety: dual-camera + video/event + coaching accepted.
 
 # Immediate action register
-1. Keep #108/#113 as the only software certification closeout lane.
-2. Deploy exact #113 candidate to isolated staging and capture build/readiness identity.
-3. Run M1 visible-Chrome role/journey closeout on the large-fleet tenant.
-4. Run M2 Device Health/GPS/Live Map/geofence/OBD closeout.
-5. Fix only observed gate defects and repeat identical journeys.
-6. Keep GT06 procurement/freeze for 2-3 identical production candidates in the deferred hardware backlog under `CR-2026-09-01-01`.
-7. Preserve the isolated GT06 gateway configuration/evidence fail-closed and stopped while no physical test window is scheduled; enroll no unidentified device.
-8. Re-open GT06 bench -> controlled route -> recovery -> soak certification only when the exact physical evidence dependency is available.
-9. Prepare Samsara real-account onboarding/acceptance plan so Wave 2 can start immediately after Wave 1.
-10. Begin ELD partner due diligence without building an in-house ELD.
+1. Monitor the #108/#113 controlled pilot under `CR-2026-09-01-02`; enforce its exact SHA, one-tenant, 10-vehicle, stop-trigger and expiry boundaries.
+2. Under #115, inventory the existing Samsara connector, tests, schemas and customer workflow and maintain a focused evidence/gap ledger.
+3. Continue bounded Samsara readiness fixes only where they do not depend on, simulate or represent missing real-account/provider evidence.
+4. Do not perform or claim Samsara field certification, gate closure or promotion until an authorized real account, API path and provider evidence are available.
+5. Under #116, perform official-source U.S./Canada regulatory and partner-readiness research while keeping the jurisdictions and certification boundaries separate.
+6. Do not select or represent an ELD integration as certified without a real partner/device boundary, commercial rights and the applicable end-to-end evidence.
+7. Maintain the disclosed dependency ledger: the Samsara account/API authority, ELD provider/device/commercial rights and qualified Appendix B human reviewer roster are not yet confirmed.
+8. Keep #109/#114 deferred, the isolated GT06 listener stopped and no device enrolled until the exact authorized physical candidate is available.
+9. Keep exactly #115 and #116 as the two active major Wave 2 lanes; no future gate starts without new CTO change control.
+10. Update the Capability Truth Matrix only when an owning gate formally closes or an approved change alters a boundary.
 
-# Master scorecard at v1.0
+# Master scorecard at v1.2
 | Gate | Status | Evidence lane | Activation |
 |---|---|---|---|
 | G0 Program control | GREEN | Master plan + #110 + truth matrix | Active/complete |
 | G1A M1/M2 certification | LIMITED GO - 30-DAY CONTROLLED PILOT | #108 / PR #113 / `CR-2026-09-01-02` | One tenant / max 10 vehicles / exact `e2230425...` / expires 2026-10-01 23:57:43 America/New_York |
 | G1B GT06 physical certification | NO-GO / DEFERRED - CLOSED WITHOUT CERTIFICATION | #109 / PR #114 / `CR-2026-09-01-01` | Re-open only with exact authorized physical hardware |
-| G2A Samsara production | QUEUED - NOT ACTIVATED | Future issue/PR | Separate CTO activation record required; G1B remains excluded |
-| G2B Certified ELD partner | QUEUED - NOT ACTIVATED | Future issue/PR | Separate CTO activation record required; G1B remains excluded |
+| G2A Samsara production | ACTIVE - AMBER | #115 / `CR-2026-09-02-01` | Real authorized Samsara account/provider evidence required; G1B remains excluded |
+| G2B Certified ELD partner | ACTIVE - AMBER | #116 / `CR-2026-09-02-01` | Official regulatory verification, real partner/device boundary and commercial rights required |
 | G3A HOS | LOCKED | Future issue/PR | After ELD source selected/integrated |
 | G3B Dual camera | LOCKED | Future issue/PR | After partner selected |
 | G4 Video/provider ecosystem | LOCKED | Future issue/PR | After G3 passes |
