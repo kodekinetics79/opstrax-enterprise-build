@@ -81,10 +81,22 @@ test("k6 workload contains GET only and bounded response handling", () => {
   assert.match(source, /maxVUs:\s*maxVus/);
   assert.doesNotMatch(source, /^\s*maxVUs,\s*$/m);
   assert.match(source, /dropped_iterations:\s*\["count==0"\]/);
+  assert.match(source, /checks:\s*\["rate==1"\]/);
+  assert.match(source, /http_req_failed:\s*\["rate<0\.005"\]/);
   assert.match(source, /http_req_duration:\s*\["p\(95\)<500",\s*"p\(99\)<5000"\]/);
   assert.match(source, /"http_req_duration\{surface:public-health\}"/);
   assert.match(source, /"http_req_duration\{surface:authenticated-read\}"/);
+  assert.match(source, /"http_req_failed\{surface:public-health\}"/);
+  assert.match(source, /"http_req_failed\{surface:authenticated-read\}"/);
   assert.doesNotMatch(source, /p\(95\)<2000/);
+  assert.doesNotMatch(source, /rate<0\.01/);
+});
+
+test("runner can retain a structured k6 summary without exposing it in dry-run output", () => {
+  const source = fs.readFileSync(path.join(directory, "run_load.mjs"), "utf8");
+  assert.match(source, /LOAD_SUMMARY_EXPORT_PATH/);
+  assert.match(source, /--summary-export/);
+  assert.doesNotMatch(JSON.stringify(sanitizedConfig(resolveLoadConfig({ ...base, LOAD_SUMMARY_EXPORT_PATH: "secret-path" }))), /secret-path/);
 });
 
 test("tracked credential template is blank", () => {
@@ -110,6 +122,10 @@ test("staging workflow uses protected auth state without logging bearer credenti
   const workflow = fs.readFileSync(path.resolve(directory, "../../.github/workflows/staging-load-certification.yml"), "utf8");
   assert.match(workflow, /environment:\s*Staging/);
   assert.match(workflow, /secrets\.E2E_TENANT_AUTH_STATE_B64/);
+  assert.match(workflow, /opstrax\.session\.v3/);
+  assert.match(workflow, /CERT-LARGE-20260825/);
+  assert.match(workflow, /EXPECTED_VEHICLE_COUNT:\s*'1001'/);
+  assert.match(workflow, /Post-load exact SHA and readiness\n\s+if:\s*\$\{\{ always\(\) \}\}/);
   assert.match(workflow, /grafana\/setup-k6-action@db07bd9765aac508ef18982e52ab937fe633a065/);
   assert.match(workflow, /k6-version:\s*'2\.2\.0'/);
   assert.match(workflow, /node tests\/load\/run_load\.mjs --execute/);

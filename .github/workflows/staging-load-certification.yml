@@ -12,7 +12,7 @@ on:
         required: true
         type: string
       profile:
-        description: Bounded read-only profile
+        description: Bounded read-only profile (smoke is preflight only)
         required: true
         default: load
         type: choice
@@ -36,6 +36,11 @@ jobs:
       CANDIDATE_SHA: ${{ inputs.candidate_sha }}
       CERT_API_BASE_URL: ${{ inputs.api_base_url }}
       LOAD_PROFILE: ${{ inputs.profile }}
+      EXPECTED_UI_ORIGIN: https://opstrax-staging-certification.vercel.app
+      EXPECTED_TENANT_CODE: CERT-LARGE-20260825
+      EXPECTED_TENANT_ID: '4'
+      EXPECTED_ROLE: Company Admin
+      EXPECTED_VEHICLE_COUNT: '1001'
     steps:
       - name: Validate exact isolated staging target
         run: |
@@ -82,8 +87,12 @@ jobs:
           node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$RUNNER_TEMP/tenant.json"
 
       - name: Require exact deployed API identity
+        env:
+          READINESS_EVIDENCE_PATH: ${{ runner.temp }}/pre-load-readiness-redacted.json
         run: |
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
           node - <<'NODE'
+          const fs = await import('node:fs');
           const response = await fetch(`${process.env.CERT_API_BASE_URL}/health/ready`);
           const body = await response.json();
           if (response.status !== 200 || body.status !== 'ready') throw new Error(`readiness returned HTTP ${response.status}`);
@@ -96,6 +105,15 @@ jobs:
           for (const field of ['critical_worker_violations', 'raw_critical_worker_violations', 'missing_critical_workers', 'stale_critical_workers', 'failed_critical_workers']) {
             if (fleet[field] !== 0) throw new Error(`${field}=${fleet[field]}; expected 0`);
           }
+          fs.writeFileSync(process.env.READINESS_EVIDENCE_PATH, `${JSON.stringify({
+            checkedAt: new Date().toISOString(),
+            candidateSha: process.env.CANDIDATE_SHA,
+            httpStatus: response.status,
+            status: body.status,
+            environment: body.environment,
+            roleRestricted: fleet.role_restricted,
+            startupGraceActive: fleet.critical_worker_startup_grace_active,
+          }, null, 2)}\n`);
           NODE
 
       - name: Execute bounded read-only load profile
@@ -104,29 +122,100 @@ jobs:
           LOAD_API_BASE_URL: ${{ env.CERT_API_BASE_URL }}
           LOAD_STAGING_HOSTS: opstrax-staging-api.onrender.com
           LOAD_ISOLATED_STAGING_ACK: I_UNDERSTAND_THIS_IS_AN_ISOLATED_STAGING_TENANT
+          LOAD_SUMMARY_EXPORT_PATH: ${{ runner.temp }}/k6-summary.json
+          IDENTITY_EVIDENCE_PATH: ${{ runner.temp }}/load-identity-redacted.json
+          RUN_EVIDENCE_PATH: ${{ runner.temp }}/load-run-redacted.json
         run: |
           set -o pipefail
           LOAD_BEARER_TOKEN="$(node - "$RUNNER_TEMP/tenant.json" <<'NODE'
           const fs = require('fs');
           const state = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const expectedOrigin = new URL(process.env.EXPECTED_UI_ORIGIN).origin;
+          const origin = (state.origins || []).find((item) => {
+            try { return new URL(item.origin).origin === expectedOrigin; } catch { return false; }
+          });
+          if (!origin) process.exit(3);
+          const entry = (origin.localStorage || []).find((item) => item.name === 'opstrax.session.v3');
+          if (!entry) process.exit(3);
           let token = '';
-          for (const origin of state.origins || []) {
-            for (const entry of origin.localStorage || []) {
-              try {
-                const stored = JSON.parse(entry.value);
-                const session = stored.session || stored;
-                if (typeof session.token === 'string' && session.token) token = session.token;
-              } catch { /* unrelated local-storage value */ }
-            }
-          }
+          try {
+            const stored = JSON.parse(entry.value);
+            const session = stored.session || stored;
+            if (typeof session.token === 'string') token = session.token;
+          } catch { process.exit(3); }
           if (!token) process.exit(3);
           process.stdout.write(token);
           NODE
           )"
           test -n "$LOAD_BEARER_TOKEN"
           export LOAD_BEARER_TOKEN
+          node - <<'NODE'
+          const fs = await import('node:fs');
+          const headers = { Authorization: `Bearer ${process.env.LOAD_BEARER_TOKEN}` };
+          const [identityResponse, summaryResponse] = await Promise.all([
+            fetch(`${process.env.CERT_API_BASE_URL}/api/auth/me`, { headers }),
+            fetch(`${process.env.CERT_API_BASE_URL}/api/vehicles/summary`, { headers }),
+          ]);
+          if (identityResponse.status !== 200 || summaryResponse.status !== 200) {
+            throw new Error(`credential preflight failed: identity=${identityResponse.status}, fleet=${summaryResponse.status}`);
+          }
+          const identity = (await identityResponse.json()).data;
+          const summary = (await summaryResponse.json()).data;
+          if (String(identity?.company?.code) !== process.env.EXPECTED_TENANT_CODE) throw new Error('credential tenant code mismatch');
+          if (String(identity?.company?.id) !== process.env.EXPECTED_TENANT_ID) throw new Error('credential tenant id mismatch');
+          if (String(identity?.role) !== process.env.EXPECTED_ROLE) throw new Error('credential role mismatch');
+          if (String(summary?.total) !== process.env.EXPECTED_VEHICLE_COUNT) throw new Error('large-fleet dataset count mismatch');
+          fs.writeFileSync(process.env.IDENTITY_EVIDENCE_PATH, `${JSON.stringify({
+            checkedAt: new Date().toISOString(),
+            tenantCode: identity.company.code,
+            tenantId: identity.company.id,
+            role: identity.role,
+            vehicleCount: Number(summary.total),
+          }, null, 2)}\n`);
+          NODE
           node tests/load/run_load.mjs --dry-run > "$RUNNER_TEMP/load-config-redacted.json"
+          node - <<'NODE'
+          const fs = await import('node:fs');
+          const { execFileSync } = await import('node:child_process');
+          fs.writeFileSync(process.env.RUN_EVIDENCE_PATH, `${JSON.stringify({
+            candidateSha: process.env.CANDIDATE_SHA,
+            profile: process.env.LOAD_PROFILE,
+            startedAt: new Date().toISOString(),
+            k6Version: execFileSync('k6', ['version'], { encoding: 'utf8' }).trim(),
+          }, null, 2)}\n`);
+          NODE
           node tests/load/run_load.mjs --execute 2>&1 | tee "$RUNNER_TEMP/k6-output.txt"
+          test -s "$LOAD_SUMMARY_EXPORT_PATH"
+
+      - name: Post-load exact SHA and readiness
+        if: ${{ always() }}
+        env:
+          READINESS_EVIDENCE_PATH: ${{ runner.temp }}/post-load-readiness-redacted.json
+        run: |
+          node - <<'NODE'
+          const fs = await import('node:fs');
+          const response = await fetch(`${process.env.CERT_API_BASE_URL}/health/ready`);
+          const body = await response.json();
+          const fleet = body.checks?.fleet_production_contract;
+          if (response.status !== 200 || body.status !== 'ready') throw new Error(`post-load readiness returned HTTP ${response.status}`);
+          if (body.version !== process.env.CANDIDATE_SHA) throw new Error(`post-load API reports ${body.version}, expected ${process.env.CANDIDATE_SHA}`);
+          if (String(body.environment).toLowerCase() !== 'staging') throw new Error('post-load protected Staging environment is required');
+          if (fleet?.status !== 'ready' || fleet.role_restricted !== true || fleet.critical_worker_startup_grace_active !== false) {
+            throw new Error('post-load steady-state restricted fleet readiness failed');
+          }
+          for (const field of ['critical_worker_violations', 'raw_critical_worker_violations', 'missing_critical_workers', 'stale_critical_workers', 'failed_critical_workers']) {
+            if (fleet[field] !== 0) throw new Error(`post-load ${field}=${fleet[field]}; expected 0`);
+          }
+          fs.writeFileSync(process.env.READINESS_EVIDENCE_PATH, `${JSON.stringify({
+            checkedAt: new Date().toISOString(),
+            candidateSha: process.env.CANDIDATE_SHA,
+            httpStatus: response.status,
+            status: body.status,
+            environment: body.environment,
+            roleRestricted: fleet.role_restricted,
+            startupGraceActive: fleet.critical_worker_startup_grace_active,
+          }, null, 2)}\n`);
+          NODE
 
       - name: Upload redacted load evidence
         if: ${{ always() }}
@@ -134,7 +223,12 @@ jobs:
         with:
           name: staging-load-${{ env.CANDIDATE_SHA }}-${{ env.LOAD_PROFILE }}
           path: |
+            ${{ runner.temp }}/pre-load-readiness-redacted.json
+            ${{ runner.temp }}/post-load-readiness-redacted.json
+            ${{ runner.temp }}/load-identity-redacted.json
             ${{ runner.temp }}/load-config-redacted.json
+            ${{ runner.temp }}/load-run-redacted.json
+            ${{ runner.temp }}/k6-summary.json
             ${{ runner.temp }}/k6-output.txt
           if-no-files-found: error
           retention-days: 30
