@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { resolveAuthorizedSummaryCount } from "../src/utils/vehicleSummaryPresentation.ts";
+import { summarizePositionFreshness } from "../src/utils/telemetryProvenance.ts";
+import { summarizeControlTowerStatus } from "../src/utils/controlTowerStatus.ts";
 
 const audit = fs.readFileSync(new URL("../src/pages/AuditLogsPage.tsx", import.meta.url), "utf8");
 const vehicles = fs.readFileSync(new URL("../src/pages/VehiclesPage.tsx", import.meta.url), "utf8");
+const liveMap = fs.readFileSync(new URL("../src/pages/LiveMapPage.tsx", import.meta.url), "utf8");
+const controlTower = fs.readFileSync(new URL("../src/pages/ControlTowerPage.tsx", import.meta.url), "utf8");
+const moduleConfig = fs.readFileSync(new URL("../src/modules/moduleConfig.ts", import.meta.url), "utf8");
 
 assert.doesNotMatch(
   audit,
@@ -53,5 +58,74 @@ assert.equal(resolveAuthorizedSummaryCount(true, false), null, "Boolean values m
 assert.equal(resolveAuthorizedSummaryCount(true, " 1"), null, "Whitespace-padded counts must render unavailable");
 assert.equal(resolveAuthorizedSummaryCount(true, Number.MAX_SAFE_INTEGER + 1), null, "Unsafe integer counts must render unavailable");
 assert.equal(resolveAuthorizedSummaryCount(true, "not-a-number"), null, "Invalid summary values must render unavailable");
+
+for (const page of [liveMap, controlTower]) {
+  assert.doesNotMatch(page, /Stream connected · .*valid positions/, "Transport connectivity must not certify GPS-fix currency");
+  assert.doesNotMatch(page, /GPS stream live/, "A connected stream must not be described as current GPS evidence");
+  assert.doesNotMatch(page, /Real-time vehicle positions|Live vehicle positions/, "Position pages must not overclaim stale fixes as current");
+  assert.doesNotMatch(page, /Live Operations Map/, "Position map headings must remain freshness-neutral");
+  assert.match(page, /Stream transport connected/, "Connected transport must be labeled separately from fix freshness");
+  assert.match(page, /stale\/unknown/, "Position headers must disclose stale or unknown fixes");
+}
+assert.match(liveMap, /Last-known vehicle positions/, "Fleet map must describe positions as last-known");
+assert.doesNotMatch(
+  controlTower,
+  /(?:onlineDevices|onlineCameras|highRiskUnits|speedAlerts)\s*\?\?\s*0/,
+  "Missing control-tower evidence must remain unavailable rather than becoming a reported zero",
+);
+assert.doesNotMatch(controlTower, /kpis\.onlineCameras/, "Default-contaminated camera status must not be presented as online evidence");
+assert.match(controlTower, /summarizeControlTowerStatus/, "Aggregate status must use the tested evidence summary");
+assert.doesNotMatch(
+  liveMap,
+  /kpis\.(?:liveCoverage|connectedUnits|degradedUnits|deviceOfflineUnits|cameraOfflineUnits|connectivityCoverage)/,
+  "Fleet map must not present receipt-age or default-contaminated connectivity KPIs as fix evidence",
+);
+assert.match(liveMap, /positionFreshness\.recent \/ positionFreshness\.located/, "Recent-fix coverage must use authoritative fix freshness");
+assert.match(liveMap, /Avg receipt age/, "Pipeline receipt age must not be labeled as device-fix age");
+assert.match(moduleConfig, /title: "Fleet Position Map"/, "Navigation must use a freshness-neutral map title");
+assert.match(moduleConfig, /Last-known fleet positions with fix freshness/, "Navigation copy must disclose fix freshness");
+
+assert.deepEqual(
+  summarizePositionFreshness([
+    { lat: 43.1, lng: -79.1, freshness: "live", secondsSincePing: 9999 },
+    { lat: 43.2, lng: -79.2, secondsSincePing: 400 },
+    { lat: 43.3, lng: -79.3, isStale: true, secondsSincePing: 1 },
+    { lat: 43.4, lng: -79.4 },
+    { lat: 0, lng: 0, freshness: "live" },
+  ]),
+  { located: 4, live: 1, delayed: 1, recent: 2, stale: 1, offline: 1, staleOrUnknown: 2 },
+  "Freshness summary must prefer server evidence and exclude invalid coordinates",
+);
+
+assert.deepEqual(
+  summarizeControlTowerStatus({ highRiskUnits: 0, alertCount: 0, actionCount: 0, alertsAvailable: true }),
+  {
+    evidenceIncomplete: false,
+    isNominal: true,
+    isCritical: false,
+    label: "No Current Exceptions Reported",
+    details: "No high-risk units, open telemetry alerts, or queued actions in the current authorized scope.",
+  },
+  "Nominal exception state requires complete zero-valued evidence",
+);
+const queuedStatus = summarizeControlTowerStatus({ highRiskUnits: 0, alertCount: 0, actionCount: 2, alertsAvailable: true });
+assert.equal(queuedStatus.isNominal, false, "Queued actions must prevent a nominal status");
+assert.equal(queuedStatus.label, "Review Needed", "Queued actions must produce a review state");
+assert.match(queuedStatus.details, /2 queued actions/, "Queued actions must be disclosed");
+
+for (const input of [
+  { highRiskUnits: null, alertCount: 0, actionCount: 0, alertsAvailable: true },
+  { highRiskUnits: 0, alertCount: 0, actionCount: 0, alertsAvailable: false },
+  { highRiskUnits: false, alertCount: 0, actionCount: 0, alertsAvailable: true },
+  { highRiskUnits: "", alertCount: 0, actionCount: 0, alertsAvailable: true },
+  { highRiskUnits: " 0", alertCount: 0, actionCount: 0, alertsAvailable: true },
+  { highRiskUnits: 0, alertCount: false, actionCount: 0, alertsAvailable: true },
+  { highRiskUnits: 0, alertCount: 0, actionCount: "", alertsAvailable: true },
+]) {
+  const status = summarizeControlTowerStatus(input);
+  assert.equal(status.evidenceIncomplete, true, "Missing or malformed exception evidence must remain incomplete");
+  assert.equal(status.isNominal, false, "Incomplete exception evidence must never become nominal");
+  assert.equal(status.label, "Exception Evidence Incomplete", "Incomplete exception evidence must be explicit");
+}
 
 console.log("Commercial-truth copy contract passed.");

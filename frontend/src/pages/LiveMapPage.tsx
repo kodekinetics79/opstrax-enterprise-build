@@ -37,6 +37,7 @@ import {
   freshnessColor,
   freshnessBucketLabel,
   readSource,
+  summarizePositionFreshness,
   type ProvenanceCategory,
   type FreshnessBucket,
 } from "@/utils/telemetryProvenance";
@@ -214,6 +215,10 @@ export function LiveMapPage() {
     refetchInterval: 30_000,
   });
   const telemetry = useLiveTelemetry();
+  const positionFreshness = useMemo(
+    () => summarizePositionFreshness(telemetry.positions),
+    [telemetry.positions],
+  );
   const qc = useQueryClient();
 
   // Reverse-geocode live positions to street addresses (server-side, cached + billing-
@@ -482,7 +487,7 @@ export function LiveMapPage() {
   if (isError) {
     return (
       <ErrorState
-        message="Unable to load the live map telemetry feed. Check backend connectivity and retry."
+        message="Unable to load fleet position telemetry. Check backend connectivity and retry."
         onRetry={() => void refetch()}
       />
     );
@@ -495,18 +500,21 @@ export function LiveMapPage() {
   const recommendations = (data.recommendations as AnyRecord[]) ?? [];
   const openAlerts = alerts.data ?? [];
   const locatedEntityCount = liveEntities.filter(hasValidPosition).length;
+  const recentFixCoverage = positionFreshness.located === 0
+    ? null
+    : Math.round((positionFreshness.recent / positionFreshness.located) * 1000) / 10;
 
   return (
     <div className="control-tower live-map-workbench flex h-full min-w-0 max-w-full flex-col gap-4 overflow-x-hidden overflow-y-auto">
       <PageHeader
         eyebrow="Operations"
-        title="Live Fleet Map"
-        description="Real-time vehicle positions, status and geofences — streamed live from the operational database."
+        title="Fleet Position Map"
+        description="Last-known vehicle positions with transport status, fix freshness, provenance, and geofences. Operational use requires a recent fix."
         actions={
           telemetry.connected ? (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-teal-50 px-3 py-1.5 text-xs font-semibold text-teal-700">
-              <Wifi className="h-3.5 w-3.5" /> Stream connected · {telemetry.positions.filter(hasValidPosition).length} valid positions
-              {telemetry.lastUpdated ? <span className="font-medium text-teal-600/70">· {telemetry.lastUpdated.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span> : null}
+              <Wifi className="h-3.5 w-3.5" /> Stream transport connected · {positionFreshness.recent} recent · {positionFreshness.staleOrUnknown} stale/unknown
+              {telemetry.lastUpdated ? <span className="font-medium text-teal-600/70">· snapshot checked {telemetry.lastUpdated.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span> : null}
             </span>
           ) : (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-500">
@@ -525,9 +533,9 @@ export function LiveMapPage() {
 
       {/* Status segmentation — the single primary metric row. */}
       <div className="live-map-status-grid order-2 grid min-w-0 gap-2 sm:grid-cols-2 lg:grid-cols-5">
-        <StatusBoardCard label="All Units"     count={liveEntities.length} tone="slate"  meaning="Tracked"        active={activeFilter === "All"}     onClick={() => setActiveFilter("All")} />
+        <StatusBoardCard label="All Units"     count={liveEntities.length} tone="slate"  meaning="Fleet scope"    active={activeFilter === "All"}     onClick={() => setActiveFilter("All")} />
         <StatusBoardCard label="Moving"        count={buckets.Moving}      tone="teal"   meaning="On the road"    active={activeFilter === "Moving"}  onClick={() => setActiveFilter(activeFilter === "Moving" ? "All" : "Moving")} />
-        <StatusBoardCard label="Idle / Parked" count={buckets.Idle}        tone="indigo" meaning="Stopped, live"  active={activeFilter === "Idle"}    onClick={() => setActiveFilter(activeFilter === "Idle" ? "All" : "Idle")} />
+        <StatusBoardCard label="Idle / Parked" count={buckets.Idle}        tone="indigo" meaning="Stopped, recent" active={activeFilter === "Idle"}    onClick={() => setActiveFilter(activeFilter === "Idle" ? "All" : "Idle")} />
         <StatusBoardCard label="Offline"       count={buckets.Offline}     tone="rose"   meaning="No recent GPS"  active={activeFilter === "Offline"} onClick={() => setActiveFilter(activeFilter === "Offline" ? "All" : "Offline")} />
         <StatusBoardCard label="Unknown"       count={buckets.Unknown}     tone="slate"  meaning="No trusted state" active={activeFilter === "Unknown"} onClick={() => setActiveFilter(activeFilter === "Unknown" ? "All" : "Unknown")} />
       </div>
@@ -536,7 +544,7 @@ export function LiveMapPage() {
         {/* Hero map */}
         <section className="panel live-map-stage flex min-w-0 flex-col overflow-hidden p-3 sm:p-4">
           <div className="flex flex-wrap items-center justify-between gap-x-5 gap-y-2">
-            <h2 className="section-title">Live Operations Map</h2>
+            <h2 className="section-title">Fleet Position Map</h2>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs font-semibold text-slate-400">
               {/* Bound to keys BuildKpis actually emits. The previous four
                   (onlineDevices/onlineCameras/telemetryQuality/speedAlerts) are produced
@@ -545,8 +553,8 @@ export function LiveMapPage() {
                   defaults to 'Online' and is never recomputed, so any camera figure
                   would be fabricated. */}
               <MetaStat icon={<Satellite className="h-3.5 w-3.5 text-teal-500" />} value={String(kpis.registeredDevices ?? "--")} label="devices" />
-              <MetaStat icon={<Wifi className="h-3.5 w-3.5 text-violet-500" />} value={String(kpis.connectedUnits ?? "--")} label="connected" />
-              <MetaStat icon={<Gauge className="h-3.5 w-3.5 text-blue-500" />} value={kpis.liveCoverage != null ? `${kpis.liveCoverage}%` : "--"} label="live" />
+              <MetaStat icon={<MapPin className="h-3.5 w-3.5 text-violet-500" />} value={String(positionFreshness.located)} label="positions" />
+              <MetaStat icon={<Gauge className="h-3.5 w-3.5 text-blue-500" />} value={recentFixCoverage == null ? "--" : `${recentFixCoverage}%`} label="recent fixes" />
               <MetaStat icon={<ShieldAlert className="h-3.5 w-3.5 text-amber-500" />} value={String(kpis.openAlerts ?? "--")} label="open alerts" />
             </div>
           </div>
@@ -600,20 +608,20 @@ export function LiveMapPage() {
                 <MetricPill label="Watch" value={String(assetHealth.watch)} tone="sky" />
               </div>
               <p className="mt-2 text-[11px] text-slate-500">
-                Avg freshness {freshnessLabel(assetHealth.avgFreshness)} · geospatial state updates live from the telemetry feed
+                Avg receipt age {freshnessLabel(assetHealth.avgFreshness)} · authoritative fix freshness is reported separately
               </p>
             </div>
 
             <div className="rounded-2xl border border-slate-200/80 bg-white/80 p-3 shadow-sm">
-              <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-400">Connectivity</p>
+              <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-slate-400">Position currency</p>
               <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
-                <MetricPill label="Connected" value={String(kpis.connectedUnits ?? "--")} tone="sky" />
-                <MetricPill label="Degraded" value={String(kpis.degradedUnits ?? "--")} tone="amber" />
-                <MetricPill label="Device offline" value={String(kpis.deviceOfflineUnits ?? "--")} tone="rose" />
-                <MetricPill label="Camera offline" value={String(kpis.cameraOfflineUnits ?? "--")} tone="rose" />
+                <MetricPill label="Recent fixes" value={String(positionFreshness.recent)} tone="sky" />
+                <MetricPill label="Stale fixes" value={String(positionFreshness.stale)} tone="amber" />
+                <MetricPill label="Unknown age" value={String(positionFreshness.offline)} tone="rose" />
+                <MetricPill label="Located" value={String(positionFreshness.located)} />
               </div>
               <p className="mt-2 text-[11px] text-slate-500">
-                Connectivity coverage {kpis.connectivityCoverage == null ? "unknown" : `${String(kpis.connectivityCoverage)}%`} · real vehicle, device, camera and GPS signals
+                Counts use authoritative fix freshness for coordinate-bearing positions in the current authorized stream snapshot
               </p>
             </div>
           </div>
@@ -717,7 +725,7 @@ export function LiveMapPage() {
             </div>
             <div className="mt-3 space-y-2">
               {assetHealthRows.length === 0 ? (
-                <p className="text-sm text-slate-500">No live asset health rows yet.</p>
+                <p className="text-sm text-slate-500">No asset health rows yet.</p>
               ) : (
                 assetHealthRows.map((item) => (
                   <div key={item.id} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 shadow-sm">
@@ -746,10 +754,10 @@ export function LiveMapPage() {
 
           <div className="border-b border-slate-100 px-4 pb-3 pt-4">
             <div className="flex items-center justify-between">
-              <h2 className="section-title">Live Roster</h2>
+              <h2 className="section-title">Position Roster</h2>
               <span className={`inline-flex items-center gap-1.5 text-xs font-semibold ${telemetry.connected ? "text-teal-600" : "text-slate-400"}`}>
                 <span className={`h-2 w-2 rounded-full ${telemetry.connected ? "animate-pulse bg-teal-500" : "bg-slate-300"}`} />
-                {telemetry.connected ? "Live" : "Reconnecting"}
+                {telemetry.connected ? "Transport connected" : "Reconnecting"}
               </span>
             </div>
             <div className="relative mt-3">
@@ -1251,7 +1259,7 @@ function VehicleDetailDrawer({ detail, entity, loading, onClose }: { detail?: An
     <div className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-sm" onClick={onClose}>
       <aside className="h-full w-full max-w-3xl overflow-y-auto border-l border-slate-200 bg-white p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <button type="button" aria-label="Close" className="float-right icon-btn" onClick={onClose}><X className="h-5 w-5" /></button>
-        <p className="section-title">Live Vehicle Detail</p>
+        <p className="section-title">Vehicle Position Detail</p>
         <h2 className="mt-3 text-2xl font-semibold text-slate-900">{String(record.vehicleCode ?? record.vehicle_code)}</h2>
         <div className="mt-4 flex flex-wrap gap-2">
           <StatusBadge status={record.status} />
@@ -1259,7 +1267,7 @@ function VehicleDetailDrawer({ detail, entity, loading, onClose }: { detail?: An
           <span className="badge"><MapPin className="mr-1 inline h-3 w-3" />Last seen {String(record.lastSeenAt ?? record.last_seen_at ?? "--")}</span>
         </div>
         <div className="mt-6 grid gap-4 lg:grid-cols-2">
-          <Mini title="Live Telemetry" record={record} keys={["driverName", "driver_name", "lat", "lng", "speedMph", "speed_mph", "heading", "deviceStatus", "device_status", "cameraStatus", "camera_status", "connectivityStatus", "connectivity_status", "connectivityIssues", "connectivity_issues"]} />
+          <Mini title="Latest Telemetry" record={record} keys={["driverName", "driver_name", "lat", "lng", "speedMph", "speed_mph", "heading", "deviceStatus", "device_status", "cameraStatus", "camera_status", "connectivityStatus", "connectivity_status", "connectivityIssues", "connectivity_issues"]} />
           <Mini title="Health & Diagnostics" record={record} keys={["readinessScore", "readiness_score", "dataQualityScore", "data_quality_score", "riskScore", "risk_score", "odometerMiles", "odometer_miles", "type", "vehicleStatus", "vehicle_status"]} />
         </div>
         <ProvenancePanel entity={entity} />

@@ -4484,6 +4484,12 @@ public static partial class EndpointMappings
     {
         if (RequirePermission(http, "dashboard:view") is { } denied) return denied;
         var companyId = GetCompanyId(http);
+        var branchId = GetBranchId(http);
+        void BindScope(NpgsqlCommand command)
+        {
+            command.Parameters.AddWithValue("@companyId", companyId);
+            command.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+        }
         var entities = await db.QueryAsync(
             @"SELECT v.id, v.id vehicleId, v.assigned_driver_id driverId, v.vehicle_code label, 'vehicle' entity_type, COALESCE(v.status, le.event_type) status,
                      le.lat, le.lng, le.speed_mph speedMph, le.heading, le.event_type eventType, le.event_time eventTime, v.type vehicleType, v.device_status deviceStatus, v.camera_status cameraStatus,
@@ -4496,26 +4502,41 @@ public static partial class EndpointMappings
                      CASE WHEN v.risk_score >= 70 OR le.speed_mph > 65 THEN 'High' WHEN v.device_status <> 'Online' OR v.camera_status <> 'Online' THEN 'Medium' ELSE 'Low' END risk_level
               FROM vehicles v
               INNER JOIN (SELECT le1.* FROM location_events le1 INNER JOIN (SELECT vehicle_id, MAX(id) max_id FROM location_events WHERE company_id=@companyId GROUP BY vehicle_id) le2 ON le1.id=le2.max_id WHERE le1.company_id=@companyId) le ON v.id=le.vehicle_id
-              LEFT JOIN drivers d ON d.id=v.assigned_driver_id
+              LEFT JOIN drivers d ON d.id=v.assigned_driver_id AND d.company_id=v.company_id AND d.branch_id=v.branch_id
               WHERE v.deleted_at IS NULL AND v.company_id=@companyId
-              ORDER BY le.event_time DESC LIMIT 24", c => c.Parameters.AddWithValue("@companyId", companyId), ct: ct);
-        var geofences = await db.QueryAsync("SELECT * FROM geofences WHERE company_id=@companyId ORDER BY name", c => c.Parameters.AddWithValue("@companyId", companyId), ct: ct);
-        var events = await db.QueryAsync("SELECT * FROM operational_events WHERE company_id=@companyId ORDER BY event_time DESC LIMIT 20", c => c.Parameters.AddWithValue("@companyId", companyId), ct: ct);
-        var recommendations = await db.QueryAsync("SELECT * FROM ai_recommendations WHERE tenant_id=@companyId AND module_key='control-tower' ORDER BY score DESC LIMIT 6", c => c.Parameters.AddWithValue("@companyId", companyId), ct: ct);
+                AND (@branchId::BIGINT IS NULL OR v.branch_id=@branchId)
+              ORDER BY le.event_time DESC LIMIT 24", BindScope, ct: ct);
+        var geofences = await db.QueryAsync(
+            "SELECT * FROM geofences WHERE company_id=@companyId AND (@branchId::BIGINT IS NULL OR branch_id=@branchId) ORDER BY name",
+            BindScope, ct: ct);
+        var events = await db.QueryAsync(
+            @"SELECT oe.* FROM operational_events oe
+              WHERE oe.company_id=@companyId
+                AND (@branchId::BIGINT IS NULL
+                     OR (LOWER(oe.entity_type) IN ('vehicle','vehicles') AND EXISTS (SELECT 1 FROM vehicles v WHERE v.id=oe.entity_id AND v.company_id=oe.company_id AND v.branch_id=@branchId AND v.deleted_at IS NULL))
+                     OR (LOWER(oe.entity_type) IN ('driver','drivers') AND EXISTS (SELECT 1 FROM drivers d WHERE d.id=oe.entity_id AND d.company_id=oe.company_id AND d.branch_id=@branchId AND d.deleted_at IS NULL))
+                     OR (LOWER(oe.entity_type) IN ('job','jobs','shipment','shipments') AND EXISTS (SELECT 1 FROM jobs j WHERE j.id=oe.entity_id AND j.company_id=oe.company_id AND j.branch_id=@branchId AND j.deleted_at IS NULL)))
+              ORDER BY oe.event_time DESC LIMIT 20", BindScope, ct: ct);
+        var recommendations = branchId is null
+            ? await db.QueryAsync("SELECT * FROM ai_recommendations WHERE tenant_id=@companyId AND module_key='control-tower' ORDER BY score DESC LIMIT 6", c => c.Parameters.AddWithValue("@companyId", companyId), ct: ct)
+            : [];
         var kpis = await db.QuerySingleAsync(
-            @"SELECT (SELECT COUNT(*) FROM vehicles WHERE deleted_at IS NULL AND company_id=@companyId) tracked_entities,
+            @"SELECT (SELECT COUNT(*) FROM vehicles scoped_v WHERE scoped_v.deleted_at IS NULL AND scoped_v.company_id=@companyId AND (@branchId::BIGINT IS NULL OR scoped_v.branch_id=@branchId)) tracked_entities,
                      SUM(CASE WHEN v.device_status='Online' THEN 1 ELSE 0 END) online_devices,
                      SUM(CASE WHEN v.camera_status='Online' THEN 1 ELSE 0 END) online_cameras,
                      SUM(CASE WHEN v.status IN ('Available','Active','On Route','Idle') THEN 1 ELSE 0 END) active_units,
                      SUM(CASE WHEN v.risk_score >= 70 THEN 1 ELSE 0 END) high_risk_units,
-                     (SELECT COUNT(*) FROM location_events le2 INNER JOIN (SELECT vehicle_id, MAX(id) max_id FROM location_events WHERE company_id=@companyId GROUP BY vehicle_id) latest ON le2.id=latest.max_id WHERE le2.company_id=@companyId AND le2.speed_mph > 65) speed_alerts,
+                     (SELECT COUNT(*) FROM location_events le2
+                       INNER JOIN (SELECT vehicle_id, MAX(id) max_id FROM location_events WHERE company_id=@companyId GROUP BY vehicle_id) latest ON le2.id=latest.max_id
+                       INNER JOIN vehicles scoped_v ON scoped_v.id=le2.vehicle_id AND scoped_v.company_id=le2.company_id AND scoped_v.deleted_at IS NULL
+                       WHERE le2.company_id=@companyId AND le2.speed_mph > 65 AND (@branchId::BIGINT IS NULL OR scoped_v.branch_id=@branchId)) speed_alerts,
                      ROUND(AVG(v.data_quality_score) FILTER (
                          WHERE LOWER(COALESCE(v.device_status,'')) NOT IN ('','unknown','unavailable')
                             OR LOWER(COALESCE(v.camera_status,'')) NOT IN ('','unknown','unavailable')),1) telemetry_quality,
                      ROUND(AVG(v.readiness_score) FILTER (
                          WHERE LOWER(COALESCE(v.device_status,'')) NOT IN ('','unknown','unavailable')
                             OR LOWER(COALESCE(v.camera_status,'')) NOT IN ('','unknown','unavailable')),1) fleet_readiness
-              FROM vehicles v WHERE v.deleted_at IS NULL AND v.company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId), ct: ct);
+              FROM vehicles v WHERE v.deleted_at IS NULL AND v.company_id=@companyId AND (@branchId::BIGINT IS NULL OR v.branch_id=@branchId)", BindScope, ct: ct);
         var jobs = await db.QueryAsync(
             @"SELECT j.id, COALESCE(j.job_number,j.job_code) job_number, j.status, j.priority, j.sla_status, j.eta,
                      c.name customer_name, v.vehicle_code, d.full_name driver_name,
@@ -4523,31 +4544,42 @@ public static partial class EndpointMappings
                           WHEN j.assigned_vehicle_id IS NULL THEN 'Assign vehicle'
                           ELSE 'Monitor SLA' END recommended_action
               FROM jobs j
-              LEFT JOIN customers c ON c.id=j.customer_id
-              LEFT JOIN vehicles v ON v.id=j.assigned_vehicle_id
-              LEFT JOIN drivers d ON d.id=j.assigned_driver_id
-              WHERE j.deleted_at IS NULL AND j.company_id=@companyId
-              ORDER BY j.risk_score DESC, j.scheduled_start LIMIT 10", c => c.Parameters.AddWithValue("@companyId", companyId), ct: ct);
+              LEFT JOIN customers c ON c.id=j.customer_id AND c.company_id=j.company_id
+              LEFT JOIN vehicles v ON v.id=j.assigned_vehicle_id AND v.company_id=j.company_id AND v.branch_id=j.branch_id
+              LEFT JOIN drivers d ON d.id=j.assigned_driver_id AND d.company_id=j.company_id AND d.branch_id=j.branch_id
+              WHERE j.deleted_at IS NULL AND j.company_id=@companyId AND (@branchId::BIGINT IS NULL OR j.branch_id=@branchId)
+              ORDER BY j.risk_score DESC, j.scheduled_start LIMIT 10", BindScope, ct: ct);
         var diagnostics = await db.QueryAsync(
             @"SELECT v.id, v.vehicle_code, v.device_status, v.camera_status, v.readiness_score, v.data_quality_score, v.risk_score,
                      CASE WHEN v.device_status <> 'Online' THEN 'Recover gateway connection'
                           WHEN v.camera_status <> 'Online' THEN 'Verify camera health'
                           WHEN v.risk_score >= 70 THEN 'Create maintenance/safety review'
                           ELSE 'Healthy telemetry' END recommended_action
-              FROM vehicles v WHERE v.deleted_at IS NULL AND v.company_id=@companyId ORDER BY v.risk_score DESC, v.data_quality_score LIMIT 10", c => c.Parameters.AddWithValue("@companyId", companyId), ct: ct);
+              FROM vehicles v WHERE v.deleted_at IS NULL AND v.company_id=@companyId AND (@branchId::BIGINT IS NULL OR v.branch_id=@branchId)
+              ORDER BY v.risk_score DESC, v.data_quality_score LIMIT 10", BindScope, ct: ct);
         var safetyVideo = await db.QueryAsync(
             @"SELECT de.id, de.event_number, de.event_type, de.severity, de.review_status, de.evidence_status, de.thumbnail_url,
                      d.full_name driver_name, v.vehicle_code, de.ai_summary
               FROM dashcam_events de
-              LEFT JOIN drivers d ON d.id=de.driver_id
-              LEFT JOIN vehicles v ON v.id=de.vehicle_id
+              LEFT JOIN drivers d ON d.id=de.driver_id AND d.company_id=de.company_id AND d.deleted_at IS NULL
+                AND (@branchId::BIGINT IS NULL OR d.branch_id=@branchId)
+              LEFT JOIN vehicles v ON v.id=de.vehicle_id AND v.company_id=de.company_id AND v.deleted_at IS NULL
+                AND (@branchId::BIGINT IS NULL OR v.branch_id=@branchId)
               WHERE de.deleted_at IS NULL AND de.company_id=@companyId
-              ORDER BY de.occurred_at DESC LIMIT 6", c => c.Parameters.AddWithValue("@companyId", companyId), ct: ct);
+                AND (@branchId::BIGINT IS NULL OR v.id IS NOT NULL OR (de.vehicle_id IS NULL AND d.id IS NOT NULL))
+              ORDER BY de.occurred_at DESC LIMIT 6", BindScope, ct: ct);
         var actionQueue = await db.QueryAsync(
-            @"SELECT id, title, severity priority, event_type module_key, event_time created_at FROM operational_events WHERE company_id=@companyId
+            @"SELECT oe.id, oe.title, oe.severity priority, oe.event_type module_key, oe.event_time created_at
+              FROM operational_events oe WHERE oe.company_id=@companyId
+                AND (@branchId::BIGINT IS NULL
+                     OR (LOWER(oe.entity_type) IN ('vehicle','vehicles') AND EXISTS (SELECT 1 FROM vehicles v WHERE v.id=oe.entity_id AND v.company_id=oe.company_id AND v.branch_id=@branchId AND v.deleted_at IS NULL))
+                     OR (LOWER(oe.entity_type) IN ('driver','drivers') AND EXISTS (SELECT 1 FROM drivers d WHERE d.id=oe.entity_id AND d.company_id=oe.company_id AND d.branch_id=@branchId AND d.deleted_at IS NULL))
+                     OR (LOWER(oe.entity_type) IN ('job','jobs','shipment','shipments') AND EXISTS (SELECT 1 FROM jobs j WHERE j.id=oe.entity_id AND j.company_id=oe.company_id AND j.branch_id=@branchId AND j.deleted_at IS NULL)))
               UNION ALL
-              SELECT id, CONCAT('SLA watch: ', COALESCE(job_number,job_code)), priority, 'dispatch', created_at FROM jobs WHERE deleted_at IS NULL AND company_id=@companyId AND (sla_status='At Risk' OR status IN ('Delayed','At Risk'))
-              ORDER BY created_at DESC LIMIT 12", c => c.Parameters.AddWithValue("@companyId", companyId), ct: ct);
+              SELECT j.id, CONCAT('SLA watch: ', COALESCE(j.job_number,j.job_code)), j.priority, 'dispatch', j.created_at
+              FROM jobs j WHERE j.deleted_at IS NULL AND j.company_id=@companyId AND (j.sla_status='At Risk' OR j.status IN ('Delayed','At Risk'))
+                AND (@branchId::BIGINT IS NULL OR j.branch_id=@branchId)
+              ORDER BY created_at DESC LIMIT 12", BindScope, ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             status = "Current operational snapshot",

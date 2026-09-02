@@ -717,7 +717,7 @@ function TelematicsDetailDrawer({
       </div>
 
       <div className="mt-6 flex flex-wrap gap-3">
-        {canViewMap ? <button className="btn-ghost" disabled={!row.positionAvailable} title={row.positionAvailable ? "Open the current position on the fleet map." : "Map unavailable because this record has no valid position."} onClick={() => row.positionAvailable && window.location.assign(`/map-view`)}><MapPinned className="h-4 w-4" /> {row.positionAvailable ? "View on map" : "No valid map fix"}</button> : null}
+        {canViewMap ? <button className="btn-ghost" disabled={!row.positionAvailable} title={row.positionAvailable ? "Open the reported position on the fleet map and verify its freshness before operational use." : "Map unavailable because this record has no valid position."} onClick={() => row.positionAvailable && window.location.assign(`/map-view`)}><MapPinned className="h-4 w-4" /> {row.positionAvailable ? "View on map" : "No valid map fix"}</button> : null}
         {canViewDevices ? <button className="btn-ghost" onClick={() => window.location.assign(`/iot-devices`)}><Truck className="h-4 w-4" /> View device</button> : null}
         {canViewVehicles ? <button className="btn-ghost" onClick={() => window.location.assign(`/vehicles`)}><Truck className="h-4 w-4" /> View vehicle</button> : null}
         {canViewJobs && row.shipmentId !== "No active shipment" ? <button className="btn-ghost" onClick={() => window.location.assign(`/jobs`)}><Truck className="h-4 w-4" /> Open trip</button> : null}
