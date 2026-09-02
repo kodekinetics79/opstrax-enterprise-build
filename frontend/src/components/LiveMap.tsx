@@ -535,7 +535,7 @@ export function LiveMap({ entities, geofences, routeTrails = [], onSelect, focus
       ref={containerRef}
       style={{ height: "100%", width: "100%" }}
       role="region"
-      aria-label="Live fleet map. Vehicles without valid GPS coordinates are not plotted."
+      aria-label="Fleet position map. Positions may be last-known; vehicles without valid GPS coordinates are not plotted."
       // Override leaflet default font so it matches app
       className="[&_.leaflet-popup-content-wrapper]:rounded-xl [&_.leaflet-popup-content-wrapper]:shadow-lg"
     />

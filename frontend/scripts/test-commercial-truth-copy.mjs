@@ -7,6 +7,7 @@ import { summarizeControlTowerStatus } from "../src/utils/controlTowerStatus.ts"
 const audit = fs.readFileSync(new URL("../src/pages/AuditLogsPage.tsx", import.meta.url), "utf8");
 const vehicles = fs.readFileSync(new URL("../src/pages/VehiclesPage.tsx", import.meta.url), "utf8");
 const liveMap = fs.readFileSync(new URL("../src/pages/LiveMapPage.tsx", import.meta.url), "utf8");
+const liveMapComponent = fs.readFileSync(new URL("../src/components/LiveMap.tsx", import.meta.url), "utf8");
 const controlTower = fs.readFileSync(new URL("../src/pages/ControlTowerPage.tsx", import.meta.url), "utf8");
 const moduleConfig = fs.readFileSync(new URL("../src/modules/moduleConfig.ts", import.meta.url), "utf8");
 
@@ -68,6 +69,8 @@ for (const page of [liveMap, controlTower]) {
   assert.match(page, /stale\/unknown/, "Position headers must disclose stale or unknown fixes");
 }
 assert.match(liveMap, /Last-known vehicle positions/, "Fleet map must describe positions as last-known");
+assert.doesNotMatch(liveMapComponent, /Live fleet map/, "The map's accessible name must not overclaim stale positions as live");
+assert.match(liveMapComponent, /Positions may be last-known/, "The map's accessible name must disclose position currency");
 assert.doesNotMatch(
   controlTower,
   /(?:onlineDevices|onlineCameras|highRiskUnits|speedAlerts)\s*\?\?\s*0/,
