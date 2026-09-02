@@ -1,255 +1,223 @@
-# OpsTrax Master Commercialization & Certification Action Plan
+# OpsTrax Accelerated Hardening Factory — Master Action Plan
 
-**Status:** CONTROLLED MASTER - ACTIVE  
-**Version:** 1.2
-**Effective date:** 2026-09-02
+**Status:** CONTROLLED MASTER — ACTIVE  
+**Version:** 2.0  
+**Effective date:** 2026-09-02  
 **Executive owner:** CTO Office / OpsTrax Commercialization Program  
-**Technical baseline:** `main@155b54a3451c2a4618b4fc6a87fd59f0e68f425d`  
 **Parent tracker:** #110  
-**Limited Gate A:** #108 / PR #113 - 30-day controlled-pilot LIMITED GO under `CR-2026-09-01-02`
-**Deferred Gate B:** #109 / PR #114 - GT06 physical compatibility certification; NO-GO / closed without certification under `CR-2026-09-01-01`
-**Active Wave 2 Gate A:** #115 - Samsara production connector certification under `CR-2026-09-02-01`
-**Active Wave 2 Gate B:** #116 - certified ELD partner selection and integration under `CR-2026-09-02-01`
+**Current main at activation:** `a859dffd47400774f9992eb7e361517222a6d1ea`  
+**Wave 1:** G1A merged/closed under a time-bounded LIMITED GO; M1/M2 remain PILOT.  
+**GT06 physical certification:** EXTERNAL HOLD / NOT CERTIFIED until an exact authorized physical candidate is available.  
+**Wave 2:** ACTIVE. #115 Samsara production connector; #116 certified ELD partner selection/integration.  
+**Recent integration state:** PR #118 merged; PR #119 merged; PR #120 active for Samsara truth/recovery hardening.
 
-## Master rule
-This document governs commercialization sequencing. Work may be refined inside a phase, but no phase may be skipped, broadened, or declared complete without the stated acceptance evidence. Any sequence/gate change requires CTO change control.
+## 1. Executive objective
+Move OpsTrax rapidly from a strong but uneven pilot-capable build to a commercially deployable connected-fleet platform without sacrificing customer truth, tenant isolation, hardware truth, provider truth, regulatory compliance, or production reliability.
 
-## Executive objective
-Graduate OpsTrax from pilot-capable fleet/TMS software with a strong telematics foundation into a commercially deployable, device-agnostic connected-fleet platform with certified-compatible hardware, production provider integrations, regulated ELD/HOS through a valid partner/device path, video safety, resilient operations, and evidence that survives customer, auditor, and executive scrutiny.
+The governing execution model is now a hardening factory, not a serial certification queue.
 
-## Non-negotiables
-- Product truth over UI/schema/marketing appearance.
-- Visible Chrome + real persisted data for customer-facing acceptance.
-- Physical hardware certification requires physical hardware.
-- Provider certification requires a real provider account/API path.
-- ELD/HOS claims require applicable regulatory evidence and complete workflow proof.
-- No fabricated telemetry, diagnostics, video, safety, or HOS data in pilot/production acceptance.
-- No broad repeated audits; defects close inside the owning gate.
-- Exact-SHA final evidence.
-- No unresolved P0/P1 at CERTIFIED/PRODUCTION READY status.
-- Maximum two active critical commercialization tracks unless CTO explicitly authorizes more.
+## 2. Core operating model
 
-## Capability truth at v1.2 activation
-| Capability | Status | Primary gap |
+### SPEED 1 — BUILD
+Up to **six bounded engineering squads** may work in parallel. Each squad owns a vertical slice, batches related defects, runs targeted and integration tests, and produces a reviewable PR. Minor fixes do not trigger a full certification cycle.
+
+### SPEED 2 — INTEGRATE
+Accepted squad work is combined into controlled integration candidates. Full automated regression, PostgreSQL integration, security contracts, frontend/mobile contracts, telematics regression, release-container build, migration rehearsal, and bounded load smoke run here.
+
+### SPEED 3 — CERTIFY
+At most **two certification candidates** may exist simultaneously. Only frozen candidates receive exact-SHA staging deployment, visible Chrome acceptance, real persisted data, provider/device/regulatory evidence where applicable, recovery/failure testing, performance acceptance, independent assurance, and final CTO GO / LIMITED GO / NO-GO.
+
+**Rule:** certification rigor is preserved, but applied to meaningful frozen batches rather than every small correction.
+
+## 3. Concurrency policy
+- Maximum **6 bounded engineering squads** active at once.
+- Maximum **2 certification candidates** active at once.
+- A squad blocked solely by hardware, provider approval/account, external commercial agreement, or qualified external review moves to **EXTERNAL HOLD** and frees capacity immediately.
+- Human/qualified SME acceptance can queue; it blocks certification/promotion, not unrelated engineering progress.
+- P0 findings may preempt any squad and can stop affected integration/certification lanes.
+
+## 4. Active factory squads
+
+| Squad | Scope | Mandatory leadership/review |
 |---|---|---|
-| Fleet Identity / Asset Master | PILOT | Current-SHA closeout: responsive, correction, document/expiry, performance evidence |
-| Telematics / DeviceOps | PILOT | Current-SHA closeout + provider/physical certification |
-| GT06 | PILOT | Exact physical model/firmware bench, drive and soak |
-| Samsara connector | PILOT | Real-account onboarding/mapping/reconciliation/backfill/sync-health certification |
-| J1939 | DEVELOPMENT/PILOT | Acquisition/transport, broader PGNs, real-hardware evidence |
-| Pacific Track / PT40 | DEVELOPMENT | Real capture, fingerprint, vendor parser, bench/field certification |
-| HOS data structures / alert concepts | DEVELOPMENT | Certified source plus complete operational/regulatory workflow |
-| Certified ELD/HOS product | ROADMAP | Certified partner/device, commercial rights and jurisdiction-specific end-to-end evidence |
-| Dual-facing camera | ROADMAP | Partner selection and secure event/video integration |
-| Video Safety | ROADMAP | AI event/incident/coaching/retention workflow |
-| Geotab/Motive/OEM | ROADMAP | Provider-specific production connectors |
+| S1 Fleet/TMS Core | fleet identity, vehicles, drivers, assets, dispatch, jobs, routes, TMS, maintenance, customer workflows | Fleet Product, enterprise architect, frontend/backend, independent SDET |
+| S2 Connected Vehicle | telematics, DeviceOps, Samsara, Motive/Geotab/OEM adapters, GPS, J1939, protocol gateway | Telematics/IoT, protocol/data, security, independent SDET |
+| S3 Compliance | ELD partner, HOS, DVIR/compliance workflow, U.S./Canada evidence | ELD/HOS regulatory, Fleet Ops, security, SDET |
+| S4 Video Safety | dual-facing camera integration, event video, privacy, incidents, coaching | Video telematics, driver safety, privacy/security, SDET |
+| S5 Platform Hardening | tenancy/RBAC/RLS, DB, migrations, SRE, observability, recovery, security, warning debt | Security, PostgreSQL, SRE, platform architecture, SDET |
+| S6 UX/Performance | enterprise-density UX, responsive/accessibility, GIS/map usability, frontend performance | Enterprise UI/UX, GIS, performance, Fleet Product, SDET |
 
-## CTO-led SME council
-- CTO / Program Owner - sequence, architecture, risk, final GO/NO-GO.
-- Fleet Product SME - workflow completeness and operational value.
-- Telematics / IoT SME - protocols, gateway, canonical telemetry, provider adapters.
-- Hardware Certification SME - exact-model bench/vehicle/recovery/soak/supportability.
-- ELD/HOS Regulatory SME - U.S./Canada certification boundary and HOS evidence.
-- Video Telematics / Safety SME - camera architecture, event taxonomy, privacy/coaching.
-- SDET / Performance SME - real-client Chrome, large-fleet, failure and performance evidence.
-- Cybersecurity SME - tenant/branch isolation, device trust, secrets, privacy.
-- SRE / DevOps SME - deployment, observability, recovery, backup/restore, scale.
-- UI/UX SME - responsive, accessibility, high-volume usability and workflow clarity.
-- Data/Analytics SME - telemetry semantics, provenance, quality and KPI truth.
-- Commercial/Sales SME - packaging, pricing, claims and pilot boundaries.
-- Customer Success/Support SME - onboarding, installation, training, SLA and RMA readiness.
+The CTO may change squad allocation based on evidence and commercial priority without changing the factory model.
 
-Any SME can raise a RED finding. Only the CTO may waive a gate, and every waiver must be written, quantified, time-bounded and reflected in the Capability Truth Matrix.
+## 5. Independent assurance model
+Implementation teams do not certify their own work.
 
-## Program waves
-| Wave | Critical workstreams | Exit result |
-|---|---|---|
-| 0 - Control | Truth matrix, baseline freeze, master plan, GitHub evidence lanes | Controlled program |
-| 1 - Certify what exists | A: M1/M2 current-SHA closeout; B: GT06 physical certification deferred under `CR-2026-09-01-01` | Limited core only; no certified-compatible GPS family claim |
-| 2 - Connect and comply | A: Samsara production certification; B: certified ELD partner selection/integration | Commercial BYOT + regulated ELD source |
-| 3 - HOS and cameras | A: OpsTrax HOS workflow; B: dual-facing camera integration | Operational HOS + real camera/video path |
-| 4 - Safety/ecosystem | A: Video Safety; B: Geotab/Motive prioritized connectors | Competitive safety + provider breadth |
-| 5 - Device depth | DeviceOps 2.0, J1939 acquisition, PT40, OEM expansion | Supportable device lifecycle + heavy-duty breadth |
-| 6 - Scale release | 1K-5K+ resilience, DR/recovery, support, billing, commercial packaging | Commercial connected-fleet release |
+A central assurance function owns:
+- adversarial browser journeys;
+- tenant/branch boundary testing;
+- API/contract regression;
+- PostgreSQL integration;
+- security abuse cases;
+- load/stress/soak where applicable;
+- failure/recovery evidence;
+- evidence reconciliation and defect reopening.
 
-# WAVE 1 - TIME-LIMITED CONTROLLED PILOT
+For P0 domains, require at least two logically independent expert perspectives before closure. Qualified-human acceptance remains mandatory wherever the commercial/regulatory release contract says so; AI-assisted review is supporting evidence only.
 
-## Gate 1A - M1/M2 current-SHA LIMITED GO
-Governance: #108 / PR #113 / `cert/m1-m2-current-sha-closeout`.
+## 6. Severity and execution policy
 
-Required closeout:
-1. Exact candidate frontend/API build identity and readiness.
-2. Company Admin/Fleet Manager/Dispatcher/Maintenance/Executive/Driver/Customer journeys as applicable.
-3. Vehicle/driver/asset/device invalid/duplicate/correction and persistence workflows.
-4. Large-fleet search/filter/sort/pagination/export.
-5. Device Health list/detail/lifecycle/install/commissioning truth.
-6. GPS/live-map identity, freshness, drilldown, branch restriction and geofence behavior.
-7. Real persisted OBD/J1939 diagnostic evidence and fault/hold workflow.
-8. Required responsive viewports.
-9. Browser console/failed-network evidence.
-10. Open performance gate re-test.
-11. Defect loop: observe -> evidence -> root cause -> focused fix -> tests -> exact-SHA deploy -> identical re-test.
+### P0 — stop-the-line
+Tenant leakage, auth bypass, cross-tenant device attribution, data corruption/loss, regulatory safety corruption, fabricated telemetry/HOS/video truth, critical secret exposure.
 
-Exit: 0 P0/P1; 0 tenant/branch leakage; 0 Driver/Customer internal-route exposure; 0 fabricated telemetry/diagnostics; exact-SHA evidence; customer journeys persist after refresh/logout-login; limitations declared.
+Action: immediate containment, focused remediation, adversarial regression, affected integration/certification lane blocked.
 
-`CR-2026-09-01-02` grants a CTO-approved, 30-day **LIMITED GO** for exact frontend/API candidate `e2230425a8e14249d2c0f477a7ec7b713a6ab27e`. It authorizes one isolated tenant and no more than 10 pilot vehicles from 2026-09-01 23:57:43 through 2026-10-01 23:57:43 America/New_York. M1/M2 remain PILOT. The Class 1/Class 3 exception covers the missing relevant-SME/Security/Product human quorum, external qualified-human Appendix B acceptance, and final-candidate representative performance renewal for this window only; it discloses rather than fabricates those approvals and does not waive security, isolation, data-integrity, truth, exact-SHA, hardware, provider, or regulatory requirements. Any P0/P1, isolation concern, data loss/corruption, truth violation, readiness failure, critical-worker violation, scope excess, SHA change, or expiry suspends the authorization.
+### P1 — release blocker
+Broken core workflow, materially wrong GPS/diagnostics/HOS, critical availability failure, major role boundary defect, unsafe provider mapping, material recovery failure.
 
-## Gate 1B - GT06 physical certification - NO-GO / DEFERRED / CLOSED WITHOUT CERTIFICATION
-Governance: #109 / PR #114 / `cert/gt06-physical-compatibility`.
+Action: fix in current batch before integration candidate can pass.
 
-`CR-2026-09-01-01` removes this gate from the active Wave 1 exit boundary because no authorized physical GT06 production candidate is available. The software harness remains at PILOT and may be retained in isolated staging, but this disposition is not a compatibility pass, waiver of physical evidence, supported-device listing, or permission to make a certified-hardware claim. Re-entry requires an exact physical manufacturer/model/hardware-revision/firmware combination, controlled enrollment, the mandatory Appendix B specialists, and completion of every stage below.
+### P2 — hardening batch
+Non-critical workflow defects, bounded performance issues, moderate UX/accessibility defects, incomplete operational behavior.
 
-Certification stages:
-1. Candidate - exact manufacturer/model/hardware revision/firmware/modem/radio/procurement identity.
-2. Protocol Identified - real device byte behavior confirmed; no guessed decoder evidence.
-3. Bench Compatible - identity/login/ACK/GPS/heartbeat/supported events/reboot/reconnect end to end.
-4. Vehicle Tested - controlled route vs reference GPS; freshness/geofence/speed/heading where supported.
-5. Failure/Recovery - power/network/GPS loss, duplicate session and server restart integrity.
-6. Soak - 24h for Certified Compatible; 72h for Production Supported.
-7. Security Review - provisioning, tenant binding, secrets/logs, replay/session policy.
-8. Certified Compatible - exact model/firmware capability and limitation record published.
-9. Production Supported - repeatable install, procurement, support/replacement process.
+Action: batch with owning module; do not force a certification cycle per item.
 
-Physical hardware, SIM/data service, safe bench/vehicle access and the exact production candidate are external evidence dependencies. Simulator results cannot close them.
+### P3 — backlog/polish
+Minor copy, cosmetic spacing, low-risk enhancement.
 
-# ACTIVE WAVE 2
+Action: backlog unless trivial and safe.
 
-`CR-2026-09-02-01` activates exactly two major workstreams after G1A LIMITED GO, merged PR #113 and closed #108: G2A under #115 and G2B under #116. Activation does not promote any capability. Real provider/account/device/commercial-rights/regulatory evidence remains mandatory, and G1B remains excluded and deferred.
+## 7. Batch-first defect closure
+Related findings are grouped by vertical slice, for example:
+- Vehicle Master batch: validation, correction, import, archive/reactivate, assignment/history, export.
+- Telematics Truth batch: freshness, device state, position truth, diagnostics, alerts, branch scope, provenance.
+- RBAC batch: role catalog, direct URL, export/mutation, branch/customer/driver boundaries.
+- Provider batch: authentication, discovery, mapping, backfill, pagination, cursor/replay, stale-feed health, disconnect/reconnect.
 
-## Samsara production certification
-- Customer-managed Connect -> Authenticate -> Discover -> Map -> Validate -> Sync -> Monitor -> Disconnect/Reconnect flow.
-- Deterministic matching and unmatched/reconciliation queue; no silent ambiguous mapping.
-- Backfill, incremental sync, backlog/last-success/error/stale-feed visibility.
-- Real Samsara account/provider data evidence.
-- Start with GPS/engine-state/odometer and expand only contract-tested fields.
-- Acceptance: customer connects without engineering intervention; provider provenance is visible; disconnect/reconnect is safe and idempotent.
+A batch receives one integration promotion and one certification run unless a P0 forces earlier isolation.
 
-## Certified ELD partner selection/integration
-Mandatory evaluation: U.S./Canada regulatory status, API depth, commercial rights, geography, hardware availability/install/support, security, webhooks/polling/backfill/rate limits/sandbox.
+## 8. External dependency policy
+Use status **EXTERNAL HOLD** when internal code readiness is bounded but final evidence depends on an unavailable external dependency.
 
-Do not build/market an ordinary GPS tracker as an ELD. U.S. and Canadian regulatory paths remain separate and must be verified against official sources.
+Examples:
+- GT06 physical model unavailable → EXTERNAL HOLD; no certified-hardware claim.
+- Samsara real account/token unavailable → internal connector hardening may continue; provider certification stays HOLD.
+- ELD partner/device/commercial rights unresolved → compliance architecture/research may continue; regulated package stays HOLD.
+- Camera vendor unavailable → canonical video/event/privacy architecture may continue; hardware/video certification stays HOLD.
 
-# WAVE 3
+Never fabricate external evidence and never let one external hold freeze unrelated squads.
 
-## HOS workflow
-Minimum: OFF/SB/D/ON timeline, automatic driving source, unidentified driving, applicable clocks and violation risk, edits/annotations/certification, supported special statuses, malfunction/diagnostic handling, inspection/transfer behavior as applicable, dispatch warnings when remaining legal time is insufficient.
+## 9. Current program truth at v2.0 activation
+- G1A: CLOSED to a **time-bounded LIMITED GO** for controlled pilot; M1/M2 remain PILOT, not generally certified/production-ready.
+- G1B GT06 physical: **EXTERNAL HOLD / NOT CERTIFIED**.
+- G2A Samsara: ACTIVE, currently PILOT/HOLD for final provider certification. Real-account/provider evidence remains mandatory.
+- G2B Certified ELD partner: ACTIVE due diligence/integration readiness; no regulated package claim yet.
+- Motive: connector readiness work exists; no provider certification claim.
+- HOS: DEVELOPMENT until sourced from a certified/qualified path and proven end-to-end.
+- Video Safety: ROADMAP/engineering-readiness until a real camera/provider path exists.
 
-Release only after source ELD evidence, edits/exceptions, audit reconstruction, role boundaries and inspection/transfer behavior are proven end to end.
+## 10. Factory board — vertical slices
+Each slice moves independently through `RED -> HARDENING -> INTEGRATION GREEN -> CERTIFICATION -> LOCKED`.
 
-## Dual-facing camera
-Use a proven road-facing + driver-facing OEM/provider. Require secure API/SDK, event metadata, clip/live retrieval where needed, canonical vehicle/driver/trip/time/location linkage, and privacy/retention/access policy before driver-facing video is enabled.
+1. Fleet Identity
+2. Vehicle Operations
+3. Driver Operations
+4. Device Operations
+5. GPS / Live Operations
+6. Dispatch
+7. Jobs / Orders
+8. Routes
+9. Maintenance
+10. Safety
+11. TMS / Shipments
+12. Last Mile
+13. Customer Portal
+14. Cold Chain
+15. Reporting / Analytics
+16. Platform Admin / Security
+17. Billing / Commercial Operations
+18. Integrations / Provider Hub
+19. HOS / ELD
+20. Video Safety
 
-# WAVE 4
+## 11. Integration gate — mandatory checks
+A candidate cannot advance to certification unless applicable checks are green:
+- full build with zero errors;
+- warning ceiling must not increase; warning debt gets a tracked burn-down target;
+- unit/contract suites;
+- PostgreSQL-backed integration;
+- migration enrollment and production-shaped rehearsal;
+- RBAC/RLS/tenant isolation regression;
+- frontend lint/contracts/build/bundle budget;
+- mobile contracts/build where touched;
+- telematics/protocol regression where touched;
+- dependency/security checks;
+- bounded load smoke;
+- release containers/provenance;
+- no open P0/P1 in candidate scope.
 
-## Video Safety
-Event -> Review -> Severity -> Driver -> Vehicle -> Trip -> Coaching -> Driver acknowledgement -> Supervisor closure -> Safety history. Preserve provider evidence and review decisions.
+## 12. Certification gate — mandatory evidence
+Only frozen candidates are certified.
 
-## Geotab / Motive / OEM
-Reuse one canonical telemetry model and one connector lifecycle. Each connector passes auth, discovery, mapping, backfill, incremental sync, failure/recovery, disconnect and tenant-isolation gates. Provider priority follows real sales pipeline/installed base.
+Customer-facing claims require visible Chrome and real persisted data. Provider claims require a real provider account/API response. Hardware claims require real physical hardware. ELD/HOS claims require jurisdiction-appropriate regulatory evidence and end-to-end operational proof. Production-support claims require scale, recovery, observability and supportability evidence.
 
-# WAVE 5
+Final acceptance must record exact frontend/API/build identity and limitations.
 
-## DeviceOps 2.0
-Inventory, SIM/eSIM/carrier, firmware campaigns, RMA/warranty/replacement, installer appointments/evidence, governed remote commands, certification/compatibility catalog.
+## 13. Daily executive velocity dashboard
+The program reports only decision-driving metrics daily:
+- open P0;
+- open P1;
+- P0/P1 closed in last 24h;
+- slices RED / HARDENING / INTEGRATION GREEN / CERTIFICATION / LOCKED;
+- active squads and blocked squads;
+- active certification candidates;
+- regression pass/fail count;
+- new regressions;
+- compiler warning count and delta;
+- staging availability/readiness;
+- key p95 performance indicators;
+- external holds;
+- commercial packages newly eligible or blocked.
 
-## J1939 depth
-Keep DM1/DM2; add selected gateway acquisition/transport/reassembly and certify high-value PGNs/SPNs against real hardware. No universal-J1939 claim without evidence.
+Long narrative evidence remains in issues/PR artifacts; executive status stays concise.
 
-## PT40
-Acquire exact unit -> capture real bytes -> fingerprint -> vendor parser/spec -> bench -> drive -> failure/recovery -> soak -> security -> certification.
+## 14. Current immediate execution directive
+1. **S2 Connected Vehicle:** finish PR #120 as a batched Samsara correctness/recovery integration unit; do not over-certify each internal fix. Keep Samsara provider certification HOLD until real account evidence exists.
+2. **S3 Compliance:** continue #116 partner/regulatory/commercial evidence and define the canonical ELD/HOS integration contract without claiming certification.
+3. **S5 Platform Hardening:** run continuous warning-debt, dependency/security, migration, DB/RLS, backup/restore, readiness, worker and recovery hardening against current main.
+4. **S1 Fleet/TMS Core:** begin post-Wave-1 module-by-module P0/P1 hardening of dispatch/jobs/routes/maintenance/TMS/customer workflows using realistic large-fleet data; batch related defects.
+5. **S6 UX/Performance:** execute shared-token/primitive enterprise-density hardening plus performance/accessibility regression; avoid page-by-page cosmetic patching.
+6. **S4 Video Safety:** prepare provider-agnostic camera/event/retention/privacy contracts and vendor evaluation criteria; final hardware/video evidence stays EXTERNAL HOLD until a real camera partner is selected.
+7. Central assurance consumes completed batches and forms integration candidates; no more full certification deployment after every minor fix.
 
-# Continuous hardening
-- Drive compiler/build warning debt downward.
-- Dependency/secrets/SAST + RBAC/RLS/device-trust regression.
-- Migrations remain production schema authority.
-- Metrics/logs/traces and actionable alerts for API/workers/connectors/gateway.
-- Backup verification, restore drills, restart/reconnect, queue replay/idempotency.
-- Browser/API/DB/gateway performance at representative scale.
-- Long-run worker/gateway/provider soak.
-- Honest no-data states and telemetry provenance/freshness.
-- Driver-camera and driver-record privacy/retention/audit.
+## 15. Commercial release policy
+Revenue activates package-by-package; the entire roadmap does not need to be complete.
 
-# Universal evidence stack
-1. Source/code review - supporting only.
-2. Automated tests - supporting only.
-3. Persisted data reconciliation - supporting only.
-4. Visible Chrome - required for customer-facing workflows.
-5. Real provider - required for provider claims.
-6. Physical hardware - required for hardware support claims.
-7. Regulatory evidence - required for ELD/HOS claims.
-8. Scale/recovery - required for production support tier.
+- Controlled Fleet/TMS Pilot: allowed only within the active limited-pilot boundaries and stop triggers.
+- Existing-provider Connected Fleet: after the relevant provider connector is certified with real-account evidence.
+- Certified GPS: only after exact hardware model/firmware passes physical certification.
+- Regulated ELD/HOS: only after certified/qualified source, commercial rights and OpsTrax end-to-end HOS acceptance.
+- Video Safety: only after real camera/provider integration, privacy controls, incident/coaching workflow and acceptance.
 
-# Change control
-- New ideas go to backlog unless they remove a blocker on the current active gate.
-- No module scope expansion during certification except required defect/market/compliance closure.
-- No future critical workstream starts without CTO activation.
-- Severe security/regulatory findings supersede schedule and attach to the owning gate.
-- External evidence can be prepared for but never simulated as passed.
-- Sales claims are checked against the Capability Truth Matrix before proposal/contract.
+## 16. Non-negotiable truth rules
+- UI/schema presence is not capability proof.
+- Simulator evidence is not hardware certification.
+- Catalog presence is not provider connectivity.
+- Provider reachability is not production integration proof.
+- AI review is not qualified-human regulatory/hardware acceptance.
+- Stale telemetry is never presented as current/live.
+- No ordinary GPS device may be marketed as an ELD.
+- Sales/marketing status must match the Capability Truth Matrix.
 
-Change classes:
-- Class 0 in-scope refinement - workstream lead.
-- Class 1 gate-impacting - CTO + relevant SME; issue + master change log.
-- Class 2 sequence change - CTO after SME review; master document version change.
-- Class 3 commercial waiver - CTO + applicable Security/Regulatory/Product; quantified waiver + expiry.
+## 17. Change control
+This v2.0 factory model supersedes the serial wave-execution mechanics in v1.x while preserving all prior commercial-truth, security, physical-evidence, provider-evidence, regulatory-evidence and time-bounded waiver constraints.
 
-# Fast-path cadence
-- Daily: active-gate evidence/blocker/P0-P1 pulse only.
-- Per defect: same observe/fix/exact-SHA/re-test loop.
-- Twice weekly: gate review.
-- Weekly: commercial truth review.
-- Gate close: independent SDET + Security/Regulatory/Product review as applicable.
+- Squad allocation/change within the six-lane factory: CTO Class 0/1 decision.
+- New certification candidate: CTO approval; max two concurrent.
+- Sequence/commercial claim change: documented change record.
+- Commercial waiver: quantified, time-bounded, explicit stop triggers and expiry.
+- Any P0 may override schedule.
 
-# Accelerated 12-week target map
-Calendar is subordinate to the gates and external partner/hardware availability.
+## 18. End-state
+The factory is complete when OpsTrax has commercially deployable, evidence-backed fleet/TMS operations; production provider connectivity; supportable device operations; valid regulated ELD/HOS integration; real video safety; hardened security/RBAC/tenancy; proven performance/recovery; and package-level commercial release gates that can be defended to customers, auditors and partners.
 
-| Window | Primary | Parallel | Outcome target |
-|---|---|---|---|
-| Weeks 1-2 | M1/M2 defect/evidence closeout | Freeze GT06 hardware + bench | Defect burn-down + hardware ready |
-| Weeks 3-4 | Final M1/M2 exact-SHA acceptance | GT06 bench + controlled vehicle | Core software gate + device decision |
-| Weeks 5-6 | Samsara real-account certification | ELD partner due diligence/API/commercial review | BYOT + ELD shortlist |
-| Weeks 7-8 | Finish Samsara customer workflow | Integrate ELD baseline + start HOS | Connected fleet + regulated source |
-| Weeks 9-10 | HOS workflows/evidence | Select/integrate camera baseline | HOS pilot + video event path |
-| Weeks 11-12 | HOS/video stabilization + sales packaging | Next provider/DeviceOps only if green | Controlled paid connected-fleet pilot package |
-
-# Commercial release rule
-Revenue activates package-by-package as gates pass; the whole roadmap does not need to be complete.
-
-- Fleet/TMS Pilot: M1 customer workflows accepted, limitations declared.
-- Connected Fleet / Existing Samsara: Samsara connector certified.
-- Connected Fleet / Certified GPS: exact hardware Certified Compatible/Production Supported.
-- Regulated Fleet / ELD-HOS: certified partner + OpsTrax HOS end-to-end accepted.
-- Video Safety: dual-camera + video/event + coaching accepted.
-
-# Immediate action register
-1. Monitor the #108/#113 controlled pilot under `CR-2026-09-01-02`; enforce its exact SHA, one-tenant, 10-vehicle, stop-trigger and expiry boundaries.
-2. Under #115, inventory the existing Samsara connector, tests, schemas and customer workflow and maintain a focused evidence/gap ledger.
-3. Continue bounded Samsara readiness fixes only where they do not depend on, simulate or represent missing real-account/provider evidence.
-4. Do not perform or claim Samsara field certification, gate closure or promotion until an authorized real account, API path and provider evidence are available.
-5. Under #116, perform official-source U.S./Canada regulatory and partner-readiness research while keeping the jurisdictions and certification boundaries separate.
-6. Do not select or represent an ELD integration as certified without a real partner/device boundary, commercial rights and the applicable end-to-end evidence.
-7. Maintain the disclosed dependency ledger: the Samsara account/API authority, ELD provider/device/commercial rights and qualified Appendix B human reviewer roster are not yet confirmed.
-8. Keep #109/#114 deferred, the isolated GT06 listener stopped and no device enrolled until the exact authorized physical candidate is available.
-9. Keep exactly #115 and #116 as the two active major Wave 2 lanes; no future gate starts without new CTO change control.
-10. Update the Capability Truth Matrix only when an owning gate formally closes or an approved change alters a boundary.
-
-# Master scorecard at v1.2
-| Gate | Status | Evidence lane | Activation |
-|---|---|---|---|
-| G0 Program control | GREEN | Master plan + #110 + truth matrix | Active/complete |
-| G1A M1/M2 certification | LIMITED GO - 30-DAY CONTROLLED PILOT | #108 / PR #113 / `CR-2026-09-01-02` | One tenant / max 10 vehicles / exact `e2230425...` / expires 2026-10-01 23:57:43 America/New_York |
-| G1B GT06 physical certification | NO-GO / DEFERRED - CLOSED WITHOUT CERTIFICATION | #109 / PR #114 / `CR-2026-09-01-01` | Re-open only with exact authorized physical hardware |
-| G2A Samsara production | ACTIVE - AMBER | #115 / `CR-2026-09-02-01` | Real authorized Samsara account/provider evidence required; G1B remains excluded |
-| G2B Certified ELD partner | ACTIVE - AMBER | #116 / `CR-2026-09-02-01` | Official regulatory verification, real partner/device boundary and commercial rights required |
-| G3A HOS | LOCKED | Future issue/PR | After ELD source selected/integrated |
-| G3B Dual camera | LOCKED | Future issue/PR | After partner selected |
-| G4 Video/provider ecosystem | LOCKED | Future issue/PR | After G3 passes |
-| G5 DeviceOps/J1939/PT40 | LOCKED | Future issue/PR | After provider/device foundation stable |
-| G6 Scale/commercial release | LOCKED | Final certification | After prerequisite gates |
-
-# CTO GO/NO-GO
-- **GO:** applicable gates met, 0 P0/P1, evidence package complete.
-- **LIMITED GO:** bounded pilot, no critical security/regulatory defect, limitations and CTO waiver explicit.
-- **NO-GO:** unresolved critical/P1 risk, regulatory uncertainty, tenant-isolation defect, fabricated truth or missing required real-world evidence.
-
-This plan remains the master sequence. It is updated by versioned change control, not by silently changing direction.
+**Governing principle:** build in parallel, integrate deliberately, certify only frozen meaningful candidates, and never trade truth for speed.
