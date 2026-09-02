@@ -88,6 +88,55 @@ public sealed class MotiveConnectorBehaviorTests
     private static MotiveConnector Connector(HttpMessageHandler handler) => new(
         new StaticHttpClientFactory(handler), NullLogger<MotiveConnector>.Instance);
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TestConnection_OversizeResponseStopsProbesWithoutPrebuffering(bool declaredLength)
+    {
+        var limit = MotiveResponseReader.ProbeResponseBytes;
+        var stream = new MotiveReadFixture([], unending: true);
+        using var content = new MotiveStreamingFixture(stream, declaredLength ? limit + 1 : null);
+        var handler = new ScriptedHandler(_ => new(HttpStatusCode.OK) { Content = content });
+        var result = await Connector(handler).TestConnectionAsync(Config(), CancellationToken.None);
+        Assert.False(result.Success);
+        Assert.Contains("exceeded the allowed size", result.Message);
+        Assert.Single(handler.Requests);
+        Assert.Equal(declaredLength ? 0 : limit + 1, stream.BytesRead);
+        Assert.False(content.WasBuffered);
+    }
+
+    [Fact]
+    public async Task TestConnection_DeniedScopeDoesNotReadOrBufferErrorBody()
+    {
+        var stream = new MotiveReadFixture([], unending: true);
+        using var content = new MotiveStreamingFixture(stream);
+        var handler = new ScriptedHandler(_ => new(HttpStatusCode.Forbidden) { Content = content });
+        var result = await Connector(handler).TestConnectionAsync(Config(), CancellationToken.None);
+        Assert.False(result.Success);
+        Assert.Single(handler.Requests);
+        Assert.Contains("companies.read", result.Message);
+        Assert.False(content.WasBuffered);
+        Assert.Equal(0, stream.BytesRead);
+    }
+
+    [Fact]
+    public async Task TestConnection_CancellationAfterHeadersStopsProbes()
+    {
+        var stream = new MotiveReadFixture([], stalled: true);
+        using var content = new MotiveStreamingFixture(stream);
+        var handler = new ScriptedHandler(_ => new(HttpStatusCode.OK) { Content = content });
+        using var cts = new CancellationTokenSource();
+        var verification = Connector(handler).TestConnectionAsync(Config(), cts.Token);
+        await stream.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cts.Cancel();
+        var result = await verification.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(result.Success);
+        Assert.Single(handler.Requests);
+        Assert.Contains("did not respond in time", result.Message);
+        Assert.True(stream.Disposed);
+        Assert.False(content.WasBuffered);
+    }
+
     private static IReadOnlyDictionary<string, string?> Config() =>
         new Dictionary<string, string?>
         {

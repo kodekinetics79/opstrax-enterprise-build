@@ -57,7 +57,9 @@ public sealed class MotiveConnector(
             foreach (var probe in RequiredProbes)
             {
                 var probePath = probe.Path.Replace("{utcDate}", utcDate, StringComparison.Ordinal);
-                using var response = await client.GetAsync(probePath, verificationTimeout.Token);
+                using var probeTimeout = CancellationTokenSource.CreateLinkedTokenSource(verificationTimeout.Token);
+                probeTimeout.CancelAfter(TimeSpan.FromSeconds(20));
+                using var response = await client.GetAsync(probePath, HttpCompletionOption.ResponseHeadersRead, probeTimeout.Token);
                 if ((int)response.StatusCode is 401 or 403)
                     return ConnectorResult.Fail(
                         $"Motive rejected the OAuth token or required read scope {probe.Scope} for {probe.Label}.");
@@ -69,7 +71,8 @@ public sealed class MotiveConnector(
 
                 try
                 {
-                    using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(verificationTimeout.Token));
+                    using var document = await MotiveResponseReader.ReadJsonAsync(
+                        response.Content, MotiveResponseReader.ProbeResponseBytes, probeTimeout.Token);
                     if (document.RootElement.ValueKind is not (JsonValueKind.Object or JsonValueKind.Array))
                         return ConnectorResult.Fail($"Motive {probe.Label} returned an invalid JSON envelope.");
                 }
@@ -88,7 +91,11 @@ public sealed class MotiveConnector(
                     ["writeScopesRequested"] = false,
                 });
         }
-        catch (TaskCanceledException)
+        catch (MotiveResponseReader.ResponseTooLargeException)
+        {
+            return ConnectorResult.Fail("Motive verification response exceeded the allowed size.");
+        }
+        catch (OperationCanceledException)
         {
             return ConnectorResult.Fail("Motive did not respond in time.");
         }
