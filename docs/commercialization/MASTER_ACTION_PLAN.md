@@ -6,7 +6,7 @@
 **Executive owner:** CTO Office / OpsTrax Commercialization Program  
 **Technical baseline:** `main@155b54a3451c2a4618b4fc6a87fd59f0e68f425d`  
 **Parent tracker:** #110  
-**Active Gate A:** #108 / PR #113 - M1/M2 current-SHA certification closeout  
+**Limited Gate A:** #108 / PR #113 - 30-day controlled-pilot LIMITED GO under `CR-2026-09-01-02`
 **Deferred Gate B:** #109 / PR #114 - GT06 physical compatibility certification; NO-GO / closed without certification under `CR-2026-09-01-01`
 
 ## Master rule
@@ -69,9 +69,9 @@ Any SME can raise a RED finding. Only the CTO may waive a gate, and every waiver
 | 5 - Device depth | DeviceOps 2.0, J1939 acquisition, PT40, OEM expansion | Supportable device lifecycle + heavy-duty breadth |
 | 6 - Scale release | 1K-5K+ resilience, DR/recovery, support, billing, commercial packaging | Commercial connected-fleet release |
 
-# ACTIVE WAVE 1
+# WAVE 1 - TIME-LIMITED CONTROLLED PILOT
 
-## Gate 1A - M1/M2 current-SHA certification
+## Gate 1A - M1/M2 current-SHA LIMITED GO
 Governance: #108 / PR #113 / `cert/m1-m2-current-sha-closeout`.
 
 Required closeout:
@@ -88,6 +88,8 @@ Required closeout:
 11. Defect loop: observe -> evidence -> root cause -> focused fix -> tests -> exact-SHA deploy -> identical re-test.
 
 Exit: 0 P0/P1; 0 tenant/branch leakage; 0 Driver/Customer internal-route exposure; 0 fabricated telemetry/diagnostics; exact-SHA evidence; customer journeys persist after refresh/logout-login; limitations declared.
+
+`CR-2026-09-01-02` grants a CTO-approved, 30-day **LIMITED GO** for exact frontend/API candidate `e2230425a8e14249d2c0f477a7ec7b713a6ab27e`. It authorizes one isolated tenant and no more than 10 pilot vehicles from 2026-09-01 23:57:43 through 2026-10-01 23:57:43 America/New_York. M1/M2 remain PILOT. The Class 1/Class 3 exception covers the missing relevant-SME/Security/Product human quorum, external qualified-human Appendix B acceptance, and final-candidate representative performance renewal for this window only; it discloses rather than fabricates those approvals and does not waive security, isolation, data-integrity, truth, exact-SHA, hardware, provider, or regulatory requirements. Any P0/P1, isolation concern, data loss/corruption, truth violation, readiness failure, critical-worker violation, scope excess, SHA change, or expiry suspends the authorization.
 
 ## Gate 1B - GT06 physical certification - NO-GO / DEFERRED / CLOSED WITHOUT CERTIFICATION
 Governance: #109 / PR #114 / `cert/gt06-physical-compatibility`.
@@ -109,7 +111,7 @@ Physical hardware, SIM/data service, safe bench/vehicle access and the exact pro
 
 # WAVE 2 - INACTIVE / QUEUED
 
-The G1B deferral does not itself activate Wave 2. Activation requires formal G1A GO or LIMITED GO after its remaining acceptance work, including A-02 restricted-role branch-isolation evidence, is independently accepted and recorded.
+The G1B deferral does not itself activate Wave 2. Although `CR-2026-09-01-02` records a time-limited G1A LIMITED GO, that record explicitly does not activate G2A/G2B. Wave 2 requires a separate CTO activation record confirming the real provider/partner dependencies, resources, gate owners, and commercial boundaries; G1B remains excluded and deferred.
 
 ## Samsara production certification
 - Customer-managed Connect -> Authenticate -> Discover -> Map -> Validate -> Sync -> Monitor -> Disconnect/Reconnect flow.
@@ -232,10 +234,10 @@ Revenue activates package-by-package as gates pass; the whole roadmap does not n
 | Gate | Status | Evidence lane | Activation |
 |---|---|---|---|
 | G0 Program control | GREEN | Master plan + #110 + truth matrix | Active/complete |
-| G1A M1/M2 certification | ACTIVE - AMBER | #108 / PR #113 | Active now |
+| G1A M1/M2 certification | LIMITED GO - 30-DAY CONTROLLED PILOT | #108 / PR #113 / `CR-2026-09-01-02` | One tenant / max 10 vehicles / exact `e2230425...` / expires 2026-10-01 23:57:43 America/New_York |
 | G1B GT06 physical certification | NO-GO / DEFERRED - CLOSED WITHOUT CERTIFICATION | #109 / PR #114 / `CR-2026-09-01-01` | Re-open only with exact authorized physical hardware |
-| G2A Samsara production | QUEUED | Future issue/PR | After G1A formal GO/LIMITED GO; G1B remains excluded |
-| G2B Certified ELD partner | QUEUED | Future issue/PR | After G1A formal GO/LIMITED GO; G1B remains excluded |
+| G2A Samsara production | QUEUED - NOT ACTIVATED | Future issue/PR | Separate CTO activation record required; G1B remains excluded |
+| G2B Certified ELD partner | QUEUED - NOT ACTIVATED | Future issue/PR | Separate CTO activation record required; G1B remains excluded |
 | G3A HOS | LOCKED | Future issue/PR | After ELD source selected/integrated |
 | G3B Dual camera | LOCKED | Future issue/PR | After partner selected |
 | G4 Video/provider ecosystem | LOCKED | Future issue/PR | After G3 passes |
