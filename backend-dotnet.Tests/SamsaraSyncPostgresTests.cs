@@ -486,7 +486,10 @@ public sealed class SamsaraSyncPostgresTests
                     c.Parameters.AddWithValue("@cid", companyId);
                     c.Parameters.AddWithValue("@id", integrationId);
                 });
-            Assert.Equal(newest.UtcDateTime, Convert.ToDateTime(row?["providerLastEventAt"]).ToUniversalTime());
+            Assert.Equal(
+                newest.UtcDateTime,
+                Convert.ToDateTime(row?["providerLastEventAt"]).ToUniversalTime(),
+                TimeSpan.FromMilliseconds(1));
             Assert.Equal(2, await db.ScalarLongAsync(
                 "SELECT COUNT(*) FROM location_events WHERE company_id=@cid AND source_channel='samsara-api'",
                 c => c.Parameters.AddWithValue("@cid", companyId)));

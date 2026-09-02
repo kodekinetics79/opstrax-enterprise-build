@@ -1,4 +1,6 @@
 using Opstrax.Api.Data;
+using Npgsql;
+using NpgsqlTypes;
 
 namespace Opstrax.Api.Services.Connectors;
 
@@ -130,7 +132,10 @@ public static class ConnectorOperationLease
                 {
                     Bind(c, operation);
                     c.Parameters.AddWithValue("@ok", result.Success);
-                    c.Parameters.AddWithValue("@cursor", (object?)nextCursor ?? DBNull.Value);
+                    c.Parameters.Add(new NpgsqlParameter("@cursor", NpgsqlDbType.Text)
+                    {
+                        Value = (object?)nextCursor ?? DBNull.Value
+                    });
                 }, ct), ct);
 
     public static Task<int> ReleaseAsErrorAsync(
