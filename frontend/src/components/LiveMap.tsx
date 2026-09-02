@@ -16,6 +16,7 @@ import {
   type FreshnessBucket,
   type ProvenanceCategory,
 } from "@/utils/telemetryProvenance";
+import { buildVehicleMarkerAccessibleName } from "@/utils/mapAccessibility";
 
 // Returns the vehicle's real GPS coordinate, or null when there is no genuine fix.
 // We never fabricate a position — a dot a dispatcher can't trust poisons the whole map.
@@ -347,12 +348,21 @@ export function LiveMap({ entities, geofences, routeTrails = [], onSelect, focus
         ? freshnessBucketLabel(fresh)
         : serverFreshness ? serverFreshness.charAt(0).toUpperCase() + serverFreshness.slice(1) : "Unknown";
       const freshDotColor = fresh != null ? freshnessColor(fresh) : "#94a3b8";
+      const operationalStatus = notRecentText(fresh, isStale, status);
+      const markerAccessibleName = buildVehicleMarkerAccessibleName({
+        label,
+        fallbackId: key,
+        driver,
+        freshness: freshLabel,
+        operationalStatus,
+        speedMph: Number.isFinite(speed) ? speed : null,
+      });
 
       const popupHtml =
         `<div style="font-family:system-ui;font-size:12px;min-width:210px;line-height:1.5">
           <p style="font-weight:700;margin:0 0 2px;font-size:13px">${label}</p>
           <p style="margin:0;color:#475569">${driver}</p>
-          <p style="margin:2px 0 0;color:#64748b">${Number.isFinite(speed) ? `${Math.round(speed)} mph &bull; ` : ""}${notRecentText(fresh, isStale, status)}</p>
+          <p style="margin:2px 0 0;color:#64748b">${Number.isFinite(speed) ? `${Math.round(speed)} mph &bull; ` : ""}${operationalStatus}</p>
           ${address ? `<p style="margin:3px 0 0;color:#334155;font-size:11px">&#128205; ${address}</p>` : ""}
           <div style="margin:6px 0 0;padding-top:5px;border-top:1px solid #e2e8f0">
             <span style="display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:700;color:${catColor};border:1px solid ${catColor};border-radius:9999px;padding:1px 6px;text-transform:uppercase;letter-spacing:.04em">${categoryBadge(sourceCat)}</span>
@@ -371,10 +381,25 @@ export function LiveMap({ entities, geofences, routeTrails = [], onSelect, focus
         marker.setIcon(makeVehicleIcon(fresh, sourceCat, risk, status, speed, heading, isStale, deviceStatus, camStatus));
         marker.setPopupContent(popupHtml);
       } else {
-        marker = L.marker([lat, lng], { icon: makeVehicleIcon(fresh, sourceCat, risk, status, speed, heading, isStale, deviceStatus, camStatus) })
+        marker = L.marker([lat, lng], {
+          icon: makeVehicleIcon(fresh, sourceCat, risk, status, speed, heading, isStale, deviceStatus, camStatus),
+          keyboard: true,
+          title: markerAccessibleName,
+          alt: markerAccessibleName,
+        })
           .addTo(map)
           .bindPopup(popupHtml, { closeButton: false });
         markers.set(key, marker);
+      }
+      // DivIcon markers do not apply MarkerOptions.alt to their root element.
+      // Set the live DOM attributes after both creation and setIcon updates so
+      // every keyboard-focusable marker has a current, distinct accessible name.
+      marker.options.title = markerAccessibleName;
+      marker.options.alt = markerAccessibleName;
+      const markerElement = marker.getElement();
+      if (markerElement) {
+        markerElement.setAttribute("aria-label", markerAccessibleName);
+        markerElement.setAttribute("title", markerAccessibleName);
       }
       // Rebind click each pass so it always carries the latest entity snapshot.
       const capturedEntity = entity;

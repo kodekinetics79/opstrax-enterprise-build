@@ -3,6 +3,7 @@ import fs from "node:fs";
 import { resolveAuthorizedSummaryCount } from "../src/utils/vehicleSummaryPresentation.ts";
 import { summarizePositionFreshness } from "../src/utils/telemetryProvenance.ts";
 import { summarizeControlTowerStatus } from "../src/utils/controlTowerStatus.ts";
+import { buildVehicleMarkerAccessibleName } from "../src/utils/mapAccessibility.ts";
 
 const audit = fs.readFileSync(new URL("../src/pages/AuditLogsPage.tsx", import.meta.url), "utf8");
 const vehicles = fs.readFileSync(new URL("../src/pages/VehiclesPage.tsx", import.meta.url), "utf8");
@@ -71,6 +72,34 @@ for (const page of [liveMap, controlTower]) {
 assert.match(liveMap, /Last-known vehicle positions/, "Fleet map must describe positions as last-known");
 assert.doesNotMatch(liveMapComponent, /Live fleet map/, "The map's accessible name must not overclaim stale positions as live");
 assert.match(liveMapComponent, /Positions may be last-known/, "The map's accessible name must disclose position currency");
+assert.match(
+  liveMapComponent,
+  /markerElement\.setAttribute\("aria-label", markerAccessibleName\)/,
+  "Every rendered vehicle marker must receive its current accessible name",
+);
+assert.equal(
+  buildVehicleMarkerAccessibleName({
+    label: "WESTHUB-V-0199",
+    fallbackId: "vehicle-199",
+    driver: "Unassigned",
+    freshness: "Stale",
+    operationalStatus: "Stale",
+    speedMph: 0,
+  }),
+  "Vehicle WESTHUB-V-0199, position stale, status stale, driver Unassigned, 0 miles per hour",
+  "Vehicle-marker names must identify the vehicle and disclose freshness and operational status",
+);
+assert.equal(
+  buildVehicleMarkerAccessibleName({
+    label: "Vehicle",
+    fallbackId: "vehicle-42",
+    driver: "",
+    freshness: "",
+    operationalStatus: "",
+  }),
+  "Vehicle vehicle-42, position unknown, status unknown, driver unassigned",
+  "Generic marker labels must fall back to a stable identifier rather than producing duplicate controls",
+);
 assert.doesNotMatch(
   controlTower,
   /(?:onlineDevices|onlineCameras|highRiskUnits|speedAlerts)\s*\?\?\s*0/,
