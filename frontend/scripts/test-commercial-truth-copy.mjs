@@ -10,6 +10,7 @@ const audit = fs.readFileSync(new URL("../src/pages/AuditLogsPage.tsx", import.m
 const vehicles = fs.readFileSync(new URL("../src/pages/VehiclesPage.tsx", import.meta.url), "utf8");
 const liveMap = fs.readFileSync(new URL("../src/pages/LiveMapPage.tsx", import.meta.url), "utf8");
 const liveMapComponent = fs.readFileSync(new URL("../src/components/LiveMap.tsx", import.meta.url), "utf8");
+const geofences = fs.readFileSync(new URL("../src/pages/GeofenceManagementPage.tsx", import.meta.url), "utf8");
 const controlTower = fs.readFileSync(new URL("../src/pages/ControlTowerPage.tsx", import.meta.url), "utf8");
 const moduleConfig = fs.readFileSync(new URL("../src/modules/moduleConfig.ts", import.meta.url), "utf8");
 
@@ -48,6 +49,11 @@ assert.match(vehicles, /label="Authorized scope at risk"/, "At-risk KPI must dis
 assert.match(vehicles, /label="Authorized scope device \/ camera gaps"/, "Device-gap KPI must disclose authorized scope");
 assert.match(vehicles, /\{moving\} moving on page/, "Vehicle footer movement count must disclose page scope");
 assert.doesNotMatch(vehicles, /need attention fleet-wide|Fleet-wide high risk|Fleet-wide telematics/, "Restricted users must not see tenant-wide scope claims");
+
+assert.match(geofences, /aria-label={`Edit geofence \${String\(zone\.name \?\? zone\.id\)}`}/, "Each geofence edit control must identify its target zone");
+assert.match(geofences, /aria-label={`Delete geofence \${String\(zone\.name \?\? zone\.id\)}`}/, "Each geofence delete control must identify its target zone");
+assert.match(geofences, /aria-label={`View events for geofence \${String\(zone\.name \?\? zone\.id\)}`}/, "Each geofence event control must identify its target zone");
+assert.match(geofences, /aria-label="Close geofence dialog"/, "The geofence editor close control must expose its purpose");
 
 assert.ok(VEHICLE_TYPE_OPTIONS.includes("Tractor"), "The governed large-fleet Tractor type must be editable");
 assert.deepEqual(

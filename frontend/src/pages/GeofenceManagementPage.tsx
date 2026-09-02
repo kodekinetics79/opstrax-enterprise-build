@@ -223,7 +223,7 @@ function GeofenceModal({
       <form className="panel w-full max-w-md mx-4 flex flex-col gap-4" onClick={(e) => e.stopPropagation()} onSubmit={handleSubmit}>
         <div className="flex items-center justify-between">
           <h3 className="text-base font-semibold text-slate-900">{isEdit ? "Edit Geofence" : isPolygon ? "Create Polygon Geofence" : "Create Geofence"}</h3>
-          <button type="button" className="text-slate-400 hover:text-slate-600" onClick={onClose}>✕</button>
+          <button type="button" className="text-slate-400 hover:text-slate-600" onClick={onClose} aria-label="Close geofence dialog">✕</button>
         </div>
         <div className="flex flex-col gap-1">
           <label className="text-xs font-medium text-slate-700">Name <span className="text-red-500">*</span></label>
@@ -558,8 +558,8 @@ export function GeofenceManagementPage() {
                         </span>
                         {canEdit && (
                           <>
-                            <button type="button" className="text-xs text-slate-400 hover:text-violet-600 px-1" onClick={(e) => { e.stopPropagation(); setModalData(zone); }}>✎</button>
-                            <button type="button" className="text-xs text-slate-400 hover:text-red-500 px-1" onClick={(e) => { e.stopPropagation(); if (confirm(`Delete "${String(zone.name)}"?`)) deleteMutation.mutate(Number(zone.id)); }}>✕</button>
+                            <button type="button" className="text-xs text-slate-400 hover:text-violet-600 px-1" aria-label={`Edit geofence ${String(zone.name ?? zone.id)}`} onClick={(e) => { e.stopPropagation(); setModalData(zone); }}>✎</button>
+                            <button type="button" className="text-xs text-slate-400 hover:text-red-500 px-1" aria-label={`Delete geofence ${String(zone.name ?? zone.id)}`} onClick={(e) => { e.stopPropagation(); if (confirm(`Delete "${String(zone.name)}"?`)) deleteMutation.mutate(Number(zone.id)); }}>✕</button>
                           </>
                         )}
                       </div>
@@ -567,6 +567,7 @@ export function GeofenceManagementPage() {
                     <button
                       type="button"
                       className="mt-2 text-xs text-violet-600 hover:text-violet-800 font-medium"
+                      aria-label={`View events for geofence ${String(zone.name ?? zone.id)}`}
                       onClick={(e) => { e.stopPropagation(); setShowEvents(zone); }}
                     >
                       View events →
