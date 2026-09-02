@@ -174,6 +174,29 @@ public sealed class TelemetryLaunchHardeningTests
     }
 
     [Fact]
+    public void CatalogOnlyProvidersCannotAcceptCredentialsOrAppearConnectable()
+    {
+        var endpoints = Read("backend-dotnet", "Controllers", "EndpointMappings.cs");
+        var configure = Block(endpoints, "private static async Task<IResult> ConfigureIntegration", "// ── POST /api/integrations/{id}/test-connection");
+        var registry = Read("backend-dotnet", "Services", "Connectors", "ConnectorRegistry.cs");
+        var api = Read("frontend", "src", "services", "integrationsApi.ts");
+        var page = Read("frontend", "src", "pages", "IntegrationsPage.tsx");
+
+        Assert.Contains("public bool HasAdapter", registry, StringComparison.Ordinal);
+        Assert.Contains("adapterAvailable = isCustom || connectors.HasAdapter(key)", endpoints, StringComparison.Ordinal);
+        Assert.Contains("!connectors.HasAdapter(integrationKey)", configure, StringComparison.Ordinal);
+        AssertOrdered(configure, "!connectors.HasAdapter(integrationKey)", "MergeConfigForStorage");
+        Assert.Contains("No credentials were stored", configure, StringComparison.Ordinal);
+        Assert.Contains("Status422UnprocessableEntity", configure, StringComparison.Ordinal);
+        Assert.Equal(3, Count(endpoints, "RequireAvailableIntegrationAdapterAsync(db, companyId, id, connectors, ct)"));
+        Assert.Contains("adapterAvailable: boolean", api, StringComparison.Ordinal);
+        Assert.Contains("if (record.adapterAvailable !== true) return []", page, StringComparison.Ordinal);
+        Assert.Contains("Adapter unavailable — evaluation only", page, StringComparison.Ordinal);
+        Assert.Contains("OpsTrax will not accept credentials for it", page, StringComparison.Ordinal);
+        Assert.Contains("No credentials can be stored and no connection is claimed", page, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void SamsaraLifecycleIsFailClosedAcrossDisconnectSyncAndProviderMappingUi()
     {
         var endpoints = Read("backend-dotnet", "Controllers", "EndpointMappings.cs");

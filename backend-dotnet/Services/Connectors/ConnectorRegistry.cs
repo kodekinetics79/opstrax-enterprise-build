@@ -43,6 +43,14 @@ public sealed class ConnectorRegistry
             : _fallback;
     }
 
+    /// <summary>
+    /// True only when this build has a provider-specific connector registered for the
+    /// catalog key. Tenant-created custom connectors intentionally use the generic HTTP
+    /// fallback and are classified separately by the endpoint response shaper.
+    /// </summary>
+    public bool HasAdapter(string? integrationKey) =>
+        integrationKey is not null && _byKey.ContainsKey(integrationKey);
+
     // Config keys whose VALUES are secrets: encrypted at rest, decrypted only for the
     // outbound call, and redacted when the config is returned to the client. apiToken is
     // Samsara's documented name and must not fall through merely because apiKey/token are

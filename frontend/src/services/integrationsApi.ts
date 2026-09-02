@@ -42,6 +42,9 @@ export type IntegrationRecord = {
   // True for tenant-created connectors (fully editable/deletable). Built-in catalog
   // connectors are is_custom=false and are reset rather than deleted.
   isCustom?: boolean;
+  // True only when this build can actually run the provider adapter. Catalog-only
+  // entries remain visible for evaluation but cannot accept credentials or claim a connection.
+  adapterAvailable: boolean;
   // Connector health from the last real handshake (test-connection).
   lastTestedAt?: string | null;
   lastTestOk?: boolean | null;

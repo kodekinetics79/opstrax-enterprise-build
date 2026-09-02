@@ -45,7 +45,7 @@ public sealed class ConnectorSecretHardeningTests
     [Fact]
     public async Task Registry_FailsClosedForCatalogOnlyProviderButKeepsCustomHttpFallback()
     {
-        var registry = Registry(new TestKeyProvider(), Environments.Staging);
+        var registry = Registry(new TestKeyProvider(), Environments.Staging, new StubConnector("samsara"));
 
         var catalog = registry.Resolve("geotab");
         var catalogResult = await catalog.TestConnectionAsync(
@@ -56,6 +56,9 @@ public sealed class ConnectorSecretHardeningTests
         Assert.False(catalogResult.Success);
         Assert.Contains("provider-specific adapter", catalogResult.Message, StringComparison.OrdinalIgnoreCase);
         Assert.IsType<GenericHttpConnector>(registry.Resolve("tenant-custom-webhook"));
+        Assert.True(registry.HasAdapter("samsara"));
+        Assert.False(registry.HasAdapter("geotab"));
+        Assert.False(registry.HasAdapter("tenant-custom-webhook"));
     }
 
     [Fact]
@@ -221,11 +224,20 @@ public sealed class ConnectorSecretHardeningTests
         Assert.Contains("structured-secret", registry.DecryptConfig(merged)["api_token"], StringComparison.Ordinal);
     }
 
-    private static ConnectorRegistry Registry(IDataKeyProvider keys, string environment)
+    private static ConnectorRegistry Registry(IDataKeyProvider keys, string environment, params IConnector[] connectors)
     {
         var pii = new PiiProtectionService(keys, NullLogger<PiiProtectionService>.Instance);
         var fallback = new GenericHttpConnector(new NeverHttpClientFactory(), NullLogger<GenericHttpConnector>.Instance);
-        return new ConnectorRegistry([], fallback, pii, new TestEnvironment(environment));
+        return new ConnectorRegistry(connectors, fallback, pii, new TestEnvironment(environment));
+    }
+
+    private sealed class StubConnector(string key) : IConnector
+    {
+        public IReadOnlyCollection<string> Keys { get; } = [key];
+        public string DisplayName { get; } = key;
+        public Task<ConnectorResult> TestConnectionAsync(
+            IReadOnlyDictionary<string, string?> config, CancellationToken ct) =>
+            Task.FromResult(ConnectorResult.Ok("stub"));
     }
 
     private sealed class NeverHttpClientFactory : IHttpClientFactory

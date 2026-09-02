@@ -972,8 +972,9 @@ public static partial class EndpointMappings
 
         // ── Integrations ──
         // ── Integrations control-tower (full CRUD) ────────────────────────────────
-        // The connectivity/config utility room. Every connector — built-in or custom —
-        // is editable and CRUD-able. Reads return the full record shape the UI needs
+        // The connectivity/config utility room. Tenant-created connectors are editable;
+        // built-in catalog providers accept credentials only when this build registers a
+        // provider-specific adapter. Reads return the full record shape the UI needs
         // (records + summary + activity). Permission: integrations:view / :manage, with
         // telematics:providers:manage accepted as a legacy alias for manage.
         app.MapGet("/api/integrations", IntegrationsList);
@@ -11229,7 +11230,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 statusCode: StatusCodes.Status403Forbidden);
     }
 
-    private static async Task<IResult> IntegrationsList(HttpContext http, Database db, CancellationToken ct)
+    private static async Task<IResult> IntegrationsList(HttpContext http, Database db,
+        Opstrax.Api.Services.Connectors.ConnectorRegistry connectors, CancellationToken ct)
     {
         if (IntegrationsViewGuard(http) is { } denied) return denied;
         if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
@@ -11259,7 +11261,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         // parsed arrays/objects). Without this the page's `record.relatedSystems.length`
         // etc. throw at render because the DB returns related_systems_json as a JSON
         // STRING under `relatedSystemsJson`, not a `relatedSystems` array.
-        var shapedRecords = records.Select(r => ShapeIntegration(r, companyId)).ToList();
+        var shapedRecords = records.Select(r => ShapeIntegration(r, companyId, connectors)).ToList();
         var shapedActivity = activity.Select(ShapeIntegrationActivity).ToList();
         return Results.Ok(ApiResponse<object>.Ok(new
         {
@@ -11312,7 +11314,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         catch { return new(); }
     }
 
-    private static object ShapeIntegration(Dictionary<string, object?> row, long companyId)
+    private static object ShapeIntegration(Dictionary<string, object?> row, long companyId,
+        Opstrax.Api.Services.Connectors.ConnectorRegistry connectors)
     {
         string Str(string k) => row.TryGetValue(k, out var v) && v is not null ? v.ToString() ?? "" : "";
         var name = Str("providerName");
@@ -11321,6 +11324,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             key = System.Text.RegularExpressions.Regex.Replace(name.ToLowerInvariant(), "\\s+", "-");
         var lastSyncAt = row.TryGetValue("lastSyncAt", out var ls) && ls is not null ? ls : null;
         var syncLabel = Str("syncLabel");
+        var isCustom = row.TryGetValue("isCustom", out var ic) && ic is bool b && b;
         return new
         {
             id = row.TryGetValue("id", out var idv) && idv is not null ? Convert.ToInt64(idv) : 0L,
@@ -11345,7 +11349,10 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             config = Opstrax.Api.Services.Connectors.ConnectorRegistry.RedactConfig(row.GetValueOrDefault("configJson")),
             // Lets the UI show edit/delete only on tenant-created (custom) connectors;
             // built-in catalog connectors are reset, not deleted.
-            isCustom = row.TryGetValue("isCustom", out var ic) && ic is bool b && b,
+            isCustom,
+            // Built-in catalog presence is not connector capability. Only a registered
+            // provider adapter (or a tenant-created generic connector) is configurable.
+            adapterAvailable = isCustom || connectors.HasAdapter(key),
             // Connector health signal from the last real handshake.
             lastTestedAt = row.GetValueOrDefault("lastTestedAt"),
             lastTestOk = row.TryGetValue("lastTestOk", out var lto) && lto is bool tb ? tb : (bool?)null,
@@ -11397,7 +11404,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         };
     }
 
-    private static async Task<IResult> IntegrationDetail(HttpContext http, long id, Database db, CancellationToken ct)
+    private static async Task<IResult> IntegrationDetail(HttpContext http, long id, Database db,
+        Opstrax.Api.Services.Connectors.ConnectorRegistry connectors, CancellationToken ct)
     {
         if (IntegrationsViewGuard(http) is { } denied) return denied;
         if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
@@ -11414,9 +11422,28 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         // Shape to the frontend IntegrationDetailPayload contract (parsed arrays/objects).
         return Results.Ok(ApiResponse<object>.Ok(new
         {
-            record = ShapeIntegration(record, companyId),
+            record = ShapeIntegration(record, companyId, connectors),
             activity = activity.Select(ShapeIntegrationActivity).ToList(),
         }));
+    }
+
+    private static async Task<IResult?> RequireAvailableIntegrationAdapterAsync(
+        Database db,
+        long companyId,
+        long id,
+        Opstrax.Api.Services.Connectors.ConnectorRegistry connectors,
+        CancellationToken ct)
+    {
+        var row = await db.QuerySingleAsync(
+            "SELECT integration_key,COALESCE(is_custom,false) is_custom FROM integrations WHERE company_id=@cid AND id=@id LIMIT 1",
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); }, ct);
+        if (row is null) return Results.NotFound(ApiResponse<object>.Fail("Integration not found"));
+        var isCustom = row.TryGetValue("isCustom", out var customRaw) && customRaw is bool custom && custom;
+        var integrationKey = row.GetValueOrDefault("integrationKey")?.ToString();
+        if (isCustom || connectors.HasAdapter(integrationKey)) return null;
+        return Results.Json(ApiResponse<object>.Fail(
+            "This catalog provider has no provider-specific adapter in this build."),
+            statusCode: StatusCodes.Status422UnprocessableEntity);
     }
 
     private static string IntegrationSlug(string name) =>
@@ -11448,7 +11475,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             c => { c.Parameters.AddWithValue("@cid", companyId); BindIntegration(c, body, name, key, protectedConfig); }, ct);
         await audit.LogAsync(http, "integration.created", "Integration", id,
             detailsJson: System.Text.Json.JsonSerializer.Serialize(new { key, name }), ct: ct);
-        return await IntegrationDetail(http, id, db, ct);
+        return await IntegrationDetail(http, id, db, connectors, ct);
     }
 
     private static async Task<IResult> UpdateIntegration(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit,
@@ -11492,7 +11519,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         }, ct);
         if (!updated) return Results.NotFound(ApiResponse<object>.Fail("Integration not found"));
         await audit.LogAsync(http, "integration.updated", "Integration", id, ct: ct);
-        return await IntegrationDetail(http, id, db, ct);
+        return await IntegrationDetail(http, id, db, connectors, ct);
     }
 
     // Serializes every read/merge/write configuration mutation with disconnect/reset.
@@ -11508,7 +11535,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         db.RunInTenantTransactionAsync(companyId, async () =>
         {
             var existing = await db.QuerySingleAsync(
-                @"SELECT config_json,operation_generation FROM integrations
+                @"SELECT config_json,operation_generation,integration_key,COALESCE(is_custom,false) is_custom FROM integrations
                   WHERE company_id=@cid AND id=@id
                   FOR UPDATE",
                 c =>
@@ -11519,7 +11546,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             return existing is not null && await mutation(existing) > 0;
         }, ct);
 
-    private static async Task<IResult> RemoveIntegration(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct)
+    private static async Task<IResult> RemoveIntegration(HttpContext http, long id, Database db, AuditService audit,
+        Opstrax.Api.Services.Connectors.ConnectorRegistry connectors, CancellationToken ct)
     {
         if (IntegrationsManageGuard(http) is { } denied) return denied;
         if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
@@ -11548,10 +11576,11 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
               WHERE company_id=@cid AND id=@id",
             c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); }, ct);
         await audit.LogAsync(http, "integration.reset", "Integration", id, ct: ct);
-        return await IntegrationDetail(http, id, db, ct);
+        return await IntegrationDetail(http, id, db, connectors, ct);
     }
 
-    private static async Task<IResult> DisconnectIntegration(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct)
+    private static async Task<IResult> DisconnectIntegration(HttpContext http, long id, Database db, AuditService audit,
+        Opstrax.Api.Services.Connectors.ConnectorRegistry connectors, CancellationToken ct)
     {
         if (IntegrationsManageGuard(http) is { } denied) return denied;
         if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
@@ -11582,7 +11611,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                 syncCursorRemoved = true,
                 providerCredentialRevocationRequired = true,
             }), ct: ct);
-        return await IntegrationDetail(http, id, db, ct);
+        return await IntegrationDetail(http, id, db, connectors, ct);
     }
 
     private static async Task<IResult> IntegrationSync(HttpContext http, long id, Database db, AuditService audit,
@@ -11591,6 +11620,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (IntegrationsManageGuard(http) is { } denied) return denied;
         if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
         var companyId = GetCompanyId(http);
+        if (await RequireAvailableIntegrationAdapterAsync(db, companyId, id, connectors, ct) is { } unavailable)
+            return unavailable;
         var operation = await Opstrax.Api.Services.Connectors.ConnectorOperationLease.TryAcquireAsync(
             db, companyId, id, ["Connected"], TimeSpan.FromSeconds(90), ct,
             isSyncOperation: true);
@@ -11647,8 +11678,16 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (IntegrationsManageGuard(http) is { } denied) return denied;
         if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
         var companyId = GetCompanyId(http);
+        var adapterUnavailable = false;
         var configured = await RunLockedIntegrationMutationAsync(db, companyId, id, async existing =>
         {
+            var isCustom = existing.TryGetValue("isCustom", out var customRaw) && customRaw is bool custom && custom;
+            var integrationKey = existing.GetValueOrDefault("integrationKey")?.ToString();
+            if (!isCustom && !connectors.HasAdapter(integrationKey))
+            {
+                adapterUnavailable = true;
+                return 0;
+            }
             // Recursive merge preserves omitted/masked stored credentials and encrypts
             // every changed sensitive leaf. The row lock ensures the stored snapshot
             // cannot be invalidated by disconnect between this merge and its write.
@@ -11676,9 +11715,13 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                     c.Parameters.AddWithValue("@config", configJson);
                 }, ct);
         }, ct);
+        if (adapterUnavailable)
+            return Results.Json(ApiResponse<object>.Fail(
+                "This catalog provider has no provider-specific adapter in this build. No credentials were stored."),
+                statusCode: StatusCodes.Status422UnprocessableEntity);
         if (!configured) return Results.NotFound(ApiResponse<object>.Fail("Integration not found"));
         await audit.LogAsync(http, "integration.configured", "Integration", id, ct: ct);
-        return await IntegrationDetail(http, id, db, ct);
+        return await IntegrationDetail(http, id, db, connectors, ct);
     }
 
     // ── POST /api/integrations/{id}/test-connection ────────────────────────────────
@@ -11691,6 +11734,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (IntegrationsManageGuard(http) is { } denied) return denied;
         if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
         var companyId = GetCompanyId(http);
+        if (await RequireAvailableIntegrationAdapterAsync(db, companyId, id, connectors, ct) is { } unavailable)
+            return unavailable;
         var operation = await Opstrax.Api.Services.Connectors.ConnectorOperationLease.TryAcquireAsync(
             db, companyId, id, ["Pending", "Disconnected", "Connected", "Error"], TimeSpan.FromSeconds(45), ct);
         if (operation is null)
@@ -11730,6 +11775,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (IntegrationsManageGuard(http) is { } denied) return denied;
         if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
         var companyId = GetCompanyId(http);
+        if (await RequireAvailableIntegrationAdapterAsync(db, companyId, id, connectors, ct) is { } unavailable)
+            return unavailable;
         var action = body.ValueKind == System.Text.Json.JsonValueKind.Object && body.TryGetProperty("action", out var a) ? a.GetString() : null;
         if (string.IsNullOrWhiteSpace(action)) return Results.BadRequest(ApiResponse<object>.Fail("An 'action' is required."));
         // Sync carries tenant scope into a system-RLS transaction. Never allow the
