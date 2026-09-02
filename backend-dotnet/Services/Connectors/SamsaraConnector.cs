@@ -12,7 +12,8 @@ namespace Opstrax.Api.Services.Connectors;
 // (latest_vehicle_positions + location_events), so Samsara vehicles appear live.
 //
 // Auth:   Bearer <apiToken>  (config key "apiToken" / "apiKey", SENSITIVE)
-// Verify: GET /fleet/vehicles  (200 = token valid + has fleet read scope)
+// Verify: GET /fleet/vehicles plus a bounded GET of the vehicle stats feed.
+//         Both required read scopes must succeed before the connector is Connected.
 // Sync:   GET /fleet/vehicles/stats/feed?types=gps,engineStates,obdOdometerMeters
 //         (cursor-paginated; endCursor persisted per-connector so each sync is
 //          incremental). Each vehicle is resolved through a globally unique
@@ -56,23 +57,72 @@ public sealed class SamsaraConnector(
         try
         {
             var client = Client(token!);
-            using var resp = await client.GetAsync("/fleet/vehicles?limit=1", ct);
-            if (resp.IsSuccessStatusCode)
+            int sampleVehicleCount;
+            string? sampleVehicleId;
+            using (var vehiclesResponse = await client.GetAsync("/fleet/vehicles?limit=1", ct))
             {
-                int count = 0;
+                if ((int)vehiclesResponse.StatusCode is 401 or 403)
+                    return ConnectorResult.Fail("Samsara rejected the token or its 'Read Vehicles' scope.");
+                if (!vehiclesResponse.IsSuccessStatusCode)
+                    return ConnectorResult.Fail($"Samsara vehicle access returned {(int)vehiclesResponse.StatusCode} {vehiclesResponse.ReasonPhrase}.");
+
                 try
                 {
-                    using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
-                    if (doc.RootElement.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Array)
-                        count = data.GetArrayLength();
+                    using var vehiclesDocument = JsonDocument.Parse(await vehiclesResponse.Content.ReadAsStringAsync(ct));
+                    if (!vehiclesDocument.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+                        return ConnectorResult.Fail("Samsara vehicle access returned an invalid response envelope; connection was not accepted.");
+
+                    sampleVehicleCount = data.GetArrayLength();
+                    sampleVehicleId = sampleVehicleCount > 0
+                        && data[0].ValueKind == JsonValueKind.Object
+                        && data[0].TryGetProperty("id", out var id)
+                        && id.ValueKind == JsonValueKind.String
+                            ? id.GetString()
+                            : null;
+                    if (sampleVehicleCount > 0 && string.IsNullOrWhiteSpace(sampleVehicleId))
+                        return ConnectorResult.Fail("Samsara vehicle access returned a vehicle without its required identifier; connection was not accepted.");
                 }
-                catch { /* body optional */ }
-                return ConnectorResult.Ok("Connected to Samsara — token is valid and has fleet read access.",
-                    new Dictionary<string, object?> { ["sampleVehicleCount"] = count });
+                catch (JsonException)
+                {
+                    return ConnectorResult.Fail("Samsara vehicle access returned malformed JSON; connection was not accepted.");
+                }
             }
-            if ((int)resp.StatusCode is 401 or 403)
-                return ConnectorResult.Fail("Samsara rejected the token (auth). Check the token and that it has 'Read Vehicles' + 'Read Vehicle Statistics' scopes.");
-            return ConnectorResult.Fail($"Samsara returned {(int)resp.StatusCode} {resp.ReasonPhrase}.");
+
+            var statisticsUrl = "/fleet/vehicles/stats/feed?types=gps";
+            if (!string.IsNullOrWhiteSpace(sampleVehicleId))
+                statisticsUrl += $"&vehicleIds={Uri.EscapeDataString(sampleVehicleId)}";
+
+            using var statisticsResponse = await client.GetAsync(statisticsUrl, ct);
+            if ((int)statisticsResponse.StatusCode is 401 or 403)
+                return ConnectorResult.Fail("Samsara rejected the token or its 'Read Vehicle Statistics' scope; connection was not accepted.");
+            if (!statisticsResponse.IsSuccessStatusCode)
+                return ConnectorResult.Fail($"Samsara vehicle-statistics access returned {(int)statisticsResponse.StatusCode} {statisticsResponse.ReasonPhrase}.");
+
+            try
+            {
+                using var statisticsDocument = JsonDocument.Parse(await statisticsResponse.Content.ReadAsStringAsync(ct));
+                if (!statisticsDocument.RootElement.TryGetProperty("data", out var statisticsData)
+                    || statisticsData.ValueKind != JsonValueKind.Array)
+                    return ConnectorResult.Fail("Samsara vehicle-statistics access returned an invalid response envelope: the required data array is missing.");
+                _ = SamsaraSync.ReadPagination(statisticsDocument.RootElement);
+            }
+            catch (JsonException)
+            {
+                return ConnectorResult.Fail("Samsara vehicle-statistics access returned malformed JSON; connection was not accepted.");
+            }
+            catch (InvalidDataException ex)
+            {
+                return ConnectorResult.Fail($"Samsara vehicle-statistics access returned an invalid response envelope: {ex.Message}");
+            }
+
+            return ConnectorResult.Ok(
+                "Connected to Samsara — token and both required read scopes were verified.",
+                new Dictionary<string, object?>
+                {
+                    ["sampleVehicleCount"] = sampleVehicleCount,
+                    ["readVehiclesVerified"] = true,
+                    ["readVehicleStatisticsVerified"] = true,
+                });
         }
         catch (TaskCanceledException) { return ConnectorResult.Fail("Samsara did not respond in time (timeout)."); }
         catch (Exception ex) { logger.LogWarning(ex, "Samsara test failed"); return ConnectorResult.Fail($"Could not reach Samsara: {ex.Message}"); }

@@ -11,6 +11,110 @@ namespace Opstrax.Tests;
 public sealed class SamsaraConnectorBehaviorTests
 {
     [Fact]
+    public async Task TestConnection_VerifiesVehicleAndStatisticsScopes()
+    {
+        var handler = new ScriptedHandler(request =>
+            request.RequestUri!.AbsolutePath == "/fleet/vehicles"
+                ? Json(HttpStatusCode.OK, """{"data":[{"id":"vehicle-1"}]}""")
+                : Json(HttpStatusCode.OK, """{"data":[],"pagination":{"endCursor":"probe-cursor","hasNextPage":false}}"""));
+        var connector = Connector(handler);
+
+        var result = await connector.TestConnectionAsync(Config(), CancellationToken.None);
+
+        Assert.True(result.Success, result.Message);
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.Equal(true, result.Details!["readVehiclesVerified"]);
+        Assert.Equal(true, result.Details["readVehicleStatisticsVerified"]);
+        Assert.Contains(handler.Requests, uri =>
+            uri.AbsolutePath == "/fleet/vehicles/stats/feed"
+            && uri.Query.Contains("types=gps", StringComparison.Ordinal)
+            && uri.Query.Contains("vehicleIds=vehicle-1", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task TestConnection_FailsWhenStatisticsScopeIsDenied()
+    {
+        var handler = new ScriptedHandler(request =>
+            request.RequestUri!.AbsolutePath == "/fleet/vehicles"
+                ? Json(HttpStatusCode.OK, """{"data":[{"id":"vehicle-1"}]}""")
+                : Json(HttpStatusCode.Forbidden, "{}"));
+        var connector = Connector(handler);
+
+        var result = await connector.TestConnectionAsync(Config(), CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.Contains("Read Vehicle Statistics", result.Message, StringComparison.Ordinal);
+        Assert.Equal(2, handler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task TestConnection_FailsWhenStatisticsEnvelopeOmitsData()
+    {
+        var handler = new ScriptedHandler(request =>
+            request.RequestUri!.AbsolutePath == "/fleet/vehicles"
+                ? Json(HttpStatusCode.OK, """{"data":[]}""")
+                : Json(HttpStatusCode.OK, """{"pagination":{"endCursor":"probe-cursor","hasNextPage":false}}"""));
+        var connector = Connector(handler);
+
+        var result = await connector.TestConnectionAsync(Config(), CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.Contains("required data array", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(2, handler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task Sync_FailsClosedWhenPaginationEnvelopeIsMissing()
+    {
+        var handler = new ScriptedHandler(_ => Json(HttpStatusCode.OK, """{"data":[]}"""));
+        var connector = Connector(handler);
+        using var body = OperationBody();
+
+        var result = await connector.RunActionAsync("sync", Config(), body.RootElement, CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.Contains("pagination", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, Convert.ToInt32(result.Details!["pagesCommitted"]));
+        Assert.Null(result.Details["nextCursor"]);
+    }
+
+    [Fact]
+    public async Task Sync_MalformedLaterPageReturnsOnlyLastValidatedCursor()
+    {
+        var responses = new Queue<HttpResponseMessage>(
+        [
+            Json(HttpStatusCode.OK, """{"data":[],"pagination":{"endCursor":"cursor-1","hasNextPage":true}}"""),
+            Json(HttpStatusCode.OK, """{"data":[],"pagination":{"hasNextPage":false}}"""),
+        ]);
+        var handler = new ScriptedHandler(_ => responses.Dequeue());
+        var connector = Connector(handler);
+        using var body = OperationBody();
+
+        var result = await connector.RunActionAsync("sync", Config(), body.RootElement, CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.Contains("pagination.endCursor", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, Convert.ToInt32(result.Details!["pagesCommitted"]));
+        Assert.Equal("cursor-1", result.Details["nextCursor"]?.ToString());
+        Assert.Equal(2, handler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task Sync_FailsWhenMorePagesHaveNoResumeCursor()
+    {
+        var handler = new ScriptedHandler(_ => Json(HttpStatusCode.OK,
+            """{"data":[],"pagination":{"endCursor":"","hasNextPage":true}}"""));
+        var connector = Connector(handler);
+        using var body = OperationBody();
+
+        var result = await connector.RunActionAsync("sync", Config(), body.RootElement, CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.Contains("cannot be empty", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
     public async Task Sync_DrainsAdvancingCursorPagesAndReturnsFinalCursor()
     {
         var handler = new ScriptedHandler(request =>
@@ -94,7 +198,7 @@ public sealed class SamsaraConnectorBehaviorTests
         var responses = new Queue<HttpResponseMessage>(
         [
             Json((HttpStatusCode)429, "{}"),
-            Json(HttpStatusCode.OK, """{"data":[],"pagination":{"endCursor":null,"hasNextPage":false}}"""),
+            Json(HttpStatusCode.OK, """{"data":[],"pagination":{"endCursor":"","hasNextPage":false}}"""),
         ]);
         var handler = new ScriptedHandler(_ => responses.Dequeue());
         var connector = Connector(handler);
@@ -114,7 +218,7 @@ public sealed class SamsaraConnectorBehaviorTests
         var responses = new Queue<HttpResponseMessage>(
         [
             rateLimited,
-            Json(HttpStatusCode.OK, """{"data":[],"pagination":{"endCursor":null,"hasNextPage":false}}"""),
+            Json(HttpStatusCode.OK, """{"data":[],"pagination":{"endCursor":"","hasNextPage":false}}"""),
         ]);
         var handler = new ScriptedHandler(_ => responses.Dequeue());
         var connector = Connector(handler);
@@ -167,7 +271,7 @@ public sealed class SamsaraConnectorBehaviorTests
     public async Task Sync_ReportsInvalidProviderFixesWithoutFabricatingTelemetry()
     {
         var handler = new ScriptedHandler(_ => Json(HttpStatusCode.OK,
-            """{"data":[{"id":"bad-fix","gps":{"time":"not-a-time","latitude":999,"longitude":-118.24,"speedMilesPerHour":40}}],"pagination":{"hasNextPage":false}}"""));
+            """{"data":[{"id":"bad-fix","gps":{"time":"not-a-time","latitude":999,"longitude":-118.24,"speedMilesPerHour":40}}],"pagination":{"endCursor":"","hasNextPage":false}}"""));
         var connector = Connector(handler);
         using var body = OperationBody();
 

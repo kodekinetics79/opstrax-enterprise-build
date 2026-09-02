@@ -39,13 +39,7 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
 
         var parsed = ParseFeed(doc.RootElement);
         var readings = parsed.Readings;
-        string? nextCursor = null;
-        var hasNext = false;
-        if (doc.RootElement.TryGetProperty("pagination", out var pg))
-        {
-            nextCursor = pg.TryGetProperty("endCursor", out var ec) ? ec.GetString() : null;
-            hasNext = pg.TryGetProperty("hasNextPage", out var hn) && hn.GetBoolean();
-        }
+        var (nextCursor, hasNext) = ReadPagination(doc.RootElement);
 
         if (readings.Count == 0)
             return new SyncSummary(0, 0, 0, 0, parsed.Rejected, nextCursor, hasNext);
@@ -225,6 +219,28 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
         return new SyncSummary(readings.Count, written, unmatched, historicalOnly, parsed.Rejected, nextCursor, hasNext);
     }
 
+    internal static (string EndCursor, bool HasNextPage) ReadPagination(JsonElement root)
+    {
+        if (!root.TryGetProperty("pagination", out var pagination)
+            || pagination.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException("the required pagination object is missing.");
+
+        if (!pagination.TryGetProperty("hasNextPage", out var hasNextPage)
+            || hasNextPage.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+            throw new InvalidDataException("pagination.hasNextPage must be a boolean.");
+
+        if (!pagination.TryGetProperty("endCursor", out var endCursor)
+            || endCursor.ValueKind != JsonValueKind.String)
+            throw new InvalidDataException("pagination.endCursor must be a string.");
+
+        var cursor = endCursor.GetString() ?? string.Empty;
+        var hasNext = hasNextPage.GetBoolean();
+        if (hasNext && string.IsNullOrWhiteSpace(cursor))
+            throw new InvalidDataException("pagination.endCursor cannot be empty while more pages are available.");
+
+        return (cursor, hasNext);
+    }
+
     private static async Task ProjectAlertsAsync(
         Database db,
         long companyId,
@@ -390,7 +406,7 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
         var list = new List<SamsaraGps>();
         var rejected = 0;
         if (!root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
-            return new ParsedFeed(list, rejected);
+            throw new InvalidDataException("the required data array is missing.");
         foreach (var v in data.EnumerateArray())
         {
             var id = v.TryGetProperty("id", out var idEl) ? idEl.GetString() : null;

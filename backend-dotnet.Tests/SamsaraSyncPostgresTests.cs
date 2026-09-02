@@ -350,7 +350,7 @@ public sealed class SamsaraSyncPostgresTests
 
             var observedAt = DateTimeOffset.UtcNow.AddMinutes(-1).ToString("O");
             var feed = $$$"""
-                {"data":[{"id":"stale-{{{suffix}}}","gps":{"time":"{{{observedAt}}}","latitude":34.05,"longitude":-118.24,"headingDegrees":90,"speedMilesPerHour":40}}],"pagination":{"hasNextPage":false}}
+                {"data":[{"id":"stale-{{{suffix}}}","gps":{"time":"{{{observedAt}}}","latitude":34.05,"longitude":-118.24,"headingDegrees":90,"speedMilesPerHour":40}}],"pagination":{"endCursor":"","hasNextPage":false}}
                 """;
             await Assert.ThrowsAsync<StaleConnectorOperationException>(() =>
                 Sync(db, feed).RunAsync(operation!, null, CancellationToken.None));
@@ -473,7 +473,7 @@ public sealed class SamsaraSyncPostgresTests
             var newest = DateTimeOffset.UtcNow.AddMinutes(-1);
             var older = newest.AddHours(-2);
             string Feed(string id, DateTimeOffset observedAt) => $$$"""
-                {"data":[{"id":"{{{id}}}","gps":{"time":"{{{observedAt:O}}}","latitude":34.05,"longitude":-118.24,"headingDegrees":90,"speedMilesPerHour":40}}],"pagination":{"hasNextPage":false}}
+                {"data":[{"id":"{{{id}}}","gps":{"time":"{{{observedAt:O}}}","latitude":34.05,"longitude":-118.24,"headingDegrees":90,"speedMilesPerHour":40}}],"pagination":{"endCursor":"","hasNextPage":false}}
                 """;
 
             await Sync(db, Feed($"newest-{suffix}", newest)).RunAsync(operation!, null, CancellationToken.None);
@@ -701,7 +701,7 @@ public sealed class SamsaraSyncPostgresTests
 
             var delayedAt = transferAt.AddMinutes(-5).ToString("O");
             var delayedFeed = $$$"""
-                {"data":[{"id":"{{{providerVehicleId}}}","gps":{"time":"{{{delayedAt}}}","latitude":35.05,"longitude":-119.24,"headingDegrees":180,"speedMilesPerHour":99}}],"pagination":{"hasNextPage":false}}
+                {"data":[{"id":"{{{providerVehicleId}}}","gps":{"time":"{{{delayedAt}}}","latitude":35.05,"longitude":-119.24,"headingDegrees":180,"speedMilesPerHour":99}}],"pagination":{"endCursor":"","hasNextPage":false}}
                 """;
             var delayed = await Sync(db, delayedFeed).RunAsync(operation!, null, CancellationToken.None);
             Assert.Equal(0, delayed.PositionsWritten);
@@ -726,7 +726,7 @@ public sealed class SamsaraSyncPostgresTests
 
             var currentAt = DateTimeOffset.UtcNow.AddSeconds(-5).ToString("O");
             var currentFeed = $$$"""
-                {"data":[{"id":"{{{providerVehicleId}}}","gps":{"time":"{{{currentAt}}}","latitude":34.05,"longitude":-118.24,"headingDegrees":0,"speedMilesPerHour":0}}],"pagination":{"hasNextPage":false}}
+                {"data":[{"id":"{{{providerVehicleId}}}","gps":{"time":"{{{currentAt}}}","latitude":34.05,"longitude":-118.24,"headingDegrees":0,"speedMilesPerHour":0}}],"pagination":{"endCursor":"","hasNextPage":false}}
                 """;
             var current = await Sync(db, currentFeed).RunAsync(operation!, null, CancellationToken.None);
             Assert.Equal(1, current.PositionsWritten);
@@ -741,7 +741,7 @@ public sealed class SamsaraSyncPostgresTests
             // A first, buffered fix for a newly discovered provider device must not stamp NOW().
             var newProviderVehicleId = $"new-{suffix}";
             var staleFirstFeed = $$$"""
-                {"data":[{"id":"{{{newProviderVehicleId}}}","gps":{"time":"{{{olderAt}}}","latitude":34.05,"longitude":-118.24,"headingDegrees":0,"speedMilesPerHour":0}}],"pagination":{"hasNextPage":false}}
+                {"data":[{"id":"{{{newProviderVehicleId}}}","gps":{"time":"{{{olderAt}}}","latitude":34.05,"longitude":-118.24,"headingDegrees":0,"speedMilesPerHour":0}}],"pagination":{"endCursor":"","hasNextPage":false}}
                 """;
             var unmatched = await Sync(db, staleFirstFeed).RunAsync(operation!, null, CancellationToken.None);
             Assert.Equal(1, unmatched.Unmatched);
