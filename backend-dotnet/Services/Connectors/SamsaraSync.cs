@@ -33,9 +33,7 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
         var url = "/fleet/vehicles/stats/feed?types=gps,engineStates,obdOdometerMeters";
         if (!string.IsNullOrWhiteSpace(afterCursor)) url += $"&after={Uri.EscapeDataString(afterCursor!)}";
 
-        using var resp = await GetWithRetryAsync(url, ct);
-        resp.EnsureSuccessStatusCode();
-        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
+        using var doc = await GetWithRetryAsync(url, ct);
 
         var parsed = ParseFeed(doc.RootElement);
         var readings = parsed.Readings;
@@ -313,14 +311,25 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
             }, ct);
     }
 
-    private async Task<HttpResponseMessage> GetWithRetryAsync(string url, CancellationToken ct)
+    private async Task<JsonDocument> GetWithRetryAsync(string url, CancellationToken ct)
     {
         for (var attempt = 0; ; attempt++)
         {
-            var response = await client.GetAsync(url, ct);
-            if ((int)response.StatusCode is not (429 or >= 500) || attempt >= 4) return response;
-            var retryAfter = ResolveRetryDelay(response.Headers.RetryAfter, attempt, DateTimeOffset.UtcNow);
-            response.Dispose();
+            TimeSpan retryAfter;
+            // Keep the deadline alive through body reads: headers-only completion
+            // stops HttpClient's own timeout before the content has arrived.
+            using (var requestCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
+            {
+                requestCts.CancelAfter(SamsaraResponseReader.RequestTimeout);
+                using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, requestCts.Token);
+                if ((int)response.StatusCode is not (429 or >= 500) || attempt >= 4)
+                {
+                    response.EnsureSuccessStatusCode();
+                    return await SamsaraResponseReader.ReadJsonAsync(response.Content, requestCts.Token);
+                }
+                retryAfter = ResolveRetryDelay(response.Headers.RetryAfter, attempt, DateTimeOffset.UtcNow);
+            }
+            // Retriable error bodies are never read; disposal precedes the delay.
             await Task.Delay(retryAfter, ct);
         }
     }

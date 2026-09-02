@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -13,6 +14,72 @@ namespace Opstrax.Tests;
 [Trait("Category", "Integration")]
 public sealed class SamsaraSyncPostgresTests
 {
+    [Fact]
+    public async Task OversizedLaterPageRetainsOnlyCommittedNonemptyHistoryAndCursor()
+    {
+        var db = CreateDatabase();
+        var suffix = Guid.NewGuid().ToString("N");
+        var companyId = await db.InsertAsync(
+            "INSERT INTO companies(company_code,name,industry) VALUES(@code,'Synthetic response bound test','Transportation') RETURNING id",
+            c => c.Parameters.AddWithValue("@code", $"SRB-{suffix[..10]}"));
+        try
+        {
+            var integrationId = await db.InsertAsync(
+                @"INSERT INTO integrations(company_id,provider_name,category,status,integration_key,config_json)
+                   VALUES(@cid,'Samsara','Telematics & ELD','Connected','samsara','{}'::jsonb) RETURNING id",
+                c => c.Parameters.AddWithValue("@cid", companyId));
+            var operation = await ConnectorOperationLease.TryAcquireAsync(
+                db, companyId, integrationId, ["Connected"], TimeSpan.FromSeconds(180), CancellationToken.None);
+            Assert.NotNull(operation);
+            var observedAt = DateTimeOffset.UtcNow.AddMinutes(-1);
+            var firstPage = $$$"""
+                {"data":[{"id":"synthetic-{{{suffix}}}","gps":{"time":"{{{observedAt:O}}}","latitude":34.05,"longitude":-118.24,"speedMilesPerHour":40}}],"pagination":{"endCursor":"complete-1","hasNextPage":true}}
+                """;
+            var stream = new SamsaraBodyFixture([], endless: true);
+            using var content = new SamsaraContentFixture(stream);
+            var calls = 0;
+            var connector = SamsaraResponseBoundsTests.Connector(_ => Task.FromResult(++calls == 1
+                ? SamsaraResponseBoundsTests.Json(firstPage)
+                : new HttpResponseMessage(HttpStatusCode.OK) { Content = content }), db);
+            using var body = JsonDocument.Parse(JsonSerializer.Serialize(new
+            {
+                companyId, integrationId, operationGeneration = operation!.Generation,
+                operationLeaseToken = operation.LeaseToken.ToString(),
+            }));
+            var result = await connector.RunActionAsync("sync",
+                new Dictionary<string, string?> { ["apiToken"] = "synthetic-test-token" }, body.RootElement, CancellationToken.None);
+
+            Assert.False(result.Success);
+            Assert.Contains("exceeded", result.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(2, calls);
+            Assert.Equal(1, result.Details!["pagesCommitted"]);
+            Assert.Equal("complete-1", result.Details["nextCursor"]);
+            Assert.Equal(1, result.Details["vehiclesSeen"]);
+            Assert.Equal(1, result.Details["unmatched"]);
+            Assert.Equal(0, result.Details["positionsWritten"]);
+            Assert.Equal(1, await db.ScalarLongAsync("SELECT COUNT(*) FROM location_events WHERE company_id=@cid",
+                c => c.Parameters.AddWithValue("@cid", companyId)));
+            Assert.Equal(1, await db.ScalarLongAsync("SELECT COUNT(*) FROM eld_devices WHERE company_id=@cid",
+                c => c.Parameters.AddWithValue("@cid", companyId)));
+            Assert.Equal(0, await db.ScalarLongAsync("SELECT COUNT(*) FROM latest_vehicle_positions WHERE company_id=@cid",
+                c => c.Parameters.AddWithValue("@cid", companyId)));
+            Assert.Equal(0, await db.ScalarLongAsync("SELECT COUNT(*) FROM telemetry_alerts WHERE company_id=@cid",
+                c => c.Parameters.AddWithValue("@cid", companyId)));
+            var providerEventAt = await db.QuerySingleAsync("SELECT provider_last_event_at FROM integrations WHERE company_id=@cid AND id=@id",
+                c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", integrationId); });
+            Assert.Equal(observedAt.UtcDateTime, Convert.ToDateTime(providerEventAt!["providerLastEventAt"]).ToUniversalTime(), TimeSpan.FromMilliseconds(1));
+            Assert.False(content.WasBuffered);
+            Assert.True(stream.Disposed);
+        }
+        finally
+        {
+            await db.ExecuteAsync("DELETE FROM location_events WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", companyId));
+            await db.ExecuteAsync("DELETE FROM eld_devices WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", companyId));
+            await db.ExecuteAsync("DELETE FROM integrations WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", companyId));
+            await db.ExecuteAsync("DELETE FROM companies WHERE id=@cid", c => c.Parameters.AddWithValue("@cid", companyId));
+        }
+    }
+
     [Fact]
     public async Task ConfigurationRowLockAndDisconnectAreLinearizableWithoutCredentialResurrection()
     {
