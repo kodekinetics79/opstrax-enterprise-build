@@ -475,6 +475,13 @@ public class GatewaySessionIdentityTests
         await stream.WriteAsync(login);
         Assert.Equal(AckForFrame(login), await ReadExactlyAsync(stream, 10));
 
+        // The socket write completes before the gateway records the successful write in its
+        // process-local metric. Under a loaded CI runner the client can therefore receive the ACK
+        // a few instructions before AcksSent advances. Synchronize on the completed login ACK so
+        // the baseline cannot accidentally include that ACK after the corrupt frame is sent.
+        await WaitUntilAsync(() => gw.Metrics.AcksSent == 1, SocketTimeout);
+        Assert.Equal(1, gw.Metrics.AcksSent);
+
         long acksBefore = gw.Metrics.AcksSent;
 
         // A heartbeat REQUIRES an ack — but this one's checksum is broken.
