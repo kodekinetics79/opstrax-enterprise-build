@@ -4,6 +4,7 @@ import { resolveAuthorizedSummaryCount } from "../src/utils/vehicleSummaryPresen
 import { summarizePositionFreshness } from "../src/utils/telemetryProvenance.ts";
 import { summarizeControlTowerStatus } from "../src/utils/controlTowerStatus.ts";
 import { buildVehicleMarkerAccessibleName } from "../src/utils/mapAccessibility.ts";
+import { optionsWithPersistedValue, VEHICLE_TYPE_OPTIONS } from "../src/utils/vehicleEditorOptions.ts";
 
 const audit = fs.readFileSync(new URL("../src/pages/AuditLogsPage.tsx", import.meta.url), "utf8");
 const vehicles = fs.readFileSync(new URL("../src/pages/VehiclesPage.tsx", import.meta.url), "utf8");
@@ -47,6 +48,18 @@ assert.match(vehicles, /label="Authorized scope at risk"/, "At-risk KPI must dis
 assert.match(vehicles, /label="Authorized scope device \/ camera gaps"/, "Device-gap KPI must disclose authorized scope");
 assert.match(vehicles, /\{moving\} moving on page/, "Vehicle footer movement count must disclose page scope");
 assert.doesNotMatch(vehicles, /need attention fleet-wide|Fleet-wide high risk|Fleet-wide telematics/, "Restricted users must not see tenant-wide scope claims");
+
+assert.ok(VEHICLE_TYPE_OPTIONS.includes("Tractor"), "The governed large-fleet Tractor type must be editable");
+assert.deepEqual(
+  optionsWithPersistedValue(VEHICLE_TYPE_OPTIONS, "Tractor"),
+  VEHICLE_TYPE_OPTIONS,
+  "A governed vehicle type must remain selected without duplicating its option",
+);
+assert.deepEqual(
+  optionsWithPersistedValue(VEHICLE_TYPE_OPTIONS, "Specialized Heavy Unit"),
+  ["Specialized Heavy Unit", ...VEHICLE_TYPE_OPTIONS],
+  "An existing imported type must remain editable without silently coercing the persisted value",
+);
 
 assert.equal(resolveAuthorizedSummaryCount(true, 0), 0, "A legitimate summary zero must remain zero");
 assert.equal(resolveAuthorizedSummaryCount(true, "0"), 0, "A serialized summary zero must remain zero");

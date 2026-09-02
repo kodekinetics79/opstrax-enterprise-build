@@ -14,6 +14,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { scopeRowsForSession } from "@/auth/accessScope";
 import { apiErrorMessage } from "@/utils/apiErrorMessage";
 import { resolveAuthorizedSummaryCount } from "@/utils/vehicleSummaryPresentation";
+import { optionsWithPersistedValue, VEHICLE_TYPE_OPTIONS } from "@/utils/vehicleEditorOptions";
 import { labelize, LoadingState, ErrorState, EmptyState } from "@/components/ui";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import type { AnyRecord, UserSession } from "@/types";
@@ -99,7 +100,7 @@ type VehicleField = {
 
 const FIELDS: VehicleField[] = [
   { key: "vehicleCode", label: "Vehicle code", required: true },
-  { key: "type", label: "Type", type: "select", options: ["Truck", "Van", "Box Truck", "Reefer"], required: true },
+  { key: "type", label: "Type", type: "select", options: VEHICLE_TYPE_OPTIONS, required: true },
   { key: "make", label: "Make" },
   { key: "model", label: "Model" },
   { key: "year", label: "Year", type: "number" },
@@ -1162,7 +1163,7 @@ function VehicleFormModal({ title, initial, saving, serverError, onClose, onSave
                 <select className="fc-search w-full px-3 py-2.5 text-sm text-slate-800 outline-none"
                   required={Boolean(f.required)} value={String(form[f.key] ?? "")} onChange={(e) => setForm((c) => ({ ...c, [f.key]: e.target.value }))}>
                   <option value="">Select</option>
-                  {f.options.map((o) => <option key={o} value={o}>{o}</option>)}
+                  {optionsWithPersistedValue(f.options, form[f.key]).map((o) => <option key={o} value={o}>{o}</option>)}
                 </select>
               ) : (
                 <input className="fc-search w-full px-3 py-2.5 text-sm text-slate-800 outline-none placeholder:text-slate-400"
