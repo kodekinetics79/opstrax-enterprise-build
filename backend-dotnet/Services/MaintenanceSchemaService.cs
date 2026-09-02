@@ -93,6 +93,7 @@ public sealed class MaintenanceSchemaService(Database db)
         new("fault_codes", "diagnostic_hold_id", "BIGINT NULL"),
         new("fault_occurrences", "dtc_ordinal", "INT NOT NULL DEFAULT 0"),
         new("fault_occurrences", "canonical_dtc", "VARCHAR(240) NULL"),
+        new("fault_occurrences", "payload_fingerprint", "VARCHAR(64) NULL"),
         new("diagnostic_holds", "device_id", "VARCHAR(120) NULL"),
         new("diagnostic_holds", "canonical_dtc", "VARCHAR(240) NULL"),
         new("diagnostic_holds", "severity", "VARCHAR(40) NULL"),
@@ -118,7 +119,8 @@ public sealed class MaintenanceSchemaService(Database db)
             result VARCHAR(40) NOT NULL DEFAULT 'pass',
             severity VARCHAR(40) NOT NULL DEFAULT 'minor',
             notes TEXT NULL,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            checklist_item_id BIGINT NULL
         )",
 
         // Fault codes ingested from OBD/J1939/OEM device telemetry.
@@ -179,6 +181,7 @@ public sealed class MaintenanceSchemaService(Database db)
             occurrence_count INT NOT NULL DEFAULT 1,
             lamp_status JSONB NULL,
             raw_evidence JSONB NULL,
+            payload_fingerprint VARCHAR(64) NULL,
             UNIQUE (company_id, device_id, source_event_id)
         )",
 

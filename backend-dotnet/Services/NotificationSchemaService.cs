@@ -30,6 +30,9 @@ public sealed class NotificationSchemaService(Database db)
         "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS acknowledged_by BIGINT",
         "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS acknowledgement_note TEXT",
         "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS escalated_from BIGINT",
+        // SMS delivery target for ops users. Driver phones live on drivers.phone; this is the
+        // first per-user contact number, resolved as COALESCE(users.phone, drivers.phone).
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(50)",
     ];
 
     private static readonly string[] Tables =
@@ -101,6 +104,23 @@ public sealed class NotificationSchemaService(Database db)
             attachment_ref VARCHAR(500) NULL
         )",
 
+        // Per-recipient, per-channel delivery claims for alert email/SMS fan-out. The UNIQUE
+        // constraint is the idempotency guard: at-least-once outbox redelivery claims each
+        // (alert, user, channel) once, so a retry can never double-send.
+        @"CREATE TABLE IF NOT EXISTS alert_notification_deliveries (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL,
+            alert_id BIGINT NOT NULL,
+            user_id BIGINT NOT NULL,
+            channel VARCHAR(20) NOT NULL,
+            recipient VARCHAR(255) NULL,
+            status VARCHAR(20) NOT NULL DEFAULT 'pending',
+            error TEXT NULL,
+            sent_at TIMESTAMPTZ NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT uq_alert_notif_delivery UNIQUE (company_id, alert_id, user_id, channel)
+        )",
+
         @"CREATE TABLE IF NOT EXISTS escalation_rules (
             id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
             company_id BIGINT NOT NULL,
@@ -133,5 +153,10 @@ public sealed class NotificationSchemaService(Database db)
         "CREATE INDEX IF NOT EXISTS idx_messaging_messages_conversation ON messaging_messages(conversation_id)",
         "CREATE INDEX IF NOT EXISTS idx_escalation_rules_company ON escalation_rules(company_id)",
         "CREATE INDEX IF NOT EXISTS idx_escalation_rules_event ON escalation_rules(event_type)",
+        "CREATE INDEX IF NOT EXISTS idx_alert_notif_deliveries_alert ON alert_notification_deliveries(company_id, alert_id)",
+        // The alert-bridge's exactly-once claim target (INSERT ... ON CONFLICT). Lives in the
+        // try/catch'd index list because outbox_messages is ensured by the Foundation step,
+        // which runs AFTER this service on a pristine database — it materializes on the next boot.
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_outbox_alert_notification ON outbox_messages (tenant_id, aggregate_id) WHERE event_type='alert.notification.requested'",
     ];
 }

@@ -1,0 +1,85 @@
+OpsTrax Live Operations — Jobs, Routes, Executive read-only, Dispatcher scope retest
+Date: 2026-08-26 EDT
+Tenant: CERT-LARGE-20260825
+Candidate/deployed SHA: 899769d946225f459d9049a3b4d2d42dabbaa2dc
+Primary evidence surface: rendered product in visible Google Chrome
+Staging only; production untouched; no SQL/API seeding; no simulated telemetry.
+
+DEPLOYMENT / EXACT-SHA GATE — PASS
+- Render staging service srv-d9u6qnajobas73ef2590 only.
+- OPSTRAX_DEPLOY_VERSION set to full 899769d946225f459d9049a3b4d2d42dabbaa2dc.
+- Manual specific-commit deploy selected and launched once from Render dashboard.
+- Render source visibly showed full 899769d SHA and merge PR #72.
+- Deploy succeeded in 1m33s; deployed 2026-08-26 15:38:47 EDT.
+- Supporting /health/ready: HTTP 200, ready, exact full version and x-deployment-version.
+- Vercel exact build/alias was independently confirmed READY by the integration owner.
+- Rendered product banners on Executive Jobs and Dispatcher Fleet Overview showed full Frontend/API 899769d SHA and Live.
+
+TENANT ADMIN — JOBS CUSTOMER DISCOVERY — PASS WITH EXTERNAL DATA/ENTITLEMENT BLOCKER
+- Create Job now exposes a customer-facing Find customer searchbox and Customer selector.
+- While loading, selector is disabled and status announces "Loading active customers…".
+- Tenant result is empty and actionable:
+  "No active customers are available. A customer must be created through the Commercial customer master before a job can be saved."
+  "Ask an account administrator to enable Commercial/CRM access or create the customer."
+- Save Job remains disabled; the old free-text numeric Customer ID field is gone.
+- No active customer option exists in CERT-LARGE-20260825, and Commercial/CRM is intentionally not entitled in this certification scope.
+- Therefore CERT-LIVE-JOB-001 could not be safely created without expanding tenant entitlements or creating out-of-scope customer data.
+- No job mutation was attempted; total remained 0.
+- Product finding disposition: prior misleading numeric-ID workflow is fixed. Remaining inability to create a job is an external tenant-data/entitlement blocker for this cycle, not a silent UI failure.
+
+TENANT ADMIN — ROUTE INVALID INPUT — PASS
+- Route Plans showed 0 routes before the attempt.
+- A single controlled empty Save rendered useful inline validation in 794 ms:
+  * Route code is required.
+  * Route name is required.
+  * Planned start is required.
+  * Planned end is required.
+- Dialog remained open and total stayed 0; no mutation occurred.
+
+TENANT ADMIN — VALID ROUTE ATTEMPT — EXTERNAL CONTROLLER BLOCKER
+- All non-date fields for CERT-LIVE-ROUTE-001 were populated through visible customer controls:
+  code; name; CL-HQ Columbus Certification Zone; Delivery; Balanced; $185; Planned; non-personal certification note.
+- Browser automation fill against the native datetime-local controls did not bind into React state. The one valid Save attempt rendered only:
+  * Planned start is required.
+  * Planned end is required.
+- A bounded visible Computer Use attempt opened Chrome's native local-date picker, but the segmented datetime values remained unset in the accessible control state.
+- No second Save or ambiguous retry occurred. No route record was created; total remained 0.
+- Valid route creation, rendered time verification, persistence, and assignment-preserving edit could not be certified because the native datetime controller could not reliably enter the required values.
+- This is recorded as an external browser-controller limitation. The product's inline validation itself behaved correctly.
+
+EXECUTIVE 01 — SHIPMENTS:VIEW READ-ONLY — PASS
+- The tenant-created Executive role retained only canonical shipments:view for shipment access from the prior authorized correction; create/update/delete/export were not granted.
+- Fresh Executive login completed in 2,720 ms.
+- Jobs navigation and direct customer list rendered; 0 shown / 0 total.
+- Exact Frontend/API 899769d and Live gate rendered.
+- Jobs page loaded in 1,872 ms.
+- Create Job absent.
+- Import CSV absent.
+- Export Roster absent.
+- Admin / Users & Roles navigation absent.
+- With no job record, detail edit/export controls were not applicable; no POD permission was queued because no safe relevant record/role journey existed.
+- The prior P1 unauthorized Executive create/import/export control exposure is closed.
+
+CL-HQ DISPATCHER — BRANCH SCOPE — PASS
+- Fresh Dispatcher login completed in 2,823 ms.
+- Fleet Overview rendered exact full Frontend/API 899769d and Live.
+- Own branch view: 1–50 of 200 vehicles; CLHQ-V-0001 visible; no WESTHUB row in baseline.
+- Search WESTHUB-V-0001 returned no table row and rendered "No vehicles match this search or filter".
+- No cross-branch leakage or unexpected Admin navigation observed.
+
+CONSOLE / NETWORK
+- Final Chrome warn/error query: 0 entries.
+- No material failed request surfaced through the available Chrome diagnostics.
+
+DATA / SAFETY
+- No job, route, trip, dispatch, POD, customer, telemetry, role, entitlement, or production mutation occurred in this retest.
+- The only staging state change was the explicitly authorized exact-SHA deployment/version update.
+
+VERDICT: BLOCKED BY EXTERNAL PREREQUISITES, WITH TARGETED FIXES PASSING
+- PASS: exact-SHA/live gate.
+- PASS: actionable empty-customer guidance and disabled Job save.
+- PASS: useful Route inline validation/no mutation.
+- PASS: Executive read-only control boundary.
+- PASS: Dispatcher branch isolation.
+- BLOCKED: no active entitled customer prevents safe Job creation; native datetime controller prevents valid Route submission through the available visible-browser automation.
+- No open P0/P1 was observed in the portions that could be executed on 899769d.

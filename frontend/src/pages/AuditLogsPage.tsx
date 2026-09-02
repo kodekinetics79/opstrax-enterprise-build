@@ -7,7 +7,7 @@ import {
 import { PERMISSIONS } from "@/auth/rbacConfig";
 import { useAuth } from "@/hooks/useAuth";
 import { useHasPermission } from "@/hooks/usePermission";
-import { ClayCard, KpiCard } from "@/components/ui";
+import { ClayCard, ErrorState, KpiCard, LoadingState } from "@/components/ui";
 import {
   useAuditLogs, useAuditExportRequests, useCreateAuditExport, useAuditAiRecs,
 } from "@/hooks/useBatch7";
@@ -56,6 +56,29 @@ function ExportStatusBadge({ status }: { status: string }) {
   };
   const cls = map[status] ?? "border-slate-200 bg-slate-50 text-slate-600";
   return <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${cls}`}>{status}</span>;
+}
+
+function displayText(value: unknown) {
+  const text = String(value ?? "").trim();
+  return text || "Not recorded";
+}
+
+function formatDateOnly(value: unknown) {
+  if (!value) return "Not recorded";
+  const [year, month, day] = String(value).slice(0, 10).split("-").map(Number);
+  if (!year || !month || !day) return "Not recorded";
+  return new Date(year, month - 1, day).toLocaleDateString();
+}
+
+function formatDateTime(value: unknown) {
+  if (!value) return "Not recorded";
+  const date = new Date(String(value));
+  return Number.isNaN(date.getTime()) ? "Not recorded" : date.toLocaleString();
+}
+
+function exportFormat(record: AnyRecord) {
+  const value = String(record.exportFormat ?? "").trim();
+  return value || "Not recorded";
 }
 
 export function AuditLogsPage() {
@@ -121,9 +144,27 @@ export function AuditLogsPage() {
   const apiSearch = search || dlActor || dlEntity;
   if (apiSearch)    params.search   = apiSearch;
 
-  const { data: logsRaw = [] }         = useAuditLogs(Object.keys(params).length ? params : undefined);
-  const { data: exportsRaw = [] }      = useAuditExportRequests();
-  const { data: aiRecsRaw = [] }       = useAuditAiRecs();
+  // DEF-020: a failed audit-log load must NEVER render as "Total Events 0". Keep the
+  // query objects so the page can distinguish measured-empty (a real zero) from
+  // loading (no claim yet) and failure (an explicit error state). A future divergence
+  // between the UI and /api/audit/logs becomes visible instead of dishonest.
+  const logsQ    = useAuditLogs(Object.keys(params).length ? params : undefined);
+  const exportsQ = useAuditExportRequests();
+  const aiRecsQ  = useAuditAiRecs();
+  const logsRaw    = (logsQ.data ?? []) as AnyRecord[];
+  const exportsRaw = exportsQ.data ?? [];
+  const aiRecsRaw  = aiRecsQ.data ?? [];
+  const logsUnavailable    = logsQ.isError;
+  const logsLoading        = logsQ.isLoading;
+  // The DEF-020 treatment stopped at the audit-log query. The export-request and
+  // recommendation queries have the same three states, and their surfaces claimed a
+  // measured zero ("No export requests yet", "Total requests 0") while the query was
+  // still in flight or had FAILED. Absence must render as absence, not as zero.
+  const exportsUnavailable = exportsQ.isError;
+  const exportsLoading     = exportsQ.isLoading;
+  const exportsUnknown     = exportsUnavailable || exportsLoading;
+  const aiRecsUnavailable  = aiRecsQ.isError;
+  const aiRecsLoading      = aiRecsQ.isLoading;
 
   // Client-side narrowing for deep-link params the API has no dedicated filter for.
   const logs = useMemo(() => {
@@ -194,7 +235,7 @@ export function AuditLogsPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-extrabold text-slate-900">Audit Logs</h1>
-          <p className="mt-0.5 text-sm text-slate-500">Immutable record of all system actions across all modules</p>
+          <p className="mt-0.5 text-sm text-slate-500">Operational record of recorded system activity for internal review</p>
         </div>
         <button
           className="btn-primary flex items-center gap-2"
@@ -217,32 +258,41 @@ export function AuditLogsPage() {
         </div>
       </div>
 
-      {/* KPI row — all values computed from data already in scope */}
+      {/* DEF-020: failure is an explicit state, never a zero. */}
+      {logsUnavailable && (
+        <ErrorState
+          message="The audit trail could not be loaded. Event counts below are unavailable — they are not zero."
+          onRetry={() => { void logsQ.refetch(); }}
+        />
+      )}
+
+      {/* KPI row — all values computed from data already in scope. "—" means the
+          measurement is unavailable (loading or failed), never a measured zero. */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <KpiCard
           label="Total Events"
-          value={stats.total.toLocaleString()}
-          trend={`${stats.modules} module${stats.modules === 1 ? "" : "s"} active`}
+          value={logsUnavailable || logsLoading ? "—" : stats.total.toLocaleString()}
+          trend={logsUnavailable ? "Audit trail unavailable" : logsLoading ? "Loading…" : `${stats.modules} module${stats.modules === 1 ? "" : "s"} active`}
           icon={<Activity className="h-5 w-5" />}
         />
         <KpiCard
           label="Critical & High"
-          value={stats.criticalHigh.toLocaleString()}
-          status={stats.criticalHigh > 0 ? "Critical" : undefined}
-          trend={stats.criticalHigh > 0 ? `${stats.sevCounts.Critical ?? 0} critical` : "No high-severity events"}
+          value={logsUnavailable || logsLoading ? "—" : stats.criticalHigh.toLocaleString()}
+          status={!logsUnavailable && !logsLoading && stats.criticalHigh > 0 ? "Critical" : undefined}
+          trend={logsUnavailable ? "Audit trail unavailable" : logsLoading ? "Loading…" : stats.criticalHigh > 0 ? `${stats.sevCounts.Critical ?? 0} critical` : "No high-severity events"}
           icon={<Shield className="h-5 w-5" />}
         />
         <KpiCard
           label="Export Requests"
-          value={stats.exportsTotal.toLocaleString()}
-          status={stats.pendingExports > 0 ? "Pending" : undefined}
-          trend={stats.pendingExports > 0 ? `${stats.pendingExports} in progress` : "All resolved"}
+          value={exportsUnknown ? "—" : stats.exportsTotal.toLocaleString()}
+          status={!exportsUnknown && stats.pendingExports > 0 ? "Pending" : undefined}
+          trend={exportsUnavailable ? "Export list unavailable" : exportsLoading ? "Loading…" : stats.pendingExports > 0 ? `${stats.pendingExports} in progress` : "All resolved"}
           icon={<FileDown className="h-5 w-5" />}
         />
         <KpiCard
           label="Distinct Actors"
-          value={stats.actors.toLocaleString()}
-          trend={`${stats.modules} module${stats.modules === 1 ? "" : "s"} touched`}
+          value={logsUnavailable || logsLoading ? "—" : stats.actors.toLocaleString()}
+          trend={logsUnavailable ? "Audit trail unavailable" : logsLoading ? "Loading…" : `${stats.modules} module${stats.modules === 1 ? "" : "s"} touched`}
           icon={<Users className="h-5 w-5" />}
         />
       </div>
@@ -323,6 +373,14 @@ export function AuditLogsPage() {
           )}
 
           {/* Two-column shell: log table (main) + analytics rail (side) */}
+          {logsUnavailable ? (
+            <ErrorState
+              message="The audit trail could not be loaded, so no entries can be shown. This is a load failure — not an empty log."
+              onRetry={() => { void logsQ.refetch(); }}
+            />
+          ) : logsLoading ? (
+            <LoadingState />
+          ) : (
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
             <div className="panel overflow-x-auto">
               <table className="w-full text-sm">
@@ -460,6 +518,7 @@ export function AuditLogsPage() {
               </ClayCard>
             </div>
           </div>
+          )}
         </div>
       )}
 
@@ -467,6 +526,12 @@ export function AuditLogsPage() {
       {tab === "Export Requests" && (
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
           <div className="panel overflow-x-auto">
+            {exportsUnavailable && (
+              <ErrorState
+                message="Export requests could not be loaded. The list below is unavailable — it is not empty."
+                onRetry={() => { void exportsQ.refetch(); }}
+              />
+            )}
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-200">
@@ -478,25 +543,28 @@ export function AuditLogsPage() {
               <tbody className="divide-y divide-slate-100">
                 {exports_.map((e, i) => (
                   <tr key={i} className="transition hover:bg-slate-50">
-                    <td className="px-4 py-3 text-slate-700">{String(e.requested_by_name ?? "")}</td>
+                    <td className="px-4 py-3 text-slate-700">{displayText(e.requestedByName)}</td>
                     <td className="px-4 py-3 text-xs text-slate-500">
-                      {e.date_range_start ? new Date(String(e.date_range_start)).toLocaleDateString() : "—"}
+                      {formatDateOnly(e.dateFrom)}
                       {" – "}
-                      {e.date_range_end ? new Date(String(e.date_range_end)).toLocaleDateString() : "—"}
+                      {formatDateOnly(e.dateTo)}
                     </td>
-                    <td className="px-4 py-3 font-mono text-xs font-bold text-emerald-700">{String(e.export_format ?? "")}</td>
-                    <td className="px-4 py-3"><ExportStatusBadge status={String(e.status ?? "")} /></td>
-                    <td className="px-4 py-3 text-xs text-slate-400">{e.requested_at ? new Date(String(e.requested_at)).toLocaleString() : "—"}</td>
+                    <td className="px-4 py-3 font-mono text-xs font-bold text-emerald-700">{exportFormat(e)}</td>
+                    <td className="px-4 py-3"><ExportStatusBadge status={displayText(e.status)} /></td>
+                    <td className="px-4 py-3 text-xs text-slate-400">{formatDateTime(e.createdAt)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            {exports_.length === 0 && (
+            {exportsLoading ? (
+              <LoadingState />
+            ) : exports_.length === 0 && !exportsUnavailable ? (
               <div className="py-12 text-center">
                 <FileDown className="mx-auto h-8 w-8 text-slate-400" />
                 <p className="mt-2 text-sm text-slate-500">No export requests yet.</p>
+                <p className="mt-1 text-xs text-slate-400">Nobody in this organization has requested an audit export.</p>
               </div>
-            )}
+            ) : null}
           </div>
 
           {/* Export summary rail — derived from in-scope export data */}
@@ -508,11 +576,11 @@ export function AuditLogsPage() {
               </div>
               <div className="mt-3 grid grid-cols-2 gap-3">
                 <div className="rounded-xl border border-slate-200 bg-white p-3">
-                  <p className="text-[26px] font-black tabular-nums text-slate-900">{stats.exportsTotal}</p>
+                  <p className="text-[26px] font-black tabular-nums text-slate-900">{exportsUnknown ? "—" : stats.exportsTotal}</p>
                   <p className="text-[11px] font-semibold text-slate-500">Total requests</p>
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-white p-3">
-                  <p className={`text-[26px] font-black tabular-nums ${stats.pendingExports > 0 ? "text-amber-600" : "text-slate-900"}`}>{stats.pendingExports}</p>
+                  <p className={`text-[26px] font-black tabular-nums ${!exportsUnknown && stats.pendingExports > 0 ? "text-amber-600" : "text-slate-900"}`}>{exportsUnknown ? "—" : stats.pendingExports}</p>
                   <p className="text-[11px] font-semibold text-slate-500">In progress</p>
                 </div>
               </div>
@@ -531,20 +599,24 @@ export function AuditLogsPage() {
                 <Layers className="h-4 w-4 text-blue-600" />
                 <p className="text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">Recent Requests</p>
               </div>
-              {exports_.length === 0 ? (
+              {exportsUnavailable ? (
+                <p className="mt-3 text-xs text-red-600">Unavailable — the export list could not be loaded.</p>
+              ) : exportsLoading ? (
+                <p className="mt-3 text-xs text-slate-400">Loading…</p>
+              ) : exports_.length === 0 ? (
                 <p className="mt-3 text-xs text-slate-400">No requests to show.</p>
               ) : (
                 <ul className="mt-3 space-y-2.5">
                   {exports_.slice(0, 6).map((e, i) => (
                     <li key={i} className="flex items-center justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="truncate text-xs font-semibold text-slate-700">{String(e.requested_by_name ?? "—")}</p>
+                        <p className="truncate text-xs font-semibold text-slate-700">{displayText(e.requestedByName)}</p>
                         <p className="truncate text-[11px] text-slate-400">
-                          {String(e.export_format ?? "")}
-                          {e.requested_at ? ` · ${new Date(String(e.requested_at)).toLocaleDateString()}` : ""}
+                          {exportFormat(e)}
+                          {` · ${formatDateTime(e.createdAt)}`}
                         </p>
                       </div>
-                      <ExportStatusBadge status={String(e.status ?? "")} />
+                      <ExportStatusBadge status={displayText(e.status)} />
                     </li>
                   ))}
                 </ul>
@@ -557,6 +629,15 @@ export function AuditLogsPage() {
       {/* AI Advisor */}
       {tab === "Operations Advisor" && (
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+          {aiRecsUnavailable && (
+            <div className="lg:col-span-2">
+              <ErrorState
+                message="Operations recommendations could not be loaded. None are shown because the advisor is unavailable — not because there are none."
+                onRetry={() => { void aiRecsQ.refetch(); }}
+              />
+            </div>
+          )}
+          {aiRecsLoading && <div className="lg:col-span-2"><LoadingState /></div>}
           {aiRecs.map((rec, i) => (
             <ClayCard key={i} interactive className="flex items-start gap-4 p-4">
               <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-50 border border-violet-200">
@@ -565,16 +646,25 @@ export function AuditLogsPage() {
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <p className="font-semibold text-slate-900">{String(rec.title ?? "")}</p>
-                  <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-bold text-violet-700">Score {Number(rec.score ?? 0)}</span>
+                  {/* A recommendation with no score is UNSCORED, not scored zero.
+                      Defaulting the missing score to zero printed "Score 0" — the
+                      worst possible rating — for every record the advisor never
+                      scored, which is a fabricated assessment, not a measurement. */}
+                  {Number.isFinite(Number(rec.score)) && rec.score !== null && rec.score !== undefined && rec.score !== "" ? (
+                    <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-bold text-violet-700">Score {Number(rec.score)}</span>
+                  ) : (
+                    <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-bold text-slate-500">Unscored</span>
+                  )}
                 </div>
                 <p className="mt-1 text-sm text-slate-600">{String(rec.body ?? rec.description ?? "")}</p>
               </div>
             </ClayCard>
           ))}
-          {aiRecs.length === 0 && (
+          {aiRecs.length === 0 && !aiRecsUnavailable && !aiRecsLoading && (
             <div className="lg:col-span-2 py-12 text-center">
               <Bot className="mx-auto h-8 w-8 text-slate-400" />
-              <p className="mt-2 text-sm text-slate-500">No operations recommendations available.</p>
+              <p className="mt-2 text-sm text-slate-500">No operations recommendations right now.</p>
+              <p className="mt-1 text-xs text-slate-400">The advisor ran and found nothing that needs attention in this organization.</p>
             </div>
           )}
         </div>

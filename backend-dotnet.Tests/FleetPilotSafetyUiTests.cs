@@ -93,7 +93,10 @@ public class FleetPilotSafetyUiTests
         var source = ReadFrontend(folder, file);
 
         Assert.Contains("useHasPermission", source, StringComparison.Ordinal);
-        Assert.Contains($"hasPermission('{permission}')", source, StringComparison.Ordinal);
+        var permissionGuard = file == "FleetAssetManagementPage.tsx"
+            ? "hasPermission(PERMISSIONS.FLEET_MANAGE)"
+            : $"hasPermission('{permission}')";
+        Assert.Contains(permissionGuard, source, StringComparison.Ordinal);
         Assert.Contains(readOnlyLabel, source, StringComparison.Ordinal);
     }
 
@@ -105,7 +108,9 @@ public class FleetPilotSafetyUiTests
         Assert.Contains("if (loading) return <LoadingState />", source, StringComparison.Ordinal);
         Assert.Contains("const scannedValue = forms.scanValue.trim()", source, StringComparison.Ordinal);
         Assert.Contains("if (!scannedValue)", source, StringComparison.Ordinal);
-        Assert.Contains("disabled={!canManageFleet || !forms.scanValue.trim()}", source, StringComparison.Ordinal);
+        Assert.Contains("{canManageFleet ? <section", source, StringComparison.Ordinal);
+        Assert.Contains("disabled={!forms.scanValue.trim()}", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("disabled={!canManageFleet || !forms.scanValue.trim()}", source, StringComparison.Ordinal);
         Assert.DoesNotContain("if (loading) return <div className=\"min-h-screen bg-slate-950\" />", source, StringComparison.Ordinal);
     }
 

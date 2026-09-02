@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -19,6 +20,7 @@ sys.path.insert(0, str(TOOLS))
 import capture_listener  # noqa: E402
 import fingerprint  # noqa: E402
 import public_replay  # noqa: E402
+import certification_harness  # noqa: E402
 
 
 class FingerprintTests(unittest.TestCase):
@@ -179,6 +181,398 @@ class PublicReplayTests(unittest.TestCase):
             ])
         self.assertEqual(status, 2)
         self.assertIn("not protocol-confirmed", stderr.getvalue())
+
+
+class CertificationHarnessTests(unittest.TestCase):
+    @staticmethod
+    def large_credentials() -> list[certification_harness.Credential]:
+        return [
+            certification_harness.Credential(
+                f"{branch}-DEV-{ordinal:04d}",
+                f"api-{branch}-{ordinal:04d}",
+                f"hmac-{branch}-{ordinal:04d}",
+            )
+            for branch in certification_harness.BRANCH_CENTERS
+            for ordinal in range(1, certification_harness.DEVICES_PER_BRANCH + 1)
+        ]
+
+    def credential_file(self, directory: str, rows: list[tuple[str, str, str]]) -> Path:
+        path = Path(directory) / "credentials.csv"
+        path.write_text(
+            "deviceSerial,apiKey,hmacSecret\n" +
+            "".join(f"{serial},{api_key},{secret}\n" for serial, api_key, secret in rows),
+            encoding="utf-8",
+        )
+        path.chmod(0o600)
+        return path
+
+    def test_signature_matches_canonical_contract(self) -> None:
+        body = '{"lat":35.1,"lng":-80.2}'
+        canonical = "POST\n/api/telemetry/ingest\n1700000000\nnonce-1\n" + certification_harness.sha256_hex(body)
+        expected = __import__("hmac").new(
+            b"device-secret", canonical.encode("utf-8"), __import__("hashlib").sha256,
+        ).hexdigest()
+        self.assertEqual(
+            certification_harness.compute_signature(
+                "device-secret", "POST", "/api/telemetry/ingest", "1700000000", "nonce-1", body,
+            ),
+            expected,
+        )
+
+    def test_credentials_must_be_mode_0600(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.credential_file(directory, [("CLHQ-DEV-0001", "key", "secret")])
+            path.chmod(0o644)
+            with self.assertRaisesRegex(ValueError, "group/world"):
+                certification_harness.load_credentials([str(path)])
+
+    def test_credentials_are_unique_and_header_is_exact(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.credential_file(directory, [
+                ("CLHQ-DEV-0001", "key-1", "secret-1"),
+                ("CLHQ-DEV-0001", "key-2", "secret-2"),
+            ])
+            with self.assertRaisesRegex(ValueError, "duplicate device serial"):
+                certification_harness.load_credentials([str(path)])
+
+    def test_plan_is_deterministic_and_contains_no_credentials(self) -> None:
+        credentials = self.large_credentials()
+        observed = certification_harness.datetime(2026, 8, 27, 5, 15, tzinfo=certification_harness.timezone.utc)
+        first = certification_harness.build_scenarios(credentials, "RUN-1", observed)
+        second = certification_harness.build_scenarios(credentials, "RUN-1", observed)
+        self.assertEqual(first, second)
+        public = __import__("json").dumps([scenario.public() for scenario in first])
+        self.assertNotIn("api-CLHQ-0001", public)
+        self.assertNotIn("hmac-CLHQ-0001", public)
+        self.assertEqual(len(first), 7_642)
+        self.assertEqual(sum(row.interface == "native" for row in first), 7_632)
+        self.assertEqual(sum(row.interface == "diagnostic-native" for row in first), 10)
+        by_name = {scenario.name: scenario for scenario in first}
+        original = by_name["idempotency-original"]
+        identical = by_name["idempotency-identical-fresh-nonce"]
+        conflict = by_name["idempotency-conflict-fresh-nonce"]
+        self.assertEqual(original.body, identical.body)
+        self.assertNotEqual(original.nonce, identical.nonce)
+        self.assertEqual(identical.expected_status, (200,))
+        self.assertEqual(identical.expected_mutation, "none")
+        self.assertEqual(
+            __import__("json").loads(original.body)["clientGeneratedId"],
+            __import__("json").loads(conflict.body)["clientGeneratedId"],
+        )
+        self.assertNotEqual(original.body, conflict.body)
+        self.assertEqual(conflict.expected_status, (409,))
+
+    def test_future_fix_control_cannot_age_into_the_api_acceptance_window(self) -> None:
+        observed = certification_harness.datetime(
+            2026, 8, 27, 5, 15, tzinfo=certification_harness.timezone.utc)
+        scenarios = certification_harness.build_scenarios(
+            self.large_credentials(), "RUN-FUTURE-CONTROL", observed)
+        future_fix = next(row for row in scenarios if row.name == "future-fix")
+        event_time = certification_harness.datetime.fromisoformat(
+            __import__("json").loads(future_fix.body)["eventTime"].replace("Z", "+00:00"))
+        scheduled_submission = observed + certification_harness.timedelta(
+            seconds=future_fix.send_offset_seconds)
+
+        self.assertEqual(future_fix.expected_status, (422,))
+        self.assertEqual(future_fix.expected_mutation, "none")
+        self.assertGreaterEqual(
+            (event_time - scheduled_submission).total_seconds(),
+            certification_harness.FUTURE_CONTROL_OFFSET_SECONDS - 2,
+        )
+        self.assertGreater(
+            certification_harness.FUTURE_CONTROL_OFFSET_SECONDS,
+            certification_harness.RECONNECT_SECONDS + 5 * 60,
+        )
+
+    def test_aged_future_fix_fails_closed_before_submission(self) -> None:
+        observed = certification_harness.datetime(
+            2026, 8, 27, 5, 15, tzinfo=certification_harness.timezone.utc)
+        scenarios = certification_harness.build_scenarios(
+            self.large_credentials(), "RUN-AGED-CONTROL", observed)
+        future_fix = next(row for row in scenarios if row.name == "future-fix")
+        body = __import__("json").loads(future_fix.body)
+        body["eventTime"] = "2026-08-27T05:19:59Z"
+        aged = certification_harness.replace(
+            future_fix,
+            body=__import__("json").dumps(body, sort_keys=True, separators=(",", ":")),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "aged into the API acceptance window"):
+            certification_harness._validate_scenario_time_oracle(
+                aged,
+                certification_harness.datetime(
+                    2026, 8, 27, 5, 15, tzinfo=certification_harness.timezone.utc),
+            )
+
+    def test_exact_per_branch_cohort_plan_and_never_connected_invariant(self) -> None:
+        credentials = self.large_credentials()
+        grouped = certification_harness.validate_large_fleet_credentials(credentials)
+        counts = {name: 0 for name in certification_harness.EXPECTED_COHORT_TOTALS}
+        for branch_rows in grouped.values():
+            branch_counts = {name: 0 for name in counts}
+            for credential in branch_rows:
+                cohort = certification_harness._cohort(certification_harness._device_number(credential.serial))
+                counts[cohort] += 1
+                branch_counts[cohort] += 1
+            self.assertEqual(branch_counts, {
+                "normal": 140, "delayed": 20, "stale": 15, "offline": 10,
+                "reconnect": 5, "geofence": 5, "odometer": 3,
+                "critical-j1939": 2, "never-connected": 20,
+            })
+        self.assertEqual(counts, certification_harness.EXPECTED_COHORT_TOTALS)
+        scenarios = certification_harness.build_scenarios(
+            credentials, "RUN-COHORTS",
+            certification_harness.datetime(2026, 8, 27, tzinfo=certification_harness.timezone.utc),
+        )
+        never_serials = {
+            credential.serial for credential in credentials
+            if certification_harness._cohort(certification_harness._device_number(credential.serial)) == "never-connected"
+        }
+        self.assertEqual(len(never_serials), 100)
+        self.assertTrue(never_serials.isdisjoint({scenario.serial for scenario in scenarios}))
+
+    def test_phase_schedule_keeps_non_offline_devices_online_and_final_live_cohorts_fresh(self) -> None:
+        scenarios = certification_harness.build_scenarios(
+            self.large_credentials(), "RUN-PHASES",
+            certification_harness.datetime(2026, 8, 27, tzinfo=certification_harness.timezone.utc),
+        )
+        offsets = lambda serial, interface="native": [
+            row.send_offset_seconds for row in scenarios
+            if row.serial == serial and row.interface == interface and row.cohort != "control"
+        ]
+        self.assertEqual(max(offsets("CLHQ-DEV-0001")), certification_harness.RECONNECT_SECONDS)
+        self.assertIn(2 * 60, offsets("CLHQ-DEV-0191"))
+        self.assertEqual(max(offsets("CLHQ-DEV-0191")), certification_harness.RECONNECT_SECONDS)
+        self.assertEqual(max(offsets("CLHQ-DEV-0196")), certification_harness.RECONNECT_SECONDS)
+        self.assertEqual(offsets("CLHQ-DEV-0199"), [2 * 60, certification_harness.RECONNECT_SECONDS])
+        self.assertEqual(offsets("CLHQ-DEV-0199", "diagnostic-native"), [15 * 60])
+        self.assertEqual(max(offsets("CLHQ-DEV-0141")), 15 * 60)
+        self.assertEqual(max(offsets("CLHQ-DEV-0161")), 15 * 60)
+        self.assertEqual(offsets("CLHQ-DEV-0176"), [0])
+        self.assertEqual(max(offsets("CLHQ-DEV-0186")), certification_harness.RECONNECT_SECONDS)
+
+    def test_public_manifest_has_exact_non_secret_oracle_totals(self) -> None:
+        credentials = self.large_credentials()
+        observed = certification_harness.datetime(2026, 8, 27, 5, 15, tzinfo=certification_harness.timezone.utc)
+        scenarios = certification_harness.build_scenarios(credentials, "RUN-MANIFEST", observed)
+        plan = certification_harness.build_public_plan(
+            credentials, scenarios, "RUN-MANIFEST", "staging.example.test", False,
+        )
+        self.assertEqual(plan["networkCalls"], 0)
+        self.assertEqual(plan["expectedInventory"], {"devices": 1100, "installed": 1000, "neverConnected": 100})
+        self.assertEqual(plan["cohortPerBranch"], {
+            "normal": 140, "delayed": 20, "stale": 15, "offline": 10,
+            "reconnect": 5, "geofence": 5, "odometer": 3,
+            "critical-j1939": 2, "never-connected": 20,
+        })
+        self.assertEqual(plan["cohortTotals"], certification_harness.EXPECTED_COHORT_TOTALS)
+        self.assertEqual(plan["interfaceEventTotals"], {"native": 7632, "diagnostic-native": 10})
+        self.assertEqual(plan["eventTotals"], {
+            "cohortGps": 7620,
+            "positiveControlGps": 3,
+            "idempotentNoOpSuccess": 1,
+            "validDiagnostics": 10,
+            "rejectedControls": 8,
+            "negativeOrNoMutationControls": 9,
+            "allPlannedAttempts": 7642,
+        })
+        self.assertEqual(plan["expectedChromeTotals"]["onlineAfterReconnect"], 950)
+        encoded = __import__("json").dumps(plan)
+        self.assertNotIn("api-CLHQ-0001", encoded)
+        self.assertNotIn("hmac-CLHQ-0001", encoded)
+
+    def test_j1939_fixture_derives_critical_without_client_severity(self) -> None:
+        body = __import__("json").loads(certification_harness._diagnostic_body(
+            "CLHQ-DEV-0199",
+            certification_harness.datetime(2026, 8, 27, tzinfo=certification_harness.timezone.utc),
+            "CERT-LARGE-20260825-M2-UNIT",
+        ))
+        self.assertEqual(body["protocol"], "J1939")
+        self.assertEqual(body["pgn"], 65226)
+        self.assertEqual(body["lampStatus"]["redStop"], "On")
+        self.assertNotIn("severity", body)
+
+    def test_repeat_runs_use_distinct_customer_event_identities(self) -> None:
+        observed_at = certification_harness.datetime(
+            2026, 8, 27, tzinfo=certification_harness.timezone.utc)
+        first = __import__("json").loads(certification_harness._json_body(
+            "CLHQ-DEV-0001", observed_at, "CERT-RUN-A", sequence=1))
+        second = __import__("json").loads(certification_harness._json_body(
+            "CLHQ-DEV-0001", observed_at, "CERT-RUN-B", sequence=1))
+        self.assertNotEqual(first["clientGeneratedId"], second["clientGeneratedId"])
+        self.assertNotEqual(first["correlationId"], second["correlationId"])
+
+    def test_large_fleet_rejects_partial_or_misaligned_credentials(self) -> None:
+        with self.assertRaisesRegex(ValueError, "exactly 1100"):
+            certification_harness.validate_large_fleet_credentials(self.large_credentials()[:-1])
+        malformed = self.large_credentials()
+        malformed[-1] = certification_harness.Credential("WESTHUB-DEV-9999", "api", "hmac")
+        with self.assertRaisesRegex(ValueError, "0001..0220"):
+            certification_harness.validate_large_fleet_credentials(malformed)
+
+    def test_target_refuses_production_and_requires_exact_allowlist(self) -> None:
+        with self.assertRaisesRegex(ValueError, "production"):
+            certification_harness.validate_target(
+                "https://osptrax-fleet-management.onrender.com",
+                "osptrax-fleet-management.onrender.com", "staging",
+            )
+        with self.assertRaisesRegex(ValueError, "exactly match"):
+            certification_harness.validate_target(
+                "https://opstrax-staging-api.onrender.com", "other.example", "staging",
+            )
+
+    def test_target_refuses_current_render_production_host(self) -> None:
+        production_host = "opstrax-enterprise-build-8x41.onrender.com"
+        with self.assertRaisesRegex(ValueError, "production"):
+            certification_harness.validate_target(
+                f"https://{production_host}", production_host, "staging",
+            )
+
+    def test_preflight_requires_server_attested_staging_environment(self) -> None:
+        expected_sha = "a" * 40
+        production_response = (
+            200,
+            {"x-deployment-version": expected_sha},
+            __import__("json").dumps({
+                "status": "ready",
+                "version": expected_sha,
+                "environment": "Production",
+            }).encode("utf-8"),
+            0.125,
+        )
+        with mock.patch.object(certification_harness, "_open_json", return_value=production_response):
+            with self.assertRaisesRegex(RuntimeError, "environment mismatch"):
+                certification_harness.preflight(
+                    "https://staging.example.test", expected_sha, 30.0,
+                )
+
+    def test_preflight_preserves_verified_staging_environment_in_evidence(self) -> None:
+        expected_sha = "b" * 40
+        staging_response = (
+            200,
+            {"x-deployment-version": expected_sha},
+            __import__("json").dumps({
+                "status": "ready",
+                "version": expected_sha,
+                "environment": "Staging",
+            }).encode("utf-8"),
+            0.125,
+        )
+        with mock.patch.object(certification_harness, "_open_json", return_value=staging_response):
+            evidence = certification_harness.preflight(
+                "https://staging.example.test", expected_sha, 30.0,
+            )
+        self.assertEqual(evidence["environment"], "Staging")
+        self.assertEqual(evidence["version"], expected_sha)
+
+    def test_default_plan_makes_zero_network_calls(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.credential_file(directory, [
+                (credential.serial, credential.api_key, credential.hmac_secret)
+                for credential in self.large_credentials()
+            ])
+            stdout = io.StringIO()
+            with mock.patch.object(certification_harness.request, "urlopen") as urlopen, redirect_stdout(stdout):
+                status = certification_harness.main([
+                    "--credentials", str(path), "--run-id", "RUN-DRY",
+                    "--observed-at", "2026-08-27T05:15:00Z",
+                ])
+            self.assertEqual(status, 0)
+            urlopen.assert_not_called()
+            self.assertIn('"networkCalls": 0', stdout.getvalue())
+            self.assertNotIn("api-CLHQ-0001", stdout.getvalue())
+            self.assertNotIn("hmac-CLHQ-0001", stdout.getvalue())
+
+    def test_execute_requires_ack_and_exact_sha(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.credential_file(directory, [
+                (credential.serial, credential.api_key, credential.hmac_secret)
+                for credential in self.large_credentials()
+            ])
+            stderr = io.StringIO()
+            with redirect_stderr(stderr):
+                status = certification_harness.main([
+                    "--credentials", str(path), "--run-id", "RUN-EXEC", "--execute",
+                ])
+            self.assertEqual(status, 2)
+            self.assertIn("execute mode requires", stderr.getvalue())
+
+    def test_execute_scenarios_serializes_same_device_replay_pair(self) -> None:
+        def scenario(name: str) -> certification_harness.Scenario:
+            return certification_harness.Scenario(
+                name=name,
+                serial="CLHQ-DEV-0001",
+                api_key="api-key",
+                hmac_secret="hmac-secret",
+                nonce=f"nonce-{name}",
+                body="{}",
+                expected_status=(200,),
+                chrome_outcome="test",
+            )
+
+        original_started = threading.Event()
+        release_original = threading.Event()
+        duplicate_started = threading.Event()
+        call_order: list[str] = []
+        result: list[tuple[int, int]] = []
+
+        def execute(_base_url: str, row: certification_harness.Scenario,
+                    _expected_sha: str, _timeout: float) -> dict[str, object]:
+            call_order.append(f"{row.name}:start")
+            if row.name == "replay-original":
+                original_started.set()
+                self.assertTrue(release_original.wait(2))
+                call_order.append(f"{row.name}:finish")
+            else:
+                duplicate_started.set()
+                call_order.append(f"{row.name}:finish")
+            return {"name": row.name, "passed": True}
+
+        def run() -> None:
+            result.append(certification_harness.execute_scenarios(
+                "https://staging.example.test",
+                [scenario("replay-original"), scenario("replay-duplicate")],
+                "a" * 40,
+                1.0,
+                50.0,
+            ))
+
+        with mock.patch.object(certification_harness, "execute_scenario", side_effect=execute), \
+                redirect_stdout(io.StringIO()):
+            runner = threading.Thread(target=run)
+            runner.start()
+            self.assertTrue(original_started.wait(1))
+            self.assertFalse(duplicate_started.wait(0.1))
+            release_original.set()
+            runner.join(2)
+
+        self.assertFalse(runner.is_alive())
+        self.assertEqual(result, [(2, 0)])
+        self.assertEqual(call_order, [
+            "replay-original:start",
+            "replay-original:finish",
+            "replay-duplicate:start",
+            "replay-duplicate:finish",
+        ])
+
+    def test_submission_pacing_discards_backpressure_debt(self) -> None:
+        clock = {"now": 10.0}
+        sleeps: list[float] = []
+
+        def sleep(seconds: float) -> None:
+            sleeps.append(seconds)
+            clock["now"] += seconds
+
+        with mock.patch.object(certification_harness.time, "monotonic",
+                               side_effect=lambda: clock["now"]), \
+                mock.patch.object(certification_harness.time, "sleep", side_effect=sleep):
+            first_submission = certification_harness._wait_for_submission_slot(0.0, 1.0)
+            next_rate_slot = first_submission + 1.0
+            second_submission = certification_harness._wait_for_submission_slot(0.0, next_rate_slot)
+
+        self.assertEqual(first_submission, 10.0)
+        self.assertEqual(second_submission, 11.0)
+        self.assertEqual(sleeps, [1.0])
 
 
 if __name__ == "__main__":

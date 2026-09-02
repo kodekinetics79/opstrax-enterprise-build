@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "candidateSha": "4960df41edd4399d3b6c7b07fe8145936cf1905b",
+  "tenant": "CERT-LARGE-20260825",
+  "browser": "visible Google Chrome",
+  "observations": {
+    "executiveFreshLoginMs": 2178,
+    "vehicleRosterPage1UsableMs": 2551,
+    "vehicleSearchFinalIdentityMs": 1011,
+    "vehiclePages1Through20Ms": 20812,
+    "finalPageSettleMs": 1800,
+    "vehicleCount": 1000,
+    "vehiclePageCount": 20,
+    "finalIdentity": "WESTHUB-V-0200",
+    "finalNextDisabled": true,
+    "consoleEntries": 0
+  },
+  "qualification": "Customer-visible wall-time observations, not a percentile load test."
+}

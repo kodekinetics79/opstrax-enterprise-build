@@ -1,0 +1,13 @@
+Captured: 2026-08-28
+Environment: Staging
+Candidate: 4cdb6c4cf3a37b11529007f90dd0f685cc8a58a7
+Frontend deployment: dpl_Dqjn1FUmqMf94f5rXTjW3HrotT8a (READY)
+Frontend URL: https://opstrax-staging-certification.vercel.app
+Render deployment: dep-da8n7ve7bikc73drrpg0 (Deploy succeeded|Live)
+API readiness URL: https://opstrax-staging-api.onrender.com/health/ready
+HTTP status: 200
+x-deployment-version: 4cdb6c4cf3a37b11529007f90dd0f685cc8a58a7
+Body status: ready
+Body version: 4cdb6c4cf3a37b11529007f90dd0f685cc8a58a7
+Body environment: Staging
+Production: not changed

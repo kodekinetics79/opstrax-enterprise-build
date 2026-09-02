@@ -1,9 +1,9 @@
 import { cloneElement, isValidElement, useEffect, useId, useMemo, useRef, useState } from "react";
-import type { ButtonHTMLAttributes, HTMLAttributes, ReactElement, ReactNode } from "react";
+import type { ButtonHTMLAttributes, HTMLAttributes, InputHTMLAttributes, ReactElement, ReactNode } from "react";
 import {
   AlertTriangle, ArrowDownRight, ArrowUpRight,
   ChevronUp, ChevronDown as ChevronDownIcon,
-  Loader2, Search,
+  Eye, EyeOff, Loader2, Search,
   Sparkles, TrendingUp, X,
 } from "lucide-react";
 import type { AnyRecord } from "@/types";
@@ -120,6 +120,32 @@ export function FormField({
       ) : hint ? (
         <p id={messageId} className="text-xs text-slate-500">{hint}</p>
       ) : null}
+    </div>
+  );
+}
+
+/* Password input with a show/hide (eye) toggle — every password field must let
+   the person typing verify what they typed. The toggle reveals the TYPED value
+   only; secrets stored server-side (e.g. the SMTP credential) are never echoed
+   back by the API, so there is nothing stored to reveal here. */
+export function PasswordInput({
+  className = "field",
+  wrapperClassName = "",
+  ...props
+}: InputHTMLAttributes<HTMLInputElement> & { wrapperClassName?: string }) {
+  const [show, setShow] = useState(false);
+  return (
+    <div className={`relative ${wrapperClassName}`.trim()}>
+      <input {...props} type={show ? "text" : "password"} className={`${className} w-full pr-10`} />
+      <button
+        type="button"
+        onClick={() => setShow((s) => !s)}
+        aria-label={show ? "Hide password" : "Show password"}
+        aria-pressed={show}
+        className="absolute inset-y-0 right-0 flex w-10 items-center justify-center text-slate-400 hover:text-teal-600"
+      >
+        {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+      </button>
     </div>
   );
 }
@@ -354,6 +380,8 @@ export function DataTable({
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(0);
+  const pageSize = 100;
 
   const filtered = useMemo(() => {
     if (!search.trim()) return rows;
@@ -370,6 +398,14 @@ export function DataTable({
       return sortDir === "asc" ? cmp : -cmp;
     });
   }, [filtered, sortKey, sortDir]);
+
+  const pageCount = Math.max(1, Math.ceil(sorted.length / pageSize));
+  const pageRows = useMemo(() => sorted.slice(page * pageSize, (page + 1) * pageSize), [sorted, page]);
+
+  useEffect(() => setPage(0), [rows, search, sortKey, sortDir]);
+  useEffect(() => {
+    if (page >= pageCount) setPage(pageCount - 1);
+  }, [page, pageCount]);
 
   const handleSort = (col: string) => {
     if (sortKey === col) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -440,14 +476,14 @@ export function DataTable({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {sorted.length === 0 ? (
+            {pageRows.length === 0 ? (
               <tr>
                 <td colSpan={columns.length} className="px-5 py-12 text-center text-sm text-slate-500">
                   No records found. Try a different search or filter.
                 </td>
               </tr>
             ) : (
-              sorted.map((row, index) => (
+              pageRows.map((row, index) => (
                 <tr
                   key={String(row.id ?? index)}
                   onClick={onSelect ? () => onSelect(row) : undefined}
@@ -480,8 +516,12 @@ export function DataTable({
 
       {sorted.length > 0 && (
         <div className="flex items-center justify-between border-t border-slate-100 px-5 py-2.5">
-          <span className="text-xs text-slate-600">Showing {sorted.length} of {rows.length} records</span>
-          <span className="text-xs text-slate-600">Click a row to view details · Click column headers to sort</span>
+          <span className="text-xs text-slate-600">Showing {page * pageSize + 1}–{Math.min((page + 1) * pageSize, sorted.length)} of {sorted.length} records</span>
+          <div className="flex items-center gap-2">
+            <button className="btn-ghost px-3 py-1 text-xs" type="button" disabled={page === 0} onClick={() => setPage((value) => Math.max(0, value - 1))}>Previous</button>
+            <span className="text-xs text-slate-600">Page {page + 1} of {pageCount}</span>
+            <button className="btn-ghost px-3 py-1 text-xs" type="button" disabled={page + 1 >= pageCount} onClick={() => setPage((value) => Math.min(pageCount - 1, value + 1))}>Next</button>
+          </div>
         </div>
       )}
     </div>

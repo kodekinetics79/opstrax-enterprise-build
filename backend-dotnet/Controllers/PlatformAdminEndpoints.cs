@@ -177,7 +177,9 @@ public static class PlatformAdminEndpoints
         if (string.IsNullOrWhiteSpace(baseUrl)) return false;
 
         var link = $"{baseUrl}/platform/accept-invite?email={Uri.EscapeDataString(email)}&token={rawToken}";
-        return await PlatformMailService.TrySendAsync(
+        var mail = http.RequestServices?.GetService<PlatformMailService>();
+        if (mail is null) return false;
+        return await mail.TrySendAsync(
             email,
             "OpsTrax Platform — operator access setup",
             $"""

@@ -1,6 +1,9 @@
 export const PERMISSIONS = {
   DASHBOARD_VIEW: "dashboard:view",
 
+  // Canonical server guard for branch, vehicle, driver, and fleet-asset writes.
+  FLEET_MANAGE: "fleet:manage",
+
   VEHICLES_VIEW: "vehicles:view",
   VEHICLES_CREATE: "vehicles:create",
   VEHICLES_UPDATE: "vehicles:update",
@@ -136,6 +139,13 @@ export const PERMISSIONS = {
   BILLING_VIEW: "billing:view",
   BILLING_MANAGE: "billing:manage",
 
+  // Finance sub-domains. The API folds tax/settlement/revrec/invoice permissions
+  // into finance:view / finance:manage (EndpointMappings.cs ~2648-2674); without
+  // the same folding here the CLIENT hid four /finance/* routes from a Finance &
+  // Billing Manager that the server would have allowed.
+  FINANCE_VIEW: "finance:view",
+  FINANCE_MANAGE: "finance:manage",
+
   // P9 — Platform operations (admin/engineering access only)
   OPS_VIEW: "ops:view",
 } as const;
@@ -146,6 +156,11 @@ const P = PERMISSIONS;
 
 const PERMISSION_GROUPS: Record<Permission, string[]> = {
   [P.DASHBOARD_VIEW]: ["dashboard.view"],
+
+  // Fail closed on the endpoint's canonical fleet:manage requirement. Do not
+  // reproduce the server's legacy sibling-action alias closure in the client:
+  // a vehicles:update grant must never make a Delete control appear.
+  [P.FLEET_MANAGE]: ["fleet.manage"],
 
   [P.VEHICLES_VIEW]: ["fleet.view", "fleet:view"],
   [P.VEHICLES_CREATE]: ["fleet.manage", "fleet:manage"],
@@ -162,10 +177,10 @@ const PERMISSION_GROUPS: Record<Permission, string[]> = {
   [P.DRIVERS_EXPORT]: ["drivers.view", "drivers:view", "drivers.manage", "drivers:manage"],
 
   [P.SHIPMENTS_VIEW]: ["shipments.view", "shipments:view", "orders.view", "orders:view"],
-  [P.SHIPMENTS_CREATE]: ["shipments.manage", "shipments:manage", "orders.manage", "orders:manage", "dispatch.manage", "dispatch:manage"],
-  [P.SHIPMENTS_UPDATE]: ["shipments.manage", "shipments:manage", "orders.manage", "orders:manage", "dispatch.manage", "dispatch:manage"],
-  [P.SHIPMENTS_DELETE]: ["shipments.manage", "shipments:manage", "orders.manage", "orders:manage", "dispatch.manage", "dispatch:manage"],
-  [P.SHIPMENTS_EXPORT]: ["shipments.view", "shipments:view", "shipments.manage", "shipments:manage", "orders.view", "orders:view"],
+  [P.SHIPMENTS_CREATE]: ["shipments.manage", "shipments:manage", "orders.manage", "orders:manage"],
+  [P.SHIPMENTS_UPDATE]: ["shipments.manage", "shipments:manage", "orders.manage", "orders:manage"],
+  [P.SHIPMENTS_DELETE]: ["shipments.manage", "shipments:manage", "orders.manage", "orders:manage"],
+  [P.SHIPMENTS_EXPORT]: ["shipments.manage", "shipments:manage"],
 
   [P.DISPATCH_VIEW]: ["dispatch.view", "dispatch:view"],
   [P.DISPATCH_CREATE]: ["dispatch.manage", "dispatch:manage", "orders.manage", "orders:manage"],
@@ -196,79 +211,102 @@ const PERMISSION_GROUPS: Record<Permission, string[]> = {
   [P.COMPLIANCE_UPDATE]: ["compliance.manage", "compliance:manage"],
   [P.COMPLIANCE_EXPORT]: ["compliance.manage", "compliance:manage"],
 
-  [P.ALERTS_VIEW]: ["alerts.view", "alerts:view", "fleet.view", "fleet:view", "safety.view", "safety:view", "maintenance.view", "maintenance:view"],
-  [P.ALERTS_ACKNOWLEDGE]: ["alerts.manage", "alerts:manage", "safety.manage", "safety:manage", "maintenance.manage", "maintenance:manage"],
-  [P.ALERTS_CLOSE]: ["alerts.manage", "alerts:manage", "safety.manage", "safety:manage", "maintenance.manage", "maintenance:manage"],
+  [P.ALERTS_VIEW]: ["alerts.view", "alerts:view", "safety.view", "safety:view", "maintenance.view", "maintenance:view"],
+  [P.ALERTS_ACKNOWLEDGE]: ["alerts.manage", "alerts:manage"],
+  [P.ALERTS_CLOSE]: ["alerts.manage", "alerts:manage"],
 
   [P.REPORTS_VIEW]: ["reports.view", "reports:view"],
-  [P.REPORTS_EXPORT]: ["reports.manage", "reports:manage", "reports.view", "reports:view"],
+  [P.REPORTS_EXPORT]: ["reports.manage", "reports:manage"],
 
   [P.OPERATIONS_EXECUTION_SUMMARY_READ]: ["operations.execution_summary.read", "dispatch:view", "dispatch:manage", "shipments:view", "fleet:view", "driver:self"],
-  [P.DISPATCH_SMART_ASSIGN_READ]: ["dispatch.smart_assign.read", "dispatch:view", "dispatch:manage", "dispatch:assign"],
-  [P.DISPATCH_SMART_ASSIGN_RECOMMEND]: ["dispatch.smart_assign.recommend", "dispatch:manage", "dispatch:assign"],
-  [P.DISPATCH_SMART_ASSIGN_ACCEPT]: ["dispatch.smart_assign.accept", "dispatch:manage", "dispatch:assign"],
-  [P.DISPATCH_SMART_ASSIGN_REJECT]: ["dispatch.smart_assign.reject", "dispatch:manage"],
-  [P.OPERATIONS_SITE_ACCESS_READ]: ["operations.site_access.read", "dispatch:view", "dispatch:manage", "job.update"],
-  [P.OPERATIONS_SITE_ACCESS_CREATE]: ["operations.site_access.create", "dispatch:manage", "job.update", "job:update", "driver:self"],
-  [P.OPERATIONS_SITE_ACCESS_UPDATE]: ["operations.site_access.update", "dispatch:manage", "job.update", "job:update", "driver:self"],
-  [P.OPERATIONS_ACCESS_DOCUMENT_READ]: ["operations.access_document.read", "dispatch:view", "dispatch:manage", "driver:self"],
-  [P.OPERATIONS_ACCESS_DOCUMENT_CREATE]: ["operations.access_document.create", "dispatch:manage", "driver:self"],
-  [P.OPERATIONS_ACCESS_DOCUMENT_UPDATE]: ["operations.access_document.update", "operations.access_document.verify", "dispatch:manage", "driver:self"],
-  [P.OPERATIONS_ACCESS_DOCUMENT_VERIFY]: ["operations.access_document.verify", "operations.access_document.update", "dispatch:manage", "driver:self"],
-  [P.OPERATIONS_PICKUP_AUTHORIZATION_READ]: ["operations.pickup_authorization.read", "dispatch:view", "dispatch:manage", "driver:self"],
-  [P.OPERATIONS_PICKUP_AUTHORIZATION_CREATE]: ["operations.pickup_authorization.create", "dispatch:manage", "driver:self"],
-  [P.OPERATIONS_PICKUP_AUTHORIZATION_UPDATE]: ["operations.pickup_authorization.update", "operations.pickup_authorization.verify", "dispatch:manage", "driver:self"],
-  [P.OPERATIONS_PICKUP_AUTHORIZATION_VERIFY]: ["operations.pickup_authorization.verify", "operations.pickup_authorization.update", "dispatch:manage", "driver:self"],
-  [P.OPERATIONS_WAREHOUSE_HANDOVER_READ]: ["operations.warehouse_handover.read", "dispatch:view", "dispatch:manage", "driver:self"],
-  [P.OPERATIONS_WAREHOUSE_HANDOVER_CREATE]: ["operations.warehouse_handover.create", "dispatch:manage", "driver:self"],
-  [P.OPERATIONS_WAREHOUSE_HANDOVER_UPDATE]: ["operations.warehouse_handover.update", "dispatch:manage", "driver:self"],
-  [P.OPERATIONS_PROOF_READ]: ["operations.proof.read", "dispatch:view", "dispatch:manage", "driver:self"],
-  [P.OPERATIONS_PROOF_CREATE]: ["operations.proof.create", "dispatch:manage", "driver:self"],
-  [P.OPERATIONS_PROOF_UPDATE]: ["operations.proof.update", "operations.proof.create", "dispatch:manage", "driver:self"],
-  [P.OPERATIONS_PROOF_SUBMIT]: ["operations.proof.submit", "operations.proof.create", "dispatch:manage", "driver:self"],
-  [P.OPERATIONS_PROOF_VALIDATE]: ["operations.proof.validate", "dispatch:manage"],
-  [P.OPERATIONS_PROOF_ARTIFACT_READ]: ["operations.proof_artifact.read", "operations.proof.read", "dispatch:view", "dispatch:manage", "driver:self"],
-  [P.OPERATIONS_PROOF_ARTIFACT_CREATE]: ["operations.proof_artifact.create", "operations.proof.create", "dispatch:manage", "driver:self"],
+  [P.DISPATCH_SMART_ASSIGN_READ]: ["dispatch.smart_assign.read", "dispatch.smart_assign.recommend", "dispatch.smart_assign.accept", "dispatch.smart_assign.reject"],
+  [P.DISPATCH_SMART_ASSIGN_RECOMMEND]: ["dispatch.smart_assign.recommend"],
+  [P.DISPATCH_SMART_ASSIGN_ACCEPT]: ["dispatch.smart_assign.accept"],
+  [P.DISPATCH_SMART_ASSIGN_REJECT]: ["dispatch.smart_assign.reject"],
+  [P.OPERATIONS_SITE_ACCESS_READ]: ["operations.site_access.read", "operations.site_access.create", "operations.site_access.update"],
+  [P.OPERATIONS_SITE_ACCESS_CREATE]: ["operations.site_access.create"],
+  [P.OPERATIONS_SITE_ACCESS_UPDATE]: ["operations.site_access.update"],
+  [P.OPERATIONS_ACCESS_DOCUMENT_READ]: ["operations.access_document.read", "operations.access_document.create", "operations.access_document.update", "operations.access_document.verify"],
+  [P.OPERATIONS_ACCESS_DOCUMENT_CREATE]: ["operations.access_document.create"],
+  [P.OPERATIONS_ACCESS_DOCUMENT_UPDATE]: ["operations.access_document.update"],
+  [P.OPERATIONS_ACCESS_DOCUMENT_VERIFY]: ["operations.access_document.verify"],
+  [P.OPERATIONS_PICKUP_AUTHORIZATION_READ]: ["operations.pickup_authorization.read", "operations.pickup_authorization.create", "operations.pickup_authorization.update", "operations.pickup_authorization.verify"],
+  [P.OPERATIONS_PICKUP_AUTHORIZATION_CREATE]: ["operations.pickup_authorization.create"],
+  [P.OPERATIONS_PICKUP_AUTHORIZATION_UPDATE]: ["operations.pickup_authorization.update"],
+  [P.OPERATIONS_PICKUP_AUTHORIZATION_VERIFY]: ["operations.pickup_authorization.verify"],
+  [P.OPERATIONS_WAREHOUSE_HANDOVER_READ]: ["operations.warehouse_handover.read", "operations.warehouse_handover.create", "operations.warehouse_handover.update"],
+  [P.OPERATIONS_WAREHOUSE_HANDOVER_CREATE]: ["operations.warehouse_handover.create"],
+  [P.OPERATIONS_WAREHOUSE_HANDOVER_UPDATE]: ["operations.warehouse_handover.update"],
+  [P.OPERATIONS_PROOF_READ]: ["operations.proof.read", "operations.proof.create", "operations.proof.update", "operations.proof.submit", "operations.proof.validate"],
+  [P.OPERATIONS_PROOF_CREATE]: ["operations.proof.create"],
+  [P.OPERATIONS_PROOF_UPDATE]: ["operations.proof.update"],
+  [P.OPERATIONS_PROOF_SUBMIT]: ["operations.proof.submit"],
+  [P.OPERATIONS_PROOF_VALIDATE]: ["operations.proof.validate"],
+  [P.OPERATIONS_PROOF_ARTIFACT_READ]: ["operations.proof_artifact.read", "operations.proof_artifact.create"],
+  [P.OPERATIONS_PROOF_ARTIFACT_CREATE]: ["operations.proof_artifact.create", "operations.proof.create"],
 
-  [P.USERS_VIEW]: ["users.view", "users:view", "users.manage", "users:manage"],
+  // ── Governance view tiers are ONE-WAY ──────────────────────────────────────
+  // Satisfiers are directed toward the canonical permission. A view entry must
+  // never list its manage token; manage-to-view is declared on the manage/action
+  // entries instead. Measured on the pre-recovery closure:
+  // settings:view→settings:manage, settings:view→settings:update,
+  // users:view→users:manage/create/update/delete, roles:view→users:manage and
+  // roles:view→roles:manage/update/create were ALL true, and settings:view also
+  // reached `telematics:providers:manage` (SETTINGS_VIEW → settings:manage →
+  // TELEMATICS_PROVIDERS_MANAGE). A Read-only Auditor was rendered — and on the
+  // frontend authorised for — the whole tenant-administration write surface.
+  // The view groups now carry ONLY their own view token. Do not add a manage
+  // token back: there is no one-way edge in this closure, only equivalence.
+  [P.USERS_VIEW]: ["users.view", "users:view"],
   [P.USERS_CREATE]: ["users.manage", "users:manage"],
   [P.USERS_UPDATE]: ["users.manage", "users:manage"],
   [P.USERS_DELETE]: ["users.manage", "users:manage"],
 
-  [P.ROLES_VIEW]: ["roles.view", "roles:view", "users.manage", "users:manage"],
+  [P.ROLES_VIEW]: ["roles.view", "roles:view"],
   [P.ROLES_CREATE]: ["roles.manage", "roles:manage", "users.manage", "users:manage"],
   [P.ROLES_UPDATE]: ["roles.manage", "roles:manage", "users.manage", "users:manage"],
 
-  [P.SETTINGS_VIEW]: ["settings.view", "settings:view", "settings.manage", "settings:manage"],
+  [P.SETTINGS_VIEW]: ["settings.view", "settings:view"],
   [P.SETTINGS_UPDATE]: ["settings.manage", "settings:manage"],
 
-  [P.AUDIT_VIEW]: ["audit.view", "audit:view", "reports.manage", "reports:manage"],
+  [P.AUDIT_VIEW]: ["audit.view", "audit:view"],
 
-  [P.TELEMATICS_DEVICES_VIEW]: ["fleet.view", "fleet:view", "telematics.view", "telematics:view"],
+  // PAGE-GATING token. Deliberately carries NO module-view alias (fleet:view /
+  // telematics:view): this group is merged into TELEMETRY_DEVICES_READ through the
+  // shared `telematics:devices:view` token, so any broad token listed here also
+  // satisfies telemetry.devices.read — which is exactly how Mechanic/Compliance
+  // Manager (fleet:view, no device grant) were shown /iot-devices that then 403'd.
+  // Roles that legitimately manage devices hold telematics:devices:view directly.
+  [P.TELEMATICS_DEVICES_VIEW]: ["telematics.devices.view", "telematics:devices:view"],
   [P.TELEMATICS_DEVICES_CREATE]: ["fleet.manage", "fleet:manage", "telematics.manage", "telematics:manage"],
   [P.TELEMATICS_DEVICES_UPDATE]: ["fleet.manage", "fleet:manage", "telematics.manage", "telematics:manage"],
   [P.TELEMATICS_DEVICES_DELETE]: ["fleet.manage", "fleet:manage", "telematics.manage", "telematics:manage"],
   [P.TELEMATICS_DEVICES_ASSIGN]: ["fleet.manage", "fleet:manage", "dispatch.manage", "dispatch:manage", "telematics.manage", "telematics:manage"],
   [P.TELEMATICS_DEVICES_DIAGNOSTICS]: ["maintenance.manage", "maintenance:manage", "compliance.manage", "compliance:manage", "telematics.manage", "telematics:manage"],
   [P.TELEMATICS_DEVICES_FIRMWARE]: ["maintenance.manage", "maintenance:manage", "telematics.manage", "telematics:manage"],
-  [P.TELEMATICS_DEVICES_EXPORT]: ["fleet.view", "fleet:view", "fleet.manage", "fleet:manage", "telematics.view", "telematics:view"],
+  [P.TELEMATICS_DEVICES_EXPORT]: ["telematics.devices.export", "telematics:devices:export"],
   [P.TELEMATICS_PROVIDERS_MANAGE]: ["settings.manage", "settings:manage", "fleet.manage", "fleet:manage", "telematics.manage", "telematics:manage"],
-  [P.TELEMATICS_GPS_VIEW]: ["fleet.view", "fleet:view", "telematics.gps.view", "telematics:gps:view", "telematics.view", "telematics:view"],
+  // PAGE-GATING token, same reasoning: this group is merged into
+  // TELEMETRY_LIVE_STATE_READ through the shared `telematics:gps:view` token, so a
+  // module-view alias here flows straight into the live-map permission. fleet:view /
+  // telematics:view removed — holders of those saw /map-view and got a 403 from
+  // /api/telemetry/live-state (they hold neither map:view nor telematics:gps:view).
+  [P.TELEMATICS_GPS_VIEW]: ["telematics.gps.view", "telematics:gps:view"],
   [P.TELEMATICS_GPS_EXPORT]: ["fleet.view", "fleet:view", "telematics.gps.export", "telematics:gps:export", "telematics.view", "telematics:view"],
   [P.TELEMATICS_DIAGNOSTICS_VIEW]: ["maintenance.view", "maintenance:view", "telematics.diagnostics.view", "telematics:diagnostics:view", "telematics.view", "telematics:view"],
   [P.TELEMATICS_DIAGNOSTICS_UPDATE]: ["maintenance.manage", "maintenance:manage", "telematics.diagnostics.update", "telematics:diagnostics:update", "telematics.manage", "telematics:manage"],
-  [P.TELEMATICS_DIAGNOSTICS_EXPORT]: ["maintenance.view", "maintenance:view", "telematics.diagnostics.export", "telematics:diagnostics:export", "telematics.view", "telematics:view"],
+  [P.TELEMATICS_DIAGNOSTICS_EXPORT]: ["telematics.diagnostics.export", "telematics:diagnostics:export"],
   [P.TELEMATICS_SENSORS_VIEW]: ["fleet.view", "fleet:view", "telematics.sensors.view", "telematics:sensors:view", "telematics.view", "telematics:view"],
   [P.TELEMATICS_SENSORS_UPDATE]: ["maintenance.manage", "maintenance:manage", "telematics.sensors.update", "telematics:sensors:update", "telematics.manage", "telematics:manage"],
   [P.TELEMATICS_SENSORS_EXPORT]: ["fleet.view", "fleet:view", "telematics.sensors.export", "telematics:sensors:export", "telematics.view", "telematics:view"],
-  [P.TELEMETRY_LIVE_STATE_READ]: ["telemetry.live_state.read", "telemetry.live-state.read", "telemetry.alerts.read", "telemetry.alerts.view", "telemetry.rules.read", "telemetry.rules.view", "dashboard:view", "dashboard.view", "map:view", "map.view", "fleet:view", "fleet.view", "telematics:gps:view"],
-  [P.TELEMETRY_DEVICES_READ]: ["telemetry.devices.read", "telemetry.devices.view", "telematics:devices:view", "telematics.devices.view", "fleet:view", "fleet.view"],
-  [P.TELEMETRY_DEVICES_MANAGE]: ["telemetry.devices.manage", "telematics:devices:create", "telematics:devices:update", "telematics:devices:delete", "telematics:devices:assign", "telematics:providers:manage", "fleet:manage", "fleet.manage"],
+  [P.TELEMETRY_LIVE_STATE_READ]: ["telemetry.live_state.read", "telemetry.live-state.read", "map:view", "map.view", "telematics:gps:view"],
+  [P.TELEMETRY_DEVICES_READ]: ["telemetry.devices.read", "telemetry.devices.view", "telematics:devices:view", "telematics.devices.view"],
+  [P.TELEMETRY_DEVICES_MANAGE]: ["telemetry.devices.manage", "telematics:providers:manage", "fleet:manage", "fleet.manage"],
   [P.TELEMETRY_ALERTS_READ]: ["telemetry.alerts.read", "telemetry.alerts.view", "alerts:view", "alerts.view", "safety:view", "safety.view", "maintenance:view", "maintenance.view"],
-  [P.TELEMETRY_ALERTS_MANAGE]: ["telemetry.alerts.manage", "alerts:acknowledge", "alerts:close", "alerts.manage", "alerts:manage", "safety:manage", "safety.manage", "maintenance:manage", "maintenance.manage"],
-  [P.TELEMETRY_RULES_READ]: ["telemetry.rules.read", "telemetry.rules.view", "dashboard:view", "dashboard.view", "fleet:view", "fleet.view"],
+  [P.TELEMETRY_ALERTS_MANAGE]: ["telemetry.alerts.manage", "alerts.manage", "alerts:manage"],
+  [P.TELEMETRY_RULES_READ]: ["telemetry.rules.read", "telemetry.rules.view"],
   [P.TELEMETRY_RULES_MANAGE]: ["telemetry.rules.manage", "devices:manage", "fleet:manage", "fleet.manage"],
-  [P.TELEMETRY_RECOMMENDATIONS_READ]: ["telemetry.recommendations.read", "reports:view", "reports.view", "dashboard:view", "dashboard.view"],
+  [P.TELEMETRY_RECOMMENDATIONS_READ]: ["telemetry.recommendations.read", "reports:view", "reports.view"],
 
   [P.CUSTOMER_PORTAL_VIEW]: ["customer_portal.view", "customer-portal:view", "customer_portal:view", "fleet.tracking.view", "fleet.pod.view"],
   [P.CUSTOMER_PORTAL_MANAGE]: ["customer_portal.manage", "customer-portal:manage", "customer_portal:manage", "fleet.customer_tracking.manage", "dispatch.manage", "dispatch:manage"],
@@ -279,28 +317,68 @@ const PERMISSION_GROUPS: Record<Permission, string[]> = {
   [P.FUEL_VIEW]: ["fuel.view", "fuel:view", "fleet.fuel.view", "fleet.view", "fleet:view"],
   [P.FUEL_MANAGE]: ["fuel.manage", "fuel:manage", "fleet.fuel.manage", "fleet.manage", "fleet:manage"],
 
-  [P.BILLING_VIEW]: ["billing.view", "billing:view", "fleet.billing.view", "reports.view", "reports:view"],
+  [P.BILLING_VIEW]: ["billing.view", "billing:view", "billing.read", "fleet.billing.view", "reports.view", "reports:view"],
   [P.BILLING_MANAGE]: ["billing.manage", "billing:manage", "fleet.billing.manage"],
+
+  // Mirrors the server's fold exactly — read-side sub-permissions resolve to
+  // finance:view/billing:view, write-side to finance:manage/billing:manage.
+  [P.FINANCE_VIEW]: [
+    "finance.view", "finance:view", "billing.view", "billing:view",
+    "tax.read", "tax.view", "billing.read",
+    "settlement.read", "settlement.view",
+    "revrec.read", "revrec.view",
+    "finance.invoice.read", "finance.invoice.view",
+    "finance.invoice_draft.read", "finance.invoice_draft.view",
+    "charge.read", "charge.view", "contract.read", "rate_card.read",
+  ],
+  [P.FINANCE_MANAGE]: [
+    "finance.manage", "finance:manage",
+  ],
 
   [P.OPS_VIEW]: ["ops.view", "ops:view", "platform.ops:view"],
 } satisfies Record<Permission, string[]>;
 
-const permissionAliasLookup = new Map<string, string[]>();
+const permissionImplicationLookup = new Map<string, string[]>();
 
-function addPermissionGroup(canonical: Permission, aliases: string[]) {
-  const variants = unique([canonical, ...aliases, ...aliases.flatMap(getPunctuationVariants)]);
-  for (const token of variants) {
-    const key = token.toLowerCase();
-    const next = permissionAliasLookup.get(key) ?? [];
-    permissionAliasLookup.set(key, unique([...next, ...variants]));
+// SECURITY INVARIANT — this is a DIRECTED held-grant graph. Each value in a
+// PERMISSION_GROUPS entry is a grant that may satisfy that entry's canonical
+// permission; it never makes the canonical permission imply the value or a
+// sibling entry. This is what lets `fleet:manage` imply vehicles:create/update/
+// delete while vehicles:create remains only vehicles:create.
+function addPermissionImplications(canonical: Permission, satisfiers: string[]) {
+  const target = normalizePermission(canonical);
+  for (const held of unique([canonical, ...satisfiers])) {
+    for (const variant of getPunctuationVariants(held)) {
+      const source = normalizePermission(variant);
+      addDirectedImplication(source, target);
+    }
   }
 }
 
-for (const [canonical, aliases] of Object.entries(PERMISSION_GROUPS) as Array<[Permission, string[]]>) {
-  addPermissionGroup(canonical, aliases);
+function addDirectedImplication(held: string, implied: string) {
+  const source = normalizePermission(held);
+  const target = normalizePermission(implied);
+  const next = permissionImplicationLookup.get(source) ?? [];
+  permissionImplicationLookup.set(source, unique([...next, target]));
 }
 
+for (const [canonical, satisfiers] of Object.entries(PERMISSION_GROUPS) as Array<[Permission, string[]]>) {
+  addPermissionImplications(canonical, satisfiers);
+}
+
+// Finance workflow permissions are backend-only vocabulary (there is no page-level
+// PERMISSIONS constant for each action), but the frontend must mirror the approved
+// finance:manage implications when it renders action controls.
+for (const action of [
+  "finance.invoice.issue", "finance.invoice.approve", "finance.invoice.payment.record",
+  "settlement.create", "settlement.update", "settlement.approve", "settlement.pay",
+  "tax.create", "tax.update", "tax.publish", "revrec.create", "revrec.update",
+  "revrec.period.close", "finance.config.create", "finance.config.update", "finance.config.publish",
+]) addDirectedImplication("finance:manage", action);
+
 const TENANT_ADMIN_PERMISSIONS = [
+  "fleet:manage", "dispatch:manage", "safety:manage", "maintenance:manage", "compliance:manage",
+  "alerts:manage", "reports:manage", "users:manage", "roles:manage", "settings:manage",
   P.DASHBOARD_VIEW,
   P.VEHICLES_VIEW, P.VEHICLES_CREATE, P.VEHICLES_UPDATE, P.VEHICLES_DELETE, P.VEHICLES_ASSIGN, P.VEHICLES_EXPORT,
   P.DRIVERS_VIEW, P.DRIVERS_CREATE, P.DRIVERS_UPDATE, P.DRIVERS_DELETE, P.DRIVERS_ASSIGN, P.DRIVERS_EXPORT,
@@ -325,6 +403,7 @@ const TENANT_ADMIN_PERMISSIONS = [
 ];
 
 const FLEET_MANAGER_PERMISSIONS = [
+  "fleet:manage", "dispatch:manage", "maintenance:manage", "compliance:manage", "alerts:manage", "reports:manage",
   P.DASHBOARD_VIEW,
   P.VEHICLES_VIEW, P.VEHICLES_CREATE, P.VEHICLES_UPDATE, P.VEHICLES_DELETE, P.VEHICLES_ASSIGN, P.VEHICLES_EXPORT,
   P.DRIVERS_VIEW, P.DRIVERS_CREATE, P.DRIVERS_UPDATE, P.DRIVERS_DELETE, P.DRIVERS_ASSIGN, P.DRIVERS_EXPORT,
@@ -381,10 +460,10 @@ const FINANCE_BILLING_USER_PERMISSIONS = [
 
 const CUSTOMER_VIEWER_PERMISSIONS = [
   P.CUSTOMER_PORTAL_VIEW,
-  P.SHIPMENTS_VIEW,
 ];
 
 const SAFETY_MANAGER_PERMISSIONS = [
+  "safety:manage", "compliance:manage",
   P.DASHBOARD_VIEW,
   P.SAFETY_VIEW, P.SAFETY_CREATE, P.SAFETY_UPDATE, P.SAFETY_REVIEW, P.SAFETY_EVIDENCE_VIEW, P.SAFETY_EVIDENCE_EXPORT,
   P.ALERTS_VIEW, P.ALERTS_ACKNOWLEDGE, P.ALERTS_CLOSE,
@@ -397,6 +476,7 @@ const SAFETY_MANAGER_PERMISSIONS = [
 ];
 
 const MAINTENANCE_MANAGER_PERMISSIONS = [
+  "maintenance:manage",
   P.DASHBOARD_VIEW,
   P.VEHICLES_VIEW,
   P.MAINTENANCE_VIEW, P.MAINTENANCE_CREATE, P.MAINTENANCE_UPDATE, P.MAINTENANCE_CLOSE,
@@ -422,9 +502,7 @@ const DRIVER_PERMISSIONS = [
 ];
 
 const CUSTOMER_PERMISSIONS = [
-  P.SHIPMENTS_VIEW,
   P.CUSTOMER_PORTAL_VIEW,
-  P.ALERTS_VIEW,
 ];
 
 const READ_ONLY_AUDITOR_PERMISSIONS = [
@@ -484,6 +562,12 @@ export const ROLE_PERMISSIONS = {
     P.REPORTS_VIEW,
     P.REPORTS_EXPORT,
     P.SETTINGS_VIEW,
+    // Matches the seeded role in stage77_protected_role_bootstrap.sql, which
+    // grants finance:view/finance:manage and fuel:view/fuel:manage.
+    P.FINANCE_VIEW,
+    P.FINANCE_MANAGE,
+    P.FUEL_VIEW,
+    P.FUEL_MANAGE,
   ],
   crm_sales_manager: [
     P.CUSTOMERS_VIEW,
@@ -500,16 +584,22 @@ export function getPermissionsForRole(roleKey: RoleKey): string[] {
 }
 
 export function getPermissionVariants(permission: string): string[] {
-  const normalized = permission.trim().toLowerCase();
-  const variants = permissionAliasLookup.get(normalized);
-  if (variants && variants.length > 0) return variants;
-  return getPunctuationVariants(normalized);
+  const root = normalizePermission(permission);
+  const visited = new Set<string>();
+  const pending = [root];
+  while (pending.length > 0) {
+    const held = pending.shift()!;
+    if (visited.has(held)) continue;
+    visited.add(held);
+    for (const implied of permissionImplicationLookup.get(held) ?? []) pending.push(implied);
+  }
+  return [...visited];
 }
 
 export function hasPermission(ownedPermissions: string[], requiredPermission: string): boolean {
   if (ownedPermissions.some((permission) => permission.trim() === "*")) return true;
-  const owned = new Set(ownedPermissions.flatMap(getPermissionVariants).map((permission) => permission.toLowerCase()));
-  return getPermissionVariants(requiredPermission).some((permission) => owned.has(permission.toLowerCase()));
+  const required = normalizePermission(requiredPermission);
+  return ownedPermissions.some((permission) => getPermissionVariants(permission).includes(required));
 }
 
 export function isPermissionGranted(ownedPermissions: string[], requiredPermission: string) {
@@ -517,7 +607,7 @@ export function isPermissionGranted(ownedPermissions: string[], requiredPermissi
 }
 
 function getPunctuationVariants(permission: string) {
-  const normalized = permission.trim().toLowerCase();
+  const normalized = normalizePermission(permission);
   return unique([
     normalized,
     normalized.replace(/\./g, ":"),
@@ -526,6 +616,14 @@ function getPunctuationVariants(permission: string) {
     normalized.replace(/_/g, "-"),
     normalized.replace(/-/g, "_"),
   ]);
+}
+
+function normalizePermission(permission: string) {
+  const normalized = permission.trim().toLowerCase().replaceAll(".", ":");
+  if (normalized === "customer-portal:view") return "customer_portal:view";
+  if (normalized === "customer-portal:manage") return "customer_portal:manage";
+  if (normalized === "telemetry:live-state:read") return "telemetry:live_state:read";
+  return normalized;
 }
 
 function unique(values: string[]) {

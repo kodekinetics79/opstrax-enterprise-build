@@ -25,6 +25,9 @@ public sealed class TelemetryLiveStateService(Database db)
         var alertCount = row.TryGetValue("alertCount", out var alertRaw) && alertRaw is not null
             ? Convert.ToInt32(alertRaw, CultureInfo.InvariantCulture)
             : 0;
+        var openAlertSeverity = row.TryGetValue("openAlertSeverity", out var alertSeverityRaw)
+            ? alertSeverityRaw?.ToString() ?? string.Empty
+            : string.Empty;
         var speedMph = row.TryGetValue("speedMph", out var speedRaw) && speedRaw is not null
             ? Convert.ToDecimal(speedRaw, CultureInfo.InvariantCulture)
             : 0m;
@@ -40,7 +43,10 @@ public sealed class TelemetryLiveStateService(Database db)
                     : "healthy";
         var riskLevel = staleSeconds > (long)staleThreshold
             ? "high"
-            : openAlerts > 2 || speedMph > speedThreshold
+            : string.Equals(openAlertSeverity, "Critical", StringComparison.OrdinalIgnoreCase)
+                ? "high"
+                : string.Equals(openAlertSeverity, "High", StringComparison.OrdinalIgnoreCase)
+                  || openAlerts > 2 || speedMph > speedThreshold
                 ? "medium"
                 : "low";
         var nextAction = telemetryStatus switch
@@ -59,6 +65,7 @@ public sealed class TelemetryLiveStateService(Database db)
             riskLevel,
             alertCount,
             openAlerts,
+            openAlertSeverity,
             staleSeconds,
             nextAction,
             lastAlertType = row.TryGetValue("lastAlertType", out var lastAlertRaw) ? lastAlertRaw?.ToString() : null,
@@ -133,6 +140,34 @@ public sealed class TelemetryLiveStateService(Database db)
                 c.Parameters.AddWithValue("@nextAction", nextAction);
                 c.Parameters.AddWithValue("@summary", summary);
             }, ct);
+
+        // Keep the position projection's operator-facing alert fields in sync with the
+        // authoritative telemetry_alerts ledger. Native ingest advances the position before
+        // it creates or resolves alerts, so the zero-valued placeholders written with the fix
+        // otherwise survive even though telemetry_live_asset_states has already been refreshed.
+        // GPS Tracking reads latest_vehicle_positions directly; mirroring the derived fields
+        // here prevents it from reporting "Clear" beside a real open alert.
+        await db.ExecuteAsync(
+            @"UPDATE latest_vehicle_positions
+              SET telemetry_status=@telemetryStatus,
+                  risk_level=@riskLevel,
+                  alert_count=@alertCount,
+                  open_alert_count=@openAlertCount,
+                  next_action=@nextAction,
+                  summary_json=COALESCE(@summary::jsonb, '{}'::jsonb),
+                  updated_at=NOW()
+              WHERE company_id=@companyId AND vehicle_id=@vehicleId",
+            c =>
+            {
+                c.Parameters.AddWithValue("@companyId", companyId);
+                c.Parameters.AddWithValue("@vehicleId", vehicleId);
+                c.Parameters.AddWithValue("@telemetryStatus", telemetryStatus);
+                c.Parameters.AddWithValue("@riskLevel", riskLevel);
+                c.Parameters.AddWithValue("@alertCount", alertCount);
+                c.Parameters.AddWithValue("@openAlertCount", openAlerts);
+                c.Parameters.AddWithValue("@nextAction", nextAction);
+                c.Parameters.AddWithValue("@summary", summary);
+            }, ct);
     }
 
     public async Task RefreshCompanyAsync(long companyId, CancellationToken ct = default)
@@ -143,7 +178,8 @@ public sealed class TelemetryLiveStateService(Database db)
 
         foreach (var row in vehicleIds)
         {
-            if (row.TryGetValue("vehicle_id", out var vehicleIdRaw) && vehicleIdRaw is not null)
+            var vehicleIdRaw = Value(row, "vehicleId", "vehicle_id");
+            if (vehicleIdRaw is not null)
             {
                 await RefreshVehicleAsync(companyId, Convert.ToInt64(vehicleIdRaw, CultureInfo.InvariantCulture), ct);
             }
@@ -151,36 +187,49 @@ public sealed class TelemetryLiveStateService(Database db)
     }
 
     public async Task<List<Dictionary<string, object?>>> ListLiveStatesAsync(long companyId, CancellationToken ct = default)
+        => await ListLiveStatesAsync(companyId, null, ct);
+
+    public async Task<List<Dictionary<string, object?>>> ListLiveStatesAsync(long companyId, long? branchId, CancellationToken ct = default)
     {
         var rows = await db.QueryAsync(
                 @"SELECT lsa.*,
                      EXTRACT(EPOCH FROM (NOW() - lsa.received_at))::BIGINT seconds_since_ping
               FROM telemetry_live_asset_states lsa
-              WHERE lsa.company_id=@cid
+              JOIN vehicles v ON v.id=lsa.vehicle_id AND v.company_id=lsa.company_id
+              WHERE lsa.company_id=@cid AND (@branchId::BIGINT IS NULL OR v.branch_id=@branchId)
               ORDER BY CASE lsa.risk_level WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 ELSE 3 END,
                        lsa.open_alert_count DESC,
                        lsa.updated_at DESC",
-            c => c.Parameters.AddWithValue("@cid", companyId), ct);
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
         return rows.ToList();
     }
 
     public async Task<Dictionary<string, object?>?> GetLiveStateAsync(long companyId, long vehicleId, CancellationToken ct = default)
+        => await GetLiveStateAsync(companyId, vehicleId, null, ct);
+
+    public async Task<Dictionary<string, object?>?> GetLiveStateAsync(long companyId, long vehicleId, long? branchId, CancellationToken ct = default)
     {
         var row = await db.QuerySingleAsync(
             @"SELECT lsa.*,
                      EXTRACT(EPOCH FROM (NOW() - lsa.received_at))::BIGINT seconds_since_ping
               FROM telemetry_live_asset_states lsa
+              JOIN vehicles v ON v.id=lsa.vehicle_id AND v.company_id=lsa.company_id
               WHERE lsa.company_id=@cid AND lsa.vehicle_id=@vid
+                AND (@branchId::BIGINT IS NULL OR v.branch_id=@branchId)
               LIMIT 1",
             c =>
             {
                 c.Parameters.AddWithValue("@cid", companyId);
                 c.Parameters.AddWithValue("@vid", vehicleId);
+                c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
             }, ct);
         return row;
     }
 
     public async Task<List<Dictionary<string, object?>>> ListDevicesAsync(long companyId, CancellationToken ct = default)
+        => await ListDevicesAsync(companyId, null, ct);
+
+    public async Task<List<Dictionary<string, object?>>> ListDevicesAsync(long companyId, long? branchId, CancellationToken ct = default)
     {
         var rows = await db.QueryAsync(
             @"SELECT e.id, e.device_serial, e.device_model, e.provider, e.status,
@@ -198,8 +247,9 @@ public sealed class TelemetryLiveStateService(Database db)
               LEFT JOIN telemetry_live_asset_states lsa
                 ON lsa.company_id=e.company_id AND lsa.vehicle_id=e.vehicle_id
               WHERE e.company_id=@cid AND e.deleted_at IS NULL
+                AND (@branchId::BIGINT IS NULL OR e.branch_id=@branchId)
               ORDER BY e.device_serial",
-            c => c.Parameters.AddWithValue("@cid", companyId), ct);
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
         return rows.ToList();
     }
 
@@ -231,23 +281,27 @@ public sealed class TelemetryLiveStateService(Database db)
     }
 
     public async Task<Dictionary<string, object?>> BuildSummaryAsync(long companyId, CancellationToken ct = default)
+        => await BuildSummaryAsync(companyId, null, ct);
+
+    public async Task<Dictionary<string, object?>> BuildSummaryAsync(long companyId, long? branchId, CancellationToken ct = default)
     {
         try
         {
-            var states = await ListLiveStatesAsync(companyId, ct);
-            var devices = await ListDevicesAsync(companyId, ct);
+            var states = await ListLiveStatesAsync(companyId, branchId, ct);
+            var devices = await ListDevicesAsync(companyId, branchId, ct);
             var alerts = await db.QueryAsync(
                 @"SELECT ta.id, ta.alert_type, ta.severity, ta.message, ta.status,
                          ta.source_event_id, ta.correlation_id, ta.causation_id, ta.created_at, ta.updated_at,
                          v.vehicle_code, d.full_name driver_name, e.device_serial
                   FROM telemetry_alerts ta
-                  LEFT JOIN vehicles v ON v.id=ta.vehicle_id
-                  LEFT JOIN drivers d ON d.id=ta.driver_id
-                  LEFT JOIN eld_devices e ON e.id=ta.device_id
+                  LEFT JOIN vehicles v ON v.id=ta.vehicle_id AND v.company_id=ta.company_id
+                  LEFT JOIN drivers d ON d.id=ta.driver_id AND d.company_id=ta.company_id
+                  LEFT JOIN eld_devices e ON e.id=ta.device_id AND e.company_id=ta.company_id
                   WHERE ta.company_id=@cid AND ta.status='Open'
+                    AND (@branchId::BIGINT IS NULL OR COALESCE(v.branch_id,e.branch_id)=@branchId)
                   ORDER BY ta.created_at DESC
                   LIMIT 50",
-                c => c.Parameters.AddWithValue("@cid", companyId), ct);
+                c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
             var rules = await db.QueryAsync(
                 @"SELECT id, rule_type, threshold_value, severity, enabled, notes, created_at, updated_at
                   FROM telemetry_rules
@@ -259,27 +313,31 @@ public sealed class TelemetryLiveStateService(Database db)
                          (SELECT COUNT(*) FROM geofence_events ge WHERE ge.geofence_id=g.id) event_count,
                          (SELECT COUNT(*) FROM geofence_events ge WHERE ge.geofence_id=g.id AND ge.event_time::date=CURRENT_DATE) events_today
                   FROM geofences g
-                  WHERE g.company_id=@cid
+                  WHERE g.company_id=@cid AND (@branchId::BIGINT IS NULL OR g.branch_id=@branchId)
                   ORDER BY g.name",
-                c => c.Parameters.AddWithValue("@cid", companyId), ct);
+                c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
             var recommendations = await db.QueryAsync(
                 @"SELECT id,
-                         module_key AS recommendation_type,
+                         recommendation_type,
                          title,
-                         COALESCE(body, description) AS summary,
-                         score AS confidence_score,
-                         score AS urgency_score,
-                         COALESCE(priority, 'medium') AS risk_level,
+                         COALESCE(NULLIF(body, ''), NULLIF(summary, ''), title) AS summary,
+                         confidence_score,
+                         urgency_score,
+                         risk_level,
                          status,
-                         correlation_id AS source_event_id,
-                         action_label AS actor_type,
-                         action_type AS actor_id,
-                         NULL::timestamptz AS created_at
+                         source_event_id,
+                         actor_type,
+                         actor_id,
+                         created_at
                   FROM ai_recommendations
-                  WHERE company_id=@tenantId AND (module_key LIKE 'telemetry.%' OR module_key IN ('control-tower', 'command-center', 'dispatch'))
+                  WHERE company_id=@tenantId
+                    AND @branchId::BIGINT IS NULL
+                    AND (recommendation_type LIKE 'telemetry.%'
+                         OR module_key LIKE 'telemetry.%'
+                         OR module_key IN ('control-tower', 'command-center', 'dispatch'))
                   ORDER BY id DESC
                   LIMIT 12",
-                c => c.Parameters.AddWithValue("@tenantId", companyId), ct);
+                c => { c.Parameters.AddWithValue("@tenantId", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
 
             var entities = BuildEntities(states);
             if (entities.Count == 0)
@@ -333,12 +391,16 @@ public sealed class TelemetryLiveStateService(Database db)
                      v.readiness_score, v.data_quality_score,
                      COALESCE((SELECT COUNT(*) FROM telemetry_alerts ta WHERE ta.company_id=@cid AND ta.vehicle_id=@vid), 0) alert_count,
                      COALESCE((SELECT COUNT(*) FROM telemetry_alerts ta WHERE ta.company_id=@cid AND ta.vehicle_id=@vid AND ta.status='Open'), 0) open_alert_count,
+                     COALESCE((SELECT ta.severity FROM telemetry_alerts ta
+                               WHERE ta.company_id=@cid AND ta.vehicle_id=@vid AND ta.status='Open'
+                               ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Warning','Info'],ta.severity),ta.created_at DESC
+                               LIMIT 1), '') open_alert_severity,
                      COALESCE((SELECT ta.alert_type FROM telemetry_alerts ta WHERE ta.company_id=@cid AND ta.vehicle_id=@vid ORDER BY ta.created_at DESC LIMIT 1), 'clear') last_alert_type,
                      EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT stale_seconds
               FROM latest_vehicle_positions lvp
-              LEFT JOIN vehicles v ON v.id=lvp.vehicle_id
-              LEFT JOIN drivers d ON d.id=lvp.driver_id
-              LEFT JOIN eld_devices e ON e.id=lvp.device_id
+              JOIN vehicles v ON v.id=lvp.vehicle_id AND v.company_id=lvp.company_id
+              LEFT JOIN drivers d ON d.id=lvp.driver_id AND d.company_id=lvp.company_id
+              LEFT JOIN eld_devices e ON e.id=lvp.device_id AND e.company_id=lvp.company_id
               WHERE lvp.company_id=@cid AND lvp.vehicle_id=@vid
               LIMIT 1",
             c =>

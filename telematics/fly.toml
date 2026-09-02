@@ -1,0 +1,65 @@
+# Opstrax Telematics Gateway — raw TCP device edge (PT40-Q / GT06-class trackers).
+#
+# WHY A SEPARATE HOST
+#   The Opstrax API stays on Render: it is HTTP, and Render routes HTTP fine.
+#   This service is NOT HTTP -- trackers open a raw TCP session and speak a binary
+#   protocol. Render web services only route HTTP/HTTPS, so the device edge needs a
+#   host that exposes a raw TCP port. Fly does that natively (no handlers = raw TCP).
+#
+# DEPLOY (run from the REPOSITORY ROOT -- the Dockerfile COPYs telematics/src/...,
+# so the build context must be the repo root, not this directory):
+#
+#   fly launch --no-deploy --copy-config --config telematics/fly.toml
+#   fly secrets set --config telematics/fly.toml \
+#     ConnectionStrings__Telematics='postgresql://...neon...?sslmode=require' \
+#     ConnectionStrings__PlatformRegistry='postgresql://...neon...?sslmode=require'
+#   fly deploy --config telematics/fly.toml
+#
+# Both connection strings are REQUIRED in Production/Staging -- Program.cs refuses to
+# start without them. Use the restricted runtime identity, never the owner credential.
+#
+# After deploy, confirm the edge is reachable before touching the device:
+#   fly ips list                       # -> the public IPv4 to put in the SERVER command
+#   nc -vz <public-ip> 5023            # must connect
+
+app = "opstrax-telematics-gateway"
+primary_region = "iad"                 # Ashburn -- matches the Mid-Atlantic pilot fleet
+
+[build]
+  # Relative to the build context, which is the directory `fly deploy` runs in
+  # (the repo root) -- NOT to this file. The Dockerfile COPYs telematics/src/...,
+  # so a bare "Dockerfile" here would resolve to the repo-root Dockerfile instead.
+  dockerfile = "telematics/Dockerfile"
+
+[env]
+  DOTNET_ENVIRONMENT = "Production"
+  # The image already sets these; repeated here so the binding is visible in config.
+  Gateway__ListenAddress = "0.0.0.0"
+  Gateway__ListenPort = "5023"
+
+# Raw TCP. Deliberately no [http_service] and no handlers: adding "http" or "tls"
+# here would wrap the stream and corrupt the binary GT06 framing.
+[[services]]
+  protocol = "tcp"
+  internal_port = 5023
+
+  [[services.ports]]
+    port = 5023
+
+  [services.concurrency]
+    type = "connections"
+    # Gateway:MaxConnections defaults to 1024; stay under it so Fly sheds load
+    # before the process does.
+    hard_limit = 900
+    soft_limit = 700
+
+  # A tracker session is long-lived and mostly idle between fixes; the gateway's
+  # own Gateway:IdleTimeout (5m) owns disconnection, not the proxy.
+  [[services.tcp_checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "20s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

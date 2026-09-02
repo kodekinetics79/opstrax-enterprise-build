@@ -1,0 +1,83 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+
+const devices = fs.readFileSync(new URL("../src/pages/IotDevicesPage.tsx", import.meta.url), "utf8");
+const command = fs.readFileSync(new URL("../src/pages/TelematicsCommandPage.tsx", import.meta.url), "utf8");
+const importer = fs.readFileSync(new URL("../src/components/EntityImportExport.tsx", import.meta.url), "utf8");
+const service = fs.readFileSync(new URL("../src/services/telematicsService.ts", import.meta.url), "utf8");
+const controlTower = fs.readFileSync(new URL("../src/pages/TelematicsControlTowerPage.tsx", import.meta.url), "utf8");
+const integrations = fs.readFileSync(new URL("../src/pages/IntegrationsPage.tsx", import.meta.url), "utf8");
+const integrationsApi = fs.readFileSync(new URL("../src/services/integrationsApi.ts", import.meta.url), "utf8");
+const connectorFreshness = fs.readFileSync(new URL("../src/lib/connectorFreshness.ts", import.meta.url), "utf8");
+
+assert.match(devices, /aria-label=\{`\$\{canManageDeviceLifecycle \? "Manage" : "View details for"\} \$\{row\.deviceName\}`\}/, "The row action identifies the selected device without overstating read-only authority");
+assert.match(devices, /aria-haspopup="dialog"[\s\S]*onClick=\{\(\) => setSelectedId\(row\.id\)\}/, "The row action opens the durable detail/action drawer");
+assert.doesNotMatch(devices, /setOpenMenuId/, "The row action must not rely on an overflow-clipped popover");
+
+assert.match(devices, /tab === "diagnostics"[\s\S]*Diagnostics evidence is separate from device inventory/, "Diagnostics has an evidence-specific landing state");
+assert.match(devices, /Device Health does not infer diagnostic coverage for every registered device/, "Diagnostics does not mislabel inventory rows as evidence");
+assert.match(devices, /disabled=\{!canDiagnostics\}[\s\S]*navigate\("\/obd-j1939"\)/, "Diagnostics navigation is permission-aware");
+
+assert.match(command, /apiErrorMessage\(recordsQ\.error, fallback\)/, "Telemetry load errors preserve safe server guidance");
+assert.match(command, /OBD \/ J1939 evidence could not be loaded[\s\S]*confirm diagnostics access for this role/, "OBD fallback gives the Executive a useful recovery path");
+assert.match(command, /canViewGeofences = hasPermission\("map:view"\)/, "Geofence discovery follows the destination permission");
+assert.match(command, /kind === "gps-tracking"[\s\S]*navigate\("\/geofences"\)[\s\S]*Manage Geofences/, "GPS exposes geofence management");
+assert.match(service, /serialNumber: device\.serialNumber/, "GPS cluster retains the immutable serial for same-model device uniqueness");
+assert.match(command, /row\.serialNumber[\s\S]*row\.deviceName/, "GPS renders serial prominently and model secondarily");
+assert.match(command, /"obd-j1939"[\s\S]*columns: \["serialNumber", "vehicleCode", "deviceName"/, "OBD/J1939 table leads with immutable device serial");
+assert.match(command, /canViewDevices = hasPermission\(PERMISSIONS\.TELEMATICS_DEVICES_VIEW\)[\s\S]*canViewVehicles = hasPermission\(PERMISSIONS\.VEHICLES_VIEW\)[\s\S]*canViewJobs = hasDirectPermission\(PERMISSIONS\.SHIPMENTS_VIEW\)[\s\S]*canViewMap = hasPermission\(PERMISSIONS\.TELEMETRY_LIVE_STATE_READ\)/, "Telemetry drilldown controls follow their destination permissions");
+assert.match(command, /Device serial", row\.serialNumber[\s\S]*Device model", row\.deviceName/, "Telemetry detail keeps immutable serial primary and model secondary");
+assert.match(controlTower, /device: device\.serialNumber, model: device\.deviceName/, "Control Tower separates immutable serial from display model");
+assert.match(controlTower, /Export full device inventory/, "Control Tower export states that it is not the filtered queue");
+assert.match(controlTower, /canViewDevices = hasPermission\(PERMISSIONS\.TELEMATICS_DEVICES_VIEW\)/, "Control Tower checks Device Health destination access");
+assert.match(controlTower, /canViewGps = hasPermission\(PERMISSIONS\.TELEMATICS_GPS_VIEW\)/, "Control Tower checks GPS destination access");
+assert.match(controlTower, /canViewDiagnostics = hasPermission\(PERMISSIONS\.TELEMATICS_DIAGNOSTICS_VIEW\)/, "Control Tower checks diagnostics destination access");
+assert.match(controlTower, /\{canViewGps \? <button[\s\S]*GPS<\/button> : null\}/, "Control Tower hides GPS navigation when permission is absent");
+assert.match(controlTower, /\{canViewDiagnostics \? <button[\s\S]*Diagnostics<\/button> : null\}/, "Control Tower hides diagnostics navigation when permission is absent");
+assert.match(controlTower, /\{canViewDevices \? <button[\s\S]*Device Health<\/button> : null\}/, "Control Tower hides Device Health navigation when permission is absent");
+assert.match(command, /Fleet managed units[\s\S]*Fleet offline \/ stale[\s\S]*Fleet needs action[\s\S]*Current page health/, "GPS KPI labels state fleet and page scope truthfully");
+assert.match(command, /Fleet cards cover every authorized unit[\s\S]*current page/, "GPS explains mixed KPI scopes");
+assert.match(command, /Search serial, IMEI, model, category, provider, vehicle, driver, or location/, "GPS search promise matches backend-supported fields");
+assert.match(command, /Delayed \/ Watch[\s\S]*delayed-gps/, "GPS exposes the delayed-fix cohort");
+assert.match(command, /Sort telemetry records[\s\S]*Highest risk first[\s\S]*Freshness risk[\s\S]*Latest fix first[\s\S]*Device serial/, "GPS exposes enterprise sort controls");
+assert.match(service, /sort: options\.sort \?\? "risk"[\s\S]*direction: options\.direction \?\? "desc"/, "Telemetry sort reaches the server page endpoint");
+assert.match(command, /columnLabels\[column\] \?\? column/, "GPS uses human-readable column labels");
+assert.match(command, /sticky left-0[\s\S]*sticky right-0/, "GPS keeps identity and actions visible during horizontal scroll");
+assert.match(service, /createMaintenanceTask[\s\S]*vehicleId: String\(device\.vehicle_id \?\? ""\)/, "Maintenance handoff re-reads the current governed vehicle identity");
+assert.match(service, /device assignment was re-read at handoff as \$\{label\}[\s\S]*point-in-time and must be revalidated before service/, "Maintenance description uses the re-read assignment and states the point-in-time evidence limit");
+assert.match(command, /Number\(maintenance\.vehicleId\)[\s\S]*Number\.isSafeInteger\(vehicleId\)[\s\S]*current vehicle assignment is required/, "Maintenance handoff fails closed without a current numeric vehicle identity");
+assert.match(command, /canCreateMaintenance = canUpdate && hasPermission\(PERMISSIONS\.MAINTENANCE_CREATE\)/, "Maintenance handoff requires both telematics update and maintenance-create authority");
+assert.match(command, /disabled=\{!canCreateMaintenance \|\| maintenanceMut\.isPending\}[\s\S]*canCreateMaintenance && maintenanceMut\.mutate\(row\)/, "Maintenance actions remain unavailable when either authority is absent");
+assert.match(command, /onMutate: \(\) => setNotice\(null\)[\s\S]*onError: \(\) => setNotice\(null\)/, "Maintenance retries clear stale success notices before actionable conflicts are shown");
+assert.match(command, /isMaintenancePending=\{maintenanceMut\.isPending\}[\s\S]*disabled=\{!canCreateMaintenance \|\| isMaintenancePending\}/, "Maintenance detail action is disabled while a request is pending");
+assert.match(command, /maintenanceApi\.createWorkOrder\(\{[\s\S]*vehicleId,[\s\S]*serviceType:[\s\S]*description: maintenance\.note[\s\S]*estimatedCost: 0,[\s\S]*scheduledAt: new Date\(\)\.toISOString\(\)\.slice\(0, 10\)/, "Maintenance handoff uses the validated work-order contract instead of the incompatible legacy maintenance payload");
+assert.match(command, /apiErrorMessage\(maintenanceMut\.error, "The maintenance follow-up was not created\."\)/, "Maintenance handoff preserves actionable server validation and conflict guidance");
+
+assert.match(devices, /entity: "device installations"[\s\S]*atomic: true/, "Device Health exposes an atomic bulk installation wizard");
+assert.match(devices, /canBulkInstall = hasDirectPermission\(PERMISSIONS\.TELEMETRY_DEVICES_MANAGE\)/, "Bulk installation UI requires the direct canonical device-manage grant");
+assert.match(
+  devices,
+  /\{canManageDeviceLifecycle \? "Manage" : "View details"\}/,
+  "Device row action must reserve the Manage label for lifecycle-authorized users",
+);
+assert.match(devices, /toolbarLabel: "Device"[\s\S]*toolbarLabel: "Installation"/, "Adjacent device and installation import controls have distinct visible labels");
+assert.match(devices, /This create-only workflow records new installations[\s\S]*Exact idempotent replays are skipped[\s\S]*governed Transfer action/, "Installation wizard describes create-only, replay, and reassignment semantics truthfully");
+assert.match(devices, /deviceSerial[\s\S]*vehicleCode[\s\S]*effectiveFrom[\s\S]*idempotencyKey/, "Bulk installation uses governed identity, time, and replay fields");
+assert.match(service, /device-installations\/import-preview/, "Bulk installation preview uses the governed API");
+assert.match(service, /device-installations\/import-commit[\s\S]*timeout: 120000/, "Bulk installation commit has a bounded large-batch timeout");
+assert.match(importer, /action: "create" \| "update" \| "skip" \| "error"/, "Already-recorded rows have a neutral preview state");
+assert.match(importer, /config\.atomic === true && invalid > 0/, "Atomic imports cannot commit a known-invalid preview");
+assert.match(command, /exportTelemetryClusterCsv\(kind,[\s\S]*Export every authorized row matching the current search and filter/, "Paged export fetches the complete authorized result set");
+assert.match(devices, /Revoke & Archive[\s\S]*Use Suspend for a reversible stop/, "Permanent credential revocation is not mislabeled as reversible archive");
+
+assert.match(service, /pageSize: 10_000[\s\S]*purpose: "export"[\s\S]*new Set\(identities\)\.size[\s\S]*exportComplete/, "Cluster export uses one bounded snapshot and fails closed on duplicate or incomplete identities");
+assert.match(service, /purpose: "export"/, "Cluster export declares its server-enforced export purpose");
+assert.match(service, /\^\[=\+\\-@\\t\\r\]/, "Cluster CSV neutralizes spreadsheet formulas");
+assert.match(integrationsApi, /syncLastAttemptAt\?: string \| null[\s\S]*syncLastCompletedAt\?: string \| null[\s\S]*syncLastOk\?: boolean \| null[\s\S]*providerLastEventAt\?: string \| null/, "Integration records expose sync-specific and provider-event freshness truth");
+assert.match(integrations, /Last successful sync[\s\S]*attemptHealth\.label[\s\S]*role="status"[\s\S]*attemptHealth\.announcement/, "Connector cards keep changing relative time outside a stable accessible state announcement");
+assert.match(integrations, /integration\.lastSyncAt \? formatRelativeTime\(integration\.lastSyncAt\) : "Never"/, "Last-success copy is derived from the timestamp rather than a persisted relative label");
+assert.match(integrations, /refetchInterval: 60_000[\s\S]*refetchIntervalInBackground: true/, "An already-open connector screen re-evaluates worker freshness on a bounded cadence");
+assert.match(connectorFreshness, /integration\.key !== "samsara"[\s\S]*CONNECTOR_STALE_AFTER_MS/, "Polling freshness is not incorrectly applied to connectors without the Samsara polling contract");
+assert.match(connectorFreshness, /CONNECTOR_STALE_AFTER_MS = 15 \* 60 \* 1000[\s\S]*Sync attempt stale/, "Connector freshness uses the approved pilot threshold");
+
+console.log("Telematics customer-pilot UX contract passed.");

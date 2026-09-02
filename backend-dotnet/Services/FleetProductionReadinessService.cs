@@ -1,4 +1,5 @@
 using Opstrax.Api.Data;
+using Opstrax.Api.Foundation;
 using Opstrax.Api.Observability;
 
 namespace Opstrax.Api.Services;
@@ -23,7 +24,15 @@ public sealed class FleetProductionReadinessService
         "RetentionEnforcementService",
     ];
 
-    internal static readonly TimeSpan CriticalWorkerStartupGrace = TimeSpan.FromMinutes(2);
+    // Protected-environment startup launches all cross-tenant workers together. On
+    // a small Render instance their first system-scope transactions can serialize
+    // behind database warm-up and one worker may take a little over two minutes to
+    // publish its first independently committed heartbeat. A two-minute grace made
+    // readiness return 503 just as the process became usable, so Render killed and
+    // restarted it forever. Five minutes still fails closed well inside the normal
+    // ten-minute freshness window while allowing the first production cycle to
+    // establish liveness.
+    internal static readonly TimeSpan CriticalWorkerStartupGrace = TimeSpan.FromMinutes(5);
     internal static readonly TimeSpan CriticalWorkerFreshness = TimeSpan.FromMinutes(10);
     internal static int CriticalWorkerFailureThreshold(string serviceName) =>
         string.Equals(serviceName, "RetentionEnforcementService", StringComparison.Ordinal) ? 1 : 3;
@@ -32,20 +41,45 @@ public sealed class FleetProductionReadinessService
     private readonly ILogger<FleetProductionReadinessService> log;
     private readonly TimeProvider timeProvider;
     private readonly DateTimeOffset processStartedAt;
+    private readonly PositiveReadinessCache<FleetProductionContractResult> positiveCache;
+    internal IReadOnlyList<string> ExpectedCriticalWorkerNames { get; }
 
     public FleetProductionReadinessService(Database db, ILogger<FleetProductionReadinessService> log)
-        : this(db, log, TimeProvider.System, new DateTimeOffset(BuildInfo.StartedAtUtc)) { }
+        : this(db, log, TimeProvider.System, new DateTimeOffset(BuildInfo.StartedAtUtc), CriticalWorkerNames) { }
+
+    public FleetProductionReadinessService(
+        Database db,
+        ILogger<FleetProductionReadinessService> log,
+        OutboxDispatcherOptions outboxOptions,
+        IHostEnvironment environment)
+        : this(
+            db,
+            log,
+            TimeProvider.System,
+            new DateTimeOffset(BuildInfo.StartedAtUtc),
+            outboxOptions.Enabled && (!(environment.IsProduction() || environment.IsStaging()) || outboxOptions.AllowProduction)
+                ? [.. CriticalWorkerNames, "OutboxDispatcherBackgroundService"]
+                : CriticalWorkerNames) { }
 
     internal FleetProductionReadinessService(
         Database db,
         ILogger<FleetProductionReadinessService> log,
         TimeProvider timeProvider,
-        DateTimeOffset processStartedAt)
+        DateTimeOffset processStartedAt,
+        IReadOnlyList<string>? expectedCriticalWorkerNames = null)
     {
         this.db = db;
         this.log = log;
         this.timeProvider = timeProvider;
         this.processStartedAt = processStartedAt;
+        ExpectedCriticalWorkerNames = expectedCriticalWorkerNames ?? CriticalWorkerNames;
+        positiveCache = new(
+            PositiveReadinessCache<FleetProductionContractResult>.DefaultDuration,
+            // Never extend startup grace through the cache when a worker has not
+            // yet published a clean heartbeat. Once every raw worker check is
+            // clean, the positive result is safe to reuse for the bounded TTL.
+            result => result.Ready && result.RawCriticalWorkerViolations == 0,
+            timeProvider);
     }
 
     internal bool CriticalWorkerStartupGraceActive =>
@@ -54,7 +88,10 @@ public sealed class FleetProductionReadinessService
     internal int CriticalWorkerStartupGraceRemainingSeconds => Math.Max(0,
         (int)Math.Ceiling((CriticalWorkerStartupGrace - (timeProvider.GetUtcNow() - processStartedAt)).TotalSeconds));
 
-    public async Task<FleetProductionContractResult> CheckAsync(CancellationToken ct = default)
+    public Task<FleetProductionContractResult> CheckAsync(CancellationToken ct = default) =>
+        positiveCache.GetOrRefreshAsync(CheckUncachedAsync, ct);
+
+    private async Task<FleetProductionContractResult> CheckUncachedAsync(CancellationToken ct)
     {
         try
         {
@@ -65,7 +102,7 @@ public sealed class FleetProductionReadinessService
             // system transaction while retaining the restricted database identity.
             var row = await db.QuerySingleInSystemScopeAsync(Sql, command =>
             {
-                command.Parameters.AddWithValue("@criticalWorkers", CriticalWorkerNames);
+                command.Parameters.AddWithValue("@criticalWorkers", ExpectedCriticalWorkerNames.ToArray());
                 command.Parameters.AddWithValue("@processStartedAt", processStartedAt.UtcDateTime);
             }, ct);
             if (row is null)
@@ -99,6 +136,7 @@ public sealed class FleetProductionReadinessService
                 Bool(row, "dataProtectionKeyRingMigrationApplied"),
                 Bool(row, "marketCatalogReady"),
                 Bool(row, "tenantProvisioningReady"),
+                Bool(row, "fleetIdentityReady"),
                 Bool(row, "indexesReady"),
                 startupGraceActive ? 0 : rawWorkerViolations,
                 rawWorkerViolations,
@@ -116,14 +154,14 @@ public sealed class FleetProductionReadinessService
                     "rlsViolations={Rls}; grantViolations={Grants}; tenantCoverageViolations={TenantRls}; " +
                     "tenantGrantViolations={TenantGrants}; defaultPrivilegeViolations={DefaultGrants}; runtimeRouteColumnViolations={RouteColumns}; runtimeRouteObjectViolations={RouteObjects}; fleetIntegrityObjectViolations={IntegrityObjects}; workforceContractViolations={WorkforceContract}; migrationApplied={Migration}; " +
                     "runtimeSupportMigrationApplied={RuntimeMigration}; tenantCoverageMigrationApplied={TenantMigration}; coldChainIntegrityMigrationApplied={ColdChainMigration}; runtimeRouteMigrationApplied={RouteMigration}; assetTypeIntegrityMigrationApplied={AssetMigration}; workforceScheduleIntegrityMigrationApplied={WorkforceMigration}; tenantTicketMigrationApplied={TicketMigration}; dataProtectionKeyRingMigrationApplied={KeyRingMigration}; marketCatalogReady={Catalog}; tenantProvisioningReady={Provisioning}; " +
-                    "indexesReady={Indexes}; criticalWorkerViolations={Workers}; rawCriticalWorkerViolations={RawWorkers}; missingCriticalWorkers={MissingWorkers}; staleCriticalWorkers={StaleWorkers}; failedCriticalWorkers={FailedWorkers}; workerStartupGraceActive={WorkerGrace}",
+                    "fleetIdentityReady={FleetIdentity}; indexesReady={Indexes}; criticalWorkerViolations={Workers}; rawCriticalWorkerViolations={RawWorkers}; missingCriticalWorkers={MissingWorkers}; staleCriticalWorkers={StaleWorkers}; failedCriticalWorkers={FailedWorkers}; workerStartupGraceActive={WorkerGrace}",
                     result.RoleRestricted, result.MissingTables, result.RlsViolations,
                     result.GrantViolations, result.TenantCoverageViolations, result.TenantGrantViolations,
                     result.DefaultPrivilegeViolations, result.RuntimeRouteColumnViolations, result.RuntimeRouteObjectViolations, result.FleetIntegrityObjectViolations, result.WorkforceContractViolations,
                     result.MigrationApplied, result.RuntimeSupportMigrationApplied,
                     result.TenantCoverageMigrationApplied, result.ColdChainIntegrityMigrationApplied,
                     result.RuntimeRouteMigrationApplied, result.AssetTypeIntegrityMigrationApplied, result.WorkforceScheduleIntegrityMigrationApplied, result.TenantTicketMigrationApplied, result.DataProtectionKeyRingMigrationApplied, result.MarketCatalogReady, result.TenantProvisioningReady,
-                    result.IndexesReady, result.CriticalWorkerViolations, result.RawCriticalWorkerViolations,
+                    result.FleetIdentityReady, result.IndexesReady, result.CriticalWorkerViolations, result.RawCriticalWorkerViolations,
                     result.MissingCriticalWorkers, result.StaleCriticalWorkers, result.FailedCriticalWorkers,
                     result.CriticalWorkerStartupGraceActive);
             }
@@ -145,6 +183,9 @@ public sealed class FleetProductionReadinessService
           SELECT unnest(@criticalWorkers::text[])
         ), required(name, tenant_scoped) AS (VALUES
           ('companies',true),('outbox_messages',true),('inbox_messages',true),('platform_admins',false),('country_profiles',false),
+          ('company_security_settings',true),
+          ('security_events',true),
+          ('driver_offline_queue',true),('hos_records',true),
           ('password_reset_tokens',true),('feature_flags',true),
           ('workforce_schedules',true),
           ('vehicles',true),('drivers',true),('vehicle_assignments',true),('dispatch_assignments',true),
@@ -175,11 +216,27 @@ public sealed class FleetProductionReadinessService
           ('scheduled_reports',true),('routes',true),('route_stops',true),('trips',true),('trip_stops',true),
           ('location_events',true),('latest_vehicle_positions',true),('telemetry_alerts',true),
           ('telemetry_rules',true),('telemetry_gateways',true),
+          ('device_installations',true),('device_installation_evidence',true),
           ('telemetry_nonces',false),('gps_gateway_replay',false),
           ('safety_events',true),('driver_safety_scores',true),('telemetry_live_asset_states',true),
           ('fleet_health_snapshots',true),('evidence_package_items',true),('vehicle_safety_scorecards',true),
           ('ai_recommendations',true),('maintenance_pm_rules',true),('maintenance_items',true),
-          ('integrations',true),('geofences',true),('dispatch_exceptions',true)
+          ('integrations',true),('geofences',true),('dispatch_exceptions',true),
+          -- Stage88 runtime schema-service contract. Every table below was declared ONLY by an
+          -- owner-capable *SchemaService, which Program.cs skips in a protected environment, so
+          -- none of them could ever exist there while readiness stayed green and the endpoints
+          -- selecting them returned 42P01 (/api/settings/api-keys is the proven case). Enrolling
+          -- them here turns that failure class RED on /health/ready instead of shipping 500s.
+          ('alert_rules',true),('alert_follow_up_tasks',true),
+          ('customer_visibility',true),('dispatch_eligibility_config',true),
+          ('journal_entries',true),
+          ('messaging_conversations',true),('messaging_messages',true),
+          ('platform_invoice_lines',false),('tenant_billing_plan_items',true),
+          ('platform_tax_registrations',false),('platform_tax_rules',false),
+          ('safety_coaching_tasks',true),('sso_connections',true),
+          ('access_reviews',true),('backup_verifications',true),
+          ('tenant_api_keys',true),('tenant_webhook_settings',true),
+          ('company_profile',true),('user_notification_prefs',true)
         ), reference_tables(name) AS (VALUES
           ('fleet_tms_saudi_regions'),('market_packs'),('market_pack_features'),('market_address_schemas'),
           ('market_document_types'),('market_driver_requirements'),('market_vehicle_requirements'),
@@ -192,7 +249,7 @@ public sealed class FleetProductionReadinessService
           ('telematics_device_trust_policy'),('telemetry_replay_seen'),
           ('telemetry_projection_inbox'),('raw_packets'),
           ('telemetry_store_forward'),('telemetry_gateway_rejections'),
-          ('canonical_telemetry_events')
+          ('canonical_telemetry_events'),('device_installation_quarantine')
         ), system_no_update(name) AS (VALUES
           ('telemetry_replay_seen'),('telemetry_projection_inbox'),('telemetry_gateway_rejections'),
           ('canonical_telemetry_events')
@@ -206,7 +263,8 @@ public sealed class FleetProductionReadinessService
           FROM pg_class c
           JOIN pg_namespace n ON n.oid=c.relnamespace
           WHERE n.nspname='public' AND c.relkind IN ('r','p')
-            AND c.relname NOT IN ('platform_invoices','gps_gateway_replay','platform_impersonation_sessions','roles','report_catalog')
+            AND c.relname NOT IN ('platform_invoices','gps_gateway_replay','platform_impersonation_sessions','roles','report_catalog',
+                                  'device_installation_quarantine')
             AND (c.relname='companies' OR EXISTS (
               SELECT 1 FROM information_schema.columns x
               WHERE x.table_schema='public' AND x.table_name=c.relname
@@ -215,6 +273,7 @@ public sealed class FleetProductionReadinessService
           ('authorization_decision_logs',true,false,false),
           ('companies',false,true,false),
           ('audit_logs',true,false,false),
+          ('usage_events',true,false,false),
           ('compliance_evidence',true,false,false),
           ('fleet_tms_shipment_events',true,false,false),
           ('fleet_tms_cold_chain_event_log',true,false,false),
@@ -235,6 +294,7 @@ public sealed class FleetProductionReadinessService
           ('telemetry_gateways',false,false,false),
           ('device_state_transitions',true,false,false),('device_installations',true,true,false),
           ('device_installation_evidence',true,false,false),('device_channel_health',true,true,false),
+          ('dvir_inspection_results',true,false,false),
           ('telematics_device_commands',true,true,false),('telemetry_privacy_policies',true,true,false),
           ('fault_codes',true,true,false),('fault_occurrences',true,false,false),
           ('diagnostic_holds',true,true,false),('canonical_telemetry_events',false,false,false),
@@ -258,8 +318,17 @@ public sealed class FleetProductionReadinessService
           ('created_at','timestamp with time zone',true,'now()',''),
           ('updated_at','timestamp with time zone',false,'','')
         ), runtime_route_columns(table_name,column_name,data_type,not_null,column_default,identity_kind) AS (VALUES
+          ('documents','lifecycle_mode','character varying(20)',true,'''legacy_unknown''::character varying',''),
+          ('documents','lifecycle_assessed_on','date',false,'',''),
+          ('documents','risk_score','numeric(6,2)',false,'20',''),
           ('companies','country','character varying(2)',false,'',''),
           ('companies','currency','character varying(8)',false,'',''),
+          ('users','failed_login_attempts','integer',true,'0',''),
+          ('users','locked_until','timestamp with time zone',false,'',''),
+          ('users','force_password_change','boolean',true,'false',''),
+          ('users','password_changed_at','timestamp with time zone',false,'',''),
+          ('drivers','user_id','bigint',false,'',''),
+          ('coaching_tasks','acknowledged_note','text',false,'',''),
           ('authorization_decision_logs','id','bigint',true,'','a'),
           ('authorization_decision_logs','tenant_id','bigint',true,'',''),
           ('authorization_decision_logs','actor_type','character varying(40)',true,'',''),
@@ -303,6 +372,21 @@ public sealed class FleetProductionReadinessService
           ('latest_vehicle_positions','confidence','numeric(4,3)',false,'',''),
           ('latest_vehicle_positions','trust_score','numeric(4,3)',false,'',''),
           ('latest_vehicle_positions','quality_flags','jsonb',false,'',''),
+          ('latest_vehicle_positions','battery_voltage','numeric(6,2)',false,'',''),
+          ('latest_vehicle_positions','address','text',false,'',''),
+          ('fleet_tms_temperature_devices','last_reported_temperature_celsius','numeric(6,2)',false,'',''),
+          ('fleet_tms_temperature_devices','battery_percent','numeric(6,2)',false,'',''),
+          ('fleet_tms_temperature_devices','last_ping_at_utc','timestamp with time zone',false,'',''),
+          ('fleet_tms_temperature_alerts','threshold_min','numeric(6,2)',false,'',''),
+          ('fleet_tms_temperature_alerts','threshold_max','numeric(6,2)',false,'',''),
+          ('fleet_tms_temperature_alerts','measured_humidity','numeric(6,2)',false,'',''),
+          ('fleet_tms_temperature_alerts','humidity_threshold_min','numeric(6,2)',false,'',''),
+          ('fleet_tms_temperature_alerts','humidity_threshold_max','numeric(6,2)',false,'',''),
+          ('customers','sla_health_score','numeric(6,2)',false,'',''),
+          ('customers','delivery_experience_score','numeric(6,2)',false,'',''),
+          ('customers','risk_score','numeric(6,2)',false,'',''),
+          ('customers','health_state','character varying(32)',false,'',''),
+          ('customers','health_computed_at','timestamp with time zone',false,'',''),
           ('location_events','source','character varying(40)',true,'''device''::character varying',''),
           ('location_events','nonce','character varying(128)',false,'',''),
           ('location_events','source_channel','character varying(40)',false,'',''),
@@ -314,6 +398,137 @@ public sealed class FleetProductionReadinessService
           ,('platform_admins','invite_expires_at','timestamp with time zone',false,'','')
           ,('platform_admins','updated_at','timestamp with time zone',true,'now()','')
           ,('platform_admins','mfa_secret','character varying(160)',false,'','')
+          -- Stage86 runtime route column contract: previously created only by the
+          -- owner-capable Batch2/3/4/7 schema services, which protected environments
+          -- skip — readiness stayed green while the selecting endpoints returned 500 (42703).
+          ,('routes','sla_risk','character varying(60)',true,'''Low''::character varying','')
+          ,('work_orders','asset_id','bigint',false,'','')
+          ,('maintenance_items','asset_id','bigint',false,'','')
+          ,('safety_events','event_number','character varying(80)',false,'','')
+          ,('dashcam_events','event_number','character varying(80)',false,'','')
+          ,('audit_logs','severity','character varying(40)',true,'''Info''::character varying','')
+          ,('audit_logs','module_key','character varying(100)',false,'','')
+          ,('audit_logs','action_type','character varying(80)',true,'''update''::character varying','')
+          -- Stage88 runtime schema-service contract — the CORE JOURNEY columns.
+          -- Declared only by the owner-capable Batch*/Maintenance/Telemetry schema services
+          -- that Program.cs skips under RLS enforcement, so a protected environment could
+          -- never have them: /api/routes 500'd on efficiency_score while stage86 enrolled
+          -- routes.sla_risk from the SAME CASE expression. Every string below was read back
+          -- with format_type(a.atttypid,a.atttypmod) / attnotnull / pg_get_expr(d.adbin,d.adrelid)
+          -- from a freshly rebuilt migration-pure database — a paraphrase here makes
+          -- /health/ready permanently RED and render.yaml withholds traffic.
+          ,('routes','cost_estimate','numeric(12,2)',false,'','')
+          ,('routes','efficiency_score','numeric(6,2)',true,'85','')
+          ,('routes','notes','text',false,'','')
+          ,('routes','optimization_mode','character varying(80)',true,'''Balanced''::character varying','')
+          ,('routes','region','character varying(120)',false,'','')
+          ,('routes','route_type','character varying(80)',true,'''Delivery''::character varying','')
+          ,('routes','total_stops','integer',true,'0','')
+          ,('routes','updated_at','timestamp with time zone',false,'','')
+          ,('work_orders','actual_cost','numeric(12,2)',false,'','')
+          ,('work_orders','approved_cost','numeric(12,2)',false,'','')
+          ,('work_orders','assigned_at','timestamp with time zone',false,'','')
+          ,('work_orders','assigned_to_user_id','bigint',false,'','')
+          ,('work_orders','completed_at','timestamp with time zone',false,'','')
+          ,('work_orders','cost_approval_status','character varying(80)',true,'''Pending''::character varying','')
+          ,('work_orders','created_at','timestamp with time zone',true,'now()','')
+          ,('work_orders','created_date','timestamp with time zone',false,'','')
+          ,('work_orders','description','text',false,'','')
+          ,('work_orders','downtime_hours','numeric(8,2)',true,'0','')
+          ,('work_orders','dvir_report_id','bigint',false,'','')
+          ,('work_orders','issue_type','character varying(120)',false,'','')
+          ,('work_orders','maintenance_item_id','bigint',false,'','')
+          ,('work_orders','notes','text',false,'','')
+          ,('work_orders','recommended_action','character varying(240)',false,'','')
+          ,('work_orders','risk_score','numeric(6,2)',true,'35','')
+          ,('work_orders','started_at','timestamp with time zone',false,'','')
+          ,('work_orders','updated_at','timestamp with time zone',false,'','')
+          ,('work_orders','vendor_name','character varying(160)',false,'','')
+          ,('work_orders','work_order_number','character varying(80)',false,'','')
+          ,('safety_events','ai_summary','text',false,'','')
+          ,('safety_events','coaching_status','character varying(80)',true,'''Not Created''::character varying','')
+          ,('safety_events','incident_status','character varying(80)',true,'''None''::character varying','')
+          ,('safety_events','job_id','bigint',false,'','')
+          ,('safety_events','latitude','numeric(10,7)',false,'','')
+          ,('safety_events','location_description','character varying(220)',false,'','')
+          ,('safety_events','longitude','numeric(10,7)',false,'','')
+          ,('safety_events','occurred_at','timestamp with time zone',false,'','')
+          ,('safety_events','posted_speed_limit','numeric(8,2)',false,'','')
+          ,('safety_events','recommended_action','character varying(260)',false,'','')
+          ,('safety_events','route_id','bigint',false,'','')
+          ,('safety_events','speed','numeric(8,2)',false,'','')
+          ,('expenses','approval_status','character varying(80)',true,'''Pending''::character varying','')
+          ,('expenses','carrier_id','bigint',false,'','')
+          ,('expenses','category_name','character varying(120)',false,'','')
+          ,('expenses','currency','character varying(10)',true,'''USD''::character varying','')
+          ,('expenses','customer_id','bigint',false,'','')
+          ,('expenses','deleted_at','timestamp with time zone',false,'','')
+          ,('expenses','document_id','bigint',false,'','')
+          ,('expenses','driver_id','bigint',false,'','')
+          ,('expenses','expense_number','character varying(80)',false,'','')
+          ,('expenses','job_id','bigint',false,'','')
+          ,('expenses','notes','text',false,'','')
+          ,('expenses','receipt_status','character varying(80)',true,'''Missing''::character varying','')
+          ,('expenses','recommended_action','character varying(260)',false,'','')
+          ,('expenses','risk_score','numeric(6,2)',true,'20','')
+          ,('expenses','route_id','bigint',false,'','')
+          ,('expenses','updated_at','timestamp with time zone',false,'','')
+          ,('expenses','vehicle_id','bigint',false,'','')
+          ,('expenses','vendor_name','character varying(180)',false,'','')
+          ,('fuel_transactions','anomaly_status','character varying(80)',true,'''Normal''::character varying','')
+          ,('fuel_transactions','currency','character varying(10)',true,'''USD''::character varying','')
+          ,('fuel_transactions','deleted_at','timestamp with time zone',false,'','')
+          ,('fuel_transactions','driver_id','bigint',false,'','')
+          ,('fuel_transactions','fuel_card_number','character varying(80)',false,'','')
+          ,('fuel_transactions','fuel_date','date',false,'','')
+          ,('fuel_transactions','fuel_type','character varying(80)',true,'''Diesel''::character varying','')
+          ,('fuel_transactions','job_id','bigint',false,'','')
+          ,('fuel_transactions','notes','text',false,'','')
+          ,('fuel_transactions','odometer','numeric(12,2)',false,'','')
+          ,('fuel_transactions','payment_method','character varying(80)',true,'''Fleet Card''::character varying','')
+          ,('fuel_transactions','quantity','numeric(10,3)',true,'0','')
+          ,('fuel_transactions','recommended_action','character varying(260)',false,'','')
+          ,('fuel_transactions','region','character varying(120)',false,'','')
+          ,('fuel_transactions','route_id','bigint',false,'','')
+          ,('fuel_transactions','transaction_number','character varying(80)',false,'','')
+          ,('fuel_transactions','unit','character varying(30)',true,'''Gallons''::character varying','')
+          ,('fuel_transactions','unit_price','numeric(10,4)',true,'0','')
+          ,('fuel_transactions','updated_at','timestamp with time zone',false,'','')
+          ,('maintenance_items','created_at','timestamp with time zone',true,'now()','')
+          ,('maintenance_items','due_engine_hours','integer',false,'','')
+          ,('maintenance_items','due_odometer','integer',false,'','')
+          ,('dashcam_events','ai_confidence','numeric(6,2)',true,'84','')
+          ,('dashcam_events','ai_summary','text',false,'','')
+          ,('dashcam_events','created_at','timestamp with time zone',true,'now()','')
+          ,('dashcam_events','deleted_at','timestamp with time zone',false,'','')
+          ,('dashcam_events','driver_facing_clip_url','character varying(400)',false,'','')
+          ,('dashcam_events','driver_id','bigint',false,'','')
+          ,('dashcam_events','event_type','character varying(120)',false,'','')
+          ,('dashcam_events','evidence_status','character varying(80)',true,'''Not Packaged''::character varying','')
+          ,('dashcam_events','false_positive','boolean',true,'false','')
+          ,('dashcam_events','job_id','bigint',false,'','')
+          ,('dashcam_events','latitude','numeric(10,7)',false,'','')
+          ,('dashcam_events','location_description','character varying(220)',false,'','')
+          ,('dashcam_events','longitude','numeric(10,7)',false,'','')
+          ,('dashcam_events','occurred_at','timestamp with time zone',false,'','')
+          ,('dashcam_events','recommended_action','character varying(260)',false,'','')
+          ,('dashcam_events','review_status','character varying(80)',true,'''Pending Review''::character varying','')
+          ,('dashcam_events','road_facing_clip_url','character varying(400)',false,'','')
+          ,('dashcam_events','route_id','bigint',false,'','')
+          ,('dashcam_events','thumbnail_url','character varying(400)',false,'','')
+          ,('dashcam_events','updated_at','timestamp with time zone',false,'','')
+          ,('dashcam_events','vehicle_id','bigint',false,'','')
+          ,('tenant_api_keys','id','bigint',true,'','a')
+          ,('tenant_api_keys','company_id','bigint',true,'','')
+          ,('tenant_api_keys','key_hash','character varying(64)',true,'','')
+          ,('tenant_api_keys','key_prefix','character varying(32)',true,'','')
+          ,('tenant_api_keys','last_four','character varying(8)',true,'','')
+          ,('tenant_api_keys','label','character varying(200)',false,'','')
+          ,('tenant_api_keys','created_by','character varying(200)',false,'','')
+          ,('tenant_api_keys','created_at','timestamp with time zone',true,'now()','')
+          ,('tenant_api_keys','last_used_at','timestamp with time zone',false,'','')
+          ,('tenant_api_keys','revoked_at','timestamp with time zone',false,'','')
+          ,('tenant_api_keys','revoked_by','character varying(200)',false,'','')
         ), identity_indexes(name, table_name, key1, key2, predicate) AS (VALUES
           ('uq_vehicles_identity_code_normalized','vehicles','company_id','lower(btrim(vehicle_code::text))',''),
           ('uq_drivers_identity_code_normalized','drivers','company_id','lower(btrim(driver_code::text))',''),
@@ -642,7 +857,15 @@ public sealed class FleetProductionReadinessService
             LEFT JOIN pg_class idx ON idx.oid=to_regclass('public.'||expected.name)
             LEFT JOIN pg_index i ON i.indexrelid=idx.oid
             WHERE idx.oid IS NULL OR i.indisunique OR NOT i.indisvalid OR NOT i.indisready
-              OR pg_get_indexdef(idx.oid)<>expected.definition))::int AS runtime_route_object_violations,
+              OR pg_get_indexdef(idx.oid)<>expected.definition)
+            + CASE WHEN EXISTS (SELECT 1 FROM schema_migrations WHERE version='2026_08_31_stage93_document_lifecycle_provenance')
+                   THEN 0 ELSE 1 END
+            + CASE WHEN EXISTS (SELECT 1 FROM pg_constraint c
+                WHERE c.conrelid=to_regclass('public.documents') AND c.conname='ck_documents_lifecycle_mode'
+                  AND c.contype='c' AND c.convalidated
+                  AND pg_get_expr(c.conbin,c.conrelid,true) =
+                    'lifecycle_mode::text = ANY (ARRAY[''automatic''::character varying, ''manual''::character varying, ''legacy_unknown''::character varying]::text[])')
+                   THEN 0 ELSE 1 END)::int AS runtime_route_object_violations,
           (SELECT COUNT(*)::int FROM fleet_integrity_indexes expected
             LEFT JOIN pg_class idx ON idx.oid=to_regclass('public.'||expected.name)
             LEFT JOIN pg_index i ON i.indexrelid=idx.oid
@@ -704,6 +927,64 @@ public sealed class FleetProductionReadinessService
           COALESCE((SELECT COUNT(*)=2 FROM market_packs WHERE code IN ('canada_na','saudi_gcc') AND status='active'),false)
             AND COALESCE((SELECT COUNT(*)=3 FROM country_profiles WHERE country_code IN ('US','CA','SA')),false)
             AND COALESCE((SELECT BOOL_AND((country_code='US' AND default_currency='USD') OR (country_code='CA' AND default_currency='CAD') OR (country_code='SA' AND default_currency='SAR' AND text_direction='rtl')) FROM country_profiles WHERE country_code IN ('US','CA','SA')),false)
+            AND to_regclass('public.module_packages') IS NOT NULL
+            AND to_regclass('public.usage_meters') IS NOT NULL
+            AND to_regclass('public.usage_events') IS NOT NULL
+            AND to_regclass('public.usage_counters') IS NOT NULL
+            AND to_regclass('public.pricing_rules') IS NOT NULL
+            AND to_regclass('public.tenant_contract_overrides') IS NOT NULL
+            AND COALESCE((SELECT COUNT(*)=15 FROM (VALUES
+              ('module_packages','package_key'),('module_packages','module_keys'),
+              ('module_packages','base_price_cents'),('usage_meters','meter_key'),
+              ('usage_meters','period'),('usage_events','company_id'),
+              ('usage_events','meter_key'),('usage_events','period_key'),
+              ('usage_counters','company_id'),('usage_counters','meter_key'),
+              ('usage_counters','period_key'),('pricing_rules','package_id'),
+              ('pricing_rules','meter_key'),('tenant_contract_overrides','company_id'),
+              ('tenant_contract_overrides','meter_key')
+            ) expected(table_name,column_name)
+            JOIN information_schema.columns actual ON actual.table_schema='public'
+              AND actual.table_name=expected.table_name AND actual.column_name=expected.column_name),false)
+            AND COALESCE((SELECT BOOL_AND(
+              has_table_privilege('opstrax_app',table_name,'SELECT')
+              AND NOT has_table_privilege('opstrax_app',table_name,'INSERT')
+              AND NOT has_table_privilege('opstrax_app',table_name,'UPDATE')
+              AND NOT has_table_privilege('opstrax_app',table_name,'DELETE')
+              AND has_table_privilege('opstrax_system',table_name,'SELECT')
+              AND has_table_privilege('opstrax_system',table_name,'INSERT')
+              AND has_table_privilege('opstrax_system',table_name,'UPDATE')
+              AND has_table_privilege('opstrax_system',table_name,'DELETE')
+            ) FROM (VALUES ('module_packages'),('usage_meters'),('pricing_rules')) refs(table_name)),false)
+            AND COALESCE((SELECT BOOL_AND(
+              NOT has_sequence_privilege('opstrax_app',sequence_name,'USAGE')
+              AND has_sequence_privilege('opstrax_system',sequence_name,'USAGE')
+            ) FROM (VALUES ('module_packages_id_seq'),('usage_meters_id_seq'),('pricing_rules_id_seq')) refs(sequence_name)),false)
+            AND COALESCE((SELECT COUNT(*)=3 AND BOOL_AND(c.relrowsecurity AND c.relforcerowsecurity)
+              FROM pg_class c WHERE c.oid IN (
+                to_regclass('public.usage_events'),to_regclass('public.usage_counters'),
+                to_regclass('public.tenant_contract_overrides'))),false)
+            AND COALESCE((SELECT COUNT(*)=6 FROM pg_policies
+              WHERE schemaname='public'
+                AND tablename IN ('usage_events','usage_counters','tenant_contract_overrides')
+                AND policyname IN ('tenant_ticket_app','system_control_plane')),false)
+            AND has_table_privilege('opstrax_app','usage_events','SELECT')
+            AND has_table_privilege('opstrax_app','usage_events','INSERT')
+            AND NOT has_table_privilege('opstrax_app','usage_events','UPDATE')
+            AND NOT has_table_privilege('opstrax_app','usage_events','DELETE')
+            AND has_table_privilege('opstrax_system','usage_events','SELECT')
+            AND has_table_privilege('opstrax_system','usage_events','INSERT')
+            AND has_table_privilege('opstrax_system','usage_events','UPDATE')
+            AND has_table_privilege('opstrax_system','usage_events','DELETE')
+            AND COALESCE((SELECT BOOL_AND(
+              has_table_privilege('opstrax_app',table_name,'SELECT')
+              AND has_table_privilege('opstrax_app',table_name,'INSERT')
+              AND has_table_privilege('opstrax_app',table_name,'UPDATE')
+              AND has_table_privilege('opstrax_app',table_name,'DELETE')
+              AND has_table_privilege('opstrax_system',table_name,'SELECT')
+              AND has_table_privilege('opstrax_system',table_name,'INSERT')
+              AND has_table_privilege('opstrax_system',table_name,'UPDATE')
+              AND has_table_privilege('opstrax_system',table_name,'DELETE')
+            ) FROM (VALUES ('usage_counters'),('tenant_contract_overrides')) tenant_tables(table_name)),false)
             AND COALESCE((SELECT COUNT(*)=1 FROM schema_migrations WHERE version='2026_08_13_stage78_country_profiles_runtime_contract'),false) AS market_catalog_ready,
           COALESCE((SELECT COUNT(*)=1 FROM schema_migrations WHERE version='2026_08_13_stage79_tenant_provisioning_runtime_contract'),false)
             AND to_regclass('public.password_reset_tokens') IS NOT NULL
@@ -723,6 +1004,48 @@ public sealed class FleetProductionReadinessService
                AND actual.table_name=required.table_name
                AND actual.column_name=required.column_name
             ),false) AS tenant_provisioning_ready,
+          COALESCE((SELECT COUNT(*)=1 FROM schema_migrations WHERE version='2026_08_14_stage80_fleet_identity_backbone'),false)
+            AND COALESCE((SELECT COUNT(*)=1 FROM schema_migrations
+              WHERE version='2026_08_20_stage82_telematics_device_credential_constraint'),false)
+            AND COALESCE((SELECT COUNT(*)=1 FROM schema_migrations
+              WHERE version='2026_08_26_stage91_telematics_ingest_fingerprint'),false)
+            AND COALESCE((SELECT COUNT(*)=1 AND BOOL_AND(
+              c.convalidated
+              AND pg_get_constraintdef(c.oid,true) LIKE '%hmac_secret IS NULL%'
+              AND pg_get_constraintdef(c.oid,true) LIKE '%hmac_secret_encrypted IS NOT NULL%'
+              AND pg_get_constraintdef(c.oid,true) LIKE '%hmac_key_version > 0%'
+            ) FROM pg_constraint c
+              WHERE c.conrelid=to_regclass('public.eld_devices')
+                AND c.conname='ck_eld_devices_active_credentials'),false)
+            AND NOT EXISTS (
+              SELECT 1 FROM pg_constraint c
+              WHERE c.conrelid=to_regclass('public.eld_devices')
+                AND c.contype='c'
+                AND pg_get_constraintdef(c.oid,true) LIKE '%hmac_secret IS NOT NULL%'
+            )
+            AND to_regclass('public.ex_stage80_device_installation_period') IS NOT NULL
+            AND to_regclass('public.uq_stage80_vehicle_primary_role') IS NOT NULL
+            AND to_regprocedure('public.stage80_sync_device_vehicle_projection()') IS NOT NULL
+            AND COALESCE((SELECT COUNT(*)=15 FROM (VALUES
+              ('device_installations','effective_from'),('device_installations','effective_to'),
+              ('device_installations','device_role'),('device_installations','row_version'),
+              ('location_events','installation_id'),('location_events','assignment_id'),
+              ('location_events','engine_status'),('location_events','ingest_fingerprint'),
+              ('latest_vehicle_positions','battery_voltage'),('latest_vehicle_positions','address'),
+              ('latest_vehicle_positions','installation_id'),('latest_vehicle_positions','assignment_id'),
+              ('canonical_telemetry_events','installation_id'),('canonical_telemetry_events','assignment_id'),
+              ('fault_occurrences','payload_fingerprint')
+            ) expected(table_name,column_name)
+            JOIN information_schema.columns actual ON actual.table_schema='public'
+              AND actual.table_name=expected.table_name AND actual.column_name=expected.column_name),false)
+            AND NOT has_table_privilege('opstrax_app','device_installation_quarantine','SELECT')
+            AND NOT has_table_privilege('opstrax_app','device_installation_quarantine','INSERT')
+            AND NOT has_table_privilege('opstrax_app','device_installation_quarantine','UPDATE')
+            AND NOT has_table_privilege('opstrax_app','device_installation_quarantine','DELETE')
+            AND has_table_privilege('opstrax_system','device_installation_quarantine','SELECT')
+            AND has_table_privilege('opstrax_system','device_installation_quarantine','INSERT')
+            AND has_table_privilege('opstrax_system','device_installation_quarantine','UPDATE')
+            AS fleet_identity_ready,
           to_regclass('public.uq_ftms_shipment_identity') IS NOT NULL
             AND to_regclass('public.uq_ftms_vehicle_identity') IS NOT NULL
             AND to_regclass('public.ux_ftms_assets_branch_tag_normalized') IS NOT NULL
@@ -796,6 +1119,7 @@ public sealed record FleetProductionContractResult(
     bool DataProtectionKeyRingMigrationApplied,
     bool MarketCatalogReady,
     bool TenantProvisioningReady,
+    bool FleetIdentityReady,
     bool IndexesReady,
     int CriticalWorkerViolations,
     int RawCriticalWorkerViolations,
@@ -813,9 +1137,9 @@ public sealed record FleetProductionContractResult(
                          && MigrationApplied && RuntimeSupportMigrationApplied && TenantCoverageMigrationApplied
                          && ColdChainIntegrityMigrationApplied && RuntimeRouteMigrationApplied && AssetTypeIntegrityMigrationApplied
                          && WorkforceScheduleIntegrityMigrationApplied && TenantTicketMigrationApplied && DataProtectionKeyRingMigrationApplied
-                         && MarketCatalogReady && TenantProvisioningReady && IndexesReady
+                         && MarketCatalogReady && TenantProvisioningReady && FleetIdentityReady && IndexesReady
                          && CriticalWorkerViolations == 0 && FailureCode is null;
 
     public static FleetProductionContractResult Failed(string code) =>
-        new(false, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, false, false, false, false, false, false, false, false, false, false, false, false, -1, -1, -1, -1, -1, false, 0, code);
+        new(false, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, false, false, false, false, false, false, false, false, false, false, false, false, false, -1, -1, -1, -1, -1, false, 0, code);
 }

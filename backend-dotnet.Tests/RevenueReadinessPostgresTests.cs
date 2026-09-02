@@ -905,7 +905,7 @@ ON CONFLICT DO NOTHING");
         await db.ExecuteAsync("SELECT setval(pg_get_serial_sequence('drivers', 'id'), (SELECT COALESCE(MAX(id), 1) FROM drivers))");
 
         await db.ExecuteAsync(@"
-INSERT INTO vehicles (id, company_id, vehicle_code, type, make, model, year, vin, plate_number, status, odometer_miles, readiness_score, data_quality_score, risk_score, device_status, camera_status, assigned_driver_id)
+INSERT INTO vehicles (id, company_id, vehicle_code, type, make, model, year, vin, vin_exception_type, alternate_identifier, plate_number, status, odometer_miles, readiness_score, data_quality_score, risk_score, device_status, camera_status, assigned_driver_id)
 OVERRIDING SYSTEM VALUE
 SELECT n, 1,
        (ARRAY['TRK','VAN','BOX','REEFER'])[((n - 1) % 4) + 1] || '-' || (100 + n)::TEXT,
@@ -913,7 +913,9 @@ SELECT n, 1,
        (ARRAY['Freightliner','Ford','Isuzu','International','Mercedes'])[((n - 1) % 5) + 1],
        (ARRAY['M2','Transit','NPR','MV','Sprinter'])[((n - 1) % 5) + 1],
        2020 + (n % 5),
-       'VINOPSTRAX' || LPAD(n::TEXT, 6, '0'),
+       NULL,
+       'legacy-fleet-identifier',
+       'STAGE7-' || LPAD(n::TEXT, 6, '0'),
        'VA-' || (100 + n)::TEXT,
        (ARRAY['Available','On Route','At Stop','Idle','Delayed','Maintenance'])[((n - 1) % 6) + 1],
        14000 + n * 3100,

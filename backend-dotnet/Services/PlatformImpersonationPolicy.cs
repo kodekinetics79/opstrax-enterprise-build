@@ -25,6 +25,11 @@ public static class PlatformImpersonationPolicy
         "/api/audit/logs",
     ];
 
+    // Surfaced to the Platform console so an operator — and the customer reading the
+    // grant record — can see the exact scope a support session carries, rather than
+    // being told to trust that it is "read only".
+    public static IReadOnlyList<string> ReadOnlyScope => ReadOnlyPathPrefixes;
+
     public static bool IsEnabled(IConfiguration configuration) =>
         configuration.GetValue("PlatformImpersonation:Enabled", false);
 

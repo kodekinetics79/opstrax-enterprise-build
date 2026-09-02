@@ -121,6 +121,8 @@ BEGIN
       ('device_state_transitions',            TRUE,  TRUE, TRUE, FALSE,FALSE, TRUE,TRUE,TRUE,TRUE),
       ('device_installations',                TRUE,  TRUE, TRUE, TRUE, FALSE, TRUE,TRUE,TRUE,TRUE),
       ('device_installation_evidence',        TRUE,  TRUE, TRUE, FALSE,FALSE, TRUE,TRUE,TRUE,TRUE),
+      ('device_installation_quarantine',      TRUE,  FALSE,FALSE,FALSE,FALSE, TRUE,TRUE,TRUE,FALSE),
+      ('dvir_inspection_results',             TRUE,  TRUE, TRUE, FALSE,FALSE, TRUE,TRUE,TRUE,TRUE),
       ('device_channel_health',               TRUE,  TRUE, TRUE, TRUE, FALSE, TRUE,TRUE,TRUE,TRUE),
       ('telematics_device_commands',          TRUE,  TRUE, TRUE, TRUE, FALSE, TRUE,TRUE,TRUE,TRUE),
       ('telemetry_privacy_policies',          TRUE,  TRUE, TRUE, TRUE, FALSE, TRUE,TRUE,TRUE,TRUE),
@@ -224,7 +226,7 @@ BEGIN
     FROM information_schema.columns
    WHERE table_schema='public' AND table_name='eld_devices'
      AND column_name=ANY(ARRAY[
-       'branch_id','imei','device_model','provider','vehicle_id','driver_id',
+       'branch_id','imei','device_model','provider','device_state',
        'firmware_version','status','malfunction_code','malfunction_description',
        'malfunction_resolved_at','malfunction_resolved_by','resolution_evidence',
        'row_version','updated_at'
@@ -274,6 +276,9 @@ BEGIN
      OR NOT has_column_privilege('opstrax_app','eld_devices','malfunction_resolved_by','UPDATE')
      OR NOT has_column_privilege('opstrax_app','eld_devices','resolution_evidence','UPDATE')
      OR NOT has_column_privilege('opstrax_app','eld_devices','row_version','UPDATE')
+     OR NOT has_column_privilege('opstrax_app','eld_devices','device_state','UPDATE')
+     OR has_column_privilege('opstrax_app','eld_devices','vehicle_id','UPDATE')
+     OR has_column_privilege('opstrax_app','eld_devices','driver_id','UPDATE')
      OR has_column_privilege('opstrax_app','eld_devices','api_key_hash','UPDATE')
      OR has_column_privilege('opstrax_app','eld_devices','hmac_secret_encrypted','UPDATE') THEN
     RAISE EXCEPTION 'Stage76 eld_devices credential read boundary is unsafe';
@@ -371,6 +376,22 @@ BEGIN
   END IF;
 END
 $stage76_verify$;
+
+-- Raw metering events are append-only evidence. Stage58's generic tenant-table
+-- reconciliation grants CRUD, so the terminal boundary must narrow this table back
+-- to app SELECT/INSERT. The system control plane retains CRUD for governed repair and
+-- retention, while tenant runtime identities may never rewrite or erase usage evidence.
+DO $stage76_usage_event_immutability$
+BEGIN
+  IF to_regclass('public.usage_events') IS NOT NULL THEN
+    REVOKE ALL ON TABLE usage_events FROM PUBLIC,opstrax_app,opstrax_system;
+    REVOKE ALL ON SEQUENCE usage_events_id_seq FROM PUBLIC,opstrax_app,opstrax_system;
+    GRANT SELECT,INSERT ON TABLE usage_events TO opstrax_app;
+    GRANT SELECT,INSERT,UPDATE,DELETE ON TABLE usage_events TO opstrax_system;
+    GRANT USAGE,SELECT ON SEQUENCE usage_events_id_seq TO opstrax_app,opstrax_system;
+  END IF;
+END
+$stage76_usage_event_immutability$;
 
 INSERT INTO schema_migrations(version,description)
 VALUES ('2026_08_11_stage76_telematics_security_hardening',

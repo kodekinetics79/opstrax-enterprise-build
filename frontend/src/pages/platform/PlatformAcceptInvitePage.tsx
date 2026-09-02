@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
-import { CheckCircle2, KeyRound, Loader2 } from "lucide-react";
+import { CheckCircle2, KeyRound, Loader2, Eye, EyeOff } from "lucide-react";
 import { OpsTraxLogo } from "@/components/OpsTraxLogo";
 import { platformApi } from "@/services/platformApi";
 
@@ -14,6 +14,8 @@ export function PlatformAcceptInvitePage() {
   const [token, setToken] = useState(params.get("token") ?? "");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
+  // One toggle for both fields — revealing what was typed is how a typo gets caught.
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
@@ -83,16 +85,23 @@ export function PlatformAcceptInvitePage() {
                 </label>
                 <label className="block">
                   <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-400">New password</span>
-                  <input
-                    className="w-full rounded-[14px] border border-slate-700 bg-slate-900/60 px-3 py-2.5 text-sm text-slate-100 outline-none focus:border-teal-400"
-                    type="password" value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="new-password"
-                  />
+                  <div className="relative">
+                    <input
+                      className="w-full rounded-[14px] border border-slate-700 bg-slate-900/60 py-2.5 pl-3 pr-11 text-sm text-slate-100 outline-none focus:border-teal-400"
+                      type={showPassword ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="new-password"
+                    />
+                    <button type="button" onClick={() => setShowPassword((v) => !v)}
+                      aria-label={showPassword ? "Hide passwords" : "Show passwords"} aria-pressed={showPassword}
+                      className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-lg p-2 text-slate-400 transition hover:bg-slate-800/70 hover:text-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-400">
+                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
                 </label>
                 <label className="block">
                   <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-400">Confirm password</span>
                   <input
                     className="w-full rounded-[14px] border border-slate-700 bg-slate-900/60 px-3 py-2.5 text-sm text-slate-100 outline-none focus:border-teal-400"
-                    type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} required autoComplete="new-password"
+                    type={showPassword ? "text" : "password"} value={confirm} onChange={(e) => setConfirm(e.target.value)} required autoComplete="new-password"
                   />
                 </label>
                 {passwordIssue && <p className="text-xs font-semibold text-amber-400" role="alert">{passwordIssue}</p>}

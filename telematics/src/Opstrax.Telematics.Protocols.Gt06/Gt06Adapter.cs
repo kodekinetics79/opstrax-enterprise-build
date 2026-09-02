@@ -70,6 +70,12 @@ public sealed class Gt06Adapter : IProtocolAdapter
     /// <summary>The effective per-frame ceiling for this instance (see <see cref="MaxFrameBytes"/>).</summary>
     private readonly int _maxFrameBytes;
 
+    /// <summary>
+    /// Source of the UTC instant published in a <c>0x8A</c> time response. Injectable purely so the
+    /// response can be asserted byte-for-byte in a test; the adapter still holds no protocol state.
+    /// </summary>
+    private readonly Func<DateTime> _utcNow;
+
     /// <summary>Creates the adapter with the default per-frame ceiling (<see cref="MaxFrameBytes"/>).</summary>
     public Gt06Adapter()
         : this(MaxFrameBytes)
@@ -82,12 +88,17 @@ public sealed class Gt06Adapter : IProtocolAdapter
     /// reassembly-buffer bound come from one place and cannot drift apart.
     /// </summary>
     /// <param name="maxFrameBytes">The largest total frame size to admit. Must be positive.</param>
-    public Gt06Adapter(int maxFrameBytes)
+    /// <param name="utcNow">
+    /// Optional UTC clock used only to fill a <c>0x8A</c> time response. Defaults to the system
+    /// clock; tests pass a fixed instant so the response frame is deterministic.
+    /// </param>
+    public Gt06Adapter(int maxFrameBytes, Func<DateTime>? utcNow = null)
     {
         if (maxFrameBytes <= 0)
             throw new ArgumentOutOfRangeException(nameof(maxFrameBytes), maxFrameBytes,
                 "Per-frame ceiling must be positive.");
         _maxFrameBytes = maxFrameBytes;
+        _utcNow = utcNow ?? (() => DateTime.UtcNow);
     }
 
     // GT06 constant markers.
@@ -103,8 +114,20 @@ public sealed class Gt06Adapter : IProtocolAdapter
     private const byte ProtoStatus13 = 0x13;
     private const byte ProtoStatus23 = 0x23;
     private const byte ProtoAlarm16 = 0x16;
-    private const byte ProtoAlarm18 = 0x18;
     private const byte ProtoAlarm26 = 0x26;
+
+    /// <summary>
+    /// LBS multiple-base-station extended information — <b>not</b> an alarm. Traccar's
+    /// <c>Gt06ProtocolDecoder</c> names this <c>MSG_LBS_EXTEND</c> and deliberately excludes it from
+    /// its <c>hasGps()</c> set. Running the GPS/alarm layout over its cell-tower payload fabricates a
+    /// position and an alarm code out of MCC/MNC/LAC/CellId bytes, so this decoder retains the raw
+    /// frame and decodes nothing. See <c>fixtures/gt06/README.md</c>.
+    /// </summary>
+    private const byte ProtoLbsExtended18 = 0x18;
+
+    /// <summary>Device→server string / command result (Traccar <c>MSG_STRING</c>). Never GPS or status.</summary>
+    private const byte ProtoCommandResponse15 = 0x15;
+
     private const byte ProtoTime8A = 0x8A;
     private const byte ProtoCommand80 = 0x80;
 
@@ -147,9 +170,22 @@ public sealed class Gt06Adapter : IProtocolAdapter
     ///     drop-the-connection condition, never a fabricated event.</description></item>
     /// </list>
     /// </remarks>
-    public IReadOnlyList<DecodedMessage> Decode(ReadOnlySpan<byte> buffer, out int consumed)
+    public IReadOnlyList<DecodedMessage> Decode(ReadOnlySpan<byte> buffer, out int consumed) =>
+        Decode(buffer, out consumed, out _);
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The statistics overload. <see cref="FrameDecodeStats.FramesRead"/> counts every complete,
+    /// well-framed frame this call stepped over — CRC-valid <em>and</em> CRC-invalid — so
+    /// <c>FramesRead - CrcFailures</c> is exactly the number of returned messages. A truncated
+    /// trailing frame is not yet a frame and is not counted; it is counted on the later call that
+    /// completes it. Malformed framing throws before any count is reported for the offending frame.
+    /// </remarks>
+    public IReadOnlyList<DecodedMessage> Decode(ReadOnlySpan<byte> buffer, out int consumed, out FrameDecodeStats stats)
     {
         consumed = 0;
+        int framesRead = 0;
+        int crcFailures = 0;
         List<DecodedMessage>? messages = null;
 
         while (consumed < buffer.Length)
@@ -161,6 +197,7 @@ public sealed class Gt06Adapter : IProtocolAdapter
             {
                 case FrameStatus.NeedMore:
                     // Leave the partial frame unconsumed and wait for more bytes.
+                    stats = new FrameDecodeStats(framesRead, crcFailures);
                     return (IReadOnlyList<DecodedMessage>?)messages ?? Array.Empty<DecodedMessage>();
 
                 case FrameStatus.Malformed:
@@ -171,10 +208,15 @@ public sealed class Gt06Adapter : IProtocolAdapter
 
                 case FrameStatus.BadCrc:
                     // Reject this frame but do NOT throw: consume its declared span and continue.
+                    // It IS a frame we read off the wire, so it counts as an attempt — and as the
+                    // CRC failure that explains why no message came out of it.
+                    framesRead++;
+                    crcFailures++;
                     consumed += frameLength;
                     continue;
 
                 case FrameStatus.Ok:
+                    framesRead++;
                     messages ??= new List<DecodedMessage>();
                     messages.Add(message!);
                     consumed += frameLength;
@@ -182,6 +224,7 @@ public sealed class Gt06Adapter : IProtocolAdapter
             }
         }
 
+        stats = new FrameDecodeStats(framesRead, crcFailures);
         return (IReadOnlyList<DecodedMessage>?)messages ?? Array.Empty<DecodedMessage>();
     }
 
@@ -264,16 +307,25 @@ public sealed class Gt06Adapter : IProtocolAdapter
         var rawFrame = span[..totalFrameLength];
 
         frameLength = totalFrameLength;
-        message = BuildMessage(protocolNumber, content, serial, rawFrame);
+        message = BuildMessage(protocolNumber, content, serial, rawFrame, extendedFraming: lengthFieldSize == 2);
         return FrameStatus.Ok;
     }
 
-    private DecodedMessage BuildMessage(byte protocolNumber, ReadOnlySpan<byte> content, int serial, ReadOnlySpan<byte> rawFrame)
+    private DecodedMessage BuildMessage(
+        byte protocolNumber,
+        ReadOnlySpan<byte> content,
+        int serial,
+        ReadOnlySpan<byte> rawFrame,
+        bool extendedFraming)
     {
         var fields = new Dictionary<string, object?>
         {
             ["protocolNumber"] = (int)protocolNumber,
             ["serial"] = serial,
+            // Which start marker carried this frame. The server answer mirrors it, so an ACK is
+            // never written back in a framing the device did not use.
+            ["framing"] = extendedFraming ? "7979" : "7878",
+            ["extendedFraming"] = extendedFraming,
         };
 
         switch (protocolNumber)
@@ -295,14 +347,30 @@ public sealed class Gt06Adapter : IProtocolAdapter
                 return new DecodedMessage(MessageType.Status, rawFrame, fields, protocolMessageId: serial, requiresAck: true);
 
             case ProtoAlarm16:
-            case ProtoAlarm18:
             case ProtoAlarm26:
                 DecodeAlarm(content, fields);
                 return new DecodedMessage(MessageType.Alarm, rawFrame, fields, protocolMessageId: serial, requiresAck: true);
 
+            case ProtoLbsExtended18:
+                // LBS multiple-base-station extended information. The frame is well-formed and its
+                // checksum verified, but its content is cell-tower data whose per-model layout this
+                // decoder does not claim to know. Decoding NOTHING is the only safe answer: the GPS
+                // and alarm layouts would happily read MCC/MNC/LAC/CellId bytes as a coordinate and
+                // an alarm code and hand the fleet a fabricated position. Raw frame retained.
+                fields["messageKind"] = "LbsExtended";
+                fields["decoded"] = false;
+                fields["undecodedReason"] = "GT06 0x18 LBS extended layout is model-specific and unverified.";
+                return new DecodedMessage(MessageType.Unknown, rawFrame, fields, protocolMessageId: serial, requiresAck: false);
+
+            case ProtoCommandResponse15:
+                DecodeCommandResponse(content, fields);
+                return new DecodedMessage(MessageType.Ack, rawFrame, fields, protocolMessageId: serial, requiresAck: false);
+
             case ProtoTime8A:
+                // The device is asking the server for UTC. Answering is the whole point of the
+                // packet, so it requires a response; EncodeAck builds the 6-byte UTC body.
                 fields["messageKind"] = "TimeSync";
-                return new DecodedMessage(MessageType.Status, rawFrame, fields, protocolMessageId: serial, requiresAck: false);
+                return new DecodedMessage(MessageType.Status, rawFrame, fields, protocolMessageId: serial, requiresAck: true);
 
             case ProtoCommand80:
                 fields["messageKind"] = "Command";
@@ -313,6 +381,49 @@ public sealed class Gt06Adapter : IProtocolAdapter
                 fields["messageKind"] = "Unknown";
                 return new DecodedMessage(MessageType.Unknown, rawFrame, fields, protocolMessageId: serial, requiresAck: false);
         }
+    }
+
+    /// <summary>
+    /// Decodes a device→server string / command result (protocol <c>0x15</c>, Traccar's
+    /// <c>MSG_STRING</c>): <c>LengthOfCommand(1) | ServerFlagBit(4) | ASCII content</c> — the exact
+    /// inverse of the <c>0x80</c> downlink this adapter encodes.
+    /// </summary>
+    /// <remarks>
+    /// The server flag is echoed back verbatim by the device, so it is retained as the correlation
+    /// token for the command that produced this reply. Nothing here is ever treated as GPS or
+    /// status: a command result carries no position, and inventing one from its ASCII would put a
+    /// fabricated fix on the map. A frame too short to hold the fixed header decodes nothing.
+    /// </remarks>
+    private static void DecodeCommandResponse(ReadOnlySpan<byte> content, Dictionary<string, object?> fields)
+    {
+        fields["messageKind"] = "CommandResponse";
+
+        // LengthOfCommand(1) + ServerFlagBit(4) is the smallest header that can be present.
+        if (content.Length < 5)
+        {
+            fields["decoded"] = false;
+            return;
+        }
+
+        int declaredLength = content[0];
+        uint serverFlag = ReadUInt32(content.Slice(1, 4));
+
+        // declaredLength counts the 4 server-flag bytes plus the ASCII payload.
+        int asciiLength = declaredLength - 4;
+        int available = content.Length - 5;
+        if (asciiLength < 0 || asciiLength > available)
+        {
+            // The declared length disagrees with the frame. Report the disagreement rather than
+            // reading past it or silently trusting the smaller number.
+            fields["decoded"] = false;
+            fields["commandLengthMismatch"] = true;
+            fields["serverFlag"] = serverFlag.ToString("X8", CultureInfo.InvariantCulture);
+            return;
+        }
+
+        fields["decoded"] = true;
+        fields["serverFlag"] = serverFlag.ToString("X8", CultureInfo.InvariantCulture);
+        fields["commandText"] = Encoding.ASCII.GetString(content.Slice(5, asciiLength));
     }
 
     private static DecodedMessage BuildLogin(ReadOnlySpan<byte> content, int serial, ReadOnlySpan<byte> rawFrame, Dictionary<string, object?> fields)
@@ -376,17 +487,35 @@ public sealed class Gt06Adapter : IProtocolAdapter
         int speedKph = content[15];
         int courseStatus = (content[16] << 8) | content[17];
 
-        // Course/Status word (big-endian bit field), per the GT06 spec:
-        //   bits 0-9 : course over ground, degrees [0,360)
-        //   bit 10   : longitude hemisphere -> 0 = East, 1 = West
-        //   bit 11   : latitude hemisphere  -> 1 = North, 0 = South
-        //   bit 12   : 1 = GPS positioned (fix valid), 0 = not positioned
-        //   bit 13   : 1 = real-time GPS, 0 = differential positioning
+        // Course/Status word (big-endian bit field), per the GT06 spec. The vendor document
+        // tabulates this as two bytes; BYTE1 bit N of that table is bit (N + 8) of the word:
+        //   bits 0-9 : course over ground, degrees [0,360)          (BYTE2 all + BYTE1 bits 0-1)
+        //   bit 10   : LATITUDE  hemisphere -> 1 = North, 0 = South (BYTE1 bit2)
+        //   bit 11   : LONGITUDE hemisphere -> 1 = West,  0 = East  (BYTE1 bit3)
+        //   bit 12   : 1 = GPS positioned (fix valid), 0 = not positioned            (BYTE1 bit4)
+        //   bit 13   : 0 = real-time GPS, 1 = differential positioning               (BYTE1 bit5)
+        //
+        // Bits 10 and 11 are LATITUDE then LONGITUDE, in that order, and bit 13 is asserted for
+        // DIFFERENTIAL positioning — not real-time. Both facts are easy to invert and neither is
+        // observable from a fixture whose two hemisphere bits happen to agree, so both are pinned
+        // by independent sources:
+        //   * Traccar Gt06ProtocolDecoder (Apache-2.0, cited in fixtures/gt06/README.md):
+        //     "if (!BitUtil.check(flags, 10)) latitude = -latitude;" and
+        //     "if (BitUtil.check(flags, 11)) longitude = -longitude;".
+        //   * The public GT06/GT06N vendor protocol document: BYTE1 bit2 "South Latitude, North
+        //     Latitude", bit3 "East Longitude, West Longitude", bit4 "GPS having been positioned
+        //     or not", bit5 "GPS real-time/differential positioning" — with the worked example
+        //     0x154C annotated "Bit5=0 -> real time GPS, Bit4=1 -> GPS has been positioned".
         int course = courseStatus & 0x03FF;
-        bool west = (courseStatus & (1 << 10)) != 0;
-        bool north = (courseStatus & (1 << 11)) != 0;
+        bool north = (courseStatus & (1 << 10)) != 0;
+        bool west = (courseStatus & (1 << 11)) != 0;
         bool positioned = (courseStatus & (1 << 12)) != 0;
-        bool realTime = (courseStatus & (1 << 13)) != 0;
+
+        // Named for what the BIT means, so the polarity cannot be silently re-inverted by someone
+        // reading only the field name. `realTimeGps` is retained for downstream consumers and is
+        // now computed as the negation it always should have been.
+        bool differentialPositioning = (courseStatus & (1 << 13)) != 0;
+        bool realTime = !differentialPositioning;
 
         // Raw units are 1/1800000 degree (= 1/(60*30000)).
         double latMagnitude = latRaw / 1800000.0;
@@ -405,6 +534,7 @@ public sealed class Gt06Adapter : IProtocolAdapter
         fields["hemisphereWest"] = west;
         fields["positioned"] = positioned;
         fields["realTimeGps"] = realTime;
+        fields["isDifferentialPositioning"] = differentialPositioning;
 
         // Plausibility is a normalization concern, not a decode invariant: we still surface
         // out-of-range or impossible values verbatim and merely FLAG them so the pipeline
@@ -467,25 +597,59 @@ public sealed class Gt06Adapter : IProtocolAdapter
         //   bit1   : ACC (ignition) -> 1 = high/on
         //   bit2   : charging       -> 1 = charging
         //   bit3-5 : alarm status (3-bit)
-        //   bit6   : 1 = GPS positioned/tracking
-        //   bit7   : oil & electricity -> 1 = connected
+        //   bit6   : 1 = GPS tracking on, 0 = GPS tracking off
+        //   bit7   : 1 = oil & electricity DISCONNECTED, 0 = connected
+        //
+        // Bit 7 is asserted when the relay has CUT power, not when power is present. The public
+        // GT06 vendor document states it as "1: oil and electricity disconnected / 0: oil and
+        // electricity connected", and Traccar maps this same bit to Position.KEY_BLOCKED. The
+        // canonical downstream field name stays `oilElectricityConnected`, so it must be the
+        // NEGATION of the bit; reporting the raw bit under that name told the fleet a cut-off
+        // vehicle was powered and a powered vehicle was cut off.
         fields["terminalInfo"] = (int)terminalInfo;
         fields["defenseActivated"] = (terminalInfo & 0x01) != 0;
         fields["ignitionOn"] = (terminalInfo & 0x02) != 0;
         fields["charging"] = (terminalInfo & 0x04) != 0;
         fields["terminalAlarmBits"] = (terminalInfo >> 3) & 0x07;
         fields["gpsTracking"] = (terminalInfo & 0x40) != 0;
-        fields["oilElectricityConnected"] = (terminalInfo & 0x80) != 0;
+        fields["oilElectricityDisconnected"] = (terminalInfo & 0x80) != 0;
+        fields["oilElectricityConnected"] = (terminalInfo & 0x80) == 0;
     }
 
+    /// <summary>
+    /// Maps a GT06 alarm byte to a stable name for the <b>documented baseline dialect</b>
+    /// (GT06/GT06N/Concox as described by the public vendor protocol document and decoded by
+    /// Traccar's <c>Gt06ProtocolDecoder</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Only codes both sources agree on are named.</b> The vendor document itself enumerates
+    /// only <c>0x00</c>–<c>0x05</c>; everything above that is dialect territory where public
+    /// references disagree materially. Where they disagree the code is deliberately rendered as
+    /// <c>Vendor0xNN</c> rather than given a confident label, because a wrong alarm name is worse
+    /// than an unmapped one: a fleet acting on "SIM change" when the device said "door" is a
+    /// dispatch decision made on fiction. The raw <c>alarmCode</c> is always published alongside
+    /// this name, so a deployment that knows its model can map the remainder itself.
+    /// </para>
+    /// <para>
+    /// Corrected here against both sources: <c>0x11</c> is power off (was reported as an airplane
+    /// mode guess), <c>0x13</c> is disassemble/tamper (was reported as a fall), and <c>0x23</c> is
+    /// the fall alarm (was unmapped). <c>0x10</c> and <c>0x12</c> are the contested pair — Traccar
+    /// reads them as door and removal, other circulated tables as SIM change and airplane mode —
+    /// so neither is asserted.
+    /// </para>
+    /// </remarks>
     private static string AlarmName(int code) => code switch
     {
+        // ── Vendor-document codes: unambiguous across every source. ──
         0x00 => "Normal",
         0x01 => "SOS",
         0x02 => "PowerCut",
         0x03 => "Vibration",
         0x04 => "EnterFence",
         0x05 => "ExitFence",
+
+        // ── Widely agreed extended codes. ──
         0x06 => "Overspeed",
         0x09 => "Displacement",
         0x0A => "EnterGpsBlindArea",
@@ -494,11 +658,23 @@ public sealed class Gt06Adapter : IProtocolAdapter
         0x0D => "GpsFirstFix",
         0x0E => "LowBattery",
         0x0F => "LowPower",
-        0x10 => "PowerOff",
-        0x11 => "AirplaneMode?",
-        0x13 => "Fall",
+        0x11 => "PowerOff",
+        0x13 => "Disassemble",
+        0x14 => "Door",
+        0x23 => "Fall",
+
+        // ── Contested by model; named generically rather than wrongly. ──
+        0x10 or 0x12 => VendorSpecificAlarmName(code),
+
         _ => "Unknown",
     };
+
+    /// <summary>
+    /// Renders a real but dialect-dependent alarm code as <c>Vendor0xNN</c>: it says "the device
+    /// raised alarm NN and we will not guess which alarm that is on your hardware".
+    /// </summary>
+    private static string VendorSpecificAlarmName(int code) =>
+        string.Create(CultureInfo.InvariantCulture, $"Vendor0x{code:X2}");
 
     /// <inheritdoc />
     /// <remarks>
@@ -515,13 +691,43 @@ public sealed class Gt06Adapter : IProtocolAdapter
         if (!message.RequiresAck)
             return Array.Empty<byte>();
 
-        if (message.Fields.TryGetValue("protocolNumber", out var protoObj) && protoObj is int proto
-            && message.ProtocolMessageId is int serial)
+        if (!message.Fields.TryGetValue("protocolNumber", out var protoObj) || protoObj is not int proto
+            || message.ProtocolMessageId is not int serial)
         {
-            return BuildResponse((byte)proto, serial, ReadOnlySpan<byte>.Empty);
+            return Array.Empty<byte>();
         }
 
-        return Array.Empty<byte>();
+        // Answer in the framing the device used. A frame that arrived under the 2-byte-length
+        // 0x7979 marker is answered under 0x7979; a 0x7878 frame is answered under 0x7878. Traccar
+        // makes exactly this choice (its sendResponse takes an `extended` flag threaded through
+        // from the received framing). See the ACK note in fixtures/gt06/README.md for the residual
+        // uncertainty this does NOT resolve.
+        bool extended = message.Fields.TryGetValue("extendedFraming", out var extObj) && extObj is true;
+
+        if ((byte)proto == ProtoTime8A)
+            return BuildResponse(ProtoTime8A, serial, BuildUtcTimeBody(_utcNow()), extended);
+
+        return BuildResponse((byte)proto, serial, ReadOnlySpan<byte>.Empty, extended);
+    }
+
+    /// <summary>
+    /// Builds the 6-byte GT06 time-synchronisation body a <c>0x8A</c> request is answered with:
+    /// <c>YY MM DD HH MM SS</c> in <b>UTC</b>, year encoded as <c>year - 2000</c> — the same
+    /// encoding the device uses for its own fix timestamps, and the same body Traccar sends.
+    /// </summary>
+    /// <param name="utcNow">The current UTC time to publish to the device.</param>
+    internal static byte[] BuildUtcTimeBody(DateTime utcNow)
+    {
+        DateTime utc = utcNow.Kind == DateTimeKind.Utc ? utcNow : utcNow.ToUniversalTime();
+        return new[]
+        {
+            (byte)(utc.Year - 2000),
+            (byte)utc.Month,
+            (byte)utc.Day,
+            (byte)utc.Hour,
+            (byte)utc.Minute,
+            (byte)utc.Second,
+        };
     }
 
     /// <inheritdoc />
@@ -678,24 +884,50 @@ public sealed class Gt06Adapter : IProtocolAdapter
         return (ushort)(~crc & 0xFFFF);
     }
 
-    /// <summary>Builds a <c>0x7878</c> server frame: start, length, protocol, body, serial, CRC-ITU, stop.</summary>
-    private static byte[] BuildResponse(byte protocolNumber, int serial, ReadOnlySpan<byte> body)
+    /// <summary>
+    /// Builds a server frame: start, length, protocol, body, serial, CRC-ITU, stop — under
+    /// <c>0x7878</c> (1-byte length) or, when <paramref name="extendedFraming"/> is set,
+    /// <c>0x7979</c> (2-byte length).
+    /// </summary>
+    /// <param name="protocolNumber">The protocol number to echo back.</param>
+    /// <param name="serial">The information serial number of the frame being answered.</param>
+    /// <param name="body">Response content between the protocol number and the serial; usually empty.</param>
+    /// <param name="extendedFraming">
+    /// <see langword="true"/> to answer under the 2-byte-length <c>0x7979</c> marker. The caller
+    /// passes the framing the request arrived under so a response is never written in a framing the
+    /// device did not use.
+    /// </param>
+    private static byte[] BuildResponse(byte protocolNumber, int serial, ReadOnlySpan<byte> body, bool extendedFraming = false)
     {
         // PacketLength = protocol(1) + body(N) + serial(2) + crc(2).
         int packetLength = 1 + body.Length + 2 + 2;
-        var frame = new byte[2 + 1 + packetLength + 2];
+        int lengthFieldSize = extendedFraming ? 2 : 1;
+        var frame = new byte[2 + lengthFieldSize + packetLength + 2];
 
-        frame[0] = Start1;
-        frame[1] = Start1;
-        frame[2] = (byte)packetLength;
-        frame[3] = protocolNumber;
-        body.CopyTo(frame.AsSpan(4));
-        int serialIdx = 4 + body.Length;
+        byte start = extendedFraming ? Start2 : Start1;
+        frame[0] = start;
+        frame[1] = start;
+
+        if (extendedFraming)
+        {
+            frame[2] = (byte)((packetLength >> 8) & 0xFF);
+            frame[3] = (byte)(packetLength & 0xFF);
+        }
+        else
+        {
+            frame[2] = (byte)packetLength;
+        }
+
+        int protoIdx = 2 + lengthFieldSize;
+        frame[protoIdx] = protocolNumber;
+        body.CopyTo(frame.AsSpan(protoIdx + 1));
+
+        int serialIdx = protoIdx + 1 + body.Length;
         frame[serialIdx] = (byte)((serial >> 8) & 0xFF);
         frame[serialIdx + 1] = (byte)(serial & 0xFF);
 
         int crcIdx = serialIdx + 2;
-        // CRC covers from the length byte (index 2) through the serial (exclusive of CRC bytes).
+        // CRC covers from the length field (index 2) through the serial (exclusive of CRC bytes).
         ushort crc = Crc16Itu(frame.AsSpan(2, crcIdx - 2));
         frame[crcIdx] = (byte)((crc >> 8) & 0xFF);
         frame[crcIdx + 1] = (byte)(crc & 0xFF);
@@ -734,10 +966,27 @@ public sealed class Gt06Adapter : IProtocolAdapter
     /// trimmed), or <see langword="null"/> when the terminal id is not valid packed BCD.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Each nibble must be a decimal digit (0–9). A nibble of 0xA–0xF is not a BCD digit: emitting
     /// <c>'0' + nibble</c> for it would produce a non-digit ASCII character (':', ';', … '?') and
     /// fabricate a garbage identifier. Rather than pass that off as an IMEI, a malformed terminal id
     /// yields <see langword="null"/> so the caller treats the identity as absent.
+    /// </para>
+    /// <para>
+    /// <b>Exactly one pad nibble is removed, not every leading zero.</b> The terminal id is eight
+    /// bytes, which is sixteen nibbles, and a 15-digit IMEI is stored with a single leading pad
+    /// nibble — so the IMEI is the last fifteen digits, always. Trimming every leading zero instead
+    /// silently eats real digits from any IMEI that begins with one, and the reporting-body
+    /// prefixes that start <c>0</c> are ordinary allocations, not a curiosity. Such a device
+    /// decoded to a 14-digit string, matched nothing in the registry or the allowlist, and could
+    /// never be onboarded at all.
+    /// </para>
+    /// <para>
+    /// The change is safe for the existing fleet by construction: for any IMEI that does not begin
+    /// with a zero, trimming one nibble and trimming all leading zeros produce the same string, so
+    /// no device that resolves today decodes differently tomorrow. The only devices affected are
+    /// ones that cannot connect at present.
+    /// </para>
     /// </remarks>
     private static string? TryDecodeImei(ReadOnlySpan<byte> bcd)
     {
@@ -752,7 +1001,8 @@ public sealed class Gt06Adapter : IProtocolAdapter
             sb.Append((char)('0' + high));
             sb.Append((char)('0' + low));
         }
-        string digits = sb.ToString().TrimStart('0');
-        return digits.Length == 0 ? "0" : digits;
+
+        // 16 nibbles -> drop the single pad nibble -> the 15 digits the device actually sent.
+        return sb.ToString(1, sb.Length - 1);
     }
 }

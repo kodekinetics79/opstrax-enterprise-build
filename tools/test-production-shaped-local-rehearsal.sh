@@ -97,6 +97,9 @@ jwt_key=$(openssl rand -base64 64 | tr -d '\n')
 data_key=$(openssl rand -base64 32 | tr -d '\n')
 sse_key=$(openssl rand -base64 48 | tr -d '\n')
 platform_password=$(openssl rand -base64 24 | tr -d '\n')
+# /health/deep and /metrics are gated (security review): probes must present the
+# configured diagnostics key via the X-Diagnostics-Key header.
+diagnostics_key=$(openssl rand -base64 32 | tr -d '\n')
 
 rehearsal_stage="candidate restore and build"
 dotnet restore backend-dotnet.Tests/Opstrax.Tests.csproj \
@@ -119,9 +122,12 @@ dotnet build backend-dotnet.Tests/Opstrax.Tests.csproj --no-restore --verbosity 
     DATA_ENCRYPTION_KEY="$data_key" \
     Telemetry__SseTicketKey="$sse_key" \
     PLATFORM_SUPERADMIN_PASSWORD="$platform_password" \
+    DIAGNOSTICS_KEY="$diagnostics_key" \
     DemoSeed__Enabled=false \
     ENABLE_FLEET_DEMO_SEED=false \
     Telemetry__Simulator__Enabled=false \
+    OutboxDispatcher__Enabled=true \
+    OutboxDispatcher__AllowProduction=true \
     RetentionWorker__Enabled=true \
     Cors__AllowedOrigins="https://pilot.example.invalid" \
     ./bin/Debug/net8.0/Opstrax.Api
@@ -142,9 +148,12 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 curl -fsS "$live_url" >"$rehearsal_tmp/live.json"
-for _ in $(seq 1 150); do
+# The production contract deliberately allows five minutes for serialized worker
+# warm-up. Give the rehearsal enough time to prove the post-grace state rather
+# than failing while every expected worker is healthy but the grace is active.
+for _ in $(seq 1 390); do
   curl -sS "$ready_url" >"$rehearsal_tmp/ready.json"
-  curl -sS "$deep_url" >"$rehearsal_tmp/deep.json"
+  curl -sS -H "X-Diagnostics-Key: $diagnostics_key" "$deep_url" >"$rehearsal_tmp/deep.json"
   if jq -e '.status=="ready"' "$rehearsal_tmp/ready.json" >/dev/null 2>&1 \
     && jq -e '.checks.critical_worker_contract.status=="healthy"' "$rehearsal_tmp/deep.json" >/dev/null 2>&1; then
     break
@@ -179,7 +188,7 @@ jq -e '.status=="healthy" and .environment=="Production"
   and .checks.data_protection_key_ring.status=="ready"
   and .checks.fleet_production_contract.status=="ready"
   and .checks.critical_worker_contract.status=="healthy"
-  and .checks.critical_worker_contract.expected_count==7
+  and .checks.critical_worker_contract.expected_count==8
   and ([.checks.services[] | select(.name=="RetentionEnforcementService" and .status=="healthy")] | length)==1' \
   "$rehearsal_tmp/deep.json" >/dev/null
 

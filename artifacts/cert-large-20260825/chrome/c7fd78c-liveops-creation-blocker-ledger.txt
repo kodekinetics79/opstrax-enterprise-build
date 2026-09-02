@@ -1,0 +1,73 @@
+OpsTrax Live Operations — customer workflow creation blocker cycle
+Date: 2026-08-26 EDT
+Tenant: CERT-LARGE-20260825
+Candidate/deployed SHA: c7fd78cc1b4c9ac0621b28065150b0f67bb0fbe8
+Primary evidence surface: rendered product in visible Google Chrome
+Roles exercised: Tenant/Fleet Administrator, CL-HQ Dispatcher, Executive 01
+Staging only; production untouched; no SQL/API mutation; no synthetic telemetry.
+
+EXACT-SHA / TENANT GATE — PASS
+- Rendered banner showed tenant CERT-LARGE-20260825.
+- Rendered banner showed full Frontend and API SHA c7fd78cc1b4c9ac0621b28065150b0f67bb0fbe8 and Live.
+- Supporting readiness had already passed HTTP 200 exact SHA in the immediately preceding focused cycle.
+
+TENANT ADMIN — JOBS & ORDERS CREATION — BLOCKED
+- Jobs & Orders rendered normally in about 1.2 seconds.
+- Initial truth: 0 jobs; all lifecycle buckets 0.
+- Create Job control and full customer form were visible.
+- Attempted exactly one clearly prefixed non-personal job:
+  CERT-LIVE-JOB-001; Delivery; Normal; Central Operations HQ, Columbus OH -> Certification Customer Dock CL-HQ, Columbus OH; future schedule/SLA; Tractor; non-personal certification note.
+- Rendered validation after the one Save attempt:
+  "Job validation failed: Customer is required. Customer ID must be a positive integer."
+- The form exposes Customer ID only as free-text and does not expose a customer picker/discovery workflow. The tenant navigation exposes no Customers surface under its current entitlements. Guessing an undiscoverable positive database identifier was deliberately avoided.
+- Save cycle including form interaction: 7,130 ms.
+- Result: no job created; total remained 0; no customer data mutated.
+- Classification: P1 workflow blocker for customer-facing job creation in the isolated certification tenant.
+
+TENANT ADMIN — ROUTE CREATION — BLOCKED
+- Route Plans rendered normally and truthfully showed 0 routes.
+- Create Route control and form were visible.
+- Attempted exactly one clearly prefixed non-personal route:
+  CERT-LIVE-ROUTE-001 / CERT-LIVE CL-HQ Customer Dock Run; CL-HQ Columbus Certification Zone; future planned start/end; Delivery; Balanced; $185; Planned; non-personal certification note.
+- Chrome's rendered native date-time controls visibly held 2026-08-27T14:00 and 2026-08-27T16:00 before Save.
+- One Save action left the dialog open, created no record, left total at 0, and rendered no validation, error, or toast. Console warn/error remained empty.
+- Save-cycle observation: 1,836 ms plus bounded post-action wait.
+- No ambiguous retry was performed.
+- Classification: P1 silent workflow blocker because a fully completed rendered form produces neither a record nor actionable feedback.
+
+TENANT ADMIN — DISPATCH/TRIPS DEPENDENCY STATE
+- Dispatch Board rendered 0 unassigned, 0 active assignments, 0 exceptions, 0 available drivers; no create control exists there. The board depends on upstream jobs/assignments.
+- Trips rendered 0 current/planned/active/exception trips and explicitly stated that trips appear once routes and dispatch create them; no trip-create control exists.
+- Because both upstream creation paths were blocked, assignment, progress, reassignment, cancel, complete, and history journeys could not be exercised without inventing or directly seeding records.
+
+CL-HQ DISPATCHER — BRANCH AND AUTHORIZATION — PASS
+- Fresh authorized Dispatcher login succeeded using the existing secure workflow; secrets were not logged.
+- Rendered exact Frontend/API c7fd78c and Live gate.
+- Fleet Overview was branch-scoped: 1–50 of 200 vehicles, Page 1 of 4; CLHQ-V-0001 visible; no other-branch row visible.
+- Search for WESTHUB-V-0001 returned an empty table, 0 of 0 vehicles, Page 0 of 0, with "No vehicles match this search or filter"; no cross-branch leakage.
+- Jobs was visible to Dispatcher, with Create Job present and 0 total. The same upstream customer-ID blocker applies.
+- Direct /user-management was safely denied with rendered text:
+  "Permission denied" / "You do not have permission to perform this action" / missing users:view.
+- Direct denial completed in 1,294 ms; Dispatcher Jobs navigation completed in 1,548 ms.
+
+EXECUTIVE 01 — READ-ONLY COVERAGE GAP
+- Fresh authorized Executive login succeeded; secrets were not logged.
+- Dispatch/Jobs navigation was absent.
+- Direct /jobs was safely denied with missing shipments:view; no job data or mutation control rendered.
+- Authorization safety passes, but the requested Executive read-only Live Operations view is unavailable under the current role grants.
+- Classification: role/journey coverage gap; it blocks Executive read-only validation for Jobs/Live Operations until intended entitlement/grant is clarified or corrected.
+
+PERSISTENCE / HISTORY
+- No CERT-LIVE job, route, trip, or dispatch record was created, so no lifecycle history exists to refresh or relogin-test.
+- Jobs and Routes remained 0 after the failed single attempts and later role transitions.
+
+CONSOLE / MATERIAL REQUESTS
+- Chrome console query after the full cycle: 0 warning/error entries.
+- No material failed request was surfaced by the available Chrome diagnostic surface.
+- The job validation was handled and rendered; the route failure was silent in product UI.
+
+VERDICT: BLOCKED
+- No P0 observed.
+- Open P1 workflow blockers: undiscoverable required numeric Customer ID prevents Job creation; completed Route form silently fails without record or useful error.
+- Downstream dispatch/trip lifecycle cannot be certified until at least one governed upstream creation path works.
+- Executive read-only Live Operations coverage is also unavailable under current grants.

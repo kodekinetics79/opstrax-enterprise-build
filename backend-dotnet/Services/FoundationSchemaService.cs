@@ -244,6 +244,7 @@ public sealed class FoundationSchemaService(Database db)
         "ALTER TABLE inbox_messages ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(160) NULL",
         "ALTER TABLE inbox_messages ADD COLUMN IF NOT EXISTS payload_hash VARCHAR(128) NULL",
         "ALTER TABLE inbox_messages ADD COLUMN IF NOT EXISTS retry_count INT NOT NULL DEFAULT 0",
+        "ALTER TABLE inbox_messages ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ NULL",
         "ALTER TABLE inbox_messages ADD COLUMN IF NOT EXISTS processed_at TIMESTAMPTZ NULL",
         "ALTER TABLE inbox_messages ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ NULL",
         "ALTER TABLE inbox_messages ADD COLUMN IF NOT EXISTS claimed_by VARCHAR(120) NULL",
@@ -269,6 +270,7 @@ public sealed class FoundationSchemaService(Database db)
         "CREATE INDEX IF NOT EXISTS idx_outbox_tenant_next_attempt ON outbox_messages (tenant_id, next_attempt_at)",
         "CREATE INDEX IF NOT EXISTS idx_outbox_tenant_locked_until ON outbox_messages (tenant_id, locked_until)",
         "CREATE INDEX IF NOT EXISTS idx_outbox_tenant_retry_pending ON outbox_messages (tenant_id, status, next_attempt_at)",
+        "CREATE INDEX IF NOT EXISTS idx_inbox_tenant_retry_pending ON inbox_messages (tenant_id, status, next_attempt_at)",
         // Idempotent job.delivered enqueue (ADR-008 §B): at most one delivered event per (tenant, job),
         // so a delivered transition fired twice enqueues once. Partial so it only constrains this type.
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_outbox_job_delivered ON outbox_messages (tenant_id, aggregate_id) WHERE event_type='job.delivered'",

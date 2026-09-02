@@ -1,0 +1,26 @@
+[
+  {
+    "path": "/vehicles",
+    "url": "https://opstrax-staging-certification.vercel.app/customer-portal",
+    "customerPortal": true,
+    "fleetLeak": false
+  },
+  {
+    "path": "/drivers",
+    "url": "https://opstrax-staging-certification.vercel.app/customer-portal",
+    "customerPortal": true,
+    "fleetLeak": false
+  },
+  {
+    "path": "/iot-devices",
+    "url": "https://opstrax-staging-certification.vercel.app/customer-portal",
+    "customerPortal": true,
+    "fleetLeak": false
+  },
+  {
+    "path": "/admin",
+    "url": "https://opstrax-staging-certification.vercel.app/customer-portal",
+    "customerPortal": true,
+    "fleetLeak": false
+  }
+]

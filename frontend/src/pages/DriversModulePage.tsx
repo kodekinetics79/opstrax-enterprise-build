@@ -1,19 +1,29 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router";
-import { AlertTriangle, ArrowRight, BadgeCheck, ClipboardCheck, Radio, ShieldAlert, UserCheck, Users } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowRight,
+  BadgeCheck,
+  ClipboardCheck,
+  Plus,
+  Radio,
+  ShieldAlert,
+  UserCheck,
+  Users,
+} from "lucide-react";
 import { LoadingState, ErrorState, KpiCard, EmptyState, DataTable, StatusBadge } from "@/components/ui";
 import { EntityImportExport } from "@/components/EntityImportExport";
 import { driversApi } from "@/services/driversApi";
 import { scopeRowsForSession } from "@/auth/accessScope";
 import { useAuth } from "@/hooks/useAuth";
-import { useHasPermission } from "@/hooks/usePermission";
+import { PERMISSIONS, useHasPermission } from "@/hooks/usePermission";
 import type { AnyRecord } from "@/types";
 import { EntityListPage } from "@/pages/EntityListPage";
 
 const DRIVER_IMPORT_EXPORT = {
   entity: "drivers",
-  columns: ["driverCode", "fullName", "phone", "email", "licenseNumber", "status"],
+  columns: ["driverCode", "branchCode", "fullName", "phone", "email", "licenseNumber", "status"],
   requiredColumns: ["driverCode", "fullName"],
   templateEndpoint: "/api/drivers/import-template",
   exportEndpoint: "/api/drivers/export",
@@ -126,8 +136,12 @@ export function DriversModulePage() {
   const section = readSection(location.pathname);
   const { session } = useAuth();
   const hasPermission = useHasPermission();
+  const canManageFleet = hasPermission(PERMISSIONS.FLEET_MANAGE);
 
-  const list = useQuery({ queryKey: ["drivers"], queryFn: driversApi.list });
+  // Keep the canonical module roster cache distinct from lightweight driver pickers.
+  // A legacy messaging picker used the same key with a different response contract,
+  // which could leave Records with a non-roster value after cross-module navigation.
+  const list = useQuery({ queryKey: ["drivers", "module", "active"], queryFn: driversApi.list });
   const summary = useQuery({ queryKey: ["drivers", "summary"], queryFn: driversApi.summary });
 
   const rows = useMemo(() => scopeRowsForSession("drivers", list.data || [], session), [list.data, session]);
@@ -164,9 +178,17 @@ export function DriversModulePage() {
           <div className="flex flex-wrap items-center gap-2">
             <EntityImportExport
               config={DRIVER_IMPORT_EXPORT}
-              canImport={hasPermission("fleet:manage")}
-              canExport={hasPermission("drivers:view")}
+              canImport={canManageFleet}
+              canExport={hasPermission("drivers:export")}
             />
+            {/* Single-add sat only on the roster tab, so the Overview offered bulk import
+                but no way to add one record — users reasonably concluded it was missing.
+                Deep-links into the roster's existing create form rather than duplicating it. */}
+            {canManageFleet ? (
+              <button type="button" onClick={() => navigate("/drivers/roster?new=1")} className="btn-ghost h-10">
+                <Plus className="h-4 w-4" /> New driver
+              </button>
+            ) : null}
             <button type="button" onClick={() => navigate("/drivers/roster")} className="btn-primary h-10">
               Open roster <ArrowRight className="h-4 w-4" />
             </button>
@@ -567,7 +589,7 @@ function RecordsView({ rows, onNavigate }: { rows: AnyRecord[]; onNavigate: (rou
  */
 function PortalAccessCard({ record, onChanged }: { record: AnyRecord | null; onChanged: () => void }) {
   const hasPermission = useHasPermission();
-  const canManage = hasPermission("fleet:manage");
+  const canManage = hasPermission(PERMISSIONS.FLEET_MANAGE);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tempPassword, setTempPassword] = useState<string | null>(null);

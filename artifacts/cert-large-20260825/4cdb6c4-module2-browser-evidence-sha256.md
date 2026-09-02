@@ -1,0 +1,16 @@
+# Module 2 browser evidence SHA-256 manifest
+
+Candidate: `4cdb6c4cf3a37b11529007f90dd0f685cc8a58a7`  
+Tenant: `CERT-LARGE-20260825`
+
+```text
+4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945  chrome/4cdb6c4-maintenance-console-errors.json
+044272f1659e338baf41ee40fc78e82a22ae3e8e81471f0b9569a0c25e676b09  chrome/4cdb6c4-maintenance-device-health-parity-pass.jpg
+daaef75b74c2fe3eb5faba7e435b241b04d0df629e6e1c15702659eb72f51fa8  chrome/4cdb6c4-maintenance-device-health-parity.txt
+33458dd63396d828928eaddb4db16776fec37b9e41432b0de43dbf7041db58f7  chrome/4cdb6c4-maintenance-device-health-relogin-pass.jpg
+7dacc34e403da85a19a734ffe25931897259d83548268e62c49dda85cbf5230c  chrome/4cdb6c4-maintenance-device-health-row-pass.jpg
+30b724d260904b3d98a71f3fd2455ffcd7ea630c1d7eda773c5dc9c725ba221e  chrome/4cdb6c4-render-deploy-succeeded.jpg
+101df6b0fec811f30d9de2cb9dcee929eba7c6d588c00471e04f7ed8179d4c25  chrome/4cdb6c4-staging-readiness.txt
+71b88b2db5de3b794d9c7b7e98626164b8cba01a69781456168ec00797bb74ac  chrome/a894229-maintenance-control-tower-pass.png
+c26e95fe8d763ee98e9826809837c6ccfc3760fd67e0f47d8fc967427ded8deb  chrome/a894229-maintenance-device-health-pass.png
+```

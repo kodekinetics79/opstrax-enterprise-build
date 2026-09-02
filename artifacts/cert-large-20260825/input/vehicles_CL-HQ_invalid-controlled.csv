@@ -1,0 +1,7 @@
+vehicleCode,branchCode,type,make,model,year,vehicleClass,odometerMiles,vin,vinExceptionType,alternateIdentifier,plateNumber,plateJurisdiction,status
+,CL-HQ,Truck,Ford,F-650,2020,Class 6,100000,,legacy-fleet-identifier,CERT-INVALID-BLANK-CODE,OH-BAD01,OH,Available
+CLHQ-V-0191,CL-HQ,Truck,Ford,F-650,1949,Class 6,100000,,legacy-fleet-identifier,CERT-CLHQ-VEH-0191,OH-0191,OH,Available
+CLHQ-V-0192,CL-HQ,Van,Ford,Transit,2022,Class 2b,-1,,legacy-fleet-identifier,CERT-CLHQ-VEH-0192,OH-0192,OH,Available
+CLHQ-V-0193,CL-HQ,Truck,Isuzu,NPR-HD,2023,Class 5,85000,,unsupported-identity-kind,CERT-CLHQ-VEH-0193,OH-0193,OH,Available
+CLHQ-V-0194,CL-HQ,Tractor,Volvo,VNL 760,2024,Class 8,210000,,legacy-fleet-identifier,UNKNOWN,OH-0194,OH,Available
+CLHQ-V-0195,CL-HQ,Tractor,Freightliner,Cascadia,2025,Class 8,190000,BADVIN,,,OH-0195,OH,Available

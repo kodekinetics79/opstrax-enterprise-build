@@ -136,15 +136,22 @@ builder.Services.AddSingleton<OidcLoginService>(); // OIDC SSO login (discovery 
 builder.Services.AddScoped<AuditService>();
 
 // ── Integration connector framework (real, testable third-party connectivity) ──
-// Provider-specific connectors do a genuine API handshake; anything without a specific
-// connector falls back to GenericHttpConnector (probes the configured URL). All are
-// live-testable via POST /api/integrations/{id}/test-connection.
+// Provider-specific connectors do a genuine API handshake. User-created custom
+// connectors may use the generic HTTP probe; built-in catalog providers without an
+// adapter fail closed so a reachable URL cannot masquerade as provider integration.
 builder.Services.AddSingleton<Opstrax.Api.Services.Connectors.IConnector, Opstrax.Api.Services.Connectors.TwilioConnector>();
 builder.Services.AddSingleton<Opstrax.Api.Services.Connectors.IConnector, Opstrax.Api.Services.Connectors.SlackConnector>();
 builder.Services.AddSingleton<Opstrax.Api.Services.Connectors.IConnector, Opstrax.Api.Services.Connectors.SendGridConnector>();
 builder.Services.AddSingleton<Opstrax.Api.Services.Connectors.IConnector, Opstrax.Api.Services.Connectors.GoogleMapsConnector>();
 // Samsara — deep integration: real GPS/telemetry sync into latest_vehicle_positions.
 builder.Services.AddSingleton<Opstrax.Api.Services.Connectors.IConnector, Opstrax.Api.Services.Connectors.SamsaraConnector>();
+// Motive — controlled G2B OAuth + read-only ELD/HOS evidence adapter.
+builder.Services.AddHttpClient("motive-oauth")
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+builder.Services.AddHttpClient("motive")
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+builder.Services.AddSingleton<Opstrax.Api.Services.Connectors.IConnector, Opstrax.Api.Services.Connectors.MotiveConnector>();
+builder.Services.AddSingleton<Opstrax.Api.Services.Connectors.MotiveOAuthService>();
 builder.Services.AddSingleton<Opstrax.Api.Services.Connectors.GenericHttpConnector>();
 builder.Services.AddSingleton<Opstrax.Api.Services.Connectors.ConnectorRegistry>();
 // Server-side Google Maps (geocoding/routing) using the tenant's stored Maps key.
@@ -220,6 +227,8 @@ builder.Services.AddSingleton<CreditNoteService>();
 builder.Services.AddSingleton<IOutboxMessageHandler, CreditNoteIssuedGeneralLedgerHandler>();
 // Detention: real email delivery for the pre-expiry 'meter running' notice.
 builder.Services.AddSingleton<IOutboxMessageHandler, DetentionWarningNotificationHandler>();
+// Alert notifications: email/SMS fan-out per user_notification_prefs (Settings → Notifications).
+builder.Services.AddSingleton<IOutboxMessageHandler, AlertNotificationDeliveryHandler>();
 builder.Services.AddSingleton<FinancialConfigService>();
 builder.Services.AddSingleton<CommercialFoundationService>();
 builder.Services.AddSingleton<RevenueReadinessService>();
@@ -252,6 +261,12 @@ builder.Services.AddSingleton<SecuritySchemaService>();
 builder.Services.AddSingleton<TenantApiSchemaService>();
 // Platform Admin — global SaaS business control plane (separate from tenant admin)
 builder.Services.AddSingleton<PlatformSchemaService>();
+// Operator-editable platform configuration (SMTP today) — DB-first with an env fallback, so
+// mail can be switched on from the console instead of requiring a redeploy. Singleton to match
+// Database/PiiProtectionService, and because the outbox dispatcher (a singleton) resolves the
+// mail service to deliver detention notices.
+builder.Services.AddSingleton<PlatformSettingsService>();
+builder.Services.AddSingleton<PlatformMailService>();
 // Country profiles — platform-managed market/localization defaults + tenant cascade
 builder.Services.AddSingleton<CountryProfileSchemaService>();
 builder.Services.AddScoped<CountryProfileService>();
@@ -264,6 +279,8 @@ builder.Services.AddSingleton<IZatcaComplianceGateway, PendingOnboardingZatcaGat
 builder.Services.AddScoped<ZatcaService>();
 // Revenue foundation — module-package catalog, usage meters/events, pricing, overrides
 builder.Services.AddSingleton<RevenueSchemaService>();
+builder.Services.AddSingleton<PlatformBillingSchemaService>();
+builder.Services.AddScoped<PlatformBillingService>();
 builder.Services.AddScoped<EntitlementService>();
 builder.Services.AddScoped<FeatureFlagService>();
 builder.Services.AddSingleton<RolePermissionReconciler>();
@@ -298,6 +315,12 @@ builder.Services.AddHostedService<ConnectorSyncBackgroundService>();
 builder.Services.AddHostedService<TripBackgroundService>();
 builder.Services.AddHostedService<MaintenanceBackgroundService>();
 builder.Services.AddHostedService<EscalationBackgroundService>();
+// Bridges telemetry_alerts into the notification spine: in-app fan-out per user prefs +
+// outbox enqueue for the email/SMS delivery handler.
+builder.Services.AddHostedService<AlertNotificationBridgeService>();
+// Derives hos_violation / maintenance_due / sla_breach / fuel_anomaly / idling alerts
+// from their source tables — the generators behind the notification-prefs matrix rows.
+builder.Services.AddHostedService<OperationalAlertDetectionService>();
 // Agentic Ops Copilot — reasons over open dispatch exceptions and proposes actions.
 builder.Services.AddHostedService<AgenticOpsBackgroundService>();
 builder.Services.AddHostedService<ScheduledReportBackgroundService>();
@@ -314,7 +337,15 @@ builder.Services.AddCors(options =>
         policy.WithOrigins(origins).AllowAnyHeader().AllowAnyMethod().AllowCredentials()
             // Expose trace headers so the browser can read them cross-origin and
             // surface a trace reference for a failed request (frontend→DB tracing).
-            .WithExposedHeaders("X-Trace-Id", "X-Correlation-Id", "X-Deployment-Version", "X-CSRF-Token");
+            .WithExposedHeaders(
+                "X-Trace-Id",
+                "X-Correlation-Id",
+                "X-Deployment-Version",
+                "X-CSRF-Token",
+                // Paged fleet registers read this header in the browser. Without
+                // exposing it through CORS, Axios only sees the current page length
+                // and hides Next/Previous even when more branch records exist.
+                "X-Total-Count");
     });
 });
 
@@ -372,15 +403,35 @@ if (IsProtectedEnvironment(app.Environment) && app.Configuration.GetValue<bool>(
 
 using (var scope = app.Services.CreateScope())
 {
-    // Schema init does DDL + seeding and MUST run as the DB owner, never the
-    // restricted runtime role (opstrax_app is NOSUPERUSER/NOBYPASSRLS with no DDL
-    // grants). Decide up front whether to run it:
-    //   • owner-capable role (super/bypassrls)  -> run schema init (normal path).
-    //   • restricted role + RLS enforced        -> SKIP with a clear log; the owner
-    //     applies migrations/seeders out-of-band (documented production flow), so the
-    //     single runtime process can boot as opstrax_app without failing on DDL.
-    //   • restricted role + RLS off (misconfig) -> warn but still attempt (legacy behaviour).
-    var runSchemaInit = await ShouldRunSchemaInitAsync(app, scope.ServiceProvider.GetRequiredService<Database>());
+    // ── MIGRATIONS ARE THE ONLY SCHEMA AUTHORITY (stage88) ────────────────────
+    // Boot-time runtime DDL is RETIRED. It was never a schema authority: this
+    // process skipped every *SchemaService whenever it connected as the restricted
+    // opstrax_app role under RLS enforcement — always true in staging and
+    // production — so 1,006 columns and 51 tables that only those services declared
+    // could never exist there, and the endpoints selecting them returned 42703 /
+    // 42P01 while /health/ready stayed green. A boot path that runs in development
+    // and silently does not run in production is a split-brain, not a fallback.
+    // database/migrations/2026_08_22_stage88_runtime_schema_service_contract.sql
+    // materializes every one of those declarations as migration-owned schema, so
+    // the migration chain is now a strict superset of what this block ever built.
+    //
+    // The *SchemaService classes and their declaration lists are DELIBERATELY kept:
+    // they are the generator input for stage88 and the subject of the runtime/
+    // migration parity test. Only their EXECUTION at boot is retired.
+    //
+    // DEV / LOCAL ONBOARDING is the same command production uses:
+    //   NEON_PG_URI=postgresql://…/opstrax_local ./tools/apply-neon-predeploy-migrations.sh
+    //
+    // The decision is now explicit configuration, never inferred from the connected
+    // role (see ResolveRuntimeSchemaDdlAsync): once a database carries the stage88
+    // ledger row, boot performs NO DDL on it — which is every protected environment
+    // and every correctly-onboarded dev box. The one surviving exception is a
+    // database the chain has never touched at all, where the legacy path still
+    // bootstraps rather than leaving a developer with an empty database and no
+    // explanation. `SchemaInit:RunRuntimeDdl` overrides both directions.
+    var runtimeIdentity = scope.ServiceProvider.GetRequiredService<Database>();
+    await AssertRuntimeDatabaseIdentityAsync(app, runtimeIdentity);
+    var runSchemaInit = await ResolveRuntimeSchemaDdlAsync(app, builder.Configuration, runtimeIdentity);
     if (runSchemaInit)
     {
     await RunSchemaStep(app, "Core", () => scope.ServiceProvider.GetRequiredService<CoreSchemaService>().EnsureAsync());
@@ -471,6 +522,8 @@ using (var scope = app.Services.CreateScope())
     await RunSchemaStep(app, "Zatca",              () => scope.ServiceProvider.GetRequiredService<ZatcaSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "Revenue",           () => scope.ServiceProvider.GetRequiredService<RevenueSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "MarketPacks",        () => scope.ServiceProvider.GetRequiredService<MarketPackSchemaService>().EnsureAsync());
+    // After Revenue + MarketPacks: itemization references their meters and packs.
+    await RunSchemaStep(app, "PlatformBilling",    () => scope.ServiceProvider.GetRequiredService<PlatformBillingSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "FleetTms",           () => scope.ServiceProvider.GetRequiredService<FleetTmsSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "FleetTmsColdChain",  () => scope.ServiceProvider.GetRequiredService<FleetTmsColdChainSchemaService>().EnsureAsync());
     await RunSchemaStep(app, "FleetTmsColdChainFoundation", () => scope.ServiceProvider.GetRequiredService<FleetTmsColdChainFoundationSchemaService>().EnsureAsync());
@@ -485,8 +538,10 @@ using (var scope = app.Services.CreateScope())
     }
     else
     {
-        app.Logger.LogWarning("Schema init SKIPPED — runtime is connected as the restricted role under RLS enforcement. " +
-            "Ensure migrations/seeders have been applied out-of-band by the DB owner.");
+        app.Logger.LogInformation(
+            "Boot-time schema DDL is retired — migrations are the only schema authority. " +
+            "Apply database/migrations via tools/apply-neon-predeploy-migrations.sh (through stage88) " +
+            "before starting the API; /health/ready reports any object the contract still misses.");
     }
 }
 
@@ -513,6 +568,31 @@ using (var scope = app.Services.CreateScope())
 {
     var platformAdminReconciler = scope.ServiceProvider.GetRequiredService<PlatformSuperAdminReconciler>();
     await platformAdminReconciler.ReconcileAsync();
+}
+
+// platform_settings (operator-editable SMTP + app URLs) must exist even where the
+// schema-init gate is skipped (production: restricted role, RLS enforced, owner applies
+// migrations out-of-band). CREATE TABLE IF NOT EXISTS is DML-adjacent enough to attempt
+// under the system identity: where that identity may create tables this self-heals; where
+// it may not, the failure is swallowed after a loud log and the console degrades to
+// env-only configuration with save disabled — the operator applies stage83 out-of-band.
+// (Skipping this entirely was the 2026-08-21 incident: the Email & SMTP page loaded from
+// env fallback but every save 500'd against the missing table.)
+using (var scope = app.Services.CreateScope())
+{
+    var settingsDb = scope.ServiceProvider.GetRequiredService<Database>();
+    var platformSettings = scope.ServiceProvider.GetRequiredService<PlatformSettingsService>();
+    try
+    {
+        await settingsDb.RunInSystemScopeAsync(() => platformSettings.EnsureSchemaAsync());
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning(ex,
+            "platform_settings bootstrap failed — the system identity cannot create the table. " +
+            "Apply database/migrations/2026_08_21_stage83_platform_settings.sql as the owner; " +
+            "until then Email & SMTP settings are environment-only and console saves are refused cleanly.");
+    }
 }
 
 // Request telemetry runs FIRST: it establishes the trace_id / correlation_id for
@@ -576,6 +656,15 @@ app.UseWhen(
                 scopes.Current = sys;
                 try { await next(); await sys.CompleteAsync(context.RequestAborted); }
                 finally { scopes.Current = null; }
+            }
+            // Motive redirects here without an OpsTrax bearer session. The handler
+            // validates its protected one-time state and opens only short system
+            // transactions around DB reads/writes; provider network calls must never
+            // hold a request-length database transaction or pooled connection.
+            if (string.Equals(path, "/api/integrations/motive/oauth/callback", StringComparison.OrdinalIgnoreCase))
+            {
+                await next();
+                return;
             }
             if (string.Equals(path, "/api/auth/login", StringComparison.OrdinalIgnoreCase) ||
                 // Second-factor login completion is pre-session too: it validates a challenge, reads
@@ -1047,12 +1136,50 @@ static async Task<IResult> ReadinessAsync(
 app.MapGet("/ready",        (Database db, ConfigValidationService cfg, FleetProductionReadinessService fleet, DataProtectionReadinessService dp, IWebHostEnvironment env, CancellationToken ct) => ReadinessAsync(db, cfg, fleet, dp, env, ct));
 app.MapGet("/health/ready", (Database db, ConfigValidationService cfg, FleetProductionReadinessService fleet, DataProtectionReadinessService dp, IWebHostEnvironment env, CancellationToken ct) => ReadinessAsync(db, cfg, fleet, dp, env, ct));
 
+// ── Diagnostics gate ─────────────────────────────────────────────────────────
+// /health/deep and /metrics live OUTSIDE the /api session middleware (probes must
+// stay unauthenticated), which historically left them fully public. Security
+// review: /health/deep discloses the worker roster, migration state and RLS
+// violation lists — an architecture map — and /metrics allows tenant-activity
+// inference. Both now require either a valid session bearer (the SPA already
+// sends one) or an X-Diagnostics-Key matching the DIAGNOSTICS_KEY env var (for
+// monitoring agents and rehearsal scripts). /health, /health/live and
+// /health/ready remain public for load-balancer probes.
+async Task<bool> DiagnosticsAuthorizedAsync(HttpContext http, Database db, CancellationToken ct)
+{
+    var configuredKey = Environment.GetEnvironmentVariable("DIAGNOSTICS_KEY");
+    var presentedKey = http.Request.Headers["X-Diagnostics-Key"].ToString();
+    if (!string.IsNullOrWhiteSpace(configuredKey) && !string.IsNullOrWhiteSpace(presentedKey)
+        && System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(
+            System.Text.Encoding.UTF8.GetBytes(configuredKey), System.Text.Encoding.UTF8.GetBytes(presentedKey)))
+        return true;
+
+    var auth = http.Request.Headers.Authorization.ToString();
+    if (!auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)) return false;
+    var token = auth["Bearer ".Length..].Trim();
+    if (string.IsNullOrWhiteSpace(token)) return false;
+
+    const string sessionSql =
+        @"SELECT s.user_id FROM user_sessions s
+          JOIN users u ON u.id = s.user_id AND u.company_id = s.company_id
+          WHERE s.session_token=@token AND s.expires_at > NOW() AND u.status='Active' LIMIT 1";
+    var session = rlsEnforceTenantContext
+        ? await db.QuerySingleInSystemScopeAsync(sessionSql, c => c.Parameters.AddWithValue("@token", token), ct)
+        : await db.QuerySingleAsync(sessionSql, c => c.Parameters.AddWithValue("@token", token), ct);
+    return session is not null;
+}
+
 // Prometheus scrape target — any external monitor (Grafana Agent, Datadog,
 // UptimeRobot-with-metrics) can alert on 5xx rate / p95 / DB failures within 60s.
-app.MapGet("/metrics", (Opstrax.Api.Observability.ApiMetricsService m) =>
-    Results.Text(m.ToPrometheus(), "text/plain; version=0.0.4"));
+// Scrapers authenticate with the X-Diagnostics-Key header.
+app.MapGet("/metrics", async (HttpContext http, Database db, Opstrax.Api.Observability.ApiMetricsService m, CancellationToken ct) =>
+    await DiagnosticsAuthorizedAsync(http, db, ct)
+        ? Results.Text(m.ToPrometheus(), "text/plain; version=0.0.4")
+        : Results.Json(ApiResponse<object>.Fail("Unauthorized", "Metrics require an authenticated session or diagnostics key"),
+            statusCode: StatusCodes.Status401Unauthorized));
 
 app.MapGet("/health/deep", async (
+    HttpContext http,
     Database db,
     ConfigValidationService configValidator,
     FleetProductionReadinessService fleetContract,
@@ -1060,6 +1187,10 @@ app.MapGet("/health/deep", async (
     IWebHostEnvironment environment,
     CancellationToken ct) =>
 {
+    if (!await DiagnosticsAuthorizedAsync(http, db, ct))
+        return Results.Json(ApiResponse<object>.Fail("Unauthorized", "Deep diagnostics require an authenticated session or diagnostics key"),
+            statusCode: StatusCodes.Status401Unauthorized);
+
     var checks   = new Dictionary<string, object>();
     var dbOk     = false;
     var dbLatMs  = -1;
@@ -1087,7 +1218,7 @@ app.MapGet("/health/deep", async (
     var servicesDegraded = false;
     if (dbOk)
     {
-        var expectedWorkers = FleetProductionReadinessService.CriticalWorkerNames.ToHashSet(StringComparer.Ordinal);
+        var expectedWorkers = fleetContract.ExpectedCriticalWorkerNames.ToHashSet(StringComparer.Ordinal);
         var observedExpectedWorkers = new HashSet<string>(StringComparer.Ordinal);
         var startupGraceActive = fleetContract.CriticalWorkerStartupGraceActive;
         var staleBefore = DateTime.UtcNow - FleetProductionReadinessService.CriticalWorkerFreshness;
@@ -1133,7 +1264,7 @@ app.MapGet("/health/deep", async (
         }
         catch { heartbeatLedgerReadable = false; }
 
-        foreach (var missing in FleetProductionReadinessService.CriticalWorkerNames
+        foreach (var missing in fleetContract.ExpectedCriticalWorkerNames
                      .Where(name => !observedExpectedWorkers.Contains(name)))
         {
             var status = startupGraceActive ? "starting" : "degraded";
@@ -1152,7 +1283,7 @@ app.MapGet("/health/deep", async (
         checks["critical_worker_contract"] = new
         {
             status = servicesDegraded ? "invalid" : startupGraceActive ? "starting" : "healthy",
-            expected_count = FleetProductionReadinessService.CriticalWorkerNames.Length,
+            expected_count = fleetContract.ExpectedCriticalWorkerNames.Count,
             observed_count = observedExpectedWorkers.Count,
             heartbeat_ledger_readable = heartbeatLedgerReadable,
             startup_grace_active = startupGraceActive,
@@ -1271,6 +1402,7 @@ app.MapFleetTmsColdChainEndpoints();
 app.MapFleetTmsLogisticsEndpoints();
 app.MapActiveShipmentsEndpoints();
 app.MapRevenueEndpoints();
+app.MapPlatformBillingEndpoints();
 app.MapRevenueReadinessEndpoints();
 app.MapRatingEndpoints();
 app.MapSettlementEndpoints();
@@ -1488,18 +1620,101 @@ static async Task RunSchemaStep(WebApplication app, string name, Func<Task> step
     }
 }
 
-// Guard: schema init must connect as the DB owner, not the restricted `opstrax_app`
-// role. A NOBYPASSRLS non-superuser role has no DDL grants and would fail every
-// CREATE/ALTER — so we detect it up front and throw, halting startup with a clear
-// message instead of a cascade of permission errors. Only enforced when RLS is on
-// (the only scenario in which a restricted role is even in play); otherwise a warning.
-// Decide whether startup should run schema DDL/seeding, based on the connected role.
-//   owner-capable (super/bypassrls)        -> true  (normal single-process path)
-//   restricted role + RLS enforced         -> false (owner applies schema out-of-band;
-//                                                     runtime boots as opstrax_app safely)
-//   restricted role + RLS off (misconfig)  -> true + warn (legacy behaviour; DDL will
-//                                                     likely fail, surfaced loudly)
-static async Task<bool> ShouldRunSchemaInitAsync(WebApplication app, Database db)
+// Decide whether boot runs the retired *SchemaService DDL.
+//
+// Stage88 made migrations the only schema authority, so this answers "no" for every
+// database the migration chain has touched. It is deliberately NOT inferred from the
+// connected role any more: role inference is exactly what produced the split-brain
+// (owner-capable dev boot built 1,006 columns that the restricted staging/production
+// process could never build, so the deployed code queried columns the deployed
+// database could not hold).
+//
+//   protected environment               -> false, ALWAYS. Owners apply the chain. This is
+//                                          an absolute floor and is evaluated FIRST: a
+//                                          `true` in SchemaInit:RunRuntimeDdl is refused
+//                                          (and logged) rather than honoured, because a
+//                                          config flag must not be able to re-enable
+//                                          retired boot DDL in production. `false` there
+//                                          is redundant but harmless.
+//   SchemaInit:RunRuntimeDdl set        -> otherwise honour it, both directions.
+//   stage88 ledger row present          -> false. Migrations own this database.
+//   otherwise (chain never applied here) -> true + a loud warning naming the chain,
+//                                          so a first boot against a genuinely empty
+//                                          local database still bootstraps.
+static async Task<bool> ResolveRuntimeSchemaDdlAsync(WebApplication app, IConfiguration configuration, Database db)
+{
+    const string Stage88 = "2026_08_22_stage88_runtime_schema_service_contract";
+    var configured = configuration.GetValue<bool?>("SchemaInit:RunRuntimeDdl");
+
+    // The protected-environment floor is checked BEFORE the config flag, not after it.
+    // Evaluating the flag first made the header's "protected environment -> false, always"
+    // untrue: anything that can set SchemaInit:RunRuntimeDdl=true (an env var, a stray
+    // appsettings override, a copied Render blueprint) could re-enable the retired boot DDL
+    // against production and rebuild the split-brain that stage88 exists to end. Refuse it
+    // loudly instead of silently obeying.
+    if (configured is true && IsProtectedEnvironment(app.Environment))
+    {
+        app.Logger.LogWarning(
+            "SchemaInit:RunRuntimeDdl=true was REFUSED — {Environment} is a protected environment and boot DDL is " +
+            "permanently disabled there. Schema is migration-owned; apply the migration chain with an owner role.",
+            app.Environment.EnvironmentName);
+    }
+    if (IsProtectedEnvironment(app.Environment))
+    {
+        app.Logger.LogInformation("Boot schema DDL disabled — protected environment. Schema is migration-owned.");
+        return false;
+    }
+
+    if (configured is not null)
+    {
+        app.Logger.LogInformation("Boot schema DDL is explicitly configured: SchemaInit:RunRuntimeDdl={Configured}.", configured);
+        return configured.Value;
+    }
+    try
+    {
+        // Two steps on purpose: PostgreSQL parses the whole statement before it runs,
+        // so a CASE guarding a SELECT on a missing relation still raises 42P01 — which
+        // would send a genuinely empty database down the "cannot tell" branch.
+        var ledgerExists = await db.ScalarLongAsync(
+            "SELECT CASE WHEN to_regclass('public.schema_migrations') IS NULL THEN 0 ELSE 1 END");
+        var ledgered = ledgerExists == 0
+            ? 0
+            : await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM schema_migrations WHERE version=@version",
+                c => c.Parameters.AddWithValue("@version", Stage88));
+        if (ledgered > 0)
+        {
+            app.Logger.LogInformation(
+                "Boot schema DDL disabled — {Version} is ledgered, so migrations own this database.", Stage88);
+            return false;
+        }
+        app.Logger.LogWarning(
+            "This database has no {Version} ledger row, so the migration chain has never been applied to it. " +
+            "Running the RETIRED boot-time schema services once so a first local boot is not left with an empty " +
+            "database. Apply tools/apply-neon-predeploy-migrations.sh — it is the only schema authority and a " +
+            "strict superset of what this path builds.", Stage88);
+        return true;
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning(ex, "Could not read the migration ledger; leaving boot schema DDL disabled.");
+        return false;
+    }
+}
+
+// Fail-closed proof of the runtime database identity.
+//
+// This USED to be ShouldRunSchemaInitAsync: it decided whether boot ran the runtime
+// *SchemaService DDL, and answering "no" for every restricted-role/RLS-enforced
+// process is exactly what made staging and production structurally unable to hold
+// the 1,006 columns those services declared. Stage88 moved every one of those
+// declarations into database/migrations, so the DDL decision no longer exists —
+// migrations are the only schema authority and boot never runs DDL.
+//
+// What survives is the half that was always load-bearing: a protected environment
+// must be connected as the EXACT restricted opstrax_app identity with no role
+// memberships and no CREATE rights, and startup is refused otherwise.
+static async Task AssertRuntimeDatabaseIdentityAsync(WebApplication app, Database db)
 {
     try
     {
@@ -1556,23 +1771,10 @@ static async Task<bool> ShouldRunSchemaInitAsync(WebApplication app, Database db
                 "Protected-environment runtime database role must be exact restricted opstrax_app with no role memberships.");
         }
 
-        if (looksLikeOwner)
-        {
-            app.Logger.LogInformation("Schema init will run — owner-capable role '{Role}' (super={Super}, bypassrls={Bypass}).",
-                roleName, isSuper, bypassRls);
-            return true;
-        }
-
-        if (rlsEnforced)
-        {
-            app.Logger.LogWarning("Skipping schema init — connected as restricted role '{Role}' under RLS enforcement. " +
-                "Migrations/seeders must be applied out-of-band by the DB owner.", roleName);
-            return false;
-        }
-
-        app.Logger.LogWarning("Connected as restricted role '{Role}' but RLS is OFF — attempting schema init anyway; " +
-            "DDL may fail. Apply owner migrations out-of-band before runtime boot.", roleName);
-        return true;
+        app.Logger.LogInformation(
+            "Runtime database identity proven — role '{Role}' (super={Super}, bypassrls={Bypass}, rlsEnforced={Rls}). " +
+            "Schema is migration-owned; boot performs no DDL.",
+            roleName, isSuper, bypassRls, rlsEnforced);
     }
     catch (Exception ex)
     {
@@ -1583,9 +1785,9 @@ static async Task<bool> ShouldRunSchemaInitAsync(WebApplication app, Database db
             throw new InvalidOperationException(
                 "Protected-environment runtime database role must be provably restricted opstrax_app.", ex);
         }
-        // Never block startup on the check itself failing (e.g. restricted pg_roles view).
-        app.Logger.LogWarning(ex, "Schema init role check could not be evaluated; proceeding with schema init.");
-        return true;
+        // Never block a non-protected startup on the check itself failing (e.g. a
+        // restricted pg_roles view). No DDL depends on the answer any more.
+        app.Logger.LogWarning(ex, "Runtime database identity check could not be evaluated; continuing.");
     }
 }
 

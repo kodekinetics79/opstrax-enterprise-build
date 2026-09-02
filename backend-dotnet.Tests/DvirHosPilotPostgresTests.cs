@@ -1052,7 +1052,7 @@ public sealed class DvirHosPilotPostgresTests
         c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@b", branch); c.Parameters.AddWithValue("@code", $"DH-D-{suffix}-{company}"); c.Parameters.AddWithValue("@name", $"DVIR/HOS Driver {suffix}"); c.Parameters.AddWithValue("@uid", userId); });
 
     private static Task<long> Vehicle(Database db, long company, long branch, string suffix) => db.InsertAsync(
-        "INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,status) VALUES(@c,@b,@code,'Truck','Available')",
+        "INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,vin_exception_type,alternate_identifier,status) VALUES(@c,@b,@code,'Truck','legacy-fleet-identifier',@code,'Available')",
         c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@b", branch); c.Parameters.AddWithValue("@code", $"DH-V-{suffix}-{company}"); });
 
     private static Task InsertClock(Database db, long company, long branch, long driver, string status, int remaining) => db.ExecuteAsync(

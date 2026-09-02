@@ -11,6 +11,7 @@ namespace Opstrax.Api.Services;
 public static class GeofenceEvaluator
 {
     private const double EarthRadiusMeters = 6_371_000d;
+    private const string AutomaticResolutionActor = "system:geofence-reentry";
 
     internal static async Task EvaluateAsync(Database db, CancellationToken ct = default)
     {
@@ -36,7 +37,7 @@ public static class GeofenceEvaluator
         // Current inside/outside state per (geofence, vehicle), derived from the most recent event.
         var states = await db.QueryAsync(
             @"SELECT DISTINCT ON (geofence_id, vehicle_id) geofence_id, vehicle_id, event_type
-              FROM geofence_events ORDER BY geofence_id, vehicle_id, event_time DESC",
+              FROM geofence_events ORDER BY geofence_id, vehicle_id, event_time DESC, id DESC",
             ct: ct);
         var lastEvent = new Dictionary<(long, long), string>();
         foreach (var s in states)
@@ -166,6 +167,100 @@ public static class GeofenceEvaluator
         return firstValidFence;
     }
 
+    // Project every accepted, monotonic position while it is still in the ingest transaction.
+    // The background evaluator remains a reconciliation safety net, but this path preserves
+    // transitions that occur between its polling cycles and uses the device event time as evidence.
+    internal static async Task<Dictionary<string, object?>?> ProjectPositionAsync(
+        Database db,
+        long companyId,
+        long? branchId,
+        long vehicleId,
+        double lat,
+        double lng,
+        DateTimeOffset eventTime,
+        CancellationToken ct = default)
+    {
+        var fences = await db.QueryAsync(
+            @"SELECT id,name,center_lat,center_lng,radius_meters,polygon_json
+              FROM geofences
+              WHERE company_id=@cid AND status='Active'
+                AND (branch_id IS NULL OR branch_id=@branchId)",
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid", companyId);
+                c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+            }, ct);
+
+        var states = await db.QueryAsync(
+            @"SELECT DISTINCT ON (geofence_id) geofence_id,event_type
+              FROM geofence_events
+              WHERE company_id=@cid AND vehicle_id=@vid
+              ORDER BY geofence_id,event_time DESC,id DESC",
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid", companyId);
+                c.Parameters.AddWithValue("@vid", vehicleId);
+            }, ct);
+        var lastEvent = states.ToDictionary(
+            s => Convert.ToInt64(s["geofenceId"]),
+            s => s["eventType"]?.ToString() ?? "");
+
+        Dictionary<string, object?>? firstValidFence = null;
+        var insideAny = false;
+        foreach (var fence in fences)
+        {
+            var polygon = ParsePolygon(fence.GetValueOrDefault("polygonJson")?.ToString());
+            bool inside;
+            if (polygon is not null)
+            {
+                inside = PointInPolygon(lat, lng, polygon);
+            }
+            else if (TryReadFiniteDouble(fence.GetValueOrDefault("centerLat"), out var centerLat)
+                     && TryReadFiniteDouble(fence.GetValueOrDefault("centerLng"), out var centerLng)
+                     && TryReadFiniteDouble(fence.GetValueOrDefault("radiusMeters"), out var radiusMeters)
+                     && radiusMeters > 0)
+            {
+                inside = DistanceMeters(lat, lng, centerLat, centerLng) <= radiusMeters;
+            }
+            else
+            {
+                continue;
+            }
+
+            var geofenceId = Convert.ToInt64(fence["id"]);
+            firstValidFence ??= new Dictionary<string, object?>
+            {
+                ["id"] = fence.GetValueOrDefault("id"),
+                ["name"] = fence.GetValueOrDefault("name")
+            };
+            lastEvent.TryGetValue(geofenceId, out var last);
+            if (inside && last != "Entry")
+                await EmitAsync(db, companyId, geofenceId, vehicleId, "Entry", eventTime, ct);
+            else if (!inside && last == "Entry")
+                await EmitAsync(db, companyId, geofenceId, vehicleId, "Exit", eventTime, ct);
+
+            insideAny |= inside;
+        }
+
+        if (firstValidFence is null) return null;
+        if (!insideAny) return firstValidFence;
+
+        // Re-entry is objective telemetry evidence, so it closes both open and acknowledged
+        // breach alerts. A later exit can then create a new alert with its own source event.
+        await db.ExecuteAsync(
+            @"UPDATE telemetry_alerts
+              SET status='Resolved',resolved_at=NOW(),resolved_by=@actor,updated_at=NOW()
+              WHERE company_id=@cid AND vehicle_id=@vid AND alert_type='geofence_breach'
+                AND status IN ('Open','Acknowledged')",
+            c =>
+            {
+                c.Parameters.AddWithValue("@actor", AutomaticResolutionActor);
+                c.Parameters.AddWithValue("@cid", companyId);
+                c.Parameters.AddWithValue("@vid", vehicleId);
+            }, ct);
+        return null;
+    }
+
     private static bool TryReadFiniteDouble(object? raw, out double value)
     {
         value = 0;
@@ -182,15 +277,19 @@ public static class GeofenceEvaluator
     }
 
     private static Task EmitAsync(Database db, long companyId, long geofenceId, long vehicleId, string eventType, CancellationToken ct) =>
+        EmitAsync(db, companyId, geofenceId, vehicleId, eventType, null, ct);
+
+    private static Task EmitAsync(Database db, long companyId, long geofenceId, long vehicleId, string eventType, DateTimeOffset? eventTime, CancellationToken ct) =>
         db.ExecuteAsync(
             @"INSERT INTO geofence_events (company_id, geofence_id, vehicle_id, event_type, event_time)
-              VALUES (@c, @g, @v, @t, NOW())",
+              VALUES (@c, @g, @v, @t, COALESCE(@eventTime,NOW()))",
             c =>
             {
                 c.Parameters.AddWithValue("@c", companyId);
                 c.Parameters.AddWithValue("@g", geofenceId);
                 c.Parameters.AddWithValue("@v", vehicleId);
                 c.Parameters.AddWithValue("@t", eventType);
+                c.Parameters.AddWithValue("@eventTime", eventTime?.UtcDateTime ?? (object)DBNull.Value);
             }, ct);
 
     // Great-circle distance in metres (haversine).

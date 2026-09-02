@@ -18,7 +18,13 @@ public sealed class MaintenanceBackgroundService(
     : BackgroundService
 {
     private static readonly TimeSpan Interval = TimeSpan.FromMinutes(15);
+    // Readiness marks a critical worker stale after CriticalWorkerFreshness (10 min).
+    // This cycle only needs to run every 15 minutes, so the idle wait must still emit a
+    // heartbeat on the shared cadence — otherwise the worker is reported stale for ~5 of
+    // every 15 minutes even while perfectly healthy. Mirrors RetentionEnforcementBackgroundService.
+    private static readonly TimeSpan IdleHeartbeatInterval = TimeSpan.FromMinutes(5);
     private const string SvcName = "MaintenanceBackgroundService";
+    internal const int ProgressHeartbeatBatchSize = 100;
 
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
@@ -29,12 +35,18 @@ public sealed class MaintenanceBackgroundService(
             var runId = await tracker.BeginAsync(SvcName, ct);
             try
             {
+                // BeginAsync records the run ledger, while readiness is driven by the
+                // independently committed service_heartbeats row. Publish liveness
+                // before the first, potentially long, post-deploy maintenance cycle.
+                await ReportProgressAsync(runId, ct);
+
                 // Cross-tenant worker (all-company PM rules, filtered by company_id):
                 // run the whole tick under the platform-admin bypass scope.
                 await db.RunInSystemScopeAsync(async () =>
                 {
-                    await RunCycleAsync(ct);
+                    await RunCycleAsync(runId, ct);
                     await RefreshFleetHealthSnapshotsAsync(ct);
+                    await ReportProgressAsync(runId, ct);
                 }, ct);
                 sw.Stop();
                 await tracker.CompleteAsync(runId, SvcName, 0, (int)sw.ElapsedMilliseconds, ct);
@@ -45,21 +57,43 @@ public sealed class MaintenanceBackgroundService(
                 log.LogError(ex, "{Svc} cycle failed", SvcName);
                 await tracker.FailAsync(runId, SvcName, ex, (int)sw.ElapsedMilliseconds, ct);
             }
-            await Task.Delay(Interval, ct);
+            await WaitWithHeartbeatAsync(Interval, ct);
         }
     }
 
-    private async Task RunCycleAsync(CancellationToken ct)
+    // Tracker calls use their own system scope, so progress commits outside the
+    // maintenance-cycle transaction and remains observable to readiness probes.
+    private async Task ReportProgressAsync(long runId, CancellationToken ct)
     {
-        await EvaluatePmRulesAsync(ct);
+        await tracker.HeartbeatAsync(SvcName, runId, ct);
+        await tracker.PulseAsync(SvcName, ct);
+    }
+
+    private async Task WaitWithHeartbeatAsync(TimeSpan delay, CancellationToken ct)
+    {
+        var remaining = delay;
+        while (remaining > TimeSpan.Zero)
+        {
+            var slice = remaining < IdleHeartbeatInterval ? remaining : IdleHeartbeatInterval;
+            await Task.Delay(slice, ct);
+            remaining -= slice;
+            await tracker.PulseAsync(SvcName, ct);
+        }
+    }
+
+    private async Task RunCycleAsync(long runId, CancellationToken ct)
+    {
+        await EvaluatePmRulesAsync(runId, ct);
+        await ReportProgressAsync(runId, ct);
         await UpdateVehicleAvailabilityAsync(ct);
+        await ReportProgressAsync(runId, ct);
     }
 
     // ── PM Rule evaluation ────────────────────────────────────────────────────────
     // For each active vehicle + enabled PM rule combination, check whether service
     // is due (within warning threshold) or overdue. Generate a maintenance_items
     // entry if one doesn't already exist for this cycle.
-    private async Task EvaluatePmRulesAsync(CancellationToken ct)
+    private async Task EvaluatePmRulesAsync(long runId, CancellationToken ct)
     {
         var rules = await db.QueryAsync(
             @"SELECT r.*, c.id AS company_id_val
@@ -68,6 +102,7 @@ public sealed class MaintenanceBackgroundService(
               WHERE r.enabled=TRUE",
             ct: ct);
 
+        var processedVehicles = 0;
         foreach (var rule in rules)
         {
             var companyId   = Convert.ToInt64(rule["companyId"]);
@@ -103,6 +138,7 @@ public sealed class MaintenanceBackgroundService(
 
             foreach (var v in vehicles)
             {
+                processedVehicles++;
                 var vehicleId   = Convert.ToInt64(v["id"]);
                 var currentOdo  = v["odometerMiles"]   is null ? (decimal?)null : Convert.ToDecimal(v["odometerMiles"]);
                 var engineHrs   = v["engineHours"]     is null ? (decimal?)null : Convert.ToDecimal(v["engineHours"]);
@@ -146,6 +182,9 @@ public sealed class MaintenanceBackgroundService(
                     if (DateTime.UtcNow >= nextDue) { isOverdue = true; dueReason = $"Service due date {nextDue:yyyy-MM-dd} passed"; }
                     else if (DateTime.UtcNow >= warnDate) { isDue = true; dueReason = $"Service due {nextDue:yyyy-MM-dd} approaching"; }
                 }
+
+                if (processedVehicles % ProgressHeartbeatBatchSize == 0)
+                    await ReportProgressAsync(runId, ct);
 
                 if (!isDue && !isOverdue) continue;
 
@@ -198,6 +237,10 @@ public sealed class MaintenanceBackgroundService(
                     log.LogWarning(recEx, "[MaintBgSvc] PM recommendation enrichment failed for item {Id}; the maintenance item was still recorded", itemId);
                 }
             }
+
+            // A rule can contain fewer vehicles than the batch size; still expose a
+            // durable boundary before the next tenant/rule begins.
+            await ReportProgressAsync(runId, ct);
         }
     }
 

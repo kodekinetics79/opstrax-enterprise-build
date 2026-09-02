@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router';
-import { Archive, Barcode, Boxes, CheckCheck, Layers3, SquareStack, Truck } from 'lucide-react';
+import { Archive, Barcode, Boxes, CheckCheck, ChevronLeft, ChevronRight, Search, SquareStack, Truck } from 'lucide-react';
 import { ClayStat, ConsoleRail } from '@/components/console';
 import { notifyApiError } from '@/services/fleetTmsApi';
 import { fleetApi, fleetAssetApi, type Asset, type AssetAssignment, type AssetEvent, type AssetType } from '@/services/fleetTmsApi';
 import { LoadingState } from '@/components/ui';
-import { useHasPermission } from '@/hooks/usePermission';
+import { EntityImportExport } from '@/components/EntityImportExport';
+import { PERMISSIONS, useHasPermission } from '@/hooks/usePermission';
 
 type AssetDetail = {
   asset: Asset;
@@ -15,9 +16,15 @@ type AssetDetail = {
 
 export function FleetAssetManagementPage() {
   const hasPermission = useHasPermission();
-  const canManageFleet = hasPermission('fleet:manage');
+  const canManageFleet = hasPermission(PERMISSIONS.FLEET_MANAGE);
   const [assetTypes, setAssetTypes] = useState<AssetType[]>([]);
   const [assets, setAssets] = useState<Asset[]>([]);
+  const [assetTotal, setAssetTotal] = useState(0);
+  const [assetSummary, setAssetSummary] = useState({ assigned: 0, available: 0, needsReview: 0 });
+  const [assetPage, setAssetPage] = useState(1);
+  const [assetSearch, setAssetSearch] = useState('');
+  const [assetSort, setAssetSort] = useState<'assetTag' | 'name' | 'status' | 'location' | 'condition' | 'type' | 'lastSeen'>('assetTag');
+  const [assetDirection, setAssetDirection] = useState<'asc' | 'desc'>('asc');
   const [shipments, setShipments] = useState<Array<{ id: string; shipmentNumber: string; customerName: string; status: string }>>([]);
   const [detail, setDetail] = useState<AssetDetail | null>(null);
   const [selectedAssetId, setSelectedAssetId] = useState('');
@@ -49,7 +56,7 @@ export function FleetAssetManagementPage() {
     const warnings: string[] = [];
     const [typesRes, assetsRes, shipmentsRes] = await Promise.allSettled([
       fleetAssetApi.assetTypes(),
-      fleetAssetApi.assets(),
+      fleetAssetApi.assets({ page: assetPage, pageSize: 100, search: assetSearch, sort: assetSort, direction: assetDirection }),
       fleetApi.shipments({ pageSize: 8 }),
     ]);
 
@@ -62,7 +69,11 @@ export function FleetAssetManagementPage() {
     };
 
     apply(typesRes, 'Asset types', (value) => setAssetTypes(value.items));
-    apply(assetsRes, 'Assets', (value) => setAssets(value.items));
+    apply(assetsRes, 'Assets', (value) => {
+      setAssets(value.items);
+      setAssetTotal(value.total);
+      setAssetSummary(value.summary);
+    });
     apply(shipmentsRes, 'Shipments', (value) => setShipments(value.items as Array<{ id: string; shipmentNumber: string; customerName: string; status: string }>));
 
     if (typesRes.status === 'fulfilled' && typesRes.value.items.length && !selectedTypeId) {
@@ -106,6 +117,24 @@ export function FleetAssetManagementPage() {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void fleetAssetApi.assets({ page: assetPage, pageSize: 100, search: assetSearch, sort: assetSort, direction: assetDirection })
+        .then((result) => {
+          if (cancelled) return;
+          setAssets(result.items);
+          setAssetTotal(result.total);
+          setAssetSummary(result.summary);
+        })
+        .catch((error) => { if (!cancelled) notifyApiError(error, 'Unable to load the requested asset page.'); });
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [assetDirection, assetPage, assetSearch, assetSort]);
+
   const refresh = async () => {
     await loadWorkspaceData();
   };
@@ -127,16 +156,15 @@ export function FleetAssetManagementPage() {
   }, [selectedAssetId]);
 
   const metrics = useMemo(() => {
-    const assigned = assets.filter((asset) => asset.status === 'Assigned' || asset.status === 'InUse').length;
-    const available = assets.filter((asset) => asset.status === 'Available').length;
-    const maintenance = assets.filter((asset) => asset.condition !== 'Good').length;
     return [
       { label: 'Asset types', value: assetTypes.length, tone: 'text-cyan-700' },
-      { label: 'Assigned', value: assigned, tone: 'text-blue-700' },
-      { label: 'Available', value: available, tone: 'text-emerald-700' },
-      { label: 'Needs review', value: maintenance, tone: 'text-amber-700' },
+      { label: 'Assigned', value: assetSummary.assigned, tone: 'text-blue-700' },
+      { label: 'Available', value: assetSummary.available, tone: 'text-emerald-700' },
+      { label: 'Needs review', value: assetSummary.needsReview, tone: 'text-amber-700' },
     ];
-  }, [assetTypes, assets]);
+  }, [assetSummary, assetTypes]);
+
+  const assetPageCount = Math.max(1, Math.ceil(assetTotal / 100));
 
   const createAssetType = async () => {
     if (!canManageFleet) return;
@@ -237,20 +265,35 @@ export function FleetAssetManagementPage() {
 
   return (
     <main className="fleet-console text-slate-900">
-      <section className="relative mx-auto flex w-full flex-col gap-3">
+      <section className="relative mx-auto flex w-full max-w-7xl flex-col gap-3">
         <ConsoleRail
           eyebrow="Fleet · Returnable Assets"
           icon={<Boxes className="h-3.5 w-3.5 text-teal-700" />}
           title="Returnable Assets"
           meta={<>
-            <span className="font-bold text-slate-700 tabular-nums">{assets.length}</span> assets in custody ·{" "}
-            <span className="font-bold text-emerald-600 tabular-nums">{assets.filter((asset) => asset.status === 'Available').length}</span> available ·{" "}
-            <span className="font-bold text-amber-600 tabular-nums">{assets.filter((asset) => asset.condition !== 'Good').length}</span> need review
+            <span className="font-bold text-slate-700 tabular-nums">{assetTotal}</span> assets in custody ·{" "}
+            <span className="font-bold text-emerald-600 tabular-nums">{assetSummary.available}</span> available ·{" "}
+            <span className="font-bold text-amber-600 tabular-nums">{assetSummary.needsReview}</span> need review
           </>}
           actions={
-            <Link to="/fleet-workspace" className="btn-ghost h-10">
-              Fleet Workspace
-            </Link>
+            <>
+              <EntityImportExport
+                canImport={canManageFleet}
+                canExport={canManageFleet}
+                config={{
+                  entity: 'assets',
+                  columns: ['assetTag', 'branchCode', 'name', 'assetTypeCode', 'status', 'currentLocation', 'condition', 'isReturnable', 'quantity', 'unitOfMeasure', 'notes'],
+                  requiredColumns: ['assetTag', 'name', 'assetTypeCode'],
+                  templateEndpoint: '/api/fleet-tms/assets/import-template',
+                  exportEndpoint: '/api/fleet-tms/assets/export',
+                  importPreview: fleetAssetApi.previewImport,
+                  importCommit: fleetAssetApi.commitImport,
+                  invalidateKey: 'fleet-assets',
+                  onImported: refresh,
+                }}
+              />
+              <Link to="/fleet-workspace" className="btn-ghost h-10">Fleet Workspace</Link>
+            </>
           }
         />
 
@@ -301,7 +344,7 @@ export function FleetAssetManagementPage() {
                 </div>
               </section>
 
-              <section className="rounded-[28px] border border-white/75 bg-white/75 p-6 shadow-[0_24px_50px_rgba(15,23,42,0.08)] backdrop-blur">
+              {canManageFleet ? <section className="rounded-[28px] border border-white/75 bg-white/75 p-6 shadow-[0_24px_50px_rgba(15,23,42,0.08)] backdrop-blur">
                 <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">Create asset</p>
                 <h2 className="mt-2 text-2xl font-black text-slate-950">Inventory intake</h2>
                 <div className="mt-5 grid gap-4 sm:grid-cols-2">
@@ -318,14 +361,14 @@ export function FleetAssetManagementPage() {
                   <textarea value={forms.typeDescription} onChange={(e) => setForms((current) => ({ ...current, typeDescription: e.target.value }))} rows={3} placeholder="Type description" className="sm:col-span-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400" />
                 </div>
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  <button disabled={!canManageFleet || saving} onClick={createAsset} title={canManageFleet ? undefined : 'Requires fleet manage permission'} className="rounded-2xl bg-gradient-to-r from-blue-600 to-cyan-600 px-4 py-3 font-bold text-white shadow-lg transition hover:from-blue-500 hover:to-cyan-500 disabled:opacity-60">
+                  <button disabled={saving} onClick={createAsset} className="rounded-2xl bg-gradient-to-r from-blue-600 to-cyan-600 px-4 py-3 font-bold text-white shadow-lg transition hover:from-blue-500 hover:to-cyan-500 disabled:opacity-60">
                     {saving ? 'Saving...' : 'Create asset'}
                   </button>
-                  <button disabled={!canManageFleet || saving} onClick={createAssetType} title={canManageFleet ? undefined : 'Requires fleet manage permission'} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 font-bold text-slate-700 transition hover:border-cyan-300 hover:text-cyan-700 disabled:opacity-60">
+                  <button disabled={saving} onClick={createAssetType} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 font-bold text-slate-700 transition hover:border-cyan-300 hover:text-cyan-700 disabled:opacity-60">
                     Add asset type
                   </button>
                 </div>
-              </section>
+              </section> : null}
             </div>
           </div>
 
@@ -338,8 +381,37 @@ export function FleetAssetManagementPage() {
                 </div>
                 <Archive className="h-5 w-5 text-cyan-300" />
               </div>
+              <div className="mt-4 grid gap-2 sm:grid-cols-[1fr_auto_auto]">
+                <label className="relative">
+                  <span className="sr-only">Search returnable assets</span>
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <input
+                    value={assetSearch}
+                    onChange={(event) => { setAssetSearch(event.target.value); setAssetPage(1); }}
+                    placeholder="Search tag, name, type, status, location…"
+                    className="w-full rounded-xl border border-white/15 bg-white/10 py-2 pl-9 pr-3 text-sm text-white placeholder:text-slate-400"
+                  />
+                </label>
+                <select
+                  aria-label="Sort assets"
+                  value={assetSort}
+                  onChange={(event) => { setAssetSort(event.target.value as typeof assetSort); setAssetPage(1); }}
+                  className="rounded-xl border border-white/15 bg-slate-900 px-3 py-2 text-sm text-white"
+                >
+                  <option value="assetTag">Asset tag</option>
+                  <option value="name">Name</option>
+                  <option value="type">Type</option>
+                  <option value="status">Status</option>
+                  <option value="location">Location</option>
+                  <option value="condition">Condition</option>
+                  <option value="lastSeen">Last seen</option>
+                </select>
+                <button type="button" className="rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-sm font-semibold" onClick={() => { setAssetDirection((current) => current === 'asc' ? 'desc' : 'asc'); setAssetPage(1); }}>
+                  {assetDirection === 'asc' ? 'Ascending' : 'Descending'}
+                </button>
+              </div>
               <div className="mt-5 space-y-3">
-                {assets.slice(0, 7).map((asset) => (
+                {assets.map((asset) => (
                   <button key={asset.id} onClick={() => setSelectedAssetId(asset.id)} className={`w-full rounded-2xl border p-4 text-left transition ${selectedAssetId === asset.id ? 'border-cyan-300 bg-white/10' : 'border-white/10 bg-white/5 hover:bg-white/8'}`}>
                     <div className="flex items-center justify-between">
                       <div>
@@ -351,23 +423,30 @@ export function FleetAssetManagementPage() {
                   </button>
                 ))}
               </div>
+              <div className="mt-4 flex items-center justify-between border-t border-white/10 pt-4 text-sm text-slate-300">
+                <span>Page {assetPage} of {assetPageCount} · {assets.length} shown · {assetTotal} total</span>
+                <div className="flex gap-2">
+                  <button type="button" aria-label="Previous asset page" disabled={assetPage <= 1} className="rounded-lg border border-white/15 p-2 disabled:opacity-40" onClick={() => setAssetPage((current) => Math.max(1, current - 1))}><ChevronLeft className="h-4 w-4" /></button>
+                  <button type="button" aria-label="Next asset page" disabled={assetPage >= assetPageCount} className="rounded-lg border border-white/15 p-2 disabled:opacity-40" onClick={() => setAssetPage((current) => Math.min(assetPageCount, current + 1))}><ChevronRight className="h-4 w-4" /></button>
+                </div>
+              </div>
             </section>
 
-            <section className="rounded-[28px] border border-white/75 bg-white/80 p-6 shadow-[0_24px_50px_rgba(15,23,42,0.08)] backdrop-blur">
+            {canManageFleet ? <section className="rounded-[28px] border border-white/75 bg-white/80 p-6 shadow-[0_24px_50px_rgba(15,23,42,0.08)] backdrop-blur">
               <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">Scan & custody</p>
               <h2 className="mt-2 text-2xl font-black text-slate-950">Barcode / RFID actions</h2>
               <div className="mt-5 space-y-3">
                 <input value={forms.scanValue} onChange={(e) => { setForms((current) => ({ ...current, scanValue: e.target.value })); if (actionMessage) setActionMessage(''); }} placeholder="Scan value / tag" className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400" />
                 <textarea value={forms.scanNotes} onChange={(e) => setForms((current) => ({ ...current, scanNotes: e.target.value }))} rows={3} placeholder="Scan notes" className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400" />
                 {actionMessage && <p className="text-sm font-medium text-rose-600" role="alert">{actionMessage}</p>}
-                <button onClick={scan} disabled={!canManageFleet || !forms.scanValue.trim()} title={canManageFleet ? undefined : 'Requires fleet manage permission'} className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-800 px-4 py-3 font-bold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
+                <button onClick={scan} disabled={!forms.scanValue.trim()} className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
                   <Barcode className="h-4 w-4" />
                   Capture barcode scan
                 </button>
               </div>
-            </section>
+            </section> : null}
 
-            <section className="rounded-[28px] border border-white/75 bg-white/80 p-6 shadow-[0_24px_50px_rgba(15,23,42,0.08)] backdrop-blur">
+            {canManageFleet ? <section className="rounded-[28px] border border-white/75 bg-white/80 p-6 shadow-[0_24px_50px_rgba(15,23,42,0.08)] backdrop-blur">
               <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">Assignment</p>
               <h2 className="mt-2 text-2xl font-black text-slate-950">Move selected asset</h2>
               <div className="mt-5 space-y-3">
@@ -377,18 +456,18 @@ export function FleetAssetManagementPage() {
                   {shipments.map((shipment) => <option key={shipment.id} value={shipment.id}>{shipment.shipmentNumber}</option>)}
                 </select>
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <button onClick={() => assign('checkOut')} disabled={!canManageFleet || !selectedAssetId} title={canManageFleet ? undefined : 'Requires fleet manage permission'} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-blue-600 to-cyan-600 px-4 py-3 font-bold text-white transition hover:from-blue-500 hover:to-cyan-500 disabled:cursor-not-allowed disabled:opacity-50">
+                  <button onClick={() => assign('checkOut')} disabled={!selectedAssetId} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-blue-600 to-cyan-600 px-4 py-3 font-bold text-white transition hover:from-blue-500 hover:to-cyan-500 disabled:cursor-not-allowed disabled:opacity-50">
                     <CheckCheck className="h-4 w-4" />
                     Check out
                   </button>
-                  <button onClick={() => assign('checkIn')} disabled={!canManageFleet || !selectedAssetId} title={canManageFleet ? undefined : 'Requires fleet manage permission'} className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 font-bold text-slate-700 transition hover:border-cyan-300 hover:text-cyan-700 disabled:cursor-not-allowed disabled:opacity-50">
+                  <button onClick={() => assign('checkIn')} disabled={!selectedAssetId} className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 font-bold text-slate-700 transition hover:border-cyan-300 hover:text-cyan-700 disabled:cursor-not-allowed disabled:opacity-50">
                     <Truck className="h-4 w-4" />
                     Check in
                   </button>
                 </div>
                 <textarea value={forms.movementNotes} onChange={(e) => setForms((current) => ({ ...current, movementNotes: e.target.value }))} rows={3} placeholder="Movement notes" className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400" />
               </div>
-            </section>
+            </section> : null}
 
             <section className="rounded-[28px] border border-white/75 bg-white/80 p-6 shadow-[0_24px_50px_rgba(15,23,42,0.08)] backdrop-blur">
               <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">Selected asset</p>

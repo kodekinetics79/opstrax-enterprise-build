@@ -6,15 +6,19 @@ test.describe("@readonly public access", () => {
     await page.goto("/login");
     await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
     const email = page.getByLabel("Work email");
+    const companyCode = page.getByLabel("Organization code");
     const continueButton = page.getByRole("button", { name: /Continue/i });
+    await expect(companyCode).toBeVisible();
     await expect(email).toBeVisible();
     await expect(continueButton).toBeDisabled();
+    await companyCode.fill("qa-tenant");
     await email.fill("qa@example.com");
     await expect(continueButton).toBeEnabled();
   });
 
   test("invalid work email is rejected without a network request", async ({ page }) => {
     await page.goto("/login");
+    await page.getByLabel("Organization code").fill("qa-tenant");
     await page.getByLabel("Work email").fill("not-an-email");
     await page.getByRole("button", { name: /Continue/i }).click();
     await expect(page.getByText("Enter a valid work email address.")).toBeVisible();
@@ -23,6 +27,7 @@ test.describe("@readonly public access", () => {
   test("login controls expose names and a visible keyboard focus path", async ({ page }) => {
     await page.goto("/login");
     const email = page.getByLabel("Work email");
+    await page.getByLabel("Organization code").fill("qa-tenant");
     const continueButton = page.getByRole("button", { name: /Continue/i });
     await email.focus();
     await expect(email).toBeFocused();

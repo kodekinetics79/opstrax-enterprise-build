@@ -10,17 +10,21 @@ import { PlatformBillingPage } from "./PlatformBillingPage";
 import { PlatformHealthPage } from "./PlatformHealthPage";
 import { PlatformReliabilityPage } from "./PlatformReliabilityPage";
 import { PlatformAuditPage } from "./PlatformAuditPage";
+import { PlatformSupportAccessPage } from "./PlatformSupportAccessPage";
 import { PlatformCommercialOpsPage } from "./PlatformCommercialOpsPage";
 import { PlatformOperatorsPage } from "./PlatformOperatorsPage";
+import { PlatformEmailSettingsPage } from "./PlatformEmailSettingsPage";
 import { PlatformAcceptInvitePage } from "./PlatformAcceptInvitePage";
 import { PlatformAccountPage } from "./PlatformAccountPage";
+import { PlatformProductPilotPage } from "./PlatformProductPilotPage";
 
 // Permission-gated wrapper: redirects to the platform login if not authenticated,
 // and to the command center if the role lacks the required permission.
-function Guard({ permission, children }: { permission?: string; children: React.ReactNode }) {
+function Guard({ permission, requireProductPilot = false, children }: { permission?: string; requireProductPilot?: boolean; children: React.ReactNode }) {
   const { session, can } = usePlatformAuth();
   if (!session) return <Navigate to="/platform/login" replace />;
   if (permission && !can(permission)) return <Navigate to="/platform" replace />;
+  if (requireProductPilot && session.productPilotAvailable !== true) return <Navigate to="/platform" replace />;
   return <>{children}</>;
 }
 
@@ -42,13 +46,16 @@ export default function PlatformApp() {
           <Route index element={<Guard permission="platform:dashboard:view"><PlatformCommandCenterPage /></Guard>} />
           <Route path="commercial-ops" element={<Guard permission="platform:dashboard:view"><PlatformCommercialOpsPage /></Guard>} />
           <Route path="tenants" element={<Guard permission="platform:tenants:view"><PlatformTenantsPage /></Guard>} />
+          <Route path="product-pilot" element={<Guard permission="platform:pilot:run" requireProductPilot><PlatformProductPilotPage /></Guard>} />
           <Route path="packages" element={<Guard permission="platform:packages:view"><PlatformPackagesPage /></Guard>} />
           <Route path="revenue" element={<Guard permission="platform:packages:view"><PlatformRevenuePage /></Guard>} />
           <Route path="billing" element={<Guard permission="platform:billing:view"><PlatformBillingPage /></Guard>} />
           <Route path="health" element={<Guard permission="platform:health:view"><PlatformHealthPage /></Guard>} />
           <Route path="reliability" element={<Guard permission="platform:health:view"><PlatformReliabilityPage /></Guard>} />
           <Route path="audit" element={<Guard permission="platform:audit:view"><PlatformAuditPage /></Guard>} />
+          <Route path="support-access" element={<Guard permission="platform:tenants:view"><PlatformSupportAccessPage /></Guard>} />
           <Route path="operators" element={<Guard permission="platform:admins:view"><PlatformOperatorsPage /></Guard>} />
+          <Route path="settings/email" element={<Guard permission="platform:settings:manage"><PlatformEmailSettingsPage /></Guard>} />
           {/* Self-service: every signed-in admin can manage their own account. */}
           <Route path="account" element={<Guard permission="platform:dashboard:view"><PlatformAccountPage /></Guard>} />
         </Route>

@@ -47,17 +47,18 @@ CREATE TABLE IF NOT EXISTS feature_flags (
 CREATE INDEX IF NOT EXISTS idx_feature_flags_company
   ON feature_flags (company_id, flag_key);
 
--- Tenant login and invite ownership are case-insensitive. Refuse a migration
--- when pre-existing rows would make that lookup ambiguous across tenants.
+-- Tenant login and invite ownership are case-insensitive. The same email may
+-- legitimately belong to multiple tenants because company_code disambiguates
+-- authentication; only duplicates inside one tenant make the lookup ambiguous.
 DO $email_collision_preflight$
 BEGIN
   IF EXISTS (
     SELECT 1
     FROM users
-    GROUP BY lower(email)
-    HAVING count(DISTINCT company_id) > 1
+    GROUP BY company_id, lower(email)
+    HAVING count(*) > 1
   ) THEN
-    RAISE EXCEPTION 'Stage79 found a cross-tenant case-insensitive email collision';
+    RAISE EXCEPTION 'Stage79 found a within-tenant case-insensitive email collision';
   END IF;
 END
 $email_collision_preflight$;

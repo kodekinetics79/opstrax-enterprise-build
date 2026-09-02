@@ -41,6 +41,7 @@ export function DvirInspectionsPage() {
   const canClose = hasPermission("maintenance:close") || hasPermission("maintenance:manage");
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [showTemplateCreate, setShowTemplateCreate] = useState(false);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
   const [resolveNotes, setResolveNotes] = useState<Record<string, string>>({});
@@ -107,9 +108,14 @@ export function DvirInspectionsPage() {
           <h1 className="mt-1 flex items-center gap-2 text-2xl font-black text-slate-900"><ClipboardCheck className="h-6 w-6 text-teal-600" />DVIR Inspections</h1>
           <p className="mt-1 text-sm text-slate-500">Persisted inspection reports, defect evidence, mechanic review and repair certification.</p>
         </div>
-        <button type="button" className="btn-primary h-10 gap-1.5" disabled={!canCreate} title={!canCreate ? "Requires maintenance create permission" : "Create a no-defect administrative report"} onClick={() => setShowCreate(true)}>
-          <Plus className="h-4 w-4" /> New report
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className="btn-secondary h-10 gap-1.5" disabled={!canReview} title={!canReview ? "Requires maintenance update permission" : "Create a driver checklist template"} onClick={() => setShowTemplateCreate(true)}>
+            <Plus className="h-4 w-4" /> New checklist template
+          </button>
+          <button type="button" className="btn-primary h-10 gap-1.5" disabled={!canCreate} title={!canCreate ? "Requires maintenance create permission" : "Create a no-defect administrative report"} onClick={() => setShowCreate(true)}>
+            <Plus className="h-4 w-4" /> New report
+          </button>
+        </div>
       </div>
 
       <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-xs leading-5 text-blue-800">
@@ -178,8 +184,57 @@ export function DvirInspectionsPage() {
       )}
 
       {showCreate && <CreateDvirDialog drivers={(driversQ.data as AnyRecord[] | undefined) ?? []} vehicles={(vehiclesQ.data as AnyRecord[] | undefined) ?? []} loading={driversQ.isLoading || vehiclesQ.isLoading} onClose={() => setShowCreate(false)} onCreated={async () => { setShowCreate(false); setNotice({ kind: "success", text: "DVIR report created." }); await refresh(); }} />}
+      {showTemplateCreate && <CreateDvirTemplateDialog onClose={() => setShowTemplateCreate(false)} onCreated={async () => {
+        setShowTemplateCreate(false);
+        setNotice({ kind: "success", text: "DVIR checklist template created and available to drivers." });
+        await Promise.all([
+          qc.invalidateQueries({ queryKey: ["dvir", "templates"] }),
+          qc.invalidateQueries({ queryKey: ["driver", "dvir-templates"] }),
+        ]);
+      }} />}
     </div>
   );
+}
+
+type ChecklistDraft = { category: string; itemName: string; required: boolean };
+
+function CreateDvirTemplateDialog({ onClose, onCreated }: { onClose: () => void; onCreated: () => Promise<void> }) {
+  const dialogRef = useDialogFocus<HTMLDivElement>(true, onClose);
+  const singleFlight = useSingleFlight();
+  const [form, setForm] = useState({ templateName: "", inspectionType: "Pre-Trip", countryCode: "US", vehicleType: "" });
+  const [items, setItems] = useState<ChecklistDraft[]>([{ category: "Vehicle", itemName: "", required: true }]);
+  const mutation = useMutation({
+    mutationFn: () => dvirApi.createTemplate({
+      ...form,
+      checklistItems: items.map((item) => ({ ...item, category: item.category.trim(), itemName: item.itemName.trim() })),
+    }),
+    onSuccess: onCreated,
+  });
+  const valid = form.templateName.trim().length > 0 && form.inspectionType.trim().length > 0 &&
+    items.length >= 1 && items.length <= 50 && items.every((item) => item.category.trim() && item.itemName.trim());
+  const updateItem = (index: number, patch: Partial<ChecklistDraft>) => setItems((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item));
+
+  return <div ref={dialogRef} className="fixed inset-0 z-[60] grid place-items-center bg-black/60 p-4" role="dialog" aria-modal="true" aria-label="Create DVIR checklist template">
+    <form className="panel max-h-[90vh] w-full max-w-2xl overflow-y-auto p-5" onSubmit={(event) => { event.preventDefault(); if (valid) void singleFlight(() => mutation.mutateAsync()); }}>
+      <div className="flex items-start justify-between gap-3"><div><h2 className="text-lg font-black text-slate-900">New checklist template</h2><p className="mt-1 text-xs text-slate-500">Create the persisted inspection checklist drivers must complete before departure.</p></div><button type="button" className="icon-btn" aria-label="Close" onClick={onClose}><X className="h-4 w-4" /></button></div>
+      <div className="mt-5 grid gap-4 sm:grid-cols-2">
+        <label className="sm:col-span-2"><span className="field-label">Template name</span><input className="field mt-1" required maxLength={160} value={form.templateName} onChange={(event) => setForm({ ...form, templateName: event.target.value })} placeholder="US pre-trip inspection" /></label>
+        <label><span className="field-label">Inspection type</span><select className="field mt-1" value={form.inspectionType} onChange={(event) => setForm({ ...form, inspectionType: event.target.value })}><option>Pre-Trip</option><option>Post-Trip</option><option>En Route</option></select></label>
+        <label><span className="field-label">Country</span><input className="field mt-1" required maxLength={12} value={form.countryCode} onChange={(event) => setForm({ ...form, countryCode: event.target.value.toUpperCase() })} /></label>
+        <label className="sm:col-span-2"><span className="field-label">Vehicle type (optional)</span><input className="field mt-1" maxLength={80} value={form.vehicleType} onChange={(event) => setForm({ ...form, vehicleType: event.target.value })} placeholder="Truck, van, trailer…" /></label>
+      </div>
+      <section className="mt-5" aria-labelledby="checklist-items-heading"><div className="flex items-center justify-between gap-3"><h3 id="checklist-items-heading" className="text-sm font-black text-slate-900">Checklist items ({items.length}/50)</h3><button type="button" className="btn-secondary h-9" disabled={items.length >= 50} onClick={() => setItems((current) => [...current, { category: "Vehicle", itemName: "", required: true }])}><Plus className="h-4 w-4" /> Add item</button></div>
+        <div className="mt-3 space-y-3">{items.map((item, index) => <div key={index} className="grid gap-2 rounded-xl border border-slate-200 p-3 sm:grid-cols-[0.8fr_1.5fr_auto_auto] sm:items-end">
+          <label><span className="field-label">Category</span><input className="field mt-1" required maxLength={120} value={item.category} onChange={(event) => updateItem(index, { category: event.target.value })} /></label>
+          <label><span className="field-label">Inspection item</span><input className="field mt-1" required maxLength={220} value={item.itemName} onChange={(event) => updateItem(index, { itemName: event.target.value })} placeholder="Service brakes operate correctly" /></label>
+          <label className="flex h-10 items-center gap-2 text-xs font-semibold text-slate-700"><input type="checkbox" checked={item.required} onChange={(event) => updateItem(index, { required: event.target.checked })} /> Required</label>
+          <button type="button" className="btn-ghost h-10" disabled={items.length === 1} onClick={() => setItems((current) => current.filter((_, itemIndex) => itemIndex !== index))}>Remove</button>
+        </div>)}</div>
+      </section>
+      {mutation.isError && <p className="mt-4 text-sm text-red-700" role="alert">{(mutation.error as Error)?.message ?? "Checklist template creation failed."}</p>}
+      <div className="mt-5 flex justify-end gap-2"><button type="button" className="btn-ghost" onClick={onClose}>Cancel</button><button type="submit" className="btn-primary" disabled={!valid || mutation.isPending}>{mutation.isPending ? "Creating…" : "Create checklist template"}</button></div>
+    </form>
+  </div>;
 }
 
 function DvirDetail({ detail, canReview, canClose, busy, timeline, resolveNotes, onResolveNotes, onAction }: {

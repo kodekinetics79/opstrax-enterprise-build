@@ -51,7 +51,7 @@ public sealed class RoutePlansPilotPostgresTests
                 "INSERT INTO drivers(company_id,branch_id,driver_code,full_name,status,safety_score,readiness_score,compliance_score) VALUES (@c,@b,@code,'Route Driver','Available',95,95,95)",
                 c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchA); c.Parameters.AddWithValue("@code", $"RDRV-{companyId}"); });
             var vehicle = await db.InsertAsync(
-                "INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,status,availability_status,out_of_service,readiness_score,risk_score) VALUES (@c,@b,@code,'Truck','Available','available',false,95,5)",
+                "INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,vin_exception_type,alternate_identifier,status,availability_status,out_of_service,readiness_score,risk_score) VALUES (@c,@b,@code,'Truck','legacy-fleet-identifier',@code,'Available','available',false,95,5)",
                 c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchA); c.Parameters.AddWithValue("@code", $"RVEH-{companyId}"); });
             await db.ExecuteAsync(
                 "INSERT INTO hos_records(company_id,driver_id,shift_date,remaining_drive_hours,remaining_shift_hours,hos_status) VALUES (@c,@d,CURRENT_DATE,8,8,'On Duty')",
@@ -126,7 +126,7 @@ public sealed class RoutePlansPilotPostgresTests
                 "INSERT INTO drivers(company_id,branch_id,driver_code,full_name,status,safety_score,readiness_score,compliance_score) VALUES (@c,@b,@code,'Exhausted Driver','Available',95,95,95)",
                 c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchA); c.Parameters.AddWithValue("@code", $"RDRV-X-{companyId}"); });
             var spareVehicle = await db.InsertAsync(
-                "INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,status,availability_status,out_of_service,readiness_score,risk_score) VALUES (@c,@b,@code,'Truck','Available','available',false,95,5)",
+                "INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,vin_exception_type,alternate_identifier,status,availability_status,out_of_service,readiness_score,risk_score) VALUES (@c,@b,@code,'Truck','legacy-fleet-identifier',@code,'Available','available',false,95,5)",
                 c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchA); c.Parameters.AddWithValue("@code", $"RVEH-X-{companyId}"); });
             await db.ExecuteAsync(
                 "INSERT INTO hos_records(company_id,driver_id,shift_date,remaining_drive_hours,remaining_shift_hours,hos_status) VALUES (@c,@d,CURRENT_DATE,0.5,8,'On Duty')",
@@ -156,6 +156,19 @@ public sealed class RoutePlansPilotPostgresTests
             var activeRoute = Convert.ToInt64((await db.QuerySingleAsync(
                 "SELECT id FROM routes WHERE company_id=@c AND status='Active' AND assigned_driver_id=@d",
                 c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@d", driver); }))!["id"]);
+
+            var assignedEdit = await Invoke("UpdateRoute", httpA, activeRoute,
+                new Dictionary<string, object?> { ["routeName"] = "Assigned route edited", ["region"] = "East" },
+                db, audit, CancellationToken.None);
+            Assert.Equal(StatusCodes.Status200OK, Status(assignedEdit));
+            var assignedAfterEdit = await db.QuerySingleAsync(
+                "SELECT route_name,region,assigned_driver_id,assigned_vehicle_id FROM routes WHERE id=@id AND company_id=@c",
+                c => { c.Parameters.AddWithValue("@id", activeRoute); c.Parameters.AddWithValue("@c", companyId); });
+            Assert.NotNull(assignedAfterEdit);
+            Assert.Equal("Assigned route edited", assignedAfterEdit!["routeName"]?.ToString());
+            Assert.Equal("East", assignedAfterEdit["region"]?.ToString());
+            Assert.Equal(driver, Convert.ToInt64(assignedAfterEdit["assignedDriverId"]));
+            Assert.Equal(vehicle, Convert.ToInt64(assignedAfterEdit["assignedVehicleId"]));
 
             var contestedRouteA = await CreateRoute(db, audit, companyId, branchA, $"RACE-A-{companyId}");
             var contestedRouteB = await CreateRoute(db, audit, companyId, branchA, $"RACE-B-{companyId}");

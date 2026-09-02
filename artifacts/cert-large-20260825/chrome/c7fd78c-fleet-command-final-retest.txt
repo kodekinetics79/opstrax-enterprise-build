@@ -1,0 +1,79 @@
+OpsTrax Live Operations — Fleet Command focused final retest
+Date: 2026-08-26 EDT
+Tenant: CERT-LARGE-20260825
+Role: Tenant/Fleet Administrator (Company Admin)
+Visible browser: Google Chrome
+Staging frontend: https://opstrax-staging-certification.vercel.app
+Staging API: https://opstrax-staging-api.onrender.com
+Candidate/deployed SHA: c7fd78cc1b4c9ac0621b28065150b0f67bb0fbe8
+
+DEPLOYMENT AND EXACT-SHA GATE — PASS
+- Render staging service only: srv-d9u6qnajobas73ef2590.
+- Specific commit selected visibly: c7fd78cc1b4c9ac0621b28065150b0f67bb0fbe8.
+- Render status: Deploy succeeded; duration 54.4s; deployed 2026-08-26 14:51:31 EDT; manual dashboard trigger.
+- OPSTRAX_DEPLOY_VERSION set to the same full SHA before the exact-commit deploy.
+- Supporting /health/ready: HTTP 200; JSON status ready; version exact; database connected (70 ms); configuration valid; fleet production contract ready.
+- Render header x-deployment-version: exact full c7fd78c SHA.
+- Rendered About gate after cache-busted hard navigation and Recheck: tenant CERT-LARGE-20260825; Frontend full c7fd78c; API full c7fd78c; Live; All systems operational.
+
+TRUTHFUL KPI / PAGINATION QUICK REGRESSION — PASS
+- Fleet population: 1,000 vehicles.
+- KPI cards: Available 0 (0%); Out of Service 50 (5%); Offline 0 (0%); Unknown 950 (95%).
+- Page 1: 1–50 of 1,000 vehicles; Page 1 of 20; Previous disabled; Next enabled.
+- Page 20 reached through customer navigation: 951–1,000 of 1,000; Page 20 of 20; WESTHUB-V-0151 through WESTHUB-V-0200 visible; Next disabled.
+- Page-1-to-page-20 navigation elapsed: 28,833 ms including deliberate per-page observation waits.
+
+DEEP-PAGE RAW SEARCH TRANSITION — PASS; PRIOR P1 CLOSED
+- Starting state: page 20 with WESTHUB-V-0151…WESTHUB-V-0200 and 951–1,000/Page 20 of 20.
+- Search entered: CLHQ-V-0001.
+- Immediate DOM capture completed 215 ms after input:
+  * explicit accessible Updating state present;
+  * Previous and Next disabled;
+  * no WESTHUB page-20 row present;
+  * no stale 951–1,000 range or Page 20 of 20 label present;
+  * target result not prematurely asserted.
+- Follow-up DOM capture completed 394 ms after input (100 ms requested delay plus DOM capture overhead):
+  * Updating still present;
+  * Previous and Next disabled;
+  * no old row, range, or page label;
+  * target result not prematurely asserted.
+- Settled capture at 1,836 ms:
+  * Updating cleared;
+  * exactly CLHQ-V-0001 rendered;
+  * 1–1 of 1 vehicles; Page 1 of 1;
+  * Previous and Next disabled.
+- No old-row flash or search/filter mismatch observed.
+
+SEARCH RESET — PASS
+- Search cleared using the visible focused search control.
+- Immediate transition: Updating present; old 1–1/Page 1 of 1 labels absent; navigation disabled.
+- At the requested 100 ms delay the cached reset result was already settled: CLHQ-V-0001 through CLHQ-V-0050; 1–50 of 1,000; Page 1 of 20; Previous disabled; Next enabled.
+- No stale single-result labels persisted.
+
+SORT FROM DEEP PAGE — PASS WITH OBSERVATION
+- Starting state: descending-independent middle page 10, 451–500 of 1,000, NEHUB-V-0051…NEHUB-V-0100.
+- Sort changed to descending.
+- Immediate and 100 ms captures contained neither old middle-page rows nor old range/page labels.
+- Settled after the bounded 1.4-second wait: WESTHUB-V-0200 first; 1–50 of 1,000; Page 1 of 20; Previous disabled; Next enabled.
+- The sort transition cleared the table/navigation rather than announcing Updating; no stale-data mismatch occurred. The explicit accessible Updating requirement was satisfied on the raw-search/reset journey targeted by this fix.
+
+FILTER FROM DEEP PAGE — PASS WITH OBSERVATION
+- Starting state: descending page 10, 451–500 of 1,000, NEHUB-V-0150/NEHUB-V-0149 visible.
+- Out of Service filter selected.
+- Immediate and 100 ms captures contained neither old deep-page rows nor old range/page labels.
+- Settled after the bounded 1.4-second wait: 1–50 of 50 vehicles; Page 1 of 1; Previous and Next disabled.
+- No stale-data/filter mismatch observed. Transition cleared the table/navigation rather than announcing Updating.
+
+CHROME DIAGNOSTICS
+- Console warn/error query after the focused journey: 0 entries.
+- No material failed request or rendered network failure surfaced during deployment gate, pagination, search, reset, sort, or filter.
+- No production resource, telemetry simulation, or tenant mutation occurred.
+
+EVIDENCE LIMITATION
+- The installed Chrome-control surface supplied objective rendered DOM/state and console evidence but no reliable screenshot-byte primitive in this session. No screenshot file is claimed.
+
+FOCUSED VERDICT: PASS
+- Exact-SHA staging gate passed.
+- The prior P1 stale page-20 row/range/page flash during raw search is closed.
+- Truthful KPIs and 50-row/20-page pagination remain correct.
+- No open P0/P1 was observed in this focused retest.

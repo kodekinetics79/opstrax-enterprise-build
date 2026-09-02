@@ -30,6 +30,9 @@ export const jobsApi = {
     return `/api/jobs/export${query ? `?${query}` : ""}`;
   },
   summary: () => unwrap<AnyRecord>(apiClient.get("/api/jobs/summary")),
+  customerOptions: (search = "") => unwrap<AnyRecord[]>(apiClient.get("/api/jobs/customer-options", {
+    params: { search: search.trim(), limit: 200 },
+  })),
   detail: (id: string | number) =>
     unwrap<AnyRecord>(apiClient.get(`/api/jobs/${id}`)).then((detail) => ({
       ...detail,

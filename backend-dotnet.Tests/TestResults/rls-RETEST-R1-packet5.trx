@@ -1,0 +1,82 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="f486ea1c-a9ef-4c93-9b6f-d40af40c14e9" name="@Mac 2026-08-22 15:38:32" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-08-22T15:38:32.0816340-04:00" queuing="2026-08-22T15:38:32.0816340-04:00" start="2026-08-22T15:38:28.4801540-04:00" finish="2026-08-22T15:38:46.1056200-04:00" />
+  <TestSettings name="default" id="d2cdf4c4-4a1d-415e-b455-6b29f4e1c4d5">
+    <Deployment runDeploymentRoot="_Mac_2026-08-22_15_38_32" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="f67942c0-49d2-42ec-bfcc-9495a76cb458" testId="cc1e75e7-ef7c-445a-e7a7-daa769cd4742" testName="Opstrax.Tests.RlsTenantIsolationPostgresTests.FleetReadiness_EnforcesExpectedWorkerRoster_AfterStartupGrace_AndRecovers" computerName="Mac" duration="00:00:01.8550687" startTime="2026-08-22T15:38:35.3209310-04:00" endTime="2026-08-22T15:38:37.1761700-04:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="f67942c0-49d2-42ec-bfcc-9495a76cb458" />
+    <UnitTestResult executionId="3e6f0e71-c150-4317-acdb-dc08deaa55b6" testId="65e14aee-678e-6b9e-3047-09e9b838ed57" testName="Opstrax.Tests.RlsTenantIsolationPostgresTests.SignedScopes_IsolateTwoTenants_UnderConcurrentPoolReuse" computerName="Mac" duration="00:00:01.0375613" startTime="2026-08-22T15:38:34.2829300-04:00" endTime="2026-08-22T15:38:35.3207190-04:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="3e6f0e71-c150-4317-acdb-dc08deaa55b6" />
+    <UnitTestResult executionId="ffaed26c-a093-49bc-bb53-e4d15748496c" testId="cf64ac6c-7641-4496-f63e-780f5027243b" testName="Opstrax.Tests.RlsTenantIsolationPostgresTests.ForgedLegacyTamperedReplayedAndExpiredTickets_AllFailClosed" computerName="Mac" duration="00:00:06.9279059" startTime="2026-08-22T15:38:38.1762290-04:00" endTime="2026-08-22T15:38:45.1042790-04:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="ffaed26c-a093-49bc-bb53-e4d15748496c" />
+    <UnitTestResult executionId="571ceb6f-e1e8-47df-bf11-dd243ee1245e" testId="c737a52d-ce77-5617-b604-9b0e98a2e927" testName="Opstrax.Tests.RlsTenantIsolationPostgresTests.FleetReadiness_AcceptsTerminalStage58And59Contract" computerName="Mac" duration="00:00:01.2327170" startTime="2026-08-22T15:38:33.0497050-04:00" endTime="2026-08-22T15:38:34.2826750-04:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="571ceb6f-e1e8-47df-bf11-dd243ee1245e" />
+    <UnitTestResult executionId="a1d63100-e382-4366-a9bc-baf73792f495" testId="e667fde9-62c7-8ee1-9568-891c03314c29" testName="Opstrax.Tests.RlsTenantIsolationPostgresTests.SystemTransaction_RestoresTenantScope_AndRollsBackAtomically" computerName="Mac" duration="00:00:01.2644347" startTime="2026-08-22T15:38:29.8066530-04:00" endTime="2026-08-22T15:38:31.0771590-04:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="a1d63100-e382-4366-a9bc-baf73792f495" />
+    <UnitTestResult executionId="001b83bc-871e-4422-83fe-85c83d9af5c6" testId="f9af2344-60c0-9e02-ff8c-5e57f202f83e" testName="Opstrax.Tests.RlsTenantIsolationPostgresTests.FleetReadiness_RejectsPermissiveGenericPolicyDrift_AndRlsFailsClosed" computerName="Mac" duration="00:00:00.9992529" startTime="2026-08-22T15:38:37.1764570-04:00" endTime="2026-08-22T15:38:38.1759890-04:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="001b83bc-871e-4422-83fe-85c83d9af5c6" />
+    <UnitTestResult executionId="4875e208-1193-45e1-b083-f202e0b38605" testId="3de45056-6ded-5024-b005-f838a8e17d14" testName="Opstrax.Tests.RlsTenantIsolationPostgresTests.FleetReadiness_RejectsPermissiveSpecialPolicyDrift" computerName="Mac" duration="00:00:01.2576609" startTime="2026-08-22T15:38:31.7872360-04:00" endTime="2026-08-22T15:38:33.0494610-04:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="4875e208-1193-45e1-b083-f202e0b38605" />
+    <UnitTestResult executionId="a651e502-a60e-44f9-a130-e60ae89495e5" testId="79bc8e90-b44c-8467-db7d-510236caf724" testName="Opstrax.Tests.RlsTenantIsolationPostgresTests.EveryTenantTable_HasExactStage58Policies_AndNoPublicPolicy" computerName="Mac" duration="00:00:00.7034411" startTime="2026-08-22T15:38:31.0829190-04:00" endTime="2026-08-22T15:38:31.7866620-04:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="a651e502-a60e-44f9-a130-e60ae89495e5" />
+    <UnitTestResult executionId="5697f296-443c-4d72-ac71-3231e5f87a1d" testId="eacc9c6c-d18f-ca46-4995-460e526fa8dd" testName="Opstrax.Tests.RlsTenantIsolationPostgresTests.FleetReadiness_RejectsMissingSpecialTablePrivilege" computerName="Mac" duration="00:00:00.9676401" startTime="2026-08-22T15:38:45.1047190-04:00" endTime="2026-08-22T15:38:46.0725950-04:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="5697f296-443c-4d72-ac71-3231e5f87a1d" />
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="Opstrax.Tests.RlsTenantIsolationPostgresTests.FleetReadiness_RejectsPermissiveSpecialPolicyDrift" storage="/users/zackkhan/downloads/opstrax-enterprise-build-fixed-nginx/backend-dotnet.tests/bin/debug/net8.0/opstrax.tests.dll" id="3de45056-6ded-5024-b005-f838a8e17d14">
+      <Execution id="4875e208-1193-45e1-b083-f202e0b38605" />
+      <TestMethod codeBase="/Users/zackkhan/Downloads/opstrax-enterprise-build-fixed-nginx/backend-dotnet.Tests/bin/Debug/net8.0/Opstrax.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Opstrax.Tests.RlsTenantIsolationPostgresTests" name="FleetReadiness_RejectsPermissiveSpecialPolicyDrift" />
+    </UnitTest>
+    <UnitTest name="Opstrax.Tests.RlsTenantIsolationPostgresTests.FleetReadiness_AcceptsTerminalStage58And59Contract" storage="/users/zackkhan/downloads/opstrax-enterprise-build-fixed-nginx/backend-dotnet.tests/bin/debug/net8.0/opstrax.tests.dll" id="c737a52d-ce77-5617-b604-9b0e98a2e927">
+      <Execution id="571ceb6f-e1e8-47df-bf11-dd243ee1245e" />
+      <TestMethod codeBase="/Users/zackkhan/Downloads/opstrax-enterprise-build-fixed-nginx/backend-dotnet.Tests/bin/Debug/net8.0/Opstrax.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Opstrax.Tests.RlsTenantIsolationPostgresTests" name="FleetReadiness_AcceptsTerminalStage58And59Contract" />
+    </UnitTest>
+    <UnitTest name="Opstrax.Tests.RlsTenantIsolationPostgresTests.FleetReadiness_EnforcesExpectedWorkerRoster_AfterStartupGrace_AndRecovers" storage="/users/zackkhan/downloads/opstrax-enterprise-build-fixed-nginx/backend-dotnet.tests/bin/debug/net8.0/opstrax.tests.dll" id="cc1e75e7-ef7c-445a-e7a7-daa769cd4742">
+      <Execution id="f67942c0-49d2-42ec-bfcc-9495a76cb458" />
+      <TestMethod codeBase="/Users/zackkhan/Downloads/opstrax-enterprise-build-fixed-nginx/backend-dotnet.Tests/bin/Debug/net8.0/Opstrax.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Opstrax.Tests.RlsTenantIsolationPostgresTests" name="FleetReadiness_EnforcesExpectedWorkerRoster_AfterStartupGrace_AndRecovers" />
+    </UnitTest>
+    <UnitTest name="Opstrax.Tests.RlsTenantIsolationPostgresTests.SystemTransaction_RestoresTenantScope_AndRollsBackAtomically" storage="/users/zackkhan/downloads/opstrax-enterprise-build-fixed-nginx/backend-dotnet.tests/bin/debug/net8.0/opstrax.tests.dll" id="e667fde9-62c7-8ee1-9568-891c03314c29">
+      <Execution id="a1d63100-e382-4366-a9bc-baf73792f495" />
+      <TestMethod codeBase="/Users/zackkhan/Downloads/opstrax-enterprise-build-fixed-nginx/backend-dotnet.Tests/bin/Debug/net8.0/Opstrax.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Opstrax.Tests.RlsTenantIsolationPostgresTests" name="SystemTransaction_RestoresTenantScope_AndRollsBackAtomically" />
+    </UnitTest>
+    <UnitTest name="Opstrax.Tests.RlsTenantIsolationPostgresTests.EveryTenantTable_HasExactStage58Policies_AndNoPublicPolicy" storage="/users/zackkhan/downloads/opstrax-enterprise-build-fixed-nginx/backend-dotnet.tests/bin/debug/net8.0/opstrax.tests.dll" id="79bc8e90-b44c-8467-db7d-510236caf724">
+      <Execution id="a651e502-a60e-44f9-a130-e60ae89495e5" />
+      <TestMethod codeBase="/Users/zackkhan/Downloads/opstrax-enterprise-build-fixed-nginx/backend-dotnet.Tests/bin/Debug/net8.0/Opstrax.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Opstrax.Tests.RlsTenantIsolationPostgresTests" name="EveryTenantTable_HasExactStage58Policies_AndNoPublicPolicy" />
+    </UnitTest>
+    <UnitTest name="Opstrax.Tests.RlsTenantIsolationPostgresTests.FleetReadiness_RejectsPermissiveGenericPolicyDrift_AndRlsFailsClosed" storage="/users/zackkhan/downloads/opstrax-enterprise-build-fixed-nginx/backend-dotnet.tests/bin/debug/net8.0/opstrax.tests.dll" id="f9af2344-60c0-9e02-ff8c-5e57f202f83e">
+      <Execution id="001b83bc-871e-4422-83fe-85c83d9af5c6" />
+      <TestMethod codeBase="/Users/zackkhan/Downloads/opstrax-enterprise-build-fixed-nginx/backend-dotnet.Tests/bin/Debug/net8.0/Opstrax.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Opstrax.Tests.RlsTenantIsolationPostgresTests" name="FleetReadiness_RejectsPermissiveGenericPolicyDrift_AndRlsFailsClosed" />
+    </UnitTest>
+    <UnitTest name="Opstrax.Tests.RlsTenantIsolationPostgresTests.FleetReadiness_RejectsMissingSpecialTablePrivilege" storage="/users/zackkhan/downloads/opstrax-enterprise-build-fixed-nginx/backend-dotnet.tests/bin/debug/net8.0/opstrax.tests.dll" id="eacc9c6c-d18f-ca46-4995-460e526fa8dd">
+      <Execution id="5697f296-443c-4d72-ac71-3231e5f87a1d" />
+      <TestMethod codeBase="/Users/zackkhan/Downloads/opstrax-enterprise-build-fixed-nginx/backend-dotnet.Tests/bin/Debug/net8.0/Opstrax.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Opstrax.Tests.RlsTenantIsolationPostgresTests" name="FleetReadiness_RejectsMissingSpecialTablePrivilege" />
+    </UnitTest>
+    <UnitTest name="Opstrax.Tests.RlsTenantIsolationPostgresTests.ForgedLegacyTamperedReplayedAndExpiredTickets_AllFailClosed" storage="/users/zackkhan/downloads/opstrax-enterprise-build-fixed-nginx/backend-dotnet.tests/bin/debug/net8.0/opstrax.tests.dll" id="cf64ac6c-7641-4496-f63e-780f5027243b">
+      <Execution id="ffaed26c-a093-49bc-bb53-e4d15748496c" />
+      <TestMethod codeBase="/Users/zackkhan/Downloads/opstrax-enterprise-build-fixed-nginx/backend-dotnet.Tests/bin/Debug/net8.0/Opstrax.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Opstrax.Tests.RlsTenantIsolationPostgresTests" name="ForgedLegacyTamperedReplayedAndExpiredTickets_AllFailClosed" />
+    </UnitTest>
+    <UnitTest name="Opstrax.Tests.RlsTenantIsolationPostgresTests.SignedScopes_IsolateTwoTenants_UnderConcurrentPoolReuse" storage="/users/zackkhan/downloads/opstrax-enterprise-build-fixed-nginx/backend-dotnet.tests/bin/debug/net8.0/opstrax.tests.dll" id="65e14aee-678e-6b9e-3047-09e9b838ed57">
+      <Execution id="3e6f0e71-c150-4317-acdb-dc08deaa55b6" />
+      <TestMethod codeBase="/Users/zackkhan/Downloads/opstrax-enterprise-build-fixed-nginx/backend-dotnet.Tests/bin/Debug/net8.0/Opstrax.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Opstrax.Tests.RlsTenantIsolationPostgresTests" name="SignedScopes_IsolateTwoTenants_UnderConcurrentPoolReuse" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="cc1e75e7-ef7c-445a-e7a7-daa769cd4742" executionId="f67942c0-49d2-42ec-bfcc-9495a76cb458" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="65e14aee-678e-6b9e-3047-09e9b838ed57" executionId="3e6f0e71-c150-4317-acdb-dc08deaa55b6" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="cf64ac6c-7641-4496-f63e-780f5027243b" executionId="ffaed26c-a093-49bc-bb53-e4d15748496c" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="c737a52d-ce77-5617-b604-9b0e98a2e927" executionId="571ceb6f-e1e8-47df-bf11-dd243ee1245e" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="e667fde9-62c7-8ee1-9568-891c03314c29" executionId="a1d63100-e382-4366-a9bc-baf73792f495" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="f9af2344-60c0-9e02-ff8c-5e57f202f83e" executionId="001b83bc-871e-4422-83fe-85c83d9af5c6" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="3de45056-6ded-5024-b005-f838a8e17d14" executionId="4875e208-1193-45e1-b083-f202e0b38605" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="79bc8e90-b44c-8467-db7d-510236caf724" executionId="a651e502-a60e-44f9-a130-e60ae89495e5" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="eacc9c6c-d18f-ca46-4995-460e526fa8dd" executionId="5697f296-443c-4d72-ac71-3231e5f87a1d" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Completed">
+    <Counters total="9" executed="9" passed="9" failed="0" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 8.0.27)
+[xUnit.net 00:00:00.35]   Discovering: Opstrax.Tests
+[xUnit.net 00:00:00.66]   Discovered:  Opstrax.Tests
+[xUnit.net 00:00:00.67]   Starting:    Opstrax.Tests
+[xUnit.net 00:00:16.95]   Finished:    Opstrax.Tests
+</StdOut>
+    </Output>
+  </ResultSummary>
+</TestRun>

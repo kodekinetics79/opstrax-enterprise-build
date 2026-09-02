@@ -69,7 +69,9 @@ public sealed class EnterpriseJourneyHardeningTests
 
         Assert.Contains("Delivery cannot be closed until", page);
         Assert.Contains("does not queue proof offline", page);
-        Assert.Contains("proofType == \"delivery\" && string.IsNullOrWhiteSpace(evidenceHash)", endpoint);
+        Assert.Contains("proofType == \"delivery\" && requestedReferences.Length == 0", endpoint);
+        Assert.Contains("FROM dispatch_proof_uploads", endpoint);
+        Assert.Contains("AND consumed_at IS NULL AND reference=ANY(@refs)", endpoint);
         Assert.Contains("JOIN dispatch_proofs p ON p.id=pa.proof_id AND p.company_id=pa.company_id", endpoint);
         Assert.Contains("JOIN dispatch_assignments da ON da.id=p.assignment_id AND da.company_id=p.company_id", endpoint);
         Assert.Contains("new { assignment, exceptions, proofs, proofArtifacts, auditTrail }", endpoint);
@@ -100,7 +102,19 @@ public sealed class EnterpriseJourneyHardeningTests
         Assert.Contains("Retry telemetry snapshot", map);
         Assert.Contains("if (!hasFreshnessAge) return \"Unknown\"", map);
         Assert.Contains("live|fresh|online|healthy|delayed", map);
-        Assert.Contains("kpis.onlineDevices ?? \"--\"", map);
+        // API-backed KPI tiles must render "--" when evidence is missing, while position
+        // coverage must be calculated from authoritative fix-freshness buckets rather
+        // than receipt connectivity or defaults.
+        Assert.Contains("kpis.registeredDevices ?? \"--\"", map);
+        Assert.Contains("String(positionFreshness.located)", map);
+        Assert.Contains("kpis.openAlerts ?? \"--\"", map);
+        Assert.Contains("recentFixCoverage == null ? \"--\"", map);
+        Assert.Contains("positionFreshness.recent / positionFreshness.located", map);
+        Assert.DoesNotContain("kpis.connectedUnits", map);
+        Assert.DoesNotContain("kpis.liveCoverage", map);
+        // The camera tile is deliberately absent: vehicles.camera_status defaults to
+        // 'Online' and is never recomputed, so any camera figure would be invented.
+        Assert.DoesNotContain("kpis.onlineCameras", map);
         Assert.Contains("s === \"healthy\"", monitor);
         Assert.Contains("Unknown telemetry", monitor);
         Assert.Contains("Alert state unknown", wall);
@@ -183,6 +197,21 @@ public sealed class EnterpriseJourneyHardeningTests
         Assert.Contains("exportCsv(\"service-history\", await serviceHistoryApi())", page);
         Assert.Contains("exportCsv(\"downtime\", await downtimeApi())", page);
         Assert.Contains("exportCsv(\"preventive-maintenance\", await pmApi())", page);
+        Assert.Contains("const canExport = hasPermission(\"reports:export\")", page);
+        Assert.Contains("if (!canExport) return", page);
+        Assert.Contains("{canExport && <button", page);
+
+        var command = Read("frontend", "src", "pages", "MaintenanceCommandPage.tsx");
+        Assert.Contains("const canExport = hasPermission(\"reports:export\")", command);
+        Assert.Contains("{canExport && <button", command);
+        Assert.Contains("exportCsv(\"maintenance-defects\"", command);
+
+        var endpoints = Read("backend-dotnet", "Controllers", "EndpointMappings.cs");
+        var recommendations = Block(endpoints,
+            "app.MapGet(\"/api/maintenance/recommendations\"",
+            "app.MapGet(\"/api/maintenance\", MaintenanceItems)");
+        Assert.Contains("RequirePermission(http, \"maintenance:view\")", recommendations);
+        Assert.DoesNotContain("telemetry.recommendations.read", recommendations);
     }
 
     private static string Block(string source, string startMarker, string endMarker)

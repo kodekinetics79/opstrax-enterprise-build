@@ -11,4 +11,10 @@
     <ProjectReference Include="..\Opstrax.Telematics.Contracts\Opstrax.Telematics.Contracts.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Lets the protocol tests assert the 0x8A time body against a frozen clock without
+         widening the public surface of the adapter. -->
+    <InternalsVisibleTo Include="Opstrax.Telematics.Protocols.Tests" />
+  </ItemGroup>
+
 </Project>

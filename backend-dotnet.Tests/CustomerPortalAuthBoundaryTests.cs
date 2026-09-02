@@ -65,8 +65,11 @@ public class CustomerPortalAuthBoundaryTests
         {
             var result = EndpointMappings.RequirePermission(http, perm);
             Assert.NotNull(result); // rejected outright (403) — NOT a scoped-empty response
-            // The rejection happens before any authorization decision / data query is reached.
-            Assert.False(http.Items.ContainsKey("opstrax.authorization.decision"));
+            // The fail-closed denial is recorded for audit before any data query is reached.
+            var decision = Assert.IsType<Opstrax.Api.Foundation.AuthorizationDecisionResult>(
+                http.Items["opstrax.authorization.decision"]);
+            Assert.False(decision.IsAllowed);
+            Assert.Contains("Customer-portal", decision.Reason, StringComparison.OrdinalIgnoreCase);
         }
         Assert.NotNull(EndpointMappings.RequireInternalUser(http));
         Assert.True(EndpointMappings.IsCustomerPortalPrincipal(http));

@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { KeyboardAvoidingView, Platform, Text, View } from "react-native";
-import { ActionButton, colors, Input, Panel, Screen, SectionHeader, Field, EmptyState } from "@/components/ui";
-import { API_BASE_URL, APP_NAME, STAGE_LABEL } from "@/config";
+import { LinearGradient } from "expo-linear-gradient";
+import { ActionButton, colors, Input, Panel, Screen, SectionHeader, ErrorState, Pill } from "@/components/ui";
+import { APP_NAME } from "@/config";
 import { useSession } from "@/auth/SessionProvider";
 
 export function LoginScreen() {
-  const { login, verifyMfa, cancelMfa, mfaChallenge, authError, roleModel } = useSession();
+  const { login, verifyMfa, cancelMfa, mfaChallenge, authError } = useSession();
+  const [companyCode, setCompanyCode] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [mfaCode, setMfaCode] = useState("");
@@ -16,9 +18,10 @@ export function LoginScreen() {
     setBusy(true);
     setError(null);
     try {
-      await login(email, password);
+      await login(email, password, companyCode);
+      setPassword("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Login failed.");
+      setError(err instanceof Error ? err.message : "Sign in failed.");
     } finally {
       setBusy(false);
     }
@@ -30,7 +33,7 @@ export function LoginScreen() {
     try {
       await verifyMfa(mfaCode);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "MFA verification failed.");
+      setError(err instanceof Error ? err.message : "Verification failed.");
     } finally {
       setBusy(false);
     }
@@ -39,47 +42,61 @@ export function LoginScreen() {
   return (
     <Screen>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ gap: 16 }}>
-        <Panel>
-          <SectionHeader
-            eyebrow="Secure entry"
-            title={APP_NAME}
-            description="This is the first mobile shell for OpsTrax. It uses the same backend login and tenant-scoped authorization model as web."
-          />
-          <View style={{ gap: 10 }}>
-            <Field label="Stage" value={STAGE_LABEL} />
-            <Field label="Backend API" value={API_BASE_URL} />
-            <Field label="Role model" value={roleModel.title} />
-          </View>
-        </Panel>
+        <LinearGradient colors={["rgba(39,211,194,0.22)", "rgba(112,183,255,0.08)"]} style={{ borderRadius: 28 }}>
+          <Panel style={{ backgroundColor: "transparent" }}>
+            <View style={{ gap: 12 }}>
+              <Pill label="Secure operations" tone="teal" />
+              <Text style={{ color: colors.text, fontSize: 34, lineHeight: 38, fontWeight: "900", letterSpacing: -1.4 }}>
+                Work moves.{"\n"}You stay ahead.
+              </Text>
+              <Text style={{ color: colors.muted, fontSize: 15, lineHeight: 22 }}>
+                {APP_NAME} connects drivers and operations to the same tenant-secured system of record.
+              </Text>
+            </View>
+          </Panel>
+        </LinearGradient>
 
         <Panel>
           <SectionHeader
-            eyebrow="Authentication"
-            title="Sign in with your OpsTrax account"
-            description="No visible role picker, no mobile-only auth shortcut, and no hardcoded tenant identifiers."
+            eyebrow={mfaChallenge ? "Second factor" : "Workspace sign in"}
+            title={mfaChallenge ? "Verify it’s you" : "Welcome back"}
+            description={mfaChallenge
+              ? `Enter the authenticator code for ${mfaChallenge.email}.`
+              : "Your organization code selects the correct tenant before credentials are verified."}
           />
           <View style={{ gap: 14 }}>
             {mfaChallenge ? (
               <>
-                <Text style={{ color: colors.text }}>Enter the 6-digit authenticator code for {mfaChallenge.email}.</Text>
                 <Input label="Authenticator code" value={mfaCode} onChangeText={setMfaCode} placeholder="123456" keyboardType="numeric" autoComplete="one-time-code" textContentType="oneTimeCode" />
-                <ActionButton label={busy ? "Verifying..." : "Verify code"} onPress={submitMfa} disabled={busy || !/^\d{6}$/.test(mfaCode)} />
-                <ActionButton label="Restart sign-in" onPress={() => { cancelMfa(); setMfaCode(""); }} disabled={busy} variant="secondary" />
+                <ActionButton label={busy ? "Verifying…" : "Verify code"} onPress={submitMfa} disabled={busy || !/^\d{6}$/.test(mfaCode)} />
+                <ActionButton label="Use a different account" onPress={() => { cancelMfa(); setMfaCode(""); }} disabled={busy} variant="ghost" />
               </>
             ) : (
               <>
-                <Input label="Email" value={email} onChangeText={setEmail} placeholder="name@company.com" keyboardType="email-address" autoComplete="email" textContentType="emailAddress" />
+                <Input
+                  label="Organization code"
+                  value={companyCode}
+                  onChangeText={(value) => setCompanyCode(value.trimStart().toUpperCase())}
+                  placeholder="ACME-LOGISTICS"
+                  autoCapitalize="characters"
+                  autoComplete="off"
+                  textContentType="none"
+                />
+                <Input label="Work email" value={email} onChangeText={setEmail} placeholder="name@company.com" keyboardType="email-address" autoComplete="email" textContentType="emailAddress" />
                 <Input label="Password" value={password} onChangeText={setPassword} placeholder="Enter password" secureTextEntry autoComplete="password" textContentType="password" />
-                <ActionButton label={busy ? "Signing in..." : "Sign in"} onPress={submit} disabled={busy || !email || !password} />
+                <ActionButton
+                  label={busy ? "Signing in…" : "Sign in securely"}
+                  onPress={submit}
+                  disabled={busy || !companyCode.trim() || !email.trim() || !password}
+                />
               </>
             )}
-            <Text style={{ color: colors.muted, fontSize: 12, lineHeight: 18 }}>
-              The backend determines tenant, role, and permissions from the authenticated session. The mobile client only renders what the session allows.
+            <Text style={{ color: colors.subtle, fontSize: 12, lineHeight: 18 }}>
+              Tenant, branch, role, and permissions are bound by the server session. OpsTrax never lets the app choose an authenticated tenant after sign in.
             </Text>
           </View>
         </Panel>
-
-        {error ? <EmptyState title="Login error" body={error} /> : null}
+        {error ? <ErrorState title="Unable to sign in" body={error} /> : null}
       </KeyboardAvoidingView>
     </Screen>
   );

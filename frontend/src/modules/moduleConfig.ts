@@ -55,8 +55,8 @@ export const GCC_COUNTRIES = ["SA", "AE", "QA", "KW", "BH", "OM"];
 export const modules: ModuleConfig[] = [
   { key: "command-center",    title: "Dashboard",            route: "/command-center",    group: "Operations", description: "Live operating status — fleet readiness, dispatch exceptions, safety risk and cost leakage in one dashboard.", accent: "teal",   requiredPermission: "dashboard.view" },
   { key: "fleet-health",     title: "Fleet Health",         route: "/fleet-health",      group: "Operations", description: "Priority-ranked vehicles and drivers by risk — OOS status, critical defects, safety score and action queue.", accent: "red",    requiredPermission: "dashboard:view" },
-  { key: "live-dashboard",   title: "Fleet Overview",       route: "/live-dashboard",    group: "Operations", description: "Live vehicle positions, operational status, HOS posture and fleet health at a glance.", accent: "blue",   requiredPermission: "dashboard.view" },
-  { key: "map-view",         title: "Live Map",             route: "/map-view",          group: "Operations", description: "Real-time fleet positions, shipment routes, geofences and driver locations.", accent: "blue",   requiredPermission: "telemetry.live_state.read", requiredEntitlement: "telematics" },
+  { key: "live-dashboard",   title: "Fleet Overview",       route: "/live-dashboard",    group: "Operations", description: "Reported vehicle position status, HOS posture and fleet health at a glance.", accent: "blue",   requiredPermission: "dashboard.view" },
+  { key: "map-view",         title: "Fleet Position Map",   route: "/map-view",          group: "Operations", description: "Last-known fleet positions with fix freshness, provenance, shipment routes and geofences.", accent: "blue",   requiredPermission: "telemetry.live_state.read", requiredEntitlement: "telematics" },
   { key: "fleet-live-wall",  title: "Fleet Live Wall",      route: "/fleet/live-wall",   group: "Operations", description: "Every vehicle's live telemetry as a wall of panels; open any vehicle on its own screen/monitor.", accent: "blue",   requiredPermission: "telemetry.live_state.read", requiredEntitlement: "telematics" },
   { key: "alerts",           title: "Alerts",               route: "/alerts",            group: "Operations", description: "Critical operating alerts across telematics, maintenance, customer SLA and safety.", accent: "red",    requiredPermission: "alerts:view", permissionMatch: "direct" },
   { key: "active-shipments", title: "Active Shipments",     route: "/active-shipments",  group: "Operations", description: "Live shipment board with SLA, ETA, POD and invoice readiness.", accent: "teal",   requiredPermission: "shipments:view", permissionMatch: "direct" },
@@ -97,11 +97,12 @@ export const modules: ModuleConfig[] = [
   { key: "fleet-workspace", title: "Fleet TMS Workspace", route: "/fleet-workspace", group: "Fleet", description: "Shipment lifecycle, POD verification, public tracking links, vehicles, tracking, maintenance and fuel in one operations cockpit.", accent: "teal", requiredPermission: "fleet:view" },
   { key: "fleet-cold-chain", title: "Cold Chain Monitor", route: "/fleet-cold-chain", group: "Fleet", description: "Temperature zones, sensor devices, live readings, breach alerts and per-shipment cold-chain compliance reports.", accent: "blue", requiredPermission: "fleet:view" },
   { key: "fleet-assets", title: "Returnable Assets", route: "/fleet-assets", group: "Fleet", description: "Pallets, roll cages and crates with check-in/out, assignments, barcode/RFID scans and asset event history.", accent: "green", requiredPermission: "fleet:view" },
+  { key: "branches", title: "Branches", route: "/branches", group: "Fleet", description: "Branch, depot and yard ownership scopes for fleet records and role accounts.", accent: "teal", requiredPermission: "dashboard:view" },
   { key: "fleet-saudi-readiness", title: "Saudi Readiness", route: "/fleet-saudi-readiness", group: "Fleet", description: "Saudi/GCC region reference, ZATCA VAT invoice-readiness and compliance document expiry tracking. Visible only to entitled Saudi/GCC tenants.", accent: "amber", requiredPermission: "compliance:view", requiredCountries: GCC_COUNTRIES },
   { key: "fleet-compliance", title: "Fleet Compliance", route: "/fleet-compliance", group: "Fleet", description: "Market-pack readiness — Canada/NA driver qualification, DVIR, IFTA & HOS/ELD foundation; Saudi/GCC transport documents, VAT & Hijri expiry.", accent: "blue", requiredPermission: "compliance:view", requiredEntitlement: "compliance" },
   { key: "vehicles",    title: "Vehicles",    route: "/vehicles",    group: "Fleet", description: "Fleet registry, age, readiness, documents, device visibility and lifecycle planning.", accent: "blue",   requiredPermission: "vehicles:view" },
   { key: "drivers",     title: "Drivers",     route: "/drivers",     group: "Fleet", description: "Driver availability, HOS, safety, documents, assignment and coaching state.", accent: "green",  requiredPermission: "drivers:view" },
-  { key: "owners",      title: "Owners",      route: "/owners",      group: "Fleet", description: "Owner-operator and asset ownership management.", accent: "teal",   requiredPermission: "fleet.view" },
+  { key: "owners",      title: "Owners",      route: "/owners",      group: "Fleet", description: "Owner-operator and asset ownership management.", accent: "teal",   requiredPermission: "dispatch:view" },
   { key: "assignments", title: "Assignments", route: "/assignments", group: "Fleet", description: "Driver, vehicle, device and asset assignment history.", accent: "purple", requiredPermission: "dispatch:view" },
   { key: "documents",   title: "Documents",   route: "/documents",   group: "Fleet", description: "Vehicle, driver, contract, POD, invoice and compliance document vault.", accent: "blue",   requiredPermission: "fleet.view" },
 
@@ -120,7 +121,14 @@ export const modules: ModuleConfig[] = [
   { key: "dvir-inspections",  title: "DVIR",               route: "/dvir-inspections",  group: "Safety & Compliance", description: "Driver vehicle inspection reports, defects, signatures and mechanic review.", accent: "teal",   requiredPermission: "maintenance.view", requiredEntitlement: "maintenance" },
   { key: "hos-eld",           title: "HOS / ELD",          route: "/hos-eld",           group: "Safety & Compliance", description: "Hours of service, ELD sync, violation risk and driver duty status.", accent: "amber",  requiredPermission: "compliance.view", requiredEntitlement: "compliance" },
   { key: "traffic-violations",title: "Traffic Violations", route: "/traffic-violations",group: "Safety & Compliance", description: "Speeding, phone use, seatbelt, red-light and route violation watch.", accent: "red",    requiredPermission: "safety.view", requiredEntitlement: "safety" },
-  { key: "evidence-packages", title: "Evidence Packages",  route: "/evidence-packages", group: "Safety & Compliance", description: "Video, GPS, speed, DVIR, documents and chain-of-custody bundles.", accent: "blue",   requiredPermission: "safety.view", requiredEntitlement: "safety" },
+  // ROUND-2 FIX — the nav gate must EQUAL the route gate. /evidence-graphs guards
+  // safety:evidence:view, but this entry asked only for safety.view, and the alias closure
+  // is not transitive through the route's token: a session can satisfy safety.view (e.g.
+  // via fuel:view's group carrying fleet:view, which merges into the safety group) and
+  // still fail safety:evidence:view. That is 11 role × nav dead ends across the real role
+  // catalogue — the seeded Finance & Billing Manager and Customer Service among them saw
+  // "Evidence Packages" in the sidebar and got PermissionDenied on click.
+  { key: "evidence-packages", title: "Evidence Packages",  route: "/evidence-packages", group: "Safety & Compliance", description: "Video, GPS, speed, DVIR, documents and chain-of-custody bundles.", accent: "blue",   requiredPermission: "safety:evidence:view", requiredEntitlement: "safety" },
 
   { key: "work-orders",            title: "Work Orders",           route: "/work-orders",            group: "Maintenance", description: "Repair execution, priority, vendor, labor, parts and cost approval.", accent: "amber",  requiredPermission: "maintenance.view", requiredEntitlement: "maintenance" },
   { key: "maintenance-center",     title: "Maintenance Center",    route: "/maintenance",            group: "Maintenance", description: "Maintenance command, defects, work orders and fleet readiness.", accent: "amber", requiredPermission: "maintenance.view", requiredEntitlement: "maintenance" },
@@ -139,20 +147,29 @@ export const modules: ModuleConfig[] = [
   { key: "driver-pay",   title: "Driver Pay",        route: "/finance/settlements", group: "Financials", description: "Generate, approve and pay driver settlement statements.", accent: "green",  requiredPermission: "settlement.read" },
   { key: "revenue-recognition", title: "Revenue Recognition", route: "/finance/revenue-recognition", group: "Financials", description: "Recognized revenue and accounting period close.", accent: "purple", requiredPermission: "revrec.read" },
 
-  { key: "user-management", title: "Users & Roles",  route: "/user-management", group: "Governance", description: "Users, tenants, roles, permissions and access posture.", accent: "blue",   requiredPermission: "users.manage" },
-  { key: "audit-logs",      title: "Audit Logs",     route: "/audit-logs",      group: "Governance", description: "Immutable activity record across users, dispatch, safety, operations and billing.", accent: "amber",  requiredPermission: "reports.manage" },
+  // Governance nav gates MUST mirror their route guards exactly (App.tsx). /user-management
+  // is a DIRECT-match governance route, so the nav gate is direct too — a semantic
+  // users.manage gate advertised the item to holders the direct guard then denied.
+  { key: "user-management", title: "Users & Roles",  route: "/user-management", group: "Governance", description: "Users, tenants, roles, permissions and access posture.", accent: "blue",   requiredPermission: "users:view", permissionMatch: "direct" },
+  // audit:view, NOT reports.manage: /audit-logs is guarded by audit:view and the
+  // reports.manage → audit:view alias was (correctly) severed, so Dispatcher, Fleet
+  // Manager and Safety Manager saw this item and hit a PermissionDenied dead end.
+  { key: "audit-logs",      title: "Audit Logs",     route: "/audit-logs",      group: "Governance", description: "Immutable activity record across users, dispatch, safety, operations and billing.", accent: "amber",  requiredPermission: "audit:view" },
   { key: "integrations",    title: "Integrations",   route: "/integrations",    group: "Governance", description: "Live connector hub for ERP, accounting, telematics, fuel cards, maps, messaging, WMS and compliance integrations.", accent: "teal",   requiredPermission: "telematics:providers:manage", requiredEntitlement: "integrations" },
 
   { key: "carbon-tracking",   title: "Carbon Tracking",     route: "/carbon-tracking",   group: "Intelligence",        description: "Fleet CO₂ emissions, sustainability KPIs, reduction targets and carbon intensity per shipment.", accent: "green",  requiredPermission: "reports.view" },
   { key: "digital-forms",    title: "Digital Forms",       route: "/digital-forms",     group: "Safety & Compliance", description: "Pre-trip, post-trip, incident, delivery and compliance digital form templates and submissions.", accent: "blue",   requiredPermission: "safety.view" },
   { key: "alert-rules",      title: "Alert Rules",         route: "/alert-rules",       group: "Governance",          description: "Configure speed, idling, geofence, HOS, maintenance and safety alert thresholds with notification channels.", accent: "red",    requiredPermission: "alerts.view" },
-  { key: "driver-messaging", title: "Driver Messaging",    route: "/driver-messaging",  group: "Transport Operations", description: "Send dispatch instructions, safety alerts and broadcast announcements to drivers via in-app and SMS.", accent: "teal",  requiredPermission: "dispatch.view" },
+  // /driver-messaging redirects to /messages, which is guarded by messages:send — not
+  // dispatch.view. Gating the nav on dispatch.view showed it to every dispatch-capable
+  // role and denied the ones without the messaging grant.
+  { key: "driver-messaging", title: "Driver Messaging",    route: "/driver-messaging",  group: "Transport Operations", description: "Send dispatch instructions, safety alerts and broadcast announcements to drivers via in-app and SMS.", accent: "teal",  requiredPermission: "messages:send" },
   { key: "workforce", title: "Workforce Management", route: "/workforce", group: "Transport Operations", description: "Driver shift scheduling calendar, availability tracking, HOS compliance indicators and automated roster optimisation.", accent: "teal", requiredPermission: "dispatch.view" },
 
   { key: "feature-flags",        title: "Feature Flags",       route: "/feature-flags",        group: "Governance",   description: "Kill switches and gradual rollouts. Turning a flag off blocks its API (403) and hides it in the UI — no deploy.", accent: "purple", requiredPermission: "users.manage" },
   { key: "ai-copilot",           title: "Operations Copilot",  route: "/ai-copilot",           group: "Intelligence", description: "Operational query workspace for cost, dispatch, maintenance, safety and executive analysis.", accent: "purple", requiredPermission: "reports.view" },
   { key: "predictive-analytics", title: "Fleet Intelligence",  route: "/predictive-analytics",  group: "Intelligence", description: "Maintenance failure predictions, driver safety risk scores, and SLA breach probability.", accent: "purple", requiredPermission: "reports.view" },
-  { key: "control-tower",     title: "Control Tower",       route: "/control-tower",     group: "Intelligence", description: "Connected live map and control tower.", accent: "blue",   requiredPermission: "dashboard.view" },
+  { key: "control-tower",     title: "Control Tower",       route: "/control-tower",     group: "Intelligence", description: "Operational command view with position freshness, reported evidence and exception queues.", accent: "blue",   requiredPermission: "dashboard.view" },
   { key: "reports-analytics", title: "Reports & Analytics", route: "/reports-analytics", group: "Intelligence", description: "Operational analytics, trend views and executive reporting.", accent: "purple", requiredPermission: "reports.view", requiredEntitlement: "reports" },
   { key: "compliance-center", title: "Compliance Center", route: "/compliance", group: "Safety & Compliance", description: "Compliance profiles, rules, violations, documents and audit packages.", accent: "blue", requiredPermission: "compliance.view", requiredEntitlement: "compliance" },
   { key: "about",             title: "About OpsTrax",       route: "/about",             group: "Governance",   description: "Platform overview, system health and support.", accent: "purple", requiredPermission: "settings.view" },
@@ -191,6 +208,7 @@ export const moduleIcons: Record<string, typeof Activity> = {
   "logistics-workspace": Map,
   vehicles: Truck,
   drivers: Users,
+  branches: Building2,
   owners: UserCog,
   assignments: Activity,
   documents: FileText,

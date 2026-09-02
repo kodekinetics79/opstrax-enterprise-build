@@ -100,6 +100,75 @@ public static class TelematicsInstrumentation
         Meter.CreateCounter<long>("opstrax_telematics_out_of_order", unit: "{packet}",
             description: "Readings older than the last committed position for the vehicle.");
 
+    // ── Frame integrity and session safety ──────────────────────────────────────
+    // These were previously counted only in GatewayMetrics, which is a process-local, free-running
+    // struct that no exporter scrapes. Counters an operator cannot reach are not observability, so
+    // the ones worth waking somebody for are emitted here as well.
+
+    /// <summary>
+    /// Complete frames read off the wire, CRC-valid and CRC-invalid alike. The denominator for a
+    /// corruption rate. Labels: protocol.
+    /// </summary>
+    public static readonly Counter<long> FramesReceived =
+        Meter.CreateCounter<long>("opstrax_telematics_frames_received", unit: "{frame}",
+            description: "Complete protocol frames read off the wire, whether or not their checksum verified.");
+
+    /// <summary>
+    /// Frames whose CRC did not verify. Such a frame yields no message and never reaches
+    /// normalization, storage or an acknowledgement. Labels: protocol.
+    /// </summary>
+    /// <remarks>
+    /// This is the series that separates "the device is silent" from "the device is shouting
+    /// through noise". Alert on the RATE against <see cref="FramesReceived"/>, not the absolute
+    /// count: a cellular fleet always corrupts a few frames, and a fixed threshold either never
+    /// fires or fires constantly depending on fleet size.
+    /// </remarks>
+    public static readonly Counter<long> CrcFailures =
+        Meter.CreateCounter<long>("opstrax_telematics_crc_failures", unit: "{frame}",
+            description: "Frames rejected because their CRC did not verify.");
+
+    /// <summary>
+    /// Logins that tried to change the device identity of an already-bound socket. Labels: protocol.
+    /// </summary>
+    /// <remarks>
+    /// Not a protocol event. A device does not re-introduce itself as a different device, so any
+    /// non-zero value is a badly broken tracker or an attempt to attribute traffic to another
+    /// tenant's vehicle. This series should sit flat at zero and page when it does not.
+    /// </remarks>
+    public static readonly Counter<long> SessionIdentityViolations =
+        Meter.CreateCounter<long>("opstrax_telematics_session_identity_violations", unit: "{login}",
+            description: "Logins that attempted to re-identify an already-bound connection.");
+
+    /// <summary>Sessions torn down because the same device authenticated on a newer socket. Labels: protocol.</summary>
+    /// <remarks>
+    /// Routine on a roaming fleet: the bearer dropped without a FIN and the tracker redialled. A
+    /// sustained spike means devices are reconnect-looping, which is a carrier or power problem.
+    /// </remarks>
+    public static readonly Counter<long> DuplicateSessionsDisplaced =
+        Meter.CreateCounter<long>("opstrax_telematics_duplicate_sessions_displaced", unit: "{session}",
+            description: "Sessions closed because the device authenticated on a newer socket.");
+
+    /// <summary>
+    /// Fixes whose displacement from the device's previous position is impossible in the elapsed
+    /// time. Labels: protocol.
+    /// </summary>
+    /// <remarks>
+    /// A slow trickle is spoofing, tampering, or a device moved between vehicles — investigate per
+    /// device. A sudden spike <b>across many distinct devices at once</b> is not a fleet of
+    /// teleporting trucks: it is a decoder or coordinate-handling regression that just shipped, and
+    /// it is the single highest-value alert in this file. Alert on distinct devices affected, not
+    /// on the raw count, so one tampered unit reporting continuously cannot masquerade as a fleet
+    /// event and a genuine fleet event cannot hide inside one device's noise.
+    /// </remarks>
+    public static readonly Counter<long> TeleportSuspected =
+        Meter.CreateCounter<long>("opstrax_telematics_teleport_suspected", unit: "{packet}",
+            description: "Fixes whose displacement from the previous position is physically impossible.");
+
+    /// <summary>Fixes whose device-reported ground speed exceeds the physical ceiling. Labels: protocol.</summary>
+    public static readonly Counter<long> ImpossibleSpeed =
+        Meter.CreateCounter<long>("opstrax_telematics_impossible_speed", unit: "{packet}",
+            description: "Fixes whose device-reported ground speed exceeds the physical ceiling.");
+
     // ── Histograms (latency distributions) ───────────────────────────────────────
 
     /// <summary>
@@ -126,6 +195,21 @@ public static class TelematicsInstrumentation
     public static readonly UpDownCounter<long> ActiveConnections =
         Meter.CreateUpDownCounter<long>("opstrax_telematics_active_connections", unit: "{connection}",
             description: "Currently-open device sockets (gauge-like).");
+
+    /// <summary>
+    /// Distinct devices flagged for an impossible displacement in the last 10 minutes. Registered
+    /// by the composition root against the live <c>FixPlausibilityGuard</c>.
+    /// </summary>
+    /// <remarks>
+    /// A gauge rather than a counter because the question is "how many vehicles are affected right
+    /// now", which is what separates one tampered unit from a decoder regression. Aggregated
+    /// in-process so the metric keeps a single series; a <c>device_id</c> label would let whoever
+    /// chooses the IMEIs choose the cardinality.
+    /// </remarks>
+    public const string TeleportDistinctDevicesName = "opstrax_telematics_teleport_distinct_devices";
+
+    /// <summary>The window the <see cref="TeleportDistinctDevicesName"/> gauge reports over.</summary>
+    public static readonly TimeSpan TeleportDistinctDevicesWindow = TimeSpan.FromMinutes(10);
 
     // ── Bounded metric-label keys (NOT span-attribute keys) ─────────────────────
 

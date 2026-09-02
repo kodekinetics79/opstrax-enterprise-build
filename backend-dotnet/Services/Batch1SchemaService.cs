@@ -273,6 +273,9 @@ public sealed class Batch1SchemaService(Database db, IConfiguration? configurati
             WHERE assigned_vehicle_id IS NOT NULL AND NOT EXISTS (
               SELECT 1 FROM vehicles v WHERE v.id=d.assigned_vehicle_id AND v.company_id=d.company_id
                 AND v.deleted_at IS NULL AND v.assigned_driver_id=d.id)"
+        ,@"UPDATE vehicle_assignments va SET branch_id=v.branch_id
+            FROM vehicles v
+            WHERE va.vehicle_id=v.id AND va.company_id=v.company_id AND va.branch_id IS NULL"
         ,@"WITH ranked AS (
               SELECT id, ROW_NUMBER() OVER (PARTITION BY company_id, vehicle_id ORDER BY assigned_at DESC, id DESC) rn
               FROM vehicle_assignments WHERE status='Active')

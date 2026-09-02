@@ -1,12 +1,13 @@
 import { test as base, expect } from "@playwright/test";
 import { apiRequestMatchesTarget, assertRuntimeSignalsHealthy, assertStagingAuthConfigured } from "./lib/signals.mjs";
-import { assertRequestAllowed, authStateFor, mutationGate, resolveTarget } from "./lib/target.mjs";
+import { assertRequestAllowed, authStateFor, iotLifecycleGate, mutationGate, resolveTarget } from "./lib/target.mjs";
 
 const target = resolveTarget(process.env);
 
 export const test = base.extend({
   target: [target, { scope: "worker" }],
   mutationGate: [mutationGate(target, process.env), { scope: "worker" }],
+  iotLifecycleGate: [iotLifecycleGate(target, process.env), { scope: "worker" }],
   storageState: async ({ workerStorageState }, use) => use(workerStorageState),
   workerStorageState: [async ({}, use, workerInfo) => {
     const role = String(workerInfo.project.metadata?.role || "anonymous");
@@ -55,6 +56,20 @@ export const test = base.extend({
     page.on("response", (response) => {
       if (response.status() >= 500) signals.serverErrors.push({ status: response.status(), url: response.url() });
     });
+
+    // The anonymous local job intentionally has no API process. Fulfil only the
+    // global locale bootstrap so every route can be exercised with a strict
+    // zero-console-error gate; staging and production always hit their real API.
+    if (activeTarget.environment === "local" && role === "anonymous") {
+      await page.context().route("**/api/localization/user-preferences", async (route) => {
+        if (route.request().method() !== "GET") return route.continue();
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ success: true, data: [] }),
+        });
+      });
+    }
 
     if (activeTarget.isProduction) {
       await page.context().route("**/*", async (route) => {

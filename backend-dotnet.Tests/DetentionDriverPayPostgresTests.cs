@@ -104,7 +104,7 @@ public class DetentionDriverPayPostgresTests
         var custId = await db.InsertAsync(
             "INSERT INTO customers (company_id, customer_code, name) VALUES (@c, @code, 'DDP Cust') RETURNING id",
             c => { c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@code", $"DDPC-{Guid.NewGuid():N}".Substring(0, 14)); });
-        var vid = await db.InsertAsync("INSERT INTO vehicles (company_id, vehicle_code, type) VALUES (@c, @code, 'truck') RETURNING id",
+        var vid = await db.InsertAsync("INSERT INTO vehicles (company_id, vehicle_code, type, vin_exception_type, alternate_identifier) VALUES (@c, @code, 'truck', 'legacy-fleet-identifier', @code) RETURNING id",
             c => { c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@code", $"DV-{Guid.NewGuid():N}".Substring(0, 12)); });
         var gid = await db.InsertAsync(
             "INSERT INTO geofences (company_id, name, geofence_type, center_lat, center_lng, radius_meters, status, customer_id, site_role) VALUES (@c, 'Depot', 'circular', 34, -118, 300, 'Active', @cust, 'customer_site') RETURNING id",

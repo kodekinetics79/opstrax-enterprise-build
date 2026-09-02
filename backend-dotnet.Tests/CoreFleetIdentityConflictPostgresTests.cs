@@ -15,6 +15,79 @@ namespace Opstrax.Tests;
 [Trait("Category", "Integration")]
 public sealed class CoreFleetIdentityConflictPostgresTests
 {
+    private const string SharedValidVin = "1HGCM82633A004352";
+    private const string UpdateSharedValidVin = "1M8GDM9AXKP042788";
+
+    [Theory]
+    [InlineData("year", "1949", "year must be a number between 1950 and 2100.")]
+    [InlineData("year", "2101", "year must be a number between 1950 and 2100.")]
+    [InlineData("year", "2020.5", "year must be a number between 1950 and 2100.")]
+    [InlineData("odometerMiles", "-1", "odometerMiles must be a non-negative number.")]
+    public async Task NumericValidation_CreateUpdateAndImportRejectWithoutPersistence(string key, string invalid, string error)
+    {
+        var db = Db();
+        var companyId = await SeedCompany(db);
+        try
+        {
+            await SeedImportBranch(db, companyId);
+            var body = new Dictionary<string, object?>
+            {
+                ["vehicleCode"] = "NUMERIC-INVALID", ["type"] = "Truck",
+                ["vinExceptionType"] = "legacy-fleet-identifier", ["alternateIdentifier"] = "NUMERIC-INVALID",
+                ["year"] = 2020, ["odometerMiles"] = 0m, [key] = invalid,
+            };
+            var created = await Invoke("CreateVehicle", Principal(companyId), body, db, new AuditService(db), CancellationToken.None);
+            Assert.Equal(400, ((IStatusCodeHttpResult)created).StatusCode);
+            using (var payload = Payload(created)) Assert.Contains(error, payload.RootElement.ToString());
+            Assert.Equal(0, await Count(db, "vehicles", companyId));
+
+            var id = await InsertVehicle(db, companyId, "NUMERIC-EXISTING");
+            await db.ExecuteAsync("UPDATE vehicles SET year=2020,odometer_miles=10 WHERE id=@id", c => c.Parameters.AddWithValue("@id", id));
+            var updated = await UpdateVehicle(companyId, id, new() { [key] = invalid });
+            Assert.Equal(400, ((IStatusCodeHttpResult)updated).StatusCode);
+            Assert.Equal(1, await db.ScalarLongAsync("SELECT COUNT(*) FROM vehicles WHERE id=@id AND year=2020 AND odometer_miles=10", c => c.Parameters.AddWithValue("@id", id)));
+
+            body["branchCode"] = "MAIN";
+            var import = JsonSerializer.Deserialize<Dictionary<string, object?>>(JsonSerializer.Serialize(new { rows = new[] { body } }))!;
+            await AssertImportPreviewConflict("VehiclesImportPreview", Principal(companyId), import, error);
+            await AssertImportCommitConflict("VehiclesImportCommit", Principal(companyId), import, error);
+            Assert.Equal(1, await Count(db, "vehicles", companyId));
+        }
+        finally { await Cleanup(db, companyId); }
+    }
+
+    [Theory]
+    [InlineData("1950", "0")]
+    [InlineData("2100", "1.5")]
+    public async Task NumericValidation_ValidBoundariesCreateAndUpdate(string year, string odometer)
+    {
+        var db = Db();
+        var companyId = await SeedCompany(db);
+        try
+        {
+            var body = new Dictionary<string, object?>
+            {
+                ["vehicleCode"] = "NUMERIC-VALID", ["type"] = "Truck",
+                ["vinExceptionType"] = "legacy-fleet-identifier", ["alternateIdentifier"] = "NUMERIC-VALID",
+                ["year"] = year, ["odometerMiles"] = odometer,
+            };
+            var result = await Invoke("CreateVehicle", Principal(companyId), body, db, new AuditService(db), CancellationToken.None);
+            Assert.True(IsCreated(result));
+            using var payload = Payload(result);
+            var id = payload.RootElement.GetProperty("data").GetProperty("id").GetInt64();
+            Assert.Equal(1, await db.ScalarLongAsync("SELECT COUNT(*) FROM vehicles WHERE id=@id AND year=@year AND odometer_miles=@odo", c =>
+            {
+                c.Parameters.AddWithValue("@id", id);
+                c.Parameters.AddWithValue("@year", int.Parse(year));
+                c.Parameters.AddWithValue("@odo", decimal.Parse(odometer, System.Globalization.CultureInfo.InvariantCulture));
+            }));
+            var updated = await UpdateVehicle(companyId, id, new() { ["year"] = "2020", ["odometerMiles"] = "0" });
+            Assert.True(IsOk(updated));
+            Assert.Equal(1, await db.ScalarLongAsync("SELECT COUNT(*) FROM vehicles WHERE id=@id AND year=2020 AND odometer_miles=0", c => c.Parameters.AddWithValue("@id", id)));
+        }
+        finally { await Cleanup(db, companyId); }
+    }
+
     [Fact]
     public async Task VehicleCreate_ArchivedCode_ReturnsStableConflict()
     {
@@ -23,7 +96,8 @@ public sealed class CoreFleetIdentityConflictPostgresTests
         try
         {
             await db.ExecuteAsync(
-                "INSERT INTO vehicles(company_id,vehicle_code,type,deleted_at) VALUES (@c,'ARCHIVED-VEHICLE','Truck',NOW())",
+                @"INSERT INTO vehicles(company_id,vehicle_code,type,vin_exception_type,alternate_identifier,deleted_at)
+                  VALUES (@c,'ARCHIVED-VEHICLE','Truck','legacy-fleet-identifier','ARCHIVED-VEHICLE',NOW())",
                 c => c.Parameters.AddWithValue("@c", companyId));
 
             var result = await CreateVehicle(companyId, "ARCHIVED-VEHICLE");
@@ -99,12 +173,12 @@ public sealed class CoreFleetIdentityConflictPostgresTests
         try
         {
             var results = await Task.WhenAll(Enumerable.Range(0, 24).Select(i =>
-                CreateVehicle(companyId, $"VIN-RACE-{i:00}", "SHARED-VIN")));
+                CreateVehicle(companyId, $"VIN-RACE-{i:00}", SharedValidVin)));
 
             Assert.Equal(1, results.Count(IsCreated));
             Assert.Equal(23, results.Count(IsConflict));
             Assert.All(results.Where(IsConflict), r => AssertConflict(r,
-                "VIN 'SHARED-VIN' is already registered to another vehicle."));
+                $"VIN '{SharedValidVin}' is already registered to another vehicle."));
             Assert.Equal(1, await Count(db, "vehicles", companyId));
         }
         finally { await Cleanup(db, companyId); }
@@ -152,12 +226,12 @@ public sealed class CoreFleetIdentityConflictPostgresTests
             var vinA = await InsertVehicle(db, companyId, "UPDATE-VIN-A");
             var vinB = await InsertVehicle(db, companyId, "UPDATE-VIN-B");
             var vinResults = await Task.WhenAll(
-                UpdateVehicle(companyId, vinA, new() { ["vin"] = "UPDATE-VIN-SHARED" }),
-                UpdateVehicle(companyId, vinB, new() { ["vin"] = "UPDATE-VIN-SHARED" }));
+                UpdateVehicle(companyId, vinA, new() { ["vin"] = UpdateSharedValidVin }),
+                UpdateVehicle(companyId, vinB, new() { ["vin"] = UpdateSharedValidVin }));
             Assert.Equal(1, vinResults.Count(IsOk));
             Assert.Equal(1, vinResults.Count(IsConflict));
             AssertConflict(vinResults.Single(IsConflict),
-                "VIN 'UPDATE-VIN-SHARED' is already registered to another vehicle.");
+                $"VIN '{UpdateSharedValidVin}' is already registered to another vehicle.");
         }
         finally { await Cleanup(db, companyId); }
     }
@@ -199,6 +273,7 @@ public sealed class CoreFleetIdentityConflictPostgresTests
         var companyId = await SeedCompany(db);
         try
         {
+            await SeedImportBranch(db, companyId);
             await db.ExecuteAsync(@"INSERT INTO drivers(company_id,driver_code,full_name,license_number,license_number_bidx)
                 VALUES (@c,'LEGACY-PLAIN','Legacy Plaintext','TRANSITION-LICENSE',NULL)",
                 c => c.Parameters.AddWithValue("@c", companyId));
@@ -214,6 +289,7 @@ public sealed class CoreFleetIdentityConflictPostgresTests
             var importBody = JsonSerializer.Deserialize<Dictionary<string, object?>>(@"{
                 ""rows"": [{
                     ""driverCode"": ""TRANSITION-IMPORT"",
+                    ""branchCode"": ""MAIN"",
                     ""fullName"": ""Transition Import"",
                     ""licenseNumber"": ""transition-license""
                 }]
@@ -273,12 +349,13 @@ public sealed class CoreFleetIdentityConflictPostgresTests
         var companyId = await SeedCompany(db);
         try
         {
+            await SeedImportBranch(db, companyId);
             var vehicleResults = await Task.WhenAll(Enumerable.Range(0, 20).Select(i =>
-                CommitVehicleImport(companyId, $"IMPORT-VIN-{i:00}", "IMPORT-SHARED-VIN")));
-            AssertImportContention(vehicleResults, "VIN 'IMPORT-SHARED-VIN' is already registered to another vehicle.");
+                CommitVehicleImport(companyId, $"IMPORT-VIN-{i:00}", SharedValidVin, "MAIN")));
+            AssertImportContention(vehicleResults, $"VIN '{SharedValidVin}' is already registered to another vehicle.");
 
             var driverResults = await Task.WhenAll(Enumerable.Range(0, 20).Select(i =>
-                CommitDriverImport(companyId, $"IMPORT-LIC-{i:00}", "IMPORT-SHARED-LICENSE")));
+                CommitDriverImport(companyId, $"IMPORT-LIC-{i:00}", "IMPORT-SHARED-LICENSE", "MAIN")));
             AssertImportContention(driverResults,
                 "License number 'IMPORT-SHARED-LICENSE' is already registered to another driver.");
 
@@ -286,7 +363,7 @@ public sealed class CoreFleetIdentityConflictPostgresTests
             // but every request must remain a stable 200 import result rather than a
             // leaked unique violation or transaction-aborted 500.
             var codeResults = await Task.WhenAll(Enumerable.Range(0, 20).Select(_ =>
-                CommitVehicleImport(companyId, "IMPORT-SHARED-CODE", null)));
+                CommitVehicleImport(companyId, "IMPORT-SHARED-CODE", null, "MAIN")));
             Assert.All(codeResults, result => Assert.True(IsOk(result)));
             Assert.Equal(20, codeResults.Sum(ImportProcessedRows));
         }
@@ -304,7 +381,7 @@ public sealed class CoreFleetIdentityConflictPostgresTests
         try
         {
             await db.ExecuteAsync(@"INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,vin)
-                VALUES (@c,@b,'BRANCH-OWNER-VEHICLE','Truck','TENANT-WIDE-VIN')",
+                VALUES (@c,@b,'BRANCH-OWNER-VEHICLE','Truck','1M8GDM9AXKP042788')",
                 c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", ownerBranch); });
             var ownerDriver = await Invoke("CreateDriver", Principal(companyId, piiEnabled: true, branchId: ownerBranch),
                 new Dictionary<string, object?>
@@ -324,7 +401,7 @@ public sealed class CoreFleetIdentityConflictPostgresTests
             {
                 ["vehicleCode"] = "CALLER-BRANCH-VEHICLE",
                 ["type"] = "Truck",
-                ["vin"] = "TENANT-WIDE-VIN",
+                ["vin"] = UpdateSharedValidVin,
             });
             var driverBody = ImportBody(new()
             {
@@ -341,10 +418,10 @@ public sealed class CoreFleetIdentityConflictPostgresTests
 
             await AssertImportPreviewConflict("VehiclesImportPreview",
                 Principal(companyId, branchId: callerBranch), vehicleBody,
-                "VIN 'TENANT-WIDE-VIN' is already registered to another vehicle.");
+                $"VIN '{UpdateSharedValidVin}' is already registered to another vehicle.");
             await AssertImportCommitConflict("VehiclesImportCommit",
                 Principal(companyId, branchId: callerBranch), vehicleBody,
-                "VIN 'TENANT-WIDE-VIN' is already registered to another vehicle.");
+                $"VIN '{UpdateSharedValidVin}' is already registered to another vehicle.");
             await AssertImportPreviewConflict("DriversImportPreview",
                 Principal(companyId, piiEnabled: true, branchId: callerBranch), driverBody,
                 "License number 'TENANT-WIDE-LICENSE' is already registered to another driver.");
@@ -385,6 +462,8 @@ public sealed class CoreFleetIdentityConflictPostgresTests
                 ["vehicleCode"] = code,
                 ["type"] = "Truck",
                 ["vin"] = vin,
+                ["vinExceptionType"] = vin is null ? "legacy-fleet-identifier" : null,
+                ["alternateIdentifier"] = vin is null ? code : null,
             }, Db(), new AuditService(Db()), CancellationToken.None);
 
     private static Task<IResult> CreateDriver(long companyId, string code, string? license = null, bool piiEnabled = false)
@@ -411,7 +490,13 @@ public sealed class CoreFleetIdentityConflictPostgresTests
         try
         {
             var result = await Invoke("CreateVehicle", Principal(companyId),
-                new Dictionary<string, object?> { ["vehicleCode"] = code, ["type"] = "Truck" },
+                new Dictionary<string, object?>
+                {
+                    ["vehicleCode"] = code,
+                    ["type"] = "Truck",
+                    ["vinExceptionType"] = "legacy-fleet-identifier",
+                    ["alternateIdentifier"] = code,
+                },
                 db, new AuditService(db), CancellationToken.None);
             await scope.CompleteAsync();
             return result;
@@ -436,7 +521,7 @@ public sealed class CoreFleetIdentityConflictPostgresTests
         finally { accessor.Current = null; }
     }
 
-    private static async Task<IResult> CommitVehicleImport(long companyId, string code, string? vin)
+    private static async Task<IResult> CommitVehicleImport(long companyId, string code, string? vin, string branchCode)
     {
         var accessor = new TenantScopeAccessor();
         var db = Db(accessor);
@@ -447,8 +532,11 @@ public sealed class CoreFleetIdentityConflictPostgresTests
             var result = await Invoke("VehiclesImportCommit", Principal(companyId), ImportBody(new()
             {
                 ["vehicleCode"] = code,
+                ["branchCode"] = branchCode,
                 ["type"] = "Truck",
                 ["vin"] = vin,
+                ["vinExceptionType"] = vin is null ? "legacy-fleet-identifier" : null,
+                ["alternateIdentifier"] = vin is null ? code : null,
             }), db, new AuditService(db), CancellationToken.None);
             await scope.CompleteAsync();
             return result;
@@ -456,7 +544,7 @@ public sealed class CoreFleetIdentityConflictPostgresTests
         finally { accessor.Current = null; }
     }
 
-    private static async Task<IResult> CommitDriverImport(long companyId, string code, string license)
+    private static async Task<IResult> CommitDriverImport(long companyId, string code, string license, string branchCode)
     {
         var accessor = new TenantScopeAccessor();
         var db = Db(accessor);
@@ -467,6 +555,7 @@ public sealed class CoreFleetIdentityConflictPostgresTests
             var result = await Invoke("DriversImportCommit", Principal(companyId, piiEnabled: true), ImportBody(new()
             {
                 ["driverCode"] = code,
+                ["branchCode"] = branchCode,
                 ["fullName"] = "Import Race Driver",
                 ["licenseNumber"] = license,
             }), db, new AuditService(db), CancellationToken.None);
@@ -618,13 +707,18 @@ public sealed class CoreFleetIdentityConflictPostgresTests
         "INSERT INTO companies(company_code,name,industry) VALUES (@code,'Fleet Identity Conflict Test','Transportation')",
         c => c.Parameters.AddWithValue("@code", $"FIC-{Guid.NewGuid():N}"));
 
+    private static Task<long> SeedImportBranch(Database db, long companyId) => db.InsertAsync(
+        "INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,'MAIN','Main','Active')",
+        c => c.Parameters.AddWithValue("@c", companyId));
+
     private static Task<long> Count(Database db, string table, long companyId)
         => db.ScalarLongAsync($"SELECT COUNT(*) FROM {table} WHERE company_id=@c",
             c => c.Parameters.AddWithValue("@c", companyId));
 
     private static Task<long> InsertVehicle(Database db, long companyId, string code)
         => db.InsertAsync(
-            "INSERT INTO vehicles(company_id,vehicle_code,type) VALUES (@c,@code,'Truck')",
+            @"INSERT INTO vehicles(company_id,vehicle_code,type,vin_exception_type,alternate_identifier)
+              VALUES (@c,@code,'Truck','legacy-fleet-identifier',@code)",
             c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@code", code); });
 
     private static Task<long> InsertDriver(Database db, long companyId, string code)
@@ -634,7 +728,7 @@ public sealed class CoreFleetIdentityConflictPostgresTests
 
     private static async Task Cleanup(Database db, long companyId)
     {
-        foreach (var table in new[] { "audit_logs", "vehicles", "drivers" })
+        foreach (var table in new[] { "audit_logs", "vehicles", "drivers", "branches" })
             await db.ExecuteAsync($"DELETE FROM {table} WHERE company_id=@c",
                 c => c.Parameters.AddWithValue("@c", companyId));
         await db.ExecuteAsync("DELETE FROM companies WHERE id=@c",

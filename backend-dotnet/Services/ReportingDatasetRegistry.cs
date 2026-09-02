@@ -32,6 +32,9 @@ public sealed class ReportFieldDef
     public string   Type             { get; init; } = "string";
     /// <summary>Sensitive fields are hidden unless callerHasSensitivePermission.</summary>
     public bool     Sensitive        { get; init; }
+    /// <summary>DEF-015: value is rendered masked (last four) post-query even for callers
+    /// holding the Sensitive permission. Raw PII leaves only via the audited DSAR export.</summary>
+    public bool     MaskPii          { get; init; }
     public bool     Exportable       { get; init; } = true;
     public bool     Sortable         { get; init; } = true;
     public bool     Groupable        { get; init; }
@@ -263,7 +266,7 @@ public static class ReportingDatasetRegistry
                 TenantTableAlias = "d",
                 BaseQuery = @"
                     SELECT d.id, d.driver_code, d.full_name AS driver_name, d.status,
-                           d.safety_score, d.license_class,
+                           d.safety_score,
                            d.license_number, d.license_expiry,
                            d.company_id
                     FROM drivers d
@@ -277,9 +280,10 @@ public static class ReportingDatasetRegistry
                     new() { Key="driver_name",    Label="Driver Name",    Type="string", AllowedOperators=StrOps, Sortable=true },
                     new() { Key="status",         Label="Status",         Type="enum",   AllowedOperators=EnumOps, Groupable=true },
                     new() { Key="safety_score",   Label="Safety Score",   Type="number", AllowedOperators=NumOps, Sortable=true },
-                    new() { Key="license_class",  Label="License Class",  Type="string", AllowedOperators=StrOps, Groupable=true },
-                    // Sensitive fields — require drivers:export
-                    new() { Key="license_number", Label="License Number", Type="string", AllowedOperators=StrOps, Sensitive=true },
+                    // Sensitive fields — require drivers:export. The license renders masked
+                    // (last four) even with the grant; drivers has no license_class column,
+                    // so the phantom field that 42703'd every run of this dataset is gone.
+                    new() { Key="license_number", Label="License Number (masked)", Type="string", AllowedOperators=StrOps, Sensitive=true, MaskPii=true },
                     new() { Key="license_expiry", Label="License Expiry", Type="date",   AllowedOperators=DateOps, Sensitive=true },
                 ]
             },

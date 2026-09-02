@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
+using Opstrax.Api.Security;
 
 namespace Opstrax.Api.Foundation;
 
@@ -58,7 +59,7 @@ public sealed class AuthorizationDecisionService(IFeatureAccessService? featureA
             return Denied(request, permission, "Tenant boundary violation");
 
         if (policy.DenyOverride)
-            return Denied(request, permission, "Deny override applied");
+            return Denied(request, permission, policy.Reason ?? "Deny override applied");
 
         if (!PermissionAllowed(actorPermissions, permission))
             return Denied(request, permission, $"Missing permission: {permission}");
@@ -106,26 +107,10 @@ public sealed class AuthorizationDecisionService(IFeatureAccessService? featureA
     }
 
     private static bool PermissionAllowed(IReadOnlyCollection<string> permissions, string permission)
-    {
-        if (permissions.Count == 0) return false;
-        if (permissions.Any(p => string.Equals(p, "*", StringComparison.OrdinalIgnoreCase))) return true;
-        var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            permission,
-            permission.Replace('.', ':'),
-            permission.Replace(':', '.'),
-        };
+        => PermissionPolicy.Allows(permissions, permission);
 
-        foreach (var alias in SemanticPermissionAliases(permission))
-        {
-            aliases.Add(alias);
-            aliases.Add(alias.Replace('.', ':'));
-            aliases.Add(alias.Replace(':', '.'));
-        }
-
-        return permissions.Any(aliases.Contains);
-    }
-
+    // Legacy vocabulary inventory only. PermissionAllowed delegates exclusively to the
+    // directed PermissionPolicy; this symmetric table must never re-enter enforcement.
     private static IEnumerable<string> SemanticPermissionAliases(string permission)
     {
         if (permission is "customer.account.read" or "customer.account.view" or "customers:view" or "crm:view")
@@ -170,8 +155,62 @@ public sealed class AuthorizationDecisionService(IFeatureAccessService? featureA
         if (permission is "operations.execution_summary.read")
             return ["operations.execution_summary.read", "dispatch:view", "dispatch:manage", "shipments:view", "fleet:view", "driver:self"];
 
+        // ── Telemetry + audit satisfy-sets (must mirror EndpointMappings EXACTLY) ────
+        // RequirePermission expands the REQUIRED token here, in the engine, and the
+        // HELD tokens through EndpointMappings.PermissionAliases. A satisfy-set that
+        // exists only in EndpointMappings is therefore DEAD in enforcement: granting the
+        // documented token `telematics:devices:view` did not open /api/devices, because
+        // nothing ever expanded the required `telemetry.devices.read` to reach it. These
+        // groups were mirrored one at a time and later ones were missed — four of them
+        // (devices.manage, alerts.read, alerts.manage, rules.manage) survived a whole
+        // release cycle unmirrored because the drift guard was a HAND-WRITTEN list of
+        // five group names rather than an enumeration of the table it protects.
+        // Any change here MUST be made in EndpointMappings.SemanticPermissionAliases
+        // too — TelemetryAliasMirrorTests now ENUMERATES every case key parsed out of
+        // the shipped EndpointMappings source, so a new or unmirrored telemetry.* group
+        // fails the suite instead of passing unnoticed.
         if (permission is "telemetry.live_state.read" or "telemetry.live-state.read")
-            return ["telemetry.live_state.read", "telemetry.live-state.read", "telemetry.alerts.read", "telemetry.alerts.view", "telemetry.rules.read", "telemetry.rules.view", "dashboard:view", "dashboard.view", "map:view", "map.view", "fleet:view", "fleet.view", "telematics:gps:view", "telematics.gps.view"];
+            return ["telemetry.live_state.read", "telemetry.live-state.read", "map:view", "map.view", "telematics:gps:view", "telematics.gps.view"];
+
+        // Packet-2 mirror: fleet:view no longer reaches the device registry.
+        if (permission is "telemetry.devices.read" or "telemetry.devices.view")
+            return ["telemetry.devices.read", "telemetry.devices.view", "telematics:devices:view", "telematics.devices.view"];
+
+        // ROUND-2 FIX — the device credential kill switch was unreachable.
+        // DeviceRevoke/DeviceSuspend/DeviceActivate gate on telemetry.devices.manage.
+        // EndpointMappings declared this satisfy-set but the ENGINE did not, so the
+        // required side expanded to the bare token and only a wildcard role could
+        // revoke a compromised device — while the SPA (which mirrors the
+        // EndpointMappings list) rendered the control and the API 403'd. Mirrored
+        // EXACTLY, group for group, with EndpointMappings.
+        if (permission is "telemetry.devices.manage")
+            return ["telemetry.devices.manage", "telematics:devices:create", "telematics:devices:update", "telematics:devices:delete", "telematics:devices:assign", "telematics:providers:manage", "fleet:manage", "fleet.manage"];
+
+        // ROUND-2 FIX — same dead-in-enforcement defect on the alert tiers.
+        if (permission is "telemetry.alerts.read" or "telemetry.alerts.view")
+            return ["telemetry.alerts.read", "telemetry.alerts.view", "alerts:view", "alerts.view", "safety:view", "safety.view", "maintenance:view", "maintenance.view"];
+
+        if (permission is "telemetry.alerts.manage")
+            return ["telemetry.alerts.manage", "alerts:acknowledge", "alerts:close", "alerts.manage", "alerts:manage", "safety:manage", "safety.manage", "maintenance:manage", "maintenance.manage"];
+
+        // Packet-2 mirror: dashboard:view / fleet:view no longer satisfy rules reads.
+        if (permission is "telemetry.rules.read" or "telemetry.rules.view")
+            return ["telemetry.rules.read", "telemetry.rules.view"];
+
+        // ROUND-2 FIX — rules WRITE tier was likewise dead in enforcement.
+        if (permission is "telemetry.rules.manage")
+            return ["telemetry.rules.manage", "devices:manage", "fleet:manage", "fleet.manage"];
+
+        // Packet-2 mirror: dashboard:view no longer satisfies telemetry recommendations.
+        if (permission is "telemetry.recommendations.read")
+            return ["telemetry.recommendations.read", "reports:view", "reports.view"];
+
+        // Packet-2 mirror: reports:manage no longer satisfies the audit trail — audit
+        // access is an explicit grant, not a side effect of managing reports. (The dot/
+        // colon variants are already covered by PermissionAllowed; this entry keeps the
+        // mirror complete so the drift guard can compare the two tables group for group.)
+        if (permission is "audit:view" or "audit.view")
+            return ["audit:view", "audit.view"];
 
         if (permission is "operations.site_access.read" or "operations.site_access.create" or "operations.site_access.update")
             return ["operations.site_access.read", "operations.site_access.create", "operations.site_access.update", "dispatch:view", "dispatch:manage", "job.update"];

@@ -271,12 +271,32 @@ public sealed class ReliabilityService(
     {
         try
         {
-            var pending = await db.ScalarLongAsync(
-                @"SELECT COUNT(*) FROM outbox_messages
-                  WHERE status IN ('pending','failed')", ct: ct);
-            var status = pending > 500 ? "degraded" : "healthy";
+            var row = await db.QuerySingleAsync(
+                @"SELECT COUNT(*) FILTER (WHERE status='pending') AS pending,
+                         COUNT(*) FILTER (WHERE status='retry_pending') AS retry_pending,
+                         COUNT(*) FILTER (WHERE status='dead_letter') AS dead_letter,
+                         COUNT(*) FILTER (WHERE status='processing' AND (locked_until IS NULL OR locked_until < NOW())) AS stranded,
+                         COUNT(*) FILTER (WHERE status='retry_pending' AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())) AS retry_due
+                  FROM outbox_messages", ct: ct) ?? new Dictionary<string, object?>();
+            var pending = ToLong(row, "pending");
+            var retries = ToLong(row, "retryPending");
+            var deadLetters = ToLong(row, "deadLetter");
+            var stranded = ToLong(row, "stranded");
+            var retryDue = ToLong(row, "retryDue");
+            var status = deadLetters > 0 || stranded > 0
+                ? "down"
+                : retries > 0 || pending > 500 ? "degraded" : "healthy";
             return new ComponentHealth("integrations", "Integrations (outbox)", status,
-                $"{pending} pending/failed messages", null);
+                $"{pending} pending, {retries} retrying, {deadLetters} dead-lettered, {stranded} stranded",
+                null,
+                new Dictionary<string, long>
+                {
+                    ["pending"] = pending,
+                    ["retryPending"] = retries,
+                    ["retryDue"] = retryDue,
+                    ["deadLetter"] = deadLetters,
+                    ["stranded"] = stranded,
+                });
         }
         catch
         {
@@ -365,7 +385,8 @@ public sealed record ReliabilitySnapshot(
     DateTime CapturedUtc);
 
 public sealed record ComponentHealth(
-    string Id, string Name, string Status, string Detail, long? LatencyMs);
+    string Id, string Name, string Status, string Detail, long? LatencyMs,
+    IReadOnlyDictionary<string, long>? Counters = null);
 
 public sealed record TenantReliability(
     long CompanyId, string CompanyName, long OpenIncidents, long CriticalAlerts, string Status);

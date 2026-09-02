@@ -60,7 +60,7 @@ public sealed class GpsAuthorizationRegressionTests
     {
         var ingest = Slice("private static async Task<IResult> TelemetryIngest", "private static async Task TelemetryStream");
         Assert.Contains("TryParseObservedAt(body.EventTime, out var observedAt)", ingest);
-        Assert.Contains("client_generated_id, idempotency_key, observed_at, normalized_at, event_time, received_at", ingest);
+        Assert.Contains("client_generated_id, idempotency_key, ingest_fingerprint, observed_at, normalized_at, event_time, received_at", ingest);
         Assert.Contains("@observedAt, NOW(), @observedAt, NOW()", ingest);
         Assert.Contains("@batt, @observedAt, NOW()", ingest);
         Assert.DoesNotContain("@idempotencyKey, NOW(), NOW()", ingest);

@@ -113,6 +113,11 @@ export function FleetAssignmentsPage() {
     queryFn: () => dispatchApi.assignments({ limit: 100 }),
     refetchInterval: 30_000,
   });
+  const fleetHistoryQ = useQuery({
+    queryKey: ["fleet", "vehicle-assignments"],
+    queryFn: () => unwrap<AnyRecord[]>(apiClient.get("/api/vehicle-assignments")),
+    refetchInterval: 30_000,
+  });
   const detailQ = useQuery({
     queryKey: ["dispatch", "assignments", "detail", selectedId],
     queryFn: () => dispatchApi.assignmentDetail(String(selectedId)),
@@ -145,6 +150,7 @@ export function FleetAssignmentsPage() {
   });
 
   const assignments = (assignmentsQ.data ?? []) as AnyRecord[];
+  const fleetHistory = (fleetHistoryQ.data ?? []) as AnyRecord[];
   const recommendations = (recommendationsQ.data ?? []) as AnyRecord[];
   const exceptions = (exceptionsQ.data ?? []) as AnyRecord[];
   const availableDrivers = (availableDriversQ.data ?? []) as AnyRecord[];
@@ -163,10 +169,11 @@ export function FleetAssignmentsPage() {
     return <ErrorState message={assignmentsQ.error instanceof Error ? assignmentsQ.error.message : "Unable to load assignments."} />;
   }
 
-  const supportingError = [recommendationsQ, exceptionsQ, availableDriversQ, availableVehiclesQ, ownersQ]
+  const supportingError = [fleetHistoryQ, recommendationsQ, exceptionsQ, availableDriversQ, availableVehiclesQ, ownersQ]
     .find((query) => query.isError)?.error;
 
   const activeAssignments = assignments.filter((row) => !/deliver|cancel/.test(assignmentStatus(row))).length;
+  const activeFleetPairings = fleetHistory.filter((row) => /^active$/i.test(String(g(row, "status") ?? ""))).length;
   const inTransit = assignments.filter((row) => /pickup|transit|delivery/.test(assignmentStatus(row))).length;
   const exceptionCount = exceptions.filter((row) => String(g(row, "status") ?? "open").toLowerCase() !== "resolved").length;
   const avgMatch = assignments.length
@@ -191,7 +198,8 @@ export function FleetAssignmentsPage() {
         icon={<Link2 className="h-3.5 w-3.5 text-teal-700" />}
         title="Assignments"
         meta={<>
-          <span className="font-bold text-slate-700 tabular-nums">{activeAssignments}</span> active pairings ·{" "}
+          <span className="font-bold text-slate-700 tabular-nums">{activeFleetPairings}</span> fleet pairings ·{" "}
+          <span className="font-bold text-violet-600 tabular-nums">{activeAssignments}</span> dispatch jobs ·{" "}
           <span className="font-bold text-emerald-600 tabular-nums">{inTransit}</span> in motion ·{" "}
           <span className="font-bold text-rose-600 tabular-nums">{exceptionCount}</span> exceptions ·{" "}
           <span className="font-bold text-sky-600 tabular-nums">{owners.length}</span> partner operators
@@ -209,7 +217,7 @@ export function FleetAssignmentsPage() {
       <ConsoleNav sections={SECTIONS} active={section} onSelect={(key) => navigate(`/assignments/${key}`)} />
 
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-        <ClayStat Icon={Link2}         tone="fc-clay-teal"    iconCls="text-teal-700"    label="Active assignments" value={activeAssignments} caption={`${inTransit} in motion`} />
+        <ClayStat Icon={Link2}         tone="fc-clay-teal"    iconCls="text-teal-700"    label="Fleet pairings" value={activeFleetPairings} caption={`${fleetHistory.length} history rows`} />
         <ClayStat Icon={AlertTriangle} tone="fc-clay-red"     iconCls="text-rose-700"    label="Open exceptions" value={exceptionCount} caption={exceptionCount ? "Needs dispatcher attention" : "No open dispatch issues"} alert={exceptionCount > 0} />
         <ClayStat Icon={Gauge}         tone="fc-clay-emerald" iconCls="text-emerald-700" label="Average match score" value={`${avgMatch}%`} caption={`${readyDrivers} ready drivers / ${readyVehicles} ready units`} />
         <ClayStat Icon={Users}         tone="fc-clay-sky"     iconCls="text-sky-700"     label="Partner capacity" value={owners.length} caption={owners.length ? "Owner-operator records" : "No owner records yet"} />
@@ -217,6 +225,35 @@ export function FleetAssignmentsPage() {
 
       {section === "overview" && (
         <div className="space-y-6">
+          <section className="panel p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">Fleet assignment history</h2>
+                <p className="text-sm text-slate-500">Effective-dated driver and vehicle pairings from the fleet master. Reassignment closes the previous row and preserves it here.</p>
+              </div>
+              <button type="button" className="btn-ghost h-9" onClick={() => exportCsv("fleet-assignment-history", fleetHistory)}>Export history</button>
+            </div>
+            {fleetHistoryQ.isLoading ? <div className="mt-4"><LoadingState /></div> : fleetHistory.length ? (
+              <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200">
+                <table className="min-w-full text-left text-sm">
+                  <thead className="bg-slate-50 text-[11px] uppercase tracking-[0.12em] text-slate-500">
+                    <tr><th className="px-4 py-3">Vehicle</th><th className="px-4 py-3">Driver</th><th className="px-4 py-3">Type</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Effective from</th><th className="px-4 py-3">Effective to</th></tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {fleetHistory.slice(0, 100).map((row) => <tr key={String(row.id)}>
+                      <td className="px-4 py-3 font-semibold text-slate-900">{String(g(row, "vehicleCode", "vehicle_code") ?? "—")}</td>
+                      <td className="px-4 py-3 text-slate-700">{String(g(row, "driverCode", "driver_code") ?? "—")} · {String(g(row, "driverName", "driver_name") ?? "—")}</td>
+                      <td className="px-4 py-3 text-slate-600">{String(g(row, "assignmentType", "assignment_type") ?? "Primary Driver")}</td>
+                      <td className="px-4 py-3"><StatusBadge status={g(row, "status") ?? "Unknown"} /></td>
+                      <td className="px-4 py-3 text-slate-600">{g(row, "assignmentDate", "assignment_date") ? new Date(String(g(row, "assignmentDate", "assignment_date"))).toLocaleString() : "—"}</td>
+                      <td className="px-4 py-3 text-slate-600">{g(row, "releaseDate", "release_date") ? new Date(String(g(row, "releaseDate", "release_date"))).toLocaleString() : "Current"}</td>
+                    </tr>)}
+                  </tbody>
+                </table>
+                {fleetHistory.length > 100 ? <p className="border-t border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-500">Showing the latest 100 of {fleetHistory.length.toLocaleString()} history rows. Export includes the complete result.</p> : null}
+              </div>
+            ) : <div className="mt-4"><EmptyState title="No fleet pairings" subtitle="Assign a driver from the vehicle roster to create the first governed history row." /></div>}
+          </section>
           <div className="grid gap-4 lg:grid-cols-3">
             <ModuleCard
               title="Assignment board"

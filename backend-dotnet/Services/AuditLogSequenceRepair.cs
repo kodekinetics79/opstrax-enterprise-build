@@ -13,6 +13,23 @@ internal static class AuditLogSequenceRepair
         Action<NpgsqlCommand> bind,
         CancellationToken ct = default)
     {
+        if (db.HasAmbientTransaction)
+        {
+            await db.ExecuteAsync("SAVEPOINT audit_log_sequence_repair", ct: ct);
+            try
+            {
+                await db.ExecuteAsync(sql, bind, ct);
+                await db.ExecuteAsync("RELEASE SAVEPOINT audit_log_sequence_repair", ct: ct);
+                return;
+            }
+            catch
+            {
+                await db.ExecuteAsync("ROLLBACK TO SAVEPOINT audit_log_sequence_repair", ct: ct);
+                await db.ExecuteAsync("RELEASE SAVEPOINT audit_log_sequence_repair", ct: ct);
+                throw;
+            }
+        }
+
         try
         {
             await db.ExecuteAsync(sql, bind, ct);

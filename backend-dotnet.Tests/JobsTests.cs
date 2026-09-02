@@ -11,19 +11,21 @@ namespace Opstrax.Tests;
 public class JobsSeedPermissionTests
 {
     [Fact]
-    public void DispatcherSeed_Includes_JobsView_And_JobsManage()
+    public void DispatcherSeed_UsesReviewedActionGrants_WithoutLegacyUmbrellas()
     {
         var seed = ReadSeedSql();
-        Assert.Contains("dispatch:view','dispatch:manage'", seed);
-        Assert.Contains("jobs:view','jobs:manage'", seed);
+        Assert.Contains("'dispatch:view','dispatch:create','dispatch:update','dispatch:assign','dispatch:cancel'", seed);
+        Assert.Contains("'shipments:view','shipments:create','shipments:update','shipments:export'", seed);
+        Assert.DoesNotContain("'jobs:view','jobs:manage'", seed);
+        Assert.DoesNotContain("(4,'dashboard:view'),(4,'dispatch:view'),(4,'dispatch:manage')", seed);
     }
 
     [Fact]
-    public void DriverSeed_Includes_JobsView_But_Not_JobsManage()
+    public void DriverSeed_IsPortalOnly()
     {
         var seed = ReadSeedSql();
-        Assert.Contains("driver:portal','jobs:view','dvir:manage'", seed);
-        Assert.DoesNotContain("driver:portal','jobs:view','jobs:manage'", seed);
+        Assert.Contains("'driver:self','notifications:view','messages:send'", seed);
+        Assert.DoesNotContain("'driver:portal','jobs:view','dvir:manage'", seed);
     }
 
     [Fact]

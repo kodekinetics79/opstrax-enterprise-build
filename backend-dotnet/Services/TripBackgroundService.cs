@@ -46,11 +46,16 @@ public sealed class TripBackgroundService(
             var runId = await tracker.BeginAsync(SvcName, ct);
             try
             {
+                // The append-only run row and readiness heartbeat are separate. Commit
+                // liveness before this database-wide cycle so a genuine long first run
+                // does not become stale immediately after startup grace expires.
+                await ReportProgressAsync(runId, ct);
+
                 // Cross-tenant worker (all-company routes, filtered by company_id):
                 // run the whole tick under the platform-admin bypass scope.
                 await db.RunInSystemTransactionAsync(async () =>
                 {
-                    await RunCycleAsync(ct);
+                    await RunCycleAsync(runId, ct);
                     return true;
                 }, ct);
                 sw.Stop();
@@ -66,7 +71,15 @@ public sealed class TripBackgroundService(
         }
     }
 
-    private async Task RunCycleAsync(CancellationToken ct)
+    // Tracker updates use their own system transaction and therefore commit outside
+    // the long trip transaction, remaining visible to readiness probes mid-cycle.
+    private async Task ReportProgressAsync(long runId, CancellationToken ct)
+    {
+        await tracker.HeartbeatAsync(SvcName, runId, ct);
+        await tracker.PulseAsync(SvcName, ct);
+    }
+
+    private async Task RunCycleAsync(long runId, CancellationToken ct)
     {
         // One database-wide cycle at a time. The advisory transaction lock is held by
         // ExecuteAsync's system transaction and makes overlapping service instances a
@@ -82,21 +95,27 @@ public sealed class TripBackgroundService(
 
         // Step 1 — upsert trips for every active route with an assigned vehicle.
         await CreateTripsFromActiveRoutesAsync(ct);
+        await ReportProgressAsync(runId, ct);
 
         // Step 2 — bind unassigned location_events to their active trip.
         await BindLocationEventsAsync(ct);
+        await ReportProgressAsync(runId, ct);
 
         // Step 3 — detect stop completion by proximity.
         await DetectStopCompletionsAsync(ct);
+        await ReportProgressAsync(runId, ct);
 
         // Step 4 — close trips first so final compliance counts every unfinished stop.
         await CloseFinalizedTripsAsync(ct);
+        await ReportProgressAsync(runId, ct);
 
         // Step 5 — compute compliance scores for active and just-completed trips.
         await ComputeComplianceAsync(ct);
+        await ReportProgressAsync(runId, ct);
 
         // Step 6 — generate route_deviation safety events for still-active trips.
         await GenerateDeviationAlertsAsync(ct);
+        await ReportProgressAsync(runId, ct);
     }
 
     // ── Step 1: Create trips ──────────────────────────────────────────────────────
@@ -106,6 +125,7 @@ public sealed class TripBackgroundService(
             @"SELECT r.id, r.company_id, r.assigned_vehicle_id, r.assigned_driver_id,
                      r.planned_start, r.planned_end, r.route_name, r.status,
                      r.estimated_distance, r.estimated_duration_minutes,
+                     CASE WHEN COUNT(DISTINCT rs.job_id)=1 THEN MIN(rs.job_id) END job_id,
                      rs_first.address AS origin,
                      rs_last.address  AS destination,
                      COUNT(rs.id)     AS total_stops
@@ -128,6 +148,7 @@ public sealed class TripBackgroundService(
             var companyId = Convert.ToInt64(route["companyId"]);
             var vehicleId = Convert.ToInt64(route["assignedVehicleId"]);
             var driverId  = route["assignedDriverId"] is null ? (long?)null : Convert.ToInt64(route["assignedDriverId"]);
+            var jobId = route["jobId"] is null or DBNull ? (long?)null : Convert.ToInt64(route["jobId"]);
 
             // Serialize creation per tenant+route across worker instances. The whole
             // cycle runs in one system transaction, so this lock covers check+insert+seed.
@@ -153,11 +174,11 @@ public sealed class TripBackgroundService(
 
             var tripId = await db.InsertAsync(
                 @"INSERT INTO trips
-                    (company_id, driver_id, vehicle_id, route_id,
+                    (company_id, driver_id, vehicle_id, route_id, job_id,
                      status, planned_start_time, planned_end_time,
                      origin, destination,
                      planned_distance_miles, planned_duration_minutes, total_planned_stops)
-                  VALUES (@cid, @did, @vid, @rid,
+                  VALUES (@cid, @did, @vid, @rid, @jid,
                           'planned', @pstart, @pend,
                           @origin, @dest,
                           @pdist, @pdur, @tstops)",
@@ -167,6 +188,7 @@ public sealed class TripBackgroundService(
                     c.Parameters.AddWithValue("@did",    (object?)driverId ?? DBNull.Value);
                     c.Parameters.AddWithValue("@vid",    vehicleId);
                     c.Parameters.AddWithValue("@rid",    routeId);
+                    c.Parameters.AddWithValue("@jid",    (object?)jobId ?? DBNull.Value);
                     c.Parameters.AddWithValue("@pstart", route["plannedStart"] ?? (object)DBNull.Value);
                     c.Parameters.AddWithValue("@pend",   route["plannedEnd"]   ?? (object)DBNull.Value);
                     c.Parameters.AddWithValue("@origin", route["origin"]       ?? (object)DBNull.Value);

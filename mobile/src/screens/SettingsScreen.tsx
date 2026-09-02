@@ -1,52 +1,57 @@
-import { View, Text } from "react-native";
+import { Alert, Text, View } from "react-native";
 import { ActionButton, Field, Panel, Pill, Screen, SectionHeader, colors } from "@/components/ui";
 import { useSession } from "@/auth/SessionProvider";
 import { useWorkflow } from "@/workflow/WorkflowContext";
-import { APP_NAME, API_BASE_URL, STAGE_LABEL } from "@/config";
-import { ROLE_MODELS } from "@/data/roleModel";
+import { APP_NAME } from "@/config";
 
 export function SettingsScreen() {
-  const { session, roleModel, normalizedRole, logout } = useSession();
+  const { session, roleModel, logout, refresh } = useSession();
   const { selectedJobId } = useWorkflow();
-  const role = ROLE_MODELS.find((entry) => entry.role === normalizedRole) ?? roleModel;
+
+  const signOut = () => {
+    Alert.alert("Sign out of this device?", "Local tenant data and the saved secure session will be cleared.", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Sign out", style: "destructive", onPress: () => void logout() },
+    ]);
+  };
 
   return (
     <Screen>
       <Panel>
-        <SectionHeader eyebrow="Account" title={APP_NAME} description="Secure session, role visibility, and operational contract preview." right={<Pill label={role.title} tone="teal" />} />
-        <Field label="Tenant / company" value={session?.company.name} />
-        <Field label="Company code" value={session?.company.code} />
-        <Field label="User" value={session?.user.name} />
-        <Field label="Email" value={session?.user.email} />
-        <Field label="Selected job" value={selectedJobId ? String(selectedJobId) : "None"} />
+        <SectionHeader eyebrow="Account" title={session?.user.name ?? APP_NAME} description="Your active organization is bound by the authenticated server session." right={<Pill label={roleModel.title} tone="teal" />} />
+        <Field label="Organization" value={session?.company.name} />
+        <Field label="Organization code" value={session?.company.code} />
+        <Field label="Work email" value={session?.user.email} />
+        {selectedJobId ? <Field label="Selected work item" value={String(selectedJobId)} /> : null}
       </Panel>
 
       <Panel>
-        <SectionHeader eyebrow="Security" title="How the mobile shell stays safe" description="The backend owns authentication, permissions, and tenant context. Mobile stores only the session token and metadata needed to keep using the same contract." />
+        <SectionHeader eyebrow="Security" title="Session protection" description="Credentials are never stored. The server token is device-only and available only while the device is unlocked." />
         <View style={{ gap: 10 }}>
-          <Field label="Stage" value={STAGE_LABEL} />
-          <Field label="API base URL" value={API_BASE_URL} />
-          <Field label="Session storage" value="Expo SecureStore" />
-          <Field label="Offline sync contract" value="Preview only; no sync engine yet" />
-          <Field label="Notification contract" value="Event mapping only; no push delivery yet" />
+          <Field label="Tenant authority" value="Server-bound bearer session" />
+          <Field label="Authorization" value="Backend role and permission grants" />
+          <Field label="Local session" value="SecureStore · device only · when unlocked" />
+          <Field label="Offline changes" value="Live mutations require a connection" />
         </View>
         <Text style={{ color: colors.muted, lineHeight: 19 }}>
-          The app does not hardcode tenant IDs, user IDs, tokens, or production URLs. It uses the authenticated backend session and the current environment variable only.
+          OpsTrax does not use a role picker, tenant override header, hardcoded account, or fabricated successful action.
         </Text>
+        <ActionButton label="Revalidate session" onPress={() => void refresh().catch((error) => Alert.alert("Session refresh failed", error instanceof Error ? error.message : "Unable to refresh."))} variant="secondary" />
       </Panel>
 
       <Panel>
-        <SectionHeader eyebrow="Permissions" title="Session grants" description="These are the backend-granted permissions visible to the mobile client." />
+        <SectionHeader eyebrow="Access" title="Backend-granted permissions" description="These grants are informational; every API action is enforced again on the server." />
         <View style={{ gap: 8 }}>
-          {session?.permissions?.length ? session.permissions.slice(0, 12).map((permission) => <Field key={permission} label="Permission" value={permission} />) : <Field label="Permission" value="No permissions loaded yet" />}
+          {session?.permissions?.length
+            ? session.permissions.slice(0, 20).map((permission) => <Field key={permission} label="Permission" value={permission} />)
+            : <Field label="Permission" value="No mobile permissions granted" />}
         </View>
       </Panel>
 
       <Panel>
-        <SectionHeader eyebrow="Exit" title="End this session" description="Logout clears the local secure session and revokes the server session when possible." />
-        <ActionButton label="Logout" onPress={() => void logout()} variant="secondary" />
+        <SectionHeader eyebrow="Device" title="End this session" description="Local secure data is removed before server revocation is attempted, so an offline force-close cannot restore the account." />
+        <ActionButton label="Sign out securely" onPress={signOut} variant="danger" />
       </Panel>
     </Screen>
   );
 }
-

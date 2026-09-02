@@ -56,7 +56,7 @@ public sealed class FleetTmsWorkspaceWave1Tests
                     "INSERT INTO drivers(company_id,branch_id,driver_code,full_name,status) VALUES (@company,@branch,@driverCode,'Driver One','Available')",
                     c => { c.Parameters.AddWithValue("@company", companyId); c.Parameters.AddWithValue("@branch", branchId); c.Parameters.AddWithValue("@driverCode", $"DRV-{companyId}"); });
                 await db.ExecuteAsync(
-                    "INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,status) VALUES (@company,@branch,'UNIT-301','Truck','Available')",
+                    "INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,vin_exception_type,alternate_identifier,status) VALUES (@company,@branch,'UNIT-301','Truck','legacy-fleet-identifier','UNIT-301','Available')",
                     c => { c.Parameters.AddWithValue("@company", companyId); c.Parameters.AddWithValue("@branch", branchId); });
             }
             var vehicleId = await db.InsertAsync("INSERT INTO fleet_tms_vehicles(company_id,branch_id,vehicle_number,status) VALUES (@company,@branch,'UNIT-301','Available')",

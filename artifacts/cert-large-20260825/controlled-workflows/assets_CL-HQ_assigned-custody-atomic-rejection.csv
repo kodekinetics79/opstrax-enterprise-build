@@ -1,0 +1,3 @@
+assetTag,branchCode,name,assetTypeCode,status,currentLocation,condition,isReturnable,quantity,unitOfMeasure,notes
+CLHQ-TRL-0002,CL-HQ,Atomic predecessor must roll back,TRAILER,Available,Central Operations HQ,Good,TRUE,1,Each,CERT-LARGE-20260825 atomic rollback predecessor
+CLHQ-TRL-0001,CL-HQ,Certification Trailer CLHQ 0001,TRAILER,Available,Tamper Yard,Good,TRUE,1,Each,CERT-LARGE-20260825 controlled custody violation

@@ -27,12 +27,10 @@ namespace Opstrax.Api.Services;
 ///    is skipped (restricted `opstrax_app` role under RLS enforcement, i.e. production).
 ///    That is the whole point: prod is exactly where the drift was fatal. Executes under a
 ///    system scope so RLS does not hide the global (company_id IS NULL) role rows.
-///  • ADDITIVE, never subtractive — except for the explicitly-listed <see cref="Retired"/>
-///    keys. A blanket "make the DB match the code" would have stripped Dispatcher of
-///    `jobs:view`, `map:view`, `fleet:view` and `dispatch:manage`, which are NOT in that
-///    role's code default but ARE live via the semantic alias tables in FoundationServices.
-///    Adding a missing grant can only restore intended access; removing one can cause an
-///    outage. So removals require proof, one key at a time.
+///  • ADDITIVE, never subtractive — except for explicitly-listed global or role-specific
+///    retired keys. A blanket "make the DB match the code" would strip live legacy grants
+///    without review. Removals therefore require proof, one role/key pair at a time; AUD-003
+///    retires only Dispatcher's obsolete umbrella while preserving its exact action grants.
 ///  • Idempotent: a converged DB produces zero writes.
 ///  • Built-in roles are already immutable through the admin API (`UpdateAdminRole` filters
 ///    `is_system=FALSE`), so there is no admin-authored state here for this to trample.
@@ -53,6 +51,12 @@ public sealed class RolePermissionReconciler(Database db, ILogger<RolePermission
     /// Do not add to this list without the same proof.
     /// </summary>
     private static readonly string[] Retired = ["driver:portal", "dvir:manage"];
+    private static readonly Dictionary<string, string[]> RoleRetired = new(StringComparer.OrdinalIgnoreCase)
+    {
+        // AUD-003: Dispatcher owns explicit create/update/assign/cancel grants. The
+        // legacy seed's umbrella grant also opened supervisor-only manage endpoints.
+        ["Dispatcher"] = ["dispatch:manage"],
+    };
 
     /// <summary>
     /// Roles whose grant set is AUTHORITATIVE — the code default is the exact, single source of
@@ -60,10 +64,10 @@ public sealed class RolePermissionReconciler(Database db, ILogger<RolePermission
     /// additively). Reserved for locked-down, isolated roles where over-granting is a security
     /// problem, not a convenience. The Driver role is portal-only: a driver must never accumulate
     /// back-office grants (dispatch/shipments/etc.), so it is reconciled to exactly its default.
-    /// Broad staff roles are intentionally NOT here — for them additive reconciliation stands, so a
-    /// tenant's bespoke extra grant is never silently stripped.
+    /// Dispatcher is also authoritative because AUD-003 replaces its legacy umbrella grants with
+    /// the reviewed action-level set. Other broad staff roles remain additive.
     /// </summary>
-    private static readonly HashSet<string> Authoritative = new(StringComparer.OrdinalIgnoreCase) { "Driver" };
+    private static readonly HashSet<string> Authoritative = new(StringComparer.OrdinalIgnoreCase) { "Driver", "Dispatcher" };
 
     public async Task ReconcileAsync(CancellationToken ct = default)
     {
@@ -128,6 +132,7 @@ public sealed class RolePermissionReconciler(Database db, ILogger<RolePermission
             var desired = new HashSet<string>(authoritative ? codeDefault : current, StringComparer.OrdinalIgnoreCase);
             if (!authoritative) desired.UnionWith(codeDefault);
             desired.ExceptWith(Retired);
+            if (RoleRetired.TryGetValue(name, out var roleRetired)) desired.ExceptWith(roleRetired);
 
             var toAdd = desired.Except(currentGrantRows, StringComparer.OrdinalIgnoreCase).ToArray();
             var toRemove = currentGrantRows.Except(desired, StringComparer.OrdinalIgnoreCase).ToArray();

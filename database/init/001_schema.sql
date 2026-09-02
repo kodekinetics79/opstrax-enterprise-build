@@ -538,6 +538,9 @@ CREATE TABLE IF NOT EXISTS documents (
   document_type VARCHAR(120) NOT NULL,
   owner_name VARCHAR(160) NULL,
   status VARCHAR(50) NOT NULL DEFAULT 'Active',
+  lifecycle_mode VARCHAR(20) NOT NULL DEFAULT 'legacy_unknown'
+    CONSTRAINT ck_documents_lifecycle_mode CHECK (lifecycle_mode IN ('automatic','manual','legacy_unknown')),
+  lifecycle_assessed_on DATE NULL,
   uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

@@ -12,8 +12,17 @@ export async function stubUnavailablePublicApisWhenLocal(page, target) {
   if (target.environment !== "local") return;
   await page.route("**/api/**", async (route) => {
     if (route.request().method() !== "GET") return route.abort("blockedbyclient");
+    if (new URL(route.request().url()).pathname === "/api/localization/user-preferences") {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ success: true, data: [] }),
+      });
+    }
     return route.fulfill({
-      status: 404,
+      // A transport-successful negative envelope exercises the page's
+      // fail-closed state without manufacturing a browser console error.
+      status: 200,
       contentType: "application/json",
       body: JSON.stringify({ success: false, message: "Not found" }),
     });

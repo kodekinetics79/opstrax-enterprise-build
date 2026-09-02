@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Eye, EyeOff } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router";
 import { AlertCircle, CheckCircle2, ShieldCheck } from "lucide-react";
@@ -17,6 +18,9 @@ export function ResetPasswordPage() {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [localError, setLocalError] = useState("");
+  // One toggle governs both fields: an activation password is typed once and confirmed
+  // immediately, so revealing them together is what actually helps the user see a typo.
+  const [showPassword, setShowPassword] = useState(false);
   const action = useMutation({
     mutationFn: async () => {
       if (resetting) await authApi.resetPassword(linkedEmail, token, password);
@@ -39,7 +43,21 @@ export function ResetPasswordPage() {
       {action.isSuccess ? <div role="status" className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800"><CheckCircle2 className="mb-2 h-5 w-5" />{resetting ? (welcome ? "Your account is active. You can now sign in." : "Password updated. You can now sign in.") : "If an active account matches that email, reset instructions have been sent."}<div className="mt-3"><Link to="/login" className="font-semibold underline">Return to sign in</Link></div></div> :
       <form onSubmit={submit} className="mt-6 space-y-4">
         {!resetting && <label className="block text-sm font-medium text-slate-700">Work email<input type="email" autoComplete="email" required value={email} onChange={e => setEmail(e.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-300 px-3.5 py-2.5 outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-500/15" /></label>}
-        {resetting && <><label className="block text-sm font-medium text-slate-700">New password<input type="password" autoComplete="new-password" required minLength={8} value={password} onChange={e => setPassword(e.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-300 px-3.5 py-2.5 outline-none focus:border-teal-500" /></label><label className="block text-sm font-medium text-slate-700">Confirm password<input type="password" autoComplete="new-password" required minLength={8} value={confirm} onChange={e => setConfirm(e.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-300 px-3.5 py-2.5 outline-none focus:border-teal-500" /></label></>}
+        {resetting && <>
+          <label className="block text-sm font-medium text-slate-700">New password
+            <div className="relative mt-1.5">
+              <input type={showPassword ? "text" : "password"} autoComplete="new-password" required minLength={8} value={password} onChange={e => setPassword(e.target.value)} className="w-full rounded-lg border border-slate-300 py-2.5 pl-3.5 pr-11 outline-none focus:border-teal-500" />
+              <button type="button" onClick={() => setShowPassword(v => !v)}
+                aria-label={showPassword ? "Hide passwords" : "Show passwords"} aria-pressed={showPassword}
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-md p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500">
+                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+          </label>
+          <label className="block text-sm font-medium text-slate-700">Confirm password
+            <input type={showPassword ? "text" : "password"} autoComplete="new-password" required minLength={8} value={confirm} onChange={e => setConfirm(e.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-300 px-3.5 py-2.5 outline-none focus:border-teal-500" />
+          </label>
+        </>}
         {(localError || apiError) && <div role="alert" className="flex gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700"><AlertCircle className="h-4 w-4 shrink-0" />{localError || apiError}</div>}
         <button disabled={action.isPending || (!resetting && !email.trim()) || (resetting && (!password || !confirm))} className="w-full rounded-lg bg-teal-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-teal-500 disabled:opacity-50">{action.isPending ? "Please wait…" : resetting ? "Update password" : "Send reset link"}</button>
       </form>}

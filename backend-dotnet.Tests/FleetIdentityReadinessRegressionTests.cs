@@ -52,9 +52,15 @@ public sealed class FleetIdentityReadinessRegressionTests
     {
         var endpoints = Read("backend-dotnet", "Controllers", "EndpointMappings.cs");
 
-        Assert.True(Count(endpoints, "license_number_bidx=@bidx OR") >= 4);
+        Assert.True(Count(endpoints, "license_number_bidx=@bidx OR") >= 2);
         Assert.True(Count(endpoints,
-            "NULLIF(BTRIM(license_number_bidx),'') IS NULL AND LOWER(BTRIM(license_number))=LOWER(BTRIM(") >= 4);
+            "NULLIF(BTRIM(license_number_bidx),'') IS NULL AND LOWER(BTRIM(license_number))=LOWER(BTRIM(") >= 2);
+
+        // Bulk import performs the same PII transition bridge set-wise: current
+        // encrypted rows match by blind index, while legacy rows without an index
+        // match normalized plaintext until the key-aware backfill is complete.
+        Assert.Contains("license_number_bidx=ANY(@licenseBlindIndexes) OR", endpoints);
+        Assert.Contains("NULLIF(BTRIM(license_number_bidx),'') IS NULL AND UPPER(BTRIM(license_number))=ANY(@licenses)", endpoints);
     }
 
     [Fact]

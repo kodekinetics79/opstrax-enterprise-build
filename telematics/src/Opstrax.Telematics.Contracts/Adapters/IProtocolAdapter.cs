@@ -16,7 +16,7 @@ namespace Opstrax.Telematics.Contracts.Adapters;
 /// share as singletons across concurrent connections.
 /// </para>
 /// <para>
-/// <b>Partial frames.</b> <see cref="Decode"/> is explicitly partial-frame aware: it is
+/// <b>Partial frames.</b> <see cref="Decode(System.ReadOnlySpan{byte}, out int)"/> is explicitly partial-frame aware: it is
 /// called with whatever bytes are currently buffered, decodes as many <em>complete</em>
 /// frames as it can, and reports how many bytes it consumed so the gateway can retain the
 /// unconsumed remainder and append the next read. It must never block waiting for more
@@ -49,6 +49,26 @@ public interface IProtocolAdapter
     /// <returns>Zero or more decoded messages, in wire order. Never <see langword="null"/>.</returns>
     /// <exception cref="ProtocolException">The buffer is malformed beyond recovery (bad checksum, impossible framing).</exception>
     IReadOnlyList<DecodedMessage> Decode(ReadOnlySpan<byte> buffer, out int consumed);
+
+    /// <summary>
+    /// Decodes as <see cref="Decode(ReadOnlySpan{byte}, out int)"/> does, and additionally reports
+    /// this call's framing statistics so the host can count frame attempts and checksum failures
+    /// without re-parsing the buffer.
+    /// </summary>
+    /// <param name="buffer">The currently buffered, possibly partial, byte stream.</param>
+    /// <param name="consumed">Bytes fully consumed, exactly as in the two-argument overload.</param>
+    /// <param name="stats">Frames stepped over and checksum failures observed by this call.</param>
+    /// <returns>Zero or more decoded messages, in wire order. Never <see langword="null"/>.</returns>
+    /// <remarks>
+    /// The default implementation reports empty statistics, so an adapter that does not yet
+    /// distinguish a checksum failure from a quiet link keeps compiling and simply contributes
+    /// nothing to those counters rather than contributing a wrong number.
+    /// </remarks>
+    IReadOnlyList<DecodedMessage> Decode(ReadOnlySpan<byte> buffer, out int consumed, out FrameDecodeStats stats)
+    {
+        stats = default;
+        return Decode(buffer, out consumed);
+    }
 
     /// <summary>
     /// Builds the protocol-level acknowledgement the device expects for

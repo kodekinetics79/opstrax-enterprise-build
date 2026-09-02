@@ -58,6 +58,14 @@ function num(v: unknown, fallback = 0): number {
   return isNaN(n) ? fallback : n;
 }
 
+/** Null when the API supplied no usable value, so the UI can show "—" rather than
+ *  inventing a number. Use for anything presented to the user as a measurement. */
+function optional(v: unknown): number | null {
+  if (v == null || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
 function hasReadinessEvidence(vehicle: AnyRecord): boolean {
   return [vehicle.deviceStatus ?? vehicle.device_status, vehicle.cameraStatus ?? vehicle.camera_status]
     .some((status) => status != null && !/^(unknown|unavailable|--)$/i.test(String(status).trim()));
@@ -97,12 +105,15 @@ function DrawerSkeleton() {
 // ── Readiness gauge strip ───────────────────────────────────────────────────
 
 function ReadinessStrip({ summary }: { summary: AnyRecord }) {
-  const score     = num(summary.fleetHealthScore, 50);
+  // A missing score must read as missing. These previously defaulted to 50 and 100,
+  // so a tenant with no computed health rendered a "50% / Action required" dial and a
+  // "100%" safety average -- fabricated assessments indistinguishable from measured ones.
+  const score     = optional(summary.fleetHealthScore);
   const total     = num(summary.totalVehicles);
   const ready     = num(summary.dispatchReadyVehicles);
   const oos       = num(summary.oosVehicles);
   const blockers  = num(summary.criticalDefectVehicles);
-  const avgSafety = num(summary.avgSafetyScore, 100);
+  const avgSafety = optional(summary.avgSafetyScore);
 
   return (
     <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-wrap gap-6 items-center shadow-sm">
@@ -113,21 +124,25 @@ function ReadinessStrip({ summary }: { summary: AnyRecord }) {
             <circle cx="18" cy="18" r="14" fill="none" stroke={tokens.border} strokeWidth="3" />
             <circle
               cx="18" cy="18" r="14" fill="none"
-              stroke={score >= 80 ? chart.emerald500 : score >= 60 ? chart.amber500 : chart.red500}
+              stroke={score == null ? tokens.border : score >= 80 ? chart.emerald500 : score >= 60 ? chart.amber500 : chart.red500}
               strokeWidth="3"
-              strokeDasharray={`${(score / 100) * 87.96} 87.96`}
+              strokeDasharray={`${((score ?? 0) / 100) * 87.96} 87.96`}
               strokeLinecap="round"
             />
           </svg>
-          <span className={`absolute inset-0 flex items-center justify-center text-sm font-bold ${scoreColor(score)}`}>
-            {score}%
+          <span className={`absolute inset-0 flex items-center justify-center text-sm font-bold ${score == null ? "text-slate-400" : scoreColor(score)}`}>
+            {score == null ? "—" : `${score}%`}
           </span>
         </div>
         <div>
           <p className="text-[11px] font-bold uppercase tracking-widest text-slate-400">Fleet Health</p>
-          <p className={`text-2xl font-bold ${scoreColor(score)}`}>{score}%</p>
+          <p className={`text-2xl font-bold ${score == null ? "text-slate-400" : scoreColor(score)}`}>
+            {score == null ? "—" : `${score}%`}
+          </p>
           <p className="text-xs text-slate-500 mt-0.5">
-            {score >= 85 ? "Good standing" : score >= 65 ? "Needs attention" : "Action required"}
+            {score == null
+              ? "Not yet measured"
+              : score >= 85 ? "Good standing" : score >= 65 ? "Needs attention" : "Action required"}
           </p>
         </div>
       </div>
@@ -151,7 +166,9 @@ function ReadinessStrip({ summary }: { summary: AnyRecord }) {
         </div>
         <div className="text-center">
           <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Safety Score</p>
-          <p className={`text-xl font-bold ${scoreColor(avgSafety)}`}>{avgSafety}%</p>
+          <p className={`text-xl font-bold ${avgSafety == null ? "text-slate-400" : scoreColor(avgSafety)}`}>
+            {avgSafety == null ? "—" : `${avgSafety}%`}
+          </p>
           <p className="text-xs text-slate-500">fleet avg</p>
         </div>
         <div className="text-center">

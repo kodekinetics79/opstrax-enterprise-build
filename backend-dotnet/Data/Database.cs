@@ -25,6 +25,8 @@ public sealed class TenantScope : IAsyncDisposable
 {
     internal NpgsqlConnection Connection { get; }
     internal NpgsqlTransaction Transaction { get; }
+    // Factory-owned identity, never populated from an HTTP body or a system scope.
+    internal long? CompanyId { get; }
     private bool _completed;
     private readonly Func<CancellationToken, Task>? _refreshTenantTicket;
     private readonly TimeSpan _ticketRefreshInterval;
@@ -40,10 +42,12 @@ public sealed class TenantScope : IAsyncDisposable
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
         Func<CancellationToken, Task>? refreshTenantTicket = null,
-        TimeSpan? ticketRefreshInterval = null)
+        TimeSpan? ticketRefreshInterval = null,
+        long? companyId = null)
     {
         Connection = connection;
         Transaction = transaction;
+        CompanyId = companyId;
         _refreshTenantTicket = refreshTenantTicket;
         _ticketRefreshInterval = ticketRefreshInterval ?? TimeSpan.Zero;
         _refreshAfterTimestamp = NextRefreshTimestamp(_ticketRefreshInterval);
@@ -98,22 +102,20 @@ public sealed class TenantScope : IAsyncDisposable
 public sealed class Database(IConfiguration configuration, TenantScopeAccessor? scopes = null)
 {
     // Credentials are environment-only — never hard-coded in appsettings.json.
-    // Production resolution is explicit: ConnectionStrings:DefaultConnection or
+    // Protected-environment resolution is explicit: ConnectionStrings:DefaultConnection or
     // PG_CONNECTION_APP. The legacy PG_CONNECTION fallback is non-production only.
     private readonly string _connectionString =
         ResolveAppConnection(configuration)
         ?? throw new InvalidOperationException(
             "Application database connection string is not configured. Set ConnectionStrings__DefaultConnection or PG_CONNECTION_APP.");
 
-    private readonly bool _productionRls =
+    private readonly bool _protectedRls =
         configuration.GetValue<bool>("Rls:EnforceTenantContext") &&
-        string.Equals(
-            configuration["ASPNETCORE_ENVIRONMENT"] ?? configuration["DOTNET_ENVIRONMENT"] ?? configuration["Environment"],
-            "Production", StringComparison.OrdinalIgnoreCase);
+        IsProtectedEnvironment(configuration["ASPNETCORE_ENVIRONMENT"] ?? configuration["DOTNET_ENVIRONMENT"] ?? configuration["Environment"]);
 
     // Cross-tenant bootstrap, platform, public-token and background work uses a
     // physically separate pool and the narrowly-granted opstrax_system login. In
-    // Production+RLS this value is mandatory and NEVER falls back to the app pool.
+    // Production/Staging+RLS this value is mandatory and NEVER falls back to the app pool.
     // Non-production retains the one-identity fallback so local schema tools and the
     // existing owner-backed integration tests keep working without production secrets.
     private readonly string? _systemConnectionString = ResolveSystemConnection(configuration);
@@ -141,6 +143,7 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
     // (background workers, SSE) MUST wrap their DB work in a scope or the restricted
     // `opstrax_app` role returns 0 rows (fail-closed) — see BeginSystemScopeAsync.
     public bool RlsEnforced { get; } = configuration.GetValue<bool>("Rls:EnforceTenantContext");
+    internal bool HasAmbientTransaction => _scopes.Current is not null;
     private readonly int _tenantTicketTtlSeconds = ResolveTenantTicketTtl(configuration);
 
     private static string? Coalesce(params string?[] values)
@@ -152,11 +155,9 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
             config.GetConnectionString("DefaultConnection"),
             config["PG_CONNECTION_APP"],
             Environment.GetEnvironmentVariable("PG_CONNECTION_APP"));
-        var productionRls = config.GetValue<bool>("Rls:EnforceTenantContext") &&
-            string.Equals(
-                config["ASPNETCORE_ENVIRONMENT"] ?? config["DOTNET_ENVIRONMENT"] ?? config["Environment"],
-                "Production", StringComparison.OrdinalIgnoreCase);
-        return productionRls
+        var protectedRls = config.GetValue<bool>("Rls:EnforceTenantContext") &&
+            IsProtectedEnvironment(config["ASPNETCORE_ENVIRONMENT"] ?? config["DOTNET_ENVIRONMENT"] ?? config["Environment"]);
+        return protectedRls
             ? explicitApp
             : Coalesce(explicitApp, config["PG_CONNECTION"], Environment.GetEnvironmentVariable("PG_CONNECTION"));
     }
@@ -167,15 +168,17 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
             config.GetConnectionString("SystemConnection"),
             config["PG_CONNECTION_SYSTEM"],
             Environment.GetEnvironmentVariable("PG_CONNECTION_SYSTEM"));
-        var productionRls = config.GetValue<bool>("Rls:EnforceTenantContext") &&
-            string.Equals(
-                config["ASPNETCORE_ENVIRONMENT"] ?? config["DOTNET_ENVIRONMENT"] ?? config["Environment"],
-                "Production", StringComparison.OrdinalIgnoreCase);
-        if (productionRls && string.IsNullOrWhiteSpace(explicitSystem))
+        var protectedRls = config.GetValue<bool>("Rls:EnforceTenantContext") &&
+            IsProtectedEnvironment(config["ASPNETCORE_ENVIRONMENT"] ?? config["DOTNET_ENVIRONMENT"] ?? config["Environment"]);
+        if (protectedRls && string.IsNullOrWhiteSpace(explicitSystem))
             throw new InvalidOperationException(
-                "System database connection string is required in Production with RLS. Set ConnectionStrings__SystemConnection or PG_CONNECTION_SYSTEM.");
+                "System database connection string is required in Production or Staging with RLS. Set ConnectionStrings__SystemConnection or PG_CONNECTION_SYSTEM.");
         return explicitSystem;
     }
+
+    private static bool IsProtectedEnvironment(string? environment) =>
+        string.Equals(environment, "Production", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(environment, "Staging", StringComparison.OrdinalIgnoreCase);
 
     private static int ResolveTenantTicketTtl(IConfiguration config)
     {
@@ -262,6 +265,54 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
         finally { _scopes.Current = null; }
     }
 
+    // Canonical document mutations need a committed business result before the HTTP
+    // result is returned. Suspend (never complete/dispose) the request's outer scope.
+    // This uses the SAME restricted application pool and signed tenant authority.
+    // It costs a second pooled connection while an outer request scope is held.
+    public async Task<T> RunInDocumentTransactionAsync<T>(long companyId, Func<Task<T>> body,
+        Func<CancellationToken, Task>? afterConfirmedRollback = null, CancellationToken ct = default)
+    {
+        var priorScope = _scopes.Current;
+        if (companyId <= 0 || (RlsEnforced && (priorScope is null || priorScope.CompanyId != companyId)))
+            throw new InvalidOperationException("Document mutation requires the matching authenticated tenant scope.");
+        await using var scope = await BeginTenantScopeAsync(companyId, ct);
+        _scopes.Current = scope;
+        var commitAttempted = false;
+        try
+        {
+            var result = await body();
+            commitAttempted = true;
+            await scope.CompleteAsync(ct);
+            return result;
+        }
+        catch (Exception failure)
+        {
+            // Commit may have reached PostgreSQL even if its acknowledgment was lost.
+            // Never compensate an object after attempting it, including on cancellation.
+            if (commitAttempted)
+                throw new DocumentTransactionUncertainException("Document commit outcome is uncertain. Reload and reconcile before retrying.", failure);
+            using var rollbackTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            try { await scope.Transaction.RollbackAsync(rollbackTimeout.Token); }
+            catch (Exception rollbackFailure)
+            {
+                throw new DocumentTransactionUncertainException("Document rollback was not confirmed. Reload and reconcile before retrying.", rollbackFailure);
+            }
+            if (afterConfirmedRollback is not null)
+            {
+                // This callback is object-storage compensation only. The inner DB
+                // transaction is rolled back; callers must not execute DB commands here.
+                using var cleanupTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                try { await afterConfirmedRollback(cleanupTimeout.Token); }
+                catch (Exception cleanupFailure)
+                {
+                    throw new DocumentTransactionUncertainException("Document writes rolled back, but uploaded-file cleanup needs reconciliation.", cleanupFailure);
+                }
+            }
+            throw;
+        }
+        finally { _scopes.Current = priorScope; }
+    }
+
     // Runs a cross-tenant/system mutation as one transaction even when RLS is disabled.
     // This is intentionally distinct from RunInSystemScopeAsync, whose non-RLS path is
     // a pass-through for background reads. Provisioning workflows such as demo-tenant
@@ -288,12 +339,12 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
         => await OpenWithRetryAsync(_connectionString, ct);
 
     /// <summary>
-    /// Opens the isolated system pool. Production+RLS never aliases or falls back to
+    /// Opens the isolated system pool. Production/Staging+RLS never aliases or falls back to
     /// the application identity; local/test environments may use the app connection.
     /// </summary>
     public async Task<NpgsqlConnection> OpenSystemAsync(CancellationToken ct = default)
     {
-        if (_productionRls && string.IsNullOrWhiteSpace(_systemConnectionString))
+        if (_protectedRls && string.IsNullOrWhiteSpace(_systemConnectionString))
             throw new InvalidOperationException("System database identity is unavailable.");
         return await OpenWithRetryAsync(_systemConnectionString ?? _connectionString, ct);
     }
@@ -502,7 +553,7 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
                     "SELECT set_config('app.current_tenant_id', @cid, true)", connection, tx);
                 legacy.Parameters.AddWithValue("@cid", companyId.ToString());
                 await legacy.ExecuteNonQueryAsync(ct);
-                return new TenantScope(connection, tx);
+                return new TenantScope(connection, tx, companyId: companyId);
             }
 
             int backendPid;
@@ -560,7 +611,7 @@ public sealed class Database(IConfiguration configuration, TenantScopeAccessor? 
                     renew.Parameters.AddWithValue("@ticket", renewedTicket);
                     await renew.ExecuteNonQueryAsync(refreshCt);
                 },
-                refreshInterval);
+                refreshInterval, companyId);
         }
         catch
         {

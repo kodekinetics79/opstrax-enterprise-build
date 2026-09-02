@@ -1,0 +1,2 @@
+vehicleCode,branchCode,type,make,model,year,vehicleClass,odometerMiles,vin,vinExceptionType,alternateIdentifier,plateNumber,plateJurisdiction,status
+TRK-101,CL-HQ,Truck,Honda,Accord,2003,Class 1,84500,1HGCM82633A004352,,,PLT-4821,NY,Available

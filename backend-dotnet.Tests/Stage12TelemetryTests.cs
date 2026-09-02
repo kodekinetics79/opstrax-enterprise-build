@@ -16,18 +16,20 @@ public class Stage12TelemetryTests
     {
         var db = CreateDatabase();
         var schema = new TelemetrySchemaService(db);
-        var companyId = NextCompanyId();
-        var vehicleId = await GetAnyVehicleIdAsync(db);
-        var driverId = await GetAnyDriverIdAsync(db);
+        long companyId = 0;
         var liveState = new TelemetryLiveStateService(db);
         var ai = new PostgresAiFoundationService(db, new AmbientCorrelationContext());
 
         try
         {
             await schema.EnsureAsync();
+            var fixture = await CreateTenantFixtureAsync(db, "SUMMARY");
+            (companyId, _, var vehicleId, var driverId) = fixture;
             await SeedTelemetryAsync(db, companyId, vehicleId, driverId, staleMinutes: 2, speedMph: 78m);
 
-            await liveState.RefreshVehicleAsync(companyId, vehicleId);
+            // Exercise the company-level worker path. Database rows are normalized to
+            // camelCase, so this also guards the vehicleId projection used by scheduled refreshes.
+            await liveState.RefreshCompanyAsync(companyId);
             _ = ai.CreateRecommendation(
                 companyId.ToString(),
                 "telemetry.speeding",
@@ -50,8 +52,37 @@ public class Stage12TelemetryTests
             Assert.NotNull(summary["riskRules"]);
             Assert.NotNull(summary["alerts"]);
             Assert.NotNull(summary["recommendations"]);
+            Assert.False(summary.ContainsKey("error"), summary.GetValueOrDefault("errorDetail")?.ToString());
             Assert.False(summary.ContainsKey("mobileReadiness"));
             Assert.True(entities.Count >= 0);
+
+            var alerts = (IReadOnlyList<Dictionary<string, object?>>)summary["alerts"]!;
+            Assert.Contains(alerts, alert =>
+                alert["alertType"]?.ToString() == "speeding"
+                && alert["status"]?.ToString() == "Open");
+            var positionProjection = await db.QuerySingleAsync(
+                @"SELECT alert_count,open_alert_count,telemetry_status,risk_level,next_action
+                  FROM latest_vehicle_positions WHERE company_id=@cid AND vehicle_id=@vid",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@cid", companyId);
+                    c.Parameters.AddWithValue("@vid", vehicleId);
+                });
+            Assert.NotNull(positionProjection);
+            Assert.Equal(1, Convert.ToInt32(positionProjection!["alertCount"]));
+            Assert.Equal(1, Convert.ToInt32(positionProjection["openAlertCount"]));
+            Assert.Equal("watch", positionProjection["telemetryStatus"]?.ToString());
+            Assert.Equal("medium", positionProjection["riskLevel"]?.ToString());
+            var nextAction = positionProjection["nextAction"]?.ToString() ?? string.Empty;
+            Assert.True(
+                nextAction.Contains("alert", StringComparison.OrdinalIgnoreCase)
+                || nextAction.Contains("speeding", StringComparison.OrdinalIgnoreCase),
+                $"Expected an alert- or speeding-focused next action, got '{nextAction}'.");
+            Assert.DoesNotContain("No action required", nextAction, StringComparison.OrdinalIgnoreCase);
+            var recommendations = (IReadOnlyList<Dictionary<string, object?>>)summary["recommendations"]!;
+            Assert.Contains(recommendations, recommendation =>
+                recommendation["recommendationType"]?.ToString() == "telemetry.speeding"
+                && recommendation["title"]?.ToString() == "Speeding review");
 
             var kpis = (Dictionary<string, object?>)summary["kpis"]!;
             Assert.True(Convert.ToInt64(kpis["liveUnits"]) >= 0);
@@ -68,15 +99,17 @@ public class Stage12TelemetryTests
     {
         var db = CreateDatabase();
         var schema = new TelemetrySchemaService(db);
-        var companyA = NextCompanyId();
-        var companyB = NextCompanyId();
-        var vehicleId = await GetAnyVehicleIdAsync(db);
-        var driverId = await GetAnyDriverIdAsync(db);
+        long companyA = 0;
+        long companyB = 0;
         var liveState = new TelemetryLiveStateService(db);
 
         try
         {
             await schema.EnsureAsync();
+            var fixtureA = await CreateTenantFixtureAsync(db, "STALE-A");
+            var fixtureB = await CreateTenantFixtureAsync(db, "STALE-B");
+            (companyA, _, var vehicleId, var driverId) = fixtureA;
+            (companyB, _, _, _) = fixtureB;
             await SeedTelemetryAsync(db, companyA, vehicleId, driverId, staleMinutes: 25, speedMph: 12m);
             await liveState.RefreshVehicleAsync(companyA, vehicleId);
 
@@ -85,6 +118,9 @@ public class Stage12TelemetryTests
             Assert.Equal("stale", state!["telemetryStatus"]?.ToString());
             Assert.Equal("high", state["riskLevel"]?.ToString());
             Assert.Contains("heartbeat", state["nextAction"]?.ToString() ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+
+            await liveState.RefreshVehicleAsync(companyB, vehicleId);
+            Assert.Null(await liveState.GetLiveStateAsync(companyB, vehicleId));
 
             var otherSummary = await liveState.BuildSummaryAsync(companyB);
             Assert.Empty((IReadOnlyList<Dictionary<string, object?>>)otherSummary["entities"]!);
@@ -101,9 +137,16 @@ public class Stage12TelemetryTests
     public void TelemetryPermissions_FailClosed_And_Recognize_Allowed_Aliases()
     {
         Assert.True(EndpointMappings.HasPermission(new[] { "map:view" }, "telemetry.live_state.read"));
-        Assert.True(EndpointMappings.HasPermission(new[] { "fleet:view" }, "telemetry.devices.read"));
+        Assert.True(EndpointMappings.HasPermission(new[] { "telematics:devices:view" }, "telemetry.devices.read"));
         Assert.True(EndpointMappings.HasPermission(new[] { "alerts:view" }, "telemetry.alerts.read"));
         Assert.False(EndpointMappings.HasPermission(Array.Empty<string>(), "telemetry.live_state.read"));
+        // Packet-2 alias mirror (tightened): coarse view grants no longer satisfy the
+        // telemetry surfaces — a fleet:view/dashboard:view-only session is denied.
+        Assert.False(EndpointMappings.HasPermission(new[] { "fleet:view" }, "telemetry.devices.read"));
+        Assert.False(EndpointMappings.HasPermission(new[] { "fleet:view" }, "telemetry.live_state.read"));
+        Assert.False(EndpointMappings.HasPermission(new[] { "dashboard:view" }, "telemetry.live_state.read"));
+        Assert.False(EndpointMappings.HasPermission(new[] { "dashboard:view" }, "telemetry.rules.read"));
+        Assert.False(EndpointMappings.HasPermission(new[] { "reports:manage" }, "audit:view"));
     }
 
     private static Database CreateDatabase()
@@ -157,7 +200,7 @@ public class Stage12TelemetryTests
                 (@companyId, @vehicleId, @deviceId, @driverId, 33.1000000, -97.1000000, @speedMph, 180,
                  5.0, 'Running', 78.5, 220123.4, 12.6, NOW() - (@staleMinutes || ' minutes')::interval,
                  NOW() - (@staleMinutes || ' minutes')::interval, 4, 1001, 'stale',
-                 'high', 1, 1, 'Check device heartbeat and field power', '{}'::jsonb, NOW())",
+                 'high', 0, 0, 'No action required', '{}'::jsonb, NOW())",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
@@ -183,15 +226,24 @@ public class Stage12TelemetryTests
             });
     }
 
-    private static async Task<long> GetAnyVehicleIdAsync(Database db)
-        => await db.ScalarLongAsync("SELECT id FROM vehicles ORDER BY id LIMIT 1");
-
-    private static async Task<long> GetAnyDriverIdAsync(Database db)
-        => await db.ScalarLongAsync("SELECT id FROM drivers ORDER BY id LIMIT 1");
-
-    private static long NextCompanyId() => Interlocked.Increment(ref _nextCompanyId);
-
-    private static long _nextCompanyId = 69000;
+    private static async Task<(long CompanyId, long BranchId, long VehicleId, long DriverId)> CreateTenantFixtureAsync(Database db, string label)
+    {
+        var suffix = $"{label}-{Guid.NewGuid():N}"[..Math.Min(label.Length + 11, label.Length + 33)];
+        var companyId = await db.InsertAsync(
+            "INSERT INTO companies(company_code,name,industry) VALUES (@code,'Telemetry integration','Transportation')",
+            c => c.Parameters.AddWithValue("@code", $"TEL-{suffix}"));
+        var branchId = await db.InsertAsync(
+            "INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,@code,@code,'Active')",
+            c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@code", $"BR-{suffix}"); });
+        var vehicleId = await db.InsertAsync(
+            @"INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,vin_exception_type,alternate_identifier,status,availability_status,out_of_service)
+              VALUES (@c,@b,@code,'Truck','legacy-fleet-identifier',@code,'Available','available',FALSE)",
+            c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchId); c.Parameters.AddWithValue("@code", $"VEH-{suffix}"); });
+        var driverId = await db.InsertAsync(
+            "INSERT INTO drivers(company_id,branch_id,driver_code,full_name,status) VALUES (@c,@b,@code,'Telemetry Driver','Available')",
+            c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchId); c.Parameters.AddWithValue("@code", $"DRV-{suffix}"); });
+        return (companyId, branchId, vehicleId, driverId);
+    }
 
     private static async Task CleanupTenantAsync(Database db, long companyId)
     {
@@ -202,6 +254,10 @@ public class Stage12TelemetryTests
         await DeleteIfExistsAsync(db, "eld_devices", "company_id", companyId);
         await DeleteIfExistsAsync(db, "location_events", "company_id", companyId);
         await DeleteIfExistsAsync(db, "ai_recommendations", "tenant_id", companyId);
+        await DeleteIfExistsAsync(db, "drivers", "company_id", companyId);
+        await DeleteIfExistsAsync(db, "vehicles", "company_id", companyId);
+        await DeleteIfExistsAsync(db, "branches", "company_id", companyId);
+        await DeleteIfExistsAsync(db, "companies", "id", companyId);
     }
 
     private static async Task DeleteIfExistsAsync(Database db, string table, string tenantColumn, long tenantId)

@@ -59,6 +59,7 @@ public sealed class TelemetrySchemaService(Database db)
         new("location_events", "causation_id", "VARCHAR(120) NULL"),
         new("location_events", "client_generated_id", "VARCHAR(120) NULL"),
         new("location_events", "idempotency_key", "VARCHAR(120) NULL"),
+        new("location_events", "ingest_fingerprint", "VARCHAR(64) NULL"),
         // Keep owner-capable fresh installs aligned with the committed polygon
         // geofence migration. GeofenceEvaluator always selects this column.
         new("geofences", "polygon_json", "JSONB NULL"),
@@ -252,6 +253,9 @@ public sealed class TelemetrySchemaService(Database db)
         // Matches ux_eld_devices_imei from migration stage32 so both provisioning paths agree.
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_eld_devices_imei ON eld_devices(imei) WHERE imei IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS idx_lvp_tenant ON latest_vehicle_positions(company_id, received_at)",
+        // Device-first latest-position reads back the paged GPS/diagnostics workspaces;
+        // keep the lateral lookup bounded at large-fleet volume.
+        "CREATE INDEX IF NOT EXISTS idx_lvp_company_device_received ON latest_vehicle_positions(company_id, device_id, received_at DESC, id DESC) WHERE device_id IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS idx_lvp_status ON latest_vehicle_positions(company_id, telemetry_status, risk_level)",
         "CREATE INDEX IF NOT EXISTS idx_tn_device_used ON telemetry_nonces(device_id, used_at)",
         "CREATE INDEX IF NOT EXISTS idx_ggr_received ON gps_gateway_replay(received_at)",
@@ -272,6 +276,16 @@ public sealed class TelemetrySchemaService(Database db)
         // Seed default stale-device rule (900 seconds = 15 minutes)
         @"INSERT INTO telemetry_rules (company_id, rule_type, threshold_value, severity, enabled)
           SELECT DISTINCT company_id, 'stale_device', 900, 'Warning', true
+          FROM eld_devices WHERE company_id IS NOT NULL AND company_id > 0
+          ON CONFLICT DO NOTHING",
+        // Excessive-idling window in minutes (OperationalAlertDetectionService)
+        @"INSERT INTO telemetry_rules (company_id, rule_type, threshold_value, severity, enabled)
+          SELECT DISTINCT company_id, 'idling', 15, 'Warning', true
+          FROM eld_devices WHERE company_id IS NOT NULL AND company_id > 0
+          ON CONFLICT DO NOTHING",
+        // Fuel-level drop (percentage points inside 45 min) that counts as an anomaly
+        @"INSERT INTO telemetry_rules (company_id, rule_type, threshold_value, severity, enabled)
+          SELECT DISTINCT company_id, 'fuel_drop_pct', 20, 'High', true
           FROM eld_devices WHERE company_id IS NOT NULL AND company_id > 0
           ON CONFLICT DO NOTHING",
     ];
@@ -311,8 +325,14 @@ public sealed class TelemetrySchemaService(Database db)
         @"ALTER TABLE eld_devices ADD CONSTRAINT ck_eld_devices_active_credentials CHECK (
             LOWER(status) <> 'active' OR (
               api_key_hash IS NOT NULL AND api_key_hash ~ '^[0-9a-fA-F]{64}$'
+              AND hmac_secret IS NULL
               AND hmac_secret_encrypted IS NOT NULL AND length(btrim(hmac_secret_encrypted)) >= 24
+              AND hmac_key_version > 0
               AND revoked_at IS NULL
             )) NOT VALID",
+        // The quarantine immediately above removes every violating active row, so
+        // validation must complete before startup can advertise fleet readiness.
+        // Leaving the replacement NOT VALID silently undid Stage 82 on every boot.
+        "ALTER TABLE eld_devices VALIDATE CONSTRAINT ck_eld_devices_active_credentials",
     ];
 }

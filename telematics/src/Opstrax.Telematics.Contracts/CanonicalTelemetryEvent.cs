@@ -74,6 +74,30 @@ public sealed record CanonicalTelemetryEvent
     /// <summary>Vehicle the device was bound to at observation time, if any.</summary>
     public long? VehicleId { get; init; }
 
+    /// <summary>
+    /// Immutable installation interval that authorized the device-to-vehicle binding at
+    /// <see cref="OccurredAtDeviceUtc"/>. Null means the producer has not yet performed the
+    /// authoritative effective-time resolution; persistence must resolve and validate it before
+    /// accepting the event.
+    /// </summary>
+    public long? InstallationId { get; init; }
+
+    /// <summary>
+    /// Dispatch assignment effective for <see cref="VehicleId"/> at
+    /// <see cref="OccurredAtDeviceUtc"/>. This is resolved by authoritative persistence, never
+    /// accepted from the device packet.
+    /// </summary>
+    public long? AssignmentId { get; init; }
+
+    /// <summary>Trip linked to <see cref="AssignmentId"/> at observation time, when assigned.</summary>
+    public long? TripId { get; init; }
+
+    /// <summary>
+    /// Driver linked through <see cref="AssignmentId"/> at observation time. Device inventory's
+    /// legacy mutable driver pointer is never an authority for this value.
+    /// </summary>
+    public long? DriverId { get; init; }
+
     // ── Provenance ─────────────────────────────────────────────────────────────
 
     /// <summary>Origin category of the event (device, vendor cloud, simulator, seed, …).</summary>

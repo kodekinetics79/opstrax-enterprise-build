@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import {
   LayoutDashboard, Building2, Package, Receipt, HeartPulse, ScrollText, LogOut, Gauge, BriefcaseBusiness, Activity, UserCog, KeyRound, Menu, X,
+ Mail, ShieldCheck,
 } from "lucide-react";
 import { OpsTraxLogo } from "@/components/OpsTraxLogo";
 import { usePlatformAuth } from "@/hooks/usePlatformAuth";
@@ -13,13 +14,16 @@ const NAV: NavItem[] = [
   { to: "/platform", label: "Dashboard", icon: LayoutDashboard, permission: "platform:dashboard:view" },
   { to: "/platform/commercial-ops", label: "Commercial Ops", icon: BriefcaseBusiness, permission: "platform:dashboard:view" },
   { to: "/platform/tenants", label: "Tenants", icon: Building2, permission: "platform:tenants:view" },
+  { to: "/platform/product-pilot", label: "Product Pilot", icon: ShieldCheck, permission: "platform:pilot:run" },
   { to: "/platform/packages", label: "Packages & Pricing", icon: Package, permission: "platform:packages:view" },
   { to: "/platform/revenue", label: "Revenue & Usage", icon: Gauge, permission: "platform:packages:view" },
   { to: "/platform/billing", label: "Billing & Invoices", icon: Receipt, permission: "platform:billing:view" },
   { to: "/platform/health", label: "Customer Success", icon: HeartPulse, permission: "platform:health:view" },
   { to: "/platform/reliability", label: "Reliability Center", icon: Activity, permission: "platform:health:view" },
   { to: "/platform/audit", label: "Security & Audit", icon: ScrollText, permission: "platform:audit:view" },
+  { to: "/platform/support-access", label: "Support Access", icon: KeyRound, permission: "platform:tenants:view" },
   { to: "/platform/operators", label: "Operators", icon: UserCog, permission: "platform:admins:view" },
+  { to: "/platform/settings/email", label: "Email & SMTP", icon: Mail, permission: "platform:settings:manage" },
   // Self-service — every signed-in admin holds dashboard:view, so this is always visible.
   { to: "/platform/account", label: "My Account", icon: KeyRound, permission: "platform:dashboard:view" },
 ];
@@ -30,7 +34,8 @@ export function PlatformShell() {
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const mobileNavRef = useDialogFocus<HTMLElement>(mobileOpen, () => setMobileOpen(false));
-  const visibleNav = NAV.filter((item) => can(item.permission));
+  const visibleNav = NAV.filter((item) => can(item.permission)
+    && (item.to !== "/platform/product-pilot" || session?.productPilotAvailable === true));
 
   useEffect(() => setMobileOpen(false), [location.pathname]);
 

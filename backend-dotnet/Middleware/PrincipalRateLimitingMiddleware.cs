@@ -130,6 +130,9 @@ internal static class ApiRateLimitClassifier
            path.Equals("/api/auth/sso/discover", StringComparison.OrdinalIgnoreCase) ||
            path.StartsWithSegments("/api/auth/sso/start", StringComparison.OrdinalIgnoreCase) ||
            path.Equals("/api/auth/sso/callback", StringComparison.OrdinalIgnoreCase) ||
+           // OAuth callbacks may trigger an external token exchange. Keep them on
+           // the low authentication ceiling, never the general anonymous API quota.
+           path.Equals("/api/integrations/motive/oauth/callback", StringComparison.OrdinalIgnoreCase) ||
            path.Equals("/api/auth/forgot-password", StringComparison.OrdinalIgnoreCase) ||
            path.Equals("/api/auth/reset-password", StringComparison.OrdinalIgnoreCase) ||
            path.Equals("/api/platform/auth/login", StringComparison.OrdinalIgnoreCase);

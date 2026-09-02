@@ -26,6 +26,69 @@ material:
 3. **`node-gt06`** (MIT) — community Node.js GT06 parser. Cross-checked the login BCD IMEI
    packing and the server login/heartbeat ACK frame shape.
 
+### Course / Status bit field — corrected 2026-08-28
+
+The vendor document tabulates this 2-byte field as two bytes; **BYTE1 bit N of that table is
+bit (N+8) of the 16-bit word**. Getting that translation wrong is what produced the original
+defect, so it is written out here explicitly:
+
+| Word bit | Vendor table | Meaning |
+|----------|--------------|---------|
+| 0–9 | BYTE2 all + BYTE1 bits 0–1 | Course over ground, 0–359 degrees |
+| 10 | BYTE1 bit2 | **Latitude** hemisphere — `1` = North, `0` = South |
+| 11 | BYTE1 bit3 | **Longitude** hemisphere — `1` = West, `0` = East |
+| 12 | BYTE1 bit4 | `1` = GPS positioned, `0` = not positioned |
+| 13 | BYTE1 bit5 | `0` = **real-time** GPS, `1` = **differential** positioning |
+
+Two things here were previously decoded wrongly and neither was detectable from the fixture
+set below:
+
+* **Bits 10 and 11 were swapped** (latitude read as longitude and vice versa). Every GPS
+  fixture in the original set happened to carry those two bits with the *same* value — both
+  set for Dallas and London, both clear for Sydney — and a swap is invisible when the two bits
+  agree. The missing coverage was exactly the mixed quadrants, which is why
+  `quadrant_north_east.hex` and `quadrant_south_west.hex` now exist.
+* **Bit 13 was read with the opposite polarity.** The vendor document's own worked example
+  `0x15 0x4C` is annotated "Bit5=0 → real time GPS, Bit4=1 → GPS has been positioned"; under
+  the corrected table that word also reads as North/East, course 332 — a coherent fix.
+
+Cross-checked against Traccar `Gt06ProtocolDecoder`:
+`if (!BitUtil.check(flags, 10)) latitude = -latitude;` and
+`if (BitUtil.check(flags, 11)) longitude = -longitude;`.
+
+### Terminal information bit 7 — corrected 2026-08-28
+
+`1` = oil and electricity **disconnected**, `0` = connected. The vendor document states it in
+those words and Traccar maps the same bit to `Position.KEY_BLOCKED`. The canonical downstream
+field is still named `oilElectricityConnected`, so it carries the **negation** of the bit;
+publishing the raw bit under that name reported a cut-off vehicle as powered and a powered
+vehicle as cut off.
+
+### Protocol 0x18 — not an alarm
+
+`0x18` is LBS multiple-base-station extended information (Traccar `MSG_LBS_EXTEND`, and
+deliberately absent from its `hasGps()` set). It was previously decoded through the alarm path,
+which read cell-tower MCC/MNC/LAC/CellId bytes as a coordinate and an alarm code — one such
+frame decoded as an "EnterFence" alarm at latitude −1901.45. It is now retained raw and decoded
+into nothing.
+
+### Alarm codes — supported baseline dialect
+
+Named only where the vendor document and Traccar agree. `0x11` = power off, `0x13` =
+disassemble/tamper, `0x23` = fall. `0x10` and `0x12` are read differently by different sources
+(door and removal versus SIM change and airplane mode) and are therefore rendered as
+`Vendor0x10` / `Vendor0x12` rather than given a confident label — a wrong alarm name is worse
+than an unmapped one, because a dispatcher acts on it. The raw `alarmCode` is always published.
+
+### Acknowledgement framing — `CANNOT VERIFY`
+
+A frame received under `0x7979` is now answered under `0x7979`, mirroring Traccar's
+`sendResponse(channel, extended, …)`. **This is not confirmed against hardware.** No
+authoritative vendor statement and no device trace of an ACK-required `0x7979` packet was
+available, and none of the fixtures below is one. Mirroring is the better-evidenced of the two
+possible behaviours, not a verified one. Confirming it requires an authoritative
+ACK-required `0x7979` device trace — see the physical-bench plan.
+
 ### CRC-ITU (CRC-16/X.25)
 
 Reflected polynomial `0x8408` (= `0x1021` reflected), init `0xFFFF`, reflected in/out,
@@ -52,7 +115,7 @@ inclusive** — i.e. everything between the start bits and the 2-byte error chec
 | `login.hex` | `0x01` login | IMEI `868120303337976` as 8-byte packed BCD `08 68 12 03 03 33 79 76` (one leading pad nibble), serial `0x0001`. Decodes to `MessageType.Login`, `RequiresAck=true`, `Identity.Imei` set. |
 | `login_ack.hex` | server → device | Expected server response to `login.hex`: `78 78 05 01 00 01 D9 DC 0D 0A` (protocol `0x01`, echoed serial `0x0001`, fresh CRC). Asserted equal to `EncodeAck(login)`. |
 | `heartbeat_ack.hex` | server → device | Expected server response to `heartbeat_0x13.hex`: protocol `0x13`, serial `0x0007`. Asserted equal to `EncodeAck(heartbeat)`. |
-| `location_0x12.hex` | `0x12` GPS | Fix 2024-01-15 10:20:30 UTC, 9 sats, **32.7767 N, -96.7970 W** (Dallas), speed 60 kph, course 217°, positioned + real-time. Course/status word `0x3CD9`. Includes trailing LBS (MCC 460 / MNC 1 / LAC / CellId). |
+| `location_0x12.hex` | `0x12` GPS | Fix 2024-01-15 10:20:30 UTC, 9 sats, **32.7767 N, -96.7970 W** (Dallas), speed 60 kph, course 217°, positioned. Course/status word `0x3CD9` — bits 10 and 11 both set (North, West), and **bit 13 set, so this frame reports differential positioning**, not real-time. The bytes are authentic and unchanged; only the earlier reading of bit 13 was inverted. |
 | `location_0x22_7979.hex` | `0x22` GPS via `0x7979` | Same GPS block shape but carried under the **2-byte-length** `0x7979` start marker: 51.5074 N, -0.1278 W (London), 33 kph, serial `0x000A`. Proves both framings decode. |
 | `heartbeat_0x13.hex` | `0x13` status/heartbeat | Terminal info `0x46` (ignition on, charging, GPS tracking), voltage **level** 5/6, GSM 4/4, alarm `0x00`, language `0x02`. `RequiresAck=true`. |
 | `status_0x23.hex` | `0x23` status | Terminal info `0x46`, voltage level 6, GSM 3, serial `0x0008`. Decodes to `MessageType.Status`. |
@@ -63,15 +126,28 @@ inclusive** — i.e. everything between the start bits and the 2-byte error chec
 | `truncated.hex` | `0x01` (partial) | First 10 bytes of `login.hex` only. Decoder must report `consumed=0` and wait for more (no throw, no message). |
 | `malformed_length.hex` | — | `78 78 02 ...`: packet length `0x02` is below the 5-byte minimum → impossible framing → `ProtocolException`. |
 | `multi_frame.hex` | mixed | `login` + `location_0x12` + `heartbeat_0x13` concatenated in one buffer. Decoder returns all three in wire order and consumes the whole buffer. |
-| `invalid_coordinates.hex` | `0x12` | Raw lat `0x0F000000` (≈139.8°) and lng `0x20000000` (≈298.3°) — out of geographic range. Values are surfaced verbatim with `coordinatesValid=false` (plausibility is a normalization concern, not a decode error). |
+| `invalid_coordinates.hex` | `0x12` | Raw lat `0x0F000000` (magnitude ≈139.8°) and lng `0x20000000` (≈298.3°) — out of geographic range. Course/status `0x382D`: bit 10 clear (South) and bit 11 set (West), so the latitude is carried as **−139.8**. Values are surfaced verbatim with `coordinatesValid=false` (plausibility is a normalization concern, not a decode error). |
 | `extreme_speed.hex` | `0x12` | Speed byte `0xFF` = 255 kph (physically implausible for most fleet vehicles). Decoded verbatim; the adapter never silently clamps. |
 | `duplicate_serial.hex` | `0x12` | Second location reusing serial `0x0002` (same as `location_0x12.hex`). Duplicate/idempotency detection is downstream; the decoder still returns the correct serial for the gateway to notice. |
 | `out_of_order.hex` | `0x12` | Fix time 10:19:00 (earlier) carried on a **higher** serial `0x0003`. Ordering/skew is a normalization concern; the decoder faithfully reports device time + serial. |
-| `south_east.hex` | `0x12` | Sydney -33.8688 S, 151.2093 E — exercises the **South** and **East** hemisphere bits (course/status word `0x3078`, bit11=0 → South, bit10=0 → East). |
+| `south_east.hex` | `0x12` | Sydney -33.8688 S, 151.2093 E (course/status `0x3078`: bit 10 = 0 → South, bit 11 = 0 → East). Both hemisphere bits agree, so this frame cannot detect a bit-10/11 swap — see the quadrant fixtures below. |
+| `quadrant_north_east.hex` | `0x12` | **Tokyo 35.6762 N, 139.6503 E.** The mixed quadrant that exposes the swap: bit 10 set, bit 11 clear. Under the pre-fix parser this decoded as **South/West**. |
+| `quadrant_north_west.hex` | `0x12` | New York 40.7128 N, −74.0060 W. Both bits set. |
+| `quadrant_south_east.hex` | `0x12` | Sydney −33.8688 S, 151.2093 E. Both bits clear. |
+| `quadrant_south_west.hex` | `0x12` | **Buenos Aires −34.6037 S, −58.3816 W.** The other mixed quadrant: bit 10 clear, bit 11 set. |
+| `positioning_realtime.hex` | `0x12` | Bit 13 **clear** → real-time GPS. Byte-identical to the next fixture apart from that bit. |
+| `positioning_differential.hex` | `0x12` | Bit 13 **set** → differential positioning. |
 
 ## Regenerating
 
-The generator script lives alongside this fixture set's history; each frame is
+`generate_quadrant_fixtures.py` regenerates the `quadrant_*.hex` and `positioning_*.hex` frames.
+It is written **from the protocol document only** — it restates the bit table above in named
+constants and never reads anything back from `Gt06Adapter`. That independence is the point: a
+fixture generated by the decoder under test can only ever confirm the decoder's own assumptions,
+which is precisely how the hemisphere swap survived. Run it with `python3
+generate_quadrant_fixtures.py` from this directory.
+
+For the remaining frames, each is
 `start | length | protocol | content | serial | CRC-ITU | stop`, with the CRC computed by
 the exact algorithm in `Gt06Adapter.Crc16Itu`. If you change a fixture's content you MUST
 recompute its CRC or the decoder will (correctly) reject it.

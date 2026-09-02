@@ -1,0 +1,201 @@
+vehicleCode,branchCode,type,make,model,year,vehicleClass,odometerMiles,vin,vinExceptionType,alternateIdentifier,plateNumber,plateJurisdiction,status
+MWYARD-V-0001,MW-YARD,Tractor,Freightliner,Cascadia,2017,Class 8,49919,,legacy-fleet-identifier,CERT-MWYARD-VEH-0001,IL-0001,IL,Available
+MWYARD-V-0002,MW-YARD,Truck,Ford,F-650,2018,Class 6,57838,,legacy-fleet-identifier,CERT-MWYARD-VEH-0002,IL-0002,IL,Available
+MWYARD-V-0003,MW-YARD,Van,Ford,Transit,2019,Class 2b,65757,,legacy-fleet-identifier,CERT-MWYARD-VEH-0003,IL-0003,IL,Available
+MWYARD-V-0004,MW-YARD,Truck,Isuzu,NPR-HD,2020,Class 5,73676,,legacy-fleet-identifier,CERT-MWYARD-VEH-0004,IL-0004,IL,Available
+MWYARD-V-0005,MW-YARD,Tractor,Volvo,VNL 760,2021,Class 8,81595,,legacy-fleet-identifier,CERT-MWYARD-VEH-0005,IL-0005,IL,Available
+MWYARD-V-0006,MW-YARD,Tractor,Freightliner,Cascadia,2022,Class 8,89514,,legacy-fleet-identifier,CERT-MWYARD-VEH-0006,IL-0006,IL,Available
+MWYARD-V-0007,MW-YARD,Truck,Ford,F-650,2023,Class 6,97433,,legacy-fleet-identifier,CERT-MWYARD-VEH-0007,IL-0007,IL,Available
+MWYARD-V-0008,MW-YARD,Van,Ford,Transit,2024,Class 2b,105352,,legacy-fleet-identifier,CERT-MWYARD-VEH-0008,IL-0008,IL,Available
+MWYARD-V-0009,MW-YARD,Truck,Isuzu,NPR-HD,2025,Class 5,113271,,legacy-fleet-identifier,CERT-MWYARD-VEH-0009,IL-0009,IL,Available
+MWYARD-V-0010,MW-YARD,Tractor,Volvo,VNL 760,2026,Class 8,121190,,legacy-fleet-identifier,CERT-MWYARD-VEH-0010,IL-0010,IL,Available
+MWYARD-V-0011,MW-YARD,Tractor,Freightliner,Cascadia,2017,Class 8,129109,,legacy-fleet-identifier,CERT-MWYARD-VEH-0011,IL-0011,IL,Available
+MWYARD-V-0012,MW-YARD,Truck,Ford,F-650,2018,Class 6,137028,,legacy-fleet-identifier,CERT-MWYARD-VEH-0012,IL-0012,IL,Available
+MWYARD-V-0013,MW-YARD,Van,Ford,Transit,2019,Class 2b,144947,,legacy-fleet-identifier,CERT-MWYARD-VEH-0013,IL-0013,IL,Available
+MWYARD-V-0014,MW-YARD,Truck,Isuzu,NPR-HD,2020,Class 5,152866,,legacy-fleet-identifier,CERT-MWYARD-VEH-0014,IL-0014,IL,Available
+MWYARD-V-0015,MW-YARD,Tractor,Volvo,VNL 760,2021,Class 8,160785,,legacy-fleet-identifier,CERT-MWYARD-VEH-0015,IL-0015,IL,Available
+MWYARD-V-0016,MW-YARD,Tractor,Freightliner,Cascadia,2022,Class 8,168704,,legacy-fleet-identifier,CERT-MWYARD-VEH-0016,IL-0016,IL,Available
+MWYARD-V-0017,MW-YARD,Truck,Ford,F-650,2023,Class 6,176623,,legacy-fleet-identifier,CERT-MWYARD-VEH-0017,IL-0017,IL,Available
+MWYARD-V-0018,MW-YARD,Van,Ford,Transit,2024,Class 2b,184542,,legacy-fleet-identifier,CERT-MWYARD-VEH-0018,IL-0018,IL,Available
+MWYARD-V-0019,MW-YARD,Truck,Isuzu,NPR-HD,2025,Class 5,192461,,legacy-fleet-identifier,CERT-MWYARD-VEH-0019,IL-0019,IL,Available
+MWYARD-V-0020,MW-YARD,Tractor,Volvo,VNL 760,2026,Class 8,200380,,legacy-fleet-identifier,CERT-MWYARD-VEH-0020,IL-0020,IL,Maintenance
+MWYARD-V-0021,MW-YARD,Tractor,Freightliner,Cascadia,2017,Class 8,208299,,legacy-fleet-identifier,CERT-MWYARD-VEH-0021,IL-0021,IL,Available
+MWYARD-V-0022,MW-YARD,Truck,Ford,F-650,2018,Class 6,216218,,legacy-fleet-identifier,CERT-MWYARD-VEH-0022,IL-0022,IL,Available
+MWYARD-V-0023,MW-YARD,Van,Ford,Transit,2019,Class 2b,224137,,legacy-fleet-identifier,CERT-MWYARD-VEH-0023,IL-0023,IL,Available
+MWYARD-V-0024,MW-YARD,Truck,Isuzu,NPR-HD,2020,Class 5,232056,,legacy-fleet-identifier,CERT-MWYARD-VEH-0024,IL-0024,IL,Available
+MWYARD-V-0025,MW-YARD,Tractor,Volvo,VNL 760,2021,Class 8,239975,,legacy-fleet-identifier,CERT-MWYARD-VEH-0025,IL-0025,IL,Available
+MWYARD-V-0026,MW-YARD,Tractor,Freightliner,Cascadia,2022,Class 8,247894,,legacy-fleet-identifier,CERT-MWYARD-VEH-0026,IL-0026,IL,Available
+MWYARD-V-0027,MW-YARD,Truck,Ford,F-650,2023,Class 6,255813,,legacy-fleet-identifier,CERT-MWYARD-VEH-0027,IL-0027,IL,Available
+MWYARD-V-0028,MW-YARD,Van,Ford,Transit,2024,Class 2b,263732,,legacy-fleet-identifier,CERT-MWYARD-VEH-0028,IL-0028,IL,Available
+MWYARD-V-0029,MW-YARD,Truck,Isuzu,NPR-HD,2025,Class 5,271651,,legacy-fleet-identifier,CERT-MWYARD-VEH-0029,IL-0029,IL,Available
+MWYARD-V-0030,MW-YARD,Tractor,Volvo,VNL 760,2026,Class 8,279570,,legacy-fleet-identifier,CERT-MWYARD-VEH-0030,IL-0030,IL,Available
+MWYARD-V-0031,MW-YARD,Tractor,Freightliner,Cascadia,2017,Class 8,287489,,legacy-fleet-identifier,CERT-MWYARD-VEH-0031,IL-0031,IL,Available
+MWYARD-V-0032,MW-YARD,Truck,Ford,F-650,2018,Class 6,295408,,legacy-fleet-identifier,CERT-MWYARD-VEH-0032,IL-0032,IL,Available
+MWYARD-V-0033,MW-YARD,Van,Ford,Transit,2019,Class 2b,303327,,legacy-fleet-identifier,CERT-MWYARD-VEH-0033,IL-0033,IL,Available
+MWYARD-V-0034,MW-YARD,Truck,Isuzu,NPR-HD,2020,Class 5,311246,,legacy-fleet-identifier,CERT-MWYARD-VEH-0034,IL-0034,IL,Available
+MWYARD-V-0035,MW-YARD,Tractor,Volvo,VNL 760,2021,Class 8,319165,,legacy-fleet-identifier,CERT-MWYARD-VEH-0035,IL-0035,IL,Available
+MWYARD-V-0036,MW-YARD,Tractor,Freightliner,Cascadia,2022,Class 8,327084,,legacy-fleet-identifier,CERT-MWYARD-VEH-0036,IL-0036,IL,Available
+MWYARD-V-0037,MW-YARD,Truck,Ford,F-650,2023,Class 6,335003,,legacy-fleet-identifier,CERT-MWYARD-VEH-0037,IL-0037,IL,Available
+MWYARD-V-0038,MW-YARD,Van,Ford,Transit,2024,Class 2b,342922,,legacy-fleet-identifier,CERT-MWYARD-VEH-0038,IL-0038,IL,Available
+MWYARD-V-0039,MW-YARD,Truck,Isuzu,NPR-HD,2025,Class 5,350841,,legacy-fleet-identifier,CERT-MWYARD-VEH-0039,IL-0039,IL,Available
+MWYARD-V-0040,MW-YARD,Tractor,Volvo,VNL 760,2026,Class 8,358760,,legacy-fleet-identifier,CERT-MWYARD-VEH-0040,IL-0040,IL,Maintenance
+MWYARD-V-0041,MW-YARD,Tractor,Freightliner,Cascadia,2017,Class 8,366679,,legacy-fleet-identifier,CERT-MWYARD-VEH-0041,IL-0041,IL,Available
+MWYARD-V-0042,MW-YARD,Truck,Ford,F-650,2018,Class 6,374598,,legacy-fleet-identifier,CERT-MWYARD-VEH-0042,IL-0042,IL,Available
+MWYARD-V-0043,MW-YARD,Van,Ford,Transit,2019,Class 2b,382517,,legacy-fleet-identifier,CERT-MWYARD-VEH-0043,IL-0043,IL,Available
+MWYARD-V-0044,MW-YARD,Truck,Isuzu,NPR-HD,2020,Class 5,390436,,legacy-fleet-identifier,CERT-MWYARD-VEH-0044,IL-0044,IL,Available
+MWYARD-V-0045,MW-YARD,Tractor,Volvo,VNL 760,2021,Class 8,398355,,legacy-fleet-identifier,CERT-MWYARD-VEH-0045,IL-0045,IL,Available
+MWYARD-V-0046,MW-YARD,Tractor,Freightliner,Cascadia,2022,Class 8,406274,,legacy-fleet-identifier,CERT-MWYARD-VEH-0046,IL-0046,IL,Available
+MWYARD-V-0047,MW-YARD,Truck,Ford,F-650,2023,Class 6,414193,,legacy-fleet-identifier,CERT-MWYARD-VEH-0047,IL-0047,IL,Available
+MWYARD-V-0048,MW-YARD,Van,Ford,Transit,2024,Class 2b,422112,,legacy-fleet-identifier,CERT-MWYARD-VEH-0048,IL-0048,IL,Available
+MWYARD-V-0049,MW-YARD,Truck,Isuzu,NPR-HD,2025,Class 5,430031,,legacy-fleet-identifier,CERT-MWYARD-VEH-0049,IL-0049,IL,Available
+MWYARD-V-0050,MW-YARD,Tractor,Volvo,VNL 760,2026,Class 8,437950,,legacy-fleet-identifier,CERT-MWYARD-VEH-0050,IL-0050,IL,Available
+MWYARD-V-0051,MW-YARD,Tractor,Freightliner,Cascadia,2017,Class 8,445869,,legacy-fleet-identifier,CERT-MWYARD-VEH-0051,IL-0051,IL,Available
+MWYARD-V-0052,MW-YARD,Truck,Ford,F-650,2018,Class 6,453788,,legacy-fleet-identifier,CERT-MWYARD-VEH-0052,IL-0052,IL,Available
+MWYARD-V-0053,MW-YARD,Van,Ford,Transit,2019,Class 2b,461707,,legacy-fleet-identifier,CERT-MWYARD-VEH-0053,IL-0053,IL,Available
+MWYARD-V-0054,MW-YARD,Truck,Isuzu,NPR-HD,2020,Class 5,469626,,legacy-fleet-identifier,CERT-MWYARD-VEH-0054,IL-0054,IL,Available
+MWYARD-V-0055,MW-YARD,Tractor,Volvo,VNL 760,2021,Class 8,477545,,legacy-fleet-identifier,CERT-MWYARD-VEH-0055,IL-0055,IL,Available
+MWYARD-V-0056,MW-YARD,Tractor,Freightliner,Cascadia,2022,Class 8,485464,,legacy-fleet-identifier,CERT-MWYARD-VEH-0056,IL-0056,IL,Available
+MWYARD-V-0057,MW-YARD,Truck,Ford,F-650,2023,Class 6,493383,,legacy-fleet-identifier,CERT-MWYARD-VEH-0057,IL-0057,IL,Available
+MWYARD-V-0058,MW-YARD,Van,Ford,Transit,2024,Class 2b,501302,,legacy-fleet-identifier,CERT-MWYARD-VEH-0058,IL-0058,IL,Available
+MWYARD-V-0059,MW-YARD,Truck,Isuzu,NPR-HD,2025,Class 5,509221,,legacy-fleet-identifier,CERT-MWYARD-VEH-0059,IL-0059,IL,Available
+MWYARD-V-0060,MW-YARD,Tractor,Volvo,VNL 760,2026,Class 8,517140,,legacy-fleet-identifier,CERT-MWYARD-VEH-0060,IL-0060,IL,Maintenance
+MWYARD-V-0061,MW-YARD,Tractor,Freightliner,Cascadia,2017,Class 8,525059,,legacy-fleet-identifier,CERT-MWYARD-VEH-0061,IL-0061,IL,Available
+MWYARD-V-0062,MW-YARD,Truck,Ford,F-650,2018,Class 6,532978,,legacy-fleet-identifier,CERT-MWYARD-VEH-0062,IL-0062,IL,Available
+MWYARD-V-0063,MW-YARD,Van,Ford,Transit,2019,Class 2b,540897,,legacy-fleet-identifier,CERT-MWYARD-VEH-0063,IL-0063,IL,Available
+MWYARD-V-0064,MW-YARD,Truck,Isuzu,NPR-HD,2020,Class 5,548816,,legacy-fleet-identifier,CERT-MWYARD-VEH-0064,IL-0064,IL,Available
+MWYARD-V-0065,MW-YARD,Tractor,Volvo,VNL 760,2021,Class 8,556735,,legacy-fleet-identifier,CERT-MWYARD-VEH-0065,IL-0065,IL,Available
+MWYARD-V-0066,MW-YARD,Tractor,Freightliner,Cascadia,2022,Class 8,564654,,legacy-fleet-identifier,CERT-MWYARD-VEH-0066,IL-0066,IL,Available
+MWYARD-V-0067,MW-YARD,Truck,Ford,F-650,2023,Class 6,572573,,legacy-fleet-identifier,CERT-MWYARD-VEH-0067,IL-0067,IL,Available
+MWYARD-V-0068,MW-YARD,Van,Ford,Transit,2024,Class 2b,580492,,legacy-fleet-identifier,CERT-MWYARD-VEH-0068,IL-0068,IL,Available
+MWYARD-V-0069,MW-YARD,Truck,Isuzu,NPR-HD,2025,Class 5,588411,,legacy-fleet-identifier,CERT-MWYARD-VEH-0069,IL-0069,IL,Available
+MWYARD-V-0070,MW-YARD,Tractor,Volvo,VNL 760,2026,Class 8,596330,,legacy-fleet-identifier,CERT-MWYARD-VEH-0070,IL-0070,IL,Available
+MWYARD-V-0071,MW-YARD,Tractor,Freightliner,Cascadia,2017,Class 8,604249,,legacy-fleet-identifier,CERT-MWYARD-VEH-0071,IL-0071,IL,Available
+MWYARD-V-0072,MW-YARD,Truck,Ford,F-650,2018,Class 6,612168,,legacy-fleet-identifier,CERT-MWYARD-VEH-0072,IL-0072,IL,Available
+MWYARD-V-0073,MW-YARD,Van,Ford,Transit,2019,Class 2b,620087,,legacy-fleet-identifier,CERT-MWYARD-VEH-0073,IL-0073,IL,Available
+MWYARD-V-0074,MW-YARD,Truck,Isuzu,NPR-HD,2020,Class 5,628006,,legacy-fleet-identifier,CERT-MWYARD-VEH-0074,IL-0074,IL,Available
+MWYARD-V-0075,MW-YARD,Tractor,Volvo,VNL 760,2021,Class 8,635925,,legacy-fleet-identifier,CERT-MWYARD-VEH-0075,IL-0075,IL,Available
+MWYARD-V-0076,MW-YARD,Tractor,Freightliner,Cascadia,2022,Class 8,643844,,legacy-fleet-identifier,CERT-MWYARD-VEH-0076,IL-0076,IL,Available
+MWYARD-V-0077,MW-YARD,Truck,Ford,F-650,2023,Class 6,651763,,legacy-fleet-identifier,CERT-MWYARD-VEH-0077,IL-0077,IL,Available
+MWYARD-V-0078,MW-YARD,Van,Ford,Transit,2024,Class 2b,49682,,legacy-fleet-identifier,CERT-MWYARD-VEH-0078,IL-0078,IL,Available
+MWYARD-V-0079,MW-YARD,Truck,Isuzu,NPR-HD,2025,Class 5,57601,,legacy-fleet-identifier,CERT-MWYARD-VEH-0079,IL-0079,IL,Available
+MWYARD-V-0080,MW-YARD,Tractor,Volvo,VNL 760,2026,Class 8,65520,,legacy-fleet-identifier,CERT-MWYARD-VEH-0080,IL-0080,IL,Maintenance
+MWYARD-V-0081,MW-YARD,Tractor,Freightliner,Cascadia,2017,Class 8,73439,,legacy-fleet-identifier,CERT-MWYARD-VEH-0081,IL-0081,IL,Available
+MWYARD-V-0082,MW-YARD,Truck,Ford,F-650,2018,Class 6,81358,,legacy-fleet-identifier,CERT-MWYARD-VEH-0082,IL-0082,IL,Available
+MWYARD-V-0083,MW-YARD,Van,Ford,Transit,2019,Class 2b,89277,,legacy-fleet-identifier,CERT-MWYARD-VEH-0083,IL-0083,IL,Available
+MWYARD-V-0084,MW-YARD,Truck,Isuzu,NPR-HD,2020,Class 5,97196,,legacy-fleet-identifier,CERT-MWYARD-VEH-0084,IL-0084,IL,Available
+MWYARD-V-0085,MW-YARD,Tractor,Volvo,VNL 760,2021,Class 8,105115,,legacy-fleet-identifier,CERT-MWYARD-VEH-0085,IL-0085,IL,Available
+MWYARD-V-0086,MW-YARD,Tractor,Freightliner,Cascadia,2022,Class 8,113034,,legacy-fleet-identifier,CERT-MWYARD-VEH-0086,IL-0086,IL,Available
+MWYARD-V-0087,MW-YARD,Truck,Ford,F-650,2023,Class 6,120953,,legacy-fleet-identifier,CERT-MWYARD-VEH-0087,IL-0087,IL,Available
+MWYARD-V-0088,MW-YARD,Van,Ford,Transit,2024,Class 2b,128872,,legacy-fleet-identifier,CERT-MWYARD-VEH-0088,IL-0088,IL,Available
+MWYARD-V-0089,MW-YARD,Truck,Isuzu,NPR-HD,2025,Class 5,136791,,legacy-fleet-identifier,CERT-MWYARD-VEH-0089,IL-0089,IL,Available
+MWYARD-V-0090,MW-YARD,Tractor,Volvo,VNL 760,2026,Class 8,144710,,legacy-fleet-identifier,CERT-MWYARD-VEH-0090,IL-0090,IL,Available
+MWYARD-V-0091,MW-YARD,Tractor,Freightliner,Cascadia,2017,Class 8,152629,,legacy-fleet-identifier,CERT-MWYARD-VEH-0091,IL-0091,IL,Available
+MWYARD-V-0092,MW-YARD,Truck,Ford,F-650,2018,Class 6,160548,,legacy-fleet-identifier,CERT-MWYARD-VEH-0092,IL-0092,IL,Available
+MWYARD-V-0093,MW-YARD,Van,Ford,Transit,2019,Class 2b,168467,,legacy-fleet-identifier,CERT-MWYARD-VEH-0093,IL-0093,IL,Available
+MWYARD-V-0094,MW-YARD,Truck,Isuzu,NPR-HD,2020,Class 5,176386,,legacy-fleet-identifier,CERT-MWYARD-VEH-0094,IL-0094,IL,Available
+MWYARD-V-0095,MW-YARD,Tractor,Volvo,VNL 760,2021,Class 8,184305,,legacy-fleet-identifier,CERT-MWYARD-VEH-0095,IL-0095,IL,Available
+MWYARD-V-0096,MW-YARD,Tractor,Freightliner,Cascadia,2022,Class 8,192224,,legacy-fleet-identifier,CERT-MWYARD-VEH-0096,IL-0096,IL,Available
+MWYARD-V-0097,MW-YARD,Truck,Ford,F-650,2023,Class 6,200143,,legacy-fleet-identifier,CERT-MWYARD-VEH-0097,IL-0097,IL,Available
+MWYARD-V-0098,MW-YARD,Van,Ford,Transit,2024,Class 2b,208062,,legacy-fleet-identifier,CERT-MWYARD-VEH-0098,IL-0098,IL,Available
+MWYARD-V-0099,MW-YARD,Truck,Isuzu,NPR-HD,2025,Class 5,215981,,legacy-fleet-identifier,CERT-MWYARD-VEH-0099,IL-0099,IL,Available
+MWYARD-V-0100,MW-YARD,Tractor,Volvo,VNL 760,2026,Class 8,223900,,legacy-fleet-identifier,CERT-MWYARD-VEH-0100,IL-0100,IL,Maintenance
+MWYARD-V-0101,MW-YARD,Tractor,Freightliner,Cascadia,2017,Class 8,231819,,legacy-fleet-identifier,CERT-MWYARD-VEH-0101,IL-0101,IL,Available
+MWYARD-V-0102,MW-YARD,Truck,Ford,F-650,2018,Class 6,239738,,legacy-fleet-identifier,CERT-MWYARD-VEH-0102,IL-0102,IL,Available
+MWYARD-V-0103,MW-YARD,Van,Ford,Transit,2019,Class 2b,247657,,legacy-fleet-identifier,CERT-MWYARD-VEH-0103,IL-0103,IL,Available
+MWYARD-V-0104,MW-YARD,Truck,Isuzu,NPR-HD,2020,Class 5,255576,,legacy-fleet-identifier,CERT-MWYARD-VEH-0104,IL-0104,IL,Available
+MWYARD-V-0105,MW-YARD,Tractor,Volvo,VNL 760,2021,Class 8,263495,,legacy-fleet-identifier,CERT-MWYARD-VEH-0105,IL-0105,IL,Available
+MWYARD-V-0106,MW-YARD,Tractor,Freightliner,Cascadia,2022,Class 8,271414,,legacy-fleet-identifier,CERT-MWYARD-VEH-0106,IL-0106,IL,Available
+MWYARD-V-0107,MW-YARD,Truck,Ford,F-650,2023,Class 6,279333,,legacy-fleet-identifier,CERT-MWYARD-VEH-0107,IL-0107,IL,Available
+MWYARD-V-0108,MW-YARD,Van,Ford,Transit,2024,Class 2b,287252,,legacy-fleet-identifier,CERT-MWYARD-VEH-0108,IL-0108,IL,Available
+MWYARD-V-0109,MW-YARD,Truck,Isuzu,NPR-HD,2025,Class 5,295171,,legacy-fleet-identifier,CERT-MWYARD-VEH-0109,IL-0109,IL,Available
+MWYARD-V-0110,MW-YARD,Tractor,Volvo,VNL 760,2026,Class 8,303090,,legacy-fleet-identifier,CERT-MWYARD-VEH-0110,IL-0110,IL,Available
+MWYARD-V-0111,MW-YARD,Tractor,Freightliner,Cascadia,2017,Class 8,311009,,legacy-fleet-identifier,CERT-MWYARD-VEH-0111,IL-0111,IL,Available
+MWYARD-V-0112,MW-YARD,Truck,Ford,F-650,2018,Class 6,318928,,legacy-fleet-identifier,CERT-MWYARD-VEH-0112,IL-0112,IL,Available
+MWYARD-V-0113,MW-YARD,Van,Ford,Transit,2019,Class 2b,326847,,legacy-fleet-identifier,CERT-MWYARD-VEH-0113,IL-0113,IL,Available
+MWYARD-V-0114,MW-YARD,Truck,Isuzu,NPR-HD,2020,Class 5,334766,,legacy-fleet-identifier,CERT-MWYARD-VEH-0114,IL-0114,IL,Available
+MWYARD-V-0115,MW-YARD,Tractor,Volvo,VNL 760,2021,Class 8,342685,,legacy-fleet-identifier,CERT-MWYARD-VEH-0115,IL-0115,IL,Available
+MWYARD-V-0116,MW-YARD,Tractor,Freightliner,Cascadia,2022,Class 8,350604,,legacy-fleet-identifier,CERT-MWYARD-VEH-0116,IL-0116,IL,Available
+MWYARD-V-0117,MW-YARD,Truck,Ford,F-650,2023,Class 6,358523,,legacy-fleet-identifier,CERT-MWYARD-VEH-0117,IL-0117,IL,Available
+MWYARD-V-0118,MW-YARD,Van,Ford,Transit,2024,Class 2b,366442,,legacy-fleet-identifier,CERT-MWYARD-VEH-0118,IL-0118,IL,Available
+MWYARD-V-0119,MW-YARD,Truck,Isuzu,NPR-HD,2025,Class 5,374361,,legacy-fleet-identifier,CERT-MWYARD-VEH-0119,IL-0119,IL,Available
+MWYARD-V-0120,MW-YARD,Tractor,Volvo,VNL 760,2026,Class 8,382280,,legacy-fleet-identifier,CERT-MWYARD-VEH-0120,IL-0120,IL,Maintenance
+MWYARD-V-0121,MW-YARD,Tractor,Freightliner,Cascadia,2017,Class 8,390199,,legacy-fleet-identifier,CERT-MWYARD-VEH-0121,IL-0121,IL,Available
+MWYARD-V-0122,MW-YARD,Truck,Ford,F-650,2018,Class 6,398118,,legacy-fleet-identifier,CERT-MWYARD-VEH-0122,IL-0122,IL,Available
+MWYARD-V-0123,MW-YARD,Van,Ford,Transit,2019,Class 2b,406037,,legacy-fleet-identifier,CERT-MWYARD-VEH-0123,IL-0123,IL,Available
+MWYARD-V-0124,MW-YARD,Truck,Isuzu,NPR-HD,2020,Class 5,413956,,legacy-fleet-identifier,CERT-MWYARD-VEH-0124,IL-0124,IL,Available
+MWYARD-V-0125,MW-YARD,Tractor,Volvo,VNL 760,2021,Class 8,421875,,legacy-fleet-identifier,CERT-MWYARD-VEH-0125,IL-0125,IL,Available
+MWYARD-V-0126,MW-YARD,Tractor,Freightliner,Cascadia,2022,Class 8,429794,,legacy-fleet-identifier,CERT-MWYARD-VEH-0126,IL-0126,IL,Available
+MWYARD-V-0127,MW-YARD,Truck,Ford,F-650,2023,Class 6,437713,,legacy-fleet-identifier,CERT-MWYARD-VEH-0127,IL-0127,IL,Available
+MWYARD-V-0128,MW-YARD,Van,Ford,Transit,2024,Class 2b,445632,,legacy-fleet-identifier,CERT-MWYARD-VEH-0128,IL-0128,IL,Available
+MWYARD-V-0129,MW-YARD,Truck,Isuzu,NPR-HD,2025,Class 5,453551,,legacy-fleet-identifier,CERT-MWYARD-VEH-0129,IL-0129,IL,Available
+MWYARD-V-0130,MW-YARD,Tractor,Volvo,VNL 760,2026,Class 8,461470,,legacy-fleet-identifier,CERT-MWYARD-VEH-0130,IL-0130,IL,Available
+MWYARD-V-0131,MW-YARD,Tractor,Freightliner,Cascadia,2017,Class 8,469389,,legacy-fleet-identifier,CERT-MWYARD-VEH-0131,IL-0131,IL,Available
+MWYARD-V-0132,MW-YARD,Truck,Ford,F-650,2018,Class 6,477308,,legacy-fleet-identifier,CERT-MWYARD-VEH-0132,IL-0132,IL,Available
+MWYARD-V-0133,MW-YARD,Van,Ford,Transit,2019,Class 2b,485227,,legacy-fleet-identifier,CERT-MWYARD-VEH-0133,IL-0133,IL,Available
+MWYARD-V-0134,MW-YARD,Truck,Isuzu,NPR-HD,2020,Class 5,493146,,legacy-fleet-identifier,CERT-MWYARD-VEH-0134,IL-0134,IL,Available
+MWYARD-V-0135,MW-YARD,Tractor,Volvo,VNL 760,2021,Class 8,501065,,legacy-fleet-identifier,CERT-MWYARD-VEH-0135,IL-0135,IL,Available
+MWYARD-V-0136,MW-YARD,Tractor,Freightliner,Cascadia,2022,Class 8,508984,,legacy-fleet-identifier,CERT-MWYARD-VEH-0136,IL-0136,IL,Available
+MWYARD-V-0137,MW-YARD,Truck,Ford,F-650,2023,Class 6,516903,,legacy-fleet-identifier,CERT-MWYARD-VEH-0137,IL-0137,IL,Available
+MWYARD-V-0138,MW-YARD,Van,Ford,Transit,2024,Class 2b,524822,,legacy-fleet-identifier,CERT-MWYARD-VEH-0138,IL-0138,IL,Available
+MWYARD-V-0139,MW-YARD,Truck,Isuzu,NPR-HD,2025,Class 5,532741,,legacy-fleet-identifier,CERT-MWYARD-VEH-0139,IL-0139,IL,Available
+MWYARD-V-0140,MW-YARD,Tractor,Volvo,VNL 760,2026,Class 8,540660,,legacy-fleet-identifier,CERT-MWYARD-VEH-0140,IL-0140,IL,Maintenance
+MWYARD-V-0141,MW-YARD,Tractor,Freightliner,Cascadia,2017,Class 8,548579,,legacy-fleet-identifier,CERT-MWYARD-VEH-0141,IL-0141,IL,Available
+MWYARD-V-0142,MW-YARD,Truck,Ford,F-650,2018,Class 6,556498,,legacy-fleet-identifier,CERT-MWYARD-VEH-0142,IL-0142,IL,Available
+MWYARD-V-0143,MW-YARD,Van,Ford,Transit,2019,Class 2b,564417,,legacy-fleet-identifier,CERT-MWYARD-VEH-0143,IL-0143,IL,Available
+MWYARD-V-0144,MW-YARD,Truck,Isuzu,NPR-HD,2020,Class 5,572336,,legacy-fleet-identifier,CERT-MWYARD-VEH-0144,IL-0144,IL,Available
+MWYARD-V-0145,MW-YARD,Tractor,Volvo,VNL 760,2021,Class 8,580255,,legacy-fleet-identifier,CERT-MWYARD-VEH-0145,IL-0145,IL,Available
+MWYARD-V-0146,MW-YARD,Tractor,Freightliner,Cascadia,2022,Class 8,588174,,legacy-fleet-identifier,CERT-MWYARD-VEH-0146,IL-0146,IL,Available
+MWYARD-V-0147,MW-YARD,Truck,Ford,F-650,2023,Class 6,596093,,legacy-fleet-identifier,CERT-MWYARD-VEH-0147,IL-0147,IL,Available
+MWYARD-V-0148,MW-YARD,Van,Ford,Transit,2024,Class 2b,604012,,legacy-fleet-identifier,CERT-MWYARD-VEH-0148,IL-0148,IL,Available
+MWYARD-V-0149,MW-YARD,Truck,Isuzu,NPR-HD,2025,Class 5,611931,,legacy-fleet-identifier,CERT-MWYARD-VEH-0149,IL-0149,IL,Available
+MWYARD-V-0150,MW-YARD,Tractor,Volvo,VNL 760,2026,Class 8,619850,,legacy-fleet-identifier,CERT-MWYARD-VEH-0150,IL-0150,IL,Available
+MWYARD-V-0151,MW-YARD,Tractor,Freightliner,Cascadia,2017,Class 8,627769,,legacy-fleet-identifier,CERT-MWYARD-VEH-0151,IL-0151,IL,Available
+MWYARD-V-0152,MW-YARD,Truck,Ford,F-650,2018,Class 6,635688,,legacy-fleet-identifier,CERT-MWYARD-VEH-0152,IL-0152,IL,Available
+MWYARD-V-0153,MW-YARD,Van,Ford,Transit,2019,Class 2b,643607,,legacy-fleet-identifier,CERT-MWYARD-VEH-0153,IL-0153,IL,Available
+MWYARD-V-0154,MW-YARD,Truck,Isuzu,NPR-HD,2020,Class 5,651526,,legacy-fleet-identifier,CERT-MWYARD-VEH-0154,IL-0154,IL,Available
+MWYARD-V-0155,MW-YARD,Tractor,Volvo,VNL 760,2021,Class 8,49445,,legacy-fleet-identifier,CERT-MWYARD-VEH-0155,IL-0155,IL,Available
+MWYARD-V-0156,MW-YARD,Tractor,Freightliner,Cascadia,2022,Class 8,57364,,legacy-fleet-identifier,CERT-MWYARD-VEH-0156,IL-0156,IL,Available
+MWYARD-V-0157,MW-YARD,Truck,Ford,F-650,2023,Class 6,65283,,legacy-fleet-identifier,CERT-MWYARD-VEH-0157,IL-0157,IL,Available
+MWYARD-V-0158,MW-YARD,Van,Ford,Transit,2024,Class 2b,73202,,legacy-fleet-identifier,CERT-MWYARD-VEH-0158,IL-0158,IL,Available
+MWYARD-V-0159,MW-YARD,Truck,Isuzu,NPR-HD,2025,Class 5,81121,,legacy-fleet-identifier,CERT-MWYARD-VEH-0159,IL-0159,IL,Available
+MWYARD-V-0160,MW-YARD,Tractor,Volvo,VNL 760,2026,Class 8,89040,,legacy-fleet-identifier,CERT-MWYARD-VEH-0160,IL-0160,IL,Maintenance
+MWYARD-V-0161,MW-YARD,Tractor,Freightliner,Cascadia,2017,Class 8,96959,,legacy-fleet-identifier,CERT-MWYARD-VEH-0161,IL-0161,IL,Available
+MWYARD-V-0162,MW-YARD,Truck,Ford,F-650,2018,Class 6,104878,,legacy-fleet-identifier,CERT-MWYARD-VEH-0162,IL-0162,IL,Available
+MWYARD-V-0163,MW-YARD,Van,Ford,Transit,2019,Class 2b,112797,,legacy-fleet-identifier,CERT-MWYARD-VEH-0163,IL-0163,IL,Available
+MWYARD-V-0164,MW-YARD,Truck,Isuzu,NPR-HD,2020,Class 5,120716,,legacy-fleet-identifier,CERT-MWYARD-VEH-0164,IL-0164,IL,Available
+MWYARD-V-0165,MW-YARD,Tractor,Volvo,VNL 760,2021,Class 8,128635,,legacy-fleet-identifier,CERT-MWYARD-VEH-0165,IL-0165,IL,Available
+MWYARD-V-0166,MW-YARD,Tractor,Freightliner,Cascadia,2022,Class 8,136554,,legacy-fleet-identifier,CERT-MWYARD-VEH-0166,IL-0166,IL,Available
+MWYARD-V-0167,MW-YARD,Truck,Ford,F-650,2023,Class 6,144473,,legacy-fleet-identifier,CERT-MWYARD-VEH-0167,IL-0167,IL,Available
+MWYARD-V-0168,MW-YARD,Van,Ford,Transit,2024,Class 2b,152392,,legacy-fleet-identifier,CERT-MWYARD-VEH-0168,IL-0168,IL,Available
+MWYARD-V-0169,MW-YARD,Truck,Isuzu,NPR-HD,2025,Class 5,160311,,legacy-fleet-identifier,CERT-MWYARD-VEH-0169,IL-0169,IL,Available
+MWYARD-V-0170,MW-YARD,Tractor,Volvo,VNL 760,2026,Class 8,168230,,legacy-fleet-identifier,CERT-MWYARD-VEH-0170,IL-0170,IL,Available
+MWYARD-V-0171,MW-YARD,Tractor,Freightliner,Cascadia,2017,Class 8,176149,,legacy-fleet-identifier,CERT-MWYARD-VEH-0171,IL-0171,IL,Available
+MWYARD-V-0172,MW-YARD,Truck,Ford,F-650,2018,Class 6,184068,,legacy-fleet-identifier,CERT-MWYARD-VEH-0172,IL-0172,IL,Available
+MWYARD-V-0173,MW-YARD,Van,Ford,Transit,2019,Class 2b,191987,,legacy-fleet-identifier,CERT-MWYARD-VEH-0173,IL-0173,IL,Available
+MWYARD-V-0174,MW-YARD,Truck,Isuzu,NPR-HD,2020,Class 5,199906,,legacy-fleet-identifier,CERT-MWYARD-VEH-0174,IL-0174,IL,Available
+MWYARD-V-0175,MW-YARD,Tractor,Volvo,VNL 760,2021,Class 8,207825,,legacy-fleet-identifier,CERT-MWYARD-VEH-0175,IL-0175,IL,Available
+MWYARD-V-0176,MW-YARD,Tractor,Freightliner,Cascadia,2022,Class 8,215744,,legacy-fleet-identifier,CERT-MWYARD-VEH-0176,IL-0176,IL,Available
+MWYARD-V-0177,MW-YARD,Truck,Ford,F-650,2023,Class 6,223663,,legacy-fleet-identifier,CERT-MWYARD-VEH-0177,IL-0177,IL,Available
+MWYARD-V-0178,MW-YARD,Van,Ford,Transit,2024,Class 2b,231582,,legacy-fleet-identifier,CERT-MWYARD-VEH-0178,IL-0178,IL,Available
+MWYARD-V-0179,MW-YARD,Truck,Isuzu,NPR-HD,2025,Class 5,239501,,legacy-fleet-identifier,CERT-MWYARD-VEH-0179,IL-0179,IL,Available
+MWYARD-V-0180,MW-YARD,Tractor,Volvo,VNL 760,2026,Class 8,247420,,legacy-fleet-identifier,CERT-MWYARD-VEH-0180,IL-0180,IL,Maintenance
+MWYARD-V-0181,MW-YARD,Tractor,Freightliner,Cascadia,2017,Class 8,255339,,legacy-fleet-identifier,CERT-MWYARD-VEH-0181,IL-0181,IL,Available
+MWYARD-V-0182,MW-YARD,Truck,Ford,F-650,2018,Class 6,263258,,legacy-fleet-identifier,CERT-MWYARD-VEH-0182,IL-0182,IL,Available
+MWYARD-V-0183,MW-YARD,Van,Ford,Transit,2019,Class 2b,271177,,legacy-fleet-identifier,CERT-MWYARD-VEH-0183,IL-0183,IL,Available
+MWYARD-V-0184,MW-YARD,Truck,Isuzu,NPR-HD,2020,Class 5,279096,,legacy-fleet-identifier,CERT-MWYARD-VEH-0184,IL-0184,IL,Available
+MWYARD-V-0185,MW-YARD,Tractor,Volvo,VNL 760,2021,Class 8,287015,,legacy-fleet-identifier,CERT-MWYARD-VEH-0185,IL-0185,IL,Available
+MWYARD-V-0186,MW-YARD,Tractor,Freightliner,Cascadia,2022,Class 8,294934,,legacy-fleet-identifier,CERT-MWYARD-VEH-0186,IL-0186,IL,Available
+MWYARD-V-0187,MW-YARD,Truck,Ford,F-650,2023,Class 6,302853,,legacy-fleet-identifier,CERT-MWYARD-VEH-0187,IL-0187,IL,Available
+MWYARD-V-0188,MW-YARD,Van,Ford,Transit,2024,Class 2b,310772,,legacy-fleet-identifier,CERT-MWYARD-VEH-0188,IL-0188,IL,Available
+MWYARD-V-0189,MW-YARD,Truck,Isuzu,NPR-HD,2025,Class 5,318691,,legacy-fleet-identifier,CERT-MWYARD-VEH-0189,IL-0189,IL,Available
+MWYARD-V-0190,MW-YARD,Tractor,Volvo,VNL 760,2026,Class 8,326610,,legacy-fleet-identifier,CERT-MWYARD-VEH-0190,IL-0190,IL,Available
+MWYARD-V-0191,MW-YARD,Tractor,Freightliner,Cascadia,2017,Class 8,334529,,legacy-fleet-identifier,CERT-MWYARD-VEH-0191,IL-0191,IL,Available
+MWYARD-V-0192,MW-YARD,Truck,Ford,F-650,2018,Class 6,342448,,legacy-fleet-identifier,CERT-MWYARD-VEH-0192,IL-0192,IL,Available
+MWYARD-V-0193,MW-YARD,Van,Ford,Transit,2019,Class 2b,350367,,legacy-fleet-identifier,CERT-MWYARD-VEH-0193,IL-0193,IL,Available
+MWYARD-V-0194,MW-YARD,Truck,Isuzu,NPR-HD,2020,Class 5,358286,,legacy-fleet-identifier,CERT-MWYARD-VEH-0194,IL-0194,IL,Available
+MWYARD-V-0195,MW-YARD,Tractor,Volvo,VNL 760,2021,Class 8,366205,,legacy-fleet-identifier,CERT-MWYARD-VEH-0195,IL-0195,IL,Available
+MWYARD-V-0196,MW-YARD,Tractor,Freightliner,Cascadia,2022,Class 8,374124,,legacy-fleet-identifier,CERT-MWYARD-VEH-0196,IL-0196,IL,Available
+MWYARD-V-0197,MW-YARD,Truck,Ford,F-650,2023,Class 6,382043,,legacy-fleet-identifier,CERT-MWYARD-VEH-0197,IL-0197,IL,Available
+MWYARD-V-0198,MW-YARD,Van,Ford,Transit,2024,Class 2b,389962,,legacy-fleet-identifier,CERT-MWYARD-VEH-0198,IL-0198,IL,Available
+MWYARD-V-0199,MW-YARD,Truck,Isuzu,NPR-HD,2025,Class 5,397881,,legacy-fleet-identifier,CERT-MWYARD-VEH-0199,IL-0199,IL,Available
+MWYARD-V-0200,MW-YARD,Tractor,Volvo,VNL 760,2026,Class 8,405800,,legacy-fleet-identifier,CERT-MWYARD-VEH-0200,IL-0200,IL,Maintenance

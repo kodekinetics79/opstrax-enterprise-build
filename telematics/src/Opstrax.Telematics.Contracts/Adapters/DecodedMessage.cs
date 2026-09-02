@@ -3,7 +3,7 @@ using Opstrax.Telematics.Contracts.Identity;
 namespace Opstrax.Telematics.Contracts.Adapters;
 
 /// <summary>
-/// One fully-framed protocol message produced by <see cref="IProtocolAdapter.Decode"/>.
+/// One fully-framed protocol message produced by <see cref="IProtocolAdapter.Decode(System.ReadOnlySpan{byte}, out int)"/>.
 /// A decoded message is the bridge between raw wire bytes and the normalized
 /// <c>CanonicalTelemetryEvent</c>: it exposes the adapter's structured interpretation
 /// while <b>retaining the exact raw frame</b> so the pipeline can acknowledge, audit,

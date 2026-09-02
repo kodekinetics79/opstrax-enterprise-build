@@ -5,10 +5,10 @@ import { defineConfig, loadEnv } from "vite";
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   const frontendSha =
+    env.RENDER_GIT_COMMIT ||
     env.VITE_DEPLOYMENT_SHA ||
     env.VERCEL_GIT_COMMIT_SHA ||
     env.GITHUB_SHA ||
-    env.RENDER_GIT_COMMIT ||
     "unknown";
   const frontendEnvironment =
     env.VITE_APP_ENVIRONMENT ||

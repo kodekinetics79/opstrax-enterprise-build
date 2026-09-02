@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle2, Download, FileDown, FileUp, Loader2, Upload, X } from "lucide-react";
 import { downloadServerExport } from "@/services/fleetDomainApi";
+import { importErrorMessage } from "@/utils/importErrorMessage";
 import type { AnyRecord } from "@/types";
 
 /* ============================================================
@@ -21,10 +22,14 @@ export interface ImportExportConfig {
   columns: readonly string[];           // canonical camelCase headers (template order)
   requiredColumns: readonly string[];   // shown as required in the wizard help
   templateEndpoint: string;             // GET  → text/csv
-  exportEndpoint: string;               // GET  → text/csv (full tenant dataset)
+  exportEndpoint?: string;              // GET  → text/csv (full tenant dataset)
   importPreview: (rows: AnyRecord[]) => Promise<AnyRecord>;
   importCommit: (rows: AnyRecord[]) => Promise<AnyRecord>;
   invalidateKey: string;                // react-query key root to refresh after commit
+  onImported?: () => void | Promise<void>;
+  atomic?: boolean;                     // block commit until every row is valid
+  toolbarLabel?: string;                // disambiguates adjacent toolbars, e.g. Device vs Installation
+  importHelp?: string;                  // workflow-specific create/update/idempotency guidance
 }
 
 /* ---------------- CSV parsing (quoted fields, CRLF, BOM) ---------------- */
@@ -102,6 +107,9 @@ export function EntityImportExport({ config, canImport, canExport }: {
   const [wizardOpen, setWizardOpen] = useState(false);
   const [busy, setBusy] = useState<"template" | "export" | null>(null);
   const [toolbarError, setToolbarError] = useState<string | null>(null);
+  const templateLabel = config.toolbarLabel ? `${config.toolbarLabel} template` : "Template";
+  const importLabel = config.toolbarLabel ? `${config.toolbarLabel} import` : "Import";
+  const exportLabel = config.toolbarLabel ? `${config.toolbarLabel} export` : "Export";
 
   const download = async (kind: "template" | "export", endpoint: string, filename: string) => {
     setBusy(kind);
@@ -117,18 +125,22 @@ export function EntityImportExport({ config, canImport, canExport }: {
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <button type="button" className="btn-ghost h-10" disabled={busy === "template"}
+      <button type="button" className="btn-ghost h-10" disabled={busy === "template"} aria-label={`Download ${config.entity} CSV template`}
         onClick={() => download("template", config.templateEndpoint, `${config.entity}-import-template.csv`)}>
-        {busy === "template" ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileDown className="h-4 w-4" />} Template
+        {busy === "template" ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileDown className="h-4 w-4" />} {templateLabel}
       </button>
-      <button type="button" className="btn-ghost h-10" disabled={!canImport} title={canImport ? "Import a CSV of records" : "Requires fleet manage permission"}
-        onClick={() => canImport && setWizardOpen(true)}>
-        <FileUp className="h-4 w-4" /> Import
-      </button>
-      <button type="button" className="btn-ghost h-10" disabled={!canExport || busy === "export"} title={canExport ? "Export the full dataset (all pages)" : "Requires export permission"}
-        onClick={() => canExport && download("export", config.exportEndpoint, `${config.entity}_${new Date().toISOString().slice(0, 10)}.csv`)}>
-        {busy === "export" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} Export
-      </button>
+      {canImport ? (
+        <button type="button" className="btn-ghost h-10" title="Import a CSV of records"
+          onClick={() => setWizardOpen(true)}>
+          <FileUp className="h-4 w-4" /> {importLabel}
+        </button>
+      ) : null}
+      {config.exportEndpoint && canExport ? (
+        <button type="button" className="btn-ghost h-10" disabled={busy === "export"} title="Export the full dataset (all pages)"
+          onClick={() => download("export", config.exportEndpoint!, `${config.entity}_${new Date().toISOString().slice(0, 10)}.csv`)}>
+          {busy === "export" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} {exportLabel}
+        </button>
+      ) : null}
       {toolbarError && <span className="text-xs font-semibold text-rose-600">{toolbarError}</span>}
       {wizardOpen && <ImportWizard config={config} onClose={() => setWizardOpen(false)} />}
     </div>
@@ -137,7 +149,7 @@ export function EntityImportExport({ config, canImport, canExport }: {
 
 /* ---------------- wizard ---------------- */
 
-type PreviewRow = { rowNumber: number; key: string; action: "create" | "update" | "error"; errors: string[] };
+type PreviewRow = { rowNumber: number; key: string; action: "create" | "update" | "skip" | "error"; errors: string[]; message?: string };
 
 function ImportWizard({ config, onClose }: { config: ImportExportConfig; onClose: () => void }) {
   const queryClient = useQueryClient();
@@ -186,9 +198,24 @@ function ImportWizard({ config, onClose }: { config: ImportExportConfig; onClose
       const r = await config.importCommit(rows);
       setResult(r);
       setStep("done");
+      const credentials = Array.isArray(r.credentials) ? r.credentials as AnyRecord[] : [];
+      if (credentials.length > 0) {
+        const headers = ["deviceSerial", "apiKey", "hmacSecret"];
+        const quote = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+        const csv = [headers.join(","), ...credentials.map((row) => headers.map((key) => quote(row[key])).join(","))].join("\n");
+        const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = `${config.entity}-one-time-credentials.csv`;
+        anchor.click();
+        URL.revokeObjectURL(url);
+      }
       await queryClient.invalidateQueries({ queryKey: [config.invalidateKey] });
+      await config.onImported?.();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Import failed — no rows were guaranteed committed.");
+      // Keep the preview, parsed rows and wizard open so the customer can read the
+      // row-specific rejection, go Back to correct the CSV, or safely retry.
+      setError(importErrorMessage(e, "Import failed — no rows were changed. Review the preview and retry."));
     } finally {
       setWorking(false);
     }
@@ -196,16 +223,22 @@ function ImportWizard({ config, onClose }: { config: ImportExportConfig; onClose
 
   const previewRows = ((preview?.rows as PreviewRow[]) || []);
   const importable = Number(preview?.creates ?? 0) + Number(preview?.updates ?? 0);
+  const invalid = Number(preview?.invalid ?? 0);
 
   return (
-    <div className="fixed inset-0 z-[70] grid place-items-center bg-slate-900/40 p-4 backdrop-blur-sm" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-[70] grid place-items-center bg-slate-900/40 p-4 backdrop-blur-sm"
+      onClick={(event) => {
+        if (!working && event.target === event.currentTarget) onClose();
+      }}
+    >
       <div className="fc-neumo flex max-h-[86vh] w-full max-w-2xl flex-col overflow-hidden anim-fade-up" onClick={(e) => e.stopPropagation()}>
         <div className="flex shrink-0 items-start justify-between px-6 pt-5">
           <div>
             <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">CSV import</div>
             <h2 className="mt-1 text-xl font-black capitalize tracking-tight text-slate-900">Import {config.entity}</h2>
           </div>
-          <button type="button" aria-label="Close" onClick={onClose} className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"><X className="h-5 w-5" /></button>
+          <button type="button" aria-label="Close" disabled={working} onClick={onClose} className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"><X className="h-5 w-5" /></button>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
@@ -219,12 +252,12 @@ function ImportWizard({ config, onClose }: { config: ImportExportConfig; onClose
                 <Upload className="h-8 w-8 text-slate-400" />
                 <p className="mt-3 text-sm font-bold text-slate-700">Choose a CSV file</p>
                 <p className="mt-1 text-xs text-slate-500">
-                  Up to 500 rows. Required: {config.requiredColumns.join(", ")}. Matching {config.entity === "vehicles" ? "codes" : "codes"} update existing records; new ones are created.
+                  {config.importHelp ?? `Up to 500 rows. Required: ${config.requiredColumns.join(", ")}. Matching ${config.columns[0]} values update existing records; new ones are created.`}
                 </p>
               </button>
               <input ref={fileRef} type="file" accept=".csv,text/csv" aria-label="Choose a CSV file to import" className="hidden" onChange={(e) => void onFile(e.target.files?.[0])} />
               <p className="text-center text-[11px] font-medium text-slate-400">
-                Column headers accepted in any of these forms: <code className="rounded bg-slate-100 px-1">vehicleCode</code>, <code className="rounded bg-slate-100 px-1">vehicle_code</code>, <code className="rounded bg-slate-100 px-1">Vehicle Code</code>
+                Column headers tolerate camelCase, snake_case and spaced labels. For example: <code className="rounded bg-slate-100 px-1">{config.columns[0]}</code>.
               </p>
               {working && <p className="flex items-center justify-center gap-2 text-sm font-semibold text-slate-500"><Loader2 className="h-4 w-4 animate-spin" /> Validating rows on the server…</p>}
             </div>
@@ -260,17 +293,20 @@ function ImportWizard({ config, onClose }: { config: ImportExportConfig; onClose
                         <td className="px-3 py-2">
                           <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase ${
                             r.action === "create" ? "bg-emerald-100 text-emerald-700" :
-                            r.action === "update" ? "bg-sky-100 text-sky-700" : "bg-rose-100 text-rose-700"
+                            r.action === "update" ? "bg-sky-100 text-sky-700" :
+                            r.action === "skip" ? "bg-slate-100 text-slate-600" : "bg-rose-100 text-rose-700"
                           }`}>{r.action}</span>
                         </td>
-                        <td className="px-3 py-2 text-rose-600">{r.errors?.join("; ") || ""}</td>
+                        <td className={r.errors?.length ? "px-3 py-2 text-rose-600" : "px-3 py-2 text-slate-500"}>{r.errors?.join("; ") || r.message || ""}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
               <p className="text-[11px] font-medium text-slate-500">
-                Rows with errors are skipped on commit — the rest import normally.
+                {config.atomic
+                  ? "This governed import is atomic. Correct every error before committing; a concurrent conflict changes no rows."
+                  : "Rows with errors are skipped on commit — the rest import normally."}
               </p>
             </div>
           )}
@@ -291,11 +327,16 @@ function ImportWizard({ config, onClose }: { config: ImportExportConfig; onClose
                   ))}
                 </div>
               )}
+              {Array.isArray(result.credentials) && result.credentials.length > 0 && (
+                <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
+                  One-time device credentials were downloaded as a CSV. Store it securely; these secrets cannot be displayed again.
+                </p>
+              )}
             </div>
           )}
 
           {error && (
-            <p className="mt-4 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-700">
+            <p role="alert" aria-live="assertive" className="mt-4 flex items-start gap-2 whitespace-pre-wrap rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-700">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> {error}
             </p>
           )}
@@ -305,13 +346,13 @@ function ImportWizard({ config, onClose }: { config: ImportExportConfig; onClose
           {step === "preview" ? (
             <>
               <button type="button" className="btn-ghost h-10" onClick={() => { setStep("select"); setPreview(null); }}>Back</button>
-              <button type="button" className="btn-primary h-10" disabled={working || importable === 0} onClick={() => void commit()}>
+              <button type="button" className="btn-primary h-10" disabled={working || importable === 0 || (config.atomic === true && invalid > 0)} onClick={() => void commit()}>
                 {working ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileUp className="h-4 w-4" />}
                 {working ? "Importing…" : `Import ${importable} row${importable === 1 ? "" : "s"}`}
               </button>
             </>
           ) : (
-            <button type="button" className={step === "done" ? "btn-primary h-10" : "btn-ghost h-10"} onClick={onClose}>
+            <button type="button" className={step === "done" ? "btn-primary h-10" : "btn-ghost h-10"} disabled={working} onClick={onClose}>
               {step === "done" ? "Done" : "Cancel"}
             </button>
           )}

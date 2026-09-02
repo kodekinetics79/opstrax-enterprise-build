@@ -7,6 +7,8 @@ import { useLiveTelemetry } from "@/hooks/useLiveTelemetry";
 import { controlTowerApi } from "@/services/controlTowerApi";
 import { LiveMap } from "@/components/LiveMap";
 import { useTrips, useTripBreadcrumbs, useTripCompliance } from "@/hooks/useBatch7";
+import { summarizePositionFreshness } from "@/utils/telemetryProvenance";
+import { summarizeControlTowerStatus } from "@/utils/controlTowerStatus";
 import type { AnyRecord } from "@/types";
 
 export function ControlTowerPage() {
@@ -20,6 +22,10 @@ export function ControlTowerPage() {
     enabled: Boolean(selected?.vehicleId || selected?.id),
   });
   const telemetry = useLiveTelemetry();
+  const positionFreshness = useMemo(
+    () => summarizePositionFreshness(telemetry.positions),
+    [telemetry.positions],
+  );
   const qc = useQueryClient();
   const action = useMutation({
     mutationFn: (type: string) => type === "eta" ? controlTowerApi.sendEta() : type === "dispatch" ? controlTowerApi.createDispatchReview() : controlTowerApi.createMaintenanceReview(),
@@ -47,7 +53,19 @@ export function ControlTowerPage() {
     return baseEntities.map((e) => {
       const live = posMap.get(String(e.label ?? e.vehicleCode ?? ""));
       if (!live) return e;
-      return { ...e, lat: live.lat, lng: live.lng, speedMph: live.speedMph, heading: live.heading, engineStatus: live.engineStatus };
+      return {
+        ...e,
+        lat: live.lat,
+        lng: live.lng,
+        speedMph: live.speedMph,
+        heading: live.heading,
+        engineStatus: live.engineStatus,
+        secondsSincePing: live.secondsSincePing,
+        isStale: live.isStale,
+        freshness: live.freshness,
+        deviceFixTime: live.deviceFixTime,
+        gatewayReceivedAt: live.gatewayReceivedAt,
+      };
     });
   }, [baseEntities, telemetry.positions]);
   const trips = useTrips({ status: "active" });
@@ -77,27 +95,27 @@ export function ControlTowerPage() {
       <PageHeader
         eyebrow="Control Tower"
         title="Fleet Command Center"
-        description="Live vehicle positions, telemetry alerts, trip compliance, and dispatch exceptions — updated every 15 seconds."
+        description="Last-known vehicle positions with fix freshness, telemetry alerts, trip compliance, and dispatch exceptions. The operational snapshot is refreshed every 15 seconds."
         actions={<><button className="btn-primary" onClick={() => action.mutate("eta")}><Send className="h-4 w-4" /> Send ETA Update</button><button className="btn-ghost" onClick={() => action.mutate("dispatch")}><Route className="h-4 w-4" /> Dispatch Review</button><button className="btn-ghost" onClick={() => action.mutate("maintenance")}><Wrench className="h-4 w-4" /> Maintenance Review</button></>}
       />
-      <ControlStatusStrip kpis={kpis} generatedAt={data.generatedAt} alertCount={alertCount} actionCount={actionQueue.length} />
+      <ControlStatusStrip kpis={kpis} generatedAt={data.generatedAt} alertCount={alertCount} actionCount={actionQueue.length} alertsAvailable={alerts.isSuccess} />
       <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-6">
         <KpiCard label="Tracked Vehicles" value={String(kpis.trackedEntities ?? entities.length)} icon={<RadioTower />} status="Active" />
-        <KpiCard label="Online Devices" value={String(kpis.onlineDevices ?? 0)} icon={<Satellite />} status="Live" />
-        <KpiCard label="Online Cameras" value={String(kpis.onlineCameras ?? 0)} icon={<Camera />} status="Live" />
-        <KpiCard label="Telemetry Quality" value={String(kpis.telemetryQuality ?? "--")} icon={<Gauge />} status="Healthy" />
-        <KpiCard label="High Risk Units" value={String(kpis.highRiskUnits ?? 0)} icon={<ShieldAlert />} status="Review" />
-        <KpiCard label="Speed Alerts" value={String(kpis.speedAlerts ?? 0)} icon={<CircleDot />} status="Warning" />
+        <KpiCard label="Online Device Evidence" value={kpis.onlineDevices == null ? "—" : String(kpis.onlineDevices)} icon={<Satellite />} status={kpis.onlineDevices == null ? "Unavailable" : "Reported"} />
+        <KpiCard label="Open Telemetry Alerts" value={alerts.isSuccess ? String(alertCount) : "—"} icon={<Bell />} status={!alerts.isSuccess ? "Unavailable" : alertCount > 0 ? "Review" : "Reported"} />
+        <KpiCard label="Telemetry Quality" value={kpis.telemetryQuality == null ? "—" : String(kpis.telemetryQuality)} icon={<Gauge />} status={kpis.telemetryQuality == null ? "Unavailable" : "Reported"} />
+        <KpiCard label="High Risk Units" value={kpis.highRiskUnits == null ? "—" : String(kpis.highRiskUnits)} icon={<ShieldAlert />} status={kpis.highRiskUnits == null ? "Unavailable" : Number(kpis.highRiskUnits) > 0 ? "Review" : "Reported"} />
+        <KpiCard label="Speed Alerts" value={kpis.speedAlerts == null ? "—" : String(kpis.speedAlerts)} icon={<CircleDot />} status={kpis.speedAlerts == null ? "Unavailable" : Number(kpis.speedAlerts) > 0 ? "Warning" : "Reported"} />
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[1.35fr_.65fr]">
         <section className="panel p-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 className="section-title">Live Operations Map</h2>
+              <h2 className="section-title">Fleet Position Map</h2>
               <div className="mt-1.5 flex items-center gap-2">
                 {telemetry.connected
-                  ? <span className="inline-flex items-center gap-1.5 rounded-full bg-teal-50 px-2 py-0.5 text-xs font-medium text-teal-700"><Wifi className="h-3 w-3" />GPS stream live · {telemetry.positions.length} vehicles</span>
+                  ? <span className="inline-flex items-center gap-1.5 rounded-full bg-teal-50 px-2 py-0.5 text-xs font-medium text-teal-700"><Wifi className="h-3 w-3" />Stream transport connected · {positionFreshness.recent} recent · {positionFreshness.staleOrUnknown} stale/unknown</span>
                   : <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500"><WifiOff className="h-3 w-3" />{telemetry.error ?? "Connecting to stream…"}</span>
                 }
               </div>
@@ -110,7 +128,7 @@ export function ControlTowerPage() {
         </section>
 
         <aside className="space-y-6">
-          <Panel title="Live Event Feed">
+          <Panel title="Event Feed">
             <div className="space-y-3">{events.slice(0, 10).map((event, index) => <EventRow key={String(event.id || index)} event={event} />)}</div>
           </Panel>
           <Panel title={`Needs Attention${actionQueue.length > 0 ? ` (${actionQueue.length})` : ""}`}>
@@ -168,43 +186,37 @@ export function ControlTowerPage() {
   );
 }
 
-function ControlStatusStrip({ kpis, generatedAt, alertCount, actionCount }: {
+function ControlStatusStrip({ kpis, generatedAt, alertCount, actionCount, alertsAvailable }: {
   kpis: AnyRecord;
   generatedAt?: unknown;
   alertCount: number;
   actionCount: number;
+  alertsAvailable: boolean;
 }) {
   const lastSync = generatedAt
     ? new Date(String(generatedAt)).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
     : "--";
-  const highRisk = Number(kpis.highRiskUnits ?? 0);
-  const isNominal = highRisk === 0 && alertCount === 0;
-  const isCritical = highRisk > 3 || alertCount > 5;
-
-  const dotColor = isNominal ? "bg-teal-500" : isCritical ? "bg-red-500" : "bg-amber-500";
-  const label    = isNominal ? "All Systems Nominal" : isCritical ? "Action Required" : "Review Needed";
-
-  const details = isNominal
-    ? "All tracked assets within parameters. No open alerts."
-    : [
-        alertCount > 0    && `${alertCount} open alert${alertCount > 1 ? "s" : ""}`,
-        actionCount > 0   && `${actionCount} queued action${actionCount > 1 ? "s" : ""}`,
-        highRisk > 0      && `${highRisk} high-risk unit${highRisk > 1 ? "s" : ""}`,
-      ].filter(Boolean).join(" · ");
+  const { evidenceIncomplete, isNominal, isCritical, label, details } = summarizeControlTowerStatus({
+    highRiskUnits: kpis.highRiskUnits,
+    alertCount,
+    actionCount,
+    alertsAvailable,
+  });
+  const dotColor = evidenceIncomplete ? "bg-slate-400" : isNominal ? "bg-teal-500" : isCritical ? "bg-red-500" : "bg-amber-500";
 
   return (
     <section className="control-status-strip">
       <div>
         <div className="flex items-center gap-2">
-          <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${dotColor} ${!isNominal ? "animate-pulse" : ""}`} />
+          <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${dotColor} ${!evidenceIncomplete && !isNominal ? "animate-pulse" : ""}`} />
           <p className="section-title">{label}</p>
         </div>
         <h2 className="mt-1.5">{details}</h2>
       </div>
       <div className="control-status-grid">
-        <span><b>{String(kpis.telemetryQuality ?? "--")}</b> Telemetry quality</span>
-        <span><b>{String(kpis.fleetReadiness ?? "--")}</b> Fleet readiness</span>
-        <span><b>{String(kpis.onlineCameras ?? 0)}</b> Cameras online</span>
+        <span><b>{String(kpis.telemetryQuality ?? "—")}</b> Telemetry quality</span>
+        <span><b>{String(kpis.fleetReadiness ?? "—")}</b> Fleet readiness</span>
+        <span><b>{alertsAvailable ? "Available" : "Unavailable"}</b> Open-alert evidence</span>
         <span><b>{lastSync}</b> Last sync</span>
       </div>
     </section>
@@ -254,7 +266,7 @@ function TelemetryAlertRow({ alert, onAck, onResolve }: { alert: AnyRecord; onAc
 }
 
 function EventRow({ event }: { event: AnyRecord }) {
-  return <div className="rounded-xl border border-slate-200 bg-slate-50 p-3"><div className="flex justify-between gap-3"><p className="text-sm font-semibold text-slate-900">{String(event.title || event.type || event.eventType)}</p><StatusBadge status={event.severity || "Live"} /></div><p className="mt-1 text-xs text-slate-500">{String(event.eventTime || event.generatedAt || "")}</p></div>;
+  return <div className="rounded-xl border border-slate-200 bg-slate-50 p-3"><div className="flex justify-between gap-3"><p className="text-sm font-semibold text-slate-900">{String(event.title || event.type || event.eventType)}</p><StatusBadge status={event.severity || "Reported"} /></div><p className="mt-1 text-xs text-slate-500">{String(event.eventTime || event.generatedAt || "")}</p></div>;
 }
 
 function Panel({ title, children }: { title: string; children: ReactNode }) {
@@ -275,7 +287,7 @@ function EntityDrawer({ detail, loading, onClose }: { detail?: AnyRecord; loadin
     <div className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-sm">
       <aside className="h-full w-full max-w-4xl overflow-y-auto border-l border-slate-200 bg-white p-6 shadow-2xl">
         <button type="button" aria-label="Close" className="float-right icon-btn" onClick={onClose}><X className="h-5 w-5" /></button>
-        <p className="section-title">Live Vehicle Detail</p>
+        <p className="section-title">Vehicle Position Detail</p>
         <h2 className="mt-3 text-2xl font-semibold text-slate-900">{String(record.vehicleCode)}</h2>
         <div className="mt-4 flex flex-wrap gap-2"><StatusBadge status={record.status} /><RiskBadge risk={record.riskScore} /><span className="badge">Last seen {String(record.lastSeenAt || "--")}</span></div>
         {activeTrip && (
@@ -295,7 +307,7 @@ function EntityDrawer({ detail, loading, onClose }: { detail?: AnyRecord; loadin
           </div>
         )}
         <div className="mt-6 grid gap-4 lg:grid-cols-2">
-          <Mini title="Live Telemetry" record={record} keys={["driverName","lat","lng","speedMph","heading","deviceStatus","cameraStatus"]} />
+          <Mini title="Latest Telemetry" record={record} keys={["driverName","lat","lng","speedMph","heading","deviceStatus","cameraStatus"]} />
           <Mini title="Health & Diagnostics" record={record} keys={["readinessScore","dataQualityScore","riskScore","odometerMiles","type"]} />
         </div>
         <Grid title="Active Jobs / SLA" rows={(detail?.activeJobs as AnyRecord[]) || []} columns={["jobNumber","status","slaStatus","eta","priority"]} />

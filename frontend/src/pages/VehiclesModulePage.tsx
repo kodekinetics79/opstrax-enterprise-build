@@ -1,19 +1,33 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router";
-import { ArrowRight, Boxes, ClipboardList, Gauge, ShieldAlert, Sparkles, Truck, Wrench } from "lucide-react";
+import {
+  ArrowRight,
+  Boxes,
+  ClipboardList,
+  Gauge,
+  Plus,
+  ShieldAlert,
+  Sparkles,
+  Truck,
+  Wrench,
+} from "lucide-react";
 import { LoadingState, ErrorState, KpiCard, EmptyState, DataTable, StatusBadge } from "@/components/ui";
 import { EntityImportExport } from "@/components/EntityImportExport";
 import { vehiclesApi } from "@/services/vehiclesApi";
 import { scopeRowsForSession } from "@/auth/accessScope";
 import { useAuth } from "@/hooks/useAuth";
-import { useHasPermission } from "@/hooks/usePermission";
+import { PERMISSIONS, useHasPermission } from "@/hooks/usePermission";
 import type { AnyRecord } from "@/types";
 import { VehiclesPage as VehiclesRosterPage } from "@/pages/VehiclesPage";
 
 const VEHICLE_IMPORT_EXPORT = {
   entity: "vehicles",
-  columns: ["vehicleCode", "type", "make", "model", "year", "odometerMiles", "vin", "plateNumber", "status"],
+  columns: [
+    "vehicleCode", "branchCode", "type", "make", "model", "year", "vehicleClass",
+    "odometerMiles", "vin", "vinExceptionType", "alternateIdentifier",
+    "plateNumber", "plateJurisdiction", "status",
+  ],
   requiredColumns: ["vehicleCode"],
   templateEndpoint: "/api/vehicles/import-template",
   exportEndpoint: "/api/vehicles/export",
@@ -82,6 +96,7 @@ export function VehiclesModulePage() {
   const section = readSection(location.pathname);
   const { session } = useAuth();
   const hasPermission = useHasPermission();
+  const canManageFleet = hasPermission(PERMISSIONS.FLEET_MANAGE);
 
   const list = useQuery({ queryKey: ["vehicles"], queryFn: vehiclesApi.list });
   const summary = useQuery({ queryKey: ["vehicles", "summary"], queryFn: vehiclesApi.summary });
@@ -95,7 +110,13 @@ export function VehiclesModulePage() {
   if (list.isError) return <ErrorState message={list.error instanceof Error ? list.error.message : "Unable to load vehicles."} />;
   if (summary.isError) return <ErrorState message={summary.error instanceof Error ? summary.error.message : "Unable to load vehicle summary."} />;
 
-  const available = rows.filter((row) => /available/i.test(String(g(row, "status")))).length;
+  // The list endpoint is deliberately paged at 500 rows. Header totals must come
+  // from the branch-aware aggregate endpoint so a large fleet is never presented
+  // as only the first page of its registry.
+  const total = visibleSummary.total != null ? num(visibleSummary.total) : rows.length;
+  const available = visibleSummary.available != null
+    ? num(visibleSummary.available)
+    : rows.filter((row) => /available/i.test(String(g(row, "status")))).length;
   const atRisk = num(visibleSummary.atRisk ?? visibleSummary.at_risk) || rows.filter((row) => riskTier(row) === "High").length;
   const deviceEx = num(visibleSummary.deviceExceptions ?? visibleSummary.device_exceptions) ||
     rows.filter((row) => !/online/i.test(String(g(row, "deviceStatus", "device_status") ?? "Unknown")) || !/online/i.test(String(g(row, "cameraStatus", "camera_status") ?? "Unknown"))).length;
@@ -117,7 +138,7 @@ export function VehiclesModulePage() {
           </span>
           <h1 className="mt-1 text-[26px] font-black leading-none tracking-tight text-slate-950">Vehicles</h1>
           <p className="mt-1.5 text-[12.5px] font-medium text-slate-500">
-            <span className="font-bold text-slate-700 tabular-nums">{rows.length}</span> units in the fleet registry ·{" "}
+            <span className="font-bold text-slate-700 tabular-nums">{total}</span> units in the fleet registry ·{" "}
             <span className="font-bold text-emerald-600 tabular-nums">{available}</span> available ·{" "}
             <span className="font-bold text-rose-600 tabular-nums">{atRisk}</span> need attention
           </p>
@@ -125,9 +146,17 @@ export function VehiclesModulePage() {
         <div className="flex flex-wrap items-center gap-2">
           <EntityImportExport
             config={VEHICLE_IMPORT_EXPORT}
-            canImport={hasPermission("fleet:manage")}
-            canExport={hasPermission("vehicles:view")}
+            canImport={canManageFleet}
+            canExport={hasPermission(PERMISSIONS.VEHICLES_EXPORT)}
           />
+          {/* Single-add sat only on the roster tab, so the Overview offered bulk import
+              but no way to add one record — users reasonably concluded it was missing.
+              Deep-links into the roster's existing create form rather than duplicating it. */}
+          {canManageFleet ? (
+            <button type="button" onClick={() => navigate("/vehicles/roster?new=1")} className="btn-ghost h-10">
+              <Plus className="h-4 w-4" /> New vehicle
+            </button>
+          ) : null}
           <button type="button" onClick={() => navigate("/vehicles/roster")} className="btn-primary h-10">
             Open roster <ArrowRight className="h-4 w-4" />
           </button>

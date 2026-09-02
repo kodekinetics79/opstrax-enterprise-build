@@ -19,6 +19,9 @@ export const driverApi = {
   acceptAssignment: (id: number | string) =>
     unwrap<AnyRecord>(apiClient.post(`/api/driver/assignments/${id}/accept`, {})),
 
+  confirmVehicle: (id: number | string, method: "unit_suffix" | "vin_suffix", reference: string) =>
+    unwrap<AnyRecord>(apiClient.post(`/api/driver/assignments/${id}/confirm-vehicle`, { method, reference })),
+
   updateStatus: (id: number | string, status: string, notes?: string) =>
     unwrap<AnyRecord>(
       apiClient.post(`/api/driver/assignments/${id}/status`, { status, notes })

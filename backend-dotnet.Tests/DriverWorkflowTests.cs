@@ -1,4 +1,6 @@
 using Opstrax.Api.Controllers;
+using Microsoft.Extensions.DependencyInjection;
+using System.Text.Json;
 using Xunit;
 
 namespace Opstrax.Tests;
@@ -44,19 +46,45 @@ public class DriverPermissionTests
     }
 
     // The Driver role is PORTAL-ONLY and isolated. Every /api/driver/* endpoint (assignments,
-    // DVIR, coaching, HOS, earnings) gates on driver:self, and the DVIR submit needs the narrow
-    // maintenance:create WRITE — nothing else. A driver must NOT carry back-office READ keys, so a
+    // DVIR, coaching, HOS, earnings) gates on driver:self. The dedicated driver DVIR route does not
+    // grant the back-office maintenance:create capability. A driver must NOT carry back-office keys, so a
     // driver token can never pull tenant operational data even by hitting an admin API directly.
     [Fact]
     public void Driver_Is_Portal_Isolated_No_BackOffice_Reads()
     {
         var perms = EndpointMappings.RolePermissionDefaults["Driver"];
         Assert.Contains("driver:self", perms);          // the portal gate
-        Assert.Contains("maintenance:create", perms);   // DVIR submit (write only)
+        Assert.DoesNotContain("maintenance:create", perms);
         foreach (var backOfficeRead in new[] { "dispatch:view", "shipments:view", "vehicles:view",
                                                "drivers:view", "safety:view", "compliance:view",
                                                "alerts:view", "dashboard:view" })
             Assert.DoesNotContain(backOfficeRead, perms);
+    }
+
+    [Fact]
+    public async Task UnprovisionedDriverDashboard_IsSafeAndDoesNotExposeFleetData()
+    {
+        var result = EndpointMappings.DriverProfileNotProvisionedDashboard();
+        var http = new Microsoft.AspNetCore.Http.DefaultHttpContext
+        {
+            RequestServices = new ServiceCollection()
+                .AddLogging()
+                .BuildServiceProvider(),
+        };
+        http.Response.Body = new MemoryStream();
+
+        await result.ExecuteAsync(http);
+
+        Assert.Equal(200, http.Response.StatusCode);
+        http.Response.Body.Position = 0;
+        using var json = await JsonDocument.ParseAsync(http.Response.Body);
+        var data = json.RootElement.GetProperty("data");
+        Assert.Equal(JsonValueKind.Null, data.GetProperty("driver").GetProperty("id").ValueKind);
+        Assert.Equal(JsonValueKind.Null, data.GetProperty("currentAssignment").ValueKind);
+        Assert.False(data.GetProperty("vehicleBlocking").GetProperty("blocked").GetBoolean());
+        Assert.Contains("no driver profile is linked",
+            data.GetProperty("guidance")[0].GetProperty("message").GetString(),
+            StringComparison.OrdinalIgnoreCase);
     }
 }
 

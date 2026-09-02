@@ -1,169 +1,80 @@
 import { useMemo } from "react";
 import { Pressable, Text, View } from "react-native";
-import { ActionButton, EmptyState, ErrorState, Field, Input, LoadingState, MetricCard, Panel, Pill, Row, Screen, SectionHeader, colors } from "@/components/ui";
+import { EmptyState, ErrorState, Field, LoadingState, MetricCard, Panel, Pill, Row, Screen, SectionHeader, colors, toneForStatus } from "@/components/ui";
 import { useSession } from "@/auth/SessionProvider";
 import { useWorkflow } from "@/workflow/WorkflowContext";
 import { useAsyncResource } from "@/hooks/useAsyncResource";
-import { ROLE_MODELS } from "@/data/roleModel";
-import type { JsonRecord } from "@/types";
-
-function asArray(value: unknown): JsonRecord[] {
-  if (Array.isArray(value)) return value as JsonRecord[];
-  if (value && typeof value === "object") {
-    const record = value as Record<string, unknown>;
-    for (const key of ["items", "rows", "data", "results"]) {
-      if (Array.isArray(record[key])) return record[key] as JsonRecord[];
-    }
-  }
-  return [];
-}
-
-function textOf(value: unknown) {
-  return value === null || value === undefined || value === "" ? "No data yet" : String(value);
-}
+import { asRecords, textOf } from "@/data/records";
 
 export function DashboardScreen() {
   const { session, roleModel, api, hasPermission } = useSession();
-  const { selectedJobId, selectedJobInput, setSelectedJobInput, applySelectedJob, setSelectedJobId } = useWorkflow();
-  const canReadJobs = hasPermission("shipments:view");
-  const canReadSummary = ["operations.execution_summary.read", "dispatch:view", "dispatch:manage", "shipments:view", "fleet:view", "driver:self"].some(hasPermission);
-  const jobs = useAsyncResource(async () => (canReadJobs ? api.jobs() : null), [api, canReadJobs]);
-  const summary = useAsyncResource(async () => (selectedJobId && canReadSummary ? api.executionSummary(selectedJobId) : null), [api, selectedJobId, canReadSummary]);
-
-  const recentJobs = useMemo(() => asArray(jobs.data), [jobs.data]);
-  const previewSummary = summary.data ?? null;
-  const routeModel = ROLE_MODELS.find((entry) => entry.role === roleModel.role) ?? roleModel;
+  const { selectedJobId, setSelectedJobId } = useWorkflow();
+  const canReadJobs = ["jobs:view", "shipments:view", "dispatch:view", "dispatch:manage"].some(hasPermission);
+  const jobs = useAsyncResource(async () => canReadJobs ? api.jobs() : [], [api, canReadJobs]);
+  const recentJobs = useMemo(() => asRecords(jobs.data), [jobs.data]);
 
   return (
     <Screen>
       <Panel>
         <SectionHeader
-          eyebrow="Mobile foundation"
+          eyebrow={session?.company.name}
           title={`Hello, ${session?.user.name ?? "operator"}`}
-          description="This dashboard is role-aware, tenant-scoped, and driven by the live backend session."
-          right={<Pill label={routeModel.title} tone="teal" />}
+          description={roleModel.subtitle}
+          right={<Pill label={roleModel.title} tone="teal" />}
         />
         <Row>
-          <MetricCard label="Permissions" value={String(session?.permissions?.length ?? 0)} tone="blue" />
-          <MetricCard label="Role family" value={routeModel.title} tone="teal" />
-          <MetricCard label="Job selected" value={selectedJobId ? String(selectedJobId) : "None"} tone="amber" />
+          <MetricCard label="Workspace" value={session?.company.code ?? "Unknown"} tone="teal" />
+          <MetricCard label="Open work" value={canReadJobs ? String(recentJobs.length) : "Scoped"} tone="blue" />
+          <MetricCard label="Selected" value={selectedJobId ? `#${selectedJobId}` : "None"} tone="amber" />
         </Row>
       </Panel>
 
       <Panel>
-        <SectionHeader
-          eyebrow="Route model"
-          title="What this session can reach"
-          description="The mobile app uses the backend session permissions, not a separate mobile authorization path."
-        />
+        <SectionHeader eyebrow="Operational inbox" title="Recent authorized work" description="Choose only from records returned by your session. Manual database-ID entry is intentionally unavailable." />
+        {jobs.loading ? <LoadingState label="Loading authorized work…" /> : null}
+        {jobs.error ? <ErrorState title="Work unavailable" body={jobs.error} onRetry={jobs.refresh} /> : null}
+        {!canReadJobs ? <EmptyState title="No operations feed for this role" body="Your mobile workspace only exposes records and actions granted by the backend session." /> : null}
+        {canReadJobs && !jobs.loading && !jobs.error && recentJobs.length === 0 ? <EmptyState title="No open work" body="The backend returned no current records. OpsTrax does not create placeholder jobs." /> : null}
         <View style={{ gap: 10 }}>
-          {routeModel.routeFamilies.map((family) => (
-            <Field key={family} label="Route family" value={family} />
-          ))}
-        </View>
-        <View style={{ gap: 10 }}>
-          <Text style={{ color: colors.muted, fontSize: 12, fontWeight: "700", textTransform: "uppercase", letterSpacing: 1.2 }}>Hidden data by design</Text>
-          {routeModel.hiddenData.map((item) => (
-            <Text key={item} style={{ color: colors.text, lineHeight: 19 }}>
-              • {item}
-            </Text>
-          ))}
-        </View>
-      </Panel>
-
-      <Panel>
-        <SectionHeader
-          eyebrow="Job context"
-          title="Load a live execution summary"
-          description="The workflows tab uses the real job id. No fake job data is injected here."
-        />
-        <View style={{ gap: 10 }}>
-          <Field label="Selected job" value={selectedJobId ? String(selectedJobId) : null} />
-          <Field label="Backend execution summary access" value={canReadSummary ? "Allowed" : "Denied"} />
-          <Input label="Job id input" value={selectedJobInput} onChangeText={setSelectedJobInput} placeholder="Enter a real job id" keyboardType="numeric" />
-          <ActionButton label="Set job" onPress={applySelectedJob} disabled={!canReadSummary} />
-          <ActionButton label="Clear job" onPress={() => setSelectedJobId(null)} variant="secondary" />
-        </View>
-      </Panel>
-
-      <Panel>
-        <SectionHeader eyebrow="Recent jobs" title="Real backend job list" description="This is a live list from the existing job endpoint when the backend is reachable." />
-        {!canReadJobs ? (
-          <EmptyState title="Job list not available" body="This authenticated session does not grant shipment-list access. A permitted job id can still be entered above." />
-        ) : jobs.loading ? (
-          <LoadingState label="Loading jobs..." />
-        ) : jobs.error ? (
-          <ErrorState title="Jobs unavailable" body={jobs.error} onRetry={jobs.refresh} />
-        ) : recentJobs.length === 0 ? (
-          <EmptyState title="No jobs yet" body="The backend returned an empty job list. That is honest; the app does not fabricate assignments." />
-        ) : null}
-        <View style={{ gap: 10 }}>
-          {recentJobs.slice(0, 5).map((job, index) => (
-            <Pressable accessibilityRole="button" accessibilityLabel={`Select ${textOf(job.jobNumber ?? job.job_number ?? job.reference ?? `job ${job.id ?? index + 1}`)}`} key={String(job.id ?? index)} onPress={() => setSelectedJobId(Number(job.id ?? 0) || null)} style={({ pressed }) => [{ opacity: pressed ? 0.85 : 1 }, styles.jobRow]}>
-              <View style={{ flex: 1, gap: 4 }}>
-                <Text style={styles.jobTitle}>{textOf(job.jobNumber ?? job.job_number ?? job.reference ?? `Job ${job.id ?? index + 1}`)}</Text>
-                <Text style={styles.jobSubtitle}>{textOf(job.customerName ?? job.customer_name ?? job.title ?? job.description)}</Text>
-              </View>
-              <View style={{ alignItems: "flex-end", gap: 6 }}>
-                <Pill label={textOf(job.status ?? "Open")} tone="teal" />
-                <Text style={styles.jobMeta}>{textOf(job.scheduledStart ?? job.scheduled_start ?? job.createdAt ?? job.created_at)}</Text>
-              </View>
-            </Pressable>
-          ))}
+          {recentJobs.slice(0, 20).map((job, index) => {
+            const id = Number(job.id);
+            const selected = Number.isFinite(id) && selectedJobId === id;
+            return (
+              <Pressable
+                key={String(job.id ?? index)}
+                accessibilityRole="button"
+                accessibilityLabel={`Select ${textOf(job.jobNumber ?? job.jobCode ?? job.reference, `work item ${index + 1}`)}`}
+                onPress={() => Number.isFinite(id) && id > 0 ? setSelectedJobId(id) : undefined}
+                style={({ pressed }) => [{
+                  borderRadius: 18,
+                  borderWidth: 1,
+                  borderColor: selected ? colors.teal + "88" : colors.border,
+                  backgroundColor: selected ? colors.teal + "12" : colors.panelAlt,
+                  padding: 14,
+                  gap: 9,
+                  opacity: pressed ? 0.82 : 1,
+                }]}
+              >
+                <Row>
+                  <View style={{ flex: 1, minWidth: 180, gap: 4 }}>
+                    <Text style={{ color: colors.text, fontSize: 15, fontWeight: "900" }}>{textOf(job.jobNumber ?? job.jobCode ?? job.reference, `Work item ${index + 1}`)}</Text>
+                    <Text style={{ color: colors.muted, fontSize: 13, lineHeight: 18 }}>{textOf(job.customerName ?? job.title ?? job.description)}</Text>
+                  </View>
+                  <Pill label={textOf(job.status, "Open")} tone={toneForStatus(String(job.status ?? ""))} />
+                </Row>
+                <Field label="Schedule" value={textOf(job.scheduledStart ?? job.createdAt)} />
+              </Pressable>
+            );
+          })}
         </View>
       </Panel>
 
       <Panel>
-        <SectionHeader eyebrow="Execution summary" title="Live workflow snapshot" description="The summary below is pulled from the real backend once a job id is selected." />
-        {!canReadSummary ? (
-          <EmptyState title="Execution summary not available" body="This authenticated session does not grant execution-summary access." />
-        ) : selectedJobId == null ? (
-          <EmptyState title="No job selected" body="Set a live job id above to view assignment, proof, access, and billing confidence summaries." />
-        ) : summary.loading ? (
-          <LoadingState label="Loading execution summary..." />
-        ) : summary.error ? (
-          <ErrorState title="Summary unavailable" body={summary.error} onRetry={summary.refresh} />
-        ) : previewSummary ? (
-          <View style={{ gap: 10 }}>
-            <Field label="Execution status" value={textOf((previewSummary as JsonRecord).status ?? (previewSummary as JsonRecord).summary_status)} />
-            <Field label="Assignment summary" value={textOf((previewSummary as JsonRecord).assignment_summary ?? (previewSummary as JsonRecord).smart_assignment_summary)} />
-            <Field label="Site access summary" value={textOf((previewSummary as JsonRecord).site_access_summary)} />
-            <Field label="Proof package summary" value={textOf((previewSummary as JsonRecord).proof_package_summary)} />
-            <Field label="Billing confidence summary" value={textOf((previewSummary as JsonRecord).billing_confidence_summary)} />
-          </View>
-        ) : (
-          <EmptyState title="No summary data" body="The backend returned no execution summary object for this job yet." />
-        )}
+        <SectionHeader eyebrow="Tenant boundary" title="One active organization" description="The authenticated server session binds this app to one tenant, user, branch, role, and permission set." />
+        <Field label="Organization" value={session?.company.name} />
+        <Field label="Organization code" value={session?.company.code} />
+        <Field label="Signed-in user" value={session?.user.email} />
       </Panel>
     </Screen>
   );
 }
-
-const styles = {
-  jobRow: {
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.panelAlt,
-    padding: 14,
-    flexDirection: "row" as const,
-    alignItems: "center" as const,
-    justifyContent: "space-between" as const,
-    gap: 12,
-  },
-  jobTitle: {
-    color: colors.text,
-    fontSize: 15,
-    fontWeight: "800" as const,
-  },
-  jobSubtitle: {
-    color: colors.muted,
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  jobMeta: {
-    color: colors.subtle,
-    fontSize: 11,
-    fontWeight: "700" as const,
-  },
-};

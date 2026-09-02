@@ -266,8 +266,8 @@ CREATE TABLE IF NOT EXISTS fleet_tms_temperature_devices (
     shipment_id                       BIGINT NULL,
     vehicle_number                    VARCHAR(60)  NOT NULL DEFAULT '',
     status                            VARCHAR(30)  NOT NULL DEFAULT 'Active',
-    last_reported_temperature_celsius NUMERIC(6,2) NOT NULL DEFAULT 0,
-    battery_percent                   NUMERIC(6,2) NOT NULL DEFAULT 0,
+    last_reported_temperature_celsius NUMERIC(6,2) NULL,
+    battery_percent                   NUMERIC(6,2) NULL,
     last_ping_at_utc                  TIMESTAMPTZ NULL,
     notes                             TEXT         NOT NULL DEFAULT '',
     created_at_utc                    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -300,9 +300,12 @@ CREATE TABLE IF NOT EXISTS fleet_tms_temperature_alerts (
     alert_type           VARCHAR(60)  NOT NULL DEFAULT 'TemperatureBreach',
     severity             VARCHAR(30)  NOT NULL DEFAULT 'High',
     status               VARCHAR(30)  NOT NULL DEFAULT 'Open',
-    threshold_min        NUMERIC(6,2) NOT NULL DEFAULT 0,
-    threshold_max        NUMERIC(6,2) NOT NULL DEFAULT 0,
+    threshold_min        NUMERIC(6,2) NULL,
+    threshold_max        NUMERIC(6,2) NULL,
     measured_temperature NUMERIC(6,2) NOT NULL DEFAULT 0,
+    measured_humidity    NUMERIC(6,2) NULL,
+    humidity_threshold_min NUMERIC(6,2) NULL,
+    humidity_threshold_max NUMERIC(6,2) NULL,
     triggered_at_utc     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     resolved_at_utc      TIMESTAMPTZ NULL,
     resolved_by          VARCHAR(255) NOT NULL DEFAULT '',
@@ -1210,6 +1213,22 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_ftms_active_task_per_stop
   WHERE stop_id IS NOT NULL AND status <> 'Cancelled';
 CREATE UNIQUE INDEX IF NOT EXISTS uq_ftms_tracking_hash
   ON fleet_tms_tracking_links (token_hash);
+
+ALTER TABLE fleet_tms_temperature_devices
+  ALTER COLUMN last_reported_temperature_celsius DROP DEFAULT,
+  ALTER COLUMN last_reported_temperature_celsius DROP NOT NULL,
+  ALTER COLUMN battery_percent DROP DEFAULT,
+  ALTER COLUMN battery_percent DROP NOT NULL,
+  ALTER COLUMN last_ping_at_utc DROP DEFAULT;
+
+ALTER TABLE fleet_tms_temperature_alerts
+  ALTER COLUMN threshold_min DROP DEFAULT,
+  ALTER COLUMN threshold_min DROP NOT NULL,
+  ALTER COLUMN threshold_max DROP DEFAULT,
+  ALTER COLUMN threshold_max DROP NOT NULL,
+  ADD COLUMN IF NOT EXISTS measured_humidity NUMERIC(6,2) NULL,
+  ADD COLUMN IF NOT EXISTS humidity_threshold_min NUMERIC(6,2) NULL,
+  ADD COLUMN IF NOT EXISTS humidity_threshold_max NUMERIC(6,2) NULL;
 
 ALTER TABLE fleet_tms_temperature_devices ADD COLUMN IF NOT EXISTS source_channel VARCHAR(40) NULL;
 

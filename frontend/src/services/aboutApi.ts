@@ -7,4 +7,5 @@ import type { AnyRecord } from "@/types";
 export const aboutApi = {
   platform:      (): Promise<AnyRecord> => unwrap<AnyRecord>(apiClient.get("/api/about/platform")),
   healthSummary: (): Promise<AnyRecord> => unwrap<AnyRecord>(apiClient.get("/api/about/health-summary")),
+  license:       (): Promise<AnyRecord> => unwrap<AnyRecord>(apiClient.get("/api/about/license")),
 };

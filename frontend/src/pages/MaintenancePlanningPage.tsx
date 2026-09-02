@@ -8,6 +8,7 @@ import {
 } from "@/components/ui";
 import type { AnyRecord } from "@/types";
 import { useTenantCurrency } from "@/hooks/useTenantRegion";
+import { useHasPermission } from "@/hooks/usePermission";
 import { formatCurrency } from "@/utils/formatters";
 
 // ── Live data builders ────────────────────────────────────────────────────────
@@ -420,6 +421,8 @@ function PMScheduleTab() {
 
 export function MaintenancePlanningPage() {
   const { pathname } = useLocation();
+  const hasPermission = useHasPermission();
+  const canExport = hasPermission("reports:export");
   const defaultTab = (ROUTE_TAB[pathname] as Tab) ?? "history";
   const [tab, setTab] = useState<Tab>(defaultTab);
   const [exporting, setExporting] = useState(false);
@@ -432,6 +435,7 @@ export function MaintenancePlanningPage() {
   };
 
   const runExport = async () => {
+    if (!canExport) return;
     setExporting(true);
     setExportError(null);
     try {
@@ -462,7 +466,7 @@ export function MaintenancePlanningPage() {
           <h1 className="text-xl font-bold text-slate-900">{titles[tab]}</h1>
           <p className="text-sm text-slate-500 mt-0.5">{descriptions[tab]}</p>
         </div>
-        <button type="button" className="btn-secondary text-sm" onClick={() => void runExport()} disabled={exporting}>{exporting ? "Exporting…" : "Export CSV"}</button>
+        {canExport && <button type="button" className="btn-secondary text-sm" onClick={() => void runExport()} disabled={exporting}>{exporting ? "Exporting…" : "Export CSV"}</button>}
       </div>
 
       {exportError ? <ErrorState message={exportError} onRetry={() => void runExport()} /> : null}

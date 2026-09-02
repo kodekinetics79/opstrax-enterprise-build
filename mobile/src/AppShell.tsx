@@ -4,7 +4,7 @@ import { enableScreens } from "react-native-screens";
 import { SessionProvider } from "@/auth/SessionProvider";
 import { WorkflowProvider } from "@/workflow/WorkflowContext";
 import { RootNavigator } from "@/navigation/RootNavigator";
-import { Shell } from "@/components/ui";
+import { NetworkBanner, Shell } from "@/components/ui";
 
 enableScreens();
 
@@ -15,6 +15,7 @@ export function AppShell() {
         <WorkflowProvider>
           <Shell>
             <StatusBar style="light" />
+            <NetworkBanner />
             <RootNavigator />
           </Shell>
         </WorkflowProvider>

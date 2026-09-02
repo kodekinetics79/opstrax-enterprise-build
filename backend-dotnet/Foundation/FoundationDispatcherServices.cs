@@ -206,6 +206,8 @@ public sealed class PostgresOutboxDispatcher(
     private async Task<List<OutboxMessageRecord>> ClaimOutboxAsync(CancellationToken ct)
         => await db.WithTransactionAsync(async (conn, tx) =>
         {
+            await RecoverExpiredOutboxClaimsAsync(conn, tx, ct);
+
             var ids = new List<long>();
             await using (var select = new NpgsqlCommand(
                 @"SELECT id
@@ -256,11 +258,14 @@ public sealed class PostgresOutboxDispatcher(
     private async Task<List<InboxMessageRecord>> ClaimInboxAsync(CancellationToken ct)
         => await db.WithTransactionAsync(async (conn, tx) =>
         {
+            await RecoverExpiredInboxClaimsAsync(conn, tx, ct);
+
             var ids = new List<long>();
             await using (var select = new NpgsqlCommand(
                 @"SELECT id
                   FROM inbox_messages
                   WHERE status IN ('received', 'retry_pending')
+                    AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
                     AND (locked_until IS NULL OR locked_until < NOW())
                     AND (@tenantIdFilter IS NULL OR tenant_id = @tenantIdFilter)
                   ORDER BY received_at, id
@@ -301,6 +306,56 @@ public sealed class PostgresOutboxDispatcher(
                 rows.Add(ReadInbox(reader2));
             return rows;
         }, ct);
+
+    private async Task RecoverExpiredOutboxClaimsAsync(NpgsqlConnection conn, NpgsqlTransaction tx, CancellationToken ct)
+    {
+        await using var command = new NpgsqlCommand(
+            @"UPDATE outbox_messages
+              SET retry_count=retry_count + 1,
+                  status=CASE WHEN retry_count + 1 >= @maxRetries THEN 'dead_letter' ELSE 'retry_pending' END,
+                  next_attempt_at=CASE WHEN retry_count + 1 >= @maxRetries THEN NULL ELSE NOW() END,
+                  processed_at=CASE WHEN retry_count + 1 >= @maxRetries THEN NOW() ELSE NULL END,
+                  last_error='Processing lease expired before completion',
+                  dead_letter_reason=CASE WHEN retry_count + 1 >= @maxRetries
+                                          THEN 'Processing lease expired before completion'
+                                          ELSE NULL END,
+                  claimed_by=NULL,
+                  claimed_at=NULL,
+                  locked_until=NULL
+              WHERE status='processing'
+                AND locked_until IS NOT NULL
+                AND locked_until < NOW()
+                AND (@tenantIdFilter IS NULL OR tenant_id = @tenantIdFilter)",
+            conn, tx);
+        command.Parameters.AddWithValue("@maxRetries", options.MaxRetryCount);
+        command.Parameters.Add(new NpgsqlParameter("@tenantIdFilter", NpgsqlDbType.Bigint) { Value = (object?)options.TenantIdFilter ?? DBNull.Value });
+        await command.ExecuteNonQueryAsync(ct);
+    }
+
+    private async Task RecoverExpiredInboxClaimsAsync(NpgsqlConnection conn, NpgsqlTransaction tx, CancellationToken ct)
+    {
+        await using var command = new NpgsqlCommand(
+            @"UPDATE inbox_messages
+              SET retry_count=retry_count + 1,
+                  status=CASE WHEN retry_count + 1 >= @maxRetries THEN 'dead_letter' ELSE 'retry_pending' END,
+                  next_attempt_at=CASE WHEN retry_count + 1 >= @maxRetries THEN NULL ELSE NOW() END,
+                  processed_at=CASE WHEN retry_count + 1 >= @maxRetries THEN NOW() ELSE NULL END,
+                  last_error='Processing lease expired before completion',
+                  dead_letter_reason=CASE WHEN retry_count + 1 >= @maxRetries
+                                          THEN 'Processing lease expired before completion'
+                                          ELSE NULL END,
+                  claimed_by=NULL,
+                  claimed_at=NULL,
+                  locked_until=NULL
+              WHERE status='processing'
+                AND locked_until IS NOT NULL
+                AND locked_until < NOW()
+                AND (@tenantIdFilter IS NULL OR tenant_id = @tenantIdFilter)",
+            conn, tx);
+        command.Parameters.AddWithValue("@maxRetries", options.MaxRetryCount);
+        command.Parameters.Add(new NpgsqlParameter("@tenantIdFilter", NpgsqlDbType.Bigint) { Value = (object?)options.TenantIdFilter ?? DBNull.Value });
+        await command.ExecuteNonQueryAsync(ct);
+    }
 
     private async Task MarkOutboxProcessedAsync(OutboxMessageRecord message, CancellationToken ct)
     {

@@ -1,0 +1,1001 @@
+vehicleCode,type,make,model,year,vin,plateNumber,status,odometerMiles,deviceStatus
+CLHQ-V-0001,Tractor,Freightliner,Cascadia,2017,,OH-0001,Available,49919.00,Unknown
+CLHQ-V-0002,Truck,Ford,F-650,2018,,OH-0002,Available,57838.00,Unknown
+CLHQ-V-0003,Van,Ford,Transit,2019,,OH-0003,Available,65757.00,Unknown
+CLHQ-V-0004,Truck,Isuzu,NPR-HD,2020,,OH-0004,Available,73676.00,Unknown
+CLHQ-V-0005,Tractor,Volvo,VNL 760,2021,,OH-0005,Available,81595.00,Unknown
+CLHQ-V-0006,Tractor,Freightliner,Cascadia,2022,,OH-0006,Available,89514.00,Unknown
+CLHQ-V-0007,Truck,Ford,F-650,2023,,OH-0007,Available,97433.00,Unknown
+CLHQ-V-0008,Van,Ford,Transit,2024,,OH-0008,Available,105352.00,Unknown
+CLHQ-V-0009,Truck,Isuzu,NPR-HD,2025,,OH-0009,Available,113271.00,Unknown
+CLHQ-V-0010,Tractor,Volvo,VNL 760,2026,,OH-0010,Available,121190.00,Unknown
+CLHQ-V-0011,Tractor,Freightliner,Cascadia,2017,,OH-0011,Available,129109.00,Unknown
+CLHQ-V-0012,Truck,Ford,F-650,2018,,OH-0012,Available,137028.00,Unknown
+CLHQ-V-0013,Van,Ford,Transit,2019,,OH-0013,Available,144947.00,Unknown
+CLHQ-V-0014,Truck,Isuzu,NPR-HD,2020,,OH-0014,Available,152866.00,Unknown
+CLHQ-V-0015,Tractor,Volvo,VNL 760,2021,,OH-0015,Available,160785.00,Unknown
+CLHQ-V-0016,Tractor,Freightliner,Cascadia,2022,,OH-0016,Available,168704.00,Unknown
+CLHQ-V-0017,Truck,Ford,F-650,2023,,OH-0017,Available,176623.00,Unknown
+CLHQ-V-0018,Van,Ford,Transit,2024,,OH-0018,Available,184542.00,Unknown
+CLHQ-V-0019,Truck,Isuzu,NPR-HD,2025,,OH-0019,Available,192461.00,Unknown
+CLHQ-V-0020,Tractor,Volvo,VNL 760,2026,,OH-0020,Maintenance,200380.00,Unknown
+CLHQ-V-0021,Tractor,Freightliner,Cascadia,2017,,OH-0021,Available,208299.00,Unknown
+CLHQ-V-0022,Truck,Ford,F-650,2018,,OH-0022,Available,216218.00,Unknown
+CLHQ-V-0023,Van,Ford,Transit,2019,,OH-0023,Available,224137.00,Unknown
+CLHQ-V-0024,Truck,Isuzu,NPR-HD,2020,,OH-0024,Available,232056.00,Unknown
+CLHQ-V-0025,Tractor,Volvo,VNL 760,2021,,OH-0025,Available,239975.00,Unknown
+CLHQ-V-0026,Tractor,Freightliner,Cascadia,2022,,OH-0026,Available,247894.00,Unknown
+CLHQ-V-0027,Truck,Ford,F-650,2023,,OH-0027,Available,255813.00,Unknown
+CLHQ-V-0028,Van,Ford,Transit,2024,,OH-0028,Available,263732.00,Unknown
+CLHQ-V-0029,Truck,Isuzu,NPR-HD,2025,,OH-0029,Available,271651.00,Unknown
+CLHQ-V-0030,Tractor,Volvo,VNL 760,2026,,OH-0030,Available,279570.00,Unknown
+CLHQ-V-0031,Tractor,Freightliner,Cascadia,2017,,OH-0031,Available,287489.00,Unknown
+CLHQ-V-0032,Truck,Ford,F-650,2018,,OH-0032,Available,295408.00,Unknown
+CLHQ-V-0033,Van,Ford,Transit,2019,,OH-0033,Available,303327.00,Unknown
+CLHQ-V-0034,Truck,Isuzu,NPR-HD,2020,,OH-0034,Available,311246.00,Unknown
+CLHQ-V-0035,Tractor,Volvo,VNL 760,2021,,OH-0035,Available,319165.00,Unknown
+CLHQ-V-0036,Tractor,Freightliner,Cascadia,2022,,OH-0036,Available,327084.00,Unknown
+CLHQ-V-0037,Truck,Ford,F-650,2023,,OH-0037,Available,335003.00,Unknown
+CLHQ-V-0038,Van,Ford,Transit,2024,,OH-0038,Available,342922.00,Unknown
+CLHQ-V-0039,Truck,Isuzu,NPR-HD,2025,,OH-0039,Available,350841.00,Unknown
+CLHQ-V-0040,Tractor,Volvo,VNL 760,2026,,OH-0040,Maintenance,358760.00,Unknown
+CLHQ-V-0041,Tractor,Freightliner,Cascadia,2017,,OH-0041,Available,366679.00,Unknown
+CLHQ-V-0042,Truck,Ford,F-650,2018,,OH-0042,Available,374598.00,Unknown
+CLHQ-V-0043,Van,Ford,Transit,2019,,OH-0043,Available,382517.00,Unknown
+CLHQ-V-0044,Truck,Isuzu,NPR-HD,2020,,OH-0044,Available,390436.00,Unknown
+CLHQ-V-0045,Tractor,Volvo,VNL 760,2021,,OH-0045,Available,398355.00,Unknown
+CLHQ-V-0046,Tractor,Freightliner,Cascadia,2022,,OH-0046,Available,406274.00,Unknown
+CLHQ-V-0047,Truck,Ford,F-650,2023,,OH-0047,Available,414193.00,Unknown
+CLHQ-V-0048,Van,Ford,Transit,2024,,OH-0048,Available,422112.00,Unknown
+CLHQ-V-0049,Truck,Isuzu,NPR-HD,2025,,OH-0049,Available,430031.00,Unknown
+CLHQ-V-0050,Tractor,Volvo,VNL 760,2026,,OH-0050,Available,437950.00,Unknown
+CLHQ-V-0051,Tractor,Freightliner,Cascadia,2017,,OH-0051,Available,445869.00,Unknown
+CLHQ-V-0052,Truck,Ford,F-650,2018,,OH-0052,Available,453788.00,Unknown
+CLHQ-V-0053,Van,Ford,Transit,2019,,OH-0053,Available,461707.00,Unknown
+CLHQ-V-0054,Truck,Isuzu,NPR-HD,2020,,OH-0054,Available,469626.00,Unknown
+CLHQ-V-0055,Tractor,Volvo,VNL 760,2021,,OH-0055,Available,477545.00,Unknown
+CLHQ-V-0056,Tractor,Freightliner,Cascadia,2022,,OH-0056,Available,485464.00,Unknown
+CLHQ-V-0057,Truck,Ford,F-650,2023,,OH-0057,Available,493383.00,Unknown
+CLHQ-V-0058,Van,Ford,Transit,2024,,OH-0058,Available,501302.00,Unknown
+CLHQ-V-0059,Truck,Isuzu,NPR-HD,2025,,OH-0059,Available,509221.00,Unknown
+CLHQ-V-0060,Tractor,Volvo,VNL 760,2026,,OH-0060,Maintenance,517140.00,Unknown
+CLHQ-V-0061,Tractor,Freightliner,Cascadia,2017,,OH-0061,Available,525059.00,Unknown
+CLHQ-V-0062,Truck,Ford,F-650,2018,,OH-0062,Available,532978.00,Unknown
+CLHQ-V-0063,Van,Ford,Transit,2019,,OH-0063,Available,540897.00,Unknown
+CLHQ-V-0064,Truck,Isuzu,NPR-HD,2020,,OH-0064,Available,548816.00,Unknown
+CLHQ-V-0065,Tractor,Volvo,VNL 760,2021,,OH-0065,Available,556735.00,Unknown
+CLHQ-V-0066,Tractor,Freightliner,Cascadia,2022,,OH-0066,Available,564654.00,Unknown
+CLHQ-V-0067,Truck,Ford,F-650,2023,,OH-0067,Available,572573.00,Unknown
+CLHQ-V-0068,Van,Ford,Transit,2024,,OH-0068,Available,580492.00,Unknown
+CLHQ-V-0069,Truck,Isuzu,NPR-HD,2025,,OH-0069,Available,588411.00,Unknown
+CLHQ-V-0070,Tractor,Volvo,VNL 760,2026,,OH-0070,Available,596330.00,Unknown
+CLHQ-V-0071,Tractor,Freightliner,Cascadia,2017,,OH-0071,Available,604249.00,Unknown
+CLHQ-V-0072,Truck,Ford,F-650,2018,,OH-0072,Available,612168.00,Unknown
+CLHQ-V-0073,Van,Ford,Transit,2019,,OH-0073,Available,620087.00,Unknown
+CLHQ-V-0074,Truck,Isuzu,NPR-HD,2020,,OH-0074,Available,628006.00,Unknown
+CLHQ-V-0075,Tractor,Volvo,VNL 760,2021,,OH-0075,Available,635925.00,Unknown
+CLHQ-V-0076,Tractor,Freightliner,Cascadia,2022,,OH-0076,Available,643844.00,Unknown
+CLHQ-V-0077,Truck,Ford,F-650,2023,,OH-0077,Available,651763.00,Unknown
+CLHQ-V-0078,Van,Ford,Transit,2024,,OH-0078,Available,49682.00,Unknown
+CLHQ-V-0079,Truck,Isuzu,NPR-HD,2025,,OH-0079,Available,57601.00,Unknown
+CLHQ-V-0080,Tractor,Volvo,VNL 760,2026,,OH-0080,Maintenance,65520.00,Unknown
+CLHQ-V-0081,Tractor,Freightliner,Cascadia,2017,,OH-0081,Available,73439.00,Unknown
+CLHQ-V-0082,Truck,Ford,F-650,2018,,OH-0082,Available,81358.00,Unknown
+CLHQ-V-0083,Van,Ford,Transit,2019,,OH-0083,Available,89277.00,Unknown
+CLHQ-V-0084,Truck,Isuzu,NPR-HD,2020,,OH-0084,Available,97196.00,Unknown
+CLHQ-V-0085,Tractor,Volvo,VNL 760,2021,,OH-0085,Available,105115.00,Unknown
+CLHQ-V-0086,Tractor,Freightliner,Cascadia,2022,,OH-0086,Available,113034.00,Unknown
+CLHQ-V-0087,Truck,Ford,F-650,2023,,OH-0087,Available,120953.00,Unknown
+CLHQ-V-0088,Van,Ford,Transit,2024,,OH-0088,Available,128872.00,Unknown
+CLHQ-V-0089,Truck,Isuzu,NPR-HD,2025,,OH-0089,Available,136791.00,Unknown
+CLHQ-V-0090,Tractor,Volvo,VNL 760,2026,,OH-0090,Available,144710.00,Unknown
+CLHQ-V-0091,Tractor,Freightliner,Cascadia,2017,,OH-0091,Available,152629.00,Unknown
+CLHQ-V-0092,Truck,Ford,F-650,2018,,OH-0092,Available,160548.00,Unknown
+CLHQ-V-0093,Van,Ford,Transit,2019,,OH-0093,Available,168467.00,Unknown
+CLHQ-V-0094,Truck,Isuzu,NPR-HD,2020,,OH-0094,Available,176386.00,Unknown
+CLHQ-V-0095,Tractor,Volvo,VNL 760,2021,,OH-0095,Available,184305.00,Unknown
+CLHQ-V-0096,Tractor,Freightliner,Cascadia,2022,,OH-0096,Available,192224.00,Unknown
+CLHQ-V-0097,Truck,Ford,F-650,2023,,OH-0097,Available,200143.00,Unknown
+CLHQ-V-0098,Van,Ford,Transit,2024,,OH-0098,Available,208062.00,Unknown
+CLHQ-V-0099,Truck,Isuzu,NPR-HD,2025,,OH-0099,Available,215981.00,Unknown
+CLHQ-V-0100,Tractor,Volvo,VNL 760,2026,,OH-0100,Maintenance,223900.00,Unknown
+CLHQ-V-0101,Tractor,Freightliner,Cascadia,2017,,OH-0101,Available,231819.00,Unknown
+CLHQ-V-0102,Truck,Ford,F-650,2018,,OH-0102,Available,239738.00,Unknown
+CLHQ-V-0103,Van,Ford,Transit,2019,,OH-0103,Available,247657.00,Unknown
+CLHQ-V-0104,Truck,Isuzu,NPR-HD,2020,,OH-0104,Available,255576.00,Unknown
+CLHQ-V-0105,Tractor,Volvo,VNL 760,2021,,OH-0105,Available,263495.00,Unknown
+CLHQ-V-0106,Tractor,Freightliner,Cascadia,2022,,OH-0106,Available,271414.00,Unknown
+CLHQ-V-0107,Truck,Ford,F-650,2023,,OH-0107,Available,279333.00,Unknown
+CLHQ-V-0108,Van,Ford,Transit,2024,,OH-0108,Available,287252.00,Unknown
+CLHQ-V-0109,Truck,Isuzu,NPR-HD,2025,,OH-0109,Available,295171.00,Unknown
+CLHQ-V-0110,Tractor,Volvo,VNL 760,2026,,OH-0110,Available,303090.00,Unknown
+CLHQ-V-0111,Tractor,Freightliner,Cascadia,2017,,OH-0111,Available,311009.00,Unknown
+CLHQ-V-0112,Truck,Ford,F-650,2018,,OH-0112,Available,318928.00,Unknown
+CLHQ-V-0113,Van,Ford,Transit,2019,,OH-0113,Available,326847.00,Unknown
+CLHQ-V-0114,Truck,Isuzu,NPR-HD,2020,,OH-0114,Available,334766.00,Unknown
+CLHQ-V-0115,Tractor,Volvo,VNL 760,2021,,OH-0115,Available,342685.00,Unknown
+CLHQ-V-0116,Tractor,Freightliner,Cascadia,2022,,OH-0116,Available,350604.00,Unknown
+CLHQ-V-0117,Truck,Ford,F-650,2023,,OH-0117,Available,358523.00,Unknown
+CLHQ-V-0118,Van,Ford,Transit,2024,,OH-0118,Available,366442.00,Unknown
+CLHQ-V-0119,Truck,Isuzu,NPR-HD,2025,,OH-0119,Available,374361.00,Unknown
+CLHQ-V-0120,Tractor,Volvo,VNL 760,2026,,OH-0120,Maintenance,382280.00,Unknown
+CLHQ-V-0121,Tractor,Freightliner,Cascadia,2017,,OH-0121,Available,390199.00,Unknown
+CLHQ-V-0122,Truck,Ford,F-650,2018,,OH-0122,Available,398118.00,Unknown
+CLHQ-V-0123,Van,Ford,Transit,2019,,OH-0123,Available,406037.00,Unknown
+CLHQ-V-0124,Truck,Isuzu,NPR-HD,2020,,OH-0124,Available,413956.00,Unknown
+CLHQ-V-0125,Tractor,Volvo,VNL 760,2021,,OH-0125,Available,421875.00,Unknown
+CLHQ-V-0126,Tractor,Freightliner,Cascadia,2022,,OH-0126,Available,429794.00,Unknown
+CLHQ-V-0127,Truck,Ford,F-650,2023,,OH-0127,Available,437713.00,Unknown
+CLHQ-V-0128,Van,Ford,Transit,2024,,OH-0128,Available,445632.00,Unknown
+CLHQ-V-0129,Truck,Isuzu,NPR-HD,2025,,OH-0129,Available,453551.00,Unknown
+CLHQ-V-0130,Tractor,Volvo,VNL 760,2026,,OH-0130,Available,461470.00,Unknown
+CLHQ-V-0131,Tractor,Freightliner,Cascadia,2017,,OH-0131,Available,469389.00,Unknown
+CLHQ-V-0132,Truck,Ford,F-650,2018,,OH-0132,Available,477308.00,Unknown
+CLHQ-V-0133,Van,Ford,Transit,2019,,OH-0133,Available,485227.00,Unknown
+CLHQ-V-0134,Truck,Isuzu,NPR-HD,2020,,OH-0134,Available,493146.00,Unknown
+CLHQ-V-0135,Tractor,Volvo,VNL 760,2021,,OH-0135,Available,501065.00,Unknown
+CLHQ-V-0136,Tractor,Freightliner,Cascadia,2022,,OH-0136,Available,508984.00,Unknown
+CLHQ-V-0137,Truck,Ford,F-650,2023,,OH-0137,Available,516903.00,Unknown
+CLHQ-V-0138,Van,Ford,Transit,2024,,OH-0138,Available,524822.00,Unknown
+CLHQ-V-0139,Truck,Isuzu,NPR-HD,2025,,OH-0139,Available,532741.00,Unknown
+CLHQ-V-0140,Tractor,Volvo,VNL 760,2026,,OH-0140,Maintenance,540660.00,Unknown
+CLHQ-V-0141,Tractor,Freightliner,Cascadia,2017,,OH-0141,Available,548579.00,Unknown
+CLHQ-V-0142,Truck,Ford,F-650,2018,,OH-0142,Available,556498.00,Unknown
+CLHQ-V-0143,Van,Ford,Transit,2019,,OH-0143,Available,564417.00,Unknown
+CLHQ-V-0144,Truck,Isuzu,NPR-HD,2020,,OH-0144,Available,572336.00,Unknown
+CLHQ-V-0145,Tractor,Volvo,VNL 760,2021,,OH-0145,Available,580255.00,Unknown
+CLHQ-V-0146,Tractor,Freightliner,Cascadia,2022,,OH-0146,Available,588174.00,Unknown
+CLHQ-V-0147,Truck,Ford,F-650,2023,,OH-0147,Available,596093.00,Unknown
+CLHQ-V-0148,Van,Ford,Transit,2024,,OH-0148,Available,604012.00,Unknown
+CLHQ-V-0149,Truck,Isuzu,NPR-HD,2025,,OH-0149,Available,611931.00,Unknown
+CLHQ-V-0150,Tractor,Volvo,VNL 760,2026,,OH-0150,Available,619850.00,Unknown
+CLHQ-V-0151,Tractor,Freightliner,Cascadia,2017,,OH-0151,Available,627769.00,Unknown
+CLHQ-V-0152,Truck,Ford,F-650,2018,,OH-0152,Available,635688.00,Unknown
+CLHQ-V-0153,Van,Ford,Transit,2019,,OH-0153,Available,643607.00,Unknown
+CLHQ-V-0154,Truck,Isuzu,NPR-HD,2020,,OH-0154,Available,651526.00,Unknown
+CLHQ-V-0155,Tractor,Volvo,VNL 760,2021,,OH-0155,Available,49445.00,Unknown
+CLHQ-V-0156,Tractor,Freightliner,Cascadia,2022,,OH-0156,Available,57364.00,Unknown
+CLHQ-V-0157,Truck,Ford,F-650,2023,,OH-0157,Available,65283.00,Unknown
+CLHQ-V-0158,Van,Ford,Transit,2024,,OH-0158,Available,73202.00,Unknown
+CLHQ-V-0159,Truck,Isuzu,NPR-HD,2025,,OH-0159,Available,81121.00,Unknown
+CLHQ-V-0160,Tractor,Volvo,VNL 760,2026,,OH-0160,Maintenance,89040.00,Unknown
+CLHQ-V-0161,Tractor,Freightliner,Cascadia,2017,,OH-0161,Available,96959.00,Unknown
+CLHQ-V-0162,Truck,Ford,F-650,2018,,OH-0162,Available,104878.00,Unknown
+CLHQ-V-0163,Van,Ford,Transit,2019,,OH-0163,Available,112797.00,Unknown
+CLHQ-V-0164,Truck,Isuzu,NPR-HD,2020,,OH-0164,Available,120716.00,Unknown
+CLHQ-V-0165,Tractor,Volvo,VNL 760,2021,,OH-0165,Available,128635.00,Unknown
+CLHQ-V-0166,Tractor,Freightliner,Cascadia,2022,,OH-0166,Available,136554.00,Unknown
+CLHQ-V-0167,Truck,Ford,F-650,2023,,OH-0167,Available,144473.00,Unknown
+CLHQ-V-0168,Van,Ford,Transit,2024,,OH-0168,Available,152392.00,Unknown
+CLHQ-V-0169,Truck,Isuzu,NPR-HD,2025,,OH-0169,Available,160311.00,Unknown
+CLHQ-V-0170,Tractor,Volvo,VNL 760,2026,,OH-0170,Available,168230.00,Unknown
+CLHQ-V-0171,Tractor,Freightliner,Cascadia,2017,,OH-0171,Available,176149.00,Unknown
+CLHQ-V-0172,Truck,Ford,F-650,2018,,OH-0172,Available,184068.00,Unknown
+CLHQ-V-0173,Van,Ford,Transit,2019,,OH-0173,Available,191987.00,Unknown
+CLHQ-V-0174,Truck,Isuzu,NPR-HD,2020,,OH-0174,Available,199906.00,Unknown
+CLHQ-V-0175,Tractor,Volvo,VNL 760,2021,,OH-0175,Available,207825.00,Unknown
+CLHQ-V-0176,Tractor,Freightliner,Cascadia,2022,,OH-0176,Available,215744.00,Unknown
+CLHQ-V-0177,Truck,Ford,F-650,2023,,OH-0177,Available,223663.00,Unknown
+CLHQ-V-0178,Van,Ford,Transit,2024,,OH-0178,Available,231582.00,Unknown
+CLHQ-V-0179,Truck,Isuzu,NPR-HD,2025,,OH-0179,Available,239501.00,Unknown
+CLHQ-V-0180,Tractor,Volvo,VNL 760,2026,,OH-0180,Maintenance,247420.00,Unknown
+CLHQ-V-0181,Tractor,Freightliner,Cascadia,2017,,OH-0181,Available,255339.00,Unknown
+CLHQ-V-0182,Truck,Ford,F-650,2018,,OH-0182,Available,263258.00,Unknown
+CLHQ-V-0183,Van,Ford,Transit,2019,,OH-0183,Available,271177.00,Unknown
+CLHQ-V-0184,Truck,Isuzu,NPR-HD,2020,,OH-0184,Available,279096.00,Unknown
+CLHQ-V-0185,Tractor,Volvo,VNL 760,2021,,OH-0185,Available,287015.00,Unknown
+CLHQ-V-0186,Tractor,Freightliner,Cascadia,2022,,OH-0186,Available,294934.00,Unknown
+CLHQ-V-0187,Truck,Ford,F-650,2023,,OH-0187,Available,302853.00,Unknown
+CLHQ-V-0188,Van,Ford,Transit,2024,,OH-0188,Available,310772.00,Unknown
+CLHQ-V-0189,Truck,Isuzu,NPR-HD,2025,,OH-0189,Available,318691.00,Unknown
+CLHQ-V-0190,Tractor,Volvo,VNL 760,2026,,OH-0190,Available,326610.00,Unknown
+CLHQ-V-0191,Tractor,Freightliner,Cascadia,2017,,OH-0191,Available,334529.00,Unknown
+CLHQ-V-0192,Truck,Ford,F-650,2018,,OH-0192,Available,342448.00,Unknown
+CLHQ-V-0193,Van,Ford,Transit,2019,,OH-0193,Available,350367.00,Unknown
+CLHQ-V-0194,Truck,Isuzu,NPR-HD,2020,,OH-0194,Available,358286.00,Unknown
+CLHQ-V-0195,Tractor,Volvo,VNL 760,2021,,OH-0195,Available,366205.00,Unknown
+CLHQ-V-0196,Tractor,Freightliner,Cascadia,2022,,OH-0196,Available,374124.00,Unknown
+CLHQ-V-0197,Truck,Ford,F-650,2023,,OH-0197,Available,382043.00,Unknown
+CLHQ-V-0198,Van,Ford,Transit,2024,,OH-0198,Available,389962.00,Unknown
+CLHQ-V-0199,Truck,Isuzu,NPR-HD,2025,,OH-0199,Available,397881.00,Unknown
+CLHQ-V-0200,Tractor,Volvo,VNL 760,2026,,OH-0200,Maintenance,405800.00,Unknown
+MWYARD-V-0001,Tractor,Freightliner,Cascadia,2017,,IL-0001,Available,49919.00,Unknown
+MWYARD-V-0002,Truck,Ford,F-650,2018,,IL-0002,Available,57838.00,Unknown
+MWYARD-V-0003,Van,Ford,Transit,2019,,IL-0003,Available,65757.00,Unknown
+MWYARD-V-0004,Truck,Isuzu,NPR-HD,2020,,IL-0004,Available,73676.00,Unknown
+MWYARD-V-0005,Tractor,Volvo,VNL 760,2021,,IL-0005,Available,81595.00,Unknown
+MWYARD-V-0006,Tractor,Freightliner,Cascadia,2022,,IL-0006,Available,89514.00,Unknown
+MWYARD-V-0007,Truck,Ford,F-650,2023,,IL-0007,Available,97433.00,Unknown
+MWYARD-V-0008,Van,Ford,Transit,2024,,IL-0008,Available,105352.00,Unknown
+MWYARD-V-0009,Truck,Isuzu,NPR-HD,2025,,IL-0009,Available,113271.00,Unknown
+MWYARD-V-0010,Tractor,Volvo,VNL 760,2026,,IL-0010,Available,121190.00,Unknown
+MWYARD-V-0011,Tractor,Freightliner,Cascadia,2017,,IL-0011,Available,129109.00,Unknown
+MWYARD-V-0012,Truck,Ford,F-650,2018,,IL-0012,Available,137028.00,Unknown
+MWYARD-V-0013,Van,Ford,Transit,2019,,IL-0013,Available,144947.00,Unknown
+MWYARD-V-0014,Truck,Isuzu,NPR-HD,2020,,IL-0014,Available,152866.00,Unknown
+MWYARD-V-0015,Tractor,Volvo,VNL 760,2021,,IL-0015,Available,160785.00,Unknown
+MWYARD-V-0016,Tractor,Freightliner,Cascadia,2022,,IL-0016,Available,168704.00,Unknown
+MWYARD-V-0017,Truck,Ford,F-650,2023,,IL-0017,Available,176623.00,Unknown
+MWYARD-V-0018,Van,Ford,Transit,2024,,IL-0018,Available,184542.00,Unknown
+MWYARD-V-0019,Truck,Isuzu,NPR-HD,2025,,IL-0019,Available,192461.00,Unknown
+MWYARD-V-0020,Tractor,Volvo,VNL 760,2026,,IL-0020,Maintenance,200380.00,Unknown
+MWYARD-V-0021,Tractor,Freightliner,Cascadia,2017,,IL-0021,Available,208299.00,Unknown
+MWYARD-V-0022,Truck,Ford,F-650,2018,,IL-0022,Available,216218.00,Unknown
+MWYARD-V-0023,Van,Ford,Transit,2019,,IL-0023,Available,224137.00,Unknown
+MWYARD-V-0024,Truck,Isuzu,NPR-HD,2020,,IL-0024,Available,232056.00,Unknown
+MWYARD-V-0025,Tractor,Volvo,VNL 760,2021,,IL-0025,Available,239975.00,Unknown
+MWYARD-V-0026,Tractor,Freightliner,Cascadia,2022,,IL-0026,Available,247894.00,Unknown
+MWYARD-V-0027,Truck,Ford,F-650,2023,,IL-0027,Available,255813.00,Unknown
+MWYARD-V-0028,Van,Ford,Transit,2024,,IL-0028,Available,263732.00,Unknown
+MWYARD-V-0029,Truck,Isuzu,NPR-HD,2025,,IL-0029,Available,271651.00,Unknown
+MWYARD-V-0030,Tractor,Volvo,VNL 760,2026,,IL-0030,Available,279570.00,Unknown
+MWYARD-V-0031,Tractor,Freightliner,Cascadia,2017,,IL-0031,Available,287489.00,Unknown
+MWYARD-V-0032,Truck,Ford,F-650,2018,,IL-0032,Available,295408.00,Unknown
+MWYARD-V-0033,Van,Ford,Transit,2019,,IL-0033,Available,303327.00,Unknown
+MWYARD-V-0034,Truck,Isuzu,NPR-HD,2020,,IL-0034,Available,311246.00,Unknown
+MWYARD-V-0035,Tractor,Volvo,VNL 760,2021,,IL-0035,Available,319165.00,Unknown
+MWYARD-V-0036,Tractor,Freightliner,Cascadia,2022,,IL-0036,Available,327084.00,Unknown
+MWYARD-V-0037,Truck,Ford,F-650,2023,,IL-0037,Available,335003.00,Unknown
+MWYARD-V-0038,Van,Ford,Transit,2024,,IL-0038,Available,342922.00,Unknown
+MWYARD-V-0039,Truck,Isuzu,NPR-HD,2025,,IL-0039,Available,350841.00,Unknown
+MWYARD-V-0040,Tractor,Volvo,VNL 760,2026,,IL-0040,Maintenance,358760.00,Unknown
+MWYARD-V-0041,Tractor,Freightliner,Cascadia,2017,,IL-0041,Available,366679.00,Unknown
+MWYARD-V-0042,Truck,Ford,F-650,2018,,IL-0042,Available,374598.00,Unknown
+MWYARD-V-0043,Van,Ford,Transit,2019,,IL-0043,Available,382517.00,Unknown
+MWYARD-V-0044,Truck,Isuzu,NPR-HD,2020,,IL-0044,Available,390436.00,Unknown
+MWYARD-V-0045,Tractor,Volvo,VNL 760,2021,,IL-0045,Available,398355.00,Unknown
+MWYARD-V-0046,Tractor,Freightliner,Cascadia,2022,,IL-0046,Available,406274.00,Unknown
+MWYARD-V-0047,Truck,Ford,F-650,2023,,IL-0047,Available,414193.00,Unknown
+MWYARD-V-0048,Van,Ford,Transit,2024,,IL-0048,Available,422112.00,Unknown
+MWYARD-V-0049,Truck,Isuzu,NPR-HD,2025,,IL-0049,Available,430031.00,Unknown
+MWYARD-V-0050,Tractor,Volvo,VNL 760,2026,,IL-0050,Available,437950.00,Unknown
+MWYARD-V-0051,Tractor,Freightliner,Cascadia,2017,,IL-0051,Available,445869.00,Unknown
+MWYARD-V-0052,Truck,Ford,F-650,2018,,IL-0052,Available,453788.00,Unknown
+MWYARD-V-0053,Van,Ford,Transit,2019,,IL-0053,Available,461707.00,Unknown
+MWYARD-V-0054,Truck,Isuzu,NPR-HD,2020,,IL-0054,Available,469626.00,Unknown
+MWYARD-V-0055,Tractor,Volvo,VNL 760,2021,,IL-0055,Available,477545.00,Unknown
+MWYARD-V-0056,Tractor,Freightliner,Cascadia,2022,,IL-0056,Available,485464.00,Unknown
+MWYARD-V-0057,Truck,Ford,F-650,2023,,IL-0057,Available,493383.00,Unknown
+MWYARD-V-0058,Van,Ford,Transit,2024,,IL-0058,Available,501302.00,Unknown
+MWYARD-V-0059,Truck,Isuzu,NPR-HD,2025,,IL-0059,Available,509221.00,Unknown
+MWYARD-V-0060,Tractor,Volvo,VNL 760,2026,,IL-0060,Maintenance,517140.00,Unknown
+MWYARD-V-0061,Tractor,Freightliner,Cascadia,2017,,IL-0061,Available,525059.00,Unknown
+MWYARD-V-0062,Truck,Ford,F-650,2018,,IL-0062,Available,532978.00,Unknown
+MWYARD-V-0063,Van,Ford,Transit,2019,,IL-0063,Available,540897.00,Unknown
+MWYARD-V-0064,Truck,Isuzu,NPR-HD,2020,,IL-0064,Available,548816.00,Unknown
+MWYARD-V-0065,Tractor,Volvo,VNL 760,2021,,IL-0065,Available,556735.00,Unknown
+MWYARD-V-0066,Tractor,Freightliner,Cascadia,2022,,IL-0066,Available,564654.00,Unknown
+MWYARD-V-0067,Truck,Ford,F-650,2023,,IL-0067,Available,572573.00,Unknown
+MWYARD-V-0068,Van,Ford,Transit,2024,,IL-0068,Available,580492.00,Unknown
+MWYARD-V-0069,Truck,Isuzu,NPR-HD,2025,,IL-0069,Available,588411.00,Unknown
+MWYARD-V-0070,Tractor,Volvo,VNL 760,2026,,IL-0070,Available,596330.00,Unknown
+MWYARD-V-0071,Tractor,Freightliner,Cascadia,2017,,IL-0071,Available,604249.00,Unknown
+MWYARD-V-0072,Truck,Ford,F-650,2018,,IL-0072,Available,612168.00,Unknown
+MWYARD-V-0073,Van,Ford,Transit,2019,,IL-0073,Available,620087.00,Unknown
+MWYARD-V-0074,Truck,Isuzu,NPR-HD,2020,,IL-0074,Available,628006.00,Unknown
+MWYARD-V-0075,Tractor,Volvo,VNL 760,2021,,IL-0075,Available,635925.00,Unknown
+MWYARD-V-0076,Tractor,Freightliner,Cascadia,2022,,IL-0076,Available,643844.00,Unknown
+MWYARD-V-0077,Truck,Ford,F-650,2023,,IL-0077,Available,651763.00,Unknown
+MWYARD-V-0078,Van,Ford,Transit,2024,,IL-0078,Available,49682.00,Unknown
+MWYARD-V-0079,Truck,Isuzu,NPR-HD,2025,,IL-0079,Available,57601.00,Unknown
+MWYARD-V-0080,Tractor,Volvo,VNL 760,2026,,IL-0080,Maintenance,65520.00,Unknown
+MWYARD-V-0081,Tractor,Freightliner,Cascadia,2017,,IL-0081,Available,73439.00,Unknown
+MWYARD-V-0082,Truck,Ford,F-650,2018,,IL-0082,Available,81358.00,Unknown
+MWYARD-V-0083,Van,Ford,Transit,2019,,IL-0083,Available,89277.00,Unknown
+MWYARD-V-0084,Truck,Isuzu,NPR-HD,2020,,IL-0084,Available,97196.00,Unknown
+MWYARD-V-0085,Tractor,Volvo,VNL 760,2021,,IL-0085,Available,105115.00,Unknown
+MWYARD-V-0086,Tractor,Freightliner,Cascadia,2022,,IL-0086,Available,113034.00,Unknown
+MWYARD-V-0087,Truck,Ford,F-650,2023,,IL-0087,Available,120953.00,Unknown
+MWYARD-V-0088,Van,Ford,Transit,2024,,IL-0088,Available,128872.00,Unknown
+MWYARD-V-0089,Truck,Isuzu,NPR-HD,2025,,IL-0089,Available,136791.00,Unknown
+MWYARD-V-0090,Tractor,Volvo,VNL 760,2026,,IL-0090,Available,144710.00,Unknown
+MWYARD-V-0091,Tractor,Freightliner,Cascadia,2017,,IL-0091,Available,152629.00,Unknown
+MWYARD-V-0092,Truck,Ford,F-650,2018,,IL-0092,Available,160548.00,Unknown
+MWYARD-V-0093,Van,Ford,Transit,2019,,IL-0093,Available,168467.00,Unknown
+MWYARD-V-0094,Truck,Isuzu,NPR-HD,2020,,IL-0094,Available,176386.00,Unknown
+MWYARD-V-0095,Tractor,Volvo,VNL 760,2021,,IL-0095,Available,184305.00,Unknown
+MWYARD-V-0096,Tractor,Freightliner,Cascadia,2022,,IL-0096,Available,192224.00,Unknown
+MWYARD-V-0097,Truck,Ford,F-650,2023,,IL-0097,Available,200143.00,Unknown
+MWYARD-V-0098,Van,Ford,Transit,2024,,IL-0098,Available,208062.00,Unknown
+MWYARD-V-0099,Truck,Isuzu,NPR-HD,2025,,IL-0099,Available,215981.00,Unknown
+MWYARD-V-0100,Tractor,Volvo,VNL 760,2026,,IL-0100,Maintenance,223900.00,Unknown
+MWYARD-V-0101,Tractor,Freightliner,Cascadia,2017,,IL-0101,Available,231819.00,Unknown
+MWYARD-V-0102,Truck,Ford,F-650,2018,,IL-0102,Available,239738.00,Unknown
+MWYARD-V-0103,Van,Ford,Transit,2019,,IL-0103,Available,247657.00,Unknown
+MWYARD-V-0104,Truck,Isuzu,NPR-HD,2020,,IL-0104,Available,255576.00,Unknown
+MWYARD-V-0105,Tractor,Volvo,VNL 760,2021,,IL-0105,Available,263495.00,Unknown
+MWYARD-V-0106,Tractor,Freightliner,Cascadia,2022,,IL-0106,Available,271414.00,Unknown
+MWYARD-V-0107,Truck,Ford,F-650,2023,,IL-0107,Available,279333.00,Unknown
+MWYARD-V-0108,Van,Ford,Transit,2024,,IL-0108,Available,287252.00,Unknown
+MWYARD-V-0109,Truck,Isuzu,NPR-HD,2025,,IL-0109,Available,295171.00,Unknown
+MWYARD-V-0110,Tractor,Volvo,VNL 760,2026,,IL-0110,Available,303090.00,Unknown
+MWYARD-V-0111,Tractor,Freightliner,Cascadia,2017,,IL-0111,Available,311009.00,Unknown
+MWYARD-V-0112,Truck,Ford,F-650,2018,,IL-0112,Available,318928.00,Unknown
+MWYARD-V-0113,Van,Ford,Transit,2019,,IL-0113,Available,326847.00,Unknown
+MWYARD-V-0114,Truck,Isuzu,NPR-HD,2020,,IL-0114,Available,334766.00,Unknown
+MWYARD-V-0115,Tractor,Volvo,VNL 760,2021,,IL-0115,Available,342685.00,Unknown
+MWYARD-V-0116,Tractor,Freightliner,Cascadia,2022,,IL-0116,Available,350604.00,Unknown
+MWYARD-V-0117,Truck,Ford,F-650,2023,,IL-0117,Available,358523.00,Unknown
+MWYARD-V-0118,Van,Ford,Transit,2024,,IL-0118,Available,366442.00,Unknown
+MWYARD-V-0119,Truck,Isuzu,NPR-HD,2025,,IL-0119,Available,374361.00,Unknown
+MWYARD-V-0120,Tractor,Volvo,VNL 760,2026,,IL-0120,Maintenance,382280.00,Unknown
+MWYARD-V-0121,Tractor,Freightliner,Cascadia,2017,,IL-0121,Available,390199.00,Unknown
+MWYARD-V-0122,Truck,Ford,F-650,2018,,IL-0122,Available,398118.00,Unknown
+MWYARD-V-0123,Van,Ford,Transit,2019,,IL-0123,Available,406037.00,Unknown
+MWYARD-V-0124,Truck,Isuzu,NPR-HD,2020,,IL-0124,Available,413956.00,Unknown
+MWYARD-V-0125,Tractor,Volvo,VNL 760,2021,,IL-0125,Available,421875.00,Unknown
+MWYARD-V-0126,Tractor,Freightliner,Cascadia,2022,,IL-0126,Available,429794.00,Unknown
+MWYARD-V-0127,Truck,Ford,F-650,2023,,IL-0127,Available,437713.00,Unknown
+MWYARD-V-0128,Van,Ford,Transit,2024,,IL-0128,Available,445632.00,Unknown
+MWYARD-V-0129,Truck,Isuzu,NPR-HD,2025,,IL-0129,Available,453551.00,Unknown
+MWYARD-V-0130,Tractor,Volvo,VNL 760,2026,,IL-0130,Available,461470.00,Unknown
+MWYARD-V-0131,Tractor,Freightliner,Cascadia,2017,,IL-0131,Available,469389.00,Unknown
+MWYARD-V-0132,Truck,Ford,F-650,2018,,IL-0132,Available,477308.00,Unknown
+MWYARD-V-0133,Van,Ford,Transit,2019,,IL-0133,Available,485227.00,Unknown
+MWYARD-V-0134,Truck,Isuzu,NPR-HD,2020,,IL-0134,Available,493146.00,Unknown
+MWYARD-V-0135,Tractor,Volvo,VNL 760,2021,,IL-0135,Available,501065.00,Unknown
+MWYARD-V-0136,Tractor,Freightliner,Cascadia,2022,,IL-0136,Available,508984.00,Unknown
+MWYARD-V-0137,Truck,Ford,F-650,2023,,IL-0137,Available,516903.00,Unknown
+MWYARD-V-0138,Van,Ford,Transit,2024,,IL-0138,Available,524822.00,Unknown
+MWYARD-V-0139,Truck,Isuzu,NPR-HD,2025,,IL-0139,Available,532741.00,Unknown
+MWYARD-V-0140,Tractor,Volvo,VNL 760,2026,,IL-0140,Maintenance,540660.00,Unknown
+MWYARD-V-0141,Tractor,Freightliner,Cascadia,2017,,IL-0141,Available,548579.00,Unknown
+MWYARD-V-0142,Truck,Ford,F-650,2018,,IL-0142,Available,556498.00,Unknown
+MWYARD-V-0143,Van,Ford,Transit,2019,,IL-0143,Available,564417.00,Unknown
+MWYARD-V-0144,Truck,Isuzu,NPR-HD,2020,,IL-0144,Available,572336.00,Unknown
+MWYARD-V-0145,Tractor,Volvo,VNL 760,2021,,IL-0145,Available,580255.00,Unknown
+MWYARD-V-0146,Tractor,Freightliner,Cascadia,2022,,IL-0146,Available,588174.00,Unknown
+MWYARD-V-0147,Truck,Ford,F-650,2023,,IL-0147,Available,596093.00,Unknown
+MWYARD-V-0148,Van,Ford,Transit,2024,,IL-0148,Available,604012.00,Unknown
+MWYARD-V-0149,Truck,Isuzu,NPR-HD,2025,,IL-0149,Available,611931.00,Unknown
+MWYARD-V-0150,Tractor,Volvo,VNL 760,2026,,IL-0150,Available,619850.00,Unknown
+MWYARD-V-0151,Tractor,Freightliner,Cascadia,2017,,IL-0151,Available,627769.00,Unknown
+MWYARD-V-0152,Truck,Ford,F-650,2018,,IL-0152,Available,635688.00,Unknown
+MWYARD-V-0153,Van,Ford,Transit,2019,,IL-0153,Available,643607.00,Unknown
+MWYARD-V-0154,Truck,Isuzu,NPR-HD,2020,,IL-0154,Available,651526.00,Unknown
+MWYARD-V-0155,Tractor,Volvo,VNL 760,2021,,IL-0155,Available,49445.00,Unknown
+MWYARD-V-0156,Tractor,Freightliner,Cascadia,2022,,IL-0156,Available,57364.00,Unknown
+MWYARD-V-0157,Truck,Ford,F-650,2023,,IL-0157,Available,65283.00,Unknown
+MWYARD-V-0158,Van,Ford,Transit,2024,,IL-0158,Available,73202.00,Unknown
+MWYARD-V-0159,Truck,Isuzu,NPR-HD,2025,,IL-0159,Available,81121.00,Unknown
+MWYARD-V-0160,Tractor,Volvo,VNL 760,2026,,IL-0160,Maintenance,89040.00,Unknown
+MWYARD-V-0161,Tractor,Freightliner,Cascadia,2017,,IL-0161,Available,96959.00,Unknown
+MWYARD-V-0162,Truck,Ford,F-650,2018,,IL-0162,Available,104878.00,Unknown
+MWYARD-V-0163,Van,Ford,Transit,2019,,IL-0163,Available,112797.00,Unknown
+MWYARD-V-0164,Truck,Isuzu,NPR-HD,2020,,IL-0164,Available,120716.00,Unknown
+MWYARD-V-0165,Tractor,Volvo,VNL 760,2021,,IL-0165,Available,128635.00,Unknown
+MWYARD-V-0166,Tractor,Freightliner,Cascadia,2022,,IL-0166,Available,136554.00,Unknown
+MWYARD-V-0167,Truck,Ford,F-650,2023,,IL-0167,Available,144473.00,Unknown
+MWYARD-V-0168,Van,Ford,Transit,2024,,IL-0168,Available,152392.00,Unknown
+MWYARD-V-0169,Truck,Isuzu,NPR-HD,2025,,IL-0169,Available,160311.00,Unknown
+MWYARD-V-0170,Tractor,Volvo,VNL 760,2026,,IL-0170,Available,168230.00,Unknown
+MWYARD-V-0171,Tractor,Freightliner,Cascadia,2017,,IL-0171,Available,176149.00,Unknown
+MWYARD-V-0172,Truck,Ford,F-650,2018,,IL-0172,Available,184068.00,Unknown
+MWYARD-V-0173,Van,Ford,Transit,2019,,IL-0173,Available,191987.00,Unknown
+MWYARD-V-0174,Truck,Isuzu,NPR-HD,2020,,IL-0174,Available,199906.00,Unknown
+MWYARD-V-0175,Tractor,Volvo,VNL 760,2021,,IL-0175,Available,207825.00,Unknown
+MWYARD-V-0176,Tractor,Freightliner,Cascadia,2022,,IL-0176,Available,215744.00,Unknown
+MWYARD-V-0177,Truck,Ford,F-650,2023,,IL-0177,Available,223663.00,Unknown
+MWYARD-V-0178,Van,Ford,Transit,2024,,IL-0178,Available,231582.00,Unknown
+MWYARD-V-0179,Truck,Isuzu,NPR-HD,2025,,IL-0179,Available,239501.00,Unknown
+MWYARD-V-0180,Tractor,Volvo,VNL 760,2026,,IL-0180,Maintenance,247420.00,Unknown
+MWYARD-V-0181,Tractor,Freightliner,Cascadia,2017,,IL-0181,Available,255339.00,Unknown
+MWYARD-V-0182,Truck,Ford,F-650,2018,,IL-0182,Available,263258.00,Unknown
+MWYARD-V-0183,Van,Ford,Transit,2019,,IL-0183,Available,271177.00,Unknown
+MWYARD-V-0184,Truck,Isuzu,NPR-HD,2020,,IL-0184,Available,279096.00,Unknown
+MWYARD-V-0185,Tractor,Volvo,VNL 760,2021,,IL-0185,Available,287015.00,Unknown
+MWYARD-V-0186,Tractor,Freightliner,Cascadia,2022,,IL-0186,Available,294934.00,Unknown
+MWYARD-V-0187,Truck,Ford,F-650,2023,,IL-0187,Available,302853.00,Unknown
+MWYARD-V-0188,Van,Ford,Transit,2024,,IL-0188,Available,310772.00,Unknown
+MWYARD-V-0189,Truck,Isuzu,NPR-HD,2025,,IL-0189,Available,318691.00,Unknown
+MWYARD-V-0190,Tractor,Volvo,VNL 760,2026,,IL-0190,Available,326610.00,Unknown
+MWYARD-V-0191,Tractor,Freightliner,Cascadia,2017,,IL-0191,Available,334529.00,Unknown
+MWYARD-V-0192,Truck,Ford,F-650,2018,,IL-0192,Available,342448.00,Unknown
+MWYARD-V-0193,Van,Ford,Transit,2019,,IL-0193,Available,350367.00,Unknown
+MWYARD-V-0194,Truck,Isuzu,NPR-HD,2020,,IL-0194,Available,358286.00,Unknown
+MWYARD-V-0195,Tractor,Volvo,VNL 760,2021,,IL-0195,Available,366205.00,Unknown
+MWYARD-V-0196,Tractor,Freightliner,Cascadia,2022,,IL-0196,Available,374124.00,Unknown
+MWYARD-V-0197,Truck,Ford,F-650,2023,,IL-0197,Available,382043.00,Unknown
+MWYARD-V-0198,Van,Ford,Transit,2024,,IL-0198,Available,389962.00,Unknown
+MWYARD-V-0199,Truck,Isuzu,NPR-HD,2025,,IL-0199,Available,397881.00,Unknown
+MWYARD-V-0200,Tractor,Volvo,VNL 760,2026,,IL-0200,Maintenance,405800.00,Unknown
+NEHUB-V-0001,Tractor,Freightliner,Cascadia,2017,,NJ-0001,Available,49919.00,Unknown
+NEHUB-V-0002,Truck,Ford,F-650,2018,,NJ-0002,Available,57838.00,Unknown
+NEHUB-V-0003,Van,Ford,Transit,2019,,NJ-0003,Available,65757.00,Unknown
+NEHUB-V-0004,Truck,Isuzu,NPR-HD,2020,,NJ-0004,Available,73676.00,Unknown
+NEHUB-V-0005,Tractor,Volvo,VNL 760,2021,,NJ-0005,Available,81595.00,Unknown
+NEHUB-V-0006,Tractor,Freightliner,Cascadia,2022,,NJ-0006,Available,89514.00,Unknown
+NEHUB-V-0007,Truck,Ford,F-650,2023,,NJ-0007,Available,97433.00,Unknown
+NEHUB-V-0008,Van,Ford,Transit,2024,,NJ-0008,Available,105352.00,Unknown
+NEHUB-V-0009,Truck,Isuzu,NPR-HD,2025,,NJ-0009,Available,113271.00,Unknown
+NEHUB-V-0010,Tractor,Volvo,VNL 760,2026,,NJ-0010,Available,121190.00,Unknown
+NEHUB-V-0011,Tractor,Freightliner,Cascadia,2017,,NJ-0011,Available,129109.00,Unknown
+NEHUB-V-0012,Truck,Ford,F-650,2018,,NJ-0012,Available,137028.00,Unknown
+NEHUB-V-0013,Van,Ford,Transit,2019,,NJ-0013,Available,144947.00,Unknown
+NEHUB-V-0014,Truck,Isuzu,NPR-HD,2020,,NJ-0014,Available,152866.00,Unknown
+NEHUB-V-0015,Tractor,Volvo,VNL 760,2021,,NJ-0015,Available,160785.00,Unknown
+NEHUB-V-0016,Tractor,Freightliner,Cascadia,2022,,NJ-0016,Available,168704.00,Unknown
+NEHUB-V-0017,Truck,Ford,F-650,2023,,NJ-0017,Available,176623.00,Unknown
+NEHUB-V-0018,Van,Ford,Transit,2024,,NJ-0018,Available,184542.00,Unknown
+NEHUB-V-0019,Truck,Isuzu,NPR-HD,2025,,NJ-0019,Available,192461.00,Unknown
+NEHUB-V-0020,Tractor,Volvo,VNL 760,2026,,NJ-0020,Maintenance,200380.00,Unknown
+NEHUB-V-0021,Tractor,Freightliner,Cascadia,2017,,NJ-0021,Available,208299.00,Unknown
+NEHUB-V-0022,Truck,Ford,F-650,2018,,NJ-0022,Available,216218.00,Unknown
+NEHUB-V-0023,Van,Ford,Transit,2019,,NJ-0023,Available,224137.00,Unknown
+NEHUB-V-0024,Truck,Isuzu,NPR-HD,2020,,NJ-0024,Available,232056.00,Unknown
+NEHUB-V-0025,Tractor,Volvo,VNL 760,2021,,NJ-0025,Available,239975.00,Unknown
+NEHUB-V-0026,Tractor,Freightliner,Cascadia,2022,,NJ-0026,Available,247894.00,Unknown
+NEHUB-V-0027,Truck,Ford,F-650,2023,,NJ-0027,Available,255813.00,Unknown
+NEHUB-V-0028,Van,Ford,Transit,2024,,NJ-0028,Available,263732.00,Unknown
+NEHUB-V-0029,Truck,Isuzu,NPR-HD,2025,,NJ-0029,Available,271651.00,Unknown
+NEHUB-V-0030,Tractor,Volvo,VNL 760,2026,,NJ-0030,Available,279570.00,Unknown
+NEHUB-V-0031,Tractor,Freightliner,Cascadia,2017,,NJ-0031,Available,287489.00,Unknown
+NEHUB-V-0032,Truck,Ford,F-650,2018,,NJ-0032,Available,295408.00,Unknown
+NEHUB-V-0033,Van,Ford,Transit,2019,,NJ-0033,Available,303327.00,Unknown
+NEHUB-V-0034,Truck,Isuzu,NPR-HD,2020,,NJ-0034,Available,311246.00,Unknown
+NEHUB-V-0035,Tractor,Volvo,VNL 760,2021,,NJ-0035,Available,319165.00,Unknown
+NEHUB-V-0036,Tractor,Freightliner,Cascadia,2022,,NJ-0036,Available,327084.00,Unknown
+NEHUB-V-0037,Truck,Ford,F-650,2023,,NJ-0037,Available,335003.00,Unknown
+NEHUB-V-0038,Van,Ford,Transit,2024,,NJ-0038,Available,342922.00,Unknown
+NEHUB-V-0039,Truck,Isuzu,NPR-HD,2025,,NJ-0039,Available,350841.00,Unknown
+NEHUB-V-0040,Tractor,Volvo,VNL 760,2026,,NJ-0040,Maintenance,358760.00,Unknown
+NEHUB-V-0041,Tractor,Freightliner,Cascadia,2017,,NJ-0041,Available,366679.00,Unknown
+NEHUB-V-0042,Truck,Ford,F-650,2018,,NJ-0042,Available,374598.00,Unknown
+NEHUB-V-0043,Van,Ford,Transit,2019,,NJ-0043,Available,382517.00,Unknown
+NEHUB-V-0044,Truck,Isuzu,NPR-HD,2020,,NJ-0044,Available,390436.00,Unknown
+NEHUB-V-0045,Tractor,Volvo,VNL 760,2021,,NJ-0045,Available,398355.00,Unknown
+NEHUB-V-0046,Tractor,Freightliner,Cascadia,2022,,NJ-0046,Available,406274.00,Unknown
+NEHUB-V-0047,Truck,Ford,F-650,2023,,NJ-0047,Available,414193.00,Unknown
+NEHUB-V-0048,Van,Ford,Transit,2024,,NJ-0048,Available,422112.00,Unknown
+NEHUB-V-0049,Truck,Isuzu,NPR-HD,2025,,NJ-0049,Available,430031.00,Unknown
+NEHUB-V-0050,Tractor,Volvo,VNL 760,2026,,NJ-0050,Available,437950.00,Unknown
+NEHUB-V-0051,Tractor,Freightliner,Cascadia,2017,,NJ-0051,Available,445869.00,Unknown
+NEHUB-V-0052,Truck,Ford,F-650,2018,,NJ-0052,Available,453788.00,Unknown
+NEHUB-V-0053,Van,Ford,Transit,2019,,NJ-0053,Available,461707.00,Unknown
+NEHUB-V-0054,Truck,Isuzu,NPR-HD,2020,,NJ-0054,Available,469626.00,Unknown
+NEHUB-V-0055,Tractor,Volvo,VNL 760,2021,,NJ-0055,Available,477545.00,Unknown
+NEHUB-V-0056,Tractor,Freightliner,Cascadia,2022,,NJ-0056,Available,485464.00,Unknown
+NEHUB-V-0057,Truck,Ford,F-650,2023,,NJ-0057,Available,493383.00,Unknown
+NEHUB-V-0058,Van,Ford,Transit,2024,,NJ-0058,Available,501302.00,Unknown
+NEHUB-V-0059,Truck,Isuzu,NPR-HD,2025,,NJ-0059,Available,509221.00,Unknown
+NEHUB-V-0060,Tractor,Volvo,VNL 760,2026,,NJ-0060,Maintenance,517140.00,Unknown
+NEHUB-V-0061,Tractor,Freightliner,Cascadia,2017,,NJ-0061,Available,525059.00,Unknown
+NEHUB-V-0062,Truck,Ford,F-650,2018,,NJ-0062,Available,532978.00,Unknown
+NEHUB-V-0063,Van,Ford,Transit,2019,,NJ-0063,Available,540897.00,Unknown
+NEHUB-V-0064,Truck,Isuzu,NPR-HD,2020,,NJ-0064,Available,548816.00,Unknown
+NEHUB-V-0065,Tractor,Volvo,VNL 760,2021,,NJ-0065,Available,556735.00,Unknown
+NEHUB-V-0066,Tractor,Freightliner,Cascadia,2022,,NJ-0066,Available,564654.00,Unknown
+NEHUB-V-0067,Truck,Ford,F-650,2023,,NJ-0067,Available,572573.00,Unknown
+NEHUB-V-0068,Van,Ford,Transit,2024,,NJ-0068,Available,580492.00,Unknown
+NEHUB-V-0069,Truck,Isuzu,NPR-HD,2025,,NJ-0069,Available,588411.00,Unknown
+NEHUB-V-0070,Tractor,Volvo,VNL 760,2026,,NJ-0070,Available,596330.00,Unknown
+NEHUB-V-0071,Tractor,Freightliner,Cascadia,2017,,NJ-0071,Available,604249.00,Unknown
+NEHUB-V-0072,Truck,Ford,F-650,2018,,NJ-0072,Available,612168.00,Unknown
+NEHUB-V-0073,Van,Ford,Transit,2019,,NJ-0073,Available,620087.00,Unknown
+NEHUB-V-0074,Truck,Isuzu,NPR-HD,2020,,NJ-0074,Available,628006.00,Unknown
+NEHUB-V-0075,Tractor,Volvo,VNL 760,2021,,NJ-0075,Available,635925.00,Unknown
+NEHUB-V-0076,Tractor,Freightliner,Cascadia,2022,,NJ-0076,Available,643844.00,Unknown
+NEHUB-V-0077,Truck,Ford,F-650,2023,,NJ-0077,Available,651763.00,Unknown
+NEHUB-V-0078,Van,Ford,Transit,2024,,NJ-0078,Available,49682.00,Unknown
+NEHUB-V-0079,Truck,Isuzu,NPR-HD,2025,,NJ-0079,Available,57601.00,Unknown
+NEHUB-V-0080,Tractor,Volvo,VNL 760,2026,,NJ-0080,Maintenance,65520.00,Unknown
+NEHUB-V-0081,Tractor,Freightliner,Cascadia,2017,,NJ-0081,Available,73439.00,Unknown
+NEHUB-V-0082,Truck,Ford,F-650,2018,,NJ-0082,Available,81358.00,Unknown
+NEHUB-V-0083,Van,Ford,Transit,2019,,NJ-0083,Available,89277.00,Unknown
+NEHUB-V-0084,Truck,Isuzu,NPR-HD,2020,,NJ-0084,Available,97196.00,Unknown
+NEHUB-V-0085,Tractor,Volvo,VNL 760,2021,,NJ-0085,Available,105115.00,Unknown
+NEHUB-V-0086,Tractor,Freightliner,Cascadia,2022,,NJ-0086,Available,113034.00,Unknown
+NEHUB-V-0087,Truck,Ford,F-650,2023,,NJ-0087,Available,120953.00,Unknown
+NEHUB-V-0088,Van,Ford,Transit,2024,,NJ-0088,Available,128872.00,Unknown
+NEHUB-V-0089,Truck,Isuzu,NPR-HD,2025,,NJ-0089,Available,136791.00,Unknown
+NEHUB-V-0090,Tractor,Volvo,VNL 760,2026,,NJ-0090,Available,144710.00,Unknown
+NEHUB-V-0091,Tractor,Freightliner,Cascadia,2017,,NJ-0091,Available,152629.00,Unknown
+NEHUB-V-0092,Truck,Ford,F-650,2018,,NJ-0092,Available,160548.00,Unknown
+NEHUB-V-0093,Van,Ford,Transit,2019,,NJ-0093,Available,168467.00,Unknown
+NEHUB-V-0094,Truck,Isuzu,NPR-HD,2020,,NJ-0094,Available,176386.00,Unknown
+NEHUB-V-0095,Tractor,Volvo,VNL 760,2021,,NJ-0095,Available,184305.00,Unknown
+NEHUB-V-0096,Tractor,Freightliner,Cascadia,2022,,NJ-0096,Available,192224.00,Unknown
+NEHUB-V-0097,Truck,Ford,F-650,2023,,NJ-0097,Available,200143.00,Unknown
+NEHUB-V-0098,Van,Ford,Transit,2024,,NJ-0098,Available,208062.00,Unknown
+NEHUB-V-0099,Truck,Isuzu,NPR-HD,2025,,NJ-0099,Available,215981.00,Unknown
+NEHUB-V-0100,Tractor,Volvo,VNL 760,2026,,NJ-0100,Maintenance,223900.00,Unknown
+NEHUB-V-0101,Tractor,Freightliner,Cascadia,2017,,NJ-0101,Available,231819.00,Unknown
+NEHUB-V-0102,Truck,Ford,F-650,2018,,NJ-0102,Available,239738.00,Unknown
+NEHUB-V-0103,Van,Ford,Transit,2019,,NJ-0103,Available,247657.00,Unknown
+NEHUB-V-0104,Truck,Isuzu,NPR-HD,2020,,NJ-0104,Available,255576.00,Unknown
+NEHUB-V-0105,Tractor,Volvo,VNL 760,2021,,NJ-0105,Available,263495.00,Unknown
+NEHUB-V-0106,Tractor,Freightliner,Cascadia,2022,,NJ-0106,Available,271414.00,Unknown
+NEHUB-V-0107,Truck,Ford,F-650,2023,,NJ-0107,Available,279333.00,Unknown
+NEHUB-V-0108,Van,Ford,Transit,2024,,NJ-0108,Available,287252.00,Unknown
+NEHUB-V-0109,Truck,Isuzu,NPR-HD,2025,,NJ-0109,Available,295171.00,Unknown
+NEHUB-V-0110,Tractor,Volvo,VNL 760,2026,,NJ-0110,Available,303090.00,Unknown
+NEHUB-V-0111,Tractor,Freightliner,Cascadia,2017,,NJ-0111,Available,311009.00,Unknown
+NEHUB-V-0112,Truck,Ford,F-650,2018,,NJ-0112,Available,318928.00,Unknown
+NEHUB-V-0113,Van,Ford,Transit,2019,,NJ-0113,Available,326847.00,Unknown
+NEHUB-V-0114,Truck,Isuzu,NPR-HD,2020,,NJ-0114,Available,334766.00,Unknown
+NEHUB-V-0115,Tractor,Volvo,VNL 760,2021,,NJ-0115,Available,342685.00,Unknown
+NEHUB-V-0116,Tractor,Freightliner,Cascadia,2022,,NJ-0116,Available,350604.00,Unknown
+NEHUB-V-0117,Truck,Ford,F-650,2023,,NJ-0117,Available,358523.00,Unknown
+NEHUB-V-0118,Van,Ford,Transit,2024,,NJ-0118,Available,366442.00,Unknown
+NEHUB-V-0119,Truck,Isuzu,NPR-HD,2025,,NJ-0119,Available,374361.00,Unknown
+NEHUB-V-0120,Tractor,Volvo,VNL 760,2026,,NJ-0120,Maintenance,382280.00,Unknown
+NEHUB-V-0121,Tractor,Freightliner,Cascadia,2017,,NJ-0121,Available,390199.00,Unknown
+NEHUB-V-0122,Truck,Ford,F-650,2018,,NJ-0122,Available,398118.00,Unknown
+NEHUB-V-0123,Van,Ford,Transit,2019,,NJ-0123,Available,406037.00,Unknown
+NEHUB-V-0124,Truck,Isuzu,NPR-HD,2020,,NJ-0124,Available,413956.00,Unknown
+NEHUB-V-0125,Tractor,Volvo,VNL 760,2021,,NJ-0125,Available,421875.00,Unknown
+NEHUB-V-0126,Tractor,Freightliner,Cascadia,2022,,NJ-0126,Available,429794.00,Unknown
+NEHUB-V-0127,Truck,Ford,F-650,2023,,NJ-0127,Available,437713.00,Unknown
+NEHUB-V-0128,Van,Ford,Transit,2024,,NJ-0128,Available,445632.00,Unknown
+NEHUB-V-0129,Truck,Isuzu,NPR-HD,2025,,NJ-0129,Available,453551.00,Unknown
+NEHUB-V-0130,Tractor,Volvo,VNL 760,2026,,NJ-0130,Available,461470.00,Unknown
+NEHUB-V-0131,Tractor,Freightliner,Cascadia,2017,,NJ-0131,Available,469389.00,Unknown
+NEHUB-V-0132,Truck,Ford,F-650,2018,,NJ-0132,Available,477308.00,Unknown
+NEHUB-V-0133,Van,Ford,Transit,2019,,NJ-0133,Available,485227.00,Unknown
+NEHUB-V-0134,Truck,Isuzu,NPR-HD,2020,,NJ-0134,Available,493146.00,Unknown
+NEHUB-V-0135,Tractor,Volvo,VNL 760,2021,,NJ-0135,Available,501065.00,Unknown
+NEHUB-V-0136,Tractor,Freightliner,Cascadia,2022,,NJ-0136,Available,508984.00,Unknown
+NEHUB-V-0137,Truck,Ford,F-650,2023,,NJ-0137,Available,516903.00,Unknown
+NEHUB-V-0138,Van,Ford,Transit,2024,,NJ-0138,Available,524822.00,Unknown
+NEHUB-V-0139,Truck,Isuzu,NPR-HD,2025,,NJ-0139,Available,532741.00,Unknown
+NEHUB-V-0140,Tractor,Volvo,VNL 760,2026,,NJ-0140,Maintenance,540660.00,Unknown
+NEHUB-V-0141,Tractor,Freightliner,Cascadia,2017,,NJ-0141,Available,548579.00,Unknown
+NEHUB-V-0142,Truck,Ford,F-650,2018,,NJ-0142,Available,556498.00,Unknown
+NEHUB-V-0143,Van,Ford,Transit,2019,,NJ-0143,Available,564417.00,Unknown
+NEHUB-V-0144,Truck,Isuzu,NPR-HD,2020,,NJ-0144,Available,572336.00,Unknown
+NEHUB-V-0145,Tractor,Volvo,VNL 760,2021,,NJ-0145,Available,580255.00,Unknown
+NEHUB-V-0146,Tractor,Freightliner,Cascadia,2022,,NJ-0146,Available,588174.00,Unknown
+NEHUB-V-0147,Truck,Ford,F-650,2023,,NJ-0147,Available,596093.00,Unknown
+NEHUB-V-0148,Van,Ford,Transit,2024,,NJ-0148,Available,604012.00,Unknown
+NEHUB-V-0149,Truck,Isuzu,NPR-HD,2025,,NJ-0149,Available,611931.00,Unknown
+NEHUB-V-0150,Tractor,Volvo,VNL 760,2026,,NJ-0150,Available,619850.00,Unknown
+NEHUB-V-0151,Tractor,Freightliner,Cascadia,2017,,NJ-0151,Available,627769.00,Unknown
+NEHUB-V-0152,Truck,Ford,F-650,2018,,NJ-0152,Available,635688.00,Unknown
+NEHUB-V-0153,Van,Ford,Transit,2019,,NJ-0153,Available,643607.00,Unknown
+NEHUB-V-0154,Truck,Isuzu,NPR-HD,2020,,NJ-0154,Available,651526.00,Unknown
+NEHUB-V-0155,Tractor,Volvo,VNL 760,2021,,NJ-0155,Available,49445.00,Unknown
+NEHUB-V-0156,Tractor,Freightliner,Cascadia,2022,,NJ-0156,Available,57364.00,Unknown
+NEHUB-V-0157,Truck,Ford,F-650,2023,,NJ-0157,Available,65283.00,Unknown
+NEHUB-V-0158,Van,Ford,Transit,2024,,NJ-0158,Available,73202.00,Unknown
+NEHUB-V-0159,Truck,Isuzu,NPR-HD,2025,,NJ-0159,Available,81121.00,Unknown
+NEHUB-V-0160,Tractor,Volvo,VNL 760,2026,,NJ-0160,Maintenance,89040.00,Unknown
+NEHUB-V-0161,Tractor,Freightliner,Cascadia,2017,,NJ-0161,Available,96959.00,Unknown
+NEHUB-V-0162,Truck,Ford,F-650,2018,,NJ-0162,Available,104878.00,Unknown
+NEHUB-V-0163,Van,Ford,Transit,2019,,NJ-0163,Available,112797.00,Unknown
+NEHUB-V-0164,Truck,Isuzu,NPR-HD,2020,,NJ-0164,Available,120716.00,Unknown
+NEHUB-V-0165,Tractor,Volvo,VNL 760,2021,,NJ-0165,Available,128635.00,Unknown
+NEHUB-V-0166,Tractor,Freightliner,Cascadia,2022,,NJ-0166,Available,136554.00,Unknown
+NEHUB-V-0167,Truck,Ford,F-650,2023,,NJ-0167,Available,144473.00,Unknown
+NEHUB-V-0168,Van,Ford,Transit,2024,,NJ-0168,Available,152392.00,Unknown
+NEHUB-V-0169,Truck,Isuzu,NPR-HD,2025,,NJ-0169,Available,160311.00,Unknown
+NEHUB-V-0170,Tractor,Volvo,VNL 760,2026,,NJ-0170,Available,168230.00,Unknown
+NEHUB-V-0171,Tractor,Freightliner,Cascadia,2017,,NJ-0171,Available,176149.00,Unknown
+NEHUB-V-0172,Truck,Ford,F-650,2018,,NJ-0172,Available,184068.00,Unknown
+NEHUB-V-0173,Van,Ford,Transit,2019,,NJ-0173,Available,191987.00,Unknown
+NEHUB-V-0174,Truck,Isuzu,NPR-HD,2020,,NJ-0174,Available,199906.00,Unknown
+NEHUB-V-0175,Tractor,Volvo,VNL 760,2021,,NJ-0175,Available,207825.00,Unknown
+NEHUB-V-0176,Tractor,Freightliner,Cascadia,2022,,NJ-0176,Available,215744.00,Unknown
+NEHUB-V-0177,Truck,Ford,F-650,2023,,NJ-0177,Available,223663.00,Unknown
+NEHUB-V-0178,Van,Ford,Transit,2024,,NJ-0178,Available,231582.00,Unknown
+NEHUB-V-0179,Truck,Isuzu,NPR-HD,2025,,NJ-0179,Available,239501.00,Unknown
+NEHUB-V-0180,Tractor,Volvo,VNL 760,2026,,NJ-0180,Maintenance,247420.00,Unknown
+NEHUB-V-0181,Tractor,Freightliner,Cascadia,2017,,NJ-0181,Available,255339.00,Unknown
+NEHUB-V-0182,Truck,Ford,F-650,2018,,NJ-0182,Available,263258.00,Unknown
+NEHUB-V-0183,Van,Ford,Transit,2019,,NJ-0183,Available,271177.00,Unknown
+NEHUB-V-0184,Truck,Isuzu,NPR-HD,2020,,NJ-0184,Available,279096.00,Unknown
+NEHUB-V-0185,Tractor,Volvo,VNL 760,2021,,NJ-0185,Available,287015.00,Unknown
+NEHUB-V-0186,Tractor,Freightliner,Cascadia,2022,,NJ-0186,Available,294934.00,Unknown
+NEHUB-V-0187,Truck,Ford,F-650,2023,,NJ-0187,Available,302853.00,Unknown
+NEHUB-V-0188,Van,Ford,Transit,2024,,NJ-0188,Available,310772.00,Unknown
+NEHUB-V-0189,Truck,Isuzu,NPR-HD,2025,,NJ-0189,Available,318691.00,Unknown
+NEHUB-V-0190,Tractor,Volvo,VNL 760,2026,,NJ-0190,Available,326610.00,Unknown
+NEHUB-V-0191,Tractor,Freightliner,Cascadia,2017,,NJ-0191,Available,334529.00,Unknown
+NEHUB-V-0192,Truck,Ford,F-650,2018,,NJ-0192,Available,342448.00,Unknown
+NEHUB-V-0193,Van,Ford,Transit,2019,,NJ-0193,Available,350367.00,Unknown
+NEHUB-V-0194,Truck,Isuzu,NPR-HD,2020,,NJ-0194,Available,358286.00,Unknown
+NEHUB-V-0195,Tractor,Volvo,VNL 760,2021,,NJ-0195,Available,366205.00,Unknown
+NEHUB-V-0196,Tractor,Freightliner,Cascadia,2022,,NJ-0196,Available,374124.00,Unknown
+NEHUB-V-0197,Truck,Ford,F-650,2023,,NJ-0197,Available,382043.00,Unknown
+NEHUB-V-0198,Van,Ford,Transit,2024,,NJ-0198,Available,389962.00,Unknown
+NEHUB-V-0199,Truck,Isuzu,NPR-HD,2025,,NJ-0199,Available,397881.00,Unknown
+NEHUB-V-0200,Tractor,Volvo,VNL 760,2026,,NJ-0200,Maintenance,405800.00,Unknown
+SEDEPOT-V-0001,Tractor,Freightliner,Cascadia,2017,,GA-0001,Available,49919.00,Unknown
+SEDEPOT-V-0002,Truck,Ford,F-650,2018,,GA-0002,Available,57838.00,Unknown
+SEDEPOT-V-0003,Van,Ford,Transit,2019,,GA-0003,Available,65757.00,Unknown
+SEDEPOT-V-0004,Truck,Isuzu,NPR-HD,2020,,GA-0004,Available,73676.00,Unknown
+SEDEPOT-V-0005,Tractor,Volvo,VNL 760,2021,,GA-0005,Available,81595.00,Unknown
+SEDEPOT-V-0006,Tractor,Freightliner,Cascadia,2022,,GA-0006,Available,89514.00,Unknown
+SEDEPOT-V-0007,Truck,Ford,F-650,2023,,GA-0007,Available,97433.00,Unknown
+SEDEPOT-V-0008,Van,Ford,Transit,2024,,GA-0008,Available,105352.00,Unknown
+SEDEPOT-V-0009,Truck,Isuzu,NPR-HD,2025,,GA-0009,Available,113271.00,Unknown
+SEDEPOT-V-0010,Tractor,Volvo,VNL 760,2026,,GA-0010,Available,121190.00,Unknown
+SEDEPOT-V-0011,Tractor,Freightliner,Cascadia,2017,,GA-0011,Available,129109.00,Unknown
+SEDEPOT-V-0012,Truck,Ford,F-650,2018,,GA-0012,Available,137028.00,Unknown
+SEDEPOT-V-0013,Van,Ford,Transit,2019,,GA-0013,Available,144947.00,Unknown
+SEDEPOT-V-0014,Truck,Isuzu,NPR-HD,2020,,GA-0014,Available,152866.00,Unknown
+SEDEPOT-V-0015,Tractor,Volvo,VNL 760,2021,,GA-0015,Available,160785.00,Unknown
+SEDEPOT-V-0016,Tractor,Freightliner,Cascadia,2022,,GA-0016,Available,168704.00,Unknown
+SEDEPOT-V-0017,Truck,Ford,F-650,2023,,GA-0017,Available,176623.00,Unknown
+SEDEPOT-V-0018,Van,Ford,Transit,2024,,GA-0018,Available,184542.00,Unknown
+SEDEPOT-V-0019,Truck,Isuzu,NPR-HD,2025,,GA-0019,Available,192461.00,Unknown
+SEDEPOT-V-0020,Tractor,Volvo,VNL 760,2026,,GA-0020,Maintenance,200380.00,Unknown
+SEDEPOT-V-0021,Tractor,Freightliner,Cascadia,2017,,GA-0021,Available,208299.00,Unknown
+SEDEPOT-V-0022,Truck,Ford,F-650,2018,,GA-0022,Available,216218.00,Unknown
+SEDEPOT-V-0023,Van,Ford,Transit,2019,,GA-0023,Available,224137.00,Unknown
+SEDEPOT-V-0024,Truck,Isuzu,NPR-HD,2020,,GA-0024,Available,232056.00,Unknown
+SEDEPOT-V-0025,Tractor,Volvo,VNL 760,2021,,GA-0025,Available,239975.00,Unknown
+SEDEPOT-V-0026,Tractor,Freightliner,Cascadia,2022,,GA-0026,Available,247894.00,Unknown
+SEDEPOT-V-0027,Truck,Ford,F-650,2023,,GA-0027,Available,255813.00,Unknown
+SEDEPOT-V-0028,Van,Ford,Transit,2024,,GA-0028,Available,263732.00,Unknown
+SEDEPOT-V-0029,Truck,Isuzu,NPR-HD,2025,,GA-0029,Available,271651.00,Unknown
+SEDEPOT-V-0030,Tractor,Volvo,VNL 760,2026,,GA-0030,Available,279570.00,Unknown
+SEDEPOT-V-0031,Tractor,Freightliner,Cascadia,2017,,GA-0031,Available,287489.00,Unknown
+SEDEPOT-V-0032,Truck,Ford,F-650,2018,,GA-0032,Available,295408.00,Unknown
+SEDEPOT-V-0033,Van,Ford,Transit,2019,,GA-0033,Available,303327.00,Unknown
+SEDEPOT-V-0034,Truck,Isuzu,NPR-HD,2020,,GA-0034,Available,311246.00,Unknown
+SEDEPOT-V-0035,Tractor,Volvo,VNL 760,2021,,GA-0035,Available,319165.00,Unknown
+SEDEPOT-V-0036,Tractor,Freightliner,Cascadia,2022,,GA-0036,Available,327084.00,Unknown
+SEDEPOT-V-0037,Truck,Ford,F-650,2023,,GA-0037,Available,335003.00,Unknown
+SEDEPOT-V-0038,Van,Ford,Transit,2024,,GA-0038,Available,342922.00,Unknown
+SEDEPOT-V-0039,Truck,Isuzu,NPR-HD,2025,,GA-0039,Available,350841.00,Unknown
+SEDEPOT-V-0040,Tractor,Volvo,VNL 760,2026,,GA-0040,Maintenance,358760.00,Unknown
+SEDEPOT-V-0041,Tractor,Freightliner,Cascadia,2017,,GA-0041,Available,366679.00,Unknown
+SEDEPOT-V-0042,Truck,Ford,F-650,2018,,GA-0042,Available,374598.00,Unknown
+SEDEPOT-V-0043,Van,Ford,Transit,2019,,GA-0043,Available,382517.00,Unknown
+SEDEPOT-V-0044,Truck,Isuzu,NPR-HD,2020,,GA-0044,Available,390436.00,Unknown
+SEDEPOT-V-0045,Tractor,Volvo,VNL 760,2021,,GA-0045,Available,398355.00,Unknown
+SEDEPOT-V-0046,Tractor,Freightliner,Cascadia,2022,,GA-0046,Available,406274.00,Unknown
+SEDEPOT-V-0047,Truck,Ford,F-650,2023,,GA-0047,Available,414193.00,Unknown
+SEDEPOT-V-0048,Van,Ford,Transit,2024,,GA-0048,Available,422112.00,Unknown
+SEDEPOT-V-0049,Truck,Isuzu,NPR-HD,2025,,GA-0049,Available,430031.00,Unknown
+SEDEPOT-V-0050,Tractor,Volvo,VNL 760,2026,,GA-0050,Available,437950.00,Unknown
+SEDEPOT-V-0051,Tractor,Freightliner,Cascadia,2017,,GA-0051,Available,445869.00,Unknown
+SEDEPOT-V-0052,Truck,Ford,F-650,2018,,GA-0052,Available,453788.00,Unknown
+SEDEPOT-V-0053,Van,Ford,Transit,2019,,GA-0053,Available,461707.00,Unknown
+SEDEPOT-V-0054,Truck,Isuzu,NPR-HD,2020,,GA-0054,Available,469626.00,Unknown
+SEDEPOT-V-0055,Tractor,Volvo,VNL 760,2021,,GA-0055,Available,477545.00,Unknown
+SEDEPOT-V-0056,Tractor,Freightliner,Cascadia,2022,,GA-0056,Available,485464.00,Unknown
+SEDEPOT-V-0057,Truck,Ford,F-650,2023,,GA-0057,Available,493383.00,Unknown
+SEDEPOT-V-0058,Van,Ford,Transit,2024,,GA-0058,Available,501302.00,Unknown
+SEDEPOT-V-0059,Truck,Isuzu,NPR-HD,2025,,GA-0059,Available,509221.00,Unknown
+SEDEPOT-V-0060,Tractor,Volvo,VNL 760,2026,,GA-0060,Maintenance,517140.00,Unknown
+SEDEPOT-V-0061,Tractor,Freightliner,Cascadia,2017,,GA-0061,Available,525059.00,Unknown
+SEDEPOT-V-0062,Truck,Ford,F-650,2018,,GA-0062,Available,532978.00,Unknown
+SEDEPOT-V-0063,Van,Ford,Transit,2019,,GA-0063,Available,540897.00,Unknown
+SEDEPOT-V-0064,Truck,Isuzu,NPR-HD,2020,,GA-0064,Available,548816.00,Unknown
+SEDEPOT-V-0065,Tractor,Volvo,VNL 760,2021,,GA-0065,Available,556735.00,Unknown
+SEDEPOT-V-0066,Tractor,Freightliner,Cascadia,2022,,GA-0066,Available,564654.00,Unknown
+SEDEPOT-V-0067,Truck,Ford,F-650,2023,,GA-0067,Available,572573.00,Unknown
+SEDEPOT-V-0068,Van,Ford,Transit,2024,,GA-0068,Available,580492.00,Unknown
+SEDEPOT-V-0069,Truck,Isuzu,NPR-HD,2025,,GA-0069,Available,588411.00,Unknown
+SEDEPOT-V-0070,Tractor,Volvo,VNL 760,2026,,GA-0070,Available,596330.00,Unknown
+SEDEPOT-V-0071,Tractor,Freightliner,Cascadia,2017,,GA-0071,Available,604249.00,Unknown
+SEDEPOT-V-0072,Truck,Ford,F-650,2018,,GA-0072,Available,612168.00,Unknown
+SEDEPOT-V-0073,Van,Ford,Transit,2019,,GA-0073,Available,620087.00,Unknown
+SEDEPOT-V-0074,Truck,Isuzu,NPR-HD,2020,,GA-0074,Available,628006.00,Unknown
+SEDEPOT-V-0075,Tractor,Volvo,VNL 760,2021,,GA-0075,Available,635925.00,Unknown
+SEDEPOT-V-0076,Tractor,Freightliner,Cascadia,2022,,GA-0076,Available,643844.00,Unknown
+SEDEPOT-V-0077,Truck,Ford,F-650,2023,,GA-0077,Available,651763.00,Unknown
+SEDEPOT-V-0078,Van,Ford,Transit,2024,,GA-0078,Available,49682.00,Unknown
+SEDEPOT-V-0079,Truck,Isuzu,NPR-HD,2025,,GA-0079,Available,57601.00,Unknown
+SEDEPOT-V-0080,Tractor,Volvo,VNL 760,2026,,GA-0080,Maintenance,65520.00,Unknown
+SEDEPOT-V-0081,Tractor,Freightliner,Cascadia,2017,,GA-0081,Available,73439.00,Unknown
+SEDEPOT-V-0082,Truck,Ford,F-650,2018,,GA-0082,Available,81358.00,Unknown
+SEDEPOT-V-0083,Van,Ford,Transit,2019,,GA-0083,Available,89277.00,Unknown
+SEDEPOT-V-0084,Truck,Isuzu,NPR-HD,2020,,GA-0084,Available,97196.00,Unknown
+SEDEPOT-V-0085,Tractor,Volvo,VNL 760,2021,,GA-0085,Available,105115.00,Unknown
+SEDEPOT-V-0086,Tractor,Freightliner,Cascadia,2022,,GA-0086,Available,113034.00,Unknown
+SEDEPOT-V-0087,Truck,Ford,F-650,2023,,GA-0087,Available,120953.00,Unknown
+SEDEPOT-V-0088,Van,Ford,Transit,2024,,GA-0088,Available,128872.00,Unknown
+SEDEPOT-V-0089,Truck,Isuzu,NPR-HD,2025,,GA-0089,Available,136791.00,Unknown
+SEDEPOT-V-0090,Tractor,Volvo,VNL 760,2026,,GA-0090,Available,144710.00,Unknown
+SEDEPOT-V-0091,Tractor,Freightliner,Cascadia,2017,,GA-0091,Available,152629.00,Unknown
+SEDEPOT-V-0092,Truck,Ford,F-650,2018,,GA-0092,Available,160548.00,Unknown
+SEDEPOT-V-0093,Van,Ford,Transit,2019,,GA-0093,Available,168467.00,Unknown
+SEDEPOT-V-0094,Truck,Isuzu,NPR-HD,2020,,GA-0094,Available,176386.00,Unknown
+SEDEPOT-V-0095,Tractor,Volvo,VNL 760,2021,,GA-0095,Available,184305.00,Unknown
+SEDEPOT-V-0096,Tractor,Freightliner,Cascadia,2022,,GA-0096,Available,192224.00,Unknown
+SEDEPOT-V-0097,Truck,Ford,F-650,2023,,GA-0097,Available,200143.00,Unknown
+SEDEPOT-V-0098,Van,Ford,Transit,2024,,GA-0098,Available,208062.00,Unknown
+SEDEPOT-V-0099,Truck,Isuzu,NPR-HD,2025,,GA-0099,Available,215981.00,Unknown
+SEDEPOT-V-0100,Tractor,Volvo,VNL 760,2026,,GA-0100,Maintenance,223900.00,Unknown
+SEDEPOT-V-0101,Tractor,Freightliner,Cascadia,2017,,GA-0101,Available,231819.00,Unknown
+SEDEPOT-V-0102,Truck,Ford,F-650,2018,,GA-0102,Available,239738.00,Unknown
+SEDEPOT-V-0103,Van,Ford,Transit,2019,,GA-0103,Available,247657.00,Unknown
+SEDEPOT-V-0104,Truck,Isuzu,NPR-HD,2020,,GA-0104,Available,255576.00,Unknown
+SEDEPOT-V-0105,Tractor,Volvo,VNL 760,2021,,GA-0105,Available,263495.00,Unknown
+SEDEPOT-V-0106,Tractor,Freightliner,Cascadia,2022,,GA-0106,Available,271414.00,Unknown
+SEDEPOT-V-0107,Truck,Ford,F-650,2023,,GA-0107,Available,279333.00,Unknown
+SEDEPOT-V-0108,Van,Ford,Transit,2024,,GA-0108,Available,287252.00,Unknown
+SEDEPOT-V-0109,Truck,Isuzu,NPR-HD,2025,,GA-0109,Available,295171.00,Unknown
+SEDEPOT-V-0110,Tractor,Volvo,VNL 760,2026,,GA-0110,Available,303090.00,Unknown
+SEDEPOT-V-0111,Tractor,Freightliner,Cascadia,2017,,GA-0111,Available,311009.00,Unknown
+SEDEPOT-V-0112,Truck,Ford,F-650,2018,,GA-0112,Available,318928.00,Unknown
+SEDEPOT-V-0113,Van,Ford,Transit,2019,,GA-0113,Available,326847.00,Unknown
+SEDEPOT-V-0114,Truck,Isuzu,NPR-HD,2020,,GA-0114,Available,334766.00,Unknown
+SEDEPOT-V-0115,Tractor,Volvo,VNL 760,2021,,GA-0115,Available,342685.00,Unknown
+SEDEPOT-V-0116,Tractor,Freightliner,Cascadia,2022,,GA-0116,Available,350604.00,Unknown
+SEDEPOT-V-0117,Truck,Ford,F-650,2023,,GA-0117,Available,358523.00,Unknown
+SEDEPOT-V-0118,Van,Ford,Transit,2024,,GA-0118,Available,366442.00,Unknown
+SEDEPOT-V-0119,Truck,Isuzu,NPR-HD,2025,,GA-0119,Available,374361.00,Unknown
+SEDEPOT-V-0120,Tractor,Volvo,VNL 760,2026,,GA-0120,Maintenance,382280.00,Unknown
+SEDEPOT-V-0121,Tractor,Freightliner,Cascadia,2017,,GA-0121,Available,390199.00,Unknown
+SEDEPOT-V-0122,Truck,Ford,F-650,2018,,GA-0122,Available,398118.00,Unknown
+SEDEPOT-V-0123,Van,Ford,Transit,2019,,GA-0123,Available,406037.00,Unknown
+SEDEPOT-V-0124,Truck,Isuzu,NPR-HD,2020,,GA-0124,Available,413956.00,Unknown
+SEDEPOT-V-0125,Tractor,Volvo,VNL 760,2021,,GA-0125,Available,421875.00,Unknown
+SEDEPOT-V-0126,Tractor,Freightliner,Cascadia,2022,,GA-0126,Available,429794.00,Unknown
+SEDEPOT-V-0127,Truck,Ford,F-650,2023,,GA-0127,Available,437713.00,Unknown
+SEDEPOT-V-0128,Van,Ford,Transit,2024,,GA-0128,Available,445632.00,Unknown
+SEDEPOT-V-0129,Truck,Isuzu,NPR-HD,2025,,GA-0129,Available,453551.00,Unknown
+SEDEPOT-V-0130,Tractor,Volvo,VNL 760,2026,,GA-0130,Available,461470.00,Unknown
+SEDEPOT-V-0131,Tractor,Freightliner,Cascadia,2017,,GA-0131,Available,469389.00,Unknown
+SEDEPOT-V-0132,Truck,Ford,F-650,2018,,GA-0132,Available,477308.00,Unknown
+SEDEPOT-V-0133,Van,Ford,Transit,2019,,GA-0133,Available,485227.00,Unknown
+SEDEPOT-V-0134,Truck,Isuzu,NPR-HD,2020,,GA-0134,Available,493146.00,Unknown
+SEDEPOT-V-0135,Tractor,Volvo,VNL 760,2021,,GA-0135,Available,501065.00,Unknown
+SEDEPOT-V-0136,Tractor,Freightliner,Cascadia,2022,,GA-0136,Available,508984.00,Unknown
+SEDEPOT-V-0137,Truck,Ford,F-650,2023,,GA-0137,Available,516903.00,Unknown
+SEDEPOT-V-0138,Van,Ford,Transit,2024,,GA-0138,Available,524822.00,Unknown
+SEDEPOT-V-0139,Truck,Isuzu,NPR-HD,2025,,GA-0139,Available,532741.00,Unknown
+SEDEPOT-V-0140,Tractor,Volvo,VNL 760,2026,,GA-0140,Maintenance,540660.00,Unknown
+SEDEPOT-V-0141,Tractor,Freightliner,Cascadia,2017,,GA-0141,Available,548579.00,Unknown
+SEDEPOT-V-0142,Truck,Ford,F-650,2018,,GA-0142,Available,556498.00,Unknown
+SEDEPOT-V-0143,Van,Ford,Transit,2019,,GA-0143,Available,564417.00,Unknown
+SEDEPOT-V-0144,Truck,Isuzu,NPR-HD,2020,,GA-0144,Available,572336.00,Unknown
+SEDEPOT-V-0145,Tractor,Volvo,VNL 760,2021,,GA-0145,Available,580255.00,Unknown
+SEDEPOT-V-0146,Tractor,Freightliner,Cascadia,2022,,GA-0146,Available,588174.00,Unknown
+SEDEPOT-V-0147,Truck,Ford,F-650,2023,,GA-0147,Available,596093.00,Unknown
+SEDEPOT-V-0148,Van,Ford,Transit,2024,,GA-0148,Available,604012.00,Unknown
+SEDEPOT-V-0149,Truck,Isuzu,NPR-HD,2025,,GA-0149,Available,611931.00,Unknown
+SEDEPOT-V-0150,Tractor,Volvo,VNL 760,2026,,GA-0150,Available,619850.00,Unknown
+SEDEPOT-V-0151,Tractor,Freightliner,Cascadia,2017,,GA-0151,Available,627769.00,Unknown
+SEDEPOT-V-0152,Truck,Ford,F-650,2018,,GA-0152,Available,635688.00,Unknown
+SEDEPOT-V-0153,Van,Ford,Transit,2019,,GA-0153,Available,643607.00,Unknown
+SEDEPOT-V-0154,Truck,Isuzu,NPR-HD,2020,,GA-0154,Available,651526.00,Unknown
+SEDEPOT-V-0155,Tractor,Volvo,VNL 760,2021,,GA-0155,Available,49445.00,Unknown
+SEDEPOT-V-0156,Tractor,Freightliner,Cascadia,2022,,GA-0156,Available,57364.00,Unknown
+SEDEPOT-V-0157,Truck,Ford,F-650,2023,,GA-0157,Available,65283.00,Unknown
+SEDEPOT-V-0158,Van,Ford,Transit,2024,,GA-0158,Available,73202.00,Unknown
+SEDEPOT-V-0159,Truck,Isuzu,NPR-HD,2025,,GA-0159,Available,81121.00,Unknown
+SEDEPOT-V-0160,Tractor,Volvo,VNL 760,2026,,GA-0160,Maintenance,89040.00,Unknown
+SEDEPOT-V-0161,Tractor,Freightliner,Cascadia,2017,,GA-0161,Available,96959.00,Unknown
+SEDEPOT-V-0162,Truck,Ford,F-650,2018,,GA-0162,Available,104878.00,Unknown
+SEDEPOT-V-0163,Van,Ford,Transit,2019,,GA-0163,Available,112797.00,Unknown
+SEDEPOT-V-0164,Truck,Isuzu,NPR-HD,2020,,GA-0164,Available,120716.00,Unknown
+SEDEPOT-V-0165,Tractor,Volvo,VNL 760,2021,,GA-0165,Available,128635.00,Unknown
+SEDEPOT-V-0166,Tractor,Freightliner,Cascadia,2022,,GA-0166,Available,136554.00,Unknown
+SEDEPOT-V-0167,Truck,Ford,F-650,2023,,GA-0167,Available,144473.00,Unknown
+SEDEPOT-V-0168,Van,Ford,Transit,2024,,GA-0168,Available,152392.00,Unknown
+SEDEPOT-V-0169,Truck,Isuzu,NPR-HD,2025,,GA-0169,Available,160311.00,Unknown
+SEDEPOT-V-0170,Tractor,Volvo,VNL 760,2026,,GA-0170,Available,168230.00,Unknown
+SEDEPOT-V-0171,Tractor,Freightliner,Cascadia,2017,,GA-0171,Available,176149.00,Unknown
+SEDEPOT-V-0172,Truck,Ford,F-650,2018,,GA-0172,Available,184068.00,Unknown
+SEDEPOT-V-0173,Van,Ford,Transit,2019,,GA-0173,Available,191987.00,Unknown
+SEDEPOT-V-0174,Truck,Isuzu,NPR-HD,2020,,GA-0174,Available,199906.00,Unknown
+SEDEPOT-V-0175,Tractor,Volvo,VNL 760,2021,,GA-0175,Available,207825.00,Unknown
+SEDEPOT-V-0176,Tractor,Freightliner,Cascadia,2022,,GA-0176,Available,215744.00,Unknown
+SEDEPOT-V-0177,Truck,Ford,F-650,2023,,GA-0177,Available,223663.00,Unknown
+SEDEPOT-V-0178,Van,Ford,Transit,2024,,GA-0178,Available,231582.00,Unknown
+SEDEPOT-V-0179,Truck,Isuzu,NPR-HD,2025,,GA-0179,Available,239501.00,Unknown
+SEDEPOT-V-0180,Tractor,Volvo,VNL 760,2026,,GA-0180,Maintenance,247420.00,Unknown
+SEDEPOT-V-0181,Tractor,Freightliner,Cascadia,2017,,GA-0181,Available,255339.00,Unknown
+SEDEPOT-V-0182,Truck,Ford,F-650,2018,,GA-0182,Available,263258.00,Unknown
+SEDEPOT-V-0183,Van,Ford,Transit,2019,,GA-0183,Available,271177.00,Unknown
+SEDEPOT-V-0184,Truck,Isuzu,NPR-HD,2020,,GA-0184,Available,279096.00,Unknown
+SEDEPOT-V-0185,Tractor,Volvo,VNL 760,2021,,GA-0185,Available,287015.00,Unknown
+SEDEPOT-V-0186,Tractor,Freightliner,Cascadia,2022,,GA-0186,Available,294934.00,Unknown
+SEDEPOT-V-0187,Truck,Ford,F-650,2023,,GA-0187,Available,302853.00,Unknown
+SEDEPOT-V-0188,Van,Ford,Transit,2024,,GA-0188,Available,310772.00,Unknown
+SEDEPOT-V-0189,Truck,Isuzu,NPR-HD,2025,,GA-0189,Available,318691.00,Unknown
+SEDEPOT-V-0190,Tractor,Volvo,VNL 760,2026,,GA-0190,Available,326610.00,Unknown
+SEDEPOT-V-0191,Tractor,Freightliner,Cascadia,2017,,GA-0191,Available,334529.00,Unknown
+SEDEPOT-V-0192,Truck,Ford,F-650,2018,,GA-0192,Available,342448.00,Unknown
+SEDEPOT-V-0193,Van,Ford,Transit,2019,,GA-0193,Available,350367.00,Unknown
+SEDEPOT-V-0194,Truck,Isuzu,NPR-HD,2020,,GA-0194,Available,358286.00,Unknown
+SEDEPOT-V-0195,Tractor,Volvo,VNL 760,2021,,GA-0195,Available,366205.00,Unknown
+SEDEPOT-V-0196,Tractor,Freightliner,Cascadia,2022,,GA-0196,Available,374124.00,Unknown
+SEDEPOT-V-0197,Truck,Ford,F-650,2023,,GA-0197,Available,382043.00,Unknown
+SEDEPOT-V-0198,Van,Ford,Transit,2024,,GA-0198,Available,389962.00,Unknown
+SEDEPOT-V-0199,Truck,Isuzu,NPR-HD,2025,,GA-0199,Available,397881.00,Unknown
+SEDEPOT-V-0200,Tractor,Volvo,VNL 760,2026,,GA-0200,Maintenance,405800.00,Unknown
+WESTHUB-V-0001,Tractor,Freightliner,Cascadia,2017,,AZ-0001,Available,49919.00,Unknown
+WESTHUB-V-0002,Truck,Ford,F-650,2018,,AZ-0002,Available,57838.00,Unknown
+WESTHUB-V-0003,Van,Ford,Transit,2019,,AZ-0003,Available,65757.00,Unknown
+WESTHUB-V-0004,Truck,Isuzu,NPR-HD,2020,,AZ-0004,Available,73676.00,Unknown
+WESTHUB-V-0005,Tractor,Volvo,VNL 760,2021,,AZ-0005,Available,81595.00,Unknown
+WESTHUB-V-0006,Tractor,Freightliner,Cascadia,2022,,AZ-0006,Available,89514.00,Unknown
+WESTHUB-V-0007,Truck,Ford,F-650,2023,,AZ-0007,Available,97433.00,Unknown
+WESTHUB-V-0008,Van,Ford,Transit,2024,,AZ-0008,Available,105352.00,Unknown
+WESTHUB-V-0009,Truck,Isuzu,NPR-HD,2025,,AZ-0009,Available,113271.00,Unknown
+WESTHUB-V-0010,Tractor,Volvo,VNL 760,2026,,AZ-0010,Available,121190.00,Unknown
+WESTHUB-V-0011,Tractor,Freightliner,Cascadia,2017,,AZ-0011,Available,129109.00,Unknown
+WESTHUB-V-0012,Truck,Ford,F-650,2018,,AZ-0012,Available,137028.00,Unknown
+WESTHUB-V-0013,Van,Ford,Transit,2019,,AZ-0013,Available,144947.00,Unknown
+WESTHUB-V-0014,Truck,Isuzu,NPR-HD,2020,,AZ-0014,Available,152866.00,Unknown
+WESTHUB-V-0015,Tractor,Volvo,VNL 760,2021,,AZ-0015,Available,160785.00,Unknown
+WESTHUB-V-0016,Tractor,Freightliner,Cascadia,2022,,AZ-0016,Available,168704.00,Unknown
+WESTHUB-V-0017,Truck,Ford,F-650,2023,,AZ-0017,Available,176623.00,Unknown
+WESTHUB-V-0018,Van,Ford,Transit,2024,,AZ-0018,Available,184542.00,Unknown
+WESTHUB-V-0019,Truck,Isuzu,NPR-HD,2025,,AZ-0019,Available,192461.00,Unknown
+WESTHUB-V-0020,Tractor,Volvo,VNL 760,2026,,AZ-0020,Maintenance,200380.00,Unknown
+WESTHUB-V-0021,Tractor,Freightliner,Cascadia,2017,,AZ-0021,Available,208299.00,Unknown
+WESTHUB-V-0022,Truck,Ford,F-650,2018,,AZ-0022,Available,216218.00,Unknown
+WESTHUB-V-0023,Van,Ford,Transit,2019,,AZ-0023,Available,224137.00,Unknown
+WESTHUB-V-0024,Truck,Isuzu,NPR-HD,2020,,AZ-0024,Available,232056.00,Unknown
+WESTHUB-V-0025,Tractor,Volvo,VNL 760,2021,,AZ-0025,Available,239975.00,Unknown
+WESTHUB-V-0026,Tractor,Freightliner,Cascadia,2022,,AZ-0026,Available,247894.00,Unknown
+WESTHUB-V-0027,Truck,Ford,F-650,2023,,AZ-0027,Available,255813.00,Unknown
+WESTHUB-V-0028,Van,Ford,Transit,2024,,AZ-0028,Available,263732.00,Unknown
+WESTHUB-V-0029,Truck,Isuzu,NPR-HD,2025,,AZ-0029,Available,271651.00,Unknown
+WESTHUB-V-0030,Tractor,Volvo,VNL 760,2026,,AZ-0030,Available,279570.00,Unknown
+WESTHUB-V-0031,Tractor,Freightliner,Cascadia,2017,,AZ-0031,Available,287489.00,Unknown
+WESTHUB-V-0032,Truck,Ford,F-650,2018,,AZ-0032,Available,295408.00,Unknown
+WESTHUB-V-0033,Van,Ford,Transit,2019,,AZ-0033,Available,303327.00,Unknown
+WESTHUB-V-0034,Truck,Isuzu,NPR-HD,2020,,AZ-0034,Available,311246.00,Unknown
+WESTHUB-V-0035,Tractor,Volvo,VNL 760,2021,,AZ-0035,Available,319165.00,Unknown
+WESTHUB-V-0036,Tractor,Freightliner,Cascadia,2022,,AZ-0036,Available,327084.00,Unknown
+WESTHUB-V-0037,Truck,Ford,F-650,2023,,AZ-0037,Available,335003.00,Unknown
+WESTHUB-V-0038,Van,Ford,Transit,2024,,AZ-0038,Available,342922.00,Unknown
+WESTHUB-V-0039,Truck,Isuzu,NPR-HD,2025,,AZ-0039,Available,350841.00,Unknown
+WESTHUB-V-0040,Tractor,Volvo,VNL 760,2026,,AZ-0040,Maintenance,358760.00,Unknown
+WESTHUB-V-0041,Tractor,Freightliner,Cascadia,2017,,AZ-0041,Available,366679.00,Unknown
+WESTHUB-V-0042,Truck,Ford,F-650,2018,,AZ-0042,Available,374598.00,Unknown
+WESTHUB-V-0043,Van,Ford,Transit,2019,,AZ-0043,Available,382517.00,Unknown
+WESTHUB-V-0044,Truck,Isuzu,NPR-HD,2020,,AZ-0044,Available,390436.00,Unknown
+WESTHUB-V-0045,Tractor,Volvo,VNL 760,2021,,AZ-0045,Available,398355.00,Unknown
+WESTHUB-V-0046,Tractor,Freightliner,Cascadia,2022,,AZ-0046,Available,406274.00,Unknown
+WESTHUB-V-0047,Truck,Ford,F-650,2023,,AZ-0047,Available,414193.00,Unknown
+WESTHUB-V-0048,Van,Ford,Transit,2024,,AZ-0048,Available,422112.00,Unknown
+WESTHUB-V-0049,Truck,Isuzu,NPR-HD,2025,,AZ-0049,Available,430031.00,Unknown
+WESTHUB-V-0050,Tractor,Volvo,VNL 760,2026,,AZ-0050,Available,437950.00,Unknown
+WESTHUB-V-0051,Tractor,Freightliner,Cascadia,2017,,AZ-0051,Available,445869.00,Unknown
+WESTHUB-V-0052,Truck,Ford,F-650,2018,,AZ-0052,Available,453788.00,Unknown
+WESTHUB-V-0053,Van,Ford,Transit,2019,,AZ-0053,Available,461707.00,Unknown
+WESTHUB-V-0054,Truck,Isuzu,NPR-HD,2020,,AZ-0054,Available,469626.00,Unknown
+WESTHUB-V-0055,Tractor,Volvo,VNL 760,2021,,AZ-0055,Available,477545.00,Unknown
+WESTHUB-V-0056,Tractor,Freightliner,Cascadia,2022,,AZ-0056,Available,485464.00,Unknown
+WESTHUB-V-0057,Truck,Ford,F-650,2023,,AZ-0057,Available,493383.00,Unknown
+WESTHUB-V-0058,Van,Ford,Transit,2024,,AZ-0058,Available,501302.00,Unknown
+WESTHUB-V-0059,Truck,Isuzu,NPR-HD,2025,,AZ-0059,Available,509221.00,Unknown
+WESTHUB-V-0060,Tractor,Volvo,VNL 760,2026,,AZ-0060,Maintenance,517140.00,Unknown
+WESTHUB-V-0061,Tractor,Freightliner,Cascadia,2017,,AZ-0061,Available,525059.00,Unknown
+WESTHUB-V-0062,Truck,Ford,F-650,2018,,AZ-0062,Available,532978.00,Unknown
+WESTHUB-V-0063,Van,Ford,Transit,2019,,AZ-0063,Available,540897.00,Unknown
+WESTHUB-V-0064,Truck,Isuzu,NPR-HD,2020,,AZ-0064,Available,548816.00,Unknown
+WESTHUB-V-0065,Tractor,Volvo,VNL 760,2021,,AZ-0065,Available,556735.00,Unknown
+WESTHUB-V-0066,Tractor,Freightliner,Cascadia,2022,,AZ-0066,Available,564654.00,Unknown
+WESTHUB-V-0067,Truck,Ford,F-650,2023,,AZ-0067,Available,572573.00,Unknown
+WESTHUB-V-0068,Van,Ford,Transit,2024,,AZ-0068,Available,580492.00,Unknown
+WESTHUB-V-0069,Truck,Isuzu,NPR-HD,2025,,AZ-0069,Available,588411.00,Unknown
+WESTHUB-V-0070,Tractor,Volvo,VNL 760,2026,,AZ-0070,Available,596330.00,Unknown
+WESTHUB-V-0071,Tractor,Freightliner,Cascadia,2017,,AZ-0071,Available,604249.00,Unknown
+WESTHUB-V-0072,Truck,Ford,F-650,2018,,AZ-0072,Available,612168.00,Unknown
+WESTHUB-V-0073,Van,Ford,Transit,2019,,AZ-0073,Available,620087.00,Unknown
+WESTHUB-V-0074,Truck,Isuzu,NPR-HD,2020,,AZ-0074,Available,628006.00,Unknown
+WESTHUB-V-0075,Tractor,Volvo,VNL 760,2021,,AZ-0075,Available,635925.00,Unknown
+WESTHUB-V-0076,Tractor,Freightliner,Cascadia,2022,,AZ-0076,Available,643844.00,Unknown
+WESTHUB-V-0077,Truck,Ford,F-650,2023,,AZ-0077,Available,651763.00,Unknown
+WESTHUB-V-0078,Van,Ford,Transit,2024,,AZ-0078,Available,49682.00,Unknown
+WESTHUB-V-0079,Truck,Isuzu,NPR-HD,2025,,AZ-0079,Available,57601.00,Unknown
+WESTHUB-V-0080,Tractor,Volvo,VNL 760,2026,,AZ-0080,Maintenance,65520.00,Unknown
+WESTHUB-V-0081,Tractor,Freightliner,Cascadia,2017,,AZ-0081,Available,73439.00,Unknown
+WESTHUB-V-0082,Truck,Ford,F-650,2018,,AZ-0082,Available,81358.00,Unknown
+WESTHUB-V-0083,Van,Ford,Transit,2019,,AZ-0083,Available,89277.00,Unknown
+WESTHUB-V-0084,Truck,Isuzu,NPR-HD,2020,,AZ-0084,Available,97196.00,Unknown
+WESTHUB-V-0085,Tractor,Volvo,VNL 760,2021,,AZ-0085,Available,105115.00,Unknown
+WESTHUB-V-0086,Tractor,Freightliner,Cascadia,2022,,AZ-0086,Available,113034.00,Unknown
+WESTHUB-V-0087,Truck,Ford,F-650,2023,,AZ-0087,Available,120953.00,Unknown
+WESTHUB-V-0088,Van,Ford,Transit,2024,,AZ-0088,Available,128872.00,Unknown
+WESTHUB-V-0089,Truck,Isuzu,NPR-HD,2025,,AZ-0089,Available,136791.00,Unknown
+WESTHUB-V-0090,Tractor,Volvo,VNL 760,2026,,AZ-0090,Available,144710.00,Unknown
+WESTHUB-V-0091,Tractor,Freightliner,Cascadia,2017,,AZ-0091,Available,152629.00,Unknown
+WESTHUB-V-0092,Truck,Ford,F-650,2018,,AZ-0092,Available,160548.00,Unknown
+WESTHUB-V-0093,Van,Ford,Transit,2019,,AZ-0093,Available,168467.00,Unknown
+WESTHUB-V-0094,Truck,Isuzu,NPR-HD,2020,,AZ-0094,Available,176386.00,Unknown
+WESTHUB-V-0095,Tractor,Volvo,VNL 760,2021,,AZ-0095,Available,184305.00,Unknown
+WESTHUB-V-0096,Tractor,Freightliner,Cascadia,2022,,AZ-0096,Available,192224.00,Unknown
+WESTHUB-V-0097,Truck,Ford,F-650,2023,,AZ-0097,Available,200143.00,Unknown
+WESTHUB-V-0098,Van,Ford,Transit,2024,,AZ-0098,Available,208062.00,Unknown
+WESTHUB-V-0099,Truck,Isuzu,NPR-HD,2025,,AZ-0099,Available,215981.00,Unknown
+WESTHUB-V-0100,Tractor,Volvo,VNL 760,2026,,AZ-0100,Maintenance,223900.00,Unknown
+WESTHUB-V-0101,Tractor,Freightliner,Cascadia,2017,,AZ-0101,Available,231819.00,Unknown
+WESTHUB-V-0102,Truck,Ford,F-650,2018,,AZ-0102,Available,239738.00,Unknown
+WESTHUB-V-0103,Van,Ford,Transit,2019,,AZ-0103,Available,247657.00,Unknown
+WESTHUB-V-0104,Truck,Isuzu,NPR-HD,2020,,AZ-0104,Available,255576.00,Unknown
+WESTHUB-V-0105,Tractor,Volvo,VNL 760,2021,,AZ-0105,Available,263495.00,Unknown
+WESTHUB-V-0106,Tractor,Freightliner,Cascadia,2022,,AZ-0106,Available,271414.00,Unknown
+WESTHUB-V-0107,Truck,Ford,F-650,2023,,AZ-0107,Available,279333.00,Unknown
+WESTHUB-V-0108,Van,Ford,Transit,2024,,AZ-0108,Available,287252.00,Unknown
+WESTHUB-V-0109,Truck,Isuzu,NPR-HD,2025,,AZ-0109,Available,295171.00,Unknown
+WESTHUB-V-0110,Tractor,Volvo,VNL 760,2026,,AZ-0110,Available,303090.00,Unknown
+WESTHUB-V-0111,Tractor,Freightliner,Cascadia,2017,,AZ-0111,Available,311009.00,Unknown
+WESTHUB-V-0112,Truck,Ford,F-650,2018,,AZ-0112,Available,318928.00,Unknown
+WESTHUB-V-0113,Van,Ford,Transit,2019,,AZ-0113,Available,326847.00,Unknown
+WESTHUB-V-0114,Truck,Isuzu,NPR-HD,2020,,AZ-0114,Available,334766.00,Unknown
+WESTHUB-V-0115,Tractor,Volvo,VNL 760,2021,,AZ-0115,Available,342685.00,Unknown
+WESTHUB-V-0116,Tractor,Freightliner,Cascadia,2022,,AZ-0116,Available,350604.00,Unknown
+WESTHUB-V-0117,Truck,Ford,F-650,2023,,AZ-0117,Available,358523.00,Unknown
+WESTHUB-V-0118,Van,Ford,Transit,2024,,AZ-0118,Available,366442.00,Unknown
+WESTHUB-V-0119,Truck,Isuzu,NPR-HD,2025,,AZ-0119,Available,374361.00,Unknown
+WESTHUB-V-0120,Tractor,Volvo,VNL 760,2026,,AZ-0120,Maintenance,382280.00,Unknown
+WESTHUB-V-0121,Tractor,Freightliner,Cascadia,2017,,AZ-0121,Available,390199.00,Unknown
+WESTHUB-V-0122,Truck,Ford,F-650,2018,,AZ-0122,Available,398118.00,Unknown
+WESTHUB-V-0123,Van,Ford,Transit,2019,,AZ-0123,Available,406037.00,Unknown
+WESTHUB-V-0124,Truck,Isuzu,NPR-HD,2020,,AZ-0124,Available,413956.00,Unknown
+WESTHUB-V-0125,Tractor,Volvo,VNL 760,2021,,AZ-0125,Available,421875.00,Unknown
+WESTHUB-V-0126,Tractor,Freightliner,Cascadia,2022,,AZ-0126,Available,429794.00,Unknown
+WESTHUB-V-0127,Truck,Ford,F-650,2023,,AZ-0127,Available,437713.00,Unknown
+WESTHUB-V-0128,Van,Ford,Transit,2024,,AZ-0128,Available,445632.00,Unknown
+WESTHUB-V-0129,Truck,Isuzu,NPR-HD,2025,,AZ-0129,Available,453551.00,Unknown
+WESTHUB-V-0130,Tractor,Volvo,VNL 760,2026,,AZ-0130,Available,461470.00,Unknown
+WESTHUB-V-0131,Tractor,Freightliner,Cascadia,2017,,AZ-0131,Available,469389.00,Unknown
+WESTHUB-V-0132,Truck,Ford,F-650,2018,,AZ-0132,Available,477308.00,Unknown
+WESTHUB-V-0133,Van,Ford,Transit,2019,,AZ-0133,Available,485227.00,Unknown
+WESTHUB-V-0134,Truck,Isuzu,NPR-HD,2020,,AZ-0134,Available,493146.00,Unknown
+WESTHUB-V-0135,Tractor,Volvo,VNL 760,2021,,AZ-0135,Available,501065.00,Unknown
+WESTHUB-V-0136,Tractor,Freightliner,Cascadia,2022,,AZ-0136,Available,508984.00,Unknown
+WESTHUB-V-0137,Truck,Ford,F-650,2023,,AZ-0137,Available,516903.00,Unknown
+WESTHUB-V-0138,Van,Ford,Transit,2024,,AZ-0138,Available,524822.00,Unknown
+WESTHUB-V-0139,Truck,Isuzu,NPR-HD,2025,,AZ-0139,Available,532741.00,Unknown
+WESTHUB-V-0140,Tractor,Volvo,VNL 760,2026,,AZ-0140,Maintenance,540660.00,Unknown
+WESTHUB-V-0141,Tractor,Freightliner,Cascadia,2017,,AZ-0141,Available,548579.00,Unknown
+WESTHUB-V-0142,Truck,Ford,F-650,2018,,AZ-0142,Available,556498.00,Unknown
+WESTHUB-V-0143,Van,Ford,Transit,2019,,AZ-0143,Available,564417.00,Unknown
+WESTHUB-V-0144,Truck,Isuzu,NPR-HD,2020,,AZ-0144,Available,572336.00,Unknown
+WESTHUB-V-0145,Tractor,Volvo,VNL 760,2021,,AZ-0145,Available,580255.00,Unknown
+WESTHUB-V-0146,Tractor,Freightliner,Cascadia,2022,,AZ-0146,Available,588174.00,Unknown
+WESTHUB-V-0147,Truck,Ford,F-650,2023,,AZ-0147,Available,596093.00,Unknown
+WESTHUB-V-0148,Van,Ford,Transit,2024,,AZ-0148,Available,604012.00,Unknown
+WESTHUB-V-0149,Truck,Isuzu,NPR-HD,2025,,AZ-0149,Available,611931.00,Unknown
+WESTHUB-V-0150,Tractor,Volvo,VNL 760,2026,,AZ-0150,Available,619850.00,Unknown
+WESTHUB-V-0151,Tractor,Freightliner,Cascadia,2017,,AZ-0151,Available,627769.00,Unknown
+WESTHUB-V-0152,Truck,Ford,F-650,2018,,AZ-0152,Available,635688.00,Unknown
+WESTHUB-V-0153,Van,Ford,Transit,2019,,AZ-0153,Available,643607.00,Unknown
+WESTHUB-V-0154,Truck,Isuzu,NPR-HD,2020,,AZ-0154,Available,651526.00,Unknown
+WESTHUB-V-0155,Tractor,Volvo,VNL 760,2021,,AZ-0155,Available,49445.00,Unknown
+WESTHUB-V-0156,Tractor,Freightliner,Cascadia,2022,,AZ-0156,Available,57364.00,Unknown
+WESTHUB-V-0157,Truck,Ford,F-650,2023,,AZ-0157,Available,65283.00,Unknown
+WESTHUB-V-0158,Van,Ford,Transit,2024,,AZ-0158,Available,73202.00,Unknown
+WESTHUB-V-0159,Truck,Isuzu,NPR-HD,2025,,AZ-0159,Available,81121.00,Unknown
+WESTHUB-V-0160,Tractor,Volvo,VNL 760,2026,,AZ-0160,Maintenance,89040.00,Unknown
+WESTHUB-V-0161,Tractor,Freightliner,Cascadia,2017,,AZ-0161,Available,96959.00,Unknown
+WESTHUB-V-0162,Truck,Ford,F-650,2018,,AZ-0162,Available,104878.00,Unknown
+WESTHUB-V-0163,Van,Ford,Transit,2019,,AZ-0163,Available,112797.00,Unknown
+WESTHUB-V-0164,Truck,Isuzu,NPR-HD,2020,,AZ-0164,Available,120716.00,Unknown
+WESTHUB-V-0165,Tractor,Volvo,VNL 760,2021,,AZ-0165,Available,128635.00,Unknown
+WESTHUB-V-0166,Tractor,Freightliner,Cascadia,2022,,AZ-0166,Available,136554.00,Unknown
+WESTHUB-V-0167,Truck,Ford,F-650,2023,,AZ-0167,Available,144473.00,Unknown
+WESTHUB-V-0168,Van,Ford,Transit,2024,,AZ-0168,Available,152392.00,Unknown
+WESTHUB-V-0169,Truck,Isuzu,NPR-HD,2025,,AZ-0169,Available,160311.00,Unknown
+WESTHUB-V-0170,Tractor,Volvo,VNL 760,2026,,AZ-0170,Available,168230.00,Unknown
+WESTHUB-V-0171,Tractor,Freightliner,Cascadia,2017,,AZ-0171,Available,176149.00,Unknown
+WESTHUB-V-0172,Truck,Ford,F-650,2018,,AZ-0172,Available,184068.00,Unknown
+WESTHUB-V-0173,Van,Ford,Transit,2019,,AZ-0173,Available,191987.00,Unknown
+WESTHUB-V-0174,Truck,Isuzu,NPR-HD,2020,,AZ-0174,Available,199906.00,Unknown
+WESTHUB-V-0175,Tractor,Volvo,VNL 760,2021,,AZ-0175,Available,207825.00,Unknown
+WESTHUB-V-0176,Tractor,Freightliner,Cascadia,2022,,AZ-0176,Available,215744.00,Unknown
+WESTHUB-V-0177,Truck,Ford,F-650,2023,,AZ-0177,Available,223663.00,Unknown
+WESTHUB-V-0178,Van,Ford,Transit,2024,,AZ-0178,Available,231582.00,Unknown
+WESTHUB-V-0179,Truck,Isuzu,NPR-HD,2025,,AZ-0179,Available,239501.00,Unknown
+WESTHUB-V-0180,Tractor,Volvo,VNL 760,2026,,AZ-0180,Maintenance,247420.00,Unknown
+WESTHUB-V-0181,Tractor,Freightliner,Cascadia,2017,,AZ-0181,Available,255339.00,Unknown
+WESTHUB-V-0182,Truck,Ford,F-650,2018,,AZ-0182,Available,263258.00,Unknown
+WESTHUB-V-0183,Van,Ford,Transit,2019,,AZ-0183,Available,271177.00,Unknown
+WESTHUB-V-0184,Truck,Isuzu,NPR-HD,2020,,AZ-0184,Available,279096.00,Unknown
+WESTHUB-V-0185,Tractor,Volvo,VNL 760,2021,,AZ-0185,Available,287015.00,Unknown
+WESTHUB-V-0186,Tractor,Freightliner,Cascadia,2022,,AZ-0186,Available,294934.00,Unknown
+WESTHUB-V-0187,Truck,Ford,F-650,2023,,AZ-0187,Available,302853.00,Unknown
+WESTHUB-V-0188,Van,Ford,Transit,2024,,AZ-0188,Available,310772.00,Unknown
+WESTHUB-V-0189,Truck,Isuzu,NPR-HD,2025,,AZ-0189,Available,318691.00,Unknown
+WESTHUB-V-0190,Tractor,Volvo,VNL 760,2026,,AZ-0190,Available,326610.00,Unknown
+WESTHUB-V-0191,Tractor,Freightliner,Cascadia,2017,,AZ-0191,Available,334529.00,Unknown
+WESTHUB-V-0192,Truck,Ford,F-650,2018,,AZ-0192,Available,342448.00,Unknown
+WESTHUB-V-0193,Van,Ford,Transit,2019,,AZ-0193,Available,350367.00,Unknown
+WESTHUB-V-0194,Truck,Isuzu,NPR-HD,2020,,AZ-0194,Available,358286.00,Unknown
+WESTHUB-V-0195,Tractor,Volvo,VNL 760,2021,,AZ-0195,Available,366205.00,Unknown
+WESTHUB-V-0196,Tractor,Freightliner,Cascadia,2022,,AZ-0196,Available,374124.00,Unknown
+WESTHUB-V-0197,Truck,Ford,F-650,2023,,AZ-0197,Available,382043.00,Unknown
+WESTHUB-V-0198,Van,Ford,Transit,2024,,AZ-0198,Available,389962.00,Unknown
+WESTHUB-V-0199,Truck,Isuzu,NPR-HD,2025,,AZ-0199,Available,397881.00,Unknown
+WESTHUB-V-0200,Tractor,Volvo,VNL 760,2026,,AZ-0200,Maintenance,405800.00,Unknown

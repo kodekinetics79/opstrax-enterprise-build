@@ -1,0 +1,3 @@
+deviceSerial,branchCode,imei,deviceCategory,deviceModel,provider,firmwareVersion,notes
+CLHQ-DEV-0001,CL-HQ,990000001000001,GPS,Certification GPS-500,OpsTrax Certification Lab,1.0.0,CERT-LARGE-20260825 CL-HQ inventory 0001
+CLHQ-DEV-0001,CL-HQ,990000001000001,GPS,Certification GPS-500,OpsTrax Certification Lab,1.0.0,CERT-LARGE-20260825 CL-HQ inventory 0001

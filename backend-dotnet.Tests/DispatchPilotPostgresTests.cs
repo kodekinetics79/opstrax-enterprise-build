@@ -16,11 +16,11 @@ public sealed class DispatchPilotPostgresTests
     {
         var db = Db();
         var scope = new SeedData(987654321, 123, 124, 42, 1, 1, 1);
-        var normalBody = new object?[] { 1L, 1L, null, null, null, null, null, null, null, false };
+        var normalBody = new object?[] { 1L, 1L, null, null, null, null, null, null, null, false, null, null };
         Assert.Equal(StatusCodes.Status403Forbidden,
             Status(await InvokeCreate(Principal(scope, "dispatch:update"), normalBody, db)));
 
-        var overrideBody = new object?[] { 1L, 1L, null, null, null, null, null, null, "Supervisor approved", true };
+        var overrideBody = new object?[] { 1L, 1L, null, null, null, null, null, null, "Supervisor approved", true, null, null };
         Assert.Equal(StatusCodes.Status403Forbidden,
             Status(await InvokeCreate(Principal(scope, "dispatch:assign"), overrideBody, db)));
         Assert.Equal(StatusCodes.Status403Forbidden,
@@ -82,12 +82,14 @@ public sealed class DispatchPilotPostgresTests
         try
         {
             var assignment = await Assignment(db, seed, "arrived_delivery", "in_transit");
+            var reference = $"objkey:tenant/{seed.CompanyId}/proof/{Guid.NewGuid():N}.jpg";
+            await RegisterUpload(db, seed, assignment, reference);
             var dispatchDb = Db();
             var driverDb = Db();
             var dispatchCall = InvokeWithBody("DispatchAssignmentProof", assignment,
                 Principal(seed, "dispatch:update"), new object?[] { "delivery", "Signed by receiver", "hash-a", 40m, -74m }, dispatchDb);
             var driverCall = InvokeWithBody("DriverSubmitProof", assignment,
-                Principal(seed, "driver:self"), new object?[] { "delivery", "Signed by receiver", "hash-b", 40m, -74m, null }, driverDb);
+                Principal(seed, "driver:self"), new object?[] { "delivery", "Signed by receiver", null, 40m, -74m, ProofArtifacts(reference) }, driverDb);
             var results = await Task.WhenAll(dispatchCall, driverCall);
 
             Assert.Single(results.Where(r => Status(r) is StatusCodes.Status200OK or StatusCodes.Status201Created));
@@ -98,6 +100,58 @@ public sealed class DispatchPilotPostgresTests
             Assert.Equal("Delivered", final["jobStatus"]);
             Assert.Equal(1, await db.ScalarLongAsync("SELECT COUNT(*) FROM dispatch_proofs WHERE company_id=@c AND assignment_id=@a AND proof_type='delivery'", c => { c.Parameters.AddWithValue("@c", seed.CompanyId); c.Parameters.AddWithValue("@a", assignment); }));
             Assert.Equal(1, await db.ScalarLongAsync("SELECT COUNT(*) FROM outbox_messages WHERE tenant_id=@c AND aggregate_id=@j::text AND event_type='job.delivered'", c => { c.Parameters.AddWithValue("@c", seed.CompanyId); c.Parameters.AddWithValue("@j", seed.JobId); }));
+        }
+        finally { await Cleanup(db, seed.CompanyId); }
+    }
+
+    [Fact]
+    public async Task DriverDeliveryProof_RejectsFakeCrossAssignmentAndReusedUploadReferences()
+    {
+        var db = Db();
+        await new FoundationSchemaService(db).EnsureAsync();
+        await new Batch2SchemaService(db).EnsureAsync();
+        await new DispatchSchemaService(db, NullLogger<DispatchSchemaService>.Instance).EnsureAsync();
+        var seed = await Seed(db);
+        try
+        {
+            var firstAssignment = await Assignment(db, seed, "arrived_delivery", "in_transit");
+            var firstReference = $"objkey:tenant/{seed.CompanyId}/proof/{Guid.NewGuid():N}.jpg";
+            await RegisterUpload(db, seed, firstAssignment, firstReference);
+
+            // Close the first assignment so the partial unique indexes allow another
+            // active assignment for the same driver/vehicle/job test fixture.
+            await db.ExecuteAsync(
+                "UPDATE dispatch_assignments SET assignment_status='cancelled',status='Cancelled' WHERE id=@id AND company_id=@c",
+                c => { c.Parameters.AddWithValue("@id", firstAssignment); c.Parameters.AddWithValue("@c", seed.CompanyId); });
+            var currentAssignment = await Assignment(db, seed, "arrived_delivery", "in_transit");
+            var principal = Principal(seed, "driver:self");
+
+            var fakeReference = $"objkey:tenant/{seed.CompanyId}/proof/not-registered.jpg";
+            Assert.Equal(StatusCodes.Status400BadRequest,
+                Status(await InvokeWithBody("DriverSubmitProof", currentAssignment, principal,
+                    new object?[] { "delivery", null, null, null, null, ProofArtifacts(fakeReference) }, db)));
+            Assert.Equal("arrived_delivery", (await Row(db, currentAssignment))!["assignmentStatus"]);
+
+            Assert.Equal(StatusCodes.Status400BadRequest,
+                Status(await InvokeWithBody("DriverSubmitProof", currentAssignment, principal,
+                    new object?[] { "delivery", null, null, null, null, ProofArtifacts(firstReference) }, db)));
+            Assert.Equal("arrived_delivery", (await Row(db, currentAssignment))!["assignmentStatus"]);
+
+            var currentReference = $"objkey:tenant/{seed.CompanyId}/proof/{Guid.NewGuid():N}.jpg";
+            await RegisterUpload(db, seed, currentAssignment, currentReference);
+            Assert.Equal(StatusCodes.Status200OK,
+                Status(await InvokeWithBody("DriverSubmitProof", currentAssignment, principal,
+                    new object?[] { "delivery", null, null, null, null, ProofArtifacts(currentReference) }, db)));
+            Assert.Equal(1, await db.ScalarLongAsync(
+                @"SELECT COUNT(*) FROM dispatch_proof_uploads
+                  WHERE company_id=@c AND assignment_id=@a AND reference=@r
+                    AND consumed_at IS NOT NULL AND proof_id IS NOT NULL",
+                c => { c.Parameters.AddWithValue("@c", seed.CompanyId); c.Parameters.AddWithValue("@a", currentAssignment); c.Parameters.AddWithValue("@r", currentReference); }));
+
+            // The proof uniqueness guard and consumed registration both fail closed on replay.
+            Assert.Equal(StatusCodes.Status409Conflict,
+                Status(await InvokeWithBody("DriverSubmitProof", currentAssignment, principal,
+                    new object?[] { "delivery", null, null, null, null, ProofArtifacts(currentReference) }, db)));
         }
         finally { await Cleanup(db, seed.CompanyId); }
     }
@@ -125,6 +179,62 @@ public sealed class DispatchPilotPostgresTests
         finally { await Cleanup(db, seed.CompanyId); }
     }
 
+    [Fact]
+    public async Task CreateAssignment_BindsOnlyCurrentRouteTrip_WhenTerminalHistoryExists()
+    {
+        var db = Db();
+        await new FoundationSchemaService(db).EnsureAsync();
+        await new Batch2SchemaService(db).EnsureAsync();
+        await new DispatchSchemaService(db, NullLogger<DispatchSchemaService>.Instance).EnsureAsync();
+        var seed = await Seed(db);
+        try
+        {
+            await db.ExecuteAsync("UPDATE drivers SET safety_score=90 WHERE id=@id",
+                c => c.Parameters.AddWithValue("@id", seed.DriverId));
+            var route = await db.InsertAsync(
+                @"INSERT INTO routes(company_id,route_code,name,status,assigned_vehicle_id,assigned_driver_id)
+                  VALUES (@c,@code,'Governed route','Active',@v,@d)",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@c", seed.CompanyId);
+                    c.Parameters.AddWithValue("@code", $"R-{Guid.NewGuid():N}"[..20]);
+                    c.Parameters.AddWithValue("@v", seed.VehicleId);
+                    c.Parameters.AddWithValue("@d", seed.DriverId);
+                });
+            var historical = await db.InsertAsync(
+                @"INSERT INTO trips(company_id,vehicle_id,driver_id,route_id,job_id,status,trip_ref,planned_start_time)
+                  VALUES (@c,@v,@d,@r,@j,'completed',@ref,NOW()-INTERVAL '2 days')",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@c", seed.CompanyId); c.Parameters.AddWithValue("@v", seed.VehicleId);
+                    c.Parameters.AddWithValue("@d", seed.DriverId); c.Parameters.AddWithValue("@r", route);
+                    c.Parameters.AddWithValue("@j", seed.JobId); c.Parameters.AddWithValue("@ref", $"TRP-H-{Guid.NewGuid():N}"[..24]);
+                });
+            var current = await db.InsertAsync(
+                @"INSERT INTO trips(company_id,vehicle_id,driver_id,route_id,job_id,status,trip_ref,planned_start_time)
+                  VALUES (@c,@v,@d,@r,@j,'planned',@ref,NOW())",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@c", seed.CompanyId); c.Parameters.AddWithValue("@v", seed.VehicleId);
+                    c.Parameters.AddWithValue("@d", seed.DriverId); c.Parameters.AddWithValue("@r", route);
+                    c.Parameters.AddWithValue("@j", seed.JobId); c.Parameters.AddWithValue("@ref", $"TRP-C-{Guid.NewGuid():N}"[..24]);
+                });
+
+            var body = new object?[] { seed.VehicleId, seed.DriverId, null, route, null, null, null, null, null, false, null, null };
+            var result = await InvokeCreate(Principal(seed, "dispatch:assign"), body, db);
+
+            Assert.Equal(StatusCodes.Status201Created, Status(result));
+            var assignment = await db.QuerySingleAsync(
+                "SELECT trip_id,job_id FROM dispatch_assignments WHERE company_id=@c AND route_id=@r",
+                c => { c.Parameters.AddWithValue("@c", seed.CompanyId); c.Parameters.AddWithValue("@r", route); });
+            Assert.NotNull(assignment);
+            Assert.Equal(current, Convert.ToInt64(assignment!["tripId"]));
+            Assert.Equal(seed.JobId, Convert.ToInt64(assignment["jobId"]));
+            Assert.NotEqual(historical, Convert.ToInt64(assignment["tripId"]));
+        }
+        finally { await Cleanup(db, seed.CompanyId); }
+    }
+
     private static async Task<IResult> Invoke(string name, params object[] args)
     {
         var method = typeof(EndpointMappings).GetMethod(name, BindingFlags.NonPublic | BindingFlags.Static)!;
@@ -142,6 +252,31 @@ public sealed class DispatchPilotPostgresTests
             ? Invoke(name, http, id, body, db, new AuditService(db), CancellationToken.None)
             : Invoke(name, id, http, body, db, new AuditService(db), CancellationToken.None);
     }
+
+    private static Array ProofArtifacts(string reference)
+    {
+        var artifactType = typeof(EndpointMappings).GetNestedType("DriverProofArtifactBody", BindingFlags.NonPublic)!;
+        var artifact = Activator.CreateInstance(artifactType,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null,
+            new object?[] { "photo", reference, "image/jpeg", 123L }, null)!;
+        var artifacts = Array.CreateInstance(artifactType, 1);
+        artifacts.SetValue(artifact, 0);
+        return artifacts;
+    }
+
+    private static Task RegisterUpload(Database db, SeedData seed, long assignmentId, string reference) =>
+        db.ExecuteAsync(
+            @"INSERT INTO dispatch_proof_uploads
+                (company_id,assignment_id,driver_id,uploaded_by_user_id,kind,reference,content_type,size_bytes)
+              VALUES (@c,@a,@d,@u,'photo',@r,'image/jpeg',123)",
+            c =>
+            {
+                c.Parameters.AddWithValue("@c", seed.CompanyId);
+                c.Parameters.AddWithValue("@a", assignmentId);
+                c.Parameters.AddWithValue("@d", seed.DriverId);
+                c.Parameters.AddWithValue("@u", seed.UserId);
+                c.Parameters.AddWithValue("@r", reference);
+            });
 
     private static Task<IResult> InvokeCreate(HttpContext http, object?[] bodyArgs, Database db)
     {
@@ -174,7 +309,7 @@ public sealed class DispatchPilotPostgresTests
         var other = await db.InsertAsync("INSERT INTO branches(company_id,branch_code,name,status) VALUES (@c,'OTHER','Other','Active')", c => c.Parameters.AddWithValue("@c", company));
         var user = await db.InsertAsync("INSERT INTO users(company_id,branch_id,full_name,email,role_name,status) VALUES (@c,@b,'Pilot Driver',@e,'Driver','Active')", c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@b", branch); c.Parameters.AddWithValue("@e", $"{suffix}@example.invalid"); });
         var driver = await db.InsertAsync("INSERT INTO drivers(company_id,branch_id,user_id,driver_code,full_name,status) VALUES (@c,@b,@u,@x,'Pilot Driver','Available')", c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@b", branch); c.Parameters.AddWithValue("@u", user); c.Parameters.AddWithValue("@x", $"D-{suffix}"); });
-        var vehicle = await db.InsertAsync("INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,status) VALUES (@c,@b,@x,'Truck','Available')", c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@b", branch); c.Parameters.AddWithValue("@x", $"V-{suffix}"); });
+        var vehicle = await db.InsertAsync("INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,vin_exception_type,alternate_identifier,status) VALUES (@c,@b,@x,'Truck','legacy-fleet-identifier',@x,'Available')", c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@b", branch); c.Parameters.AddWithValue("@x", $"V-{suffix}"); });
         var job = await db.InsertAsync("INSERT INTO jobs(company_id,branch_id,job_code,job_type,status) VALUES (@c,@b,@x,'Delivery','Assigned')", c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@b", branch); c.Parameters.AddWithValue("@x", $"J-{suffix}"); });
         return new(company, branch, other, user, driver, vehicle, job);
     }
@@ -190,7 +325,7 @@ public sealed class DispatchPilotPostgresTests
 
     private static async Task Cleanup(Database db, long company)
     {
-        foreach (var sql in new[] { "DELETE FROM dispatch_proof_artifacts WHERE company_id=@c", "DELETE FROM dispatch_proofs WHERE company_id=@c", "DELETE FROM dispatch_exceptions WHERE company_id=@c", "DELETE FROM audit_logs WHERE company_id=@c", "DELETE FROM outbox_messages WHERE tenant_id=@c", "DELETE FROM dispatch_assignments WHERE company_id=@c", "DELETE FROM jobs WHERE company_id=@c", "DELETE FROM vehicles WHERE company_id=@c", "DELETE FROM drivers WHERE company_id=@c", "DELETE FROM users WHERE company_id=@c", "DELETE FROM branches WHERE company_id=@c", "DELETE FROM companies WHERE id=@c" })
+        foreach (var sql in new[] { "DELETE FROM dispatch_proof_uploads WHERE company_id=@c", "DELETE FROM dispatch_proof_artifacts WHERE company_id=@c", "DELETE FROM dispatch_proofs WHERE company_id=@c", "DELETE FROM dispatch_exceptions WHERE company_id=@c", "DELETE FROM audit_logs WHERE company_id=@c", "DELETE FROM outbox_messages WHERE tenant_id=@c", "DELETE FROM dispatch_assignments WHERE company_id=@c", "DELETE FROM trips WHERE company_id=@c", "DELETE FROM route_stops WHERE route_id IN (SELECT id FROM routes WHERE company_id=@c)", "DELETE FROM routes WHERE company_id=@c", "DELETE FROM jobs WHERE company_id=@c", "DELETE FROM vehicles WHERE company_id=@c", "DELETE FROM drivers WHERE company_id=@c", "DELETE FROM users WHERE company_id=@c", "DELETE FROM branches WHERE company_id=@c", "DELETE FROM companies WHERE id=@c" })
             await db.ExecuteAsync(sql, c => c.Parameters.AddWithValue("@c", company));
     }
 

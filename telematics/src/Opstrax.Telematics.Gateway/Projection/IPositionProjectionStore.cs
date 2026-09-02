@@ -44,8 +44,13 @@ internal interface IPositionProjectionStore
     /// </summary>
     /// <param name="evt">The canonical event to project. Its registry-resolved ownership is authoritative.</param>
     /// <param name="cancellationToken">Cancels the projection.</param>
-    Task<ProjectionOutcome> ApplyAsync(CanonicalTelemetryEvent evt, CancellationToken cancellationToken = default);
+    Task<ProjectionResult> ApplyAsync(CanonicalTelemetryEvent evt, CancellationToken cancellationToken = default);
 }
+
+/// <summary>Projection disposition plus the authoritative canonical ownership persisted with it.</summary>
+internal readonly record struct ProjectionResult(
+    ProjectionOutcome Outcome,
+    CanonicalTelemetryEvent Event);
 
 /// <summary>
 /// The disposition of a single <see cref="IPositionProjectionStore.ApplyAsync"/> call. Every value

@@ -9,6 +9,7 @@ export const API_BASE_URL =
     .trim()
     .replace(/\/+$/, "");
 
-export const SECURE_SESSION_KEY = "opstrax.mobile.session.v1";
-export const SECURE_WORKSPACE_JOB_KEY = "opstrax.mobile.job.v1";
+const storageStage = STAGE_LABEL.toLowerCase().replace(/[^a-z0-9._-]+/g, "-");
 
+export const SECURE_SESSION_KEY = `opstrax.mobile.${storageStage}.session.v2`;
+export const SECURE_WORKSPACE_JOB_KEY = `opstrax.mobile.${storageStage}.job.v2`;

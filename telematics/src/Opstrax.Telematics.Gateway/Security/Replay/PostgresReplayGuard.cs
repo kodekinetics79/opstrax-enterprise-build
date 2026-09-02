@@ -124,14 +124,18 @@ public sealed class PostgresReplayGuard : ITelemetryReplayGuard, IDisposable
 
         DeviceHighWater? state = null;
         await using (var stateCommand = new NpgsqlCommand(
-            "SELECT last_raw_serial,high_water_unwrapped FROM telemetry_replay_device_state WHERE device_id=@device_id FOR UPDATE",
+            "SELECT last_raw_serial,high_water_unwrapped,pending_epoch_base,epoch_floor FROM telemetry_replay_device_state WHERE device_id=@device_id FOR UPDATE",
             connection, transaction))
         {
             stateCommand.Parameters.AddWithValue("device_id", deviceId);
             await using var stateReader = await stateCommand.ExecuteReaderAsync(
                 CommandBehavior.SingleRow, cancellationToken).ConfigureAwait(false);
             if (await stateReader.ReadAsync(cancellationToken).ConfigureAwait(false))
-                state = new DeviceHighWater(stateReader.GetInt64(0), stateReader.GetInt64(1));
+                state = new DeviceHighWater(
+                    stateReader.GetInt64(0),
+                    stateReader.GetInt64(1),
+                    stateReader.IsDBNull(2) ? null : stateReader.GetInt64(2),
+                    stateReader.IsDBNull(3) ? 0L : stateReader.GetInt64(3));
         }
 
         long unwrappedSerial;
@@ -145,11 +149,48 @@ public sealed class PostgresReplayGuard : ITelemetryReplayGuard, IDisposable
             long? maxExisting = highResult is null or DBNull ? null : Convert.ToInt64(highResult);
             unwrappedSerial = BootstrapUnwrapped(protocolSerial, maxExisting, _serialModulus);
         }
+        else if (state.PendingEpochBase is long epochBase)
+        {
+            // A successful login declared that this device may legitimately have restarted its
+            // counter. Apply the generation base directly: base + raw is strictly ahead of the
+            // previous high-water mark for EVERY serial in the counter's range, whereas nudging the
+            // unwrap origin and re-using the nearer-half rule would still push a high raw serial
+            // backwards. Applied once; the row's pending base is cleared below.
+            unwrappedSerial = checked(epochBase + protocolSerial);
+        }
         else
         {
             unwrappedSerial = Unwrap(
                 protocolSerial, state.LastRawSerial, state.HighWaterUnwrapped, _serialModulus);
         }
+
+        // ── Cross-epoch replay defence. ─────────────────────────────────────────────
+        // A login-declared epoch deliberately re-issues low serials, so the same captured frame
+        // presented after a power cycle would receive a BRAND-NEW unwrapped serial and slide past
+        // the UNIQUE (device_id,unwrapped_serial,content_hash) key untouched. That is the hole the
+        // epoch mechanism would otherwise open, and this closes it: a digest this device already
+        // produced BELOW the current epoch floor is a replay, whatever serial it now claims.
+        //
+        // Deliberately scoped to the epoch floor rather than to the device's whole history. A
+        // natural counter WRAP is real forward progress — the device genuinely emitted 65 536
+        // frames — so identical bytes recurring after one are a new occurrence, not a replay, and
+        // the floor only moves when an authenticated login says a reset may have happened.
+        if (state is { EpochFloor: > 0 } floored)
+        {
+            await using var priorEpoch = new NpgsqlCommand(
+                $"SELECT event_id FROM {TableName} WHERE device_id=@device_id AND content_hash=@content_hash AND unwrapped_serial < @floor LIMIT 1",
+                connection, transaction);
+            priorEpoch.Parameters.AddWithValue("device_id", deviceId);
+            priorEpoch.Parameters.AddWithValue("content_hash", contentHash);
+            priorEpoch.Parameters.AddWithValue("floor", floored.EpochFloor);
+            object? priorEvent = await priorEpoch.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+            if (priorEvent is Guid priorEventId)
+            {
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                return ReplayDecision.DuplicateReplay(priorEventId);
+            }
+        }
+
         long? previousHighWater = state?.HighWaterUnwrapped;
         long? previousRawSerial = state?.LastRawSerial;
 
@@ -164,10 +205,20 @@ public sealed class PostgresReplayGuard : ITelemetryReplayGuard, IDisposable
         else if (unwrappedSerial > state.HighWaterUnwrapped)
         {
             await using var advanceState = new NpgsqlCommand(
-                "UPDATE telemetry_replay_device_state SET last_raw_serial=@serial,high_water_unwrapped=@unwrapped,updated_at=NOW() WHERE device_id=@device_id",
+                "UPDATE telemetry_replay_device_state SET last_raw_serial=@serial,high_water_unwrapped=@unwrapped,pending_epoch_base=NULL,updated_at=NOW() WHERE device_id=@device_id",
                 connection, transaction);
             AddStateParameters(advanceState, deviceId, protocolSerial, unwrappedSerial);
             await advanceState.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+        else if (state.PendingEpochBase is not null)
+        {
+            // The epoch was consumed by a frame that did not advance the mark. Clear it anyway so a
+            // single login can only ever open ONE generation, no matter how the first frame lands.
+            await using var clearEpoch = new NpgsqlCommand(
+                "UPDATE telemetry_replay_device_state SET pending_epoch_base=NULL,updated_at=NOW() WHERE device_id=@device_id",
+                connection, transaction);
+            clearEpoch.Parameters.AddWithValue("device_id", deviceId);
+            await clearEpoch.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 
         Guid candidateEventId = Guid.NewGuid();
@@ -214,6 +265,46 @@ public sealed class PostgresReplayGuard : ITelemetryReplayGuard, IDisposable
         if (previousHighWater is long high && unwrappedSerial < high)
             return ReplayDecision.OutOfOrder(previousRawSerial ?? protocolSerial, eventId);
         return ReplayDecision.Accept(eventId);
+    }
+
+    /// <inheritdoc />
+    public async Task BeginSessionEpochAsync(string deviceId, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrEmpty(deviceId))
+            throw new ArgumentException("deviceId must be non-empty.", nameof(deviceId));
+        if (_serialModulus is not long modulus)
+            return; // A non-wrapping counter has no generations to advance.
+
+        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+
+        // Same advisory lock the frame path takes, so an epoch stamp and an in-flight frame for the
+        // same device are serialised against each other rather than interleaving.
+        await using (var deviceLock = new NpgsqlCommand(
+            "SELECT pg_advisory_xact_lock(hashtextextended(@device_id,0))", connection, transaction))
+        {
+            deviceLock.Parameters.AddWithValue("device_id", deviceId);
+            await deviceLock.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        // Only a device with existing state needs moving: a device with none bootstraps its own
+        // generation on its first frame. Note this UPDATE touches ONLY pending_epoch_base — the
+        // high-water mark is not lowered and not one row of the seen ledger is removed, so replay
+        // history survives the reboot intact.
+        await using (var stamp = new NpgsqlCommand(
+            "UPDATE telemetry_replay_device_state "
+            + "SET pending_epoch_base=((high_water_unwrapped / @modulus) + 1) * @modulus, "
+            + "    epoch_floor=((high_water_unwrapped / @modulus) + 1) * @modulus, "
+            + "    updated_at=NOW() "
+            + "WHERE device_id=@device_id",
+            connection, transaction))
+        {
+            stamp.Parameters.AddWithValue("device_id", deviceId);
+            stamp.Parameters.AddWithValue("modulus", modulus);
+            await stamp.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private static void AddStateParameters(
@@ -272,5 +363,5 @@ public sealed class PostgresReplayGuard : ITelemetryReplayGuard, IDisposable
             _dataSource.Dispose();
     }
 
-    private sealed record DeviceHighWater(long LastRawSerial, long HighWaterUnwrapped);
+    private sealed record DeviceHighWater(long LastRawSerial, long HighWaterUnwrapped, long? PendingEpochBase, long EpochFloor);
 }

@@ -82,7 +82,8 @@ public sealed class EntitlementAwareNavigationTests
         Assert.Contains("enabled: canViewAlerts", overview, StringComparison.Ordinal);
         Assert.Contains("enabled: canViewJobs", overview, StringComparison.Ordinal);
         Assert.Contains("enabled: canViewVehicles", overview, StringComparison.Ordinal);
-        Assert.Contains("enabled: canViewDrivers", overview, StringComparison.Ordinal);
+        Assert.DoesNotContain("driversApi.list()", overview, StringComparison.Ordinal);
+        Assert.Contains("/api/live-operations/fleet-overview", endpoints, StringComparison.Ordinal);
         Assert.Contains("const canViewDevices = hasPermission(\"telemetry.devices.read\")", overview, StringComparison.Ordinal);
         Assert.Contains("if (!canViewAlerts) return []", overview, StringComparison.Ordinal);
         Assert.Contains("Not available for this role.", overview, StringComparison.Ordinal);

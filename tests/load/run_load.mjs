@@ -19,7 +19,11 @@ try {
     process.exit(0);
   }
 
-  const result = spawnSync("k6", ["run", path.join(directory, "readonly.js")], {
+  const k6Arguments = ["run"];
+  const summaryExportPath = process.env.LOAD_SUMMARY_EXPORT_PATH?.trim();
+  if (summaryExportPath) k6Arguments.push("--summary-export", path.resolve(summaryExportPath));
+  k6Arguments.push(path.join(directory, "readonly.js"));
+  const result = spawnSync("k6", k6Arguments, {
     cwd: directory,
     stdio: "inherit",
     env: {

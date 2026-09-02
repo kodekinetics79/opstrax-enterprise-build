@@ -61,6 +61,7 @@ export function MaintenanceCommandPage() {
   const hasPermission = useHasPermission();
   const canManage = hasPermission("maintenance:manage");
   const canClose  = hasPermission("maintenance:close");
+  const canExport = hasPermission("reports:export");
   const vehicles = useQuery<AnyRecord[]>({
     queryKey: ["vehicles", "maintenance-selector"],
     queryFn: vehiclesApi.list,
@@ -133,9 +134,9 @@ export function MaintenanceCommandPage() {
           >
             <Plus className="h-4 w-4" /> Create work order
           </button>}
-          <button type="button" className="btn-ghost" onClick={() => exportCsv("maintenance-defects", defects.data ?? [])}>
+          {canExport && <button type="button" className="btn-ghost" onClick={() => exportCsv("maintenance-defects", defects.data ?? [])}>
             Export Defects
-          </button>
+          </button>}
         </div>}
       />
 

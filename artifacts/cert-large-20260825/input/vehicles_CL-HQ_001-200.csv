@@ -1,0 +1,201 @@
+vehicleCode,branchCode,type,make,model,year,vehicleClass,odometerMiles,vin,vinExceptionType,alternateIdentifier,plateNumber,plateJurisdiction,status
+CLHQ-V-0001,CL-HQ,Tractor,Freightliner,Cascadia,2017,Class 8,49919,,legacy-fleet-identifier,CERT-CLHQ-VEH-0001,OH-0001,OH,Available
+CLHQ-V-0002,CL-HQ,Truck,Ford,F-650,2018,Class 6,57838,,legacy-fleet-identifier,CERT-CLHQ-VEH-0002,OH-0002,OH,Available
+CLHQ-V-0003,CL-HQ,Van,Ford,Transit,2019,Class 2b,65757,,legacy-fleet-identifier,CERT-CLHQ-VEH-0003,OH-0003,OH,Available
+CLHQ-V-0004,CL-HQ,Truck,Isuzu,NPR-HD,2020,Class 5,73676,,legacy-fleet-identifier,CERT-CLHQ-VEH-0004,OH-0004,OH,Available
+CLHQ-V-0005,CL-HQ,Tractor,Volvo,VNL 760,2021,Class 8,81595,,legacy-fleet-identifier,CERT-CLHQ-VEH-0005,OH-0005,OH,Available
+CLHQ-V-0006,CL-HQ,Tractor,Freightliner,Cascadia,2022,Class 8,89514,,legacy-fleet-identifier,CERT-CLHQ-VEH-0006,OH-0006,OH,Available
+CLHQ-V-0007,CL-HQ,Truck,Ford,F-650,2023,Class 6,97433,,legacy-fleet-identifier,CERT-CLHQ-VEH-0007,OH-0007,OH,Available
+CLHQ-V-0008,CL-HQ,Van,Ford,Transit,2024,Class 2b,105352,,legacy-fleet-identifier,CERT-CLHQ-VEH-0008,OH-0008,OH,Available
+CLHQ-V-0009,CL-HQ,Truck,Isuzu,NPR-HD,2025,Class 5,113271,,legacy-fleet-identifier,CERT-CLHQ-VEH-0009,OH-0009,OH,Available
+CLHQ-V-0010,CL-HQ,Tractor,Volvo,VNL 760,2026,Class 8,121190,,legacy-fleet-identifier,CERT-CLHQ-VEH-0010,OH-0010,OH,Available
+CLHQ-V-0011,CL-HQ,Tractor,Freightliner,Cascadia,2017,Class 8,129109,,legacy-fleet-identifier,CERT-CLHQ-VEH-0011,OH-0011,OH,Available
+CLHQ-V-0012,CL-HQ,Truck,Ford,F-650,2018,Class 6,137028,,legacy-fleet-identifier,CERT-CLHQ-VEH-0012,OH-0012,OH,Available
+CLHQ-V-0013,CL-HQ,Van,Ford,Transit,2019,Class 2b,144947,,legacy-fleet-identifier,CERT-CLHQ-VEH-0013,OH-0013,OH,Available
+CLHQ-V-0014,CL-HQ,Truck,Isuzu,NPR-HD,2020,Class 5,152866,,legacy-fleet-identifier,CERT-CLHQ-VEH-0014,OH-0014,OH,Available
+CLHQ-V-0015,CL-HQ,Tractor,Volvo,VNL 760,2021,Class 8,160785,,legacy-fleet-identifier,CERT-CLHQ-VEH-0015,OH-0015,OH,Available
+CLHQ-V-0016,CL-HQ,Tractor,Freightliner,Cascadia,2022,Class 8,168704,,legacy-fleet-identifier,CERT-CLHQ-VEH-0016,OH-0016,OH,Available
+CLHQ-V-0017,CL-HQ,Truck,Ford,F-650,2023,Class 6,176623,,legacy-fleet-identifier,CERT-CLHQ-VEH-0017,OH-0017,OH,Available
+CLHQ-V-0018,CL-HQ,Van,Ford,Transit,2024,Class 2b,184542,,legacy-fleet-identifier,CERT-CLHQ-VEH-0018,OH-0018,OH,Available
+CLHQ-V-0019,CL-HQ,Truck,Isuzu,NPR-HD,2025,Class 5,192461,,legacy-fleet-identifier,CERT-CLHQ-VEH-0019,OH-0019,OH,Available
+CLHQ-V-0020,CL-HQ,Tractor,Volvo,VNL 760,2026,Class 8,200380,,legacy-fleet-identifier,CERT-CLHQ-VEH-0020,OH-0020,OH,Maintenance
+CLHQ-V-0021,CL-HQ,Tractor,Freightliner,Cascadia,2017,Class 8,208299,,legacy-fleet-identifier,CERT-CLHQ-VEH-0021,OH-0021,OH,Available
+CLHQ-V-0022,CL-HQ,Truck,Ford,F-650,2018,Class 6,216218,,legacy-fleet-identifier,CERT-CLHQ-VEH-0022,OH-0022,OH,Available
+CLHQ-V-0023,CL-HQ,Van,Ford,Transit,2019,Class 2b,224137,,legacy-fleet-identifier,CERT-CLHQ-VEH-0023,OH-0023,OH,Available
+CLHQ-V-0024,CL-HQ,Truck,Isuzu,NPR-HD,2020,Class 5,232056,,legacy-fleet-identifier,CERT-CLHQ-VEH-0024,OH-0024,OH,Available
+CLHQ-V-0025,CL-HQ,Tractor,Volvo,VNL 760,2021,Class 8,239975,,legacy-fleet-identifier,CERT-CLHQ-VEH-0025,OH-0025,OH,Available
+CLHQ-V-0026,CL-HQ,Tractor,Freightliner,Cascadia,2022,Class 8,247894,,legacy-fleet-identifier,CERT-CLHQ-VEH-0026,OH-0026,OH,Available
+CLHQ-V-0027,CL-HQ,Truck,Ford,F-650,2023,Class 6,255813,,legacy-fleet-identifier,CERT-CLHQ-VEH-0027,OH-0027,OH,Available
+CLHQ-V-0028,CL-HQ,Van,Ford,Transit,2024,Class 2b,263732,,legacy-fleet-identifier,CERT-CLHQ-VEH-0028,OH-0028,OH,Available
+CLHQ-V-0029,CL-HQ,Truck,Isuzu,NPR-HD,2025,Class 5,271651,,legacy-fleet-identifier,CERT-CLHQ-VEH-0029,OH-0029,OH,Available
+CLHQ-V-0030,CL-HQ,Tractor,Volvo,VNL 760,2026,Class 8,279570,,legacy-fleet-identifier,CERT-CLHQ-VEH-0030,OH-0030,OH,Available
+CLHQ-V-0031,CL-HQ,Tractor,Freightliner,Cascadia,2017,Class 8,287489,,legacy-fleet-identifier,CERT-CLHQ-VEH-0031,OH-0031,OH,Available
+CLHQ-V-0032,CL-HQ,Truck,Ford,F-650,2018,Class 6,295408,,legacy-fleet-identifier,CERT-CLHQ-VEH-0032,OH-0032,OH,Available
+CLHQ-V-0033,CL-HQ,Van,Ford,Transit,2019,Class 2b,303327,,legacy-fleet-identifier,CERT-CLHQ-VEH-0033,OH-0033,OH,Available
+CLHQ-V-0034,CL-HQ,Truck,Isuzu,NPR-HD,2020,Class 5,311246,,legacy-fleet-identifier,CERT-CLHQ-VEH-0034,OH-0034,OH,Available
+CLHQ-V-0035,CL-HQ,Tractor,Volvo,VNL 760,2021,Class 8,319165,,legacy-fleet-identifier,CERT-CLHQ-VEH-0035,OH-0035,OH,Available
+CLHQ-V-0036,CL-HQ,Tractor,Freightliner,Cascadia,2022,Class 8,327084,,legacy-fleet-identifier,CERT-CLHQ-VEH-0036,OH-0036,OH,Available
+CLHQ-V-0037,CL-HQ,Truck,Ford,F-650,2023,Class 6,335003,,legacy-fleet-identifier,CERT-CLHQ-VEH-0037,OH-0037,OH,Available
+CLHQ-V-0038,CL-HQ,Van,Ford,Transit,2024,Class 2b,342922,,legacy-fleet-identifier,CERT-CLHQ-VEH-0038,OH-0038,OH,Available
+CLHQ-V-0039,CL-HQ,Truck,Isuzu,NPR-HD,2025,Class 5,350841,,legacy-fleet-identifier,CERT-CLHQ-VEH-0039,OH-0039,OH,Available
+CLHQ-V-0040,CL-HQ,Tractor,Volvo,VNL 760,2026,Class 8,358760,,legacy-fleet-identifier,CERT-CLHQ-VEH-0040,OH-0040,OH,Maintenance
+CLHQ-V-0041,CL-HQ,Tractor,Freightliner,Cascadia,2017,Class 8,366679,,legacy-fleet-identifier,CERT-CLHQ-VEH-0041,OH-0041,OH,Available
+CLHQ-V-0042,CL-HQ,Truck,Ford,F-650,2018,Class 6,374598,,legacy-fleet-identifier,CERT-CLHQ-VEH-0042,OH-0042,OH,Available
+CLHQ-V-0043,CL-HQ,Van,Ford,Transit,2019,Class 2b,382517,,legacy-fleet-identifier,CERT-CLHQ-VEH-0043,OH-0043,OH,Available
+CLHQ-V-0044,CL-HQ,Truck,Isuzu,NPR-HD,2020,Class 5,390436,,legacy-fleet-identifier,CERT-CLHQ-VEH-0044,OH-0044,OH,Available
+CLHQ-V-0045,CL-HQ,Tractor,Volvo,VNL 760,2021,Class 8,398355,,legacy-fleet-identifier,CERT-CLHQ-VEH-0045,OH-0045,OH,Available
+CLHQ-V-0046,CL-HQ,Tractor,Freightliner,Cascadia,2022,Class 8,406274,,legacy-fleet-identifier,CERT-CLHQ-VEH-0046,OH-0046,OH,Available
+CLHQ-V-0047,CL-HQ,Truck,Ford,F-650,2023,Class 6,414193,,legacy-fleet-identifier,CERT-CLHQ-VEH-0047,OH-0047,OH,Available
+CLHQ-V-0048,CL-HQ,Van,Ford,Transit,2024,Class 2b,422112,,legacy-fleet-identifier,CERT-CLHQ-VEH-0048,OH-0048,OH,Available
+CLHQ-V-0049,CL-HQ,Truck,Isuzu,NPR-HD,2025,Class 5,430031,,legacy-fleet-identifier,CERT-CLHQ-VEH-0049,OH-0049,OH,Available
+CLHQ-V-0050,CL-HQ,Tractor,Volvo,VNL 760,2026,Class 8,437950,,legacy-fleet-identifier,CERT-CLHQ-VEH-0050,OH-0050,OH,Available
+CLHQ-V-0051,CL-HQ,Tractor,Freightliner,Cascadia,2017,Class 8,445869,,legacy-fleet-identifier,CERT-CLHQ-VEH-0051,OH-0051,OH,Available
+CLHQ-V-0052,CL-HQ,Truck,Ford,F-650,2018,Class 6,453788,,legacy-fleet-identifier,CERT-CLHQ-VEH-0052,OH-0052,OH,Available
+CLHQ-V-0053,CL-HQ,Van,Ford,Transit,2019,Class 2b,461707,,legacy-fleet-identifier,CERT-CLHQ-VEH-0053,OH-0053,OH,Available
+CLHQ-V-0054,CL-HQ,Truck,Isuzu,NPR-HD,2020,Class 5,469626,,legacy-fleet-identifier,CERT-CLHQ-VEH-0054,OH-0054,OH,Available
+CLHQ-V-0055,CL-HQ,Tractor,Volvo,VNL 760,2021,Class 8,477545,,legacy-fleet-identifier,CERT-CLHQ-VEH-0055,OH-0055,OH,Available
+CLHQ-V-0056,CL-HQ,Tractor,Freightliner,Cascadia,2022,Class 8,485464,,legacy-fleet-identifier,CERT-CLHQ-VEH-0056,OH-0056,OH,Available
+CLHQ-V-0057,CL-HQ,Truck,Ford,F-650,2023,Class 6,493383,,legacy-fleet-identifier,CERT-CLHQ-VEH-0057,OH-0057,OH,Available
+CLHQ-V-0058,CL-HQ,Van,Ford,Transit,2024,Class 2b,501302,,legacy-fleet-identifier,CERT-CLHQ-VEH-0058,OH-0058,OH,Available
+CLHQ-V-0059,CL-HQ,Truck,Isuzu,NPR-HD,2025,Class 5,509221,,legacy-fleet-identifier,CERT-CLHQ-VEH-0059,OH-0059,OH,Available
+CLHQ-V-0060,CL-HQ,Tractor,Volvo,VNL 760,2026,Class 8,517140,,legacy-fleet-identifier,CERT-CLHQ-VEH-0060,OH-0060,OH,Maintenance
+CLHQ-V-0061,CL-HQ,Tractor,Freightliner,Cascadia,2017,Class 8,525059,,legacy-fleet-identifier,CERT-CLHQ-VEH-0061,OH-0061,OH,Available
+CLHQ-V-0062,CL-HQ,Truck,Ford,F-650,2018,Class 6,532978,,legacy-fleet-identifier,CERT-CLHQ-VEH-0062,OH-0062,OH,Available
+CLHQ-V-0063,CL-HQ,Van,Ford,Transit,2019,Class 2b,540897,,legacy-fleet-identifier,CERT-CLHQ-VEH-0063,OH-0063,OH,Available
+CLHQ-V-0064,CL-HQ,Truck,Isuzu,NPR-HD,2020,Class 5,548816,,legacy-fleet-identifier,CERT-CLHQ-VEH-0064,OH-0064,OH,Available
+CLHQ-V-0065,CL-HQ,Tractor,Volvo,VNL 760,2021,Class 8,556735,,legacy-fleet-identifier,CERT-CLHQ-VEH-0065,OH-0065,OH,Available
+CLHQ-V-0066,CL-HQ,Tractor,Freightliner,Cascadia,2022,Class 8,564654,,legacy-fleet-identifier,CERT-CLHQ-VEH-0066,OH-0066,OH,Available
+CLHQ-V-0067,CL-HQ,Truck,Ford,F-650,2023,Class 6,572573,,legacy-fleet-identifier,CERT-CLHQ-VEH-0067,OH-0067,OH,Available
+CLHQ-V-0068,CL-HQ,Van,Ford,Transit,2024,Class 2b,580492,,legacy-fleet-identifier,CERT-CLHQ-VEH-0068,OH-0068,OH,Available
+CLHQ-V-0069,CL-HQ,Truck,Isuzu,NPR-HD,2025,Class 5,588411,,legacy-fleet-identifier,CERT-CLHQ-VEH-0069,OH-0069,OH,Available
+CLHQ-V-0070,CL-HQ,Tractor,Volvo,VNL 760,2026,Class 8,596330,,legacy-fleet-identifier,CERT-CLHQ-VEH-0070,OH-0070,OH,Available
+CLHQ-V-0071,CL-HQ,Tractor,Freightliner,Cascadia,2017,Class 8,604249,,legacy-fleet-identifier,CERT-CLHQ-VEH-0071,OH-0071,OH,Available
+CLHQ-V-0072,CL-HQ,Truck,Ford,F-650,2018,Class 6,612168,,legacy-fleet-identifier,CERT-CLHQ-VEH-0072,OH-0072,OH,Available
+CLHQ-V-0073,CL-HQ,Van,Ford,Transit,2019,Class 2b,620087,,legacy-fleet-identifier,CERT-CLHQ-VEH-0073,OH-0073,OH,Available
+CLHQ-V-0074,CL-HQ,Truck,Isuzu,NPR-HD,2020,Class 5,628006,,legacy-fleet-identifier,CERT-CLHQ-VEH-0074,OH-0074,OH,Available
+CLHQ-V-0075,CL-HQ,Tractor,Volvo,VNL 760,2021,Class 8,635925,,legacy-fleet-identifier,CERT-CLHQ-VEH-0075,OH-0075,OH,Available
+CLHQ-V-0076,CL-HQ,Tractor,Freightliner,Cascadia,2022,Class 8,643844,,legacy-fleet-identifier,CERT-CLHQ-VEH-0076,OH-0076,OH,Available
+CLHQ-V-0077,CL-HQ,Truck,Ford,F-650,2023,Class 6,651763,,legacy-fleet-identifier,CERT-CLHQ-VEH-0077,OH-0077,OH,Available
+CLHQ-V-0078,CL-HQ,Van,Ford,Transit,2024,Class 2b,49682,,legacy-fleet-identifier,CERT-CLHQ-VEH-0078,OH-0078,OH,Available
+CLHQ-V-0079,CL-HQ,Truck,Isuzu,NPR-HD,2025,Class 5,57601,,legacy-fleet-identifier,CERT-CLHQ-VEH-0079,OH-0079,OH,Available
+CLHQ-V-0080,CL-HQ,Tractor,Volvo,VNL 760,2026,Class 8,65520,,legacy-fleet-identifier,CERT-CLHQ-VEH-0080,OH-0080,OH,Maintenance
+CLHQ-V-0081,CL-HQ,Tractor,Freightliner,Cascadia,2017,Class 8,73439,,legacy-fleet-identifier,CERT-CLHQ-VEH-0081,OH-0081,OH,Available
+CLHQ-V-0082,CL-HQ,Truck,Ford,F-650,2018,Class 6,81358,,legacy-fleet-identifier,CERT-CLHQ-VEH-0082,OH-0082,OH,Available
+CLHQ-V-0083,CL-HQ,Van,Ford,Transit,2019,Class 2b,89277,,legacy-fleet-identifier,CERT-CLHQ-VEH-0083,OH-0083,OH,Available
+CLHQ-V-0084,CL-HQ,Truck,Isuzu,NPR-HD,2020,Class 5,97196,,legacy-fleet-identifier,CERT-CLHQ-VEH-0084,OH-0084,OH,Available
+CLHQ-V-0085,CL-HQ,Tractor,Volvo,VNL 760,2021,Class 8,105115,,legacy-fleet-identifier,CERT-CLHQ-VEH-0085,OH-0085,OH,Available
+CLHQ-V-0086,CL-HQ,Tractor,Freightliner,Cascadia,2022,Class 8,113034,,legacy-fleet-identifier,CERT-CLHQ-VEH-0086,OH-0086,OH,Available
+CLHQ-V-0087,CL-HQ,Truck,Ford,F-650,2023,Class 6,120953,,legacy-fleet-identifier,CERT-CLHQ-VEH-0087,OH-0087,OH,Available
+CLHQ-V-0088,CL-HQ,Van,Ford,Transit,2024,Class 2b,128872,,legacy-fleet-identifier,CERT-CLHQ-VEH-0088,OH-0088,OH,Available
+CLHQ-V-0089,CL-HQ,Truck,Isuzu,NPR-HD,2025,Class 5,136791,,legacy-fleet-identifier,CERT-CLHQ-VEH-0089,OH-0089,OH,Available
+CLHQ-V-0090,CL-HQ,Tractor,Volvo,VNL 760,2026,Class 8,144710,,legacy-fleet-identifier,CERT-CLHQ-VEH-0090,OH-0090,OH,Available
+CLHQ-V-0091,CL-HQ,Tractor,Freightliner,Cascadia,2017,Class 8,152629,,legacy-fleet-identifier,CERT-CLHQ-VEH-0091,OH-0091,OH,Available
+CLHQ-V-0092,CL-HQ,Truck,Ford,F-650,2018,Class 6,160548,,legacy-fleet-identifier,CERT-CLHQ-VEH-0092,OH-0092,OH,Available
+CLHQ-V-0093,CL-HQ,Van,Ford,Transit,2019,Class 2b,168467,,legacy-fleet-identifier,CERT-CLHQ-VEH-0093,OH-0093,OH,Available
+CLHQ-V-0094,CL-HQ,Truck,Isuzu,NPR-HD,2020,Class 5,176386,,legacy-fleet-identifier,CERT-CLHQ-VEH-0094,OH-0094,OH,Available
+CLHQ-V-0095,CL-HQ,Tractor,Volvo,VNL 760,2021,Class 8,184305,,legacy-fleet-identifier,CERT-CLHQ-VEH-0095,OH-0095,OH,Available
+CLHQ-V-0096,CL-HQ,Tractor,Freightliner,Cascadia,2022,Class 8,192224,,legacy-fleet-identifier,CERT-CLHQ-VEH-0096,OH-0096,OH,Available
+CLHQ-V-0097,CL-HQ,Truck,Ford,F-650,2023,Class 6,200143,,legacy-fleet-identifier,CERT-CLHQ-VEH-0097,OH-0097,OH,Available
+CLHQ-V-0098,CL-HQ,Van,Ford,Transit,2024,Class 2b,208062,,legacy-fleet-identifier,CERT-CLHQ-VEH-0098,OH-0098,OH,Available
+CLHQ-V-0099,CL-HQ,Truck,Isuzu,NPR-HD,2025,Class 5,215981,,legacy-fleet-identifier,CERT-CLHQ-VEH-0099,OH-0099,OH,Available
+CLHQ-V-0100,CL-HQ,Tractor,Volvo,VNL 760,2026,Class 8,223900,,legacy-fleet-identifier,CERT-CLHQ-VEH-0100,OH-0100,OH,Maintenance
+CLHQ-V-0101,CL-HQ,Tractor,Freightliner,Cascadia,2017,Class 8,231819,,legacy-fleet-identifier,CERT-CLHQ-VEH-0101,OH-0101,OH,Available
+CLHQ-V-0102,CL-HQ,Truck,Ford,F-650,2018,Class 6,239738,,legacy-fleet-identifier,CERT-CLHQ-VEH-0102,OH-0102,OH,Available
+CLHQ-V-0103,CL-HQ,Van,Ford,Transit,2019,Class 2b,247657,,legacy-fleet-identifier,CERT-CLHQ-VEH-0103,OH-0103,OH,Available
+CLHQ-V-0104,CL-HQ,Truck,Isuzu,NPR-HD,2020,Class 5,255576,,legacy-fleet-identifier,CERT-CLHQ-VEH-0104,OH-0104,OH,Available
+CLHQ-V-0105,CL-HQ,Tractor,Volvo,VNL 760,2021,Class 8,263495,,legacy-fleet-identifier,CERT-CLHQ-VEH-0105,OH-0105,OH,Available
+CLHQ-V-0106,CL-HQ,Tractor,Freightliner,Cascadia,2022,Class 8,271414,,legacy-fleet-identifier,CERT-CLHQ-VEH-0106,OH-0106,OH,Available
+CLHQ-V-0107,CL-HQ,Truck,Ford,F-650,2023,Class 6,279333,,legacy-fleet-identifier,CERT-CLHQ-VEH-0107,OH-0107,OH,Available
+CLHQ-V-0108,CL-HQ,Van,Ford,Transit,2024,Class 2b,287252,,legacy-fleet-identifier,CERT-CLHQ-VEH-0108,OH-0108,OH,Available
+CLHQ-V-0109,CL-HQ,Truck,Isuzu,NPR-HD,2025,Class 5,295171,,legacy-fleet-identifier,CERT-CLHQ-VEH-0109,OH-0109,OH,Available
+CLHQ-V-0110,CL-HQ,Tractor,Volvo,VNL 760,2026,Class 8,303090,,legacy-fleet-identifier,CERT-CLHQ-VEH-0110,OH-0110,OH,Available
+CLHQ-V-0111,CL-HQ,Tractor,Freightliner,Cascadia,2017,Class 8,311009,,legacy-fleet-identifier,CERT-CLHQ-VEH-0111,OH-0111,OH,Available
+CLHQ-V-0112,CL-HQ,Truck,Ford,F-650,2018,Class 6,318928,,legacy-fleet-identifier,CERT-CLHQ-VEH-0112,OH-0112,OH,Available
+CLHQ-V-0113,CL-HQ,Van,Ford,Transit,2019,Class 2b,326847,,legacy-fleet-identifier,CERT-CLHQ-VEH-0113,OH-0113,OH,Available
+CLHQ-V-0114,CL-HQ,Truck,Isuzu,NPR-HD,2020,Class 5,334766,,legacy-fleet-identifier,CERT-CLHQ-VEH-0114,OH-0114,OH,Available
+CLHQ-V-0115,CL-HQ,Tractor,Volvo,VNL 760,2021,Class 8,342685,,legacy-fleet-identifier,CERT-CLHQ-VEH-0115,OH-0115,OH,Available
+CLHQ-V-0116,CL-HQ,Tractor,Freightliner,Cascadia,2022,Class 8,350604,,legacy-fleet-identifier,CERT-CLHQ-VEH-0116,OH-0116,OH,Available
+CLHQ-V-0117,CL-HQ,Truck,Ford,F-650,2023,Class 6,358523,,legacy-fleet-identifier,CERT-CLHQ-VEH-0117,OH-0117,OH,Available
+CLHQ-V-0118,CL-HQ,Van,Ford,Transit,2024,Class 2b,366442,,legacy-fleet-identifier,CERT-CLHQ-VEH-0118,OH-0118,OH,Available
+CLHQ-V-0119,CL-HQ,Truck,Isuzu,NPR-HD,2025,Class 5,374361,,legacy-fleet-identifier,CERT-CLHQ-VEH-0119,OH-0119,OH,Available
+CLHQ-V-0120,CL-HQ,Tractor,Volvo,VNL 760,2026,Class 8,382280,,legacy-fleet-identifier,CERT-CLHQ-VEH-0120,OH-0120,OH,Maintenance
+CLHQ-V-0121,CL-HQ,Tractor,Freightliner,Cascadia,2017,Class 8,390199,,legacy-fleet-identifier,CERT-CLHQ-VEH-0121,OH-0121,OH,Available
+CLHQ-V-0122,CL-HQ,Truck,Ford,F-650,2018,Class 6,398118,,legacy-fleet-identifier,CERT-CLHQ-VEH-0122,OH-0122,OH,Available
+CLHQ-V-0123,CL-HQ,Van,Ford,Transit,2019,Class 2b,406037,,legacy-fleet-identifier,CERT-CLHQ-VEH-0123,OH-0123,OH,Available
+CLHQ-V-0124,CL-HQ,Truck,Isuzu,NPR-HD,2020,Class 5,413956,,legacy-fleet-identifier,CERT-CLHQ-VEH-0124,OH-0124,OH,Available
+CLHQ-V-0125,CL-HQ,Tractor,Volvo,VNL 760,2021,Class 8,421875,,legacy-fleet-identifier,CERT-CLHQ-VEH-0125,OH-0125,OH,Available
+CLHQ-V-0126,CL-HQ,Tractor,Freightliner,Cascadia,2022,Class 8,429794,,legacy-fleet-identifier,CERT-CLHQ-VEH-0126,OH-0126,OH,Available
+CLHQ-V-0127,CL-HQ,Truck,Ford,F-650,2023,Class 6,437713,,legacy-fleet-identifier,CERT-CLHQ-VEH-0127,OH-0127,OH,Available
+CLHQ-V-0128,CL-HQ,Van,Ford,Transit,2024,Class 2b,445632,,legacy-fleet-identifier,CERT-CLHQ-VEH-0128,OH-0128,OH,Available
+CLHQ-V-0129,CL-HQ,Truck,Isuzu,NPR-HD,2025,Class 5,453551,,legacy-fleet-identifier,CERT-CLHQ-VEH-0129,OH-0129,OH,Available
+CLHQ-V-0130,CL-HQ,Tractor,Volvo,VNL 760,2026,Class 8,461470,,legacy-fleet-identifier,CERT-CLHQ-VEH-0130,OH-0130,OH,Available
+CLHQ-V-0131,CL-HQ,Tractor,Freightliner,Cascadia,2017,Class 8,469389,,legacy-fleet-identifier,CERT-CLHQ-VEH-0131,OH-0131,OH,Available
+CLHQ-V-0132,CL-HQ,Truck,Ford,F-650,2018,Class 6,477308,,legacy-fleet-identifier,CERT-CLHQ-VEH-0132,OH-0132,OH,Available
+CLHQ-V-0133,CL-HQ,Van,Ford,Transit,2019,Class 2b,485227,,legacy-fleet-identifier,CERT-CLHQ-VEH-0133,OH-0133,OH,Available
+CLHQ-V-0134,CL-HQ,Truck,Isuzu,NPR-HD,2020,Class 5,493146,,legacy-fleet-identifier,CERT-CLHQ-VEH-0134,OH-0134,OH,Available
+CLHQ-V-0135,CL-HQ,Tractor,Volvo,VNL 760,2021,Class 8,501065,,legacy-fleet-identifier,CERT-CLHQ-VEH-0135,OH-0135,OH,Available
+CLHQ-V-0136,CL-HQ,Tractor,Freightliner,Cascadia,2022,Class 8,508984,,legacy-fleet-identifier,CERT-CLHQ-VEH-0136,OH-0136,OH,Available
+CLHQ-V-0137,CL-HQ,Truck,Ford,F-650,2023,Class 6,516903,,legacy-fleet-identifier,CERT-CLHQ-VEH-0137,OH-0137,OH,Available
+CLHQ-V-0138,CL-HQ,Van,Ford,Transit,2024,Class 2b,524822,,legacy-fleet-identifier,CERT-CLHQ-VEH-0138,OH-0138,OH,Available
+CLHQ-V-0139,CL-HQ,Truck,Isuzu,NPR-HD,2025,Class 5,532741,,legacy-fleet-identifier,CERT-CLHQ-VEH-0139,OH-0139,OH,Available
+CLHQ-V-0140,CL-HQ,Tractor,Volvo,VNL 760,2026,Class 8,540660,,legacy-fleet-identifier,CERT-CLHQ-VEH-0140,OH-0140,OH,Maintenance
+CLHQ-V-0141,CL-HQ,Tractor,Freightliner,Cascadia,2017,Class 8,548579,,legacy-fleet-identifier,CERT-CLHQ-VEH-0141,OH-0141,OH,Available
+CLHQ-V-0142,CL-HQ,Truck,Ford,F-650,2018,Class 6,556498,,legacy-fleet-identifier,CERT-CLHQ-VEH-0142,OH-0142,OH,Available
+CLHQ-V-0143,CL-HQ,Van,Ford,Transit,2019,Class 2b,564417,,legacy-fleet-identifier,CERT-CLHQ-VEH-0143,OH-0143,OH,Available
+CLHQ-V-0144,CL-HQ,Truck,Isuzu,NPR-HD,2020,Class 5,572336,,legacy-fleet-identifier,CERT-CLHQ-VEH-0144,OH-0144,OH,Available
+CLHQ-V-0145,CL-HQ,Tractor,Volvo,VNL 760,2021,Class 8,580255,,legacy-fleet-identifier,CERT-CLHQ-VEH-0145,OH-0145,OH,Available
+CLHQ-V-0146,CL-HQ,Tractor,Freightliner,Cascadia,2022,Class 8,588174,,legacy-fleet-identifier,CERT-CLHQ-VEH-0146,OH-0146,OH,Available
+CLHQ-V-0147,CL-HQ,Truck,Ford,F-650,2023,Class 6,596093,,legacy-fleet-identifier,CERT-CLHQ-VEH-0147,OH-0147,OH,Available
+CLHQ-V-0148,CL-HQ,Van,Ford,Transit,2024,Class 2b,604012,,legacy-fleet-identifier,CERT-CLHQ-VEH-0148,OH-0148,OH,Available
+CLHQ-V-0149,CL-HQ,Truck,Isuzu,NPR-HD,2025,Class 5,611931,,legacy-fleet-identifier,CERT-CLHQ-VEH-0149,OH-0149,OH,Available
+CLHQ-V-0150,CL-HQ,Tractor,Volvo,VNL 760,2026,Class 8,619850,,legacy-fleet-identifier,CERT-CLHQ-VEH-0150,OH-0150,OH,Available
+CLHQ-V-0151,CL-HQ,Tractor,Freightliner,Cascadia,2017,Class 8,627769,,legacy-fleet-identifier,CERT-CLHQ-VEH-0151,OH-0151,OH,Available
+CLHQ-V-0152,CL-HQ,Truck,Ford,F-650,2018,Class 6,635688,,legacy-fleet-identifier,CERT-CLHQ-VEH-0152,OH-0152,OH,Available
+CLHQ-V-0153,CL-HQ,Van,Ford,Transit,2019,Class 2b,643607,,legacy-fleet-identifier,CERT-CLHQ-VEH-0153,OH-0153,OH,Available
+CLHQ-V-0154,CL-HQ,Truck,Isuzu,NPR-HD,2020,Class 5,651526,,legacy-fleet-identifier,CERT-CLHQ-VEH-0154,OH-0154,OH,Available
+CLHQ-V-0155,CL-HQ,Tractor,Volvo,VNL 760,2021,Class 8,49445,,legacy-fleet-identifier,CERT-CLHQ-VEH-0155,OH-0155,OH,Available
+CLHQ-V-0156,CL-HQ,Tractor,Freightliner,Cascadia,2022,Class 8,57364,,legacy-fleet-identifier,CERT-CLHQ-VEH-0156,OH-0156,OH,Available
+CLHQ-V-0157,CL-HQ,Truck,Ford,F-650,2023,Class 6,65283,,legacy-fleet-identifier,CERT-CLHQ-VEH-0157,OH-0157,OH,Available
+CLHQ-V-0158,CL-HQ,Van,Ford,Transit,2024,Class 2b,73202,,legacy-fleet-identifier,CERT-CLHQ-VEH-0158,OH-0158,OH,Available
+CLHQ-V-0159,CL-HQ,Truck,Isuzu,NPR-HD,2025,Class 5,81121,,legacy-fleet-identifier,CERT-CLHQ-VEH-0159,OH-0159,OH,Available
+CLHQ-V-0160,CL-HQ,Tractor,Volvo,VNL 760,2026,Class 8,89040,,legacy-fleet-identifier,CERT-CLHQ-VEH-0160,OH-0160,OH,Maintenance
+CLHQ-V-0161,CL-HQ,Tractor,Freightliner,Cascadia,2017,Class 8,96959,,legacy-fleet-identifier,CERT-CLHQ-VEH-0161,OH-0161,OH,Available
+CLHQ-V-0162,CL-HQ,Truck,Ford,F-650,2018,Class 6,104878,,legacy-fleet-identifier,CERT-CLHQ-VEH-0162,OH-0162,OH,Available
+CLHQ-V-0163,CL-HQ,Van,Ford,Transit,2019,Class 2b,112797,,legacy-fleet-identifier,CERT-CLHQ-VEH-0163,OH-0163,OH,Available
+CLHQ-V-0164,CL-HQ,Truck,Isuzu,NPR-HD,2020,Class 5,120716,,legacy-fleet-identifier,CERT-CLHQ-VEH-0164,OH-0164,OH,Available
+CLHQ-V-0165,CL-HQ,Tractor,Volvo,VNL 760,2021,Class 8,128635,,legacy-fleet-identifier,CERT-CLHQ-VEH-0165,OH-0165,OH,Available
+CLHQ-V-0166,CL-HQ,Tractor,Freightliner,Cascadia,2022,Class 8,136554,,legacy-fleet-identifier,CERT-CLHQ-VEH-0166,OH-0166,OH,Available
+CLHQ-V-0167,CL-HQ,Truck,Ford,F-650,2023,Class 6,144473,,legacy-fleet-identifier,CERT-CLHQ-VEH-0167,OH-0167,OH,Available
+CLHQ-V-0168,CL-HQ,Van,Ford,Transit,2024,Class 2b,152392,,legacy-fleet-identifier,CERT-CLHQ-VEH-0168,OH-0168,OH,Available
+CLHQ-V-0169,CL-HQ,Truck,Isuzu,NPR-HD,2025,Class 5,160311,,legacy-fleet-identifier,CERT-CLHQ-VEH-0169,OH-0169,OH,Available
+CLHQ-V-0170,CL-HQ,Tractor,Volvo,VNL 760,2026,Class 8,168230,,legacy-fleet-identifier,CERT-CLHQ-VEH-0170,OH-0170,OH,Available
+CLHQ-V-0171,CL-HQ,Tractor,Freightliner,Cascadia,2017,Class 8,176149,,legacy-fleet-identifier,CERT-CLHQ-VEH-0171,OH-0171,OH,Available
+CLHQ-V-0172,CL-HQ,Truck,Ford,F-650,2018,Class 6,184068,,legacy-fleet-identifier,CERT-CLHQ-VEH-0172,OH-0172,OH,Available
+CLHQ-V-0173,CL-HQ,Van,Ford,Transit,2019,Class 2b,191987,,legacy-fleet-identifier,CERT-CLHQ-VEH-0173,OH-0173,OH,Available
+CLHQ-V-0174,CL-HQ,Truck,Isuzu,NPR-HD,2020,Class 5,199906,,legacy-fleet-identifier,CERT-CLHQ-VEH-0174,OH-0174,OH,Available
+CLHQ-V-0175,CL-HQ,Tractor,Volvo,VNL 760,2021,Class 8,207825,,legacy-fleet-identifier,CERT-CLHQ-VEH-0175,OH-0175,OH,Available
+CLHQ-V-0176,CL-HQ,Tractor,Freightliner,Cascadia,2022,Class 8,215744,,legacy-fleet-identifier,CERT-CLHQ-VEH-0176,OH-0176,OH,Available
+CLHQ-V-0177,CL-HQ,Truck,Ford,F-650,2023,Class 6,223663,,legacy-fleet-identifier,CERT-CLHQ-VEH-0177,OH-0177,OH,Available
+CLHQ-V-0178,CL-HQ,Van,Ford,Transit,2024,Class 2b,231582,,legacy-fleet-identifier,CERT-CLHQ-VEH-0178,OH-0178,OH,Available
+CLHQ-V-0179,CL-HQ,Truck,Isuzu,NPR-HD,2025,Class 5,239501,,legacy-fleet-identifier,CERT-CLHQ-VEH-0179,OH-0179,OH,Available
+CLHQ-V-0180,CL-HQ,Tractor,Volvo,VNL 760,2026,Class 8,247420,,legacy-fleet-identifier,CERT-CLHQ-VEH-0180,OH-0180,OH,Maintenance
+CLHQ-V-0181,CL-HQ,Tractor,Freightliner,Cascadia,2017,Class 8,255339,,legacy-fleet-identifier,CERT-CLHQ-VEH-0181,OH-0181,OH,Available
+CLHQ-V-0182,CL-HQ,Truck,Ford,F-650,2018,Class 6,263258,,legacy-fleet-identifier,CERT-CLHQ-VEH-0182,OH-0182,OH,Available
+CLHQ-V-0183,CL-HQ,Van,Ford,Transit,2019,Class 2b,271177,,legacy-fleet-identifier,CERT-CLHQ-VEH-0183,OH-0183,OH,Available
+CLHQ-V-0184,CL-HQ,Truck,Isuzu,NPR-HD,2020,Class 5,279096,,legacy-fleet-identifier,CERT-CLHQ-VEH-0184,OH-0184,OH,Available
+CLHQ-V-0185,CL-HQ,Tractor,Volvo,VNL 760,2021,Class 8,287015,,legacy-fleet-identifier,CERT-CLHQ-VEH-0185,OH-0185,OH,Available
+CLHQ-V-0186,CL-HQ,Tractor,Freightliner,Cascadia,2022,Class 8,294934,,legacy-fleet-identifier,CERT-CLHQ-VEH-0186,OH-0186,OH,Available
+CLHQ-V-0187,CL-HQ,Truck,Ford,F-650,2023,Class 6,302853,,legacy-fleet-identifier,CERT-CLHQ-VEH-0187,OH-0187,OH,Available
+CLHQ-V-0188,CL-HQ,Van,Ford,Transit,2024,Class 2b,310772,,legacy-fleet-identifier,CERT-CLHQ-VEH-0188,OH-0188,OH,Available
+CLHQ-V-0189,CL-HQ,Truck,Isuzu,NPR-HD,2025,Class 5,318691,,legacy-fleet-identifier,CERT-CLHQ-VEH-0189,OH-0189,OH,Available
+CLHQ-V-0190,CL-HQ,Tractor,Volvo,VNL 760,2026,Class 8,326610,,legacy-fleet-identifier,CERT-CLHQ-VEH-0190,OH-0190,OH,Available
+CLHQ-V-0191,CL-HQ,Tractor,Freightliner,Cascadia,2017,Class 8,334529,,legacy-fleet-identifier,CERT-CLHQ-VEH-0191,OH-0191,OH,Available
+CLHQ-V-0192,CL-HQ,Truck,Ford,F-650,2018,Class 6,342448,,legacy-fleet-identifier,CERT-CLHQ-VEH-0192,OH-0192,OH,Available
+CLHQ-V-0193,CL-HQ,Van,Ford,Transit,2019,Class 2b,350367,,legacy-fleet-identifier,CERT-CLHQ-VEH-0193,OH-0193,OH,Available
+CLHQ-V-0194,CL-HQ,Truck,Isuzu,NPR-HD,2020,Class 5,358286,,legacy-fleet-identifier,CERT-CLHQ-VEH-0194,OH-0194,OH,Available
+CLHQ-V-0195,CL-HQ,Tractor,Volvo,VNL 760,2021,Class 8,366205,,legacy-fleet-identifier,CERT-CLHQ-VEH-0195,OH-0195,OH,Available
+CLHQ-V-0196,CL-HQ,Tractor,Freightliner,Cascadia,2022,Class 8,374124,,legacy-fleet-identifier,CERT-CLHQ-VEH-0196,OH-0196,OH,Available
+CLHQ-V-0197,CL-HQ,Truck,Ford,F-650,2023,Class 6,382043,,legacy-fleet-identifier,CERT-CLHQ-VEH-0197,OH-0197,OH,Available
+CLHQ-V-0198,CL-HQ,Van,Ford,Transit,2024,Class 2b,389962,,legacy-fleet-identifier,CERT-CLHQ-VEH-0198,OH-0198,OH,Available
+CLHQ-V-0199,CL-HQ,Truck,Isuzu,NPR-HD,2025,Class 5,397881,,legacy-fleet-identifier,CERT-CLHQ-VEH-0199,OH-0199,OH,Available
+CLHQ-V-0200,CL-HQ,Tractor,Volvo,VNL 760,2026,Class 8,405800,,legacy-fleet-identifier,CERT-CLHQ-VEH-0200,OH-0200,OH,Maintenance

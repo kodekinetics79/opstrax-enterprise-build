@@ -34,7 +34,7 @@ public static class IntegrationCatalog
         string ManagedBy,
         object Config);
 
-    public static readonly IReadOnlyList<Entry> Entries = new List<Entry>
+    private static readonly IReadOnlyList<Entry> Definitions = new List<Entry>
     {
         new("sap-s4hana", "SAP S/4HANA", "ERP & Accounting",
             "Order, invoice, GL posting, and cost-center synchronization for enterprise finance.",
@@ -63,10 +63,10 @@ public static class IntegrationCatalog
             "SGE", "Disconnected", "—", null,
             new[]{"finance"}, new[]{"Accounting"}, "Finance Ops", new { }),
         new("samsara", "Samsara", "Telematics & ELD",
-            "GPS tracking, ELD, and AI dashcam event integration for live fleet operations.",
-            "SAM", "Connected", "Real-time", "2026-06-24T14:14:00Z",
-            new[]{"vehicles","drivers","safety"}, new[]{"GPS","ELD","Dashcam"}, "Fleet Ops",
-            new { providerAccountId = "sam-1001" }),
+            "Samsara connector readiness for GPS position, engine-state, and odometer sync. A tenant-authorized provider account and successful live handshake are required before use.",
+            "SAM", "Disconnected", "Never", null,
+            new[]{"vehicles"}, new[]{"GPS","Engine state","Odometer"}, "Fleet Ops",
+            new { }),
         new("geotab", "Geotab", "Telematics & ELD",
             "Fleet telematics and open SDK for GPS, diagnostics, and log data.",
             "GEO", "Disconnected", "—", null,
@@ -174,6 +174,31 @@ public static class IntegrationCatalog
             "IFT", "Pending", "Weekly", null,
             new[]{"compliance","fuel"}, new[]{"Compliance"}, "Compliance Ops", new { }),
     };
+
+    // A catalog definition describes what could be integrated. It is never operational
+    // evidence. Historical definitions carried demo statuses, timestamps, and config
+    // values; normalize every public/runtime entry so a new tenant always starts from
+    // an unverified, credential-free state.
+    public static readonly IReadOnlyList<Entry> Entries = Definitions
+        .Select(entry => entry with
+        {
+            Status = "Disconnected",
+            SyncLabel = "Never",
+            LastSyncAt = null,
+            Config = new Dictionary<string, object?>(),
+        })
+        .ToList();
+
+    private static readonly IReadOnlyDictionary<string, string> BuiltInNames = Entries
+        .ToDictionary(entry => entry.Key, entry => entry.Name, StringComparer.OrdinalIgnoreCase);
+
+    public static bool IsBuiltInKey(string? key) =>
+        !string.IsNullOrWhiteSpace(key) && BuiltInNames.ContainsKey(key);
+
+    public static string DisplayNameFor(string? key) =>
+        !string.IsNullOrWhiteSpace(key) && BuiltInNames.TryGetValue(key, out var name)
+            ? name
+            : "Catalog connector";
 
     // Idempotent, tenant-scoped hydration. Inserts only the catalog entries a tenant
     // is missing (by integration_key); never overwrites existing rows or a tenant's

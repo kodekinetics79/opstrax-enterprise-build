@@ -706,6 +706,6 @@ public class SystemTriggerTests
         Assert.Contains("maintenance:create", maintPerms);
 
         var driverPerms = EndpointMappings.RolePermissionDefaults["Driver"];
-        Assert.Contains("maintenance:create", driverPerms);
+        Assert.DoesNotContain("maintenance:create", driverPerms);
     }
 }

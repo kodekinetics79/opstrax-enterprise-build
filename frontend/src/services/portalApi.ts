@@ -8,6 +8,12 @@ export const portalApi = {
   invoices: () =>
     unwrap<{ items: AnyRecord[] }>(apiClient.get("/api/portal/invoices")).then((r) => r.items ?? []),
 
+  // One invoice with its line detail and tax breakdown. The list deliberately
+  // carries only summary fields; this is what the customer opens to check what
+  // they are actually being charged for.
+  invoice: (invoiceId: string) =>
+    unwrap<AnyRecord>(apiClient.get(`/api/portal/invoices/${invoiceId}`)),
+
   jobs: () =>
     unwrap<{ items: AnyRecord[] }>(apiClient.get("/api/portal/jobs")).then((r) => r.items ?? []),
 

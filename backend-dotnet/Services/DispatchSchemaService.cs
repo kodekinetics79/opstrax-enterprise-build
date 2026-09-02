@@ -97,6 +97,29 @@ CREATE TABLE IF NOT EXISTS dispatch_proofs (
     created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )");
 
+        // Upload registration is the trust boundary between durable object storage and
+        // proof submission. A client-visible objkey is not evidence by itself: it must
+        // have been created by the authenticated driver's upload route for this exact
+        // assignment, and it may be consumed by at most one proof.
+        await TryCreate("dispatch_proof_uploads", @"
+CREATE TABLE IF NOT EXISTS dispatch_proof_uploads (
+    id                    BIGINT NOT NULL GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    company_id            BIGINT NOT NULL,
+    assignment_id         BIGINT NOT NULL REFERENCES dispatch_assignments(id) ON DELETE CASCADE,
+    driver_id             BIGINT NOT NULL,
+    uploaded_by_user_id   BIGINT NOT NULL,
+    kind                  VARCHAR(30) NOT NULL CHECK (kind IN ('photo','signature')),
+    reference             TEXT NOT NULL,
+    content_type          VARCHAR(120) NOT NULL,
+    size_bytes            BIGINT NOT NULL CHECK (size_bytes > 0),
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    consumed_at           TIMESTAMPTZ NULL,
+    proof_id              BIGINT NULL REFERENCES dispatch_proofs(id),
+    UNIQUE (company_id, reference),
+    CHECK ((consumed_at IS NULL AND proof_id IS NULL) OR
+           (consumed_at IS NOT NULL AND proof_id IS NOT NULL))
+)");
+
         // Driver POD media must survive submission as first-class, tenant-owned rows.
         // This table previously existed only in an optional docker init script, while
         // the runtime always wrote it; migrated/hosted databases therefore failed POD.
@@ -178,6 +201,8 @@ CREATE TABLE IF NOT EXISTS dispatch_eligibility_config (
             ("dispatch_exceptions", "idx_dex_status",             "company_id, status"),
             ("dispatch_proofs",     "idx_dp_assignment",          "assignment_id"),
             ("dispatch_proofs",     "idx_dp_company",             "company_id, proof_type"),
+            ("dispatch_proof_uploads", "idx_dpu_owned_unconsumed", "company_id, assignment_id, driver_id, consumed_at"),
+            ("dispatch_proof_uploads", "idx_dpu_proof",            "proof_id"),
             ("dispatch_proof_artifacts", "idx_dpa_proof",         "proof_id"),
             ("dispatch_proof_artifacts", "idx_dpa_company",       "company_id"),
             ("dispatch_assignments","idx_da_company_status",      "company_id, assignment_status"),

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import axios from "axios";
 import { AlertCircle, ArrowRight, Building2, ClipboardCheck, Lock, Route, ShieldCheck, Wrench } from "lucide-react";
@@ -24,7 +24,7 @@ function getLoginErrorMessage(error: unknown): string {
 
   const status = error.response?.status;
   if (status === 401) {
-    return "The email or password was not recognized. Please verify your credentials and try again.";
+    return "The organization code, email, or password was not recognized. Please verify your credentials and try again.";
   }
   if (status === 403) {
     return "Security verification did not complete. Refresh the page and try signing in again.";
@@ -458,9 +458,12 @@ const TRUST_SIGNALS = [
 export function LoginPage() {
   const { setSession } = useAuth();
   const navigate = useNavigate();
+  const [companyCode, setCompanyCode] = useState("");
   const [email, setEmail]           = useState("");
   const [password, setPassword]     = useState("");
   const [showPassword, setShowPass] = useState(false);
+  const [passwordError, setPasswordError] = useState("");
+  const [companyCodeError, setCompanyCodeError] = useState("");
   const [emailError, setEmailError] = useState("");
   // Identifier-first: "identify" collects the email; "authenticate" reveals the
   // password field OR the SSO button depending on the domain's SSO config; "mfa"
@@ -470,13 +473,16 @@ export function LoginPage() {
   const [mfaChallenge, setMfaChallenge] = useState<MfaChallenge | null>(null);
   const [mfaCode, setMfaCode]       = useState("");
   const { panelRef, sceneRef } = usePointerTilt();
+  const companyCodeRef = useRef<HTMLInputElement>(null);
+  const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
   const mfaCodeRef = useRef<HTMLInputElement>(null);
 
   // Resolve whether the email's domain routes to SSO. Fails OPEN to the password
   // field so a discovery outage never blocks a password login.
   const identify = useMutation({
-    mutationFn: async (e: string) => authApi.ssoDiscover(e),
+    mutationFn: async ({ email: e, companyCode: code }: { email: string; companyCode: string }) =>
+      authApi.ssoDiscover(e, code),
     onSuccess: (result) => {
       setSsoConn(result.ssoConfigured && result.connection ? result.connection : null);
       setStep("authenticate");
@@ -488,9 +494,9 @@ export function LoginPage() {
   });
 
   const login = useMutation({
-    mutationFn: async ({ email: e, password: p }: { email: string; password: string }) => {
+    mutationFn: async ({ email: e, password: p, companyCode: code }: { email: string; password: string; companyCode: string }) => {
       await authApi.bootstrap();
-      return authApi.login(e, p);
+      return authApi.login(e, p, code);
     },
     onSuccess: (result) => {
       if (isMfaChallenge(result)) {
@@ -511,6 +517,7 @@ export function LoginPage() {
     // password, and return focus for a deliberate retry.
     onError: () => {
       setPassword("");
+      if (passwordRef.current) passwordRef.current.value = "";
       requestAnimationFrame(() => passwordRef.current?.focus());
     },
   });
@@ -534,6 +541,7 @@ export function LoginPage() {
         setMfaChallenge(null);
         setStep("authenticate");
         setPassword("");
+        if (passwordRef.current) passwordRef.current.value = "";
         requestAnimationFrame(() => passwordRef.current?.focus());
         return;
       }
@@ -546,22 +554,56 @@ export function LoginPage() {
     if (step === "authenticate" && !ssoConn) passwordRef.current?.focus();
   }, [step, ssoConn]);
 
+  // Password managers can populate a controlled input without dispatching the
+  // input/change event React normally uses to update state. Copy only values
+  // already present in the browser-owned fields into the existing in-memory
+  // form state; never persist, log, serialize, or expose detected credentials.
+  const syncBrowserFilledFields = useCallback(() => {
+    const nextCompanyCode = companyCodeRef.current?.value ?? "";
+    const nextEmail = emailRef.current?.value ?? "";
+    const nextPassword = passwordRef.current?.value ?? "";
+    if (nextCompanyCode) setCompanyCode((current) => current === nextCompanyCode ? current : nextCompanyCode);
+    if (nextEmail) setEmail((current) => current === nextEmail ? current : nextEmail);
+    if (nextPassword) setPassword((current) => current === nextPassword ? current : nextPassword);
+  }, []);
+
+  useEffect(() => {
+    // Autofill may settle after paint or after Chrome finishes its credential UI.
+    // Keep this bounded so the page does not poll for the lifetime of a session.
+    syncBrowserFilledFields();
+    const frame = requestAnimationFrame(syncBrowserFilledFields);
+    const interval = window.setInterval(syncBrowserFilledFields, 200);
+    const stop = window.setTimeout(() => window.clearInterval(interval), 2_000);
+    const onVisibility = () => { if (document.visibilityState === "visible") syncBrowserFilledFields(); };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.clearInterval(interval);
+      window.clearTimeout(stop);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [step, ssoConn, syncBrowserFilledFields]);
+
   // Move focus to the MFA code field the moment it is revealed.
   useEffect(() => {
     if (step === "mfa") mfaCodeRef.current?.focus();
   }, [step]);
 
   const continueWithEmail = () => {
+    const code = companyCode.trim();
     const value = email.trim();
+    if (!code) { setCompanyCodeError("Enter your organization code."); return; }
+    setCompanyCodeError("");
     if (!EMAIL_RE.test(value)) { setEmailError("Enter a valid work email address."); return; }
     setEmailError("");
-    identify.mutate(value);
+    identify.mutate({ email: value, companyCode: code });
   };
 
   const editEmail = () => {
     setStep("identify");
     setSsoConn(null);
     setPassword("");
+    setPasswordError("");
     setMfaChallenge(null);
     setMfaCode("");
     login.reset();
@@ -579,7 +621,20 @@ export function LoginPage() {
     if (step === "identify") { continueWithEmail(); return; }
     if (step === "mfa") { if (mfaCode.trim()) mfaVerify.mutate(mfaCode.trim()); return; }
     if (ssoConn) { goToSso(); return; }
-    if (email.trim() && password) login.mutate({ email: email.trim(), password });
+    // Read the submitted password from the browser-owned input. Chrome may
+    // render a saved credential without emitting React's change event; keeping
+    // this field uncontrolled prevents a render with empty state from erasing
+    // that native autofill before submission.
+    const submittedPassword = passwordRef.current?.value ?? password;
+    if (!submittedPassword) {
+      setPasswordError("Enter your password.");
+      passwordRef.current?.focus();
+      return;
+    }
+    setPasswordError("");
+    if (companyCode.trim() && email.trim()) {
+      login.mutate({ companyCode: companyCode.trim(), email: email.trim(), password: submittedPassword });
+    }
   };
 
   const identifying = identify.isPending;
@@ -728,7 +783,7 @@ export function LoginPage() {
                 <h2 className="mt-2 text-2xl font-bold text-slate-950">Sign in</h2>
                 <p className="mt-1.5 text-sm leading-6 text-slate-500">
                   {step === "identify"
-                    ? "Enter your work email to continue."
+                    ? "Enter your organization code and work email to continue."
                     : step === "mfa"
                       ? "Enter the 6-digit code from your authenticator app."
                       : ssoConn
@@ -758,27 +813,60 @@ export function LoginPage() {
                 </div>
               )}
 
-              <form onSubmit={submit} className="space-y-4" noValidate>
+              <form onSubmit={submit} onInputCapture={syncBrowserFilledFields} autoComplete="on" className="space-y-4" noValidate>
                 {/* Identity: editable email (step 1) → read-only chip (step 2) */}
                 {step === "identify" ? (
-                  <div>
-                    <label htmlFor="login-email" className="mb-1.5 block text-sm font-medium text-slate-700">Work email</label>
-                    <input
-                      id="login-email" type="email" inputMode="email" value={email}
-                      onChange={(e) => { setEmail(e.target.value); if (emailError) setEmailError(""); }}
-                      autoComplete="username" autoFocus placeholder="you@company.com"
-                      aria-invalid={emailError ? true : undefined}
-                      aria-describedby={emailError ? "login-email-error" : undefined}
-                      className="login2-field" />
-                    {emailError && (
-                      <p id="login-email-error" role="alert" className="mt-1.5 text-xs font-medium text-red-600">{emailError}</p>
-                    )}
-                  </div>
+                  <>
+                    <div>
+                      <label htmlFor="login-company-code" className="mb-1.5 block text-sm font-medium text-slate-700">Organization code</label>
+                      <input
+                        ref={companyCodeRef} id="login-company-code" name="organization" value={companyCode}
+                        onChange={(e) => { setCompanyCode(e.target.value); if (companyCodeError) setCompanyCodeError(""); }}
+                        autoComplete="organization" autoFocus placeholder="Your tenant code"
+                        aria-invalid={companyCodeError ? true : undefined}
+                        aria-describedby={companyCodeError ? "login-company-code-error" : "login-company-code-help"}
+                        className="login2-field" />
+                      {companyCodeError ? (
+                        <p id="login-company-code-error" role="alert" className="mt-1.5 text-xs font-medium text-red-600">{companyCodeError}</p>
+                      ) : (
+                        <p id="login-company-code-help" className="mt-1.5 text-xs text-slate-500">Provided by your OpsTrax administrator.</p>
+                      )}
+                    </div>
+                    <div>
+                      <label htmlFor="login-email" className="mb-1.5 block text-sm font-medium text-slate-700">Work email</label>
+                      <input
+                        ref={emailRef} id="login-email" name="username" type="email" inputMode="email" value={email}
+                        onChange={(e) => { setEmail(e.target.value); if (emailError) setEmailError(""); }}
+                        autoComplete="username" placeholder="you@company.com"
+                        aria-invalid={emailError ? true : undefined}
+                        aria-describedby={emailError ? "login-email-error" : undefined}
+                        className="login2-field" />
+                      {emailError && (
+                        <p id="login-email-error" role="alert" className="mt-1.5 text-xs font-medium text-red-600">{emailError}</p>
+                      )}
+                    </div>
+                  </>
                 ) : (
                   <div className="login2-idchip">
+                    {/* Keep the username in the authentication form so password
+                        managers can associate current-password with its identity. */}
+                    <input
+                      ref={emailRef}
+                      name="username"
+                      type="email"
+                      autoComplete="username"
+                      value={email}
+                      readOnly
+                      tabIndex={-1}
+                      className="sr-only"
+                      aria-hidden="true"
+                    />
                     <span className="flex min-w-0 items-center gap-2">
-                      <ShieldCheck className="h-4 w-4 shrink-0 text-teal-600" aria-hidden="true" />
-                      <span className="truncate text-sm font-medium text-slate-700">{email.trim()}</span>
+                      <Building2 className="h-4 w-4 shrink-0 text-teal-600" aria-hidden="true" />
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-medium text-slate-700">{email.trim()}</span>
+                        <span className="block truncate text-[11px] text-slate-500">Organization {companyCode.trim()}</span>
+                      </span>
                     </span>
                     <button type="button" onClick={editEmail}
                       className="shrink-0 text-xs font-semibold text-teal-700 transition hover:text-teal-600 focus-visible:outline-2 focus-visible:outline-teal-600">
@@ -819,9 +907,13 @@ export function LoginPage() {
                           </div>
                           <div className="relative">
                             <input
-                              ref={passwordRef} id="login-password" type={showPassword ? "text" : "password"}
-                              value={password} onChange={(e) => setPassword(e.target.value)}
+                              ref={passwordRef} id="login-password" name="password" type={showPassword ? "text" : "password"}
+                              defaultValue="" onChange={(e) => { setPassword(e.target.value); if (passwordError) setPasswordError(""); }}
+                              onFocus={syncBrowserFilledFields}
+                              onBlur={syncBrowserFilledFields}
                               autoComplete="current-password" placeholder="••••••••"
+                              aria-invalid={passwordError ? true : undefined}
+                              aria-describedby={passwordError ? "login-password-error" : undefined}
                               className="login2-field pr-20" />
                             <button type="button" onClick={() => setShowPass((v) => !v)}
                               aria-label={showPassword ? "Hide password" : "Show password"} aria-pressed={showPassword}
@@ -829,6 +921,9 @@ export function LoginPage() {
                               {showPassword ? "Hide" : "Show"}
                             </button>
                           </div>
+                          {passwordError && (
+                            <p id="login-password-error" role="alert" className="mt-1.5 text-xs font-medium text-red-600">{passwordError}</p>
+                          )}
                         </div>
                       )}
                     </div>
@@ -839,9 +934,9 @@ export function LoginPage() {
                 {!(ssoConn && step === "authenticate") && (
                   <button type="submit" className="login2-cta"
                     disabled={
-                      step === "identify" ? (identifying || !email.trim())
+                      step === "identify" ? (identifying || !companyCode.trim() || !email.trim())
                         : step === "mfa" ? (mfaVerify.isPending || mfaCode.trim().length !== 6)
-                          : (login.isPending || !password)
+                          : login.isPending
                     }>
                     {step === "identify"
                       ? (identifying

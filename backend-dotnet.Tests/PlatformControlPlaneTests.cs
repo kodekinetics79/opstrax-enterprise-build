@@ -471,7 +471,8 @@ public class PlatformControlPlaneTests
 
             // BILLING: create invoice + mark paid
             var inv = await PlatformEndpoints.InvoiceCreate(Http(token),
-                new Dictionary<string, object?> { ["companyId"] = companyId, ["amountCents"] = 9900L }, db, CancellationToken.None);
+                new Dictionary<string, object?> { ["companyId"] = companyId, ["amountCents"] = 9900L },
+                db, new PlatformBillingService(db), CancellationToken.None);
             Assert.Equal(200, StatusOf(inv));
             var invoiceId = await db.ScalarLongAsync("SELECT id FROM platform_invoices WHERE company_id=@id ORDER BY id DESC LIMIT 1",
                 c => c.Parameters.AddWithValue("@id", companyId));

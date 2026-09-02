@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using Npgsql;
+using Opstrax.Api.Controllers;
 using Opstrax.Api.Data;
 using Opstrax.Api.Foundation;
 
@@ -212,23 +213,148 @@ public sealed class Stage9OperationalFoundationService(
             return new(false, "Smart assignment requires approval", true, approvalRequest.Id, recommendation);
         }
 
+        var jobId = TryLong(recommendation.GetValueOrDefault("jobId"));
+        var tripId = TryLong(recommendation.GetValueOrDefault("tripId"));
+        var driverId = TryLong(recommendation.GetValueOrDefault("recommendedDriverId"));
+        var vehicleId = TryLong(recommendation.GetValueOrDefault("recommendedVehicleId"));
+        if (!driverId.HasValue || !vehicleId.HasValue)
+            return new(false, "Smart assignment requires both a persisted driver and vehicle");
+
+        // Acceptance is the allocation decision, not a cosmetic confirmation. Serialize all
+        // allocations for the tenant and revalidate the recommendation against current resource
+        // truth before creating the one canonical dispatch assignment.
+        await db.ExecuteAsync("SELECT pg_advisory_xact_lock(@companyId)",
+            c => c.Parameters.AddWithValue("@companyId", companyId), ct);
+        var resources = await db.QuerySingleAsync(
+            @"SELECT d.branch_id driver_branch_id,v.branch_id vehicle_branch_id
+              FROM drivers d JOIN vehicles v ON v.company_id=d.company_id
+              WHERE d.company_id=@companyId AND d.id=@driverId AND v.id=@vehicleId
+                AND d.deleted_at IS NULL AND v.deleted_at IS NULL
+                AND LOWER(COALESCE(d.status,'active')) NOT IN ('inactive','suspended','terminated')
+                AND LOWER(COALESCE(v.status,'active')) NOT IN ('inactive','retired','archived')
+                AND COALESCE(v.out_of_service,FALSE)=FALSE",
+            c =>
+            {
+                c.Parameters.AddWithValue("@companyId", companyId);
+                c.Parameters.AddWithValue("@driverId", driverId.Value);
+                c.Parameters.AddWithValue("@vehicleId", vehicleId.Value);
+            }, ct);
+        if (resources is null)
+            return new(false, "Recommended driver or vehicle is unavailable for this tenant");
+        var driverBranch = TryLong(resources.GetValueOrDefault("driverBranchId"));
+        var vehicleBranch = TryLong(resources.GetValueOrDefault("vehicleBranchId"));
+        if (driverBranch != vehicleBranch)
+            return new(false, "Recommended driver and vehicle must belong to the same branch");
+
+        if (jobId.HasValue && await db.ScalarLongAsync(
+                @"SELECT COUNT(*) FROM jobs WHERE company_id=@companyId AND id=@jobId
+                  AND deleted_at IS NULL AND LOWER(COALESCE(status,'')) NOT IN ('completed','delivered','cancelled','canceled')
+                  AND branch_id IS NOT DISTINCT FROM @branchId::BIGINT",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@companyId", companyId);
+                    c.Parameters.AddWithValue("@jobId", jobId.Value);
+                    c.Parameters.AddWithValue("@branchId", (object?)vehicleBranch ?? DBNull.Value);
+                }, ct) != 1)
+            return new(false, "Recommended job is unavailable for this tenant");
+        if (tripId.HasValue && await db.ScalarLongAsync(
+                @"SELECT COUNT(*) FROM trips WHERE company_id=@companyId AND id=@tripId
+                  AND LOWER(COALESCE(status,'')) NOT IN ('completed','cancelled','canceled')
+                  AND (driver_id IS NULL OR driver_id=@driverId)
+                  AND (vehicle_id IS NULL OR vehicle_id=@vehicleId)",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@companyId", companyId);
+                    c.Parameters.AddWithValue("@tripId", tripId.Value);
+                    c.Parameters.AddWithValue("@driverId", driverId.Value);
+                    c.Parameters.AddWithValue("@vehicleId", vehicleId.Value);
+                }, ct) != 1)
+            return new(false, "Recommended trip is unavailable or bound to different resources");
+
+        var activeConflict = await db.ScalarLongAsync(
+            @"SELECT COUNT(*) FROM dispatch_assignments
+              WHERE company_id=@companyId AND assignment_status NOT IN ('delivered','cancelled')
+                AND (driver_id=@driverId OR vehicle_id=@vehicleId
+                  OR (@jobId::BIGINT IS NOT NULL AND job_id=@jobId))",
+            c =>
+            {
+                c.Parameters.AddWithValue("@companyId", companyId);
+                c.Parameters.AddWithValue("@driverId", driverId.Value);
+                c.Parameters.AddWithValue("@vehicleId", vehicleId.Value);
+                c.Parameters.AddWithValue("@jobId", (object?)jobId ?? DBNull.Value);
+            }, ct);
+        if (activeConflict > 0)
+            return new(false, "Recommended driver, vehicle, or job is already actively assigned");
+
+        var eligibility = await EndpointMappings.CheckDispatchEligibilityAsync(
+            companyId, vehicleId.Value, driverId.Value, db, ct);
+        if (!eligibility.Eligible)
+            return new(false,
+                $"Recommended resources are no longer dispatch-eligible: {string.Join("; ", eligibility.BlockingReasons)}");
+
+        var actorUserId = ActorUserId();
+        var assignmentId = await db.InsertAsync(
+            @"INSERT INTO dispatch_assignments
+                (company_id,branch_id,job_id,trip_id,vehicle_id,driver_id,match_score,
+                 assignment_status,status,assigned_by_user_id,assigned_at,acceptance_due_at,
+                 eligibility_json,notes)
+              VALUES (@companyId,@branchId,@jobId,@tripId,@vehicleId,@driverId,@score,
+                      'assigned','Assigned',@actor,NOW(),NOW()+INTERVAL '10 minutes',
+                      jsonb_build_object('source','smart_assignment','recommendationId',@recommendationId,
+                                         'riskLevel',@riskLevel,'score',@rawScore),
+                      'Created from accepted smart-assignment recommendation')",
+            c =>
+            {
+                c.Parameters.AddWithValue("@companyId", companyId);
+                c.Parameters.AddWithValue("@branchId", (object?)vehicleBranch ?? DBNull.Value);
+                c.Parameters.AddWithValue("@jobId", (object?)jobId ?? DBNull.Value);
+                c.Parameters.AddWithValue("@tripId", (object?)tripId ?? DBNull.Value);
+                c.Parameters.AddWithValue("@vehicleId", vehicleId.Value);
+                c.Parameters.AddWithValue("@driverId", driverId.Value);
+                c.Parameters.AddWithValue("@score", score * 100m);
+                c.Parameters.AddWithValue("@actor", (object?)actorUserId ?? DBNull.Value);
+                c.Parameters.AddWithValue("@recommendationId", recommendationId);
+                c.Parameters.AddWithValue("@riskLevel", riskLevel);
+                c.Parameters.AddWithValue("@rawScore", score);
+            }, ct);
+
+        if (jobId.HasValue)
+            await db.ExecuteAsync(
+                @"UPDATE jobs SET status='Assigned',assigned_driver_id=@driverId,assigned_vehicle_id=@vehicleId
+                  WHERE company_id=@companyId AND id=@jobId",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@jobId", jobId.Value);
+                    c.Parameters.AddWithValue("@driverId", driverId.Value); c.Parameters.AddWithValue("@vehicleId", vehicleId.Value);
+                }, ct);
+        if (tripId.HasValue)
+            await db.ExecuteAsync(
+                @"UPDATE trips SET driver_id=@driverId,vehicle_id=@vehicleId
+                  WHERE company_id=@companyId AND id=@tripId",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@tripId", tripId.Value);
+                    c.Parameters.AddWithValue("@driverId", driverId.Value); c.Parameters.AddWithValue("@vehicleId", vehicleId.Value);
+                }, ct);
+
         await db.ExecuteAsync(
             @"INSERT INTO assignment_confirmations
-                (company_id, recommendation_id, job_id, trip_id, driver_id, vehicle_id, status, accepted_at,
+                (company_id, recommendation_id, dispatch_assignment_id, job_id, trip_id, driver_id, vehicle_id, status, accepted_at,
                  source_channel, client_generated_id, idempotency_key, device_id, mobile_app_version,
                  metadata_json, correlation_id, causation_id, created_at)
               VALUES
-                (@companyId, @recommendationId, @jobId, @tripId, @driverId, @vehicleId, 'accepted', NOW(),
+                (@companyId, @recommendationId, @assignmentId, @jobId, @tripId, @driverId, @vehicleId, 'accepted', NOW(),
                  @sourceChannel, @clientGeneratedId, @idempotencyKey, @deviceId, @mobileAppVersion,
                  COALESCE(@metadata::jsonb, '{}'::jsonb), @correlationId, @causationId, NOW())",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
                 c.Parameters.AddWithValue("@recommendationId", recommendationId);
-                c.Parameters.AddWithValue("@jobId", recommendation.GetValueOrDefault("jobId") ?? DBNull.Value);
-                c.Parameters.AddWithValue("@tripId", recommendation.GetValueOrDefault("tripId") ?? DBNull.Value);
-                c.Parameters.AddWithValue("@driverId", recommendation.GetValueOrDefault("recommendedDriverId") ?? DBNull.Value);
-                c.Parameters.AddWithValue("@vehicleId", recommendation.GetValueOrDefault("recommendedVehicleId") ?? DBNull.Value);
+                c.Parameters.AddWithValue("@assignmentId", assignmentId);
+                c.Parameters.AddWithValue("@jobId", (object?)jobId ?? DBNull.Value);
+                c.Parameters.AddWithValue("@tripId", (object?)tripId ?? DBNull.Value);
+                c.Parameters.AddWithValue("@driverId", driverId.Value);
+                c.Parameters.AddWithValue("@vehicleId", vehicleId.Value);
                 c.Parameters.AddWithValue("@sourceChannel", (object?)Str(body, "sourceChannel") ?? recommendation.GetValueOrDefault("sourceChannel") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@clientGeneratedId", (object?)Str(body, "clientGeneratedId") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@idempotencyKey", (object?)Str(body, "idempotencyKey") ?? DBNull.Value);
@@ -237,6 +363,21 @@ public sealed class Stage9OperationalFoundationService(
                 c.Parameters.AddWithValue("@metadata", Str(body, "metadataJson") ?? "{}");
                 c.Parameters.AddWithValue("@correlationId", (object?)correlation.CorrelationId ?? DBNull.Value);
                 c.Parameters.AddWithValue("@causationId", (object?)correlation.CausationId ?? DBNull.Value);
+            }, ct);
+
+        await AuditLogSequenceRepair.ExecuteWithSequenceRepairAsync(
+            db,"audit_logs","id",
+            @"INSERT INTO audit_logs
+                (company_id,actor_user_id,actor_name,action_name,entity_name,entity_id,details_json)
+              VALUES (@companyId,@actor,@actorName,'dispatch.assignment.created','DispatchAssignment',@assignmentId,
+                      jsonb_build_object('source','smart_assignment','recommendationId',@recommendationId))",
+            c =>
+            {
+                c.Parameters.AddWithValue("@companyId", companyId);
+                c.Parameters.AddWithValue("@actor", (object?)actorUserId ?? DBNull.Value);
+                c.Parameters.AddWithValue("@actorName", actorUserId.HasValue ? $"user:{actorUserId.Value}" : "system");
+                c.Parameters.AddWithValue("@assignmentId", assignmentId);
+                c.Parameters.AddWithValue("@recommendationId", recommendationId);
             }, ct);
 
         await db.ExecuteAsync(
@@ -252,9 +393,9 @@ public sealed class Stage9OperationalFoundationService(
         _ = events.Publish(
             companyId.ToString(CultureInfo.InvariantCulture),
             "assignment.accepted",
-            "smart_assignment_recommendation",
-            recommendationId.ToString(CultureInfo.InvariantCulture),
-            JsonSerializer.Serialize(new { recommendationId, companyId, accepted = true }),
+            "dispatch_assignment",
+            assignmentId.ToString(CultureInfo.InvariantCulture),
+            JsonSerializer.Serialize(new { recommendationId, assignmentId, companyId, accepted = true }),
             correlation.CorrelationId,
             correlation.CausationId,
             $"smart_assign.accept:{recommendationId}");
@@ -269,7 +410,8 @@ public sealed class Stage9OperationalFoundationService(
             correlation.CausationId,
             $"assignment_confirmation:{recommendationId}");
 
-        return new(true, "Smart assignment accepted", false, null, await LoadAssignmentConfirmationAsync(companyId, recommendationId, ct));
+        return new(true, "Smart assignment accepted and canonical dispatch assignment created", false, null,
+            await LoadAssignmentConfirmationAsync(companyId, recommendationId, ct));
         }, ct);
     }
 

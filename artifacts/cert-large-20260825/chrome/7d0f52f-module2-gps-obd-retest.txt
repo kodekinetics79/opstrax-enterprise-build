@@ -1,0 +1,56 @@
+OpsTrax Module 2 corrective browser retest
+Date: 2026-08-26 America/New_York
+Tenant: CERT-LARGE-20260825
+Role: Tenant/Fleet Administrator, plus representative Driver negative
+Stable surface: https://opstrax-staging-certification.vercel.app
+Exact frontend/API SHA: 7d0f52fc73f45a48f31ff1c17c0e264835460ab6
+
+STAGING DEPLOYMENT
+- Render staging service only: srv-d9u6qnajobas73ef2590.
+- OPSTRAX_DEPLOY_VERSION corrected from stale 646e503... to full exact 7d0f52fc73f45a48f31ff1c17c0e264835460ab6.
+- Exact commit selected visibly: merge PR #67, fix(telematics): truthful large-fleet telemetry views.
+- Manual dashboard deployment source showed full exact SHA.
+- Terminal status: Deploy succeeded | Live. Duration 1m47s. Triggered 2026-08-26 1:19:10 PM EDT.
+- Vercel staging deployment supplied by integration owner: dpl_Am8eUMw9CQraZ8yH5dfQoCGGPvxv, exact matching SHA.
+- Rendered About gate after Recheck: full matching frontend/API SHA, Live, All systems operational, correct tenant. About navigation 1.868 s.
+- Supporting readiness supplied by integration owner: /health/ready HTTP 200, exact same version.
+
+GPS TRACKING CORRECTIVE RESULTS
+- Initial visible customer-page load after exact gate: approximately 3.6 s to settled table.
+- Truthful KPIs: Visible Units 1,100; Offline / Stale 1,100; Needs Action 1,100; Average Health unknown.
+- Records explicitly state No valid fix, Unknown source, No data, and Blocked — no valid position. No telemetry was simulated.
+- Server pagination: 50 rows per page, Page 1 of 22, Showing 1–50 of 1,100.
+- Page 2: Showing 51–100 of 1,100.
+- Page 11: Showing 501–550 of 1,100; 50 visible rows. Page 2 -> 11 traversal 13.707 s.
+- Page 22: Showing 1,051–1,100 of 1,100; 50 visible rows; Next disabled. Page 11 -> 22 traversal 18.958 s.
+- Offline filter: 1,100 matching.
+- Stale GPS filter is distinct from Offline and produced an explicit filtered-empty state: No GPS records found / No vehicles match the current GPS filters for this tenant.
+- Exact search CLHQ-V-0002 settled to one row, Showing 1–1 of 1, Page 1 of 1. Observed debounce/request settle approximately 1.9 s.
+- No-result CERT-NO-SUCH-POSITION: explicit filtered-empty state in 1.878 s.
+- Clearing the query reset to Page 1, 1–50 of 1,100, in 2.480 s.
+- Full hard refresh completed in 4.664 s; exact/Live gate and Page 1 counts persisted.
+- Full logout/fresh Tenant Admin login succeeded. Gate initially showed Unavailable during bootstrap, then settled to full exact frontend/API Live after approximately 4.6 s. GPS reload after login took 2.851 s and retained 1,100 truthful counts and 50-row pagination.
+
+OBD / J1939 CORRECTIVE RESULTS
+- With all filters cleared, the tenant has zero real engine/bus telemetry records.
+- Truthful tenant-empty KPIs: Visible Units 0; Offline / Stale 0; Needs Action 0; Average Health unknown.
+- Explicit empty state: No live telemetry yet / No obd / j1939 is streaming for this tenant. Provision or activate a device to see live data here.
+- Page settled in approximately 4.3 s after navigation/filter clearing.
+- OBD pagination and diagnostics-detail permission cannot be certified because there is no authenticated OBD/J1939/CAN evidence. This is an external evidence limitation; no synthetic bus data was introduced.
+
+AUTHORIZATION NEGATIVE
+- Representative active Driver account driver-cl-hq@cert-large-20260825.invalid authenticated using the pre-authorized secure certification credential.
+- Driver landing explicitly showed no linked driver profile, no active assignment, HOS unavailable, ELD not synced.
+- Direct visible navigation to /gps-tracking was denied by redirecting back to /driver in 2.983 s. No Telemetry or Admin navigation leaked into the Driver shell.
+- Browser returned to Tenant/Fleet Administrator after the negative check.
+
+CONSOLE / NETWORK / RESPONSIVE LIMITATIONS
+- Chrome warning/error collection after the full cycle: 0 entries.
+- No material failed request or raw 4xx/5xx surfaced in the customer UI during the retest. Installed Chrome control does not expose a complete request waterfall, so no stronger network claim is made.
+- Exact viewport resizing is not available in the installed persistent Chrome controller. No responsive certification claim is made in this retest.
+
+VERDICT
+- GPS KPI truthfulness, distinct Offline/Stale behavior, 50-row pagination, search/no-result behavior, persistence, and Driver direct-URL restriction: PASS.
+- OBD/J1939 truthful empty state: PASS for current evidence.
+- OBD pagination and diagnostics details: EXTERNALLY BLOCKED by absence of real authenticated engine/bus telemetry.
+- Overall focused PR #67 browser retest: PASS WITH EXTERNAL EVIDENCE LIMITATIONS; no reproduced P0/P1 defect on the exercised GPS journey.

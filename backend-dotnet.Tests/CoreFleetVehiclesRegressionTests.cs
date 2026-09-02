@@ -49,7 +49,7 @@ public sealed class CoreFleetVehiclesRegressionTests
     public void VehicleUiSurfacesMutationFailures()
     {
         var page = Read("frontend", "src", "pages", "VehiclesPage.tsx");
-        Assert.Contains("const actionError = save.error ?? remove.error ?? assign.error", page);
+        Assert.Contains("const actionError = save.error ?? remove.error ?? reactivate.error ?? assign.error", page);
         Assert.Contains("serverError={save.error", page);
         Assert.Contains("role=\"alert\"", page);
     }

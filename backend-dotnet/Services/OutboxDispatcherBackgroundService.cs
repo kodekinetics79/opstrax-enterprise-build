@@ -9,8 +9,11 @@ public sealed class OutboxDispatcherBackgroundService(
     IOutboxDispatcher dispatcher,
     OutboxDispatcherOptions options,
     Database db,
+    ServiceRunTracker tracker,
     ILogger<OutboxDispatcherBackgroundService> logger) : BackgroundService
 {
+    private const string ServiceName = "OutboxDispatcherBackgroundService";
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         if (!options.Enabled)
@@ -24,8 +27,11 @@ public sealed class OutboxDispatcherBackgroundService(
 
         while (!stoppingToken.IsCancellationRequested)
         {
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            var runId = await tracker.BeginAsync(ServiceName, stoppingToken);
             try
             {
+                var processedTotal = 0;
                 // Cross-tenant worker (drains all-tenant outbox/inbox): run the drain under
                 // the platform-admin bypass scope so it functions as the restricted role.
                 await db.RunInSystemScopeAsync(async () =>
@@ -35,9 +41,12 @@ public sealed class OutboxDispatcherBackgroundService(
                     {
                         processed = await dispatcher.DispatchOutboxOnceAsync(stoppingToken);
                         processed += await dispatcher.DispatchInboxOnceAsync(stoppingToken);
+                        processedTotal += processed;
                     }
                     while (processed > 0 && !stoppingToken.IsCancellationRequested);
                 }, stoppingToken);
+                stopwatch.Stop();
+                await tracker.CompleteAsync(runId, ServiceName, processedTotal, (int)stopwatch.ElapsedMilliseconds, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -45,7 +54,9 @@ public sealed class OutboxDispatcherBackgroundService(
             }
             catch (Exception ex)
             {
+                stopwatch.Stop();
                 logger.LogError(ex, "Foundation dispatcher cycle failed.");
+                await tracker.FailAsync(runId, ServiceName, ex, (int)stopwatch.ElapsedMilliseconds, stoppingToken);
             }
 
             try

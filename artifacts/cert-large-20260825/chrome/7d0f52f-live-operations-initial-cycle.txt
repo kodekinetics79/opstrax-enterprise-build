@@ -1,0 +1,99 @@
+OpsTrax Live Operations initial browser-first certification cycle
+Date: 2026-08-26 America/New_York
+Tenant: CERT-LARGE-20260825
+Stable staging: https://opstrax-staging-certification.vercel.app
+Exact frontend/API SHA: 7d0f52fc73f45a48f31ff1c17c0e264835460ab6
+Roles exercised: Tenant/Fleet Administrator, Dispatcher CL-HQ, Executive 01, Driver CL-HQ
+
+EXACT GATE
+- Visible full matching frontend/API SHA and correct tenant throughout.
+- About/Recheck ended Live and All systems operational at 2:02:41 PM.
+- An earlier Recheck temporarily reported Services are starting up while customer API pages still loaded; later Recheck cleared without intervention.
+
+TENANT / FLEET ADMINISTRATOR
+
+Fleet Overview / Fleet Command
+- Load 3.132 s.
+- 1,000 vehicles tracked; 0 active; 950 available; 50 out of service.
+- OOS filter returned 50 rows in 1.257 s; All restored 1,000 rows in 2.377 s.
+- Assignment visible: CLHQ-V-0001 with Certification Driver CLHQ 0002.
+- P1 truthfulness: summary says Offline 0 / Unknown 0 while every one of the 1,000 rendered table rows visibly says device Offline and No live GPS.
+- P1 large-fleet usability: all 1,000 rows render at once, no search/sort/pagination; accessibility DOM approximately 590,532 characters. This remains a multi-second, high-volume surface.
+
+Live Map
+- Load 4.799 s.
+- Stream connected; 0 valid positions; 1,100 tracked; 0 moving; 0 idle; 1,100 Unknown; 0 connected; 1,100 degraded; geocoded 0/1,100; coverage 0%.
+- Explicitly states no current GPS positions and requires an authenticated device telemetry ping.
+- Roster deliberately bounded to first 200 of 1,100 and requests refined filters.
+- Exact roster search CLHQ-V-0002 returned one row in 0.569 s.
+
+Fleet Live Wall
+- Load 4.127 s.
+- Honest empty state: 0 live vehicles; no vehicles are reporting live telemetry yet.
+
+Dispatch Board
+- Load 4.544 s as Tenant Admin, 3.989 s as Dispatcher.
+- 0 unassigned, 0 active assignments, 0 exceptions, 0 drivers ready.
+- Empty board lanes are explicit.
+- P2 copy issue: “All active assignments are tracking normally” is shown when there are zero active assignments.
+
+Jobs & Orders
+- Load 4.265 s.
+- 0 jobs across every stage; 0 shown / 0 total; explicit filtered-empty state.
+- P2 presentation issues: “All jobs on track” with zero jobs and On-Time ETA rendered as a bare “%”.
+
+Assignments
+- Load 4.171 s as Tenant Admin; 4.079 s as Dispatcher.
+- 1 current fleet pairing; 2 effective-dated history rows.
+- Current: CLHQ-V-0001 -> CLHQ-D-0002, Active, effective 8/25/2026 5:15:16 PM -> Current.
+- Prior: CLHQ-V-0001 -> CLHQ-D-0001, Released, 8/25/2026 4:34:14 PM -> 8/25/2026 5:15:16 PM.
+- Dispatcher CL-HQ saw exactly the CL-HQ pairing/history, 190 ready units, and no NEHUB/SEDEPOT/MWYARD/WESTHUB leakage.
+
+Alerts Center
+- Load 4.447 s.
+- Explicit live-backend/no-demo surface; open queue 0, critical/high 0, aging 0, unowned 0, 0 visible.
+- Search/category/severity/status controls render; empty result is explicit.
+
+Route Plans
+- Load 4.431 s.
+- 0 routes and explicit filtered-empty state.
+- P2 presentation issue: Avg Route ETA displays bare “min” without a numeric value.
+
+ROLE MATRIX
+
+Dispatcher CL-HQ
+- Fresh secure login 2.850 s; exact gate settled Live.
+- Dispatch Board and Assignments available; Users & Roles absent.
+- Branch-scoped assignment history passed with no cross-branch leakage.
+
+Executive 01
+- Fresh secure login 2.760 s; exact gate settled Live.
+- Live Map read-only positive loaded in 4.457 s with all 1,100 truthful Unknown records.
+- No Create Job, Create Route, Connect Device, Import CSV, or Users & Roles control leaked.
+
+Driver CL-HQ
+- Fresh secure login 2.549 s plus 0.9 s settle.
+- Dedicated Driver shell only: no Fleet Overview or Dispatch Board navigation.
+- Honest setup state: no linked driver profile, no active assignment, HOS unavailable, ELD not synced.
+- Safe direct /gps-tracking denial was previously repeated on this same exact SHA and redirected to /driver; no telemetry/admin surface leaked. Current cycle reconfirmed the same minimal Driver shell.
+
+PERSISTENCE / SESSION
+- Multiple full logout/fresh-login cycles succeeded using existing authorized role credentials.
+- Exact tenant and role boundaries persisted; assignment current/prior history remained visible after fresh sessions.
+- Browser returned to Tenant/Fleet Administrator and final About/Recheck was exact/Live/operational.
+
+CONSOLE / NETWORK
+- Final Chrome console warning/error collection: 0 entries.
+- No material failed request or raw unresolved 4xx/5xx surfaced in the visible customer journeys.
+- Installed Chrome control does not expose a complete network waterfall; no broader network claim is made.
+
+BLOCKERS / FINDINGS
+- No P0 reproduced.
+- Open P1: Fleet Command offline/unknown summary contradicts all 1,000 rendered Offline rows.
+- Open P1: Fleet Command renders 1,000 rows without search/sort/pagination, materially weakening complete-dataset usability.
+- External evidence blocker: no authenticated live GPS positions, driver/vehicle motion, jobs, routes, dispatch events, or live alerts exist in the isolated tenant. These live workflows cannot be certified from empty states alone and no telemetry was simulated.
+- Responsive viewport changes were not available in the installed persistent Chrome controller; no viewport certification claim is made.
+
+VERDICT
+- Initial Live Operations verdict: BLOCKED.
+- Reasons: open Fleet Command P1s plus absence of real live operational events/telemetry needed to certify the end-to-end customer journey.

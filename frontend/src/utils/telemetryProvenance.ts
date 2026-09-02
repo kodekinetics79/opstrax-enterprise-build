@@ -128,6 +128,57 @@ export function bucketFromServerFreshness(freshness: string | null | undefined):
   }
 }
 
+/**
+ * Resolve freshness from a loosely typed telemetry record. Server-computed
+ * freshness wins because it accounts for both device-fix and receipt age.
+ */
+export function readFreshnessBucket(rec: object | null | undefined): FreshnessBucket {
+  if (!rec) return "offline";
+  const row = rec as Record<string, unknown>;
+  const server = bucketFromServerFreshness(row["freshness"] == null ? null : String(row["freshness"]));
+  if (server) return server;
+  if (row["isStale"] === true || row["is_stale"] === true) return "stale";
+  const raw = row["secondsSincePing"] ?? row["seconds_since_ping"];
+  const seconds = raw == null ? null : Number(raw);
+  return freshnessBucket(seconds != null && Number.isFinite(seconds) ? seconds : null);
+}
+
+/** True only for a bounded, non-zero coordinate pair suitable for display. */
+export function hasValidTelemetryPosition(rec: object | null | undefined): boolean {
+  if (!rec) return false;
+  const row = rec as Record<string, unknown>;
+  const lat = Number(row["lat"] ?? row["latitude"]);
+  const lng = Number(row["lng"] ?? row["longitude"]);
+  return Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 && !(lat === 0 && lng === 0);
+}
+
+export type PositionFreshnessSummary = {
+  located: number;
+  live: number;
+  delayed: number;
+  recent: number;
+  stale: number;
+  offline: number;
+  staleOrUnknown: number;
+};
+
+/**
+ * Count coordinate-bearing fixes without confusing stream connectivity with
+ * current GPS evidence. "Recent" deliberately means live + delayed.
+ */
+export function summarizePositionFreshness(records: object[]): PositionFreshnessSummary {
+  const summary: PositionFreshnessSummary = { located: 0, live: 0, delayed: 0, recent: 0, stale: 0, offline: 0, staleOrUnknown: 0 };
+  for (const record of records) {
+    if (!hasValidTelemetryPosition(record)) continue;
+    summary.located += 1;
+    const bucket = readFreshnessBucket(record);
+    summary[bucket] += 1;
+  }
+  summary.recent = summary.live + summary.delayed;
+  summary.staleOrUnknown = summary.stale + summary.offline;
+  return summary;
+}
+
 /** Marker/dot color per freshness bucket — stale/offline are deliberately muted. */
 export function freshnessColor(bucket: FreshnessBucket): string {
   switch (bucket) {

@@ -1,10 +1,14 @@
 import { useState } from "react";
 import { chart } from "@/styles/tokens";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "react-router";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { apiClient, unwrap } from "@/services/apiClient";
+import { financeOrderToCashApi } from "@/services/financeOrderToCashApi";
 import { exportCsv, LoadingState, EmptyState, ErrorState, KpiCard, DataTable } from "@/components/ui";
+import { useDialogFocus } from "@/hooks/useDialogFocus";
+import { useHasPermission } from "@/hooks/usePermission";
+import { apiErrorMessage } from "@/utils/apiErrorMessage";
 import type { AnyRecord } from "@/types";
 
 // Present the real revenue-spine payment status as a human label the canonical StatusBadge
@@ -125,9 +129,129 @@ function totalsByCurrency(rows: AnyRecord[], value: (row: AnyRecord) => number):
   return [...totals].sort(([left], [right]) => left.localeCompare(right)).map(([currency, total]) => ({ currency, total }));
 }
 
+type PaymentTarget = {
+  id: string;
+  invoiceNumber: string;
+  customerName: string;
+  balanceDue: number;
+  currency: string;
+};
+
+function PaymentDialog({ target, saving, serverError, onClose, onSubmit }: {
+  target: PaymentTarget;
+  saving: boolean;
+  serverError: string | null;
+  onClose: () => void;
+  onSubmit: (input: { amount: number; currency: string; paymentReference: string; paymentMethod: string }) => void;
+}) {
+  const [amount, setAmount] = useState(String(target.balanceDue));
+  const [paymentReference, setPaymentReference] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState("bank_transfer");
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const dialogRef = useDialogFocus<HTMLDivElement>(true, onClose);
+
+  const submit = () => {
+    const parsedAmount = Number(amount);
+    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+      setValidationError("Enter a payment amount greater than zero.");
+      return;
+    }
+    if (parsedAmount > target.balanceDue) {
+      setValidationError(`Payment cannot exceed the outstanding balance of ${money(target.balanceDue, target.currency)}.`);
+      return;
+    }
+    if (!paymentReference.trim()) {
+      setValidationError("Enter the bank, cheque, card or remittance reference used to reconcile this payment.");
+      return;
+    }
+    setValidationError(null);
+    onSubmit({ amount: parsedAmount, currency: target.currency, paymentReference: paymentReference.trim(), paymentMethod });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/50 p-4" role="presentation">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="record-payment-title" className="panel w-full max-w-lg p-5 shadow-2xl">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 id="record-payment-title" className="text-lg font-bold text-slate-900">Record invoice payment</h2>
+            <p className="mt-1 text-sm text-slate-500">{target.invoiceNumber} · {target.customerName}</p>
+          </div>
+          <button type="button" className="btn-secondary" onClick={onClose} disabled={saving} aria-label="Close payment dialog">Close</button>
+        </div>
+        <p className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
+          Outstanding balance: <strong>{money(target.balanceDue, target.currency)}</strong>. Record only funds confirmed by your payment provider.
+        </p>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <label className="text-sm font-medium text-slate-700">Amount ({target.currency})
+            <input autoFocus className="input mt-1 w-full" inputMode="decimal" type="number" min="0.01" max={target.balanceDue} step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} />
+          </label>
+          <label className="text-sm font-medium text-slate-700">Payment method
+            <select className="input mt-1 w-full" value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value)}>
+              <option value="bank_transfer">Bank transfer</option>
+              <option value="cheque">Cheque</option>
+              <option value="card">Card</option>
+              <option value="cash">Cash</option>
+              <option value="other">Other</option>
+            </select>
+          </label>
+        </div>
+        <label className="mt-4 block text-sm font-medium text-slate-700">Payment reference
+          <input className="input mt-1 w-full" value={paymentReference} onChange={(event) => setPaymentReference(event.target.value)} placeholder="Bank transaction or remittance reference" />
+        </label>
+        {(validationError || serverError) && <div className="mt-4 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700" role="alert">{validationError || serverError}</div>}
+        <div className="mt-5 flex justify-end gap-2">
+          <button type="button" className="btn-secondary" onClick={onClose} disabled={saving}>Cancel</button>
+          <button type="button" className="btn-primary" onClick={submit} disabled={saving}>{saving ? "Recording…" : "Record payment"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function InvoicesTab() {
+  const queryClient = useQueryClient();
+  const hasPermission = useHasPermission();
+  const canReadDrafts = hasPermission("finance.invoice_draft.read");
+  const canIssue = hasPermission("finance.invoice.issue");
+  const canRecordPayment = hasPermission("finance.invoice.payment.record");
+  const [paymentTarget, setPaymentTarget] = useState<PaymentTarget | null>(null);
+  const [notice, setNotice] = useState<{ kind: "success" | "error"; text: string } | null>(null);
   const q = useQuery({ queryKey: ["issued-invoices"], queryFn: financialApi.invoices });
+  const draftsQ = useQuery({
+    queryKey: ["invoice-drafts"],
+    queryFn: financeOrderToCashApi.invoiceDrafts,
+    enabled: canReadDrafts,
+  });
+  const issue = useMutation({
+    mutationFn: ({ id, key }: { id: string; key: string }) => financeOrderToCashApi.issueInvoiceDraft(id, key),
+    onSuccess: async (result) => {
+      setNotice({
+        kind: "success",
+        text: result.approvalRequired
+          ? `Invoice approval requested${result.approvalRequestId ? ` (request #${result.approvalRequestId})` : ""}. The draft remains unissued until approval.`
+          : "Invoice issued successfully and moved into accounts receivable.",
+      });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["invoice-drafts"] }),
+        queryClient.invalidateQueries({ queryKey: ["issued-invoices"] }),
+      ]);
+    },
+    onError: (error) => setNotice({ kind: "error", text: apiErrorMessage(error, "The invoice could not be issued. Review the draft and try again.") }),
+  });
+  const recordPayment = useMutation({
+    mutationFn: ({ invoiceId, input }: { invoiceId: string; input: { amount: number; currency: string; paymentReference: string; paymentMethod: string } }) =>
+      financeOrderToCashApi.recordInvoicePayment(invoiceId, input),
+    onSuccess: async () => {
+      setPaymentTarget(null);
+      setNotice({ kind: "success", text: "Payment recorded. The invoice balance and collections ledger have been refreshed." });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["issued-invoices"] }),
+        queryClient.invalidateQueries({ queryKey: ["payments"] }),
+      ]);
+    },
+  });
   const rows = (q.data ?? []) as AnyRecord[];
+  const drafts = (draftsQ.data ?? []) as AnyRecord[];
   const outstandingBalances = totalsByCurrency(rows, (r) => Number(r.balanceDue ?? 0));
   const overdue = rows.filter((r) => String(r.paymentStatus) === "Overdue").length;
   const totalValues = totalsByCurrency(rows, (r) => Number(r.total ?? 0));
@@ -150,6 +274,7 @@ function InvoicesTab() {
 
   return (
     <div className="flex flex-col gap-4">
+      {notice && <div className={`rounded-lg border p-3 text-sm ${notice.kind === "error" ? "border-red-300 bg-red-50 text-red-700" : "border-emerald-300 bg-emerald-50 text-emerald-700"}`} role={notice.kind === "error" ? "alert" : "status"}>{notice.text}</div>}
       <div className="flex flex-wrap gap-3">
         <KpiCard label="Total Invoices" value={rows.length} />
         {outstandingBalances.map(({ currency, total }) => <KpiCard key={`outstanding-${currency}`} label={`Outstanding (${currency})`} value={money(total, currency)} status="Review" />)}
@@ -175,12 +300,62 @@ function InvoicesTab() {
           <p className="mt-1 text-sm font-semibold text-slate-900">Sourced from the live revenue spine (issued_invoices).</p>
         </div>
       </div>
+      {canReadDrafts && (
+        <section className="panel overflow-hidden p-0" aria-labelledby="invoice-drafts-title">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-3">
+            <div>
+              <h2 id="invoice-drafts-title" className="text-sm font-bold text-slate-900">Invoice drafts awaiting issue</h2>
+              <p className="text-xs text-slate-500">Review draft totals before they enter accounts receivable.</p>
+            </div>
+            {!canIssue && <span className="text-xs text-slate-500">Read-only · issue permission required</span>}
+          </div>
+          {draftsQ.isLoading ? <div className="p-4"><LoadingState /></div> : draftsQ.isError ? (
+            <div className="p-4"><ErrorState message={apiErrorMessage(draftsQ.error, "Unable to load invoice drafts.")} onRetry={() => { void draftsQ.refetch(); }} /></div>
+          ) : drafts.length === 0 ? <div className="p-4"><EmptyState title="No invoice drafts awaiting issue" /></div> : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead><tr className="border-b border-slate-200 bg-slate-50">
+                  {['Draft #', 'Customer', 'Status', 'Subtotal', 'Tax', 'Total', 'Action'].map((heading) => <th key={heading} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">{heading}</th>)}
+                </tr></thead>
+                <tbody className="divide-y divide-slate-100">{drafts.map((draft) => {
+                  const id = String(draft.id ?? "");
+                  const status = String(draft.status ?? "draft");
+                  const currency = currencyCode(draft.currency);
+                  const eligible = !/issued|cancelled|void/i.test(status);
+                  return <tr key={id}>
+                    <td className="px-4 py-3 font-medium text-slate-900">{String(draft.invoiceDraftNo ?? id)}</td>
+                    <td className="px-4 py-3 text-slate-700">{draft.customerName ? String(draft.customerName) : `Customer #${String(draft.customerId ?? "—")}`}</td>
+                    <td className="px-4 py-3 text-slate-600">{status}</td>
+                    <td className="px-4 py-3 text-slate-700">{money(Number(draft.subtotal ?? 0), currency)}</td>
+                    <td className="px-4 py-3 text-slate-700">{money(Number(draft.taxTotal ?? 0), currency)}</td>
+                    <td className="px-4 py-3 font-semibold text-slate-900">{money(Number(draft.total ?? 0), currency)}</td>
+                    <td className="px-4 py-3"><button type="button" className="btn-primary whitespace-nowrap text-xs" disabled={!canIssue || !eligible || issue.isPending} title={!canIssue ? "Requires invoice issue permission" : !eligible ? "This draft cannot be issued in its current status" : "Issue this invoice"} onClick={() => { setNotice(null); issue.mutate({ id, key: crypto.randomUUID() }); }}>{issue.isPending && issue.variables?.id === id ? "Issuing…" : "Issue invoice"}</button></td>
+                  </tr>;
+                })}</tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
       {rows.length === 0 ? <EmptyState title="No invoices found" /> : (
         <DataTable
           rows={tableRows}
           columns={["Invoice #", "Customer", "Total", "Paid", "Balance Due", "status", "Due Date", "Aging"]}
         />
       )}
+      {rows.some((row) => Number(row.balanceDue ?? 0) > 0) && (
+        <section className="panel overflow-hidden p-0" aria-labelledby="collections-actions-title">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-3">
+            <div><h2 id="collections-actions-title" className="text-sm font-bold text-slate-900">Collections actions</h2><p className="text-xs text-slate-500">Record confirmed payments against an issued invoice.</p></div>
+            {!canRecordPayment && <span className="text-xs text-slate-500">Read-only · payment record permission required</span>}
+          </div>
+          <div className="divide-y divide-slate-100">{rows.filter((row) => Number(row.balanceDue ?? 0) > 0).map((row) => {
+            const target = { id: String(row.id), invoiceNumber: String(row.invoiceNumber ?? row.id), customerName: String(row.customerName ?? "—"), balanceDue: Number(row.balanceDue), currency: currencyCode(row.currency) };
+            return <div key={target.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"><div><p className="font-medium text-slate-900">{target.invoiceNumber} · {target.customerName}</p><p className="text-xs text-slate-500">Outstanding {money(target.balanceDue, target.currency)}</p></div><button type="button" className="btn-secondary text-xs" disabled={!canRecordPayment} title={!canRecordPayment ? "Requires invoice payment record permission" : "Record a confirmed payment"} onClick={() => { setNotice(null); setPaymentTarget(target); }}>Record payment</button></div>;
+          })}</div>
+        </section>
+      )}
+      {paymentTarget && <PaymentDialog target={paymentTarget} saving={recordPayment.isPending} serverError={recordPayment.isError ? apiErrorMessage(recordPayment.error, "The payment could not be recorded. Check the amount and invoice status, then try again.") : null} onClose={() => { if (!recordPayment.isPending) { recordPayment.reset(); setPaymentTarget(null); } }} onSubmit={(input) => recordPayment.mutate({ invoiceId: paymentTarget.id, input })} />}
     </div>
   );
 }

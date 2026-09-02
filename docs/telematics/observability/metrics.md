@@ -58,6 +58,45 @@ series links straight to a `trace_id` (see [`tracing.md`](./tracing.md)); the SL
 | `opstrax_telematics_replay_rejections_total` | Counter | `protocol`, `company_id` | Timestamp outside freshness window / nonce reuse → security-relevant. |
 | `opstrax_telematics_out_of_order_total` | Counter | `protocol`, `company_id` | Reading older than the last committed position for that vehicle. |
 
+### 2a. Frame integrity, session safety & fix continuity
+
+Emitted by `TelematicsInstrumentation` from the GT06 device edge. Each of these is also counted
+into the process-local `GatewayMetrics`, which nothing scrapes; `GatewaySessionIdentityTests`
+asserts the two agree, because a silent drift here draws a flat green line for a condition that is
+actually occurring.
+
+None of them carries `company_id`. A frame that failed its checksum, and a login that tried to
+re-identify a socket, have no trustworthy identity — labelling them by tenant would hand an
+attacker control of which tenant's series lights up.
+
+| Metric | Type | Labels | Notes |
+|--------|------|--------|-------|
+| `opstrax_telematics_frames_received_total` | Counter | `protocol` | Complete frames off the wire, CRC-valid and CRC-invalid alike. The denominator for a corruption rate. |
+| `opstrax_telematics_crc_failures_total` | Counter | `protocol` | Frames whose CRC did not verify. They yield no message and reach neither normalization, storage nor an ACK. Separates "the device is silent" from "the device is shouting through noise". |
+| `opstrax_telematics_session_identity_violations_total` | Counter | `protocol` | Logins that tried to change the device identity of an already-bound socket. **Should be flat at zero.** A device does not re-introduce itself as a different device. |
+| `opstrax_telematics_duplicate_sessions_displaced_total` | Counter | `protocol` | Sessions closed because the device authenticated on a newer socket. Routine on a roaming fleet; a sustained spike means devices are reconnect-looping. |
+| `opstrax_telematics_teleport_suspected_total` | Counter | `protocol` | Fixes whose displacement from the device's previous position is impossible in the elapsed time. Produces `QualityFlags.TeleportSuspected`. |
+| `opstrax_telematics_impossible_speed_total` | Counter | `protocol` | Fixes whose device-reported ground speed exceeds the physical ceiling. Produces `QualityFlags.ImpossibleSpeed`. |
+| `opstrax_telematics_teleport_distinct_devices` | Gauge | none | Distinct devices flagged for an impossible displacement in the last 10 minutes. Aggregated in-process precisely so no `device_id` label is needed — that label would let whoever chooses the IMEIs choose the cardinality. **This is the series that separates one tampered unit from a decoder regression.** |
+
+**What the teleport series does and does not catch.** It catches a fix that *jumps*: GPS spoofing,
+a device swapped between vehicles, a provisioning error, and above all a decoder regression shipped
+mid-flight, where many devices jump simultaneously. It does **not** catch a decoder that has been
+uniformly wrong since birth, because consecutive equally-wrong fixes sit beside each other and imply
+an ordinary speed. Nothing derived from continuity alone can catch that class of fault; it takes a
+comparison against known ground truth at commissioning time. The limit is pinned as a test
+(`A_uniformly_mirrored_decoder_is_NOT_caught_and_that_is_a_known_limit`) so it stays a documented
+property rather than folklore.
+
+### 2b. Why normalization refused a frame (forwarding edge)
+
+`EdgeMetrics` breaks `NormalizationRejections` down by cause. The distinction is operational, not
+cosmetic: a frame refused here is **acknowledged and then discarded**, which is correct when the
+device sent something unusable and exactly wrong when *our decoder* made it unusable — and the
+device drops its only copy either way. `RejectedInvalidCoordinates` rising is the decoder-fault
+signature; `RejectedDeviceTimeOutOfWindow` rising is a fleet with unset clocks. Same aggregate
+before, opposite responses.
+
 ## 3. Queue, events & durability
 
 | Metric | Type | Labels | Notes |

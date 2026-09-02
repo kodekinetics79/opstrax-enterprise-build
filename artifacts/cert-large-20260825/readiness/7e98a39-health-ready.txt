@@ -1,0 +1,19 @@
+Observed: 2026-08-26T05:39:47Z
+URL: https://opstrax-staging-api.onrender.com/health/ready
+HTTP status: 200
+Total request time: 0.869442 seconds
+Deployment header: 7e98a39d66d67dbd5bb5419602532d7ec1aa23d1
+Body status: ready
+Service: opstrax-api
+Environment: Staging
+Database: connected (70 ms)
+Configuration: valid (0 failures, 0 warnings)
+Fleet production contract: ready
+Role restricted: true
+RLS violations: 0
+Grant violations: 0
+Tenant coverage violations: 0
+Failure reason: null
+
+This is supporting HTTP evidence. The rendered-product release gate and customer
+journey are preserved separately as visible-Chrome evidence.

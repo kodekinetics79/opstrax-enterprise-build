@@ -4,11 +4,28 @@ namespace Opstrax.Api.Services;
 
 public sealed record DataProtectionReadinessResult(bool Ready, long KeyCount, string? FailureCode);
 
-public sealed class DataProtectionReadinessService(
-    PostgresDataProtectionXmlRepository repository,
-    IDataProtectionProvider provider)
+public sealed class DataProtectionReadinessService
 {
-    public async Task<DataProtectionReadinessResult> CheckAsync(CancellationToken ct = default)
+    private readonly PostgresDataProtectionXmlRepository repository;
+    private readonly IDataProtectionProvider provider;
+    private readonly PositiveReadinessCache<DataProtectionReadinessResult> positiveCache;
+
+    public DataProtectionReadinessService(
+        PostgresDataProtectionXmlRepository repository,
+        IDataProtectionProvider provider)
+    {
+        this.repository = repository;
+        this.provider = provider;
+        positiveCache = new(
+            PositiveReadinessCache<DataProtectionReadinessResult>.DefaultDuration,
+            result => result.Ready,
+            TimeProvider.System);
+    }
+
+    public Task<DataProtectionReadinessResult> CheckAsync(CancellationToken ct = default) =>
+        positiveCache.GetOrRefreshAsync(CheckUncachedAsync, ct);
+
+    private async Task<DataProtectionReadinessResult> CheckUncachedAsync(CancellationToken ct)
     {
         try
         {

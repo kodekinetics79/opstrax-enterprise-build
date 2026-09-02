@@ -19,6 +19,7 @@
 #   stage24  compliance tenant scope (company_id columns + backfill)
 #   stage25  branches org hierarchy  (branches table, users.branch_id, …)
 #   stage26  platform control plane  (platform tables as migration)
+#   stage32  device IMEI identifier and ambiguity preflight
 #   2026-07-30 customer feedback contract (portal service columns + index)
 #   stage49  durable one-time MFA challenge consumption
 #   stage50  complete Fleet/market-pack production schema + RLS contract
@@ -52,6 +53,8 @@
 #   stage77  Protected-environment authorization reference bootstrap
 #   stage78  Protected-environment country-profile runtime contract
 #   stage79  Protected-environment tenant-provisioning runtime contract
+#   stage80  Effective-dated fleet identity backbone
+#   stage91  Native telemetry and diagnostic payload fingerprint idempotency
 #
 # WHAT IT DELIBERATELY SKIPS
 #   stage19/20/22 (the broad Row-Level Security cutover). Stage49 itself is
@@ -73,8 +76,18 @@ if [ -z "${NEON_PG_URI:-}" ]; then
   exit 1
 fi
 command -v psql >/dev/null || { echo "ERROR: psql not found. brew install libpq (or run via docker exec)." >&2; exit 1; }
+command -v python3 >/dev/null || { echo "ERROR: python3 is required for secret-safe URI parsing." >&2; exit 1; }
+
+# Parse the URI from the environment and exec psql with individual libpq
+# variables. The full credential never enters a process argument or receipt.
+psql_neon() { python3 tools/psql-neon-env.py "$@"; }
 
 MIGRATIONS=(
+  # The dated migrations are additive overlays. A genuinely empty Neon database
+  # must first receive the canonical 001 predecessor that owns core tables such
+  # as jobs, trips, users, vehicles and eld_devices. Without this bootstrap the
+  # old runner reached Stage 6 and failed at ALTER TABLE jobs.
+  ../init/001_schema
   # A clean protected database never runs owner-capable runtime schema services.
   # Package the complete pre-RLS foundation explicitly before the security cutover.
   2026_06_27_stage5_p0b1a_foundation
@@ -96,6 +109,7 @@ MIGRATIONS=(
   2026_07_02_stage24_compliance_tenant_scope
   2026_07_02_stage25_branches_org_hierarchy
   2026_07_02_stage26_platform_control_plane
+  2026_07_11_stage32_device_imei
   # Required owner schema for per-gateway credentials. Stage76 intentionally fails closed when
   # this table is absent; do not rely on the runtime EnsureAsync path to materialize Production.
   2026_07_16_stage42_telemetry_gateways
@@ -103,10 +117,36 @@ MIGRATIONS=(
   2026_07_30_stage49_mfa_challenge_one_time
   2026_07_30_stage50_fleet_production_contract
   2026_07_30_stage51_production_runtime_support
+  # MUST follow stage51: it ALTERs latest_vehicle_positions, which stage51 creates.
+  # This array is a hand-maintained DEPENDENCY order, not a filename/date sort --
+  # stage30 is dated earlier but cannot run earlier.
+  # Adds geocoded_at/_lat/_lng, read AND written by
+  # POST /api/maps/reverse-geocode-positions (EndpointMappings.cs:11161-11179).
+  # While unenrolled the endpoint was a live 42703 in every protected environment,
+  # invisible to both schema guards (the parity test only sees SchemaService
+  # declarations; the orphan rule had no column dimension).
+  2026_07_09_stage30_position_address_cache
   # Stage12 enriches telemetry tables whose owner-safe definitions are installed
   # by Stage51 on the supported protected predecessor.
   2026_06_28_stage12a_telemetry_live_state
   2026_07_22_stage47_detention_recovery
+  # Enrolled after CI proved stage88 alone is not enough: stage88 emits tables,
+  # columns and indexes only -- zero functions, zero triggers. It materialised the
+  # GL tables WITHOUT gl_enforce_period_lock() and trg_gl_period_lock (stage46:43,56),
+  # turning a loud 42P01 into SILENT back-posting into a closed accounting period.
+  # Must stay ahead of stage88. The dev-shaped local database masked this because
+  # the runtime schema services build the trigger there; only the chain-only
+  # oracle CI now builds exposes it.
+  # stage36/stage40 enrolled for the same reason as stage45/46, proven by CI:
+  # stage88 emits table and column SHAPE only -- no unique indexes -- so the
+  # revenue-recognition and delivered-to-billing paths failed with 42P10, 'no
+  # unique or exclusion constraint matching the ON CONFLICT specification'.
+  # ux_outbox_revenue_recognized, ux_outbox_job_delivered and the revrec unique
+  # indexes live only in these two files. Enrolled ahead of stage88.
+  2026_07_15_stage36_outbox_job_delivered_idempotency
+  2026_07_16_stage40_revenue_recognition
+  2026_07_22_stage45_general_ledger
+  2026_07_22_stage46_gl_period_close_export
   2026_07_30_stage52_fleet_identity_uniqueness
   2026_07_30_stage53_tenant_rls_reconciliation
   2026_07_30_stage54_cold_chain_device_integrity
@@ -138,16 +178,76 @@ MIGRATIONS=(
   2026_08_12_stage77_protected_role_bootstrap
   2026_08_13_stage78_country_profiles_runtime_contract
   2026_08_13_stage79_tenant_provisioning_runtime_contract
+  2026_08_13_stage80_driver_proof_upload_binding
+  2026_08_14_stage80_fleet_identity_backbone
+  2026_08_20_stage81_customer_eta_secure_token
+  2026_08_20_stage82_telematics_device_credential_constraint
+  2026_08_21_stage83_company_security_settings_runtime_contract
+  # platform_settings is the operator SMTP/config store; protected environments never
+  # run PlatformSettingsService.EnsureSchemaAsync, so this file is its only creator.
+  2026_08_21_stage83_platform_settings
+  2026_08_21_stage84_driver_hos_runtime_contract
+  2026_08_21_stage85_alert_notification_delivery
+  # Stage86 ends the schema-service/migration split-brain for the runtime route
+  # columns (routes.sla_risk, work_orders/maintenance_items.asset_id,
+  # safety/dashcam event_number, audit_logs severity/module_key/action_type):
+  # protected environments skip the owner-capable Batch* schema services, so this
+  # file is the only path that materializes those columns there.
+  2026_08_22_stage86_runtime_route_column_contract
+  # Stage87 backfills users.role_id from role_name with the ResolveRoleRecord
+  # precedence (tenant-local role over global on a name collision).
+  2026_08_22_stage87_user_role_id_backfill
+  # Stage88 makes migrations the ONLY schema authority. Program.cs
+  # ShouldRunSchemaInitAsync skips EVERY runtime *SchemaService whenever the process
+  # is the restricted opstrax_app role under RLS enforcement — always true here — so
+  # 1,006 columns and 51 tables declared only in those services could never exist in
+  # a protected environment. Stage86 fixed 8 of them by hand and still left
+  # routes.efficiency_score, which sits in the same CASE expression as the
+  # routes.sla_risk it did enrol. This file is generated mechanically from all 48
+  # backend-dotnet/Services/*SchemaService.cs declaration lists, so the class cannot
+  # reopen one column at a time. It MUST run last: it creates tables that carry
+  # company_id and therefore enter FleetProductionReadinessService's dynamic
+  # tenant_scope, and it re-applies stage76's safe-column eld_devices grant over the
+  # column it adds there.
+  2026_08_22_stage88_runtime_schema_service_contract
+  # Inbox failures persist an exponential next_attempt_at schedule. Stage89 is the
+  # owner-safe protected-environment contract that adds and indexes that column.
+  2026_08_24_stage89_inbox_retry_schedule
+  2026_08_26_stage90_product_pilot_permission
+  2026_08_26_stage91_telematics_ingest_fingerprint
+  # Reboot-safe GT06 replay epochs. ALTERs telemetry_replay_device_state, which
+  # telematics/005_replay_guard creates above, so it must follow it. Additive and
+  # idempotent. The gateway's PostgresReplayGuard SELECTs pending_epoch_base and
+  # epoch_floor on every location frame and ProductionStorageReadinessService
+  # requires both at boot, so a gateway shipped ahead of this migration refuses to
+  # start rather than accepting no telemetry while reporting healthy.
+  2026_08_28_stage92_gt06_replay_session_epoch
+  # Document-only origin tracking; legacy rows retain every stored workflow value.
+  2026_08_31_stage93_document_lifecycle_provenance
+  # Remove only the exact fabricated Samsara catalog/seed fixtures. Real tenant
+  # credentials, successful handshakes, and provider-derived data are untouched.
+  2026_09_02_stage94_samsara_provider_truth
+  # Provider calls are generation-bound; disconnect/configure invalidate the
+  # committed lease so stale handshakes and telemetry cannot write afterward.
+  2026_09_02_stage95_connector_operation_lease
+  # Keep scheduler fairness separate from customer-visible data-sync freshness,
+  # and retain the newest authentic provider-event clock for stale-feed truth.
+  2026_09_02_stage96_connector_sync_freshness
+  # Catalog entries are opportunities, not evidence. Reset never-verified built-in
+  # rows to an honest disconnected/pending state without deleting tenant config.
+  2026_09_02_stage97_integration_catalog_truth
 )
 
-echo "Target host: $(printf '%s' "$NEON_PG_URI" | sed -E 's|.*@([^/:?]+).*|\1|')"
-echo "Pre-check: read-only connectivity…"
-psql "$NEON_PG_URI" -tA -c "SELECT current_database(), version()" | head -1
-stage58_already_applied=$(psql "$NEON_PG_URI" -tA -c "SELECT CASE WHEN to_regclass('public.schema_migrations') IS NOT NULL THEN (SELECT COUNT(*) FROM schema_migrations WHERE version='2026_07_31_stage58_nonforgeable_tenant_ticket') ELSE 0 END" 2>/dev/null || echo 0)
+echo "Pre-check: validated read-only database identity…"
+psql_neon -tA -c "SELECT current_database(), session_user, inet_server_addr(), inet_server_port(), version()" | head -1
+stage58_already_applied=$(psql_neon -tA -c "SELECT CASE WHEN to_regclass('public.schema_migrations') IS NOT NULL THEN (SELECT COUNT(*) FROM schema_migrations WHERE version='2026_07_31_stage58_nonforgeable_tenant_ticket') ELSE 0 END" 2>/dev/null || echo 0)
 
 for m in "${MIGRATIONS[@]}"; do
   f="database/migrations/$m.sql"
   ledger_version="$m"
+  if [ "$m" = "../init/001_schema" ]; then
+    ledger_version="database_init_001_schema"
+  fi
   case "$m" in
     telematics/*) ledger_version="telematics_$(basename "$m")" ;;
   esac
@@ -159,7 +259,37 @@ for m in "${MIGRATIONS[@]}"; do
     continue
   fi
   # Skip if already registered in the ledger (ledger may not exist before stage23 — treat as not applied).
-  applied=$(psql "$NEON_PG_URI" -tA -c "SELECT COUNT(*) FROM schema_migrations WHERE version='$ledger_version'" 2>/dev/null || echo 0)
+  applied=$(psql_neon -tA -c "SELECT COUNT(*) FROM schema_migrations WHERE version='$ledger_version'" 2>/dev/null || echo 0)
+  # Some established environments and production-shaped tests predate Stage23's
+  # ledger but already contain the complete canonical predecessor. Replaying
+  # 001_schema.sql there is unsafe because its two circular foreign keys are
+  # intentionally one-time bootstrap statements. Recognize the materialized
+  # predecessor from both ends of the file plus those exact constraints; Stage23
+  # then records database_init_001_schema in the authoritative ledger. A genuinely
+  # empty Neon database fails this probe and still receives 001_schema.sql.
+  if [ "$m" = "../init/001_schema" ] && [ "$applied" != "1" ]; then
+    predecessor_materialized=$(psql_neon -tA -v ON_ERROR_STOP=1 -c "
+      SELECT CASE WHEN
+        to_regclass('public.companies') IS NOT NULL
+        AND to_regclass('public.drivers') IS NOT NULL
+        AND to_regclass('public.vehicles') IS NOT NULL
+        AND to_regclass('public.jobs') IS NOT NULL
+        AND to_regclass('public.eld_devices') IS NOT NULL
+        AND to_regclass('public.file_storage_metadata') IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conrelid=to_regclass('public.drivers') AND conname='fk_drivers_vehicle'
+        )
+        AND EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conrelid=to_regclass('public.vehicles') AND conname='fk_vehicles_driver'
+        )
+      THEN 1 ELSE 0 END")
+    if [ "$predecessor_materialized" = "1" ]; then
+      echo "── $m: canonical predecessor already materialized — Stage23 will ledger it"
+      continue
+    fi
+  fi
   repair_migration=false
   case "$m" in
     2026_06_27_stage5_p0b1a_foundation|\
@@ -171,6 +301,7 @@ for m in "${MIGRATIONS[@]}"; do
     2026_06_28_stage12a_telemetry_live_state|\
     2026_06_28_stage13b_safety_maintenance_foundation|\
     2026_06_29_stage18_commercial_foundation|\
+    2026_07_11_stage32_device_imei|\
     2026_07_16_stage42_telemetry_gateways|\
     2026_07_30_stage53_tenant_rls_reconciliation|\
     2026_07_30_stage54_cold_chain_device_integrity|\
@@ -190,7 +321,10 @@ for m in "${MIGRATIONS[@]}"; do
     2026_08_02_stage75_bounded_support_access|\
     2026_08_12_stage77_protected_role_bootstrap|\
     2026_08_13_stage78_country_profiles_runtime_contract|\
-    2026_08_13_stage79_tenant_provisioning_runtime_contract) repair_migration=true ;;
+    2026_08_13_stage79_tenant_provisioning_runtime_contract|\
+    2026_08_14_stage80_fleet_identity_backbone|\
+    2026_08_21_stage83_company_security_settings_runtime_contract|\
+    2026_08_21_stage84_driver_hos_runtime_contract) repair_migration=true ;;
   esac
   if [ "$applied" = "1" ] && [ "$repair_migration" = false ]; then
     echo "── $m: already applied (ledger) — skipping"
@@ -201,17 +335,17 @@ for m in "${MIGRATIONS[@]}"; do
   else
     echo "── applying $m"
   fi
-  psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f "$f"
+  psql_neon -v ON_ERROR_STOP=1 -q -f "$f"
   # stage21 precedes the ledger; later migrations must register successfully so a
   # failed bookkeeping write cannot masquerade as a complete deploy on the next run.
-  if [ "$(psql "$NEON_PG_URI" -tA -c "SELECT to_regclass('public.schema_migrations') IS NOT NULL")" = "t" ]; then
-    psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -c "INSERT INTO schema_migrations (version, description) VALUES ('$ledger_version', 'applied by apply-neon-predeploy-migrations.sh') ON CONFLICT (version) DO NOTHING"
+  if [ "$(psql_neon -tA -c "SELECT to_regclass('public.schema_migrations') IS NOT NULL")" = "t" ]; then
+    psql_neon -v ON_ERROR_STOP=1 -q -c "INSERT INTO schema_migrations (version, description) VALUES ('$ledger_version', 'applied by apply-neon-predeploy-migrations.sh') ON CONFLICT (version) DO NOTHING"
   fi
 done
 
 # Required owner schemas and pilot-wave migrations are release gates, not optional seed packs.
 # Verify their ledgers and critical objects before the terminal Stage58 reconciliation.
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 <<'SQL'
+psql_neon -v ON_ERROR_STOP=1 <<'SQL'
 DO $verify_pilot_wave$
 BEGIN
   IF EXISTS (
@@ -225,6 +359,7 @@ BEGIN
       ('2026_06_28_stage12a_telemetry_live_state'),
       ('2026_06_28_stage13b_safety_maintenance_foundation'),
       ('2026_06_29_stage18_commercial_foundation'),
+      ('2026_07_11_stage32_device_imei'),
       ('2026_07_16_stage42_telemetry_gateways'),
       ('2026_08_01_stage60_dispatch_trip_pilot'),
       ('2026_07_22_stage47_detention_recovery'),
@@ -251,7 +386,8 @@ BEGIN
       ('2026_08_02_stage75_bounded_support_access'),
       ('2026_08_12_stage77_protected_role_bootstrap'),
       ('2026_08_13_stage78_country_profiles_runtime_contract'),
-      ('2026_08_13_stage79_tenant_provisioning_runtime_contract')) required(version)
+      ('2026_08_13_stage79_tenant_provisioning_runtime_contract'),
+      ('2026_08_14_stage80_fleet_identity_backbone')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN RAISE EXCEPTION 'Required owner/pilot migration ledger missing or duplicated'; END IF;
   IF to_regclass('public.uq_ftms_dorders_company_number') IS NULL
@@ -345,6 +481,96 @@ BEGIN
      ) THEN
     RAISE EXCEPTION 'Stage79 tenant-provisioning runtime contract is incomplete';
   END IF;
+  IF to_regclass('public.device_installation_quarantine') IS NULL
+     OR to_regclass('public.ex_stage80_device_installation_period') IS NULL
+     OR to_regclass('public.uq_stage80_vehicle_primary_role') IS NULL
+     OR to_regprocedure('public.stage80_sync_device_vehicle_projection()') IS NULL
+     OR to_regclass('public.module_packages') IS NULL
+     OR to_regclass('public.usage_meters') IS NULL
+     OR to_regclass('public.usage_events') IS NULL
+     OR to_regclass('public.usage_counters') IS NULL
+     OR to_regclass('public.pricing_rules') IS NULL
+     OR to_regclass('public.tenant_contract_overrides') IS NULL
+     OR EXISTS (
+       SELECT 1 FROM (VALUES
+         ('device_installations','effective_from'),('device_installations','effective_to'),
+         ('device_installations','device_role'),('device_installations','row_version'),
+         ('eld_devices','notes'),
+         ('location_events','installation_id'),('location_events','assignment_id'),
+         ('location_events','battery_voltage'),
+         ('location_events','engine_status'),
+         ('latest_vehicle_positions','address'),
+         ('latest_vehicle_positions','battery_voltage'),
+         ('latest_vehicle_positions','installation_id'),('latest_vehicle_positions','assignment_id'),
+         ('fleet_tms_temperature_devices','last_reported_temperature_celsius'),
+         ('fleet_tms_temperature_devices','battery_percent'),
+         ('fleet_tms_temperature_devices','last_ping_at_utc'),
+         ('fleet_tms_temperature_alerts','measured_humidity'),
+         ('fleet_tms_temperature_alerts','humidity_threshold_min'),
+         ('fleet_tms_temperature_alerts','humidity_threshold_max'),
+         ('customers','sla_health_score'),('customers','delivery_experience_score'),
+         ('customers','risk_score'),('customers','health_state'),('customers','health_computed_at'),
+         ('module_packages','package_key'),('module_packages','module_keys'),
+         ('module_packages','base_price_cents'),('usage_meters','meter_key'),
+         ('usage_meters','period'),('usage_events','company_id'),
+         ('usage_events','meter_key'),('usage_events','period_key'),
+         ('usage_counters','company_id'),('usage_counters','meter_key'),
+         ('usage_counters','period_key'),('pricing_rules','package_id'),
+         ('pricing_rules','meter_key'),('tenant_contract_overrides','company_id'),
+         ('tenant_contract_overrides','meter_key'),
+         ('canonical_telemetry_events','installation_id'),('canonical_telemetry_events','assignment_id')
+       ) required(table_name,column_name)
+       WHERE NOT EXISTS (SELECT 1 FROM information_schema.columns actual
+         WHERE actual.table_schema='public' AND actual.table_name=required.table_name
+           AND actual.column_name=required.column_name)
+  ) THEN
+    RAISE EXCEPTION 'Stage80 fleet identity backbone contract is incomplete';
+  END IF;
+  IF (SELECT COUNT(*) FROM pg_roles WHERE rolname IN ('opstrax_app','opstrax_system'))=2 AND (
+  EXISTS (
+    SELECT 1 FROM (VALUES ('module_packages'),('usage_meters'),('pricing_rules')) refs(table_name)
+    WHERE NOT has_table_privilege('opstrax_app',table_name,'SELECT')
+       OR has_table_privilege('opstrax_app',table_name,'INSERT')
+       OR has_table_privilege('opstrax_app',table_name,'UPDATE')
+       OR has_table_privilege('opstrax_app',table_name,'DELETE')
+       OR NOT has_table_privilege('opstrax_system',table_name,'SELECT')
+       OR NOT has_table_privilege('opstrax_system',table_name,'INSERT')
+       OR NOT has_table_privilege('opstrax_system',table_name,'UPDATE')
+       OR NOT has_table_privilege('opstrax_system',table_name,'DELETE')
+  ) OR EXISTS (
+    SELECT 1 FROM (VALUES ('module_packages_id_seq'),('usage_meters_id_seq'),('pricing_rules_id_seq')) refs(sequence_name)
+    WHERE has_sequence_privilege('opstrax_app',sequence_name,'USAGE')
+       OR NOT has_sequence_privilege('opstrax_system',sequence_name,'USAGE')
+  ) OR NOT COALESCE((SELECT c.relrowsecurity AND c.relforcerowsecurity
+                       FROM pg_class c WHERE c.oid=to_regclass('public.usage_events')),false)
+       OR NOT has_table_privilege('opstrax_app','usage_events','SELECT')
+       OR NOT has_table_privilege('opstrax_app','usage_events','INSERT')
+       OR has_table_privilege('opstrax_app','usage_events','UPDATE')
+       OR has_table_privilege('opstrax_app','usage_events','DELETE')
+       OR NOT has_table_privilege('opstrax_system','usage_events','SELECT')
+       OR NOT has_table_privilege('opstrax_system','usage_events','INSERT')
+       OR NOT has_table_privilege('opstrax_system','usage_events','UPDATE')
+       OR NOT has_table_privilege('opstrax_system','usage_events','DELETE')
+  OR EXISTS (
+    SELECT 1 FROM (VALUES ('usage_counters'),('tenant_contract_overrides')) tenant_tables(table_name)
+    JOIN pg_class c ON c.oid=to_regclass('public.'||tenant_tables.table_name)
+    WHERE NOT c.relrowsecurity OR NOT c.relforcerowsecurity
+       OR NOT has_table_privilege('opstrax_app',table_name,'SELECT')
+       OR NOT has_table_privilege('opstrax_app',table_name,'INSERT')
+       OR NOT has_table_privilege('opstrax_app',table_name,'UPDATE')
+       OR NOT has_table_privilege('opstrax_app',table_name,'DELETE')
+       OR NOT has_table_privilege('opstrax_system',table_name,'SELECT')
+       OR NOT has_table_privilege('opstrax_system',table_name,'INSERT')
+       OR NOT has_table_privilege('opstrax_system',table_name,'UPDATE')
+       OR NOT has_table_privilege('opstrax_system',table_name,'DELETE')
+  -- Stage58 is intentionally applied after this owner-integrity checkpoint. Stage80
+  -- must establish the three control-plane policies itself; the terminal check below
+  -- separately requires all six policies after Stage58 adds tenant_ticket_app.
+  ) OR (SELECT COUNT(*) FROM pg_policies WHERE schemaname='public'
+          AND tablename IN ('usage_events','usage_counters','tenant_contract_overrides')
+          AND policyname='system_control_plane')<>3) THEN
+    RAISE EXCEPTION 'Stage80 revenue/market catalog ACL and tenant-RLS contract is incomplete';
+  END IF;
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns
     WHERE table_schema='public' AND table_name='companies'
@@ -414,13 +640,13 @@ echo "Owner integrity: Stage42 gateway schema plus pilot ledgers and critical co
 
 if [ "$stage58_already_applied" = "1" ]; then
   echo "Reapplying terminal Stage58 without a legacy-policy window…"
-  psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_07_31_stage58_nonforgeable_tenant_ticket.sql
-  psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_07_31_stage59_data_protection_key_ring.sql
+  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_07_31_stage58_nonforgeable_tenant_ticket.sql
+  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_07_31_stage59_data_protection_key_ring.sql
   echo "Reapplying Stage67 device-credential boundary after Stage58…"
-  psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_02_stage67_telematics_diagnostics_integrity.sql
+  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_02_stage67_telematics_diagnostics_integrity.sql
   echo "Applying terminal Stage76 telemetry ACL reconciliation…"
-  psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_11_stage76_telematics_security_hardening.sql
-  psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 <<'SQL'
+  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_11_stage76_telematics_security_hardening.sql
+  psql_neon -v ON_ERROR_STOP=1 <<'SQL'
 DO $stage58_rerun$
 BEGIN
   IF (SELECT count(*) FROM pg_policies WHERE schemaname='public' AND roles='{public}'::name[])<>0
@@ -441,14 +667,14 @@ fi
 
 echo
 echo "Post-check: auth-critical columns…"
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -tA -c "
+psql_neon -v ON_ERROR_STOP=1 -tA -c "
   SELECT
     'users.customer_id: ' || COUNT(*) FILTER (WHERE column_name='customer_id') ||
     ' | users.branch_id: ' || COUNT(*) FILTER (WHERE column_name='branch_id')
   FROM information_schema.columns WHERE table_name='users' AND column_name IN ('customer_id','branch_id')"
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -tA -c "SELECT 'branches table: ' || COUNT(*) FROM information_schema.tables WHERE table_name='branches'"
+psql_neon -v ON_ERROR_STOP=1 -tA -c "SELECT 'branches table: ' || COUNT(*) FROM information_schema.tables WHERE table_name='branches'"
 echo "Post-check: customer feedback service contract…"
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 <<'SQL'
+psql_neon -v ON_ERROR_STOP=1 <<'SQL'
 DO $verify$
 DECLARE
   missing_columns TEXT[];
@@ -476,7 +702,8 @@ $verify$;
 SQL
 echo "customer_feedback: 6/6 columns + ix_customer_feedback_company_customer"
 echo "Post-check: durable one-time MFA challenge ledger…"
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 <<'SQL'
+if [ "$stage58_already_applied" != "1" ]; then
+psql_neon -v ON_ERROR_STOP=1 <<'SQL'
 DO $verify$
 DECLARE
   table_oid OID := to_regclass('public.mfa_login_challenge_consumptions');
@@ -544,8 +771,12 @@ END
 $verify$;
 SQL
 echo "mfa_login_challenge_consumptions: digest + indexes + FORCE RLS + policies + runtime grants verified"
+else
+  echo "MFA replay: terminal Stage58 policy contract already active — legacy pre-terminal policy check skipped"
+fi
 echo "Post-check: complete Fleet production schema/RLS contract…"
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 <<'SQL'
+if [ "$stage58_already_applied" != "1" ]; then
+psql_neon -v ON_ERROR_STOP=1 <<'SQL'
 DO $verify$
 DECLARE
   required_tables TEXT[] := ARRAY[
@@ -679,8 +910,12 @@ END
 $verify$;
 SQL
 echo "Fleet: 58 route-contract tables + market catalog + RLS/FORCE/policies/grants/indexes verified"
+else
+  echo "Fleet production: terminal Stage58 policy contract already active — legacy pre-terminal policy check skipped"
+fi
 echo "Post-check: production runtime worker support…"
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 <<'SQL'
+if [ "$stage58_already_applied" != "1" ]; then
+psql_neon -v ON_ERROR_STOP=1 <<'SQL'
 DO $verify$
 DECLARE
   required TEXT[] := ARRAY[
@@ -759,8 +994,11 @@ END
 $verify$;
 SQL
 echo "Runtime support: worker tables + RLS/FORCE/policies/grants/columns verified"
+else
+  echo "runtime worker: terminal Stage58 policy contract already active — legacy pre-terminal policy check skipped"
+fi
 echo "Post-check: Fleet master identity uniqueness…"
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 <<'SQL'
+psql_neon -v ON_ERROR_STOP=1 <<'SQL'
 DO $verify$
 DECLARE
   invalid TEXT[];
@@ -809,11 +1047,12 @@ terminal_file="database/migrations/${terminal_migration}.sql"
 # contracts. Every tenant table now exists, including Stage60-63 additions, so
 # Stage58 can atomically replace all legacy/public GUC policies before the first
 # production-wide policy scan. There is no post-scan legacy-policy window.
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f "$terminal_file"
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_07_31_stage59_data_protection_key_ring.sql
+psql_neon -v ON_ERROR_STOP=1 -q -f "$terminal_file"
+psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_07_31_stage59_data_protection_key_ring.sql
 
 echo "Post-check: production-wide tenant RLS coverage…"
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 <<'SQL'
+if [ "$stage58_already_applied" != "1" ]; then
+psql_neon -v ON_ERROR_STOP=1 <<'SQL'
 DO $verify$
 DECLARE
   violations TEXT[];
@@ -847,6 +1086,7 @@ BEGIN
     ('authorization_decision_logs',true,false,false),
     ('companies',false,true,false),
     ('audit_logs',true,false,false),
+    ('usage_events',true,false,false),
     ('compliance_evidence',true,false,false),
     ('fleet_tms_shipment_events',true,false,false),
     ('fleet_tms_cold_chain_event_log',true,false,false),
@@ -926,7 +1166,7 @@ BEGIN
 END
 $verify$;
 SQL
-tenant_rls_count=$(psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -tA -c "
+tenant_rls_count=$(psql_neon -v ON_ERROR_STOP=1 -tA -c "
   SELECT COUNT(*) FROM pg_class cls JOIN pg_namespace ns ON ns.oid=cls.relnamespace
   WHERE ns.nspname='public' AND cls.relkind IN ('r','p')
     AND cls.relname NOT IN ('platform_invoices','gps_gateway_replay','platform_impersonation_sessions','roles','report_catalog')
@@ -935,8 +1175,11 @@ tenant_rls_count=$(psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -tA -c "
       WHERE c.table_schema='public' AND c.table_name=cls.relname
         AND c.column_name IN ('company_id','tenant_id') AND c.data_type='bigint'))")
 echo "Tenant RLS coverage: ${tenant_rls_count} in-scope tables verified"
+else
+  echo "tenant RLS: terminal Stage58 policy contract already active — legacy pre-terminal policy check skipped"
+fi
 echo "Post-check: Fleet cold-chain/runtime-route/asset/workforce integrity contracts…"
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 <<'SQL'
+psql_neon -v ON_ERROR_STOP=1 <<'SQL'
 DO $verify$
 DECLARE invalid TEXT[];
 BEGIN
@@ -1030,7 +1273,7 @@ $verify$;
 SQL
 echo "Fleet integrity: Stage54/55/56/57 exact indexes, authorization/workforce evidence, and ledgers verified"
 echo "Verifying terminal Stage58/59 non-forgeable tenant boundary…"
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 <<'SQL'
+psql_neon -v ON_ERROR_STOP=1 <<'SQL'
 DO $verify_stage58$
 BEGIN
   IF (SELECT count(*) FROM schema_migrations WHERE version='2026_07_31_stage58_nonforgeable_tenant_ticket')<>1 THEN
@@ -1142,8 +1385,8 @@ $verify_stage58$;
 SQL
 echo "Stage58: signed transaction tickets, exact roles/policies/grants, and control-plane separation verified"
 echo "Reapplying Stage67 least-privilege device credential boundary after terminal reconciliation…"
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_02_stage67_telematics_diagnostics_integrity.sql
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q <<'SQL'
+psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_02_stage67_telematics_diagnostics_integrity.sql
+psql_neon -v ON_ERROR_STOP=1 -q <<'SQL'
 DO $verify_stage67_credentials$
 BEGIN
   IF has_column_privilege('opstrax_app','eld_devices','api_key_hash','SELECT')
@@ -1158,8 +1401,8 @@ END
 $verify_stage67_credentials$;
 SQL
 echo "Applying terminal Stage76 telemetry default-deny/runtime ACL reconciliation…"
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_11_stage76_telematics_security_hardening.sql
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -q <<'SQL'
+psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_11_stage76_telematics_security_hardening.sql
+psql_neon -v ON_ERROR_STOP=1 -q <<'SQL'
 DO $verify_stage76_terminal$
 BEGIN
   IF (SELECT count(*) FROM schema_migrations
@@ -1170,11 +1413,52 @@ BEGIN
      OR NOT has_column_privilege('opstrax_app','eld_devices','device_serial','SELECT') THEN
     RAISE EXCEPTION 'Stage76 is not the effective terminal telemetry boundary';
   END IF;
+  IF EXISTS (
+    SELECT 1 FROM (VALUES ('module_packages'),('usage_meters'),('pricing_rules')) refs(table_name)
+    WHERE NOT has_table_privilege('opstrax_app',table_name,'SELECT')
+       OR has_table_privilege('opstrax_app',table_name,'INSERT')
+       OR has_table_privilege('opstrax_app',table_name,'UPDATE')
+       OR has_table_privilege('opstrax_app',table_name,'DELETE')
+       OR NOT has_table_privilege('opstrax_system',table_name,'SELECT')
+       OR NOT has_table_privilege('opstrax_system',table_name,'INSERT')
+       OR NOT has_table_privilege('opstrax_system',table_name,'UPDATE')
+       OR NOT has_table_privilege('opstrax_system',table_name,'DELETE')
+  ) OR EXISTS (
+    SELECT 1 FROM (VALUES ('module_packages_id_seq'),('usage_meters_id_seq'),('pricing_rules_id_seq')) refs(sequence_name)
+    WHERE has_sequence_privilege('opstrax_app',sequence_name,'USAGE')
+       OR NOT has_sequence_privilege('opstrax_system',sequence_name,'USAGE')
+  ) OR NOT COALESCE((SELECT c.relrowsecurity AND c.relforcerowsecurity
+                       FROM pg_class c WHERE c.oid=to_regclass('public.usage_events')),false)
+       OR NOT has_table_privilege('opstrax_app','usage_events','SELECT')
+       OR NOT has_table_privilege('opstrax_app','usage_events','INSERT')
+       OR has_table_privilege('opstrax_app','usage_events','UPDATE')
+       OR has_table_privilege('opstrax_app','usage_events','DELETE')
+       OR NOT has_table_privilege('opstrax_system','usage_events','SELECT')
+       OR NOT has_table_privilege('opstrax_system','usage_events','INSERT')
+       OR NOT has_table_privilege('opstrax_system','usage_events','UPDATE')
+       OR NOT has_table_privilege('opstrax_system','usage_events','DELETE')
+  OR EXISTS (
+    SELECT 1 FROM (VALUES ('usage_counters'),('tenant_contract_overrides')) tenant_tables(table_name)
+    JOIN pg_class c ON c.oid=to_regclass('public.'||tenant_tables.table_name)
+    WHERE NOT c.relrowsecurity OR NOT c.relforcerowsecurity
+       OR NOT has_table_privilege('opstrax_app',table_name,'SELECT')
+       OR NOT has_table_privilege('opstrax_app',table_name,'INSERT')
+       OR NOT has_table_privilege('opstrax_app',table_name,'UPDATE')
+       OR NOT has_table_privilege('opstrax_app',table_name,'DELETE')
+       OR NOT has_table_privilege('opstrax_system',table_name,'SELECT')
+       OR NOT has_table_privilege('opstrax_system',table_name,'INSERT')
+       OR NOT has_table_privilege('opstrax_system',table_name,'UPDATE')
+       OR NOT has_table_privilege('opstrax_system',table_name,'DELETE')
+  ) OR (SELECT COUNT(*) FROM pg_policies WHERE schemaname='public'
+          AND tablename IN ('usage_events','usage_counters','tenant_contract_overrides')
+          AND policyname IN ('tenant_ticket_app','system_control_plane'))<>6 THEN
+    RAISE EXCEPTION 'Stage80 revenue/market catalog ACL and tenant-RLS contract is not terminally reconciled';
+  END IF;
 END
 $verify_stage76_terminal$;
 SQL
 echo
 echo "Ledger:"
-psql "$NEON_PG_URI" -v ON_ERROR_STOP=1 -tA -c "SELECT version FROM schema_migrations ORDER BY version"
+psql_neon -v ON_ERROR_STOP=1 -tA -c "SELECT version FROM schema_migrations ORDER BY version"
 echo
 echo "✅ Neon predeploy chain is prepared with Stage76 terminal; deployment still requires exact-SHA release evidence."

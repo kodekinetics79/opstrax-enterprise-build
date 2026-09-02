@@ -1,0 +1,4 @@
+driverCode,branchCode,fullName,phone,email,licenseNumber,status
+,CL-HQ,Certification Driver Invalid 0001,+1-555-019-0001,cert.invalid.0001@example.invalid,CERT-LIC-INVALID-0001,Available
+CLHQ-D-0191,CL-HQ,,+1-555-010-0191,cert.driver.clhq.0191@example.invalid,CERT-LIC-CLHQ-0191,Available
+CLHQ-D-0192,CL-HQ,Certification Driver CLHQ 0192,+1-555-010-0192,not-an-email,CERT-LIC-CLHQ-0192,Available

@@ -2,23 +2,32 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Activity, AlertTriangle, BellRing, ChevronRight, Clock, Gauge as GaugeIcon,
-  MapPin, Package, Radio, ShieldAlert, Truck, Wifi, WifiOff, Wrench, Zap,
+  MapPin, Package, Radio, Search, ShieldAlert, Truck, Wifi, WifiOff, Wrench, Zap,
 } from "lucide-react";
 import { useNavigate } from "react-router";
 import { LoadingState } from "@/components/ui";
 import { vehiclesApi } from "@/services/vehiclesApi";
-import { driversApi } from "@/services/driversApi";
 import { alertsApi } from "@/services/alertsApi";
 import { jobsApi } from "@/services/jobsApi";
 import { useAuth } from "@/hooks/useAuth";
 import { useHasDirectPermission, useHasPermission } from "@/hooks/usePermission";
 import type { AnyRecord } from "@/types";
+import { fleetQueryFingerprint, resolveFleetQueryPresentation } from "@/utils/fleetQueryPresentation";
 
 // Vehicle movement status is derived from real vehicle + telemetry fields. We do NOT
 // fabricate GPS speed/location — where live telemetry is absent we show honest blanks.
 type VStatus = "Active" | "Idle" | "Available" | "Offline" | "OOS" | "Unknown";
 type MStatus = "Healthy" | "Due Soon" | "Overdue" | "Critical" | "Unknown";
 type Signal  = "Online" | "Degraded" | "Offline" | "Unknown";
+
+const COMMAND_STATE_LABELS: Record<VStatus, string> = {
+  Active: "Operational active",
+  Idle: "Operational idle",
+  Available: "Operational available",
+  Offline: "Telemetry offline",
+  OOS: "Dispatch restricted",
+  Unknown: "State unknown",
+};
 
 interface FleetRow {
   id:          string;
@@ -36,14 +45,18 @@ interface FleetRow {
 
 const STATUS_TABS = ["All", "Active", "Idle", "Available", "OOS", "Offline", "Unknown"] as const;
 type Tab = typeof STATUS_TABS[number];
+const STATUS_TAB_LABELS: Record<Tab, string> = {
+  All: "All command states",
+  ...COMMAND_STATE_LABELS,
+};
 
 const STATUS_CFG: Record<VStatus, { badge: string; dot: string; label: string }> = {
-  Active:    { badge: "badge badge-success",                                               dot: "bg-emerald-500 animate-pulse", label: "Active" },
-  Idle:      { badge: "badge badge-warning",                                               dot: "bg-amber-400",                 label: "Idle" },
-  Available: { badge: "inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold bg-slate-100 text-slate-600 border border-slate-200", dot: "bg-slate-400", label: "Available" },
-  Offline:   { badge: "badge badge-danger",                                                dot: "bg-red-500",                   label: "Offline" },
-  OOS:       { badge: "inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold bg-red-100 text-red-700 border border-red-200",      dot: "bg-red-500 animate-pulse", label: "OOS" },
-  Unknown:   { badge: "inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold bg-slate-100 text-slate-600 border border-slate-200", dot: "bg-slate-400", label: "Unknown" },
+  Active:    { badge: "badge badge-success",                                               dot: "bg-emerald-500 animate-pulse", label: COMMAND_STATE_LABELS.Active },
+  Idle:      { badge: "badge badge-warning",                                               dot: "bg-amber-400",                 label: COMMAND_STATE_LABELS.Idle },
+  Available: { badge: "inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold bg-slate-100 text-slate-600 border border-slate-200", dot: "bg-slate-400", label: COMMAND_STATE_LABELS.Available },
+  Offline:   { badge: "badge badge-danger",                                                dot: "bg-red-500",                   label: COMMAND_STATE_LABELS.Offline },
+  OOS:       { badge: "inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold bg-red-100 text-red-700 border border-red-200",      dot: "bg-red-500 animate-pulse", label: COMMAND_STATE_LABELS.OOS },
+  Unknown:   { badge: "inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold bg-slate-100 text-slate-600 border border-slate-200", dot: "bg-slate-400", label: COMMAND_STATE_LABELS.Unknown },
 };
 
 const MAINT_CFG: Record<MStatus, { cls: string }> = {
@@ -126,75 +139,106 @@ export function FleetOverviewPage() {
   const hasPermission = useHasPermission();
   const hasDirectPermission = useHasDirectPermission();
   const [tab, setTab] = useState<Tab>("All");
+  const [page, setPage] = useState(1);
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState("vehicle");
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
+  const pageSize = 50;
 
   const canViewAlerts = hasDirectPermission("alerts:view");
   const canViewJobs = hasDirectPermission("shipments:view");
   const canViewVehicles = hasPermission("vehicles:view");
-  const canViewDrivers = hasPermission("drivers:view");
   const canViewDevices = hasPermission("telemetry.devices.read")
     && (session?.entitlementPolicyMode !== "package_allowlist" || session.entitlements?.telematics === true);
 
-  const vehiclesQ = useQuery({ queryKey: ["fleet-overview-vehicles"], queryFn: () => vehiclesApi.list(), refetchInterval: 30_000, enabled: canViewVehicles });
-  const driversQ  = useQuery({ queryKey: ["fleet-overview-drivers"],  queryFn: () => driversApi.list(), enabled: canViewDrivers });
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setSearch(searchInput.trim());
+      setPage(1);
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [searchInput]);
+
+  const requestFingerprint = fleetQueryFingerprint({
+    page, pageSize, search, status: tab, sort, order: sortOrder,
+  });
+  const vehiclesQ = useQuery({
+    queryKey: ["fleet-overview-vehicles", requestFingerprint],
+    queryFn: async (): Promise<AnyRecord & { queryFingerprint: string }> => {
+      const response = await vehiclesApi.fleetOverview({ page, pageSize, search, status: tab, sort, order: sortOrder });
+      return { ...response, queryFingerprint: requestFingerprint };
+    },
+    refetchInterval: 30_000,
+    enabled: canViewVehicles,
+  });
   const alertsQ   = useQuery({ queryKey: ["fleet-overview-alerts"],   queryFn: () => alertsApi.list(),  refetchInterval: 60_000, enabled: canViewAlerts });
   const jobsQ     = useQuery({ queryKey: ["fleet-overview-jobs"],     queryFn: () => jobsApi.summary(), refetchInterval: 60_000, enabled: canViewJobs });
 
-  const driverById = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const d of (driversQ.data ?? []) as AnyRecord[]) {
-      map.set(String(d.id), String(d.fullName ?? d.driverCode ?? ""));
-    }
-    return map;
-  }, [driversQ.data]);
+  const fleetPresentation = resolveFleetQueryPresentation({
+    rawSearch: searchInput,
+    appliedSearch: search,
+    requestFingerprint,
+    responseFingerprint: vehiclesQ.data?.queryFingerprint as string | undefined,
+    hasData: Boolean(vehiclesQ.data),
+    isFetching: vehiclesQ.isFetching,
+  });
+  const isFleetSettling = fleetPresentation === "settling";
+  const visibleFleetData = fleetPresentation === "rows" ? vehiclesQ.data : undefined;
 
   const fleet: FleetRow[] = useMemo(() => {
-    const rows = (vehiclesQ.data ?? []) as AnyRecord[];
+    const rows = ((visibleFleetData?.items ?? []) as AnyRecord[]);
     return rows.map((v) => ({
       id:          String(v.vehicleCode ?? v.id),
       vehicleId:   String(v.id),
-      type:        String(v.type ?? [v.make, v.model].filter(Boolean).join(" ") ?? "Vehicle"),
-      driver:      v.assignedDriverId != null ? (driverById.get(String(v.assignedDriverId)) || String(v.assignedDriver ?? "")) || null : null,
-      status:      deriveStatus(v),
+      type:        String(v.type || [v.make, v.model].filter(Boolean).join(" ") || "Vehicle"),
+      driver:      v.assignedDriver ? String(v.assignedDriver) : null,
+      status:      (v.status as VStatus) ?? deriveStatus(v),
       location:    (v.lastKnownLocation as string) ?? null,
-      maintenance: deriveMaint(v),
-      signal:      deriveSignal(v),
+      maintenance: (v.maintenance as MStatus) ?? deriveMaint(v),
+      signal:      (v.deviceStatus as Signal) ?? deriveSignal(v),
       riskScore:   Number(v.riskScore ?? v.riskHeatScore ?? 0),
-      readiness:   Number(v.readinessScore ?? v.fleetReadinessScore ?? 0),
-      flag:        deriveFlag(v),
+      readiness:   Number(v.readiness ?? v.readinessScore ?? v.fleetReadinessScore ?? 0),
+      flag:        v.flag ? String(v.flag) : deriveFlag(v),
     }));
-  }, [vehiclesQ.data, driverById]);
+  }, [visibleFleetData]);
 
-  const counts = useMemo(() => ({
-    Active:    fleet.filter((v) => v.status === "Active").length,
-    Idle:      fleet.filter((v) => v.status === "Idle").length,
-    Available: fleet.filter((v) => v.status === "Available").length,
-    Offline:   fleet.filter((v) => v.status === "Offline").length,
-    OOS:       fleet.filter((v) => v.status === "OOS").length,
-    Unknown:   fleet.filter((v) => v.status === "Unknown").length,
-  }), [fleet]);
-
-  const filtered = useMemo(
-    () => tab === "All" ? fleet : fleet.filter((v) => v.status === tab),
-    [tab, fleet],
-  );
-
-  const flagged = fleet.filter((v) => v.flag).length;
+  const summary = (vehiclesQ.data?.summary ?? {}) as AnyRecord;
+  const counts = {
+    Active: Number(summary.active ?? 0),
+    Idle: Number(summary.idle ?? 0),
+    Available: Number(summary.available ?? 0),
+    Offline: Number(summary.offline ?? 0),
+    OOS: Number(summary.oos ?? 0),
+    Unknown: Number(summary.unknown ?? 0),
+  };
+  const filtered = fleet;
+  const totalFleet = Number(summary.total ?? 0);
+  const selectedTotal = Number(vehiclesQ.data?.total ?? 0);
+  const pageCount = Number(vehiclesQ.data?.pageCount ?? 0);
+  const displayPage = Number(vehiclesQ.data?.page ?? page);
+  const flagged = Number(summary.flagged ?? 0);
 
   // Readiness instrumentation — only from vehicles that actually report a score.
   const readiness = useMemo(() => {
-    const scored = fleet.filter((v) => v.readiness > 0);
-    if (scored.length === 0) return null;
-    const avg = scored.reduce((s, v) => s + v.readiness, 0) / scored.length;
-    const lowest = scored.reduce((min, v) => (v.readiness < min.readiness ? v : min), scored[0]);
-    return { avg, lowest, scoredCount: scored.length };
-  }, [fleet]);
+    const scoredCount = Number(summary.readinessScoredCount ?? 0);
+    const average = Number(summary.readinessAverage);
+    const lowestRaw = vehiclesQ.data?.lowestReadiness as AnyRecord | undefined;
+    if (!scoredCount || !Number.isFinite(average) || !lowestRaw) return null;
+    const lowest: FleetRow = {
+      id: String(lowestRaw.vehicleCode ?? lowestRaw.id), vehicleId: String(lowestRaw.id), type: "Vehicle",
+      driver: null, status: "Unknown", location: null, maintenance: "Unknown", signal: "Unknown",
+      riskScore: 0, readiness: Number(lowestRaw.readiness ?? 0), flag: null,
+    };
+    return { avg: average, lowest, scoredCount };
+  }, [summary.readinessAverage, summary.readinessScoredCount, vehiclesQ.data?.lowestReadiness]);
 
-  const deviceCounts = useMemo(() => ({
-    Online:   fleet.filter((v) => v.signal === "Online").length,
-    Degraded: fleet.filter((v) => v.signal === "Degraded").length,
-    Offline:  fleet.filter((v) => v.signal === "Offline").length,
-    Unknown:  fleet.filter((v) => v.signal === "Unknown").length,
-  }), [fleet]);
+  const deviceCounts = {
+    Online: Number(summary.deviceOnline ?? 0),
+    Degraded: Number(summary.deviceDegraded ?? 0),
+    Offline: Number(summary.deviceOffline ?? 0),
+    Unknown: Number(summary.deviceUnknown ?? 0),
+  };
 
   const alerts = useMemo(() => {
     if (!canViewAlerts) return [];
@@ -214,7 +258,8 @@ export function FleetOverviewPage() {
       .slice(0, 8);
   }, [alertsQ.data, canViewAlerts]);
 
-  const toggleTab = (next: Tab) => setTab((cur) => (cur === next ? "All" : next));
+  const selectTab = (next: Tab) => { setTab(next); setPage(1); };
+  const toggleTab = (next: Tab) => selectTab(tab === next ? "All" : next);
 
   if (!canViewVehicles) {
     return (
@@ -259,7 +304,7 @@ export function FleetOverviewPage() {
             </span>
             <h1 className="mt-1 text-[26px] font-black leading-none tracking-tight text-slate-950">Fleet Command</h1>
             <p className="mt-1.5 text-[12.5px] font-medium text-slate-500">
-              {fleet.length} vehicles tracked · {counts.Active} active · {flagged} flagged for review
+              {totalFleet} vehicles evaluated · {counts.Active} operationally active · {flagged} dispatch flags
             </p>
           </div>
           <div className="ml-auto flex flex-wrap items-center gap-3">
@@ -274,13 +319,17 @@ export function FleetOverviewPage() {
 
       {/* ── Clay status tiles — puffy, pressable fleet filters ────────────── */}
       <div className="grid shrink-0 grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
-        <ClayKpi label="Active"         count={counts.Active}    total={fleet.length} Icon={Truck}       tone="deck-clay-emerald" fill="deck-fill-emerald" icon="text-emerald-700" dot="bg-emerald-500 animate-pulse" active={tab === "Active"}    onClick={() => toggleTab("Active")} />
-        <ClayKpi label="Idle"           count={counts.Idle}      total={fleet.length} Icon={Zap}         tone="deck-clay-amber"   fill="deck-fill-amber"   icon="text-amber-700"   dot="bg-amber-400"                 active={tab === "Idle"}      onClick={() => toggleTab("Idle")} />
-        <ClayKpi label="Available"      count={counts.Available} total={fleet.length} Icon={Clock}       tone="deck-clay-sky"     fill="deck-fill-sky"     icon="text-sky-700"     dot="bg-sky-400"                   active={tab === "Available"} onClick={() => toggleTab("Available")} />
-        <ClayKpi label="Out of Service" count={counts.OOS}       total={fleet.length} Icon={ShieldAlert} tone="deck-clay-red"     fill="deck-fill-red"     icon="text-red-700"     dot="bg-red-500 animate-pulse"     active={tab === "OOS"}       onClick={() => toggleTab("OOS")} />
-        <ClayKpi label="Offline"        count={counts.Offline}   total={fleet.length} Icon={WifiOff}     tone="deck-clay-slate"   fill="deck-fill-slate"   icon="text-slate-600"   dot="bg-slate-400"                 active={tab === "Offline"}   onClick={() => toggleTab("Offline")} />
-        <ClayKpi label="Unknown"        count={counts.Unknown}   total={fleet.length} Icon={Radio}       tone="deck-clay-slate"   fill="deck-fill-slate"   icon="text-slate-600"   dot="bg-slate-400"                 active={tab === "Unknown"}   onClick={() => toggleTab("Unknown")} />
+        <ClayKpi label={COMMAND_STATE_LABELS.Active}    count={counts.Active}    total={totalFleet} Icon={Truck}       tone="deck-clay-emerald" fill="deck-fill-emerald" icon="text-emerald-700" dot="bg-emerald-500 animate-pulse" active={tab === "Active"}    onClick={() => toggleTab("Active")} />
+        <ClayKpi label={COMMAND_STATE_LABELS.Idle}      count={counts.Idle}      total={totalFleet} Icon={Zap}         tone="deck-clay-amber"   fill="deck-fill-amber"   icon="text-amber-700"   dot="bg-amber-400"             active={tab === "Idle"}      onClick={() => toggleTab("Idle")} />
+        <ClayKpi label={COMMAND_STATE_LABELS.Available} count={counts.Available} total={totalFleet} Icon={Clock}       tone="deck-clay-sky"     fill="deck-fill-sky"     icon="text-sky-700"     dot="bg-sky-400"               active={tab === "Available"} onClick={() => toggleTab("Available")} />
+        <ClayKpi label={COMMAND_STATE_LABELS.OOS}       count={counts.OOS}       total={totalFleet} Icon={ShieldAlert} tone="deck-clay-red"     fill="deck-fill-red"     icon="text-red-700"     dot="bg-red-500 animate-pulse" active={tab === "OOS"}       onClick={() => toggleTab("OOS")} />
+        <ClayKpi label={COMMAND_STATE_LABELS.Offline}   count={counts.Offline}   total={totalFleet} Icon={WifiOff}     tone="deck-clay-slate"   fill="deck-fill-slate"   icon="text-slate-600"   dot="bg-slate-400"             active={tab === "Offline"}   onClick={() => toggleTab("Offline")} />
+        <ClayKpi label={COMMAND_STATE_LABELS.Unknown}   count={counts.Unknown}   total={totalFleet} Icon={Radio}       tone="deck-clay-slate"   fill="deck-fill-slate"   icon="text-slate-600"   dot="bg-slate-400"             active={tab === "Unknown"}   onClick={() => toggleTab("Unknown")} />
       </div>
+
+      <p role="note" className="shrink-0 px-1 text-[11px] font-medium text-slate-500">
+        Command-state buckets are mutually exclusive. Dispatch restricted covers maintenance or out-of-service units; when authorized telemetry is visible, offline or unknown telemetry takes precedence. Operational states do not prove connectivity, and Fleet Registry availability is a separate master-data summary.
+      </p>
 
       {/* ── Main deck: roster console + instrument rail ───────────────────── */}
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_324px]">
@@ -293,10 +342,10 @@ export function FleetOverviewPage() {
                 <button
                   key={t}
                   type="button"
-                  onClick={() => setTab(t)}
+                  onClick={() => selectTab(t)}
                   className={`deck-seg-btn ${tab === t ? "deck-seg-btn-active" : ""}`}
                 >
-                  {t}
+                  {STATUS_TAB_LABELS[t]}
                   {t !== "All" && (
                     <span className={`ml-1.5 rounded-full px-1.5 py-px text-[10px] font-bold tabular-nums ${
                       tab === t ? "bg-teal-100 text-teal-700" : "bg-slate-200/70 text-slate-500"
@@ -311,16 +360,56 @@ export function FleetOverviewPage() {
               <Activity className="h-3 w-3 text-teal-600" />
               Registry · refreshes every 30 s
             </span>
+            <label className="relative min-w-[210px] flex-1 sm:max-w-[280px]">
+              <span className="sr-only">Search fleet</span>
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+              <input
+                type="search"
+                value={searchInput}
+                onChange={(event) => setSearchInput(event.target.value)}
+                placeholder="Search vehicle or driver"
+                aria-controls="fleet-roster"
+                aria-describedby={isFleetSettling ? "fleet-query-status" : undefined}
+                className="h-9 w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 text-xs text-slate-700 outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
+              />
+            </label>
+            <label className="inline-flex items-center gap-2 text-[11px] font-semibold text-slate-500">
+              Sort
+              <select
+                value={sort}
+                onChange={(event) => { setSort(event.target.value); setPage(1); }}
+                className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-700"
+                aria-label="Sort fleet"
+              >
+                <option value="vehicle">Vehicle</option>
+                <option value="driver">Driver</option>
+                <option value="status">Status</option>
+                <option value="readiness">Readiness</option>
+                <option value="device">Device</option>
+              </select>
+            </label>
+            <button
+              type="button"
+              className="btn-ghost h-9 px-3 text-xs"
+              onClick={() => { setSortOrder((current) => current === "asc" ? "desc" : "asc"); setPage(1); }}
+              aria-label={`Sort ${sortOrder === "asc" ? "descending" : "ascending"}`}
+            >
+              {sortOrder === "asc" ? "Ascending" : "Descending"}
+            </button>
           </div>
 
           <div className="deck-bezel mx-3 flex min-h-0 flex-1 flex-col">
-            <div className="deck-screen min-h-0 flex-1 overflow-auto">
+            <div
+              id="fleet-roster"
+              className="deck-screen min-h-0 flex-1 overflow-auto"
+              aria-busy={isFleetSettling || vehiclesQ.isFetching}
+            >
               <table className="w-full text-sm">
                 <thead className="sticky top-0 z-10 bg-[#fcfdff]">
                   <tr className="border-b border-slate-200/80">
                     <th className="px-5 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-400">Vehicle</th>
                     <th className="px-3 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-400">Driver</th>
-                    <th className="px-3 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-400">Status</th>
+                    <th className="px-3 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-400">Command state</th>
                     <th className="px-3 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-400">Location</th>
                     <th className="px-3 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-400">Readiness</th>
                     <th className="px-3 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-400">Maint.</th>
@@ -392,11 +481,19 @@ export function FleetOverviewPage() {
                 </tbody>
               </table>
 
-              {filtered.length === 0 && (
+              {isFleetSettling && (
+                <div id="fleet-query-status" role="status" aria-live="polite" className="py-12 text-center">
+                  <Activity className="mx-auto h-8 w-8 animate-pulse text-teal-500" />
+                  <p className="mt-2 text-sm font-semibold text-slate-600">Updating fleet view…</p>
+                  <p className="mt-1 text-xs text-slate-400">Applying search, filter, and sort changes.</p>
+                </div>
+              )}
+
+              {!isFleetSettling && filtered.length === 0 && (
                 <div className="py-12 text-center">
                   <Radio className="mx-auto h-8 w-8 text-slate-300" />
                   <p className="mt-2 text-sm font-semibold text-slate-500">
-                    {fleet.length === 0 ? "No vehicles in your fleet yet" : "No vehicles match this filter"}
+                    {totalFleet === 0 && !search ? "No vehicles in your fleet yet" : "No vehicles match this search or filter"}
                   </p>
                 </div>
               )}
@@ -405,7 +502,11 @@ export function FleetOverviewPage() {
 
           {/* Instrument strip */}
           <div className="flex shrink-0 flex-wrap items-center gap-x-5 gap-y-2 px-5 py-3 text-[11.5px] font-semibold text-slate-500">
-            <span className="tabular-nums">{filtered.length} of {fleet.length} vehicles shown</span>
+            <span className="tabular-nums">
+              {isFleetSettling
+                ? "Updating fleet view…"
+                : `${selectedTotal > 0 ? `${(displayPage - 1) * pageSize + 1}–${Math.min(displayPage * pageSize, selectedTotal)}` : "0"} of ${selectedTotal} vehicles`}
+            </span>
             <span className="inline-flex items-center gap-2">
               <span className="deck-led deck-led-emerald" />
               <span className="tabular-nums">{deviceCounts.Online} devices online</span>
@@ -420,13 +521,36 @@ export function FleetOverviewPage() {
                 <ChevronRight className="h-3 w-3" />
               </button>
             )}
+            <nav className="ml-auto inline-flex items-center gap-2" aria-label="Fleet pages">
+              <button
+                type="button"
+                className="btn-ghost h-8 px-3 text-xs"
+                disabled={displayPage <= 1 || vehiclesQ.isFetching || isFleetSettling}
+                onClick={() => setPage(Math.max(1, displayPage - 1))}
+                aria-label="Previous fleet page"
+              >
+                Previous
+              </button>
+              <span className="min-w-[76px] text-center tabular-nums" aria-live="polite">
+                {isFleetSettling ? "Updating…" : `Page ${pageCount === 0 ? 0 : displayPage} of ${pageCount}`}
+              </span>
+              <button
+                type="button"
+                className="btn-ghost h-8 px-3 text-xs"
+                disabled={pageCount === 0 || displayPage >= pageCount || vehiclesQ.isFetching || isFleetSettling}
+                onClick={() => setPage(Math.min(pageCount, displayPage + 1))}
+                aria-label="Next fleet page"
+              >
+                Next
+              </button>
+            </nav>
           </div>
         </section>
 
         {/* Instrument rail — gauge, signal bay, jobs pulse, alert feed */}
         <aside className="flex min-h-0 flex-col gap-3 xl:overflow-y-auto">
           <ReadinessGauge readiness={readiness} flagged={flagged} />
-          {canViewDevices && <SignalBay counts={deviceCounts} total={fleet.length} onOpen={() => navigate("/iot-devices")} />}
+          {canViewDevices && <SignalBay counts={deviceCounts} total={totalFleet} onOpen={() => navigate("/iot-devices")} />}
           <JobsPulse authorized={canViewJobs} query={jobsQ} onOpen={() => navigate("/jobs")} />
           <AlertsFeed authorized={canViewAlerts} query={alertsQ} alerts={alerts} onOpen={() => navigate("/alerts")} />
         </aside>

@@ -1,3 +1,4 @@
+using Npgsql;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -35,8 +36,8 @@ public static class PlatformEndpoints
     public static void MapPlatformEndpoints(this WebApplication app)
     {
         // ── Auth ──────────────────────────────────────────────────────────────
-        app.MapPost("/api/platform/auth/login", PlatformLogin);
-        app.MapGet("/api/platform/auth/me", PlatformMe);
+        app.MapPost("/api/platform/auth/login", PlatformLoginWithConfig);
+        app.MapGet("/api/platform/auth/me", PlatformMeWithConfig);
         app.MapPost("/api/platform/auth/logout", PlatformLogout);
 
         // ── Command Center ──────────────────────────────────────────────────────
@@ -52,6 +53,10 @@ public static class PlatformEndpoints
         // Safe, time-limited, fully-audited tenant impersonation (Platform Admin P0).
         app.MapPost("/api/platform/tenants/{id:long}/impersonate", TenantImpersonate);
         app.MapPost("/api/platform/impersonation/{id:long}/end", ImpersonationEnd);
+        // Without a list, an operator can only end a grant whose id they still hold
+        // from the start response — so a grant left open by a closed browser tab was
+        // unrevocable until it expired, and nobody could review who had access.
+        app.MapGet("/api/platform/support-access", SupportAccessList);
         app.MapPost("/api/platform/tenants/{id:long}/assign-package", TenantAssignPackage);
         app.MapPost("/api/platform/tenants/{id:long}/reset-admin-invite", TenantResetInvite);
         // Emergency/support control: kill every active session for a tenant without
@@ -63,6 +68,12 @@ public static class PlatformEndpoints
         // returns a one-time temporary password for the operator to hand over).
         app.MapGet("/api/platform/tenants/{id:long}/users", TenantUsers);
         app.MapPost("/api/platform/tenants/{id:long}/users/{userId:long}/reset-password", TenantUserResetPassword);
+        // Full 360 user administration for a tenant: create an operator, correct a
+        // sign-in email, change a role, disable/re-enable, and re-arm an invite —
+        // all without needing anyone inside the tenant to already be able to log in.
+        app.MapPost("/api/platform/tenants/{id:long}/users", TenantUserCreate);
+        app.MapPut("/api/platform/tenants/{id:long}/users/{userId:long}", TenantUserUpdate);
+        app.MapPost("/api/platform/tenants/{id:long}/users/{userId:long}/resend-invite", TenantUserResendInvite);
         // Offboarding — schema-driven cascade delete of ALL tenant-owned rows + the company.
         app.MapDelete("/api/platform/tenants/{id:long}", TenantDelete);
         // Bulk operations for the Tenants table multi-select action bar. Routes each
@@ -108,12 +119,20 @@ public static class PlatformEndpoints
 
         // ── Security & Audit ────────────────────────────────────────────────────
         app.MapGet("/api/platform/audit", AuditList);
+        app.MapGet("/api/platform/audit/export.csv", AuditExport);
 
         // ── Roles (for RBAC visibility) ─────────────────────────────────────────
         app.MapGet("/api/platform/roles", RolesList);
 
         // ── Platform operator management (list/invite/role/status/sessions) ──────
         PlatformAdminEndpoints.Map(app);
+
+        // ── Platform settings (outbound email / SMTP) ───────────────────────────
+        PlatformSettingsEndpoints.Map(app);
+
+        // Fixed-tenant, staging-only certification readiness control. Mapping is
+        // absent unless all fail-closed ProductPilot settings agree.
+        ProductPilotEndpoints.Map(app);
     }
 
     // ════════════════════════════════════════════════════════════════════════════
@@ -262,7 +281,13 @@ public static class PlatformEndpoints
                 c.Parameters.AddWithValue("@ip", http.Connection.RemoteIpAddress?.ToString() ?? "unknown");
             }, ct);
 
-    internal static async Task<IResult> PlatformLogin(HttpContext http, PlatformLoginRequest request, Database db, CancellationToken ct)
+    internal static Task<IResult> PlatformLogin(HttpContext http, PlatformLoginRequest request, Database db, CancellationToken ct)
+        => PlatformLoginCore(http, request, db, null, null, ct);
+
+    private static Task<IResult> PlatformLoginWithConfig(HttpContext http, PlatformLoginRequest request, Database db, IHostEnvironment environment, IConfiguration configuration, CancellationToken ct)
+        => PlatformLoginCore(http, request, db, environment, configuration, ct);
+
+    private static async Task<IResult> PlatformLoginCore(HttpContext http, PlatformLoginRequest request, Database db, IHostEnvironment? environment, IConfiguration? configuration, CancellationToken ct)
     {
         var email = (request.Email ?? "").Trim();
         var ip = http.Connection.RemoteIpAddress?.ToString() ?? "unknown";
@@ -337,10 +362,17 @@ public static class PlatformEndpoints
             admin = new { id = adminId, email = admin["email"], name = admin["fullName"] },
             role = new { key = admin["roleKey"], name = admin["roleName"] },
             permissions = perms,
+            productPilotAvailable = environment is not null && configuration is not null && ProductPilotEndpoints.IsAvailable(environment, configuration),
         }, "Platform login successful"));
     }
 
     private static async Task<IResult> PlatformMe(HttpContext http, Database db, CancellationToken ct)
+        => await PlatformMeCore(http, db, null, null, ct);
+
+    private static Task<IResult> PlatformMeWithConfig(HttpContext http, Database db, IHostEnvironment environment, IConfiguration configuration, CancellationToken ct)
+        => PlatformMeCore(http, db, environment, configuration, ct);
+
+    private static async Task<IResult> PlatformMeCore(HttpContext http, Database db, IHostEnvironment? environment, IConfiguration? configuration, CancellationToken ct)
     {
         var principal = await AuthenticateAsync(http, db, ct);
         if (principal is null) return Results.Json(ApiResponse<object>.Fail("Unauthorized"), statusCode: StatusCodes.Status401Unauthorized);
@@ -351,6 +383,7 @@ public static class PlatformEndpoints
             admin = new { id = principal.AdminId, email = principal.Email, name = name?["fullName"] },
             role = new { key = principal.RoleKey, name = principal.RoleName },
             permissions = principal.Permissions,
+            productPilotAvailable = environment is not null && configuration is not null && ProductPilotEndpoints.IsAvailable(environment, configuration),
         }, "Session active"));
     }
 
@@ -730,6 +763,38 @@ public static class PlatformEndpoints
             "Support access ended and its exact session was revoked."));
     }
 
+    // The support-access ledger: who holds live access to which tenant right now,
+    // under what stated reason, expiring when — plus the recent history, which is
+    // what a customer asks for when they ask "who at your company saw our data".
+    internal static async Task<IResult> SupportAccessList(
+        HttpContext http, Database db, IConfiguration configuration, CancellationToken ct)
+    {
+        var (_, error) = await RequireAsync(http, db, "platform:tenants:view", ct);
+        if (error is not null) return error;
+
+        var rows = await db.QueryAsync("""
+            SELECT s.id, s.grant_ref, s.reason, s.created_at, s.expires_at, s.ended_at,
+                   s.company_id, c.name AS tenant, a.email AS operator_email,
+                   u.email AS target_email, u.full_name AS target_name,
+                   (s.ended_at IS NULL AND s.expires_at > NOW()) AS is_active,
+                   GREATEST(0, EXTRACT(EPOCH FROM (s.expires_at - NOW()))::int) AS seconds_remaining
+            FROM platform_impersonation_sessions s
+            JOIN companies c ON c.id = s.company_id
+            LEFT JOIN platform_admins a ON a.id = s.admin_id
+            LEFT JOIN users u ON u.id = s.target_user_id
+            ORDER BY (s.ended_at IS NULL AND s.expires_at > NOW()) DESC, s.created_at DESC
+            LIMIT 100
+            """, ct: ct);
+
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            enabled = PlatformImpersonationPolicy.IsEnabled(configuration),
+            readOnlyScope = PlatformImpersonationPolicy.ReadOnlyScope,
+            grants = rows,
+            activeCount = rows.Count(r => r["isActive"] is bool b && b),
+        }));
+    }
+
     private static Task TenantSupportAuditAsync(Database db, long companyId, string action, Guid grantRef,
         object details, CancellationToken ct) => AuditLogSequenceRepair.ExecuteWithSequenceRepairAsync(
         db, "audit_logs", "id",
@@ -901,7 +966,8 @@ public static class PlatformEndpoints
             var invite = await CreateAdminInviteAsync(http, db, companyId, adminEmail!, Str(body, "adminName") ?? "Tenant Admin", ct);
             adminInvite = invite.Status == AdminInviteStatus.CrossTenantConflict
                 ? new { email = adminEmail, sent = false, invited = false, error = "That email already belongs to another tenant; the tenant was created without an admin invite. Re-issue the invite with a different admin email." }
-                : new { email = adminEmail, sent = invite.EmailSent, invited = true, error = (string?)null };
+                : new { email = adminEmail, sent = invite.EmailSent, invited = true, error = (string?)null,
+                        activationUrl = invite.ActivationUrl, activationToken = invite.ActivationToken };
         }
 
         // Give the new tenant the standard flag set (seeded enabled — these are kill
@@ -1254,8 +1320,18 @@ public static class PlatformEndpoints
                 statusCode: StatusCodes.Status409Conflict);
         }
 
+        // The token is deliberately absent from the audit row — only whether mail went out.
         await AuditAsync(db, principal!, http, "tenant.admin_invite.reset", "Tenant", id, id, new { adminEmail, emailSent = invite.EmailSent }, ct);
-        return Results.Ok(ApiResponse<object>.Ok(new { id, adminEmail, emailSent = invite.EmailSent }, "Admin invite reset"));
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            id,
+            adminEmail,
+            emailSent = invite.EmailSent,
+            activationUrl = invite.ActivationUrl,
+            activationToken = invite.ActivationToken,
+        }, invite.EmailSent
+            ? "Activation email sent"
+            : "Invite created — email was not sent, so deliver the activation link below"));
     }
 
     internal static async Task<IResult> TenantRevokeSessions(long id, HttpContext http, Database db, CancellationToken ct)
@@ -1281,12 +1357,20 @@ public static class PlatformEndpoints
         if (error is not null) return error;
         // NB: `users` has no last_login_at column — only the columns below exist.
         var rows = await db.QueryAsync(
-            @"SELECT id, full_name, email, role_name, status, customer_id, password_changed_at, created_at
+            @"SELECT id, full_name, email, role_name, status, customer_id, password_changed_at, created_at,
+                     (password_hash IS NOT NULL AND password_hash <> '') AS has_password,
+                     (SELECT COUNT(*) FROM user_sessions s WHERE s.user_id = users.id) AS active_sessions
               FROM users
               WHERE company_id=@id AND COALESCE(status,'') <> 'Deleted'
               ORDER BY (role_name ILIKE '%admin%') DESC, full_name",
             c => c.Parameters.AddWithValue("@id", id), ct);
-        return Results.Ok(ApiResponse<object>.Ok(rows));
+        // The assignable roles are the tenant's own plus the system catalog, so the
+        // editor offers real role names instead of a free-text field that can quietly
+        // strip a user of every permission.
+        var roles = await db.QueryAsync(
+            @"SELECT name, is_system FROM roles WHERE company_id IS NULL OR company_id=@id ORDER BY name",
+            c => c.Parameters.AddWithValue("@id", id), ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { users = rows, roles }));
     }
 
     // Platform-initiated password reset for a tenant user. Generates a strong one-time
@@ -1334,6 +1418,318 @@ public static class PlatformEndpoints
             temporaryPassword = temp,
             sessionsRevoked = revoked,
         }, "Temporary password generated — copy it now, it is shown only once"));
+    }
+
+    // Roles carrying tenant-wide authority. Used both to seed a new administrator
+    // and to guard against removing the last one.
+    private static readonly string[] TenantAdminRoles = ["Company Admin", "Super Admin", "Reseller / Partner Admin"];
+
+    private static bool IsTenantAdminRole(string? roleName) =>
+        roleName is not null && TenantAdminRoles.Contains(roleName, StringComparer.OrdinalIgnoreCase);
+
+    // Counts the tenant's remaining people who can actually sign in AND administer.
+    // Every mutation that could reduce this to zero is refused — a tenant with no
+    // reachable administrator is a support ticket that platform admin then has to
+    // dig them out of.
+    private static Task<long> ActiveAdminCountAsync(Database db, long companyId, long? excludingUserId, CancellationToken ct) =>
+        db.ScalarLongAsync(
+            @"SELECT COUNT(*) FROM users
+              WHERE company_id=@cid AND status='Active' AND (@ex IS NULL OR id <> @ex)
+                AND role_name = ANY(@roles)",
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid", companyId);
+                c.Parameters.AddWithValue("@ex", (object?)excludingUserId ?? DBNull.Value);
+                c.Parameters.AddWithValue("@roles", TenantAdminRoles);
+            }, ct);
+
+    private static bool LooksLikeEmail(string s) =>
+        System.Text.RegularExpressions.Regex.IsMatch(s, @"^[^\s@]+@[^\s@]+\.[^\s@]+$");
+
+    // Creates a tenant user from the platform console and arms a set-password invite.
+    // This is the escape hatch for "the customer's only admin left the company".
+    internal static async Task<IResult> TenantUserCreate(long id, HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
+    {
+        var (principal, error) = await RequireAsync(http, db, "platform:tenants:manage", ct);
+        if (error is not null) return error;
+
+        var tenantExists = await db.ScalarLongAsync("SELECT COUNT(*) FROM companies WHERE id=@id",
+            c => c.Parameters.AddWithValue("@id", id), ct);
+        if (tenantExists == 0) return Results.Json(ApiResponse<object>.Fail("Not found"), statusCode: StatusCodes.Status404NotFound);
+
+        var email = Str(body, "email")?.Trim();
+        var fullName = Str(body, "fullName")?.Trim();
+        var roleName = Str(body, "roleName")?.Trim() ?? "Company Admin";
+        if (string.IsNullOrWhiteSpace(email) || !LooksLikeEmail(email!))
+            return Results.Json(ApiResponse<object>.Fail("Validation failed", "A valid email address is required"), statusCode: StatusCodes.Status400BadRequest);
+        if (string.IsNullOrWhiteSpace(fullName))
+            return Results.Json(ApiResponse<object>.Fail("Validation failed", "fullName is required"), statusCode: StatusCodes.Status400BadRequest);
+
+        // ONE matching rule, and the CANONICAL name is what gets stored.
+        //
+        // Validation used to be case-INSENSITIVE (LOWER(name)=LOWER(@r)) while the INSERT
+        // resolved role_id case-SENSITIVELY (WHERE name=@role). roleName:"dispatcher"
+        // therefore passed validation, matched no row on the way in, and produced exactly
+        // the NULL role_id that DEF-021 exists to eliminate — after which the session falls
+        // through to RolePermissionDefaults (an OrdinalIgnoreCase dictionary that DOES match
+        // the variant) and the user receives the hardcoded defaults rather than the tenant's
+        // possibly-narrowed role. Resolving the row ONCE and reusing its id and its exact
+        // name closes both halves: the id can never be NULL when validation passed, and
+        // role_name always matches a real roles row byte for byte.
+        //
+        // Precedence is ResolveRoleRecord's: a tenant-local role outranks the global one of
+        // the same name (ORDER BY company_id NULLS LAST LIMIT 1), matching the stage87
+        // backfill and every other provisioning insert.
+        var resolvedRole = await db.QuerySingleAsync(
+            @"SELECT id, name, permissions_json FROM roles
+              WHERE LOWER(name)=LOWER(@r) AND (company_id IS NULL OR company_id=@cid)
+              ORDER BY company_id NULLS LAST LIMIT 1",
+            c => { c.Parameters.AddWithValue("@r", roleName); c.Parameters.AddWithValue("@cid", id); }, ct);
+        if (resolvedRole is null)
+            return Results.Json(ApiResponse<object>.Fail("Validation failed", $"Unknown role: {roleName}"), statusCode: StatusCodes.Status400BadRequest);
+        var canonicalRoleName = resolvedRole["name"]?.ToString() ?? roleName;
+        if (await EndpointMappings.IsCustomerPortalRoleAsync(db, resolvedRole, canonicalRoleName, ct))
+            return Results.Json(ApiResponse<object>.Fail("Validation failed",
+                "Customer-portal users require a customer binding and must be provisioned from tenant user administration."),
+                statusCode: StatusCodes.Status400BadRequest);
+
+        // Same cross-tenant refusal as the admin invite: an email owned by another
+        // company is never relocated, because that is account takeover by typo.
+        var existing = await db.QuerySingleAsync(
+            "SELECT id, company_id FROM users WHERE LOWER(email)=LOWER(@e) LIMIT 1",
+            c => c.Parameters.AddWithValue("@e", email!), ct);
+        if (existing is not null)
+        {
+            var owner = Convert.ToInt64(existing["companyId"]);
+            return Results.Json(ApiResponse<object>.Fail("Conflict",
+                owner == id
+                    ? "A user with that email already exists in this tenant — edit that user instead."
+                    : "That email address already belongs to a user in a different tenant."),
+                statusCode: StatusCodes.Status409Conflict);
+        }
+
+        // DEF-021: resolve role_id at provisioning time. The subquery now matches the way
+        // validation above matches — LOWER(name)=LOWER(@role), same ORDER BY … NULLS LAST
+        // precedence — and @role carries the CANONICAL name read back from the roles row, so
+        // the two agree by construction and role_id can no longer come back NULL for a role
+        // validation just accepted. Role membership is what the middleware and the role-card
+        // user counts read; role_name alone creates a member /api/admin/roles cannot count.
+        var userId = await db.InsertAsync(
+            @"INSERT INTO users (company_id, role_id, full_name, email, role_name, status)
+              VALUES (@cid,
+                      (SELECT id FROM roles WHERE LOWER(name)=LOWER(@role) AND (company_id IS NULL OR company_id=@cid) ORDER BY company_id NULLS LAST LIMIT 1),
+                      @name, @email, @role, 'Pending') RETURNING id",
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid", id);
+                c.Parameters.AddWithValue("@name", fullName!);
+                c.Parameters.AddWithValue("@email", email!);
+                c.Parameters.AddWithValue("@role", canonicalRoleName);
+            }, ct);
+
+        // Hand back a temporary password as well as the invite, because SMTP is not
+        // guaranteed and an operator on a call needs something to read out now.
+        var temp = GenerateTempPassword();
+        await db.ExecuteAsync(
+            "UPDATE users SET password_hash=@h, password_changed_at=NOW(), status='Active' WHERE id=@uid",
+            c =>
+            {
+                c.Parameters.AddWithValue("@h", PlatformSchemaService.HashPassword(temp));
+                c.Parameters.AddWithValue("@uid", userId);
+            }, ct);
+
+        await AuditAsync(db, principal!, http, "tenant.user.created", "User", userId, id,
+            new { email, roleName = canonicalRoleName }, ct);
+
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            userId, email, fullName, roleName = canonicalRoleName, status = "Active",
+            temporaryPassword = temp,
+        }, "User created — copy the temporary password now, it is shown only once"));
+    }
+
+    // Edits identity and access for one tenant user: sign-in email, display name,
+    // role, and enabled/disabled state.
+    internal static async Task<IResult> TenantUserUpdate(long id, long userId, HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
+    {
+        var (principal, error) = await RequireAsync(http, db, "platform:tenants:manage", ct);
+        if (error is not null) return error;
+
+        var user = await db.QuerySingleAsync(
+            "SELECT id, email, full_name, role_id, role_name, status, customer_id FROM users WHERE id=@uid AND company_id=@cid",
+            c => { c.Parameters.AddWithValue("@uid", userId); c.Parameters.AddWithValue("@cid", id); }, ct);
+        if (user is null)
+            return Results.Json(ApiResponse<object>.Fail("Not found", "That user does not belong to this tenant"),
+                statusCode: StatusCodes.Status404NotFound);
+
+        var currentEmail = user["email"]?.ToString() ?? "";
+        var currentRole = user["roleName"]?.ToString();
+        var currentStatus = user["status"]?.ToString() ?? "";
+
+        var newEmail = Str(body, "email")?.Trim();
+        var newName = Str(body, "fullName")?.Trim();
+        var newRole = Str(body, "roleName")?.Trim();
+        var newStatus = Str(body, "status")?.Trim();
+
+        var emailChanged = !string.IsNullOrWhiteSpace(newEmail)
+            && !string.Equals(newEmail, currentEmail, StringComparison.OrdinalIgnoreCase);
+
+        if (emailChanged)
+        {
+            if (!LooksLikeEmail(newEmail!))
+                return Results.Json(ApiResponse<object>.Fail("Validation failed", "That is not a valid email address"), statusCode: StatusCodes.Status400BadRequest);
+            var clash = await db.QuerySingleAsync(
+                "SELECT id, company_id FROM users WHERE LOWER(email)=LOWER(@e) AND id <> @uid LIMIT 1",
+                c => { c.Parameters.AddWithValue("@e", newEmail!); c.Parameters.AddWithValue("@uid", userId); }, ct);
+            if (clash is not null)
+                return Results.Json(ApiResponse<object>.Fail("Conflict",
+                    Convert.ToInt64(clash["companyId"]) == id
+                        ? "Another user in this tenant already uses that email."
+                        : "That email address already belongs to a user in a different tenant."),
+                    statusCode: StatusCodes.Status409Conflict);
+        }
+
+        Dictionary<string, object?>? resolvedNewRole = null;
+        if (!string.IsNullOrWhiteSpace(newRole))
+        {
+            resolvedNewRole = await db.QuerySingleAsync(
+                @"SELECT id, name, permissions_json FROM roles
+                  WHERE LOWER(name)=LOWER(@r) AND (company_id IS NULL OR company_id=@cid)
+                  ORDER BY company_id NULLS LAST LIMIT 1",
+                c => { c.Parameters.AddWithValue("@r", newRole!); c.Parameters.AddWithValue("@cid", id); }, ct);
+            if (resolvedNewRole is null)
+                return Results.Json(ApiResponse<object>.Fail("Validation failed", $"Unknown role: {newRole}"), statusCode: StatusCodes.Status400BadRequest);
+            newRole = resolvedNewRole["name"]?.ToString() ?? newRole;
+            if (await EndpointMappings.IsCustomerPortalRoleAsync(db, resolvedNewRole, newRole, ct))
+                return Results.Json(ApiResponse<object>.Fail("Validation failed",
+                    "Customer-portal users require a customer binding and must be provisioned from tenant user administration."),
+                    statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        if (!string.IsNullOrWhiteSpace(newStatus) && newStatus is not ("Active" or "Disabled" or "Pending"))
+            return Results.Json(ApiResponse<object>.Fail("Validation failed", "status must be Active, Disabled or Pending"), statusCode: StatusCodes.Status400BadRequest);
+
+        // Lockout guard: demoting or disabling the tenant's last reachable admin
+        // would leave nobody inside able to administer it.
+        var losesAdmin =
+            (IsTenantAdminRole(currentRole) && !string.IsNullOrWhiteSpace(newRole) && !IsTenantAdminRole(newRole))
+            || (IsTenantAdminRole(currentRole) && string.Equals(currentStatus, "Active", StringComparison.OrdinalIgnoreCase)
+                && newStatus is not null && !string.Equals(newStatus, "Active", StringComparison.OrdinalIgnoreCase));
+        if (losesAdmin && await ActiveAdminCountAsync(db, id, userId, ct) == 0)
+            return Results.Json(ApiResponse<object>.Fail("Refused",
+                "This is the tenant's last active administrator. Promote or create another admin first."),
+                statusCode: StatusCodes.Status409Conflict);
+
+        var clearsCustomerBinding = resolvedNewRole is not null &&
+            user.GetValueOrDefault("customerId") is not null and not DBNull;
+        await db.ExecuteAsync(
+            @"UPDATE users SET
+                email     = COALESCE(@email, email),
+                full_name = COALESCE(@name, full_name),
+                role_id   = COALESCE(@roleId, role_id),
+                role_name = COALESCE(@role, role_name),
+                customer_id = CASE WHEN @clearCustomerBinding THEN NULL ELSE customer_id END,
+                status    = COALESCE(@status, status)
+              WHERE id=@uid AND company_id=@cid",
+            c =>
+            {
+                c.Parameters.AddWithValue("@email", (object?)newEmail ?? DBNull.Value);
+                c.Parameters.AddWithValue("@name", (object?)newName ?? DBNull.Value);
+                c.Parameters.AddWithValue("@roleId", resolvedNewRole?.GetValueOrDefault("id") ?? DBNull.Value);
+                c.Parameters.AddWithValue("@role", (object?)newRole ?? DBNull.Value);
+                c.Parameters.AddWithValue("@clearCustomerBinding", clearsCustomerBinding);
+                c.Parameters.AddWithValue("@status", (object?)newStatus ?? DBNull.Value);
+                c.Parameters.AddWithValue("@uid", userId);
+                c.Parameters.AddWithValue("@cid", id);
+            }, ct);
+
+        // The email IS the sign-in identity and the role IS the permission set, so a
+        // live session issued under the old values must not survive the change.
+        var revoked = 0;
+        var mustRevoke = emailChanged
+            || (!string.IsNullOrWhiteSpace(newRole) && !string.Equals(newRole, currentRole, StringComparison.OrdinalIgnoreCase))
+            || (newStatus is not null && !string.Equals(newStatus, "Active", StringComparison.OrdinalIgnoreCase));
+        if (mustRevoke)
+            revoked = await db.ExecuteAsync("DELETE FROM user_sessions WHERE user_id=@uid",
+                c => c.Parameters.AddWithValue("@uid", userId), ct);
+
+        await AuditAsync(db, principal!, http, "tenant.user.updated", "User", userId, id,
+            new
+            {
+                emailFrom = emailChanged ? currentEmail : null,
+                emailTo = emailChanged ? newEmail : null,
+                roleFrom = newRole is null ? null : currentRole,
+                roleTo = newRole,
+                statusFrom = newStatus is null ? null : currentStatus,
+                statusTo = newStatus,
+                sessionsRevoked = revoked,
+            }, ct);
+
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            userId,
+            email = newEmail ?? currentEmail,
+            roleName = newRole ?? currentRole,
+            status = newStatus ?? currentStatus,
+            sessionsRevoked = revoked,
+        }, mustRevoke && revoked > 0
+            ? $"User updated — {revoked} active session{(revoked == 1 ? "" : "s")} revoked"
+            : "User updated"));
+    }
+
+    // Re-arms the set-password invite for any tenant user, not only the original
+    // admin. Returns whether SMTP actually carried it, so the operator knows
+    // whether they still have to hand the link over themselves.
+    internal static async Task<IResult> TenantUserResendInvite(long id, long userId, HttpContext http, Database db, CancellationToken ct)
+    {
+        var (principal, error) = await RequireAsync(http, db, "platform:tenants:manage", ct);
+        if (error is not null) return error;
+
+        var user = await db.QuerySingleAsync(
+            "SELECT email, full_name FROM users WHERE id=@uid AND company_id=@cid",
+            c => { c.Parameters.AddWithValue("@uid", userId); c.Parameters.AddWithValue("@cid", id); }, ct);
+        if (user is null)
+            return Results.Json(ApiResponse<object>.Fail("Not found", "That user does not belong to this tenant"),
+                statusCode: StatusCodes.Status404NotFound);
+
+        var email = user["email"]?.ToString() ?? "";
+        var fullName = user["fullName"]?.ToString() ?? "Team member";
+
+        // Deliberately NOT CreateAdminInviteAsync: that path forces role_name to
+        // 'Company Admin', which would quietly promote a dispatcher whose invite an
+        // operator merely re-sent. Mint the same single-use token, touch no role.
+        var rawToken = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))
+            .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        var tokenHash = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(rawToken)));
+        await db.ExecuteAsync(
+            @"INSERT INTO password_reset_tokens (user_id, company_id, token_hash, expires_at, request_ip_hash)
+              VALUES (@uid, @cid, @hash, NOW() + INTERVAL '7 days', @ip)
+              ON CONFLICT (user_id) DO UPDATE SET token_hash=EXCLUDED.token_hash, expires_at=EXCLUDED.expires_at,
+                consumed_at=NULL, request_ip_hash=EXCLUDED.request_ip_hash, created_at=NOW()",
+            c =>
+            {
+                c.Parameters.AddWithValue("@uid", userId);
+                c.Parameters.AddWithValue("@cid", id);
+                c.Parameters.AddWithValue("@hash", tokenHash);
+                c.Parameters.AddWithValue("@ip", InviteRequestIpHash(http));
+            }, ct);
+
+        var emailSent = await TrySendTenantInviteEmailAsync(http, id, email, fullName, rawToken, ct);
+        var activationUrl = await BuildTenantActivationUrlAsync(http, email, rawToken, ct);
+
+        await AuditAsync(db, principal!, http, "tenant.user.invite_resent", "User", userId, id,
+            new { email, emailSent }, ct);
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            userId,
+            email,
+            emailSent,
+            activationUrl,
+            activationToken = rawToken,
+        },
+            emailSent
+                ? "Invite emailed"
+                : "Invite created — email was not sent, so deliver the activation link below"));
     }
 
     // Unambiguous alphabet (no O/0, I/l/1) so a handed-over password is easy to type.
@@ -1981,14 +2377,23 @@ public static class PlatformEndpoints
         var (_, error) = await RequireAsync(http, db, "platform:billing:view", ct);
         if (error is not null) return error;
         var rows = await db.QueryAsync(
-            @"SELECT i.id, i.invoice_number, i.status, i.kind, i.amount_cents, i.currency,
-                     i.issued_at, i.due_at, i.paid_at, c.name tenant, i.company_id
+            @"SELECT i.id, i.invoice_number, i.status, i.kind, i.document_type, i.amount_cents, i.currency,
+                     i.subtotal_cents, i.discount_cents, i.tax_total_cents, i.total_cents,
+                     i.tax_country, i.tax_treatment, i.tax_label, i.period_start, i.period_end,
+                     i.credit_note_of, i.issued_at, i.due_at, i.paid_at, c.name tenant, i.company_id,
+                     (SELECT COUNT(*) FROM platform_invoice_lines l WHERE l.invoice_id = i.id) line_count
               FROM platform_invoices i JOIN companies c ON c.id = i.company_id
               ORDER BY i.created_at DESC LIMIT 200", ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(rows));
     }
 
-    internal static async Task<IResult> InvoiceCreate(HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
+    // Manual invoice creation. Every invoice now goes through the same itemized,
+    // taxed path as a generated one: the caller supplies net lines (or a single
+    // amount, which becomes one line), tax is determined from the tenant's country
+    // of activation, and the document is saved as a draft. Unless the caller asks
+    // for a draft it is issued immediately, which is what the old flat-amount API
+    // did — so an existing caller keeps its behaviour and gains the line detail.
+    internal static async Task<IResult> InvoiceCreate(HttpContext http, Dictionary<string, object?> body, Database db, PlatformBillingService billing, CancellationToken ct)
     {
         var (principal, error) = await RequireAsync(http, db, "platform:billing:manage", ct);
         if (error is not null) return error;
@@ -1996,29 +2401,55 @@ public static class PlatformEndpoints
         var companyId = Long(body, "companyId");
         if (!companyId.HasValue)
             return Results.Json(ApiResponse<object>.Fail("Validation failed", "companyId is required"), statusCode: StatusCodes.Status400BadRequest);
-        var amount = Long(body, "amountCents") ?? 0;
-        var lineItems = body.TryGetValue("lineItems", out var li) && li is not null ? JsonSerializer.Serialize(li) : "[]";
-        var number = "INV-" + DateTime.UtcNow.ToString("yyyyMM") + "-" + Guid.NewGuid().ToString("N")[..6].ToUpperInvariant();
 
-        var newId = await db.InsertAsync(
-            @"INSERT INTO platform_invoices (company_id, invoice_number, status, kind, amount_cents, currency, line_items, notes, issued_at, due_at)
-              VALUES (@cid, @num, @status, @kind, @amt, @cur, CAST(@items AS JSONB), @notes, NOW(),
-                      NOW() + (@dueDays || ' day')::interval)",
-            c =>
+        var exists = await db.ScalarLongAsync("SELECT COUNT(*) FROM companies WHERE id=@id",
+            c => c.Parameters.AddWithValue("@id", companyId.Value), ct);
+        if (exists == 0)
+            return Results.Json(ApiResponse<object>.Fail("Not found", "No such tenant"), statusCode: StatusCodes.Status404NotFound);
+
+        var lines = PlatformBillingEndpoints.ReadLines(body);
+        if (lines.Count == 0)
+        {
+            // Flat-amount compatibility: one line rather than a bare number, so even
+            // the simplest invoice still reconciles line-by-line.
+            var amount = Long(body, "amountCents") ?? 0;
+            if (amount == 0)
+                return Results.Json(ApiResponse<object>.Fail("Validation failed", "Provide either lines[] or a non-zero amountCents"), statusCode: StatusCodes.Status400BadRequest);
+            lines.Add(new PlatformBillingService.DraftLine
             {
-                c.Parameters.AddWithValue("@cid", companyId.Value);
-                c.Parameters.AddWithValue("@num", number);
-                c.Parameters.AddWithValue("@status", Str(body, "status") ?? "sent");
-                c.Parameters.AddWithValue("@kind", Str(body, "kind") ?? "recurring");
-                c.Parameters.AddWithValue("@amt", amount);
-                c.Parameters.AddWithValue("@cur", Str(body, "currency") ?? "USD");
-                c.Parameters.AddWithValue("@items", lineItems);
-                c.Parameters.AddWithValue("@notes", (object?)Str(body, "notes") ?? DBNull.Value);
-                c.Parameters.AddWithValue("@dueDays", ((int)(Long(body, "dueDays") ?? 15)).ToString());
-            }, ct);
+                Source = "manual",
+                Description = Str(body, "notes") ?? "Platform services",
+                ChargeModel = "flat",
+                Quantity = 1,
+                UnitPriceCents = amount,
+                GrossAmountCents = amount,
+            });
+        }
 
-        await AuditAsync(db, principal!, http, "invoice.created", "Invoice", newId, companyId, new { number, amount }, ct);
-        return Results.Ok(ApiResponse<object>.Ok(new { id = newId, invoiceNumber = number }, "Invoice created"));
+        var tax = await billing.ResolveTaxAsync(companyId.Value, ct);
+        PlatformBillingService.Price(lines, tax);
+
+        var dueDays = (int)(Long(body, "dueDays") ?? 15);
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var periodStart = new DateOnly(today.Year, today.Month, 1);
+        var draft = new PlatformBillingService.Draft(
+            companyId.Value, "", periodStart, periodStart.AddMonths(1).AddDays(-1), tax, lines,
+            lines.Sum(l => l.NetAmountCents), lines.Sum(l => l.DiscountCents),
+            lines.Sum(l => l.TaxAmountCents),
+            lines.Sum(l => l.NetAmountCents) + lines.Sum(l => l.TaxAmountCents), []);
+
+        var newId = await billing.SaveDraftAsync(companyId.Value, draft,
+            Str(body, "kind") ?? "recurring", "invoice", dueDays, Str(body, "notes"), principal!.Email, ct);
+
+        var requested = (Str(body, "status") ?? "sent").ToLowerInvariant();
+        string? number = null;
+        if (requested != "draft") number = await billing.IssueAsync(newId, principal!.Email, ct);
+
+        await AuditAsync(db, principal!, http, "invoice.created", "Invoice", newId, companyId,
+            new { number, lines = lines.Count, subtotal = draft.SubtotalCents, tax = draft.TaxTotalCents, total = draft.TotalCents }, ct);
+        return Results.Ok(ApiResponse<object>.Ok(
+            new { id = newId, invoiceNumber = number, status = requested == "draft" ? "draft" : "sent", totalCents = draft.TotalCents },
+            requested == "draft" ? "Draft invoice created" : "Invoice created and issued"));
     }
 
     internal static async Task<IResult> InvoiceMarkPaid(long id, HttpContext http, Database db, CancellationToken ct)
@@ -2033,10 +2464,12 @@ public static class PlatformEndpoints
     }
 
     // Bulk invoice operations — the Collections table multi-select action bar.
-    // mark-paid / void are idempotent status writes; delete is a hard row removal
-    // (invoices carry no downstream cascade). Every row is audited individually and
-    // outcomes are reported per-id so a partial failure is transparent.
-    private static async Task<IResult> InvoiceBulk(HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
+    // mark-paid / void are idempotent status writes. `delete` is restricted to
+    // UNISSUED drafts: once a document has been issued it holds an allocated
+    // sequence number, and removing it puts a hole in a gap-free tax sequence that
+    // neither the ledger nor a tax authority can account for. Issued documents are
+    // corrected by void or credit note, never by deletion.
+    internal static async Task<IResult> InvoiceBulk(HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
     {
         var (principal, error) = await RequireAsync(http, db, "platform:billing:manage", ct);
         if (error is not null) return error;
@@ -2066,9 +2499,18 @@ public static class PlatformEndpoints
                     "mark-paid" => await db.ExecuteAsync("UPDATE platform_invoices SET status='paid', paid_at=NOW() WHERE id=@id AND status<>'paid'", c => c.Parameters.AddWithValue("@id", id), ct),
                     // Void never touches an already-paid invoice — collected revenue is immutable.
                     "void" => await db.ExecuteAsync("UPDATE platform_invoices SET status='void' WHERE id=@id AND status<>'paid'", c => c.Parameters.AddWithValue("@id", id), ct),
-                    _ => await db.ExecuteAsync("DELETE FROM platform_invoices WHERE id=@id", c => c.Parameters.AddWithValue("@id", id), ct),
+                    // Guarded by BOTH status and the provisional number pattern, so a
+                    // draft that somehow reached a real number is still protected.
+                    _ => await db.ExecuteAsync(
+                        "DELETE FROM platform_invoices WHERE id=@id AND status='draft' AND invoice_number LIKE 'DRAFT-%'",
+                        c => c.Parameters.AddWithValue("@id", id), ct),
                 };
 
+                if (affected == 0 && action == "delete")
+                {
+                    results.Add(new { id, ok = false, error = "Only an unissued draft can be deleted — void it or raise a credit note" });
+                    continue;
+                }
                 if (affected == 0 && action == "void")
                 { results.Add(new { id, ok = false, error = "Cannot void a paid invoice" }); continue; }
                 if (affected == 0 && action == "mark-paid")
@@ -2198,14 +2640,101 @@ public static class PlatformEndpoints
     // AUDIT + ROLES
     // ════════════════════════════════════════════════════════════════════════════
 
+    // Filtered, keyset-paged audit read. "Every privileged action against tenant X
+    // between March and June" is the question this log exists to answer, and an
+    // unfiltered 250-row dump cannot answer it. Tenant names are joined in so an
+    // investigator is not reading raw company ids.
     internal static async Task<IResult> AuditList(HttpContext http, Database db, CancellationToken ct)
     {
         var (_, error) = await RequireAsync(http, db, "platform:audit:view", ct);
         if (error is not null) return error;
-        var rows = await db.QueryAsync(
-            @"SELECT id, actor_email, actor_role, action, entity_type, entity_id, target_company_id, details_json, ip_address, created_at
-              FROM platform_audit_log ORDER BY created_at DESC LIMIT 250", ct: ct);
-        return Results.Ok(ApiResponse<object>.Ok(rows));
+
+        var q = http.Request.Query;
+        var limit = Math.Clamp(int.TryParse(q["limit"], out var l) ? l : 100, 1, 500);
+        var (sql, bind) = BuildAuditQuery(q, limit);
+        var rows = await db.QueryAsync(sql, bind, ct);
+
+        // Keyset rather than OFFSET: the log grows while an investigator pages, and
+        // OFFSET would silently skip or repeat rows as it does.
+        string? nextCursor = rows.Count == limit ? rows[^1]["id"]?.ToString() : null;
+        var actions = await db.QueryAsync(
+            "SELECT DISTINCT action FROM platform_audit_log ORDER BY action", ct: ct);
+
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            rows,
+            nextCursor,
+            actions = actions.Select(a => a["action"]?.ToString()).Where(a => a is not null),
+        }));
+    }
+
+    // CSV export of exactly the filtered set on screen, so an evidence request is a
+    // download rather than a DBA ticket. The export is itself audited — who pulled
+    // the log, and with what filter, is part of the record.
+    private static async Task<IResult> AuditExport(HttpContext http, Database db, CancellationToken ct)
+    {
+        var (principal, error) = await RequireAsync(http, db, "platform:audit:view", ct);
+        if (error is not null) return error;
+
+        var q = http.Request.Query;
+        var (sql, bind) = BuildAuditQuery(q, 50_000);
+        var rows = await db.QueryAsync(sql, bind, ct);
+
+        var csv = new System.Text.StringBuilder();
+        csv.AppendLine("timestamp,actor_email,actor_role,action,entity_type,entity_id,tenant,ip_address,details");
+        foreach (var r in rows)
+            csv.AppendLine(string.Join(",", new[]
+            {
+                r["createdAt"]?.ToString(), r["actorEmail"]?.ToString(), r["actorRole"]?.ToString(),
+                r["action"]?.ToString(), r["entityType"]?.ToString(), r["entityId"]?.ToString(),
+                r["tenantName"]?.ToString(), r["ipAddress"]?.ToString(), r["detailsJson"]?.ToString(),
+            }.Select(CsvCell)));
+
+        await AuditAsync(db, principal!, http, "audit.exported", "AuditLog", null, null,
+            new { rows = rows.Count, filter = q.ToDictionary(k => k.Key, v => v.Value.ToString()) }, ct);
+
+        var stamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss");
+        return Results.File(System.Text.Encoding.UTF8.GetBytes(csv.ToString()),
+            "text/csv", $"opstrax-platform-audit-{stamp}.csv");
+    }
+
+    // RFC 4180: quote every field, double any embedded quote. details_json is raw
+    // JSON full of commas and quotes — unquoted it would shred the column layout.
+    private static string CsvCell(string? value) =>
+        "\"" + (value ?? "").Replace("\"", "\"\"") + "\"";
+
+    private static (string Sql, Action<NpgsqlCommand> Bind) BuildAuditQuery(IQueryCollection q, int limit)
+    {
+        var where = new List<string>();
+        if (!string.IsNullOrWhiteSpace(q["actor"])) where.Add("a.actor_email ILIKE '%' || @actor || '%'");
+        if (!string.IsNullOrWhiteSpace(q["action"])) where.Add("a.action = @action");
+        if (!string.IsNullOrWhiteSpace(q["entityType"])) where.Add("a.entity_type = @entityType");
+        if (!string.IsNullOrWhiteSpace(q["companyId"])) where.Add("a.target_company_id = @companyId");
+        if (!string.IsNullOrWhiteSpace(q["from"])) where.Add("a.created_at >= @from::timestamptz");
+        if (!string.IsNullOrWhiteSpace(q["to"])) where.Add("a.created_at < (@to::timestamptz + INTERVAL '1 day')");
+        if (!string.IsNullOrWhiteSpace(q["cursor"])) where.Add("a.id < @cursor");
+
+        var sql = $@"
+            SELECT a.id, a.actor_email, a.actor_role, a.action, a.entity_type, a.entity_id,
+                   a.target_company_id, c.name AS tenant_name, a.details_json, a.ip_address, a.created_at
+            FROM platform_audit_log a
+            LEFT JOIN companies c ON c.id = a.target_company_id
+            {(where.Count > 0 ? "WHERE " + string.Join(" AND ", where) : "")}
+            ORDER BY a.id DESC
+            LIMIT {limit}";
+
+        return (sql, cmd =>
+        {
+            if (!string.IsNullOrWhiteSpace(q["actor"])) cmd.Parameters.AddWithValue("@actor", q["actor"].ToString());
+            if (!string.IsNullOrWhiteSpace(q["action"])) cmd.Parameters.AddWithValue("@action", q["action"].ToString());
+            if (!string.IsNullOrWhiteSpace(q["entityType"])) cmd.Parameters.AddWithValue("@entityType", q["entityType"].ToString());
+            if (!string.IsNullOrWhiteSpace(q["companyId"]) && long.TryParse(q["companyId"], out var cid))
+                cmd.Parameters.AddWithValue("@companyId", cid);
+            if (!string.IsNullOrWhiteSpace(q["from"])) cmd.Parameters.AddWithValue("@from", q["from"].ToString());
+            if (!string.IsNullOrWhiteSpace(q["to"])) cmd.Parameters.AddWithValue("@to", q["to"].ToString());
+            if (!string.IsNullOrWhiteSpace(q["cursor"]) && long.TryParse(q["cursor"], out var cur))
+                cmd.Parameters.AddWithValue("@cursor", cur);
+        });
     }
 
     private static async Task<IResult> RolesList(HttpContext http, Database db, CancellationToken ct)
@@ -2283,7 +2812,12 @@ public static class PlatformEndpoints
     // Result of a tenant-admin invite attempt. CrossTenantConflict means the email is
     // bound to a DIFFERENT company and was REFUSED (never relocated); the caller decides
     // how to surface that. EmailSent reports whether the accept link actually went out.
-    internal sealed record AdminInviteResult(AdminInviteStatus Status, bool EmailSent, string? ConflictCompanyId);
+    internal sealed record AdminInviteResult(
+        AdminInviteStatus Status, bool EmailSent, string? ConflictCompanyId,
+        // The one-time activation link. Returned to the operator so an invite is deliverable
+        // by hand when SMTP is not configured or delivery fails — without it, an invited admin
+        // stays Pending with nothing to accept.
+        string? ActivationUrl = null, string? ActivationToken = null);
 
     // Tenant-admin onboarding invite. Mirrors the platform-operator invite in
     // PlatformAdminEndpoints: a single-use, hashed-at-rest token with a 7-day expiry is
@@ -2332,7 +2866,10 @@ public static class PlatformEndpoints
             if (!string.Equals(status, "Active", StringComparison.OrdinalIgnoreCase))
             {
                 await db.ExecuteAsync(
-                    "UPDATE users SET full_name=@n, role_name='Company Admin', status='Pending' WHERE id=@id AND company_id=@cid",
+                    @"UPDATE users SET full_name=@n, role_name='Company Admin',
+                          role_id=(SELECT id FROM roles WHERE LOWER(name)=LOWER('Company Admin') AND (company_id IS NULL OR company_id=@cid) ORDER BY company_id NULLS LAST LIMIT 1),
+                          status='Pending'
+                      WHERE id=@id AND company_id=@cid",
                     c =>
                     {
                         c.Parameters.AddWithValue("@n", name);
@@ -2346,9 +2883,12 @@ public static class PlatformEndpoints
             // Fresh admin: status 'Pending' (NOT the old 'Invited', which the login gate
             // and ResetPassword both reject) and NO password_hash. ResetPassword flips
             // 'Pending' -> 'Active' when the invite is accepted.
+            // DEF-021: same role_id resolution as every other provisioning insert.
             userId = await db.InsertAsync(
-                @"INSERT INTO users (company_id, full_name, email, role_name, status)
-                  VALUES (@cid, @name, @email, 'Company Admin', 'Pending')
+                @"INSERT INTO users (company_id, role_id, full_name, email, role_name, status)
+                  VALUES (@cid,
+                          (SELECT id FROM roles WHERE LOWER(name)=LOWER('Company Admin') AND (company_id IS NULL OR company_id=@cid) ORDER BY company_id NULLS LAST LIMIT 1),
+                          @name, @email, 'Company Admin', 'Pending')
                   RETURNING id",
                 c =>
                 {
@@ -2376,8 +2916,27 @@ public static class PlatformEndpoints
                 c.Parameters.AddWithValue("@ip", InviteRequestIpHash(http));
             }, ct);
 
-        var emailSent = await TrySendTenantInviteEmailAsync(http, normEmail, name, rawToken, ct);
-        return new AdminInviteResult(AdminInviteStatus.Sent, emailSent, null);
+        var emailSent = await TrySendTenantInviteEmailAsync(http, companyId, normEmail, name, rawToken, ct);
+        var activationUrl = await BuildTenantActivationUrlAsync(http, normEmail, rawToken, ct);
+        return new AdminInviteResult(AdminInviteStatus.Sent, emailSent, null, activationUrl, rawToken);
+    }
+
+    // The tenant-app activation link an invited admin opens to set their password. Resolves the
+    // tenant base URL from platform settings first, then FRONTEND_PUBLIC_URL / PUBLIC_APP_URL.
+    // Null only when no tenant URL is configured anywhere — the caller still returns the raw
+    // token so the invite is never a dead end. Resolved defensively: link building is auxiliary
+    // to tenant creation, so an absent service provider degrades to the environment defaults
+    // rather than failing the whole request.
+    private static async Task<string?> BuildTenantActivationUrlAsync(
+        HttpContext http, string email, string rawToken, CancellationToken ct)
+    {
+        var settings = http.RequestServices?.GetService<PlatformSettingsService>();
+        var baseUrl = settings is not null
+            ? await settings.GetTenantAppUrlAsync(ct)
+            : (Environment.GetEnvironmentVariable("FRONTEND_PUBLIC_URL")
+               ?? Environment.GetEnvironmentVariable("PUBLIC_APP_URL"))?.TrimEnd('/');
+        if (string.IsNullOrWhiteSpace(baseUrl)) return null;
+        return $"{baseUrl}/reset-password?email={Uri.EscapeDataString(email)}&token={Uri.EscapeDataString(rawToken)}&welcome=1";
     }
 
     private static string InviteRequestIpHash(HttpContext http) =>
@@ -2391,23 +2950,48 @@ public static class PlatformEndpoints
     // PUBLIC_APP_URL) is used, exactly like ForgotPassword. Returns false when no tenant
     // base URL or SMTP is configured — the caller reports that truthfully.
     private static async Task<bool> TrySendTenantInviteEmailAsync(
-        HttpContext http, string email, string fullName, string rawToken, CancellationToken ct)
+        HttpContext http, long companyId, string email, string fullName, string rawToken, CancellationToken ct)
     {
-        var baseUrl = (Environment.GetEnvironmentVariable("FRONTEND_PUBLIC_URL")
-            ?? Environment.GetEnvironmentVariable("PUBLIC_APP_URL") ?? "").TrimEnd('/');
-        if (string.IsNullOrWhiteSpace(baseUrl)) return false;
+        var link = await BuildTenantActivationUrlAsync(http, email, rawToken, ct);
+        if (string.IsNullOrWhiteSpace(link)) return false;
 
-        var link = $"{baseUrl}/reset-password?email={Uri.EscapeDataString(email)}&token={Uri.EscapeDataString(rawToken)}&welcome=1";
-        return await PlatformMailService.TrySendAsync(
+        // No mail service resolvable ⇒ treat exactly like "SMTP not configured": no send,
+        // no throw, and the caller still returns the activation link.
+        var mail = http.RequestServices?.GetService<PlatformMailService>();
+        if (mail is null) return false;
+
+        // The sign-in form requires the ORGANIZATION CODE alongside email + password, and
+        // this email is the only thing an invited user receives — without the code here
+        // they finish activation and then cannot log in at all.
+        string? companyCode = null, companyName = null;
+        var db = http.RequestServices?.GetService<Database>();
+        if (db is not null)
+        {
+            var company = await db.QuerySingleAsync(
+                "SELECT company_code, name FROM companies WHERE id=@id LIMIT 1",
+                c => c.Parameters.AddWithValue("@id", companyId), ct);
+            companyCode = company?["companyCode"]?.ToString();
+            companyName = company?["name"]?.ToString();
+        }
+        var loginUrl = link[..link.IndexOf("/reset-password", StringComparison.OrdinalIgnoreCase)] + "/login";
+
+        return await mail.TrySendAsync(
             email,
-            "OpsTrax — set up your administrator account",
+            "OpsTrax — set up your account",
             $"""
             Hello {fullName},
 
-            An OpsTrax administrator account has been created for you.
+            An OpsTrax account has been created for you{(string.IsNullOrWhiteSpace(companyName) ? "" : $" at {companyName}")}.
 
-            Set your password using this single-use link (valid for 7 days):
+            1) Set your password using this single-use link (valid for 7 days):
             {link}
+
+            2) Then sign in at {loginUrl} with:
+               Organization code: {(string.IsNullOrWhiteSpace(companyCode) ? "(ask your administrator)" : companyCode)}
+               Email:             {email}
+               Password:          the one you just set
+
+            Keep the organization code handy — the sign-in form asks for it every time.
 
             If you did not expect this, ignore this email and report it to your
             administrator.

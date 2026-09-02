@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, MessageCircle, MessageSquare, Radio, Send, Users, X } from "lucide-react";
 import { ErrorState, KpiCard, LoadingState, PageHeader, StatusBadge, exportCsv } from "@/components/ui";
 import { useHasPermission } from "@/hooks/usePermission";
-import { apiClient } from "@/services/apiClient";
+import { apiClient, unwrap } from "@/services/apiClient";
 import type { AnyRecord } from "@/types";
 
 const TABS = ["Compose", "History", "Templates", "Broadcasts"] as const;
@@ -15,8 +15,7 @@ async function fetchMessages(): Promise<AnyRecord[]> {
 }
 
 async function fetchDrivers(): Promise<AnyRecord[]> {
-  const res = await apiClient.get("/api/drivers");
-  return (res.data as AnyRecord[]) ?? [];
+  return unwrap<AnyRecord[]>(apiClient.get("/api/drivers"));
 }
 
 // App-provided message presets the dispatcher can drop into the composer. This is
@@ -59,7 +58,7 @@ export function DriverMessagingPage() {
 
   const messagesQ = useQuery({ queryKey: ["driver-messages"], queryFn: fetchMessages });
   const messages = (messagesQ.data ?? []) as AnyRecord[];
-  const driversQ = useQuery({ queryKey: ["drivers"], queryFn: fetchDrivers });
+  const driversQ = useQuery({ queryKey: ["driver-messaging", "driver-options"], queryFn: fetchDrivers });
   const drivers = (driversQ.data ?? []) as AnyRecord[];
 
   const sendMut = useMutation({

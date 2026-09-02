@@ -3,6 +3,12 @@
 
 BEGIN;
 
+-- Clean protected databases start from database/init/001_schema.sql, whose
+-- canonical jobs table predates soft deletion. Install the column before the
+-- partial active-projection index references it.
+ALTER TABLE jobs
+  ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ NULL;
+
 ALTER TABLE proof_of_delivery
   ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 

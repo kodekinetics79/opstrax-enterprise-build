@@ -54,7 +54,19 @@
 
 Credentials are environment-managed and are never published in the repository. Platform
 bootstrap credentials use `PLATFORM_SUPERADMIN_EMAIL` and
-`PLATFORM_SUPERADMIN_PASSWORD`. Optional demo seeding requires
+`PLATFORM_SUPERADMIN_PASSWORD`.
+
+Those two variables are the **declared desired state** for the bootstrap Platform Super
+Admin, not a one-time seed. `PlatformSuperAdminReconciler` applies them on every boot: it
+creates the account if that email is not in `platform_admins`, repairs anything that blocks
+sign-in (disabled, invite still pending, missing super-admin role), and installs the password
+whenever the declared credential is not already the one in force. So if Platform Admin sign-in
+rejects a credential you know is correct, set both variables and redeploy — no flag to arm.
+A later self-service password change is preserved, because the password is only rewritten when
+these values actually change. `PLATFORM_SUPERADMIN_RESET=true` forces the env password back
+over an in-app change that was forgotten; `PLATFORM_SUPERADMIN_SYNC=off` opts out entirely.
+
+Optional demo seeding requires
 `DemoSeed__Enabled=true` and `DemoSeed__Password`; keep demo seeding disabled in
 production. Tenant and portal users must be provisioned through the admin workflows.
 

@@ -20,24 +20,35 @@ test("production application code cannot import synthetic fleet records", () => 
 test("runtime Live is fail-closed on API, database, worker and telemetry truth", () => {
   const policy = read("frontend/src/services/runtimeDiagnostics.ts");
   const shell = read("frontend/src/layouts/AppShell.tsx");
-  for (const evidence of ["apiReady", "databaseReady", "databaseContractReady", "criticalWorkersFresh", "telemetryFresh", "deepHealthy"]) {
+  for (const evidence of ["apiReady", "databaseReady", "databaseContractReady", "criticalWorkersFresh", "telemetryFresh"]) {
     assert.match(policy, new RegExp(`verifiedLive[^;]+${evidence}`), `Live policy omits ${evidence}`);
   }
+  assert.match(policy, /apiClient\.get\("\/health\/ready"/, "browser runtime truth must use the public readiness contract");
+  assert.doesNotMatch(policy, /apiClient\.get\("\/health\/deep"/, "browser runtime truth must not call protected operator health");
   assert.doesNotMatch(shell, />\s*Live\s*</, "global shell still renders an unconditional Live label");
   assert.match(shell, /runtimeState === "Live"/);
   assert.match(shell, /tenantIsExplicitlySynthetic \? "Demo Data"/);
 });
 
-test("runtime provenance exposes exact frontend/API SHA, environment and base URL", () => {
+test("runtime provenance is exact in operator diagnostics and speakable-only on tenant About", () => {
   const vite = read("frontend/vite.config.ts");
   const diagnostics = read("frontend/src/services/runtimeDiagnostics.ts");
   const about = read("frontend/src/pages/AboutPage.tsx");
   for (const marker of ["VERCEL_GIT_COMMIT_SHA", "VITE_DEPLOYMENT_SHA", "__OPSTRAX_FRONTEND_SHA__", "__OPSTRAX_FRONTEND_ENVIRONMENT__", "__OPSTRAX_API_BASE_URL__"]) {
     assert.ok(vite.includes(marker), `build provenance omits ${marker}`);
   }
+  assert.ok(vite.indexOf("RENDER_GIT_COMMIT") < vite.indexOf("VITE_DEPLOYMENT_SHA"),
+    "Render's immutable commit identity must override a stale manually pinned deployment SHA");
   for (const marker of ["frontendSha", "apiSha", "frontendEnvironment", "apiEnvironment", "apiBaseUrl"]) {
-    assert.ok(diagnostics.includes(marker));
-    assert.ok(about.includes(marker));
+    assert.ok(diagnostics.includes(marker), `runtime diagnostics omit ${marker}`);
+  }
+  // Security review moved raw internals OFF the tenant-facing About page: it shows a
+  // short speakable build reference only; exact SHAs/URLs stay in operator
+  // diagnostics (runtimeDiagnostics + authenticated /health/deep). Pin both sides.
+  assert.ok(about.includes("frontendBuild"), "About lost its build identity source");
+  assert.ok(about.includes("buildRef"), "About lost the speakable build reference");
+  for (const leaked of ["frontendSha", "apiSha", "apiEnvironment", "apiBaseUrl"]) {
+    assert.ok(!about.includes(leaked), `tenant About leaks operator diagnostic ${leaked}`);
   }
 });
 

@@ -6,8 +6,14 @@
     "@react-navigation/bottom-tabs": "^7.18.3",
     "@react-navigation/native": "^7.3.4",
     "@react-navigation/native-stack": "^7.17.6",
-    "expo": "~56.0.19",
-    "expo-constants": "~56.0.23",
+    "expo": "~56.0.21",
+    "expo-blur": "~56.0.4",
+    "expo-constants": "~56.0.25",
+    "expo-haptics": "~56.0.3",
+    "expo-image-picker": "~56.0.25",
+    "expo-linear-gradient": "~56.0.4",
+    "expo-location": "~56.0.25",
+    "expo-network": "~56.0.5",
     "expo-secure-store": "~56.0.4",
     "expo-status-bar": "~56.0.4",
     "react": "19.2.3",
@@ -19,6 +25,7 @@
     "react-native-web": "^0.21.2"
   },
   "devDependencies": {
+    "@types/node": "^24.3.0",
     "@types/react": "~19.2.2",
     "babel-preset-expo": "~56.0.19",
     "babel-plugin-module-resolver": "^5.0.3",
@@ -35,7 +42,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --ext .js,.jsx,.ts,.tsx",
     "test:audit-policy": "node --test scripts/test-validate-audit.mjs",
-    "test:contracts": "node --test scripts/test-launch-workflows.mjs"
+    "test:contracts": "node --test scripts/test-launch-workflows.mjs",
+    "test:no-inbound-linking": "node scripts/verify-no-inbound-linking.mjs"
   },
   "overrides": {
     "brace-expansion@1.1.15": "1.1.18",

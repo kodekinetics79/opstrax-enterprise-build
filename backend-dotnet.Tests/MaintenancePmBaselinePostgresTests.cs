@@ -67,7 +67,7 @@ public class MaintenancePmBaselinePostgresTests
             NullLogger<MaintenanceBackgroundService>.Instance,
             provider.GetRequiredService<ServiceRunTracker>());
         var m = typeof(MaintenanceBackgroundService).GetMethod("EvaluatePmRulesAsync", BindingFlags.NonPublic | BindingFlags.Instance)!;
-        await (Task)m.Invoke(svc, new object[] { CancellationToken.None })!;
+        await (Task)m.Invoke(svc, new object[] { -1L, CancellationToken.None })!;
     }
 
     private static async Task<long> OpenItemsAsync(Database db, long cid, long vid, string serviceType) =>
@@ -83,8 +83,8 @@ public class MaintenancePmBaselinePostgresTests
             "INSERT INTO companies (company_code, name, industry) VALUES (@code, 'PM Co', 'logistics') RETURNING id",
             c => c.Parameters.AddWithValue("@code", $"PM-{Guid.NewGuid():N}".Substring(0, 15)));
         var vid = await db.InsertAsync(
-            @"INSERT INTO vehicles (company_id, vehicle_code, type, odometer_miles, engine_hours)
-              VALUES (@cid, @code, 'reefer', 50000, @hrs) RETURNING id",
+            @"INSERT INTO vehicles (company_id, vehicle_code, type, vin_exception_type, alternate_identifier, odometer_miles, engine_hours)
+              VALUES (@cid, @code, 'reefer', 'legacy-fleet-identifier', @code, 50000, @hrs) RETURNING id",
             c => { c.Parameters.AddWithValue("@cid", cid); c.Parameters.AddWithValue("@code", $"V-{Guid.NewGuid():N}".Substring(0, 12)); c.Parameters.AddWithValue("@hrs", engineHours); });
         return (cid, vid);
     }

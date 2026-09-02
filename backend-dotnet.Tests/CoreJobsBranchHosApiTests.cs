@@ -87,7 +87,7 @@ public sealed class CoreJobsBranchHosApiTests
                 c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@code", $"CUS-{companyId}"); });
             var driver = await Driver(db, companyId, branchId, $"DRV-{companyId}", "Wave 1 Driver");
             var vehicle = await db.InsertAsync(
-                "INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,status,availability_status,out_of_service,readiness_score,risk_score) VALUES (@c,@b,@code,'Truck','Available','available',false,95,5)",
+                "INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,vin_exception_type,alternate_identifier,status,availability_status,out_of_service,readiness_score,risk_score) VALUES (@c,@b,@code,'Truck','legacy-fleet-identifier',@code,'Available','available',false,95,5)",
                 c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchId); c.Parameters.AddWithValue("@code", $"VEH-{companyId}"); });
             await Hos(db, companyId, driver, "On Duty", 8m);
             var http = Principal(companyId, branchId);
@@ -515,7 +515,7 @@ public sealed class CoreJobsBranchHosApiTests
             var eligible = await Driver(db, companyId, branchId, "ELIGIBLE", "Eligible Driver");
             var offDuty = await Driver(db, companyId, branchId, "OFF-DUTY", "Off Duty Driver");
             var vehicle = await db.InsertAsync(
-                "INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,status,availability_status,out_of_service) VALUES (@c,@b,'UNIT-9221','Truck','Available','available',false)",
+                "INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,vin_exception_type,alternate_identifier,status,availability_status,out_of_service) VALUES (@c,@b,'UNIT-9221','Truck','legacy-fleet-identifier','UNIT-9221','Available','available',false)",
                 c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchId); });
             await Hos(db, companyId, eligible, "On Duty", 8m);
             await Hos(db, companyId, offDuty, "Off Duty", 8m);

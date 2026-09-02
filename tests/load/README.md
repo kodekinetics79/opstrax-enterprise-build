@@ -10,6 +10,18 @@ This lane performs exactly two `GET` requests per iteration: public liveness and
 
 Values may be lowered but cannot exceed their profile cap. The global hard cap is therefore 20 HTTP requests/s, 10 minutes, and 50 virtual users.
 
+Every run applies the versioned API latency target of p95 < 500 ms to the
+aggregate workload and independently to the public-health and authenticated-read
+surfaces. It also applies the < 0.5% API error-rate target, requires every status
+check to pass, and fails if the configured arrival rate drops any iterations; a
+fast liveness request therefore cannot mask a slow tenant fleet read.
+
+These bounded samples do not establish the rolling 15-minute production SLO.
+The 30-second smoke profile is preflight only. The five-minute load profile is
+candidate evidence that must be paired with the retained per-surface summary,
+pre/post exact-SHA readiness, and the wider saturation/soak/recovery evidence
+required by the active certification gate.
+
 ```bash
 install -m 600 tests/load/.env.local.example tests/load/.env.local
 node --test tests/load/test_load_guard.mjs

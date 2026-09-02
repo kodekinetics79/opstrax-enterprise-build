@@ -42,10 +42,19 @@ export type IntegrationRecord = {
   // True for tenant-created connectors (fully editable/deletable). Built-in catalog
   // connectors are is_custom=false and are reset rather than deleted.
   isCustom?: boolean;
+  // True only when this build can actually run the provider adapter. Catalog-only
+  // entries remain visible for evaluation but cannot accept credentials or claim a connection.
+  adapterAvailable: boolean;
   // Connector health from the last real handshake (test-connection).
   lastTestedAt?: string | null;
   lastTestOk?: boolean | null;
   lastTestMessage?: string | null;
+  // Sync-specific clocks exclude connection handshakes and keep attempts separate
+  // from the last successful data sync.
+  syncLastAttemptAt?: string | null;
+  syncLastCompletedAt?: string | null;
+  syncLastOk?: boolean | null;
+  providerLastEventAt?: string | null;
 };
 
 export type IntegrationActivity = {
@@ -91,6 +100,13 @@ export type IntegrationTestResult = {
   details?: Record<string, unknown> | null;
 };
 
+export type MotiveOAuthStartResult = {
+  authorizationUrl: string;
+  redirectUri: string;
+  scopes: string[];
+  expiresAt: string;
+};
+
 export const integrationsApi = {
   list: () => unwrap<IntegrationsPayload>(apiClient.get("/api/integrations")),
   detail: (id: number | string) =>
@@ -100,13 +116,17 @@ export const integrationsApi = {
   configure: (id: number | string, config: IntegrationConfig) =>
     unwrap<IntegrationDetailPayload>(apiClient.post(`/api/integrations/${id}/configure`, config)),
   sync: (id: number | string) =>
-    unwrap<IntegrationDetailPayload>(apiClient.post(`/api/integrations/${id}/sync`, {})),
+    unwrap<IntegrationTestResult>(apiClient.post(`/api/integrations/${id}/sync`, {})),
   disconnect: (id: number | string) =>
     unwrap<IntegrationDetailPayload>(apiClient.post(`/api/integrations/${id}/disconnect`, {})),
   // Real connectivity: performs an actual handshake with the provider and returns the
   // true result (success only when the provider accepts the credentials).
   testConnection: (id: number | string) =>
     unwrap<IntegrationTestResult>(apiClient.post(`/api/integrations/${id}/test-connection`, {})),
+  startMotiveOAuth: (id: number | string) =>
+    unwrap<MotiveOAuthStartResult>(apiClient.post(`/api/integrations/${id}/oauth/motive/start`, {})),
+  preflightMotiveOAuth: (id: number | string, state: string) =>
+    unwrap<{ ready: boolean }>(apiClient.post(`/api/integrations/${id}/oauth/motive/preflight`, { state })),
   // Provider-specific live action (e.g. Twilio { action: "send-test", to, body }).
   runAction: (id: number | string, body: Record<string, unknown>) =>
     unwrap<IntegrationTestResult>(apiClient.post(`/api/integrations/${id}/run-action`, body)),
