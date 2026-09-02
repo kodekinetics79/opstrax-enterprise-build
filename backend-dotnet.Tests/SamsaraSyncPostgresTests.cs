@@ -647,7 +647,7 @@ public sealed class SamsaraSyncPostgresTests
             {
                 BaseAddress = new Uri("https://samsara.invalid")
             };
-            var services = new ServiceCollection().AddSingleton(db).BuildServiceProvider();
+            var services = new ServiceCollection().AddSingleton(db).AddSingleton<TelemetryLiveStateService>().BuildServiceProvider();
             var sync = new SamsaraSync(client, services.GetRequiredService<IServiceScopeFactory>(), NullLogger.Instance);
 
             var identityBeforeSync = await TelemetryIdentityResolver.ResolveAsync(
@@ -868,7 +868,7 @@ public sealed class SamsaraSyncPostgresTests
         {
             BaseAddress = new Uri("https://samsara.invalid")
         };
-        var services = new ServiceCollection().AddSingleton(db).BuildServiceProvider();
+        var services = new ServiceCollection().AddSingleton(db).AddSingleton<TelemetryLiveStateService>().BuildServiceProvider();
         return new SamsaraSync(client, services.GetRequiredService<IServiceScopeFactory>(), NullLogger.Instance);
     }
 

@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Npgsql;
 using Opstrax.Api.Data;
 using Opstrax.Api.Controllers;
 using Opstrax.Api.Services;
@@ -17,6 +18,201 @@ namespace Opstrax.Tests;
 [Trait("Category", "Integration")]
 public sealed class SamsaraPartialGpsPostgresTests
 {
+    [Fact]
+    public async Task FailureOnSecondLiveProjectionRollsBackBothVehiclesAndAllAlerts()
+    {
+        await using var fixture = await Fixture.Create();
+        var suffix = Guid.NewGuid().ToString("N");
+        var secondVehicle = await fixture.Db.InsertAsync(@"INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,vin_exception_type,alternate_identifier)
+            SELECT company_id,branch_id,@code,'truck','legacy-fleet-identifier',@code FROM vehicles WHERE company_id=@cid AND id=@vid RETURNING id",
+            c => { c.Parameters.AddWithValue("@code", "SPR-" + suffix[..12]); c.Parameters.AddWithValue("@cid", fixture.CompanyId); c.Parameters.AddWithValue("@vid", fixture.VehicleId); });
+        var providerSecond = "synthetic-second-" + suffix;
+        var secondDevice = await fixture.Db.InsertAsync("INSERT INTO eld_devices(company_id,device_serial,provider,vehicle_id,status) VALUES(@cid,@serial,'Samsara',@vid,'Provisioning') RETURNING id",
+            c => { c.Parameters.AddWithValue("@cid", fixture.CompanyId); c.Parameters.AddWithValue("@serial", "samsara-" + providerSecond); c.Parameters.AddWithValue("@vid", secondVehicle); });
+        await fixture.Db.ExecuteAsync(@"INSERT INTO device_installations(company_id,branch_id,device_id,vehicle_id,status,device_role,is_primary,effective_from,installed_at,source)
+            SELECT company_id,branch_id,@did,id,'Installed','GPS',TRUE,NOW()-INTERVAL '3 hours',NOW()-INTERVAL '3 hours','synthetic-projection-test' FROM vehicles WHERE company_id=@cid AND id=@vid",
+            c => { c.Parameters.AddWithValue("@did", secondDevice); c.Parameters.AddWithValue("@cid", fixture.CompanyId); c.Parameters.AddWithValue("@vid", secondVehicle); });
+        var first = SamsaraFeedArrayTests.Gps(0);
+        first["time"] = DateTimeOffset.UtcNow.AddMinutes(-2).ToString("O");
+        first["speedMilesPerHour"] = 80;
+        first.Remove("headingDegrees");
+        var second = (JsonObject)first.DeepClone();
+        var page = SamsaraFeedArrayTests.Page(SamsaraFeedArrayTests.Vehicle(fixture.ProviderVehicleId, first),
+            SamsaraFeedArrayTests.Vehicle(providerSecond, second)).ToJsonString();
+        using var client = new HttpClient(new JsonHandler(page)) { BaseAddress = new Uri("https://samsara.invalid") };
+        using var services = new ServiceCollection().AddSingleton(fixture.Db).AddSingleton<TelemetryLiveStateService>().BuildServiceProvider();
+        var sync = new SamsaraSync(client, services.GetRequiredService<IServiceScopeFactory>(), NullLogger.Instance, true);
+        var fault = $"synthetic_second_projection_{suffix}";
+        try
+        {
+            // Sorted refresh order is observable: vehicle one is already projected
+            // inside this transaction when vehicle two raises the controlled fault.
+            await fixture.Db.ExecuteAsync($"CREATE FUNCTION public.{fault}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NOT EXISTS (SELECT 1 FROM public.telemetry_live_asset_states WHERE company_id={fixture.CompanyId} AND vehicle_id={fixture.VehicleId}) THEN RAISE EXCEPTION 'first projection was not reached'; END IF; RAISE EXCEPTION 'synthetic second projection failure'; END $$;");
+            await fixture.Db.ExecuteAsync($"CREATE TRIGGER {fault} BEFORE INSERT OR UPDATE ON public.telemetry_live_asset_states FOR EACH ROW WHEN (NEW.company_id={fixture.CompanyId} AND NEW.vehicle_id={secondVehicle}) EXECUTE FUNCTION public.{fault}();");
+            var error = await Assert.ThrowsAsync<PostgresException>(() => sync.RunAsync(fixture.Operation!, "before", CancellationToken.None));
+            Assert.Equal("synthetic second projection failure", error.MessageText);
+            foreach (var table in new[] { "location_events", "latest_vehicle_positions", "telemetry_live_asset_states", "telemetry_alerts" })
+                Assert.Equal(0, await fixture.Count($"SELECT COUNT(*) FROM {table} WHERE company_id=@cid"));
+            Assert.Equal(0, await fixture.Count("SELECT COUNT(*) FROM integrations WHERE company_id=@cid AND provider_last_event_at IS NOT NULL"));
+        }
+        finally
+        {
+            await fixture.Db.ExecuteAsync($"DROP TRIGGER IF EXISTS {fault} ON public.telemetry_live_asset_states; DROP FUNCTION IF EXISTS public.{fault}();");
+        }
+        Assert.Equal(2, (await sync.RunAsync(fixture.Operation!, "before", CancellationToken.None)).PositionsWritten);
+        Assert.Equal(0, (await sync.RunAsync(fixture.Operation!, "before", CancellationToken.None)).PositionsWritten);
+        foreach (var table in new[] { "location_events", "latest_vehicle_positions", "telemetry_live_asset_states" })
+            Assert.Equal(2, await fixture.Count($"SELECT COUNT(*) FROM {table} WHERE company_id=@cid AND speed_mph=80 AND heading IS NULL"));
+        Assert.Equal(2, await fixture.Count("SELECT SUM(event_count) FROM latest_vehicle_positions WHERE company_id=@cid"));
+        Assert.Equal(2, await fixture.Count("SELECT COUNT(*) FROM telemetry_alerts WHERE company_id=@cid AND alert_type='speeding'"));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(80d)]
+    public async Task ProjectionFailureRollsBackWholePageAndReplayRepairsOnlyCanonicalLiveState(double? speed)
+    {
+        await using var fixture = await Fixture.Create();
+        var at = DateTimeOffset.UtcNow.AddMinutes(-4);
+        async Task<SamsaraSync.SyncSummary> Run(double? spd, int? heading, DateTimeOffset time)
+        {
+            var gps = SamsaraFeedArrayTests.Gps(0);
+            gps["time"] = time.ToString("O");
+            gps["speedMilesPerHour"] = spd;
+            gps["headingDegrees"] = heading;
+            using var client = new HttpClient(new JsonHandler(SamsaraFeedArrayTests.Page(
+                SamsaraFeedArrayTests.Vehicle(fixture.ProviderVehicleId, gps)).ToJsonString()))
+                { BaseAddress = new Uri("https://samsara.invalid") };
+            using var services = new ServiceCollection().AddSingleton(fixture.Db).AddSingleton<TelemetryLiveStateService>().BuildServiceProvider();
+            return await new SamsaraSync(client, services.GetRequiredService<IServiceScopeFactory>(), NullLogger.Instance, true)
+                .RunAsync(fixture.Operation!, "durable-before", CancellationToken.None);
+        }
+
+        async Task AssertStored(double? expectedSpeed, int? expectedHeading, DateTimeOffset time, int count, int alerts)
+        {
+            Assert.Equal(count, await fixture.Count("SELECT COUNT(*) FROM location_events WHERE company_id=@cid"));
+            Assert.Equal(count, await fixture.Count("SELECT event_count FROM latest_vehicle_positions WHERE company_id=@cid"));
+            Assert.Equal(alerts, await fixture.Count("SELECT COUNT(*) FROM telemetry_alerts WHERE company_id=@cid"));
+            foreach (var table in new[] { "latest_vehicle_positions", "telemetry_live_asset_states" })
+            {
+                var timeColumn = table == "latest_vehicle_positions" ? "event_time" : "last_event_time";
+                var row = await fixture.Db.QuerySingleAsync($"SELECT speed_mph,heading,{timeColumn} AS measured_at FROM {table} WHERE company_id=@cid",
+                    c => c.Parameters.AddWithValue("@cid", fixture.CompanyId));
+                Assert.NotNull(row);
+                Assert.Equal(expectedSpeed, row!["speedMph"] is { } value ? Convert.ToDouble(value) : null);
+                Assert.Equal(expectedHeading, row["heading"] is { } bearing ? Convert.ToInt32(bearing) : null);
+                Assert.Equal(time.UtcDateTime, Convert.ToDateTime(row["measuredAt"]).ToUniversalTime(), TimeSpan.FromMilliseconds(1));
+            }
+            var integration = await fixture.Db.QuerySingleAsync("SELECT provider_last_event_at FROM integrations WHERE company_id=@cid",
+                c => c.Parameters.AddWithValue("@cid", fixture.CompanyId));
+            Assert.Equal(time.UtcDateTime, Convert.ToDateTime(integration!["providerLastEventAt"]).ToUniversalTime(), TimeSpan.FromMilliseconds(1));
+        }
+
+        Assert.Equal(1, (await Run(40, 90, at)).PositionsWritten);
+        var fault = $"synthetic_projection_fault_{Guid.NewGuid():N}";
+        try
+        {
+            // Test-owned trigger fails only this test tenant. It exercises a real PG
+            // projection write error, not a mocked sync result or a production change.
+            await fixture.Db.ExecuteAsync($"CREATE FUNCTION public.{fault}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic projection write failure'; END $$;");
+            await fixture.Db.ExecuteAsync($"CREATE TRIGGER {fault} BEFORE INSERT OR UPDATE ON public.telemetry_live_asset_states FOR EACH ROW WHEN (NEW.company_id={fixture.CompanyId}) EXECUTE FUNCTION public.{fault}();");
+            var error = await Assert.ThrowsAsync<PostgresException>(() => Run(speed, null, at.AddMinutes(1)));
+            Assert.Contains("synthetic projection write failure", error.MessageText, StringComparison.Ordinal);
+            await AssertStored(40, 90, at, 1, 0);
+        }
+        finally
+        {
+            await fixture.Db.ExecuteAsync($"DROP TRIGGER IF EXISTS {fault} ON public.telemetry_live_asset_states; DROP FUNCTION IF EXISTS public.{fault}();");
+        }
+
+        Assert.Equal(1, (await Run(speed, null, at.AddMinutes(1))).PositionsWritten);
+        await AssertStored(speed, null, at.AddMinutes(1), 2, speed is null ? 0 : 1);
+        // Reproduce a pre-fix stranded projection by removing only this synthetic
+        // tenant's derived row. Immutable history/latest/alerts are left untouched.
+        await fixture.Db.ExecuteAsync("DELETE FROM telemetry_live_asset_states WHERE company_id=@cid",
+            c => c.Parameters.AddWithValue("@cid", fixture.CompanyId));
+        Assert.Equal(0, (await Run(speed, null, at.AddMinutes(1))).PositionsWritten);
+        await AssertStored(speed, null, at.AddMinutes(1), 2, speed is null ? 0 : 1);
+        Assert.Equal(1, (await Run(0, 0, at.AddMinutes(2))).PositionsWritten);
+        await fixture.Db.ExecuteAsync("DELETE FROM telemetry_live_asset_states WHERE company_id=@cid",
+            c => c.Parameters.AddWithValue("@cid", fixture.CompanyId));
+        Assert.Equal(0, (await Run(speed, null, at.AddMinutes(1))).PositionsWritten);
+        await AssertStored(0, 0, at.AddMinutes(2), 3, speed is null ? 0 : 1);
+        await fixture.Db.ExecuteAsync("DELETE FROM telemetry_live_asset_states WHERE company_id=@cid; DELETE FROM latest_vehicle_positions WHERE company_id=@cid",
+            c => c.Parameters.AddWithValue("@cid", fixture.CompanyId));
+        Assert.Equal(0, (await Run(speed, null, at.AddMinutes(1))).PositionsWritten);
+        Assert.Equal(3, await fixture.Count("SELECT COUNT(*) FROM location_events WHERE company_id=@cid"));
+        Assert.Equal(0, await fixture.Count("SELECT COUNT(*) FROM telemetry_live_asset_states WHERE company_id=@cid"));
+        Assert.Equal(0, await fixture.Count("SELECT COUNT(*) FROM latest_vehicle_positions WHERE company_id=@cid"));
+    }
+
+    [Fact]
+    public async Task ReplayWaitsForConcurrentCanonicalWriterBeforeRepairingLiveState()
+    {
+        await using var fixture = await Fixture.Create();
+        var at = DateTimeOffset.UtcNow.AddMinutes(-2);
+        var gps = SamsaraFeedArrayTests.Gps(0);
+        gps["time"] = at.ToString("O");
+        gps["speedMilesPerHour"] = 40;
+        gps["headingDegrees"] = 90;
+        var page = SamsaraFeedArrayTests.Page(SamsaraFeedArrayTests.Vehicle(fixture.ProviderVehicleId, gps)).ToJsonString();
+        async Task<SamsaraSync.SyncSummary> Run(Database db)
+        {
+            using var client = new HttpClient(new JsonHandler(page)) { BaseAddress = new Uri("https://samsara.invalid") };
+            using var services = new ServiceCollection().AddSingleton(db).AddSingleton<TelemetryLiveStateService>().BuildServiceProvider();
+            return await new SamsaraSync(client, services.GetRequiredService<IServiceScopeFactory>(), NullLogger.Instance, true)
+                .RunAsync(fixture.Operation!, "before", CancellationToken.None);
+        }
+        Assert.Equal(1, (await Run(fixture.Db)).PositionsWritten);
+        var application = "synthetic_replay_lock_" + Guid.NewGuid().ToString("N");
+        var replayConnection = new NpgsqlConnectionStringBuilder(TestDb.ConnectionString) { ApplicationName = application, Pooling = false };
+        var replayDb = new Database(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            { ["ConnectionStrings:DefaultConnection"] = replayConnection.ConnectionString }).Build());
+        await using var writer = new NpgsqlConnection(TestDb.ConnectionString);
+        await writer.OpenAsync();
+        await using var transaction = await writer.BeginTransactionAsync();
+        await using (var update = new NpgsqlCommand("UPDATE latest_vehicle_positions SET speed_mph=22,heading=180,event_time=@at,event_count=event_count+1 WHERE company_id=@cid AND vehicle_id=@vid", writer, transaction))
+        {
+            update.Parameters.AddWithValue("@at", at.AddMinutes(1));
+            update.Parameters.AddWithValue("@cid", fixture.CompanyId);
+            update.Parameters.AddWithValue("@vid", fixture.VehicleId);
+            Assert.Equal(1, await update.ExecuteNonQueryAsync());
+        }
+        var replay = Run(replayDb);
+        SamsaraSync.SyncSummary? replaySummary = null;
+        try
+        {
+            // Observable database-lock barrier, not a guessed scheduling delay:
+            // the second connection owns the canonical row until replay waits on it.
+            var wait = System.Diagnostics.Stopwatch.StartNew();
+            var blocked = false;
+            while (!replay.IsCompleted && wait.Elapsed < TimeSpan.FromSeconds(10))
+            {
+                blocked = await fixture.Db.ScalarLongAsync("SELECT COUNT(*) FROM pg_stat_activity WHERE application_name=@app AND wait_event_type='Lock'",
+                    c => c.Parameters.AddWithValue("@app", application)) > 0;
+                if (blocked) break;
+                await Task.Delay(20);
+            }
+            Assert.True(blocked, "Replay never reached the competing canonical-row lock.");
+        }
+        finally
+        {
+            await transaction.CommitAsync();
+            // Finish the in-flight writer even when a barrier assertion fails,
+            // before disposing the test-owned tenant and its rows.
+            replaySummary = await replay.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        Assert.Equal(0, replaySummary.PositionsWritten);
+        var live = await fixture.Db.QuerySingleAsync("SELECT speed_mph,heading,last_event_time FROM telemetry_live_asset_states WHERE company_id=@cid",
+            c => c.Parameters.AddWithValue("@cid", fixture.CompanyId));
+        Assert.Equal(22m, live!["speedMph"]);
+        Assert.Equal(180, Convert.ToInt32(live["heading"]));
+        Assert.Equal(at.AddMinutes(1).UtcDateTime, Convert.ToDateTime(live["lastEventTime"]).ToUniversalTime(), TimeSpan.FromMilliseconds(1));
+        Assert.Equal(1, await fixture.Count("SELECT COUNT(*) FROM location_events WHERE company_id=@cid"));
+        Assert.Equal(2, await fixture.Count("SELECT event_count FROM latest_vehicle_positions WHERE company_id=@cid"));
+        Assert.Equal(0, await fixture.Count("SELECT COUNT(*) FROM telemetry_alerts WHERE company_id=@cid"));
+    }
+
     [Theory]
     [InlineData(null, null)]
     [InlineData(null, 0)]

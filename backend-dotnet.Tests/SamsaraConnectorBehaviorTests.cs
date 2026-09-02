@@ -288,19 +288,24 @@ public sealed class SamsaraConnectorBehaviorTests
     {
         var source = ReadRepositoryFile("backend-dotnet", "Services", "Connectors", "SamsaraSync.cs");
         Assert.Contains("RunInSystemTransactionAsync", source, StringComparison.Ordinal);
-        Assert.Contains("if (eventId == 0) continue", source, StringComparison.Ordinal);
+        Assert.Contains("if (eventId == 0)", source, StringComparison.Ordinal);
         Assert.Contains("WHERE existing.company_id=@cid AND existing.idempotency_key=@idem", source, StringComparison.Ordinal);
         Assert.Contains("ProjectAlertsAsync", source, StringComparison.Ordinal);
         Assert.Contains("sourceEventId", source, StringComparison.Ordinal);
         Assert.Contains("samsara-api", source, StringComparison.Ordinal);
 
-        var duplicateGuard = source.IndexOf("if (eventId == 0) continue", StringComparison.Ordinal);
+        var duplicateGuard = source.IndexOf("if (eventId == 0)", StringComparison.Ordinal);
+        var duplicateContinue = source.IndexOf("continue;", duplicateGuard, StringComparison.Ordinal);
         var eventCountMutation = source.IndexOf("event_count=latest_vehicle_positions.event_count+1", StringComparison.Ordinal);
         var monotonicAlertGuard = source.IndexOf("if (projected > 0)", StringComparison.Ordinal);
         var alertProjection = source.IndexOf("await ProjectAlertsAsync", StringComparison.Ordinal);
-        Assert.True(duplicateGuard >= 0 && eventCountMutation > duplicateGuard
+        Assert.True(duplicateGuard >= 0 && duplicateContinue > duplicateGuard && eventCountMutation > duplicateContinue
                     && monotonicAlertGuard > eventCountMutation && alertProjection > monotonicAlertGuard,
             "A duplicate provider page must exit before changing latest event_count or creating alerts.");
+        var liveRefresh = source.IndexOf("await telemetry.RefreshVehicleAsync", StringComparison.Ordinal);
+        var pageCommit = source.IndexOf("return true;", alertProjection, StringComparison.Ordinal);
+        Assert.True(liveRefresh > alertProjection && pageCommit > liveRefresh,
+            "The derived live state must refresh before the fenced page transaction commits.");
         Assert.Contains("'Provisioning',@eventTime", source, StringComparison.Ordinal);
         Assert.DoesNotContain("'Provisioning',NOW()", source, StringComparison.Ordinal);
         Assert.Contains("pg_advisory_xact_lock", source, StringComparison.Ordinal);

@@ -46,11 +46,10 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
         if (hasPartialGps && !allowPartialGpsMeasurements)
             throw new InvalidDataException("Partial GPS is paused until NULL-compatible readers and schema are verified and Samsara:AllowPartialGpsMeasurements is enabled; the page was not consumed.");
 
-        // 2/3. Match + write inside one system transaction (cross-tenant background write
-        //      under RLS), then refresh the live-asset projection so the map/SSE update.
+        // 2/3. Match, write and refresh the database live-asset projection in one
+        //      system transaction. Transport/browser delivery is a separate boundary.
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<Database>();
-        var telemetry = scope.ServiceProvider.GetService<TelemetryLiveStateService>();
 
         // Additive provenance: partner/vendor API pull (Samsara). Stamp source/
         // provider/protocol/device_fix_time/normalized_at ONLY when the columns exist
@@ -136,9 +135,16 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
                         c.Parameters.AddWithValue("@etime", r.EventTime);
                     }, ct);
 
-                // A repeated cursor page/provider retry is a true no-op. In particular,
-                // do not increment latest_vehicle_positions.event_count or re-open alerts.
-                if (eventId == 0) continue;
+                // Replays never increment event_count or re-open alerts. A current
+                // mapping may still need its derived live row repaired after an older
+                // build's interrupted refresh. Refresh from canonical latest state,
+                // never from the replayed (possibly older) provider measurement.
+                if (eventId == 0)
+                {
+                    if (identity is { IsCurrentInstallation: true })
+                        touchedVehicles.Add(identity.VehicleId);
+                    continue;
+                }
                 if (identity is null) { unmatched++; continue; }
                 if (!identity.IsCurrentInstallation) { historicalOnly++; continue; }
 
@@ -218,20 +224,29 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
                     c.Parameters.AddWithValue("@generation", operation.Generation);
                     c.Parameters.AddWithValue("@token", operation.LeaseToken);
                 }, ct);
+            // The live row is part of the same fenced page commit. This DB-only
+            // service shares Database's ambient transaction; no nested transaction
+            // or provider I/O belongs here. Any refresh failure rolls back the page,
+            // so its cursor cannot advance while the operator-facing state is stale.
+            if (touchedVehicles.Count > 0)
+            {
+                var telemetry = scope.ServiceProvider.GetRequiredService<TelemetryLiveStateService>();
+                foreach (var vid in touchedVehicles.Order())
+                {
+                    // A duplicate skipped the UPSERT and therefore may not own the
+                    // latest-row lock. Serialize its canonical read against another
+                    // device/provider before rebuilding the derived projection.
+                    var current = await db.QuerySingleAsync(
+                        "SELECT vehicle_id FROM latest_vehicle_positions WHERE company_id=@cid AND vehicle_id=@vid FOR UPDATE",
+                        c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@vid", vid); }, ct);
+                    if (current is null) continue; // No canonical position to repair.
+                    await telemetry.RefreshVehicleAsync(companyId, vid, ct);
+                }
+            }
             return true;
         }, ct);
 
-        // 4. Refresh the live-asset projection + push SSE so the map reflects Samsara data.
-        if (telemetry is not null)
-        {
-            try
-            {
-                foreach (var vid in touchedVehicles)
-                    await telemetry.RefreshVehicleAsync(companyId, vid, ct);
-            }
-            catch (Exception ex) { logger.LogWarning(ex, "Samsara live-state refresh failed for company {Company}", companyId); }
-        }
-
+        logger.LogDebug("Samsara page committed with {PositionsWritten} new mapped positions", written);
         return new SyncSummary(readings.Select(r => r.VehicleId).Distinct(StringComparer.Ordinal).Count(),
             written, unmatched, historicalOnly, parsed.Rejected, nextCursor, hasNext);
     }
