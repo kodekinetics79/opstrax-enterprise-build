@@ -216,7 +216,8 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
             catch (Exception ex) { logger.LogWarning(ex, "Samsara live-state refresh failed for company {Company}", companyId); }
         }
 
-        return new SyncSummary(readings.Count, written, unmatched, historicalOnly, parsed.Rejected, nextCursor, hasNext);
+        return new SyncSummary(readings.Select(r => r.VehicleId).Distinct(StringComparer.Ordinal).Count(),
+            written, unmatched, historicalOnly, parsed.Rejected, nextCursor, hasNext);
     }
 
     internal static (string EndCursor, bool HasNextPage) ReadPagination(JsonElement root)
@@ -409,9 +410,9 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
         return deviceId;
     }
 
-    // Parse the Samsara stats-feed response into flat GPS readings. Shape:
-    // { data: [ { id, name, gps:{time,latitude,longitude,headingDegrees,speedMilesPerHour},
-    //             engineStates:{value|time}, obdOdometerMeters:{value} } ] }
+    // Canonical /stats/feed uses data[].gps[] even for its initial last-known page.
+    // Sibling engine/odometer arrays have independent timestamps: never zip them or
+    // borrow their latest values. Only decorations on this GPS event are associated.
     private static ParsedFeed ParseFeed(JsonElement root)
     {
         var list = new List<SamsaraGps>();
@@ -420,41 +421,76 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
             throw new InvalidDataException("the required data array is missing.");
         foreach (var v in data.EnumerateArray())
         {
-            var id = v.TryGetProperty("id", out var idEl) ? idEl.GetString() : null;
+            if (v.ValueKind != JsonValueKind.Object)
+                throw new InvalidDataException("each data entry must be a vehicle object.");
+            var id = v.TryGetProperty("id", out var idEl) && idEl.ValueKind == JsonValueKind.String ? idEl.GetString() : null;
             if (string.IsNullOrWhiteSpace(id)) { rejected++; continue; }
-            var name = v.TryGetProperty("name", out var nEl) ? nEl.GetString() : null;
-            if (!v.TryGetProperty("gps", out var gps) || gps.ValueKind != JsonValueKind.Object) { rejected++; continue; }
+            var name = v.TryGetProperty("name", out var nEl) && nEl.ValueKind == JsonValueKind.String ? nEl.GetString() : null;
+            // An engine/odometer-only update legitimately has no GPS event.
+            if (!v.TryGetProperty("gps", out var gpsEvents)) continue;
+            if (gpsEvents.ValueKind != JsonValueKind.Array)
+                throw new InvalidDataException("gps must be an array of timestamped events; the page was not consumed.");
 
-            double lat = gps.TryGetProperty("latitude", out var la) && la.TryGetDouble(out var laV) ? laV : double.NaN;
-            double lng = gps.TryGetProperty("longitude", out var lo) && lo.TryGetDouble(out var loV) ? loV : double.NaN;
-            if (double.IsNaN(lat) || double.IsNaN(lng) || lat is < -90 or > 90 || lng is < -180 or > 180 || (lat == 0 && lng == 0))
-            { rejected++; continue; } // no valid physical fix -> counted rejection, never fabricate
+            foreach (var gps in gpsEvents.EnumerateArray())
+            {
+                if (gps.ValueKind != JsonValueKind.Object)
+                    throw new InvalidDataException("each gps event must be an object; the page was not consumed.");
+                var lat = Number(gps, "latitude") ?? double.NaN;
+                var lng = Number(gps, "longitude") ?? double.NaN;
+                if (!double.IsFinite(lat) || !double.IsFinite(lng) || lat is < -90 or > 90 || lng is < -180 or > 180 || (lat == 0 && lng == 0))
+                { rejected++; continue; }
+                if (!gps.TryGetProperty("time", out var tm) || tm.ValueKind != JsonValueKind.String ||
+                    !DateTimeOffset.TryParse(tm.GetString(), out var parsedTime)) { rejected++; continue; }
+                var time = parsedTime.UtcDateTime;
+                // Keep genuine backfill; existing monotonic projection protects live state.
+                if (time < new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc) || time > DateTime.UtcNow.AddMinutes(5))
+                { rejected++; continue; }
 
-            double speed = gps.TryGetProperty("speedMilesPerHour", out var sp) && sp.TryGetDouble(out var spV) ? spV : 0;
-            if (speed is < 0 or > 200) { rejected++; continue; }
-            int heading = gps.TryGetProperty("headingDegrees", out var hd) && hd.TryGetInt32(out var hdV) ? hdV : 0;
-            if (!gps.TryGetProperty("time", out var tm) || tm.ValueKind != JsonValueKind.String ||
-                !DateTimeOffset.TryParse(tm.GetString(), out var parsedTime)) { rejected++; continue; }
-            var time = parsedTime.UtcDateTime;
-            var now = DateTime.UtcNow;
-            // Valid provider backfill is retained without an arbitrary seven-day loss
-            // window. Monotonic projection below prevents an old fix from replacing live
-            // state or creating current alerts. Implausible/future timestamps are counted.
-            if (time < new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc) || time > now.AddMinutes(5))
-            { rejected++; continue; }
+                // These fields are optional at Samsara, but our current storage is NOT
+                // NULL-capable. Pause resumably before any page writes rather than
+                // invent zero or discard a valid location. Nullable storage is a separate
+                // explicit readiness dependency, not an implicit provider requirement.
+                var speed = Number(gps, "speedMilesPerHour") ?? throw Unrepresentable("speedMilesPerHour");
+                var bearing = Number(gps, "headingDegrees") ?? throw Unrepresentable("headingDegrees");
+                if (!double.IsFinite(speed) || speed is < 0 or > 200 || !double.IsFinite(bearing) || bearing is < 0 or > 360)
+                { rejected++; continue; }
+                var heading = (int)Math.Floor(bearing % 360); // existing whole-degree storage
 
-            double? odoMiles = null;
-            if (v.TryGetProperty("obdOdometerMeters", out var odo) && odo.TryGetProperty("value", out var ov) && ov.TryGetDouble(out var meters))
-                odoMiles = meters / 1609.344; // meters → miles
-
-            string? engine = null;
-            if (v.TryGetProperty("engineStates", out var es))
-                engine = es.ValueKind == JsonValueKind.Object && es.TryGetProperty("value", out var ev) ? ev.GetString()
-                       : es.ValueKind == JsonValueKind.String ? es.GetString() : null;
-            if (string.IsNullOrWhiteSpace(engine)) engine = null;
-
-            list.Add(new SamsaraGps(id!, name, lat, lng, speed, heading, time, odoMiles, engine));
+                var decorations = gps.TryGetProperty("decorations", out var dec) ? dec : default;
+                if (decorations.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null or JsonValueKind.Object))
+                    throw new InvalidDataException("gps decorations must be an object.");
+                var engineValue = DecorationValue(decorations, "engineStates");
+                if (engineValue.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null or JsonValueKind.String))
+                    throw new InvalidDataException("gps engineStates decoration value must be a string.");
+                var engine = engineValue.ValueKind == JsonValueKind.String ? engineValue.GetString() : null;
+                if (string.IsNullOrWhiteSpace(engine)) engine = null;
+                var odoValue = DecorationValue(decorations, "obdOdometerMeters");
+                double? odoMiles = null;
+                if (odoValue.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null))
+                {
+                    if (odoValue.ValueKind != JsonValueKind.Number || !odoValue.TryGetInt64(out var meters) || meters < 0)
+                        throw new InvalidDataException("gps obdOdometerMeters decoration must contain nonnegative integer meters.");
+                    odoMiles = meters / 1609.344;
+                }
+                list.Add(new SamsaraGps(id!, name, lat, lng, speed, heading, time, odoMiles, engine));
+            }
         }
         return new ParsedFeed(list, rejected);
+    }
+
+    private static double? Number(JsonElement value, string property) =>
+        value.TryGetProperty(property, out var number) && number.ValueKind == JsonValueKind.Number && number.TryGetDouble(out var result)
+            ? result : null;
+
+    private static InvalidDataException Unrepresentable(string field) =>
+        new($"GPS {field} is unavailable. Samsara permits missing measurements, but current OpsTrax storage cannot represent them; the page was not consumed.");
+
+    private static JsonElement DecorationValue(JsonElement decorations, string property)
+    {
+        if (decorations.ValueKind != JsonValueKind.Object || !decorations.TryGetProperty(property, out var value)
+            || value.ValueKind == JsonValueKind.Null) return default;
+        if (value.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException($"gps {property} decoration must be an object.");
+        return value.TryGetProperty("value", out var reading) ? reading : default;
     }
 }

@@ -238,7 +238,7 @@ public sealed class SamsaraConnector(
             var boundedPartial = !completed && hasNextPage;
             return ConnectorResult.Ok(
                 $"Synced {positionsWritten} vehicle position(s) from Samsara" +
-                $"{(unmatched > 0 ? $"; {unmatched} Samsara vehicle(s) had no matching OpsTrax vehicle (map a device to link them)." : ".")}" +
+                $"{(unmatched > 0 ? $"; {unmatched} Samsara GPS fix(es) had no effective OpsTrax vehicle mapping (map a device to link them)." : ".")}" +
                 $"{(historicalOnly > 0 ? $" Retained {historicalOnly} historical fix(es) against ended installations without changing live state." : "")}" +
                 $"{(rejected > 0 ? $" Rejected {rejected} invalid provider fix(es); no telemetry was fabricated." : "")}" +
                 $"{(boundedPartial ? $" Reached the bounded {maxPages}-page run limit; the returned cursor will resume the remaining backlog." : "")}",

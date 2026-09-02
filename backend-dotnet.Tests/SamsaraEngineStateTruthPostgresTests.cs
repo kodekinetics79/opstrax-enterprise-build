@@ -19,11 +19,11 @@ public sealed class SamsaraEngineStateTruthPostgresTests
     [InlineData("{}", null)]
     [InlineData("{\"value\":null}", null)]
     [InlineData("{\"value\":\"\"}", null)]
-    [InlineData("\"   \"", null)]
+    [InlineData("{\"value\":\"   \"}", null)]
     [InlineData("{\"value\":\"Off\"}", "Off")]
     [InlineData("{\"value\":\"On\"}", "On")]
     [InlineData("{\"value\":\"Idle\"}", "Idle")]
-    [InlineData("\"Unknown\"", "Unknown")]
+    [InlineData("{\"value\":\"Unknown\"}", "Unknown")]
     public async Task EngineEvidenceRemainsConsistentAcrossHistoryLatestAndLiveProjection(
         string? engineJson, string? expectedEngine)
     {
@@ -81,18 +81,28 @@ public sealed class SamsaraEngineStateTruthPostgresTests
                 .AddSingleton<TelemetryLiveStateService>().BuildServiceProvider();
             var observedAt = DateTimeOffset.UtcNow.AddMinutes(-1);
 
-            async Task<SamsaraSync.SyncSummary> Run(string? state, DateTimeOffset eventAt)
+            async Task<SamsaraSync.SyncSummary> Run(string? state, DateTimeOffset eventAt, bool batch = false)
             {
+                var gps = new JsonObject
+                {
+                    ["time"] = eventAt.ToString("O"), ["latitude"] = 34.05,
+                    ["longitude"] = -118.24, ["speedMilesPerHour"] = 0, ["headingDegrees"] = 90,
+                };
+                if (state is not null)
+                    gps["decorations"] = new JsonObject { ["engineStates"] = JsonNode.Parse(state) };
+                var events = new JsonArray(gps);
+                if (batch)
+                {
+                    var older = (JsonObject)gps.DeepClone();
+                    older["time"] = eventAt.AddSeconds(-5).ToString("O");
+                    older["decorations"] = new JsonObject { ["engineStates"] = new JsonObject { ["value"] = "On" } };
+                    events.Add(older);
+                    events.Add(gps.DeepClone());
+                }
                 var vehicle = new JsonObject
                 {
-                    ["id"] = providerVehicleId,
-                    ["gps"] = new JsonObject
-                    {
-                        ["time"] = eventAt.ToString("O"), ["latitude"] = 34.05,
-                        ["longitude"] = -118.24, ["speedMilesPerHour"] = 0, ["headingDegrees"] = 90,
-                    },
+                    ["id"] = providerVehicleId, ["gps"] = events,
                 };
-                if (state is not null) vehicle["engineStates"] = JsonNode.Parse(state);
                 var feed = new JsonObject
                 {
                     ["data"] = new JsonArray(vehicle),
@@ -136,6 +146,16 @@ public sealed class SamsaraEngineStateTruthPostgresTests
             foreach (var table in new[] { "location_events", "latest_vehicle_positions", "telemetry_live_asset_states" })
                 await AssertStored(table, null, 3);
             Assert.Equal(4, await db.ScalarLongAsync("SELECT COUNT(*) FROM location_events WHERE company_id=@cid",
+                c => c.Parameters.AddWithValue("@cid", companyId)));
+            // A canonical batch contains the newest fix, an older novel fix and an
+            // exact replay. Retain both unique history events, but advance latest once
+            // and count the provider vehicle once, not once per GPS array element.
+            var batched = await Run("{\"value\":\"Idle\"}", observedAt.AddSeconds(40), batch: true);
+            Assert.Equal(1, batched.VehiclesSeen);
+            Assert.Equal(1, batched.PositionsWritten);
+            foreach (var table in new[] { "location_events", "latest_vehicle_positions", "telemetry_live_asset_states" })
+                await AssertStored(table, "Idle", 4);
+            Assert.Equal(6, await db.ScalarLongAsync("SELECT COUNT(*) FROM location_events WHERE company_id=@cid",
                 c => c.Parameters.AddWithValue("@cid", companyId)));
             Assert.Equal(0, await db.ScalarLongAsync("SELECT COUNT(*) FROM telemetry_alerts WHERE company_id=@cid",
                 c => c.Parameters.AddWithValue("@cid", companyId)));

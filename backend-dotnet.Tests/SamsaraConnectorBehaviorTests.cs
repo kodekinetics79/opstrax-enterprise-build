@@ -271,7 +271,7 @@ public sealed class SamsaraConnectorBehaviorTests
     public async Task Sync_ReportsInvalidProviderFixesWithoutFabricatingTelemetry()
     {
         var handler = new ScriptedHandler(_ => Json(HttpStatusCode.OK,
-            """{"data":[{"id":"bad-fix","gps":{"time":"not-a-time","latitude":999,"longitude":-118.24,"speedMilesPerHour":40}}],"pagination":{"endCursor":"","hasNextPage":false}}"""));
+            """{"data":[{"id":"bad-fix","gps":[{"time":"not-a-time","latitude":999,"longitude":-118.24,"speedMilesPerHour":40,"headingDegrees":90}]}],"pagination":{"endCursor":"","hasNextPage":false}}"""));
         var connector = Connector(handler);
         using var body = OperationBody();
 
