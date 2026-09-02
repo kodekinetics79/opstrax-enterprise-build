@@ -984,7 +984,7 @@ public static partial class EndpointMappings
         // "Connect" performs the same real provider handshake as test-connection; no route
         // may assert Connected based only on a button click.
         app.MapPost("/api/integrations/{id:long}/connect", IntegrationTestConnection);
-        app.MapPost("/api/integrations/{id:long}/disconnect", (HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) => SetIntegrationStatus(http, id, "Disconnected", "integration.disconnected", db, audit, ct));
+        app.MapPost("/api/integrations/{id:long}/disconnect", DisconnectIntegration);
         app.MapPost("/api/integrations/{id:long}/sync", IntegrationSync);
         app.MapPost("/api/integrations/{id:long}/configure", ConfigureIntegration);
         // Real connectivity: performs an actual handshake with the provider and only
@@ -11449,30 +11449,63 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (IntegrationsManageGuard(http) is { } denied) return denied;
         if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
         var companyId = GetCompanyId(http);
-        var existing = await db.QuerySingleAsync("SELECT config_json FROM integrations WHERE company_id=@cid AND id=@id",
-            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); }, ct);
-        if (existing is null) return Results.NotFound(ApiResponse<object>.Fail("Integration not found"));
-        var protectedConfig = ProtectIntegrationConfig(
-            body, connectors, existing.GetValueOrDefault("configJson"), merge: true);
-
-        // COALESCE keeps any field the caller omits; JSON columns replace when provided.
-        await db.ExecuteAsync(
-            @"UPDATE integrations SET
-                  provider_name = COALESCE(@name, provider_name),
-                  category      = COALESCE(@cat, category),
-                  description   = COALESCE(@desc, description),
-                  logo          = COALESCE(@logo, logo),
-                  managed_by    = COALESCE(@managed, managed_by),
-                  scope         = COALESCE(@scope, scope),
-                  related_systems_json = COALESCE(@related::jsonb, related_systems_json),
-                  connected_to_json    = COALESCE(@connected::jsonb, connected_to_json),
-                  config_json          = COALESCE(@config::jsonb, config_json),
-                  updated_at = NOW()
-              WHERE company_id=@cid AND id=@id",
-            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); BindIntegration(c, body, null, null, protectedConfig); }, ct);
+        var updated = await RunLockedIntegrationMutationAsync(db, companyId, id, async existing =>
+        {
+            var protectedConfig = ProtectIntegrationConfig(
+                body, connectors, existing.GetValueOrDefault("configJson"), merge: true);
+            // COALESCE keeps any field the caller omits; JSON columns replace when
+            // provided. A credential-bearing edit must be re-verified before the
+            // worker may use it.
+            return await db.ExecuteAsync(
+                @"UPDATE integrations SET
+                      provider_name = COALESCE(@name, provider_name),
+                      category      = COALESCE(@cat, category),
+                      description   = COALESCE(@desc, description),
+                      logo          = COALESCE(@logo, logo),
+                      managed_by    = COALESCE(@managed, managed_by),
+                      scope         = COALESCE(@scope, scope),
+                      related_systems_json = COALESCE(@related::jsonb, related_systems_json),
+                      connected_to_json    = COALESCE(@connected::jsonb, connected_to_json),
+                      config_json          = COALESCE(@config::jsonb, config_json),
+                      status=CASE WHEN @config IS NULL THEN status ELSE 'Pending' END,
+                      last_tested_at=CASE WHEN @config IS NULL THEN last_tested_at ELSE NULL END,
+                      last_test_ok=CASE WHEN @config IS NULL THEN last_test_ok ELSE NULL END,
+                      last_test_message=CASE WHEN @config IS NULL THEN last_test_message ELSE NULL END,
+                      operation_generation = operation_generation + 1,
+                      operation_lease_token = NULL,
+                      operation_lease_expires_at = NULL,
+                      updated_at = NOW()
+                  WHERE company_id=@cid AND id=@id",
+                c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); BindIntegration(c, body, null, null, protectedConfig); }, ct);
+        }, ct);
+        if (!updated) return Results.NotFound(ApiResponse<object>.Fail("Integration not found"));
         await audit.LogAsync(http, "integration.updated", "Integration", id, ct: ct);
         return await IntegrationDetail(http, id, db, ct);
     }
+
+    // Serializes every read/merge/write configuration mutation with disconnect/reset.
+    // The row lock is held in the same tenant transaction through the callback. If
+    // configuration wins, disconnect waits and clears its result; if disconnect wins,
+    // configuration reads the already-cleared state and cannot resurrect an old secret.
+    internal static Task<bool> RunLockedIntegrationMutationAsync(
+        Database db,
+        long companyId,
+        long id,
+        Func<Dictionary<string, object?>, Task<int>> mutation,
+        CancellationToken ct = default) =>
+        db.RunInTenantTransactionAsync(companyId, async () =>
+        {
+            var existing = await db.QuerySingleAsync(
+                @"SELECT config_json,operation_generation FROM integrations
+                  WHERE company_id=@cid AND id=@id
+                  FOR UPDATE",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@cid", companyId);
+                    c.Parameters.AddWithValue("@id", id);
+                }, ct);
+            return existing is not null && await mutation(existing) > 0;
+        }, ct);
 
     private static async Task<IResult> RemoveIntegration(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct)
     {
@@ -11495,27 +11528,42 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         // Built-in: reset to a clean disconnected state rather than delete (stays discoverable).
         await db.ExecuteAsync(
             @"UPDATE integrations SET status='Disconnected', config_json='{}'::jsonb,
-                  connected_to_json='[]'::jsonb, last_sync_at=NULL, sync_label='Never', updated_at=NOW()
+                  connected_to_json='[]'::jsonb, last_sync_at=NULL, sync_label='Never',
+                  operation_generation=operation_generation+1,
+                  operation_lease_token=NULL,operation_lease_expires_at=NULL,updated_at=NOW()
               WHERE company_id=@cid AND id=@id",
             c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); }, ct);
         await audit.LogAsync(http, "integration.reset", "Integration", id, ct: ct);
         return await IntegrationDetail(http, id, db, ct);
     }
 
-    private static async Task<IResult> SetIntegrationStatus(HttpContext http, long id, string status, string action, Database db, AuditService audit, CancellationToken ct)
+    private static async Task<IResult> DisconnectIntegration(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct)
     {
         if (IntegrationsManageGuard(http) is { } denied) return denied;
         if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
         var companyId = GetCompanyId(http);
         var affected = await db.ExecuteAsync(
-            @"UPDATE integrations SET status=@status,
-                  last_sync_at = CASE WHEN @status='Connected' THEN NOW() ELSE last_sync_at END,
-                  sync_label   = CASE WHEN @status='Connected' THEN 'Just now' ELSE sync_label END,
+            @"UPDATE integrations SET status='Disconnected',
+                  config_json='{}'::jsonb,
+                  last_sync_at=NULL,
+                  sync_label='Never',
+                  last_tested_at=NULL,
+                  last_test_ok=NULL,
+                  last_test_message=NULL,
+                  operation_generation=operation_generation+1,
+                  operation_lease_token=NULL,
+                  operation_lease_expires_at=NULL,
                   updated_at = NOW()
               WHERE company_id=@cid AND id=@id",
-            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@status", status); }, ct);
+            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); }, ct);
         if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Integration not found"));
-        await audit.LogAsync(http, action, "Integration", id, ct: ct);
+        await audit.LogAsync(http, "integration.disconnected", "Integration", id,
+            detailsJson: System.Text.Json.JsonSerializer.Serialize(new
+            {
+                storedCredentialsRemoved = true,
+                syncCursorRemoved = true,
+                providerCredentialRevocationRequired = true,
+            }), ct: ct);
         return await IntegrationDetail(http, id, db, ct);
     }
 
@@ -11525,42 +11573,48 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (IntegrationsManageGuard(http) is { } denied) return denied;
         if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
         var companyId = GetCompanyId(http);
-        var row = await db.QuerySingleAsync(
-            "SELECT integration_key, config_json FROM integrations WHERE company_id=@cid AND id=@id LIMIT 1",
-            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); }, ct);
-        if (row is null) return Results.NotFound(ApiResponse<object>.Fail("Integration not found"));
+        var operation = await Opstrax.Api.Services.Connectors.ConnectorOperationLease.TryAcquireAsync(
+            db, companyId, id, ["Connected"], TimeSpan.FromSeconds(90), ct);
+        if (operation is null)
+            return Results.Conflict(ApiResponse<object>.Fail(
+                "Verify the provider connection and wait for any active connector operation before running a sync."));
 
-        var key = row.GetValueOrDefault("integrationKey")?.ToString();
-        var connector = connectors.Resolve(key);
-        var config = connectors.DecryptConfig(row.GetValueOrDefault("configJson"));
+        var connector = connectors.Resolve(operation.IntegrationKey);
+        var config = connectors.DecryptConfig(operation.ConfigJson);
 
         // Connectors that implement a real "sync" action (e.g. Samsara → live positions)
         // run the actual data pull. The tenant + last cursor are passed in the action body;
         // the returned nextCursor is persisted so the next sync is incremental. Connectors
         // with no sync action return an honest unsupported result and never claim Connected.
-        var storedConfig = Opstrax.Api.Services.Connectors.ConnectorRegistry.RedactConfig(row.GetValueOrDefault("configJson"));
+        var storedConfig = Opstrax.Api.Services.Connectors.ConnectorRegistry.RedactConfig(operation.ConfigJson);
         var cursor = storedConfig.TryGetValue("syncCursor", out var cv) ? cv?.ToString() : null;
         using var bodyDoc = System.Text.Json.JsonDocument.Parse(
-            System.Text.Json.JsonSerializer.Serialize(new { action = "sync", companyId, cursor }));
+            System.Text.Json.JsonSerializer.Serialize(new
+            {
+                action = "sync",
+                companyId,
+                integrationId = id,
+                operationGeneration = operation.Generation,
+                operationLeaseToken = operation.LeaseToken,
+                cursor,
+                maxPages = 20,
+                maxDurationSeconds = 75,
+            }));
         var result = await connector.RunActionAsync("sync", config, bodyDoc.RootElement, ct);
 
         if (result.Message.Contains("not supported", StringComparison.OrdinalIgnoreCase))
+        {
+            await Opstrax.Api.Services.Connectors.ConnectorOperationLease.ReleaseAsErrorAsync(db, operation, ct);
             return Results.Json(ApiResponse<object>.Fail("Connector sync is not supported"), statusCode: StatusCodes.Status422UnprocessableEntity);
+        }
 
         // Persist cursor + status from the real sync result.
         var nextCursor = result.Details?.GetValueOrDefault("nextCursor")?.ToString();
-        await db.ExecuteAsync(
-            @"UPDATE integrations SET
-                  status = CASE WHEN @ok THEN 'Connected' ELSE 'Error' END,
-                  last_sync_at = CASE WHEN @ok THEN NOW() ELSE last_sync_at END,
-                  sync_label   = CASE WHEN @ok THEN 'Just now' ELSE sync_label END,
-                  config_json = CASE WHEN @cursor IS NULL THEN config_json
-                                     ELSE COALESCE(config_json,'{}'::jsonb) || jsonb_build_object('syncCursor', @cursor::text) END,
-                  updated_at = NOW()
-              WHERE company_id=@cid AND id=@id",
-            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id);
-                   c.Parameters.AddWithValue("@ok", result.Success);
-                   c.Parameters.AddWithValue("@cursor", (object?)nextCursor ?? DBNull.Value); }, ct);
+        var affected = await Opstrax.Api.Services.Connectors.ConnectorOperationLease.CompleteSyncAsync(
+            db, operation, result, nextCursor, ct);
+        if (affected == 0)
+            return Results.Conflict(ApiResponse<object>.Fail(
+                "The connector operation was invalidated before completion; stale sync state was not committed."));
         await audit.LogAsync(http, result.Success ? "integration.synced" : "integration.sync.failed", "Integration", id,
             detailsJson: System.Text.Json.JsonSerializer.Serialize(new { message = result.Message }), ct: ct);
 
@@ -11574,22 +11628,32 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (IntegrationsManageGuard(http) is { } denied) return denied;
         if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
         var companyId = GetCompanyId(http);
-        var existing = await db.QuerySingleAsync(
-            "SELECT config_json FROM integrations WHERE company_id=@cid AND id=@id",
-            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); }, ct);
-        if (existing is null) return Results.NotFound(ApiResponse<object>.Fail("Integration not found"));
-        // Recursive merge preserves omitted/masked stored credentials and encrypts every
-        // changed sensitive leaf before persistence. Replace with the complete protected
-        // object; a shallow jsonb || merge would drop nested secrets.
-        var configJson = connectors.MergeConfigForStorage(body, existing.GetValueOrDefault("configJson"));
-        var affected = await db.ExecuteAsync(
-            @"UPDATE integrations SET
-                  config_json = @config::jsonb,
-                  status = CASE WHEN status='Disconnected' THEN 'Pending' ELSE status END,
-                  updated_at = NOW()
-              WHERE company_id=@cid AND id=@id",
-            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@config", configJson); }, ct);
-        if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Integration not found"));
+        var configured = await RunLockedIntegrationMutationAsync(db, companyId, id, async existing =>
+        {
+            // Recursive merge preserves omitted/masked stored credentials and encrypts
+            // every changed sensitive leaf. The row lock ensures the stored snapshot
+            // cannot be invalidated by disconnect between this merge and its write.
+            var configJson = connectors.MergeConfigForStorage(body, existing.GetValueOrDefault("configJson"));
+            return await db.ExecuteAsync(
+                @"UPDATE integrations SET
+                      config_json = @config::jsonb,
+                      status = 'Pending',
+                      last_tested_at = NULL,
+                      last_test_ok = NULL,
+                      last_test_message = NULL,
+                      operation_generation = operation_generation + 1,
+                      operation_lease_token = NULL,
+                      operation_lease_expires_at = NULL,
+                      updated_at = NOW()
+                  WHERE company_id=@cid AND id=@id",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@cid", companyId);
+                    c.Parameters.AddWithValue("@id", id);
+                    c.Parameters.AddWithValue("@config", configJson);
+                }, ct);
+        }, ct);
+        if (!configured) return Results.NotFound(ApiResponse<object>.Fail("Integration not found"));
         await audit.LogAsync(http, "integration.configured", "Integration", id, ct: ct);
         return await IntegrationDetail(http, id, db, ct);
     }
@@ -11604,32 +11668,27 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (IntegrationsManageGuard(http) is { } denied) return denied;
         if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
         var companyId = GetCompanyId(http);
-        var row = await db.QuerySingleAsync(
-            "SELECT integration_key, provider_name, config_json FROM integrations WHERE company_id=@cid AND id=@id LIMIT 1",
-            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); }, ct);
-        if (row is null) return Results.NotFound(ApiResponse<object>.Fail("Integration not found"));
+        var operation = await Opstrax.Api.Services.Connectors.ConnectorOperationLease.TryAcquireAsync(
+            db, companyId, id, ["Pending", "Disconnected", "Connected", "Error"], TimeSpan.FromSeconds(45), ct);
+        if (operation is null)
+            return Results.Conflict(ApiResponse<object>.Fail(
+                "Another connector operation is active. Wait for it to finish, then test again."));
 
-        var key = row.GetValueOrDefault("integrationKey")?.ToString();
-        var connector = connectors.Resolve(key);
-        var config = connectors.DecryptConfig(row.GetValueOrDefault("configJson"));
+        var connector = connectors.Resolve(operation.IntegrationKey);
+        var config = connectors.DecryptConfig(operation.ConfigJson);
 
         var result = await connector.TestConnectionAsync(config, ct);
 
         // Persist the verdict as real status; keep a disconnected connector disconnected
         // on failure rather than faking progress.
         var newStatus = result.Success ? "Connected" : "Error";
-        await db.ExecuteAsync(
-            @"UPDATE integrations SET status=@status,
-                  last_sync_at = CASE WHEN @ok THEN NOW() ELSE last_sync_at END,
-                  sync_label   = CASE WHEN @ok THEN 'Just now' ELSE sync_label END,
-                  last_tested_at = NOW(), last_test_ok = @ok, last_test_message = @msg,
-                  updated_at = NOW()
-              WHERE company_id=@cid AND id=@id",
-            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id);
-                   c.Parameters.AddWithValue("@status", newStatus); c.Parameters.AddWithValue("@ok", result.Success);
-                   c.Parameters.AddWithValue("@msg", (object?)result.Message ?? DBNull.Value); }, ct);
+        var affected = await Opstrax.Api.Services.Connectors.ConnectorOperationLease.CompleteTestAsync(
+            db, operation, result, ct);
+        if (affected == 0)
+            return Results.Conflict(ApiResponse<object>.Fail(
+                "The connector was changed or disconnected while the test ran; the stale provider result was discarded."));
         await audit.LogAsync(http, result.Success ? "integration.test.passed" : "integration.test.failed", "Integration", id,
-            detailsJson: System.Text.Json.JsonSerializer.Serialize(new { provider = row.GetValueOrDefault("providerName"), message = result.Message }), ct: ct);
+            detailsJson: System.Text.Json.JsonSerializer.Serialize(new { provider = connector.DisplayName, message = result.Message }), ct: ct);
 
         return Results.Ok(ApiResponse<object>.Ok(new
         {
@@ -11650,6 +11709,13 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var companyId = GetCompanyId(http);
         var action = body.ValueKind == System.Text.Json.JsonValueKind.Object && body.TryGetProperty("action", out var a) ? a.GetString() : null;
         if (string.IsNullOrWhiteSpace(action)) return Results.BadRequest(ApiResponse<object>.Fail("An 'action' is required."));
+        // Sync carries tenant scope into a system-RLS transaction. Never allow the
+        // generic action body to provide that scope: the dedicated /sync route builds
+        // companyId from the authenticated tenant and the stored connector cursor.
+        if (action.Equals("sync", StringComparison.OrdinalIgnoreCase) ||
+            action.Equals("sync-telemetry", StringComparison.OrdinalIgnoreCase))
+            return Results.Json(ApiResponse<object>.Fail("Use the tenant-scoped integration sync endpoint"),
+                statusCode: StatusCodes.Status422UnprocessableEntity);
 
         var row = await db.QuerySingleAsync(
             "SELECT integration_key, config_json FROM integrations WHERE company_id=@cid AND id=@id LIMIT 1",

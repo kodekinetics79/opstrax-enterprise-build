@@ -53,6 +53,12 @@ public sealed class Batch7SchemaService(Database db, IConfiguration? configurati
         new("integrations", "last_tested_at",         "TIMESTAMPTZ NULL"),
         new("integrations", "last_test_ok",           "BOOLEAN NULL"),
         new("integrations", "last_test_message",      "TEXT NULL"),
+        // Generation-bound provider-operation lease. Disconnect/configure invalidate
+        // in-flight handshakes and telemetry pulls before they can commit stale state.
+        new("integrations", "operation_generation",       "BIGINT NOT NULL DEFAULT 0"),
+        new("integrations", "operation_lease_token",      "UUID NULL"),
+        new("integrations", "operation_lease_expires_at", "TIMESTAMPTZ NULL"),
+        new("integrations", "operation_last_attempt_at",  "TIMESTAMPTZ NULL"),
         // Enrich audit_logs with severity + module context
         new("audit_logs", "severity",     "VARCHAR(40) NOT NULL DEFAULT 'Info'"),
         new("audit_logs", "module_key",   "VARCHAR(100) NULL"),
@@ -257,6 +263,8 @@ public sealed class Batch7SchemaService(Database db, IConfiguration? configurati
     private static readonly string[] Indexes =
     [
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_integrations_tenant_key ON integrations(company_id, integration_key) WHERE integration_key IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS ix_integrations_connector_operation_lease ON integrations(status, operation_lease_expires_at) WHERE integration_key IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS ix_integrations_connector_attempt_fairness ON integrations(status, operation_last_attempt_at, id) WHERE integration_key IS NOT NULL",
         "CREATE INDEX IF NOT EXISTS idx_report_runs_key ON report_runs(report_key)",
         "CREATE INDEX IF NOT EXISTS idx_report_runs_tenant ON report_runs(tenant_id)",
         "CREATE INDEX IF NOT EXISTS idx_scheduled_reports_key ON scheduled_reports(report_key)",

@@ -21,7 +21,7 @@ public sealed class SamsaraConnectorBehaviorTests
                 : Json(HttpStatusCode.OK, """{"data":[],"pagination":{"endCursor":"cursor-1","hasNextPage":true}}""");
         });
         var connector = Connector(handler);
-        using var body = JsonDocument.Parse("{\"companyId\":17}");
+        using var body = OperationBody();
 
         var result = await connector.RunActionAsync("sync", Config(), body.RootElement, CancellationToken.None);
 
@@ -37,7 +37,7 @@ public sealed class SamsaraConnectorBehaviorTests
         var handler = new ScriptedHandler(_ =>
             Json(HttpStatusCode.OK, """{"data":[],"pagination":{"endCursor":"stuck","hasNextPage":true}}"""));
         var connector = Connector(handler);
-        using var body = JsonDocument.Parse("{\"companyId\":17,\"cursor\":\"stuck\"}");
+        using var body = OperationBody("stuck");
 
         var result = await connector.RunActionAsync("sync", Config(), body.RootElement, CancellationToken.None);
 
@@ -56,7 +56,7 @@ public sealed class SamsaraConnectorBehaviorTests
         ]);
         var handler = new ScriptedHandler(_ => responses.Dequeue());
         var connector = Connector(handler);
-        using var body = JsonDocument.Parse("{\"companyId\":17}");
+        using var body = OperationBody();
 
         var result = await connector.RunActionAsync("sync", Config(), body.RootElement, CancellationToken.None);
 
@@ -75,7 +75,7 @@ public sealed class SamsaraConnectorBehaviorTests
                 $$$"""{"data":[],"pagination":{"endCursor":"cursor-{{{page}}}","hasNextPage":true}}""");
         });
         var connector = Connector(handler, maxPages: 2);
-        using var body = JsonDocument.Parse("{\"companyId\":17}");
+        using var body = OperationBody();
 
         var result = await connector.RunActionAsync("sync", Config(), body.RootElement, CancellationToken.None);
 
@@ -85,6 +85,22 @@ public sealed class SamsaraConnectorBehaviorTests
         Assert.Equal(true, result.Details["boundedPartial"]);
         Assert.Contains("returned cursor", result.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(2, handler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task Sync_ReportsInvalidProviderFixesWithoutFabricatingTelemetry()
+    {
+        var handler = new ScriptedHandler(_ => Json(HttpStatusCode.OK,
+            """{"data":[{"id":"bad-fix","gps":{"time":"not-a-time","latitude":999,"longitude":-118.24,"speedMilesPerHour":40}}],"pagination":{"hasNextPage":false}}"""));
+        var connector = Connector(handler);
+        using var body = OperationBody();
+
+        var result = await connector.RunActionAsync("sync", Config(), body.RootElement, CancellationToken.None);
+
+        Assert.True(result.Success, result.Message);
+        Assert.Equal(0, result.Details!["positionsWritten"]);
+        Assert.Equal(1, result.Details["rejected"]);
+        Assert.Contains("Rejected 1 invalid provider fix", result.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -105,8 +121,10 @@ public sealed class SamsaraConnectorBehaviorTests
         Assert.True(duplicateGuard >= 0 && eventCountMutation > duplicateGuard
                     && monotonicAlertGuard > eventCountMutation && alertProjection > monotonicAlertGuard,
             "A duplicate provider page must exit before changing latest event_count or creating alerts.");
-        Assert.Contains("'Provisioning', @eventTime", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("'Provisioning', NOW()", source, StringComparison.Ordinal);
+        Assert.Contains("'Provisioning',@eventTime", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("'Provisioning',NOW()", source, StringComparison.Ordinal);
+        Assert.Contains("pg_advisory_xact_lock", source, StringComparison.Ordinal);
+        Assert.Contains("select-before-insert", source, StringComparison.Ordinal);
     }
 
     private static SamsaraConnector Connector(HttpMessageHandler handler, int maxPages = 200)
@@ -128,6 +146,16 @@ public sealed class SamsaraConnectorBehaviorTests
 
     private static IReadOnlyDictionary<string, string?> Config() =>
         new Dictionary<string, string?> { ["apiToken"] = "test-token-never-sent-to-real-network" };
+
+    private static JsonDocument OperationBody(string? cursor = null) => JsonDocument.Parse(
+        JsonSerializer.Serialize(new
+        {
+            companyId = 17,
+            integrationId = 23,
+            operationGeneration = 0,
+            operationLeaseToken = "11111111-1111-1111-1111-111111111111",
+            cursor,
+        }));
 
     private static HttpResponseMessage Json(HttpStatusCode status, string body) => new(status)
     {

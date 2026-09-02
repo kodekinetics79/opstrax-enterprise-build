@@ -102,16 +102,17 @@ export const integrationCatalog: Omit<IntegrationRecord, "tenantId">[] = [
     key: "samsara",
     name: "Samsara",
     category: "Telematics & ELD",
-    description: "GPS tracking, ELD, and AI dashcam event integration for live fleet operations.",
+    description:
+      "Samsara connector readiness for GPS position, engine-state, and odometer sync. A tenant-authorized provider account and successful live handshake are required before use.",
     logo: "SAM",
-    status: "Connected",
-    sync: "Real-time",
-    lastSyncAt: "2026-06-24T14:14:00Z",
-    relatedSystems: ["vehicles", "drivers", "safety"],
-    connectedTo: ["GPS", "ELD", "Dashcam"],
+    status: "Disconnected",
+    sync: "Never",
+    lastSyncAt: null,
+    relatedSystems: ["vehicles"],
+    connectedTo: ["GPS", "Engine state", "Odometer"],
     managedBy: "Fleet Ops",
     scope: "tenant",
-    config: { providerAccountId: "sam-1001" },
+    config: {},
   },
   {
     id: 8,
@@ -498,4 +499,3 @@ export const integrationCatalog: Omit<IntegrationRecord, "tenantId">[] = [
     config: {},
   },
 ];
-

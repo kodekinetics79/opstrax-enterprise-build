@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "react-router";
 import {
   Activity,
   AlertTriangle,
@@ -15,6 +16,7 @@ import {
   PlugZap,
   Plug,
   Plus,
+  Radar,
   RadioTower,
   RefreshCw,
   Search,
@@ -50,6 +52,14 @@ type ConfigField = {
   type: "text" | "url" | "number";
   placeholder?: string;
   note?: string;
+};
+
+type IntegrationOperationResult = {
+  id: number;
+  kind: "Connection" | "Sync" | "Disconnect";
+  success: boolean;
+  message: string;
+  details?: Record<string, unknown> | null;
 };
 
 // Sensitive config values come back from the API redacted (never the real secret).
@@ -140,6 +150,21 @@ function categoryFields(category: IntegrationCategory): ConfigField[] {
   }
 }
 
+function integrationFields(record: IntegrationRecord): ConfigField[] {
+  if (record.key === "samsara") {
+    return [
+      {
+        key: "apiToken",
+        label: "Samsara API token",
+        type: "text",
+        placeholder: "Paste a tenant-authorized token",
+        note: "Requires Read Vehicles and Read Vehicle Statistics. OpsTrax stores the token encrypted and never displays it again.",
+      },
+    ];
+  }
+  return categoryFields(record.category);
+}
+
 // Compact relative time for the connector health line (e.g. "2m ago", "just now").
 function formatRelativeTime(iso?: string | null): string {
   if (!iso) return "";
@@ -197,7 +222,7 @@ function formatConfigValue(value: string | number | boolean | null | undefined) 
 }
 
 function buildFormState(record: IntegrationRecord) {
-  const fields = categoryFields(record.category);
+  const fields = integrationFields(record);
   return Object.fromEntries(
     fields.map((field) => {
       // Redacted secret → start the input empty (blank = keep the stored secret).
@@ -211,7 +236,7 @@ function buildFormState(record: IntegrationRecord) {
 
 function buildConfigPayload(record: IntegrationRecord, form: Record<string, string>) {
   const payload: Record<string, string | number | boolean | null> = {};
-  for (const field of categoryFields(record.category)) {
+  for (const field of integrationFields(record)) {
     const raw = String(form[field.key] ?? "").trim();
     const secret = isSecretField(field.key);
     const storedRedacted = isRedactedValue(record.config[field.key]);
@@ -251,24 +276,64 @@ function ConfigDrawer({
   onClose: () => void;
 }) {
   const qc = useQueryClient();
+  const dialogRef = useRef<HTMLElement>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
   const [saved, setSaved] = useState(false);
   const [form, setForm] = useState<Record<string, string>>(() => buildFormState(integration));
   // Local result of the real provider handshake, surfaced inside the drawer.
-  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string; details?: Record<string, unknown> | null } | null>(null);
+  const [discoveryResult, setDiscoveryResult] = useState<IntegrationTestResult | null>(null);
+  const [validationResult, setValidationResult] = useState<IntegrationTestResult | null>(null);
 
   useEffect(() => {
     setForm(buildFormState(integration));
     setSaved(false);
     setTestResult(null);
+    setDiscoveryResult(null);
+    setValidationResult(null);
   }, [integration]);
 
   useEffect(() => {
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusableSelector = "button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])";
+    const dialog = dialogRef.current;
+    const initialTarget = dialog?.querySelector<HTMLElement>(focusableSelector) ?? dialog;
+    initialTarget?.focus();
+
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeRef.current();
+        return;
+      }
+      if (event.key !== "Tab" || !dialog) return;
+      const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(focusableSelector));
+      if (focusable.length === 0) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (!dialog.contains(document.activeElement)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
     document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      if (previouslyFocused?.isConnected) previouslyFocused.focus();
+      else document.getElementById("integration-search")?.focus();
+    };
+  }, []);
 
   const saveMut = useMutation({
     mutationFn: (payload: Record<string, string | number | boolean | null>) =>
@@ -281,9 +346,12 @@ function ConfigDrawer({
   });
 
   const testMut = useMutation({
-    mutationFn: () => integrationsApi.testConnection(integration.id),
+    mutationFn: async () => {
+      await integrationsApi.configure(integration.id, buildConfigPayload(integration, form));
+      return integrationsApi.testConnection(integration.id);
+    },
     onSuccess: async (result: IntegrationTestResult) => {
-      setTestResult({ success: result.success, message: result.message });
+      setTestResult({ success: result.success, message: result.message, details: result.details });
       await qc.invalidateQueries({ queryKey: ["integrations"] });
     },
     onError: (error) => {
@@ -295,13 +363,48 @@ function ConfigDrawer({
     },
   });
 
-  const fields = categoryFields(integration.category);
+  const validateMut = useMutation({
+    mutationFn: () => integrationsApi.sync(integration.id),
+    onSuccess: async (result: IntegrationTestResult) => {
+      setValidationResult(result);
+      await qc.invalidateQueries({ queryKey: ["integrations"] });
+    },
+    onError: (error) => {
+      setValidationResult({
+        success: false,
+        message: error instanceof Error ? error.message : "Validation sync failed. Please try again.",
+      });
+      void qc.invalidateQueries({ queryKey: ["integrations"] });
+    },
+  });
+
+  const discoverMut = useMutation({
+    // The bounded tenant-scoped sync is also the evidence-bearing discovery pass:
+    // it persists provider device identities and unmatched history, but never
+    // invents an asset mapping from a provider vehicle name.
+    mutationFn: () => integrationsApi.sync(integration.id),
+    onSuccess: async (result: IntegrationTestResult) => {
+      setDiscoveryResult(result);
+      await qc.invalidateQueries({ queryKey: ["integrations"] });
+    },
+    onError: (error) => {
+      setDiscoveryResult({
+        success: false,
+        message: error instanceof Error ? error.message : "Device discovery failed. Please try again.",
+      });
+      void qc.invalidateQueries({ queryKey: ["integrations"] });
+    },
+  });
+
+  const fields = integrationFields(integration);
   const meta = CATEGORY_META[integration.category];
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-sm anim-fade-in">
       <div aria-hidden className="absolute inset-0" onClick={onClose} />
       <aside
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-label={`Configure ${integration.name}`}
@@ -354,12 +457,13 @@ function ConfigDrawer({
         >
           <div className="grid gap-4 md:grid-cols-2">
             <div>
-              <label className="field-label text-[12px] font-bold text-slate-700">Managed by</label>
-              <input className="field mt-1 w-full bg-slate-50" value={integration.managedBy} readOnly />
+              <label htmlFor={`integration-${integration.id}-managed-by`} className="field-label text-[12px] font-bold text-slate-700">Managed by</label>
+              <input id={`integration-${integration.id}-managed-by`} className="field mt-1 w-full bg-slate-50" value={integration.managedBy} readOnly />
             </div>
             <div>
-              <label className="field-label text-[12px] font-bold text-slate-700">Tenant scope</label>
+              <label htmlFor={`integration-${integration.id}-tenant-scope`} className="field-label text-[12px] font-bold text-slate-700">Tenant scope</label>
               <input
+                id={`integration-${integration.id}-tenant-scope`}
                 className="field mt-1 w-full bg-slate-50"
                 value={integration.scope === "platform" ? "Platform-wide" : `Tenant ${integration.tenantId}`}
                 readOnly
@@ -381,10 +485,12 @@ function ConfigDrawer({
 
             {fields.map((field) => {
               const secretSet = isSecretField(field.key) && isRedactedValue(integration.config[field.key]);
+              const inputId = `integration-${integration.id}-${field.key}`;
               return (
                 <div key={field.key}>
-                  <label className="field-label text-[12px] font-bold text-slate-700">{field.label}</label>
+                  <label htmlFor={inputId} className="field-label text-[12px] font-bold text-slate-700">{field.label}</label>
                   <input
+                    id={inputId}
                     type={field.type}
                     className="field mt-1 w-full"
                     value={form[field.key] ?? ""}
@@ -412,6 +518,79 @@ function ConfigDrawer({
             </div>
           )}
 
+          {integration.key === "samsara" && (
+            <section aria-labelledby={`samsara-readiness-${integration.id}`} className="rounded-2xl border border-teal-200 bg-teal-50/50 p-4">
+              <h3 id={`samsara-readiness-${integration.id}`} className="text-xs font-bold uppercase tracking-[0.18em] text-teal-700">
+                Discover → Map → Validate
+              </h3>
+              <p className="mt-1 text-xs leading-5 text-slate-600">
+                These are evidence-bearing steps. A catalog entry or provider name never counts as a verified device mapping.
+              </p>
+              <ol className="mt-3 space-y-3">
+                <li className="rounded-xl border border-teal-100 bg-white p-3">
+                  <p className="text-sm font-bold text-slate-800">1. Discover provider vehicles</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Save the tenant token, run the real provider handshake below, then run a bounded discovery pass. Discovery persists provider device identities and unmatched history without guessing an asset mapping.
+                    {(testResult?.success || integration.lastTestOk) ? " Handshake evidence is present for this connector state." : " No successful handshake is currently shown."}
+                  </p>
+                  <button
+                    type="button"
+                    className="btn-ghost mt-2 text-xs"
+                    disabled={!canManage || discoverMut.isPending || !(testResult?.success || integration.lastTestOk)}
+                    onClick={() => {
+                      setDiscoveryResult(null);
+                      discoverMut.mutate();
+                    }}
+                  >
+                    {discoverMut.isPending ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Radar className="h-3.5 w-3.5" />}
+                    {discoverMut.isPending ? "Discovering..." : "Run device discovery"}
+                  </button>
+                  {discoveryResult && (
+                    <div role="status" aria-live="polite" className={`mt-2 rounded-lg border px-3 py-2 text-xs ${discoveryResult.success ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-red-200 bg-red-50 text-red-700"}`}>
+                      <p className="font-semibold">{discoveryResult.message}</p>
+                      {discoveryResult.details ? (
+                        <p className="mt-1 tabular-nums">
+                          Seen {Number(discoveryResult.details.vehiclesSeen ?? 0)} · Unmatched {Number(discoveryResult.details.unmatched ?? 0)} · Rejected {Number(discoveryResult.details.rejected ?? 0)}
+                        </p>
+                      ) : null}
+                    </div>
+                  )}
+                </li>
+                <li className="rounded-xl border border-teal-100 bg-white p-3">
+                  <p className="text-sm font-bold text-slate-800">2. Map discovered devices</p>
+                  <p className="mt-1 text-xs text-slate-500">Review each discovered Samsara device and create an effective-dated installation. OpsTrax does not infer ownership from a provider vehicle name.</p>
+                  <Link className="btn-ghost mt-2 inline-flex text-xs" to="/iot-devices">Open device mapping</Link>
+                </li>
+                <li className="rounded-xl border border-teal-100 bg-white p-3">
+                  <p className="text-sm font-bold text-slate-800">3. Validate telemetry lineage</p>
+                  <p className="mt-1 text-xs text-slate-500">Run a bounded sync and review written, unmatched, historical-only, and rejected counts.</p>
+                  <button
+                    type="button"
+                    className="btn-ghost mt-2 text-xs"
+                    disabled={!canManage || validateMut.isPending || !(testResult?.success || integration.lastTestOk)}
+                    onClick={() => {
+                      setValidationResult(null);
+                      validateMut.mutate();
+                    }}
+                  >
+                    {validateMut.isPending ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
+                    {validateMut.isPending ? "Validating..." : "Run validation sync"}
+                  </button>
+                  {validationResult && (
+                    <div role="status" aria-live="polite" className={`mt-2 rounded-lg border px-3 py-2 text-xs ${validationResult.success ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-red-200 bg-red-50 text-red-700"}`}>
+                      <p className="font-semibold">{validationResult.message}</p>
+                      {validationResult.details ? (
+                        <p className="mt-1 tabular-nums">
+                          Written {Number(validationResult.details.positionsWritten ?? 0)} · Unmatched {Number(validationResult.details.unmatched ?? 0)} · Historical {Number(validationResult.details.historicalOnly ?? 0)} · Rejected {Number(validationResult.details.rejected ?? 0)}
+                        </p>
+                      ) : null}
+                    </div>
+                  )}
+                </li>
+              </ol>
+            </section>
+          )}
+
           {testResult && (
             <div
               role="status"
@@ -427,7 +606,14 @@ function ConfigDrawer({
               ) : (
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
               )}
-              <span className="font-medium">{testResult.message}</span>
+              <div>
+                <span className="font-medium">{testResult.message}</span>
+                {testResult.success && testResult.details && "sampleVehicleCount" in testResult.details ? (
+                  <p className="mt-1 text-xs font-semibold opacity-80">
+                    Provider handshake returned {Number(testResult.details.sampleVehicleCount ?? 0)} sample vehicle record(s).
+                  </p>
+                ) : null}
+              </div>
             </div>
           )}
 
@@ -1062,8 +1248,9 @@ export function IntegrationsPage() {
   const [statusFilter, setStatusFilter] = useState<string>("All");
   const [search, setSearch] = useState("");
   const [configTarget, setConfigTarget] = useState<IntegrationRecord | null>(null);
-  // Live "Test Connection" result banner — surfaces the REAL provider handshake result.
-  const [testResult, setTestResult] = useState<{ id: number; success: boolean; message: string } | null>(null);
+  // Provider operations surface their exact backend verdict and counts; success is
+  // never inferred from a button click or from catalog presence.
+  const [operationResult, setOperationResult] = useState<IntegrationOperationResult | null>(null);
   // Custom-connector create/edit dialog. { mode: "create" } opens an empty form;
   // { mode: "edit", record } prefills from an existing custom connector.
   const [connectorDialog, setConnectorDialog] = useState<
@@ -1139,24 +1326,41 @@ export function IntegrationsPage() {
     return order.map((cat) => [cat, map.get(cat)!] as const);
   }, [filtered]);
 
-  const connectMut = useMutation({
-    mutationFn: (id: number) => integrationsApi.connect(id),
-    onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: ["integrations"] });
-    },
-  });
-
   const disconnectMut = useMutation({
     mutationFn: (id: number) => integrationsApi.disconnect(id),
-    onSuccess: async () => {
+    onSuccess: async (_result, id) => {
+      setOperationResult({
+        id,
+        kind: "Disconnect",
+        success: true,
+        message: "Disconnected. The stored credential and sync cursor were removed from OpsTrax. Revoke the token in the provider portal as well.",
+      });
       await qc.invalidateQueries({ queryKey: ["integrations"] });
+    },
+    onError: (error, id) => {
+      setOperationResult({
+        id,
+        kind: "Disconnect",
+        success: false,
+        message: error instanceof Error ? error.message : "Disconnect failed. Please try again.",
+      });
     },
   });
 
   const syncMut = useMutation({
     mutationFn: (id: number) => integrationsApi.sync(id),
-    onSuccess: async () => {
+    onSuccess: async (result, id) => {
+      setOperationResult({ id, kind: "Sync", success: result.success, message: result.message, details: result.details });
       await qc.invalidateQueries({ queryKey: ["integrations"] });
+    },
+    onError: (error, id) => {
+      setOperationResult({
+        id,
+        kind: "Sync",
+        success: false,
+        message: error instanceof Error ? error.message : "Sync failed. Please try again.",
+      });
+      void qc.invalidateQueries({ queryKey: ["integrations"] });
     },
   });
 
@@ -1165,12 +1369,13 @@ export function IntegrationsPage() {
   const testMut = useMutation({
     mutationFn: (id: number) => integrationsApi.testConnection(id),
     onSuccess: async (result: IntegrationTestResult, id: number) => {
-      setTestResult({ id, success: result.success, message: result.message });
+      setOperationResult({ id, kind: "Connection", success: result.success, message: result.message, details: result.details });
       await qc.invalidateQueries({ queryKey: ["integrations"] });
     },
     onError: (error, id: number) => {
-      setTestResult({
+      setOperationResult({
         id,
+        kind: "Connection",
         success: false,
         message: error instanceof Error ? error.message : "Connection test failed. Please try again.",
       });
@@ -1180,8 +1385,16 @@ export function IntegrationsPage() {
 
   function handleTest(id: number) {
     if (!canManage) return;
-    setTestResult(null);
+    setOperationResult(null);
     testMut.mutate(id);
+  }
+
+  function handleDisconnect(integration: IntegrationRecord) {
+    if (!canManage) return;
+    const ok = window.confirm(
+      `Disconnect ${integration.name}? OpsTrax will remove the stored credential and sync cursor. You must also revoke the credential in the provider portal.`,
+    );
+    if (ok) disconnectMut.mutate(integration.id);
   }
 
   const deleteMut = useMutation({
@@ -1205,7 +1418,7 @@ export function IntegrationsPage() {
   }
 
   const busy =
-    connectMut.isPending || disconnectMut.isPending || syncMut.isPending || deleteMut.isPending;
+    disconnectMut.isPending || syncMut.isPending || deleteMut.isPending;
 
   if (q.isLoading) return <LoadingState />;
   if (q.isError) {
@@ -1265,17 +1478,17 @@ export function IntegrationsPage() {
         </div>
       )}
 
-      {testResult && (
+      {operationResult && (
         <div
           role="status"
           aria-live="polite"
           className={`flex items-start gap-3 rounded-xl border px-4 py-3 ${
-            testResult.success
+            operationResult.success
               ? "border-emerald-200 bg-emerald-50 text-emerald-800"
               : "border-red-200 bg-red-50 text-red-700"
           }`}
         >
-          {testResult.success ? (
+          {operationResult.success ? (
             <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
           ) : (
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
@@ -1283,20 +1496,25 @@ export function IntegrationsPage() {
           <div className="min-w-0 flex-1">
             <p className="text-[11px] font-bold uppercase tracking-[0.14em]">
               {(() => {
-                const name = integrations.find((item) => item.id === testResult.id)?.name;
-                const label = testResult.success ? "Connection successful" : "Connection failed";
+                const name = integrations.find((item) => item.id === operationResult.id)?.name;
+                const label = `${operationResult.kind} ${operationResult.success ? "successful" : "failed"}`;
                 return name ? `${label} · ${name}` : label;
               })()}
             </p>
-            <p className="mt-0.5 text-sm font-medium">{testResult.message}</p>
+            <p className="mt-0.5 text-sm font-medium">{operationResult.message}</p>
+            {operationResult.kind === "Sync" && operationResult.details ? (
+              <p className="mt-1 text-xs font-semibold tabular-nums opacity-80">
+                Positions written: {Number(operationResult.details.positionsWritten ?? 0)} · Vehicles seen: {Number(operationResult.details.vehiclesSeen ?? 0)} · Unmatched: {Number(operationResult.details.unmatched ?? 0)} · Historical only: {Number(operationResult.details.historicalOnly ?? 0)} · Rejected: {Number(operationResult.details.rejected ?? 0)}
+              </p>
+            ) : null}
           </div>
           <button
             type="button"
             aria-label="Dismiss connection test result"
             className={`shrink-0 rounded-lg p-1 transition ${
-              testResult.success ? "hover:bg-emerald-100" : "hover:bg-red-100"
+              operationResult.success ? "hover:bg-emerald-100" : "hover:bg-red-100"
             }`}
-            onClick={() => setTestResult(null)}
+            onClick={() => setOperationResult(null)}
           >
             <X className="h-4 w-4" />
           </button>
@@ -1308,6 +1526,7 @@ export function IntegrationsPage() {
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
             <input
+              id="integration-search"
               className="field w-64 pl-8 text-sm"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
@@ -1397,8 +1616,8 @@ export function IntegrationsPage() {
                         canManage={canManage}
                         busy={busy}
                         testing={testMut.isPending && testMut.variables === integration.id}
-                        onConnect={() => connectMut.mutate(integration.id)}
-                        onDisconnect={() => disconnectMut.mutate(integration.id)}
+                        onConnect={() => setConfigTarget(integration)}
+                        onDisconnect={() => handleDisconnect(integration)}
                         onSync={() => syncMut.mutate(integration.id)}
                         onTest={() => handleTest(integration.id)}
                         onConfigure={() => setConfigTarget(integration)}
