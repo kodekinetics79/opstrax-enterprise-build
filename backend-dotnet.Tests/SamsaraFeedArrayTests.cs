@@ -59,14 +59,41 @@ public sealed class SamsaraFeedArrayTests
     }
 
     [Theory]
-    [InlineData("speedMilesPerHour")]
-    [InlineData("headingDegrees")]
-    public void ValidButUnrepresentableOptionalMeasurementPausesPageInsteadOfInventingZero(string field)
+    [InlineData("speedMilesPerHour", "SpeedMph", false)]
+    [InlineData("speedMilesPerHour", "SpeedMph", true)]
+    [InlineData("headingDegrees", "Heading", false)]
+    [InlineData("headingDegrees", "Heading", true)]
+    public void MissingOptionalMeasurementRemainsUnknownWithoutDroppingNeighbours(string field, string output, bool explicitNull)
     {
         var gps = Gps(1);
-        gps.Remove(field);
-        var error = Assert.Throws<InvalidDataException>(() => Parse(Page(Vehicle("synthetic-A", Gps(0), gps))));
-        Assert.Contains(field, error.Message, StringComparison.Ordinal);
+        if (explicitNull) gps[field] = null; else gps.Remove(field);
+        var parsed = Parse(Page(Vehicle("synthetic-A", Gps(0), gps)));
+        Assert.Equal(0, parsed.GetProperty("Rejected").GetInt32());
+        var readings = parsed.GetProperty("Readings");
+        Assert.Equal(2, readings.GetArrayLength());
+        Assert.Equal(JsonValueKind.Number, readings[0].GetProperty(output).ValueKind);
+        Assert.Equal(JsonValueKind.Null, readings[1].GetProperty(output).ValueKind);
+    }
+
+    [Fact]
+    public void ExplicitZeroMeasurementsRemainKnownZero()
+    {
+        var gps = Gps(0);
+        gps["speedMilesPerHour"] = 0; gps["headingDegrees"] = 0;
+        var reading = Parse(Page(Vehicle("synthetic-A", gps))).GetProperty("Readings")[0];
+        Assert.Equal(0d, reading.GetProperty("SpeedMph").GetDouble());
+        Assert.Equal(0, reading.GetProperty("Heading").GetInt32());
+    }
+
+    [Theory]
+    [InlineData("speedMilesPerHour", "\"40\"")]
+    [InlineData("speedMilesPerHour", "false")]
+    [InlineData("headingDegrees", "{}")]
+    [InlineData("headingDegrees", "[]")]
+    public void MalformedOptionalMeasurementIsNotSilentlyConvertedToUnknown(string field, string value)
+    {
+        var gps = Gps(0); gps[field] = JsonNode.Parse(value);
+        Assert.Contains(field, Assert.Throws<InvalidDataException>(() => Parse(Page(Vehicle("synthetic-A", gps)))).Message);
     }
 
     [Fact]
@@ -98,6 +125,23 @@ public sealed class SamsaraFeedArrayTests
         Assert.Equal(2, readings.GetArrayLength());
         Assert.Equal(359, readings[0].GetProperty("Heading").GetInt32());
         Assert.Equal(0, readings[1].GetProperty("Heading").GetInt32());
+    }
+
+    [Fact]
+    public async Task PartialGpsWriterIsDefaultOffAndDoesNotConsumeAPageBeforeReaderApproval()
+    {
+        var gps = Gps(0); gps.Remove("speedMilesPerHour");
+        // No Database is registered: reaching a DB scope would fail this specific
+        // deployment-guard assertion. Parsing remains supported independently.
+        var connector = SamsaraResponseBoundsTests.Connector(_ =>
+            Task.FromResult(SamsaraResponseBoundsTests.Json(Page(Vehicle("synthetic-A", gps)).ToJsonString())));
+        using var body = SamsaraResponseBoundsTests.OperationBody("retained-before-opt-in");
+        var result = await connector.RunActionAsync("sync", new Dictionary<string, string?> { ["apiToken"] = "synthetic-token" }, body.RootElement, CancellationToken.None);
+        Assert.False(result.Success);
+        Assert.Contains("Samsara:AllowPartialGpsMeasurements", result.Message);
+        Assert.Equal(0, result.Details!["pagesCommitted"]);
+        Assert.Equal(0, result.Details["positionsWritten"]);
+        Assert.Null(result.Details["nextCursor"]);
     }
 
     [Fact]

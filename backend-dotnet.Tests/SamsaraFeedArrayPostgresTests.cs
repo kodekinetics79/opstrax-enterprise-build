@@ -37,7 +37,7 @@ public sealed class SamsaraFeedArrayPostgresTests
             first["pagination"] = new JsonObject { ["endCursor"] = "complete-1", ["hasNextPage"] = true };
 
             var badGps = SamsaraFeedArrayTests.Gps(20);
-            badGps.Remove("headingDegrees");
+            badGps["headingDegrees"] = "malformed";
             var bad = wrongContainer
                 ? new JsonObject { ["id"] = $"bad-{suffix}", ["gps"] = SamsaraFeedArrayTests.Gps(20) }
                 : SamsaraFeedArrayTests.Vehicle($"bad-{suffix}", badGps);

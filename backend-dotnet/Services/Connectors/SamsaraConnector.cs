@@ -193,7 +193,8 @@ public sealed class SamsaraConnector(
         try
         {
             using var client = Client(token!);
-            var sync = new SamsaraSync(client, scopeFactory, logger);
+            var sync = new SamsaraSync(client, scopeFactory, logger,
+                configuration.GetValue<bool>("Samsara:AllowPartialGpsMeasurements"));
             var seenCursors = new HashSet<string>(StringComparer.Ordinal);
             if (!string.IsNullOrWhiteSpace(cursor)) seenCursors.Add(cursor);
             var completed = false;

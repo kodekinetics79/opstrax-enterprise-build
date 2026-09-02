@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { API_BASE_URL, apiClient, unwrap } from "@/services/apiClient";
 import type { AnyRecord } from "@/types";
+import { optionalTelemetryHeading, readSpeedMph } from "@/utils/telemetryMeasurements";
 
 export type VehiclePosition = {
   vehicleCode: string;
@@ -8,8 +9,8 @@ export type VehiclePosition = {
   driverId: number | null;
   lat: number;
   lng: number;
-  speedMph: number;
-  heading: number;
+  speedMph: number | null;
+  heading: number | null;
   eventType: string;
   engineStatus: string | null;
   fuelLevel: number | null;
@@ -48,8 +49,8 @@ function toPosition(r: AnyRecord): VehiclePosition {
     driverId:         r["driverId"]    != null ? Number(r["driverId"])    : null,
     lat:              numeric(r["lat"]),
     lng:              numeric(r["lng"]),
-    speedMph:         numeric(r["speedMph"] ?? r["speed_mph"]),
-    heading:          numeric(r["heading"]),
+    speedMph:         readSpeedMph(r),
+    heading:          optionalTelemetryHeading(r["heading"]),
     eventType:        String(r["eventType"] ?? r["event_type"] ?? "ping"),
     engineStatus:     r["engineStatus"] != null ? String(r["engineStatus"]) : null,
     fuelLevel:        r["fuelLevel"]    != null ? Number(r["fuelLevel"])    : null,

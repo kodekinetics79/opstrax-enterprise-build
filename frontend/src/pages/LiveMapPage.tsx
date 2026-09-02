@@ -27,6 +27,7 @@ import { LiveMap } from "@/components/LiveMap";
 import { useLiveTelemetry } from "@/hooks/useLiveTelemetry";
 import { AiInsightCard, ErrorState, LoadingState, PageHeader, RiskBadge, StatusBadge, labelize } from "@/components/ui";
 import type { AnyRecord } from "@/types";
+import { readSpeedMph, telemetryMotion } from "@/utils/telemetryMeasurements";
 import {
   classifySource,
   sourceLabel,
@@ -141,11 +142,7 @@ function statusBucket(entity: AnyRecord): StatusBucket {
   if (entity.isStale === true || /stale|offline/.test(serverFreshness)) return "Offline";
   if (!hasFreshnessAge) return "Unknown";
   if (serverFreshness && !/live|fresh|online|healthy|delayed/.test(serverFreshness)) return "Unknown";
-  const status = String(entity.status ?? "").toLowerCase();
-  const speedRaw = entity.speedMph ?? entity.speed_mph;
-  const speed = speedRaw != null && Number.isFinite(Number(speedRaw)) ? Number(speedRaw) : null;
-  if ((speed != null && speed > 3) || /active|on route|moving|driving|en route/.test(status)) return "Moving";
-  return "Idle";
+  return telemetryMotion(readSpeedMph(entity));
 }
 
 function matchesFilter(entity: AnyRecord, filter: string): boolean {
@@ -845,10 +842,7 @@ function ReplayPanel({
   onRetry: () => void;
 }) {
   const hasTrail = totalPoints > 0;
-  const pointSpeed = currentPoint?.speedMph ?? currentPoint?.speed_mph;
-  const speedMph = pointSpeed != null && Number.isFinite(Number(pointSpeed))
-    ? Number(pointSpeed)
-    : null;
+  const speedMph = currentPoint ? readSpeedMph(currentPoint) : null;
   return (
     <div className="pointer-events-auto absolute inset-x-3 bottom-3 z-[500] rounded-2xl border border-amber-300 bg-white/95 p-3 shadow-xl backdrop-blur sm:inset-x-4 sm:bottom-4 sm:p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1079,8 +1073,7 @@ const ROSTER_DOT: Record<StatusBucket, string> = {
 
 function RosterRow({ entity, onClick }: { entity: AnyRecord; onClick: () => void }) {
   const bucket = statusBucket(entity);
-  const speedRaw = entity.speedMph ?? entity.speed_mph;
-  const speed = speedRaw != null && Number.isFinite(Number(speedRaw)) ? Number(speedRaw) : null;
+  const speed = readSpeedMph(entity);
   const driver = String(entity.driverName ?? entity.driver_name ?? "Unassigned");
   const label = String(entity.label ?? entity.vehicleCode ?? "Vehicle");
   const sspRaw = entity.secondsSincePing ?? entity.seconds_since_ping;

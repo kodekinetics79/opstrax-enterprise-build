@@ -8,7 +8,7 @@ namespace Opstrax.Api.Services.Connectors;
 // The Samsara → OpsTrax data pipeline. Pulls the vehicle stats feed and writes GPS
 // into the live-position tables the map reads. Kept separate from the connector so
 // it is unit-focused: one public RunAsync that does fetch → match → write → refresh.
-public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFactory, ILogger logger)
+public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFactory, ILogger logger, bool allowPartialGpsMeasurements = false)
 {
     public sealed record SyncSummary(
         int VehiclesSeen,
@@ -21,7 +21,7 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
 
     private sealed record ParsedFeed(List<SamsaraGps> Readings, int Rejected);
 
-    private sealed record SamsaraGps(string VehicleId, string? Name, double Lat, double Lng, double SpeedMph, int Heading, DateTime EventTime, double? OdometerMiles, string? EngineState);
+    private sealed record SamsaraGps(string VehicleId, string? Name, double Lat, double Lng, double? SpeedMph, int? Heading, DateTime EventTime, double? OdometerMiles, string? EngineState);
 
     public async Task<SyncSummary> RunAsync(
         ConnectorOperationContext operation,
@@ -41,6 +41,10 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
 
         if (readings.Count == 0)
             return new SyncSummary(0, 0, 0, 0, parsed.Rejected, nextCursor, hasNext);
+
+        var hasPartialGps = readings.Any(r => r.SpeedMph is null || r.Heading is null);
+        if (hasPartialGps && !allowPartialGpsMeasurements)
+            throw new InvalidDataException("Partial GPS is paused until NULL-compatible readers and schema are verified and Samsara:AllowPartialGpsMeasurements is enabled; the page was not consumed.");
 
         // 2/3. Match + write inside one system transaction (cross-tenant background write
         //      under RLS), then refresh the live-asset projection so the map/SSE update.
@@ -71,6 +75,18 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
             // effect. If this transaction won, disconnect waits and returns only after
             // the committed data has been followed by connector invalidation.
             await ConnectorOperationLease.AssertCurrentForWriteAsync(db, operation, ct);
+            if (hasPartialGps)
+            {
+                // Never consume partial GPS against an old schema or silently replace
+                // missing measurements with defaults. The owner migration is required;
+                // a runtime writer must not repair schema or assume it was deployed.
+                var nullableColumns = await db.ScalarLongAsync(@"SELECT COUNT(*) FROM information_schema.columns
+                    WHERE table_schema='public'
+                      AND table_name IN ('location_events','latest_vehicle_positions','telemetry_live_asset_states')
+                      AND column_name IN ('speed_mph','heading') AND is_nullable='YES'", ct: ct);
+                if (nullableColumns != 6)
+                    throw new InvalidDataException("Partial GPS requires the optional-measurement schema migration; the page was not consumed.");
+            }
             foreach (var r in readings)
             {
                 var (telemetryStatus, riskLevel) =
@@ -112,8 +128,8 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
                         c.Parameters.AddWithValue("@driverId", (object?)identity?.DriverId ?? DBNull.Value);
                         c.Parameters.AddWithValue("@lat", (decimal)r.Lat);
                         c.Parameters.AddWithValue("@lng", (decimal)r.Lng);
-                        c.Parameters.AddWithValue("@spd", (decimal)r.SpeedMph);
-                        c.Parameters.AddWithValue("@hdg", (short)Math.Clamp(r.Heading, 0, 359));
+                        c.Parameters.AddWithValue("@spd", r.SpeedMph is { } spd ? (object)(decimal)spd : DBNull.Value);
+                        c.Parameters.AddWithValue("@hdg", r.Heading is { } hdg ? (object)(short)hdg : DBNull.Value);
                         c.Parameters.AddWithValue("@eng", (object?)r.EngineState ?? DBNull.Value);
                         c.Parameters.AddWithValue("@odo", (object?)(r.OdometerMiles is { } o ? (decimal)o : (object?)null) ?? DBNull.Value);
                         c.Parameters.AddWithValue("@idem", $"samsara:{r.VehicleId}:{r.EventTime.Ticks}");
@@ -158,8 +174,8 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
                         c.Parameters.AddWithValue("@driverId", (object?)identity.DriverId ?? DBNull.Value);
                         c.Parameters.AddWithValue("@lat", (decimal)r.Lat);
                         c.Parameters.AddWithValue("@lng", (decimal)r.Lng);
-                        c.Parameters.AddWithValue("@spd", (decimal)r.SpeedMph);
-                        c.Parameters.AddWithValue("@hdg", (short)Math.Clamp(r.Heading, 0, 359));
+                        c.Parameters.AddWithValue("@spd", r.SpeedMph is { } spd ? (object)(decimal)spd : DBNull.Value);
+                        c.Parameters.AddWithValue("@hdg", r.Heading is { } hdg ? (object)(short)hdg : DBNull.Value);
                         // Missing engine evidence must agree with history; a GPS fix
                         // alone cannot establish that the engine is running.
                         c.Parameters.AddWithValue("@eng", (object?)r.EngineState ?? DBNull.Value);
@@ -255,7 +271,7 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
         var speedThreshold = await db.ScalarDecimalAsync(
             "SELECT threshold_value FROM telemetry_rules WHERE company_id=@cid AND rule_type='speeding' AND enabled=TRUE LIMIT 1",
             c => c.Parameters.AddWithValue("@cid", companyId), ct) ?? 65m;
-        if ((decimal)reading.SpeedMph > speedThreshold)
+        if (reading.SpeedMph is { } observedSpeed && (decimal)observedSpeed > speedThreshold)
         {
             await db.ExecuteAsync(
                 @"INSERT INTO telemetry_alerts
@@ -446,15 +462,14 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
                 if (time < new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc) || time > DateTime.UtcNow.AddMinutes(5))
                 { rejected++; continue; }
 
-                // These fields are optional at Samsara, but our current storage is NOT
-                // NULL-capable. Pause resumably before any page writes rather than
-                // invent zero or discard a valid location. Nullable storage is a separate
-                // explicit readiness dependency, not an implicit provider requirement.
-                var speed = Number(gps, "speedMilesPerHour") ?? throw Unrepresentable("speedMilesPerHour");
-                var bearing = Number(gps, "headingDegrees") ?? throw Unrepresentable("headingDegrees");
-                if (!double.IsFinite(speed) || speed is < 0 or > 200 || !double.IsFinite(bearing) || bearing is < 0 or > 360)
+                // Valid GPS does not require these optional measurements. Preserve
+                // absence explicitly; malformed provided values are not "unknown".
+                var speed = OptionalNumber(gps, "speedMilesPerHour");
+                var bearing = OptionalNumber(gps, "headingDegrees");
+                if (speed is { } s && (!double.IsFinite(s) || s is < 0 or > 200)
+                    || bearing is { } b && (!double.IsFinite(b) || b is < 0 or > 360))
                 { rejected++; continue; }
-                var heading = (int)Math.Floor(bearing % 360); // existing whole-degree storage
+                int? heading = bearing is { } degrees ? (int)Math.Floor(degrees % 360) : null;
 
                 var decorations = gps.TryGetProperty("decorations", out var dec) ? dec : default;
                 if (decorations.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null or JsonValueKind.Object))
@@ -482,8 +497,13 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
         value.TryGetProperty(property, out var number) && number.ValueKind == JsonValueKind.Number && number.TryGetDouble(out var result)
             ? result : null;
 
-    private static InvalidDataException Unrepresentable(string field) =>
-        new($"GPS {field} is unavailable. Samsara permits missing measurements, but current OpsTrax storage cannot represent them; the page was not consumed.");
+    private static double? OptionalNumber(JsonElement gps, string field)
+    {
+        if (!gps.TryGetProperty(field, out var value) || value.ValueKind == JsonValueKind.Null) return null;
+        if (value.ValueKind != JsonValueKind.Number || !value.TryGetDouble(out var number))
+            throw new InvalidDataException($"GPS {field} must be a number when supplied; the page was not consumed.");
+        return number;
+    }
 
     private static JsonElement DecorationValue(JsonElement decorations, string property)
     {

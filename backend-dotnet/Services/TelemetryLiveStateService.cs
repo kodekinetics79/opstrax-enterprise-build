@@ -28,9 +28,9 @@ public sealed class TelemetryLiveStateService(Database db)
         var openAlertSeverity = row.TryGetValue("openAlertSeverity", out var alertSeverityRaw)
             ? alertSeverityRaw?.ToString() ?? string.Empty
             : string.Empty;
-        var speedMph = row.TryGetValue("speedMph", out var speedRaw) && speedRaw is not null
+        decimal? speedMph = row.TryGetValue("speedMph", out var speedRaw) && speedRaw is not null
             ? Convert.ToDecimal(speedRaw, CultureInfo.InvariantCulture)
-            : 0m;
+            : null;
         var speedThreshold = await GetRuleThresholdAsync(companyId, "speeding", 65m, ct);
         var staleThreshold = await GetRuleThresholdAsync(companyId, "stale_device", 900m, ct);
 
@@ -54,6 +54,8 @@ public sealed class TelemetryLiveStateService(Database db)
             "stale" => "Check device heartbeat and field power",
             "watch" when speedMph > speedThreshold => "Review speeding and driver coaching",
             "watch" when openAlerts > 0 => "Review open telemetry alerts",
+            _ when speedMph is null => "Speed unavailable; movement not established",
+            _ when Value(row, "heading") is null => "Heading unavailable",
             _ => "No action required"
         };
 
@@ -68,6 +70,8 @@ public sealed class TelemetryLiveStateService(Database db)
             openAlertSeverity,
             staleSeconds,
             nextAction,
+            speedKnown = speedMph is not null,
+            headingKnown = Value(row, "heading") is not null,
             lastAlertType = row.TryGetValue("lastAlertType", out var lastAlertRaw) ? lastAlertRaw?.ToString() : null,
             vehicleCode = row.TryGetValue("vehicleCode", out var vehicleCodeRaw) ? vehicleCodeRaw?.ToString() : null,
             deviceSerial = row.TryGetValue("deviceSerial", out var deviceSerialRaw) ? deviceSerialRaw?.ToString() : null,
@@ -123,8 +127,8 @@ public sealed class TelemetryLiveStateService(Database db)
                 c.Parameters.AddWithValue("@driverName", Value(row, "driverName", "driver_name") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@lat", Value(row, "lat") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@lng", Value(row, "lng") ?? DBNull.Value);
-                c.Parameters.AddWithValue("@speedMph", Value(row, "speedMph", "speed_mph") ?? 0m);
-                c.Parameters.AddWithValue("@heading", Value(row, "heading") ?? 0);
+                c.Parameters.AddWithValue("@speedMph", Value(row, "speedMph", "speed_mph") ?? DBNull.Value);
+                c.Parameters.AddWithValue("@heading", Value(row, "heading") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@engineStatus", Value(row, "engineStatus", "engine_status") ?? DBNull.Value);
                 c.Parameters.AddWithValue("@telemetryStatus", telemetryStatus);
                 c.Parameters.AddWithValue("@riskLevel", riskLevel);
@@ -479,7 +483,7 @@ public sealed class TelemetryLiveStateService(Database db)
             ["deviceSerial"] = Value(device, "device_serial", "deviceSerial"),
             ["lat"] = null,
             ["lng"] = null,
-            ["speedMph"] = 0m,
+            ["speedMph"] = null,
             ["heading"] = null,
             ["secondsSincePing"] = Value(device, "seconds_since_ping", "secondsSincePing"),
             ["isStale"] = false,
