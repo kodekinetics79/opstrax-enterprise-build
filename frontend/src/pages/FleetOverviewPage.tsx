@@ -20,6 +20,15 @@ type VStatus = "Active" | "Idle" | "Available" | "Offline" | "OOS" | "Unknown";
 type MStatus = "Healthy" | "Due Soon" | "Overdue" | "Critical" | "Unknown";
 type Signal  = "Online" | "Degraded" | "Offline" | "Unknown";
 
+const COMMAND_STATE_LABELS: Record<VStatus, string> = {
+  Active: "Operational active",
+  Idle: "Operational idle",
+  Available: "Operational available",
+  Offline: "Telemetry offline",
+  OOS: "Dispatch restricted",
+  Unknown: "State unknown",
+};
+
 interface FleetRow {
   id:          string;
   vehicleId:   string;
@@ -36,14 +45,18 @@ interface FleetRow {
 
 const STATUS_TABS = ["All", "Active", "Idle", "Available", "OOS", "Offline", "Unknown"] as const;
 type Tab = typeof STATUS_TABS[number];
+const STATUS_TAB_LABELS: Record<Tab, string> = {
+  All: "All command states",
+  ...COMMAND_STATE_LABELS,
+};
 
 const STATUS_CFG: Record<VStatus, { badge: string; dot: string; label: string }> = {
-  Active:    { badge: "badge badge-success",                                               dot: "bg-emerald-500 animate-pulse", label: "Active" },
-  Idle:      { badge: "badge badge-warning",                                               dot: "bg-amber-400",                 label: "Idle" },
-  Available: { badge: "inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold bg-slate-100 text-slate-600 border border-slate-200", dot: "bg-slate-400", label: "Available" },
-  Offline:   { badge: "badge badge-danger",                                                dot: "bg-red-500",                   label: "Offline" },
-  OOS:       { badge: "inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold bg-red-100 text-red-700 border border-red-200",      dot: "bg-red-500 animate-pulse", label: "OOS" },
-  Unknown:   { badge: "inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold bg-slate-100 text-slate-600 border border-slate-200", dot: "bg-slate-400", label: "Unknown" },
+  Active:    { badge: "badge badge-success",                                               dot: "bg-emerald-500 animate-pulse", label: COMMAND_STATE_LABELS.Active },
+  Idle:      { badge: "badge badge-warning",                                               dot: "bg-amber-400",                 label: COMMAND_STATE_LABELS.Idle },
+  Available: { badge: "inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold bg-slate-100 text-slate-600 border border-slate-200", dot: "bg-slate-400", label: COMMAND_STATE_LABELS.Available },
+  Offline:   { badge: "badge badge-danger",                                                dot: "bg-red-500",                   label: COMMAND_STATE_LABELS.Offline },
+  OOS:       { badge: "inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold bg-red-100 text-red-700 border border-red-200",      dot: "bg-red-500 animate-pulse", label: COMMAND_STATE_LABELS.OOS },
+  Unknown:   { badge: "inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold bg-slate-100 text-slate-600 border border-slate-200", dot: "bg-slate-400", label: COMMAND_STATE_LABELS.Unknown },
 };
 
 const MAINT_CFG: Record<MStatus, { cls: string }> = {
@@ -291,7 +304,7 @@ export function FleetOverviewPage() {
             </span>
             <h1 className="mt-1 text-[26px] font-black leading-none tracking-tight text-slate-950">Fleet Command</h1>
             <p className="mt-1.5 text-[12.5px] font-medium text-slate-500">
-              {totalFleet} vehicles tracked · {counts.Active} active · {flagged} flagged for review
+              {totalFleet} vehicles evaluated · {counts.Active} operationally active · {flagged} dispatch flags
             </p>
           </div>
           <div className="ml-auto flex flex-wrap items-center gap-3">
@@ -306,13 +319,17 @@ export function FleetOverviewPage() {
 
       {/* ── Clay status tiles — puffy, pressable fleet filters ────────────── */}
       <div className="grid shrink-0 grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
-        <ClayKpi label="Active"         count={counts.Active}    total={totalFleet} Icon={Truck}       tone="deck-clay-emerald" fill="deck-fill-emerald" icon="text-emerald-700" dot="bg-emerald-500 animate-pulse" active={tab === "Active"}    onClick={() => toggleTab("Active")} />
-        <ClayKpi label="Idle"           count={counts.Idle}      total={totalFleet} Icon={Zap}         tone="deck-clay-amber"   fill="deck-fill-amber"   icon="text-amber-700"   dot="bg-amber-400"                 active={tab === "Idle"}      onClick={() => toggleTab("Idle")} />
-        <ClayKpi label="Available"      count={counts.Available} total={totalFleet} Icon={Clock}       tone="deck-clay-sky"     fill="deck-fill-sky"     icon="text-sky-700"     dot="bg-sky-400"                   active={tab === "Available"} onClick={() => toggleTab("Available")} />
-        <ClayKpi label="Out of Service" count={counts.OOS}       total={totalFleet} Icon={ShieldAlert} tone="deck-clay-red"     fill="deck-fill-red"     icon="text-red-700"     dot="bg-red-500 animate-pulse"     active={tab === "OOS"}       onClick={() => toggleTab("OOS")} />
-        <ClayKpi label="Offline"        count={counts.Offline}   total={totalFleet} Icon={WifiOff}     tone="deck-clay-slate"   fill="deck-fill-slate"   icon="text-slate-600"   dot="bg-slate-400"                 active={tab === "Offline"}   onClick={() => toggleTab("Offline")} />
-        <ClayKpi label="Unknown"        count={counts.Unknown}   total={totalFleet} Icon={Radio}       tone="deck-clay-slate"   fill="deck-fill-slate"   icon="text-slate-600"   dot="bg-slate-400"                 active={tab === "Unknown"}   onClick={() => toggleTab("Unknown")} />
+        <ClayKpi label={COMMAND_STATE_LABELS.Active}    count={counts.Active}    total={totalFleet} Icon={Truck}       tone="deck-clay-emerald" fill="deck-fill-emerald" icon="text-emerald-700" dot="bg-emerald-500 animate-pulse" active={tab === "Active"}    onClick={() => toggleTab("Active")} />
+        <ClayKpi label={COMMAND_STATE_LABELS.Idle}      count={counts.Idle}      total={totalFleet} Icon={Zap}         tone="deck-clay-amber"   fill="deck-fill-amber"   icon="text-amber-700"   dot="bg-amber-400"             active={tab === "Idle"}      onClick={() => toggleTab("Idle")} />
+        <ClayKpi label={COMMAND_STATE_LABELS.Available} count={counts.Available} total={totalFleet} Icon={Clock}       tone="deck-clay-sky"     fill="deck-fill-sky"     icon="text-sky-700"     dot="bg-sky-400"               active={tab === "Available"} onClick={() => toggleTab("Available")} />
+        <ClayKpi label={COMMAND_STATE_LABELS.OOS}       count={counts.OOS}       total={totalFleet} Icon={ShieldAlert} tone="deck-clay-red"     fill="deck-fill-red"     icon="text-red-700"     dot="bg-red-500 animate-pulse" active={tab === "OOS"}       onClick={() => toggleTab("OOS")} />
+        <ClayKpi label={COMMAND_STATE_LABELS.Offline}   count={counts.Offline}   total={totalFleet} Icon={WifiOff}     tone="deck-clay-slate"   fill="deck-fill-slate"   icon="text-slate-600"   dot="bg-slate-400"             active={tab === "Offline"}   onClick={() => toggleTab("Offline")} />
+        <ClayKpi label={COMMAND_STATE_LABELS.Unknown}   count={counts.Unknown}   total={totalFleet} Icon={Radio}       tone="deck-clay-slate"   fill="deck-fill-slate"   icon="text-slate-600"   dot="bg-slate-400"             active={tab === "Unknown"}   onClick={() => toggleTab("Unknown")} />
       </div>
+
+      <p role="note" className="shrink-0 px-1 text-[11px] font-medium text-slate-500">
+        Command-state buckets are mutually exclusive. Dispatch restricted covers maintenance or out-of-service units; when authorized telemetry is visible, offline or unknown telemetry takes precedence. Operational states do not prove connectivity, and Fleet Registry availability is a separate master-data summary.
+      </p>
 
       {/* ── Main deck: roster console + instrument rail ───────────────────── */}
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_324px]">
@@ -328,7 +345,7 @@ export function FleetOverviewPage() {
                   onClick={() => selectTab(t)}
                   className={`deck-seg-btn ${tab === t ? "deck-seg-btn-active" : ""}`}
                 >
-                  {t}
+                  {STATUS_TAB_LABELS[t]}
                   {t !== "All" && (
                     <span className={`ml-1.5 rounded-full px-1.5 py-px text-[10px] font-bold tabular-nums ${
                       tab === t ? "bg-teal-100 text-teal-700" : "bg-slate-200/70 text-slate-500"
@@ -392,7 +409,7 @@ export function FleetOverviewPage() {
                   <tr className="border-b border-slate-200/80">
                     <th className="px-5 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-400">Vehicle</th>
                     <th className="px-3 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-400">Driver</th>
-                    <th className="px-3 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-400">Status</th>
+                    <th className="px-3 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-400">Command state</th>
                     <th className="px-3 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-400">Location</th>
                     <th className="px-3 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-400">Readiness</th>
                     <th className="px-3 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-400">Maint.</th>

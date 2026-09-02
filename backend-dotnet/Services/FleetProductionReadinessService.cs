@@ -41,6 +41,7 @@ public sealed class FleetProductionReadinessService
     private readonly ILogger<FleetProductionReadinessService> log;
     private readonly TimeProvider timeProvider;
     private readonly DateTimeOffset processStartedAt;
+    private readonly PositiveReadinessCache<FleetProductionContractResult> positiveCache;
     internal IReadOnlyList<string> ExpectedCriticalWorkerNames { get; }
 
     public FleetProductionReadinessService(Database db, ILogger<FleetProductionReadinessService> log)
@@ -72,6 +73,13 @@ public sealed class FleetProductionReadinessService
         this.timeProvider = timeProvider;
         this.processStartedAt = processStartedAt;
         ExpectedCriticalWorkerNames = expectedCriticalWorkerNames ?? CriticalWorkerNames;
+        positiveCache = new(
+            PositiveReadinessCache<FleetProductionContractResult>.DefaultDuration,
+            // Never extend startup grace through the cache when a worker has not
+            // yet published a clean heartbeat. Once every raw worker check is
+            // clean, the positive result is safe to reuse for the bounded TTL.
+            result => result.Ready && result.RawCriticalWorkerViolations == 0,
+            timeProvider);
     }
 
     internal bool CriticalWorkerStartupGraceActive =>
@@ -80,7 +88,10 @@ public sealed class FleetProductionReadinessService
     internal int CriticalWorkerStartupGraceRemainingSeconds => Math.Max(0,
         (int)Math.Ceiling((CriticalWorkerStartupGrace - (timeProvider.GetUtcNow() - processStartedAt)).TotalSeconds));
 
-    public async Task<FleetProductionContractResult> CheckAsync(CancellationToken ct = default)
+    public Task<FleetProductionContractResult> CheckAsync(CancellationToken ct = default) =>
+        positiveCache.GetOrRefreshAsync(CheckUncachedAsync, ct);
+
+    private async Task<FleetProductionContractResult> CheckUncachedAsync(CancellationToken ct)
     {
         try
         {
@@ -307,6 +318,9 @@ public sealed class FleetProductionReadinessService
           ('created_at','timestamp with time zone',true,'now()',''),
           ('updated_at','timestamp with time zone',false,'','')
         ), runtime_route_columns(table_name,column_name,data_type,not_null,column_default,identity_kind) AS (VALUES
+          ('documents','lifecycle_mode','character varying(20)',true,'''legacy_unknown''::character varying',''),
+          ('documents','lifecycle_assessed_on','date',false,'',''),
+          ('documents','risk_score','numeric(6,2)',false,'20',''),
           ('companies','country','character varying(2)',false,'',''),
           ('companies','currency','character varying(8)',false,'',''),
           ('users','failed_login_attempts','integer',true,'0',''),
@@ -843,7 +857,15 @@ public sealed class FleetProductionReadinessService
             LEFT JOIN pg_class idx ON idx.oid=to_regclass('public.'||expected.name)
             LEFT JOIN pg_index i ON i.indexrelid=idx.oid
             WHERE idx.oid IS NULL OR i.indisunique OR NOT i.indisvalid OR NOT i.indisready
-              OR pg_get_indexdef(idx.oid)<>expected.definition))::int AS runtime_route_object_violations,
+              OR pg_get_indexdef(idx.oid)<>expected.definition)
+            + CASE WHEN EXISTS (SELECT 1 FROM schema_migrations WHERE version='2026_08_31_stage93_document_lifecycle_provenance')
+                   THEN 0 ELSE 1 END
+            + CASE WHEN EXISTS (SELECT 1 FROM pg_constraint c
+                WHERE c.conrelid=to_regclass('public.documents') AND c.conname='ck_documents_lifecycle_mode'
+                  AND c.contype='c' AND c.convalidated
+                  AND pg_get_expr(c.conbin,c.conrelid,true) =
+                    'lifecycle_mode::text = ANY (ARRAY[''automatic''::character varying, ''manual''::character varying, ''legacy_unknown''::character varying]::text[])')
+                   THEN 0 ELSE 1 END)::int AS runtime_route_object_violations,
           (SELECT COUNT(*)::int FROM fleet_integrity_indexes expected
             LEFT JOIN pg_class idx ON idx.oid=to_regclass('public.'||expected.name)
             LEFT JOIN pg_index i ON i.indexrelid=idx.oid

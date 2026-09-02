@@ -121,18 +121,34 @@ public sealed class Module1BrowserWorkflowContractTests
     {
         var api = Read("frontend", "src", "services", "documentsApi.ts");
         var page = Read("frontend", "src", "pages", "Batch3OperationsPage.tsx");
-        var backend = Read("backend-dotnet", "Controllers", "EndpointMappings.cs");
+        var editor = Read("frontend", "src", "components", "DocumentEditor.tsx");
+        var mappings = Read("backend-dotnet", "Controllers", "EndpointMappings.cs");
+        var lifecycle = Read("backend-dotnet", "Controllers", "DocumentLifecycleEndpoints.cs");
 
         Assert.Contains("new FormData()", api, StringComparison.Ordinal);
         Assert.Contains("/api/documents/upload", api, StringComparison.Ordinal);
-        Assert.Contains("type=\"file\"", page, StringComparison.Ordinal);
+        Assert.Contains("type=\"file\"", editor, StringComparison.Ordinal);
+        Assert.Contains("required={creating && [\"title\", \"entityType\", \"entityId\"].includes(key)}", editor, StringComparison.Ordinal);
         Assert.Contains("kind === \"documents\"", page, StringComparison.Ordinal);
 
-        var upload = Block(backend, "private static async Task<IResult> DocumentUpload(", "// GET /api/documents/{id}/download");
-        Assert.Contains("Choose a vehicle, driver, or asset", upload, StringComparison.Ordinal);
-        Assert.Contains("branch_id=@branchId", upload, StringComparison.Ordinal);
-        Assert.Contains("expires_at", upload, StringComparison.Ordinal);
-        Assert.Contains("Renewal Required", upload, StringComparison.Ordinal);
+        var uploadApi = Block(api, "  upload: (", "  update: (");
+        Assert.Contains("file instanceof File", uploadApi, StringComparison.Ordinal);
+        Assert.Contains("form.append(\"file\", file)", uploadApi, StringComparison.Ordinal);
+        Assert.Contains("Object.entries(payload)", uploadApi, StringComparison.Ordinal);
+        Assert.Contains("/api/documents/upload\", form, sessionBoundRequest(session", uploadApi, StringComparison.Ordinal);
+        var routes = Block(mappings, "app.MapGet(\"/api/documents/summary\"", "// Safety v1 legacy routes forwarded to v2 handlers");
+        Assert.Contains("app.MapPost(\"/api/documents/upload\", DocumentUpload).DisableAntiforgery()", routes, StringComparison.Ordinal);
+        var wrapper = Block(mappings, "private static Task<IResult> DocumentUpload(", "// GET /api/documents/{id}/download");
+        Assert.Contains("UploadLifecycleDocument", wrapper, StringComparison.Ordinal);
+
+        var upload = Block(lifecycle, "private static async Task<IResult> UploadLifecycleDocument(", "\n}");
+        Assert.Contains("DocumentLifecyclePolicy.ValidateFormBoundary", upload, StringComparison.Ordinal);
+        Assert.Contains("CheckDocumentDates(body)", upload, StringComparison.Ordinal);
+        Assert.Contains("DocumentOwner(body)", upload, StringComparison.Ordinal);
+        Assert.Contains("LockDocumentOwners", upload, StringComparison.Ordinal);
+        Assert.Contains("DocumentLifecyclePolicy.Assess", upload, StringComparison.Ordinal);
+        Assert.Contains("files.UploadAsync", upload, StringComparison.Ordinal);
+        Assert.Contains("InsertLifecycleDocument", upload, StringComparison.Ordinal);
         Assert.Contains("files.DeleteAsync(stored.Reference", upload, StringComparison.Ordinal);
     }
 

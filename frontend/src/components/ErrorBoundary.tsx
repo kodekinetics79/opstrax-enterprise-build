@@ -1,5 +1,9 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { AlertTriangle, RefreshCw } from "lucide-react";
+import {
+  moduleLoadRecoveryKey,
+  shouldReloadForDynamicImportFailure,
+} from "@/utils/moduleLoadRecovery";
 
 type Props = {
   children: ReactNode;
@@ -18,6 +22,24 @@ export class ErrorBoundary extends Component<Props, State> {
 
   override componentDidCatch(error: Error, info: ErrorInfo) {
     console.error("Frontend error boundary caught an error", error, info);
+
+    // A tab left open across an atomic deployment can still execute the old
+    // entry bundle and request a hashed lazy chunk that no longer exists on the
+    // stable alias. Reload exactly once per deployment window so the browser
+    // obtains the current entry manifest, while preserving this boundary if the
+    // reload cannot recover.
+    try {
+      const recoveryKey = moduleLoadRecoveryKey(__OPSTRAX_FRONTEND_SHA__);
+      const storedAttempt = window.sessionStorage.getItem(recoveryKey);
+
+      if (shouldReloadForDynamicImportFailure(error, storedAttempt === "attempted")) {
+        window.sessionStorage.setItem(recoveryKey, "attempted");
+        window.location.reload();
+      }
+    } catch {
+      // Storage can be unavailable in hardened browser contexts. Do not reload
+      // without the loop guard; leave the explicit recovery action visible.
+    }
   }
 
   override render() {

@@ -520,6 +520,7 @@ assert.match(branchPage, /actions=\{canManage \? <button/, "Branches must omit A
 assert.match(branchPage, /\{form && canManage && \(/, "a stale branch form must close when fleet mutation permission is lost");
 assert.match(vehiclesPage, /\{canCreate \? \(/, "Vehicles must omit New vehicle for read-only roles");
 assert.match(vehiclesPage, /\{canUpdate \? <button[^>]*>.*Edit/s, "Vehicle detail must omit Edit for read-only roles");
+assert.match(vehiclesModule, /canExport=\{hasPermission\(PERMISSIONS\.VEHICLES_EXPORT\)\}/, "Vehicles overview must omit Export unless the server export grant is present");
 assert.match(driversModule, /\{canManageFleet \? \(/, "Drivers overview must omit New driver for read-only roles");
 assert.match(entityList, /cfg\.api\.create && canCreate/, "fleet rosters must omit Create and Import for read-only roles");
 assert.match(fleetAssets, /\{canManageFleet \? <section[\s\S]*?>Create asset</, "fleet assets must omit inventory-intake controls for read-only roles");

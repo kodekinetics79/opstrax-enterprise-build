@@ -9,7 +9,7 @@ import { WorkspaceExperience } from "@/components/WorkspaceExperience";
 import { modules, moduleIcons } from "@/modules/moduleConfig";
 import { useAuth } from "@/hooks/useAuth";
 import { useFlag } from "@/hooks/useFeatureFlags";
-import { useHasDirectPermission, useHasPermission } from "@/hooks/usePermission";
+import { PERMISSIONS, useHasDirectPermission, useHasPermission } from "@/hooks/usePermission";
 import { useDialogFocus } from "@/hooks/useDialogFocus";
 import { moduleAvailableForCountry, useTenantCountry } from "@/hooks/useTenantRegion";
 import { getLandingRouteForSession } from "@/auth/sessionRouting";
@@ -288,6 +288,12 @@ export function AppShell() {
   const navigate = useNavigate();
   const hasPermission = useHasPermission();
   const hasDirectPermission = useHasDirectPermission();
+  const canViewSettings = hasPermission(PERMISSIONS.SETTINGS_VIEW);
+  const canViewUserManagement = [
+    PERMISSIONS.USERS_VIEW,
+    PERMISSIONS.ROLES_VIEW,
+    PERMISSIONS.SETTINGS_VIEW,
+  ].some(hasDirectPermission);
   const tenantCountry = useTenantCountry();
   const runtimeQuery = useRuntimeDiagnostics();
   const tenantIsExplicitlySynthetic = /\b(demo|synthetic|test)\b/i.test(String(session?.company?.name ?? ""));
@@ -304,6 +310,7 @@ export function AppShell() {
   const mobileNavRef = useDialogFocus<HTMLElement>(mobileOpen, () => setMobileOpen(false));
   const notifRef = useRef<HTMLDivElement>(null);
   const profileRef = useRef<HTMLDivElement>(null);
+  const profileTriggerRef = useRef<HTMLButtonElement>(null);
 
   // live header clock
   useEffect(() => {
@@ -378,10 +385,11 @@ export function AppShell() {
 
   const experience = useMemo(() => getExperienceProfile(location.pathname, currentPageTitle), [location.pathname, currentPageTitle]);
 
-  // close mobile sidebar & notif panel on route change
+  // close transient navigation surfaces on route change
   useEffect(() => {
     setMobileOpen(false);
     setNotifOpen(false);
+    setProfileOpen(false);
   }, [location.pathname]);
 
   // close notif + lang panels on outside click
@@ -393,6 +401,18 @@ export function AppShell() {
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, []);
+
+  useEffect(() => {
+    if (!profileOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setProfileOpen(false);
+      requestAnimationFrame(() => profileTriggerRef.current?.focus());
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [profileOpen]);
 
   const toggleGroup = (g: Group) =>
     setSectionOpen((prev) => {
@@ -547,7 +567,7 @@ export function AppShell() {
       <div className="flex h-screen flex-col overflow-hidden xl:pl-[296px]">
 
         {/* ── Header ── */}
-        <header className="glass-nav shell-header z-20 shrink-0 border-b">
+        <header className="glass-nav shell-header relative z-40 shrink-0 border-b">
           <div className="mx-auto max-w-[1800px] px-4 md:px-6">
             <div className="flex h-[54px] items-center gap-3">
 
@@ -670,7 +690,7 @@ export function AppShell() {
                   </button>
 
                   {notifOpen && (
-                    <div className="panel anim-slide-right absolute right-0 top-full z-50 mt-2 w-[300px] overflow-hidden p-0">
+                    <div style={{ position: "absolute" }} className="panel anim-slide-right absolute right-0 top-full z-50 mt-2 w-[300px] overflow-hidden p-0">
                       <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
                         <p className="section-title">Notifications</p>
                         <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-bold text-slate-500">
@@ -715,9 +735,14 @@ export function AppShell() {
                 {/* Avatar / profile dropdown */}
                 <div className="relative" ref={profileRef}>
                   <button
+                    ref={profileTriggerRef}
                     type="button"
                     className="flex shrink-0 items-center gap-2 rounded-lg border border-transparent px-1 py-1 transition hover:border-slate-200 hover:bg-slate-100/70 lg:pr-2"
                     title="My profile"
+                    aria-label="Open account menu"
+                    aria-expanded={profileOpen}
+                    aria-haspopup="dialog"
+                    aria-controls="tenant-account-menu"
                     onClick={() => setProfileOpen((v) => !v)}
                   >
                     <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-linear-to-br from-teal-50 to-blue-50 text-[12px] font-extrabold text-teal-700 ring-1 ring-teal-200/70">
@@ -730,7 +755,13 @@ export function AppShell() {
                     <ChevronDown className="hidden h-3 w-3 shrink-0 text-slate-400 lg:block" />
                   </button>
                   {profileOpen && (
-                    <div className="panel absolute right-0 top-full z-50 mt-2 w-56 overflow-hidden p-0 shadow-lg">
+                    <div
+                      id="tenant-account-menu"
+                      role="dialog"
+                      aria-label="Account menu"
+                      style={{ position: "absolute" }}
+                      className="panel absolute right-0 top-full z-50 mt-2 w-56 overflow-hidden p-0 shadow-lg"
+                    >
                       {/* User info */}
                       <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-100 bg-slate-50">
                         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-linear-to-br from-teal-100 to-blue-100 text-[14px] font-extrabold text-teal-700">
@@ -743,22 +774,26 @@ export function AppShell() {
                       </div>
                       {/* Actions */}
                       <div className="py-1">
-                        <button
-                          type="button"
-                          className="flex w-full items-center gap-3 px-4 py-2.5 text-[13px] text-slate-700 hover:bg-slate-50 transition"
-                          onClick={() => { navigate("/settings"); setProfileOpen(false); }}
-                        >
-                          <Settings className="h-4 w-4 text-slate-400" />
-                          Settings
-                        </button>
-                        <button
-                          type="button"
-                          className="flex w-full items-center gap-3 px-4 py-2.5 text-[13px] text-slate-700 hover:bg-slate-50 transition"
-                          onClick={() => { navigate("/user-management"); setProfileOpen(false); }}
-                        >
-                          <User className="h-4 w-4 text-slate-400" />
-                          User Management
-                        </button>
+                        {canViewSettings && (
+                          <button
+                            type="button"
+                            className="flex w-full items-center gap-3 px-4 py-2.5 text-[13px] text-slate-700 hover:bg-slate-50 transition"
+                            onClick={() => { navigate("/settings"); setProfileOpen(false); }}
+                          >
+                            <Settings className="h-4 w-4 text-slate-400" />
+                            Settings
+                          </button>
+                        )}
+                        {canViewUserManagement && (
+                          <button
+                            type="button"
+                            className="flex w-full items-center gap-3 px-4 py-2.5 text-[13px] text-slate-700 hover:bg-slate-50 transition"
+                            onClick={() => { navigate("/user-management"); setProfileOpen(false); }}
+                          >
+                            <User className="h-4 w-4 text-slate-400" />
+                            User Management
+                          </button>
+                        )}
                       </div>
                       <div className="border-t border-slate-100 py-1">
                         <button

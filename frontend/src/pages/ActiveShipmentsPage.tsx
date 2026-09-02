@@ -200,7 +200,7 @@ export function ActiveShipmentsPage() {
       <nav aria-label="Related active shipment modules" className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
         <p className="mb-3 text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Continue the workflow</p>
         <div className="flex flex-wrap gap-2">
-          {[['/shipments', 'All shipments'], ['/route-plans', 'Route plans'], ['/map-view', 'Live map'], ['/proof-of-delivery', 'Proof of delivery'], ['/finance/billing', 'Billing']].map(([to, label]) => <Link key={to} to={to} className="inline-flex min-h-10 items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:border-teal-300 hover:text-teal-700">{label}<ArrowRight className="h-3.5 w-3.5" aria-hidden /></Link>)}
+          {[['/shipments', 'All shipments'], ['/route-plans', 'Route plans'], ['/map-view', 'Fleet map'], ['/proof-of-delivery', 'Proof of delivery'], ['/finance/billing', 'Billing']].map(([to, label]) => <Link key={to} to={to} className="inline-flex min-h-10 items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:border-teal-300 hover:text-teal-700">{label}<ArrowRight className="h-3.5 w-3.5" aria-hidden /></Link>)}
         </div>
       </nav>
     </main>

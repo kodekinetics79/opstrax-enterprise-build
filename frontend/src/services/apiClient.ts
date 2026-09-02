@@ -2,6 +2,7 @@ import axios from "axios";
 import type { ApiEnvelope } from "@/types";
 import { getGlobalCsrfToken, hydrateGlobalCsrfToken, setGlobalCsrfToken } from "@/auth/csrfTokenStore";
 import { readRawSession, clearAllSessionKeys } from "@/auth/sessionStorage";
+import { enforceRequestSessionGuard } from "@/auth/requestSessionGuard";
 
 const isLocalhost =
   typeof window !== "undefined" &&
@@ -50,6 +51,7 @@ apiClient.interceptors.request.use((config) => {
   // Read the session (for the bearer token) from the SHARED key list — never hardcode it here, or a
   // key bump silently drops the Authorization header and every authenticated call 401s.
   const session = readRawSession();
+  enforceRequestSessionGuard(config, session);
   if (session) {
     try {
       const parsed = JSON.parse(session);

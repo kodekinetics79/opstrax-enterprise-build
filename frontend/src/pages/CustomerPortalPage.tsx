@@ -162,17 +162,40 @@ export function CustomerPortalPage() {
         <h2 className="section-title flex items-center gap-2"><MessageSquare className="h-4 w-4 text-teal-600" />Feedback & Complaints</h2>
         <div className="panel p-5">
           <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-            <select className="field" value={String(selectedJob?.id ?? "")} onChange={(e) => setSelectedJob(jobs.find((j) => String(j.id) === e.target.value) ?? null)}>
+            <select
+              className="field"
+              name="feedback-shipment"
+              aria-label="Shipment for feedback"
+              value={String(selectedJob?.id ?? "")}
+              onChange={(e) => setSelectedJob(jobs.find((j) => String(j.id) === e.target.value) ?? null)}
+            >
               <option value="">Select a shipment…</option>
               {jobs.map((j, i) => <option key={i} value={String(j.id)}>{String(j.jobNumber ?? j.id)}</option>)}
             </select>
-            <select className="field" value={rating} onChange={(e) => setRating(e.target.value)}>
+            <select className="field" name="feedback-rating" aria-label="Feedback rating" value={rating} onChange={(e) => setRating(e.target.value)}>
               <option value="">Rating…</option>
               {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n} ★</option>)}
             </select>
-            <input className="field md:col-span-2" placeholder="Subject" value={subject} onChange={(e) => setSubject(e.target.value)} />
+            <input
+              className="field md:col-span-2"
+              name="feedback-subject"
+              aria-label="Feedback subject"
+              autoComplete="off"
+              placeholder="Subject"
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+            />
           </div>
-          <textarea className="field mt-3 w-full" rows={3} placeholder="Tell us what happened…" value={comment} onChange={(e) => setComment(e.target.value)} />
+          <textarea
+            className="field mt-3 w-full"
+            name="feedback-comment"
+            aria-label="Feedback details"
+            autoComplete="off"
+            rows={3}
+            placeholder="Tell us what happened…"
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+          />
           <div className="mt-3 flex items-center justify-between">
             {submit.isError ? <span className="text-sm text-red-600">Couldn’t submit — please try again.</span> : <span />}
             <button

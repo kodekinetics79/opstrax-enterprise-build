@@ -7,9 +7,9 @@ const importer = fs.readFileSync(new URL("../src/components/EntityImportExport.t
 const service = fs.readFileSync(new URL("../src/services/telematicsService.ts", import.meta.url), "utf8");
 const controlTower = fs.readFileSync(new URL("../src/pages/TelematicsControlTowerPage.tsx", import.meta.url), "utf8");
 
-assert.match(devices, /aria-label={`Manage \${row\.deviceName}`}/, "Manage identifies the selected device");
-assert.match(devices, /aria-haspopup="dialog"[\s\S]*onClick=\{\(\) => setSelectedId\(row\.id\)\}/, "Manage opens the durable detail/action drawer");
-assert.doesNotMatch(devices, /setOpenMenuId/, "Manage must not rely on an overflow-clipped popover");
+assert.match(devices, /aria-label=\{`\$\{canManageDeviceLifecycle \? "Manage" : "View details for"\} \$\{row\.deviceName\}`\}/, "The row action identifies the selected device without overstating read-only authority");
+assert.match(devices, /aria-haspopup="dialog"[\s\S]*onClick=\{\(\) => setSelectedId\(row\.id\)\}/, "The row action opens the durable detail/action drawer");
+assert.doesNotMatch(devices, /setOpenMenuId/, "The row action must not rely on an overflow-clipped popover");
 
 assert.match(devices, /tab === "diagnostics"[\s\S]*Diagnostics evidence is separate from device inventory/, "Diagnostics has an evidence-specific landing state");
 assert.match(devices, /Device Health does not infer diagnostic coverage for every registered device/, "Diagnostics does not mislabel inventory rows as evidence");
@@ -40,9 +40,23 @@ assert.match(command, /Sort telemetry records[\s\S]*Highest risk first[\s\S]*Fre
 assert.match(service, /sort: options\.sort \?\? "risk"[\s\S]*direction: options\.direction \?\? "desc"/, "Telemetry sort reaches the server page endpoint");
 assert.match(command, /columnLabels\[column\] \?\? column/, "GPS uses human-readable column labels");
 assert.match(command, /sticky left-0[\s\S]*sticky right-0/, "GPS keeps identity and actions visible during horizontal scroll");
+assert.match(service, /createMaintenanceTask[\s\S]*vehicleId: String\(device\.vehicle_id \?\? ""\)/, "Maintenance handoff re-reads the current governed vehicle identity");
+assert.match(service, /device assignment was re-read at handoff as \$\{label\}[\s\S]*point-in-time and must be revalidated before service/, "Maintenance description uses the re-read assignment and states the point-in-time evidence limit");
+assert.match(command, /Number\(maintenance\.vehicleId\)[\s\S]*Number\.isSafeInteger\(vehicleId\)[\s\S]*current vehicle assignment is required/, "Maintenance handoff fails closed without a current numeric vehicle identity");
+assert.match(command, /canCreateMaintenance = canUpdate && hasPermission\(PERMISSIONS\.MAINTENANCE_CREATE\)/, "Maintenance handoff requires both telematics update and maintenance-create authority");
+assert.match(command, /disabled=\{!canCreateMaintenance \|\| maintenanceMut\.isPending\}[\s\S]*canCreateMaintenance && maintenanceMut\.mutate\(row\)/, "Maintenance actions remain unavailable when either authority is absent");
+assert.match(command, /onMutate: \(\) => setNotice\(null\)[\s\S]*onError: \(\) => setNotice\(null\)/, "Maintenance retries clear stale success notices before actionable conflicts are shown");
+assert.match(command, /isMaintenancePending=\{maintenanceMut\.isPending\}[\s\S]*disabled=\{!canCreateMaintenance \|\| isMaintenancePending\}/, "Maintenance detail action is disabled while a request is pending");
+assert.match(command, /maintenanceApi\.createWorkOrder\(\{[\s\S]*vehicleId,[\s\S]*serviceType:[\s\S]*description: maintenance\.note[\s\S]*estimatedCost: 0,[\s\S]*scheduledAt: new Date\(\)\.toISOString\(\)\.slice\(0, 10\)/, "Maintenance handoff uses the validated work-order contract instead of the incompatible legacy maintenance payload");
+assert.match(command, /apiErrorMessage\(maintenanceMut\.error, "The maintenance follow-up was not created\."\)/, "Maintenance handoff preserves actionable server validation and conflict guidance");
 
 assert.match(devices, /entity: "device installations"[\s\S]*atomic: true/, "Device Health exposes an atomic bulk installation wizard");
 assert.match(devices, /canBulkInstall = hasDirectPermission\(PERMISSIONS\.TELEMETRY_DEVICES_MANAGE\)/, "Bulk installation UI requires the direct canonical device-manage grant");
+assert.match(
+  devices,
+  /\{canManageDeviceLifecycle \? "Manage" : "View details"\}/,
+  "Device row action must reserve the Manage label for lifecycle-authorized users",
+);
 assert.match(devices, /toolbarLabel: "Device"[\s\S]*toolbarLabel: "Installation"/, "Adjacent device and installation import controls have distinct visible labels");
 assert.match(devices, /This create-only workflow records new installations[\s\S]*Exact idempotent replays are skipped[\s\S]*governed Transfer action/, "Installation wizard describes create-only, replay, and reassignment semantics truthfully");
 assert.match(devices, /deviceSerial[\s\S]*vehicleCode[\s\S]*effectiveFrom[\s\S]*idempotencyKey/, "Bulk installation uses governed identity, time, and replay fields");

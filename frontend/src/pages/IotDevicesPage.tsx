@@ -1067,11 +1067,11 @@ export function IotDevicesPage() {
                       <button
                         type="button"
                         className="btn-ghost h-8 px-3"
-                        aria-label={`Manage ${row.deviceName}`}
+                        aria-label={`${canManageDeviceLifecycle ? "Manage" : "View details for"} ${row.deviceName}`}
                         aria-haspopup="dialog"
                         onClick={() => setSelectedId(row.id)}
                       >
-                        Manage
+                        {canManageDeviceLifecycle ? "Manage" : "View details"}
                       </button>
                     </td>
                   </tr>

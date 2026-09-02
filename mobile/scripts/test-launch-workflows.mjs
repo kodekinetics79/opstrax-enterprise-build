@@ -1,8 +1,16 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import test from "node:test";
 
 const source = async (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
+
+async function applicationSources() {
+  const sourceRoot = new URL("../src/", import.meta.url);
+  const paths = (await readdir(sourceRoot, { recursive: true }))
+    .filter((path) => /\.(?:ts|tsx)$/.test(path))
+    .sort();
+  return Promise.all(paths.map(async (path) => [path, await readFile(new URL(path, sourceRoot), "utf8")]));
+}
 
 test("MFA challenge is completed before a mobile session is stored", async () => {
   const [client, provider, login] = await Promise.all([
@@ -79,6 +87,35 @@ test("mobile navigation, login, and persisted state are tenant and identity scop
   assert.match(navigation, /canFleet \? <Tabs\.Screen/);
   assert.match(workflow, /session\.company\.id/);
   assert.match(workflow, /session\.user\.id/);
+});
+
+test("mobile build exposes no inbound URL-to-navigation surface while the reviewed decoder advisory is upstream", async () => {
+  const [config, navigation, trip, sources] = await Promise.all([
+    source("app.config.ts"),
+    source("src/navigation/RootNavigator.tsx"),
+    source("src/screens/DriverTripScreen.tsx"),
+    applicationSources(),
+  ]);
+  assert.doesNotMatch(config, /\bscheme\s*:/);
+  assert.doesNotMatch(config, /\bintentFilters\s*:/);
+  assert.doesNotMatch(config, /\bassociatedDomains\s*:/);
+  assert.match(navigation, /<NavigationContainer theme=\{darkTheme\}>/);
+  assert.doesNotMatch(navigation, /<NavigationContainer[^>]*\blinking=/);
+  assert.doesNotMatch(navigation, /\bgetStateFromPath\b|\bgetPathFromState\b|Linking\.addEventListener/);
+  assert.match(trip, /`https:\/\/www\.google\.com\/maps\/search\/\?api=1&query=\$\{encodeURIComponent\(address\)\}`/);
+  assert.match(trip, /Linking\.canOpenURL\(url\)/);
+  assert.match(trip, /Linking\.openURL\(url\)/);
+  assert.doesNotMatch(trip, /Linking\.getInitialURL|Linking\.addEventListener/);
+
+  const forbiddenInboundApis = /Linking\.(?:getInitialURL|addEventListener)|\b(?:getStateFromPath|getPathFromState|useLinkTo|useLinkProps)\b|<Link\b|\blinking\s*=/;
+  for (const [path, content] of sources) {
+    assert.doesNotMatch(content, forbiddenInboundApis, `${path} must not expose inbound URL-to-navigation APIs`);
+    if (path !== "screens/DriverTripScreen.tsx") {
+      assert.doesNotMatch(content, /\bLinking\./, `${path} must not use React Native Linking`);
+    }
+  }
+  assert.equal((trip.match(/Linking\.canOpenURL/g) || []).length, 1);
+  assert.equal((trip.match(/Linking\.openURL/g) || []).length, 1);
 });
 
 test("manual object identifiers and fake offline success are not exposed", async () => {
