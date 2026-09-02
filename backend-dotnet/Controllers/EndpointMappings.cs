@@ -9144,7 +9144,9 @@ public static partial class EndpointMappings
                      SUM(CASE WHEN d.created_at >= NOW() - 30 * INTERVAL '1 day' THEN 1 ELSE 0 END) uploaded_this_month,
                      SUM(CASE WHEN d.category LIKE '%Audit%' THEN 1 ELSE 0 END) audit_package_documents,
                      SUM(CASE WHEN d.country_code <> 'US' THEN 1 ELSE 0 END) cross_border_missing_docs,
-                     CONCAT(ROUND(100 - AVG(LEAST(d.risk_score,95)),1),'%') data_completeness_score
+                     CASE WHEN COUNT(*) = 0 OR COUNT(d.risk_score) <> COUNT(*) THEN NULL
+                          ELSE CONCAT(ROUND(100 - AVG(LEAST(d.risk_score,95)),1),'%')
+                     END data_completeness_score
               FROM documents d WHERE d.company_id=@cid AND d.deleted_at IS NULL" + DocumentBranchScopeSql,
             c => { BindDocumentScope(c, http); c.Parameters.AddWithValue("@today", today); }, ct);
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));

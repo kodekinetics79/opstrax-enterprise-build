@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Globalization;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -218,6 +219,52 @@ public sealed class Module1DocumentLifecycleMutationPostgresTests
             }
         }
         Assert.Equal(before, await f.Snapshot());
+    }
+
+    [Theory]
+    [InlineData("", null)]
+    [InlineData("null", null)]
+    [InlineData("null,null", null)]
+    [InlineData("null,7.25", null)]
+    [InlineData("null,0", null)]
+    [InlineData("0", "100.0%")]
+    [InlineData("7.25", "92.8%")]
+    [InlineData("95", "5.0%")]
+    [InlineData("100", "5.0%")]
+    [InlineData("0,7.25,100", "65.9%")]
+    public async Task DocumentSummaryRiskIndicator_RequiresCompleteVisiblePopulation_AndReadDoesNotMutate(
+        string riskValues, string? expectedIndicator)
+    {
+        await using var f = await Fixture.Create();
+        var risks = riskValues.Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(value => value == "null" ? (decimal?)null : decimal.Parse(value, CultureInfo.InvariantCulture)).ToArray();
+        await f.PrepareSummaryRisks(risks);
+        var before = await f.Snapshot();
+
+        // Exercise the real registered summary with the existing signed, restricted
+        // database role. Synthetic AuthItems are not an HTTP authentication claim.
+        var summary = Value(await f.Read("/api/documents/summary")).GetProperty("data");
+        Assert.Equal(before, await f.Snapshot()); // Includes row versions, audit and timeline.
+        Assert.Equal(risks.Length, summary.GetProperty("totalDocuments").GetInt32());
+        foreach (var (key, expected) in new[]
+        {
+            ("expiringSoon", 0), ("expired", 0),
+            ("missingCriticalDocuments", risks.Count(risk => risk >= 80m)),
+            ("vehicleDocuments", risks.Length), ("driverDocuments", 0),
+            ("complianceDocuments", 0), ("pendingRenewal", 0),
+            ("uploadedThisMonth", risks.Length), ("auditPackageDocuments", 0),
+            ("crossBorderMissingDocs", 0)
+        })
+        {
+            // Preserve the existing empty-SUM contract; this defect changes only
+            // the risk-derived indicator, not unrelated summary aggregates.
+            if (risks.Length == 0) Assert.Equal(JsonValueKind.Null, summary.GetProperty(key).ValueKind);
+            else Assert.Equal(expected, summary.GetProperty(key).GetInt32());
+        }
+        if (expectedIndicator is null)
+            Assert.Equal(JsonValueKind.Null, summary.GetProperty("dataCompletenessScore").ValueKind);
+        else
+            Assert.Equal(expectedIndicator, summary.GetProperty("dataCompletenessScore").GetString());
     }
 
     [Fact]
@@ -461,6 +508,47 @@ public sealed class Module1DocumentLifecycleMutationPostgresTests
                 c => c.Parameters.AddWithValue("ids", companies.ToArray()));
             return state!["payload"]!.ToString()!;
         });
+
+        public async Task PrepareSummaryRisks(decimal?[] risks)
+        {
+            // Setup only: preserve adversarial branch/tenant/deleted documents in
+            // the unique fixture, without changing schema or any shared tenant.
+            await using var c = new NpgsqlConnection(owner);
+            await c.OpenAsync();
+            await using var tx = await c.BeginTransactionAsync();
+            await using (var retire = new NpgsqlCommand(@"UPDATE documents SET deleted_at=NOW(),risk_score=NULL
+                WHERE company_id=@company AND id=ANY(@ids)", c, tx))
+            {
+                retire.Parameters.AddWithValue("company", CompanyA);
+                retire.Parameters.AddWithValue("ids", new[] { DocA, ManualDoc, LegacyDoc, UnknownDoc });
+                Assert.Equal(4, await retire.ExecuteNonQueryAsync());
+            }
+            await using (var outsiders = new NpgsqlCommand(@"UPDATE documents SET risk_score=NULL
+                WHERE company_id=ANY(@companies) AND id=ANY(@ids)", c, tx))
+            {
+                outsiders.Parameters.AddWithValue("companies", companies.ToArray());
+                outsiders.Parameters.AddWithValue("ids", new[] { DocB, NullBranchDoc, ForeignDoc });
+                Assert.Equal(3, await outsiders.ExecuteNonQueryAsync());
+            }
+            for (var index = 0; index < risks.Length; index++)
+            {
+                await using var insert = new NpgsqlCommand(@"INSERT INTO documents
+                    (company_id,title,document_number,document_type,category,entity_type,entity_id,
+                     issued_at,expires_at,status,risk_score,renewal_status,recommended_action,lifecycle_mode,country_code)
+                    VALUES (@company,'Synthetic summary risk - NOT COMPLIANCE',@number,'Synthetic','Synthetic',
+                        'vehicle',@vehicle,@today,@expiry,'Active',@risk,'Current','Synthetic summary only','legacy_unknown','US')", c, tx);
+                insert.Parameters.AddWithValue("company", CompanyA);
+                insert.Parameters.AddWithValue("vehicle", VehicleA);
+                insert.Parameters.AddWithValue("number", prefix + "-SUMMARY-" + index);
+                var today = DateOnly.FromDateTime(DateTime.UtcNow);
+                insert.Parameters.AddWithValue("today", today);
+                insert.Parameters.AddWithValue("expiry", today.AddDays(120));
+                insert.Parameters.Add(new NpgsqlParameter("risk", NpgsqlTypes.NpgsqlDbType.Numeric)
+                { Value = (object?)risks[index] ?? DBNull.Value });
+                Assert.Equal(1, await insert.ExecuteNonQueryAsync());
+            }
+            await tx.CommitAsync();
+        }
 
         public Task AssertEvents(long id, int expected) => db.RunInTenantScopeAsync(CompanyA, async () =>
         {
