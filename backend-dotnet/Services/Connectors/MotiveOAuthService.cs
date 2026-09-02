@@ -215,11 +215,16 @@ public sealed class MotiveOAuthService(
                 }),
             };
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-            using var response = await client.SendAsync(request, ct);
+            // Headers-only completion avoids HttpClient buffering an unbounded body.
+            // Its own timeout ends at headers, so this budget also covers body reads.
+            using var exchangeTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            exchangeTimeout.CancelAfter(TimeSpan.FromSeconds(20));
+            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, exchangeTimeout.Token);
             if (!response.IsSuccessStatusCode)
                 return (null, $"Motive token exchange returned HTTP {(int)response.StatusCode}.");
 
-            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+            using var document = await MotiveResponseReader.ReadJsonAsync(
+                response.Content, MotiveResponseReader.TokenResponseBytes, exchangeTimeout.Token);
             var root = document.RootElement;
             var accessToken = root.TryGetProperty("access_token", out var access) ? access.GetString() : null;
             var refreshToken = root.TryGetProperty("refresh_token", out var refresh) ? refresh.GetString() : null;
@@ -236,7 +241,11 @@ public sealed class MotiveOAuthService(
                 accessToken!, refreshToken!, string.IsNullOrWhiteSpace(tokenType) ? "Bearer" : tokenType!,
                 DateTimeOffset.UtcNow.AddSeconds(expiresIn)), null);
         }
-        catch (TaskCanceledException)
+        catch (MotiveResponseReader.ResponseTooLargeException)
+        {
+            return (null, "Motive token exchange response exceeded the allowed size.");
+        }
+        catch (OperationCanceledException)
         {
             return (null, "Motive token exchange timed out.");
         }

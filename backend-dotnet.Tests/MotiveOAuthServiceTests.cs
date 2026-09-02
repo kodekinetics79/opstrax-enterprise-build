@@ -163,6 +163,97 @@ public sealed class MotiveOAuthServiceTests
         Assert.Contains("authorization code", result.Error);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExchangeCode_OversizeResponseFailsClosedWithoutPrebuffering(bool declaredLength)
+    {
+        var limit = MotiveResponseReader.TokenResponseBytes;
+        var stream = new MotiveReadFixture([], unending: true);
+        using var content = new MotiveStreamingFixture(stream, declaredLength ? limit + 1 : null);
+        var service = Service(httpFactory: new StaticHttpClientFactory(new StreamingHandler(HttpStatusCode.OK, content)));
+        Assert.True(service.TryGetSettings(out var settings, out _));
+
+        var result = await service.ExchangeCodeAsync(settings!, "test-code", CancellationToken.None);
+
+        Assert.Null(result.Tokens);
+        Assert.Contains("exceeded the allowed size", result.Error);
+        Assert.Equal(declaredLength ? 0 : limit + 1, stream.BytesRead);
+        Assert.False(content.WasBuffered);
+    }
+
+    [Fact]
+    public async Task ExchangeCode_FailedStatusDoesNotReadOrBufferErrorBody()
+    {
+        var stream = new MotiveReadFixture([], unending: true);
+        using var content = new MotiveStreamingFixture(stream);
+        var service = Service(httpFactory: new StaticHttpClientFactory(new StreamingHandler(HttpStatusCode.BadRequest, content)));
+        Assert.True(service.TryGetSettings(out var settings, out _));
+        var result = await service.ExchangeCodeAsync(settings!, "test-code", CancellationToken.None);
+        Assert.Null(result.Tokens);
+        Assert.Contains("HTTP 400", result.Error);
+        Assert.False(content.WasBuffered);
+        Assert.Equal(0, stream.BytesRead);
+    }
+
+    [Fact]
+    public async Task ExchangeCode_CancellationAfterHeadersFailsClosed()
+    {
+        var stream = new MotiveReadFixture([], stalled: true);
+        using var content = new MotiveStreamingFixture(stream);
+        var service = Service(httpFactory: new StaticHttpClientFactory(new StreamingHandler(HttpStatusCode.OK, content)));
+        Assert.True(service.TryGetSettings(out var settings, out _));
+        using var cts = new CancellationTokenSource();
+        var exchange = service.ExchangeCodeAsync(settings!, "test-code", cts.Token);
+        await stream.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cts.Cancel();
+        var result = await exchange.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Null(result.Tokens);
+        Assert.Contains("timed out", result.Error);
+        Assert.True(stream.Disposed);
+        Assert.False(content.WasBuffered);
+    }
+
+    private sealed class StreamingHandler(HttpStatusCode status, HttpContent content) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) =>
+            Task.FromResult(new HttpResponseMessage(status) { Content = content });
+    }
+
+    [Fact]
+    public async Task AutomaticDeadlines_AbortStalledBodiesWithoutCallerCancellation()
+    {
+        var tokenStream = new MotiveReadFixture([], stalled: true);
+        var probeStream = new MotiveReadFixture([], stalled: true);
+        using var tokenContent = new MotiveStreamingFixture(tokenStream);
+        using var probeContent = new MotiveStreamingFixture(probeStream);
+        var service = Service(httpFactory: new StaticHttpClientFactory(new StreamingHandler(HttpStatusCode.OK, tokenContent)));
+        var connector = new MotiveConnector(
+            new StaticHttpClientFactory(new StreamingHandler(HttpStatusCode.OK, probeContent)),
+            NullLogger<MotiveConnector>.Instance);
+        Assert.True(service.TryGetSettings(out var settings, out _));
+        var exchange = service.ExchangeCodeAsync(settings!, "test-code", CancellationToken.None);
+        var probe = connector.TestConnectionAsync(new Dictionary<string, string?>
+        {
+            ["accessToken"] = "test-access-token",
+            ["tokenExpiresAt"] = DateTimeOffset.UtcNow.AddHours(1).ToString("O"),
+        }, CancellationToken.None);
+
+        // Concurrent operations keep this real-timer regression to one budget.
+        // With headers-only completion, HttpClient.Timeout alone cannot end reads.
+        await Task.WhenAll(tokenStream.ReadStarted.Task, probeStream.ReadStarted.Task)
+            .WaitAsync(TimeSpan.FromSeconds(5));
+        await Task.WhenAll(exchange, probe).WaitAsync(TimeSpan.FromSeconds(27));
+        Assert.Null((await exchange).Tokens);
+        Assert.Contains("timed out", (await exchange).Error);
+        Assert.False((await probe).Success);
+        Assert.Contains("did not respond in time", (await probe).Message);
+        Assert.True(tokenStream.Disposed);
+        Assert.True(probeStream.Disposed);
+        Assert.False(tokenContent.WasBuffered);
+        Assert.False(probeContent.WasBuffered);
+    }
+
     private static MotiveOAuthService Service(Dictionary<string, string?>? overrides = null, IHttpClientFactory? httpFactory = null)
     {
         var values = new Dictionary<string, string?>
