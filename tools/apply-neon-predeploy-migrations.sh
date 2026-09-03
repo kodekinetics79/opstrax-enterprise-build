@@ -238,6 +238,8 @@ MIGRATIONS=(
   2026_09_02_stage97_integration_catalog_truth
   # Explicit unknown GPS measurements; preserve old producer defaults and rows.
   2026_09_02_stage98_optional_gps_measurements
+  # Dashcam/provider media remains fail-closed until authentic provider evidence exists.
+  2026_09_03_stage100_dashcam_provider_media_truth
 )
 
 echo "Pre-check: validated read-only database identity…"
