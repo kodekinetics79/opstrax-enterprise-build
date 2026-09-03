@@ -21,6 +21,7 @@ public sealed class J1939TransportReassembler
     public const byte BamControl = 0x20;
     public const byte AbortControl = 0xFF;
 
+    public const int MinPayloadBytes = 9;
     public const int MaxPayloadBytes = J1939DiagnosticDecoder.MaximumPayloadBytes;
     public const int MaxPacketCount = 255;
 
@@ -83,10 +84,10 @@ public sealed class J1939TransportReassembler
         var packetCount = data[3];
         var targetPgn = DecodePgn(data);
 
-        if (payloadBytes is < 1 or > MaxPayloadBytes)
-            throw new J1939TransportException($"Advertised payload length {payloadBytes} is outside 1..{MaxPayloadBytes} bytes.");
-        if (packetCount is < 1 or > MaxPacketCount)
-            throw new J1939TransportException("Advertised packet count must be between 1 and 255.");
+        if (payloadBytes is < MinPayloadBytes or > MaxPayloadBytes)
+            throw new J1939TransportException($"Advertised payload length {payloadBytes} is outside {MinPayloadBytes}..{MaxPayloadBytes} bytes.");
+        if (packetCount < 2)
+            throw new J1939TransportException("A transport-protocol message must require at least two TP.DT packets.");
 
         var expectedPackets = (payloadBytes + 6) / 7;
         if (packetCount != expectedPackets)
