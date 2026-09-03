@@ -55,6 +55,43 @@ SET road_facing_clip_url = NULL,
     updated_at = NOW()
 WHERE source_authority <> 'Authoritative';
 
+-- Legacy runtime/demo writers predate provider authority and may still try to
+-- write placeholder provider names, confidence values or direct clip URLs. Normalize
+-- those writes at the database boundary so they cannot recreate customer-visible
+-- provider/media claims after Stage 100.
+CREATE OR REPLACE FUNCTION stage100_enforce_dashcam_provider_truth()
+RETURNS TRIGGER LANGUAGE plpgsql AS $fn$
+BEGIN
+  IF COALESCE(NEW.source_authority, 'LegacyUnverified') <> 'Authoritative' THEN
+    NEW.source_authority := COALESCE(NULLIF(BTRIM(NEW.source_authority), ''), 'LegacyUnverified');
+    IF NEW.source_authority NOT IN ('LegacyUnverified','ProviderPending') THEN
+      NEW.source_authority := 'LegacyUnverified';
+    END IF;
+    NEW.road_facing_clip_url := NULL;
+    NEW.driver_facing_clip_url := NULL;
+    NEW.thumbnail_url := NULL;
+    NEW.ai_confidence := NULL;
+    IF LOWER(BTRIM(COALESCE(NEW.video_provider,''))) IN ('','opstrax placeholder','placeholder','demo') THEN
+      NEW.video_provider := NULL;
+    END IF;
+    NEW.provider_event_id := NULL;
+    NEW.provider_received_at := NULL;
+    NEW.media_status := CASE WHEN NEW.source_authority='ProviderPending' THEN 'ProviderPending' ELSE 'Unavailable' END;
+    NEW.road_facing_media_ref := NULL;
+    NEW.driver_facing_media_ref := NULL;
+    NEW.media_expires_at := NULL;
+    NEW.provider_payload_hash := NULL;
+  END IF;
+  NEW.row_version := COALESCE(NEW.row_version,0) + 1;
+  RETURN NEW;
+END
+$fn$;
+
+DROP TRIGGER IF EXISTS trg_stage100_enforce_dashcam_provider_truth ON dashcam_events;
+CREATE TRIGGER trg_stage100_enforce_dashcam_provider_truth
+BEFORE INSERT OR UPDATE ON dashcam_events
+FOR EACH ROW EXECUTE FUNCTION stage100_enforce_dashcam_provider_truth();
+
 -- Backfill branch only from already-owned fleet identity. A missing or conflicting
 -- branch remains NULL and must fail closed in branch-scoped customer workflows.
 UPDATE dashcam_events de
