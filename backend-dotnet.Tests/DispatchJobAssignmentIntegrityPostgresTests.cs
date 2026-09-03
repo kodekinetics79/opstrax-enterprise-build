@@ -10,6 +10,7 @@ using Npgsql;
 using Opstrax.Api.Controllers;
 using Opstrax.Api.Data;
 using Opstrax.Api.Services;
+using Xunit.Abstractions;
 
 namespace Opstrax.Tests;
 
@@ -18,7 +19,7 @@ namespace Opstrax.Tests;
 // these are not browser, full HTTP authentication, or certified HOS evidence.
 [Collection("fleet-identity-schema")]
 [Trait("Category", "Integration")]
-public sealed class DispatchJobAssignmentIntegrityPostgresTests
+public sealed class DispatchJobAssignmentIntegrityPostgresTests(ITestOutputHelper output)
 {
     [Theory]
     [InlineData("A")]
@@ -172,6 +173,145 @@ public sealed class DispatchJobAssignmentIntegrityPostgresTests
         Assert.Equal(1, await f.AssignmentCount());
     }
 
+    [Theory]
+    [InlineData("drivers", false)]
+    [InlineData("drivers", true)]
+    [InlineData("vehicles", false)]
+    [InlineData("vehicles", true)]
+    public async Task ResourceChangeFirst_AssignmentWaitsThenRejectsWithoutAssignmentEffects(string table, bool archive)
+    {
+        await using var f = await Fixture.Create();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var ct = deadline.Token;
+        var pair = f.Pairs["A"]; var job = f.Jobs["A"];
+        var resourceId = table == "drivers" ? pair.Driver : pair.Vehicle;
+        var before = await f.AssignmentEffectsSnapshot();
+        await using var changing = await f.OpenConcurrencyConnection(ct);
+        await using var changeTransaction = await changing.BeginTransactionAsync(ct);
+        await Fixture.SetTransactionDeadlines(changing, changeTransaction, ct);
+        Task<IResult>? assignment = null;
+        try
+        {
+            // This owner transaction changes exactly one fixture-owned row. The
+            // handler must wait for that row, then re-evaluate its branch/archive predicate.
+            Assert.Equal(1, await f.ChangeResource(changing, changeTransaction, table, resourceId, archive, ct));
+            var started = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+            assignment = f.Assign(job, pair.Driver, pair.Vehicle, onBackendPid: pid => started.TrySetResult(pid), ct: ct);
+            var assignmentPid = await started.Task.WaitAsync(ct);
+            Assert.NotEqual(changing.ProcessID, assignmentPid);
+            output.WriteLine(await f.ObserveBlocking(assignmentPid, changing.ProcessID, "FOR SHARE OF v,d", ct));
+            Assert.False(assignment.IsCompleted);
+            await changeTransaction.CommitAsync(ct);
+
+            Assert.Equal(400, Status(await assignment.WaitAsync(ct)));
+            await f.AssertResourceChanged(table, resourceId, archive);
+            Assert.Equal(before, await f.AssignmentEffectsSnapshot());
+            Assert.Equal(0, await f.AssignmentCount());
+            await f.AssertEvents(job, 0);
+        }
+        finally
+        {
+            deadline.Cancel();
+            // Dispose rolls back only an active transaction; Connection also stays
+            // non-null after a successful commit, so it is not a completion test.
+            await changeTransaction.DisposeAsync();
+            await DrainCanceledOperations(assignment);
+        }
+    }
+
+    [Theory]
+    [InlineData("drivers", false)]
+    [InlineData("drivers", true)]
+    [InlineData("vehicles", false)]
+    [InlineData("vehicles", true)]
+    public async Task AssignmentFirst_ResourceChangeWaitsUntilAssignmentCommit(string table, bool archive)
+    {
+        await using var f = await Fixture.Create();
+        var original = f.Pairs["A"]; var replacement = f.Pairs["A2"]; var job = f.Jobs["A"];
+        Assert.Equal(200, Status(await f.Assign(job, original.Driver, original.Vehicle, f.BranchA)));
+        var previous = await f.ActiveAssignment(job);
+        var previousId = previous.GetProperty("id").GetInt64();
+        var resourceId = table == "drivers" ? replacement.Driver : replacement.Vehicle;
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var ct = deadline.Token;
+        await using var gate = await f.OpenConcurrencyConnection(ct);
+        await using var gateTransaction = await gate.BeginTransactionAsync(ct);
+        await Fixture.SetTransactionDeadlines(gate, gateTransaction, ct);
+        await using var changing = await f.OpenConcurrencyConnection(ct);
+        await using var changeTransaction = await changing.BeginTransactionAsync(ct);
+        await Fixture.SetTransactionDeadlines(changing, changeTransaction, ct);
+        Task<IResult>? assignment = null;
+        Task<int>? resourceChange = null;
+        try
+        {
+            // Only the owned prior assignment row is gated. Reaching its UPDATE
+            // proves the real handler has already acquired its resource FOR SHARE locks.
+            await f.HoldPriorAssignment(gate, gateTransaction, previousId, ct);
+            var started = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+            assignment = f.Assign(job, replacement.Driver, replacement.Vehicle,
+                onBackendPid: pid => started.TrySetResult(pid), ct: ct);
+            var assignmentPid = await started.Task.WaitAsync(ct);
+            Assert.NotEqual(gate.ProcessID, assignmentPid);
+            Assert.NotEqual(changing.ProcessID, assignmentPid);
+            output.WriteLine(await f.ObserveBlocking(assignmentPid, gate.ProcessID, "UPDATE dispatch_assignments", ct));
+            Assert.False(assignment.IsCompleted);
+
+            resourceChange = f.ChangeResource(changing, changeTransaction, table, resourceId, archive, ct);
+            output.WriteLine(await f.ObserveBlocking(changing.ProcessID, assignmentPid, "UPDATE " + table, ct));
+            Assert.False(resourceChange.IsCompleted);
+            Assert.False(assignment.IsCompleted);
+            await gateTransaction.RollbackAsync(ct);
+
+            Assert.Equal(200, Status(await assignment.WaitAsync(ct)));
+            Assert.Equal(1, await resourceChange.WaitAsync(ct));
+            // Read through another connection before committing the later resource
+            // mutation: success must mean the assignment transaction really committed.
+            var current = await f.ActiveAssignment(job);
+            Assert.NotEqual(previousId, current.GetProperty("id").GetInt64());
+            Assert.Equal(f.BranchA, NullableId(current, "branch_id"));
+            Assert.Equal(replacement.Driver, current.GetProperty("driver_id").GetInt64());
+            Assert.Equal(replacement.Vehicle, current.GetProperty("vehicle_id").GetInt64());
+            var persistedJob = await f.Job(job);
+            Assert.Equal(f.BranchA, NullableId(persistedJob, "branch_id"));
+            Assert.Equal("Assigned", persistedJob.GetProperty("status").GetString());
+            Assert.Equal(replacement.Driver, persistedJob.GetProperty("assigned_driver_id").GetInt64());
+            Assert.Equal(replacement.Vehicle, persistedJob.GetProperty("assigned_vehicle_id").GetInt64());
+            var closed = await f.Assignment(previousId);
+            Assert.Equal("cancelled", closed.GetProperty("assignment_status").GetString());
+            Assert.Equal("assigned", closed.GetProperty("previous_status").GetString());
+            Assert.Equal(f.BranchA, NullableId(closed, "branch_id"));
+            Assert.Equal(2, await f.AssignmentCount());
+            await f.AssertEvents(job, 2, statusEvents: 1);
+            var committedAssignmentEffects = await f.AssignmentEffectsSnapshot();
+
+            await changeTransaction.CommitAsync(ct);
+            await f.AssertResourceChanged(table, resourceId, archive);
+            Assert.Equal(committedAssignmentEffects, await f.AssignmentEffectsSnapshot());
+            Assert.Equal(200, Status(await f.Detail(current.GetProperty("id").GetInt64(), f.BranchA)));
+        }
+        finally
+        {
+            deadline.Cancel();
+            await gateTransaction.DisposeAsync();
+            try { await DrainCanceledOperations(assignment, resourceChange); }
+            finally
+            {
+                await changeTransaction.DisposeAsync();
+            }
+        }
+    }
+
+    private static async Task DrainCanceledOperations(params Task?[] operations)
+    {
+        var all = Task.WhenAll(operations.OfType<Task>());
+        try { await all.WaitAsync(TimeSpan.FromSeconds(5)); }
+        catch when (all.IsCompleted)
+        {
+            // Main-path assertions observe operation outcomes. Cleanup observes any
+            // cancellation/failure too, before transaction and fixture disposal.
+        }
+    }
+
     [Fact]
     public async Task InvalidIdsAndInsufficientPermission_AreRejectedWithoutWrites()
     {
@@ -226,18 +366,27 @@ public sealed class DispatchJobAssignmentIntegrityPostgresTests
             catch { await fixture.DisposeAsync(); throw; }
         }
 
-        public Task<IResult> Assign(long id, object? driver, object? vehicle, long? branch = null, bool allowed = true, string? actorRole = null)
-            => Call("/api/jobs/{id:long}/assign", id, branch, new() { ["driverId"] = driver, ["vehicleId"] = vehicle }, allowed, actorRole);
+        public Task<IResult> Assign(long id, object? driver, object? vehicle, long? branch = null, bool allowed = true, string? actorRole = null,
+            Action<int>? onBackendPid = null, CancellationToken ct = default)
+            => Call("/api/jobs/{id:long}/assign", id, branch, new() { ["driverId"] = driver, ["vehicleId"] = vehicle }, allowed, actorRole, onBackendPid, ct);
         public Task<IResult> Detail(long id, long? branch) => Call("/api/dispatch/assignments/{id:long}", id, branch);
 
-        private async Task<IResult> Call(string path, long id, long? branch, Dictionary<string, object?>? body = null, bool allowed = true, string? actorRole = null)
+        private async Task<IResult> Call(string path, long id, long? branch, Dictionary<string, object?>? body = null, bool allowed = true, string? actorRole = null,
+            Action<int>? onBackendPid = null, CancellationToken ct = default)
         {
             // A fresh runtime models an independent request/restart, not shared connection state.
             var db = new Database(config, new TenantScopeAccessor());
             return await db.RunInTenantScopeAsync(CompanyA, async () =>
             {
-                var identity = await db.QuerySingleAsync("SELECT current_user AS role,opstrax_security.current_tenant_id() AS tenant");
+                var identity = await db.QuerySingleAsync("SELECT current_user AS role,opstrax_security.current_tenant_id() AS tenant,pg_backend_pid() AS backend_pid", ct: ct);
                 Assert.Equal("opstrax_app", identity!["role"]); Assert.Equal(CompanyA, Convert.ToInt64(identity["tenant"]));
+                if (onBackendPid is not null)
+                {
+                    // RunInTenantScopeAsync pins this signed connection + transaction;
+                    // AssignJob reuses it. This is not a separate pooled PID probe.
+                    await db.ExecuteAsync("SET LOCAL lock_timeout='10s'; SET LOCAL statement_timeout='15s'", ct: ct);
+                    onBackendPid(Convert.ToInt32(identity["backendPid"]));
+                }
                 var http = new DefaultHttpContext();
                 http.Items[EndpointMappings.AuthCompanyIdItemKey] = CompanyA;
                 if (branch.HasValue) http.Items[EndpointMappings.AuthBranchIdItemKey] = branch.Value;
@@ -248,11 +397,11 @@ public sealed class DispatchJobAssignmentIntegrityPostgresTests
                 var args = handler.Method.GetParameters().Select(p => p.ParameterType == typeof(HttpContext) ? (object)http :
                     p.ParameterType == typeof(long) ? id : p.ParameterType == typeof(Dictionary<string, object?>) ? body! :
                     p.ParameterType == typeof(Database) ? db : p.ParameterType == typeof(AuditService) ? new AuditService(db) :
-                    p.ParameterType == typeof(CancellationToken) ? CancellationToken.None : throw new InvalidOperationException("Unexpected registered assignment parameter")).ToArray();
+                    p.ParameterType == typeof(CancellationToken) ? ct : throw new InvalidOperationException("Unexpected registered assignment parameter")).ToArray();
                 try { return await (Task<IResult>)handler.DynamicInvoke(args)!; }
                 catch (TargetInvocationException error) when (error.InnerException is not null)
                 { System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error.InnerException).Throw(); throw; }
-            });
+            }, ct);
         }
 
         private Delegate Registered(string path)
@@ -278,6 +427,66 @@ public sealed class DispatchJobAssignmentIntegrityPostgresTests
             return await execute(command);
         }
         private Task<string> Text(string sql, params (string, object?)[] values) => Owner(sql, async command => (await command.ExecuteScalarAsync())!.ToString()!, values);
+        public async Task<NpgsqlConnection> OpenConcurrencyConnection(CancellationToken ct)
+        {
+            var connection = new NpgsqlConnection(new NpgsqlConnectionStringBuilder(owner)
+                { Pooling = false, Timeout = 5, CommandTimeout = 15 }.ConnectionString);
+            try { await connection.OpenAsync(ct); return connection; }
+            catch { await connection.DisposeAsync(); throw; }
+        }
+        public static async Task SetTransactionDeadlines(NpgsqlConnection connection, NpgsqlTransaction transaction, CancellationToken ct)
+        {
+            await using var command = new NpgsqlCommand("SET LOCAL lock_timeout='10s'; SET LOCAL statement_timeout='15s'", connection, transaction);
+            await command.ExecuteNonQueryAsync(ct);
+        }
+        public async Task HoldPriorAssignment(NpgsqlConnection connection, NpgsqlTransaction transaction, long id, CancellationToken ct)
+        {
+            await using var command = new NpgsqlCommand("SELECT id FROM dispatch_assignments WHERE id=@id AND company_id=@company FOR UPDATE", connection, transaction);
+            command.Parameters.AddWithValue("id", id); command.Parameters.AddWithValue("company", CompanyA);
+            Assert.Equal(id, Convert.ToInt64(await command.ExecuteScalarAsync(ct)));
+        }
+        public async Task<int> ChangeResource(NpgsqlConnection connection, NpgsqlTransaction transaction, string table, long id, bool archive, CancellationToken ct)
+        {
+            Assert.Contains(table, new[] { "drivers", "vehicles" });
+            var change = archive ? "deleted_at=NOW()" : "branch_id=@branch";
+            await using var command = new NpgsqlCommand($"UPDATE {table} SET {change} WHERE id=@id AND company_id=@company", connection, transaction);
+            command.Parameters.AddWithValue("id", id); command.Parameters.AddWithValue("company", CompanyA);
+            if (!archive) command.Parameters.AddWithValue("branch", BranchB);
+            return await command.ExecuteNonQueryAsync(ct);
+        }
+        public async Task AssertResourceChanged(string table, long id, bool archive)
+        {
+            Assert.Contains(table, new[] { "drivers", "vehicles" });
+            using var row = JsonDocument.Parse(await Text($"SELECT jsonb_build_object('branch_id',branch_id,'deleted_at',deleted_at)::text FROM {table} WHERE id=@id AND company_id=@company", ("id", id), ("company", CompanyA)));
+            Assert.Equal(archive ? BranchA : BranchB, NullableId(row.RootElement, "branch_id"));
+            Assert.Equal(archive, row.RootElement.GetProperty("deleted_at").ValueKind != JsonValueKind.Null);
+        }
+        public async Task<string> ObserveBlocking(int waiterPid, int blockerPid, string expectedQuery, CancellationToken ct)
+        {
+            using var observation = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            observation.CancelAfter(TimeSpan.FromSeconds(5));
+            await using var connection = await OpenConcurrencyConnection(observation.Token);
+            await using var command = new NpgsqlCommand(@"SELECT EXISTS (
+                SELECT 1 FROM pg_stat_activity
+                WHERE pid=@waiter AND datname=current_database() AND wait_event_type='Lock'
+                  AND @blocker=ANY(pg_blocking_pids(pid)) AND POSITION(@query IN query)>0)", connection);
+            command.Parameters.AddWithValue("waiter", waiterPid);
+            command.Parameters.AddWithValue("blocker", blockerPid);
+            command.Parameters.AddWithValue("query", expectedQuery);
+            using var poll = new PeriodicTimer(TimeSpan.FromMilliseconds(10));
+            while (!(bool)(await command.ExecuteScalarAsync(observation.Token))!)
+                await poll.WaitForNextTickAsync(observation.Token);
+            // Only an observed DB wait is evidence. The polling interval itself
+            // never establishes ordering or counts as proof of blocking.
+            return $"Observed PostgreSQL Lock wait: waiter={waiterPid}; blocker={blockerPid}; query contains '{expectedQuery}'.";
+        }
+        public async Task<string> AssignmentEffectsSnapshot()
+        {
+            using var snapshot = JsonDocument.Parse(await Snapshot());
+            return JsonSerializer.Serialize(snapshot.RootElement.EnumerateObject()
+                .Where(property => property.Name is not "drivers" and not "vehicles")
+                .ToDictionary(property => property.Name, property => property.Value.Clone()));
+        }
         public async Task<JsonElement> Job(long id) => JsonDocument.Parse(await Text("SELECT (to_jsonb(j)||jsonb_build_object('xmin',j.xmin::text))::text FROM jobs j WHERE id=@id AND company_id=@c", ("id", id), ("c", CompanyA))).RootElement.Clone();
         public async Task<JsonElement> ActiveAssignment(long job) => JsonDocument.Parse(await Text("SELECT to_jsonb(a)::text FROM dispatch_assignments a WHERE company_id=@c AND job_id=@job AND assignment_status='assigned'", ("c", CompanyA), ("job", job))).RootElement.Clone();
         public async Task<JsonElement> Assignment(long id) => JsonDocument.Parse(await Text("SELECT to_jsonb(a)::text FROM dispatch_assignments a WHERE company_id=@c AND id=@id", ("c", CompanyA), ("id", id))).RootElement.Clone();
