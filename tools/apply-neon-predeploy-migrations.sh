@@ -238,6 +238,8 @@ MIGRATIONS=(
   2026_09_02_stage97_integration_catalog_truth
   # Explicit unknown GPS measurements; preserve old producer defaults and rows.
   2026_09_02_stage98_optional_gps_measurements
+  # HOS legal-time values fail closed unless an authoritative source is persisted.
+  2026_09_03_stage99_hos_clock_source_truth
 )
 
 echo "Pre-check: validated read-only database identity…"
