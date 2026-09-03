@@ -30,7 +30,7 @@ public sealed class HosClockSourceTruthMigrationTests
     }
 
     [Fact]
-    public void Stage99_FailsClosedExistingUnprovenClockRows()
+    public void Stage99_FailsClosedExistingAndFutureUnprovenClockRows()
     {
         var sql = Migration;
 
@@ -40,6 +40,10 @@ public sealed class HosClockSourceTruthMigrationTests
         Assert.Contains("status = 'Unavailable'", sql, StringComparison.Ordinal);
         Assert.Contains("source_authority = 'LegacyUnverified'", sql, StringComparison.Ordinal);
         Assert.Contains("Authoritative ELD/HOS source not connected", sql, StringComparison.Ordinal);
+        Assert.Contains("stage99_enforce_hos_clock_source_truth", sql, StringComparison.Ordinal);
+        Assert.Contains("BEFORE INSERT OR UPDATE ON hos_clocks", sql, StringComparison.Ordinal);
+        Assert.Contains("COALESCE(NEW.source_authority, 'LegacyUnverified') <> 'Authoritative'", sql, StringComparison.Ordinal);
+        Assert.Contains("NEW.drive_time_remaining_minutes := NULL", sql, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -57,11 +61,11 @@ public sealed class HosClockSourceTruthMigrationTests
     }
 
     [Fact]
-    public void CurrentHosUiAlreadyRendersNullClockValuesAsUnavailable()
+    public void CurrentHosUiRendersNullClockValuesAsUnavailable()
     {
         var page = File.ReadAllText(Path.Combine(RepoRoot, "frontend", "src", "pages", "HosEldPage.tsx"));
 
-        Assert.Contains("if (value == null || value === \"\") return null", page, StringComparison.Ordinal);
+        Assert.Contains("if (value == null) return", page, StringComparison.Ordinal);
         Assert.Contains("value == null ? \"Unavailable\"", page, StringComparison.Ordinal);
         Assert.Contains("Clock value unavailable", page, StringComparison.Ordinal);
     }
