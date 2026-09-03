@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { loadSecureEnvFile, PROFILE_LIMITS, resolveLoadConfig, sanitizedConfig } from "./load_guard.mjs";
+import { DATASET_TIERS, loadSecureEnvFile, PROFILE_LIMITS, resolveLoadConfig, sanitizedConfig } from "./load_guard.mjs";
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const base = {
@@ -64,6 +64,28 @@ test("profile values may be lowered but never raised", () => {
   assert.throws(() => resolveLoadConfig({ ...base, LOAD_PROFILE: "stress", LOAD_MAX_VUS: "51" }), /safety cap/);
   assert.throws(() => resolveLoadConfig({ ...base, LOAD_PROFILE: "load", LOAD_DURATION_SECONDS: "301" }), /safety cap/);
   assert.throws(() => resolveLoadConfig({ ...base, LOAD_PROFILE: "smoke", LOAD_ITERATIONS_PER_SECOND: "2" }), /safety cap/);
+});
+
+test("fleet dataset tier is recorded separately from traffic pressure", () => {
+  const config = resolveLoadConfig({
+    ...base,
+    LOAD_PROFILE: "stress",
+    LOAD_DATASET_TIER: "50k",
+    LOAD_DATASET_VEHICLE_COUNT: "50000",
+  });
+  assert.equal(config.datasetTier, "50k");
+  assert.equal(config.datasetMinimumVehicles, DATASET_TIERS["50k"]);
+  assert.equal(config.datasetVehicleCount, 50_000);
+  assert.equal(config.maxVus, 50);
+  assert.equal(config.iterationsPerSecond, 10);
+  assert.equal(config.maximumRequestsPerSecond, 20);
+});
+
+test("enterprise dataset tiers fail closed when evidence population is too small or invalid", () => {
+  assert.equal(resolveLoadConfig(base).datasetTier, "1k");
+  assert.equal(resolveLoadConfig(base).datasetVehicleCount, 1_000);
+  assert.throws(() => resolveLoadConfig({ ...base, LOAD_DATASET_TIER: "50k", LOAD_DATASET_VEHICLE_COUNT: "49999" }), /below the 50k tier minimum/);
+  assert.throws(() => resolveLoadConfig({ ...base, LOAD_DATASET_TIER: "100k" }), /must be one of/);
 });
 
 test("only safe same-origin GET paths are accepted", () => {
