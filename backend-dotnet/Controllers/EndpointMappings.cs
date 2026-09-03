@@ -6919,7 +6919,7 @@ public static partial class EndpointMappings
             return await db.RunInTenantTransactionAsync<IResult>(companyId, async () =>
             {
                 var current = await db.QuerySingleAsync(
-                    "SELECT status,required_vehicle_type,required_driver_certification FROM jobs WHERE id=@id AND company_id=@companyId AND deleted_at IS NULL" +
+                    "SELECT status,branch_id,required_vehicle_type,required_driver_certification FROM jobs WHERE id=@id AND company_id=@companyId AND deleted_at IS NULL" +
                     (branchId is null ? "" : " AND branch_id=@branchId") + " FOR UPDATE",
                     c =>
                     {
@@ -6935,6 +6935,29 @@ public static partial class EndpointMappings
                 var vehicle = OptionalPositiveId(Get(body, "vehicleId"));
                 if (!driver.valid || !driver.id.HasValue || !vehicle.valid || !vehicle.id.HasValue)
                     return Results.BadRequest(ApiResponse<object>.Fail("Assignment validation failed", "A positive driverId and vehicleId are required."));
+
+                // Company-wide permission is not branchless ownership. Match the
+                // job's persisted branch, as DispatchAssignmentCreate does, before
+                // evaluating eligibility or closing an earlier assignment. Holding
+                // both resource rows prevents a concurrent branch/archive change
+                // from invalidating the identity used by this transaction.
+                var assignmentBranchId = current["branchId"] is null or DBNull ? (long?)null : Convert.ToInt64(current["branchId"]);
+                var resourcePair = await db.QuerySingleAsync(
+                    @"SELECT v.id FROM vehicles v JOIN drivers d ON d.company_id=v.company_id
+                      WHERE v.id=@vehicleId AND d.id=@driverId AND v.company_id=@companyId
+                        AND v.deleted_at IS NULL AND d.deleted_at IS NULL
+                        AND v.branch_id IS NOT DISTINCT FROM @assignmentBranchId::BIGINT
+                        AND d.branch_id IS NOT DISTINCT FROM @assignmentBranchId::BIGINT
+                      FOR SHARE OF v,d",
+                    c =>
+                    {
+                        c.Parameters.AddWithValue("@vehicleId", vehicle.id.Value);
+                        c.Parameters.AddWithValue("@driverId", driver.id.Value);
+                        c.Parameters.AddWithValue("@companyId", companyId);
+                        c.Parameters.AddWithValue("@assignmentBranchId", assignmentBranchId ?? (object)DBNull.Value);
+                    }, ct);
+                if (resourcePair is null)
+                    return Results.BadRequest(ApiResponse<object>.Fail("Assignment validation failed", "Driver and vehicle must exist in the job's branch."));
                 var validation = await ValidateAssignment(
                     http, body, db, ct,
                     current["requiredVehicleType"]?.ToString(),
@@ -6958,7 +6981,7 @@ public static partial class EndpointMappings
                         c.Parameters.AddWithValue("@status", nextStatus);
                         if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId.Value);
                     }, ct);
-                await InsertJobAssignment(db, companyId, branchId, id, vehicle.id.Value, driver.id.Value, match, ct);
+                await InsertJobAssignment(db, companyId, assignmentBranchId, id, vehicle.id.Value, driver.id.Value, match, ct);
                 if (previousStatus != nextStatus)
                     await InsertJobStatusEvent(db, companyId, id, previousStatus, nextStatus, "Resources assigned", null, ct);
                 await audit.LogAsync(http, "job.assigned", "Job", id, ct: ct);
