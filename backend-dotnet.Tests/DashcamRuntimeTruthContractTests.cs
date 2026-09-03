@@ -13,7 +13,15 @@ public sealed class DashcamRuntimeTruthContractTests
     {
         var source = File.ReadAllText(Path.Combine(Root, "backend-dotnet", "Services", "Batch4SchemaService.cs"));
 
-        Assert.DoesNotContain("OpsTrax Placeholder", source, StringComparison.Ordinal);
+        // Demo-only seed text may legitimately contain the literal provider label when
+        // DemoSeedGate is explicitly enabled. The runtime truth contract is narrower:
+        // production/runtime schema repair must never recreate that label as a column
+        // default, and AI confidence must remain nullable/unknown until provider evidence
+        // supplies a real value.
+        Assert.DoesNotContain(
+            "new(\"dashcam_events\", \"video_provider\", \"VARCHAR(120) NOT NULL DEFAULT 'OpsTrax Placeholder'\")",
+            source,
+            StringComparison.Ordinal);
         Assert.DoesNotContain("new(\"dashcam_events\", \"ai_confidence\", \"DECIMAL(6,2) NOT NULL DEFAULT 84\")", source, StringComparison.Ordinal);
         Assert.Contains("new(\"dashcam_events\", \"video_provider\", \"VARCHAR(120) NULL\")", source, StringComparison.Ordinal);
         Assert.Contains("new(\"dashcam_events\", \"ai_confidence\", \"DECIMAL(6,2) NULL\")", source, StringComparison.Ordinal);
