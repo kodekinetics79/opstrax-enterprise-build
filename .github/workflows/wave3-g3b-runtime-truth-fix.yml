@@ -1,0 +1,70 @@
+name: Wave3 G3B runtime truth fix
+
+on:
+  push:
+    branches:
+      - wave3/g3b-dual-camera
+    paths:
+      - .github/workflows/wave3-g3b-runtime-truth-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  reconcile-runtime-truth:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: wave3/g3b-dual-camera
+          fetch-depth: 0
+
+      - name: Remove fabricated runtime defaults and reconcile readiness
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          replacements = {
+            Path('backend-dotnet/Services/Batch4SchemaService.cs'): [
+              (
+                'new("dashcam_events", "video_provider", "VARCHAR(120) NOT NULL DEFAULT \'OpsTrax Placeholder\'"),',
+                'new("dashcam_events", "video_provider", "VARCHAR(120) NULL"),'
+              ),
+              (
+                'new("dashcam_events", "ai_confidence", "DECIMAL(6,2) NOT NULL DEFAULT 84"),',
+                'new("dashcam_events", "ai_confidence", "DECIMAL(6,2) NULL"),'
+              ),
+            ],
+            Path('backend-dotnet/Services/FleetProductionReadinessService.cs'): [
+              (
+                "('dashcam_events','ai_confidence','numeric(6,2)',true,'84','')",
+                "('dashcam_events','ai_confidence','numeric(6,2)',false,'','')"
+              ),
+            ],
+          }
+
+          for path, pairs in replacements.items():
+            text = path.read_text()
+            for old, new in pairs:
+              if new in text:
+                continue
+              if old not in text:
+                raise SystemExit(f'Expected exact anchor not found in {path}: {old}')
+              text = text.replace(old, new, 1)
+            path.write_text(text)
+          PY
+          git diff --check
+
+      - name: Commit focused runtime-truth fix
+        shell: bash
+        run: |
+          if git diff --quiet -- backend-dotnet/Services/Batch4SchemaService.cs backend-dotnet/Services/FleetProductionReadinessService.cs; then
+            echo 'No runtime truth change required.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add backend-dotnet/Services/Batch4SchemaService.cs backend-dotnet/Services/FleetProductionReadinessService.cs
+          git commit -m 'fix(video): remove placeholder provider and AI confidence defaults'
+          git push origin HEAD:wave3/g3b-dual-camera
