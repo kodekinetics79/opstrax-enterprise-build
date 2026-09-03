@@ -23,6 +23,9 @@ namespace Opstrax.Api.Services;
 //     ('idling' minutes, 'fuel_drop_pct' percentage points).
 //   • Time-bounded sources only: a fresh install with years of seed history
 //     must not blast a backlog of emails on first boot.
+//   • HOS safety alerts are emitted only from Stage99-authoritative clock rows.
+//     Legacy/demo hos_records are operational scaffolding, not certified-source
+//     evidence, and may never trigger a legal/compliance alert.
 //   • Sweeps are independent — one failing (e.g. a table missing on an old
 //     deployment) must not stop the others.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -73,8 +76,7 @@ public sealed class OperationalAlertDetectionService(
         {
             await SweepAsync(db, "maintenance_due", MaintenanceDueSql, ct);
             await SweepAsync(db, "sla_breach", SlaBreachSql, ct);
-            await SweepAsync(db, "hos_violation", HosRecordsSql, ct);
-            await SweepAsync(db, "hos_violation(clocks)", HosClocksSql, ct);
+            await SweepAsync(db, "hos_violation(authoritative_clocks)", HosClocksSql, ct);
             await SweepAsync(db, "fuel_anomaly", FuelAnomalySql, ct);
             await SweepAsync(db, "idling", IdlingSql, ct);
         }, ct);
@@ -149,32 +151,11 @@ public sealed class OperationalAlertDetectionService(
                             AND ta.created_at > NOW() - INTERVAL '24 hours')
         """;
 
-    // Latest hos_records row per driver (today/yesterday): out of drive hours or an
-    // explicit violation status. hos_records is the canonical store dispatch already
-    // gates on; it fires as soon as real ELD data (or the seeder) populates it.
-    private const string HosRecordsSql = """
-        INSERT INTO telemetry_alerts (company_id, driver_id, alert_type, severity, message, status, source_channel)
-        SELECT r.company_id, r.driver_id, 'hos_violation', 'High',
-               'HOS violation — driver #' || r.driver_id || ': ' ||
-               CASE WHEN COALESCE(r.remaining_drive_hours, 99) <= 0 THEN 'no drive hours remaining'
-                    ELSE 'status ' || COALESCE(r.hos_status, 'violation') END,
-               'Open', 'detector'
-        FROM (
-          SELECT DISTINCT ON (company_id, driver_id) company_id, driver_id, remaining_drive_hours, hos_status
-          FROM hos_records
-          WHERE company_id IS NOT NULL AND shift_date >= CURRENT_DATE - 1
-          ORDER BY company_id, driver_id, shift_date DESC, id DESC
-        ) r
-        WHERE (COALESCE(r.remaining_drive_hours, 99) <= 0
-               OR LOWER(COALESCE(r.hos_status,'')) IN ('violation','out_of_hours','out of hours'))
-          AND NOT EXISTS (SELECT 1 FROM telemetry_alerts ta
-                          WHERE ta.company_id = r.company_id AND ta.driver_id = r.driver_id
-                            AND ta.alert_type = 'hos_violation'
-                            AND ta.created_at > NOW() - INTERVAL '24 hours')
-        """;
-
-    // Companion source: hos_clocks carries an explicit status ('Violation'|'Warning'|'OK')
-    // and remaining drive minutes. Only clocks touched in the last 24h count as live.
+    // HOS alerting is a compliance/safety claim, not a convenience signal. The legacy
+    // hos_records table can contain demo/manual values and has no certified-source
+    // provenance contract, so it is deliberately NOT consumed here. Stage99 makes
+    // hos_clocks fail closed and permits actionable values only for rows explicitly
+    // marked Authoritative with persisted source identity and observation time.
     private const string HosClocksSql = """
         INSERT INTO telemetry_alerts (company_id, driver_id, alert_type, severity, message, status, source_channel)
         SELECT c.company_id, c.driver_id, 'hos_violation', 'High',
@@ -183,7 +164,10 @@ public sealed class OperationalAlertDetectionService(
                'Open', 'detector'
         FROM hos_clocks c
         WHERE c.company_id IS NOT NULL AND c.driver_id IS NOT NULL
-          AND c.updated_at > NOW() - INTERVAL '24 hours'
+          AND c.source_authority = 'Authoritative'
+          AND c.clock_source IS NOT NULL AND BTRIM(c.clock_source) <> ''
+          AND c.source_observed_at IS NOT NULL
+          AND c.source_observed_at > NOW() - INTERVAL '24 hours'
           AND (c.status = 'Violation' OR c.drive_time_remaining_minutes <= 0)
           AND NOT EXISTS (SELECT 1 FROM telemetry_alerts ta
                           WHERE ta.company_id = c.company_id AND ta.driver_id = c.driver_id
