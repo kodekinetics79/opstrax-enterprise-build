@@ -61,9 +61,9 @@ public sealed class J1939TransportReassembler
 
         if (control == AbortControl)
         {
-            var targetPgn = DecodePgn(data);
-            RemoveMatchingSession(frame.SourceAddress, frame.DestinationAddress, targetPgn);
-            RemoveMatchingSession(frame.DestinationAddress, frame.SourceAddress, targetPgn);
+            var abortedPgn = DecodePgn(data);
+            RemoveMatchingSession(frame.SourceAddress, frame.DestinationAddress, abortedPgn);
+            RemoveMatchingSession(frame.DestinationAddress, frame.SourceAddress, abortedPgn);
             return null;
         }
 
