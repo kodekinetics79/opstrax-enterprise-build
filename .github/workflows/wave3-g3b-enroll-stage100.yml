@@ -1,0 +1,52 @@
+name: Wave3 G3B enroll Stage100
+
+on:
+  push:
+    branches:
+      - wave3/g3b-dual-camera
+    paths:
+      - .github/workflows/wave3-g3b-enroll-stage100.yml
+
+permissions:
+  contents: write
+
+jobs:
+  enroll-stage100:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: wave3/g3b-dual-camera
+          fetch-depth: 0
+
+      - name: Enroll Stage100 after Stage98
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('tools/apply-neon-predeploy-migrations.sh')
+          text = path.read_text()
+          target = '2026_09_03_stage100_dashcam_provider_media_truth'
+          if target in text:
+              print('Stage100 already enrolled')
+              raise SystemExit(0)
+          anchor = '  # Explicit unknown GPS measurements; preserve old producer defaults and rows.\n  2026_09_02_stage98_optional_gps_measurements\n'
+          if anchor not in text:
+              raise SystemExit('Stage98 tail anchor not found; refusing non-deterministic edit')
+          replacement = anchor + '  # Dashcam/provider media remains fail-closed until authentic provider evidence exists.\n  2026_09_03_stage100_dashcam_provider_media_truth\n'
+          path.write_text(text.replace(anchor, replacement, 1))
+          PY
+          git diff --check
+
+      - name: Commit runner enrollment
+        shell: bash
+        run: |
+          if git diff --quiet -- tools/apply-neon-predeploy-migrations.sh; then
+            echo 'No runner change required.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tools/apply-neon-predeploy-migrations.sh
+          git commit -m 'fix(migrations): enroll Stage100 camera provider truth'
+          git push origin HEAD:wave3/g3b-dual-camera
