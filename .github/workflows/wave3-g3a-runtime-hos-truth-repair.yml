@@ -26,48 +26,80 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import re
 
           path = Path('backend-dotnet/Services/Batch6SchemaService.cs')
           source = path.read_text()
 
-          replacements = {
-              '"drive_time_remaining_minutes", "INT NOT NULL"': '"drive_time_remaining_minutes", "INT NULL"',
-              '"shift_time_remaining_minutes", "INT NOT NULL"': '"shift_time_remaining_minutes", "INT NULL"',
-              '"cycle_time_remaining_minutes", "INT NOT NULL"': '"cycle_time_remaining_minutes", "INT NULL"',
-              '"status", "VARCHAR(24) NOT NULL DEFAULT \'OK\'"': '"status", "VARCHAR(24) NOT NULL DEFAULT \'Unavailable\'"',
-          }
-          for old, new in replacements.items():
+          # The unsafe defaults live in the CREATE TABLE runtime fallback, not in
+          # ColumnDefinition entries. Remove only the exact hos_clocks fragments.
+          replacements = [
+              ('drive_time_remaining_minutes INT NOT NULL DEFAULT 660,',
+               'drive_time_remaining_minutes INT NULL,'),
+              ('shift_time_remaining_minutes INT NOT NULL DEFAULT 840,',
+               'shift_time_remaining_minutes INT NULL,'),
+              ('cycle_time_remaining_minutes INT NOT NULL DEFAULT 4200,',
+               'cycle_time_remaining_minutes INT NULL,'),
+              ("status VARCHAR(80) NOT NULL DEFAULT 'OK',\n            hos_warning",
+               "status VARCHAR(80) NOT NULL DEFAULT 'Unavailable',\n            hos_warning"),
+          ]
+          for old, new in replacements:
+              if new in source:
+                  continue
               count = source.count(old)
               if count != 1:
-                  raise SystemExit(f'expected exactly one runtime schema fragment {old!r}; found {count}')
+                  raise SystemExit(f'expected exactly one Batch6 HOS runtime fragment {old!r}; found {count}')
               source = source.replace(old, new, 1)
 
-          status_anchor = '    new("hos_clocks", "status", "VARCHAR(24) NOT NULL DEFAULT \'Unavailable\'", true),\n'
-          source_fields = ''.join([
-              '    new("hos_clocks", "clock_source", "VARCHAR(64) NULL", true),\n',
-              '    new("hos_clocks", "source_event_id", "VARCHAR(160) NULL", true),\n',
-              '    new("hos_clocks", "source_observed_at", "TIMESTAMPTZ NULL", true),\n',
-              '    new("hos_clocks", "source_authority", "VARCHAR(24) NOT NULL DEFAULT \'Unverified\'", true),\n',
-              '    new("hos_clocks", "source_quality", "VARCHAR(24) NULL", true),\n',
-          ])
-          if 'new("hos_clocks", "source_authority"' not in source:
-              if source.count(status_anchor) != 1:
-                  raise SystemExit('unique hos_clocks status anchor not found')
-              source = source.replace(status_anchor, status_anchor + source_fields, 1)
+          # Runtime EnsureAsync must be able to repair an existing hos_clocks table
+          # to the exact Stage99 provenance contract. Keep types/defaults identical
+          # to migration 2026_09_03_stage99_hos_clock_source_truth.sql.
+          anchor = '''        new("hos_clocks",               "company_id",            "BIGINT NULL"),
+        new("hos_clocks",               "branch_id",             "BIGINT NULL"),
+'''
+          additions = '''        new("hos_clocks",               "company_id",            "BIGINT NULL"),
+        new("hos_clocks",               "branch_id",             "BIGINT NULL"),
+        new("hos_clocks",               "clock_source",          "VARCHAR(64) NULL"),
+        new("hos_clocks",               "source_event_id",       "VARCHAR(160) NULL"),
+        new("hos_clocks",               "source_observed_at",    "TIMESTAMPTZ NULL"),
+        new("hos_clocks",               "source_authority",      "VARCHAR(24) NOT NULL DEFAULT 'Unverified'"),
+        new("hos_clocks",               "source_quality",        "VARCHAR(24) NULL"),
+'''
+          if 'new("hos_clocks",               "source_authority",' not in source:
+              if source.count(anchor) != 1:
+                  raise SystemExit('unique hos_clocks company/branch repair anchor not found')
+              source = source.replace(anchor, additions, 1)
 
-          demo_rows = {
-              "('HOS-001','DRV-1001',660,840,4200,'ON','OK',NOW() - INTERVAL '5 minutes')": "('HOS-001','DRV-1001',NULL,NULL,NULL,'ON','Unavailable',NOW() - INTERVAL '5 minutes')",
-              "('HOS-002','DRV-1002',480,720,3600,'ON','OK',NOW() - INTERVAL '9 minutes')": "('HOS-002','DRV-1002',NULL,NULL,NULL,'ON','Unavailable',NOW() - INTERVAL '9 minutes')",
-              "('HOS-003','DRV-1003',180,480,2820,'OFF','Warning',NOW() - INTERVAL '14 minutes')": "('HOS-003','DRV-1003',NULL,NULL,NULL,'OFF','Unavailable',NOW() - INTERVAL '14 minutes')",
-          }
-          for old, new in demo_rows.items():
-              count = source.count(old)
-              if count != 1:
-                  raise SystemExit(f'expected exactly one demo HOS seed row {old!r}; found {count}')
-              source = source.replace(old, new, 1)
+          # Gated demo mode may retain rows for UI development, but it must never
+          # invent legal remaining-time values or an OK compliance state. Preserve
+          # identities/profile/cycle only and fail closed on authority.
+          seed_start = source.find('@"INSERT INTO hos_clocks (id,driver_id,country_code,profile_id,cycle_type,drive_time_remaining_minutes,shift_time_remaining_minutes,cycle_time_remaining_minutes,status,hos_warning)')
+          if seed_start == -1:
+              raise SystemExit('hos_clocks demo seed block not found')
+          seed_end_marker = 'ON CONFLICT DO NOTHING"'
+          seed_end = source.find(seed_end_marker, seed_start)
+          if seed_end == -1:
+              raise SystemExit('hos_clocks demo seed block terminator not found')
+          seed_end += len(seed_end_marker)
+          seed_block = source[seed_start:seed_end]
+          row_pattern = re.compile(
+              r"\((\d+),(\d+),'([^']+)',(\d+),'([^']+)',(?:\d+|NULL),(?:\d+|NULL),(?:\d+|NULL),'[^']+',(?:NULL|'[^']*')\)"
+          )
+          def fail_closed_seed(match):
+              row_id, driver_id, country, profile_id, cycle = match.groups()
+              return f"({row_id},{driver_id},'{country}',{profile_id},'{cycle}',NULL,NULL,NULL,'Unavailable','Authoritative HOS source required')"
+          repaired_seed, replaced_rows = row_pattern.subn(fail_closed_seed, seed_block)
+          if replaced_rows not in (0, 10):
+              raise SystemExit(f'expected 10 HOS demo seed rows or already-repaired rows; transformed {replaced_rows}')
+          if replaced_rows == 0:
+              if seed_block.count("NULL,NULL,NULL,'Unavailable','Authoritative HOS source required'") != 10:
+                  raise SystemExit('HOS demo seed block is neither original nor fully fail-closed')
+          else:
+              source = source[:seed_start] + repaired_seed + source[seed_end:]
 
           path.write_text(source)
           PY
+          git diff --check
       - name: Run focused HOS truth tests
         run: dotnet test backend-dotnet.Tests/Opstrax.Tests.csproj --configuration Release --filter FullyQualifiedName~HosRuntimeTruthContractTests
       - name: Commit runtime source-truth repair
