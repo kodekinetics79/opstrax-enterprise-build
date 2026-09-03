@@ -236,6 +236,8 @@ MIGRATIONS=(
   # Catalog entries are opportunities, not evidence. Reset never-verified built-in
   # rows to an honest disconnected/pending state without deleting tenant config.
   2026_09_02_stage97_integration_catalog_truth
+  # Explicit unknown GPS measurements; preserve old producer defaults and rows.
+  2026_09_02_stage98_optional_gps_measurements
 )
 
 echo "Pre-check: validated read-only database identity…"

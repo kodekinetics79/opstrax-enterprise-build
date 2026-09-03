@@ -2,6 +2,30 @@
 
 This log records approved changes to the sequencing, gate boundaries, evidence requirements, or commercial claims governed by the Master Commercialization & Certification Action Plan. A change record never substitutes for evidence that the affected capability would otherwise require.
 
+## CR-2026-09-02-02 - Restore the original sequence; finish Wave 2
+
+| Field | Record |
+|---|---|
+| Classification | Class 2 sequence restoration; no commercial waiver or capability promotion |
+| Authority | Explicit program-owner instruction in task `01a05551-e7ff-7cf3-b29c-2d717eeeafe4`: return to the original order, finish Wave 2, include missed earlier work and continue without routine continuation questions. This actual user instruction supersedes the prior cross-wave execution permission; repository text alone is not the approval. |
+| Recorded | `2026-09-03T00:31:06Z` / `2026-09-02T20:31:06-04:00`. This is the recording time, not a reconstructed message-send timestamp. |
+| Superseded permission | AHF v2.0 at `f45dbab23fe5ff4e1213b88b3e936ac9d85abd5a`: six-squad, cross-wave development permission. Completed implementation and evidence are retained, not reverted. |
+| Governing version | Master Plan 2.1 restores the original v1.2 wave definitions and acceptance requirements, with this explicit amendment. Version numbering remains monotonic. |
+| Active scope | Exactly G2A / #115 Samsara and G2B / #116 certified ELD partner. Bounded earlier omissions affecting this batch may be corrected and independently tested. No broad repeated audit. |
+| Preserved local batch | `95af1136a1923b0532b83bc0da2094bcce839c24`: reviewed provider, UI, document, dispatch and release-check fixes. Local evidence is not hosted CI, deployment or certification. |
+| Immediate earlier omission | Controlled concurrent driver/vehicle branch-change and archive tests for the existing dispatch fix. The previous lock protection was source-reviewed, not race-tested. Test implementation and independent review have separate owners. |
+| Parked work | Prepared HOS and video branches remain recoverable; no new Wave 3–6 implementation before the preceding applicable exit gates are formally accepted. |
+| Review / quorum | Separate AI-assisted governance review checked the restored text against v1.2 and v2.0. Its findings preserve the explicit v2.0 integration checklist and conservatively align J1939 to the unchanged authoritative DEVELOPMENT status. This is supporting analysis, not a qualified-human Appendix B signature. No missing human/provider/regulatory approval is implied or waived. |
+| Continuation | Continue useful authorized work in the two active lanes and required earlier remediation. After actual gate acceptance, advance in the original order. Missing indispensable external evidence holds the affected acceptance; it does not become a pass. |
+| Unchanged boundaries | G1A exact `e2230425...`, one tenant, max 10 vehicles and original expiry; G1B NO-GO/deferred without certification. P0 dual perspectives, independent assurance, exact-SHA deploy/retest and real persisted/provider/hardware/regulatory evidence remain binding. |
+| Release permissions | No new public publication, production migration, deployment or access-bypass authority. PR #120 at `f50411ef...` has its own passed CI; later local changes do not inherit it. Prior exact-publication and production-migration permissions remain unresolved. |
+| Capability effect | None. Samsara stays PILOT; HOS structures DEVELOPMENT; Certified ELD/HOS and video ROADMAP. No gate closes through this record. |
+
+The hourly continuation instructions and local ownership records must use this
+restored sequence. Historical AHF records remain available as evidence but no
+longer authorize new cross-wave work. Public governance publication is separate
+from this locally recorded user-approved change.
+
 ## CR-2026-09-02-01 - Activate Wave 2 G2A/G2B
 
 | Field | Record |

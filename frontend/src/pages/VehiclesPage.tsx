@@ -18,6 +18,7 @@ import { optionsWithPersistedValue, VEHICLE_TYPE_OPTIONS } from "@/utils/vehicle
 import { labelize, LoadingState, ErrorState, EmptyState } from "@/components/ui";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import type { AnyRecord, UserSession } from "@/types";
+import { optionalTelemetryHeading, readSpeedMph, telemetryMotion, telemetrySpeedSummary } from "@/utils/telemetryMeasurements";
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -39,7 +40,7 @@ function riskTier(row: AnyRecord): "High" | "Medium" | "Low" {
 // Live movement is derived from real telemetry only. speedMph/lastSeenAt come from the
 // location_events join; where they are absent we say so honestly (no fabricated motion).
 function isMoving(row: AnyRecord): boolean {
-  return num(g(row, "speedMph", "speed_mph")) > 1;
+  return telemetryMotion(readSpeedMph(row), 1) === "Moving";
 }
 
 function vehicleDeviceStatus(row: AnyRecord): string {
@@ -139,7 +140,7 @@ type VehicleArchiveTarget = Readonly<{
 
 /* ------------------------------------------------------------------ page */
 
-export function VehiclesPage() {
+export function VehiclesPage({ embedded = false }: { embedded?: boolean }) {
   const navigate = useNavigate();
   const { session } = useAuth();
   const hasPermission = useHasPermission();
@@ -377,7 +378,7 @@ export function VehiclesPage() {
     <div className="fleet-console flex h-full min-h-0 flex-col gap-3">
 
       {/* ── Console rail — brushed header with screws + primary actions ───── */}
-      <header className="fc-rail relative shrink-0 px-5 py-3.5 pl-7 pr-7">
+      {!embedded && <header className="fc-rail relative shrink-0 px-5 py-3.5 pl-7 pr-7">
         <Screw className="left-2.5 top-2.5" slot="20deg" />
         <Screw className="right-2.5 top-2.5" slot="-38deg" />
         <Screw className="bottom-2.5 left-2.5" slot="62deg" />
@@ -416,7 +417,7 @@ export function VehiclesPage() {
             ) : null}
           </div>
         </div>
-      </header>
+      </header>}
 
       {actionError instanceof Error ? (
         <div role="alert" className="shrink-0 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
@@ -484,7 +485,7 @@ export function VehiclesPage() {
                 <tbody className="divide-y divide-slate-100/90">
                   {filtered.map((row) => {
                     const ready = vehicleReadiness(row);
-                    const speed = num(g(row, "speedMph", "speed_mph"));
+                    const speed = readSpeedMph(row);
                     const fresh = freshness(g(row, "lastSeenAt", "last_seen_at"));
                     const moving = isMoving(row);
                     return (
@@ -501,11 +502,13 @@ export function VehiclesPage() {
                         </td>
                         <td className="px-4 py-3"><StatusPill status={g(row, "status")} /></td>
                         <td className="px-4 py-3">
-                          {fresh ? (
+                          {fresh && speed != null ? (
                             <span className="inline-flex items-baseline gap-1">
                               <span className={`text-[15px] font-bold tabular-nums ${moving ? "text-emerald-600" : "text-slate-400"}`}>{Math.round(speed)}</span>
                               <span className="text-[10px] font-semibold text-slate-400">mph</span>
                             </span>
+                          ) : fresh ? (
+                            <span className="text-xs italic text-slate-400">Speed unavailable</span>
                           ) : (
                             <span className="text-xs italic text-slate-400">No GPS</span>
                           )}
@@ -801,7 +804,7 @@ function VehicleDrawer({ record, detail, loading, canUpdate, canDelete, canAssig
   const currentDevices = (detail?.currentDevices as AnyRecord[]) || [];
   const installationHistory = (detail?.installationHistory as AnyRecord[]) || [];
   const assignmentHistory = (detail?.assignmentHistory as AnyRecord[]) || [];
-  const speed = num(g(record, "speedMph", "speed_mph"));
+  const speed = readSpeedMph(record);
   const fresh = freshness(g(record, "lastSeenAt", "last_seen_at"));
   const hasGps = g(record, "lat") != null && g(record, "lng") != null;
 
@@ -870,7 +873,7 @@ function VehicleDrawer({ record, detail, loading, canUpdate, canDelete, canAssig
             </div>
             {fresh ? (
               <div className="mt-3 grid grid-cols-3 gap-2.5">
-                <Instrument label="Speed" value={Math.round(speed)} unit="mph" tone={speed > 1 ? "text-emerald-600" : "text-slate-500"} />
+                <Instrument label="Speed" value={speed == null ? "—" : Math.round(speed)} unit={speed == null ? undefined : "mph"} tone={speed != null && speed > 1 ? "text-emerald-600" : "text-slate-500"} />
                 <Instrument label="Heading" value={headingLabel(g(record, "heading"))} />
                 <Instrument label="Odometer" value={num(g(record, "odometerMiles", "odometer_miles")).toLocaleString()} unit="mi" />
               </div>
@@ -1003,9 +1006,8 @@ function Instrument({ label, value, unit, tone = "text-slate-800" }: { label: st
 function headingLabel(heading: unknown): string {
   // Number(null) === 0 (a valid finite value), which would fabricate a "N" heading
   // for units that report no bearing — reject null/empty explicitly first.
-  if (heading == null || heading === "") return "—";
-  const h = Number(heading);
-  if (!Number.isFinite(h)) return "—";
+  const h = optionalTelemetryHeading(heading);
+  if (h == null) return "—";
   const dirs = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
   return dirs[Math.round(((h % 360) / 45)) % 8];
 }
@@ -1017,20 +1019,23 @@ function SlaChip({ status }: { status: string }) {
 
 function ReplayTrail({ points }: { points: AnyRecord[] }) {
   const trail = points.slice(0, 12);
-  const maxSpeed = Math.max(1, ...trail.map((p) => num(g(p, "speedMph", "speed_mph"))));
+  const speeds = trail.map(readSpeedMph);
+  const { peak, knownCount, missingCount } = telemetrySpeedSummary(speeds);
+  const scale = Math.max(1, peak ?? 0); // chart scale is not a measured peak
   return (
     <div className="deck-inset rounded-xl p-3">
       <div className="flex items-end gap-1" style={{ height: 44 }}>
         {trail.slice().reverse().map((p, i) => {
-          const sp = num(g(p, "speedMph", "speed_mph"));
-          const h = Math.max(4, Math.round((sp / maxSpeed) * 40));
+          const sp = readSpeedMph(p);
+          if (sp == null) return <div key={i} className="flex-1 self-stretch border-b border-dashed border-slate-300" title="Speed unavailable" aria-label="Speed unavailable" />;
+          const h = Math.max(4, Math.round((sp / scale) * 40));
           const color = sp > 1 ? "bg-emerald-400" : "bg-slate-300";
           return <div key={i} className={`flex-1 rounded-t ${color}`} style={{ height: h }} title={`${Math.round(sp)} mph`} />;
         })}
       </div>
       <div className="mt-2 flex items-center justify-between text-[10px] font-semibold text-slate-400">
-        <span>{trail.length} recent points · speed profile</span>
-        <span className="tabular-nums">peak {Math.round(maxSpeed)} mph</span>
+        <span>{knownCount}/{trail.length} measured speeds{missingCount > 0 ? ` · ${missingCount} unavailable` : ""}</span>
+        <span className="tabular-nums">{peak == null ? "peak unavailable" : `peak ${Math.round(peak)} mph`}</span>
       </div>
     </div>
   );

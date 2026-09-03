@@ -4,7 +4,7 @@ Baseline: `155b54a3451c2a4618b4fc6a87fd59f0e68f425d`
 Program tracker: #110  
 Current controlled-pilot lane: closed #108 / merged PR #113 under `CR-2026-09-01-02`
 Active Wave 2 lanes: #115 Samsara production connector; #116 certified ELD partner
-Approved changes: `CR-2026-09-01-01` defers #109/#114 without certification; `CR-2026-09-01-02` grants a 30-day G1A controlled-pilot LIMITED GO; `CR-2026-09-02-01` activates G2A/G2B without capability promotion
+Approved changes: `CR-2026-09-01-01` defers #109/#114 without certification; `CR-2026-09-01-02` grants a 30-day G1A controlled-pilot LIMITED GO; `CR-2026-09-02-01` activates G2A/G2B without capability promotion; `CR-2026-09-02-02` restores the original sequential waves and two active Wave 2 lanes, retaining completed code without promoting any capability
 
 ## Status vocabulary
 

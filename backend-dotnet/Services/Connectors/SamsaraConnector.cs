@@ -56,19 +56,23 @@ public sealed class SamsaraConnector(
             return ConnectorResult.Fail("Add a Samsara API token (apiToken) in Configure, then test again. Create one in Samsara → Settings → API Tokens with 'Read Vehicles' + 'Read Vehicle Statistics'.");
         try
         {
-            var client = Client(token!);
+            using var client = Client(token!);
+            using var handshakeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            handshakeCts.CancelAfter(TimeSpan.FromSeconds(25));
             int sampleVehicleCount;
             string? sampleVehicleId;
-            using (var vehiclesResponse = await client.GetAsync("/fleet/vehicles?limit=1", ct))
+            using (var vehiclesCts = CancellationTokenSource.CreateLinkedTokenSource(handshakeCts.Token))
             {
+                vehiclesCts.CancelAfter(SamsaraResponseReader.RequestTimeout);
+                using var vehiclesResponse = await client.GetAsync("/fleet/vehicles?limit=1", HttpCompletionOption.ResponseHeadersRead, vehiclesCts.Token);
                 if ((int)vehiclesResponse.StatusCode is 401 or 403)
                     return ConnectorResult.Fail("Samsara rejected the token or its 'Read Vehicles' scope.");
                 if (!vehiclesResponse.IsSuccessStatusCode)
-                    return ConnectorResult.Fail($"Samsara vehicle access returned {(int)vehiclesResponse.StatusCode} {vehiclesResponse.ReasonPhrase}.");
+                    return ConnectorResult.Fail($"Samsara vehicle access returned HTTP {(int)vehiclesResponse.StatusCode}.");
 
                 try
                 {
-                    using var vehiclesDocument = JsonDocument.Parse(await vehiclesResponse.Content.ReadAsStringAsync(ct));
+                    using var vehiclesDocument = await SamsaraResponseReader.ReadJsonAsync(vehiclesResponse.Content, vehiclesCts.Token);
                     if (!vehiclesDocument.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
                         return ConnectorResult.Fail("Samsara vehicle access returned an invalid response envelope; connection was not accepted.");
 
@@ -92,15 +96,17 @@ public sealed class SamsaraConnector(
             if (!string.IsNullOrWhiteSpace(sampleVehicleId))
                 statisticsUrl += $"&vehicleIds={Uri.EscapeDataString(sampleVehicleId)}";
 
-            using var statisticsResponse = await client.GetAsync(statisticsUrl, ct);
+            using var statisticsCts = CancellationTokenSource.CreateLinkedTokenSource(handshakeCts.Token);
+            statisticsCts.CancelAfter(SamsaraResponseReader.RequestTimeout);
+            using var statisticsResponse = await client.GetAsync(statisticsUrl, HttpCompletionOption.ResponseHeadersRead, statisticsCts.Token);
             if ((int)statisticsResponse.StatusCode is 401 or 403)
                 return ConnectorResult.Fail("Samsara rejected the token or its 'Read Vehicle Statistics' scope; connection was not accepted.");
             if (!statisticsResponse.IsSuccessStatusCode)
-                return ConnectorResult.Fail($"Samsara vehicle-statistics access returned {(int)statisticsResponse.StatusCode} {statisticsResponse.ReasonPhrase}.");
+                return ConnectorResult.Fail($"Samsara vehicle-statistics access returned HTTP {(int)statisticsResponse.StatusCode}.");
 
             try
             {
-                using var statisticsDocument = JsonDocument.Parse(await statisticsResponse.Content.ReadAsStringAsync(ct));
+                using var statisticsDocument = await SamsaraResponseReader.ReadJsonAsync(statisticsResponse.Content, statisticsCts.Token);
                 if (!statisticsDocument.RootElement.TryGetProperty("data", out var statisticsData)
                     || statisticsData.ValueKind != JsonValueKind.Array)
                     return ConnectorResult.Fail("Samsara vehicle-statistics access returned an invalid response envelope: the required data array is missing.");
@@ -124,7 +130,8 @@ public sealed class SamsaraConnector(
                     ["readVehicleStatisticsVerified"] = true,
                 });
         }
-        catch (TaskCanceledException) { return ConnectorResult.Fail("Samsara did not respond in time (timeout)."); }
+        catch (SamsaraResponseReader.ResponseTooLargeException) { return ConnectorResult.Fail("Samsara response exceeded the allowed size; connection was not accepted."); }
+        catch (OperationCanceledException) { return ConnectorResult.Fail("Samsara did not respond in time (timeout)."); }
         catch (Exception ex) { logger.LogWarning(ex, "Samsara test failed"); return ConnectorResult.Fail($"Could not reach Samsara: {ex.Message}"); }
     }
 
@@ -185,7 +192,9 @@ public sealed class SamsaraConnector(
 
         try
         {
-            var sync = new SamsaraSync(Client(token!), scopeFactory, logger);
+            using var client = Client(token!);
+            var sync = new SamsaraSync(client, scopeFactory, logger,
+                configuration.GetValue<bool>("Samsara:AllowPartialGpsMeasurements"));
             var seenCursors = new HashSet<string>(StringComparer.Ordinal);
             if (!string.IsNullOrWhiteSpace(cursor)) seenCursors.Add(cursor);
             var completed = false;
@@ -230,7 +239,7 @@ public sealed class SamsaraConnector(
             var boundedPartial = !completed && hasNextPage;
             return ConnectorResult.Ok(
                 $"Synced {positionsWritten} vehicle position(s) from Samsara" +
-                $"{(unmatched > 0 ? $"; {unmatched} Samsara vehicle(s) had no matching OpsTrax vehicle (map a device to link them)." : ".")}" +
+                $"{(unmatched > 0 ? $"; {unmatched} Samsara GPS fix(es) had no effective OpsTrax vehicle mapping (map a device to link them)." : ".")}" +
                 $"{(historicalOnly > 0 ? $" Retained {historicalOnly} historical fix(es) against ended installations without changing live state." : "")}" +
                 $"{(rejected > 0 ? $" Rejected {rejected} invalid provider fix(es); no telemetry was fabricated." : "")}" +
                 $"{(boundedPartial ? $" Reached the bounded {maxPages}-page run limit; the returned cursor will resume the remaining backlog." : "")}",
@@ -255,10 +264,15 @@ public sealed class SamsaraConnector(
         {
             throw;
         }
-        catch (TaskCanceledException)
+        catch (OperationCanceledException)
         {
             return FailureWithCommittedProgress(
                 "A Samsara provider request timed out. Complete page transactions were retained and their latest cursor will resume on a later run; no in-run transport retry or partial page is claimed.");
+        }
+        catch (SamsaraResponseReader.ResponseTooLargeException)
+        {
+            return FailureWithCommittedProgress(
+                "Samsara response exceeded the allowed size. Complete page transactions were retained; their latest cursor will resume on a later run. The oversized page was not written, skipped or retried.");
         }
         catch (Exception ex)
         {

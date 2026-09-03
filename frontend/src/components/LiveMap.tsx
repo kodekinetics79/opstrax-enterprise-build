@@ -17,6 +17,7 @@ import {
   type ProvenanceCategory,
 } from "@/utils/telemetryProvenance";
 import { buildVehicleMarkerAccessibleName } from "@/utils/mapAccessibility";
+import { optionalTelemetryHeading, readSpeedMph, telemetryMotion } from "@/utils/telemetryMeasurements";
 
 // Returns the vehicle's real GPS coordinate, or null when there is no genuine fix.
 // We never fabricate a position — a dot a dispatcher can't trust poisons the whole map.
@@ -27,8 +28,9 @@ function getCoords(entity: AnyRecord): [number, number] | null {
   return null;
 }
 
-function isMovingState(status: string, speed: number): boolean {
-  return speed > 3 || /active|on route|moving|driving|en route/i.test(status);
+function isMovingState(_status: string, speed: number | null): boolean {
+  // Assignment/lifecycle status does not establish physical movement.
+  return telemetryMotion(speed) === "Moving";
 }
 
 // Compact "2m ago" freshness from seconds-since-fix (null-safe).
@@ -63,7 +65,7 @@ function notRecentText(fresh: FreshnessBucket | null, isStale: boolean, status: 
 // delayed (aging) fix reads amber. When freshness is unknown (pre-migration API
 // with no fix-age signal) the function falls back to the original isStale logic,
 // so existing behavior is preserved exactly.
-function markerColor(freshness: FreshnessBucket | null, risk: string, status: string, speed: number, isStale: boolean, deviceStatus?: string, cameraStatus?: string): string {
+function markerColor(freshness: FreshnessBucket | null, risk: string, status: string, speed: number | null, isStale: boolean, deviceStatus?: string, cameraStatus?: string): string {
   if (freshness === "offline") return freshnessColor("offline");
   if (freshness === "stale" || (freshness == null && isStale)) return freshnessColor("stale");
   if (freshness == null || (!deviceStatus && !cameraStatus)) return "#64748b";
@@ -85,24 +87,27 @@ function markerColor(freshness: FreshnessBucket | null, risk: string, status: st
   if (/high|critical/i.test(risk)) return "#ef4444";
   if (/medium|warning/i.test(risk)) return "#f59e0b";
   if (freshness === "delayed") return freshnessColor("delayed"); // aging fix
+  if (telemetryMotion(speed) === "Unknown") return "#64748b";
   return isMovingState(status, speed) ? "#14b8a6" : "#6366f1";
 }
 
-function makeVehicleIcon(freshness: FreshnessBucket | null, sourceCategory: ProvenanceCategory, risk: string, status: string, speed: number, heading: number, isStale: boolean, deviceStatus?: string, cameraStatus?: string): L.DivIcon {
+function makeVehicleIcon(freshness: FreshnessBucket | null, sourceCategory: ProvenanceCategory, risk: string, status: string, speed: number | null, heading: number | null, isStale: boolean, deviceStatus?: string, cameraStatus?: string): L.DivIcon {
   // "Not recent" = stale/offline (or, pre-migration, the legacy isStale flag). Such a
   // fix never renders as a moving arrow and shows the hollow-ring treatment.
   const notRecent = freshness === "offline" || freshness === "stale" || (freshness == null && isStale);
   const moving = isMovingState(status, speed) && !notRecent;
+  const bearing = optionalTelemetryHeading(heading);
   const color = markerColor(freshness, risk, status, speed, isStale, deviceStatus, cameraStatus);
 
-  // Moving units render as a heading-aware arrow; stationary as a dot; offline/stale as a hollow ring.
-  const inner = moving
+  // A directional arrow requires a measured bearing. Unknown motion/bearing stays
+  // nondirectional; a measured moving fix can still pulse without inventing north.
+  const inner = moving && bearing != null
     ? `<div style="
         width:0;height:0;
         border-left:6px solid transparent;border-right:6px solid transparent;
         border-bottom:13px solid ${color};
         filter:drop-shadow(0 1px 2px rgba(0,0,0,.4));
-        transform:rotate(${Number.isFinite(heading) ? heading : 0}deg);
+        transform:rotate(${bearing}deg);
         transform-origin:center 70%;
       "></div>`
     : `<div style="
@@ -309,9 +314,8 @@ export function LiveMap({ entities, geofences, routeTrails = [], onSelect, focus
       const status = String(entity.status ?? "");
       const label = String(entity.label ?? entity.vehicleCode ?? entity.vehicle_code ?? "Vehicle");
       const driver = String(entity.driverName ?? entity.driver_name ?? "Unassigned");
-      const speedRaw = entity.speedMph ?? entity.speed_mph;
-      const speed = speedRaw != null && Number.isFinite(Number(speedRaw)) ? Number(speedRaw) : Number.NaN;
-      const heading = Number(entity.heading ?? 0);
+      const speed = readSpeedMph(entity);
+      const heading = optionalTelemetryHeading(entity.heading);
       const isStale = Boolean(entity.isStale);
       const deviceStatus = String(entity.deviceStatus ?? entity.device_status ?? "--");
       const camStatus = String(entity.cameraStatus ?? entity.camera_status ?? "--");
@@ -355,14 +359,14 @@ export function LiveMap({ entities, geofences, routeTrails = [], onSelect, focus
         driver,
         freshness: freshLabel,
         operationalStatus,
-        speedMph: Number.isFinite(speed) ? speed : null,
+        speedMph: speed,
       });
 
       const popupHtml =
         `<div style="font-family:system-ui;font-size:12px;min-width:210px;line-height:1.5">
           <p style="font-weight:700;margin:0 0 2px;font-size:13px">${label}</p>
           <p style="margin:0;color:#475569">${driver}</p>
-          <p style="margin:2px 0 0;color:#64748b">${Number.isFinite(speed) ? `${Math.round(speed)} mph &bull; ` : ""}${operationalStatus}</p>
+          <p style="margin:2px 0 0;color:#64748b">${speed != null ? `${Math.round(speed)} mph` : "Speed unavailable"} &bull; ${operationalStatus}</p>
           ${address ? `<p style="margin:3px 0 0;color:#334155;font-size:11px">&#128205; ${address}</p>` : ""}
           <div style="margin:6px 0 0;padding-top:5px;border-top:1px solid #e2e8f0">
             <span style="display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:700;color:${catColor};border:1px solid ${catColor};border-radius:9999px;padding:1px 6px;text-transform:uppercase;letter-spacing:.04em">${categoryBadge(sourceCat)}</span>

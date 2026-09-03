@@ -122,7 +122,7 @@ export interface FleetTrackingPoint {
   alertType: string;
   latitude: number;
   longitude: number;
-  speedKph: number;
+  speedKph: number | null;
   recordedAtUtc: string;
   estimatedArrivalUtc?: string;
   notes: string;

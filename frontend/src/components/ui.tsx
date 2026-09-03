@@ -55,12 +55,12 @@ const BUTTON_CLASS: Record<ButtonVariant, string> = {
 };
 
 export function Button({
-  variant = "primary", type = "button", className = "", loading = false, disabled, children, ...rest
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant; loading?: boolean }) {
+  variant = "primary", size = "standard", type = "button", className = "", loading = false, disabled, children, ...rest
+}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant; size?: "standard" | "compact" | "cta"; loading?: boolean }) {
   return (
     <button
       type={type}
-      className={`${BUTTON_CLASS[variant]} ${className}`.trim()}
+      className={`${BUTTON_CLASS[variant]} btn-${size} ${className}`.trim()}
       disabled={disabled || loading}
       aria-busy={loading}
       {...rest}
@@ -159,26 +159,26 @@ export function PageHeader({
   title: string; eyebrow?: string; description: string; actions?: ReactNode; footer?: ReactNode;
 }) {
   return (
-    <div className="liquid-glass relative overflow-hidden px-5 py-6 lg:px-6">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(45,212,191,.12),transparent_34%),radial-gradient(circle_at_bottom_left,rgba(37,99,235,.08),transparent_30%),linear-gradient(180deg,rgba(255,255,255,.3),transparent_28%)]" />
-      <div className="relative flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-        <div className="max-w-3xl">
+    <div className="liquid-glass relative min-w-0 shrink-0 px-4 py-4">
+      <div className="pointer-events-none absolute inset-0 rounded-[inherit] bg-[radial-gradient(circle_at_top_right,rgba(45,212,191,.12),transparent_34%),radial-gradient(circle_at_bottom_left,rgba(37,99,235,.08),transparent_30%),linear-gradient(180deg,rgba(255,255,255,.3),transparent_28%)]" />
+      <div className="relative flex min-w-0 flex-wrap items-end justify-between gap-4">
+        <div className="min-w-0 flex-[1_1_24rem]">
         {eyebrow && (
           <span className="inline-flex items-center gap-2 rounded-full border border-teal-400/20 bg-white/90 px-3 py-1 text-[10px] font-black uppercase tracking-[0.26em] text-teal-700 shadow-sm backdrop-blur">
             <span className="live-dot h-1.5 w-1.5" />
             {eyebrow}
           </span>
         )}
-          <h1 className="mt-3 text-[31px] font-black tracking-tight text-slate-950 md:text-[40px]">{title}</h1>
-          <p className="mt-2.5 max-w-3xl text-[14px] leading-7 text-slate-500">{description}</p>
+          <h1 className="mt-2 break-words text-2xl font-bold tracking-tight text-slate-950 md:text-[28px]">{title}</h1>
+          <p className="mt-1 max-w-3xl break-words text-[13px] leading-5 text-slate-500">{description}</p>
         </div>
         {actions && (
-          <div className="flex shrink-0 flex-wrap items-center gap-2.5 rounded-[22px] border border-slate-200/80 bg-white/85 p-2.5 shadow-sm backdrop-blur">
+          <div className="flex min-w-0 max-w-full flex-[0_1_auto] flex-wrap items-center gap-2">
             {actions}
           </div>
         )}
       </div>
-      {footer && <div className="relative mt-5 border-t border-slate-200/70 pt-4">{footer}</div>}
+      {footer && <div className="relative mt-3 min-w-0 border-t border-slate-200/70 pt-3">{footer}</div>}
     </div>
   );
 }
@@ -202,26 +202,26 @@ export function KpiCard({
     : "text-slate-950";
 
   return (
-    <div className="clay-card card-hover relative overflow-hidden p-5">
+    <div className="clay-card card-hover relative min-w-0 overflow-hidden p-4">
       <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-[linear-gradient(90deg,rgba(13,148,136,.8),rgba(37,99,235,.75),rgba(124,58,237,.7))]" />
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-[10px] font-black uppercase tracking-[0.24em] text-slate-400">{label}</p>
-          <p className={`mt-3 text-[30px] font-black tracking-tight ${valueColor}`}>{value}</p>
-        </div>
+      <div className="flex min-w-0 items-start justify-between gap-2">
+        <p className="min-w-0 break-words text-[11px] font-bold uppercase tracking-wide text-slate-500">{label}</p>
+        {icon ? <div className="shrink-0 text-slate-400 [&>svg]:h-4 [&>svg]:w-4">{icon}</div> : null}
+      </div>
+      <div className="mt-2 flex min-w-0 flex-wrap items-center justify-between gap-2">
+        <p className={`min-w-0 break-words text-[26px] font-bold tracking-tight ${valueColor}`}>{value}</p>
         {status || trend ? (
-          <span className={`badge shrink-0 ${isCritical ? "badge-danger" : isWarning ? "badge-warning" : "badge-info"}`}>
+          <span className={`badge ${isCritical ? "badge-danger" : isWarning ? "badge-warning" : "badge-info"}`}>
             {status ?? trend}
           </span>
         ) : null}
       </div>
       {(delta || trend) && (
-        <p className="mt-4 flex items-center gap-1.5 text-xs font-semibold text-slate-500">
+        <p className="mt-2 flex items-center gap-1.5 text-xs font-semibold text-slate-500">
           {isDown ? <ArrowDownRight className="h-3.5 w-3.5 text-red-500" /> : isUp ? <ArrowUpRight className="h-3.5 w-3.5 text-emerald-500" /> : null}
           {delta ?? trend}
         </p>
       )}
-      {icon ? <div className="absolute right-4 top-4 text-slate-300">{icon}</div> : null}
     </div>
   );
 }
@@ -231,13 +231,13 @@ export function KpiCard({
    ============================================================ */
 export function SkeletonCard() {
   return (
-    <div className="clay-card flex flex-col justify-between p-5">
+    <div className="clay-card min-w-0 flex flex-col justify-between p-4">
       <div className="flex items-center justify-between gap-3">
         <div className="skeleton h-3 w-24 rounded-full" />
         <div className="skeleton h-5 w-14 rounded-full" />
       </div>
-      <div className="mt-4 skeleton h-10 w-32 rounded-2xl" />
-      <div className="mt-4 flex items-center justify-between">
+      <div className="mt-2 skeleton h-8 w-24 rounded-lg" />
+      <div className="mt-2 flex items-center justify-between">
         <div className="skeleton h-3 w-20 rounded-full" />
         <div className="skeleton h-3 w-16 rounded-full" />
       </div>
@@ -510,12 +510,12 @@ export function DataTable({
       </div>
 
       {sorted.length > 0 && (
-        <div className="flex items-center justify-between border-t border-slate-100 px-5 py-2.5">
+        <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-t border-slate-100 px-4 py-2.5">
           <span className="text-xs text-slate-600">Showing {page * pageSize + 1}–{Math.min((page + 1) * pageSize, sorted.length)} of {sorted.length} records</span>
-          <div className="flex items-center gap-2">
-            <button className="btn-ghost px-3 py-1 text-xs" type="button" disabled={page === 0} onClick={() => setPage((value) => Math.max(0, value - 1))}>Previous</button>
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <button className="btn-ghost btn-compact px-3 py-1 text-xs" type="button" disabled={page === 0} onClick={() => setPage((value) => Math.max(0, value - 1))}>Previous</button>
             <span className="text-xs text-slate-600">Page {page + 1} of {pageCount}</span>
-            <button className="btn-ghost px-3 py-1 text-xs" type="button" disabled={page + 1 >= pageCount} onClick={() => setPage((value) => Math.min(pageCount - 1, value + 1))}>Next</button>
+            <button className="btn-ghost btn-compact px-3 py-1 text-xs" type="button" disabled={page + 1 >= pageCount} onClick={() => setPage((value) => Math.min(pageCount - 1, value + 1))}>Next</button>
           </div>
         </div>
       )}

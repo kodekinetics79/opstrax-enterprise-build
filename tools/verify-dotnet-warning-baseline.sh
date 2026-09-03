@@ -13,21 +13,71 @@ trap 'rm -f "$build_log" "$warning_lines" "$counts"' EXIT
 test -f "$baseline" || { echo "Missing warning baseline: $baseline" >&2; exit 2; }
 
 set +e
-dotnet build "$project" --no-restore --configuration "$configuration" \
-  --target:Rebuild --consoleLoggerParameters:NoSummary 2>&1 | tee "$build_log"
-build_status=${PIPESTATUS[0]}
+DOTNET_CLI_UI_LANGUAGE=en dotnet build "$project" --no-restore --configuration "$configuration" \
+  --target:Rebuild --verbosity:minimal --tl:off \
+  '--consoleLoggerParameters:Summary;DisableConsoleColor' 2>&1 | tee "$build_log"
+pipeline_status=("${PIPESTATUS[@]}")
 set -e
-test "$build_status" -eq 0 || exit "$build_status"
+test "${pipeline_status[0]}" -eq 0 || exit "${pipeline_status[0]}"
+if [[ "${pipeline_status[1]}" -ne 0 ]]; then
+  echo "Build log capture failed; warning debt was not measured." >&2
+  exit "${pipeline_status[1]}"
+fi
+
+# An interrupted dotnet child can return zero before MSBuild has completed. A
+# missing/partial log is not a zero-warning build. Require the full classic
+# English success trailer, including zero errors, before measuring any debt.
+# The summary may repeat diagnostics between its success marker and counts.
+if ! awk '
+  { sub(/\r$/, "") }
+  /^Build (FAILED|canceled|cancelled)\.$/ || /(^|:[[:space:]])error [A-Za-z]+[0-9]+:/ { invalid = 1 }
+  {
+    diagnostic = ($0 ~ /warning [A-Za-z]+[0-9]+:/)
+    if (diagnostic) diagnostics++
+  }
+  /^Build succeeded\.$/ {
+    if (phase != 0) invalid = 1
+    successes++
+    phase = 1
+    next
+  }
+  /^[[:space:]]*$/ { next }
+  phase == 1 && diagnostic { next }
+  phase == 1 && /^[[:space:]]*[0-9]+ Warning\(s\)[[:space:]]*$/ {
+    summary_warnings = $1 + 0
+    phase = 2
+    next
+  }
+  phase == 2 && /^[[:space:]]*0 Error\(s\)[[:space:]]*$/ { phase = 3; next }
+  phase == 3 && /^Time Elapsed [0-9]+:[0-9][0-9]:[0-9][0-9](\.[0-9]+)?[[:space:]]*$/ {
+    phase = 4
+    next
+  }
+  phase != 0 { invalid = 1 }
+  END {
+    if (invalid || successes != 1 || phase != 4 || summary_warnings > diagnostics ||
+        (summary_warnings == 0 && diagnostics != 0)) exit 1
+  }
+' "$build_log"; then
+  echo "Build completion evidence is missing, incomplete, or inconsistent; warning debt was not measured." >&2
+  exit 2
+fi
 
 # MSBuild can print the same project warning more than once during a graph rebuild.
 # Normalize the checkout path and count each diagnostic location only once.
-grep -E 'warning [A-Za-z]+[0-9]+:' "$build_log" \
+# Unlike grep, awk returns success for a legitimate no-match result, so capture
+# and processing failures can propagate through pipefail instead of `|| true`.
+awk '/warning [A-Za-z]+[0-9]+:/ { sub(/\r$/, ""); print }' "$build_log" \
   | sed "s#${repo_root}/##g" \
-  | LC_ALL=C sort -u > "$warning_lines" || true
-grep -Eo 'warning [A-Za-z]+[0-9]+:' "$warning_lines" \
-  | sed -E 's/warning ([A-Za-z]+[0-9]+):/\1/' \
+  | LC_ALL=C sort -u > "$warning_lines"
+awk '{
+  while (match($0, /warning [A-Za-z]+[0-9]+:/)) {
+    print substr($0, RSTART + 8, RLENGTH - 9)
+    $0 = substr($0, RSTART + RLENGTH)
+  }
+}' "$warning_lines" \
   | LC_ALL=C sort | uniq -c \
-  | awk '{ print $2 "\t" $1 }' > "$counts" || true
+  | awk '{ print $2 "\t" $1 }' > "$counts"
 
 observed_total="$(wc -l < "$warning_lines" | tr -d ' ')"
 baseline_total="$(awk -F '\t' '$1 == "TOTAL" { print $2 }' "$baseline")"

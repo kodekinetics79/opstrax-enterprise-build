@@ -222,16 +222,18 @@ public sealed class OperationalAlertDetectionService(
                             AND ta.created_at > NOW() - INTERVAL '6 hours')
         """;
 
-    // Sustained zero speed while the device keeps reporting. engine_status is
-    // vendor free text on real ingest paths, so it is used only to EXCLUDE clearly
-    // switched-off vehicles (parked ≠ idling); the load-bearing signal is
-    // speed ≈ 0 across a window of fresh fixes covering ≥80% of the configured
-    // 'idling' minutes (default 15).
+    // A candidate idling window needs explicit low speed AND affirmative engine
+    // evidence at every observed sample. NULLs must break evidence coverage, not
+    // be removed by a WHERE predicate or ignored by MAX/BOOL_AND. Legacy Running
+    // defaults are not engine-on proof. Sparse samples do not prove continuity:
+    // the message reports a possible condition, not continuous idling duration.
     private const string IdlingSql = """
         WITH win AS (
           SELECT le.company_id, le.vehicle_id,
                  COALESCE(MAX(t.threshold_value), 15) AS threshold_minutes,
                  COUNT(*) AS fixes,
+                 COUNT(CASE WHEN le.speed_mph >= 0 AND le.speed_mph < 1
+                   AND LOWER(TRIM(COALESCE(le.engine_status,''))) IN ('on','idle') THEN 1 END) AS affirmative_fixes,
                  MAX(le.speed_mph) AS max_speed,
                  MIN(le.event_time) AS first_seen,
                  MAX(le.event_time) AS last_seen,
@@ -247,15 +249,15 @@ public sealed class OperationalAlertDetectionService(
         SELECT w.company_id, w.vehicle_id, 'idling',
                COALESCE((SELECT tr.severity FROM telemetry_rules tr
                          WHERE tr.company_id = w.company_id AND tr.rule_type = 'idling' AND tr.enabled = TRUE LIMIT 1), 'Warning'),
-               'Excessive idling: stationary for ' ||
-               GREATEST(1, ROUND(EXTRACT(EPOCH FROM (w.last_seen - w.first_seen)) / 60))::int || ' min with engine on',
+               'Possible idling: low-speed engine-on samples observed over ' ||
+               GREATEST(1, ROUND(EXTRACT(EPOCH FROM (w.last_seen - w.first_seen)) / 60))::int || ' min; continuous idling not established',
                'Open', 'detector'
         FROM win w
         WHERE w.fixes >= 3
+          AND w.affirmative_fixes = w.fixes
           AND w.max_speed < 1
           AND w.last_seen > NOW() - INTERVAL '5 minutes'
           AND EXTRACT(EPOCH FROM (w.last_seen - w.first_seen)) / 60 >= w.threshold_minutes * 0.8
-          AND LOWER(COALESCE(w.last_engine, '')) NOT IN ('off','stopped','parked','ignition off','ignition_off','engine off','engineoff')
           AND NOT EXISTS (SELECT 1 FROM telemetry_alerts ta
                           WHERE ta.company_id = w.company_id AND ta.vehicle_id = w.vehicle_id
                             AND ta.alert_type = 'idling'
