@@ -1,0 +1,81 @@
+name: Wave3 G3A Runtime HOS Truth Repair
+
+on:
+  push:
+    branches:
+      - wave3/g3a-hos-workflow
+    paths:
+      - .github/workflows/wave3-g3a-runtime-hos-truth-repair.yml
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: wave3/g3a-hos-workflow
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+        with:
+          dotnet-version: '8.0.x'
+      - name: Repair Batch6 HOS runtime truth
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('backend-dotnet/Services/Batch6SchemaService.cs')
+          s = p.read_text()
+          replacements = {
+              'drive_time_remaining_minutes INT NOT NULL DEFAULT 660': 'drive_time_remaining_minutes INT NULL',
+              'shift_time_remaining_minutes INT NOT NULL DEFAULT 840': 'shift_time_remaining_minutes INT NULL',
+              'cycle_time_remaining_minutes INT NOT NULL DEFAULT 4200': 'cycle_time_remaining_minutes INT NULL',
+              "status VARCHAR(80) NOT NULL DEFAULT 'OK'": "status VARCHAR(80) NOT NULL DEFAULT 'Unavailable'",
+          }
+          for old, new in replacements.items():
+              if old not in s:
+                  raise SystemExit(f'expected runtime schema token missing: {old}')
+              s = s.replace(old, new, 1)
+
+          anchor = '        new("hos_clocks",               "branch_id",             "BIGINT NULL"),\n'
+          source_columns = (
+              '        new("hos_clocks",               "clock_source",          "VARCHAR(80) NULL"),\n'
+              '        new("hos_clocks",               "source_event_id",       "VARCHAR(160) NULL"),\n'
+              '        new("hos_clocks",               "source_observed_at",    "TIMESTAMPTZ NULL"),\n'
+              '        new("hos_clocks",               "source_authority",      "VARCHAR(32) NOT NULL DEFAULT \'LegacyUnverified\'"),\n'
+              '        new("hos_clocks",               "source_quality",        "VARCHAR(32) NULL"),\n'
+          )
+          if 'new("hos_clocks",               "clock_source",' not in s:
+              if anchor not in s:
+                  raise SystemExit('hos_clocks column anchor missing')
+              s = s.replace(anchor, anchor + source_columns, 1)
+
+          table_anchor = '            hos_warning VARCHAR(200) NULL,\n            updated_at TIMESTAMPTZ NULL\n'
+          table_truth = (
+              '            hos_warning VARCHAR(200) NULL,\n'
+              '            clock_source VARCHAR(80) NULL,\n'
+              '            source_event_id VARCHAR(160) NULL,\n'
+              '            source_observed_at TIMESTAMPTZ NULL,\n'
+              "            source_authority VARCHAR(32) NOT NULL DEFAULT 'LegacyUnverified',\n"
+              '            source_quality VARCHAR(32) NULL,\n'
+              '            updated_at TIMESTAMPTZ NULL\n'
+          )
+          if table_anchor not in s:
+              raise SystemExit('hos_clocks create-table anchor missing')
+          s = s.replace(table_anchor, table_truth, 1)
+          p.write_text(s)
+          PY
+      - name: Run focused HOS runtime truth tests
+        run: dotnet test backend-dotnet.Tests/Opstrax.Tests.csproj --filter FullyQualifiedName~HosRuntimeTruthContractTests --configuration Release
+      - name: Remove one-shot workflow and commit repair
+        shell: bash
+        run: |
+          rm .github/workflows/wave3-g3a-runtime-hos-truth-repair.yml
+          git config user.name 'opstrax-cto-automation'
+          git config user.email 'actions@users.noreply.github.com'
+          git add backend-dotnet/Services/Batch6SchemaService.cs .github/workflows/wave3-g3a-runtime-hos-truth-repair.yml
+          git diff --cached --check
+          git commit -m 'fix(wave3): fail closed HOS runtime clocks'
+          git push origin HEAD:wave3/g3a-hos-workflow
