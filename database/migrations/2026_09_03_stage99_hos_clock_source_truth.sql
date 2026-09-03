@@ -42,6 +42,39 @@ SET drive_time_remaining_minutes = NULL,
     source_quality = NULL,
     updated_at = NOW();
 
+-- Runtime create-if-missing schemas and explicitly enabled demo seeders predate the
+-- source-authority model. They may still attempt to write convenience clock values.
+-- Normalize every non-authoritative write at the database boundary so those legacy
+-- paths cannot recreate an actionable legal-hours claim after this migration.
+CREATE OR REPLACE FUNCTION stage99_enforce_hos_clock_source_truth()
+RETURNS TRIGGER LANGUAGE plpgsql AS $fn$
+BEGIN
+  IF COALESCE(NEW.source_authority, 'LegacyUnverified') <> 'Authoritative' THEN
+    NEW.source_authority := COALESCE(NULLIF(BTRIM(NEW.source_authority), ''), 'LegacyUnverified');
+    IF NEW.source_authority NOT IN ('LegacyUnverified','ProviderPending') THEN
+      NEW.source_authority := 'LegacyUnverified';
+    END IF;
+    NEW.drive_time_remaining_minutes := NULL;
+    NEW.shift_time_remaining_minutes := NULL;
+    NEW.cycle_time_remaining_minutes := NULL;
+    NEW.break_needed_at := NULL;
+    NEW.reset_at := NULL;
+    NEW.status := 'Unavailable';
+    NEW.hos_warning := 'Authoritative ELD/HOS source not connected';
+    NEW.clock_source := NULL;
+    NEW.source_event_id := NULL;
+    NEW.source_observed_at := NULL;
+    NEW.source_quality := NULL;
+  END IF;
+  RETURN NEW;
+END
+$fn$;
+
+DROP TRIGGER IF EXISTS trg_stage99_enforce_hos_clock_source_truth ON hos_clocks;
+CREATE TRIGGER trg_stage99_enforce_hos_clock_source_truth
+BEFORE INSERT OR UPDATE ON hos_clocks
+FOR EACH ROW EXECUTE FUNCTION stage99_enforce_hos_clock_source_truth();
+
 DO $stage99$
 BEGIN
   IF NOT EXISTS (
