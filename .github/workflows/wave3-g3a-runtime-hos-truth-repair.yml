@@ -11,7 +11,7 @@ permissions:
   contents: write
 
 jobs:
-  repair:
+  repair-runtime-hos-truth:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -21,61 +21,65 @@ jobs:
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
         with:
           dotnet-version: '8.0.x'
-      - name: Repair Batch6 HOS runtime truth
+      - name: Repair Batch6 HOS runtime source truth
         shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          p = Path('backend-dotnet/Services/Batch6SchemaService.cs')
-          s = p.read_text()
+
+          path = Path('backend-dotnet/Services/Batch6SchemaService.cs')
+          source = path.read_text()
+
           replacements = {
-              'drive_time_remaining_minutes INT NOT NULL DEFAULT 660': 'drive_time_remaining_minutes INT NULL',
-              'shift_time_remaining_minutes INT NOT NULL DEFAULT 840': 'shift_time_remaining_minutes INT NULL',
-              'cycle_time_remaining_minutes INT NOT NULL DEFAULT 4200': 'cycle_time_remaining_minutes INT NULL',
-              "status VARCHAR(80) NOT NULL DEFAULT 'OK'": "status VARCHAR(80) NOT NULL DEFAULT 'Unavailable'",
+              '"drive_time_remaining_minutes", "INT NOT NULL"': '"drive_time_remaining_minutes", "INT NULL"',
+              '"shift_time_remaining_minutes", "INT NOT NULL"': '"shift_time_remaining_minutes", "INT NULL"',
+              '"cycle_time_remaining_minutes", "INT NOT NULL"': '"cycle_time_remaining_minutes", "INT NULL"',
+              '"status", "VARCHAR(24) NOT NULL DEFAULT \'OK\'"': '"status", "VARCHAR(24) NOT NULL DEFAULT \'Unavailable\'"',
           }
           for old, new in replacements.items():
-              if old not in s:
-                  raise SystemExit(f'expected runtime schema token missing: {old}')
-              s = s.replace(old, new, 1)
+              count = source.count(old)
+              if count != 1:
+                  raise SystemExit(f'expected exactly one runtime schema fragment {old!r}; found {count}')
+              source = source.replace(old, new, 1)
 
-          anchor = '        new("hos_clocks",               "branch_id",             "BIGINT NULL"),\n'
-          source_columns = (
-              '        new("hos_clocks",               "clock_source",          "VARCHAR(80) NULL"),\n'
-              '        new("hos_clocks",               "source_event_id",       "VARCHAR(160) NULL"),\n'
-              '        new("hos_clocks",               "source_observed_at",    "TIMESTAMPTZ NULL"),\n'
-              '        new("hos_clocks",               "source_authority",      "VARCHAR(32) NOT NULL DEFAULT \'LegacyUnverified\'"),\n'
-              '        new("hos_clocks",               "source_quality",        "VARCHAR(32) NULL"),\n'
-          )
-          if 'new("hos_clocks",               "clock_source",' not in s:
-              if anchor not in s:
-                  raise SystemExit('hos_clocks column anchor missing')
-              s = s.replace(anchor, anchor + source_columns, 1)
+          status_anchor = '    new("hos_clocks", "status", "VARCHAR(24) NOT NULL DEFAULT \'Unavailable\'", true),\n'
+          source_fields = ''.join([
+              '    new("hos_clocks", "clock_source", "VARCHAR(64) NULL", true),\n',
+              '    new("hos_clocks", "source_event_id", "VARCHAR(160) NULL", true),\n',
+              '    new("hos_clocks", "source_observed_at", "TIMESTAMPTZ NULL", true),\n',
+              '    new("hos_clocks", "source_authority", "VARCHAR(24) NOT NULL DEFAULT \'Unverified\'", true),\n',
+              '    new("hos_clocks", "source_quality", "VARCHAR(24) NULL", true),\n',
+          ])
+          if 'new("hos_clocks", "source_authority"' not in source:
+              if source.count(status_anchor) != 1:
+                  raise SystemExit('unique hos_clocks status anchor not found')
+              source = source.replace(status_anchor, status_anchor + source_fields, 1)
 
-          table_anchor = '            hos_warning VARCHAR(200) NULL,\n            updated_at TIMESTAMPTZ NULL\n'
-          table_truth = (
-              '            hos_warning VARCHAR(200) NULL,\n'
-              '            clock_source VARCHAR(80) NULL,\n'
-              '            source_event_id VARCHAR(160) NULL,\n'
-              '            source_observed_at TIMESTAMPTZ NULL,\n'
-              "            source_authority VARCHAR(32) NOT NULL DEFAULT 'LegacyUnverified',\n"
-              '            source_quality VARCHAR(32) NULL,\n'
-              '            updated_at TIMESTAMPTZ NULL\n'
-          )
-          if table_anchor not in s:
-              raise SystemExit('hos_clocks create-table anchor missing')
-          s = s.replace(table_anchor, table_truth, 1)
-          p.write_text(s)
+          demo_rows = {
+              "('HOS-001','DRV-1001',660,840,4200,'ON','OK',NOW() - INTERVAL '5 minutes')": "('HOS-001','DRV-1001',NULL,NULL,NULL,'ON','Unavailable',NOW() - INTERVAL '5 minutes')",
+              "('HOS-002','DRV-1002',480,720,3600,'ON','OK',NOW() - INTERVAL '9 minutes')": "('HOS-002','DRV-1002',NULL,NULL,NULL,'ON','Unavailable',NOW() - INTERVAL '9 minutes')",
+              "('HOS-003','DRV-1003',180,480,2820,'OFF','Warning',NOW() - INTERVAL '14 minutes')": "('HOS-003','DRV-1003',NULL,NULL,NULL,'OFF','Unavailable',NOW() - INTERVAL '14 minutes')",
+          }
+          for old, new in demo_rows.items():
+              count = source.count(old)
+              if count != 1:
+                  raise SystemExit(f'expected exactly one demo HOS seed row {old!r}; found {count}')
+              source = source.replace(old, new, 1)
+
+          path.write_text(source)
           PY
-      - name: Run focused HOS runtime truth tests
-        run: dotnet test backend-dotnet.Tests/Opstrax.Tests.csproj --filter FullyQualifiedName~HosRuntimeTruthContractTests --configuration Release
-      - name: Remove one-shot workflow and commit repair
+      - name: Run focused HOS truth tests
+        run: dotnet test backend-dotnet.Tests/Opstrax.Tests.csproj --configuration Release --filter FullyQualifiedName~HosRuntimeTruthContractTests
+      - name: Commit runtime source-truth repair
         shell: bash
         run: |
-          rm .github/workflows/wave3-g3a-runtime-hos-truth-repair.yml
-          git config user.name 'opstrax-cto-automation'
-          git config user.email 'actions@users.noreply.github.com'
-          git add backend-dotnet/Services/Batch6SchemaService.cs .github/workflows/wave3-g3a-runtime-hos-truth-repair.yml
+          git config user.name "opstrax-wave3-bot"
+          git config user.email "opstrax-wave3-bot@users.noreply.github.com"
+          git add backend-dotnet/Services/Batch6SchemaService.cs
           git diff --cached --check
-          git commit -m 'fix(wave3): fail closed HOS runtime clocks'
+          if git diff --cached --quiet; then
+            echo "No Batch6 runtime changes required."
+            exit 0
+          fi
+          git commit -m "fix(wave3): align HOS runtime schema with Stage 99 truth"
           git push origin HEAD:wave3/g3a-hos-workflow
