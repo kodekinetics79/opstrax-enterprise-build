@@ -1,0 +1,59 @@
+name: Wave7 G7B Intelligence Truth Repair
+
+on:
+  push:
+    branches:
+      - wave7/g7b-intelligence-automation
+    paths:
+      - .github/workflows/wave7-g7b-intelligence-truth-repair.yml
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: wave7/g7b-intelligence-automation
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+        with:
+          dotnet-version: '8.0.x'
+      - name: Remove unevidenced predictive/model claims
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('frontend/src/pages/PredictiveAnalyticsPage.tsx')
+          s = p.read_text()
+          replacements = {
+              '>AI-Powered Intelligence</span>': '>Operational Intelligence</span>',
+              'Predictive risk scoring for maintenance, driver safety, and SLA performance': 'Rule-based risk signals for maintenance, driver safety, and SLA performance',
+              '{ label: "Avg Confidence",': '{ label: "Avg Signal Score",',
+              'Current predictive risk items — maintenance, safety and SLA': 'Current rule-based risk items — maintenance, safety and SLA',
+              'label: "Maintenance Predictions"': 'label: "Maintenance Risk Signals"',
+              'No predictions available at this time.': 'No risk signals available at this time.',
+          }
+          for old, new in replacements.items():
+              if old not in s:
+                  raise SystemExit(f'expected customer-facing token missing: {old}')
+              s = s.replace(old, new, 1)
+          p.write_text(s)
+
+          t = Path('backend-dotnet.Tests/FleetIntelligenceTruthContractTests.cs')
+          t.write_text('''using System;\nusing System.IO;\nusing Xunit;\n\nnamespace Opstrax.Tests;\n\npublic sealed class FleetIntelligenceTruthContractTests\n{\n    private static string Root => Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../"));\n\n    [Fact]\n    public void IntelligencePage_DoesNotClaimUnevidencedPredictiveOrModelCapability()\n    {\n        var source = File.ReadAllText(Path.Combine(Root, "frontend", "src", "pages", "PredictiveAnalyticsPage.tsx"));\n\n        Assert.DoesNotContain("AI-Powered Intelligence", source, StringComparison.Ordinal);\n        Assert.DoesNotContain("Predictive risk scoring", source, StringComparison.Ordinal);\n        Assert.DoesNotContain("Maintenance Predictions", source, StringComparison.Ordinal);\n        Assert.DoesNotContain("Avg Confidence", source, StringComparison.Ordinal);\n        Assert.Contains("Rule-based risk signals", source, StringComparison.Ordinal);\n        Assert.Contains("Risk scoring", source, StringComparison.Ordinal);\n    }\n}\n''')
+          PY
+      - name: Run intelligence truth contract
+        run: dotnet test backend-dotnet.Tests/Opstrax.Tests.csproj --filter FullyQualifiedName~FleetIntelligenceTruthContractTests --configuration Release
+      - name: Remove one-shot workflow and commit repair
+        shell: bash
+        run: |
+          rm .github/workflows/wave7-g7b-intelligence-truth-repair.yml
+          git config user.name 'opstrax-cto-automation'
+          git config user.email 'actions@users.noreply.github.com'
+          git add frontend/src/pages/PredictiveAnalyticsPage.tsx backend-dotnet.Tests/FleetIntelligenceTruthContractTests.cs .github/workflows/wave7-g7b-intelligence-truth-repair.yml
+          git diff --cached --check
+          git commit -m 'fix(wave7): make fleet intelligence claims evidence-bound'
+          git push origin HEAD:wave7/g7b-intelligence-automation
