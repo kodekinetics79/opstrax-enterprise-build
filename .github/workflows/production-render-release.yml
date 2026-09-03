@@ -1,0 +1,75 @@
+name: Production Render release
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Full 40-character main-branch commit to release
+        required: true
+        type: string
+      confirmation:
+        description: Type DEPLOY_PRODUCTION
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-render-release
+  cancel-in-progress: false
+
+jobs:
+  migrate-and-deploy:
+    name: Migrate, deploy exact SHA, verify readiness
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    environment: production
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 0
+
+      - name: Validate production release authorization and lineage
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          RELEASE_CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          if [[ "$RELEASE_CONFIRMATION" != "DEPLOY_PRODUCTION" ]]; then
+            echo "Refusing release: confirmation must be DEPLOY_PRODUCTION." >&2
+            exit 1
+          fi
+          if [[ ! "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Refusing release: candidate_sha must be a full lowercase commit SHA." >&2
+            exit 1
+          fi
+          if [[ "$(git rev-parse HEAD)" != "$CANDIDATE_SHA" ]]; then
+            echo "Refusing release: checkout does not match candidate_sha." >&2
+            exit 1
+          fi
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$CANDIDATE_SHA" origin/main; then
+            echo "Refusing release: candidate is not in origin/main." >&2
+            exit 1
+          fi
+
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Apply the owner-only production migration chain
+        env:
+          NEON_PG_URI: ${{ secrets.NEON_PRODUCTION_OWNER_URI }}
+        run: |
+          set -euo pipefail
+          : "${NEON_PG_URI:?Configure the production environment secret NEON_PRODUCTION_OWNER_URI}"
+          ./tools/apply-neon-predeploy-migrations.sh
+
+      - name: Trigger and verify the exact Render deployment
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ vars.RENDER_PRODUCTION_SERVICE_ID }}
+          RENDER_HEALTH_URL: ${{ vars.RENDER_PRODUCTION_HEALTH_URL }}
+        run: node tools/render-deploy-exact.mjs
