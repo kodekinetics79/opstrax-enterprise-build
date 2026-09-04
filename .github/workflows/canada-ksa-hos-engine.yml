@@ -4,7 +4,9 @@ on:
   pull_request:
     paths:
       - 'backend-dotnet/Services/HosComplianceCalculator.cs'
+      - 'backend-dotnet/Services/HosShadowClockService.cs'
       - 'backend-dotnet.Tests/HosComplianceCalculatorTests.cs'
+      - 'backend-dotnet.Tests/HosShadowClockServiceTests.cs'
       - 'database/migrations/2026_09_03_stage102_hos_policy_shadow_engine.sql'
       - 'tools/apply-canada-ksa-hos-shadow-predeploy.sh'
       - '.github/workflows/canada-ksa-hos-engine.yml'
@@ -18,7 +20,7 @@ env:
 
 jobs:
   hos-engine:
-    name: Calculator + Stage102 real Postgres gate
+    name: Calculator + shadow service + Stage102 Postgres gate
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     services:
@@ -46,11 +48,11 @@ jobs:
       - name: Install PostgreSQL client
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
 
-      - name: Compile and run deterministic Canada/KSA HOS boundary tests
+      - name: Compile and run deterministic Canada/KSA HOS and shadow-evidence tests
         run: |
           dotnet test backend-dotnet.Tests/Opstrax.Tests.csproj \
             --configuration Release \
-            --filter FullyQualifiedName~HosComplianceCalculatorTests \
+            --filter "FullyQualifiedName~HosComplianceCalculatorTests|FullyQualifiedName~HosShadowClockServiceTests" \
             --logger "console;verbosity=normal"
 
       - name: Apply Stage101 + Stage102 on fresh Postgres
@@ -69,15 +71,14 @@ jobs:
             "SELECT COUNT(*) FROM schema_migrations WHERE version='2026_09_03_stage102_hos_policy_shadow_engine'")
           test "$count" = "1"
 
-      - name: Test policy and shadow evidence constraints
+      - name: Test policy, RLS and shadow evidence constraints
         env:
           PGPASSWORD: zayra
         run: |
           set -euo pipefail
           psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_hos -v ON_ERROR_STOP=1 <<'SQL'
-          -- Use existing runtime seed driver/company if present after canonical chain;
-          -- otherwise this constraint gate focuses on metadata-level invariants.
           DO $verify$
+          DECLARE isolated_count INTEGER;
           BEGIN
             IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname='uq_driver_hos_policy_current') THEN
               RAISE EXCEPTION 'missing one-current-policy constraint';
@@ -91,12 +92,26 @@ jobs:
             IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname='trg_hos_shadow_no_update' AND NOT tgisinternal) THEN
               RAISE EXCEPTION 'shadow snapshots are not append-only';
             END IF;
+            SELECT COUNT(*) INTO isolated_count
+              FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+             WHERE n.nspname='public'
+               AND c.relname IN ('driver_hos_policy_assignments','hos_exception_authorizations','hos_shadow_clock_snapshots')
+               AND c.relrowsecurity AND c.relforcerowsecurity;
+            IF isolated_count <> 3 THEN
+              RAISE EXCEPTION 'all Stage102 tenant tables must FORCE RLS';
+            END IF;
+            IF NOT EXISTS (
+              SELECT 1 FROM information_schema.columns
+               WHERE table_name='hos_logs' AND column_name='provenance_verified'
+            ) THEN
+              RAISE EXCEPTION 'HOS source provenance contract missing';
+            END IF;
           END
           $verify$;
           SQL
 
       - name: Record gate boundary
         run: |
-          echo "Calculator + Stage102: PASSED development gate."
+          echo "Calculator + shadow service + Stage102: PASSED development gate."
           echo "Mode remains SHADOW ONLY."
           echo "No certified ELD/TGA-provider/field evidence is implied by this CI result."
