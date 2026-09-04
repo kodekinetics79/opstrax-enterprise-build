@@ -59,16 +59,37 @@ jobs:
 '''
           additions = '''        new("hos_clocks",               "company_id",            "BIGINT NULL"),
         new("hos_clocks",               "branch_id",             "BIGINT NULL"),
-        new("hos_clocks",               "clock_source",          "VARCHAR(64) NULL"),
+        new("hos_clocks",               "clock_source",          "VARCHAR(80) NULL"),
         new("hos_clocks",               "source_event_id",       "VARCHAR(160) NULL"),
         new("hos_clocks",               "source_observed_at",    "TIMESTAMPTZ NULL"),
-        new("hos_clocks",               "source_authority",      "VARCHAR(24) NOT NULL DEFAULT 'Unverified'"),
-        new("hos_clocks",               "source_quality",        "VARCHAR(24) NULL"),
+        new("hos_clocks",               "source_authority",      "VARCHAR(32) NOT NULL DEFAULT 'LegacyUnverified'"),
+        new("hos_clocks",               "source_quality",        "VARCHAR(32) NULL"),
 '''
           if 'new("hos_clocks",               "source_authority",' not in source:
               if source.count(anchor) != 1:
                   raise SystemExit('unique hos_clocks company/branch repair anchor not found')
               source = source.replace(anchor, additions, 1)
+
+          # If the runtime fallback creates hos_clocks from scratch, it must create
+          # the same provenance fields that Stage99 expects rather than relying on a
+          # later ALTER path that runs before the CREATE TABLE block.
+          table_anchor = '''            status VARCHAR(80) NOT NULL DEFAULT 'Unavailable',
+            hos_warning VARCHAR(200) NULL,
+            updated_at TIMESTAMPTZ NULL
+'''
+          table_truth = '''            status VARCHAR(80) NOT NULL DEFAULT 'Unavailable',
+            hos_warning VARCHAR(200) NULL,
+            clock_source VARCHAR(80) NULL,
+            source_event_id VARCHAR(160) NULL,
+            source_observed_at TIMESTAMPTZ NULL,
+            source_authority VARCHAR(32) NOT NULL DEFAULT 'LegacyUnverified',
+            source_quality VARCHAR(32) NULL,
+            updated_at TIMESTAMPTZ NULL
+'''
+          if 'source_authority VARCHAR(32) NOT NULL DEFAULT \'LegacyUnverified\'' not in source[source.find('@"CREATE TABLE IF NOT EXISTS hos_clocks'):source.find('@"CREATE TABLE IF NOT EXISTS hos_certifications')]:
+              if source.count(table_anchor) != 1:
+                  raise SystemExit('unique hos_clocks CREATE TABLE source-truth anchor not found')
+              source = source.replace(table_anchor, table_truth, 1)
 
           # Gated demo mode may retain rows for UI development, but it must never
           # invent legal remaining-time values or an OK compliance state. Preserve
