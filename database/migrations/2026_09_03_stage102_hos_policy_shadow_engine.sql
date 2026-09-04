@@ -190,6 +190,82 @@ CREATE INDEX IF NOT EXISTS ix_hos_shadow_blocked
   WHERE status IN ('Blocked','Violation','Unverified');
 
 -- ---------------------------------------------------------------------------
+-- Tenant isolation / runtime grants
+-- ---------------------------------------------------------------------------
+-- Stage102 runs after the established RLS cutover, so these newly-created
+-- company-scoped tables must enroll themselves immediately. Relying on an older
+-- one-time reconciliation pass would leave a protected-environment gap.
+ALTER TABLE driver_hos_policy_assignments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE driver_hos_policy_assignments FORCE ROW LEVEL SECURITY;
+ALTER TABLE hos_exception_authorizations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE hos_exception_authorizations FORCE ROW LEVEL SECURITY;
+ALTER TABLE hos_shadow_clock_snapshots ENABLE ROW LEVEL SECURITY;
+ALTER TABLE hos_shadow_clock_snapshots FORCE ROW LEVEL SECURITY;
+
+REVOKE ALL ON TABLE driver_hos_policy_assignments FROM PUBLIC;
+REVOKE ALL ON TABLE hos_exception_authorizations FROM PUBLIC;
+REVOKE ALL ON TABLE hos_shadow_clock_snapshots FROM PUBLIC;
+
+DO $runtime_rls$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_app')
+     AND to_regprocedure('opstrax_security.current_tenant_id()') IS NOT NULL THEN
+    DROP POLICY IF EXISTS tenant_ticket_app ON driver_hos_policy_assignments;
+    CREATE POLICY tenant_ticket_app ON driver_hos_policy_assignments
+      AS PERMISSIVE FOR ALL TO opstrax_app
+      USING (company_id=(SELECT opstrax_security.current_tenant_id()))
+      WITH CHECK (company_id=(SELECT opstrax_security.current_tenant_id()));
+
+    DROP POLICY IF EXISTS tenant_ticket_app ON hos_exception_authorizations;
+    CREATE POLICY tenant_ticket_app ON hos_exception_authorizations
+      AS PERMISSIVE FOR ALL TO opstrax_app
+      USING (company_id=(SELECT opstrax_security.current_tenant_id()))
+      WITH CHECK (company_id=(SELECT opstrax_security.current_tenant_id()));
+
+    DROP POLICY IF EXISTS tenant_ticket_app ON hos_shadow_clock_snapshots;
+    CREATE POLICY tenant_ticket_app ON hos_shadow_clock_snapshots
+      AS PERMISSIVE FOR ALL TO opstrax_app
+      USING (company_id=(SELECT opstrax_security.current_tenant_id()))
+      WITH CHECK (company_id=(SELECT opstrax_security.current_tenant_id()));
+
+    REVOKE ALL ON TABLE driver_hos_policy_assignments FROM opstrax_app;
+    REVOKE ALL ON TABLE hos_exception_authorizations FROM opstrax_app;
+    REVOKE ALL ON TABLE hos_shadow_clock_snapshots FROM opstrax_app;
+    GRANT SELECT,INSERT,UPDATE,DELETE ON TABLE driver_hos_policy_assignments TO opstrax_app;
+    GRANT SELECT,INSERT,UPDATE,DELETE ON TABLE hos_exception_authorizations TO opstrax_app;
+    -- Shadow evidence is append-only. The DB trigger also rejects UPDATE/DELETE,
+    -- but withholding those privileges reduces the runtime attack surface.
+    GRANT SELECT,INSERT ON TABLE hos_shadow_clock_snapshots TO opstrax_app;
+
+    GRANT USAGE,SELECT ON SEQUENCE driver_hos_policy_assignments_id_seq TO opstrax_app;
+    GRANT USAGE,SELECT ON SEQUENCE hos_exception_authorizations_id_seq TO opstrax_app;
+    GRANT USAGE,SELECT ON SEQUENCE hos_shadow_clock_snapshots_id_seq TO opstrax_app;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_system') THEN
+    DROP POLICY IF EXISTS system_control_plane ON driver_hos_policy_assignments;
+    CREATE POLICY system_control_plane ON driver_hos_policy_assignments
+      AS PERMISSIVE FOR ALL TO opstrax_system USING (true) WITH CHECK (true);
+
+    DROP POLICY IF EXISTS system_control_plane ON hos_exception_authorizations;
+    CREATE POLICY system_control_plane ON hos_exception_authorizations
+      AS PERMISSIVE FOR ALL TO opstrax_system USING (true) WITH CHECK (true);
+
+    DROP POLICY IF EXISTS system_control_plane ON hos_shadow_clock_snapshots;
+    CREATE POLICY system_control_plane ON hos_shadow_clock_snapshots
+      AS PERMISSIVE FOR ALL TO opstrax_system USING (true) WITH CHECK (true);
+
+    GRANT SELECT,INSERT,UPDATE,DELETE ON TABLE driver_hos_policy_assignments TO opstrax_system;
+    GRANT SELECT,INSERT,UPDATE,DELETE ON TABLE hos_exception_authorizations TO opstrax_system;
+    GRANT SELECT,INSERT ON TABLE hos_shadow_clock_snapshots TO opstrax_system;
+    GRANT USAGE,SELECT ON SEQUENCE driver_hos_policy_assignments_id_seq TO opstrax_system;
+    GRANT USAGE,SELECT ON SEQUENCE hos_exception_authorizations_id_seq TO opstrax_system;
+    GRANT USAGE,SELECT ON SEQUENCE hos_shadow_clock_snapshots_id_seq TO opstrax_system;
+  END IF;
+END
+$runtime_rls$;
+
+-- ---------------------------------------------------------------------------
 -- Append-only protection. Calculations are evidence snapshots, not mutable state.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION prevent_hos_shadow_snapshot_mutation()
@@ -208,6 +284,8 @@ CREATE TRIGGER trg_hos_shadow_no_update
 -- Postconditions
 -- ---------------------------------------------------------------------------
 DO $postcondition$
+DECLARE
+  isolated_count INTEGER;
 BEGIN
   IF to_regclass('public.driver_hos_policy_assignments') IS NULL
      OR to_regclass('public.hos_exception_authorizations') IS NULL
@@ -221,6 +299,25 @@ BEGIN
 
   IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname='trg_hos_shadow_no_update' AND NOT tgisinternal) THEN
     RAISE EXCEPTION 'Stage102 failed: shadow snapshot append-only trigger missing';
+  END IF;
+
+  SELECT COUNT(*) INTO isolated_count
+  FROM pg_class c
+  JOIN pg_namespace n ON n.oid=c.relnamespace
+  WHERE n.nspname='public'
+    AND c.relname IN ('driver_hos_policy_assignments','hos_exception_authorizations','hos_shadow_clock_snapshots')
+    AND c.relrowsecurity AND c.relforcerowsecurity;
+  IF isolated_count <> 3 THEN
+    RAISE EXCEPTION 'Stage102 failed: all three HOS evidence tables must FORCE RLS';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_app')
+     AND to_regprocedure('opstrax_security.current_tenant_id()') IS NOT NULL
+     AND (SELECT COUNT(*) FROM pg_policies
+          WHERE schemaname='public'
+            AND tablename IN ('driver_hos_policy_assignments','hos_exception_authorizations','hos_shadow_clock_snapshots')
+            AND policyname='tenant_ticket_app') <> 3 THEN
+    RAISE EXCEPTION 'Stage102 failed: application tenant-ticket policies incomplete';
   END IF;
 END
 $postcondition$;
