@@ -1,0 +1,42 @@
+name: Wave3 Current-Main HOS Closeout
+
+on:
+  push:
+    branches:
+      - wave3/g3a-current-main-closeout
+    paths:
+      - tools/wave3-current-main-closeout.py
+      - .github/workflows/wave3-current-main-closeout.yml
+
+permissions:
+  contents: write
+
+jobs:
+  closeout:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: wave3/g3a-current-main-closeout
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+        with:
+          dotnet-version: '8.0.x'
+      - name: Apply focused current-main closeout
+        run: python3 tools/wave3-current-main-closeout.py
+      - name: Verify focused HOS authority tests
+        run: >-
+          dotnet test backend-dotnet.Tests/Opstrax.Tests.csproj --configuration Release
+          --filter "FullyQualifiedName~DispatchHosAuthorityContractTests|FullyQualifiedName~HosClockSourceTruthMigrationTests|FullyQualifiedName~HosRuntimeTruthContractTests|FullyQualifiedName~HosOperationalAlertSourceTruthTests"
+      - name: Verify full backend regression
+        run: dotnet test backend-dotnet.Tests/Opstrax.Tests.csproj --configuration Release
+      - name: Validate patch
+        run: git diff --check
+      - name: Commit closeout candidate
+        run: |
+          git config user.name "opstrax-wave3-bot"
+          git config user.email "opstrax-wave3-bot@users.noreply.github.com"
+          git add backend-dotnet backend-dotnet.Tests database/migrations tools/apply-neon-predeploy-migrations.sh docs/commercialization/wave3/G3A_CURRENT_MAIN_CLOSEOUT.md
+          git diff --cached --check
+          git commit -m "fix(wave3): close HOS source truth on current main"
+          git push origin HEAD:wave3/g3a-current-main-closeout
