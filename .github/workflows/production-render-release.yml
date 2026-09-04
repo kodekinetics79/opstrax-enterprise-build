@@ -58,13 +58,13 @@ jobs:
       - name: Install PostgreSQL client
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
 
-      - name: Apply the owner-only production migration chain
+      - name: Apply owner-only production migrations and Canada/KSA compliance baseline
         env:
           NEON_PG_URI: ${{ secrets.NEON_PRODUCTION_OWNER_URI }}
         run: |
           set -euo pipefail
           : "${NEON_PG_URI:?Configure the production environment secret NEON_PRODUCTION_OWNER_URI}"
-          ./tools/apply-neon-predeploy-migrations.sh
+          bash ./tools/apply-canada-ksa-compliance-predeploy.sh
 
       - name: Trigger and verify the exact Render deployment
         env:
