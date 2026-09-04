@@ -1,0 +1,824 @@
+EndpointMappings lines=29452 hits=20 windows=10
+
+--- lines 7506-7594 ---
+07506:
+07507:     private static Task<IResult> DispatchRecommendations(HttpContext http, Database db, CancellationToken ct)
+07508:     {
+07509:         if (RequirePermission(http, "dispatch:view") is { } denied) return Task.FromResult(denied);
+07510:         var (branchClause, branchId) = StrictBranchFilter(http, "v");
+07511:         return OkRows(db,
+07512:             @"SELECT dr.*, j.job_code, COALESCE(j.job_number,j.job_code) job_number, c.name customer_name, d.full_name driver_name, v.vehicle_code
+07513:               FROM dispatch_recommendations dr
+07514:               LEFT JOIN jobs j ON j.id=dr.job_id AND j.company_id=dr.company_id
+07515:               LEFT JOIN customers c ON c.id=j.customer_id AND c.company_id=dr.company_id
+07516:               LEFT JOIN drivers d ON d.id=dr.driver_id AND d.company_id=dr.company_id
+07517:               LEFT JOIN vehicles v ON v.id=dr.vehicle_id AND v.company_id=dr.company_id
+07518:               WHERE dr.company_id=@cid" + branchClause + @"
+07519:               ORDER BY dr.score DESC LIMIT 12",
+07520:             c => { c.Parameters.AddWithValue("@cid", GetCompanyId(http)); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct: ct);
+07521:     }
+07522:
+07523:     private static async Task<IResult> AvailableDrivers(HttpContext http, Database db, CancellationToken ct)
+07524:     {
+07525:         if (RequirePermission(http, "dispatch:view") is { } denied) return denied;
+07526:         var companyId = GetCompanyId(http);
+07527:         var (branchClause, branchId) = StrictBranchFilter(http, "d");
+07528:         var rows = await db.QueryAsync(
+07529:             @"SELECT d.*,
+07530:                      ROUND((COALESCE(d.readiness_score,50)+COALESCE(d.safety_score,50)+COALESCE(d.compliance_score,50))/3,1) match_readiness,
+07531:                      (SELECT COUNT(*) FROM dvir_defects dd2
+07532:                       WHERE dd2.company_id=d.company_id AND dd2.driver_id=d.id
+07533:                         AND dd2.status NOT IN ('resolved','Resolved')) open_defect_count,
+07534:                      (SELECT hr.remaining_drive_hours FROM hos_records hr
+07535:                       WHERE hr.driver_id=d.id AND (hr.company_id=@cid OR hr.company_id IS NULL)
+07536:                       ORDER BY hr.shift_date DESC, hr.id DESC LIMIT 1) available_hos_hours,
+07537:                      (SELECT COUNT(*) FROM dispatch_assignments da2
+07538:                       WHERE da2.driver_id=d.id
+07539:                         AND da2.assignment_status NOT IN ('delivered','cancelled')
+07540:                         AND da2.company_id=@cid) active_assignment_count,
+07541:                      CASE WHEN COALESCE(d.safety_score,100) < 65 THEN 1 ELSE 0 END safety_blocked,
+07542:                      CASE WHEN d.status NOT IN ('Available','Idle') THEN 1 ELSE 0 END status_blocked
+07543:               FROM drivers d
+07544:               WHERE d.company_id=@cid AND d.deleted_at IS NULL
+07545:                 AND d.status IN ('Available','Idle')
+07546:                 AND COALESCE(d.safety_score,0) >= 65
+07547:                 AND COALESCE((SELECT hr.remaining_drive_hours FROM hos_records hr
+07548:                               WHERE hr.driver_id=d.id AND (hr.company_id=@cid OR hr.company_id IS NULL)
+07549:                               ORDER BY hr.shift_date DESC, hr.id DESC LIMIT 1),0) >= 1
+07550:                 AND LOWER(COALESCE((SELECT hr.hos_status FROM hos_records hr
+07551:                                     WHERE hr.driver_id=d.id AND (hr.company_id=@cid OR hr.company_id IS NULL)
+07552:                                     ORDER BY hr.shift_date DESC, hr.id DESC LIMIT 1),''))
+07553:                     IN ('compliant','ok','eligible','available','on duty','on duty (not driving)','driving')
+07554:                 AND NOT EXISTS (SELECT 1 FROM dispatch_assignments da2
+07555:                                 WHERE da2.driver_id=d.id AND da2.company_id=@cid
+07556:                                   AND da2.assignment_status NOT IN ('delivered','cancelled'))" + branchClause + @"
+07557:               ORDER BY match_readiness DESC",
+07558:             c => { c.Parameters.AddWithValue("@cid", companyId); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct);
+07559:         // Dispatch eligibility does not need licence material at all. Omit both the
+07560:         // encrypted display value and its equality-search index from this projection.
+07561:         foreach (var row in rows)
+07562:         {
+07563:             row.Remove("licenseNumber");
+07564:             row.Remove("licenseNumberBidx");
+07565:         }
+07566:         return Results.Ok(ApiResponse<object>.Ok(rows));
+07567:     }
+07568:
+07569:     private static async Task<IResult> AvailableVehicles(HttpContext http, Database db, CancellationToken ct)
+07570:     {
+07571:         if (RequirePermission(http, "dispatch:view") is { } denied) return denied;
+07572:         var companyId = GetCompanyId(http);
+07573:         var (branchClause, branchId) = StrictBranchFilter(http, "v");
+07574:         var rows = await db.QueryAsync(
+07575:             @"SELECT v.*,
+07576:                      ROUND((COALESCE(v.readiness_score,50)+COALESCE(v.data_quality_score,50)+(100-COALESCE(v.risk_score,0)))/3,1) match_readiness,
+07577:                      COALESCE(v.availability_status, 'available') availability_status,
+07578:                      (SELECT COUNT(*) FROM dvir_defects dd2
+07579:                       WHERE dd2.vehicle_id=v.id AND dd2.out_of_service=TRUE
+07580:                         AND dd2.status NOT IN ('resolved','Resolved')) critical_defect_count,
+07581:                      (SELECT COUNT(*) FROM work_orders wo2
+07582:                       WHERE wo2.vehicle_id=v.id AND wo2.company_id=@cid
+07583:                         AND wo2.status IN ('in_progress','waiting_parts','In Progress','Waiting Parts')
+07584:                         AND wo2.deleted_at IS NULL) blocking_wo_count,
+07585:                      (SELECT COUNT(*) FROM dispatch_assignments da2
+07586:                       WHERE da2.vehicle_id=v.id
+07587:                         AND da2.assignment_status NOT IN ('delivered','cancelled')
+07588:                         AND da2.company_id=@cid) active_assignment_count
+07589:               FROM vehicles v
+07590:               WHERE v.company_id=@cid AND v.deleted_at IS NULL
+07591:                 AND v.status IN ('Available','Idle')
+07592:                 -- Exclude maintenance-red-tagged assets from the assignable pool (the gate reads
+07593:                 -- status, but maintenance red-tags via out_of_service/availability_status only).
+07594:                 AND COALESCE(v.out_of_service, FALSE) = FALSE
+
+--- lines 10027-10099 ---
+10027:             long parsedTarget = 0;
+10028:             var hasTarget = rawTarget is not null and not DBNull && long.TryParse(rawTarget.ToString(), out parsedTarget) && parsedTarget > 0;
+10029:             if (rawTarget is not null and not DBNull && !hasTarget)
+10030:                 return Results.BadRequest(ApiResponse<object>.Fail("Assignment target must be a positive integer or explicit null for unassignment."));
+10031:             var targetId = hasTarget ? parsedTarget : (long?)null;
+10032:             var source = await db.QuerySingleAsync(
+10033:                 $"SELECT id, branch_id, {column} current_target_id FROM {table} WHERE id=@id AND company_id=@companyId AND deleted_at IS NULL" + (branchId is null ? "" : " AND branch_id=@branchId") + " FOR UPDATE",
+10034:                 c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct);
+10035:             if (source is null) return Results.NotFound(ApiResponse<object>.Fail("Record not found"));
+10036:
+10037:             var targetTable = table == "vehicles" ? "drivers" : "vehicles";
+10038:             var reciprocalColumn = table == "vehicles" ? "assigned_vehicle_id" : "assigned_driver_id";
+10039:             Dictionary<string, object?>? target = null;
+10040:             if (targetId is not null)
+10041:             {
+10042:                 target = await db.QuerySingleAsync(
+10043:                     $"SELECT id, branch_id, {reciprocalColumn} reciprocal_id FROM {targetTable} WHERE id=@targetId AND company_id=@companyId AND deleted_at IS NULL" + (branchId is null ? "" : " AND branch_id=@branchId") + " FOR UPDATE",
+10044:                     c => { c.Parameters.AddWithValue("@targetId", targetId.Value); c.Parameters.AddWithValue("@companyId", companyId); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct);
+10045:                 if (target is null)
+10046:                     return Results.BadRequest(ApiResponse<object>.Fail($"Assigned {targetTable.TrimEnd('s')} was not found in this branch."));
+10047:
+10048:                 var sourceBranchId = source["branchId"] is null or DBNull ? (long?)null : Convert.ToInt64(source["branchId"]);
+10049:                 var targetBranchId = target["branchId"] is null or DBNull ? (long?)null : Convert.ToInt64(target["branchId"]);
+10050:                 if (sourceBranchId != targetBranchId)
+10051:                     return Results.UnprocessableEntity(ApiResponse<object>.Fail("Driver and vehicle must belong to the same branch."));
+10052:
+10053:                 var candidateVehicleId = table == "vehicles" ? id : targetId.Value;
+10054:                 var candidateDriverId = table == "drivers" ? id : targetId.Value;
+10055:                 var eligibility = await CheckDispatchEligibilityAsync(companyId, candidateVehicleId, candidateDriverId, db, ct);
+10056:                 if (!eligibility.Eligible)
+10057:                     return Results.UnprocessableEntity(ApiResponse<object>.Fail(
+10058:                         $"Pair is not operationally eligible: {string.Join("; ", eligibility.BlockingReasons)}"));
+10059:             }
+10060:
+10061:             var oldTargetId = source["currentTargetId"] is { } oldTarget && oldTarget is not DBNull ? Convert.ToInt64(oldTarget) : (long?)null;
+10062:             var targetOldSourceId = target?.GetValueOrDefault("reciprocalId") is { } oldSource && oldSource is not DBNull ? Convert.ToInt64(oldSource) : (long?)null;
+10063:             if (oldTargetId == targetId && (targetId is null || targetOldSourceId == id))
+10064:                 return Results.Ok(ApiResponse<object>.Ok(new { id }, "Assignment already current"));
+10065:
+10066:             // Clear both sides of any prior pair before writing the new symmetric link. All
+10067:             // request DB calls share the request transaction, so a database failure rolls the
+10068:             // complete reassignment back instead of leaving a half-linked driver/vehicle.
+10069:             if (oldTargetId is not null && oldTargetId != targetId)
+10070:                 await db.ExecuteAsync($"UPDATE {targetTable} SET {reciprocalColumn}=NULL WHERE id=@oldTargetId AND company_id=@companyId AND {reciprocalColumn}=@id",
+10071:                     c => { c.Parameters.AddWithValue("@oldTargetId", oldTargetId.Value); c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@id", id); }, ct);
+10072:             if (targetOldSourceId is not null && targetOldSourceId != id)
+10073:                 await db.ExecuteAsync($"UPDATE {table} SET {column}=NULL WHERE id=@oldSourceId AND company_id=@companyId AND {column}=@targetId",
+10074:                     c => { c.Parameters.AddWithValue("@oldSourceId", targetOldSourceId.Value); c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@targetId", targetId!.Value); }, ct);
+10075:
+10076:             var affected = await db.ExecuteAsync($"UPDATE {table} SET {column}=@targetId WHERE id=@id AND company_id=@companyId" + (branchId is null ? "" : " AND branch_id=@branchId"), c =>
+10077:             {
+10078:                 c.Parameters.AddWithValue("@id", id);
+10079:                 c.Parameters.AddWithValue("@companyId", companyId);
+10080:                 c.Parameters.AddWithValue("@targetId", (object?)targetId ?? DBNull.Value);
+10081:                 if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId.Value);
+10082:             }, ct);
+10083:             if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Record not found"));
+10084:
+10085:             // Close all open history rows touching either side before creating the new
+10086:             // active pair. Unassignment therefore has a real release timestamp too.
+10087:             await db.ExecuteAsync(@"UPDATE vehicle_assignments
+10088:                 SET status='Released', released_at=NOW()
+10089:                 WHERE company_id=@companyId AND status='Active'
+10090:                   AND (vehicle_id=@vehicleId OR driver_id=@driverId)", c =>
+10091:             {
+10092:                 c.Parameters.AddWithValue("@companyId", companyId);
+10093:                 c.Parameters.AddWithValue("@vehicleId", table == "vehicles" ? id : (object?)targetId ?? DBNull.Value);
+10094:                 c.Parameters.AddWithValue("@driverId", table == "drivers" ? id : (object?)targetId ?? DBNull.Value);
+10095:             }, ct);
+10096:             if (table == "vehicles" && column == "assigned_driver_id" && targetId is not null)
+10097:             {
+10098:                 await db.ExecuteAsync("UPDATE drivers SET assigned_vehicle_id=@vehicleId WHERE id=@driverId AND company_id=@companyId", c =>
+10099:                 {
+
+--- lines 10949-11021 ---
+10949:         if (!partial && string.IsNullOrWhiteSpace(code)) errors.Add("Job number is required.");
+10950:         if (code?.Length > 60) errors.Add("Job number cannot exceed 60 characters.");
+10951:         var customerId = OptionalPositiveId(Get(body, "customerId"));
+10952:         if (!partial && !customerId.id.HasValue) errors.Add("Customer is required.");
+10953:         if (!customerId.valid) errors.Add("Customer ID must be a positive integer.");
+10954:         if (!partial && IsBlank(Get(body, "pickupAddress"))) errors.Add("Pickup address is required.");
+10955:         if (!partial && IsBlank(Get(body, "dropoffAddress"))) errors.Add("Drop-off address is required.");
+10956:         if (Get(body, "pickupAddress")?.ToString()?.Length > 300 || Get(body, "dropoffAddress")?.ToString()?.Length > 300)
+10957:             errors.Add("Pickup and drop-off addresses cannot exceed 300 characters.");
+10958:         var priority = Get(body, "priority") is { } p and not DBNull ? p.ToString()?.Trim() : null;
+10959:         if (!string.IsNullOrWhiteSpace(priority) && priority is not ("Low" or "Normal" or "Medium" or "High" or "Critical"))
+10960:             errors.Add("Priority must be Low, Normal, Medium, High, or Critical.");
+10961:         var requestedStatus = Get(body, "status") is { } s and not DBNull ? s.ToString()?.Trim() : null;
+10962:         if (!partial && !string.IsNullOrWhiteSpace(requestedStatus) && requestedStatus is not ("Unassigned" or "Assigned"))
+10963:             errors.Add("A new job can only start Unassigned or Assigned.");
+10964:         ValidateDateRange(body, "scheduledStart", "scheduledEnd", "Scheduled", errors);
+10965:         ValidateDateRange(body, "slaWindowStart", "slaWindowEnd", "SLA", errors);
+10966:         if (customerId.id.HasValue && await db.ScalarLongAsync("SELECT COUNT(*) FROM customers WHERE id=@id AND company_id=@companyId AND deleted_at IS NULL", c => BindOwned(c, customerId.id.Value), ct) == 0) errors.Add("Customer must exist in this tenant.");
+10967:         if (!string.IsNullOrWhiteSpace(code) && await JobCodeExistsAsync(db, companyId, code, jobId, ct))
+10968:             errors.Add("Job number must be unique (case-insensitive).");
+10969:         if (!IsBlank(Get(body, "assignedDriverId")))
+10970:         {
+10971:             var assignedDriver = OptionalPositiveId(Get(body, "assignedDriverId"));
+10972:             if (!assignedDriver.valid || !assignedDriver.id.HasValue) errors.Add("Assigned driver ID must be a positive integer.");
+10973:             var driver = assignedDriver.id.HasValue ? await db.QuerySingleAsync("SELECT status FROM drivers WHERE id=@id AND company_id=@companyId AND deleted_at IS NULL" + branchScope, c => BindOwned(c, assignedDriver.id.Value), ct) : null;
+10974:             if (driver is null) errors.Add("Assigned driver must exist in the authorized branch.");
+10975:             else
+10976:             {
+10977:                 var hos = await db.QuerySingleAsync(@"SELECT remaining_drive_hours,hos_status FROM hos_records
+10978:                     WHERE driver_id=@id AND (company_id=@companyId OR company_id IS NULL)
+10979:                     ORDER BY shift_date DESC,id DESC LIMIT 1", c => { c.Parameters.AddWithValue("@id", assignedDriver.id!.Value); c.Parameters.AddWithValue("@companyId", companyId); }, ct);
+10980:                 if (driver["status"]?.ToString() is not ("Available" or "Idle") || hos is null ||
+10981:                     !IsOperableHosStatus(hos["hosStatus"]?.ToString()) || hos["remainingDriveHours"] is null or DBNull || Convert.ToDecimal(hos["remainingDriveHours"]) < 1m)
+10982:                     errors.Add("Assigned driver is not operationally eligible in the authorized branch.");
+10983:             }
+10984:         }
+10985:         if (!IsBlank(Get(body, "assignedVehicleId")))
+10986:         {
+10987:             var assignedVehicle = OptionalPositiveId(Get(body, "assignedVehicleId"));
+10988:             if (!assignedVehicle.valid || !assignedVehicle.id.HasValue) errors.Add("Assigned vehicle ID must be a positive integer.");
+10989:             var vehicle = assignedVehicle.id.HasValue ? await db.QuerySingleAsync("SELECT status,out_of_service,availability_status FROM vehicles WHERE id=@id AND company_id=@companyId AND deleted_at IS NULL" + branchScope, c => BindOwned(c, assignedVehicle.id.Value), ct) : null;
+10990:             if (vehicle is null) errors.Add("Assigned vehicle must exist in the authorized branch.");
+10991:             else if (vehicle["status"]?.ToString() is not ("Available" or "Idle") || Convert.ToBoolean(vehicle["outOfService"] ?? false) ||
+10992:                      vehicle["availabilityStatus"]?.ToString()?.ToLowerInvariant() is not ("available" or "idle"))
+10993:                 errors.Add("Assigned vehicle is not operationally eligible in the authorized branch.");
+10994:         }
+10995:         var routeId = OptionalPositiveId(Get(body, "routeId"));
+10996:         if (!routeId.valid) errors.Add("Route ID must be a positive integer.");
+10997:         if (routeId.id.HasValue && await db.ScalarLongAsync(@"SELECT COUNT(*) FROM routes r WHERE r.id=@id AND r.company_id=@companyId AND r.deleted_at IS NULL
+10998:             AND (@branchId::BIGINT IS NULL OR EXISTS (SELECT 1 FROM vehicles v WHERE v.id=r.assigned_vehicle_id AND v.company_id=r.company_id AND v.branch_id=@branchId AND v.deleted_at IS NULL))",
+10999:             c => { c.Parameters.AddWithValue("@id", routeId.id.Value); c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@branchId", branchId ?? (object)DBNull.Value); }, ct) == 0) errors.Add("Route must exist in the authorized branch when assigned.");
+11000:         if (!IsBlank(Get(body, "trackingCode")) && await db.ScalarLongAsync(
+11001:             "SELECT COUNT(*) FROM jobs WHERE company_id=@companyId AND tracking_code=@code AND (@jobId::BIGINT IS NULL OR id<>@jobId)",
+11002:             c =>
+11003:             {
+11004:                 c.Parameters.AddWithValue("@companyId", companyId);
+11005:                 c.Parameters.AddWithValue("@code", Get(body, "trackingCode"));
+11006:                 c.Parameters.AddWithValue("@jobId", jobId ?? (object)DBNull.Value);
+11007:             }, ct) > 0) errors.Add("Tracking code must be unique.");
+11008:         return errors;
+11009:     }
+11010:
+11011:     private sealed record DispatchMatch(decimal Score, string ReasonsJson, string[] Reasons);
+11012:
+11013:     private static Task LockJobCodeAsync(Database db, long companyId, string code, CancellationToken ct)
+11014:         => db.ExecuteAsync(
+11015:             "SELECT pg_advisory_xact_lock(hashtextextended(LOWER(BTRIM(@code)),@companyId))",
+11016:             c => { c.Parameters.AddWithValue("@code", code); c.Parameters.AddWithValue("@companyId", companyId); }, ct);
+11017:
+11018:     private static async Task<bool> JobCodeExistsAsync(Database db, long companyId, string code, long? exceptId, CancellationToken ct)
+11019:         => await db.ScalarLongAsync(
+11020:             "SELECT COUNT(*) FROM jobs WHERE company_id=@companyId AND LOWER(BTRIM(job_code))=LOWER(BTRIM(@code)) AND (@jobId::BIGINT IS NULL OR id<>@jobId)",
+11021:             c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@code", code); c.Parameters.AddWithValue("@jobId", exceptId ?? (object)DBNull.Value); }, ct) > 0;
+
+--- lines 11097-11169 ---
+11097:             errors.Add("An override reason between 10 and 500 characters is required.");
+11098:         var companyId = GetCompanyId(http);
+11099:         var branchId = GetBranchId(http);
+11100:         var scope = branchId is null ? "" : " AND branch_id=@branchId";
+11101:         var driver = await db.QuerySingleAsync("SELECT status FROM drivers WHERE id=@id AND company_id=@cid AND deleted_at IS NULL" + scope, c => { c.Parameters.AddWithValue("@id", driverId); c.Parameters.AddWithValue("@cid", companyId); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct);
+11102:         // Read the maintenance-derived out-of-service signals too: the maintenance engine red-tags a
+11103:         // vehicle by setting out_of_service / availability_status (from DVIR defects + blocking work
+11104:         // orders) and NEVER touches vehicles.status, so gating on status alone let an out-of-service
+11105:         // truck be dispatched (caught only by a reactive 15-min sweep). Block it at assignment time.
+11106:         var vehicle = await db.QuerySingleAsync("SELECT status, out_of_service, availability_status, type FROM vehicles WHERE id=@id AND company_id=@cid AND deleted_at IS NULL" + scope, c => { c.Parameters.AddWithValue("@id", vehicleId); c.Parameters.AddWithValue("@cid", companyId); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct);
+11107:         if (driver is null) errors.Add("Assigned driver must exist.");
+11108:         if (vehicle is null) errors.Add("Assigned vehicle must exist.");
+11109:         if (!overrideFlag && driver is not null && !new[] { "Available", "Idle" }.Contains(driver["status"]?.ToString())) errors.Add("Cannot assign unavailable driver without override.");
+11110:         if (vehicle is not null &&
+11111:             vehicle["status"]?.ToString()?.Trim().ToLowerInvariant() is "maintenance" or "out of service" or "out_of_service")
+11112:             errors.Add("Cannot assign a maintenance or out-of-service vehicle; this safety stop cannot be overridden.");
+11113:         else if (!overrideFlag && vehicle is not null && !new[] { "Available", "Idle", "Active" }.Contains(vehicle["status"]?.ToString()))
+11114:             errors.Add("Cannot assign an unavailable vehicle without an authorized override.");
+11115:         if (vehicle is not null &&
+11116:             (vehicle["outOfService"] is bool oos && oos ||
+11117:              string.Equals(vehicle["availabilityStatus"]?.ToString(), "out_of_service", StringComparison.OrdinalIgnoreCase)))
+11118:             errors.Add("Cannot assign an out-of-service vehicle; the maintenance red-tag cannot be overridden.");
+11119:         if (vehicle is not null && !string.IsNullOrWhiteSpace(requiredVehicleType) &&
+11120:             !string.Equals(vehicle["type"]?.ToString()?.Trim(), requiredVehicleType.Trim(), StringComparison.OrdinalIgnoreCase))
+11121:             errors.Add($"Assigned vehicle must be of required type '{requiredVehicleType.Trim()}'.");
+11122:         if (driver is not null)
+11123:         {
+11124:             var hos = await db.QuerySingleAsync(
+11125:                 @"SELECT remaining_drive_hours, hos_status FROM hos_records
+11126:                   WHERE driver_id=@driverId AND (company_id=@companyId OR company_id IS NULL)
+11127:                   ORDER BY shift_date DESC, id DESC LIMIT 1",
+11128:                 c => { c.Parameters.AddWithValue("@driverId", driverId ?? DBNull.Value); c.Parameters.AddWithValue("@companyId", companyId); }, ct);
+11129:             if (hos is null)
+11130:                 errors.Add("Cannot assign driver because current HOS eligibility is unavailable.");
+11131:             else if (!IsOperableHosStatus(hos["hosStatus"]?.ToString()))
+11132:                 errors.Add($"Cannot assign driver while HOS status is '{hos["hosStatus"] ?? "Unknown"}'.");
+11133:             else if (hos["remainingDriveHours"] is null or DBNull || Convert.ToDecimal(hos["remainingDriveHours"]) < 1m)
+11134:                 errors.Add("Cannot assign driver with less than one hour of remaining drive time.");
+11135:             if (!string.IsNullOrWhiteSpace(requiredDriverCertification) && await db.ScalarLongAsync(
+11136:                     @"SELECT COUNT(*) FROM driver_certifications
+11137:                       WHERE company_id=@companyId AND driver_id=@driverId
+11138:                         AND LOWER(BTRIM(certification_type))=LOWER(BTRIM(@certification))
+11139:                         AND LOWER(status) IN ('valid','active')
+11140:                         AND (expiry_date IS NULL OR expiry_date >= CURRENT_DATE)",
+11141:                     c =>
+11142:                     {
+11143:                         c.Parameters.AddWithValue("@companyId", companyId);
+11144:                         c.Parameters.AddWithValue("@driverId", driverId ?? DBNull.Value);
+11145:                         c.Parameters.AddWithValue("@certification", requiredDriverCertification.Trim());
+11146:                     }, ct) == 0)
+11147:                 errors.Add($"Assigned driver requires a current '{requiredDriverCertification.Trim()}' certification.");
+11148:         }
+11149:         return errors;
+11150:     }
+11151:
+11152:     private static bool IsOperableHosStatus(string? status)
+11153:         => status?.Trim().ToLowerInvariant() is "compliant" or "ok" or "eligible" or "available" or "on duty" or "on duty (not driving)" or "driving";
+11154:
+11155:     private static async Task<(decimal Score, string ReasonsJson, string[] Reasons)> CalculateDispatchMatch(HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
+11156:     {
+11157:         var companyId = GetCompanyId(http); var branchId = GetBranchId(http); var scope = branchId is null ? "" : " AND branch_id=@branchId";
+11158:         var driver = await db.QuerySingleAsync("SELECT safety_score, readiness_score FROM drivers WHERE id=@id AND company_id=@cid" + scope, c => { c.Parameters.AddWithValue("@id", Get(body, "driverId")); c.Parameters.AddWithValue("@cid", companyId); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct);
+11159:         var vehicle = await db.QuerySingleAsync("SELECT readiness_score, risk_score, type FROM vehicles WHERE id=@id AND company_id=@cid" + scope, c => { c.Parameters.AddWithValue("@id", Get(body, "vehicleId")); c.Parameters.AddWithValue("@cid", companyId); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct);
+11160:         var score = 70m;
+11161:         if (driver is not null) score += Math.Min(12, Convert.ToDecimal(driver["safetyScore"]) / 10);
+11162:         if (vehicle is not null) score += Math.Min(10, Convert.ToDecimal(vehicle["readinessScore"]) / 12);
+11163:         if (vehicle is not null) score -= Math.Min(8, Convert.ToDecimal(vehicle["riskScore"]) / 12);
+11164:         score = Math.Clamp(score, 45, 99);
+11165:         var reasons = new[] { "Tenant and branch ownership validated", "Driver availability validated", "Vehicle availability validated", "Required vehicle type validated", "Driver safety score considered", "Vehicle maintenance status validated", "Current HOS eligibility validated" };
+11166:         return (Math.Round(score, 1), System.Text.Json.JsonSerializer.Serialize(reasons), reasons);
+11167:     }
+11168:
+11169:     private static bool IsBlank(object? value) => value is null or DBNull || string.IsNullOrWhiteSpace(value.ToString());
+
+--- lines 23574-23646 ---
+23574:                 http, "dispatch:override", allowDispatchManage: false) is { } overrideDenied)
+23575:             return overrideDenied;
+23576:
+23577:         return await db.RunInTenantTransactionAsync(companyId, async () =>
+23578:         {
+23579:         // Serialize dispatch allocation decisions per tenant. Database partial unique
+23580:         // indexes remain the final guard, including across application instances.
+23581:         await db.ExecuteAsync("SELECT pg_advisory_xact_lock(@cid)",
+23582:             c => c.Parameters.AddWithValue("@cid", companyId), ct);
+23583:
+23584:         // Establish tenant + strict branch membership before evaluating eligibility;
+23585:         // otherwise detailed HOS/maintenance failures become a cross-branch side channel.
+23586:         var resourcePair = await db.QuerySingleAsync(
+23587:             @"SELECT v.branch_id vehicle_branch_id, d.branch_id driver_branch_id
+23588:               FROM vehicles v JOIN drivers d ON d.company_id=v.company_id
+23589:               WHERE v.id=@vid AND d.id=@did AND v.company_id=@cid
+23590:                 AND v.deleted_at IS NULL AND d.deleted_at IS NULL
+23591:                 AND (@branchId::BIGINT IS NULL OR (v.branch_id=@branchId AND d.branch_id=@branchId))",
+23592:             c => { c.Parameters.AddWithValue("@vid", body.VehicleId); c.Parameters.AddWithValue("@did", body.DriverId); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", branchId ?? (object)DBNull.Value); }, ct);
+23593:         if (resourcePair is null)
+23594:             return Results.BadRequest(ApiResponse<object>.Fail("Driver or vehicle not found in authorized branch"));
+23595:         var vehicleBranchId = resourcePair["vehicleBranchId"] is null or DBNull ? (long?)null : Convert.ToInt64(resourcePair["vehicleBranchId"]);
+23596:         var driverBranchId = resourcePair["driverBranchId"] is null or DBNull ? (long?)null : Convert.ToInt64(resourcePair["driverBranchId"]);
+23597:         if (vehicleBranchId != driverBranchId)
+23598:             return Results.UnprocessableEntity(ApiResponse<object>.Fail("Driver and vehicle must belong to the same branch"));
+23599:         var assignmentBranchId = branchId ?? vehicleBranchId;
+23600:
+23601:         // Run eligibility engine.
+23602:         var elig = await CheckDispatchEligibilityAsync(companyId, body.VehicleId, body.DriverId, db, ct);
+23603:
+23604:         // Hard block: out-of-service vehicle cannot be dispatched regardless of override.
+23605:         if (elig.VehicleOutOfService)
+23606:             return Results.UnprocessableEntity(ApiResponse<object>.Fail(
+23607:                 $"Vehicle is out of service and cannot be dispatched: {string.Join("; ", elig.BlockingReasons)}"));
+23608:
+23609:         // A driver who is currently off duty, in sleeper berth, otherwise non-operable,
+23610:         // or out of drive time is not an override candidate. An override may document a
+23611:         // soft safety/maintenance exception, but it cannot manufacture legal HOS capacity.
+23612:         if (elig.BlockingReasons.Any(reason =>
+23613:                 reason.Contains("HOS status", StringComparison.OrdinalIgnoreCase) ||
+23614:                 reason.Contains("remaining drive time", StringComparison.OrdinalIgnoreCase)))
+23615:             return Results.UnprocessableEntity(ApiResponse<object>.Fail(
+23616:                 $"Driver is not HOS-operable and cannot be dispatched: {string.Join("; ", elig.BlockingReasons)}"));
+23617:
+23618:         // Other blocks can be overridden with explicit dispatch:override permission.
+23619:         if (!elig.Eligible && !body.Override)
+23620:             return Results.Json(new
+23621:             {
+23622:                 success = false,
+23623:                 message = $"Eligibility check failed: {string.Join("; ", elig.BlockingReasons)}",
+23624:                 blockingReasons  = elig.BlockingReasons,
+23625:                 warnings         = elig.Warnings,
+23626:                 overrideRequired = true,
+23627:             }, statusCode: StatusCodes.Status422UnprocessableEntity);
+23628:
+23629:         long? governedTripId = null;
+23630:         long? governedTripJobId = null;
+23631:         if (body.RouteId.HasValue)
+23632:         {
+23633:             var routeOwned = await db.QuerySingleAsync(
+23634:                 @"SELECT r.id,
+23635:                          current_trip.trip_id,
+23636:                          current_trip.trip_job_id,
+23637:                          current_trip.trip_count
+23638:                   FROM routes r
+23639:                   LEFT JOIN LATERAL (
+23640:                       SELECT MIN(t.id) trip_id, MIN(t.job_id) trip_job_id, COUNT(*) trip_count
+23641:                       FROM trips t
+23642:                       WHERE t.company_id=r.company_id AND t.route_id=r.id
+23643:                         AND LOWER(COALESCE(t.status,'')) IN ('planned','active','exception')
+23644:                   ) current_trip ON TRUE
+23645:                   WHERE r.id=@id AND r.company_id=@cid AND r.deleted_at IS NULL
+23646:                   AND (r.assigned_vehicle_id IS NULL OR r.assigned_vehicle_id=@vehicleId)
+
+--- lines 23970-24042 ---
+23970:                     return Results.Conflict(ApiResponse<object>.Fail(
+23971:                         "Driver swap is supported only before operational departure; use a governed handover workflow for an active trip"));
+23972:                 var currentDriverId = Convert.ToInt64(current["driverId"]);
+23973:                 if (currentDriverId == body.NewDriverId)
+23974:                     return Results.Conflict(ApiResponse<object>.Fail("Replacement driver must differ from the current driver"));
+23975:                 var vehicleId = Convert.ToInt64(current["vehicleId"]);
+23976:                 var assignmentBranch = current["branchId"] is null or DBNull ? (long?)null : Convert.ToInt64(current["branchId"]);
+23977:
+23978:                 var driverAvailable = await db.ScalarLongAsync(
+23979:                     @"SELECT COUNT(*) FROM drivers d
+23980:                       WHERE d.id=@did AND d.company_id=@cid AND d.deleted_at IS NULL
+23981:                         AND d.branch_id IS NOT DISTINCT FROM @branchId::BIGINT
+23982:                         -- BTRIM: drivers.status is untrimmed free text, so 'Inactive ' would
+23983:                         -- otherwise slip past this blocklist and be offered as a swap target.
+23984:                         -- The character set is explicit because 1-arg BTRIM strips spaces only.
+23985:                         AND LOWER(BTRIM(COALESCE(d.status,'active'), E' \t\r\n\f\v')) NOT IN ('inactive','suspended','terminated')
+23986:                         AND NOT EXISTS (
+23987:                           SELECT 1 FROM dispatch_assignments active
+23988:                           WHERE active.company_id=d.company_id AND active.driver_id=d.id
+23989:                             AND active.assignment_status NOT IN ('delivered','cancelled'))",
+23990:                     c =>
+23991:                     {
+23992:                         c.Parameters.AddWithValue("@did", body.NewDriverId); c.Parameters.AddWithValue("@cid", companyId);
+23993:                         c.Parameters.AddWithValue("@branchId", (object?)assignmentBranch ?? DBNull.Value);
+23994:                     }, ct);
+23995:                 if (driverAvailable != 1)
+23996:                     return Results.Conflict(ApiResponse<object>.Fail("Replacement driver is unavailable or outside the assignment branch"));
+23997:
+23998:                 var eligibility = await CheckDispatchEligibilityAsync(companyId, vehicleId, body.NewDriverId, db, ct, id);
+23999:                 if (!eligibility.Eligible)
+24000:                     return Results.UnprocessableEntity(ApiResponse<object>.Fail(
+24001:                         $"Replacement driver is not dispatch-eligible: {string.Join("; ", eligibility.BlockingReasons)}"));
+24002:
+24003:                 var effectiveAt = DateTimeOffset.UtcNow;
+24004:                 var closed = await db.ExecuteAsync(
+24005:                     @"UPDATE dispatch_assignments
+24006:                       SET assignment_status='cancelled',status='Cancelled',previous_status=assignment_status,
+24007:                           cancelled_at=@effective,completed_at=COALESCE(completed_at,@effective),
+24008:                           driver_change_reason=@reason,updated_at=NOW()
+24009:                       WHERE id=@id AND company_id=@cid AND assignment_status NOT IN ('delivered','cancelled')",
+24010:                     c =>
+24011:                     {
+24012:                         c.Parameters.AddWithValue("@effective", effectiveAt); c.Parameters.AddWithValue("@reason", reason);
+24013:                         c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId);
+24014:                     }, ct);
+24015:                 if (closed != 1)
+24016:                     return Results.Conflict(ApiResponse<object>.Fail("Assignment changed while the driver swap was being applied"));
+24017:
+24018:                 var replacementId = await db.InsertAsync(
+24019:                     @"INSERT INTO dispatch_assignments
+24020:                         (company_id,branch_id,job_id,trip_id,vehicle_id,driver_id,route_id,trailer_id,
+24021:                          assignment_status,status,match_score,planned_pickup_at,planned_delivery_at,
+24022:                          assigned_by_user_id,notes,eligibility_json,assigned_at,acceptance_due_at,
+24023:                          supersedes_assignment_id,driver_change_reason)
+24024:                       VALUES (@cid,@branch,@job,@trip,@vehicle,@driver,@route,@trailer,
+24025:                               'assigned','Assigned',@score,@pickup,@delivery,@actor,@notes,@eligibility::jsonb,
+24026:                               @effective,@effective+INTERVAL '10 minutes',@prior,@reason)",
+24027:                     c =>
+24028:                     {
+24029:                         c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branch", (object?)assignmentBranch ?? DBNull.Value);
+24030:                         c.Parameters.AddWithValue("@job", current["jobId"] ?? DBNull.Value); c.Parameters.AddWithValue("@trip", current["tripId"] ?? DBNull.Value);
+24031:                         c.Parameters.AddWithValue("@vehicle", vehicleId); c.Parameters.AddWithValue("@driver", body.NewDriverId);
+24032:                         c.Parameters.AddWithValue("@route", current["routeId"] ?? DBNull.Value); c.Parameters.AddWithValue("@trailer", current["trailerId"] ?? DBNull.Value);
+24033:                         c.Parameters.AddWithValue("@score", eligibility.MatchScore); c.Parameters.AddWithValue("@pickup", current["plannedPickupAt"] ?? DBNull.Value);
+24034:                         c.Parameters.AddWithValue("@delivery", current["plannedDeliveryAt"] ?? DBNull.Value); c.Parameters.AddWithValue("@actor", actorId > 0 ? actorId : DBNull.Value);
+24035:                         c.Parameters.AddWithValue("@notes", current["notes"] ?? DBNull.Value);
+24036:                         c.Parameters.AddWithValue("@eligibility", System.Text.Json.JsonSerializer.Serialize(new
+24037:                         {
+24038:                             source = "driver_swap", eligibility.Eligible, eligibility.BlockingReasons,
+24039:                             eligibility.Warnings, eligibility.MatchScore, priorAssignmentId = id
+24040:                         }));
+24041:                         c.Parameters.AddWithValue("@effective", effectiveAt); c.Parameters.AddWithValue("@prior", id);
+24042:                         c.Parameters.AddWithValue("@reason", reason);
+
+--- lines 24134-24245 ---
+24134:
+24135:         await audit.LogAsync(http, $"dispatch.proof.{proofType}", "DispatchAssignment", id,
+24136:             $"proof:{proofId}", ct);
+24137:         return Results.Created($"/api/dispatch/proofs/{proofId}",
+24138:             ApiResponse<object>.Ok(new { id = proofId, assignmentId = id, proofType }, "Proof recorded"));
+24139:         }, ct);
+24140:     }
+24141:
+24142:     // GET /api/dispatch/eligibility?driverId=&vehicleId=
+24143:     private static async Task<IResult> DispatchEligibilityCheck(HttpContext http, Database db, CancellationToken ct)
+24144:     {
+24145:         if (RequirePermission(http, "dispatch:view") is { } denied) return denied;
+24146:         var companyId = GetCompanyId(http);
+24147:
+24148:         if (!long.TryParse(http.Request.Query["vehicleId"].FirstOrDefault(), out var vehicleId) || vehicleId <= 0)
+24149:             return Results.BadRequest(ApiResponse<object>.Fail("vehicleId query param required"));
+24150:         if (!long.TryParse(http.Request.Query["driverId"].FirstOrDefault(), out var driverId) || driverId <= 0)
+24151:             return Results.BadRequest(ApiResponse<object>.Fail("driverId query param required"));
+24152:
+24153:         var branchId = GetBranchId(http);
+24154:         var ownedPair = await db.ScalarLongAsync(
+24155:             @"SELECT COUNT(*) FROM vehicles v JOIN drivers d ON d.company_id=v.company_id
+24156:               WHERE v.id=@vid AND d.id=@did AND v.company_id=@cid
+24157:                 AND v.deleted_at IS NULL AND d.deleted_at IS NULL
+24158:                 AND (@branchId::BIGINT IS NULL OR (v.branch_id=@branchId AND d.branch_id=@branchId))",
+24159:             c => { c.Parameters.AddWithValue("@vid", vehicleId); c.Parameters.AddWithValue("@did", driverId); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", branchId ?? (object)DBNull.Value); }, ct);
+24160:         if (ownedPair == 0) return Results.NotFound(ApiResponse<object>.Fail("Driver or vehicle not found in authorized branch"));
+24161:
+24162:         var result = await CheckDispatchEligibilityAsync(companyId, vehicleId, driverId, db, ct);
+24163:         return Results.Ok(ApiResponse<object>.Ok(result));
+24164:     }
+24165:
+24166:     // GET /api/dispatch/exceptions — tenant-scoped exception list
+24167:     private static async Task<IResult> DispatchExceptionsList(HttpContext http, Database db, CancellationToken ct)
+24168:     {
+24169:         if (RequirePermission(http, "dispatch:view") is { } denied) return denied;
+24170:         var companyId = GetCompanyId(http);
+24171:         var (branchClause, branchId) = StrictBranchFilter(http, "da");
+24172:         var status    = http.Request.Query["status"].FirstOrDefault();
+24173:
+24174:         var rows = await db.QueryAsync(
+24175:             @"SELECT dex.*, da.assignment_status, COALESCE(j.job_number,j.job_code) job_number,
+24176:                      d.full_name driver_name, v.vehicle_code,
+24177:                      cb.full_name created_by_name, rb.full_name resolved_by_name
+24178:               FROM dispatch_exceptions dex
+24179:               JOIN dispatch_assignments da ON da.id=dex.assignment_id AND da.company_id=dex.company_id
+24180:               LEFT JOIN jobs j ON j.id=dex.job_id AND j.company_id=dex.company_id
+24181:               LEFT JOIN drivers d ON d.id=da.driver_id AND d.company_id=dex.company_id
+24182:               LEFT JOIN vehicles v ON v.id=da.vehicle_id AND v.company_id=dex.company_id
+24183:               LEFT JOIN users cb ON cb.id=dex.created_by AND cb.company_id=dex.company_id
+24184:               LEFT JOIN users rb ON rb.id=dex.resolved_by AND rb.company_id=dex.company_id
+24185:               WHERE dex.company_id=@cid
+24186:                 AND (CAST(@status AS TEXT) IS NULL OR dex.status=CAST(@status AS TEXT))" + branchClause + @"
+24187:               ORDER BY ARRAY_POSITION(ARRAY['open','acknowledged','resolved'], dex.status), dex.created_at DESC
+24188:               LIMIT 100",
+24189:             c =>
+24190:             {
+24191:                 c.Parameters.AddWithValue("@cid",    companyId);
+24192:                 c.Parameters.AddWithValue("@status", string.IsNullOrEmpty(status) ? (object)DBNull.Value : status);
+24193:                 if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId);
+24194:             }, ct);
+24195:
+24196:         return Results.Ok(ApiResponse<object>.Ok(rows));
+24197:     }
+24198:
+24199:     // ── Dispatch Eligibility Engine ────────────────────────────────────────────────
+24200:     // internal static — testable without DB mock.
+24201:     internal static async Task<DispatchEligibilityResult> CheckDispatchEligibilityAsync(
+24202:         long companyId, long vehicleId, long driverId, Database db, CancellationToken ct,
+24203:         long? ignoredAssignmentId = null)
+24204:     {
+24205:         var blocking = new List<string>();
+24206:         var warnings = new List<string>();
+24207:
+24208:         // ── Vehicle checks ─────────────────────────────────────────────────────
+24209:         var vehicle = await db.QuerySingleAsync(
+24210:             @"SELECT v.*, v.out_of_service::int oos, COALESCE(v.availability_status,'available') avail_status
+24211:               FROM vehicles v WHERE v.id=@vid AND v.company_id=@cid AND v.deleted_at IS NULL LIMIT 1",
+24212:             c =>
+24213:             {
+24214:                 c.Parameters.AddWithValue("@vid", vehicleId);
+24215:                 c.Parameters.AddWithValue("@cid", companyId);
+24216:             }, ct);
+24217:
+24218:         if (vehicle is null)
+24219:         {
+24220:             blocking.Add("Vehicle not found in tenant");
+24221:             return new DispatchEligibilityResult(false, false, blocking, warnings, null, null, 0, true, false);
+24222:         }
+24223:
+24224:         var vehicleOos = Convert.ToInt32(vehicle["oos"] ?? 0) == 1;
+24225:         if (vehicleOos)
+24226:             blocking.Add("Vehicle is out of service — resolve critical defects before dispatch");
+24227:
+24228:         var critDefects = await db.ScalarLongAsync(
+24229:             @"SELECT COUNT(*) FROM dvir_defects WHERE vehicle_id=@vid AND company_id=@cid AND out_of_service=TRUE
+24230:               AND status NOT IN ('resolved','Resolved','rejected')",
+24231:             c => { c.Parameters.AddWithValue("@vid", vehicleId); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+24232:         if (critDefects > 0 && !vehicleOos)
+24233:             blocking.Add($"{critDefects} critical open defect(s) on vehicle — must be resolved before dispatch");
+24234:
+24235:         var blockingWo = await db.ScalarLongAsync(
+24236:             @"SELECT COUNT(*) FROM work_orders WHERE vehicle_id=@vid AND company_id=@cid
+24237:               AND status IN ('in_progress','waiting_parts','In Progress','Waiting Parts')
+24238:               AND deleted_at IS NULL",
+24239:             c =>
+24240:             {
+24241:                 c.Parameters.AddWithValue("@vid", vehicleId);
+24242:                 c.Parameters.AddWithValue("@cid", companyId);
+24243:             }, ct);
+24244:         if (blockingWo > 0)
+24245:             blocking.Add($"Vehicle has {blockingWo} open maintenance work order(s) in progress");
+
+--- lines 24295-24376 ---
+24295:         var activeDriverLoads = await db.ScalarLongAsync(
+24296:             @"SELECT COUNT(*) FROM dispatch_assignments WHERE company_id=@cid AND driver_id=@did
+24297:               AND assignment_status NOT IN ('delivered','cancelled')
+24298:               AND (@ignored::BIGINT IS NULL OR id<>@ignored)",
+24299:             c =>
+24300:             {
+24301:                 c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@did", driverId);
+24302:                 c.Parameters.AddWithValue("@ignored", (object?)ignoredAssignmentId ?? DBNull.Value);
+24303:             }, ct);
+24304:         if (activeDriverLoads > 0)
+24305:             blocking.Add("Driver already has an active dispatch assignment");
+24306:
+24307:         int? safetyScore = driver["safetyScore"] is null || driver["safetyScore"] is DBNull
+24308:             ? null : Convert.ToInt32(driver["safetyScore"]);
+24309:
+24310:         // Tenant eligibility config (min safety score, defaults to 65).
+24311:         var eligConfig = await db.QuerySingleAsync(
+24312:             "SELECT min_driver_safety_score FROM dispatch_eligibility_config WHERE company_id=@cid LIMIT 1",
+24313:             c => c.Parameters.AddWithValue("@cid", companyId), ct);
+24314:         var minSafetyScore = Convert.ToInt32(eligConfig?.GetValueOrDefault("minDriverSafetyScore") ?? 65);
+24315:
+24316:         if (!safetyScore.HasValue)
+24317:             blocking.Add("Driver safety score is unavailable");
+24318:         else if (safetyScore.Value < minSafetyScore)
+24319:             blocking.Add($"Driver safety score {safetyScore} is below minimum threshold {minSafetyScore}");
+24320:
+24321:         bool safetyWarning = safetyScore.HasValue && safetyScore.Value < minSafetyScore;
+24322:
+24323:         // HOS check — integration-ready; uses hos_records if data exists.
+24324:         decimal? availableHosHours = null;
+24325:         bool hosWarning = false;
+24326:         var hasHosRecords = await db.ScalarLongAsync(
+24327:             "SELECT CASE WHEN to_regclass('public.hos_records') IS NULL THEN 0 ELSE 1 END", ct: ct) == 1;
+24328:         if (hasHosRecords)
+24329:         {
+24330:             var hosRecord = await db.QuerySingleAsync(
+24331:                 @"SELECT remaining_drive_hours, remaining_shift_hours, hos_status
+24332:                   FROM hos_records WHERE driver_id=@did AND company_id=@cid
+24333:                   ORDER BY shift_date DESC LIMIT 1",
+24334:                 c => { c.Parameters.AddWithValue("@did", driverId); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+24335:
+24336:             if (hosRecord is not null)
+24337:             {
+24338:                 availableHosHours = hosRecord["remainingDriveHours"] is null
+24339:                     ? null : Convert.ToDecimal(hosRecord["remainingDriveHours"]);
+24340:                 var hosStatus = hosRecord["hosStatus"]?.ToString() ?? "";
+24341:
+24342:                 if (!IsOperableHosStatus(hosStatus))
+24343:                     blocking.Add($"Driver HOS status is '{hosStatus}' — cannot dispatch");
+24344:                 else if (availableHosHours.HasValue && availableHosHours.Value < 1m)
+24345:                 { blocking.Add($"Driver has only {availableHosHours:N1}h remaining drive time — cannot dispatch"); hosWarning = true; }
+24346:                 else if (availableHosHours.HasValue && availableHosHours.Value < 3m)
+24347:                 { warnings.Add($"Driver has {availableHosHours:N1}h remaining drive time — limited availability"); hosWarning = true; }
+24348:             }
+24349:             else
+24350:             {
+24351:                 warnings.Add("HOS data unavailable for this driver — manual verification required before long-haul dispatch");
+24352:             }
+24353:         }
+24354:         else
+24355:         {
+24356:             warnings.Add("HOS data unavailable — manual verification required");
+24357:         }
+24358:
+24359:         // Safety events — critical unresolved flags.
+24360:         var critSafetyEvents = await db.ScalarLongAsync(
+24361:             @"SELECT COUNT(*) FROM safety_events
+24362:               WHERE driver_id=@did AND company_id=@cid
+24363:                 AND severity='Critical' AND status NOT IN ('Resolved','Closed','closed','resolved')",
+24364:             c =>
+24365:             {
+24366:                 c.Parameters.AddWithValue("@did", driverId);
+24367:                 c.Parameters.AddWithValue("@cid", companyId);
+24368:             }, ct);
+24369:         if (critSafetyEvents > 0)
+24370:             blocking.Add($"Driver has {critSafetyEvents} unresolved critical safety event(s)");
+24371:
+24372:         var overrideRequired = safetyWarning || blocking.Any(b => b.Contains("defect") || b.Contains("work order"));
+24373:         var eligible = blocking.Count == 0;
+24374:
+24375:         // Match score: starts at 70, +driver safety, +vehicle readiness, -vehicle risk.
+24376:         var score = 70m;
+
+--- lines 25983-26058 ---
+25983:         // DEF-026: schema/grant drift on optional companion tables must degrade this
+25984:         // screen, never 500 it — the driver's home screen is how they reach dispatch.
+25985:         // to_regclass guards absence (house style, see dispatch eligibility); the catch
+25986:         // covers revoked grants (42501) and column drift (42703) the same way.
+25987:         long coachingCount = 0;
+25988:         try
+25989:         {
+25990:             if (await db.ScalarLongAsync(
+25991:                     "SELECT CASE WHEN to_regclass('public.coaching_tasks') IS NULL THEN 0 ELSE 1 END", ct: ct) == 1)
+25992:             {
+25993:                 coachingCount = await db.ScalarLongAsync(
+25994:                     @"SELECT COUNT(*) FROM coaching_tasks
+25995:                       WHERE driver_id=@did AND company_id=@cid AND deleted_at IS NULL
+25996:                         AND COALESCE(driver_acknowledged, FALSE) = FALSE
+25997:                         AND status NOT IN ('Completed','Cancelled')",
+25998:                     c => { c.Parameters.AddWithValue("@did", driverId); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+25999:             }
+26000:         }
+26001:         catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.UndefinedTable
+26002:             or PostgresErrorCodes.InsufficientPrivilege or PostgresErrorCodes.UndefinedColumn)
+26003:         {
+26004:             coachingCount = 0;
+26005:         }
+26006:
+26007:         Dictionary<string, object?>? hosRow = null;
+26008:         try
+26009:         {
+26010:             if (await db.ScalarLongAsync(
+26011:                     "SELECT CASE WHEN to_regclass('public.hos_records') IS NULL THEN 0 ELSE 1 END", ct: ct) == 1)
+26012:             {
+26013:                 hosRow = await db.QuerySingleAsync(
+26014:                     "SELECT remaining_drive_hours, remaining_shift_hours, hos_status FROM hos_records WHERE driver_id=@did AND company_id=@cid ORDER BY shift_date DESC LIMIT 1",
+26015:                     c => { c.Parameters.AddWithValue("@did", driverId); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+26016:             }
+26017:         }
+26018:         catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.UndefinedTable
+26019:             or PostgresErrorCodes.InsufficientPrivilege or PostgresErrorCodes.UndefinedColumn)
+26020:         {
+26021:             hosRow = null; // degrades to the hos-unavailable branch below
+26022:         }
+26023:
+26024:         var isOos = driver["outOfService"] is not null and not DBNull && Convert.ToInt32(driver["outOfService"]) == 1;
+26025:
+26026:         return Results.Ok(ApiResponse<object>.Ok(new
+26027:         {
+26028:             driver = new
+26029:             {
+26030:                 id          = driver["id"],
+26031:                 fullName    = driver["fullName"],
+26032:                 status      = driver["status"],
+26033:                 vehicleId   = driver["vehicleId"],
+26034:                 vehicleCode = driver["vehicleCode"],
+26035:                 vehicleOos  = isOos,
+26036:                 vehicleAvailabilityStatus = driver["availabilityStatus"],
+26037:             },
+26038:             currentAssignment,
+26039:             vehicleBlocking = new
+26040:             {
+26041:                 criticalDefects,
+26042:                 blocked = isOos || criticalDefects > 0,
+26043:                 reason  = isOos ? "Vehicle is out of service. Do not depart until cleared by maintenance."
+26044:                         : criticalDefects > 0 ? "Vehicle has open critical defects. DVIR required before departure."
+26045:                         : (string?)null,
+26046:             },
+26047:             hos = hosRow is not null
+26048:                 ? new { dataAvailable = (object)true,  remainingDriveHours = hosRow["remainingDriveHours"], remainingShiftHours = hosRow["remainingShiftHours"], hosStatus = (object?)hosRow["hosStatus"] }
+26049:                 : new { dataAvailable = (object)false, remainingDriveHours = (object?)null, remainingShiftHours = (object?)null, hosStatus = (object?)"unavailable" },
+26050:             coaching = new { pendingCount = coachingCount },
+26051:             guidance  = BuildDriverGuidance(driver, currentAssignment, isOos, criticalDefects, coachingCount, hosRow),
+26052:         }));
+26053:     }
+26054:
+26055:     private static async Task<IResult> DriverAssignments(HttpContext http, Database db, CancellationToken ct)
+26056:     {
+26057:         var companyId = GetCompanyId(http);
+26058:         var driverId  = await GetDriverIdFromAuthAsync(http, db, ct);
+
+--- lines 26725-26803 ---
+26725:               WHERE id=@id AND company_id=@cid",
+26726:             c =>
+26727:             {
+26728:                 c.Parameters.AddWithValue("@id",   id);
+26729:                 c.Parameters.AddWithValue("@cid",  companyId);
+26730:                 c.Parameters.AddWithValue("@note", string.IsNullOrWhiteSpace(note) ? DBNull.Value : note);
+26731:             }, ct);
+26732:         await audit.LogAsync(http, "driver.coaching.acknowledged", "CoachingTask", id, ct: ct);
+26733:         return Results.Ok(ApiResponse<object>.Ok(new { id }, "Coaching task acknowledged"));
+26734:     }
+26735:
+26736:     private static async Task<IResult> DriverHos(HttpContext http, Database db, CancellationToken ct)
+26737:     {
+26738:         var companyId = GetCompanyId(http);
+26739:         var driverId  = await GetDriverIdFromAuthAsync(http, db, ct);
+26740:         if (driverId < 0) return DriverIdentityNotFound();
+26741:
+26742:         // eld_devices has no `device_identifier` column — it is `device_serial`. This 500'd
+26743:         // (42703) on every call; nobody saw it because the route 403'd for every driver
+26744:         // first, so the lockout was hiding a second, independent break. Also scoped by
+26745:         // company_id: driverId is tenant-resolved, but a bare driver_id filter on a
+26746:         // cross-tenant table is one refactor away from a leak.
+26747:         // DEF-026: degrade to the data-unavailable branch on schema/grant drift
+26748:         // (missing table 42P01, revoked grant 42501, column drift 42703) — never 500.
+26749:         Dictionary<string, object?>? record = null;
+26750:         try
+26751:         {
+26752:             if (await db.ScalarLongAsync(
+26753:                     "SELECT CASE WHEN to_regclass('public.hos_records') IS NULL THEN 0 ELSE 1 END", ct: ct) == 1)
+26754:             {
+26755:                 record = await db.QuerySingleAsync(
+26756:                     @"SELECT hr.remaining_drive_hours, hr.remaining_shift_hours, hr.remaining_cycle_hours,
+26757:                              hr.hos_status, hr.shift_date, hr.eld_device_id,
+26758:                              ed.device_serial eld_identifier
+26759:                       FROM hos_records hr
+26760:                       LEFT JOIN eld_devices ed ON ed.id = hr.eld_device_id AND ed.company_id = hr.company_id
+26761:                       WHERE hr.driver_id=@did AND hr.company_id=@cid
+26762:                       ORDER BY hr.shift_date DESC
+26763:                       LIMIT 1",
+26764:                     c => { c.Parameters.AddWithValue("@did", driverId); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+26765:             }
+26766:         }
+26767:         catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.UndefinedTable
+26768:             or PostgresErrorCodes.InsufficientPrivilege or PostgresErrorCodes.UndefinedColumn)
+26769:         {
+26770:             record = null;
+26771:         }
+26772:
+26773:         if (record is null)
+26774:         {
+26775:             return Results.Ok(ApiResponse<object>.Ok(new
+26776:             {
+26777:                 dataAvailable = false,
+26778:                 message       = "HOS data unavailable. Your ELD device may not be paired or data has not synced.",
+26779:                 guidance      = new[] { DriverInsight("warning", "HOS data is unavailable. You are responsible for manually tracking your Hours of Service compliance until ELD sync is restored.") }
+26780:             }));
+26781:         }
+26782:
+26783:         var remaining = record["remainingDriveHours"] is not null and not DBNull
+26784:             ? Convert.ToDecimal(record["remainingDriveHours"]) : (decimal?)null;
+26785:         var hosStatus = record["hosStatus"]?.ToString() ?? "";
+26786:
+26787:         var warnings = new List<object>();
+26788:         if (remaining.HasValue && remaining < 1m)
+26789:             warnings.Add(DriverInsight("critical", $"CRITICAL: Only {remaining:0.0}h drive time remaining. Do not depart on a new run without reset."));
+26790:         else if (remaining.HasValue && remaining < 3m)
+26791:             warnings.Add(DriverInsight("warning", $"HOS Warning: {remaining:0.0}h drive time remaining. Plan for a rest stop."));
+26792:         if (hosStatus.Contains("Violation", StringComparison.OrdinalIgnoreCase))
+26793:             warnings.Add(DriverInsight("critical", "HOS Violation recorded. Contact your fleet manager immediately."));
+26794:
+26795:         return Results.Ok(ApiResponse<object>.Ok(new
+26796:         {
+26797:             dataAvailable        = true,
+26798:             remainingDriveHours  = record["remainingDriveHours"],
+26799:             remainingShiftHours  = record["remainingShiftHours"],
+26800:             remainingCycleHours  = record["remainingCycleHours"],
+26801:             hosStatus,
+26802:             shiftDate            = record["shiftDate"],
+26803:             eldIdentifier        = record["eldIdentifier"],
