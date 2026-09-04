@@ -9,11 +9,15 @@ namespace Opstrax.Api.Services;
 ///   implemented here. Provider/device provenance and official certification /
 ///   qualification remain separate launch gates.
 /// - Unsupported exception paths (split sleeper, Canadian deferral, unvalidated
-///   personal conveyance, etc.) fail closed as ReviewRequired rather than silently
-///   granting driving time.
+///   personal conveyance, ambiguous Saudi split-break records, etc.) fail closed
+///   as ReviewRequired rather than silently granting driving time.
+/// - The live calculator distinguishes an eligibility block (the driver has no
+///   legal time available to begin/continue driving) from a proven overrun. A
+///   separate historical audit pass is still required to reconstruct whether the
+///   driver actually drove after a non-driving threshold was crossed.
 ///
-/// Rule source/version is intentionally explicit so every persisted clock can be
-/// traced back to the regulatory baseline used for its calculation.
+/// Rule source/version is intentionally explicit so every persisted shadow clock
+/// can be traced back to the regulatory baseline used for its calculation.
 /// </summary>
 internal static class HosComplianceCalculator
 {
@@ -62,6 +66,7 @@ internal static class HosComplianceCalculator
         bool CanDrive,
         string Status,
         IReadOnlyList<string> Violations,
+        IReadOnlyList<string> DrivingBlocks,
         IReadOnlyList<string> ReviewFlags,
         IReadOnlyDictionary<string, decimal> Metrics);
 
@@ -91,18 +96,17 @@ internal static class HosComplianceCalculator
             throw new ArgumentException("DayStart must identify the carrier-designated 24-hour day containing AsOf", nameof(request));
 
         var violations = new List<string>();
+        var blocks = new List<string>();
         var reviews = new List<string>();
         var normalized = Normalize(request, reviews, out var dataComplete);
 
-        Result result = request.RuleProfile switch
+        return request.RuleProfile switch
         {
-            CanadaSouth60 => EvaluateCanada(request, normalized, northOf60: false, dataComplete, violations, reviews),
-            CanadaNorth60 => EvaluateCanada(request, normalized, northOf60: true, dataComplete, violations, reviews),
-            SaudiTgaGoods => EvaluateSaudi(request, normalized, dataComplete, violations, reviews),
+            CanadaSouth60 => EvaluateCanada(request, normalized, northOf60: false, dataComplete, violations, blocks, reviews),
+            CanadaNorth60 => EvaluateCanada(request, normalized, northOf60: true, dataComplete, violations, blocks, reviews),
+            SaudiTgaGoods => EvaluateSaudi(request, normalized, dataComplete, violations, blocks, reviews),
             _ => throw new ArgumentOutOfRangeException(nameof(request.RuleProfile), request.RuleProfile, "Unsupported HOS rule profile")
         };
-
-        return result;
     }
 
     private static Result EvaluateCanada(
@@ -111,6 +115,7 @@ internal static class HosComplianceCalculator
         bool northOf60,
         bool dataComplete,
         List<string> violations,
+        List<string> blocks,
         List<string> reviews)
     {
         var driveLimit = northOf60 ? 15 * 60 : 13 * 60;
@@ -119,25 +124,24 @@ internal static class HosComplianceCalculator
         var cycleOneLimit = northOf60 ? 80 * 60 : 70 * 60;
         const int cycleTwoLimit = 120 * 60;
         var cycleTwoIntermediateLimit = northOf60 ? 80 * 60 : 70 * 60;
-
-        var dayEnd = request.DayStart.AddHours(24);
         var asOf = request.AsOf;
-        var driveToday = SumMinutes(segments, request.DayStart, Min(asOf, dayEnd), IsDriving);
-        var dutyToday = SumMinutes(segments, request.DayStart, Min(asOf, dayEnd), IsOnDuty);
-        var offToday = SumMinutes(segments, request.DayStart, Min(asOf, dayEnd), IsOffDuty);
+
+        var driveToday = SumMinutes(segments, request.DayStart, asOf, IsDriving);
+        var dutyToday = SumMinutes(segments, request.DayStart, asOf, IsOnDuty);
+        var offToday = SumMinutes(segments, request.DayStart, asOf, IsOffDuty);
+        var currentlyDriving = IsDrivingAtAsOf(segments, asOf);
 
         if (request.CanadaOffDutyDeferralDeclared)
             AddReview(reviews, "CA_OFF_DUTY_DEFERRAL_REVIEW");
 
-        // Personal conveyance is off-duty only when the statutory conditions are
-        // satisfied (including the Canadian personal-use conditions). Do not grant
-        // off-duty credit merely because an upstream payload used that label.
+        // Canadian personal-use driving is excluded from on-duty time only when
+        // the statutory conditions are satisfied. An upstream label by itself is
+        // insufficient evidence, so ambiguous personal conveyance fails closed.
         if (!request.PersonalConveyanceValidated && segments.Any(s => s.Kind == DutyKind.PersonalConveyance))
             AddReview(reviews, "CA_PERSONAL_CONVEYANCE_VALIDATION_REQUIRED");
 
-        // Split sleeper calculations alter elapsed-time treatment. Until the full
-        // split-sleeper evidence model is implemented, detect candidates and fail
-        // closed instead of treating them as ordinary consecutive rest.
+        // Split sleeper changes elapsed-time treatment. We detect the candidate
+        // pattern and require dedicated review instead of granting extra time.
         if (HasPotentialSplitSleeper(segments, northOf60 ? 8 * 60 : 10 * 60))
             AddReview(reviews, northOf60 ? "CA_N60_SPLIT_SLEEPER_REVIEW" : "CA_S60_SPLIT_SLEEPER_REVIEW");
 
@@ -158,34 +162,35 @@ internal static class HosComplianceCalculator
         var dutySinceRest = SumMinutes(segments, shiftStart, asOf, IsOnDuty);
         var elapsedSinceRest = WholeMinutes(shiftStart, asOf);
 
-        var dailyDriveRemaining = driveLimit - driveToday;
-        var dailyDutyRemaining = dutyLimit - dutyToday;
+        // South-of-60 has both carrier-designated-day limits (s.12) and the
+        // post-8-hour-rest limits (s.13). North-of-60 s.39 is rest-window based;
+        // do not invent an additional south-style per-day 15/18-hour cap.
+        var dailyDriveRemaining = northOf60 ? int.MaxValue : driveLimit - driveToday;
+        var dailyDutyRemaining = northOf60 ? int.MaxValue : dutyLimit - dutyToday;
         var shiftDriveRemaining = driveLimit - driveSinceRest;
         var shiftDutyRemaining = dutyLimit - dutySinceRest;
         var elapsedRemaining = elapsedLimit - elapsedSinceRest;
 
-        if (driveToday > driveLimit)
-            AddViolation(violations, northOf60 ? "CA_N60_DRIVE_LIMIT" : "CA_S60_DAILY_DRIVE_LIMIT");
-        if (!northOf60 && dutyToday > dutyLimit)
+        if (!northOf60 && driveToday > driveLimit)
+            AddViolation(violations, "CA_S60_DAILY_DRIVE_LIMIT");
+        if (!northOf60 && dutyToday > dutyLimit && currentlyDriving)
             AddViolation(violations, "CA_S60_DAILY_ON_DUTY_LIMIT");
         if (driveSinceRest > driveLimit)
             AddViolation(violations, northOf60 ? "CA_N60_DRIVE_SINCE_8H_REST" : "CA_S60_DRIVE_SINCE_8H_REST");
-        if (dutySinceRest > dutyLimit)
+        if (dutySinceRest > dutyLimit && currentlyDriving)
             AddViolation(violations, northOf60 ? "CA_N60_ON_DUTY_SINCE_8H_REST" : "CA_S60_ON_DUTY_SINCE_8H_REST");
-        if (elapsedSinceRest > elapsedLimit)
+        if (elapsedSinceRest > elapsedLimit && currentlyDriving)
             AddViolation(violations, northOf60 ? "CA_N60_ELAPSED_LIMIT" : "CA_S60_ELAPSED_LIMIT");
 
-        // South-of-60 has the explicit daily 10-hour off-duty requirement. This
-        // live clock records today's accumulated off-duty minutes, but the final
-        // daily violation is intentionally evaluated only for completed days by a
-        // separate daily-certification pass. A declared deferral remains review-only.
-        if (!northOf60 && offToday < 10 * 60 && asOf >= dayEnd)
-        {
-            if (request.CanadaOffDutyDeferralDeclared)
-                AddReview(reviews, "CA_DAILY_10H_OFF_DUTY_DEFERRAL_REVIEW");
-            else
-                AddViolation(violations, "CA_S60_DAILY_10H_OFF_DUTY");
-        }
+        if (!northOf60 && dailyDriveRemaining <= 0) AddBlock(blocks, "CA_S60_DAILY_DRIVE_LIMIT_REACHED");
+        if (!northOf60 && dailyDutyRemaining <= 0) AddBlock(blocks, "CA_S60_DAILY_ON_DUTY_LIMIT_REACHED");
+        if (shiftDriveRemaining <= 0) AddBlock(blocks, northOf60 ? "CA_N60_DRIVE_LIMIT_REACHED" : "CA_S60_DRIVE_SINCE_8H_REST_REACHED");
+        if (shiftDutyRemaining <= 0) AddBlock(blocks, northOf60 ? "CA_N60_ON_DUTY_LIMIT_REACHED" : "CA_S60_ON_DUTY_SINCE_8H_REST_REACHED");
+        if (elapsedRemaining <= 0) AddBlock(blocks, northOf60 ? "CA_N60_ELAPSED_LIMIT_REACHED" : "CA_S60_ELAPSED_LIMIT_REACHED");
+
+        // South-of-60 s.14 daily off-duty completion and s.16 deferral require a
+        // completed-day / two-day audit. This live calculator exposes accumulated
+        // off-duty time but deliberately does not fabricate a completed-day result.
 
         var cycleTwo = IsCycleTwo(request.CycleType);
         var cycleDays = cycleTwo ? 14 : 7;
@@ -200,12 +205,13 @@ internal static class HosComplianceCalculator
         var cycleLimit = cycleTwo ? cycleTwoLimit : cycleOneLimit;
         var cycleRemaining = cycleLimit - cycleUsed;
 
-        if (cycleUsed > cycleLimit)
+        if (cycleRemaining <= 0)
+            AddBlock(blocks, cycleTwo ? "CA_CYCLE2_LIMIT_REACHED" : "CA_CYCLE1_LIMIT_REACHED");
+        if (cycleUsed > cycleLimit && currentlyDriving)
             AddViolation(violations, cycleTwo ? "CA_CYCLE2_LIMIT" : "CA_CYCLE1_LIMIT");
 
-        // A driver may not drive without a 24-consecutive-hour off-duty period in
-        // the preceding 14 days. For Cycle 2, the additional 70/80-hour limit also
-        // applies until a 24-hour block has occurred.
+        // A driver may not drive without 24 consecutive hours off in the
+        // preceding 14 days. Missing history is not converted to zero/off-duty.
         var last24 = offBlocks
             .Where(b => b.Minutes >= 24 * 60 && b.End <= asOf && b.End >= asOf.AddDays(-14))
             .OrderByDescending(b => b.End)
@@ -214,7 +220,10 @@ internal static class HosComplianceCalculator
         if (last24 is null)
         {
             if (request.CoverageStart <= asOf.AddDays(-14))
-                AddViolation(violations, "CA_24H_OFF_IN_PRECEDING_14_DAYS");
+            {
+                AddBlock(blocks, "CA_24H_OFF_IN_PRECEDING_14_DAYS_REQUIRED");
+                if (currentlyDriving) AddViolation(violations, "CA_24H_OFF_IN_PRECEDING_14_DAYS");
+            }
             else
             {
                 dataComplete = false;
@@ -228,13 +237,17 @@ internal static class HosComplianceCalculator
             var dutySince24 = SumMinutes(segments, since24Start, asOf, IsOnDuty);
             var intermediateRemaining = cycleTwoIntermediateLimit - dutySince24;
             cycleRemaining = Math.Min(cycleRemaining, intermediateRemaining);
-            if (dutySince24 > cycleTwoIntermediateLimit)
+            if (intermediateRemaining <= 0)
+                AddBlock(blocks, northOf60 ? "CA_N60_CYCLE2_80H_WITHOUT_24H_OFF_REACHED" : "CA_S60_CYCLE2_70H_WITHOUT_24H_OFF_REACHED");
+            if (dutySince24 > cycleTwoIntermediateLimit && currentlyDriving)
                 AddViolation(violations, northOf60 ? "CA_N60_CYCLE2_80H_WITHOUT_24H_OFF" : "CA_S60_CYCLE2_70H_WITHOUT_24H_OFF");
         }
 
-        var driveRemaining = MinNonNegative(dailyDriveRemaining, shiftDriveRemaining, dailyDutyRemaining,
-            shiftDutyRemaining, elapsedRemaining, cycleRemaining);
-        var shiftRemaining = Math.Max(0, Math.Min(Math.Min(dailyDutyRemaining, shiftDutyRemaining), elapsedRemaining));
+        var driveRemainingInputs = northOf60
+            ? new[] { shiftDriveRemaining, shiftDutyRemaining, elapsedRemaining, cycleRemaining }
+            : new[] { dailyDriveRemaining, shiftDriveRemaining, dailyDutyRemaining, shiftDutyRemaining, elapsedRemaining, cycleRemaining };
+        var driveRemaining = MinNonNegative(driveRemainingInputs);
+        var shiftRemaining = Math.Max(0, Math.Min(shiftDutyRemaining, elapsedRemaining));
         cycleRemaining = Math.Max(0, cycleRemaining);
 
         var metrics = new Dictionary<string, decimal>
@@ -250,7 +263,7 @@ internal static class HosComplianceCalculator
         };
 
         return FinalizeResult(request.RuleProfile, driveRemaining, shiftRemaining, cycleRemaining, null,
-            dataComplete, violations, reviews, metrics);
+            dataComplete, violations, blocks, reviews, metrics);
     }
 
     private static Result EvaluateSaudi(
@@ -258,6 +271,7 @@ internal static class HosComplianceCalculator
         IReadOnlyList<NormalizedSegment> segments,
         bool dataComplete,
         List<string> violations,
+        List<string> blocks,
         List<string> reviews)
     {
         if (request.WeekStart is null)
@@ -267,15 +281,13 @@ internal static class HosComplianceCalculator
 
         var weekStart = request.WeekStart.Value;
         var twoWeekStart = weekStart.AddDays(-7);
-        var dayEnd = request.DayStart.AddHours(24);
         var asOf = request.AsOf;
 
         if (segments.Any(s => s.Kind == DutyKind.PersonalConveyance))
             AddReview(reviews, "SA_PERSONAL_USE_CLASSIFICATION_REVIEW");
 
-        // Treat any 15/30-minute split-break pattern as review-required until the
-        // provider's exact TGA-compliant rest coding is mapped. We never silently
-        // grant a break based on ambiguous split records.
+        // Do not infer compliance from ambiguous split break fragments until the
+        // exact provider/TGA coding is independently accepted.
         if (HasSaudiSplitBreakCandidate(segments, asOf))
             AddReview(reviews, "SA_SPLIT_BREAK_REVIEW");
 
@@ -290,7 +302,7 @@ internal static class HosComplianceCalculator
             AddReview(reviews, "SA_11H_REST_HISTORY_INCOMPLETE");
         }
 
-        var driveToday = SumMinutes(segments, request.DayStart, Min(asOf, dayEnd), IsDriving);
+        var driveToday = SumMinutes(segments, request.DayStart, asOf, IsDriving);
         var driveThisWeek = SumMinutes(segments, weekStart, asOf, IsDriving);
         var driveTwoWeeks = SumMinutes(segments, twoWeekStart, asOf, IsDriving);
 
@@ -309,39 +321,49 @@ internal static class HosComplianceCalculator
         else if (driveToday > 9 * 60 && !extensionAllowed)
             AddViolation(violations, "SA_9H_DAILY_DRIVE_LIMIT_WITHOUT_VALID_EXTENSION");
 
+        if (driveToday >= todayLimit) AddBlock(blocks, "SA_DAILY_DRIVE_LIMIT_REACHED");
         if (driveThisWeek > 56 * 60)
             AddViolation(violations, "SA_56H_WEEKLY_DRIVE_LIMIT");
+        if (driveThisWeek >= 56 * 60) AddBlock(blocks, "SA_56H_WEEKLY_DRIVE_LIMIT_REACHED");
         if (driveTwoWeeks > 90 * 60)
             AddViolation(violations, "SA_90H_TWO_WEEK_DRIVE_LIMIT");
+        if (driveTwoWeeks >= 90 * 60) AddBlock(blocks, "SA_90H_TWO_WEEK_DRIVE_LIMIT_REACHED");
 
         var continuousDrive = ContinuousDrivingSinceQualifyingBreak(segments, asOf);
         var breakRemaining = 270 - continuousDrive;
         if (continuousDrive > 270)
             AddViolation(violations, "SA_45M_BREAK_AFTER_4_5H_DRIVING");
+        if (breakRemaining <= 0) AddBlock(blocks, "SA_45M_BREAK_REQUIRED");
 
-        // At least 48 consecutive hours weekly rest / no more than six consecutive
-        // working days. The exact carrier week anchor is explicit in the request.
+        // Weekly-rest / workday control. The carrier's actual week anchor is an
+        // explicit request input; it is not guessed from UTC/server locale.
         var hasWeeklyRest = offBlocks.Any(b => b.Minutes >= 48 * 60 && b.End > twoWeekStart && b.End <= asOf);
         var consecutiveWorkDays = CountConsecutiveWorkDays(segments, request.DayStart, asOf, maxDays: 7);
         if (consecutiveWorkDays > 6 && !hasWeeklyRest)
             AddViolation(violations, "SA_MAX_6_CONSECUTIVE_WORK_DAYS");
+        if (consecutiveWorkDays >= 6 && !hasWeeklyRest)
+            AddBlock(blocks, "SA_WEEKLY_48H_REST_REQUIRED_BEFORE_NEXT_WORKDAY");
 
+        // Evaluate the most recent completed inter-day rest only when the history
+        // is contiguous. A later dedicated historical audit will reconstruct every
+        // completed day; this live path does not invent missing rest records.
         var lastWorkBeforeToday = segments
             .Where(s => s.End <= request.DayStart && IsOnDuty(s.Kind))
             .OrderByDescending(s => s.End)
             .FirstOrDefault();
         if (lastWorkBeforeToday is not null)
         {
-            var restBetween = offBlocks
-                .Where(b => b.Start >= lastWorkBeforeToday.End && b.End <= request.DayStart)
-                .Sum(b => b.Minutes);
             var maxConsecutiveRest = offBlocks
-                .Where(b => b.End <= request.DayStart && b.End > request.DayStart.AddDays(-2))
+                .Where(b => b.End <= request.DayStart && b.Start >= lastWorkBeforeToday.End)
                 .Select(b => b.Minutes)
                 .DefaultIfEmpty(0)
                 .Max();
-            if (restBetween > 0 && maxConsecutiveRest < 11 * 60)
-                AddViolation(violations, "SA_11H_DAILY_REST_REQUIREMENT");
+            if (maxConsecutiveRest < 11 * 60)
+            {
+                AddBlock(blocks, "SA_11H_DAILY_REST_REQUIRED");
+                if (IsDrivingAtAsOf(segments, asOf))
+                    AddViolation(violations, "SA_11H_DAILY_REST_REQUIREMENT");
+            }
         }
 
         var dailyRemaining = todayLimit - driveToday;
@@ -362,7 +384,7 @@ internal static class HosComplianceCalculator
         };
 
         return FinalizeResult(request.RuleProfile, driveRemaining, null, cycleRemaining, Math.Max(0, breakRemaining),
-            dataComplete, violations, reviews, metrics);
+            dataComplete, violations, blocks, reviews, metrics);
     }
 
     private static Result FinalizeResult(
@@ -373,6 +395,7 @@ internal static class HosComplianceCalculator
         int? breakRemaining,
         bool dataComplete,
         List<string> violations,
+        List<string> blocks,
         List<string> reviews,
         IReadOnlyDictionary<string, decimal> metrics)
     {
@@ -381,10 +404,12 @@ internal static class HosComplianceCalculator
             ? "Violation"
             : reviewRequired
                 ? "Unverified"
-                : IsWarning(driveRemaining, shiftRemaining, cycleRemaining, breakRemaining)
-                    ? "Warning"
-                    : "OK";
-        var canDrive = dataComplete && !reviewRequired && violations.Count == 0 && driveRemaining > 0;
+                : blocks.Count > 0
+                    ? "Blocked"
+                    : IsWarning(driveRemaining, shiftRemaining, cycleRemaining, breakRemaining)
+                        ? "Warning"
+                        : "OK";
+        var canDrive = dataComplete && !reviewRequired && violations.Count == 0 && blocks.Count == 0 && driveRemaining > 0;
 
         return new Result(
             profile,
@@ -397,6 +422,7 @@ internal static class HosComplianceCalculator
             canDrive,
             status,
             violations.AsReadOnly(),
+            blocks.AsReadOnly(),
             reviews.AsReadOnly(),
             metrics);
     }
@@ -473,6 +499,9 @@ internal static class HosComplianceCalculator
     private static bool IsOnDuty(DutyKind kind) => kind is DutyKind.Driving or DutyKind.OnDutyNotDriving or DutyKind.YardMove;
 
     private static bool IsOffDuty(DutyKind kind) => kind is DutyKind.OffDuty or DutyKind.SleeperBerth;
+
+    private static bool IsDrivingAtAsOf(IReadOnlyList<NormalizedSegment> segments, DateTimeOffset asOf)
+        => segments.Any(s => s.Kind == DutyKind.Driving && s.Start < asOf && s.End >= asOf.AddMinutes(-1));
 
     private static IReadOnlyList<OffDutyBlock> OffDutyBlocks(
         IReadOnlyList<NormalizedSegment> segments,
@@ -556,10 +585,8 @@ internal static class HosComplianceCalculator
         {
             if (IsOffDuty(segment.Kind) && segment.Minutes >= 45) break;
             if (segment.Kind == DutyKind.Driving) total += segment.Minutes;
-            else if (segment.Kind is DutyKind.OnDutyNotDriving or DutyKind.YardMove)
-            {
-                // A non-driving work interval is not assumed to be the required rest break.
-            }
+            // On-duty-not-driving and yard moves do not automatically satisfy a
+            // required rest break; they simply leave continuous driving unchanged.
         }
         return total;
     }
@@ -619,6 +646,11 @@ internal static class HosComplianceCalculator
     private static DateTimeOffset Max(DateTimeOffset a, DateTimeOffset b) => a >= b ? a : b;
 
     private static void AddViolation(List<string> list, string value)
+    {
+        if (!list.Contains(value, StringComparer.Ordinal)) list.Add(value);
+    }
+
+    private static void AddBlock(List<string> list, string value)
     {
         if (!list.Contains(value, StringComparer.Ordinal)) list.Add(value);
     }
