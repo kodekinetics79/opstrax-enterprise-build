@@ -64,7 +64,7 @@ jobs:
         run: |
           set -euo pipefail
           : "${NEON_PG_URI:?Configure the production environment secret NEON_PRODUCTION_OWNER_URI}"
-          ./tools/apply-canada-ksa-compliance-predeploy.sh
+          bash ./tools/apply-canada-ksa-compliance-predeploy.sh
 
       - name: Trigger and verify the exact Render deployment
         env:
