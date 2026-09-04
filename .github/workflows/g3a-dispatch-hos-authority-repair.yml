@@ -1,0 +1,35 @@
+name: G3A Dispatch HOS Authority Repair
+
+on:
+  push:
+    branches:
+      - wave3/g3a-hos-workflow
+    paths:
+      - .github/workflows/g3a-dispatch-hos-authority-repair.yml
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: wave3/g3a-hos-workflow
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+        with:
+          dotnet-version: '8.0.x'
+      - name: Patch dispatch HOS authority boundary
+        run: python3 tools/repair-wave3-dispatch-hos-authority.py
+      - name: Verify focused authority contract
+        run: dotnet test backend-dotnet.Tests/Opstrax.Tests.csproj --configuration Release --filter FullyQualifiedName~DispatchHosAuthorityContractTests
+      - name: Commit focused repair
+        run: |
+          git config user.name "opstrax-wave3-bot"
+          git config user.email "opstrax-wave3-bot@users.noreply.github.com"
+          git add backend-dotnet/Controllers/EndpointMappings.cs backend-dotnet.Tests/DispatchHosAuthorityContractTests.cs
+          git diff --cached --check
+          git commit -m "fix(wave3): use authoritative HOS clocks for dispatch"
+          git push origin HEAD:wave3/g3a-hos-workflow
