@@ -7531,9 +7531,10 @@ public static partial class EndpointMappings
                      (SELECT COUNT(*) FROM dvir_defects dd2
                       WHERE dd2.company_id=d.company_id AND dd2.driver_id=d.id
                         AND dd2.status NOT IN ('resolved','Resolved')) open_defect_count,
-                     (SELECT hr.remaining_drive_hours FROM hos_records hr
-                      WHERE hr.driver_id=d.id AND (hr.company_id=@cid OR hr.company_id IS NULL)
-                      ORDER BY hr.shift_date DESC, hr.id DESC LIMIT 1) available_hos_hours,
+                     hos.drive_time_remaining_minutes / 60.0 available_hos_hours,
+                     COALESCE(hos.status,'Unavailable') hos_clock_status,
+                     hos.clock_source hos_clock_source,
+                     hos.source_observed_at hos_source_observed_at,
                      (SELECT COUNT(*) FROM dispatch_assignments da2
                       WHERE da2.driver_id=d.id
                         AND da2.assignment_status NOT IN ('delivered','cancelled')
@@ -7541,16 +7542,20 @@ public static partial class EndpointMappings
                      CASE WHEN COALESCE(d.safety_score,100) < 65 THEN 1 ELSE 0 END safety_blocked,
                      CASE WHEN d.status NOT IN ('Available','Idle') THEN 1 ELSE 0 END status_blocked
               FROM drivers d
+              LEFT JOIN LATERAL (
+                  SELECT hc.drive_time_remaining_minutes, hc.status, hc.clock_source, hc.source_observed_at
+                  FROM hos_clocks hc
+                  WHERE hc.driver_id=d.id AND hc.company_id=@cid
+                    AND hc.source_authority='Authoritative'
+                    AND NULLIF(BTRIM(hc.clock_source),'') IS NOT NULL
+                    AND hc.source_observed_at IS NOT NULL
+                    AND hc.source_observed_at >= NOW() - INTERVAL '24 hours'
+                  ORDER BY hc.source_observed_at DESC, hc.id DESC
+                  LIMIT 1
+              ) hos ON TRUE
               WHERE d.company_id=@cid AND d.deleted_at IS NULL
                 AND d.status IN ('Available','Idle')
                 AND COALESCE(d.safety_score,0) >= 65
-                AND COALESCE((SELECT hr.remaining_drive_hours FROM hos_records hr
-                              WHERE hr.driver_id=d.id AND (hr.company_id=@cid OR hr.company_id IS NULL)
-                              ORDER BY hr.shift_date DESC, hr.id DESC LIMIT 1),0) >= 1
-                AND LOWER(COALESCE((SELECT hr.hos_status FROM hos_records hr
-                                    WHERE hr.driver_id=d.id AND (hr.company_id=@cid OR hr.company_id IS NULL)
-                                    ORDER BY hr.shift_date DESC, hr.id DESC LIMIT 1),''))
-                    IN ('compliant','ok','eligible','available','on duty','on duty (not driving)','driving')
                 AND NOT EXISTS (SELECT 1 FROM dispatch_assignments da2
                                 WHERE da2.driver_id=d.id AND da2.company_id=@cid
                                   AND da2.assignment_status NOT IN ('delivered','cancelled'))" + branchClause + @"
@@ -24320,40 +24325,70 @@ LIMIT 100000",
 
         bool safetyWarning = safetyScore.HasValue && safetyScore.Value < minSafetyScore;
 
-        // HOS check — integration-ready; uses hos_records if data exists.
+        // Legal-time decisions are fail-closed on source truth: only a fresh,
+        // tenant-scoped Stage99 Authoritative clock may influence dispatch. Legacy
+        // hos_records remain compatibility/demo data and are never legal authority.
         decimal? availableHosHours = null;
         bool hosWarning = false;
-        var hasHosRecords = await db.ScalarLongAsync(
-            "SELECT CASE WHEN to_regclass('public.hos_records') IS NULL THEN 0 ELSE 1 END", ct: ct) == 1;
-        if (hasHosRecords)
+        Dictionary<string, object?>? hosClock = null;
+        try
         {
-            var hosRecord = await db.QuerySingleAsync(
-                @"SELECT remaining_drive_hours, remaining_shift_hours, hos_status
-                  FROM hos_records WHERE driver_id=@did AND company_id=@cid
-                  ORDER BY shift_date DESC LIMIT 1",
-                c => { c.Parameters.AddWithValue("@did", driverId); c.Parameters.AddWithValue("@cid", companyId); }, ct);
-
-            if (hosRecord is not null)
+            if (await db.ScalarLongAsync(
+                    "SELECT CASE WHEN to_regclass('public.hos_clocks') IS NULL THEN 0 ELSE 1 END", ct: ct) == 1)
             {
-                availableHosHours = hosRecord["remainingDriveHours"] is null
-                    ? null : Convert.ToDecimal(hosRecord["remainingDriveHours"]);
-                var hosStatus = hosRecord["hosStatus"]?.ToString() ?? "";
-
-                if (!IsOperableHosStatus(hosStatus))
-                    blocking.Add($"Driver HOS status is '{hosStatus}' — cannot dispatch");
-                else if (availableHosHours.HasValue && availableHosHours.Value < 1m)
-                { blocking.Add($"Driver has only {availableHosHours:N1}h remaining drive time — cannot dispatch"); hosWarning = true; }
-                else if (availableHosHours.HasValue && availableHosHours.Value < 3m)
-                { warnings.Add($"Driver has {availableHosHours:N1}h remaining drive time — limited availability"); hosWarning = true; }
+                hosClock = await db.QuerySingleAsync(
+                    @"SELECT drive_time_remaining_minutes, status, clock_source, source_observed_at
+                      FROM hos_clocks
+                      WHERE driver_id=@did AND company_id=@cid
+                        AND source_authority='Authoritative'
+                        AND NULLIF(BTRIM(clock_source),'') IS NOT NULL
+                        AND source_observed_at IS NOT NULL
+                        AND source_observed_at >= NOW() - INTERVAL '24 hours'
+                      ORDER BY source_observed_at DESC, id DESC
+                      LIMIT 1",
+                    c =>
+                    {
+                        c.Parameters.AddWithValue("@did", driverId);
+                        c.Parameters.AddWithValue("@cid", companyId);
+                    }, ct);
             }
-            else
+        }
+        catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.UndefinedTable
+            or PostgresErrorCodes.InsufficientPrivilege or PostgresErrorCodes.UndefinedColumn)
+        {
+            hosClock = null;
+        }
+
+        if (hosClock is not null)
+        {
+            if (hosClock["driveTimeRemainingMinutes"] is not null and not DBNull)
+                availableHosHours = Convert.ToDecimal(hosClock["driveTimeRemainingMinutes"]) / 60m;
+
+            var clockStatus = hosClock["status"]?.ToString() ?? "Unavailable";
+            if (clockStatus.Equals("Violation", StringComparison.OrdinalIgnoreCase))
             {
-                warnings.Add("HOS data unavailable for this driver — manual verification required before long-haul dispatch");
+                blocking.Add("Authoritative HOS clock reports a violation — cannot dispatch");
+                hosWarning = true;
+            }
+            else if (availableHosHours.HasValue && availableHosHours.Value < 1m)
+            {
+                blocking.Add($"Driver has only {availableHosHours:N1}h authoritative remaining drive time — cannot dispatch");
+                hosWarning = true;
+            }
+            else if (availableHosHours.HasValue && availableHosHours.Value < 3m)
+            {
+                warnings.Add($"Driver has {availableHosHours:N1}h authoritative remaining drive time — limited availability");
+                hosWarning = true;
+            }
+            else if (clockStatus.Equals("Warning", StringComparison.OrdinalIgnoreCase))
+            {
+                warnings.Add("Authoritative HOS clock reports a warning status — verify before dispatch");
+                hosWarning = true;
             }
         }
         else
         {
-            warnings.Add("HOS data unavailable — manual verification required");
+            warnings.Add("Authoritative HOS clock unavailable or stale — manual verification required before dispatch");
         }
 
         // Safety events — critical unresolved flags.
