@@ -25,10 +25,7 @@ jobs:
           source_path = Path('backend-dotnet/Controllers/EndpointMappings.cs')
           lines = source_path.read_text().splitlines()
           terms = ('hos_records', 'remaining_drive_hours', 'available_hos_hours', 'CheckDispatchEligibilityAsync')
-          hits = []
-          for i, line in enumerate(lines):
-              if any(term in line for term in terms):
-                  hits.append(i)
+          hits = [i for i, line in enumerate(lines) if any(term in line for term in terms)]
           merged = []
           for i in hits:
               start, end = max(0, i - 28), min(len(lines), i + 45)
@@ -39,11 +36,11 @@ jobs:
           out = [f'EndpointMappings lines={len(lines)} hits={len(hits)} windows={len(merged)}', '']
           for start, end in merged:
               out.append(f'--- lines {start+1}-{end} ---')
-              out.extend(f'{n+1:05d}: {lines[n]}' for n in range(start, end))
+              out.extend(f'{n+1:05d}: {lines[n].rstrip()}' for n in range(start, end))
               out.append('')
           report = Path('docs/commercialization/wave3/G3A_DISPATCH_HOS_DIAGNOSTIC.txt')
           report.parent.mkdir(parents=True, exist_ok=True)
-          report.write_text('\n'.join(out) + '\n')
+          report.write_text('\n'.join(out).rstrip() + '\n')
           PY
       - name: Commit diagnostic evidence
         run: |
