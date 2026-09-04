@@ -38,6 +38,30 @@ test("Canada/KSA wrapper preserves canonical chain then applies and verifies Sta
   assert.match(wrapper, /External provider\/device\/certification\/qualification evidence: STILL REQUIRED/);
 });
 
+test("Canada/KSA wrapper preserves Batch6 fixed-ID seed contract across release ordering", () => {
+  const wrapper = read("tools", "apply-canada-ksa-compliance-predeploy.sh");
+  const runtime = read("backend-dotnet", "Services", "Batch6SchemaService.cs");
+
+  // Runtime reference seeding reserves these original identities and uses
+  // conflict-ignore semantics. The predeploy wrapper must therefore reserve the
+  // Canada/KSA identities before Stage101 adds generated profiles/rules.
+  assert.match(runtime, /\(3,'CA','/);
+  assert.match(runtime, /\(4,'SA','/);
+  assert.match(runtime, /\(6,3,'/);
+  assert.match(runtime, /\(7,3,'/);
+  assert.match(runtime, /\(8,4,'/);
+  assert.match(runtime, /ON CONFLICT DO NOTHING/);
+
+  assert.match(wrapper, /\(3,'CA','Canada Federal HOS - South of 60N'/);
+  assert.match(wrapper, /\(4,'SA','Saudi TGA Goods Transport HOS'/);
+  assert.match(wrapper, /\(6,3,'CA-S60-HOS-13H-DRIVE'/);
+  assert.match(wrapper, /\(7,3,'CA-CARRIER-SAFETY-FITNESS'/);
+  assert.match(wrapper, /\(8,4,'SA-TGA-HOS-9H-DRIVE'/);
+  assert.match(wrapper, /pg_get_serial_sequence\('compliance_profiles','id'\)/);
+  assert.match(wrapper, /pg_get_serial_sequence\('compliance_rules','id'\)/);
+  assert.match(wrapper, /Runtime fixed-ID compatibility: VERIFIED/);
+});
+
 test("runtime manifest never receives the owner migration credential", () => {
   const render = read("render.yaml");
   assert.doesNotMatch(render, /NEON_PG_URI|NEON_PRODUCTION_OWNER_URI/);
