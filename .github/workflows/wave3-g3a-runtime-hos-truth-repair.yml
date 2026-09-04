@@ -6,6 +6,8 @@ on:
       - wave3/g3a-hos-workflow
     paths:
       - .github/workflows/wave3-g3a-runtime-hos-truth-repair.yml
+      - tools/repair-wave3-hos-runtime.py
+      - backend-dotnet.Tests/HosRuntimeTruthContractTests.cs
 
 permissions:
   contents: write
