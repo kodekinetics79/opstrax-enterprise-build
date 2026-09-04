@@ -36,7 +36,9 @@ jobs:
           out = [f'EndpointMappings lines={len(lines)} hits={len(hits)} windows={len(merged)}', '']
           for start, end in merged:
               out.append(f'--- lines {start+1}-{end} ---')
-              out.extend(f'{n+1:05d}: {lines[n].rstrip()}' for n in range(start, end))
+              for n in range(start, end):
+                  clean = lines[n].rstrip()
+                  out.append(f'{n+1:05d}: {clean}' if clean else f'{n+1:05d}:')
               out.append('')
           report = Path('docs/commercialization/wave3/G3A_DISPATCH_HOS_DIAGNOSTIC.txt')
           report.parent.mkdir(parents=True, exist_ok=True)
