@@ -1,0 +1,102 @@
+name: Canada KSA HOS Engine Gate
+
+on:
+  pull_request:
+    paths:
+      - 'backend-dotnet/Services/HosComplianceCalculator.cs'
+      - 'backend-dotnet.Tests/HosComplianceCalculatorTests.cs'
+      - 'database/migrations/2026_09_03_stage102_hos_policy_shadow_engine.sql'
+      - 'tools/apply-canada-ksa-hos-shadow-predeploy.sh'
+      - '.github/workflows/canada-ksa-hos-engine.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  hos-engine:
+    name: Calculator + Stage102 real Postgres gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:17@sha256:a426e44bac0b759c95894d68e1a0ac03ecc20b619f498a91aae373bf06d8508d
+        env:
+          POSTGRES_USER: zayra
+          POSTGRES_PASSWORD: zayra
+          POSTGRES_DB: opstrax_hos
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U zayra -d opstrax_hos"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+
+      - uses: actions/setup-dotnet@d4c94342e560b34958eacfc5d055d21461ed1c5d # v4.3.1
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Compile and run deterministic Canada/KSA HOS boundary tests
+        run: |
+          dotnet test backend-dotnet.Tests/Opstrax.Tests.csproj \
+            --configuration Release \
+            --filter FullyQualifiedName~HosComplianceCalculatorTests \
+            --logger "console;verbosity=normal"
+
+      - name: Apply Stage101 + Stage102 on fresh Postgres
+        env:
+          NEON_PG_URI: postgresql://zayra:zayra@127.0.0.1:5433/opstrax_hos?sslmode=disable
+        run: bash ./tools/apply-canada-ksa-hos-shadow-predeploy.sh
+
+      - name: Prove Stage102 idempotency
+        env:
+          NEON_PG_URI: postgresql://zayra:zayra@127.0.0.1:5433/opstrax_hos?sslmode=disable
+        run: |
+          set -euo pipefail
+          python3 tools/psql-neon-env.py -v ON_ERROR_STOP=1 -q \
+            -f database/migrations/2026_09_03_stage102_hos_policy_shadow_engine.sql
+          count=$(python3 tools/psql-neon-env.py -tA -c \
+            "SELECT COUNT(*) FROM schema_migrations WHERE version='2026_09_03_stage102_hos_policy_shadow_engine'")
+          test "$count" = "1"
+
+      - name: Test policy and shadow evidence constraints
+        env:
+          PGPASSWORD: zayra
+        run: |
+          set -euo pipefail
+          psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_hos -v ON_ERROR_STOP=1 <<'SQL'
+          -- Use existing runtime seed driver/company if present after canonical chain;
+          -- otherwise this constraint gate focuses on metadata-level invariants.
+          DO $verify$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname='uq_driver_hos_policy_current') THEN
+              RAISE EXCEPTION 'missing one-current-policy constraint';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname='uq_hos_exception_active') THEN
+              RAISE EXCEPTION 'missing active-exception uniqueness';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname='uq_hos_shadow_idempotent') THEN
+              RAISE EXCEPTION 'missing shadow idempotency constraint';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname='trg_hos_shadow_no_update' AND NOT tgisinternal) THEN
+              RAISE EXCEPTION 'shadow snapshots are not append-only';
+            END IF;
+          END
+          $verify$;
+          SQL
+
+      - name: Record gate boundary
+        run: |
+          echo "Calculator + Stage102: PASSED development gate."
+          echo "Mode remains SHADOW ONLY."
+          echo "No certified ELD/TGA-provider/field evidence is implied by this CI result."
