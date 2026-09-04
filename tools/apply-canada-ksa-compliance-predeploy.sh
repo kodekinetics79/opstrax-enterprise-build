@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Canada/KSA regulated-pilot predeploy wrapper.
 #
-# Runs the canonical protected-environment migration chain first, then Stage101.
+# Runs the canonical protected-environment migration chain first, bootstraps the
+# minimum non-tenant Canada/KSA country reference rows when a brand-new database
+# has schema but no runtime reference seeds, then applies Stage101.
+#
 # This exists so the compliance baseline cannot be treated as a documentation-only
 # change while the canonical runner enrollment is reviewed. Once Stage101 is
 # enrolled directly in apply-neon-predeploy-migrations.sh, this wrapper can remain
@@ -22,6 +25,20 @@ migration="database/migrations/2026_09_03_stage101_canada_ksa_compliance_baselin
 [ -f "$migration" ] || { echo "ERROR: missing $migration" >&2; exit 1; }
 
 psql_neon() { python3 tools/psql-neon-env.py "$@"; }
+
+# The runtime schema service normally owns global reference/catalog seeds, while
+# the canonical owner migration chain intentionally creates schema only. A fresh
+# protected database therefore can legitimately have an empty `countries` table.
+# Bootstrap only the two non-tenant rows required by Stage101. ON CONFLICT DO
+# NOTHING preserves any existing customer/reference metadata; Stage101 changes
+# only the HOS regulatory labels it owns.
+psql_neon -v ON_ERROR_STOP=1 -q <<'SQL'
+INSERT INTO countries (code,name,currency,distance_unit,volume_unit,hos_ruleset,rtl)
+VALUES
+  ('CA','Canada','CAD','Kilometers','Liters','CVHOSR SOR/2005-313',false),
+  ('SA','Saudi Arabia','SAR','Kilometers','Liters','TGA Goods Transport HOS',true)
+ON CONFLICT (code) DO NOTHING;
+SQL
 
 applied=$(psql_neon -tA -c "SELECT CASE WHEN to_regclass('public.schema_migrations') IS NOT NULL THEN COUNT(*) ELSE 0 END FROM schema_migrations WHERE version='2026_09_03_stage101_canada_ksa_compliance_baseline'" 2>/dev/null || echo 0)
 if [ "$applied" != "1" ]; then
