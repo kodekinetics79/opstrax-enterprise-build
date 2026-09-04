@@ -21,6 +21,7 @@ public sealed class HosComplianceCalculatorTests
 
         Assert.Equal(0, result.DriveRemainingMinutes);
         Assert.DoesNotContain("CA_S60_DAILY_DRIVE_LIMIT", result.Violations);
+        Assert.Contains("CA_S60_DAILY_DRIVE_LIMIT_REACHED", result.DrivingBlocks);
         Assert.False(result.CanDrive);
     }
 
@@ -36,6 +37,24 @@ public sealed class HosComplianceCalculatorTests
 
         Assert.Contains("CA_S60_DAILY_DRIVE_LIMIT", result.Violations);
         Assert.Equal("Violation", result.Status);
+        Assert.False(result.CanDrive);
+    }
+
+    [Fact]
+    public void CanadaSouth_ExactlyAtFourteenOnDutyBlocksFurtherDrivingWithoutFalseOverage()
+    {
+        var asOf = DayStart.AddHours(14);
+        var segments = CoverWithOffDutyThen(
+            DayStart,
+            Segment(DayStart, DayStart.AddHours(10), "On Duty (Not Driving)"),
+            Segment(DayStart.AddHours(10), asOf, "Driving"));
+
+        var result = EvalCanadaSouth(segments, asOf);
+
+        Assert.DoesNotContain("CA_S60_DAILY_ON_DUTY_LIMIT", result.Violations);
+        Assert.Contains("CA_S60_DAILY_ON_DUTY_LIMIT_REACHED", result.DrivingBlocks);
+        Assert.Contains("CA_S60_ON_DUTY_SINCE_8H_REST_REACHED", result.DrivingBlocks);
+        Assert.Equal(0, result.DriveRemainingMinutes);
         Assert.False(result.CanDrive);
     }
 
@@ -68,6 +87,7 @@ public sealed class HosComplianceCalculatorTests
         var result = EvalCanadaSouth(segments, asOf);
 
         Assert.Contains("CA_S60_ELAPSED_LIMIT", result.Violations);
+        Assert.Contains("CA_S60_ELAPSED_LIMIT_REACHED", result.DrivingBlocks);
         Assert.Equal(0, result.ShiftRemainingMinutes);
         Assert.False(result.CanDrive);
     }
@@ -80,18 +100,18 @@ public sealed class HosComplianceCalculatorTests
         var coverageStart = asOf.AddDays(-14);
         var segments = new List<HosComplianceCalculator.DutySegment>
         {
-            Segment(coverageStart, dayStart.AddDays(-7), "Off Duty")
+            // Long off-duty history gives us complete coverage and a valid 24h/
+            // cycle reset before the six-day accumulation begins.
+            Segment(coverageStart, dayStart.AddDays(-6), "Off Duty")
         };
 
         // 6 previous days x 11h on duty = 66h. Each 13h rest satisfies the
-        // daily 8h reset without creating a 36h cycle reset.
-        for (var i = 7; i >= 2; i--)
+        // daily 8h reset without creating another 36h cycle reset.
+        for (var day = dayStart.AddDays(-6); day < dayStart; day = day.AddDays(1))
         {
-            var start = dayStart.AddDays(-i + 1);
-            segments.Add(Segment(start, start.AddHours(11), "On Duty (Not Driving)"));
-            segments.Add(Segment(start.AddHours(11), start.AddDays(1), "Off Duty"));
+            segments.Add(Segment(day, day.AddHours(11), "On Duty (Not Driving)"));
+            segments.Add(Segment(day.AddHours(11), day.AddDays(1), "Off Duty"));
         }
-        segments.Add(Segment(dayStart.AddDays(-1), dayStart, "Off Duty"));
         segments.Add(Segment(dayStart, asOf, "Driving"));
 
         var result = HosComplianceCalculator.Evaluate(new(
@@ -104,6 +124,7 @@ public sealed class HosComplianceCalculatorTests
 
         Assert.True(result.Metrics["cycle_used_minutes"] > 70 * 60);
         Assert.Contains("CA_CYCLE1_LIMIT", result.Violations);
+        Assert.Contains("CA_CYCLE1_LIMIT_REACHED", result.DrivingBlocks);
         Assert.Equal(0, result.CycleRemainingMinutes);
     }
 
@@ -125,7 +146,8 @@ public sealed class HosComplianceCalculatorTests
             "Cycle 1",
             segments));
 
-        Assert.DoesNotContain("CA_N60_DRIVE_LIMIT", result.Violations);
+        Assert.DoesNotContain("CA_N60_DRIVE_SINCE_8H_REST", result.Violations);
+        Assert.DoesNotContain("CA_N60_DRIVE_LIMIT_REACHED", result.DrivingBlocks);
         Assert.True(result.DriveRemainingMinutes > 0);
     }
 
@@ -147,25 +169,45 @@ public sealed class HosComplianceCalculatorTests
     }
 
     [Fact]
+    public void Canada_UnknownOrMissingHistoryNeverGetsZeroFilledAsCompliant()
+    {
+        var segments = new[]
+        {
+            Segment(DayStart, DayStart.AddHours(2), "Driving"),
+            // Two-hour gap: a compliant engine must not guess what happened.
+            Segment(DayStart.AddHours(4), AsOf, "Off Duty")
+        };
+
+        var result = EvalCanadaSouth(segments);
+
+        Assert.False(result.DataComplete);
+        Assert.Contains("HOS_DUTY_STATUS_GAP", result.ReviewFlags);
+        Assert.Equal("Unverified", result.Status);
+        Assert.False(result.CanDrive);
+    }
+
+    [Fact]
     public void Saudi_DefaultDayStopsAtNineHoursUnlessExtensionIsEvidenceBacked()
     {
-        var asOf = DayStart.AddHours(9);
-        var segments = CoverWithOffDutyThen(DayStart, Segment(DayStart, asOf, "Driving"));
+        var activity = SaudiCompliantDriving(DayStart, 9 * 60, out var asOf);
+        var segments = CoverWithOffDutyThen(DayStart, activity.ToArray());
 
         var normal = EvalSaudi(segments, asOf);
         var extended = EvalSaudi(segments, asOf, extensionAuthorized: true, extensionEvidence: true);
 
         Assert.Equal(0, normal.DriveRemainingMinutes);
+        Assert.Contains("SA_DAILY_DRIVE_LIMIT_REACHED", normal.DrivingBlocks);
         Assert.Equal(60, extended.DriveRemainingMinutes);
         Assert.Equal(540m, normal.Metrics["today_drive_limit_minutes"]);
         Assert.Equal(600m, extended.Metrics["today_drive_limit_minutes"]);
+        Assert.DoesNotContain("SA_45M_BREAK_AFTER_4_5H_DRIVING", extended.Violations);
     }
 
     [Fact]
     public void Saudi_TenHourExtensionWithoutEvidenceFailsClosed()
     {
-        var asOf = DayStart.AddHours(9).AddMinutes(1);
-        var segments = CoverWithOffDutyThen(DayStart, Segment(DayStart, asOf, "Driving"));
+        var activity = SaudiCompliantDriving(DayStart, 9 * 60 + 1, out var asOf);
+        var segments = CoverWithOffDutyThen(DayStart, activity.ToArray());
 
         var result = EvalSaudi(segments, asOf, extensionAuthorized: true, extensionEvidence: false);
 
@@ -178,17 +220,17 @@ public sealed class HosComplianceCalculatorTests
     public void Saudi_ThirdWeeklyExtensionIsRejected()
     {
         var dayStart = new DateTimeOffset(2026, 9, 3, 0, 0, 0, TimeSpan.Zero);
-        var asOf = dayStart.AddHours(9).AddMinutes(1);
-        var coverageStart = asOf.AddDays(-14);
+        var coverageStart = dayStart.AddDays(-14);
         var weekStart = new DateTimeOffset(2026, 8, 31, 0, 0, 0, TimeSpan.Zero);
         var segments = new List<HosComplianceCalculator.DutySegment>
         {
             Segment(coverageStart, weekStart, "Off Duty")
         };
-        AddSaudiDay(segments, weekStart, 9 * 60 + 30);
-        AddSaudiDay(segments, weekStart.AddDays(1), 9 * 60 + 15);
-        AddSaudiDay(segments, weekStart.AddDays(2), 60);
-        segments.Add(Segment(dayStart, asOf, "Driving"));
+        AddSaudiCompleteDay(segments, weekStart, 9 * 60 + 30);
+        AddSaudiCompleteDay(segments, weekStart.AddDays(1), 9 * 60 + 15);
+        AddSaudiCompleteDay(segments, weekStart.AddDays(2), 60);
+        var current = SaudiCompliantDriving(dayStart, 9 * 60 + 1, out var asOf);
+        segments.AddRange(current);
 
         var result = HosComplianceCalculator.Evaluate(new(
             HosComplianceCalculator.SaudiTgaGoods,
@@ -215,6 +257,7 @@ public sealed class HosComplianceCalculatorTests
         var result = EvalSaudi(segments, asOf);
 
         Assert.Contains("SA_45M_BREAK_AFTER_4_5H_DRIVING", result.Violations);
+        Assert.Contains("SA_45M_BREAK_REQUIRED", result.DrivingBlocks);
         Assert.Equal(0, result.BreakRemainingMinutes);
         Assert.False(result.CanDrive);
     }
@@ -233,24 +276,6 @@ public sealed class HosComplianceCalculatorTests
 
         Assert.DoesNotContain("SA_45M_BREAK_AFTER_4_5H_DRIVING", result.Violations);
         Assert.Equal(30, result.BreakRemainingMinutes);
-    }
-
-    [Fact]
-    public void MissingDutyStatusCoverageIsUnverifiedNotZeroFilled()
-    {
-        var segments = new[]
-        {
-            Segment(DayStart, DayStart.AddHours(2), "Driving"),
-            // Two-hour gap: a compliant engine must not guess what happened.
-            Segment(DayStart.AddHours(4), AsOf, "Off Duty")
-        };
-
-        var result = EvalCanadaSouth(segments);
-
-        Assert.False(result.DataComplete);
-        Assert.Contains("HOS_DUTY_STATUS_GAP", result.ReviewFlags);
-        Assert.Equal("Unverified", result.Status);
-        Assert.False(result.CanDrive);
     }
 
     private static HosComplianceCalculator.Result EvalCanadaSouth(
@@ -292,13 +317,38 @@ public sealed class HosComplianceCalculatorTests
         return list;
     }
 
-    private static void AddSaudiDay(
+    private static List<HosComplianceCalculator.DutySegment> SaudiCompliantDriving(
+        DateTimeOffset start,
+        int drivingMinutes,
+        out DateTimeOffset end)
+    {
+        var list = new List<HosComplianceCalculator.DutySegment>();
+        var cursor = start;
+        var remaining = drivingMinutes;
+        while (remaining > 0)
+        {
+            var chunk = Math.Min(240, remaining);
+            list.Add(Segment(cursor, cursor.AddMinutes(chunk), "Driving"));
+            cursor = cursor.AddMinutes(chunk);
+            remaining -= chunk;
+            if (remaining > 0)
+            {
+                list.Add(Segment(cursor, cursor.AddMinutes(45), "Off Duty"));
+                cursor = cursor.AddMinutes(45);
+            }
+        }
+        end = cursor;
+        return list;
+    }
+
+    private static void AddSaudiCompleteDay(
         List<HosComplianceCalculator.DutySegment> segments,
         DateTimeOffset dayStart,
         int drivingMinutes)
     {
-        segments.Add(Segment(dayStart, dayStart.AddMinutes(drivingMinutes), "Driving"));
-        segments.Add(Segment(dayStart.AddMinutes(drivingMinutes), dayStart.AddDays(1), "Off Duty"));
+        var activity = SaudiCompliantDriving(dayStart, drivingMinutes, out var end);
+        segments.AddRange(activity);
+        segments.Add(Segment(end, dayStart.AddDays(1), "Off Duty"));
     }
 
     private static HosComplianceCalculator.DutySegment Segment(
