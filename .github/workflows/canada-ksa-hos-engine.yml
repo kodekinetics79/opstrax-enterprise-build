@@ -7,7 +7,9 @@ on:
       - 'backend-dotnet/Services/HosShadowClockService.cs'
       - 'backend-dotnet.Tests/HosComplianceCalculatorTests.cs'
       - 'backend-dotnet.Tests/HosShadowClockServiceTests.cs'
+      - 'backend-dotnet.Tests/HosShadowClockPostgresTests.cs'
       - 'database/migrations/2026_09_03_stage102_hos_policy_shadow_engine.sql'
+      - 'database/migrations/2026_09_03_stage103_hos_shadow_retention_control.sql'
       - 'tools/apply-canada-ksa-hos-shadow-predeploy.sh'
       - '.github/workflows/canada-ksa-hos-engine.yml'
   workflow_dispatch:
@@ -20,7 +22,7 @@ env:
 
 jobs:
   hos-engine:
-    name: Calculator + shadow service + Stage102 Postgres gate
+    name: Calculator + shadow service + Stage102/103 Postgres gate
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     services:
@@ -55,21 +57,26 @@ jobs:
             --filter "FullyQualifiedName~HosComplianceCalculatorTests|FullyQualifiedName~HosShadowClockServiceTests" \
             --logger "console;verbosity=normal"
 
-      - name: Apply Stage101 + Stage102 on fresh Postgres
+      - name: Apply Stage101 + Stage102 + Stage103 on fresh Postgres
         env:
           NEON_PG_URI: postgresql://zayra:zayra@127.0.0.1:5433/opstrax_hos?sslmode=disable
         run: bash ./tools/apply-canada-ksa-hos-shadow-predeploy.sh
 
-      - name: Prove Stage102 idempotency
+      - name: Prove Stage102/103 idempotency
         env:
           NEON_PG_URI: postgresql://zayra:zayra@127.0.0.1:5433/opstrax_hos?sslmode=disable
         run: |
           set -euo pipefail
           python3 tools/psql-neon-env.py -v ON_ERROR_STOP=1 -q \
             -f database/migrations/2026_09_03_stage102_hos_policy_shadow_engine.sql
-          count=$(python3 tools/psql-neon-env.py -tA -c \
+          python3 tools/psql-neon-env.py -v ON_ERROR_STOP=1 -q \
+            -f database/migrations/2026_09_03_stage103_hos_shadow_retention_control.sql
+          s102=$(python3 tools/psql-neon-env.py -tA -c \
             "SELECT COUNT(*) FROM schema_migrations WHERE version='2026_09_03_stage102_hos_policy_shadow_engine'")
-          test "$count" = "1"
+          s103=$(python3 tools/psql-neon-env.py -tA -c \
+            "SELECT COUNT(*) FROM schema_migrations WHERE version='2026_09_03_stage103_hos_shadow_retention_control'")
+          test "$s102" = "1"
+          test "$s103" = "1"
 
       - name: Test policy, RLS and shadow evidence constraints
         env:
@@ -90,7 +97,7 @@ jobs:
               RAISE EXCEPTION 'missing shadow idempotency constraint';
             END IF;
             IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname='trg_hos_shadow_no_update' AND NOT tgisinternal) THEN
-              RAISE EXCEPTION 'shadow snapshots are not append-only';
+              RAISE EXCEPTION 'shadow retention/mutation trigger missing';
             END IF;
             SELECT COUNT(*) INTO isolated_count
               FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
@@ -110,8 +117,17 @@ jobs:
           $verify$;
           SQL
 
+      - name: Execute real Postgres shadow service trust-boundary tests
+        env:
+          OPSTRAX_TEST_DB: Host=127.0.0.1;Port=5433;Database=opstrax_hos;Username=zayra;Password=zayra
+        run: |
+          dotnet test backend-dotnet.Tests/Opstrax.Tests.csproj \
+            --configuration Release \
+            --filter FullyQualifiedName~HosShadowClockPostgresTests \
+            --logger "console;verbosity=normal"
+
       - name: Record gate boundary
         run: |
-          echo "Calculator + shadow service + Stage102: PASSED development gate."
+          echo "Calculator + shadow service + Stage102/103: PASSED development gate."
           echo "Mode remains SHADOW ONLY."
           echo "No certified ELD/TGA-provider/field evidence is implied by this CI result."
