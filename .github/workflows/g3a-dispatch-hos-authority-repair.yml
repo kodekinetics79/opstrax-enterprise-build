@@ -6,6 +6,7 @@ on:
       - wave3/g3a-hos-workflow
     paths:
       - .github/workflows/g3a-dispatch-hos-authority-repair.yml
+      - tools/repair-wave3-dispatch-hos-authority.py
 
 permissions:
   contents: write
