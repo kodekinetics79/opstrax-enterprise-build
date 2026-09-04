@@ -88,7 +88,7 @@ public sealed class HosComplianceCalculatorTests
 
         Assert.Contains("CA_S60_ELAPSED_LIMIT", result.Violations);
         Assert.Contains("CA_S60_ELAPSED_LIMIT_REACHED", result.DrivingBlocks);
-        Assert.Equal(0, result.ShiftRemainingMinutes);
+        Assert.Equal(0, result.ShiftRemainingMinutes!.Value);
         Assert.False(result.CanDrive);
     }
 
@@ -258,7 +258,7 @@ public sealed class HosComplianceCalculatorTests
 
         Assert.Contains("SA_45M_BREAK_AFTER_4_5H_DRIVING", result.Violations);
         Assert.Contains("SA_45M_BREAK_REQUIRED", result.DrivingBlocks);
-        Assert.Equal(0, result.BreakRemainingMinutes);
+        Assert.Equal(0, result.BreakRemainingMinutes!.Value);
         Assert.False(result.CanDrive);
     }
 
@@ -275,7 +275,7 @@ public sealed class HosComplianceCalculatorTests
         var result = EvalSaudi(segments, asOf);
 
         Assert.DoesNotContain("SA_45M_BREAK_AFTER_4_5H_DRIVING", result.Violations);
-        Assert.Equal(30, result.BreakRemainingMinutes);
+        Assert.Equal(30, result.BreakRemainingMinutes!.Value);
     }
 
     private static HosComplianceCalculator.Result EvalCanadaSouth(
