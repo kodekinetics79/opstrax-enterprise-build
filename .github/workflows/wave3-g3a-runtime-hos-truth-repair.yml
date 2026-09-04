@@ -1,4 +1,4 @@
-name: Wave3 G3A Runtime HOS Truth Repair
+name: G3A HOS Runtime Repair
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
   contents: write
 
 jobs:
-  repair-runtime-hos-truth:
+  repair:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -21,110 +21,11 @@ jobs:
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
         with:
           dotnet-version: '8.0.x'
-      - name: Repair Batch6 HOS runtime source truth
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-
-          path = Path('backend-dotnet/Services/Batch6SchemaService.cs')
-          source = path.read_text()
-
-          # The unsafe defaults live in the CREATE TABLE runtime fallback, not in
-          # ColumnDefinition entries. Remove only the exact hos_clocks fragments.
-          replacements = [
-              ('drive_time_remaining_minutes INT NOT NULL DEFAULT 660,',
-               'drive_time_remaining_minutes INT NULL,'),
-              ('shift_time_remaining_minutes INT NOT NULL DEFAULT 840,',
-               'shift_time_remaining_minutes INT NULL,'),
-              ('cycle_time_remaining_minutes INT NOT NULL DEFAULT 4200,',
-               'cycle_time_remaining_minutes INT NULL,'),
-              ("status VARCHAR(80) NOT NULL DEFAULT 'OK',\n            hos_warning",
-               "status VARCHAR(80) NOT NULL DEFAULT 'Unavailable',\n            hos_warning"),
-          ]
-          for old, new in replacements:
-              if new in source:
-                  continue
-              count = source.count(old)
-              if count != 1:
-                  raise SystemExit(f'expected exactly one Batch6 HOS runtime fragment {old!r}; found {count}')
-              source = source.replace(old, new, 1)
-
-          # Runtime EnsureAsync must be able to repair an existing hos_clocks table
-          # to the exact Stage99 provenance contract. Keep types/defaults identical
-          # to migration 2026_09_03_stage99_hos_clock_source_truth.sql.
-          anchor = '''        new("hos_clocks",               "company_id",            "BIGINT NULL"),
-        new("hos_clocks",               "branch_id",             "BIGINT NULL"),
-'''
-          additions = '''        new("hos_clocks",               "company_id",            "BIGINT NULL"),
-        new("hos_clocks",               "branch_id",             "BIGINT NULL"),
-        new("hos_clocks",               "clock_source",          "VARCHAR(80) NULL"),
-        new("hos_clocks",               "source_event_id",       "VARCHAR(160) NULL"),
-        new("hos_clocks",               "source_observed_at",    "TIMESTAMPTZ NULL"),
-        new("hos_clocks",               "source_authority",      "VARCHAR(32) NOT NULL DEFAULT 'LegacyUnverified'"),
-        new("hos_clocks",               "source_quality",        "VARCHAR(32) NULL"),
-'''
-          if 'new("hos_clocks",               "source_authority",' not in source:
-              if source.count(anchor) != 1:
-                  raise SystemExit('unique hos_clocks company/branch repair anchor not found')
-              source = source.replace(anchor, additions, 1)
-
-          # If the runtime fallback creates hos_clocks from scratch, it must create
-          # the same provenance fields that Stage99 expects rather than relying on a
-          # later ALTER path that runs before the CREATE TABLE block.
-          table_anchor = '''            status VARCHAR(80) NOT NULL DEFAULT 'Unavailable',
-            hos_warning VARCHAR(200) NULL,
-            updated_at TIMESTAMPTZ NULL
-'''
-          table_truth = '''            status VARCHAR(80) NOT NULL DEFAULT 'Unavailable',
-            hos_warning VARCHAR(200) NULL,
-            clock_source VARCHAR(80) NULL,
-            source_event_id VARCHAR(160) NULL,
-            source_observed_at TIMESTAMPTZ NULL,
-            source_authority VARCHAR(32) NOT NULL DEFAULT 'LegacyUnverified',
-            source_quality VARCHAR(32) NULL,
-            updated_at TIMESTAMPTZ NULL
-'''
-          if 'source_authority VARCHAR(32) NOT NULL DEFAULT \'LegacyUnverified\'' not in source[source.find('@"CREATE TABLE IF NOT EXISTS hos_clocks'):source.find('@"CREATE TABLE IF NOT EXISTS hos_certifications')]:
-              if source.count(table_anchor) != 1:
-                  raise SystemExit('unique hos_clocks CREATE TABLE source-truth anchor not found')
-              source = source.replace(table_anchor, table_truth, 1)
-
-          # Gated demo mode may retain rows for UI development, but it must never
-          # invent legal remaining-time values or an OK compliance state. Preserve
-          # identities/profile/cycle only and fail closed on authority.
-          seed_start = source.find('@"INSERT INTO hos_clocks (id,driver_id,country_code,profile_id,cycle_type,drive_time_remaining_minutes,shift_time_remaining_minutes,cycle_time_remaining_minutes,status,hos_warning)')
-          if seed_start == -1:
-              raise SystemExit('hos_clocks demo seed block not found')
-          seed_end_marker = 'ON CONFLICT DO NOTHING"'
-          seed_end = source.find(seed_end_marker, seed_start)
-          if seed_end == -1:
-              raise SystemExit('hos_clocks demo seed block terminator not found')
-          seed_end += len(seed_end_marker)
-          seed_block = source[seed_start:seed_end]
-          row_pattern = re.compile(
-              r"\((\d+),(\d+),'([^']+)',(\d+),'([^']+)',(?:\d+|NULL),(?:\d+|NULL),(?:\d+|NULL),'[^']+',(?:NULL|'[^']*')\)"
-          )
-          def fail_closed_seed(match):
-              row_id, driver_id, country, profile_id, cycle = match.groups()
-              return f"({row_id},{driver_id},'{country}',{profile_id},'{cycle}',NULL,NULL,NULL,'Unavailable','Authoritative HOS source required')"
-          repaired_seed, replaced_rows = row_pattern.subn(fail_closed_seed, seed_block)
-          if replaced_rows not in (0, 10):
-              raise SystemExit(f'expected 10 HOS demo seed rows or already-repaired rows; transformed {replaced_rows}')
-          if replaced_rows == 0:
-              if seed_block.count("NULL,NULL,NULL,'Unavailable','Authoritative HOS source required'") != 10:
-                  raise SystemExit('HOS demo seed block is neither original nor fully fail-closed')
-          else:
-              source = source[:seed_start] + repaired_seed + source[seed_end:]
-
-          path.write_text(source)
-          PY
-          git diff --check
-      - name: Run focused HOS truth tests
+      - name: Patch Batch6
+        run: python3 tools/repair-wave3-hos-runtime.py
+      - name: Verify focused contract
         run: dotnet test backend-dotnet.Tests/Opstrax.Tests.csproj --configuration Release --filter FullyQualifiedName~HosRuntimeTruthContractTests
-      - name: Commit runtime source-truth repair
-        shell: bash
+      - name: Commit repair
         run: |
           git config user.name "opstrax-wave3-bot"
           git config user.email "opstrax-wave3-bot@users.noreply.github.com"
