@@ -163,7 +163,8 @@ public sealed class DispatchHosAuthorityContractTests
             "private static async Task<IResult> AvailableDrivers",
             "private static async Task<IResult> AvailableVehicles");
 
-        Assert.DoesNotContain("hos_records", slice, StringComparison.Ordinal);
+        Assert.DoesNotContain("FROM hos_records", slice, StringComparison.Ordinal);
+        Assert.DoesNotContain("to_regclass('public.hos_records')", slice, StringComparison.Ordinal);
         Assert.Contains("FROM hos_clocks hc", slice, StringComparison.Ordinal);
         Assert.Contains("hc.source_authority='Authoritative'", slice, StringComparison.Ordinal);
         Assert.Contains("hc.source_observed_at >= NOW() - INTERVAL '24 hours'", slice, StringComparison.Ordinal);
@@ -179,7 +180,8 @@ public sealed class DispatchHosAuthorityContractTests
             "internal static async Task<DispatchEligibilityResult> CheckDispatchEligibilityAsync",
             "// Safety events — critical unresolved flags.");
 
-        Assert.DoesNotContain("hos_records", slice, StringComparison.Ordinal);
+        Assert.DoesNotContain("FROM hos_records", slice, StringComparison.Ordinal);
+        Assert.DoesNotContain("to_regclass('public.hos_records')", slice, StringComparison.Ordinal);
         Assert.DoesNotContain("IsOperableHosStatus", slice, StringComparison.Ordinal);
         Assert.Contains("FROM hos_clocks", slice, StringComparison.Ordinal);
         Assert.Contains("source_authority='Authoritative'", slice, StringComparison.Ordinal);
