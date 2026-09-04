@@ -80,9 +80,12 @@ public sealed class HosComplianceCalculatorTests
         var asOf = DayStart.AddHours(16).AddMinutes(1);
         var segments = CoverWithOffDutyThen(
             DayStart,
-            Segment(DayStart, DayStart.AddHours(4), "Off Duty"),
-            Segment(DayStart.AddHours(4), DayStart.AddHours(12), "On Duty (Not Driving)"),
-            Segment(DayStart.AddHours(12), asOf, "Driving"));
+            // Start the shift at DayStart, then prove a sub-8h off-duty break does not
+            // reset the 16h elapsed clock. Keeping the first segment on-duty also
+            // prevents the historical coverage rest from merging into this break.
+            Segment(DayStart, DayStart.AddHours(1), "On Duty (Not Driving)"),
+            Segment(DayStart.AddHours(1), DayStart.AddHours(5), "Off Duty"),
+            Segment(DayStart.AddHours(5), asOf, "Driving"));
 
         var result = EvalCanadaSouth(segments, asOf);
 
