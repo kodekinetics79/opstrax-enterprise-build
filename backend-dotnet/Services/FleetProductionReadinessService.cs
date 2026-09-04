@@ -497,7 +497,7 @@ public sealed class FleetProductionReadinessService
           ,('maintenance_items','created_at','timestamp with time zone',true,'now()','')
           ,('maintenance_items','due_engine_hours','integer',false,'','')
           ,('maintenance_items','due_odometer','integer',false,'','')
-          ,('dashcam_events','ai_confidence','numeric(6,2)',true,'84','')
+          ,('dashcam_events','ai_confidence','numeric(6,2)',false,'','')
           ,('dashcam_events','ai_summary','text',false,'','')
           ,('dashcam_events','created_at','timestamp with time zone',true,'now()','')
           ,('dashcam_events','deleted_at','timestamp with time zone',false,'','')
