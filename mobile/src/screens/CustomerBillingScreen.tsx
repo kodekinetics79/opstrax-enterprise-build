@@ -99,7 +99,7 @@ export function CustomerBillingScreen() {
                   {lines.map((line, index) => (
                     <Panel key={String(line.lineNo ?? index)} variant="quiet" tone="teal">
                       <Row>
-                        <View style={{ flex: 1 }}><Field label={`Line ${textOf(line.lineNo, index + 1)}`} value={textOf(line.description)} /></View>
+                        <View style={{ flex: 1 }}><Field label={`Line ${textOf(line.lineNo, String(index + 1))}`} value={textOf(line.description)} /></View>
                         <View style={{ minWidth: 110 }}><Field label="Amount" value={money(line.amount, detailCurrency)} /></View>
                       </Row>
                       <Row>
