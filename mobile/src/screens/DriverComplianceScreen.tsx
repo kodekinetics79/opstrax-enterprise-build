@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, Text, View } from "react-native";
 import * as Haptics from "expo-haptics";
 import {
@@ -19,12 +19,18 @@ import {
 } from "@/components/ui";
 import { useSession } from "@/auth/SessionProvider";
 import { useAsyncResource } from "@/hooks/useAsyncResource";
+import { clearSecureDraft, readSecureDraft, secureDraftKey, writeSecureDraft } from "@/storage/secureDrafts";
 import { asRecords, numberOf, textOf, titleCase } from "@/data/records";
 import type { JsonRecord } from "@/types";
 
 const ATTESTATION = "I certify that this DVIR is true and correct and that I completed this inspection.";
 
 type ChecklistResult = { result: "pass" | "fail"; severity: "minor" | "major" | "critical"; notes: string };
+type DvirDraft = { results: Record<string, ChecklistResult>; attested: boolean; idempotencyKey: string };
+
+function newDvirIdempotencyKey(company: string, user: string, vehicle: string) {
+  return ["mobile-dvir", company, user, vehicle, Date.now().toString(36), Math.random().toString(36).slice(2, 10)].join(":").slice(0, 100);
+}
 
 export function DriverComplianceScreen() {
   const { api, session } = useSession();
@@ -35,6 +41,8 @@ export function DriverComplianceScreen() {
   const coaching = useAsyncResource(() => api.driverCoaching(), [api]);
   const [results, setResults] = useState<Record<string, ChecklistResult>>({});
   const [attested, setAttested] = useState(false);
+  const [idempotencyKey, setIdempotencyKey] = useState("");
+  const [draftReady, setDraftReady] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const template = asRecords(templates.data)[0];
@@ -45,6 +53,44 @@ export function DriverComplianceScreen() {
   const completed = items.length > 0 && items.every((item, index) => results[String(item.id ?? index)]?.result);
   const blocked = profile.data?.vehicleBlocking?.blocked === true;
   const lowDrive = numberOf(hos.data?.remainingDriveHours) !== null && numberOf(hos.data?.remainingDriveHours)! < 3;
+  const companyScope = String(session?.company.id ?? session?.company.code ?? "unknown");
+  const userScope = String(session?.user.id ?? "unknown");
+  const vehicleScope = String(vehicleId ?? "unknown");
+  const dvirDraftKey = vehicleId && template
+    ? secureDraftKey("driver-dvir", session?.company.id ?? session?.company.code, session?.user.id, `${vehicleScope}-${String(template.id ?? template.templateName ?? "template")}`)
+    : null;
+
+  useEffect(() => {
+    let active = true;
+    setDraftReady(false);
+    if (!dvirDraftKey) return () => { active = false; };
+    void readSecureDraft<DvirDraft>(dvirDraftKey).then((draft) => {
+      if (!active) return;
+      if (draft?.idempotencyKey) {
+        setResults(draft.results ?? {});
+        setAttested(Boolean(draft.attested));
+        setIdempotencyKey(draft.idempotencyKey);
+      } else {
+        setResults({});
+        setAttested(false);
+        setIdempotencyKey(newDvirIdempotencyKey(companyScope, userScope, vehicleScope));
+      }
+      setDraftReady(true);
+    });
+    return () => { active = false; };
+  }, [companyScope, dvirDraftKey, userScope, vehicleScope]);
+
+  useEffect(() => {
+    if (!dvirDraftKey || !draftReady || !idempotencyKey) return;
+    const timer = setTimeout(() => {
+      const hasDraft = Object.keys(results).length > 0 || attested;
+      const action = hasDraft
+        ? writeSecureDraft<DvirDraft>(dvirDraftKey, { results, attested, idempotencyKey })
+        : clearSecureDraft(dvirDraftKey);
+      void action.catch(() => undefined);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [attested, draftReady, dvirDraftKey, idempotencyKey, results]);
 
   const toggle = (item: JsonRecord, index: number, result: "pass" | "fail") => {
     const key = String(item.id ?? index);
@@ -59,17 +105,9 @@ export function DriverComplianceScreen() {
   };
 
   const submitDvir = async () => {
-    if (!vehicleId || !profile.data?.driver?.id || !template) return;
+    if (!vehicleId || !profile.data?.driver?.id || !template || !idempotencyKey) return;
     setBusy(true);
     try {
-      const idempotencyKey = [
-        "mobile-dvir",
-        String(session?.company.id ?? session?.company.code),
-        String(session?.user.id),
-        String(vehicleId),
-        new Date().toISOString().slice(0, 10),
-        Date.now().toString(36),
-      ].join(":").slice(0, 100);
       await api.submitDriverDvir({
         vehicleId,
         driverId: profile.data.driver.id,
@@ -89,12 +127,14 @@ export function DriverComplianceScreen() {
         attestation: ATTESTATION,
       }, idempotencyKey);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      if (dvirDraftKey) await clearSecureDraft(dvirDraftKey).catch(() => undefined);
       setResults({});
       setAttested(false);
+      setIdempotencyKey(newDvirIdempotencyKey(companyScope, userScope, vehicleScope));
       profile.refresh();
       Alert.alert("DVIR submitted", "Your inspection is recorded. Critical failures automatically block the vehicle.");
     } catch (error) {
-      Alert.alert("DVIR submission failed", error instanceof Error ? error.message : "The server rejected the inspection.");
+      Alert.alert("DVIR submission failed", error instanceof Error ? `${error.message} Your inspection draft and retry identity remain saved on this device.` : "The server rejected the inspection. Your draft remains saved.");
     } finally {
       setBusy(false);
     }
@@ -138,7 +178,7 @@ export function DriverComplianceScreen() {
         <SectionHeader
           eyebrow="Pre-trip DVIR"
           title={textOf(template?.templateName, "Inspection checklist")}
-          description="Every item must be marked. Critical failures can immediately place the vehicle out of service."
+          description="Every item must be marked. Critical failures can immediately place the vehicle out of service. Draft state and retry identity are encrypted until submission succeeds."
           right={<Pill label={textOf(vehicleCode, "No vehicle")} tone={vehicleId ? "teal" : "red"} />}
         />
         {templates.loading ? <LoadingState label="Loading tenant checklist…" /> : templates.error ? <ErrorState title="Checklist unavailable" body={templates.error} /> : null}
@@ -180,6 +220,7 @@ export function DriverComplianceScreen() {
         </View>
         {items.length ? (
           <>
+            {Object.keys(results).length > 0 ? <Pill label="Inspection draft saved securely" tone="blue" /> : null}
             <Pressable
               accessibilityRole="checkbox"
               accessibilityState={{ checked: attested }}
@@ -191,7 +232,7 @@ export function DriverComplianceScreen() {
               </View>
               <Text style={{ flex: 1, color: colors.muted, lineHeight: 20 }}>{ATTESTATION}</Text>
             </Pressable>
-            <ActionButton label={busy ? "Submitting inspection…" : "Submit DVIR"} onPress={() => void submitDvir()} disabled={busy || !vehicleId || !completed || !attested} />
+            <ActionButton label={busy ? "Submitting inspection…" : "Submit DVIR"} onPress={() => void submitDvir()} disabled={busy || !vehicleId || !completed || !attested || !idempotencyKey} />
           </>
         ) : null}
       </Panel>
