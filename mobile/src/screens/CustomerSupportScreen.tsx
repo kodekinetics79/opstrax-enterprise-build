@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Alert, Text, View } from "react-native";
 import * as Haptics from "expo-haptics";
 import { useSession } from "@/auth/SessionProvider";
 import { useAsyncResource } from "@/hooks/useAsyncResource";
+import { clearSecureDraft, readSecureDraft, secureDraftKey, writeSecureDraft } from "@/storage/secureDrafts";
 import { asRecords, textOf, titleCase } from "@/data/records";
 import type { JsonRecord } from "@/types";
 import {
@@ -24,15 +25,25 @@ import {
 } from "@/components/ui";
 
 const FEEDBACK_TYPES = ["support", "delivery", "claim", "billing", "general"] as const;
+type FeedbackType = (typeof FEEDBACK_TYPES)[number];
+type SupportDraft = {
+  selectedJobId: number | null;
+  feedbackType: FeedbackType;
+  subject: string;
+  comment: string;
+  rating: number | null;
+};
 
 export function CustomerSupportScreen() {
-  const { api } = useSession();
+  const { api, session } = useSession();
   const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
-  const [feedbackType, setFeedbackType] = useState<(typeof FEEDBACK_TYPES)[number]>("support");
+  const [feedbackType, setFeedbackType] = useState<FeedbackType>("support");
   const [subject, setSubject] = useState("");
   const [comment, setComment] = useState("");
   const [rating, setRating] = useState<number | null>(null);
+  const [draftReady, setDraftReady] = useState(false);
   const [busy, setBusy] = useState(false);
+  const supportDraftKey = secureDraftKey("customer-support", session?.company.id ?? session?.company.code, session?.user.id);
 
   const jobs = useAsyncResource(
     async () => (await api.request.get<{ items?: JsonRecord[] }>("/api/portal/jobs")).items ?? [],
@@ -47,6 +58,35 @@ export function CustomerSupportScreen() {
   const feedbackRows = useMemo(() => asRecords(feedback.data), [feedback.data]);
   const openCount = useMemo(() => feedbackRows.filter((item) => !/closed|resolved/i.test(String(item.status ?? ""))).length, [feedbackRows]);
 
+  useEffect(() => {
+    let active = true;
+    setDraftReady(false);
+    void readSecureDraft<SupportDraft>(supportDraftKey).then((draft) => {
+      if (!active) return;
+      if (draft) {
+        setSelectedJobId(draft.selectedJobId ?? null);
+        if (FEEDBACK_TYPES.includes(draft.feedbackType)) setFeedbackType(draft.feedbackType);
+        setSubject(draft.subject ?? "");
+        setComment(draft.comment ?? "");
+        setRating(draft.rating ?? null);
+      }
+      setDraftReady(true);
+    });
+    return () => { active = false; };
+  }, [supportDraftKey]);
+
+  useEffect(() => {
+    if (!draftReady) return;
+    const timer = setTimeout(() => {
+      const hasDraft = Boolean(selectedJobId || subject.trim() || comment.trim() || rating || feedbackType !== "support");
+      const action = hasDraft
+        ? writeSecureDraft<SupportDraft>(supportDraftKey, { selectedJobId, feedbackType, subject, comment, rating })
+        : clearSecureDraft(supportDraftKey);
+      void action.catch(() => undefined);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [comment, draftReady, feedbackType, rating, selectedJobId, subject, supportDraftKey]);
+
   const submit = async () => {
     if (!selectedJobId || !subject.trim() || !comment.trim()) return;
     setBusy(true);
@@ -59,13 +99,16 @@ export function CustomerSupportScreen() {
         rating,
       });
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      await clearSecureDraft(supportDraftKey).catch(() => undefined);
+      setSelectedJobId(null);
+      setFeedbackType("support");
       setSubject("");
       setComment("");
       setRating(null);
       await feedback.refresh();
       Alert.alert("Request submitted", "Your request is now recorded against this shipment and is visible to your service team.");
     } catch (error) {
-      Alert.alert("Request not submitted", error instanceof Error ? error.message : "The server rejected the request.");
+      Alert.alert("Request not submitted", error instanceof Error ? `${error.message} Your draft remains saved on this device.` : "The server rejected the request. Your draft remains saved.");
     } finally {
       setBusy(false);
     }
@@ -90,7 +133,7 @@ export function CustomerSupportScreen() {
         <SectionHeader
           eyebrow="New request"
           title="Tell us what you need"
-          description="Choose one of your shipments. The backend rejects requests for any shipment outside your customer account."
+          description="Choose one of your shipments. The backend rejects requests for any shipment outside your customer account. Unsent text is encrypted on this device."
         />
 
         {jobs.loading ? <LoadingState label="Loading your shipments…" /> : null}
@@ -146,6 +189,7 @@ export function CustomerSupportScreen() {
           </Row>
         </View>
 
+        {selectedJobId || subject.trim() || comment.trim() ? <Pill label="Draft saved securely" tone="blue" /> : null}
         <ActionButton
           label={busy ? "Submitting…" : "Submit request"}
           onPress={() => void submit()}
