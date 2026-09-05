@@ -7,12 +7,35 @@ const API_BASE_URL =
   process.env.EXPO_PUBLIC_DOTNET_API_URL?.trim() ||
   "http://localhost:8088";
 const STAGE = process.env.EXPO_PUBLIC_STAGE?.trim().toLowerCase() || "pilot";
-const isProductionBuild = process.env.EAS_BUILD_PROFILE === "production" || STAGE === "production";
+const rawProduct = process.env.EXPO_PUBLIC_PRODUCT?.trim().toLowerCase() || "unified";
+const PRODUCT = (["driver", "fleet", "customer", "unified"] as const).includes(rawProduct as "driver" | "fleet" | "customer" | "unified")
+  ? rawProduct as "driver" | "fleet" | "customer" | "unified"
+  : "unified";
+const isProductionBuild = process.env.EAS_BUILD_PROFILE?.endsWith("production") === true || STAGE === "production";
 const allowedApiHosts = (process.env.EXPO_PUBLIC_ALLOWED_API_HOSTS ?? "")
   .split(",")
   .map((value: string) => value.trim().toLowerCase())
   .filter(Boolean);
+const PRIVACY_URL = process.env.EXPO_PUBLIC_PRIVACY_URL?.trim() || "";
+const SUPPORT_URL = process.env.EXPO_PUBLIC_SUPPORT_URL?.trim() || "";
+const ACCOUNT_DELETION_URL = process.env.EXPO_PUBLIC_ACCOUNT_DELETION_URL?.trim() || "";
+const ACCOUNT_CREATION_ENABLED = process.env.EXPO_PUBLIC_ACCOUNT_CREATION_ENABLED?.trim().toLowerCase() === "true";
 const hasBundledAssets = existsSync(resolve(__dirname, "assets/icon.png"));
+
+const productConfig = {
+  driver: { name: "OpsTrax Driver", slug: "opstrax-driver", id: "driver" },
+  fleet: { name: "OpsTrax Fleet", slug: "opstrax-fleet", id: "fleet" },
+  customer: { name: "OpsTrax Customer", slug: "opstrax-customer", id: "customer" },
+  unified: { name: "OpsTrax Mobile", slug: "opstrax-mobile", id: "mobile" },
+}[PRODUCT];
+
+function requirePublicHttpsUrl(value: string, label: string) {
+  if (!value) throw new Error(`${label} must be configured for production store builds.`);
+  const url = new URL(value);
+  if (url.protocol !== "https:" || ["localhost", "127.0.0.1", "::1"].includes(url.hostname)) {
+    throw new Error(`${label} must use a public non-loopback HTTPS URL.`);
+  }
+}
 
 if (isProductionBuild) {
   const apiUrl = new URL(API_BASE_URL);
@@ -22,11 +45,23 @@ if (isProductionBuild) {
   if (!allowedApiHosts.length || !allowedApiHosts.includes(apiUrl.hostname.toLowerCase())) {
     throw new Error("Production API host must be listed in EXPO_PUBLIC_ALLOWED_API_HOSTS.");
   }
+  if (PRODUCT === "unified") {
+    throw new Error("Production store builds must set EXPO_PUBLIC_PRODUCT to driver, fleet, or customer.");
+  }
+  requirePublicHttpsUrl(PRIVACY_URL, "EXPO_PUBLIC_PRIVACY_URL");
+  requirePublicHttpsUrl(SUPPORT_URL, "EXPO_PUBLIC_SUPPORT_URL");
+  if (ACCOUNT_CREATION_ENABLED) {
+    requirePublicHttpsUrl(ACCOUNT_DELETION_URL, "EXPO_PUBLIC_ACCOUNT_DELETION_URL");
+  }
 }
 
+const normalizedStage = STAGE.replace(/[^a-z0-9]+/g, "");
+const defaultBundleBase = `com.kodekinetics.opstrax.${productConfig.id}`;
+const defaultBundleId = STAGE === "production" ? defaultBundleBase : `${defaultBundleBase}.${normalizedStage}`;
+
 const config: ExpoConfig = {
-  name: "OpsTrax Mobile",
-  slug: "opstrax-mobile",
+  name: productConfig.name,
+  slug: productConfig.slug,
   version: "1.1.0",
   orientation: "portrait",
   ...(hasBundledAssets ? { icon: "./assets/icon.png" } : {}),
@@ -46,7 +81,7 @@ const config: ExpoConfig = {
   ],
   ios: {
     supportsTablet: true,
-    bundleIdentifier: process.env.EXPO_PUBLIC_IOS_BUNDLE_ID?.trim() || (STAGE === "production" ? "com.opstrax.mobile" : `com.opstrax.mobile.${STAGE.replace(/[^a-z0-9]+/g, "")}`),
+    bundleIdentifier: process.env.EXPO_PUBLIC_IOS_BUNDLE_ID?.trim() || defaultBundleId,
     infoPlist: {
       NSLocationWhenInUseUsageDescription: "Allow OpsTrax to attach your current location to proof you choose to submit.",
     },
@@ -59,7 +94,7 @@ const config: ExpoConfig = {
       monochromeImage: "./assets/android-icon-monochrome.png",
     } } : {}),
     predictiveBackGestureEnabled: false,
-    package: process.env.EXPO_PUBLIC_ANDROID_PACKAGE?.trim() || (STAGE === "production" ? "com.opstrax.mobile" : `com.opstrax.mobile.${STAGE.replace(/[^a-z0-9]+/g, "")}`),
+    package: process.env.EXPO_PUBLIC_ANDROID_PACKAGE?.trim() || defaultBundleId,
   },
   web: {
     ...(hasBundledAssets ? { favicon: "./assets/favicon.png" } : {}),
@@ -67,7 +102,12 @@ const config: ExpoConfig = {
   extra: {
     apiBaseUrl: API_BASE_URL,
     stage: STAGE,
-    appName: "OpsTrax",
+    product: PRODUCT,
+    appName: productConfig.name,
+    privacyUrl: PRIVACY_URL,
+    supportUrl: SUPPORT_URL,
+    accountDeletionUrl: ACCOUNT_DELETION_URL,
+    accountCreationEnabled: ACCOUNT_CREATION_ENABLED,
   },
 };
 

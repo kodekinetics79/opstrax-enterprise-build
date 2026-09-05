@@ -1,6 +1,20 @@
 import { Alert, View } from "react-native";
 import * as Haptics from "expo-haptics";
-import { ActionButton, EmptyState, ErrorState, Field, LoadingState, MetricCard, Panel, Pill, Row, Screen, SectionHeader, toneForStatus } from "@/components/ui";
+import {
+  ActionButton,
+  EmptyState,
+  ErrorState,
+  Field,
+  HeroPanel,
+  LoadingState,
+  MetricCard,
+  Panel,
+  Pill,
+  Row,
+  Screen,
+  SectionHeader,
+  toneForStatus,
+} from "@/components/ui";
 import { useSession } from "@/auth/SessionProvider";
 import { useAsyncResource } from "@/hooks/useAsyncResource";
 import { textOf, titleCase } from "@/data/records";
@@ -35,19 +49,36 @@ export function DriverTodayScreen() {
 
   return (
     <Screen>
-      <Panel>
+      <HeroPanel tone={blocked ? "red" : "teal"}>
         <SectionHeader
           eyebrow={session?.company.name}
           title={`Good day, ${driver?.fullName ?? session?.user.name ?? "driver"}`}
-          description="Your current vehicle, load, compliance blocks, and next action come from the tenant-secured driver record."
-          right={<Pill label={textOf(driver?.status, "Driver")} tone={toneForStatus(String(driver?.status ?? ""))} />}
+          description={blocked
+            ? "A safety block is active. Resolve it before operating the assigned vehicle."
+            : "Your vehicle, load, compliance state, and next action are synchronized with dispatch."}
+          right={<Pill label={blocked ? "Action required" : textOf(driver?.status, "Driver")} tone={blocked ? "red" : toneForStatus(String(driver?.status ?? ""))} />}
         />
         <Row>
-          <MetricCard label="Vehicle" value={textOf(assignment?.vehicleCode ?? driver?.vehicleCode, "Unassigned")} tone={blocked ? "red" : "teal"} />
-          <MetricCard label="Drive left" value={profile.data?.hos?.dataAvailable ? `${textOf(profile.data.hos.remainingDriveHours)}h` : "No ELD data"} tone="blue" />
-          <MetricCard label="Coaching" value={String(profile.data?.coaching?.pendingCount ?? 0)} tone={(profile.data?.coaching?.pendingCount ?? 0) > 0 ? "amber" : "green"} />
+          <MetricCard
+            label="Vehicle"
+            value={textOf(assignment?.vehicleCode ?? driver?.vehicleCode, "Unassigned")}
+            helper={blocked ? "Blocked from operation" : "Current assignment"}
+            tone={blocked ? "red" : "teal"}
+          />
+          <MetricCard
+            label="Drive left"
+            value={profile.data?.hos?.dataAvailable ? `${textOf(profile.data.hos.remainingDriveHours)}h` : "No ELD data"}
+            helper={profile.data?.hos?.dataAvailable ? "Available drive time" : "No certified HOS feed"}
+            tone="blue"
+          />
+          <MetricCard
+            label="Coaching"
+            value={String(profile.data?.coaching?.pendingCount ?? 0)}
+            helper="Items waiting"
+            tone={(profile.data?.coaching?.pendingCount ?? 0) > 0 ? "amber" : "green"}
+          />
         </Row>
-      </Panel>
+      </HeroPanel>
 
       {profile.loading || current.loading ? <LoadingState label="Loading your live work…" /> : null}
       {profile.error ? <ErrorState title="Driver profile unavailable" body={profile.error} /> : null}
@@ -57,7 +88,7 @@ export function DriverTodayScreen() {
         <ErrorState title="Vehicle blocked" body={profile.data?.vehicleBlocking?.reason ?? "Do not operate this vehicle until maintenance clears it."} />
       ) : null}
 
-      <Panel>
+      <Panel variant="elevated" tone={assignment ? "teal" : undefined}>
         <SectionHeader
           eyebrow="Current load"
           title={textOf(assignment?.shipmentNumber, "No active assignment")}
@@ -80,8 +111,12 @@ export function DriverTodayScreen() {
       </Panel>
 
       {profile.data?.guidance?.length ? (
-        <Panel>
-          <SectionHeader eyebrow="Next best action" title="Driver guidance" description="Rule-based guidance from your real assignment, HOS, DVIR, and coaching state." />
+        <Panel variant="quiet" tone="blue">
+          <SectionHeader
+            eyebrow="Next best action"
+            title="Driver guidance"
+            description="Rule-based guidance from your real assignment, HOS, DVIR, and coaching state."
+          />
           <View style={{ gap: 10 }}>
             {profile.data.guidance.map((item, index) => (
               <Field key={`${item.level}-${index}`} label={titleCase(item.level ?? "Guidance")} value={item.message} />

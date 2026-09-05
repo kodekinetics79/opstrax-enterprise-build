@@ -9,36 +9,80 @@
       "distribution": "internal",
       "environment": "development",
       "env": {
-        "EXPO_PUBLIC_STAGE": "development"
+        "EXPO_PUBLIC_STAGE": "development",
+        "EXPO_PUBLIC_PRODUCT": "unified"
       },
       "android": {
         "buildType": "apk"
       }
     },
-    "preview": {
+    "driver-preview": {
       "node": "20.19.4",
       "distribution": "internal",
       "environment": "preview",
       "env": {
-        "EXPO_PUBLIC_STAGE": "preview"
+        "EXPO_PUBLIC_STAGE": "preview",
+        "EXPO_PUBLIC_PRODUCT": "driver"
       },
-      "android": {
-        "buildType": "apk"
-      }
+      "android": { "buildType": "apk" }
     },
-    "production": {
+    "fleet-preview": {
       "node": "20.19.4",
+      "distribution": "internal",
+      "environment": "preview",
+      "env": {
+        "EXPO_PUBLIC_STAGE": "preview",
+        "EXPO_PUBLIC_PRODUCT": "fleet"
+      },
+      "android": { "buildType": "apk" }
+    },
+    "customer-preview": {
+      "node": "20.19.4",
+      "distribution": "internal",
+      "environment": "preview",
+      "env": {
+        "EXPO_PUBLIC_STAGE": "preview",
+        "EXPO_PUBLIC_PRODUCT": "customer"
+      },
+      "android": { "buildType": "apk" }
+    },
+    "driver-production": {
+      "node": "20.19.4",
+      "distribution": "store",
       "environment": "production",
       "env": {
-        "EXPO_PUBLIC_STAGE": "production"
+        "EXPO_PUBLIC_STAGE": "production",
+        "EXPO_PUBLIC_PRODUCT": "driver"
       },
       "autoIncrement": true,
-      "android": {
-        "buildType": "app-bundle"
-      }
+      "android": { "buildType": "app-bundle" }
+    },
+    "fleet-production": {
+      "node": "20.19.4",
+      "distribution": "store",
+      "environment": "production",
+      "env": {
+        "EXPO_PUBLIC_STAGE": "production",
+        "EXPO_PUBLIC_PRODUCT": "fleet"
+      },
+      "autoIncrement": true,
+      "android": { "buildType": "app-bundle" }
+    },
+    "customer-production": {
+      "node": "20.19.4",
+      "distribution": "store",
+      "environment": "production",
+      "env": {
+        "EXPO_PUBLIC_STAGE": "production",
+        "EXPO_PUBLIC_PRODUCT": "customer"
+      },
+      "autoIncrement": true,
+      "android": { "buildType": "app-bundle" }
     }
   },
   "submit": {
-    "production": {}
+    "driver-production": {},
+    "fleet-production": {},
+    "customer-production": {}
   }
 }

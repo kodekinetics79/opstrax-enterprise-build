@@ -1,27 +1,76 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Alert, Linking, View } from "react-native";
 import * as Haptics from "expo-haptics";
-import { ActionButton, EmptyState, ErrorState, Field, Input, LoadingState, Panel, Pill, Row, Screen, SectionHeader, toneForStatus } from "@/components/ui";
+import {
+  ActionButton,
+  EmptyState,
+  ErrorState,
+  Field,
+  HeroPanel,
+  Input,
+  LoadingState,
+  Panel,
+  Pill,
+  Row,
+  Screen,
+  SectionHeader,
+  toneForStatus,
+} from "@/components/ui";
 import { useSession } from "@/auth/SessionProvider";
 import { useAsyncResource } from "@/hooks/useAsyncResource";
+import { clearSecureDraft, readSecureDraft, secureDraftKey, writeSecureDraft } from "@/storage/secureDrafts";
 import { textOf, titleCase } from "@/data/records";
 
 const EXCEPTION_TYPES = ["route_blocked", "late_pickup", "late_delivery", "vehicle_breakdown", "customer_hold", "safety_hold", "general"];
 
+type ExceptionDraft = {
+  exceptionType: string;
+  notes: string;
+  open: boolean;
+};
+
 export function DriverTripScreen() {
-  const { api } = useSession();
+  const { api, session } = useSession();
   const current = useAsyncResource(() => api.driverCurrentAssignment(), [api]);
   const [showException, setShowException] = useState(false);
   const [exceptionType, setExceptionType] = useState("route_blocked");
   const [exceptionNotes, setExceptionNotes] = useState("");
+  const [draftReady, setDraftReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [vehicleRef, setVehicleRef] = useState("");
   const assignment = current.data?.assignment;
-  // Departure is gated server-side on vehicle confirmation: the backend lists
-  // en_route_pickup in driverNextStatuses as soon as the load is accepted, but 409s the
-  // transition until confirm-vehicle has run. Mirror the web gate so the button is only
-  // offered once it will actually succeed.
   const vehicleConfirmed = Boolean(assignment?.vehicleConfirmedAt);
+  const exceptionDraftKey = assignment?.id
+    ? secureDraftKey("driver-exception", session?.company.id ?? session?.company.code, session?.user.id, assignment.id)
+    : null;
+
+  useEffect(() => {
+    let active = true;
+    setDraftReady(false);
+    if (!exceptionDraftKey) return () => { active = false; };
+    void readSecureDraft<ExceptionDraft>(exceptionDraftKey).then((draft) => {
+      if (!active) return;
+      if (draft) {
+        if (EXCEPTION_TYPES.includes(draft.exceptionType)) setExceptionType(draft.exceptionType);
+        setExceptionNotes(draft.notes ?? "");
+        setShowException(Boolean(draft.open || draft.notes));
+      }
+      setDraftReady(true);
+    });
+    return () => { active = false; };
+  }, [exceptionDraftKey]);
+
+  useEffect(() => {
+    if (!exceptionDraftKey || !draftReady) return;
+    const timer = setTimeout(() => {
+      const hasDraft = Boolean(exceptionNotes.trim() || showException || exceptionType !== "route_blocked");
+      const write = hasDraft
+        ? writeSecureDraft<ExceptionDraft>(exceptionDraftKey, { exceptionType, notes: exceptionNotes, open: showException })
+        : clearSecureDraft(exceptionDraftKey);
+      void write.catch(() => undefined);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [draftReady, exceptionDraftKey, exceptionNotes, exceptionType, showException]);
 
   const openMaps = async (address?: string) => {
     if (!address) return;
@@ -77,11 +126,13 @@ export function DriverTripScreen() {
         notes: exceptionNotes.trim(),
       });
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      if (exceptionDraftKey) await clearSecureDraft(exceptionDraftKey).catch(() => undefined);
       setShowException(false);
+      setExceptionType("route_blocked");
       setExceptionNotes("");
       current.refresh();
     } catch (error) {
-      Alert.alert("Exception report failed", error instanceof Error ? error.message : "The server rejected the report.");
+      Alert.alert("Exception report failed", error instanceof Error ? error.message : "The server rejected the report. Your draft remains saved on this device.");
     } finally {
       setBusy(false);
     }
@@ -89,9 +140,14 @@ export function DriverTripScreen() {
 
   return (
     <Screen>
-      <Panel>
-        <SectionHeader eyebrow="Live trip" title={textOf(assignment?.shipmentNumber, "Trip")} description="Only assignment transitions allowed by the backend state machine are shown." right={assignment ? <Pill label={titleCase(assignment.assignmentStatus)} tone={toneForStatus(assignment.assignmentStatus)} /> : undefined} />
-      </Panel>
+      <HeroPanel tone="teal">
+        <SectionHeader
+          eyebrow="Live trip"
+          title={textOf(assignment?.shipmentNumber, "Trip")}
+          description="Only assignment transitions allowed by the backend state machine are shown."
+          right={assignment ? <Pill label={titleCase(assignment.assignmentStatus)} tone={toneForStatus(assignment.assignmentStatus)} /> : undefined}
+        />
+      </HeroPanel>
 
       {current.loading ? <LoadingState label="Loading trip…" /> : null}
       {current.error ? <ErrorState title="Trip unavailable" body={current.error} /> : null}
@@ -99,8 +155,12 @@ export function DriverTripScreen() {
 
       {assignment ? (
         <>
-          <Panel>
-            <SectionHeader eyebrow="Route" title="Pickup to delivery" description="Open the destination in your device’s maps app. OpsTrax does not fabricate route geometry." />
+          <Panel variant="elevated" tone="blue">
+            <SectionHeader
+              eyebrow="Route"
+              title="Pickup to delivery"
+              description="Open a destination in the device maps app. OpsTrax does not fabricate route geometry."
+            />
             <View style={{ gap: 10 }}>
               <Field label="Pickup" value={assignment.pickupAddress} />
               <ActionButton label="Navigate to pickup" onPress={() => void openMaps(assignment.pickupAddress)} variant="secondary" disabled={!assignment.pickupAddress} />
@@ -109,8 +169,12 @@ export function DriverTripScreen() {
             </View>
           </Panel>
 
-          <Panel>
-            <SectionHeader eyebrow="Progress" title="Update live status" description="Delivery completion is never a status button; it requires proof on the Proof tab." />
+          <Panel variant="elevated" tone="teal">
+            <SectionHeader
+              eyebrow="Progress"
+              title="Update live status"
+              description="Delivery completion is never a simple status button; it requires proof on the Proof tab."
+            />
             {!vehicleConfirmed && current.data?.driverNextStatuses?.includes("en_route_pickup") ? (
               <View style={{ gap: 10, marginBottom: 12 }}>
                 <Field label="Assigned unit" value={textOf(assignment?.vehicleCode, "Unavailable")} />
@@ -130,27 +194,39 @@ export function DriverTripScreen() {
                   .filter((status) => status !== "exception")
                   .filter((status) => status !== "en_route_pickup" || vehicleConfirmed)
                   .map((status) => (
-                  <ActionButton key={status} label={`Mark ${titleCase(status)}`} onPress={() => transition(status)} disabled={busy} />
-                ))}
+                    <ActionButton key={status} label={`Mark ${titleCase(status)}`} onPress={() => transition(status)} disabled={busy} />
+                  ))}
               </View>
             ) : (
               <EmptyState title="No transition available" body="Refresh after dispatch changes the assignment, or complete the required proof step." />
             )}
           </Panel>
 
-          <Panel>
-            <SectionHeader eyebrow="Exception" title="Tell operations immediately" description="Exception reports notify dispatch and fleet management and preserve the prior trip state." />
+          <Panel variant="solid" tone="red">
+            <SectionHeader
+              eyebrow="Exception"
+              title="Tell operations immediately"
+              description="Exception reports notify dispatch and fleet management while preserving the prior trip state. Unsent notes are encrypted on this device."
+            />
             {showException ? (
               <View style={{ gap: 12 }}>
                 <TextPicker values={EXCEPTION_TYPES} selected={exceptionType} onSelect={setExceptionType} />
-                <Input label="What happened?" value={exceptionNotes} onChangeText={setExceptionNotes} placeholder="Describe what happened and what support you need." multiline autoCapitalize="sentences" />
+                <Input
+                  label="What happened?"
+                  value={exceptionNotes}
+                  onChangeText={setExceptionNotes}
+                  placeholder="Describe what happened and what support you need."
+                  multiline
+                  autoCapitalize="sentences"
+                />
+                {exceptionNotes.trim() ? <Pill label="Draft saved securely" tone="amber" /> : null}
                 <Row>
-                  <ActionButton label="Cancel" onPress={() => setShowException(false)} variant="ghost" disabled={busy} />
+                  <ActionButton label="Hide draft" onPress={() => setShowException(false)} variant="ghost" disabled={busy} />
                   <ActionButton label={busy ? "Reporting…" : "Report exception"} onPress={() => void reportException()} variant="danger" disabled={busy || exceptionNotes.trim().length < 3} />
                 </Row>
               </View>
             ) : (
-              <ActionButton label="Report an exception" onPress={() => setShowException(true)} variant="danger" />
+              <ActionButton label={exceptionNotes.trim() ? "Resume exception draft" : "Report an exception"} onPress={() => setShowException(true)} variant="danger" />
             )}
           </Panel>
         </>
