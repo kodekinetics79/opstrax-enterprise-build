@@ -372,7 +372,8 @@ public sealed class CoachingCompletionAcknowledgementHttpPostgresTests
                 Assert.Equal(Uri.UriSchemeHttp, uri!.Scheme);
                 Assert.Equal("127.0.0.1", uri.Host);
                 Assert.True(uri.Port > 0);
-                var client = new HttpClient { BaseAddress = uri, Timeout = TimeSpan.FromSeconds(15) };
+                var client = new HttpClient(new SocketsHttpHandler { UseProxy = false, AllowAutoRedirect = false })
+                    { BaseAddress = uri, Timeout = TimeSpan.FromSeconds(15) };
                 return new KestrelParityHost(servingApp, client);
             }
             catch (Exception startupFailure)

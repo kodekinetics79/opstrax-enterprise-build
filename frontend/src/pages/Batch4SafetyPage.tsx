@@ -19,10 +19,21 @@ import type { AnyRecord, UserSession } from "@/types";
 type Kind = "safety" | "dashcam" | "coaching" | "incidents" | "evidence";
 type SafetyCoachingOrigin = { session: number; attempt: number; eventId: string | number; detailGeneration: number };
 type SafetyCoachingAcknowledgement = SafetyCoachingOrigin & { generation: number; task: SafetyCoachingReceipt; refreshing: boolean; refreshWarning: boolean };
+type CoachingModalOwner = { session: number; attempt: number; open: boolean; pending: boolean; recordId?: string | number; rowVersion?: string | number; dataIdentity?: unknown; detailGeneration: number };
 
 const SAFETY_DETAIL_FIELDS = ["id", "rowVersion", "eventType", "severity", "status", "eventTime", "driverId", "driverName", "vehicleId", "vehicleCode", "notes", "reviewedAt", "reviewedByName", "resolvedAt", "resolvedByName"] as const;
 const SAFETY_COACHING_FIELDS = ["id", "status", "coachingType", "dueDate", "assignedToName", "assignedByName", "completedAt", "driverAcknowledgedAt"] as const;
 const SAFETY_AUDIT_FIELDS = ["actionName", "actorName", "createdAt"] as const;
+const COACHING_DETAIL_FIELDS = ["id", "rowVersion", "taskNumber", "driverId", "driverName", "coachingType", "priority", "status", "assignedToUserId", "assignedToName", "assignedByName", "title", "description", "aiScript", "dueAt", "driverAcknowledged", "acknowledgedAt", "beforeSafetyScore", "afterSafetyScore", "effectivenessScore", "completedAt"] as const;
+const COACHING_PRIMARY_FIELDS = ["taskNumber", "driverId", "driverName", "coachingType", "priority", "status", "assignedToUserId", "assignedToName", "assignedByName", "dueAt"] as const;
+const COACHING_CONTENT_FIELDS = ["title", "description", "aiScript"] as const;
+const COACHING_OUTCOME_FIELDS = ["driverAcknowledged", "acknowledgedAt", "beforeSafetyScore", "afterSafetyScore", "effectivenessScore", "completedAt"] as const;
+const COACHING_CSV_FIELDS = ["id", "rowVersion", "taskNumber", "driverId", "driverName", "coachingType", "priority", "status", "assignedToName", "dueAt", "driverAcknowledged", "acknowledgedAt", "beforeSafetyScore", "afterSafetyScore", "effectivenessScore", "completedAt"] as const;
+const COACHING_NOTE_FIELDS = ["id", "noteType", "noteText", "createdAt", "createdByName"] as const;
+const COACHING_RELATED_SAFETY_FIELDS = ["id", "eventNumber", "eventType", "severity", "reviewStatus", "occurredAt"] as const;
+const COACHING_RELATED_DASHCAM_FIELDS = ["id", "eventNumber", "eventType", "severity", "reviewStatus", "occurredAt"] as const;
+const COACHING_AUDIT_FIELDS = ["actionName", "actorName", "createdAt"] as const;
+const COACHING_DETAIL_UNAVAILABLE = "Current coaching detail could not be confirmed. Keep this draft open and reopen the action from the current task before submitting.";
 
 function safetyDetailId(value: unknown): string | undefined {
   if (typeof value === "number") return Number.isSafeInteger(value) && value > 0 ? String(value) : undefined;
@@ -58,6 +69,48 @@ export function safetyDetailView(value: unknown, selectedId: unknown): { record:
   const auditTrail = source.auditTrail.map(row => safetyScalarProjection(row, SAFETY_AUDIT_FIELDS));
   if (coachingTasks.some(row => !row) || auditTrail.some(row => !row)) return undefined;
   return { record, coachingTasks: coachingTasks as AnyRecord[], auditTrail: auditTrail as AnyRecord[] };
+}
+
+function coachingScalarProjection(value: unknown, fields: readonly string[]): AnyRecord | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const source = value as AnyRecord;
+  const projected: AnyRecord = {};
+  for (const field of fields) {
+    if (!Object.hasOwn(source, field) || source[field] === undefined) continue;
+    const item = source[field];
+    if (item !== null && typeof item !== "string" && typeof item !== "boolean" && !(typeof item === "number" && Number.isFinite(item))) return undefined;
+    projected[field] = item;
+  }
+  return Object.keys(projected).length ? projected : undefined;
+}
+
+function coachingRowsProjection(source: AnyRecord, key: string, fields: readonly string[]): AnyRecord[] | undefined {
+  if (!Object.hasOwn(source, key) || source[key] == null) return [];
+  if (!Array.isArray(source[key])) return undefined;
+  const rows = (source[key] as unknown[]).map(row => coachingScalarProjection(row, fields));
+  return rows.some(row => !row) ? undefined : rows as AnyRecord[];
+}
+
+export function coachingDetailView(value: unknown, selectedId: unknown): AnyRecord | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const source = value as AnyRecord;
+  if (!Object.hasOwn(source, "record") || !source.record || typeof source.record !== "object" || Array.isArray(source.record)) return undefined;
+  const rawRecord = source.record as AnyRecord;
+  const selectedKey = safetyDetailId(selectedId);
+  if (!selectedKey || !Object.hasOwn(rawRecord, "id") || safetyDetailId(rawRecord.id) !== selectedKey ||
+      !Object.hasOwn(rawRecord, "rowVersion") || !Number.isSafeInteger(rawRecord.rowVersion) || Number(rawRecord.rowVersion) < 0 ||
+      !Object.hasOwn(rawRecord, "status") || typeof rawRecord.status !== "string" || !rawRecord.status.trim()) return undefined;
+  const record = coachingScalarProjection(rawRecord, COACHING_DETAIL_FIELDS);
+  const notes = coachingRowsProjection(source, "notes", COACHING_NOTE_FIELDS);
+  const relatedSafetyEvents = coachingRowsProjection(source, "relatedSafetyEvents", COACHING_RELATED_SAFETY_FIELDS);
+  const relatedDashcamEvents = coachingRowsProjection(source, "relatedDashcamEvents", COACHING_RELATED_DASHCAM_FIELDS);
+  const auditTrail = coachingRowsProjection(source, "auditTrail", COACHING_AUDIT_FIELDS);
+  if (!record || !notes || !relatedSafetyEvents || !relatedDashcamEvents || !auditTrail) return undefined;
+  return { record, notes, relatedSafetyEvents, relatedDashcamEvents, auditTrail, recommendations: [] };
+}
+
+export function coachingCsvProjection(value: unknown): AnyRecord | undefined {
+  return coachingScalarProjection(value, COACHING_CSV_FIELDS);
 }
 
 function entitlementAllows(session: Pick<UserSession, "entitlements" | "entitlementPolicyMode"> | null, key: string): boolean {
@@ -227,8 +280,14 @@ export function Batch4SafetyPage({ kind }: { kind: Kind }) {
   const [coachingEditorError, setCoachingEditorError] = useState<unknown>(null);
   const [incidentAction, setIncidentAction] = useState<{ type: "status" | "attachEvidence"; row: AnyRecord } | null>(null);
   const [coachingNoteAction, setCoachingNoteAction] = useState<AnyRecord | null>(null);
+  const coachingNoteOwner = useRef<CoachingModalOwner>({ session: 0, attempt: 0, open: false, pending: false, detailGeneration: 0 });
+  const [coachingNoteSession, setCoachingNoteSession] = useState(0);
+  const [coachingNoteUnavailable, setCoachingNoteUnavailable] = useState(false);
   const coachingNoteFlight = useRef(false);
   const [coachingCompleteAction, setCoachingCompleteAction] = useState<AnyRecord | null>(null);
+  const coachingCompleteOwner = useRef<CoachingModalOwner>({ session: 0, attempt: 0, open: false, pending: false, detailGeneration: 0 });
+  const [coachingCompleteSession, setCoachingCompleteSession] = useState(0);
+  const [coachingCompleteUnavailable, setCoachingCompleteUnavailable] = useState(false);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("All");
   const detail = config.useDetail(kind === "safety" && !safetyDetailId(selected?.id) ? undefined : selected?.id as string | number | undefined);
@@ -282,10 +341,7 @@ export function Batch4SafetyPage({ kind }: { kind: Kind }) {
     const owner = coachingDetailOwner.current;
     if (owner.generation !== coachingDetailGeneration || !owner.id || !String(owner.id).trim() || owner.retrying) return undefined;
     const query = qc.getQueryState<AnyRecord>(["coaching", "detail", owner.id]);
-    const record = query?.data?.record as AnyRecord | undefined;
-    if (query?.status !== "success" || query.fetchStatus !== "idle" || !record || Array.isArray(record) ||
-        record.id == null || String(record.id) !== String(owner.id)) return undefined;
-    return query.data;
+    return query?.status === "success" && query.fetchStatus === "idle" ? coachingDetailView(query.data, owner.id) : undefined;
   };
   const currentCoachingActionRecord = (type: string) => {
     const record = currentCoachingDetail()?.record as AnyRecord | undefined;
@@ -298,6 +354,15 @@ export function Batch4SafetyPage({ kind }: { kind: Kind }) {
     if (type === "complete" && !coachingCompletionAdmission(record, {
       selectedId: coachingDetailOwner.current.id, isLoading: false, isFetching: false, isError: false,
     }).allowed) return undefined;
+    return record;
+  };
+  const currentCoachingModalRecord = (owner: CoachingModalOwner, sessionId: number, type: "addNote" | "complete") => {
+    if (!owner.open || owner.pending || owner.session !== sessionId || owner.recordId == null || owner.detailGeneration !== coachingDetailOwner.current.generation) return undefined;
+    const query = qc.getQueryState<AnyRecord>(["coaching", "detail", owner.recordId]);
+    if (query?.data !== owner.dataIdentity) return undefined;
+    const record = currentCoachingActionRecord(type);
+    if (!record || String(record.id) !== String(owner.recordId) ||
+        String(record.rowVersion) !== String(owner.rowVersion)) return undefined;
     return record;
   };
   const closeDetail = () => {
@@ -327,7 +392,6 @@ export function Batch4SafetyPage({ kind }: { kind: Kind }) {
     selectedId: selected?.id as string | number | undefined,
     isLoading: detail.isLoading, isFetching: detail.isFetching, isError: detail.isError,
   });
-  const coachingCompletionModalAccess = coachingCompletionModalAdmission(coachingCompletionAccess, coachingCompleteAction?.id, selected?.id);
   const saveSingleFlight = useSingleFlight();
   const actionSingleFlight = useSingleFlight();
   const invalidate = async () => { await qc.invalidateQueries({ queryKey: [config.queryKey] }); await qc.invalidateQueries({ queryKey: [config.queryKey, "summary"] }); if (selected?.id) await qc.invalidateQueries({ queryKey: [config.queryKey, "detail", selected.id] }); };
@@ -360,6 +424,13 @@ export function Batch4SafetyPage({ kind }: { kind: Kind }) {
       await invalidate();
     },
   });
+  const coachingNoteUnavailableReason = coachingNoteAction && !coachingNoteOwner.current.pending &&
+    !currentCoachingModalRecord(coachingNoteOwner.current, coachingNoteSession, "addNote") ? COACHING_DETAIL_UNAVAILABLE : undefined;
+  const coachingCompleteOwnerUnavailable = Boolean(coachingCompleteAction && !coachingCompleteOwner.current.pending &&
+    !currentCoachingModalRecord(coachingCompleteOwner.current, coachingCompleteSession, "complete"));
+  const coachingCompletionModalAccess = coachingCompleteUnavailable || coachingCompleteOwnerUnavailable
+    ? { allowed: false, reason: COACHING_DETAIL_UNAVAILABLE }
+    : coachingCompletionModalAdmission(coachingCompletionAccess, coachingCompleteAction?.id, selected?.id);
   const ownsSafetyCoaching = (sessionId: number) => safetyCoachingOwner.current.open && safetyCoachingOwner.current.session === sessionId;
   const safetyCoachingAdmission = (sessionId: number) => {
     const owner = safetyCoachingOwner.current;
@@ -608,7 +679,8 @@ export function Batch4SafetyPage({ kind }: { kind: Kind }) {
       coachingRead={kind === "coaching" ? { state: coachingDetailState, onRetry: retryCoachingDetail, onExport: () => {
         void actionSingleFlight(async () => {
           const current = currentCoachingActionRecord("export");
-          if (current) exportCsv(config.eyebrow, [current]);
+          const projected = coachingCsvProjection(current);
+          if (projected) exportCsv(config.eyebrow, [projected]);
         });
       } } : undefined}
       canUpdate={kind === "dashcam" ? camera.canEdit : canMutate(updatePermission) && (kind === "safety" ? Boolean(currentSafetyActionRecord("edit")) : kind !== "coaching" || (!coachingEditorSaving && Boolean(currentCoachingActionRecord("edit"))))}
@@ -672,9 +744,38 @@ export function Batch4SafetyPage({ kind }: { kind: Kind }) {
         }
         else if (kind === "coaching" && type === "addNote") {
           if (coachingNoteFlight.current || action.isPending) return;
-          void actionSingleFlight(async () => { action.reset(); setCoachingNoteAction(row); });
+          void actionSingleFlight(async () => {
+            const owner = coachingNoteOwner.current;
+            owner.session += 1;
+            owner.attempt = 0;
+            owner.open = true;
+            owner.pending = false;
+            owner.recordId = row.id as string | number;
+            owner.rowVersion = row.rowVersion as string | number;
+            owner.dataIdentity = qc.getQueryState(["coaching", "detail", row.id])?.data;
+            owner.detailGeneration = coachingDetailOwner.current.generation;
+            setCoachingNoteSession(owner.session);
+            setCoachingNoteUnavailable(false);
+            action.reset();
+            setCoachingNoteAction(row);
+          });
         }
-        else if (kind === "coaching" && type === "complete") { void actionSingleFlight(async () => { runCoachingCompletionAction(coachingCompletionAdmission(row, { selectedId: coachingDetailOwner.current.id, isLoading: false, isFetching: false, isError: false }), () => setCoachingCompleteAction(row)); }); }
+        else if (kind === "coaching" && type === "complete") { void actionSingleFlight(async () => {
+          runCoachingCompletionAction(coachingCompletionAdmission(row, { selectedId: coachingDetailOwner.current.id, isLoading: false, isFetching: false, isError: false }), () => {
+            const owner = coachingCompleteOwner.current;
+            owner.session += 1;
+            owner.attempt = 0;
+            owner.open = true;
+            owner.pending = false;
+            owner.recordId = row.id as string | number;
+            owner.rowVersion = row.rowVersion as string | number;
+            owner.dataIdentity = qc.getQueryState(["coaching", "detail", row.id])?.data;
+            owner.detailGeneration = coachingDetailOwner.current.generation;
+            setCoachingCompleteSession(owner.session);
+            setCoachingCompleteUnavailable(false);
+            setCoachingCompleteAction(row);
+          });
+        }); }
         else void actionSingleFlight(() => action.mutateAsync({ type, row }));
       }}
     />
@@ -688,16 +789,74 @@ export function Batch4SafetyPage({ kind }: { kind: Kind }) {
       void saveSingleFlight(() => save.mutateAsync(payload));
     }} /> : null}
     {incidentAction ? <IncidentActionModal action={incidentAction} saving={action.isPending} error={action.error} onClose={() => { action.reset(); setIncidentAction(null); }} onSubmit={(payload) => { void actionSingleFlight(() => action.mutateAsync({ type: incidentAction.type, row: incidentAction.row, payload })); }} /> : null}
-    {coachingNoteAction ? <CoachingNoteModal saving={action.isPending} error={action.error} onClose={() => {
-      if (coachingNoteFlight.current || action.isPending) return;
-      void actionSingleFlight(async () => { action.reset(); setCoachingNoteAction(null); });
+    {coachingNoteAction ? <CoachingNoteModal key={coachingNoteSession} saving={action.isPending} error={action.error} unavailableReason={coachingNoteUnavailableReason} onClose={() => {
+      const owner = coachingNoteOwner.current;
+      if (!owner.open || owner.session !== coachingNoteSession || owner.pending || coachingNoteFlight.current || action.isPending) return;
+      void actionSingleFlight(async () => {
+        if (!owner.open || owner.session !== coachingNoteSession || owner.pending) return;
+        owner.open = false;
+        setCoachingNoteUnavailable(false);
+        action.reset();
+        setCoachingNoteAction(null);
+      });
     }} onSubmit={(noteText) => {
-      if (coachingNoteFlight.current || action.isPending) return;
-      coachingNoteFlight.current = true;
-      void actionSingleFlight(async () => { await action.mutateAsync({ type: "addNote", row: coachingNoteAction, payload: { noteText } }); setCoachingNoteAction(null); })
-        .finally(() => { coachingNoteFlight.current = false; });
+      const owner = coachingNoteOwner.current;
+      if (coachingNoteFlight.current || owner.pending || action.isPending) return;
+      void actionSingleFlight(async () => {
+        const current = currentCoachingModalRecord(owner, coachingNoteSession, "addNote");
+        if (!current) {
+          if (owner.open && owner.session === coachingNoteSession) setCoachingNoteUnavailable(true);
+          return;
+        }
+        const attempt = ++owner.attempt;
+        owner.pending = true;
+        coachingNoteFlight.current = true;
+        setCoachingNoteUnavailable(false);
+        try {
+          await action.mutateAsync({ type: "addNote", row: current, payload: { noteText } });
+          if (owner.open && owner.session === coachingNoteSession && owner.attempt === attempt) {
+            owner.open = false;
+            setCoachingNoteAction(null);
+          }
+        } finally {
+          if (owner.session === coachingNoteSession && owner.attempt === attempt) owner.pending = false;
+          coachingNoteFlight.current = false;
+        }
+      });
     }} /> : null}
-    {coachingCompleteAction ? <CoachingCompleteModal saving={action.isPending} error={action.error} unavailableReason={coachingCompletionModalAccess.reason} onClose={() => { action.reset(); setCoachingCompleteAction(null); }} onSubmit={(payload) => { runCoachingCompletionAction(coachingCompletionModalAccess, () => { void actionSingleFlight(async () => { await action.mutateAsync({ type: "complete", row: coachingCompleteAction, payload }); setCoachingCompleteAction(null); }); }); }} /> : null}
+    {coachingCompleteAction ? <CoachingCompleteModal key={coachingCompleteSession} saving={action.isPending} error={action.error} unavailableReason={coachingCompletionModalAccess.reason} onClose={() => {
+      const owner = coachingCompleteOwner.current;
+      if (!owner.open || owner.session !== coachingCompleteSession || owner.pending || action.isPending) return;
+      void actionSingleFlight(async () => {
+        if (!owner.open || owner.session !== coachingCompleteSession || owner.pending) return;
+        owner.open = false;
+        setCoachingCompleteUnavailable(false);
+        action.reset();
+        setCoachingCompleteAction(null);
+      });
+    }} onSubmit={(payload) => {
+      const owner = coachingCompleteOwner.current;
+      if (owner.pending || action.isPending) return;
+      void actionSingleFlight(async () => {
+        const current = currentCoachingModalRecord(owner, coachingCompleteSession, "complete");
+        if (!current) {
+          if (owner.open && owner.session === coachingCompleteSession) setCoachingCompleteUnavailable(true);
+          return;
+        }
+        const attempt = ++owner.attempt;
+        owner.pending = true;
+        setCoachingCompleteUnavailable(false);
+        try {
+          await action.mutateAsync({ type: "complete", row: current, payload });
+          if (owner.open && owner.session === coachingCompleteSession && owner.attempt === attempt) {
+            owner.open = false;
+            setCoachingCompleteAction(null);
+          }
+        } finally {
+          if (owner.session === coachingCompleteSession && owner.attempt === attempt) owner.pending = false;
+        }
+      });
+    }} /> : null}
   </div>;
 }
 
@@ -800,7 +959,7 @@ function Drawer({
     if (coachingRead) { coachingRead.onExport(); return; }
     exportCsv(config.eyebrow, record ? [record] : []);
   };
-  return <div ref={detailDialogRef} className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label={`${config.eyebrow} detail`}><aside className="h-full w-full max-w-5xl overflow-y-auto border-l border-white/10 bg-slate-950 p-6"><button className="float-right icon-btn" aria-label="Close detail" onClick={onClose}><X className="h-5 w-5" /></button><p className="section-title text-teal-300">{config.eyebrow} Detail</p><h2 className="mt-3 text-2xl font-semibold text-white">{String(record.eventNumber || record.taskNumber || record.incidentNumber || record.packageNumber || `Record ${record.id}`)}</h2><div className="mt-4 flex flex-wrap gap-2"><StatusBadge status={record.status || record.reviewStatus} /><RiskBadge risk={record.severity || record.priority || record.riskScore} /></div><div className="mt-5 flex flex-wrap gap-3"><button className="btn-primary" disabled={!canUpdate || actionPending} title={!canUpdate ? "You do not have permission to perform this action." : "Edit this record."} onClick={() => onEdit(record)}><PenTool className="h-4 w-4" /> Edit</button>{config.actions.map((type) => { const canAction = canRunAction(type); return <button key={type} className="btn-ghost" disabled={!canAction || actionPending} aria-busy={actionPending} title={!canAction ? "You do not have permission to perform this action." : `Run ${labelize(type)}.`} onClick={() => onAction(type, record)}>{labelize(type)}</button>; })}<button className="btn-ghost" disabled={!canExport || actionPending} title={!canExport ? "You do not have permission to perform this action." : "Export this record."} onClick={exportDetail}><Download className="h-4 w-4" /> Export Report</button></div><div className="mt-6 grid gap-4 lg:grid-cols-3"><Info title="Primary Context" record={record} keys={Object.keys(record).slice(0,12)} /><Info title="Event Summary / Action" record={record} keys={["aiSummary","aiScript","summary","recommendedAction","reportSummary"]} /><Info title="Evidence / Legal Readiness" record={record} keys={["evidenceStatus","insuranceReportStatus","locked","exportUrl","falsePositive"]} /></div>{config.sections.map(([title,key,columns]) => <Grid key={title} title={title} rows={(detail?.[key] as AnyRecord[]) || []} columns={columns} />)}<Grid title="Audit Trail" rows={(detail?.auditTrail as AnyRecord[]) || []} columns={["actionName","actorName","createdAt"]} /><div className="mt-6 grid gap-4 lg:grid-cols-2">{((detail?.recommendations as AnyRecord[]) || []).slice(0,4).map((insight,i) => <AiInsightCard key={String(insight.id || i)} insight={insight} />)}</div></aside></div>;
+  return <div ref={detailDialogRef} className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label={`${config.eyebrow} detail`}><aside className="h-full w-full max-w-5xl overflow-y-auto border-l border-white/10 bg-slate-950 p-6"><button className="float-right icon-btn" aria-label="Close detail" onClick={onClose}><X className="h-5 w-5" /></button><p className="section-title text-teal-300">{config.eyebrow} Detail</p><h2 className="mt-3 text-2xl font-semibold text-white">{String(record.eventNumber || record.taskNumber || record.incidentNumber || record.packageNumber || `Record ${record.id}`)}</h2><div className="mt-4 flex flex-wrap gap-2"><StatusBadge status={record.status || record.reviewStatus} /><RiskBadge risk={record.severity || record.priority || record.riskScore} /></div><div className="mt-5 flex flex-wrap gap-3"><button className="btn-primary" disabled={!canUpdate || actionPending} title={!canUpdate ? "You do not have permission to perform this action." : "Edit this record."} onClick={() => onEdit(record)}><PenTool className="h-4 w-4" /> Edit</button>{config.actions.map((type) => { const canAction = canRunAction(type); return <button key={type} className="btn-ghost" disabled={!canAction || actionPending} aria-busy={actionPending} title={!canAction ? "You do not have permission to perform this action." : `Run ${labelize(type)}.`} onClick={() => onAction(type, record)}>{labelize(type)}</button>; })}<button className="btn-ghost" disabled={!canExport || actionPending} title={!canExport ? "You do not have permission to perform this action." : "Export this record."} onClick={exportDetail}><Download className="h-4 w-4" /> Export Report</button></div>{coachingRead ? <div className="mt-6 grid gap-4 lg:grid-cols-3"><Info title="Stored Task Context" record={record} keys={[...COACHING_PRIMARY_FIELDS]} /><Info title="Coaching Content" record={record} keys={[...COACHING_CONTENT_FIELDS]} /><Info title="Acknowledgement / Outcome" record={record} keys={[...COACHING_OUTCOME_FIELDS]} /></div> : <div className="mt-6 grid gap-4 lg:grid-cols-3"><Info title="Primary Context" record={record} keys={Object.keys(record).slice(0,12)} /><Info title="Event Summary / Action" record={record} keys={["aiSummary","aiScript","summary","recommendedAction","reportSummary"]} /><Info title="Evidence / Legal Readiness" record={record} keys={["evidenceStatus","insuranceReportStatus","locked","exportUrl","falsePositive"]} /></div>}{config.sections.map(([title,key,columns]) => <Grid key={title} title={title} rows={(detail?.[key] as AnyRecord[]) || []} columns={columns} />)}<Grid title="Audit Trail" rows={(detail?.auditTrail as AnyRecord[]) || []} columns={coachingRead ? [...COACHING_AUDIT_FIELDS] : ["actionName","actorName","createdAt"]} /><div className="mt-6 grid gap-4 lg:grid-cols-2">{((detail?.recommendations as AnyRecord[]) || []).slice(0,4).map((insight,i) => <AiInsightCard key={String(insight.id || i)} insight={insight} />)}</div></aside></div>;
 }
 
 function Modal({ kind, title, fields, initial, saving, error, draftAdmission, onClose, onSave }: { kind: Kind; title: string; fields: string[][]; initial: AnyRecord; saving: boolean; error?: unknown; draftAdmission?: () => boolean; onClose: () => void; onSave: (payload: AnyRecord) => void }) {
@@ -918,15 +1077,16 @@ function SafetyCoachingReceiptNotice({ receipt, canView, onRetry }: { receipt: S
   </section>;
 }
 
-function CoachingNoteModal({ saving, error, onClose, onSubmit }: { saving: boolean; error: unknown; onClose: () => void; onSubmit: (note: string) => void }) {
+function CoachingNoteModal({ saving, error, unavailableReason, onClose, onSubmit }: { saving: boolean; error: unknown; unavailableReason?: string; onClose: () => void; onSubmit: (note: string) => void }) {
   const coachingNoteDialogRef = useDialogFocus<HTMLDivElement>(true, onClose);
   const [note, setNote] = useState("");
   return <div ref={coachingNoteDialogRef} className="fixed inset-0 z-[70] grid place-items-center bg-black/60 p-4" role="dialog" aria-modal="true" aria-busy={saving} aria-labelledby="coaching-note-title">
-    <form className="panel w-full max-w-lg p-6" onSubmit={(event) => { event.preventDefault(); if (!saving && note.trim()) onSubmit(note.trim()); }}>
+    <form className="panel w-full max-w-lg p-6" onSubmit={(event) => { event.preventDefault(); if (!saving && !unavailableReason && note.trim()) onSubmit(note.trim()); }}>
       <div className="flex items-center justify-between"><h2 id="coaching-note-title" className="text-xl font-semibold text-slate-900">Add coaching note</h2><button type="button" className="icon-btn" aria-label="Close coaching note dialog" disabled={saving} onClick={onClose}><X /></button></div>
       {error ? <div role="alert" className="mt-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950">Note save could not be confirmed. Inspect the existing notes for this coaching task before manually submitting again. The earlier request may already have saved the note.</div> : null}
+      {unavailableReason ? <p role="status" className="mt-4 text-sm text-amber-800">{unavailableReason}</p> : null}
       <label className="mt-5 block"><span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">Note</span><textarea autoFocus className="field min-h-32" required disabled={saving} value={note} onChange={(event) => setNote(event.target.value)} /></label>
-      <div className="mt-5 flex justify-end gap-3"><button type="button" className="btn-ghost" disabled={saving} onClick={onClose}>Cancel</button><button type="submit" className="btn-primary" disabled={saving || !note.trim()}>{saving ? "Saving…" : "Add note"}</button></div>
+      <div className="mt-5 flex justify-end gap-3"><button type="button" className="btn-ghost" disabled={saving} onClick={onClose}>Cancel</button><button type="submit" className="btn-primary" disabled={saving || Boolean(unavailableReason) || !note.trim()}>{saving ? "Saving…" : "Add note"}</button></div>
     </form>
   </div>;
 }

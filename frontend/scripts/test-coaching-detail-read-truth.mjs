@@ -10,8 +10,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
 const esbuild = require("esbuild");
-const { QueryClient, QueryObserver, MutationObserver } = require("@tanstack/react-query");
+const { QueryClient, QueryObserver, MutationObserver, onlineManager } = require("@tanstack/react-query");
 const client = new QueryClient({ defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false, staleTime: 30_000 }, mutations: { retry: false } } });
+client.mount();
 const states = { page: [], drawer: [] }, refs = { page: [], drawer: [] }, mutations = [], queries = new Map(), subscriptions = [];
 let scope = "page", stateCursor = 0, refCursor = 0, mutationCursor = 0, resets = 0, directPermission = true, exportPermission = true, cleanup, snapshotOverride, assignTransport;
 const calls = [], exports = [], reads = [], failures = new Map(), transports = new Map();
@@ -73,7 +74,7 @@ const inspected = source
   .replace("function Drawer(", "export function Drawer(");
 const built = await esbuild.build({ stdin: { contents: inspected, resolveDir: root, loader: "tsx" }, bundle: true, platform: "node", format: "cjs", jsx: "automatic", write: false, nodePaths: process.env.NODE_PATH ? [process.env.NODE_PATH] : [], alias: { "@": resolve(root, "src") }, define: { "import.meta.env": "{}" }, logLevel: "silent" });
 const module = { exports: {} }; new Function("require", "module", "exports", "__hooks", "__api", "__exports", built.outputFiles[0].text)(require, module, module.exports, hooks, api, exports);
-const { Batch4SafetyPage } = module.exports;
+const { Batch4SafetyPage, coachingDetailView, coachingCsvProjection } = module.exports;
 function find(node, predicate) { if (!node || typeof node !== "object") return; if (Array.isArray(node)) { for (const child of node) { const hit = find(child, predicate); if (hit) return hit; } return; } return predicate(node) ? node : find(node.props?.children, predicate); }
 function page() { scope = "page"; stateCursor = refCursor = mutationCursor = 0; return Batch4SafetyPage({ kind: "coaching" }); }
 function drawer(tree = page()) { return find(tree, node => typeof node.props?.onEdit === "function"); }
@@ -105,6 +106,50 @@ function assertUnavailable(expected) {
   assert.equal(button(tree, "Export Report"), undefined);
   assert.ok(button(tree, "Close detail"));
   return tree;
+}
+async function closeVisibleModal() {
+  const current = visibleModal();
+  current?.props.onClose();
+  await tick();
+}
+async function assertOpenModalSubmitRevoked(type, invalidate, cleanupInvalidation) {
+  const record = type === "complete"
+    ? { ...taskA, status: "Driver Acknowledged", driverAcknowledged: true, acknowledgedAt: "2026-09-05T12:00:00Z" }
+    : taskA;
+  loaded(record);
+  drawer().props.onAction(type, record);
+  await tick();
+  const staleModal = visibleModal();
+  assert.ok(staleModal, `${type} modal opens from exact current detail`);
+  const before = snapshot();
+  const pendingCleanup = await invalidate();
+  staleModal.props.onSubmit(type === "addNote" ? "Retained operator draft" : { completionNote: "Retained observed outcome", afterSafetyScore: 50 });
+  await tick();
+  assert.deepEqual(snapshot(), before, `${type} submit is inert after current detail revocation before rerender`);
+  const currentModal = visibleModal();
+  assert.equal(currentModal?.type, staleModal.type, `${type} modal and its local draft owner remain mounted`);
+  assert.match(String(currentModal?.props.unavailableReason), /Current coaching detail could not be confirmed/);
+  await cleanupInvalidation?.(pendingCleanup);
+  await closeVisibleModal();
+}
+async function assertSupersededModalSessionIsInert(type) {
+  const record = type === "complete"
+    ? { ...taskA, status: "Driver Acknowledged", driverAcknowledged: true, acknowledgedAt: "2026-09-05T12:00:00Z" }
+    : taskA;
+  loaded(record);
+  drawer().props.onAction(type, record); await tick();
+  const staleModal = visibleModal(); assert.ok(staleModal);
+  drawer().props.onAction(type, record); await tick();
+  const replacement = visibleModal(); assert.ok(replacement);
+  assert.notEqual(replacement.key, staleModal.key);
+  const before = snapshot();
+  staleModal.props.onSubmit(type === "addNote" ? "Stale modal draft" : { completionNote: "Stale modal outcome", afterSafetyScore: 50 });
+  staleModal.props.onClose();
+  await tick();
+  assert.deepEqual(snapshot(), before, "superseded modal callbacks cannot write or reset replacement state");
+  assert.equal(visibleModal()?.key, replacement.key);
+  assert.equal(visibleModal()?.props.unavailableReason, undefined);
+  await closeVisibleModal();
 }
 
 try {
@@ -163,6 +208,50 @@ try {
   }
   old = loaded(taskA); oldTree = renderDrawer(old); select({});
   await assertInert(old, oldTree); assertUnavailable(/role="alert"/);
+
+  // Already-open note and completion callbacks synchronously re-read the
+  // exact QueryClient state and modal owner before starting a write. Exercise
+  // actual terminal error/fetch/pause plus replacement/removal/owner changes
+  // before a React rerender; every draft-bearing modal remains mounted.
+  for (const type of ["addNote", "complete"]) {
+    await assertOpenModalSubmitRevoked(type, async () => {
+      failures.set(41, new Error("Synthetic terminal modal read failure"));
+      await observer(41).refetch();
+    }, async () => { failures.delete(41); });
+    await assertOpenModalSubmitRevoked(type, () => {
+      const wait = deferred(); transports.set(41, () => wait.promise);
+      const promise = observer(41).refetch();
+      assert.equal(observer(41).getCurrentResult().fetchStatus, "fetching");
+      return { wait, promise };
+    }, async ({ wait, promise }) => {
+      transports.delete(41); wait.resolve(detailFor(taskA)); await promise;
+    });
+    await assertOpenModalSubmitRevoked(type, async () => {
+      onlineManager.setOnline(false);
+      const promise = observer(41).refetch();
+      await tick();
+      assert.equal(observer(41).getCurrentResult().fetchStatus, "paused");
+      return { promise };
+    }, async ({ promise }) => {
+      onlineManager.setOnline(true); await promise;
+    });
+    await assertOpenModalSubmitRevoked(type, () => {
+      client.setQueryData(["coaching", "detail", 41], detailFor({ ...taskA, title: "Replacement with same row version" }));
+    });
+    await assertOpenModalSubmitRevoked(type, () => {
+      client.setQueryData(["coaching", "detail", 41], detailFor({ ...taskA, rowVersion: 44 }));
+    });
+    await assertOpenModalSubmitRevoked(type, () => {
+      client.removeQueries({ queryKey: ["coaching", "detail", 41], exact: true });
+    });
+    await assertOpenModalSubmitRevoked(type, () => {
+      client.setQueryData(["coaching", "detail", 99], detailFor(taskB));
+      select(taskB);
+    });
+    await assertOpenModalSubmitRevoked(type, () => { directPermission = false; }, async () => { directPermission = true; });
+    await assertSupersededModalSessionIsInert(type);
+  }
+
   // Retry revokes old generation synchronously even before the next React frame.
   old = loaded(taskA); oldTree = renderDrawer(old);
   failures.set(41, new Error("Synthetic read failure")); await observer(41).refetch();
@@ -177,13 +266,34 @@ try {
 
   // A still-current selection callback must consume the newly trusted row/version.
   old = loaded(taskA); oldTree = renderDrawer(old);
-  const current = { ...taskA, rowVersion: 9, title: "Current trusted title" };
-  details.set(41, detailFor(current)); client.setQueryData(["coaching", "detail", 41], detailFor(current));
+  const current = { ...taskA, rowVersion: 9, title: "Current trusted title", unexpectedPrivateScalar: "UNEXPECTED_PRIVATE_RECORD" };
+  const currentDetail = {
+    record: current,
+    notes: [{ noteText: "Synthetic private coaching note", unexpectedPrivateNote: "UNEXPECTED_PRIVATE_NOTE" }],
+    relatedSafetyEvents: [{ id: 6, eventNumber: "SAFE-6", severity: "High", privateGps: "UNEXPECTED_PRIVATE_GPS" }],
+    relatedDashcamEvents: [{ id: 7, eventNumber: "CAM-7", eventType: "Manual metadata", privateUrl: "UNEXPECTED_PRIVATE_URL" }],
+    auditTrail: [{ actionName: "Synthetic private audit", unexpectedPrivateAudit: "UNEXPECTED_PRIVATE_AUDIT" }],
+    recommendations: [{ title: "UNEXPECTED_PRIVATE_RECOMMENDATION" }],
+    unexpectedPrivateCollection: [{ secret: "UNEXPECTED_PRIVATE_COLLECTION" }],
+  };
+  const inherited = Object.create({ inheritedPrivate: "UNEXPECTED_PRIVATE_INHERITED", assignedToName: "UNEXPECTED_PRIVATE_INHERITED_ALLOWED" });
+  Object.assign(inherited, currentDetail.record);
+  const projectedPrototypeDetail = coachingDetailView({ ...currentDetail, record: inherited }, 41);
+  assert.ok(projectedPrototypeDetail);
+  assert.equal(projectedPrototypeDetail.record.inheritedPrivate, undefined);
+  assert.equal(projectedPrototypeDetail.record.assignedToName, undefined, "even an allowlisted inherited field is excluded");
+  assert.equal(coachingCsvProjection(inherited).unexpectedPrivateScalar, undefined);
+  details.set(41, currentDetail); client.setQueryData(["coaching", "detail", 41], currentDetail);
   // Defensive seam: React's selected-ID hook snapshot and live cache differ.
   // Render context from the same complete live detail object used by admission.
   snapshotOverride = { ...observer(41).getCurrentResult(), data: { record: taskB, notes: [{ noteText: "Wrong snapshot narrative" }] } };
   assert.equal(drawer().props.detail.record.id, 41);
-  assert.doesNotMatch(renderToStaticMarkup(renderDrawer()), /Wrong snapshot narrative|Synthetic B/);
+  const minimizedHtml = renderToStaticMarkup(renderDrawer());
+  assert.doesNotMatch(minimizedHtml, /Wrong snapshot narrative|Synthetic B|UNEXPECTED_PRIVATE/);
+  assert.match(minimizedHtml, /Current trusted title|Synthetic private coaching note|SAFE-6|CAM-7/);
+  assert.equal(drawer().props.detail.recommendations.length, 0);
+  assert.equal(drawer().props.detail.record.unexpectedPrivateScalar, undefined);
+  assert.equal(drawer().props.detail.notes[0].unexpectedPrivateNote, undefined);
   snapshotOverride = undefined;
   old.props.onEdit(taskA); assert.equal(visibleModal().props.initial.rowVersion, 9);
   visibleModal().props.onClose(); await tick();
@@ -193,6 +303,9 @@ try {
   assert.deepEqual(calls, [{ type: "assign", id: 41, payload: { rowVersion: 9 } }]);
   old = drawer(); oldTree = renderDrawer(old); button(oldTree, "Export Report").props.onClick();
   assert.equal(exports.length, 1); assert.equal(exports[0][1][0].rowVersion, 9);
+  assert.deepEqual(Object.keys(exports[0][1][0]), ["id", "rowVersion", "taskNumber", "driverId", "coachingType", "status", "driverAcknowledged", "acknowledgedAt"]);
+  assert.equal(exports[0][1][0].description, undefined, "CSV uses its narrower scalar allowlist");
+  assert.doesNotMatch(JSON.stringify(exports[0]), /UNEXPECTED_PRIVATE/);
   await tick();
 
   // Same-turn shared Assign flight denies detail Edit/export/opening another
@@ -216,8 +329,20 @@ try {
   const beforeTerminal = snapshot(); old.props.onEdit(taskA); old.props.onAction("assign", taskA); old.props.onAction("complete", taskA); await tick();
   assert.deepEqual(snapshot(), beforeTerminal); assert.equal(visibleModal(), undefined);
   loaded({ ...taskA, status: "Driver Acknowledged", driverAcknowledged: false }); old = drawer(); old.props.onAction("complete", taskA); assert.equal(visibleModal(), undefined);
-  loaded({ ...taskA, status: "Driver Acknowledged" }); old = drawer(); old.props.onAction("complete", taskA); assert.equal(visibleModal()?.type.name, "CoachingCompleteModal");
-  visibleModal().props.onClose();
+  const completionReady = { ...taskA, status: "Driver Acknowledged" };
+  for (let wait = 0; mutations[1].getCurrentResult().isPending && wait < 200; wait++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(mutations[1].getCurrentResult().isPending, false);
+  await client.cancelQueries({ queryKey: ["coaching", "detail", 41], exact: true });
+  loaded(completionReady); old = drawer(); old.props.onAction("complete", completionReady); await tick();
+  assert.equal(observer(41).getCurrentResult().fetchStatus, "idle");
+  assert.equal(visibleModal()?.type.name, "CoachingCompleteModal");
+  assert.equal(visibleModal()?.props.unavailableReason, undefined);
+  const beforeHealthyCompletion = calls.length;
+  visibleModal().props.onSubmit({ completionNote: "Current observed outcome", afterSafetyScore: 50 });
+  await tick(); await tick();
+  assert.equal(calls.length, beforeHealthyCompletion + 1, "one exact-current completion submit produces one owned write");
+  assert.deepEqual(calls.at(-1), { type: "complete", id: 41, payload: { rowVersion: 3, completionNote: "Current observed outcome", afterSafetyScore: 50 } });
+  assert.equal(visibleModal(), undefined, "confirmed exact-current completion closes its owned modal");
 
   // Shared Drawer defaults remain unchanged for the four unscoped consumers.
   const { Drawer } = module.exports;
@@ -228,5 +353,5 @@ try {
     assert.match(renderToStaticMarkup(tree), /Synthetic private audit/);
     assert.ok(button(tree, "Export Report"));
   }
-  console.log("Coaching detail read truth PASS: actual hook/QueryObserver errors, pending, selection/retry/stale callbacks, shared-flight protection, current-row admission, permissions and four other-kind defaults; two deliberate Assigns and one deliberate export, zero automatic writes.");
-} finally { cleanup?.(); for (const unsubscribe of subscriptions) unsubscribe(); client.clear(); globalThis.document = originalDocument; }
+  console.log("Coaching detail read truth PASS: bounded display/export projection plus actual hook/QueryObserver error, fetch, pause, replacement, removal, owner/retry/stale callback and shared-flight admission; two deliberate Assigns, one exact-current completion and one deliberate export, zero automatic writes.");
+} finally { cleanup?.(); for (const unsubscribe of subscriptions) unsubscribe(); client.clear(); client.unmount(); onlineManager.setOnline(true); globalThis.document = originalDocument; }

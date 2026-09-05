@@ -48,10 +48,11 @@ assert.match(source, /isLoading: detail\.isLoading, isFetching: detail\.isFetchi
 assert.match(source, /if \(type === "complete" && !coachingCompletionAccess\.allowed\) return false/);
 assert.match(source, /const current = currentCoachingActionRecord\(type\);\s*if \(!current\) return;\s*row = current/);
 assert.match(source, /if \(!canMutate\(type === "edit" \? updatePermission : ACTION_PERMISSIONS\.coaching\[type\] \|\| updatePermission\)\) return undefined/);
-assert.match(source, /else if \(kind === "coaching" && type === "complete"\) \{ void actionSingleFlight\(async \(\) => \{ runCoachingCompletionAction\(coachingCompletionAdmission\(row, \{ selectedId: coachingDetailOwner\.current\.id, isLoading: false, isFetching: false, isError: false \}\), \(\) => setCoachingCompleteAction\(row\)\)/);
-assert.match(source, /runCoachingCompletionAction\(coachingCompletionModalAccess, \(\) => \{ void actionSingleFlight/);
+assert.match(source, /else if \(kind === "coaching" && type === "complete"\) \{ void actionSingleFlight\(async \(\) => \{[\s\S]*runCoachingCompletionAction\(coachingCompletionAdmission\(row, \{ selectedId: coachingDetailOwner\.current\.id, isLoading: false, isFetching: false, isError: false \}\)/);
+assert.match(source, /const current = currentCoachingModalRecord\(owner, coachingCompleteSession, "complete"\);\s*if \(!current\) \{\s*if \(owner\.open && owner\.session === coachingCompleteSession\) setCoachingCompleteUnavailable\(true\);\s*return;\s*\}/);
+assert.match(source, /await action\.mutateAsync\(\{ type: "complete", row: current, payload \}\)/);
 assert.match(source, /unavailableReason=\{coachingCompletionModalAccess\.reason\}/);
-assert.match(source, /coachingCompletionModalAdmission\(coachingCompletionAccess, coachingCompleteAction\?\.id, selected\?\.id\)/);
+assert.match(source, /const coachingCompletionModalAccess = coachingCompleteUnavailable \|\| coachingCompleteOwnerUnavailable[\s\S]*\? \{ allowed: false, reason: COACHING_DETAIL_UNAVAILABLE \}[\s\S]*: coachingCompletionModalAdmission\(coachingCompletionAccess, coachingCompleteAction\?\.id, selected\?\.id\)/);
 let operations = 0;
 for (const [modalId, selectedId, allowed] of [[17, 17, true], [17, 18, false], [undefined, 17, false], [17, undefined, false]]) {
   const admission = coachingCompletionModalAdmission({ allowed: true }, modalId, selectedId);

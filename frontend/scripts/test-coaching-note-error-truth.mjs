@@ -150,6 +150,25 @@ control(tree, "textarea").props.onChange({ target: { value: "  Synthetic driver 
 tree = modal();
 assert.equal(control(tree, "textarea").props.value, "  Synthetic driver safety note  ");
 
+// The already-rendered form callback must re-read the exact current detail at
+// invocation. Replace its row version before a React frame: zero POSTs, fixed
+// guidance, and the locally owned draft/modal remain intact.
+const staleCurrentForm = control(tree, "form");
+client.setQueryData(["coaching", "detail", row.id], { record: { ...row, rowVersion: 4 } });
+staleCurrentForm.props.onSubmit({ preventDefault() {} });
+await tick();
+assert.equal(requests.length, 0);
+element = noteElement(); tree = modal(element);
+assert.match(renderToStaticMarkup(tree), /Current coaching detail could not be confirmed/);
+assert.equal(control(tree, "textarea").props.value, "  Synthetic driver safety note  ");
+element.props.onClose(); await tick();
+states.modal = [];
+client.setQueryData(["coaching", "detail", row.id], { record: row });
+drawer().props.onAction("addNote", row); await tick();
+tree = modal();
+control(tree, "textarea").props.onChange({ target: { value: "  Synthetic driver safety note  " } });
+tree = modal();
+
 let rejectTransport;
 transport = () => new Promise((_resolve, reject) => { rejectTransport = reject; });
 const beforeSubmitElement = noteElement();
@@ -229,5 +248,5 @@ assert.equal(control(tree, "textarea").props.value, "Synthetic accepted response
 await tick(); assert.equal(requests.length, 3, "a display-refresh rejection must not automatically replay a successful API response");
 noteElement().props.onClose();
 assert.equal(noteElement(), undefined, "refresh rejection also releases the pending guard");
-console.log("Coaching note error truth: actual modal/page callback scenario passed (draft, note/shared-action pre-render races, pending single-flight, neutral transport/refresh uncertainty, safe cancel/reopen, manual success); no browser or persistence claim.");
+console.log("Coaching note error truth: actual modal/page callback scenario passed (draft retention after pre-render current-query replacement, note/shared-action races, pending single-flight, neutral transport/refresh uncertainty, safe cancel/reopen, manual success); no browser or persistence claim.");
 client.clear();
