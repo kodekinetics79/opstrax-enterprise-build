@@ -13,6 +13,12 @@ public static class CustomerPortalEndpoints
 {
     public static void MapCustomerPortalEndpoints(this WebApplication app)
     {
+        // Shared authenticated mobile device registration lives outside the customer
+        // authorization boundary but is registered here to keep startup wiring additive
+        // without reopening the monolithic endpoint map. Each handler re-validates the
+        // authenticated tenant/user and requested product role independently.
+        MobileDeviceEndpoints.MapMobileDeviceEndpoints(app);
+
         app.MapGet("/api/portal/invoices", PortalInvoices);
         app.MapGet("/api/portal/invoices/{invoiceId:guid}", PortalInvoiceDetail);
         app.MapGet("/api/portal/jobs", PortalJobs);
