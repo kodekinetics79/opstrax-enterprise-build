@@ -174,6 +174,67 @@ Successor pre-freeze source SHA-256 values:
 
 This successor is implementation-author evidence only. It remains `DEVELOPMENT / HOLD` until both non-author perspectives review the exact frozen successor and the root/CTO issues a disposition.
 
+## Outer-envelope successor addendum
+
+Independent Perspective A placed exact candidate
+`b92a4015022e7c94ea5b586bf80317788c3131fa` (tree
+`9f113f517a67bbdbb9efb0e40f6d4b277b42fc72`) on `HOLD` for one remaining
+P0 check-in response-boundary defect. That candidate is preserved and was not
+amended.
+
+The bounded direct successor removes shared `unwrap` from only
+`getDeviceConnectionState`. A local raw-response boundary now requires a plain or
+null-prototype envelope with exact own `success === true` and exact own `data`.
+Inherited discriminators and own wrong-case/normalized `success` or `data`
+lookalikes reject the query. The inner detail projection admits a plain or
+null-prototype row, or exactly one own `device`/compatible `record` wrapper;
+simultaneous wrappers and own wrong-case/normalized wrapper lookalikes return the
+neutral unknown projection. Existing exact row-field, timestamp, lifecycle, and
+query behavior is unchanged.
+
+Seven controls were folded into the existing malformed-input case, so the
+governed check-in count remains 11. They cover inherited envelope fields, own
+`Success`, own `Data`, `Object.prototype.success/data`, simultaneous
+`device`/`record`, own `Device`, and own `d_e_v_i_c_e`. The pre-fix run on exact
+`b92a401...` was the intended 10/11 RED, not a setup or extraction failure:
+`AUTHOR_OUTER_ENVELOPE_SUCCESSOR_RED.tap`, SHA-256
+`99556f524a2c91b4b6860ff7661e81d6c5865cc8a1360080a29b1de07ba1be10`.
+The same named case retains a positive null-prototype envelope plus compatible
+`record` wrapper control.
+
+### Outer-envelope successor evidence
+
+| Evidence | Result | SHA-256 |
+|---|---:|---|
+| `AUTHOR_ENVELOPE_SUCCESSOR_FINAL_device_checkin.tap` | 11/11 | `54084fbda4c9a9dec2545b48b5fdb7835d887cf27dc513b85226227714acd9f9` |
+| `AUTHOR_ENVELOPE_SUCCESSOR_FINAL_device_suspension.tap` | 16/16 | `0e4df9ed525107594ce90a10384e1c0ad6b6bebc47ec6219c73e9b9c90e1beb0` |
+| `AUTHOR_ENVELOPE_SUCCESSOR_FINAL_device_activation.tap` | 15/15 | `e67fdb9bfac821a979a7495abd83a4dbd4e030077e56875cdf9198f68785effe` |
+| `AUTHOR_ENVELOPE_SUCCESSOR_FINAL_device_commissioning.tap` | 20/20 | `c345535d7b1191ba4173c4a8ba61b8732984163988d4b0ec051daeeb1e3fa7c9` |
+| `AUTHOR_ENVELOPE_SUCCESSOR_FINAL_device_removal.tap` | 18/18 | `63b9b3fd95761f08035e02d01576a5e3453ebcc6d5e4861d3d45c512e4d40799` |
+| `AUTHOR_ENVELOPE_SUCCESSOR_FINAL_device_install_transfer.tap` | 30/30 | `f7330603e80237dd37a2ff9ad6247b7e76cf6d0217ad6057066d4c502621d094` |
+| `AUTHOR_ENVELOPE_SUCCESSOR_FINAL_device_installation.log` | 1/1 | `e51e64cdff1dae05f7ab5b0a2b76ac67c6733af8222ef740e0cba9b679cdfe84` |
+| six `AUTHOR_ENVELOPE_SUCCESSOR_FINAL_g4_*.log` files | all pass | completion `6686d3b8...`; note `6438819c...`; editor `5d22525d...`; detail `6db19dcf...`; shape `dc621cf8...`; input `b14edf47...` |
+| `AUTHOR_ENVELOPE_SUCCESSOR_FINAL_camera29.log` | 29/29 | `bb232595359e2c612dcd4868bc206ef23b2636ed13ce17c471f73e3994ddad56` |
+| `AUTHOR_ENVELOPE_SUCCESSOR_FINAL_query_fault.tap` | 1/1 | `ccdb194f0d868504bf378823b9cb9b40cb1511b09e86535a3aeb2652378d7749` |
+| `AUTHOR_ENVELOPE_SUCCESSOR_FINAL_aggregate.log` | pass | `e14f74337d5b1b9c815afca83d3ffcd0a0658cb0ae85d17dbcc3cb569fc5882d` |
+| `AUTHOR_ENVELOPE_SUCCESSOR_FINAL_tsc.log` | pass, no diagnostics | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| `AUTHOR_ENVELOPE_SUCCESSOR_FINAL_build.log` | pass; 210 chunks; maximum 314.86 KiB raw / 95.23 KiB gzip | `4450da73c16189d9a02b6a9c4a2a598d80931d41d675771a56710f35e783bc27` |
+| `AUTHOR_ENVELOPE_SUCCESSOR_FINAL_budget.log` | pass | `58f3979a2996f25368b27fdb673288e2ed6ea9c09c2a73dec7212e3ad3ba8f2d` |
+| `AUTHOR_ENVELOPE_SUCCESSOR_FINAL_lint.log` | configured lint pass | `b1cbed49fa6389bd4cc036a66b95cff03e5177b1ea34d6cff3a38de6f769cb4b` |
+
+The six governed G5 suites remain exactly 110/110. Current source SHA-256:
+
+- `frontend/src/services/telematicsService.ts`: `723eefa06d6bfd70aab2611e0bc422cd039844d5bcce49d3bc7997e1d58f25aa`
+- `frontend/scripts/test-device-checkin-truth-contract.mjs`: `1bbea5ca2e81854b2feb1f71aa68b2dbd19463ff669004a32c29f27d90640dbd`
+
+Only those two code/test files and this report differ from `b92a401...`.
+`frontend/src/services/apiClient.ts`, package/lock, backend, camera, G4, the G5
+page, and the other G5 scripts remain byte-identical. `git diff --check` passed.
+No browser was run because this allocation prohibits browser work; no DB,
+network, provider, device, publication, merge, or deployment action was run.
+This remains author evidence and `DEVELOPMENT / HOLD` pending two non-author
+exact-candidate reviews and root/CTO disposition.
+
 ## Governance and HOLDs
 
 This is author evidence only. It does not certify G5, close a gate, or establish HTTP/database atomicity, backend concurrency, provider compatibility, GT06 compatibility, firmware/model behavior, physical installation/removal/suspension/activation, real commissioning, check-in authenticity, telemetry delivery, browser UX/accessibility, deployment, pilot readiness, or production readiness. No DB, browser, network, provider, device, publication, merge, or deployment action was performed. Capability truth remains `DEVELOPMENT / HOLD` pending two independent exact-candidate reviews and root/CTO disposition. Package registration remains a separately serialized future owner step.

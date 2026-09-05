@@ -32,14 +32,14 @@ const built = await esbuild.build({
   logLevel: "silent",
 });
 
-async function inspect(row, { failure = false, observedAt, payload } = {}) {
+async function inspect(row, { failure = false, observedAt, payload, responseData } = {}) {
   const calls = [];
   const module = { exports: {} };
   const api = {
     get: async (...args) => {
       calls.push(["GET", ...args]);
       if (failure) throw new Error("fixture unavailable");
-      return { data: { success: true, data: payload === undefined ? { device: row } : payload } };
+      return { data: responseData === undefined ? { success: true, data: payload === undefined ? { device: row } : payload } : responseData };
     },
     post: () => assert.fail("check-in inspection must not mutate"),
     put: () => assert.fail("check-in inspection must not mutate"),
@@ -201,6 +201,41 @@ test("missing and malformed lifecycle tokens remain unknown instead of defaultin
     assert.equal(result.lifecycleBlocked, true, JSON.stringify(row));
   }
   assert.equal((await inspect({ lastSeenAt: valid, status: "Active", revokedAt: valid })).lifecycleBlocked, true);
+
+  const admittedRow = { last_seen_at: valid, status: "Active", device_state: "Registered" };
+  for (const responseData of [
+    Object.create({ success: true, data: { device: admittedRow } }),
+    { success: true, data: { device: admittedRow }, Success: false },
+    { success: true, data: { device: admittedRow }, Data: { device: admittedRow } },
+  ]) {
+    await assert.rejects(inspect(null, { responseData }), /check-in response/i);
+  }
+  const envelopePrototypeDescriptors = Object.fromEntries(["success", "data"].map(key => [key, Object.getOwnPropertyDescriptor(Object.prototype, key)]));
+  Object.defineProperty(Object.prototype, "success", { configurable: true, value: true });
+  Object.defineProperty(Object.prototype, "data", { configurable: true, value: { device: admittedRow } });
+  try {
+    await assert.rejects(inspect(null, { responseData: {} }), /check-in response/i);
+  } finally {
+    for (const key of ["success", "data"]) {
+      const descriptor = envelopePrototypeDescriptors[key];
+      if (descriptor) Object.defineProperty(Object.prototype, key, descriptor);
+      else delete Object.prototype[key];
+    }
+  }
+  for (const payload of [
+    { device: admittedRow, record: { ...admittedRow, status: "Suspended" } },
+    { device: admittedRow, Device: { ...admittedRow, status: "Suspended" } },
+    { device: admittedRow, d_e_v_i_c_e: { ...admittedRow, status: "Suspended" } },
+  ]) {
+    assert.deepEqual(await inspect(null, { payload }), expectedUnknown, "ambiguous detail wrappers must fail closed");
+  }
+  const nullPrototypeEnvelope = Object.assign(Object.create(null), {
+    success: true,
+    data: Object.assign(Object.create(null), { record: Object.assign(Object.create(null), admittedRow) }),
+  });
+  assert.deepEqual(await inspect(null, { responseData: nullPrototypeEnvelope }), {
+    hasRecordedCheckIn: true, lastSeenAt: valid, status: "Active", deviceState: "Registered", lifecycleBlocked: false,
+  }, "null-prototype envelope and retained record wrapper must remain accepted");
 });
 
 test("service transport failures reject without inventing a record", async () => {

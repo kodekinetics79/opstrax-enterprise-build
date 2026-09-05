@@ -354,15 +354,38 @@ function deviceRowFromDetail(payload: AnyRecord): AnyRecord {
   return normalizeKeys((detail.device ?? detail.record ?? detail) as AnyRecord);
 }
 
+function plainCheckInCarrier(value: unknown): value is AnyRecord {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
+}
+
+function strictCheckInEnvelopePayload(value: unknown): unknown {
+  if (!plainCheckInCarrier(value)) throw new Error("Device check-in response was invalid.");
+  if (Object.keys(value).some((key) => {
+    const normalized = key.replace(/_/g, "").toLowerCase();
+    return (normalized === "success" && key !== "success") || (normalized === "data" && key !== "data");
+  })) throw new Error("Device check-in response was invalid.");
+  if (!Object.hasOwn(value, "success") || value.success !== true || !Object.hasOwn(value, "data")) {
+    throw new Error("Device check-in response was invalid.");
+  }
+  return value.data;
+}
+
 // This inspection boundary consumes only JSON-object-shaped own fields.
 function checkInDeviceRowFromDetail(payload: unknown): AnyRecord {
-  const ownRecord = (value: unknown): AnyRecord | null => value !== null && typeof value === "object" && !Array.isArray(value)
-    && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null) ? value as AnyRecord : null;
+  const ownRecord = (value: unknown): AnyRecord | null => plainCheckInCarrier(value) ? value : null;
   const detail = ownRecord(payload);
   if (detail === null) return Object.create(null) as AnyRecord;
-  const nested = Object.hasOwn(detail, "device")
+  if (Object.keys(detail).some((key) => {
+    const normalized = key.replace(/_/g, "").toLowerCase();
+    return (normalized === "device" && key !== "device") || (normalized === "record" && key !== "record");
+  })) return Object.create(null) as AnyRecord;
+  const hasDevice = Object.hasOwn(detail, "device");
+  const hasRecord = Object.hasOwn(detail, "record");
+  if (hasDevice && hasRecord) return Object.create(null) as AnyRecord;
+  const nested = hasDevice
     ? detail.device
-    : Object.hasOwn(detail, "record")
+    : hasRecord
       ? detail.record
       : detail;
   return ownRecord(nested) ?? Object.create(null) as AnyRecord;
@@ -1830,7 +1853,8 @@ export const telematicsService = {
   // Inspect the stored check-in record. Neither this read nor a valid timestamp
   // establishes current connectivity, device authentication, or physical pairing.
   async getDeviceConnectionState(deviceId: string | number): Promise<{ hasRecordedCheckIn: boolean; lastSeenAt: string | null; status: string; deviceState: string; lifecycleBlocked: boolean }> {
-    const row = checkInDeviceRowFromDetail(await unwrap<unknown>(apiClient.get(`/api/telemetry/devices/${deviceId}`)));
+    const response = await apiClient.get(`/api/telemetry/devices/${deviceId}`);
+    const row = checkInDeviceRowFromDetail(strictCheckInEnvelopePayload(response.data));
     const checkInField = exactCheckInField(row, "lastSeenAt", "last_seen_at");
     const statusField = exactCheckInField(row, "status", "status");
     const stateField = exactCheckInField(row, "deviceState", "device_state");
