@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Alert, Linking, View } from "react-native";
 import * as Haptics from "expo-haptics";
 import {
@@ -18,20 +18,59 @@ import {
 } from "@/components/ui";
 import { useSession } from "@/auth/SessionProvider";
 import { useAsyncResource } from "@/hooks/useAsyncResource";
+import { clearSecureDraft, readSecureDraft, secureDraftKey, writeSecureDraft } from "@/storage/secureDrafts";
 import { textOf, titleCase } from "@/data/records";
 
 const EXCEPTION_TYPES = ["route_blocked", "late_pickup", "late_delivery", "vehicle_breakdown", "customer_hold", "safety_hold", "general"];
 
+type ExceptionDraft = {
+  exceptionType: string;
+  notes: string;
+  open: boolean;
+};
+
 export function DriverTripScreen() {
-  const { api } = useSession();
+  const { api, session } = useSession();
   const current = useAsyncResource(() => api.driverCurrentAssignment(), [api]);
   const [showException, setShowException] = useState(false);
   const [exceptionType, setExceptionType] = useState("route_blocked");
   const [exceptionNotes, setExceptionNotes] = useState("");
+  const [draftReady, setDraftReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [vehicleRef, setVehicleRef] = useState("");
   const assignment = current.data?.assignment;
   const vehicleConfirmed = Boolean(assignment?.vehicleConfirmedAt);
+  const exceptionDraftKey = assignment?.id
+    ? secureDraftKey("driver-exception", session?.company.id ?? session?.company.code, session?.user.id, assignment.id)
+    : null;
+
+  useEffect(() => {
+    let active = true;
+    setDraftReady(false);
+    if (!exceptionDraftKey) return () => { active = false; };
+    void readSecureDraft<ExceptionDraft>(exceptionDraftKey).then((draft) => {
+      if (!active) return;
+      if (draft) {
+        if (EXCEPTION_TYPES.includes(draft.exceptionType)) setExceptionType(draft.exceptionType);
+        setExceptionNotes(draft.notes ?? "");
+        setShowException(Boolean(draft.open || draft.notes));
+      }
+      setDraftReady(true);
+    });
+    return () => { active = false; };
+  }, [exceptionDraftKey]);
+
+  useEffect(() => {
+    if (!exceptionDraftKey || !draftReady) return;
+    const timer = setTimeout(() => {
+      const hasDraft = Boolean(exceptionNotes.trim() || showException || exceptionType !== "route_blocked");
+      const write = hasDraft
+        ? writeSecureDraft<ExceptionDraft>(exceptionDraftKey, { exceptionType, notes: exceptionNotes, open: showException })
+        : clearSecureDraft(exceptionDraftKey);
+      void write.catch(() => undefined);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [draftReady, exceptionDraftKey, exceptionNotes, exceptionType, showException]);
 
   const openMaps = async (address?: string) => {
     if (!address) return;
@@ -87,11 +126,13 @@ export function DriverTripScreen() {
         notes: exceptionNotes.trim(),
       });
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      if (exceptionDraftKey) await clearSecureDraft(exceptionDraftKey).catch(() => undefined);
       setShowException(false);
+      setExceptionType("route_blocked");
       setExceptionNotes("");
       current.refresh();
     } catch (error) {
-      Alert.alert("Exception report failed", error instanceof Error ? error.message : "The server rejected the report.");
+      Alert.alert("Exception report failed", error instanceof Error ? error.message : "The server rejected the report. Your draft remains saved on this device.");
     } finally {
       setBusy(false);
     }
@@ -165,7 +206,7 @@ export function DriverTripScreen() {
             <SectionHeader
               eyebrow="Exception"
               title="Tell operations immediately"
-              description="Exception reports notify dispatch and fleet management while preserving the prior trip state."
+              description="Exception reports notify dispatch and fleet management while preserving the prior trip state. Unsent notes are encrypted on this device."
             />
             {showException ? (
               <View style={{ gap: 12 }}>
@@ -178,13 +219,14 @@ export function DriverTripScreen() {
                   multiline
                   autoCapitalize="sentences"
                 />
+                {exceptionNotes.trim() ? <Pill label="Draft saved securely" tone="amber" /> : null}
                 <Row>
-                  <ActionButton label="Cancel" onPress={() => setShowException(false)} variant="ghost" disabled={busy} />
+                  <ActionButton label="Hide draft" onPress={() => setShowException(false)} variant="ghost" disabled={busy} />
                   <ActionButton label={busy ? "Reporting…" : "Report exception"} onPress={() => void reportException()} variant="danger" disabled={busy || exceptionNotes.trim().length < 3} />
                 </Row>
               </View>
             ) : (
-              <ActionButton label="Report an exception" onPress={() => setShowException(true)} variant="danger" />
+              <ActionButton label={exceptionNotes.trim() ? "Resume exception draft" : "Report an exception"} onPress={() => setShowException(true)} variant="danger" />
             )}
           </Panel>
         </>
