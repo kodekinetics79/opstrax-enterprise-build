@@ -9,7 +9,8 @@
       "distribution": "internal",
       "environment": "development",
       "env": {
-        "EXPO_PUBLIC_STAGE": "development"
+        "EXPO_PUBLIC_STAGE": "development",
+        "EXPO_PUBLIC_PRODUCT": "unified"
       },
       "android": {
         "buildType": "apk"
@@ -20,17 +21,43 @@
       "distribution": "internal",
       "environment": "preview",
       "env": {
-        "EXPO_PUBLIC_STAGE": "preview"
+        "EXPO_PUBLIC_STAGE": "preview",
+        "EXPO_PUBLIC_PRODUCT": "unified"
       },
       "android": {
         "buildType": "apk"
       }
     },
-    "production": {
+    "driver-production": {
       "node": "20.19.4",
       "environment": "production",
       "env": {
-        "EXPO_PUBLIC_STAGE": "production"
+        "EXPO_PUBLIC_STAGE": "production",
+        "EXPO_PUBLIC_PRODUCT": "driver"
+      },
+      "autoIncrement": true,
+      "android": {
+        "buildType": "app-bundle"
+      }
+    },
+    "fleet-production": {
+      "node": "20.19.4",
+      "environment": "production",
+      "env": {
+        "EXPO_PUBLIC_STAGE": "production",
+        "EXPO_PUBLIC_PRODUCT": "fleet"
+      },
+      "autoIncrement": true,
+      "android": {
+        "buildType": "app-bundle"
+      }
+    },
+    "customer-production": {
+      "node": "20.19.4",
+      "environment": "production",
+      "env": {
+        "EXPO_PUBLIC_STAGE": "production",
+        "EXPO_PUBLIC_PRODUCT": "customer"
       },
       "autoIncrement": true,
       "android": {
@@ -39,6 +66,8 @@
     }
   },
   "submit": {
-    "production": {}
+    "driver-production": {},
+    "fleet-production": {},
+    "customer-production": {}
   }
 }
