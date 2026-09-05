@@ -240,6 +240,8 @@ MIGRATIONS=(
   2026_09_02_stage98_optional_gps_measurements
   # Dashcam/provider media remains fail-closed until authentic provider evidence exists.
   2026_09_03_stage100_dashcam_provider_media_truth
+  # Native Driver/Fleet/Customer Expo push token lifecycle; FORCE-RLS and user scoped.
+  2026_09_05_stage101_mobile_push_tokens
 )
 
 echo "Pre-check: validated read-only database identity…"
