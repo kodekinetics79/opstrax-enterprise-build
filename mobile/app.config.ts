@@ -24,7 +24,7 @@ function resolveVariant(): AppVariant {
 
 const APP_VARIANT = resolveVariant();
 
-const PRODUCTS: Record<AppVariant, { name: string; slug: string; bundle: string; locationPurpose: string }> = {
+const PRODUCTS: Record<AppVariant, { name: string; slug: string; bundle: string; locationPurpose?: string }> = {
   driver: {
     name: "OpsTrax Driver",
     slug: "opstrax-driver",
@@ -35,13 +35,12 @@ const PRODUCTS: Record<AppVariant, { name: string; slug: string; bundle: string;
     name: "OpsTrax Fleet",
     slug: "opstrax-fleet",
     bundle: "com.opstrax.fleet",
-    locationPurpose: "Allow OpsTrax Fleet to use your location for authorized fleet and operational map features.",
+    locationPurpose: "Allow OpsTrax Fleet to use your location only for an authorized operational workflow that needs the device location.",
   },
   customer: {
     name: "OpsTrax Customer",
     slug: "opstrax-customer",
     bundle: "com.opstrax.customer",
-    locationPurpose: "Allow OpsTrax Customer to use your location only when a customer workflow explicitly requests it.",
   },
   unified: {
     name: "OpsTrax Mobile",
@@ -54,6 +53,19 @@ const PRODUCTS: Record<AppVariant, { name: string; slug: string; bundle: string;
 const product = PRODUCTS[APP_VARIANT];
 const stageSuffix = STAGE.replace(/[^a-z0-9]+/g, "");
 const defaultBundle = STAGE === "production" ? product.bundle : `${product.bundle}.${stageSuffix}`;
+const plugins: NonNullable<ExpoConfig["plugins"]> = [
+  "expo-secure-store",
+  [
+    "expo-image-picker",
+    {
+      cameraPermission: `Allow ${product.name} to capture delivery and inspection evidence when the workflow requires it.`,
+      photosPermission: `Allow ${product.name} to select delivery and inspection evidence when the workflow requires it.`,
+      microphonePermission: false,
+    },
+  ],
+  "./plugins/with-no-inbound-linking",
+];
+if (APP_VARIANT !== "customer") plugins.splice(2, 0, "expo-location");
 
 if (isProductionBuild) {
   if (APP_VARIANT === "unified") {
@@ -75,25 +87,15 @@ const config: ExpoConfig = {
   orientation: "portrait",
   ...(hasBundledAssets ? { icon: "./assets/icon.png" } : {}),
   userInterfaceStyle: "dark",
-  plugins: [
-    "expo-secure-store",
-    [
-      "expo-image-picker",
-      {
-        cameraPermission: `Allow ${product.name} to capture delivery and inspection evidence when the workflow requires it.`,
-        photosPermission: `Allow ${product.name} to select delivery and inspection evidence when the workflow requires it.`,
-        microphonePermission: false,
-      },
-    ],
-    "expo-location",
-    "./plugins/with-no-inbound-linking",
-  ],
+  plugins,
   ios: {
     supportsTablet: true,
     bundleIdentifier: process.env.EXPO_PUBLIC_IOS_BUNDLE_ID?.trim() || defaultBundle,
-    infoPlist: {
-      NSLocationWhenInUseUsageDescription: product.locationPurpose,
-    },
+    ...(product.locationPurpose ? {
+      infoPlist: {
+        NSLocationWhenInUseUsageDescription: product.locationPurpose,
+      },
+    } : {}),
   },
   android: {
     ...(hasBundledAssets ? { adaptiveIcon: {
