@@ -42,7 +42,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --ext .js,.jsx,.ts,.tsx",
     "test:audit-policy": "node --test scripts/test-validate-audit.mjs",
-    "test:contracts": "node --test scripts/test-launch-workflows.mjs scripts/test-customer-mobile-contracts.mjs scripts/test-mobile-notifications-contract.mjs scripts/test-mobile-draft-recovery.mjs",
+    "test:contracts": "node --test scripts/test-launch-workflows.mjs scripts/test-customer-mobile-contracts.mjs scripts/test-mobile-notifications-contract.mjs scripts/test-mobile-draft-recovery.mjs scripts/test-store-readiness.mjs",
     "test:no-inbound-linking": "node scripts/verify-no-inbound-linking.mjs"
   },
   "overrides": {
