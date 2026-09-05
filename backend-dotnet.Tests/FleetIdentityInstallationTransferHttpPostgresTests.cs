@@ -850,12 +850,38 @@ public sealed class FleetIdentityInstallationTransferHttpPostgresTests
                             Assert.Equal(owner.Lock.ObjectSubId, Convert.ToInt32(row["objsubid"]));
                             Assert.Equal(owner.Lock.Mode, row["mode"]?.ToString());
                             Assert.False(Convert.ToBoolean(row["granted"]));
-                            var blockers = Assert.IsType<int[]>(row["blockers"]);
-                            Assert.Equal(new[] { owner.Backend.Pid }, blockers);
+                            Assert.IsType<int[]>(row["blockers"]);
                         }
                         Assert.Equal($"device-install-resource:{companyA}:device:{DeviceA}", owner.ResourceIdentity);
                         Assert.Equal((long)unchecked((uint)(owner.ResourceHash >> 32)), owner.Lock.ClassId);
                         Assert.Equal((long)unchecked((uint)owner.ResourceHash), owner.Lock.ObjectId);
+
+                        static int[] NormalizedBlockers(BlockedRequestEvidence item)
+                            => item.Blockers.Distinct().Order().ToArray();
+
+                        foreach (var waiter in blockedEvidence)
+                        {
+                            var otherRequestPid = waiter.Backend.Pid == backendA.Pid ? backendB.Pid : backendA.Pid;
+                            var normalized = NormalizedBlockers(waiter);
+                            Assert.Contains(owner.Backend.Pid, normalized);
+                            Assert.DoesNotContain(waiter.Backend.Pid, normalized);
+                            Assert.DoesNotContain(0, normalized);
+                            Assert.All(normalized, blocker =>
+                                Assert.Contains(blocker, new[] { owner.Backend.Pid, otherRequestPid }));
+                        }
+
+                        var head = Assert.Single(blockedEvidence,
+                            waiter => NormalizedBlockers(waiter).SequenceEqual(new[] { owner.Backend.Pid }));
+                        var tail = Assert.Single(blockedEvidence, waiter => waiter.Backend.Pid != head.Backend.Pid);
+                        Assert.Equal(new[] { owner.Backend.Pid }, NormalizedBlockers(head));
+                        Assert.Equal(new[] { owner.Backend.Pid, head.Backend.Pid }.Order(), NormalizedBlockers(tail));
+                        Assert.NotEqual(head.Trace, tail.Trace);
+                        Emit("concurrent-lock-queue-accepted", new
+                        {
+                            ownerPid = owner.Backend.Pid,
+                            head = new { head.Trace, pid = head.Backend.Pid, rawBlockers = head.Blockers },
+                            tail = new { tail.Trace, pid = tail.Backend.Pid, rawBlockers = tail.Blockers }
+                        });
                         Emit("concurrent-lock-chain", new
                         {
                             owner,
