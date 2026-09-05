@@ -1343,15 +1343,15 @@ public static partial class EndpointMappings
         app.MapGet("/api/dashcam/summary", DashcamSummary);
         app.MapGet("/api/dashcam/events", DashcamEvents);
         app.MapGet("/api/dashcam/events/{id:long}", DashcamEventDetail);
-        app.MapPost("/api/dashcam/events", (HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) =>
+        app.MapPost("/api/dashcam/events", (HttpContext http, Database db, AuditService audit, CancellationToken ct) =>
         {
             var denied = RequirePermission(http, "dashcam:manage");
-            return denied is not null ? Task.FromResult(denied) : CreateDashcamEvent(http, body, db, audit, ct);
+            return denied is not null ? Task.FromResult(denied) : CreateDashcamEvent(http, db, audit, ct);
         });
-        app.MapPut("/api/dashcam/events/{id:long}", (HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) =>
+        app.MapPut("/api/dashcam/events/{id:long}", (HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) =>
         {
             var denied = RequirePermission(http, "dashcam:manage");
-            return denied is not null ? Task.FromResult(denied) : UpdateDashcamEvent(http, id, body, db, audit, ct);
+            return denied is not null ? Task.FromResult(denied) : UpdateDashcamEvent(http, id, db, audit, ct);
         });
         app.MapDelete("/api/dashcam/events/{id:long}", SoftDeleteWithPermission("dashcam_events", "dashcam.event.deleted", "dashcam:manage"));
         app.MapGet("/api/dashcam/recommendations", (HttpContext http, Database db, CancellationToken ct) =>
@@ -9436,20 +9436,323 @@ public static partial class EndpointMappings
             recommendations = await TenantModuleRecommendations(db, companyId, "dashcam", ct),
             auditTrail = await TenantAuditRows(db, companyId, "DashcamEvent", id, ct) }));
     }
-    private static async Task<IResult> CreateDashcamEvent(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
+    private const string CameraStage100SourceHash = "b8c9ab16ca90a6afb57814376de2e380c433ef6a7283dcd3d8c1666b86b81ebb";
+    private const int CameraMetadataBodyLimit = 32 * 1024;
+    private sealed record CameraMetadataInput(Dictionary<string, object?> Values)
     {
-        if (IsBlank(Get(body, "eventType")) || IsBlank(Get(body, "severity"))) return Results.BadRequest(ApiResponse<object>.Fail("Dashcam event validation failed", ["Event type and severity are required."]));
-        var companyId = GetCompanyId(http);
-        var id = await db.InsertAsync(@"INSERT INTO dashcam_events (company_id,event_number,safety_event_id,event_type,title,severity,driver_id,vehicle_id,job_id,route_id,location_description,thumbnail_url,road_facing_clip_url,driver_facing_clip_url,ai_summary,ai_confidence,review_status,evidence_status,recommended_action,occurred_at)
-            VALUES (@companyId,@number,@safety,@type,@title,@severity,@driver,@vehicle,@job,@route,@location,NULL,NULL,NULL,@summary,COALESCE(@confidence,85),COALESCE(@review,'Pending Review'),COALESCE(@evidence,'Not Packaged'),@action,COALESCE(@occurred,NOW()))", c => { c.Parameters.AddWithValue("@companyId", companyId); BindDashcam(c, body); }, ct);
-        await audit.LogAsync(http, "dashcam.event.created", "DashcamEvent", id, ct: ct);
-        return Results.Created($"/api/dashcam/events/{id}", ApiResponse<object>.Ok(new { id }, "Dashcam event created"));
+        public object? this[string key] => Values.GetValueOrDefault(key);
+        public bool Has(string key) => Values.ContainsKey(key);
     }
-    private static async Task<IResult> UpdateDashcamEvent(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
+    private sealed record CameraMetadataRelation(string SqlName);
+    private static IResult CameraMetadataInvalid() => Results.BadRequest(ApiResponse<object>.Fail("Camera metadata validation failed"));
+    private static IResult CameraMetadataMissing() => Results.NotFound(ApiResponse<object>.Fail("Camera metadata record not found"));
+    private static IResult CameraMetadataUnavailable() => Results.Json(ApiResponse<object>.Fail("Camera metadata writes are unavailable"), statusCode: 503);
+    private static IResult CameraMetadataStale() => Results.Conflict(ApiResponse<object>.Fail("Camera metadata changed; refresh before retrying"));
+    private static bool CameraMetadataJsonMedia(HttpContext http)
     {
-        await db.ExecuteAsync(@"UPDATE dashcam_events SET event_type=COALESCE(@type,event_type), title=COALESCE(@title,title), severity=COALESCE(@severity,severity), driver_id=COALESCE(@driver,driver_id), vehicle_id=COALESCE(@vehicle,vehicle_id), review_status=COALESCE(@review,review_status), evidence_status=COALESCE(@evidence,evidence_status), ai_summary=COALESCE(@summary,ai_summary), ai_confidence=COALESCE(@confidence,ai_confidence), recommended_action=COALESCE(@action,recommended_action) WHERE id=@id AND company_id=@companyId", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); BindDashcam(c, body); }, ct);
-        await audit.LogAsync(http, "dashcam.event.updated", "DashcamEvent", id, ct: ct);
-        return Results.Ok(ApiResponse<object>.Ok(new { id }, "Dashcam event updated"));
+        if (!Microsoft.Net.Http.Headers.MediaTypeHeaderValue.TryParse(http.Request.ContentType, out var media)) return false;
+        var type = media.MediaType.Value;
+        var charset = Microsoft.Net.Http.Headers.HeaderUtilities.RemoveQuotes(media.Charset).Value;
+        var charsetCount = media.Parameters.Count(p => p.Name.Equals("charset", StringComparison.OrdinalIgnoreCase));
+        return type is not null && (type.Equals("application/json", StringComparison.OrdinalIgnoreCase)
+                || type.StartsWith("application/", StringComparison.OrdinalIgnoreCase) && type.EndsWith("+json", StringComparison.OrdinalIgnoreCase))
+            && (charsetCount == 0 || charsetCount == 1 && string.Equals(charset, "utf-8", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static async Task<bool> DenyBranchCameraMetadata(HttpContext http, Database db, CancellationToken ct)
+    {
+        if (!http.Items.ContainsKey(AuthBranchIdItemKey)) return false;
+        // The fixed denial is independent of telemetry. A failed joined write must first
+        // restore its savepoint; cancellation/connection/cleanup failures still propagate.
+        await db.RunInTenantTransactionAsync(GetCompanyId(http), async () =>
+        {
+            await db.ExecuteAsync("SAVEPOINT camera_metadata_denial", ct: ct);
+            try
+            {
+                var events = http.RequestServices.GetRequiredService<SecurityEventService>();
+                await events.LogAsync(GetCompanyId(http), GetUserId(http), "permission.denied", "warning",
+                    http.Connection.RemoteIpAddress?.ToString(), http.Request.Headers.UserAgent.ToString(), false,
+                    "Branch-bound camera metadata mutation denied", new { action = "camera.metadata.write", reason = "branch_bound" }, ct);
+            }
+            catch (PostgresException ex) when (CameraRecoverableDatabaseError(ex, ct))
+            {
+                await RestoreCameraSavepoint(db, "camera_metadata_denial");
+                return true;
+            }
+            await db.ExecuteAsync("RELEASE SAVEPOINT camera_metadata_denial", ct: ct);
+            return true;
+        }, ct);
+        return true;
+    }
+    private static bool CameraRecoverableDatabaseError(PostgresException error, CancellationToken ct)
+        => !ct.IsCancellationRequested && !error.SqlState.StartsWith("08", StringComparison.Ordinal)
+           && error.SqlState is not ("57014" or "57P01" or "57P02" or "57P03");
+    private static async Task RestoreCameraSavepoint(Database db, string name)
+    {
+        // Names are private fixed constants. Never reuse a canceled RequestAborted token.
+        using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        await db.ExecuteAsync($"ROLLBACK TO SAVEPOINT {name}; RELEASE SAVEPOINT {name}",
+            c => c.CommandTimeout = 3, cleanup.Token);
+    }
+    private static async Task<CameraMetadataInput?> ReadCameraMetadataInput(HttpContext http, bool create, CancellationToken ct)
+    {
+        if (http.Request.ContentLength > CameraMetadataBodyLimit) return null;
+        var buffer = new byte[CameraMetadataBodyLimit + 1];
+        var length = 0;
+        while (length < buffer.Length)
+        {
+            var read = await http.Request.Body.ReadAsync(buffer.AsMemory(length), ct);
+            if (read == 0) break;
+            length += read;
+        }
+        if (length > CameraMetadataBodyLimit) return null;
+        JsonDocument document;
+        try
+        {
+            _ = new UTF8Encoding(false, true).GetCharCount(buffer, 0, length);
+            document = JsonDocument.Parse(buffer.AsMemory(0, length));
+        }
+        catch (JsonException) { return null; }
+        catch (DecoderFallbackException) { return null; }
+        using (document)
+        {
+            if (document.RootElement.ValueKind != JsonValueKind.Object) return null;
+            var values = new Dictionary<string, object?>(StringComparer.Ordinal);
+            foreach (var property in document.RootElement.EnumerateObject())
+            {
+                if (values.ContainsKey(property.Name)) return null;
+                object? value;
+                switch (property.Name)
+                {
+                    case "eventType": case "title": case "locationDescription":
+                        var nullable = property.Name == "locationDescription";
+                        if (nullable && property.Value.ValueKind == JsonValueKind.Null) { value = null; break; }
+                        if (property.Value.ValueKind != JsonValueKind.String) return null;
+                        var text = property.Value.GetString()!.Trim();
+                        if (text.Length == 0 || text.Length > (property.Name == "eventType" ? 120 : 220)) return null;
+                        value = text;
+                        break;
+                    case "severity":
+                        if (property.Value.ValueKind != JsonValueKind.String || property.Value.GetString() is not ("Low" or "Medium" or "High" or "Critical")) return null;
+                        value = property.Value.GetString();
+                        break;
+                    case "safetyEventId": case "driverId": case "vehicleId": case "jobId": case "routeId":
+                        if (property.Name == "safetyEventId" && !create) return null;
+                        if (property.Value.ValueKind == JsonValueKind.Null) { value = null; break; }
+                        if (property.Value.ValueKind != JsonValueKind.Number || !property.Value.TryGetInt64(out var id) || id <= 0) return null;
+                        value = id;
+                        break;
+                    case "rowVersion":
+                        if (create || property.Value.ValueKind != JsonValueKind.Number || !property.Value.TryGetInt64(out var version) || version < 0) return null;
+                        value = version;
+                        break;
+                    case "occurredAt":
+                        if (property.Value.ValueKind == JsonValueKind.Null) { value = null; break; }
+                        if (property.Value.ValueKind != JsonValueKind.String) return null;
+                        var raw = property.Value.GetString()!;
+                        if (!(raw.EndsWith("Z", StringComparison.Ordinal) || raw.EndsWith("+00:00", StringComparison.Ordinal))
+                            || !DateTimeOffset.TryParseExact(raw, ["yyyy-MM-dd'T'HH:mm:ssK", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFFK"], CultureInfo.InvariantCulture, DateTimeStyles.None, out var occurred)
+                            || occurred.Offset != TimeSpan.Zero || occurred > DateTimeOffset.UtcNow.AddMinutes(5)) return null;
+                        value = occurred.UtcDateTime;
+                        break;
+                    default: return null;
+                }
+                values.Add(property.Name, value);
+            }
+            if (create ? !values.ContainsKey("eventType") || !values.ContainsKey("title") || !values.ContainsKey("severity")
+                : !values.ContainsKey("rowVersion") || values.Count < 2) return null;
+            return new(values);
+        }
+    }
+
+    private static async Task<CameraMetadataRelation?> CameraMetadataPrerequisite(Database db, CancellationToken ct)
+    {
+        await db.ExecuteAsync("SAVEPOINT camera_metadata_prerequisite", ct: ct);
+        var restoring = false;
+        async Task<CameraMetadataRelation?> Reject()
+        {
+            restoring = true;
+            await RestoreCameraSavepoint(db, "camera_metadata_prerequisite");
+            return null;
+        }
+        try
+        {
+            var timeout = await db.QuerySingleAsync("SELECT current_setting('lock_timeout') AS previous", ct: ct);
+            await db.ExecuteAsync("SET LOCAL lock_timeout='3s'; LOCK TABLE ONLY dashcam_events IN ROW EXCLUSIVE MODE", c => c.CommandTimeout = 5, ct);
+            var relation = await db.QuerySingleAsync("""
+                SELECT c.oid::bigint AS oid, n.nspname AS schema, quote_ident(n.nspname)||'.'||quote_ident(c.relname) AS sql_name,
+                  c.relkind::text AS kind,c.relispartition AS partition,
+                  EXISTS(SELECT 1 FROM pg_inherits i WHERE i.inhparent=c.oid OR i.inhrelid=c.oid) AS inheritance,
+                  current_setting('session_replication_role') AS replication
+                FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.oid='dashcam_events'::regclass
+                """, ct: ct);
+            if (relation is null || relation["kind"] is not "r" || relation["partition"] is not false || relation["inheritance"] is not false || relation["replication"] is not ("origin" or "local"))
+                return await Reject();
+            var oid = (long)relation["oid"]!;
+            var columns = await db.QueryAsync("""
+                SELECT a.attname AS name,format_type(a.atttypid,a.atttypmod) AS type,a.attnotnull AS required,
+                  pg_get_expr(d.adbin,d.adrelid) AS expression
+                FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum
+                WHERE a.attrelid=@oid::oid AND a.attnum>0 AND NOT a.attisdropped
+                """, c => c.Parameters.AddWithValue("oid", oid), ct);
+            if (!CameraMetadataColumnsMatch(columns)) return await Reject();
+            var triggers = await db.QueryAsync("""
+                SELECT t.tgname AS name,t.tgtype::integer AS type,t.tgenabled::text AS enabled,
+                  t.tgisinternal AS internal,t.tgconstraint::bigint AS constraint_id,t.tgdeferrable AS deferrable,
+                  t.tginitdeferred AS deferred,t.tgparentid::bigint AS parent_id,t.tgnargs::integer AS arguments,
+                  t.tgqual IS NULL AS unconditional,cardinality(t.tgattr::smallint[]) AS column_count,
+                  octet_length(t.tgargs) AS argument_bytes,p.proname AS function_name,n.nspname AS function_schema,
+                  l.lanname AS language,p.prokind::text AS kind,p.prorettype='trigger'::regtype AS trigger_result,
+                  p.pronargs::integer AS function_arguments,p.pronargdefaults::integer AS defaults,
+                  p.proretset AS returns_set,p.prosecdef AS security_definer,p.proisstrict AS strict,p.proleakproof AS leakproof,
+                  p.provolatile::text AS volatility,p.proparallel::text AS parallel,p.proconfig IS NULL AS no_settings,
+                  p.proargnames IS NULL AS no_argument_names,p.prosupport::oid::bigint AS support,p.prosrc AS source
+                FROM pg_trigger t JOIN pg_proc p ON p.oid=t.tgfoid JOIN pg_namespace n ON n.oid=p.pronamespace JOIN pg_language l ON l.oid=p.prolang
+                WHERE t.tgrelid=@oid::oid AND t.tgenabled<>'D' AND (t.tgtype & 1)=1 AND (t.tgtype & 2)=2 AND (t.tgtype & 20)<>0
+                """, c => c.Parameters.AddWithValue("oid", oid), ct);
+            if (triggers.Count != 1 || !CameraMetadataTriggerMatches(triggers[0], (string)relation["schema"]!))
+                return await Reject();
+            await db.ExecuteAsync("SELECT set_config('lock_timeout',@previous,true)", c => c.Parameters.AddWithValue("previous", timeout!["previous"]!), ct);
+            await db.ExecuteAsync("RELEASE SAVEPOINT camera_metadata_prerequisite", ct: ct);
+            return new((string)relation["sqlName"]!);
+        }
+        catch (PostgresException ex) when (!restoring && CameraRecoverableDatabaseError(ex, ct))
+        {
+            return await Reject();
+        }
+    }
+    private static bool CameraMetadataColumnsMatch(List<Dictionary<string, object?>> columns)
+    {
+        var expected = new Dictionary<string, (string Type, bool Required)>(StringComparer.Ordinal)
+        {
+            ["id"]=("bigint",true),["company_id"]=("bigint",true),["event_type"]=("character varying(120)",false),
+            ["title"]=("character varying(220)",true),["severity"]=("character varying(50)",true),["event_number"]=("character varying(80)",false),
+            ["coaching_status"]=("character varying(60)",true),["review_status"]=("character varying(80)",true),["evidence_status"]=("character varying(80)",true),
+            ["false_positive"]=("boolean",true),["event_time"]=("timestamp with time zone",true),["created_at"]=("timestamp with time zone",true),
+            ["occurred_at"]=("timestamp with time zone",false),["updated_at"]=("timestamp with time zone",false),["deleted_at"]=("timestamp with time zone",false),
+            ["location_description"]=("character varying(220)",false),["video_provider"]=("character varying(120)",false),
+            ["thumbnail_url"]=("character varying(400)",false),["road_facing_clip_url"]=("character varying(400)",false),["driver_facing_clip_url"]=("character varying(400)",false),
+            ["ai_summary"]=("text",false),["ai_confidence"]=("numeric(6,2)",false),["source_authority"]=("character varying(32)",true),
+            ["media_status"]=("character varying(32)",true),["provider_event_id"]=("character varying(180)",false),["provider_received_at"]=("timestamp with time zone",false),
+            ["provider_payload_hash"]=("character varying(64)",false),["road_facing_media_ref"]=("character varying(300)",false),
+            ["driver_facing_media_ref"]=("character varying(300)",false),["media_expires_at"]=("timestamp with time zone",false),
+            ["recording_mode"]=("character varying(48)",false),["retention_class"]=("character varying(80)",false),["privacy_policy_version"]=("character varying(80)",false),["row_version"]=("bigint",true)
+        };
+        foreach (var name in new[] { "safety_event_id", "driver_id", "vehicle_id", "job_id", "route_id", "branch_id" }) expected[name] = ("bigint", false);
+        foreach (var item in expected)
+        {
+            var column = columns.SingleOrDefault(c => Equals(c["name"], item.Key));
+            if (column is null || !Equals(column["type"], item.Value.Type) || !Equals(column["required"], item.Value.Required)) return false;
+            if (item.Key == "row_version" && column["expression"] is not "0") return false;
+        }
+        return true;
+    }
+    private static bool CameraMetadataTriggerMatches(Dictionary<string, object?> t, string schema)
+    {
+        bool Is(string key, object expected) => Equals(t.GetValueOrDefault(key), expected);
+        return Is("name", "trg_stage100_enforce_dashcam_provider_truth") && Is("type", 23) && Is("enabled", "O")
+            && Is("internal", false) && Is("constraintId", 0L) && Is("deferrable", false) && Is("deferred", false) && Is("parentId", 0L)
+            && Is("arguments", 0) && Is("argumentBytes", 0) && Is("columnCount", 0) && Is("unconditional", true)
+            && Is("functionName", "stage100_enforce_dashcam_provider_truth") && Is("functionSchema", schema) && Is("language", "plpgsql")
+            && Is("kind", "f") && Is("triggerResult", true) && Is("functionArguments", 0) && Is("defaults", 0)
+            && Is("returnsSet", false) && Is("securityDefiner", false) && Is("strict", false) && Is("leakproof", false)
+            && Is("volatility", "v") && Is("parallel", "u") && Is("noSettings", true) && Is("noArgumentNames", true) && Is("support", 0L)
+            && t["source"] is string source && Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(source))).ToLowerInvariant() == CameraStage100SourceHash;
+    }
+
+    private static async Task<bool> CameraMetadataReferencesValid(Database db, long companyId, IReadOnlyDictionary<string, object?> values, CancellationToken ct)
+    {
+        var rows = new List<Dictionary<string, object?>>();
+        // Sequential statements establish safety -> driver -> vehicle -> job -> route lock order.
+        foreach (var (key, table, links) in new[] {
+            ("safetyEventId","safety_events","driver_id AS linked_driver_id,vehicle_id AS linked_vehicle_id,job_id AS linked_job_id,route_id AS linked_route_id"),
+            ("driverId","drivers","assigned_vehicle_id AS linked_vehicle_id"),
+            ("vehicleId","vehicles","assigned_driver_id AS linked_driver_id"),
+            ("jobId","jobs","assigned_driver_id AS linked_driver_id,assigned_vehicle_id AS linked_vehicle_id,route_id AS linked_route_id"),
+            ("routeId","routes","assigned_driver_id AS linked_driver_id,assigned_vehicle_id AS linked_vehicle_id") })
+        {
+            if (!values.TryGetValue(key, out var raw) || raw is null) continue;
+            if (raw is not long id || id <= 0) return false;
+            var row = await db.QuerySingleAsync($"SELECT branch_id,{links} FROM {table} WHERE id=@id AND company_id=@cid AND deleted_at IS NULL FOR SHARE",
+                c => { c.Parameters.AddWithValue("id", id); c.Parameters.AddWithValue("cid", companyId); }, ct);
+            if (row is null) return false;
+            rows.Add(row);
+        }
+        var knownBranches = rows.Select(r => r["branchId"]).Where(v => v is not null).ToList();
+        if (values.TryGetValue("branchId", out var targetBranch) && targetBranch is not null) knownBranches.Add(targetBranch);
+        if (knownBranches.Distinct().Count() > 1) return false;
+        foreach (var row in rows)
+            foreach (var (key, link) in new[] { ("driverId", "linkedDriverId"), ("vehicleId", "linkedVehicleId"), ("jobId", "linkedJobId"), ("routeId", "linkedRouteId") })
+                if (values.TryGetValue(key, out var selected) && selected is not null && row.TryGetValue(link, out var linked) && linked is not null && !Equals(selected, linked)) return false;
+        return true;
+    }
+    private static void BindCameraMetadata(NpgsqlCommand c, CameraMetadataInput body, long companyId)
+    {
+        c.Parameters.AddWithValue("companyId", companyId);
+        foreach (var (key, type) in new[] {
+            ("eventType", NpgsqlDbType.Varchar),("title",NpgsqlDbType.Varchar),("severity",NpgsqlDbType.Varchar),("locationDescription",NpgsqlDbType.Varchar),
+            ("safetyEventId",NpgsqlDbType.Bigint),("driverId",NpgsqlDbType.Bigint),("vehicleId",NpgsqlDbType.Bigint),("jobId",NpgsqlDbType.Bigint),("routeId",NpgsqlDbType.Bigint),
+            ("rowVersion",NpgsqlDbType.Bigint),("occurredAt",NpgsqlDbType.TimestampTz) })
+            c.Parameters.Add(new NpgsqlParameter(key,type) { Value = body[key] ?? DBNull.Value });
+    }
+    private static object CameraMetadataReceipt(Dictionary<string, object?> row) => new {
+        id = (long)row["id"]!, rowVersion = (long)row["rowVersion"]!, dataSource = "stored_metadata", provenanceStatus = "unverified",
+        mediaAvailable = false, automatedAssessmentAvailable = false
+    };
+    private static async Task<IResult> CreateDashcamEvent(HttpContext http, Database db, AuditService audit, CancellationToken ct)
+    {
+        if (await DenyBranchCameraMetadata(http, db, ct)) return Results.Json(ApiResponse<object>.Fail("Camera metadata mutation is not available in branch scope"), statusCode: 403);
+        if (!CameraMetadataJsonMedia(http)) return Results.Json(ApiResponse<object>.Fail("Unsupported camera metadata media type"), statusCode: 415);
+        var body = await ReadCameraMetadataInput(http, true, ct);
+        if (body is null) return CameraMetadataInvalid();
+        var companyId = GetCompanyId(http);
+        return await db.RunInTenantTransactionAsync<IResult>(companyId, async () =>
+        {
+            var relation = await CameraMetadataPrerequisite(db, ct);
+            if (relation is null) return CameraMetadataUnavailable();
+            if (!await CameraMetadataReferencesValid(db, companyId, body.Values, ct)) return CameraMetadataInvalid();
+            var row = await db.QuerySingleAsync($"""
+                INSERT INTO {relation.SqlName} (company_id,event_number,safety_event_id,event_type,title,severity,driver_id,vehicle_id,job_id,route_id,location_description,occurred_at,branch_id,
+                  source_authority,media_status,coaching_status,review_status,evidence_status,false_positive,video_provider,provider_event_id,provider_received_at,provider_payload_hash,
+                  road_facing_clip_url,driver_facing_clip_url,thumbnail_url,road_facing_media_ref,driver_facing_media_ref,media_expires_at,ai_summary,ai_confidence,event_time,created_at,recording_mode,retention_class,privacy_policy_version)
+                VALUES (@companyId,@number,@safetyEventId,@eventType,@title,@severity,@driverId,@vehicleId,@jobId,@routeId,@locationDescription,COALESCE(@occurredAt,NOW()),NULL,
+                  'LegacyUnverified','Unavailable','Needs Review','Pending Review','Not Packaged',FALSE,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NOW(),NOW(),NULL,NULL,NULL)
+                RETURNING id,row_version
+                """, c => { BindCameraMetadata(c, body, companyId); c.Parameters.AddWithValue("number", $"CAM-META-{Guid.NewGuid():N}"); }, ct)
+                ?? throw new InvalidOperationException("Camera metadata insert did not return a row.");
+            await audit.LogAsync(http, "dashcam.event.created", "DashcamEvent", (long)row["id"]!,
+                JsonSerializer.Serialize(new { operation = "manual_metadata_create", fields = body.Values.Keys.OrderBy(k => k, StringComparer.Ordinal).ToArray(), rowVersion = row["rowVersion"] }), ct);
+            return Results.Created($"/api/dashcam/events/{row["id"]}", ApiResponse<object>.Ok(CameraMetadataReceipt(row)));
+        }, ct);
+    }
+    private static async Task<IResult> UpdateDashcamEvent(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct)
+    {
+        if (await DenyBranchCameraMetadata(http, db, ct)) return Results.Json(ApiResponse<object>.Fail("Camera metadata mutation is not available in branch scope"), statusCode: 403);
+        if (!CameraMetadataJsonMedia(http)) return Results.Json(ApiResponse<object>.Fail("Unsupported camera metadata media type"), statusCode: 415);
+        var body = await ReadCameraMetadataInput(http, false, ct);
+        if (body is null) return CameraMetadataInvalid();
+        var companyId = GetCompanyId(http);
+        return await db.RunInTenantTransactionAsync<IResult>(companyId, async () =>
+        {
+            var relation = await CameraMetadataPrerequisite(db, ct);
+            if (relation is null) return CameraMetadataUnavailable();
+            if (id <= 0) return CameraMetadataMissing();
+            var current = await db.QuerySingleAsync($"SELECT id,row_version,source_authority,branch_id,safety_event_id,driver_id,vehicle_id,job_id,route_id FROM ONLY {relation.SqlName} WHERE id=@id AND company_id=@cid AND deleted_at IS NULL FOR UPDATE",
+                c => { c.Parameters.AddWithValue("id", id); c.Parameters.AddWithValue("cid", companyId); }, ct);
+            if (current is null || current["sourceAuthority"] is not "LegacyUnverified") return CameraMetadataMissing();
+            if (!Equals(current["rowVersion"], body["rowVersion"])) return CameraMetadataStale();
+            var effective = new Dictionary<string, object?>(current, StringComparer.Ordinal);
+            foreach (var item in body.Values) effective[item.Key] = item.Value;
+            if (!await CameraMetadataReferencesValid(db, companyId, effective, ct)) return CameraMetadataInvalid();
+            var map = new Dictionary<string,string> { ["eventType"]="event_type",["title"]="title",["severity"]="severity",["driverId"]="driver_id",["vehicleId"]="vehicle_id",["jobId"]="job_id",["routeId"]="route_id",["locationDescription"]="location_description",["occurredAt"]="occurred_at" };
+            var assignments = map.Where(p => body.Has(p.Key)).Select(p => $"{p.Value}=@{p.Key}");
+            var row = await db.QuerySingleAsync($"UPDATE ONLY {relation.SqlName} SET {string.Join(',', assignments)},updated_at=NOW() WHERE id=@id AND company_id=@companyId AND deleted_at IS NULL AND source_authority='LegacyUnverified' AND row_version=@rowVersion RETURNING id,row_version",
+                c => { BindCameraMetadata(c, body, companyId); c.Parameters.AddWithValue("id", id); }, ct)
+                ?? throw new InvalidOperationException("Camera metadata update did not return the locked row.");
+            await audit.LogAsync(http, "dashcam.event.updated", "DashcamEvent", (long)row["id"]!,
+                JsonSerializer.Serialize(new { operation = "manual_metadata_update", fields = map.Keys.Where(body.Has).OrderBy(k => k, StringComparer.Ordinal).ToArray(), previousVersion = current["rowVersion"], rowVersion = row["rowVersion"] }), ct);
+            return Results.Ok(ApiResponse<object>.Ok(CameraMetadataReceipt(row)));
+        }, ct);
     }
     private static async Task<IResult> DashcamReview(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) { await db.ExecuteAsync("UPDATE dashcam_events SET review_status='Reviewed' WHERE id=@id AND company_id=@companyId", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); }, ct); await audit.LogAsync(http, "dashcam.event.reviewed", "DashcamEvent", id, ct: ct); return Results.Ok(ApiResponse<object>.Ok(new { id }, "Dashcam event reviewed")); }
     private static async Task<IResult> DashcamFalsePositive(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) { await db.ExecuteAsync("UPDATE dashcam_events SET false_positive=TRUE, review_status='False Positive' WHERE id=@id AND company_id=@companyId", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); }, ct); await audit.LogAsync(http, "dashcam.false_positive", "DashcamEvent", id, ct: ct); return Results.Ok(ApiResponse<object>.Ok(new { id }, "Marked false positive")); }
