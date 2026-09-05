@@ -16,6 +16,10 @@ const allowedApiHosts = (process.env.EXPO_PUBLIC_ALLOWED_API_HOSTS ?? "")
   .split(",")
   .map((value: string) => value.trim().toLowerCase())
   .filter(Boolean);
+const PRIVACY_URL = process.env.EXPO_PUBLIC_PRIVACY_URL?.trim() || "";
+const SUPPORT_URL = process.env.EXPO_PUBLIC_SUPPORT_URL?.trim() || "";
+const ACCOUNT_DELETION_URL = process.env.EXPO_PUBLIC_ACCOUNT_DELETION_URL?.trim() || "";
+const ACCOUNT_CREATION_ENABLED = process.env.EXPO_PUBLIC_ACCOUNT_CREATION_ENABLED?.trim().toLowerCase() === "true";
 const hasBundledAssets = existsSync(resolve(__dirname, "assets/icon.png"));
 
 const productConfig = {
@@ -24,6 +28,14 @@ const productConfig = {
   customer: { name: "OpsTrax Customer", slug: "opstrax-customer", id: "customer" },
   unified: { name: "OpsTrax Mobile", slug: "opstrax-mobile", id: "mobile" },
 }[PRODUCT];
+
+function requirePublicHttpsUrl(value: string, label: string) {
+  if (!value) throw new Error(`${label} must be configured for production store builds.`);
+  const url = new URL(value);
+  if (url.protocol !== "https:" || ["localhost", "127.0.0.1", "::1"].includes(url.hostname)) {
+    throw new Error(`${label} must use a public non-loopback HTTPS URL.`);
+  }
+}
 
 if (isProductionBuild) {
   const apiUrl = new URL(API_BASE_URL);
@@ -35,6 +47,11 @@ if (isProductionBuild) {
   }
   if (PRODUCT === "unified") {
     throw new Error("Production store builds must set EXPO_PUBLIC_PRODUCT to driver, fleet, or customer.");
+  }
+  requirePublicHttpsUrl(PRIVACY_URL, "EXPO_PUBLIC_PRIVACY_URL");
+  requirePublicHttpsUrl(SUPPORT_URL, "EXPO_PUBLIC_SUPPORT_URL");
+  if (ACCOUNT_CREATION_ENABLED) {
+    requirePublicHttpsUrl(ACCOUNT_DELETION_URL, "EXPO_PUBLIC_ACCOUNT_DELETION_URL");
   }
 }
 
@@ -87,6 +104,10 @@ const config: ExpoConfig = {
     stage: STAGE,
     product: PRODUCT,
     appName: productConfig.name,
+    privacyUrl: PRIVACY_URL,
+    supportUrl: SUPPORT_URL,
+    accountDeletionUrl: ACCOUNT_DELETION_URL,
+    accountCreationEnabled: ACCOUNT_CREATION_ENABLED,
   },
 };
 
