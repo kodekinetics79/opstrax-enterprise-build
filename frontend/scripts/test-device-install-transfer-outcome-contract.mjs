@@ -100,6 +100,7 @@ const record = { ...expected("createFresh"), deviceId: "741" };
 function loadRefresh({ client, invalidate, fail = false } = {}) {
   const states = { warning: false, pending: false, subscriptions: 0 };
   const context = { current: { record, generation: 0 } };
+  const permission = { current: true };
   const calls = [];
   const fallback = { queryHash: "fixture", state: { fetchStatus: "idle", status: "success" }, isActive: () => true };
   const backingCache = client?.getQueryCache();
@@ -116,12 +117,12 @@ function loadRefresh({ client, invalidate, fail = false } = {}) {
   } };
   const refreshReceiptQueries = evaluate(declaration("refreshReceiptQueries"), { queryClient });
   const refresh = evaluate(declaration("refreshAssignmentDisplay"), {
-    assignmentRefreshContext: context,
+    assignmentRefreshContext: context, lifecyclePermissionRef: permission,
     setAssignmentRefreshWarning: value => { states.warning = value; },
     setAssignmentRefreshPending: value => { states.pending = value; },
     queryClient, refreshReceiptQueries,
   });
-  return { states, context, calls, refresh };
+  return { states, context, calls, refresh, permission };
 }
 
 function loadUi({ operation = async () => expected("createFresh"), refresh = loadRefresh(), allowed = true } = {}) {
@@ -129,14 +130,17 @@ function loadUi({ operation = async () => expected("createFresh"), refresh = loa
   const states = { target: null, form: defaults, error: null, formError: null, record: null, notice: null };
   const session = { current: { deviceId: null, intent: null, generation: 0, pending: false } };
   const snapshot = { current: defaults };
+  const lifecyclePermissionRef = { current: allowed };
+  const assignmentTargetRef = { current: null };
   const scope = {
     assignmentSession: session, assignmentFormSnapshot: snapshot, defaultInstallationForm: defaults,
-    setAssignTarget: value => { states.target = value; }, setInstallationForm: value => { states.form = value; },
+    assignmentTargetRef,
+    setAssignTarget: value => { states.target = value; assignmentTargetRef.current = value; }, setInstallationForm: value => { states.form = value; },
     setFormError: value => { states.formError = value; }, setAssignmentError: value => { states.error = value; },
     setNotice: value => { states.notice = value; }, setAssignmentRecord: value => { states.record = value; },
     setAssignmentRefreshWarning: value => { refresh.states.warning = value; }, setAssignmentRefreshPending: value => { refresh.states.pending = value; },
     assignmentRefreshContext: refresh.context, refreshAssignmentDisplay: refresh.refresh,
-    canGovernInstallations: allowed, assignmentSingleFlight: singleFlight(), toUtcIso: actualToUtcIso,
+    canGovernInstallations: allowed, lifecyclePermissionRef, assignmentSingleFlight: singleFlight(), toUtcIso: actualToUtcIso,
     assignmentRecordedMessage, getInstallationIntent: loadService().getInstallationIntent,
   };
   scope.ownsAssignmentSession = evaluate(declaration("ownsAssignmentSession"), scope);
@@ -152,10 +156,11 @@ function loadUi({ operation = async () => expected("createFresh"), refresh = loa
   };
   const dismiss = evaluate(declaration("clearLifecycleError"), { ...scope, assignMut,
     removalSession: { current: { pending: false } }, commissioningSession: { current: { pending: false } },
+    suspensionSession: { current: { pending: false } }, activationSession: { current: { pending: false } },
     unassignMut: { reset() {} }, installMut: { reset() {} }, suspendMut: { reset() {} }, activateMut: { reset() {} }, rotateSecretMut: { reset() {} },
-    setRemovalError() {}, setCommissioningError() {},
+    setRemovalError() {}, setCommissioningError() {}, setSuspensionError() {}, setActivationError() {},
   });
-  return { states, session, snapshot, scope, options, controls, refresh, submitted, observer, client, counters, dismiss };
+  return { states, session, snapshot, lifecyclePermissionRef, scope, options, controls, refresh, submitted, observer, client, counters, dismiss };
 }
 
 test("all four actual receipt variants survive failed readback with one POST and no reconstructed device", async t => {
@@ -215,7 +220,9 @@ test("HTTP envelope and own field discriminants are strict and messages cannot t
       const fixture = loadService({ variant, status });
       await assert.rejects(fixture.telematicsService.assignDeviceToVehicle(741, invocation(variant)), e => e.outcome === "unconfirmed");
     }
-    for (const envelope of [null, [], {}, 1, { success: "true", data: receipts[variant] }, { success: 1, data: receipts[variant] }, { success: true, data: null }, { success: true, data: [] }]) {
+    for (const envelope of [null, [], {}, 1, { success: "true", data: receipts[variant] }, { success: 1, data: receipts[variant] }, { success: true, data: null }, { success: true, data: [] },
+      { success: true, data: receipts[variant], Success: false }, { success: true, data: receipts[variant], Data: null },
+      { success: true, data: receipts[variant], s_u_c_c_e_s_s: false }, { success: true, data: receipts[variant], d_a_t_a: null }]) {
       const fixture = loadService({ variant, envelope });
       await assert.rejects(fixture.telematicsService.assignDeviceToVehicle(741, invocation(variant)), e => e.outcome === "unconfirmed");
     }
@@ -312,7 +319,22 @@ test("exact offset and zero padding preserve returned time while existing create
 });
 
 test("known rejection and unknown receipt or transport are distinct with no automatic resubmission", async () => {
-  for (const variant of variants) for (const [options, outcome] of [[{ envelope: { success: false, message: "private raw" } }, "rejected"], [{ failure: { response: { status: 409, data: { success: false } } } }, "rejected"], [{ failure: new Error("private timeout") }, "unconfirmed"], [{ failure: { response: { status: 503 } } }, "unconfirmed"]]) {
+  const inheritedFailure = Object.create({ success: false });
+  const exoticFailure = Object.assign(new (class ErrorCarrier {})(), { success: false });
+  const arrayFailure = Object.assign([], { success: false });
+  const nullPrototypeFailure = Object.assign(Object.create(null), { success: false });
+  for (const variant of variants) for (const [options, outcome] of [
+    [{ envelope: { success: false, message: "private raw" } }, "rejected"],
+    [{ failure: { response: { status: 409, data: { success: false } } } }, "rejected"],
+    [{ failure: { response: { status: 422, data: nullPrototypeFailure } } }, "rejected"],
+    [{ failure: { response: { status: 409, data: inheritedFailure } } }, "unconfirmed"],
+    [{ failure: { response: { status: 409, data: exoticFailure } } }, "unconfirmed"],
+    [{ failure: { response: { status: 409, data: arrayFailure } } }, "unconfirmed"],
+    [{ failure: { response: { status: 409, data: { success: false, Success: true } } } }, "unconfirmed"],
+    [{ failure: { response: { status: 409, data: { success: false, Data: null } } } }, "unconfirmed"],
+    [{ failure: new Error("private timeout") }, "unconfirmed"],
+    [{ failure: { response: { status: 503 } } }, "unconfirmed"],
+  ]) {
     const fixture = loadService({ variant, ...options });
     await assert.rejects(fixture.telematicsService.assignDeviceToVehicle(741, invocation(variant)), error => error.outcome === outcome && /history/i.test(error.message) && !/private/.test(error.message));
     assert.equal(posts(fixture).length, 1);
@@ -472,6 +494,7 @@ test("precise rejected handoff regression detects the obsolete inner-finally pen
     const form = { ...formInput };
     const scope = { canGovernInstallations: true, assignTarget: target, installationForm: form, assignmentFormSnapshot: { current: form },
       assignmentSession: session, assignmentRenderGeneration: 0, setFormError() {}, toUtcIso: actualToUtcIso,
+      lifecyclePermissionRef: { current: true }, assignmentTargetRef: { current: target },
       assignmentSingleFlight: singleFlight(), assignMut: { mutateAsync: () => { dispatches++; return promise; } } };
     scope.ownsAssignmentSession = evaluate(declaration("ownsAssignmentSession"), scope);
     const submit = evaluate(expression, scope); submit({ preventDefault() {} });
@@ -495,6 +518,26 @@ test("late mutation callbacks cannot overwrite a superseding same-device prior a
       settle(fail ? new Error("old failure") : expected("transferFresh")); await tick(); await tick();
       assert.equal(ui.states.target.currentInstallationId, "904"); assert.equal(ui.states.form.vehicleId, "45");
       assert.equal(ui.states.notice, "newer notice"); assert.equal(ui.states.record, null); assert.equal(ui.states.error, null); assert.equal(ui.session.current.pending, false);
+    } finally { ui.client.clear(); }
+  }
+  for (const mode of ["permission", "target", "form"]) for (const fail of [false, true]) {
+    let settle; const ui = loadUi({ operation: () => new Promise((resolve, reject) => { settle = fail ? reject : resolve; }) });
+    try {
+      ui.controls().openInstallation(transferTarget); ui.controls().updateInstallationForm(() => ({ ...formInput }));
+      ui.controls().submitInstallation({ preventDefault() {} }); await tick();
+      if (mode === "permission") ui.lifecyclePermissionRef.current = false;
+      if (mode === "target") {
+        const replacement = { ...transferTarget };
+        ui.scope.assignmentTargetRef.current = replacement; ui.states.target = replacement;
+      }
+      if (mode === "form") {
+        const replacement = { ...formInput };
+        ui.snapshot.current = replacement; ui.states.form = replacement;
+      }
+      ui.states.notice = `${mode} revoked`;
+      settle(fail ? new Error("old failure") : expected("transferFresh")); await tick(); await tick();
+      assert.equal(ui.states.target.currentInstallationId, "902"); assert.equal(ui.states.notice, `${mode} revoked`);
+      assert.equal(ui.states.record, null); assert.equal(ui.states.error, null);
     } finally { ui.client.clear(); }
   }
 });
@@ -545,6 +588,11 @@ test("record identity and refresh generation protect newer vehicle prior acknowl
   await refresh.refresh(record); assert.equal(refresh.calls.length, 4);
   refresh.context.current = { record: { ...newerRecord }, generation: refresh.context.current.generation + 1 };
   await refresh.refresh(newerRecord); assert.equal(refresh.calls.length, 4);
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const gated = loadRefresh({ invalidate: () => gate }); gated.states.warning = true;
+  const attempt = gated.refresh(record); await tick(); gated.permission.current = false; release(); await attempt;
+  assert.equal(gated.states.warning, true); assert.equal(gated.states.pending, false);
 });
 
 test("notice distinguishes existing recording absent time and unknown status; retry callback only refreshes display", async () => {

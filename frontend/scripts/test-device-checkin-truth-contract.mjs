@@ -32,14 +32,14 @@ const built = await esbuild.build({
   logLevel: "silent",
 });
 
-async function inspect(row, { failure = false, observedAt } = {}) {
+async function inspect(row, { failure = false, observedAt, payload } = {}) {
   const calls = [];
   const module = { exports: {} };
   const api = {
     get: async (...args) => {
       calls.push(["GET", ...args]);
       if (failure) throw new Error("fixture unavailable");
-      return { data: { success: true, data: { device: row } } };
+      return { data: { success: true, data: payload === undefined ? { device: row } : payload } };
     },
     post: () => assert.fail("check-in inspection must not mutate"),
     put: () => assert.fail("check-in inspection must not mutate"),
@@ -143,6 +143,64 @@ test("missing and malformed lifecycle tokens remain unknown instead of defaultin
     assert.equal(stateResult.hasRecordedCheckIn, true);
   }
   assert.equal((await inspect({ status: "Unrecognized", last_seen_at: valid })).status, "Unrecognized");
+
+  const expectedUnknown = { hasRecordedCheckIn: false, lastSeenAt: null, status: "Unknown", deviceState: "Unknown", lifecycleBlocked: false };
+  const polluted = { last_seen_at: valid, status: "Suspended", device_state: "Quarantined", revoked_at: valid };
+  const originalDescriptors = Object.fromEntries(Object.keys(polluted).map(key => [key, Object.getOwnPropertyDescriptor(Object.prototype, key)]));
+  for (const [key, value] of Object.entries(polluted)) Object.defineProperty(Object.prototype, key, { configurable: true, value });
+  try {
+    assert.deepEqual(await inspect({}), expectedUnknown, "Object.prototype fields must not become a device check-in or lifecycle fact");
+  } finally {
+    for (const key of Object.keys(polluted)) {
+      const descriptor = originalDescriptors[key];
+      if (descriptor) Object.defineProperty(Object.prototype, key, descriptor);
+      else delete Object.prototype[key];
+    }
+  }
+
+  class ExoticRecord {
+    constructor() {
+      this.last_seen_at = valid;
+      this.status = "Suspended";
+      this.device_state = "Quarantined";
+      this.revoked_at = valid;
+    }
+  }
+  for (const row of [new ExoticRecord(), Object.assign(new Date(0), polluted), Object.assign([], polluted)]) {
+    assert.deepEqual(await inspect(row), expectedUnknown, `${row.constructor.name} device carriers must fail closed`);
+  }
+  const inheritedDetail = Object.create({ device: { last_seen_at: valid, status: "Active", device_state: "Registered" } });
+  const exoticDetail = Object.assign(new (class DetailCarrier {})(), { device: { last_seen_at: valid, status: "Active", device_state: "Registered" } });
+  for (const payload of [inheritedDetail, exoticDetail, Object.assign([], { device: { last_seen_at: valid, status: "Active" } })]) {
+    assert.deepEqual(await inspect(null, { payload }), expectedUnknown, "inherited, exotic and array detail carriers must fail closed");
+  }
+
+  const nullPrototypeRow = Object.assign(Object.create(null), { lastSeenAt: valid, status: "Active", deviceState: "Registered" });
+  const nullPrototypeDetail = Object.assign(Object.create(null), { device: nullPrototypeRow });
+  assert.deepEqual(await inspect(null, { payload: nullPrototypeDetail }), {
+    hasRecordedCheckIn: true, lastSeenAt: valid, status: "Active", deviceState: "Registered", lifecycleBlocked: false,
+  });
+
+  for (const row of [
+    { lastSeenAt: valid, last_seen_at: undefined, status: "Active", deviceState: "Registered" },
+    { lastSeenAt: valid, last_seen_at: "2024-02-29T12:34:55Z", status: "Active", deviceState: "Registered" },
+    { Last_Seen_At: valid, status: "Active", deviceState: "Registered" },
+  ]) {
+    const result = await inspect(row);
+    assert.equal(result.hasRecordedCheckIn, false);
+    assert.equal(result.lastSeenAt, null);
+  }
+  for (const row of [
+    { lastSeenAt: valid, status: "Active", deviceState: "Registered", device_state: "Suspended" },
+    { lastSeenAt: valid, status: "Active", Device_State: "Registered" },
+    { lastSeenAt: valid, status: "Active", revokedAt: null, revoked_at: valid },
+    { lastSeenAt: valid, status: "Active", Revoked_At: valid },
+  ]) {
+    const result = await inspect(row);
+    assert.equal(result.hasRecordedCheckIn, true);
+    assert.equal(result.lifecycleBlocked, true, JSON.stringify(row));
+  }
+  assert.equal((await inspect({ lastSeenAt: valid, status: "Active", revokedAt: valid })).lifecycleBlocked, true);
 });
 
 test("service transport failures reject without inventing a record", async () => {

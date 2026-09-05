@@ -91,6 +91,7 @@ const record = { deviceId: "741", installationId: "902", result: "Failed", rowVe
 function loadRefresh({ client, invalidate, fail = false } = {}) {
   const states = { warning: false, pending: false, subscriptions: 0 };
   const context = { current: { record, generation: 0 } };
+  const permission = { current: true };
   const calls = [];
   const fallback = { queryHash: "fixture", state: { fetchStatus: "idle", status: "success" }, isActive: () => true };
   const backingCache = client?.getQueryCache();
@@ -104,21 +105,24 @@ function loadRefresh({ client, invalidate, fail = false } = {}) {
   } };
   const refreshReceiptQueries = evaluate(declaration("refreshReceiptQueries"), { queryClient });
   const refresh = evaluate(declaration("refreshCommissioningDisplay"), {
-    commissioningRefreshContext: context,
+    commissioningRefreshContext: context, lifecyclePermissionRef: permission,
     setCommissioningRefreshWarning: value => { states.warning = value; },
     setCommissioningRefreshPending: value => { states.pending = value; },
     queryClient, refreshReceiptQueries,
   });
-  return { refresh, context, states, calls };
+  return { refresh, context, states, calls, permission };
 }
 
 function loadUi({ operation = async () => ({ id: "902", commissioningResult: "Failed", status: "Failed", rowVersion: 3 }), refresh = loadRefresh(), allowed = true } = {}) {
   const states = { target: null, form: { result: "", verificationReference: "" }, formError: null, error: null, notice: null, record: null };
   const session = { current: { deviceId: null, generation: 0, pending: false } };
   const defaults = { result: "", verificationReference: "" };
+  const commissioningTargetRef = { current: null };
+  const commissioningFormRef = { current: states.form };
+  const lifecyclePermissionRef = { current: allowed };
   const setters = {
-    setCommissionTarget: value => { states.target = value; },
-    setCommissioningForm: value => { states.form = typeof value === "function" ? value(states.form) : value; },
+    setCommissionTarget: value => { states.target = value; commissioningTargetRef.current = value; },
+    setCommissioningForm: value => { states.form = typeof value === "function" ? value(states.form) : value; commissioningFormRef.current = states.form; },
     setFormError: value => { states.formError = value; },
     setCommissioningError: value => { states.error = value; },
     setNotice: value => { states.notice = value; },
@@ -127,9 +131,9 @@ function loadUi({ operation = async () => ({ id: "902", commissioningResult: "Fa
     setCommissioningRefreshPending: value => { refresh.states.pending = value; },
   };
   const scope = {
-    ...setters, commissioningSession: session, defaultCommissioningForm: defaults,
+    ...setters, commissioningSession: session, commissioningTargetRef, commissioningFormRef, defaultCommissioningForm: defaults,
     commissioningRefreshContext: refresh.context, refreshCommissioningDisplay: refresh.refresh,
-    canGovernInstallations: allowed, commissionSingleFlight: singleFlight(),
+    canGovernInstallations: allowed, lifecyclePermissionRef, commissionSingleFlight: singleFlight(),
   };
   scope.ownsCommissioningSession = evaluate(declaration("ownsCommissioningSession"), scope);
   const options = evaluate(declaration("installMut"), {
@@ -146,7 +150,7 @@ function loadUi({ operation = async () => ({ id: "902", commissioningResult: "Fa
     const renderedScope = { ...scope, installMut, commissionTarget: states.target, commissioningForm: states.form, commissioningRenderGeneration: session.current.generation };
     return Object.fromEntries(["openCommissioning","closeCommissioning","submitCommissioning","updateCommissioningForm"].map(name => [name, evaluate(declaration(name), renderedScope)]));
   };
-  return { states, session, options, controls, refresh, submitted, observer, client };
+  return { states, session, lifecyclePermissionRef, commissioningTargetRef, commissioningFormRef, options, controls, refresh, submitted, observer, client };
 }
 
 test("Passed and Failed receipts preserve recording independently of unavailable post-ack reads", async () => {
@@ -283,6 +287,16 @@ test("strict core receipt checks installation identity, result/status pairing an
     assert.equal(posts(fixture).length, 1);
     assert.equal(fixture.calls.filter(call => call[1] === "after").length, 0);
   }
+  const polluted = { id: 902, commissioning_result: "Failed", status: "Failed", row_version: 3 };
+  const descriptors = Object.fromEntries(Object.keys(polluted).map(key => [key, Object.getOwnPropertyDescriptor(Object.prototype, key)]));
+  try {
+    for (const [key, value] of Object.entries(polluted)) Object.defineProperty(Object.prototype, key, { configurable: true, value });
+    const fixture = loadService({ data: {} });
+    await assert.rejects(fixture.telematicsService.markInstalled(741, input), error => error.outcome === "unconfirmed");
+    assert.equal(posts(fixture).length, 1);
+  } finally {
+    for (const key of Object.keys(polluted)) descriptors[key] ? Object.defineProperty(Object.prototype, key, descriptors[key]) : delete Object.prototype[key];
+  }
   const snake = loadService({ data: { id: "902", commissioning_result: "Failed", status: "Failed", row_version: 3 } });
   assert.equal((await snake.telematicsService.markInstalled(741,input)).id,"902");
   const nullReceipt = Object.assign(Object.create(null), valid);
@@ -299,14 +313,19 @@ test("unused proof metadata is never reconstructed or emitted by a valid minimal
 
 test("rejection and unconfirmed receipt or transport are distinct with static safe errors and no repeated POST", async () => {
   for (const envelope of [null,[],1,"invalid",{}, new Date(), Object.create({ success: true, data: { id: 902, commissioningResult: "Failed", status: "Failed", rowVersion: 3 } }),
-    { Success: true, data: { id: 902, commissioningResult: "Failed", status: "Failed", rowVersion: 3 } }, { success: "true",data:{} }, { success: 1,data:{} }]) {
+    { Success: true, data: { id: 902, commissioningResult: "Failed", status: "Failed", rowVersion: 3 } }, { success: "true",data:{} }, { success: 1,data:{} },
+    { success: true, data: { id: 902, commissioningResult: "Failed", status: "Failed", rowVersion: 3 }, Success: false },
+    { success: true, data: { id: 902, commissioningResult: "Failed", status: "Failed", rowVersion: 3 }, Data: null },
+    { success: true, data: { id: 902, commissioningResult: "Failed", status: "Failed", rowVersion: 3 }, s_u_c_c_e_s_s: false },
+    { success: true, data: { id: 902, commissioningResult: "Failed", status: "Failed", rowVersion: 3 }, d_a_t_a: null }]) {
     const fixture = loadService({ envelope });
     await assert.rejects(fixture.telematicsService.markInstalled(741,input), error => error.outcome === "unconfirmed");
     assert.equal(posts(fixture).length, 1);
   }
   const rejected = loadService({ failure: { response: { status: 409,data:{success:false,message:"raw private detail"} } } });
   await assert.rejects(rejected.telematicsService.markInstalled(741,input), error => error.outcome === "rejected" && !error.message.includes("raw private detail"));
-  for (const failure of [new Error("raw private detail"), { response:{status:500,data:{success:false}} }]) {
+  for (const failure of [new Error("raw private detail"), { response:{status:500,data:{success:false}} },
+    { response:{status:409,data:{success:false,Success:true}} }, { response:{status:409,data:{success:false,Data:null}} }]) {
     const fixture = loadService({ failure });
     await assert.rejects(fixture.telematicsService.markInstalled(741,input), error => error.outcome === "unconfirmed" && !error.message.includes("raw private detail"));
     assert.equal(posts(fixture).length,1);
@@ -433,8 +452,11 @@ test("rejected submission handoff rejects queued admission without stranding the
     const scope = {
       canGovernInstallations: true, commissionTarget: { id: "741" }, commissioningForm: { ...input },
       commissioningSession: session, commissioningRenderGeneration: 0, setFormError() {},
+      lifecyclePermissionRef: { current: true }, commissioningTargetRef: { current: { id: "741" } }, commissioningFormRef: { current: { ...input } },
       commissionSingleFlight: singleFlight(), installMut: { mutateAsync: () => { dispatches++; return pending; } },
     };
+    scope.commissioningTargetRef.current = scope.commissionTarget;
+    scope.commissioningFormRef.current = scope.commissioningForm;
     scope.ownsCommissioningSession = evaluate(declaration("ownsCommissioningSession"), scope);
     const staleSubmit = evaluate(source, scope);
     staleSubmit({ preventDefault() {} });
@@ -472,6 +494,21 @@ test("forced session supersession seam ignores delayed prior mutation success an
       assert.equal(ui.states.notice,"later notice");
       assert.equal(ui.states.error,null);
       assert.equal(ui.states.record,null);
+    } finally { ui.client.clear(); }
+  }
+  for (const mode of ["permission","target","form"]) for (const fail of [false,true]) {
+    let settle;
+    const ui = loadUi({ operation: () => new Promise((resolve,reject) => { settle = fail ? reject : resolve; }) });
+    try {
+      const target={id:"741"}; ui.controls().openCommissioning(target); ui.controls().updateCommissioningForm(() => ({...input}));
+      ui.controls().submitCommissioning({preventDefault(){}}); await tick();
+      if (mode === "permission") ui.lifecyclePermissionRef.current=false;
+      if (mode === "target") { const replacement={...target}; ui.commissioningTargetRef.current=replacement; ui.states.target=replacement; }
+      if (mode === "form") { const replacement={...input}; ui.commissioningFormRef.current=replacement; ui.states.form=replacement; }
+      ui.states.notice=`${mode} revoked`;
+      settle(fail ? new Error("old failure") : {id:"902",commissioningResult:"Failed",status:"Failed",rowVersion:3}); await tick(); await tick();
+      assert.equal(ui.states.target.id,"741"); assert.equal(ui.states.notice,`${mode} revoked`);
+      assert.equal(ui.states.error,null); assert.equal(ui.states.record,null);
     } finally { ui.client.clear(); }
   }
 });
@@ -528,6 +565,11 @@ test("receipt identity and generation prevent same-device replacement or stale r
   refresh.context.current.record=sameDeviceNewRecord;
   await refresh.refresh(replacement);
   assert.equal(refresh.calls.length,4);
+  let release;
+  const gate=new Promise(resolve=>{release=resolve;});
+  const gated=loadRefresh({invalidate:()=>gate});gated.states.warning=true;
+  const attempt=gated.refresh(record);await tick();gated.permission.current=false;release();await attempt;
+  assert.equal(gated.states.warning,true);assert.equal(gated.states.pending,false);
 });
 
 test("read-only retry clears warning; actual warning labels device, installation and Failed without readiness claims", async () => {

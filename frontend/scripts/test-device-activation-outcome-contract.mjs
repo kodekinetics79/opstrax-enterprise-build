@@ -68,6 +68,7 @@ function evaluate(expression, scope, { component = false } = {}) {
 function loadRefresh({ fails = false, client, invalidate } = {}) {
   const states = { warning: false, pending: false, subscriptions: 0 };
   const context = { current: { deviceId: "741", generation: 0 } };
+  const permission = { current: true };
   const calls = [];
   const expression = declaration("refreshActivationDisplay");
   assert.ok(expression, "the shipped page must separate display refresh from the command");
@@ -86,14 +87,20 @@ function loadRefresh({ fails = false, client, invalidate } = {}) {
     queryClient, refreshReceiptQueries,
     setActivationRefreshWarning: value => { states.warning = value; },
     setActivationRefreshPending: value => { states.pending = value; },
-    activationRefreshContext: context,
+    activationRefreshContext: context, lifecyclePermissionRef: permission,
   });
-  return { refresh, states, calls, context };
+  return { refresh, states, calls, context, permission };
 }
 
 function loadMutation(refresh, context = { current: { deviceId: "741", generation: 0 } }) {
   const states = { notice: null, confirmation: "open", warning: false, receiptId: null, pending: false };
   const calls = [];
+  const permission = { current: true };
+  const target = { id: "741" };
+  const session = { current: { deviceId: "741", generation: 0, pending: false, target } };
+  const activationTargetRef = { current: target };
+  const ownerScope = { lifecyclePermissionRef: permission, activationSession: session, activationTargetRef };
+  const ownsActivationSession = evaluate(declaration("ownsActivationSession"), ownerScope);
   const options = evaluate(declaration("activateMut"), {
     useMutation: options => options,
     telematicsService: { activateDevice: async id => { calls.push(["POST", id]); return receipt; } },
@@ -102,11 +109,13 @@ function loadMutation(refresh, context = { current: { deviceId: "741", generatio
     setActivationRefreshWarning: value => { states.warning = value; },
     setActivationRefreshPending: value => { states.pending = value; },
     setActivationReceiptId: value => { states.receiptId = value; },
-    activationRefreshContext: context,
+    activationRefreshContext: context, activationSession: session, lifecyclePermissionRef: permission,
+    ownsActivationSession,
+    setActivationError: value => { states.error = value; },
     refreshActivationDisplay: refresh,
     refreshAll: refresh,
   });
-  return { options, states, calls };
+  return { options, states, calls, permission, session, target, activationTargetRef, variables: { deviceId: "741", sessionGeneration: 0, target } };
 }
 
 test("fresh server acknowledgement survives unavailable readback and returns only minimal receipt", async () => {
@@ -175,7 +184,19 @@ test("strict core acknowledgement rejects malformed envelope, IDs, status and ro
     await assert.rejects(fixture.telematicsService.activateDevice(741), error => error.outcome === "unconfirmed");
     assert.deepEqual(fixture.calls, [["POST", "/api/telemetry/devices/741/activate", {}]]);
   }
-  for (const envelope of [null, [], "invalid", 1, {}, new Date(), Object.create({ success: true, data: receipt }), { Success: true, data: receipt }, { success: "true", data: receipt }, { success: 1, data: receipt }, { success: 0, data: receipt }]) {
+  const polluted = { id: 741, status: "Active", device_state: "Registered", row_version: 2 };
+  const descriptors = Object.fromEntries(Object.keys(polluted).map(key => [key, Object.getOwnPropertyDescriptor(Object.prototype, key)]));
+  try {
+    for (const [key, value] of Object.entries(polluted)) Object.defineProperty(Object.prototype, key, { configurable: true, value });
+    const fixture = loadService({ data: {} });
+    await assert.rejects(fixture.telematicsService.activateDevice(741), error => error.outcome === "unconfirmed");
+    assert.equal(fixture.calls.length, 1);
+  } finally {
+    for (const key of Object.keys(polluted)) descriptors[key] ? Object.defineProperty(Object.prototype, key, descriptors[key]) : delete Object.prototype[key];
+  }
+  for (const envelope of [null, [], "invalid", 1, {}, new Date(), Object.create({ success: true, data: receipt }), { Success: true, data: receipt }, { success: "true", data: receipt }, { success: 1, data: receipt }, { success: 0, data: receipt },
+    { success: true, data: receipt, Success: false }, { success: true, data: receipt, Data: null },
+    { success: true, data: receipt, s_u_c_c_e_s_s: false }, { success: true, data: receipt, d_a_t_a: null }]) {
     const fixture = loadService({ envelope });
     await assert.rejects(fixture.telematicsService.activateDevice(741), error => error.outcome === "unconfirmed");
     assert.equal(fixture.calls.length, 1);
@@ -206,7 +227,9 @@ test("authorization remains before transport; explicit rejection differs from ti
     await assert.rejects(fixture.telematicsService.activateDevice(741), error => error.outcome === "rejected" && !error.message.includes("untrusted raw detail"));
     assert.equal(fixture.calls.length, 1);
   }
-  for (const failure of [new Error("untrusted raw detail"), { response: { status: 500, data: { success: false } } }]) {
+  for (const failure of [new Error("untrusted raw detail"), { response: { status: 500, data: { success: false } } },
+    { response: { status: 409, data: { success: false, Success: true } } },
+    { response: { status: 409, data: { success: false, Data: null } } }]) {
     const fixture = loadService({ failure });
     await assert.rejects(fixture.telematicsService.activateDevice(741), error => error.outcome === "unconfirmed" && !error.message.includes("untrusted raw detail"));
     assert.equal(fixture.calls.length, 1);
@@ -218,13 +241,31 @@ test("actual mutation disables retries and uses receipt ID with distinct fresh v
     const refresh = loadRefresh({ fails: true });
     const mutation = loadMutation(refresh.refresh, refresh.context);
     assert.equal(mutation.options.retry, false);
-    await mutation.options.onSuccess({ id: "741", status: "Active", deviceState: null, rowVersion: 2, idempotentReplay });
+    await mutation.options.onSuccess({ id: "741", status: "Active", deviceState: null, rowVersion: 2, idempotentReplay }, mutation.variables);
     assert.equal(mutation.states.receiptId, "741");
     assert.equal(mutation.states.notice, idempotentReplay ? "Activation already recorded for device 741." : "Activation recorded for device 741.");
     assert.equal(refresh.states.warning, true);
     assert.equal(refresh.states.pending, false);
     assert.deepEqual(mutation.calls, []);
   }
+  for (const mode of ["permission", "target"]) {
+    const stale = loadMutation(async () => {});
+    stale.states.notice = "newer state";
+    if (mode === "permission") stale.permission.current = false;
+    else stale.activationTargetRef.current = { id: "742" };
+    await stale.options.onSuccess({ ...receipt, id: "741" }, stale.variables);
+    stale.options.onError(new Error("old error"), stale.variables);
+    assert.equal(stale.states.notice, "newer state", mode);
+    assert.equal(stale.states.receiptId, null, mode);
+    assert.equal(stale.states.error, undefined, mode);
+  }
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const gatedRefresh = loadRefresh({ invalidate: () => gate });
+  gatedRefresh.states.warning = true;
+  const pendingRefresh = gatedRefresh.refresh("741"); await new Promise(resolve => setImmediate(resolve));
+  gatedRefresh.permission.current = false; release(); await pendingRefresh;
+  assert.equal(gatedRefresh.states.warning, true); assert.equal(gatedRefresh.states.pending, false);
 });
 
 test("installed QueryClient separates acknowledged action from every detail and optional feed read failure", async () => {
@@ -239,7 +280,7 @@ test("installed QueryClient separates acknowledged action from every detail and 
     try {
       const refresh = loadRefresh({ client });
       const mutation = loadMutation(refresh.refresh, refresh.context);
-      await mutation.options.onSuccess(ack);
+      await mutation.options.onSuccess(ack, mutation.variables);
       assert.equal(mutation.states.notice, "Activation recorded for device 741.");
       assert.equal(refresh.states.warning, true, getFailureUrl);
       assert.equal(client.getQueryState(key).status, "error");
@@ -292,23 +333,27 @@ test("actual activation callback guards same-turn duplicate calls and releases a
   const issue = () => { posts++; return new Promise((resolve, reject) => pending.push({ resolve, reject })); };
   const expression = declaration("runActivation");
   assert.ok(expression, "actual action must route through synchronous admission");
-  const run = evaluate(expression, { canManageDeviceLifecycle: true, activateSingleFlight: holder.exports.useSingleFlight(), activateMut: { mutateAsync: issue } });
-  run(741); run(741);
+  const target = { id: "741" };
+  const run = evaluate(expression, { canManageDeviceLifecycle: true, lifecyclePermissionRef: { current: true }, activationTargetRef: { current: target },
+    activationSession: { current: { deviceId: null, generation: 0, pending: false, target: null } }, activateSingleFlight: holder.exports.useSingleFlight(), activateMut: { mutateAsync: issue } });
+  run(target); run(target);
   assert.equal(posts, 1);
   pending[0].resolve();
   await new Promise(resolve => setImmediate(resolve));
-  run(741); run(741);
+  run(target); run(target);
   assert.equal(posts, 2);
   pending[1].reject(new Error("fixture rejected"));
   await new Promise(resolve => setImmediate(resolve));
-  run(741);
+  run(target);
   assert.equal(posts, 3);
   pending[2].resolve();
   await new Promise(resolve => setImmediate(resolve));
-  const denied = evaluate(expression, { canManageDeviceLifecycle: false, activateSingleFlight: holder.exports.useSingleFlight(), activateMut: { mutateAsync: issue } });
-  denied(741);
+  const deniedTarget = { id: "741" };
+  const denied = evaluate(expression, { canManageDeviceLifecycle: false, lifecyclePermissionRef: { current: false }, activationTargetRef: { current: deniedTarget },
+    activationSession: { current: { deviceId: null, generation: 0, pending: false, target: null } }, activateSingleFlight: holder.exports.useSingleFlight(), activateMut: { mutateAsync: issue } });
+  denied(deniedTarget);
   assert.equal(posts, 3);
-  assert.match(pageSource, /onActivate:\s*\(\) => runActivation\(selectedRecord\.id\)/);
+  assert.match(pageSource, /onActivate:\s*\(\) => runActivation\(selectedRecord\)/);
 });
 
 test("actual warning expression qualifies cache, labels receipt ID, and exposes only read retry", () => {
@@ -365,7 +410,7 @@ test("new activation attempt invalidates stale target completion and retry closu
   const refresh = loadRefresh({ invalidate: () => new Promise((resolve, reject) => pending.push({ resolve, reject })) });
   const older = refresh.refresh("741");
   const mutation = loadMutation(refresh.refresh, refresh.context);
-  mutation.options.onMutate();
+  mutation.options.onMutate(mutation.variables);
   refresh.context.current.deviceId = "742";
   pending[0].reject(new Error("old target failed")); pending[1].resolve();
   await older;

@@ -91,6 +91,7 @@ const record = { deviceId: "741", installationId: "902", effectiveTo };
 function loadRefresh({ client, invalidate, fail = false } = {}) {
   const states = { warning: false, pending: false, subscriptions: 0 };
   const context = { current: { record, generation: 0 } };
+  const permission = { current: true };
   const calls = [];
   const fallback = { queryHash: "fixture", state: { fetchStatus: "idle", status: "success" }, isActive: () => true };
   const backingCache = client?.getQueryCache();
@@ -104,21 +105,24 @@ function loadRefresh({ client, invalidate, fail = false } = {}) {
   } };
   const refreshReceiptQueries = evaluate(declaration("refreshReceiptQueries"), { queryClient });
   const refresh = evaluate(declaration("refreshRemovalDisplay"), {
-    removalRefreshContext: context,
+    removalRefreshContext: context, lifecyclePermissionRef: permission,
     setRemovalRefreshWarning: value => { states.warning = value; },
     setRemovalRefreshPending: value => { states.pending = value; },
     queryClient, refreshReceiptQueries,
   });
-  return { refresh, context, states, calls };
+  return { refresh, context, states, calls, permission };
 }
 
 function loadUi({ operation = async () => ({ id: "902", status: "Removed", effectiveTo }), refresh = loadRefresh(), allowed = true } = {}) {
   const states = { target: null, form: { effectiveTo: "", removalReason: "" }, formError: null, error: null, notice: null, record: null };
   const session = { current: { deviceId: null, generation: 0, pending: false } };
   const defaults = { effectiveTo: "", removalReason: "" };
+  const removalTargetRef = { current: null };
+  const removalFormRef = { current: states.form };
+  const lifecyclePermissionRef = { current: allowed };
   const setters = {
-    setRemovalTarget: value => { states.target = value; },
-    setRemovalForm: value => { states.form = typeof value === "function" ? value(states.form) : value; },
+    setRemovalTarget: value => { states.target = value; removalTargetRef.current = value; },
+    setRemovalForm: value => { states.form = typeof value === "function" ? value(states.form) : value; removalFormRef.current = states.form; },
     setFormError: value => { states.formError = value; },
     setRemovalError: value => { states.error = value; },
     setNotice: value => { states.notice = value; },
@@ -127,9 +131,9 @@ function loadUi({ operation = async () => ({ id: "902", status: "Removed", effec
     setRemovalRefreshPending: value => { refresh.states.pending = value; },
   };
   const scope = {
-    ...setters, removalSession: session, defaultRemovalForm: defaults,
+    ...setters, removalSession: session, removalTargetRef, removalFormRef, defaultRemovalForm: defaults,
     removalRefreshContext: refresh.context, refreshRemovalDisplay: refresh.refresh,
-    canGovernInstallations: allowed, removalSingleFlight: singleFlight(),
+    canGovernInstallations: allowed, lifecyclePermissionRef, removalSingleFlight: singleFlight(),
     toUtcIso: actualToUtcIso,
   };
   scope.ownsRemovalSession = evaluate(declaration("ownsRemovalSession"), scope);
@@ -153,8 +157,10 @@ function loadUi({ operation = async () => ({ id: "902", status: "Removed", effec
     assignMut: { reset() {} }, installMut: { reset() {} }, suspendMut: { reset() {} }, activateMut: { reset() {} }, rotateSecretMut: { reset() {} },
     commissioningSession: { current: { pending: false } }, setCommissioningError() {},
     assignmentSession: { current: { pending: false } }, setAssignmentError() {},
+    suspensionSession: { current: { pending: false } }, activationSession: { current: { pending: false } },
+    setSuspensionError() {}, setActivationError() {},
   });
-  return { states, session, options, controls, refresh, submitted, observer, client, counters, dismissLifecycleError };
+  return { states, session, lifecyclePermissionRef, removalTargetRef, removalFormRef, options, controls, refresh, submitted, observer, client, counters, dismissLifecycleError };
 }
 
 test("matching removal receipt survives unavailable readback without a reconstructed device or repeated POST", async () => {
@@ -274,8 +280,11 @@ test("rejected submission handoff rejects queued admission without stranding the
     const scope = {
       canGovernInstallations: true, removalTarget: { id: "741" }, removalForm: { ...input },
       removalSession: session, removalRenderGeneration: 0, setFormError() {}, toUtcIso: actualToUtcIso,
+      lifecyclePermissionRef: { current: true }, removalTargetRef: { current: { id: "741" } }, removalFormRef: { current: { ...input } },
       removalSingleFlight: singleFlight(), unassignMut: { mutateAsync: () => { dispatches++; return pending; } },
     };
+    scope.removalTargetRef.current = scope.removalTarget;
+    scope.removalFormRef.current = scope.removalForm;
     scope.ownsRemovalSession = evaluate(declaration("ownsRemovalSession"), scope);
     const staleSubmit = evaluate(source, scope);
     staleSubmit({ preventDefault() {} });
@@ -313,6 +322,21 @@ test("forced session supersession seam ignores delayed prior mutation success an
       assert.equal(ui.states.notice,"later notice");
       assert.equal(ui.states.error,null);
       assert.equal(ui.states.record,null);
+    } finally { ui.client.clear(); }
+  }
+  for (const mode of ["permission","target","form"]) for (const fail of [false,true]) {
+    let settle;
+    const ui = loadUi({ operation: () => new Promise((resolve,reject) => { settle = fail ? reject : resolve; }) });
+    try {
+      const target = {id:"741"}; ui.controls().openRemoval(target); ui.controls().updateRemovalForm(() => ({...input}));
+      ui.controls().submitRemoval({preventDefault(){}}); await tick();
+      if (mode === "permission") ui.lifecyclePermissionRef.current=false;
+      if (mode === "target") { const replacement={...target}; ui.removalTargetRef.current=replacement; ui.states.target=replacement; }
+      if (mode === "form") { const replacement={...input}; ui.removalFormRef.current=replacement; ui.states.form=replacement; }
+      ui.states.notice=`${mode} revoked`;
+      settle(fail ? new Error("old failure") : {id:"902",status:"Removed",effectiveTo}); await tick(); await tick();
+      assert.equal(ui.states.target.id,"741"); assert.equal(ui.states.notice,`${mode} revoked`);
+      assert.equal(ui.states.error,null); assert.equal(ui.states.record,null);
     } finally { ui.client.clear(); }
   }
 });
@@ -369,6 +393,11 @@ test("receipt identity and generation prevent same-device replacement or stale r
   refresh.context.current.record=sameDeviceNewRecord;
   await refresh.refresh(replacement);
   assert.equal(refresh.calls.length,4);
+  let release;
+  const gate=new Promise(resolve=>{release=resolve;});
+  const gated=loadRefresh({invalidate:()=>gate});gated.states.warning=true;
+  const attempt=gated.refresh(record);await tick();gated.permission.current=false;release();await attempt;
+  assert.equal(gated.states.warning,true);assert.equal(gated.states.pending,false);
 });
 
 test("read-only retry clears warning; actual warning labels device, installation and effective time without readiness claims", async () => {
@@ -494,6 +523,16 @@ test("malformed receipt identity status time aliases and submillisecond mismatch
     assert.equal(posts(fixture).length, 1);
     assert.equal(fixture.calls.filter(call => call[1] === "after").length, 0);
   }
+  const polluted = { id: 902, status: "Removed", effective_to: effectiveTo };
+  const descriptors = Object.fromEntries(Object.keys(polluted).map(key => [key, Object.getOwnPropertyDescriptor(Object.prototype, key)]));
+  try {
+    for (const [key, value] of Object.entries(polluted)) Object.defineProperty(Object.prototype, key, { configurable: true, value });
+    const fixture = loadService({ data: {} });
+    await assert.rejects(fixture.telematicsService.unassignDevice(741, input), error => error.outcome === "unconfirmed");
+    assert.equal(posts(fixture).length, 1);
+  } finally {
+    for (const key of Object.keys(polluted)) descriptors[key] ? Object.defineProperty(Object.prototype, key, descriptors[key]) : delete Object.prototype[key];
+  }
   const snake = loadService({ data: { id: "902", status: "Removed", effective_to: effectiveTo, rowVersion: 999, deviceState: "Registered", idempotentReplay: true } });
   assert.deepEqual(await snake.telematicsService.unassignDevice(741, input), { id: "902", status: "Removed", effectiveTo });
   const nullReceipt = Object.assign(Object.create(null), valid);
@@ -512,7 +551,11 @@ test("rejection and unknown outcomes stay distinct and removal does not invent t
     assert.deepEqual(await fixture.telematicsService.unassignDevice(741, input), { id: "902", status: "Removed", effectiveTo });
   }
   for (const envelope of [null, [], 1, "invalid", {}, new Date(), Object.create({ success: true, data: { id: 902, status: "Removed", effectiveTo } }),
-    { Success: true, data: {} }, { success: "true", data: {} }, { success: 1, data: {} }]) {
+    { Success: true, data: {} }, { success: "true", data: {} }, { success: 1, data: {} },
+    { success: true, data: { id: 902, status: "Removed", effectiveTo }, Success: false },
+    { success: true, data: { id: 902, status: "Removed", effectiveTo }, Data: null },
+    { success: true, data: { id: 902, status: "Removed", effectiveTo }, s_u_c_c_e_s_s: false },
+    { success: true, data: { id: 902, status: "Removed", effectiveTo }, d_a_t_a: null }]) {
     const fixture = loadService({ envelope });
     await assert.rejects(fixture.telematicsService.unassignDevice(741, input), error => error.outcome === "unconfirmed");
     assert.equal(posts(fixture).length, 1);
@@ -525,6 +568,12 @@ test("rejection and unknown outcomes stay distinct and removal does not invent t
   for (const failure of [new Error("private timeout"), { response: { status: 500, data: { success: false } } }]) {
     const fixture = loadService({ failure });
     await assert.rejects(fixture.telematicsService.unassignDevice(741, input), error => error.outcome === "unconfirmed" && /history/i.test(error.message) && !error.message.includes("private"));
+    assert.equal(posts(fixture).length, 1);
+  }
+  for (const failure of [{ response: { status: 409, data: { success: false, Success: true } } },
+    { response: { status: 409, data: { success: false, Data: null } } }]) {
+    const fixture = loadService({ failure });
+    await assert.rejects(fixture.telematicsService.unassignDevice(741, input), error => error.outcome === "unconfirmed");
     assert.equal(posts(fixture).length, 1);
   }
 });

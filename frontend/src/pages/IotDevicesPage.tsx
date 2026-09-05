@@ -88,13 +88,15 @@ type RemovalFormState = {
   removalReason: string;
 };
 
-type AssignmentMutationVariables = { deviceId: string; input: DeviceInstallationInput; sessionGeneration: number };
+type AssignmentMutationVariables = { deviceId: string; input: DeviceInstallationInput; sessionGeneration: number; target: DeviceCommandRecord; formSnapshot: InstallationFormState };
 type AssignmentRecordedOutcome = DeviceInstallationReceipt & { deviceId: string };
 
 type RemovalMutationVariables = {
   deviceId: string | number;
   input: DeviceInstallationRemovalInput;
   sessionGeneration: number;
+  target: DeviceCommandRecord;
+  formSnapshot: RemovalFormState;
 };
 
 type RemovalRecordedOutcome = { deviceId: string; installationId: string; effectiveTo: string };
@@ -108,6 +110,8 @@ type CommissioningMutationVariables = {
   deviceId: string | number;
   input: DeviceCommissioningInput;
   sessionGeneration: number;
+  target: DeviceCommandRecord;
+  formSnapshot: CommissioningFormState;
 };
 
 type CommissioningRecordedOutcome = {
@@ -116,6 +120,9 @@ type CommissioningRecordedOutcome = {
   result: DeviceCommissioningInput["result"];
   rowVersion: number;
 };
+
+type SuspensionMutationVariables = { deviceId: string; sessionGeneration: number; target: ConfirmActionTarget };
+type ActivationMutationVariables = { deviceId: string; sessionGeneration: number; target: DeviceCommandRecord };
 
 // DEF-023: destructive/lifecycle actions confirm through the in-app accessible
 // ConfirmDialog (native window.confirm cannot be completed by automation and is
@@ -589,6 +596,8 @@ export function IotDevicesPage() {
   const canUpdate = canManageDeviceLifecycle;
   const canDelete = canManageDeviceLifecycle;
   const canGovernInstallations = canManageDeviceLifecycle;
+  const lifecyclePermissionRef = useRef(canManageDeviceLifecycle);
+  lifecyclePermissionRef.current = canManageDeviceLifecycle;
   const canBulkInstall = hasDirectPermission(PERMISSIONS.TELEMETRY_DEVICES_MANAGE);
   // Recovery (mark/resolve malfunction) is gated server-side on
   // compliance:update | compliance:manage | telematics:manage — NOT maintenance:manage,
@@ -615,6 +624,8 @@ export function IotDevicesPage() {
   // Populated ONLY by a real provisionDevice() response.
   const [provisionResult, setProvisionResult] = useState<DeviceProvisionResult | null>(null);
   const [assignTarget, setAssignTarget] = useState<DeviceCommandRecord | null>(null);
+  const assignmentTargetRef = useRef<DeviceCommandRecord | null>(null);
+  assignmentTargetRef.current = assignTarget;
   const [installationForm, setInstallationForm] = useState<InstallationFormState>(defaultInstallationForm);
   const assignmentFormSnapshot = useRef(defaultInstallationForm);
   const [assignmentError, setAssignmentError] = useState<Error | null>(null);
@@ -623,27 +634,35 @@ export function IotDevicesPage() {
   const [assignmentRefreshPending, setAssignmentRefreshPending] = useState(false);
   const assignmentSession = useRef<{ deviceId: string | null; intent: DeviceInstallationIntent | null; generation: number; pending: boolean }>({ deviceId: null, intent: null, generation: 0, pending: false });
   const assignmentRenderGeneration = assignmentSession.current.generation;
-  const assignmentRefreshContext = useRef<{ record: AssignmentRecordedOutcome | null; generation: number }>({ record: null, generation: 0 });
+  const assignmentRefreshContext = useRef<{ record: AssignmentRecordedOutcome | null; generation: number; sessionGeneration: number | null; target: DeviceCommandRecord | null }>({ record: null, generation: 0, sessionGeneration: null, target: null });
   const assignmentSingleFlight = useSingleFlight();
   const [removalTarget, setRemovalTarget] = useState<DeviceCommandRecord | null>(null);
   const [removalForm, setRemovalForm] = useState<RemovalFormState>(defaultRemovalForm);
+  const removalTargetRef = useRef<DeviceCommandRecord | null>(null);
+  const removalFormRef = useRef<RemovalFormState>(removalForm);
+  removalTargetRef.current = removalTarget;
+  removalFormRef.current = removalForm;
   const [removalError, setRemovalError] = useState<Error | null>(null);
   const [removalRecord, setRemovalRecord] = useState<RemovalRecordedOutcome | null>(null);
   const [removalRefreshWarning, setRemovalRefreshWarning] = useState(false);
   const [removalRefreshPending, setRemovalRefreshPending] = useState(false);
   const removalSession = useRef<{ deviceId: string | null; generation: number; pending: boolean }>({ deviceId: null, generation: 0, pending: false });
   const removalRenderGeneration = removalSession.current.generation;
-  const removalRefreshContext = useRef<{ record: RemovalRecordedOutcome | null; generation: number }>({ record: null, generation: 0 });
+  const removalRefreshContext = useRef<{ record: RemovalRecordedOutcome | null; generation: number; sessionGeneration: number | null; target: DeviceCommandRecord | null }>({ record: null, generation: 0, sessionGeneration: null, target: null });
   const removalSingleFlight = useSingleFlight();
   const [commissionTarget, setCommissionTarget] = useState<DeviceCommandRecord | null>(null);
   const [commissioningForm, setCommissioningForm] = useState<CommissioningFormState>(defaultCommissioningForm);
+  const commissioningTargetRef = useRef<DeviceCommandRecord | null>(null);
+  const commissioningFormRef = useRef<CommissioningFormState>(commissioningForm);
+  commissioningTargetRef.current = commissionTarget;
+  commissioningFormRef.current = commissioningForm;
   const [commissioningError, setCommissioningError] = useState<Error | null>(null);
   const [commissioningRecord, setCommissioningRecord] = useState<CommissioningRecordedOutcome | null>(null);
   const [commissioningRefreshWarning, setCommissioningRefreshWarning] = useState(false);
   const [commissioningRefreshPending, setCommissioningRefreshPending] = useState(false);
   const commissioningSession = useRef<{ deviceId: string | null; generation: number; pending: boolean }>({ deviceId: null, generation: 0, pending: false });
   const commissioningRenderGeneration = commissioningSession.current.generation;
-  const commissioningRefreshContext = useRef<{ record: CommissioningRecordedOutcome | null; generation: number }>({ record: null, generation: 0 });
+  const commissioningRefreshContext = useRef<{ record: CommissioningRecordedOutcome | null; generation: number; sessionGeneration: number | null; target: DeviceCommandRecord | null }>({ record: null, generation: 0, sessionGeneration: null, target: null });
   const commissionSingleFlight = useSingleFlight();
   const [rotatedCredentials, setRotatedCredentials] = useState<DeviceCredentialRotationResult | null>(null);
   const [attentionTarget, setAttentionTarget] = useState<DeviceCommandRecord | null>(null);
@@ -651,12 +670,17 @@ export function IotDevicesPage() {
   const [suspensionRefreshWarning, setSuspensionRefreshWarning] = useState(false);
   const [suspensionRefreshPending, setSuspensionRefreshPending] = useState(false);
   const [suspensionReceiptId, setSuspensionReceiptId] = useState<string | null>(null);
-  const suspensionRefreshContext = useRef<{ deviceId: string | null; generation: number }>({ deviceId: null, generation: 0 });
+  const suspensionRefreshContext = useRef<{ deviceId: string | null; generation: number; sessionGeneration: number | null; target: ConfirmActionTarget | null }>({ deviceId: null, generation: 0, sessionGeneration: null, target: null });
+  const suspensionSession = useRef<{ deviceId: string | null; generation: number; pending: boolean; target: ConfirmActionTarget | null }>({ deviceId: null, generation: 0, pending: false, target: null });
+  const [suspensionError, setSuspensionError] = useState<Error | null>(null);
   const suspendSingleFlight = useSingleFlight();
   const [activationRefreshWarning, setActivationRefreshWarning] = useState(false);
   const [activationRefreshPending, setActivationRefreshPending] = useState(false);
   const [activationReceiptId, setActivationReceiptId] = useState<string | null>(null);
-  const activationRefreshContext = useRef<{ deviceId: string | null; generation: number }>({ deviceId: null, generation: 0 });
+  const activationRefreshContext = useRef<{ deviceId: string | null; generation: number; sessionGeneration: number | null; target: DeviceCommandRecord | null }>({ deviceId: null, generation: 0, sessionGeneration: null, target: null });
+  const activationSession = useRef<{ deviceId: string | null; generation: number; pending: boolean; target: DeviceCommandRecord | null }>({ deviceId: null, generation: 0, pending: false, target: null });
+  const activationTargetRef = useRef<DeviceCommandRecord | null>(null);
+  const [activationError, setActivationError] = useState<Error | null>(null);
   const activateSingleFlight = useSingleFlight();
   const [quarantineTarget, setQuarantineTarget] = useState<DeviceIdentityQuarantineRecord | null>(null);
   const [quarantineResolution, setQuarantineResolution] = useState({ resolutionNotes: "", correctedDeviceSerial: "", correctedImei: "" });
@@ -665,6 +689,27 @@ export function IotDevicesPage() {
   const [formError, setFormError] = useState<string | null>(null);
   // DEF-023: pending in-app confirmation for a destructive lifecycle action.
   const [confirmTarget, setConfirmTarget] = useState<ConfirmActionTarget | null>(null);
+  const confirmTargetRef = useRef<ConfirmActionTarget | null>(null);
+  confirmTargetRef.current = confirmTarget;
+
+  useEffect(() => {
+    if (canManageDeviceLifecycle) return;
+    assignmentSession.current = { deviceId: null, intent: null, generation: assignmentSession.current.generation + 1, pending: false };
+    removalSession.current = { deviceId: null, generation: removalSession.current.generation + 1, pending: false };
+    commissioningSession.current = { deviceId: null, generation: commissioningSession.current.generation + 1, pending: false };
+    suspensionSession.current = { deviceId: null, generation: suspensionSession.current.generation + 1, pending: false, target: null };
+    activationSession.current = { deviceId: null, generation: activationSession.current.generation + 1, pending: false, target: null };
+    assignmentRefreshContext.current = { record: null, generation: assignmentRefreshContext.current.generation + 1, sessionGeneration: null, target: null };
+    removalRefreshContext.current = { record: null, generation: removalRefreshContext.current.generation + 1, sessionGeneration: null, target: null };
+    commissioningRefreshContext.current = { record: null, generation: commissioningRefreshContext.current.generation + 1, sessionGeneration: null, target: null };
+    suspensionRefreshContext.current = { deviceId: null, generation: suspensionRefreshContext.current.generation + 1, sessionGeneration: null, target: null };
+    activationRefreshContext.current = { deviceId: null, generation: activationRefreshContext.current.generation + 1, sessionGeneration: null, target: null };
+    setAssignTarget(null); setRemovalTarget(null); setCommissionTarget(null); setConfirmTarget(null);
+    setAssignmentError(null); setRemovalError(null); setCommissioningError(null); setSuspensionError(null); setActivationError(null);
+    setAssignmentRecord(null); setRemovalRecord(null); setCommissioningRecord(null); setSuspensionReceiptId(null); setActivationReceiptId(null);
+    setAssignmentRefreshWarning(false); setRemovalRefreshWarning(false); setCommissioningRefreshWarning(false); setSuspensionRefreshWarning(false); setActivationRefreshWarning(false);
+    setAssignmentRefreshPending(false); setRemovalRefreshPending(false); setCommissioningRefreshPending(false); setSuspensionRefreshPending(false); setActivationRefreshPending(false);
+  }, [canManageDeviceLifecycle]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -741,76 +786,102 @@ export function IotDevicesPage() {
   };
 
   const refreshSuspensionDisplay = async (deviceId: string) => {
-    if (suspensionRefreshContext.current.deviceId !== deviceId) return;
+    if (!lifecyclePermissionRef.current || suspensionRefreshContext.current.deviceId !== deviceId) return;
+    const owner = suspensionRefreshContext.current;
+    const ownsRefresh = () => suspensionRefreshContext.current.deviceId === deviceId
+      && suspensionRefreshContext.current.sessionGeneration === owner.sessionGeneration
+      && suspensionRefreshContext.current.target === owner.target;
     const generation = ++suspensionRefreshContext.current.generation;
     setSuspensionRefreshPending(true);
     try {
       const refreshed = await refreshReceiptQueries();
-      if (suspensionRefreshContext.current.generation === generation) setSuspensionRefreshWarning(!refreshed);
+      if (lifecyclePermissionRef.current && ownsRefresh() && suspensionRefreshContext.current.generation === generation) setSuspensionRefreshWarning(!refreshed);
     } finally {
-      if (suspensionRefreshContext.current.generation === generation) setSuspensionRefreshPending(false);
+      if ((!lifecyclePermissionRef.current || ownsRefresh()) && suspensionRefreshContext.current.generation === generation) setSuspensionRefreshPending(false);
     }
   };
 
   const refreshActivationDisplay = async (deviceId: string) => {
-    if (activationRefreshContext.current.deviceId !== deviceId) return;
+    if (!lifecyclePermissionRef.current || activationRefreshContext.current.deviceId !== deviceId) return;
+    const owner = activationRefreshContext.current;
+    const ownsRefresh = () => activationRefreshContext.current.deviceId === deviceId
+      && activationRefreshContext.current.sessionGeneration === owner.sessionGeneration
+      && activationRefreshContext.current.target === owner.target;
     const generation = ++activationRefreshContext.current.generation;
     setActivationRefreshPending(true);
     try {
       const refreshed = await refreshReceiptQueries();
-      if (activationRefreshContext.current.generation === generation) setActivationRefreshWarning(!refreshed);
+      if (lifecyclePermissionRef.current && ownsRefresh() && activationRefreshContext.current.generation === generation) setActivationRefreshWarning(!refreshed);
     } finally {
-      if (activationRefreshContext.current.generation === generation) setActivationRefreshPending(false);
+      if ((!lifecyclePermissionRef.current || ownsRefresh()) && activationRefreshContext.current.generation === generation) setActivationRefreshPending(false);
     }
   };
 
   const refreshAssignmentDisplay = async (record: AssignmentRecordedOutcome) => {
-    if (assignmentRefreshContext.current.record !== record) return;
+    if (!lifecyclePermissionRef.current || assignmentRefreshContext.current.record !== record) return;
+    const owner = assignmentRefreshContext.current;
+    const ownsRefresh = () => assignmentRefreshContext.current.record === record
+      && assignmentRefreshContext.current.sessionGeneration === owner.sessionGeneration
+      && assignmentRefreshContext.current.target === owner.target;
     const generation = ++assignmentRefreshContext.current.generation;
     setAssignmentRefreshPending(true);
     try {
       const refreshed = await refreshReceiptQueries();
-      if (assignmentRefreshContext.current.generation === generation) setAssignmentRefreshWarning(!refreshed);
+      if (lifecyclePermissionRef.current && ownsRefresh() && assignmentRefreshContext.current.generation === generation) setAssignmentRefreshWarning(!refreshed);
     } catch {
-      if (assignmentRefreshContext.current.generation === generation) setAssignmentRefreshWarning(true);
+      if (lifecyclePermissionRef.current && ownsRefresh() && assignmentRefreshContext.current.generation === generation) setAssignmentRefreshWarning(true);
     } finally {
-      if (assignmentRefreshContext.current.generation === generation) setAssignmentRefreshPending(false);
+      if ((!lifecyclePermissionRef.current || ownsRefresh()) && assignmentRefreshContext.current.generation === generation) setAssignmentRefreshPending(false);
     }
   };
   const ownsAssignmentSession = (variables: AssignmentMutationVariables) =>
-    assignmentSession.current.generation === variables.sessionGeneration
-    && assignmentSession.current.deviceId === variables.deviceId;
+    lifecyclePermissionRef.current && assignmentSession.current.generation === variables.sessionGeneration
+    && assignmentSession.current.deviceId === variables.deviceId
+    && assignmentTargetRef.current === variables.target
+    && assignmentFormSnapshot.current === variables.formSnapshot;
 
   const refreshRemovalDisplay = async (record: RemovalRecordedOutcome) => {
-    if (removalRefreshContext.current.record !== record) return;
+    if (!lifecyclePermissionRef.current || removalRefreshContext.current.record !== record) return;
+    const owner = removalRefreshContext.current;
+    const ownsRefresh = () => removalRefreshContext.current.record === record
+      && removalRefreshContext.current.sessionGeneration === owner.sessionGeneration
+      && removalRefreshContext.current.target === owner.target;
     const generation = ++removalRefreshContext.current.generation;
     setRemovalRefreshPending(true);
     try {
       const refreshed = await refreshReceiptQueries();
-      if (removalRefreshContext.current.generation === generation) setRemovalRefreshWarning(!refreshed);
+      if (lifecyclePermissionRef.current && ownsRefresh() && removalRefreshContext.current.generation === generation) setRemovalRefreshWarning(!refreshed);
     } finally {
-      if (removalRefreshContext.current.generation === generation) setRemovalRefreshPending(false);
+      if ((!lifecyclePermissionRef.current || ownsRefresh()) && removalRefreshContext.current.generation === generation) setRemovalRefreshPending(false);
     }
   };
   const ownsRemovalSession = (variables: RemovalMutationVariables) =>
-    removalSession.current.generation === variables.sessionGeneration
-    && removalSession.current.deviceId === String(variables.deviceId);
+    lifecyclePermissionRef.current && removalSession.current.generation === variables.sessionGeneration
+    && removalSession.current.deviceId === String(variables.deviceId)
+    && removalTargetRef.current === variables.target
+    && removalFormRef.current === variables.formSnapshot;
 
   const refreshCommissioningDisplay = async (record: CommissioningRecordedOutcome) => {
     // Receipt object identity also distinguishes a replacement installation on the same device.
-    if (commissioningRefreshContext.current.record !== record) return;
+    if (!lifecyclePermissionRef.current || commissioningRefreshContext.current.record !== record) return;
+    const owner = commissioningRefreshContext.current;
+    const ownsRefresh = () => commissioningRefreshContext.current.record === record
+      && commissioningRefreshContext.current.sessionGeneration === owner.sessionGeneration
+      && commissioningRefreshContext.current.target === owner.target;
     const generation = ++commissioningRefreshContext.current.generation;
     setCommissioningRefreshPending(true);
     try {
       const refreshed = await refreshReceiptQueries();
-      if (commissioningRefreshContext.current.generation === generation) setCommissioningRefreshWarning(!refreshed);
+      if (lifecyclePermissionRef.current && ownsRefresh() && commissioningRefreshContext.current.generation === generation) setCommissioningRefreshWarning(!refreshed);
     } finally {
-      if (commissioningRefreshContext.current.generation === generation) setCommissioningRefreshPending(false);
+      if ((!lifecyclePermissionRef.current || ownsRefresh()) && commissioningRefreshContext.current.generation === generation) setCommissioningRefreshPending(false);
     }
   };
   const ownsCommissioningSession = (variables: CommissioningMutationVariables) =>
-    commissioningSession.current.generation === variables.sessionGeneration
-    && commissioningSession.current.deviceId === String(variables.deviceId);
+    lifecyclePermissionRef.current && commissioningSession.current.generation === variables.sessionGeneration
+    && commissioningSession.current.deviceId === String(variables.deviceId)
+    && commissioningTargetRef.current === variables.target
+    && commissioningFormRef.current === variables.formSnapshot;
 
   // Provisioning mints one-time credentials. Keep the result in state to render
   // those credentials and the check-in record; neither establishes a physical connection.
@@ -846,14 +917,14 @@ export function IotDevicesPage() {
     retry: false,
     onMutate: (variables) => {
       if (!ownsAssignmentSession(variables)) return;
-      assignmentRefreshContext.current = { record: null, generation: assignmentRefreshContext.current.generation + 1 };
+      assignmentRefreshContext.current = { record: null, generation: assignmentRefreshContext.current.generation + 1, sessionGeneration: null, target: null };
       setAssignmentRecord(null); setAssignmentRefreshWarning(false); setAssignmentRefreshPending(false);
       setAssignmentError(null); setNotice(null);
     },
     onSuccess: async (receipt, variables) => {
       if (!ownsAssignmentSession(variables)) return;
       const record: AssignmentRecordedOutcome = { ...receipt, deviceId: variables.deviceId };
-      assignmentRefreshContext.current = { record, generation: assignmentRefreshContext.current.generation + 1 };
+      assignmentRefreshContext.current = { record, generation: assignmentRefreshContext.current.generation + 1, sessionGeneration: variables.sessionGeneration, target: variables.target };
       setAssignmentRecord(record);
       assignmentSession.current.deviceId = null;
       assignmentSession.current.intent = null;
@@ -873,14 +944,14 @@ export function IotDevicesPage() {
     retry: false,
     onMutate: (variables) => {
       if (!ownsRemovalSession(variables)) return;
-      removalRefreshContext.current = { record: null, generation: removalRefreshContext.current.generation + 1 };
+      removalRefreshContext.current = { record: null, generation: removalRefreshContext.current.generation + 1, sessionGeneration: null, target: null };
       setRemovalRecord(null); setRemovalRefreshWarning(false); setRemovalRefreshPending(false);
       setRemovalError(null); setNotice(null);
     },
     onSuccess: async (receipt, variables) => {
       if (!ownsRemovalSession(variables)) return;
       const record: RemovalRecordedOutcome = { deviceId: String(variables.deviceId), installationId: receipt.id, effectiveTo: receipt.effectiveTo };
-      removalRefreshContext.current = { record, generation: removalRefreshContext.current.generation + 1 };
+      removalRefreshContext.current = { record, generation: removalRefreshContext.current.generation + 1, sessionGeneration: variables.sessionGeneration, target: variables.target };
       setRemovalRecord(record);
       // Revoke the acknowledged form's admission before any later form opens.
       removalSession.current.deviceId = null;
@@ -899,7 +970,7 @@ export function IotDevicesPage() {
     retry: false,
     onMutate: (variables) => {
       if (!ownsCommissioningSession(variables)) return;
-      commissioningRefreshContext.current = { record: null, generation: commissioningRefreshContext.current.generation + 1 };
+      commissioningRefreshContext.current = { record: null, generation: commissioningRefreshContext.current.generation + 1, sessionGeneration: null, target: null };
       setCommissioningRecord(null); setCommissioningRefreshWarning(false); setCommissioningRefreshPending(false);
       setCommissioningError(null); setNotice(null);
     },
@@ -909,7 +980,7 @@ export function IotDevicesPage() {
         deviceId: String(variables.deviceId), installationId: receipt.id,
         result: receipt.commissioningResult, rowVersion: receipt.rowVersion,
       };
-      commissioningRefreshContext.current = { record, generation: commissioningRefreshContext.current.generation + 1 };
+      commissioningRefreshContext.current = { record, generation: commissioningRefreshContext.current.generation + 1, sessionGeneration: variables.sessionGeneration, target: variables.target };
       setCommissioningRecord(record);
       // Revoke this form's admission immediately; its captured handlers must not
       // submit again after acknowledgement, even before another form is opened.
@@ -945,47 +1016,76 @@ export function IotDevicesPage() {
       await refreshAll();
     },
   });
+  const ownsSuspensionSession = (variables: SuspensionMutationVariables) => lifecyclePermissionRef.current
+    && suspensionSession.current.deviceId === variables.deviceId
+    && suspensionSession.current.generation === variables.sessionGeneration
+    && suspensionSession.current.target === variables.target
+    && confirmTargetRef.current === variables.target
+    && variables.target.action === "suspend"
+    && String(variables.target.device.id) === variables.deviceId;
+  const ownsActivationSession = (variables: ActivationMutationVariables) => lifecyclePermissionRef.current
+    && activationSession.current.deviceId === variables.deviceId
+    && activationSession.current.generation === variables.sessionGeneration
+    && activationSession.current.target === variables.target
+    && activationTargetRef.current === variables.target
+    && String(variables.target.id) === variables.deviceId;
   const suspendMut = useMutation({
-    mutationFn: (deviceId: string | number) => telematicsService.suspendDevice(deviceId),
+    mutationFn: ({ deviceId }: SuspensionMutationVariables) => telematicsService.suspendDevice(deviceId),
     retry: false,
-    onMutate: () => {
-      suspensionRefreshContext.current = { deviceId: null, generation: suspensionRefreshContext.current.generation + 1 };
-      setNotice(null); setSuspensionReceiptId(null); setSuspensionRefreshWarning(false); setSuspensionRefreshPending(false);
+    onMutate: (variables) => {
+      if (!ownsSuspensionSession(variables)) return;
+      suspensionRefreshContext.current = { deviceId: null, generation: suspensionRefreshContext.current.generation + 1, sessionGeneration: null, target: null };
+      setNotice(null); setSuspensionError(null); setSuspensionReceiptId(null); setSuspensionRefreshWarning(false); setSuspensionRefreshPending(false);
     },
-    onSuccess: async (receipt) => {
-      suspensionRefreshContext.current = { deviceId: receipt.id, generation: suspensionRefreshContext.current.generation + 1 };
+    onSuccess: async (receipt, variables) => {
+      if (!ownsSuspensionSession(variables)) return;
+      suspensionRefreshContext.current = { deviceId: receipt.id, generation: suspensionRefreshContext.current.generation + 1, sessionGeneration: variables.sessionGeneration, target: variables.target };
       setConfirmTarget(null); setSuspensionReceiptId(receipt.id); setNotice(`Suspension recorded for device ${receipt.id}.`);
       await refreshSuspensionDisplay(receipt.id);
     },
+    onError: (error, variables) => {
+      if (ownsSuspensionSession(variables)) setSuspensionError(error);
+    },
   });
   const activateMut = useMutation({
-    mutationFn: (deviceId: string | number) => telematicsService.activateDevice(deviceId),
+    mutationFn: ({ deviceId }: ActivationMutationVariables) => telematicsService.activateDevice(deviceId),
     retry: false,
-    onMutate: () => {
-      activationRefreshContext.current = { deviceId: null, generation: activationRefreshContext.current.generation + 1 };
-      setNotice(null); setActivationReceiptId(null); setActivationRefreshWarning(false); setActivationRefreshPending(false);
+    onMutate: (variables) => {
+      if (!ownsActivationSession(variables)) return;
+      activationRefreshContext.current = { deviceId: null, generation: activationRefreshContext.current.generation + 1, sessionGeneration: null, target: null };
+      setNotice(null); setActivationError(null); setActivationReceiptId(null); setActivationRefreshWarning(false); setActivationRefreshPending(false);
     },
-    onSuccess: async (receipt) => {
-      activationRefreshContext.current = { deviceId: receipt.id, generation: activationRefreshContext.current.generation + 1 };
+    onSuccess: async (receipt, variables) => {
+      if (!ownsActivationSession(variables)) return;
+      activationRefreshContext.current = { deviceId: receipt.id, generation: activationRefreshContext.current.generation + 1, sessionGeneration: variables.sessionGeneration, target: variables.target };
       setActivationReceiptId(receipt.id);
       setNotice(receipt.idempotentReplay ? `Activation already recorded for device ${receipt.id}.` : `Activation recorded for device ${receipt.id}.`);
       await refreshActivationDisplay(receipt.id);
     },
+    onError: (error, variables) => {
+      if (ownsActivationSession(variables)) setActivationError(error);
+    },
   });
-  const runActivation = (deviceId: string | number) => {
-    if (canManageDeviceLifecycle) void activateSingleFlight(() => activateMut.mutateAsync(deviceId));
+  const runActivation = (target: DeviceCommandRecord) => {
+    if (!canManageDeviceLifecycle || !lifecyclePermissionRef.current || activationSession.current.pending) return;
+    if (activationTargetRef.current !== target) return;
+    const admitted = { deviceId: String(target.id), generation: activationSession.current.generation + 1, pending: true, target };
+    activationSession.current = admitted;
+    void activateSingleFlight(() => activateMut.mutateAsync({ deviceId: admitted.deviceId, sessionGeneration: admitted.generation, target })).finally(() => {
+      if (activationSession.current === admitted) admitted.pending = false;
+    });
   };
   const rotateSecretMut = useMutation({
     mutationFn: (deviceId: string | number) => telematicsService.rotateDeviceSecret(deviceId),
     onSuccess: (result) => { setConfirmTarget(null); setRotatedCredentials(result); },
   });
-  const lifecycleError = assignmentError ?? removalError ?? commissioningError ?? suspendMut.error ?? activateMut.error ?? rotateSecretMut.error;
+  const lifecycleError = assignmentError ?? removalError ?? commissioningError ?? suspensionError ?? activationError ?? rotateSecretMut.error;
   const clearLifecycleError = () => {
     if (!assignmentSession.current.pending) { assignMut.reset(); setAssignmentError(null); }
     if (!removalSession.current.pending) { unassignMut.reset(); setRemovalError(null); }
     if (!commissioningSession.current.pending) { installMut.reset(); setCommissioningError(null); }
-    suspendMut.reset();
-    activateMut.reset();
+    if (!suspensionSession.current.pending) { suspendMut.reset(); setSuspensionError(null); }
+    if (!activationSession.current.pending) { activateMut.reset(); setActivationError(null); }
     rotateSecretMut.reset();
   };
   const providerSyncMut = useMutation({
@@ -1018,6 +1118,9 @@ export function IotDevicesPage() {
   // mounts the dialog, so by the time the dialog reads document.activeElement the
   // opener is already `<body>` and focus restore has nowhere to go.
   const openConfirm = (target: Omit<ConfirmActionTarget, "opener">) => {
+    if (suspensionSession.current.pending) return;
+    suspensionSession.current = { deviceId: null, generation: suspensionSession.current.generation + 1, pending: false, target: null };
+    setSuspensionError(null);
     setConfirmTarget({
       ...target,
       opener: document.activeElement instanceof HTMLElement ? document.activeElement : null,
@@ -1028,13 +1131,25 @@ export function IotDevicesPage() {
   const runConfirmedAction = () => {
     if (!confirmTarget) return;
     if (confirmTarget.action === "archive" && canDelete) archiveMut.mutate(confirmTarget.device.id);
-    else if (confirmTarget.action === "suspend" && canManageDeviceLifecycle) void suspendSingleFlight(() => suspendMut.mutateAsync(confirmTarget.device.id));
+    else if (confirmTarget.action === "suspend" && canManageDeviceLifecycle && lifecyclePermissionRef.current && !suspensionSession.current.pending) {
+      if (confirmTargetRef.current !== confirmTarget) return;
+      const target = confirmTarget;
+      const admitted = { deviceId: String(target.device.id), generation: suspensionSession.current.generation + 1, pending: true, target };
+      suspensionSession.current = admitted;
+      void suspendSingleFlight(() => suspendMut.mutateAsync({ deviceId: admitted.deviceId, sessionGeneration: admitted.generation, target })).finally(() => {
+        if (suspensionSession.current === admitted) admitted.pending = false;
+      });
+    }
     else if (confirmTarget.action === "rotate-credentials" && canManageDeviceLifecycle) rotateSecretMut.mutate(confirmTarget.device.id);
   };
   const cancelConfirmedAction = () => {
     if (!confirmTarget) return;
     if (confirmTarget.action === "archive") archiveMut.reset();
-    else if (confirmTarget.action === "suspend") suspendMut.reset();
+    else if (confirmTarget.action === "suspend") {
+      if (suspensionSession.current.pending) return;
+      suspensionSession.current = { deviceId: null, generation: suspensionSession.current.generation + 1, pending: false, target: null };
+      setSuspensionError(null); suspendMut.reset();
+    }
     else rotateSecretMut.reset();
     setConfirmTarget(null);
   };
@@ -1045,7 +1160,7 @@ export function IotDevicesPage() {
     : false;
   const confirmActionError =
     confirmTarget?.action === "archive" ? archiveMut.error
-    : confirmTarget?.action === "suspend" ? suspendMut.error
+    : confirmTarget?.action === "suspend" ? suspensionError
     : confirmTarget?.action === "rotate-credentials" ? rotateSecretMut.error
     : null;
   const confirmAllowed = confirmTarget?.action === "archive"
@@ -1102,7 +1217,7 @@ export function IotDevicesPage() {
     const admittedSession = assignmentSession.current;
     admittedSession.pending = true;
     const variables: AssignmentMutationVariables = {
-      deviceId: admittedSession.deviceId!, sessionGeneration: admittedSession.generation,
+      deviceId: admittedSession.deviceId!, sessionGeneration: admittedSession.generation, target: assignTarget, formSnapshot: installationForm,
       input: { intent, vehicleId: installationForm.vehicleId, deviceRole: installationForm.deviceRole,
         isPrimary: installationForm.primaryDesignation === "primary", effectiveAt: effectiveAtIso,
         installationLocation: installationForm.installationLocation, odometerAtInstallation: odometer,
@@ -1148,7 +1263,7 @@ export function IotDevicesPage() {
     removalSession.current.pending = true;
     const admittedSession = removalSession.current;
     const variables: RemovalMutationVariables = {
-      deviceId: removalTarget.id, sessionGeneration: removalSession.current.generation,
+      deviceId: removalTarget.id, sessionGeneration: removalSession.current.generation, target: removalTarget, formSnapshot: removalForm,
       input: { effectiveTo: effectiveToIso, removalReason: removalForm.removalReason },
     };
     void removalSingleFlight(() => unassignMut.mutateAsync(variables)).finally(() => {
@@ -1190,7 +1305,7 @@ export function IotDevicesPage() {
     commissioningSession.current.pending = true;
     const admittedSession = commissioningSession.current;
     const variables: CommissioningMutationVariables = {
-      deviceId: commissionTarget.id, sessionGeneration: commissioningSession.current.generation,
+      deviceId: commissionTarget.id, sessionGeneration: commissioningSession.current.generation, target: commissionTarget, formSnapshot: commissioningForm,
       input: { result: commissioningForm.result, verificationReference: commissioningForm.verificationReference },
     };
     void commissionSingleFlight(() => installMut.mutateAsync(variables)).finally(() => {
@@ -1206,6 +1321,11 @@ export function IotDevicesPage() {
   const vehicleOptions = (vehiclesQ.data ?? []) as AnyRecord[];
 
   const selectedRecord = detailQ.data?.device ?? deviceRows.find((row) => String(row.id) === String(selectedId)) ?? null;
+  activationTargetRef.current = selectedRecord;
+  if (activationSession.current.target && activationSession.current.target !== selectedRecord) {
+    activationSession.current = { deviceId: null, generation: activationSession.current.generation + 1, pending: false, target: null };
+    activationRefreshContext.current = { deviceId: null, generation: activationRefreshContext.current.generation + 1, sessionGeneration: null, target: null };
+  }
 
   const currentPageActiveDevices = (devicesQ.data?.items ?? []).filter((row) => activeTabCount("all", row));
   const archivedCount = devicesQ.data?.summary.archived ?? 0;
@@ -1318,19 +1438,19 @@ export function IotDevicesPage() {
         </div>
       ) : null}
 
-      {suspensionRefreshWarning && suspensionReceiptId ? (
+      {canManageDeviceLifecycle && suspensionRefreshWarning && suspensionReceiptId && suspensionRefreshContext.current.target ? (
         <SuspensionRefreshNotice deviceId={suspensionReceiptId} busy={suspensionRefreshPending} onRetry={() => { void refreshSuspensionDisplay(suspensionReceiptId); }} />
       ) : null}
-      {activationRefreshWarning && activationReceiptId ? (
+      {canManageDeviceLifecycle && activationRefreshWarning && activationReceiptId && activationRefreshContext.current.target === selectedRecord ? (
         <ActivationRefreshNotice deviceId={activationReceiptId} busy={activationRefreshPending} onRetry={() => { void refreshActivationDisplay(activationReceiptId); }} />
       ) : null}
-      {commissioningRefreshWarning && commissioningRecord ? (
+      {canManageDeviceLifecycle && commissioningRefreshWarning && commissioningRecord ? (
         <CommissioningRefreshNotice record={commissioningRecord} busy={commissioningRefreshPending} onRetry={() => { void refreshCommissioningDisplay(commissioningRecord); }} />
       ) : null}
-      {removalRefreshWarning && removalRecord ? (
+      {canManageDeviceLifecycle && removalRefreshWarning && removalRecord ? (
         <RemovalRefreshNotice record={removalRecord} busy={removalRefreshPending} onRetry={() => { void refreshRemovalDisplay(removalRecord); }} />
       ) : null}
-      {assignmentRefreshWarning && assignmentRecord ? (
+      {canManageDeviceLifecycle && assignmentRefreshWarning && assignmentRecord ? (
         <AssignmentRefreshNotice record={assignmentRecord} busy={assignmentRefreshPending} onRetry={() => { void refreshAssignmentDisplay(assignmentRecord); }} />
       ) : null}
 
@@ -1560,19 +1680,19 @@ export function IotDevicesPage() {
         <div className="fixed inset-0 z-50 flex justify-end bg-black/55 backdrop-blur-sm" onClick={() => setSelectedId(null)}>
           <aside className="h-full w-full max-w-5xl overflow-y-auto border-l border-white/[0.09] bg-slate-950 p-6 shadow-2xl" onClick={(event) => event.stopPropagation()}>
             <button className="float-right icon-btn" aria-label="Close device details" onClick={() => setSelectedId(null)}><X className="h-4 w-4" /></button>
-            {suspensionRefreshWarning && suspensionReceiptId ? (
+            {canManageDeviceLifecycle && suspensionRefreshWarning && suspensionReceiptId && suspensionRefreshContext.current.target ? (
               <SuspensionRefreshNotice deviceId={suspensionReceiptId} busy={suspensionRefreshPending} onRetry={() => { void refreshSuspensionDisplay(suspensionReceiptId); }} />
             ) : null}
-            {activationRefreshWarning && activationReceiptId ? (
+            {canManageDeviceLifecycle && activationRefreshWarning && activationReceiptId && activationRefreshContext.current.target === selectedRecord ? (
               <ActivationRefreshNotice deviceId={activationReceiptId} busy={activationRefreshPending} onRetry={() => { void refreshActivationDisplay(activationReceiptId); }} />
             ) : null}
-            {commissioningRefreshWarning && commissioningRecord ? (
+            {canManageDeviceLifecycle && commissioningRefreshWarning && commissioningRecord ? (
               <CommissioningRefreshNotice record={commissioningRecord} busy={commissioningRefreshPending} onRetry={() => { void refreshCommissioningDisplay(commissioningRecord); }} />
             ) : null}
-            {removalRefreshWarning && removalRecord ? (
+            {canManageDeviceLifecycle && removalRefreshWarning && removalRecord ? (
               <RemovalRefreshNotice record={removalRecord} busy={removalRefreshPending} onRetry={() => { void refreshRemovalDisplay(removalRecord); }} />
             ) : null}
-            {assignmentRefreshWarning && assignmentRecord ? (
+            {canManageDeviceLifecycle && assignmentRefreshWarning && assignmentRecord ? (
               <AssignmentRefreshNotice record={assignmentRecord} busy={assignmentRefreshPending} onRetry={() => { void refreshAssignmentDisplay(assignmentRecord); }} />
             ) : null}
             {detailQ.isLoading ? (
@@ -1601,7 +1721,7 @@ export function IotDevicesPage() {
 	                      onResolve: () =>
 	                        canRecover && resolveMut.mutate({ id: selectedRecord.id, rowVersion: selectedRecord.rowVersion }),
 	                      onSuspend: () => canManageDeviceLifecycle && openConfirm({ action: "suspend", device: selectedRecord }),
-	                      onActivate: () => runActivation(selectedRecord.id),
+                        onActivate: () => runActivation(selectedRecord),
 	                      onRotateSecret: () => canManageDeviceLifecycle && openConfirm({ action: "rotate-credentials", device: selectedRecord }),
 	                    })
 	                    : []

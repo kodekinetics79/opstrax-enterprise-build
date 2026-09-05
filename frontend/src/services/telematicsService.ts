@@ -354,6 +354,31 @@ function deviceRowFromDetail(payload: AnyRecord): AnyRecord {
   return normalizeKeys((detail.device ?? detail.record ?? detail) as AnyRecord);
 }
 
+// This inspection boundary consumes only JSON-object-shaped own fields.
+function checkInDeviceRowFromDetail(payload: unknown): AnyRecord {
+  const ownRecord = (value: unknown): AnyRecord | null => value !== null && typeof value === "object" && !Array.isArray(value)
+    && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null) ? value as AnyRecord : null;
+  const detail = ownRecord(payload);
+  if (detail === null) return Object.create(null) as AnyRecord;
+  const nested = Object.hasOwn(detail, "device")
+    ? detail.device
+    : Object.hasOwn(detail, "record")
+      ? detail.record
+      : detail;
+  return ownRecord(nested) ?? Object.create(null) as AnyRecord;
+}
+
+function exactCheckInField(row: AnyRecord, camel: string, snake: string): { valid: boolean; present: boolean; value: unknown } {
+  const normalizedName = camel.replace(/_/g, "").toLowerCase();
+  if (Object.keys(row).some((key) => key.replace(/_/g, "").toLowerCase() === normalizedName && key !== camel && key !== snake)) {
+    return { valid: false, present: false, value: undefined };
+  }
+  const hasCamel = Object.hasOwn(row, camel);
+  const hasSnake = Object.hasOwn(row, snake);
+  if (camel !== snake && hasCamel && hasSnake && row[camel] !== row[snake]) return { valid: false, present: false, value: undefined };
+  return { valid: true, present: hasCamel || hasSnake, value: hasSnake ? row[snake] : hasCamel ? row[camel] : undefined };
+}
+
 // This timestamp proves only that a check-in was recorded. It can originate
 // from a provider or a legacy record, not necessarily an authenticated device.
 function recordedDeviceCheckIn(value: unknown, observedAt: number): string | null {
@@ -502,6 +527,16 @@ function installationVersion(value: unknown, maximum: number): value is number {
 function installationObject(value: unknown): value is AnyRecord {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
+}
+function exactLifecycleEnvelope(value: unknown): value is AnyRecord {
+  if (!installationObject(value)) return false;
+  return !Object.keys(value).some((key) => {
+    const normalized = key.replace(/_/g, "").toLowerCase();
+    return (normalized === "success" && key !== "success") || (normalized === "data" && key !== "data");
+  });
+}
+function hasExactReceiptField(receipt: AnyRecord, camel: string, snake: string): boolean {
+  return Object.hasOwn(receipt, camel) || Object.hasOwn(receipt, snake);
 }
 
 /** Capture an internally consistent opened target, not a guessed assignment mode. */
@@ -1795,12 +1830,17 @@ export const telematicsService = {
   // Inspect the stored check-in record. Neither this read nor a valid timestamp
   // establishes current connectivity, device authentication, or physical pairing.
   async getDeviceConnectionState(deviceId: string | number): Promise<{ hasRecordedCheckIn: boolean; lastSeenAt: string | null; status: string; deviceState: string; lifecycleBlocked: boolean }> {
-    const row = deviceRowFromDetail(await unwrap<AnyRecord>(apiClient.get(`/api/telemetry/devices/${deviceId}`)));
-    const lastSeenAt = recordedDeviceCheckIn(row.last_seen_at, Date.now());
-    const status = typeof row.status === "string" && row.status.trim() ? row.status.trim() : "Unknown";
-    const deviceState = typeof row.device_state === "string" && row.device_state.trim() ? row.device_state.trim() : "Unknown";
+    const row = checkInDeviceRowFromDetail(await unwrap<unknown>(apiClient.get(`/api/telemetry/devices/${deviceId}`)));
+    const checkInField = exactCheckInField(row, "lastSeenAt", "last_seen_at");
+    const statusField = exactCheckInField(row, "status", "status");
+    const stateField = exactCheckInField(row, "deviceState", "device_state");
+    const revokedField = exactCheckInField(row, "revokedAt", "revoked_at");
+    const lastSeenAt = recordedDeviceCheckIn(checkInField.valid && checkInField.present ? checkInField.value : undefined, Date.now());
+    const status = statusField.valid && typeof statusField.value === "string" && statusField.value.trim() ? statusField.value.trim() : "Unknown";
+    const deviceState = stateField.valid && typeof stateField.value === "string" && stateField.value.trim() ? stateField.value.trim() : "Unknown";
     const restrictedLifecycle = /^(revoked|retired|suspended|quarantined|decommissioned)$/i;
-    const lifecycleBlocked = row.revoked_at != null || restrictedLifecycle.test(status)
+    const lifecycleBlocked = !statusField.valid || !stateField.valid || !revokedField.valid
+      || (revokedField.present && revokedField.value != null) || restrictedLifecycle.test(status)
       || restrictedLifecycle.test(deviceState);
     return { hasRecordedCheckIn: lastSeenAt !== null, lastSeenAt, status, deviceState, lifecycleBlocked };
   },
@@ -1858,11 +1898,12 @@ export const telematicsService = {
         ? await apiClient.post(`/api/telemetry/devices/${requestedId}/installations/transfer`, { ...installation, effectiveAt, currentInstallationId: priorId, expectedRowVersion: version, removalReason })
         : await apiClient.post(`/api/telemetry/devices/${requestedId}/installations`, { ...installation, effectiveFrom: effectiveAt });
     } catch (error) {
-      const rejected = error && typeof error === "object" ? (error as { response?: { status?: number; data?: { success?: unknown } } }).response : undefined;
-      if (rejected?.data?.success === false && [400, 401, 403, 404, 409, 422].includes(rejected.status ?? 0)) throw new DeviceInstallationOutcomeError("rejected");
+      const rejected = error && typeof error === "object" ? (error as { response?: { status?: number; data?: unknown } }).response : undefined;
+      if (exactLifecycleEnvelope(rejected?.data) && Object.hasOwn(rejected.data, "success") && rejected.data.success === false
+        && [400, 401, 403, 404, 409, 422].includes(rejected.status ?? 0)) throw new DeviceInstallationOutcomeError("rejected");
       throw new DeviceInstallationOutcomeError("unconfirmed");
     }
-    if (!installationObject(response?.data) || !Object.hasOwn(response.data, "success")) throw new DeviceInstallationOutcomeError("unconfirmed");
+    if (!exactLifecycleEnvelope(response?.data) || !Object.hasOwn(response.data, "success")) throw new DeviceInstallationOutcomeError("unconfirmed");
     const { success, data } = response.data;
     if (success === false) throw new DeviceInstallationOutcomeError("rejected");
     if (success !== true || !Object.hasOwn(response.data, "data") || !installationObject(data)) throw new DeviceInstallationOutcomeError("unconfirmed");
@@ -1996,12 +2037,12 @@ export const telematicsService = {
       const rejected = error && typeof error === "object"
         ? (error as { response?: { status?: number; data?: unknown } }).response
         : undefined;
-      if (plainCarrier(rejected?.data) && Object.hasOwn(rejected.data, "success") && rejected.data.success === false
+      if (exactLifecycleEnvelope(rejected?.data) && Object.hasOwn(rejected.data, "success") && rejected.data.success === false
         && [400, 401, 403, 404, 409, 422].includes(rejected?.status ?? 0)) throw new DeviceRemovalOutcomeError("rejected");
       throw new DeviceRemovalOutcomeError("unconfirmed");
     }
     const envelope = response?.data;
-    if (response?.status !== 200 || !plainCarrier(envelope) || !Object.hasOwn(envelope, "success")) throw new DeviceRemovalOutcomeError("unconfirmed");
+    if (response?.status !== 200 || !exactLifecycleEnvelope(envelope) || !Object.hasOwn(envelope, "success")) throw new DeviceRemovalOutcomeError("unconfirmed");
     const { success, data } = envelope;
     if (success === false) throw new DeviceRemovalOutcomeError("rejected");
     if (success !== true || !Object.hasOwn(envelope, "data") || !plainCarrier(data)) throw new DeviceRemovalOutcomeError("unconfirmed");
@@ -2013,6 +2054,9 @@ export const telematicsService = {
       if (camel !== snake && Object.hasOwn(rawReceipt, camel) && Object.hasOwn(rawReceipt, snake) && rawReceipt[camel] !== rawReceipt[snake]) {
         throw new DeviceRemovalOutcomeError("unconfirmed");
       }
+    }
+    if (!["id", "status", "effectiveTo"].every((camel) => hasExactReceiptField(rawReceipt, camel, snakeCaseKey(camel)))) {
+      throw new DeviceRemovalOutcomeError("unconfirmed");
     }
     const receipt = normalizeKeys(rawReceipt);
     const receiptId = canonicalDeviceLifecycleId(receipt.id);
@@ -2067,14 +2111,14 @@ export const telematicsService = {
       const rejected = error && typeof error === "object"
         ? (error as { response?: { status?: number; data?: unknown } }).response
         : undefined;
-      if (plainCarrier(rejected?.data) && Object.hasOwn(rejected.data, "success") && rejected.data.success === false
+      if (exactLifecycleEnvelope(rejected?.data) && Object.hasOwn(rejected.data, "success") && rejected.data.success === false
         && [400, 401, 403, 404, 409, 422].includes(rejected?.status ?? 0)) {
         throw new DeviceCommissioningOutcomeError("rejected");
       }
       throw new DeviceCommissioningOutcomeError("unconfirmed");
     }
     const envelope = response?.data;
-    if (response?.status !== 200 || !plainCarrier(envelope) || !Object.hasOwn(envelope, "success")) throw new DeviceCommissioningOutcomeError("unconfirmed");
+    if (response?.status !== 200 || !exactLifecycleEnvelope(envelope) || !Object.hasOwn(envelope, "success")) throw new DeviceCommissioningOutcomeError("unconfirmed");
     const { success, data } = envelope;
     if (success === false) throw new DeviceCommissioningOutcomeError("rejected");
     if (success !== true || !Object.hasOwn(envelope, "data") || !plainCarrier(data)) throw new DeviceCommissioningOutcomeError("unconfirmed");
@@ -2086,6 +2130,9 @@ export const telematicsService = {
       if (camel !== snake && Object.hasOwn(rawReceipt, camel) && Object.hasOwn(rawReceipt, snake) && rawReceipt[camel] !== rawReceipt[snake]) {
         throw new DeviceCommissioningOutcomeError("unconfirmed");
       }
+    }
+    if (!["id", "status", "commissioningResult", "rowVersion"].every((camel) => hasExactReceiptField(rawReceipt, camel, snakeCaseKey(camel)))) {
+      throw new DeviceCommissioningOutcomeError("unconfirmed");
     }
     const receipt = normalizeKeys(rawReceipt);
     const receiptId = canonicalDeviceLifecycleId(receipt.id);
@@ -2116,14 +2163,14 @@ export const telematicsService = {
         : undefined;
       // Only an explicit client-error response establishes a rejected request.
       // A timeout, lost response or server failure leaves the outcome unconfirmed.
-      if (plainCarrier(rejected?.data) && Object.hasOwn(rejected.data, "success") && rejected.data.success === false
+      if (exactLifecycleEnvelope(rejected?.data) && Object.hasOwn(rejected.data, "success") && rejected.data.success === false
         && [400, 401, 403, 404, 409, 422].includes(rejected?.status ?? 0)) {
         throw new DeviceSuspensionOutcomeError("rejected");
       }
       throw new DeviceSuspensionOutcomeError("unconfirmed");
     }
     const envelope = response?.data;
-    if (response?.status !== 200 || !plainCarrier(envelope) || !Object.hasOwn(envelope, "success")) throw new DeviceSuspensionOutcomeError("unconfirmed");
+    if (response?.status !== 200 || !exactLifecycleEnvelope(envelope) || !Object.hasOwn(envelope, "success")) throw new DeviceSuspensionOutcomeError("unconfirmed");
     const { success, data } = envelope;
     if (success === false) throw new DeviceSuspensionOutcomeError("rejected");
     if (success !== true || !Object.hasOwn(envelope, "data") || !plainCarrier(data)) throw new DeviceSuspensionOutcomeError("unconfirmed");
@@ -2135,6 +2182,9 @@ export const telematicsService = {
       if (camel !== snake && Object.hasOwn(rawReceipt, camel) && Object.hasOwn(rawReceipt, snake) && rawReceipt[camel] !== rawReceipt[snake]) {
         throw new DeviceSuspensionOutcomeError("unconfirmed");
       }
+    }
+    if (!["id", "status", "deviceState", "rowVersion"].every((camel) => hasExactReceiptField(rawReceipt, camel, snakeCaseKey(camel)))) {
+      throw new DeviceSuspensionOutcomeError("unconfirmed");
     }
     const receipt = normalizeKeys(data as AnyRecord);
     const receiptId = canonicalDeviceLifecycleId(receipt.id);
@@ -2162,14 +2212,14 @@ export const telematicsService = {
       const rejected = error && typeof error === "object"
         ? (error as { response?: { status?: number; data?: unknown } }).response
         : undefined;
-      if (plainCarrier(rejected?.data) && Object.hasOwn(rejected.data, "success") && rejected.data.success === false
+      if (exactLifecycleEnvelope(rejected?.data) && Object.hasOwn(rejected.data, "success") && rejected.data.success === false
         && [400, 401, 403, 404, 409, 422].includes(rejected?.status ?? 0)) {
         throw new DeviceActivationOutcomeError("rejected");
       }
       throw new DeviceActivationOutcomeError("unconfirmed");
     }
     const envelope = response?.data;
-    if (response?.status !== 200 || !plainCarrier(envelope) || !Object.hasOwn(envelope, "success")) throw new DeviceActivationOutcomeError("unconfirmed");
+    if (response?.status !== 200 || !exactLifecycleEnvelope(envelope) || !Object.hasOwn(envelope, "success")) throw new DeviceActivationOutcomeError("unconfirmed");
     const { success, data } = envelope;
     if (success === false) throw new DeviceActivationOutcomeError("rejected");
     if (success !== true || !Object.hasOwn(envelope, "data") || !plainCarrier(data)) throw new DeviceActivationOutcomeError("unconfirmed");
@@ -2182,15 +2232,20 @@ export const telematicsService = {
         throw new DeviceActivationOutcomeError("unconfirmed");
       }
     }
-    const receipt = normalizeKeys(rawReceipt);
-    const receiptId = canonicalDeviceLifecycleId(receipt.id);
-    const replay = receipt.idempotent_replay;
-    if (receiptId !== requestedId || receipt.status !== "Active"
-      || typeof receipt.row_version !== "number" || !Number.isSafeInteger(receipt.row_version) || receipt.row_version < 0
-      || (Object.hasOwn(receipt, "idempotent_replay") && typeof replay !== "boolean")) {
+    if (!["id", "status", "rowVersion"].every((camel) => hasExactReceiptField(rawReceipt, camel, snakeCaseKey(camel)))) {
       throw new DeviceActivationOutcomeError("unconfirmed");
     }
-    const state = receipt.device_state;
+    const hasDeviceState = hasExactReceiptField(rawReceipt, "deviceState", "device_state");
+    const hasReplay = hasExactReceiptField(rawReceipt, "idempotentReplay", "idempotent_replay");
+    const receipt = normalizeKeys(rawReceipt);
+    const receiptId = canonicalDeviceLifecycleId(receipt.id);
+    const replay = hasReplay ? receipt.idempotent_replay : undefined;
+    if (receiptId !== requestedId || receipt.status !== "Active"
+      || typeof receipt.row_version !== "number" || !Number.isSafeInteger(receipt.row_version) || receipt.row_version < 0
+      || (hasReplay && typeof replay !== "boolean")) {
+      throw new DeviceActivationOutcomeError("unconfirmed");
+    }
+    const state = hasDeviceState ? receipt.device_state : undefined;
     const deviceState = state === "Registered" || state === "Installed" || state === "Verified" ? state : null;
     if (replay !== true && deviceState === null) throw new DeviceActivationOutcomeError("unconfirmed");
     // An already-Active receipt may lack usable installation state. Keep only

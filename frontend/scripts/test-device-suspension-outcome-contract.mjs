@@ -68,6 +68,7 @@ function evaluate(expression, scope, { component = false } = {}) {
 function loadRefresh({ fails = false, client, invalidate } = {}) {
   const states = { warning: false, pending: false, subscriptions: 0 };
   const context = { current: { deviceId: "741", generation: 0 } };
+  const permission = { current: true };
   const calls = [];
   const expression = declaration("refreshSuspensionDisplay");
   assert.ok(expression, "the shipped page must separate display refresh from the command");
@@ -86,14 +87,20 @@ function loadRefresh({ fails = false, client, invalidate } = {}) {
     queryClient, refreshReceiptQueries,
     setSuspensionRefreshWarning: value => { states.warning = value; },
     setSuspensionRefreshPending: value => { states.pending = value; },
-    suspensionRefreshContext: context,
+    suspensionRefreshContext: context, lifecyclePermissionRef: permission,
   });
-  return { refresh, states, calls, context };
+  return { refresh, states, calls, context, permission };
 }
 
 function loadMutation(refresh, context = { current: { deviceId: "741", generation: 0 } }) {
   const states = { notice: null, confirmation: "open", warning: false, receiptId: null, pending: false };
   const calls = [];
+  const permission = { current: true };
+  const target = { action: "suspend", device: { id: "741" } };
+  const session = { current: { deviceId: "741", generation: 0, pending: false, target } };
+  const confirmTargetRef = { current: target };
+  const ownerScope = { lifecyclePermissionRef: permission, suspensionSession: session, confirmTargetRef };
+  const ownsSuspensionSession = evaluate(declaration("ownsSuspensionSession"), ownerScope);
   const options = evaluate(declaration("suspendMut"), {
     useMutation: options => options,
     telematicsService: { suspendDevice: async id => { calls.push(["POST", id]); return receipt; } },
@@ -102,11 +109,13 @@ function loadMutation(refresh, context = { current: { deviceId: "741", generatio
     setSuspensionRefreshWarning: value => { states.warning = value; },
     setSuspensionRefreshPending: value => { states.pending = value; },
     setSuspensionReceiptId: value => { states.receiptId = value; },
-    suspensionRefreshContext: context,
+    suspensionRefreshContext: context, suspensionSession: session, lifecyclePermissionRef: permission,
+    ownsSuspensionSession,
+    setSuspensionError: value => { states.error = value; },
     refreshSuspensionDisplay: refresh,
     refreshAll: refresh,
   });
-  return { options, states, calls };
+  return { options, states, calls, permission, session, target, confirmTargetRef, variables: { deviceId: "741", sessionGeneration: 0, target } };
 }
 
 test("known receipt resolves independently of unavailable follow-up reads and never constructs a device record", async () => {
@@ -148,6 +157,16 @@ test("missing, mismatched or malformed receipts remain unconfirmed without subse
     await assert.rejects(fixture.telematicsService.suspendDevice(741), error => error.outcome === "unconfirmed");
     assert.deepEqual(fixture.calls, [["POST", "/api/telemetry/devices/741/suspend", {}]]);
   }
+  const polluted = { id: 741, status: "Suspended", device_state: "Suspended", row_version: 2 };
+  const descriptors = Object.fromEntries(Object.keys(polluted).map(key => [key, Object.getOwnPropertyDescriptor(Object.prototype, key)]));
+  try {
+    for (const [key, value] of Object.entries(polluted)) Object.defineProperty(Object.prototype, key, { configurable: true, value });
+    const fixture = loadService({ data: {} });
+    await assert.rejects(fixture.telematicsService.suspendDevice(741), error => error.outcome === "unconfirmed");
+    assert.equal(fixture.calls.length, 1);
+  } finally {
+    for (const key of Object.keys(polluted)) descriptors[key] ? Object.defineProperty(Object.prototype, key, descriptors[key]) : delete Object.prototype[key];
+  }
 });
 
 test("explicit rejection stays distinct from missing, malformed or lost responses", async () => {
@@ -157,9 +176,13 @@ test("explicit rejection stays distinct from missing, malformed or lost response
   }
   for (const fixture of [
     ...[null, [], "invalid", 1, {}, new Date(), Object.create({ success: true, data: receipt }),
-      { Success: true, data: receipt }, { success: "true", data: receipt }, { success: 1, data: receipt }, { success: 0, data: receipt }].map(envelope => loadService({ envelope })),
+      { Success: true, data: receipt }, { success: "true", data: receipt }, { success: 1, data: receipt }, { success: 0, data: receipt },
+      { success: true, data: receipt, Success: false }, { success: true, data: receipt, Data: null },
+      { success: true, data: receipt, s_u_c_c_e_s_s: false }, { success: true, data: receipt, d_a_t_a: null }].map(envelope => loadService({ envelope })),
     loadService({ failure: new Error("fixture timeout") }),
     loadService({ failure: { response: { status: 500, data: { success: false } } } }),
+    loadService({ failure: { response: { status: 409, data: { success: false, Success: true } } } }),
+    loadService({ failure: { response: { status: 409, data: { success: false, Data: null } } } }),
   ]) {
     await assert.rejects(fixture.telematicsService.suspendDevice(741), error => error.outcome === "unconfirmed");
     assert.equal(fixture.calls.length, 1);
@@ -184,7 +207,7 @@ test("the actual suspension mutation disables automatic retries", () => {
 test("actual acknowledged callback and refresh helper keep success when display invalidation fails", async () => {
   const refresh = loadRefresh({ fails: true });
   const mutation = loadMutation(refresh.refresh, refresh.context);
-  await mutation.options.onSuccess({ ...receipt, id: "741" });
+  await mutation.options.onSuccess({ ...receipt, id: "741" }, mutation.variables);
   assert.equal(mutation.states.confirmation, null);
   assert.equal(mutation.states.notice, "Suspension recorded for device 741.");
   assert.equal(mutation.states.receiptId, "741");
@@ -192,6 +215,24 @@ test("actual acknowledged callback and refresh helper keep success when display 
   assert.equal(refresh.states.pending, false);
   assert.deepEqual(mutation.calls, [], "acknowledgement callback must never redispatch POST");
   assert.deepEqual(refresh.calls, [[{ queryKey: ["telematics"] }, { throwOnError: true }], [{ queryKey: ["iot-devices"] }, { throwOnError: true }]]);
+  for (const mode of ["permission", "target"]) {
+    const stale = loadMutation(async () => {});
+    stale.states.notice = "newer state";
+    if (mode === "permission") stale.permission.current = false;
+    else stale.confirmTargetRef.current = { action: "archive", device: { id: "742" } };
+    await stale.options.onSuccess({ ...receipt, id: "741" }, stale.variables);
+    stale.options.onError(new Error("old error"), stale.variables);
+    assert.equal(stale.states.notice, "newer state", mode);
+    assert.equal(stale.states.receiptId, null, mode);
+    assert.equal(stale.states.error, undefined, mode);
+  }
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const gatedRefresh = loadRefresh({ invalidate: () => gate });
+  gatedRefresh.states.warning = true;
+  const pendingRefresh = gatedRefresh.refresh("741"); await new Promise(resolve => setImmediate(resolve));
+  gatedRefresh.permission.current = false; release(); await pendingRefresh;
+  assert.equal(gatedRefresh.states.warning, true); assert.equal(gatedRefresh.states.pending, false);
 });
 
 test("successful read-only retry clears display warning and does not repeat suspension", async () => {
@@ -215,7 +256,7 @@ test("real QueryClient propagates each actual detail or optional-feed failure wi
     try {
       const refresh = loadRefresh({ client });
       const mutation = loadMutation(refresh.refresh, refresh.context);
-      await mutation.options.onSuccess(acknowledged);
+      await mutation.options.onSuccess(acknowledged, mutation.variables);
       assert.equal(mutation.states.notice, "Suspension recorded for device 741.");
       assert.equal(refresh.states.warning, true, getFailureUrl);
       assert.equal(client.getQueryState(key).status, "error");
@@ -257,8 +298,10 @@ test("same-turn suspension confirmations admit one request and release admission
   const releases = [];
   let posts = 0;
   const issue = () => { posts++; return new Promise(resolve => releases.push(resolve)); };
+  const target = { action: "suspend", device: { id: 741 } };
   const run = evaluate(declaration("runConfirmedAction"), {
-    confirmTarget: { action: "suspend", device: { id: 741 } }, canManageDeviceLifecycle: true, canDelete: false,
+    confirmTarget: target, confirmTargetRef: { current: target }, canManageDeviceLifecycle: true, canDelete: false,
+    lifecyclePermissionRef: { current: true }, suspensionSession: { current: { deviceId: null, generation: 0, pending: false, target: null } },
     suspendMut: { mutate: issue, mutateAsync: issue },
     suspendSingleFlight: holder.exports.useSingleFlight(),
   });
@@ -331,7 +374,7 @@ test("new target attempt invalidates older refresh completion and stale retry cl
   const refresh = loadRefresh({ invalidate: () => new Promise((resolve, reject) => pending.push({ resolve, reject })) });
   const older = refresh.refresh("741");
   const mutation = loadMutation(refresh.refresh, refresh.context);
-  mutation.options.onMutate();
+  mutation.options.onMutate(mutation.variables);
   refresh.context.current.deviceId = "742";
   pending[0].reject(new Error("old target refresh failed")); pending[1].resolve();
   await older;
