@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Alert, Text, View } from "react-native";
+import { Alert, Linking, Text, View } from "react-native";
 import {
   ActionButton,
   EmptyState,
@@ -20,7 +20,13 @@ import { useWorkflow } from "@/workflow/WorkflowContext";
 import { useAsyncResource } from "@/hooks/useAsyncResource";
 import { asRecords, textOf } from "@/data/records";
 import type { JsonRecord } from "@/types";
-import { APP_NAME } from "@/config";
+import {
+  ACCOUNT_CREATION_ENABLED,
+  ACCOUNT_DELETION_URL,
+  APP_NAME,
+  PRIVACY_URL,
+  SUPPORT_URL,
+} from "@/config";
 
 function notificationId(item: JsonRecord) {
   return String(item.id ?? item.notificationId ?? item.notification_id ?? "").trim();
@@ -28,6 +34,20 @@ function notificationId(item: JsonRecord) {
 
 function notificationStatus(item: JsonRecord) {
   return textOf(item.recipientStatus ?? item.recipient_status ?? item.status, "unread").toLowerCase();
+}
+
+async function openExternalUrl(url: string, label: string) {
+  if (!url) {
+    Alert.alert(`${label} unavailable`, "This link is not configured for this build.");
+    return;
+  }
+  try {
+    const supported = await Linking.canOpenURL(url);
+    if (!supported) throw new Error("The device cannot open this link.");
+    await Linking.openURL(url);
+  } catch (error) {
+    Alert.alert(`Couldn’t open ${label.toLowerCase()}`, error instanceof Error ? error.message : "Please try again.");
+  }
 }
 
 export function SettingsScreen() {
@@ -153,6 +173,26 @@ export function SettingsScreen() {
           onPress={() => void refresh().catch((error) => Alert.alert("Session refresh failed", error instanceof Error ? error.message : "Unable to refresh."))}
           variant="secondary"
         />
+      </Panel>
+
+      <Panel variant="elevated" tone="blue">
+        <SectionHeader
+          eyebrow="Privacy & help"
+          title="Store-ready account controls"
+          description="Privacy and support links shown here are the same public resources declared for App Store and Google Play review."
+        />
+        <ActionButton label="Privacy policy" onPress={() => void openExternalUrl(PRIVACY_URL, "Privacy policy")} variant="secondary" disabled={!PRIVACY_URL} />
+        <ActionButton label="Support" onPress={() => void openExternalUrl(SUPPORT_URL, "Support")} variant="secondary" disabled={!SUPPORT_URL} />
+        {ACCOUNT_CREATION_ENABLED ? (
+          <>
+            <ActionButton label="Delete my account" onPress={() => void openExternalUrl(ACCOUNT_DELETION_URL, "Account deletion")} variant="danger" disabled={!ACCOUNT_DELETION_URL} />
+            <Text style={{ color: colors.muted, fontSize: 12, lineHeight: 18 }}>
+              Account deletion opens the direct deletion flow configured for this product. Required records may be retained only where law, security, fraud prevention, or contractual obligations require it.
+            </Text>
+          </>
+        ) : (
+          <Field label="Account provisioning" value="Managed by your organization; this app does not currently create user accounts." />
+        )}
       </Panel>
 
       <Panel variant="quiet" tone="violet">
