@@ -17,6 +17,7 @@ import { DriverComplianceScreen } from "@/screens/DriverComplianceScreen";
 import { CustomerHomeScreen } from "@/screens/CustomerHomeScreen";
 import { CustomerShipmentsScreen } from "@/screens/CustomerShipmentsScreen";
 import { CustomerBillingScreen } from "@/screens/CustomerBillingScreen";
+import { CustomerSupportScreen } from "@/screens/CustomerSupportScreen";
 import { useSession } from "@/auth/SessionProvider";
 import { colors } from "@/components/ui";
 
@@ -33,6 +34,7 @@ const tabIcons: Record<string, string> = {
   Fleet: "⌁",
   Shipments: "↗",
   Billing: "$",
+  Support: "?",
   More: "•••",
 };
 
@@ -87,6 +89,7 @@ function CustomerTabs() {
       <Tabs.Screen name="CustomerHome" component={CustomerHomeScreen} options={{ title: "Your account", ...tabOptions("Home") }} />
       <Tabs.Screen name="CustomerShipments" component={CustomerShipmentsScreen} options={{ title: "Shipments", ...tabOptions("Shipments") }} />
       <Tabs.Screen name="CustomerBilling" component={CustomerBillingScreen} options={{ title: "Billing", ...tabOptions("Billing") }} />
+      <Tabs.Screen name="CustomerSupport" component={CustomerSupportScreen} options={{ title: "Support", ...tabOptions("Support") }} />
       <Tabs.Screen name="CustomerMore" component={SettingsScreen} options={{ title: "Profile & security", ...tabOptions("More") }} />
     </Tabs.Navigator>
   );
@@ -150,10 +153,6 @@ export function RootNavigator() {
     && !directPermissions.has("dashboard:view")
     && !directPermissions.has("dashboard.view"),
   );
-  // Customer mobile is a separate product experience. Requiring both the customer
-  // role model and the portal permission prevents a broad internal role that merely
-  // happens to carry a portal-related permission from being routed into this shell.
-  // The /api/portal/* backend remains the authoritative customer_id ownership gate.
   const isCustomer = Boolean(
     session
     && normalizedRole === "customerClient"
