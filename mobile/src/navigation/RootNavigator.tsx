@@ -16,6 +16,7 @@ import { CustomerHomeScreen } from "@/screens/CustomerHomeScreen";
 import { CustomerShipmentsScreen } from "@/screens/CustomerShipmentsScreen";
 import { CustomerBillingScreen } from "@/screens/CustomerBillingScreen";
 import { useSession } from "@/auth/SessionProvider";
+import { resolveProductAccess } from "@/auth/productAccess";
 import { APP_NAME, APP_VARIANT } from "@/config";
 import { colors } from "@/components/ui";
 
@@ -143,40 +144,19 @@ function ProductMismatchScreen() {
 }
 
 export function RootNavigator() {
-  const { ready, session, normalizedRole, hasPermission } = useSession();
+  const { ready, session, normalizedRole } = useSession();
   if (!ready) return <LoadingSplash />;
-  const directPermissions = new Set((session?.permissions ?? []).map((permission) => permission.trim().toLowerCase()));
-  const isDriver = Boolean(
-    session
-    && directPermissions.has("driver:self")
-    && !directPermissions.has("*")
-    && !directPermissions.has("dashboard:view")
-    && !directPermissions.has("dashboard.view"),
-  );
-  // Customer mobile is a separate product experience. Requiring both the customer
-  // role model and the portal permission prevents a broad internal role that merely
-  // happens to carry a portal-related permission from being routed into this shell.
-  // The /api/portal/* backend remains the authoritative customer_id ownership gate.
-  const isCustomer = Boolean(
-    session
-    && normalizedRole === "customerClient"
-    && hasPermission("customer_portal:view"),
-  );
-  const isFleetUser = Boolean(
-    session
-    && !isDriver
-    && !isCustomer
-    && normalizedRole !== "platformAdmin",
-  );
-  const productAccessAllowed = APP_VARIANT === "unified"
-    || (APP_VARIANT === "driver" && isDriver)
-    || (APP_VARIANT === "customer" && isCustomer)
-    || (APP_VARIANT === "fleet" && isFleetUser);
-  const MainComponent = !productAccessAllowed
+  const productAccess = resolveProductAccess({
+    variant: APP_VARIANT,
+    hasSession: Boolean(session),
+    normalizedRole,
+    permissions: session?.permissions ?? [],
+  });
+  const MainComponent = productAccess.experience === "mismatch"
     ? ProductMismatchScreen
-    : isCustomer
+    : productAccess.experience === "customer"
       ? CustomerTabs
-      : isDriver
+      : productAccess.experience === "driver"
         ? DriverTabs
         : OperationsTabs;
 
