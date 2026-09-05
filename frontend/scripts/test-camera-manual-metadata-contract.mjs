@@ -136,6 +136,19 @@ test("actual camera page feeds the shared DataTable neutral severity and whiteli
   } finally { f.cleanup(); }
 });
 
+test("actual camera summary consumer does not relabel an all-record count as today", () => {
+  const f = workflowFixture({ source: pageBuilt.outputFiles[0].text });
+  try {
+    // API8c365703 counts company/nondeleted rows without a time predicate;
+    // retain its existing wire key, not its misleading temporal label.
+    const page = f.renderPage("dashcam", { summary: { ...f.view.summary, data: { dashcamEventsToday: 3 } } });
+    const card = component(page, "KpiCard");
+    assert.equal(card.props.label, "Stored event records");
+    assert.equal(card.props.value, "3");
+    assert.doesNotMatch(renderToStaticMarkup(card), /today/i);
+  } finally { f.cleanup(); }
+});
+
 test("actual camera page treats malformed list as unavailable, never empty/healthy or exportable", async () => {
   const f = workflowFixture({ source: pageBuilt.outputFiles[0].text });
   try {
