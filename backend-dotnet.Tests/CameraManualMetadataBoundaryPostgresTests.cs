@@ -347,9 +347,36 @@ public sealed class CameraManualMetadataBoundaryPostgresTests(ITestOutputHelper 
         }
         finally
         {
-            await barrier.ReleaseAsync();
-            await Fixture.DrainAsync(api,competitor);
+            await Fixture.ReleaseAndDrainAsync(barrier.ReleaseAsync,api,competitor);
         }
+    }
+
+    [Theory]
+    [InlineData("drivers","deleted_at=NOW()","\"driverId\":110",110L)]
+    [InlineData("vehicles","assigned_driver_id=999","\"driverId\":110,\"vehicleId\":120",120L)]
+    public async Task ReferenceCompetitorWinningFirstMakesWaitingRequestInvalid(string table,string change,string fields,long id)
+    {
+        await using var fixture=await Fixture.CreateAsync(output);
+        await using var winner=await fixture.Owner.BeginTransactionAsync();
+        await fixture.ExecuteAsync($"UPDATE {table} SET {change} WHERE id={id}");
+        Task<Response>? api=null;
+        var released=false;
+        async Task Release()
+        {
+            if(released) return;
+            await winner.CommitAsync();
+            released=true;
+        }
+        try
+        {
+            api=fixture.InvokeAsync(false,ValidCreate[..^1]+","+fields+"}");
+            await fixture.WaitForBlockedAsync(fixture.Owner.ProcessID);
+            await Release();
+            Assert.Equal(400,(await api.WaitAsync(TimeSpan.FromSeconds(10))).Status);
+            Assert.Equal(0L,await fixture.ScalarAsync("SELECT COUNT(*) FROM dashcam_events"));
+            Assert.Equal(0L,await fixture.ScalarAsync("SELECT COUNT(*) FROM audit_logs"));
+        }
+        finally { await Fixture.ReleaseAndDrainAsync(Release,api); }
     }
 
     [Theory]
@@ -374,7 +401,7 @@ public sealed class CameraManualMetadataBoundaryPostgresTests(ITestOutputHelper 
             Assert.Equal("winner",await fixture.ScalarAsync("SELECT title FROM dashcam_events"));
             Assert.Equal(1L,await fixture.ScalarAsync("SELECT COUNT(*) FROM audit_logs"));
         }
-        finally { await barrier.ReleaseAsync(); await Fixture.DrainAsync(first,second); }
+        finally { await Fixture.ReleaseAndDrainAsync(barrier.ReleaseAsync,first,second); }
     }
 
     [Theory]
@@ -396,7 +423,7 @@ public sealed class CameraManualMetadataBoundaryPostgresTests(ITestOutputHelper 
             await barrier.ReleaseAsync();
             Assert.Equal(before,await fixture.SnapshotAsync());
         }
-        finally { await barrier.ReleaseAsync(); await Fixture.DrainAsync(api); }
+        finally { await Fixture.ReleaseAndDrainAsync(barrier.ReleaseAsync,api); }
     }
 
     [Fact]
@@ -412,7 +439,7 @@ public sealed class CameraManualMetadataBoundaryPostgresTests(ITestOutputHelper 
             await fixture.WaitForBlockedAsync(fixture.Owner.ProcessID);
             Assert.Equal(503,(await api.WaitAsync(TimeSpan.FromSeconds(8))).Status);
         }
-        finally { await locked.RollbackAsync(); await Fixture.DrainAsync(api); }
+        finally { await Fixture.ReleaseAndDrainAsync(() => locked.RollbackAsync(),api); }
         Assert.Equal(0L,await fixture.ScalarAsync("SELECT COUNT(*) FROM dashcam_events"));
         Assert.Equal(0L,await fixture.ScalarAsync("SELECT COUNT(*) FROM audit_logs"));
     }
@@ -427,6 +454,27 @@ public sealed class CameraManualMetadataBoundaryPostgresTests(ITestOutputHelper 
             beforeHandler: () => fixture.Db.ExecuteAsync($"SET LOCAL session_replication_role='{mode}'"));
         Assert.Equal(expected,response.Status);
         Assert.Equal(expected==201 ? 1L : 0L,await fixture.ScalarAsync("SELECT COUNT(*) FROM dashcam_events"));
+    }
+
+    [Fact]
+    public async Task ActualCleanupHelperPropagatesMissingSavepoint_LayeredNotHandlerRaceEvidence()
+    {
+        await using var fixture=await Fixture.CreateAsync(output);
+        await using var scope=await fixture.Db.BeginTenantScopeAsync(11);
+        fixture.Scopes.Current=scope;
+        try
+        {
+            var restore=typeof(EndpointMappings).GetMethod("RestoreCameraSavepoint",BindingFlags.NonPublic|BindingFlags.Static)!;
+            var task=(Task)restore.Invoke(null,[fixture.Db,"camera_metadata_prerequisite"])!;
+            var error=await Assert.ThrowsAsync<PostgresException>(() => task);
+            Assert.Equal("3B001",error.SqlState);
+        }
+        finally { fixture.Scopes.Current=null; }
+        // This source pin covers the caller's exclusion; it is NOT an actual handler
+        // cleanup-race or lost-commit test. The helper above uses the real PostgreSQL failure.
+        var source=File.ReadAllText(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"../../../../backend-dotnet/Controllers/EndpointMappings.cs")));
+        Assert.Contains("restoring = true;",source,StringComparison.Ordinal);
+        Assert.Contains("catch (PostgresException ex) when (!restoring && CameraRecoverableDatabaseError(ex, ct))",source,StringComparison.Ordinal);
     }
 
     public static IEnumerable<object[]> PrerequisiteVariants()
@@ -671,6 +719,10 @@ public sealed class CameraManualMetadataBoundaryPostgresTests(ITestOutputHelper 
             using var bound=new CancellationTokenSource(TimeSpan.FromSeconds(2));
             while (true)
             {
+                // Owner may hold a barrier transaction. Refresh only this observer's
+                // cached statistics snapshot so newly started contenders are visible.
+                await using (var refresh=new NpgsqlCommand("SELECT pg_stat_clear_snapshot()",Owner))
+                    await refresh.ExecuteNonQueryAsync(bound.Token);
                 await using var command=new NpgsqlCommand("""
                     SELECT a.pid FROM pg_stat_activity a
                     WHERE a.datname=current_database() AND a.usename=current_user AND a.application_name=@application
@@ -691,11 +743,21 @@ public sealed class CameraManualMetadataBoundaryPostgresTests(ITestOutputHelper 
         {
             // Releasing the fixture barrier happens before draining. All DB commands have
             // bounded waits. Observe expected failures here; assertions own the test result.
-            foreach (var task in tasks.Where(t => t is not null))
+            var all=Task.WhenAll(tasks.OfType<Task>());
+            try { await all.WaitAsync(TimeSpan.FromSeconds(12)); }
+            catch when (all.IsCompleted) { }
+        }
+        public static async Task ReleaseAndDrainAsync(Func<Task> release,params Task?[] tasks)
+        {
+            Exception? releaseFailure=null;
+            try { await release(); }
+            catch(Exception ex) { releaseFailure=ex; }
+            try { await DrainAsync(tasks); }
+            catch(Exception drainFailure) when(releaseFailure is not null)
             {
-                try { await task!.WaitAsync(TimeSpan.FromSeconds(12)); }
-                catch when (task!.IsCompleted) { }
+                throw new AggregateException("Fixture release and task drain both failed; cleanup is not established.",releaseFailure,drainFailure);
             }
+            if(releaseFailure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(releaseFailure).Throw();
         }
         public sealed class AuditBarrier(NpgsqlTransaction transaction) : IAsyncDisposable
         {
