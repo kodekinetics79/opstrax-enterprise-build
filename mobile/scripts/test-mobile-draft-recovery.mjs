@@ -45,3 +45,13 @@ test("DVIR retry reuses one persisted idempotency identity until success", async
   assert.match(compliance, /await clearSecureDraft\(dvirDraftKey\)/);
   assert.match(compliance, /retry identity remain saved on this device/i);
 });
+
+test("customer support request draft survives app interruption and failed submission", async () => {
+  const support = await source("src/screens/CustomerSupportScreen.tsx");
+  assert.match(support, /secureDraftKey\("customer-support"/);
+  assert.match(support, /readSecureDraft<SupportDraft>/);
+  assert.match(support, /writeSecureDraft<SupportDraft>/);
+  assert.match(support, /await api\.request\.post<JsonRecord>\("\/api\/portal\/feedback"/);
+  assert.match(support, /await clearSecureDraft\(supportDraftKey\)/);
+  assert.match(support, /Your draft remains saved on this device/);
+});
