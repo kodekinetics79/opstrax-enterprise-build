@@ -24,10 +24,14 @@ jobs:
       - name: Generate SDK 56 notification dependency lock
         working-directory: mobile
         run: npm install expo-notifications@~56.0.25 --save --package-lock-only --ignore-scripts --no-audit --no-fund
-      - name: Validate generated dependency graph
+      - name: Install generated dependency graph
         working-directory: mobile
-        run: npx expo install --check
+        run: npm ci --no-audit --no-fund
+      - name: Validate with repo-local Expo SDK 56 CLI
+        working-directory: mobile
+        run: npx --no-install expo install --check
       - name: Upload generated manifests
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: mobile-push-generated-manifests
