@@ -52,3 +52,23 @@ test("customer screens do not expose internal fleet economics or driver risk fie
     assert.doesNotMatch(combined, new RegExp(forbidden, "i"));
   }
 });
+
+test("store packaging produces distinct Driver Fleet and Customer products", async () => {
+  const [appConfig, eas, runtimeConfig, navigation] = await Promise.all([
+    source("app.config.ts"),
+    source("eas.json"),
+    source("src/config.ts"),
+    source("src/navigation/RootNavigator.tsx"),
+  ]);
+  for (const product of ["driver", "fleet", "customer"]) {
+    assert.match(appConfig, new RegExp(`${product}: \\{ name: \\"OpsTrax`, "i"));
+    assert.match(eas, new RegExp(`"${product}-production"`));
+  }
+  assert.match(appConfig, /Production store builds must set EXPO_PUBLIC_PRODUCT/);
+  assert.match(runtimeConfig, /SECURE_SESSION_KEY = `opstrax\.\$\{storageProduct\}/);
+  assert.match(runtimeConfig, /SECURE_WORKSPACE_JOB_KEY = `opstrax\.\$\{storageProduct\}/);
+  assert.match(navigation, /APP_PRODUCT === "driver" && isDriver/);
+  assert.match(navigation, /APP_PRODUCT === "customer" && isCustomer/);
+  assert.match(navigation, /APP_PRODUCT === "fleet" && isFleetUser/);
+  assert.match(navigation, /normalizedRole === "platformAdmin"/);
+});
