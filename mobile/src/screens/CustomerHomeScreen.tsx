@@ -8,6 +8,7 @@ import {
   EmptyState,
   ErrorState,
   Field,
+  HeroPanel,
   LoadingState,
   MetricCard,
   Panel,
@@ -60,25 +61,40 @@ export function CustomerHomeScreen() {
 
   return (
     <Screen>
-      <Panel>
+      <HeroPanel tone="blue">
         <SectionHeader
           eyebrow={session?.company.name}
           title={`Welcome, ${session?.user.name ?? "customer"}`}
-          description="Your shipments, delivery status, proof, and billing are scoped to your customer account only."
+          description="A private view of your shipments, delivery status, proof, and billing—scoped to your customer account only."
           right={<Pill label="Customer" tone="teal" />}
         />
         <Row>
-          <MetricCard label="Active shipments" value={jobs.loading ? "…" : String(activeShipments.length)} tone="teal" />
-          <MetricCard label="Outstanding" value={invoices.loading ? "…" : money(outstanding, currency)} tone={overdue > 0 ? "amber" : "blue"} />
-          <MetricCard label="Overdue" value={invoices.loading ? "…" : String(overdue)} tone={overdue > 0 ? "red" : "green"} />
+          <MetricCard
+            label="Active shipments"
+            value={jobs.loading ? "…" : String(activeShipments.length)}
+            helper="Currently in motion"
+            tone="teal"
+          />
+          <MetricCard
+            label="Outstanding"
+            value={invoices.loading ? "…" : money(outstanding, currency)}
+            helper="Open receivables"
+            tone={overdue > 0 ? "amber" : "blue"}
+          />
+          <MetricCard
+            label="Overdue"
+            value={invoices.loading ? "…" : String(overdue)}
+            helper={overdue > 0 ? "Needs attention" : "Account current"}
+            tone={overdue > 0 ? "red" : "green"}
+          />
         </Row>
-      </Panel>
+      </HeroPanel>
 
-      <Panel>
+      <Panel variant="elevated" tone={nextShipment ? "teal" : undefined}>
         <SectionHeader
           eyebrow="Next delivery"
           title="What needs your attention"
-          description="Live customer-safe shipment data from the OpsTrax backend."
+          description="Customer-safe shipment data from the live OpsTrax backend."
         />
         {jobs.loading ? <LoadingState label="Loading your shipments…" /> : null}
         {jobs.error ? <ErrorState title="Shipments unavailable" body={jobs.error} onRetry={jobs.refresh} /> : null}
@@ -89,7 +105,7 @@ export function CustomerHomeScreen() {
           <View style={{ gap: 10 }}>
             <Row>
               <View style={{ flex: 1, gap: 4 }}>
-                <Text style={{ color: colors.text, fontSize: 19, fontWeight: "900" }}>
+                <Text style={{ color: colors.text, fontSize: 20, fontWeight: "900", letterSpacing: -0.35 }}>
                   {textOf(nextShipment.jobNumber ?? nextShipment.trackingCode, "Shipment")}
                 </Text>
                 <Text style={{ color: colors.muted, fontSize: 13, lineHeight: 18 }}>
@@ -104,8 +120,12 @@ export function CustomerHomeScreen() {
         ) : null}
       </Panel>
 
-      <Panel>
-        <SectionHeader eyebrow="Account boundary" title="Private to your organization" description="The server enforces both tenant and customer-account ownership before returning these records." />
+      <Panel variant="quiet">
+        <SectionHeader
+          eyebrow="Privacy boundary"
+          title="Private to your organization"
+          description="The server enforces tenant and customer-account ownership before any record is returned to the app."
+        />
         <Field label="Organization" value={session?.company.name} />
         <Field label="Account" value={session?.user.email} />
       </Panel>
