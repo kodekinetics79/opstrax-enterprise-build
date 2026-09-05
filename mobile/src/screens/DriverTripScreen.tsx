@@ -1,7 +1,21 @@
 import { useState } from "react";
 import { Alert, Linking, View } from "react-native";
 import * as Haptics from "expo-haptics";
-import { ActionButton, EmptyState, ErrorState, Field, Input, LoadingState, Panel, Pill, Row, Screen, SectionHeader, toneForStatus } from "@/components/ui";
+import {
+  ActionButton,
+  EmptyState,
+  ErrorState,
+  Field,
+  HeroPanel,
+  Input,
+  LoadingState,
+  Panel,
+  Pill,
+  Row,
+  Screen,
+  SectionHeader,
+  toneForStatus,
+} from "@/components/ui";
 import { useSession } from "@/auth/SessionProvider";
 import { useAsyncResource } from "@/hooks/useAsyncResource";
 import { textOf, titleCase } from "@/data/records";
@@ -17,10 +31,6 @@ export function DriverTripScreen() {
   const [busy, setBusy] = useState(false);
   const [vehicleRef, setVehicleRef] = useState("");
   const assignment = current.data?.assignment;
-  // Departure is gated server-side on vehicle confirmation: the backend lists
-  // en_route_pickup in driverNextStatuses as soon as the load is accepted, but 409s the
-  // transition until confirm-vehicle has run. Mirror the web gate so the button is only
-  // offered once it will actually succeed.
   const vehicleConfirmed = Boolean(assignment?.vehicleConfirmedAt);
 
   const openMaps = async (address?: string) => {
@@ -89,9 +99,14 @@ export function DriverTripScreen() {
 
   return (
     <Screen>
-      <Panel>
-        <SectionHeader eyebrow="Live trip" title={textOf(assignment?.shipmentNumber, "Trip")} description="Only assignment transitions allowed by the backend state machine are shown." right={assignment ? <Pill label={titleCase(assignment.assignmentStatus)} tone={toneForStatus(assignment.assignmentStatus)} /> : undefined} />
-      </Panel>
+      <HeroPanel tone="teal">
+        <SectionHeader
+          eyebrow="Live trip"
+          title={textOf(assignment?.shipmentNumber, "Trip")}
+          description="Only assignment transitions allowed by the backend state machine are shown."
+          right={assignment ? <Pill label={titleCase(assignment.assignmentStatus)} tone={toneForStatus(assignment.assignmentStatus)} /> : undefined}
+        />
+      </HeroPanel>
 
       {current.loading ? <LoadingState label="Loading trip…" /> : null}
       {current.error ? <ErrorState title="Trip unavailable" body={current.error} /> : null}
@@ -99,8 +114,12 @@ export function DriverTripScreen() {
 
       {assignment ? (
         <>
-          <Panel>
-            <SectionHeader eyebrow="Route" title="Pickup to delivery" description="Open the destination in your device’s maps app. OpsTrax does not fabricate route geometry." />
+          <Panel variant="elevated" tone="blue">
+            <SectionHeader
+              eyebrow="Route"
+              title="Pickup to delivery"
+              description="Open a destination in the device maps app. OpsTrax does not fabricate route geometry."
+            />
             <View style={{ gap: 10 }}>
               <Field label="Pickup" value={assignment.pickupAddress} />
               <ActionButton label="Navigate to pickup" onPress={() => void openMaps(assignment.pickupAddress)} variant="secondary" disabled={!assignment.pickupAddress} />
@@ -109,8 +128,12 @@ export function DriverTripScreen() {
             </View>
           </Panel>
 
-          <Panel>
-            <SectionHeader eyebrow="Progress" title="Update live status" description="Delivery completion is never a status button; it requires proof on the Proof tab." />
+          <Panel variant="elevated" tone="teal">
+            <SectionHeader
+              eyebrow="Progress"
+              title="Update live status"
+              description="Delivery completion is never a simple status button; it requires proof on the Proof tab."
+            />
             {!vehicleConfirmed && current.data?.driverNextStatuses?.includes("en_route_pickup") ? (
               <View style={{ gap: 10, marginBottom: 12 }}>
                 <Field label="Assigned unit" value={textOf(assignment?.vehicleCode, "Unavailable")} />
@@ -130,20 +153,31 @@ export function DriverTripScreen() {
                   .filter((status) => status !== "exception")
                   .filter((status) => status !== "en_route_pickup" || vehicleConfirmed)
                   .map((status) => (
-                  <ActionButton key={status} label={`Mark ${titleCase(status)}`} onPress={() => transition(status)} disabled={busy} />
-                ))}
+                    <ActionButton key={status} label={`Mark ${titleCase(status)}`} onPress={() => transition(status)} disabled={busy} />
+                  ))}
               </View>
             ) : (
               <EmptyState title="No transition available" body="Refresh after dispatch changes the assignment, or complete the required proof step." />
             )}
           </Panel>
 
-          <Panel>
-            <SectionHeader eyebrow="Exception" title="Tell operations immediately" description="Exception reports notify dispatch and fleet management and preserve the prior trip state." />
+          <Panel variant="solid" tone="red">
+            <SectionHeader
+              eyebrow="Exception"
+              title="Tell operations immediately"
+              description="Exception reports notify dispatch and fleet management while preserving the prior trip state."
+            />
             {showException ? (
               <View style={{ gap: 12 }}>
                 <TextPicker values={EXCEPTION_TYPES} selected={exceptionType} onSelect={setExceptionType} />
-                <Input label="What happened?" value={exceptionNotes} onChangeText={setExceptionNotes} placeholder="Describe what happened and what support you need." multiline autoCapitalize="sentences" />
+                <Input
+                  label="What happened?"
+                  value={exceptionNotes}
+                  onChangeText={setExceptionNotes}
+                  placeholder="Describe what happened and what support you need."
+                  multiline
+                  autoCapitalize="sentences"
+                />
                 <Row>
                   <ActionButton label="Cancel" onPress={() => setShowException(false)} variant="ghost" disabled={busy} />
                   <ActionButton label={busy ? "Reporting…" : "Report exception"} onPress={() => void reportException()} variant="danger" disabled={busy || exceptionNotes.trim().length < 3} />
