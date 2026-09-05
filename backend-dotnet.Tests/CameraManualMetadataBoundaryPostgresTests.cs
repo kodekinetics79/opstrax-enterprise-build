@@ -320,6 +320,115 @@ public sealed class CameraManualMetadataBoundaryPostgresTests(ITestOutputHelper 
         Assert.True((bool)(await fixture.ScalarAsync("SELECT branch_id IS NULL AND occurred_at BETWEEN NOW()-interval '1 minute' AND NOW()+interval '1 minute' FROM dashcam_events"))!);
     }
 
+    [Theory]
+    [InlineData("drivers","deleted_at=NOW()","\"driverId\":110",110L)]
+    [InlineData("vehicles","assigned_driver_id=999","\"driverId\":110,\"vehicleId\":120",120L)]
+    public async Task ReferenceNonKeyCompetitorWaitsForActualApiTransaction(string table,string change,string fields,long referenceId)
+    {
+        await using var fixture=await Fixture.CreateAsync(output);
+        await using var barrier=await fixture.HoldAuditBarrierAsync();
+        Task<Response>? api=null;
+        Task<int>? competitor=null;
+        await using var connection=await fixture.OpenConnectionAsync();
+        await using var command=new NpgsqlCommand($"UPDATE {table} SET {change} WHERE id=@id",connection);
+        command.Parameters.AddWithValue("id",referenceId);
+        try
+        {
+            api=fixture.InvokeAsync(false,ValidCreate[..^1]+","+fields+"}");
+            var apiPid=await fixture.WaitForBlockedAsync(fixture.Owner.ProcessID);
+            competitor=command.ExecuteNonQueryAsync();
+            var competitorPid=await fixture.WaitForBlockedAsync(apiPid,connection.ProcessID);
+            Assert.Equal(connection.ProcessID,competitorPid);
+            Assert.False(competitor.IsCompleted);
+            await barrier.ReleaseAsync();
+            AssertReceipt(await api.WaitAsync(TimeSpan.FromSeconds(10)),201,1);
+            Assert.Equal(1,await competitor.WaitAsync(TimeSpan.FromSeconds(10)));
+            Assert.Equal(1L,await fixture.ScalarAsync("SELECT COUNT(*) FROM audit_logs"));
+        }
+        finally
+        {
+            await barrier.ReleaseAsync();
+            await Fixture.DrainAsync(api,competitor);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TwoSameVersionRequestsProduceOneCommittedWinner(bool ambient)
+    {
+        await using var fixture=await Fixture.CreateAsync(output);
+        await fixture.SeedCameraAsync();
+        await using var barrier=await fixture.HoldAuditBarrierAsync();
+        Task<Response>? first=null,second=null;
+        try
+        {
+            first=fixture.InvokeAsync(true,"{\"title\":\"winner\",\"rowVersion\":1}",ambient:ambient);
+            var firstPid=await fixture.WaitForBlockedAsync(fixture.Owner.ProcessID);
+            second=fixture.InvokeAsync(true,"{\"title\":\"stale contender\",\"rowVersion\":1}",ambient:ambient);
+            await fixture.WaitForBlockedAsync(firstPid);
+            Assert.False(second.IsCompleted);
+            await barrier.ReleaseAsync();
+            AssertReceipt(await first.WaitAsync(TimeSpan.FromSeconds(10)),200,2);
+            Assert.Equal(409,(await second.WaitAsync(TimeSpan.FromSeconds(10))).Status);
+            Assert.Equal("winner",await fixture.ScalarAsync("SELECT title FROM dashcam_events"));
+            Assert.Equal(1L,await fixture.ScalarAsync("SELECT COUNT(*) FROM audit_logs"));
+        }
+        finally { await barrier.ReleaseAsync(); await Fixture.DrainAsync(first,second); }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CancellationAfterBusinessWriteDoesNotReturnAcknowledgementOrLeaveUnauditedRow(bool ambient)
+    {
+        await using var fixture=await Fixture.CreateAsync(output);
+        var before=await fixture.SnapshotAsync();
+        await using var barrier=await fixture.HoldAuditBarrierAsync();
+        using var canceled=new CancellationTokenSource();
+        Task<Response>? api=null;
+        try
+        {
+            api=fixture.InvokeAsync(false,ValidCreate,c => c.RequestAborted=canceled.Token,ambient);
+            await fixture.WaitForBlockedAsync(fixture.Owner.ProcessID);
+            canceled.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await api.WaitAsync(TimeSpan.FromSeconds(10)));
+            await barrier.ReleaseAsync();
+            Assert.Equal(before,await fixture.SnapshotAsync());
+        }
+        finally { await barrier.ReleaseAsync(); await Fixture.DrainAsync(api); }
+    }
+
+    [Fact]
+    public async Task PrerequisiteLockTimeoutRestoresAmbientTransactionAndDoesNotReachBusinessWrite()
+    {
+        await using var fixture=await Fixture.CreateAsync(output);
+        await using var locked=await fixture.Owner.BeginTransactionAsync();
+        await fixture.ExecuteAsync("LOCK TABLE dashcam_events IN ACCESS EXCLUSIVE MODE");
+        Task<Response>? api=null;
+        try
+        {
+            api=fixture.InvokeAsync(false,ValidCreate,ambient:true,afterHandler: () => fixture.Db.ExecuteAsync("SELECT 1"));
+            await fixture.WaitForBlockedAsync(fixture.Owner.ProcessID);
+            Assert.Equal(503,(await api.WaitAsync(TimeSpan.FromSeconds(8))).Status);
+        }
+        finally { await locked.RollbackAsync(); await Fixture.DrainAsync(api); }
+        Assert.Equal(0L,await fixture.ScalarAsync("SELECT COUNT(*) FROM dashcam_events"));
+        Assert.Equal(0L,await fixture.ScalarAsync("SELECT COUNT(*) FROM audit_logs"));
+    }
+
+    [Theory]
+    [InlineData("local",201)]
+    [InlineData("replica",503)]
+    public async Task ActualSessionTriggerModeIsChecked(string mode,int expected)
+    {
+        await using var fixture=await Fixture.CreateAsync(output);
+        var response=await fixture.InvokeAsync(false,ValidCreate,ambient:true,
+            beforeHandler: () => fixture.Db.ExecuteAsync($"SET LOCAL session_replication_role='{mode}'"));
+        Assert.Equal(expected,response.Status);
+        Assert.Equal(expected==201 ? 1L : 0L,await fixture.ScalarAsync("SELECT COUNT(*) FROM dashcam_events"));
+    }
+
     public static IEnumerable<object[]> PrerequisiteVariants()
     {
         yield return ["missing", "DROP TRIGGER trg_stage100_enforce_dashcam_provider_truth ON dashcam_events"];
@@ -474,7 +583,7 @@ public sealed class CameraManualMetadataBoundaryPostgresTests(ITestOutputHelper 
             Put = Registered(_app, PutPath, HttpMethods.Put);
         }
 
-        public async Task<Response> InvokeAsync(bool update, string body, Action<HttpContext>? configure = null, bool ambient = false, Func<Task>? afterHandler = null, byte[]? rawBytes = null)
+        public async Task<Response> InvokeAsync(bool update, string body, Action<HttpContext>? configure = null, bool ambient = false, Func<Task>? afterHandler = null, byte[]? rawBytes = null, Func<Task>? beforeHandler = null)
         {
             var context = new DefaultHttpContext { RequestServices = _app!.Services };
             context.Request.Method = update ? HttpMethods.Put : HttpMethods.Post;
@@ -502,10 +611,10 @@ public sealed class CameraManualMetadataBoundaryPostgresTests(ITestOutputHelper 
             {
                 await using var scope = await Db.BeginTenantScopeAsync(11);
                 Scopes.Current = scope;
-                try { await handler(context); if (afterHandler is not null) await afterHandler(); await scope.CompleteAsync(); }
+                try { if (beforeHandler is not null) await beforeHandler(); await handler(context); if (afterHandler is not null) await afterHandler(); await scope.CompleteAsync(); }
                 finally { Scopes.Current = null; }
             }
-            else { await handler(context); if (afterHandler is not null) await afterHandler(); }
+            else { if (beforeHandler is not null) await beforeHandler(); await handler(context); if (afterHandler is not null) await afterHandler(); }
             context.Response.Body.Position = 0;
             using var reader = new StreamReader(context.Response.Body);
             return new Response(context.Response.StatusCode, await reader.ReadToEndAsync(), tracked.BytesRead);
@@ -536,6 +645,68 @@ public sealed class CameraManualMetadataBoundaryPostgresTests(ITestOutputHelper 
         {
             await using var command = new NpgsqlCommand(sql, Owner);
             return await command.ExecuteScalarAsync();
+        }
+
+        public async Task<NpgsqlConnection> OpenConnectionAsync()
+        {
+            var connection=new NpgsqlConnection(_settings.ConnectionString);
+            try { await connection.OpenAsync(); return connection; }
+            catch { await connection.DisposeAsync(); throw; }
+        }
+        public async Task<AuditBarrier> HoldAuditBarrierAsync()
+        {
+            await ExecuteAsync("""
+                CREATE TABLE synthetic_audit_barrier(id integer PRIMARY KEY);
+                INSERT INTO synthetic_audit_barrier VALUES(1);
+                CREATE FUNCTION synthetic_wait_for_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+                BEGIN PERFORM 1 FROM synthetic_audit_barrier WHERE id=1 FOR UPDATE; RETURN NEW; END $$;
+                CREATE TRIGGER synthetic_audit_wait BEFORE INSERT ON audit_logs FOR EACH ROW EXECUTE FUNCTION synthetic_wait_for_audit();
+                """);
+            var transaction=await Owner.BeginTransactionAsync();
+            try { await ExecuteAsync("SELECT 1 FROM synthetic_audit_barrier WHERE id=1 FOR UPDATE"); return new(transaction); }
+            catch { await transaction.DisposeAsync(); throw; }
+        }
+        public async Task<int> WaitForBlockedAsync(int blocker,int? expectedPid=null)
+        {
+            using var bound=new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            while (true)
+            {
+                await using var command=new NpgsqlCommand("""
+                    SELECT a.pid FROM pg_stat_activity a
+                    WHERE a.datname=current_database() AND a.usename=current_user AND a.application_name=@application
+                      AND a.pid<>pg_backend_pid() AND @blocker=ANY(pg_blocking_pids(a.pid))
+                      AND (@expected::integer IS NULL OR a.pid=@expected)
+                      AND EXISTS(SELECT 1 FROM pg_locks l JOIN pg_class c ON c.oid=l.relation JOIN pg_namespace n ON n.oid=c.relnamespace WHERE l.pid=a.pid AND n.nspname=@schema)
+                    """,Owner);
+                command.Parameters.AddWithValue("application",_schema);
+                command.Parameters.AddWithValue("schema",_schema);
+                command.Parameters.AddWithValue("blocker",blocker);
+                command.Parameters.Add(new NpgsqlParameter("expected",NpgsqlTypes.NpgsqlDbType.Integer) { Value=(object?)expectedPid ?? DBNull.Value });
+                var pid=await command.ExecuteScalarAsync(bound.Token);
+                if (pid is int id) { _output.WriteLine($"BARRIER {_schema}: backend{id} blocked by owned backend{blocker}."); return id; }
+                await Task.Delay(10,bound.Token);
+            }
+        }
+        public static async Task DrainAsync(params Task?[] tasks)
+        {
+            // Releasing the fixture barrier happens before draining. All DB commands have
+            // bounded waits. Observe expected failures here; assertions own the test result.
+            foreach (var task in tasks.Where(t => t is not null))
+            {
+                try { await task!.WaitAsync(TimeSpan.FromSeconds(12)); }
+                catch when (task!.IsCompleted) { }
+            }
+        }
+        public sealed class AuditBarrier(NpgsqlTransaction transaction) : IAsyncDisposable
+        {
+            private bool _released;
+            public async Task ReleaseAsync()
+            {
+                if (_released) return;
+                await transaction.RollbackAsync();
+                _released=true;
+            }
+            public async ValueTask DisposeAsync() { try { await ReleaseAsync(); } finally { await transaction.DisposeAsync(); } }
         }
 
         public async ValueTask DisposeAsync()
