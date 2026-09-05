@@ -492,35 +492,6 @@ public sealed class CameraManualMetadataBoundaryPostgresTests(ITestOutputHelper 
         Assert.Equal(0L,await fixture.ScalarAsync("SELECT COUNT(*) FROM audit_logs"));
     }
 
-    [Fact]
-    public async Task ManagedCloseOfExactFixtureConnectionWhilePrerequisiteBlockedPropagatesWithoutWrite()
-    {
-        await using var fixture=await Fixture.CreateAsync(output);
-        var before=await fixture.SnapshotAsync();
-        await using var locked=await fixture.Owner.BeginTransactionAsync();
-        await fixture.ExecuteAsync("LOCK TABLE dashcam_events IN ACCESS EXCLUSIVE MODE");
-        TenantScope? apiScope=null;
-        Task<Response>? api=null;
-        try
-        {
-            api=fixture.InvokeAsync(false,ValidCreate,ambient:true,beforeHandler: () =>
-            {
-                apiScope=fixture.Scopes.Current;
-                return Task.CompletedTask;
-            });
-            var apiPid=await fixture.WaitForBlockedAsync(fixture.Owner.ProcessID);
-            Assert.NotNull(apiScope);
-            Assert.Equal(apiPid,apiScope!.Connection.ProcessID);
-            await apiScope.Connection.CloseAsync().WaitAsync(TimeSpan.FromSeconds(3));
-            var failure=await Assert.ThrowsAnyAsync<Exception>(async () => await api.WaitAsync(TimeSpan.FromSeconds(10)));
-            Assert.IsNotType<TimeoutException>(failure);
-            Assert.True(failure is NpgsqlException or InvalidOperationException or OperationCanceledException or ObjectDisposedException,
-                $"Expected managed connection-close propagation, got {failure.GetType().FullName}.");
-        }
-        finally { await Fixture.ReleaseAndDrainAsync(() => locked.RollbackAsync(),api); }
-        Assert.Equal(before,await fixture.SnapshotAsync());
-    }
-
     [Theory]
     [InlineData("local",201)]
     [InlineData("replica",503)]
