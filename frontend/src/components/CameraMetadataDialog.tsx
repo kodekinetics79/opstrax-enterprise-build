@@ -28,17 +28,34 @@ export function useCameraMetadataWorkflow(view: CameraView) {
   const publish = () => render((value) => value + 1);
   const singleFlight = useSingleFlight();
   const live = () => latest.current.enabled && latest.current.canManage && cameraSession(latest.current.session) !== null;
+  const currentQueryData = (queryKey: readonly unknown[], renderedData: unknown) => {
+    const query = latest.current.queryClient.getQueryCache().find({ queryKey, exact: true });
+    return query?.isActive() && query.state.status === "success" && query.state.fetchStatus === "idle" && query.state.data === renderedData
+      ? query.state.data : undefined;
+  };
+  const rowsReady = () => {
+    const current = latest.current;
+    return Array.isArray(current.rows.data) && currentQueryData(["dashcam"], current.rows.data) === current.rows.data;
+  };
+  const currentDetailRecord = () => {
+    const current = latest.current;
+    const selected = cameraId(current.selectedId);
+    if (!selected || currentQueryData(["dashcam", "detail", current.selectedId], current.detail.data) !== current.detail.data) return null;
+    const raw = current.detail.data?.record;
+    const record = cameraRecord(raw);
+    return record?.id === selected ? { raw, record } : null;
+  };
   const detailReady = () => {
     const current = latest.current;
     return !current.detail.isError && !current.detail.isLoading && !current.detail.isFetching && current.detail.fetchStatus === "idle"
-      && cameraRecord(current.detail.data?.record)?.id === cameraId(current.selectedId);
+      && currentDetailRecord() !== null;
   };
   const admitted = (editor: CameraEditor) => {
     const current = latest.current;
     if (state.current.editor !== editor || !live() || !sameCameraSession(editor.session, current.session) || editor.selection !== cameraId(current.selectedId)) return false;
-    if (editor.id === null) return true;
-    const record = cameraRecord(current.detail.data?.record);
-    return detailReady() && Boolean(record?.manual) && record?.id === editor.id && record.version === editor.version && current.detail.data?.record === editor.record;
+    if (editor.id === null) return rowsReady();
+    const detail = currentDetailRecord();
+    return detailReady() && Boolean(detail?.record.manual) && detail?.record.id === editor.id && detail.record.version === editor.version && detail.raw === editor.record;
   };
   const ownsNotice = (notice: Notice, generation: number) => state.current.notice === notice && state.current.refreshGeneration === generation
     && notice.sessionGeneration === state.current.sessionGeneration && latest.current.enabled && sameCameraSession(notice.session, latest.current.session);
@@ -101,8 +118,9 @@ export function useCameraMetadataWorkflow(view: CameraView) {
   });
   const open = (raw?: unknown) => {
     if (!live() || state.current.attempt || state.current.editor) return;
-    const record = raw === undefined ? null : cameraRecord(raw);
-    if (raw !== undefined && (!detailReady() || raw !== latest.current.detail.data?.record || !record?.manual)) return;
+    const detail = raw === undefined ? null : currentDetailRecord();
+    const record = detail?.record ?? null;
+    if (raw === undefined ? !rowsReady() : (!detailReady() || raw !== detail?.raw || !record?.manual)) return;
     const session = cameraSession(latest.current.session)!;
     const initial = record ? { ...record.values } : { eventType: "", title: "", severity: "" };
     state.current.editor = { generation: ++state.current.generation, session, id: record?.id ?? null, version: record?.version ?? null,
@@ -133,7 +151,7 @@ export function useCameraMetadataWorkflow(view: CameraView) {
     const current = latest.current;
     if (!current.enabled || !current.canExport || !current.session || state.current.attempt) return;
     if (scope === "detail" && !detailReady()) return;
-    if (scope === "list" && (current.rows.isError || current.rows.isLoading || current.rows.isFetching || current.rows.fetchStatus !== "idle")) return;
+    if (scope === "list" && (current.rows.isError || current.rows.isLoading || current.rows.isFetching || current.rows.fetchStatus !== "idle" || !rowsReady())) return;
     const raw = scope === "detail" ? [current.detail.data?.record] : current.rows.data;
     if (!Array.isArray(raw)) return;
     const rows = raw.map(cameraProjection);

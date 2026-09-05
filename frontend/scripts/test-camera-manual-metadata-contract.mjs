@@ -167,6 +167,7 @@ test("actual camera page uses direct manage grant, current detail admission and 
   for (const permission of ["safety:update", "safety:review", "dashcam:manage", "dashcam.manage", "*"]) {
     const f = workflowFixture({ source: pageBuilt.outputFiles[0].text });
     try {
+      f.activateList();
       const page = f.renderPage("dashcam", { session: { ...f.session, permissions: [permission] } });
       const create = button(component(page, "PageHeader").props.actions, "Record Event Metadata");
       const allowed = ["dashcam:manage", "dashcam.manage", "*"].includes(permission);
@@ -182,6 +183,7 @@ test("actual camera page uses direct manage grant, current detail admission and 
   }
   const f = workflowFixture({ source: pageBuilt.outputFiles[0].text });
   try {
+    f.activateDetail(undefined, "19");
     let page = f.renderPage(); component(page, "DataTable").props.onSelect({ id: "19" }); page = f.renderPage();
     let drawer = component(page, "Drawer"); assert.equal(drawer.props.canUpdate, true);
     drawer.props.onEdit(f.view.detail.data.record); assert.ok(component(f.renderPage(), "CameraMetadataDialog"));
@@ -256,22 +258,29 @@ function workflowFixture({ source = workflowBuilt.outputFiles[0].text } = {}) {
     : name === "camera-test-queries" ? new Proxy({}, { get: (_, key) => () => String(key).includes("Summary") ? view.summary : String(key).includes("Detail") ? view.detail : view.rows })
     : require(name), document, FixtureUrl);
   const idle = { isError: false, isLoading: false, isFetching: false, fetchStatus: "idle", refetch: async () => {} };
-  view = { enabled: true, session: f.session, canManage: true, canExport: true, selectedId: 19, visibleIds: ["19"],
+  view = { enabled: true, session: f.session, canManage: true, canExport: true, selectedId: "19", visibleIds: ["19"],
     detail: { ...idle, data: { record: record() } }, rows: { ...idle, data: [record()] },
     summary: { ...idle, data: { dashcamEventsToday: 1 } }, queryClient: client };
   const render = (patch = {}) => { view = { ...view, ...patch }; cursor = 0; return f.api.useCameraMetadataWorkflow(view); };
-  const activateReads = (read = async (key) => key.length === 1 ? [record()] : key[1] === "summary" ? { dashcamEventsToday: 1 } : { record: record() }) => {
-    for (const key of [["dashcam"], ["dashcam", "summary"], ["dashcam", "detail", 19]]) {
-      const observer = new query.QueryObserver(client, { queryKey: key, queryFn: () => read(key), initialData: key.length === 1 ? [record()] : key[1] === "summary" ? { dashcamEventsToday: 1 } : { record: record() }, staleTime: Infinity, retry: false });
-      cleanups.push(observer.subscribe(() => {}));
-    }
+  const activateQuery = (key, data, read = async () => data) => {
+    const observer = new query.QueryObserver(client, { queryKey: key, queryFn: read, initialData: data, staleTime: Infinity, retry: false });
+    cleanups.push(observer.subscribe(() => {}));
+    return observer;
+  };
+  const activateList = (read) => activateQuery(["dashcam"], view.rows.data, read ? () => read(["dashcam"]) : undefined);
+  const activateDetail = (read, key = view.selectedId) => activateQuery(["dashcam", "detail", key], view.detail.data, read ? () => read(["dashcam", "detail", key]) : undefined);
+  const activateReads = (read) => {
+    activateList(read);
+    activateQuery(["dashcam", "summary"], view.summary.data, read ? () => read(["dashcam", "summary"]) : undefined);
+    activateDetail(read);
   };
   return { ...f, render, renderPage: (kind = "dashcam", patch = {}) => { view = { ...view, ...patch }; cursor = 0; return f.api.Batch4SafetyPage({ kind }); },
-    get view() { return view; }, peek, mutations, observations, client, activateReads, downloads, blobs, effects,
+    get view() { return view; }, peek, mutations, observations, client, activateQuery, activateList, activateDetail, activateReads, downloads, blobs, effects,
     get lastMutationPromise() { return lastMutationPromise; }, get resetCount() { return resetCount; },
     cleanup: () => { cleanups.forEach((fn) => fn()); client.clear(); client.unmount(); } };
 }
 function edit(f) {
+  f.activateDetail();
   let h = f.render(); h.open(f.view.detail.data.record); h = f.render();
   assert.ok(h.editor); h.change(h.editor, "title", "Changed"); return f.render();
 }
@@ -280,7 +289,7 @@ test("actual workflow refuses stale/manual/permission/session admission and same
   for (const patch of [{ canManage: false }, { session: null }, { session: { token: "x", user: {}, company: {}, permissions: [] } },
     { detail: { data: { record: record({ sourceAuthority: "Authoritative" }) }, isError: false, isLoading: false, isFetching: false, fetchStatus: "idle" } },
     { detail: { data: { record: record() }, isError: true, isLoading: false, isFetching: false, fetchStatus: "idle" } }]) {
-    const f = workflowFixture(); try { const h = f.render(patch); h.open(f.view.detail.data.record); assert.equal(f.render().editor, null); assert.equal(f.calls.length, 0); } finally { f.cleanup(); }
+    const f = workflowFixture(); try { const h = f.render(patch); f.activateDetail(); h.open(f.view.detail.data.record); assert.equal(f.render().editor, null); assert.equal(f.calls.length, 0); } finally { f.cleanup(); }
   }
   for (const change of [f => ({ canManage: false }), f => ({ selectedId: 20 }), f => ({ session: { ...f.session } }),
     f => ({ detail: { ...f.view.detail, data: { record: { ...f.view.detail.data.record } } } }), f => ({ detail: { ...f.view.detail, fetchStatus: "paused" } })]) {
@@ -289,6 +298,114 @@ test("actual workflow refuses stale/manual/permission/session admission and same
       assert.equal(f.calls.length, 0);
     } finally { f.cleanup(); }
   }
+});
+
+async function moveCurrentQueryAway(f, observer, key, mode, replacement) {
+  if (mode === "error") {
+    observer.setOptions({ queryKey: key, queryFn: async () => { throw new Error("controlled current read failure"); }, staleTime: Infinity, retry: false });
+    await observer.refetch();
+    assert.equal(f.client.getQueryState(key).status, "error");
+    return;
+  }
+  if (mode === "paused") {
+    query.onlineManager.setOnline(false);
+    const pending = observer.refetch();
+    void pending.catch(() => {});
+    await settle();
+    assert.equal(f.client.getQueryState(key).fetchStatus, "paused");
+    return true;
+  }
+  if (mode === "replaced") {
+    f.client.setQueryData(key, replacement);
+    assert.deepEqual(f.client.getQueryState(key).data, replacement);
+    return;
+  }
+  f.client.removeQueries({ queryKey: key, exact: true });
+  assert.equal(f.client.getQueryState(key), undefined);
+}
+
+test("actual exact-key QueryCache guard revokes retained detail open, submit and export before rerender", async () => {
+  for (const mode of ["error", "paused", "replaced", "removed"]) {
+    for (const operation of ["open", "submit", "export"]) {
+      const f = workflowFixture();
+      let paused;
+      try {
+        const key = ["dashcam", "detail", "19"];
+        const observer = f.activateDetail();
+        let retained = f.render();
+        if (operation === "submit") {
+          retained.open(f.view.detail.data.record); retained = f.render();
+          retained.change(retained.editor, "title", "Changed before current read moved"); retained = f.render();
+        }
+        const rendered = f.view.detail.data;
+        paused = await moveCurrentQueryAway(f, observer, key, mode, { record: record({ title: "Replacement" }) });
+        assert.equal(f.view.detail.data, rendered, "the retained rendered snapshot deliberately has not rerendered");
+        if (operation === "open") retained.open(rendered.record);
+        else if (operation === "submit") await retained.submit(retained.editor);
+        else retained.exportCurrent("detail");
+        assert.equal(Boolean(f.peek()?.editor), operation === "submit", `${mode} current detail must not newly open or close the existing editor`);
+        assert.equal(f.calls.length, 0, `${mode} current detail must block retained submit`);
+        assert.equal(f.downloads.length, 0, `${mode} current detail must block retained export`);
+      } finally {
+        query.onlineManager.setOnline(true);
+        if (paused) await settle();
+        await settle(); f.cleanup();
+      }
+    }
+  }
+
+  const wrongKey = workflowFixture();
+  try {
+    wrongKey.activateDetail(undefined, 19);
+    const retained = wrongKey.render();
+    retained.open(wrongKey.view.detail.data.record); retained.exportCurrent("detail");
+    assert.equal(wrongKey.peek()?.editor, null); assert.equal(wrongKey.downloads.length, 0);
+  } finally { wrongKey.cleanup(); }
+
+  const healthy = workflowFixture();
+  try {
+    healthy.activateDetail();
+    const current = healthy.render(); current.open(healthy.view.detail.data.record); current.exportCurrent("detail");
+    assert.ok(healthy.peek()?.editor); assert.equal(healthy.downloads.length, 1);
+  } finally { healthy.cleanup(); }
+});
+
+test("actual current list query revokes retained create and export admission before rerender", async () => {
+  for (const mode of ["error", "paused", "replaced", "removed"]) {
+    for (const operation of ["open", "submit", "export"]) {
+      const f = workflowFixture();
+      let paused;
+      try {
+        const key = ["dashcam"];
+        const observer = f.activateList();
+        let retained = f.render();
+        if (operation === "submit") {
+          retained.open(); retained = f.render();
+          for (const [field, value] of Object.entries(input())) { retained.change(retained.editor, field, value); retained = f.render(); }
+        }
+        const rendered = f.view.rows.data;
+        paused = await moveCurrentQueryAway(f, observer, key, mode, [record({ id: 20 })]);
+        assert.equal(f.view.rows.data, rendered, "the retained rendered list deliberately has not rerendered");
+        if (operation === "open") retained.open();
+        else if (operation === "submit") await retained.submit(retained.editor);
+        else retained.exportCurrent("list");
+        assert.equal(Boolean(f.peek()?.editor), operation === "submit", `${mode} current list must not newly open or close the existing editor`);
+        assert.equal(f.calls.length, 0, `${mode} current list must block retained create submit`);
+        assert.equal(f.downloads.length, 0, `${mode} current list must block retained export`);
+      } finally {
+        query.onlineManager.setOnline(true);
+        if (paused) await settle();
+        await settle(); f.cleanup();
+      }
+    }
+  }
+
+  const healthy = workflowFixture();
+  try {
+    healthy.activateList();
+    const current = healthy.render(); current.open(); current.exportCurrent("list");
+    assert.ok(healthy.peek()?.editor); assert.equal(healthy.downloads.length, 1);
+  } finally { healthy.cleanup(); }
 });
 
 test("actual single-flight keeps pending close/open/input/reset guarded until success release", async () => {
@@ -353,6 +470,7 @@ test("retained success oracle detects an in-memory early-ownership-release negat
 test("actual drawer then dedicated form order makes only topmost focus hook consume Escape", () => {
   const pageFixture = workflowFixture({ source: pageBuilt.outputFiles[0].text });
   try {
+    pageFixture.activateDetail(undefined, "19");
     let page = pageFixture.renderPage(); component(page, "DataTable").props.onSelect({ id: "19" }); page = pageFixture.renderPage();
     component(page, "Drawer").props.onEdit(pageFixture.view.detail.data.record); page = pageFixture.renderPage();
     const children = elements(page); assert.ok(children.indexOf(component(page, "Drawer")) < children.indexOf(component(page, "CameraMetadataDialog")));
@@ -449,11 +567,12 @@ test("old successful read completion cannot clear a newer target's warning or re
     const oldRead = deferred(); f.activateReads(() => oldRead.promise);
     f.setResponse(response(receipt(), 200)); let h = edit(f); await h.submit(h.editor); await settle();
     const oldNotice = f.render().notice; assert.equal(f.render().refreshing, true);
-    for (const key of [["dashcam"], ["dashcam", "summary"], ["dashcam", "detail", 20]]) {
-      const observer = new query.QueryObserver(nextClient, { queryKey: key, queryFn: async () => { throw new Error("new read unavailable"); }, initialData: {}, staleTime: Infinity, retry: false });
+    const nextRows = [record({ id: 20 })], nextSummary = { dashcamEventsToday: 1 }, nextDetail = { record: record({ id: 20 }) };
+    for (const [key, data] of [[["dashcam"], nextRows], [["dashcam", "summary"], nextSummary], [["dashcam", "detail", 20], nextDetail]]) {
+      const observer = new query.QueryObserver(nextClient, { queryKey: key, queryFn: async () => { throw new Error("new read unavailable"); }, initialData: data, staleTime: Infinity, retry: false });
       stops.push(observer.subscribe(() => {}));
     }
-    h = f.render({ selectedId: 20, detail: { ...f.view.detail, data: { record: record({ id: 20 }) } }, queryClient: nextClient });
+    h = f.render({ selectedId: 20, rows: { ...f.view.rows, data: nextRows }, summary: { ...f.view.summary, data: nextSummary }, detail: { ...f.view.detail, data: nextDetail }, queryClient: nextClient });
     h.open(f.view.detail.data.record); h = f.render(); h.change(h.editor, "title", "Second target"); h = f.render();
     f.setResponse(response(receipt({ id: 20 }), 200)); await h.submit(h.editor); await settle();
     const newer = f.render().notice; assert.equal(newer.receipt.id, "20"); assert.equal(f.render().warning, true); assert.equal(f.render().refreshing, false);
@@ -466,6 +585,7 @@ test("old successful read completion cannot clear a newer target's warning or re
 test("actual camera page retains acknowledgement on a subsequent read-error path", async () => {
   const f = workflowFixture({ source: pageBuilt.outputFiles[0].text });
   try {
+    f.activateList();
     let page = f.renderPage(); button(component(page, "PageHeader").props.actions, "Record Event Metadata").props.onClick();
     for (const [key, value] of Object.entries(input())) {
       const form = component(f.renderPage(), "CameraMetadataDialog"); form.props.onChange(form.props.editor, key, value);
@@ -512,6 +632,7 @@ test("actual shared CSV sink sees only neutral whitelisted current fields and fo
   try {
     const contaminated = record({ title: "=SUM(1,2)", roadClipUrl: "private-url", aiSummary: "private-ai", providerPayloadHash: "private-hash", sourceAuthority: "Authoritative" });
     let h = f.render({ detail: { ...f.view.detail, data: { record: contaminated } }, rows: { ...f.view.rows, data: [contaminated] } });
+    f.activateList(); f.activateDetail();
     h.exportCurrent("list"); h.exportCurrent("detail");
     assert.equal(f.blobs.length, 2); assert.equal(f.downloads.length, 2);
     for (const blob of f.blobs) {
