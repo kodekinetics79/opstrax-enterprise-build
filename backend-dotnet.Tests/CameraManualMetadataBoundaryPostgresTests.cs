@@ -35,6 +35,7 @@ public sealed class CameraManualMetadataBoundaryPostgresTests(ITestOutputHelper 
     [InlineData("{\"eventType\":\"x\",\"title\":\"\\udc00\",\"severity\":\"High\"}",false)]
     [InlineData("{\"\\ud800\":\"x\",\"title\":\"valid\",\"severity\":\"High\"}",false)]
     [InlineData("{\"eventType\":\"x\",\"title\":\"\\ud83d\\ude80\",\"severity\":\"High\"}",true)]
+    [InlineData("{\"eventType\":\"x\",\"title\":\"M\u00e9tadonn\u00e9es \u5b89\u5168\",\"severity\":\"High\"}",true)]
     public async Task ParserEscapedSurrogates_NoDatabase_ActualPrivateReader(string raw,bool valid)
     {
         var http=new DefaultHttpContext();
@@ -48,22 +49,23 @@ public sealed class CameraManualMetadataBoundaryPostgresTests(ITestOutputHelper 
         Assert.Equal(valid,result is not null);
     }
 
-    [Fact]
-    public async Task ParserNulObservation_NoDatabase_NotDatabaseAdmissionEvidence()
+    [Theory]
+    [InlineData("{\"event\\u0000Type\":\"x\",\"title\":\"valid\",\"severity\":\"High\"}")]
+    [InlineData("{\"eventType\":\"x\\u0000y\",\"title\":\"valid\",\"severity\":\"High\"}")]
+    [InlineData("{\"eventType\":\"x\",\"title\":\"escaped\\u0000nul\",\"severity\":\"High\"}")]
+    [InlineData("{\"eventType\":\"x\",\"title\":\"valid\",\"severity\":\"Hi\\u0000gh\"}")]
+    [InlineData("{\"eventType\":\"x\",\"title\":\"valid\",\"severity\":\"High\",\"locationDescription\":\"a\\u0000b\"}")]
+    [InlineData("{\"eventType\":\"x\",\"title\":\"valid\",\"severity\":\"High\",\"occurredAt\":\"2026-01-01T00:00:00Z\\u0000\"}")]
+    public async Task ParserNulIsRejected_NoDatabase_ActualPrivateReader(string raw)
     {
         var http=new DefaultHttpContext();
-        using var body=new MemoryStream(Encoding.UTF8.GetBytes("{\"eventType\":\"x\",\"title\":\"escaped\\u0000nul\",\"severity\":\"High\"}"));
+        using var body=new MemoryStream(Encoding.UTF8.GetBytes(raw));
         http.Request.Body=body;
         var method=typeof(EndpointMappings).GetMethod("ReadCameraMetadataInput",BindingFlags.NonPublic|BindingFlags.Static)!;
         var task=(Task)method.Invoke(null,[http,true,CancellationToken.None])!;
         await task;
         var result=task.GetType().GetProperty("Result")!.GetValue(task);
-        // Current parser observation only; this does not approve PostgreSQL text or
-        // change the product's accepted Unicode policy.
-        Assert.NotNull(result);
-        var values=(Dictionary<string,object?>)result.GetType().GetProperty("Values")!.GetValue(result)!;
-        Assert.Equal("escaped\0nul",values["title"]);
-        output.WriteLine("OBSERVATION: current private reader decodes escaped NUL into metadata text; no database admission was exercised.");
+        Assert.Null(result);
     }
 
     [Fact]
@@ -174,6 +176,10 @@ public sealed class CameraManualMetadataBoundaryPostgresTests(ITestOutputHelper 
             ValidCreate.Replace("High"," High "), ValidCreate.Replace("High","high"), ValidCreate.Replace("Near Miss"," "),
             ValidCreate.Replace("Synthetic manual observation","\\ud800"), ValidCreate.Replace("Synthetic manual observation","\\udc00"),
             "{\"\\ud800\":\"x\",\"title\":\"valid\",\"severity\":\"High\"}",
+            ValidCreate.Replace("Near Miss","x\\u0000y"), ValidCreate.Replace("Synthetic manual observation","escaped\\u0000nul"),
+            ValidCreate.Replace("High","Hi\\u0000gh"), "{\"event\\u0000Type\":\"x\",\"title\":\"valid\",\"severity\":\"High\"}",
+            ValidCreate[..^1]+",\"locationDescription\":\"a\\u0000b\"}",
+            ValidCreate[..^1]+",\"occurredAt\":\"2026-01-01T00:00:00Z\\u0000\"}",
             ValidCreate.Replace("Near Miss",new string('x',121)), ValidCreate.Replace("Synthetic manual observation",new string('x',221)) }) yield return [false, body];
         foreach (var field in new[] { "eventNumber", "aiConfidence", "aiSummary", "sourceAuthority", "videoProvider", "reviewStatus", "evidenceStatus", "coachingStatus", "falsePositive", "roadFacingClipUrl", "rowVersion" })
             yield return [false, ValidCreate[..^1]+$",\"{field}\":0}}"];
@@ -484,6 +490,35 @@ public sealed class CameraManualMetadataBoundaryPostgresTests(ITestOutputHelper 
         finally { await Fixture.ReleaseAndDrainAsync(() => locked.RollbackAsync(),api); }
         Assert.Equal(0L,await fixture.ScalarAsync("SELECT COUNT(*) FROM dashcam_events"));
         Assert.Equal(0L,await fixture.ScalarAsync("SELECT COUNT(*) FROM audit_logs"));
+    }
+
+    [Fact]
+    public async Task ManagedCloseOfExactFixtureConnectionWhilePrerequisiteBlockedPropagatesWithoutWrite()
+    {
+        await using var fixture=await Fixture.CreateAsync(output);
+        var before=await fixture.SnapshotAsync();
+        await using var locked=await fixture.Owner.BeginTransactionAsync();
+        await fixture.ExecuteAsync("LOCK TABLE dashcam_events IN ACCESS EXCLUSIVE MODE");
+        TenantScope? apiScope=null;
+        Task<Response>? api=null;
+        try
+        {
+            api=fixture.InvokeAsync(false,ValidCreate,ambient:true,beforeHandler: () =>
+            {
+                apiScope=fixture.Scopes.Current;
+                return Task.CompletedTask;
+            });
+            var apiPid=await fixture.WaitForBlockedAsync(fixture.Owner.ProcessID);
+            Assert.NotNull(apiScope);
+            Assert.Equal(apiPid,apiScope!.Connection.ProcessID);
+            await apiScope.Connection.CloseAsync().WaitAsync(TimeSpan.FromSeconds(3));
+            var failure=await Assert.ThrowsAnyAsync<Exception>(async () => await api.WaitAsync(TimeSpan.FromSeconds(10)));
+            Assert.IsNotType<TimeoutException>(failure);
+            Assert.True(failure is NpgsqlException or InvalidOperationException or OperationCanceledException or ObjectDisposedException,
+                $"Expected managed connection-close propagation, got {failure.GetType().FullName}.");
+        }
+        finally { await Fixture.ReleaseAndDrainAsync(() => locked.RollbackAsync(),api); }
+        Assert.Equal(before,await fixture.SnapshotAsync());
     }
 
     [Theory]

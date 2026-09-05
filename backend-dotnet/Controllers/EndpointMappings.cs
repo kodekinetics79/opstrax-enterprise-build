@@ -9524,8 +9524,11 @@ public static partial class EndpointMappings
             {
                 foreach (var property in document.RootElement.EnumerateObject())
                 {
-                    _ = property.Name;
-                    if (property.Value.ValueKind == JsonValueKind.String) _ = property.Value.GetString();
+                    var name = property.Name;
+                    if (name.Contains('\0')) return null;
+                    if (property.Value.ValueKind == JsonValueKind.String
+                        && property.Value.GetString() is { } text
+                        && text.Contains('\0')) return null;
                 }
             }
             catch (InvalidOperationException) { return null; }
