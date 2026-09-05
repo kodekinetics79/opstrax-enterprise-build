@@ -19,7 +19,8 @@ import { CustomerShipmentsScreen } from "@/screens/CustomerShipmentsScreen";
 import { CustomerBillingScreen } from "@/screens/CustomerBillingScreen";
 import { CustomerSupportScreen } from "@/screens/CustomerSupportScreen";
 import { useSession } from "@/auth/SessionProvider";
-import { colors } from "@/components/ui";
+import { APP_NAME, APP_PRODUCT } from "@/config";
+import { ActionButton, colors, Panel, Pill, Screen, SectionHeader } from "@/components/ui";
 
 const Stack = createNativeStackNavigator();
 const Tabs = createBottomTabNavigator();
@@ -142,8 +143,28 @@ function LoadingSplash() {
   );
 }
 
+function ProductAccessScreen({ role, onSignOut }: { role: string; onSignOut: () => void }) {
+  const productLabel = APP_PRODUCT === "unified" ? "OpsTrax Mobile" : APP_NAME;
+  return (
+    <Screen>
+      <Panel variant="solid" tone="amber" style={{ marginTop: 24 }}>
+        <SectionHeader
+          eyebrow="Product access"
+          title={`This account doesn’t belong in ${productLabel}`}
+          description="OpsTrax keeps Driver, Fleet, Customer, and Platform Administration experiences separated at the product boundary as well as on the server."
+          right={<Pill label="Access blocked" tone="amber" />}
+        />
+        <Text style={{ color: colors.muted, fontSize: 13, lineHeight: 19 }}>
+          Signed-in role: {role}. Use the OpsTrax app assigned by your organization. Platform Super Admin remains available through the secured web control plane rather than the public mobile products.
+        </Text>
+        <ActionButton label="Sign out and use another account" onPress={onSignOut} variant="secondary" />
+      </Panel>
+    </Screen>
+  );
+}
+
 export function RootNavigator() {
-  const { ready, session, normalizedRole, hasPermission } = useSession();
+  const { ready, session, normalizedRole, hasPermission, logout } = useSession();
   if (!ready) return <LoadingSplash />;
   const directPermissions = new Set((session?.permissions ?? []).map((permission) => permission.trim().toLowerCase()));
   const isDriver = Boolean(
@@ -158,6 +179,18 @@ export function RootNavigator() {
     && normalizedRole === "customerClient"
     && hasPermission("customer_portal:view"),
   );
+  const isPlatformAdmin = Boolean(session && normalizedRole === "platformAdmin");
+  const isFleetUser = Boolean(session && !isDriver && !isCustomer && !isPlatformAdmin);
+
+  const productAllowsRole = !session
+    || (APP_PRODUCT === "driver" && isDriver)
+    || (APP_PRODUCT === "customer" && isCustomer)
+    || (APP_PRODUCT === "fleet" && isFleetUser)
+    || (APP_PRODUCT === "unified" && !isPlatformAdmin);
+
+  if (session && !productAllowsRole) {
+    return <ProductAccessScreen role={normalizedRole} onSignOut={() => void logout()} />;
+  }
 
   return (
     <NavigationContainer theme={darkTheme}>
@@ -221,53 +254,11 @@ const darkTheme = {
 };
 
 const styles = StyleSheet.create({
-  androidGlassFallback: {
-    backgroundColor: "rgba(6,17,31,0.90)",
-  },
-  glassHighlight: {
-    position: "absolute",
-    top: 0,
-    left: 12,
-    right: 12,
-    height: 1,
-  },
-  loadingSplash: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.background,
-    padding: 24,
-    overflow: "hidden",
-  },
-  loadingGlow: {
-    position: "absolute",
-    width: 320,
-    height: 320,
-    borderRadius: 320,
-    backgroundColor: colors.teal,
-    opacity: 0.08,
-    top: -120,
-    right: -100,
-  },
-  loadingBrand: {
-    color: colors.teal,
-    fontSize: 12,
-    fontWeight: "900",
-    letterSpacing: 2.4,
-    textTransform: "uppercase",
-  },
-  loadingTitle: {
-    color: colors.text,
-    fontSize: 24,
-    fontWeight: "900",
-    letterSpacing: -0.5,
-    marginTop: 10,
-  },
-  loadingBody: {
-    color: colors.muted,
-    marginTop: 8,
-    textAlign: "center",
-    lineHeight: 20,
-    maxWidth: 320,
-  },
+  androidGlassFallback: { backgroundColor: "rgba(6,17,31,0.90)" },
+  glassHighlight: { position: "absolute", top: 0, left: 12, right: 12, height: 1 },
+  loadingSplash: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.background, padding: 24, overflow: "hidden" },
+  loadingGlow: { position: "absolute", width: 320, height: 320, borderRadius: 320, backgroundColor: colors.teal, opacity: 0.08, top: -120, right: -100 },
+  loadingBrand: { color: colors.teal, fontSize: 12, fontWeight: "900", letterSpacing: 2.4, textTransform: "uppercase" },
+  loadingTitle: { color: colors.text, fontSize: 24, fontWeight: "900", letterSpacing: -0.5, marginTop: 10 },
+  loadingBody: { color: colors.muted, marginTop: 8, textAlign: "center", lineHeight: 20, maxWidth: 320 },
 });
