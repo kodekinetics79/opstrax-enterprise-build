@@ -8,6 +8,7 @@ import {
   EmptyState,
   ErrorState,
   Field,
+  HeroPanel,
   LoadingState,
   MetricCard,
   Panel,
@@ -42,46 +43,60 @@ export function CustomerBillingScreen() {
 
   return (
     <Screen>
-      <Panel>
-        <SectionHeader eyebrow="Customer finance" title="Invoices" description="Customer-safe invoice summaries from your account only." />
+      <HeroPanel tone={overdue > 0 ? "amber" : "blue"}>
+        <SectionHeader
+          eyebrow="Customer finance"
+          title="Invoices"
+          description="Customer-safe invoice summaries returned only for your authenticated account."
+          right={<Pill label={overdue > 0 ? "Attention" : "Current"} tone={overdue > 0 ? "amber" : "green"} />}
+        />
         <Row>
-          <MetricCard label="Outstanding" value={invoices.loading ? "…" : money(outstanding, currency)} tone={overdue > 0 ? "amber" : "blue"} />
-          <MetricCard label="Overdue" value={invoices.loading ? "…" : String(overdue)} tone={overdue > 0 ? "red" : "green"} />
+          <MetricCard
+            label="Outstanding"
+            value={invoices.loading ? "…" : money(outstanding, currency)}
+            helper="Open balance"
+            tone={overdue > 0 ? "amber" : "blue"}
+          />
+          <MetricCard
+            label="Overdue"
+            value={invoices.loading ? "…" : String(overdue)}
+            helper={overdue > 0 ? "Needs review" : "No overdue invoices"}
+            tone={overdue > 0 ? "red" : "green"}
+          />
         </Row>
-      </Panel>
+      </HeroPanel>
 
-      <Panel>
-        {invoices.loading ? <LoadingState label="Loading invoices…" /> : null}
-        {invoices.error ? <ErrorState title="Couldn’t load invoices" body={invoices.error} onRetry={invoices.refresh} /> : null}
-        {!invoices.loading && !invoices.error && rows.length === 0 ? (
-          <EmptyState title="No invoices yet" body="Invoices will appear here after your shipments are billed." />
-        ) : null}
-        <View style={{ gap: 12 }}>
-          {rows.map((invoice, index) => {
-            const invoiceCurrency = String(invoice.currency ?? currency).toUpperCase();
-            const status = textOf(invoice.arStatus, "Pending");
-            return (
-              <View
-                key={String(invoice.id ?? invoice.invoiceNumber ?? index)}
-                style={{ borderRadius: 18, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.panelAlt, padding: 14, gap: 10 }}
-              >
-                <Row>
-                  <View style={{ flex: 1, gap: 4 }}>
-                    <Text style={{ color: colors.subtle, fontSize: 10, fontWeight: "800", textTransform: "uppercase", letterSpacing: 1 }}>Invoice</Text>
-                    <Text style={{ color: colors.text, fontSize: 17, fontWeight: "900" }}>{textOf(invoice.invoiceNumber, `Invoice ${index + 1}`)}</Text>
-                  </View>
-                  <Pill label={status} tone={toneForStatus(status)} />
-                </Row>
-                <Row>
-                  <View style={{ flex: 1 }}><Field label="Total" value={money(invoice.total, invoiceCurrency)} /></View>
-                  <View style={{ flex: 1 }}><Field label="Balance due" value={money(invoice.balanceDue, invoiceCurrency)} /></View>
-                </Row>
-                <Field label="Due date" value={textOf(invoice.dueDate)} />
-              </View>
-            );
-          })}
-        </View>
-      </Panel>
+      {invoices.loading ? <LoadingState label="Loading invoices…" /> : null}
+      {invoices.error ? <ErrorState title="Couldn’t load invoices" body={invoices.error} onRetry={invoices.refresh} /> : null}
+      {!invoices.loading && !invoices.error && rows.length === 0 ? (
+        <EmptyState title="No invoices yet" body="Invoices will appear here after your shipments are billed." />
+      ) : null}
+
+      <View style={{ gap: 12 }}>
+        {rows.map((invoice, index) => {
+          const invoiceCurrency = String(invoice.currency ?? currency).toUpperCase();
+          const status = textOf(invoice.arStatus, "Pending");
+          const tone = toneForStatus(status);
+          return (
+            <Panel key={String(invoice.id ?? invoice.invoiceNumber ?? index)} variant="elevated" tone={tone}>
+              <Row>
+                <View style={{ flex: 1, gap: 4 }}>
+                  <Text style={{ color: colors.subtle, fontSize: 10, fontWeight: "800", textTransform: "uppercase", letterSpacing: 1 }}>Invoice</Text>
+                  <Text style={{ color: colors.text, fontSize: 17, fontWeight: "900", letterSpacing: -0.2 }}>
+                    {textOf(invoice.invoiceNumber, `Invoice ${index + 1}`)}
+                  </Text>
+                </View>
+                <Pill label={status} tone={tone} />
+              </Row>
+              <Row>
+                <View style={{ flex: 1 }}><Field label="Total" value={money(invoice.total, invoiceCurrency)} /></View>
+                <View style={{ flex: 1 }}><Field label="Balance due" value={money(invoice.balanceDue, invoiceCurrency)} /></View>
+              </Row>
+              <Field label="Due date" value={textOf(invoice.dueDate)} />
+            </Panel>
+          );
+        })}
+      </View>
     </Screen>
   );
 }
