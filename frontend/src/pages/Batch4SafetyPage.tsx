@@ -6,8 +6,10 @@ import { useCoachingSummary, useCoachingTaskDetail, useCoachingTasks, useDashcam
 import { useHasDirectPermission, useHasPermission } from "@/hooks/usePermission";
 import { useSingleFlight } from "@/hooks/useSingleFlight";
 import { useDialogFocus } from "@/hooks/useDialogFocus";
+import { useAuth } from "@/hooks/useAuth";
+import { CameraMetadataDialog, useCameraMetadataWorkflow } from "@/components/CameraMetadataDialog";
 import { coachingApi } from "@/services/coachingApi";
-import { dashcamApi } from "@/services/dashcamApi";
+import { CAMERA_NOTICE, cameraProjection, cameraRecord, dashcamApi } from "@/services/dashcamApi";
 import { evidenceApi } from "@/services/evidenceApi";
 import { incidentsApi } from "@/services/incidentsApi";
 import { safetyApi } from "@/services/safetyApi";
@@ -27,14 +29,14 @@ const configs = {
     sections: [["Dashcam Events","dashcamEvents",["eventNumber","eventType","severity","reviewStatus","evidenceStatus"]],["Coaching Queue","coachingTasks",["taskNumber","coachingType","priority","status","dueAt"]],["Incident Watch","incidents",["incidentNumber","incidentType","severity","status"]]],
   },
   dashcam: {
-    queryKey: "dashcam", eyebrow: "Dashcam / Incident Review", title: "Video Event Inbox", icon: <FileVideo />,
-    description: "Review video event metadata, event summaries, road and driver clip slots, false positives, coaching, evidence packages and insurance exports.",
+    queryKey: "dashcam", eyebrow: "Camera Metadata", title: "Stored camera metadata", icon: <FileVideo />,
+    description: CAMERA_NOTICE,
     useRows: useDashcamEvents, useSummary: useDashcamSummary, useDetail: useDashcamEventDetail, api: dashcamApi, createLabel: "Record Event Metadata",
-    kpis: [["Dashcam Events Today","dashcamEventsToday"],["Critical Video Events","criticalVideoEvents"],["Pending Review","pendingReview"],["Reviewed Events","reviewedEvents"],["False Positives","falsePositives"],["Coaching Created","coachingCreated"],["Evidence Packages","evidencePackages"],["Collision/Near Miss","collisionNearMiss"],["Distracted Driving","distractedDrivingEvents"],["Tailgating","tailgatingEvents"],["Speeding Video","speedingVideoEvents"],["Driver Exoneration","driverExonerations"]],
-    columns: ["eventNumber","eventType","severity","driverName","vehicleCode","jobNumber","routeCode","locationDescription","occurredAt","videoProvider","aiConfidence","reviewStatus","evidenceStatus","recommendedAction"],
-    fields: [["eventNumber","Event Number"],["safetyEventId","Safety Event ID"],["eventType","Event Type"],["title","Title"],["severity","Severity"],["driverId","Driver ID"],["vehicleId","Vehicle ID"],["jobId","Job ID"],["routeId","Route ID"],["locationDescription","Location"],["aiSummary","Event Summary"],["aiConfidence","Detection Confidence"],["reviewStatus","Review Status"],["evidenceStatus","Evidence Status"],["recommendedAction","Recommended Action"]],
-    actions: ["review","falsePositive","createCoaching","createEvidencePackage","createIncidentReport"],
-    sections: [["Coaching From Video", "coachingTasks", ["taskNumber","priority","status","aiScript"]],["Evidence Packages","evidencePackages",["packageNumber","status","locked","exportUrl"]]],
+    kpis: [["Stored event records today","dashcamEventsToday"]],
+    columns: ["eventNumber","eventType","title","recordedLevel","driverName","vehicleCode","jobNumber","routeCode","locationDescription","occurredAt"],
+    fields: [],
+    actions: [],
+    sections: [],
   },
   coaching: {
     queryKey: "coaching", eyebrow: "Driver Coaching", title: "Driver coaching queue", icon: <UserCheck />,
@@ -82,8 +84,8 @@ const ACTION_PERMISSIONS: Record<Kind, Record<string, string>> = {
     createIncident: "safety:create",
   },
   dashcam: {
-    create: "safety:update",
-    update: "safety:update",
+    create: "dashcam:manage",
+    update: "dashcam:manage",
     export: "safety:evidence:export",
     review: "safety:update",
     falsePositive: "safety:update",
@@ -117,6 +119,7 @@ const ACTION_PERMISSIONS: Record<Kind, Record<string, string>> = {
 };
 
 export function Batch4SafetyPage({ kind }: { kind: Kind }) {
+  const { session } = useAuth();
   const config = configs[kind];
   const hasPermission = useHasPermission();
   const hasDirectPermission = useHasDirectPermission();
@@ -148,7 +151,7 @@ export function Batch4SafetyPage({ kind }: { kind: Kind }) {
   }, onSuccess: async () => { setEditing(null); await invalidate(); } });
   const action = useMutation({ mutationFn: ({ type, row, payload }: { type: string; row: AnyRecord; payload?: AnyRecord }) => runAction(kind, type, row, payload), onSuccess: async () => { setIncidentAction(null); await invalidate(); } });
   const operationError = save.error || action.error;
-  const rows = useMemo(() => (rowsQuery.data || []).filter((row) => {
+  const rows = useMemo(() => (kind === "dashcam" ? (Array.isArray(rowsQuery.data) ? rowsQuery.data : []).map(cameraProjection).filter((row): row is AnyRecord => row !== null) : (rowsQuery.data || [])).filter((row) => {
     const searchLower = search.toLowerCase();
     const filterLower = filter.toLowerCase();
     const matchesSearch = !search || 
@@ -159,14 +162,21 @@ export function Batch4SafetyPage({ kind }: { kind: Kind }) {
     const statusVal = String(row.status || row.reviewStatus || row.severity || "").toLowerCase();
     const matchesFilter = filter === "All" || statusVal.includes(filterLower);
     return matchesSearch && matchesFilter;
-  }), [rowsQuery.data, search, filter]);
+  }), [rowsQuery.data, search, filter, kind]);
+  const camera = useCameraMetadataWorkflow({ enabled: kind === "dashcam", session, canManage: canMutate("dashcam:manage"), canExport: hasPermission(exportPermission), selectedId: selected?.id,
+    visibleIds: rows.map((row) => String(row.id)), detail, rows: rowsQuery, queryClient: qc });
+  const cameraNotice = kind === "dashcam" && camera.notice ? <div role="status" className="rounded-xl border border-slate-300 bg-slate-50 p-4 text-sm">
+    Server returned a manual metadata acknowledgement for record {camera.notice.receipt.id}. This is not independent confirmation of durable commit or media verification.
+    {camera.warning ? <p>Display refresh is not confirmed. Inspect current records before submitting again.</p> : <p>Metadata reads refreshed.</p>}
+    <button type="button" className="btn-ghost mt-2" disabled={camera.refreshing || camera.pending} onClick={() => { if (camera.notice) void camera.refresh(camera.notice); }}>{camera.refreshing ? "Refreshing metadata…" : "Refresh metadata reads"}</button>
+  </div> : null;
   if (rowsQuery.isLoading || summary.isLoading) return <LoadingState />;
-  if (rowsQuery.isError || summary.isError) {
-    return <EmptyState
+  if (rowsQuery.isError || summary.isError || (kind === "dashcam" && !Array.isArray(rowsQuery.data))) {
+    return <div>{cameraNotice}<EmptyState
       title={`${config.eyebrow} unavailable`}
       subtitle="Unable to load live records right now. No empty or healthy state has been inferred."
       action={<button type="button" className="btn-secondary" disabled={rowsQuery.isFetching || summary.isFetching} onClick={() => { void rowsQuery.refetch(); void summary.refetch(); }}>{rowsQuery.isFetching || summary.isFetching ? "Retrying…" : "Retry live data"}</button>}
-    />;
+    /></div>;
   }
   const s = (summary.data || {}) as AnyRecord;
   return <div className="fleet-console space-y-3">
@@ -178,39 +188,46 @@ export function Batch4SafetyPage({ kind }: { kind: Kind }) {
         <>
           <button
             className="btn-primary"
-            disabled={!canMutate(createPermission)}
+            disabled={!canMutate(createPermission) || (kind === "dashcam" && camera.pending)}
             title={!canMutate(createPermission) ? "You do not have permission to perform this action." : `Create a new ${config.eyebrow.toLowerCase()} record.`}
-            onClick={() => setEditing(defaultForm(kind))}
+            onClick={() => { if (kind === "dashcam") camera.open(); else setEditing(defaultForm(kind)); }}
           >
             <Plus className="h-4 w-4" /> {config.createLabel}
           </button>
           <button
             className="btn-ghost"
-            disabled={!hasPermission(exportPermission)}
+            disabled={!hasPermission(exportPermission) || (kind === "dashcam" && (rowsQuery.isFetching || rowsQuery.fetchStatus !== "idle" || camera.pending))}
             title={!hasPermission(exportPermission) ? "You do not have permission to perform this action." : "Export the current filtered records."}
-            onClick={() => exportCsv(kind, rows)}
+            onClick={() => { if (kind === "dashcam") camera.exportCurrent("list"); else exportCsv(kind, rows); }}
           >
             <Download className="h-4 w-4" /> Export Report
           </button>
         </>
       }
     />
-    {operationError ? <div role="alert" className="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">{operationError instanceof Error ? operationError.message : "The incident action could not be completed."}</div> : null}
-    <div className="grid gap-6 sm:grid-cols-3 xl:grid-cols-5">{config.kpis.slice(0, 5).map(([label,key]) => <KpiCard key={key} label={label} value={String(s[key] ?? 0)} status={/critical|overdue|missing|rejected/i.test(label) ? "Critical" : undefined} />)}</div>
+    {cameraNotice}
+    {operationError && kind !== "dashcam" ? <div role="alert" className="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">{operationError instanceof Error ? operationError.message : "The incident action could not be completed."}</div> : null}
+    {kind === "dashcam" && Array.isArray(rowsQuery.data) && rowsQuery.data.some((row) => !cameraProjection(row)) ? <p role="alert">Some stored metadata is unavailable because its identity or fields cannot be interpreted safely. It cannot be edited or exported.</p> : null}
+    <div className="grid gap-6 sm:grid-cols-3 xl:grid-cols-5">{config.kpis.slice(0, 5).map(([label,key]) => <KpiCard key={key} label={label} value={kind === "dashcam" ? (typeof s[key] === "number" && Number.isSafeInteger(s[key]) && Number(s[key]) >= 0 ? String(s[key]) : "Unavailable") : String(s[key] ?? 0)} status={/critical|overdue|missing|rejected/i.test(label) ? "Critical" : undefined} />)}</div>
     <div className="flex flex-col gap-3 xl:flex-row xl:items-center"><input className="field xl:max-w-md" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={`Search ${config.eyebrow.toLowerCase()} by driver, vehicle, route, event, status...`} /><select className="field xl:max-w-[180px]" value={filter} onChange={(e) => setFilter(e.target.value)}><option>All</option><option>Critical</option><option>High</option><option>Pending</option><option>Reviewed</option><option>Open</option><option>Closed</option><option>Locked</option></select></div>
     {!rows.length ? (
       <EmptyState title={`No ${config.eyebrow.toLowerCase()} records`} subtitle="Try another filter or create the first record." />
     ) : (
-      <DataTable rows={rows} columns={config.columns} onSelect={setSelected} />
+      <DataTable rows={kind === "dashcam" ? rows.map(({ severity, ...metadata }) => ({ ...metadata, recordedLevel: severity ?? "Unavailable" })) : rows} columns={config.columns} onSelect={(row) => { if (kind !== "dashcam" || camera.canLeave()) setSelected(row); }} />
     )}
     <Drawer
       config={config}
       detail={detail.data}
       loading={detail.isLoading}
-      canUpdate={canMutate(updatePermission) && !(kind === "coaching" && /completed|cancelled/i.test(String((detail.data?.record as AnyRecord | undefined)?.status || selected?.status || "")))}
-      canExport={hasPermission(exportPermission)}
-      actionPending={action.isPending}
+      canUpdate={kind === "dashcam" ? camera.canEdit : canMutate(updatePermission) && !(kind === "coaching" && /completed|cancelled/i.test(String((detail.data?.record as AnyRecord | undefined)?.status || selected?.status || "")))}
+      canExport={hasPermission(exportPermission) && (kind !== "dashcam" || camera.detailReady)}
+      actionPending={kind === "dashcam" ? camera.pending : action.isPending}
+      cameraReady={kind !== "dashcam" || camera.detailReady}
+      cameraOpen={kind === "dashcam" && selected !== null}
+      onCameraExport={() => camera.exportCurrent("detail")}
+      onCameraRefresh={() => { void detail.refetch(); }}
       canRunAction={(type) => {
+        if (kind === "dashcam") return false;
         const permission = ACTION_PERMISSIONS[kind][type] || updatePermission;
         if (!canMutate(permission)) return false;
         if (kind === "coaching") {
@@ -224,9 +241,10 @@ export function Batch4SafetyPage({ kind }: { kind: Kind }) {
         }
         return true;
       }}
-      onClose={() => setSelected(null)}
-      onEdit={(r) => setEditing(r)}
+      onClose={() => { if (kind !== "dashcam" || camera.canLeave()) setSelected(null); }}
+      onEdit={(r) => { if (kind === "dashcam") camera.open(r); else setEditing(r); }}
       onAction={(type, row) => {
+        if (kind === "dashcam") return;
         if (kind === "incidents" && (type === "status" || type === "attachEvidence")) {
           const evidenceReady = ((detail.data?.evidence as AnyRecord[] | undefined) || []).some((item) => /^https:\/\//i.test(String(item.evidenceUrl || "")) && /^[0-9a-f]{64}$/i.test(String(item.contentHash || "")));
           action.reset();
@@ -237,7 +255,8 @@ export function Batch4SafetyPage({ kind }: { kind: Kind }) {
         else void actionSingleFlight(() => action.mutateAsync({ type, row }));
       }}
     />
-    {editing ? <Modal kind={kind} title={config.createLabel} fields={config.fields} initial={editing} saving={save.isPending} error={save.error} onClose={() => { save.reset(); setEditing(null); }} onSave={(payload) => { void saveSingleFlight(() => save.mutateAsync(payload)); }} /> : null}
+    {camera.editor ? <CameraMetadataDialog editor={camera.editor} pending={camera.pending} error={camera.error} onChange={camera.change} onClose={camera.close} onSubmit={(editor) => { void camera.submit(editor); }} /> : null}
+    {editing && kind !== "dashcam" ? <Modal kind={kind} title={config.createLabel} fields={config.fields} initial={editing} saving={save.isPending} error={save.error} onClose={() => { save.reset(); setEditing(null); }} onSave={(payload) => { void saveSingleFlight(() => save.mutateAsync(payload)); }} /> : null}
     {incidentAction ? <IncidentActionModal action={incidentAction} saving={action.isPending} error={action.error} onClose={() => { action.reset(); setIncidentAction(null); }} onSubmit={(payload) => { void actionSingleFlight(() => action.mutateAsync({ type: incidentAction.type, row: incidentAction.row, payload })); }} /> : null}
     {coachingNoteAction ? <CoachingNoteModal saving={action.isPending} onClose={() => setCoachingNoteAction(null)} onSubmit={(noteText) => { void actionSingleFlight(async () => { await action.mutateAsync({ type: "addNote", row: coachingNoteAction, payload: { noteText } }); setCoachingNoteAction(null); }); }} /> : null}
     {coachingCompleteAction ? <CoachingCompleteModal saving={action.isPending} error={action.error} onClose={() => { action.reset(); setCoachingCompleteAction(null); }} onSubmit={(payload) => { void actionSingleFlight(async () => { await action.mutateAsync({ type: "complete", row: coachingCompleteAction, payload }); setCoachingCompleteAction(null); }); }} /> : null}
@@ -259,6 +278,10 @@ function Drawer({
   onClose,
   onEdit,
   onAction,
+  cameraReady = true,
+  cameraOpen = false,
+  onCameraExport,
+  onCameraRefresh,
 }: {
   config: (typeof configs)[Kind];
   detail?: AnyRecord;
@@ -270,9 +293,26 @@ function Drawer({
   onClose: () => void;
   onEdit: (record: AnyRecord) => void;
   onAction: (type: string, row: AnyRecord) => void;
+  cameraReady?: boolean;
+  cameraOpen?: boolean;
+  onCameraExport?: () => void;
+  onCameraRefresh?: () => void;
 }) {
   const record = detail?.record as AnyRecord | undefined;
-  const detailDialogRef = useDialogFocus<HTMLDivElement>(Boolean(record), onClose);
+  const detailDialogRef = useDialogFocus<HTMLDivElement>(config.queryKey === "dashcam" ? cameraOpen : Boolean(record), onClose);
+  if (config.queryKey === "dashcam") {
+    if (!cameraOpen) return null;
+    const metadata = cameraProjection(record);
+    const source = cameraRecord(record)?.source ?? "Source authority unavailable";
+    return <div ref={detailDialogRef} className="fixed inset-0 z-50 flex justify-end bg-black/50" role="dialog" aria-modal="true" aria-label="Camera metadata detail"><aside className="h-full w-full max-w-3xl overflow-y-auto bg-slate-950 p-6 text-slate-100">
+      <button className="btn-ghost float-right" onClick={onClose}>Close detail</button><h2 className="text-xl font-semibold">Stored camera metadata</h2>
+      <p className="mt-3 text-sm">{CAMERA_NOTICE}</p><p className="mt-2 text-sm">{cameraReady ? source : "Current source authority unavailable"}</p>
+      <p className="mt-2 text-sm">Review, coaching, evidence and report workflows are not assessed in this view.</p>
+      <div className="mt-4 flex gap-3"><button className="btn-primary" disabled={!canUpdate || actionPending} onClick={() => { if (record && canUpdate && !actionPending) onEdit(record); }}>Edit manual metadata</button><button className="btn-ghost" disabled={!canExport || actionPending} onClick={() => { if (canExport && !actionPending) onCameraExport?.(); }}>Export metadata</button></div>
+      {!cameraReady || !metadata ? <div role="alert" className="mt-5"><p>Current metadata is unavailable. Cached data cannot authorize editing or export.</p><button className="btn-ghost" onClick={onCameraRefresh}>Retry metadata read</button></div>
+        : <div className="mt-5"><Info title="Stored event context" record={metadata} keys={Object.keys(metadata).filter((key) => key !== "metadataNotice")} /></div>}
+    </aside></div>;
+  }
   if (!record && !loading) return null;
   if (!record) return null;
   return <div ref={detailDialogRef} className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label={`${config.eyebrow} detail`}><aside className="h-full w-full max-w-5xl overflow-y-auto border-l border-white/10 bg-slate-950 p-6"><button className="float-right icon-btn" aria-label="Close detail" onClick={onClose}><X className="h-5 w-5" /></button><p className="section-title text-teal-300">{config.eyebrow} Detail</p><h2 className="mt-3 text-2xl font-semibold text-white">{String(record.eventNumber || record.taskNumber || record.incidentNumber || record.packageNumber || `Record ${record.id}`)}</h2><div className="mt-4 flex flex-wrap gap-2"><StatusBadge status={record.status || record.reviewStatus} /><RiskBadge risk={record.severity || record.priority || record.riskScore} /></div><div className="mt-5 flex flex-wrap gap-3"><button className="btn-primary" disabled={!canUpdate || actionPending} title={!canUpdate ? "You do not have permission to perform this action." : "Edit this record."} onClick={() => onEdit(record)}><PenTool className="h-4 w-4" /> Edit</button>{config.actions.map((type) => { const canAction = canRunAction(type); return <button key={type} className="btn-ghost" disabled={!canAction || actionPending} aria-busy={actionPending} title={!canAction ? "You do not have permission to perform this action." : `Run ${labelize(type)}.`} onClick={() => onAction(type, record)}>{labelize(type)}</button>; })}<button className="btn-ghost" disabled={!canExport || actionPending} title={!canExport ? "You do not have permission to perform this action." : "Export this record."} onClick={() => exportCsv(config.eyebrow, record ? [record] : [])}><Download className="h-4 w-4" /> Export Report</button></div><div className="mt-6 grid gap-4 lg:grid-cols-3"><Info title="Primary Context" record={record} keys={Object.keys(record).slice(0,12)} /><Info title="Event Summary / Action" record={record} keys={["aiSummary","aiScript","summary","recommendedAction","reportSummary"]} /><Info title="Evidence / Legal Readiness" record={record} keys={["evidenceStatus","insuranceReportStatus","locked","exportUrl","falsePositive"]} /></div>{config.sections.map(([title,key,columns]) => <Grid key={title} title={title} rows={(detail?.[key] as AnyRecord[]) || []} columns={columns} />)}<Grid title="Audit Trail" rows={(detail?.auditTrail as AnyRecord[]) || []} columns={["actionName","actorName","createdAt"]} /><div className="mt-6 grid gap-4 lg:grid-cols-2">{((detail?.recommendations as AnyRecord[]) || []).slice(0,4).map((insight,i) => <AiInsightCard key={String(insight.id || i)} insight={insight} />)}</div></aside></div>;
@@ -394,7 +434,7 @@ function CoachingCompleteModal({ saving, error, onClose, onSubmit }: { saving: b
 
 function defaultForm(kind: Kind): AnyRecord {
   if (kind === "safety") return { eventType: "Harsh Braking", severity: "High", reviewStatus: "New", riskScore: "" };
-  if (kind === "dashcam") return { eventType: "Near Miss", title: "", severity: "High", reviewStatus: "Pending Review", aiConfidence: "" };
+  if (kind === "dashcam") return { eventType: "", title: "", severity: "" };
   if (kind === "coaching") return { coachingType: "Following Distance", priority: "High", title: "", dueAt: new Date(Date.now()+7*86400000).toISOString(), idempotencyKey: crypto.randomUUID() };
   if (kind === "incidents") return { incidentType: "", severity: "", status: "New", occurredAt: "", locationDescription: "", aiSummary: "", idempotencyKey: crypto.randomUUID() };
   return { status: "Draft", summary: "" };
@@ -409,7 +449,7 @@ async function runAction(kind: Kind, type: string, row: AnyRecord, payload?: Any
     if (type === "createCoaching") return safetyApi.createCoaching(id);
     return safetyApi.createIncident(id);
   }
-  if (kind === "dashcam") return type === "review" ? dashcamApi.review(id) : type === "falsePositive" ? dashcamApi.falsePositive(id) : type === "createCoaching" ? dashcamApi.createCoaching(id) : type === "createEvidencePackage" ? dashcamApi.createEvidencePackage(id) : dashcamApi.createIncidentReport(id);
+  if (kind === "dashcam") return;
   if (kind === "coaching") {
     const rowVersion = (row.rowVersion ?? row.row_version) as string | number;
     if (type === "assign") return coachingApi.assign(id, { rowVersion });
