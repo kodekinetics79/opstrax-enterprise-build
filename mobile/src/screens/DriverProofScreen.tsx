@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Alert, Image } from "react-native";
+import { useEffect, useState } from "react";
+import { Alert, Image, Text } from "react-native";
 import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
@@ -20,6 +20,7 @@ import {
 } from "@/components/ui";
 import { useSession } from "@/auth/SessionProvider";
 import { useAsyncResource } from "@/hooks/useAsyncResource";
+import { clearSecureDraft, readSecureDraft, secureDraftKey, writeSecureDraft } from "@/storage/secureDrafts";
 import type { DriverProofArtifact } from "@/types";
 import { textOf, titleCase } from "@/data/records";
 
@@ -29,6 +30,11 @@ type CapturedAsset = {
   mimeType?: string | null;
   fileSize?: number;
   file?: Blob | null;
+};
+
+type ProofDraft = {
+  notes: string;
+  uploaded: DriverProofArtifact | null;
 };
 
 async function captureOptionalCoordinates(): Promise<{ lat: number; lng: number } | null> {
@@ -45,16 +51,51 @@ async function captureOptionalCoordinates(): Promise<{ lat: number; lng: number 
 }
 
 export function DriverProofScreen() {
-  const { api } = useSession();
+  const { api, session } = useSession();
   const current = useAsyncResource(() => api.driverCurrentAssignment(), [api]);
   const [captured, setCaptured] = useState<CapturedAsset | null>(null);
   const [uploaded, setUploaded] = useState<DriverProofArtifact | null>(null);
   const [notes, setNotes] = useState("");
+  const [draftReady, setDraftReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const assignment = current.data?.assignment;
   const status = String(assignment?.assignmentStatus ?? "").toLowerCase();
   const proofType = status === "arrived_delivery" ? "delivery" : "pickup";
   const canSubmit = Boolean(assignment?.id && (status === "arrived_delivery" || status === "arrived_pickup" || status === "loaded"));
+  const proofDraftKey = assignment?.id
+    ? secureDraftKey("driver-proof", session?.company.id ?? session?.company.code, session?.user.id, assignment.id)
+    : null;
+
+  useEffect(() => {
+    let active = true;
+    setDraftReady(false);
+    setCaptured(null);
+    if (!proofDraftKey) return () => { active = false; };
+    void readSecureDraft<ProofDraft>(proofDraftKey).then((draft) => {
+      if (!active) return;
+      if (draft) {
+        setNotes(draft.notes ?? "");
+        setUploaded(draft.uploaded?.reference ? draft.uploaded : null);
+      } else {
+        setNotes("");
+        setUploaded(null);
+      }
+      setDraftReady(true);
+    });
+    return () => { active = false; };
+  }, [proofDraftKey]);
+
+  useEffect(() => {
+    if (!proofDraftKey || !draftReady) return;
+    const timer = setTimeout(() => {
+      const hasDraft = Boolean(notes.trim() || uploaded?.reference);
+      const write = hasDraft
+        ? writeSecureDraft<ProofDraft>(proofDraftKey, { notes, uploaded })
+        : clearSecureDraft(proofDraftKey);
+      void write.catch(() => undefined);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [draftReady, notes, proofDraftKey, uploaded]);
 
   const capture = async () => {
     const permission = await ImagePicker.requestCameraPermissionsAsync();
@@ -101,13 +142,14 @@ export function DriverProofScreen() {
         }],
       });
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      if (proofDraftKey) await clearSecureDraft(proofDraftKey).catch(() => undefined);
       setCaptured(null);
       setUploaded(null);
       setNotes("");
       current.refresh();
       Alert.alert("Proof recorded", proofType === "delivery" ? "Delivery is complete and dispatch has been updated." : "Pickup evidence is now attached to this load.");
     } catch (error) {
-      Alert.alert("Proof submission failed", error instanceof Error ? error.message : "The server rejected the proof.");
+      Alert.alert("Proof submission failed", error instanceof Error ? `${error.message} Uploaded evidence and notes remain saved on this device.` : "The server rejected the proof. Your draft remains saved.");
     } finally {
       setBusy(false);
     }
@@ -157,16 +199,22 @@ export function DriverProofScreen() {
               <ActionButton label={captured ? "Retake photo" : "Take photo"} onPress={() => void capture()} variant="secondary" disabled={!canSubmit || busy} />
               {captured && !uploaded ? <ActionButton label={busy ? "Uploading…" : "Upload evidence"} onPress={() => void upload()} disabled={busy} /> : null}
             </Row>
-            {uploaded ? <Pill label="Evidence securely uploaded" tone="green" /> : null}
+            {captured && !uploaded ? (
+              <Text style={{ color: colors.amber, fontSize: 12, lineHeight: 18 }}>
+                This photo is still local to the current app session. Upload it before closing the app so the evidence receives a durable server reference.
+              </Text>
+            ) : null}
+            {uploaded ? <Pill label={captured ? "Evidence securely uploaded" : "Uploaded evidence recovered"} tone="green" /> : null}
           </Panel>
 
           <Panel variant="elevated" tone="teal">
             <SectionHeader
               eyebrow="Submit"
               title={`Record ${proofType} proof`}
-              description="Foreground location is requested at submission and included only when permission is granted."
+              description="Foreground location is requested at submission and included only when permission is granted. Notes and uploaded evidence references are encrypted on-device until submission succeeds."
             />
             <Input label="Delivery notes" value={notes} onChangeText={setNotes} placeholder="Receiver, condition, or exception notes" multiline autoCapitalize="sentences" />
+            {notes.trim() || uploaded ? <Pill label="Draft saved securely" tone="blue" /> : null}
             <ActionButton label={busy ? "Submitting…" : `Submit ${proofType} proof`} onPress={() => void submit()} disabled={!uploaded || !canSubmit || busy} />
           </Panel>
         </>
