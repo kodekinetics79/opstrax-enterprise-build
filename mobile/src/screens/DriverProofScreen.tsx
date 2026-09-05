@@ -3,7 +3,21 @@ import { Alert, Image } from "react-native";
 import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
-import { ActionButton, EmptyState, ErrorState, Field, Input, LoadingState, Panel, Pill, Row, Screen, SectionHeader } from "@/components/ui";
+import {
+  ActionButton,
+  EmptyState,
+  ErrorState,
+  Field,
+  HeroPanel,
+  Input,
+  LoadingState,
+  Panel,
+  Pill,
+  Row,
+  Screen,
+  SectionHeader,
+  colors,
+} from "@/components/ui";
 import { useSession } from "@/auth/SessionProvider";
 import { useAsyncResource } from "@/hooks/useAsyncResource";
 import type { DriverProofArtifact } from "@/types";
@@ -21,13 +35,11 @@ async function captureOptionalCoordinates(): Promise<{ lat: number; lng: number 
   try {
     const permission = await Location.requestForegroundPermissionsAsync();
     if (!permission.granted) return null;
-
     const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
     const lat = position.coords.latitude;
     const lng = position.coords.longitude;
     return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
   } catch {
-    // Proof remains valid when device location is disabled, unavailable, or times out.
     return null;
   }
 }
@@ -103,23 +115,44 @@ export function DriverProofScreen() {
 
   return (
     <Screen>
-      <Panel>
-        <SectionHeader eyebrow="Evidence" title="Proof of pickup or delivery" description="Evidence uploads first to tenant-scoped object storage. The returned reference is then attached to the assignment." right={assignment ? <Pill label={titleCase(status)} tone={canSubmit ? "teal" : "amber"} /> : undefined} />
-      </Panel>
+      <HeroPanel tone={canSubmit ? "teal" : "amber"}>
+        <SectionHeader
+          eyebrow="Evidence"
+          title="Proof of pickup or delivery"
+          description="Evidence is uploaded to tenant-scoped storage first, then attached to the authorized assignment."
+          right={assignment ? <Pill label={titleCase(status)} tone={canSubmit ? "teal" : "amber"} /> : undefined}
+        />
+      </HeroPanel>
+
       {current.loading ? <LoadingState label="Checking assignment state…" /> : null}
       {current.error ? <ErrorState title="Proof unavailable" body={current.error} /> : null}
       {!current.loading && !assignment ? <EmptyState title="No active assignment" body="Proof capture unlocks when a load is assigned to your driver identity." /> : null}
+
       {assignment ? (
         <>
-          <Panel>
-            <SectionHeader eyebrow="Load" title={textOf(assignment.shipmentNumber)} description={canSubmit ? `${titleCase(proofType)} proof is allowed at this assignment state.` : "Progress the trip to a pickup or delivery arrival state before submitting proof."} />
+          <Panel variant="quiet" tone={canSubmit ? "teal" : "amber"}>
+            <SectionHeader
+              eyebrow="Load"
+              title={textOf(assignment.shipmentNumber)}
+              description={canSubmit ? `${titleCase(proofType)} proof is allowed at this assignment state.` : "Progress the trip to a pickup or delivery arrival state before submitting proof."}
+            />
             <Field label="Vehicle" value={assignment.vehicleCode} />
             <Field label="Destination" value={proofType === "delivery" ? assignment.dropoffAddress : assignment.pickupAddress} />
           </Panel>
 
-          <Panel>
-            <SectionHeader eyebrow="Capture" title="Take a live photo" description="Camera access is requested only when you choose to capture evidence." />
-            {captured ? <Image source={{ uri: captured.uri }} style={{ width: "100%", height: 220, borderRadius: 18 }} resizeMode="cover" /> : null}
+          <Panel variant="elevated" tone="blue">
+            <SectionHeader
+              eyebrow="Capture"
+              title="Take a live photo"
+              description="Camera access is requested only when you choose to capture evidence."
+            />
+            {captured ? (
+              <Image
+                source={{ uri: captured.uri }}
+                style={{ width: "100%", height: 230, borderRadius: 22, borderWidth: 1, borderColor: colors.border }}
+                resizeMode="cover"
+              />
+            ) : null}
             <Row>
               <ActionButton label={captured ? "Retake photo" : "Take photo"} onPress={() => void capture()} variant="secondary" disabled={!canSubmit || busy} />
               {captured && !uploaded ? <ActionButton label={busy ? "Uploading…" : "Upload evidence"} onPress={() => void upload()} disabled={busy} /> : null}
@@ -127,8 +160,12 @@ export function DriverProofScreen() {
             {uploaded ? <Pill label="Evidence securely uploaded" tone="green" /> : null}
           </Panel>
 
-          <Panel>
-            <SectionHeader eyebrow="Submit" title={`Record ${proofType} proof`} description="Foreground location is requested at submission and included only when permission is granted." />
+          <Panel variant="elevated" tone="teal">
+            <SectionHeader
+              eyebrow="Submit"
+              title={`Record ${proofType} proof`}
+              description="Foreground location is requested at submission and included only when permission is granted."
+            />
             <Input label="Delivery notes" value={notes} onChangeText={setNotes} placeholder="Receiver, condition, or exception notes" multiline autoCapitalize="sentences" />
             <ActionButton label={busy ? "Submitting…" : `Submit ${proofType} proof`} onPress={() => void submit()} disabled={!uploaded || !canSubmit || busy} />
           </Panel>
