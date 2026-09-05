@@ -34,3 +34,14 @@ test("driver proof recovery persists only uploaded references and text, never ph
   assert.match(proof, /await clearSecureDraft\(proofDraftKey\)/);
   assert.match(proof, /photo is still local to the current app session/i);
 });
+
+test("DVIR retry reuses one persisted idempotency identity until success", async () => {
+  const compliance = await source("src/screens/DriverComplianceScreen.tsx");
+  assert.match(compliance, /type DvirDraft = \{[^}]*idempotencyKey: string/s);
+  assert.match(compliance, /secureDraftKey\("driver-dvir"/);
+  assert.match(compliance, /readSecureDraft<DvirDraft>/);
+  assert.match(compliance, /writeSecureDraft<DvirDraft>/);
+  assert.match(compliance, /submitDriverDvir\([\s\S]*?, idempotencyKey\)/);
+  assert.match(compliance, /await clearSecureDraft\(dvirDraftKey\)/);
+  assert.match(compliance, /retry identity remain saved on this device/i);
+});
