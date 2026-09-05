@@ -20,6 +20,7 @@ using Opstrax.Api.DTOs;
 using Opstrax.Api.Foundation;
 using Opstrax.Api.Middleware;
 using Opstrax.Api.Services;
+using Xunit.Abstractions;
 
 namespace Opstrax.Tests;
 
@@ -33,12 +34,16 @@ public sealed class FleetIdentityInstallationTransferHttpPostgresTests
     private const string DetailPattern = "/api/telemetry/devices/{id:long}";
     private const string TransferPattern = "/api/telemetry/devices/{id:long}/installations/transfer";
     private static readonly DateTimeOffset TransferAt = DateTimeOffset.Parse("2026-09-05T04:00:00Z");
+    private readonly ITestOutputHelper output;
+
+    public FleetIdentityInstallationTransferHttpPostgresTests(ITestOutputHelper output) => this.output = output;
 
     [Fact]
     public async Task RegisteredTransfer_ConcurrentSameKeyProducesOneFreshOneReplayAndRefreshesPersistedHistory()
     {
         await WithFixtureAsync(async fixture =>
         {
+        var tenantBBefore = await fixture.TenantBProjectionSnapshotAsync();
         var preflight = await fixture.GetDeviceAsync(fixture.DeviceA);
         Assert.Equal(HttpStatusCode.OK, preflight.Status);
         using var preflightJson = JsonDocument.Parse(preflight.Body);
@@ -68,21 +73,34 @@ public sealed class FleetIdentityInstallationTransferHttpPostgresTests
         Assert.Equal(fixture.PriorInstallation, replayData.GetProperty("replacedInstallationId").GetInt64());
         Assert.Equal(fixture.DeviceA, replayData.GetProperty("deviceId").GetInt64());
         Assert.Equal(fixture.VehicleB, replayData.GetProperty("vehicleId").GetInt64());
+        Assert.Equal("Installed", replayData.GetProperty("status").GetString());
         Assert.True(replayData.GetProperty("rowVersion").GetInt64() >= 0);
         Assert.Equal(TransferAt, freshData.GetProperty("effectiveFrom").GetDateTimeOffset());
         Assert.Equal(TransferAt, replayData.GetProperty("effectiveFrom").GetDateTimeOffset());
 
         var afterConcurrent = await fixture.BusinessSnapshotAsync();
-        var sequential = await fixture.TransferAsync(fresh.Trace, currentInstallationId, currentRowVersion);
+        var sequentialTrace = Guid.NewGuid().ToString("D");
+        Assert.DoesNotContain(sequentialTrace, new[] { fresh.Trace, replay.Trace });
+        var sequential = await fixture.TransferAsync(sequentialTrace, currentInstallationId, currentRowVersion);
         Assert.Equal(HttpStatusCode.OK, sequential.Status);
         Assert.Equal("Device transfer already recorded", Message(sequential));
         using (var sequentialJson = JsonDocument.Parse(sequential.Body))
-            Assert.Equal(successorId, Data(sequentialJson.RootElement).GetProperty("id").GetInt64());
+        {
+            var sequentialData = Data(sequentialJson.RootElement);
+            AssertExactProperties(sequentialData, "id", "replacedInstallationId", "deviceId", "vehicleId", "status", "effectiveFrom", "rowVersion");
+            Assert.Equal(successorId, sequentialData.GetProperty("id").GetInt64());
+            Assert.Equal(fixture.PriorInstallation, sequentialData.GetProperty("replacedInstallationId").GetInt64());
+            Assert.Equal(fixture.DeviceA, sequentialData.GetProperty("deviceId").GetInt64());
+            Assert.Equal(fixture.VehicleB, sequentialData.GetProperty("vehicleId").GetInt64());
+            Assert.Equal("Installed", sequentialData.GetProperty("status").GetString());
+            Assert.Equal(TransferAt, sequentialData.GetProperty("effectiveFrom").GetDateTimeOffset());
+            Assert.True(sequentialData.GetProperty("rowVersion").GetInt64() >= 0);
+        }
         Assert.Equal(afterConcurrent, await fixture.BusinessSnapshotAsync());
 
         var changed = await fixture.TransferAsync(Guid.NewGuid().ToString("D"), currentInstallationId,
             currentRowVersion, assignmentReason: "Different material assignment");
-        AssertFailure(changed, HttpStatusCode.Conflict, fixture.Prefix);
+        AssertFailure(changed, HttpStatusCode.Conflict, fixture.Prefix, fixture.PositiveLeakageIdentifiers);
         Assert.Equal(afterConcurrent, await fixture.BusinessSnapshotAsync());
 
         var refresh = await fixture.GetDeviceAsync(fixture.DeviceA);
@@ -92,18 +110,24 @@ public sealed class FleetIdentityInstallationTransferHttpPostgresTests
         var refreshedCurrent = refreshData.GetProperty("currentInstallation");
         Assert.Equal(successorId, refreshedCurrent.GetProperty("id").GetInt64());
         Assert.Equal(fixture.VehicleB, refreshedCurrent.GetProperty("vehicleId").GetInt64());
+        Assert.Equal("Installed", refreshedCurrent.GetProperty("status").GetString());
+        Assert.Equal(TransferAt, refreshedCurrent.GetProperty("effectiveFrom").GetDateTimeOffset());
         var history = refreshData.GetProperty("installationHistory");
         Assert.Equal(2, history.GetArrayLength());
         var replacement = history[0];
         var prior = history[1];
         Assert.Equal(successorId, replacement.GetProperty("id").GetInt64());
         Assert.Equal(fixture.VehicleB, replacement.GetProperty("vehicleId").GetInt64());
+        Assert.Equal("Installed", replacement.GetProperty("status").GetString());
+        Assert.Equal(TransferAt, replacement.GetProperty("effectiveFrom").GetDateTimeOffset());
         Assert.Equal(JsonValueKind.Null, replacement.GetProperty("effectiveTo").ValueKind);
         Assert.Equal(fixture.PriorInstallation, prior.GetProperty("id").GetInt64());
         Assert.Equal(fixture.VehicleA, prior.GetProperty("vehicleId").GetInt64());
+        Assert.Equal("Removed", prior.GetProperty("status").GetString());
         Assert.Equal(TransferAt, prior.GetProperty("effectiveTo").GetDateTimeOffset());
 
         await fixture.AssertPersistedOutcomeAsync(successorId, fresh.Trace);
+        Assert.Equal(tenantBBefore, await fixture.TenantBProjectionSnapshotAsync());
         fixture.AssertObservedRlsPosture(preflight.Trace, fresh.Trace, replay.Trace, sequential.Trace, changed.Trace, refresh.Trace);
         });
     }
@@ -127,7 +151,7 @@ public sealed class FleetIdentityInstallationTransferHttpPostgresTests
         await fixture.ArrangeStateAsync(state);
         var before = await fixture.BusinessSnapshotAsync();
         var response = await fixture.TransferForStateAsync(state);
-        AssertFailure(response, (HttpStatusCode)expectedStatus, fixture.Prefix);
+        AssertFailure(response, (HttpStatusCode)expectedStatus, fixture.Prefix, fixture.FailureLeakageIdentifiers(state));
         Assert.Equal(before, await fixture.BusinessSnapshotAsync());
         });
     }
@@ -138,11 +162,14 @@ public sealed class FleetIdentityInstallationTransferHttpPostgresTests
         await WithFixtureAsync(async fixture =>
         {
         await fixture.InstallLateAuditFailureAsync();
-        Assert.Equal(64, fixture.LateFailureSourceSha256.Length);
+        var expectedSourceSha256 = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(fixture.LateFailureSource))).ToLowerInvariant();
+        Assert.Equal(expectedSourceSha256, fixture.LateFailureSourceSha256);
+        Assert.Matches("^[a-f0-9]{64}$", fixture.LateFailureSourceSha256);
+        output.WriteLine($"Late-audit failure source SHA-256: {fixture.LateFailureSourceSha256}");
         var before = await fixture.BusinessSnapshotAsync();
         var response = await fixture.TransferAsync(Guid.NewGuid().ToString("D"), fixture.PriorInstallation, 1,
             key: fixture.LateFailureKey);
-        AssertFailure(response, HttpStatusCode.InternalServerError, fixture.Prefix);
+        AssertFailure(response, HttpStatusCode.InternalServerError, fixture.Prefix, fixture.PositiveLeakageIdentifiers);
         Assert.DoesNotContain("synthetic_late_audit_failure", response.Body, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(before, await fixture.BusinessSnapshotAsync());
         });
@@ -151,16 +178,12 @@ public sealed class FleetIdentityInstallationTransferHttpPostgresTests
     private static async Task WithFixtureAsync(Func<Fixture, Task> body)
     {
         var fixture = await Fixture.CreateAsync();
-        Exception? primary = null;
+        var failures = new List<Exception>();
         try { await body(fixture); }
-        catch (Exception error) { primary = error; }
+        catch (Exception error) { failures.Add(error); }
         try { await fixture.DisposeAsync(); }
-        catch (Exception cleanupFailure)
-        {
-            if (primary is null) primary = cleanupFailure;
-            else primary.Data["FixtureCleanupFailure"] = cleanupFailure.ToString();
-        }
-        if (primary is not null) ExceptionDispatchInfo.Capture(primary).Throw();
+        catch (Exception cleanupFailure) { failures.Add(cleanupFailure); }
+        ThrowFailures("Registered transfer journey and cleanup failures.", failures);
     }
 
     private static JsonElement Data(JsonElement root)
@@ -178,7 +201,7 @@ public sealed class FleetIdentityInstallationTransferHttpPostgresTests
     private static void AssertExactProperties(JsonElement value, params string[] expected)
         => Assert.Equal(expected.Order(StringComparer.Ordinal), value.EnumerateObject().Select(property => property.Name).Order(StringComparer.Ordinal));
 
-    private static void AssertFailure(Response response, HttpStatusCode expected, string secret)
+    private static void AssertFailure(Response response, HttpStatusCode expected, string secret, params long[] numericSecrets)
     {
         Assert.Equal(expected, response.Status);
         using var json = JsonDocument.Parse(response.Body);
@@ -190,14 +213,40 @@ public sealed class FleetIdentityInstallationTransferHttpPostgresTests
         Assert.DoesNotContain("password", response.Body, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("connection", response.Body, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("SELECT ", response.Body, StringComparison.OrdinalIgnoreCase);
+        foreach (var identifier in numericSecrets.Distinct())
+            Assert.DoesNotMatch($@"(?<!\d){identifier}(?!\d)", response.Body);
     }
 
+    private static void ThrowFailures(string message, IReadOnlyCollection<Exception> failures)
+    {
+        if (failures.Count == 0) return;
+        if (failures.Count == 1) ExceptionDispatchInfo.Capture(failures.Single()).Throw();
+        throw new AggregateException(message, failures);
+    }
+
+    private static bool TenantBound(string? expression)
+        => expression?.Contains("current_tenant_id", StringComparison.OrdinalIgnoreCase) == true;
+
+    private static DateTimeOffset UtcOffset(object value) => value switch
+    {
+        DateTimeOffset offset => offset.ToUniversalTime(),
+        DateTime dateTime => new DateTimeOffset(DateTime.SpecifyKind(dateTime, DateTimeKind.Utc)),
+        _ => DateTimeOffset.Parse(value.ToString()!).ToUniversalTime()
+    };
+
     private sealed record Response(HttpStatusCode Status, string Body, string Trace);
-    private sealed record RlsPosture(string Table, bool Enabled, bool Forced, bool Active, string Policies, long Tenant, string Role);
+    private sealed record PolicyPosture(string Name, string Command, string Roles, string? UsingExpression,
+        string? WithCheckExpression, bool Applicable);
+    private sealed record RlsPosture(string Table, bool Enabled, bool Forced, bool Active,
+        IReadOnlyList<PolicyPosture> Policies, long Tenant, string Role);
+    private sealed record BackendIdentity(int Pid, string DatabaseUser, string ApplicationName, DateTimeOffset BackendStart);
+    private sealed record AdvisoryLockIdentity(long Database, long ClassId, long ObjectId, int ObjectSubId, string Mode);
+    private sealed record OwnerLockEvidence(BackendIdentity Backend, string ResourceIdentity, long ResourceHash,
+        AdvisoryLockIdentity Lock);
 
     private sealed class RequestEvidence
     {
-        public ConcurrentDictionary<string, int> BackendByTrace { get; } = new(StringComparer.Ordinal);
+        public ConcurrentDictionary<string, BackendIdentity> BackendByTrace { get; } = new(StringComparer.Ordinal);
         public ConcurrentDictionary<string, IReadOnlyList<RlsPosture>> RlsByTrace { get; } = new(StringComparer.Ordinal);
     }
 
@@ -206,10 +255,11 @@ public sealed class FleetIdentityInstallationTransferHttpPostgresTests
         public HttpClient Client { get; } = client;
         public RequestEvidence Evidence { get; } = evidence;
 
-        public static async Task<KestrelParityHost> StartAsync(string appConnection, string systemConnection)
+        public static async Task<KestrelParityHost> StartAsync(string appConnection, string systemConnection,
+            string appApplicationName, string systemApplicationName)
         {
-            var runtime = GuardConnection(appConnection, "opstrax_app");
-            var system = GuardConnection(systemConnection, "opstrax_system");
+            var runtime = GuardConnection(appConnection, "opstrax_app", appApplicationName);
+            var system = GuardConnection(systemConnection, "opstrax_system", systemApplicationName);
             Assert.True(string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("PG_CONNECTION_REPLICA")),
                 "No ambient read-replica fallback is permitted in this isolated HTTP fixture.");
             Assert.True(string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ASPNETCORE_HOSTINGSTARTUPASSEMBLIES")),
@@ -338,19 +388,37 @@ public sealed class FleetIdentityInstallationTransferHttpPostgresTests
                         var rows = await db.QueryAsync(@"SELECT c.relname table_name,c.relrowsecurity enabled,c.relforcerowsecurity forced,
                                    row_security_active(c.oid) active,current_user role,
                                    opstrax_security.current_tenant_id() tenant,
-                                   COALESCE(string_agg(DISTINCT p.polname,',' ORDER BY p.polname),'') policies
+                                   p.polname policy_name,p.polcmd::text policy_command,
+                                   COALESCE((SELECT string_agg(CASE WHEN policy_role=0 THEN 'public'
+                                                                      ELSE pg_get_userbyid(policy_role) END,',' ORDER BY policy_role)
+                                               FROM unnest(p.polroles) policy_role),'') policy_roles,
+                                   pg_get_expr(p.polqual,p.polrelid) using_expression,
+                                   pg_get_expr(p.polwithcheck,p.polrelid) with_check_expression,
+                                   COALESCE(EXISTS(SELECT 1 FROM unnest(p.polroles) policy_role
+                                                   WHERE CASE WHEN policy_role=0 THEN TRUE
+                                                              ELSE pg_has_role(current_user,policy_role,'member') END),FALSE) applicable
                               FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
                               LEFT JOIN pg_policy p ON p.polrelid=c.oid
                              WHERE n.nspname='public' AND c.relname=ANY(@tables)
-                             GROUP BY c.oid,c.relname,c.relrowsecurity,c.relforcerowsecurity ORDER BY c.relname",
+                             ORDER BY c.relname,p.polname",
                             command => command.Parameters.AddWithValue("@tables", new[]
                             {
                                 "device_installations", "eld_devices", "idempotency_keys", "device_state_transitions", "audit_logs"
                             }), http.RequestAborted);
-                        var posture = rows.Select(row => new RlsPosture(
-                            row["tableName"]!.ToString()!, Convert.ToBoolean(row["enabled"]), Convert.ToBoolean(row["forced"]),
-                            Convert.ToBoolean(row["active"]), row["policies"]?.ToString() ?? string.Empty,
-                            Convert.ToInt64(row["tenant"]), row["role"]?.ToString() ?? string.Empty)).ToArray();
+                        var posture = rows.GroupBy(row => row["tableName"]!.ToString()!, StringComparer.Ordinal)
+                            .Select(group =>
+                            {
+                                var first = group.First();
+                                var policies = group.Where(row => row["policyName"] is not null)
+                                    .Select(row => new PolicyPosture(
+                                        row["policyName"]!.ToString()!, row["policyCommand"]?.ToString() ?? string.Empty,
+                                        row["policyRoles"]?.ToString() ?? string.Empty,
+                                        row["usingExpression"]?.ToString(), row["withCheckExpression"]?.ToString(),
+                                        Convert.ToBoolean(row["applicable"]))).ToArray();
+                                return new RlsPosture(group.Key, Convert.ToBoolean(first["enabled"]), Convert.ToBoolean(first["forced"]),
+                                    Convert.ToBoolean(first["active"]), policies, Convert.ToInt64(first["tenant"]),
+                                    first["role"]?.ToString() ?? string.Empty);
+                            }).OrderBy(item => item.Table, StringComparer.Ordinal).ToArray();
                         Assert.Equal(5, posture.Length);
                         Assert.All(posture, item =>
                         {
@@ -359,11 +427,24 @@ public sealed class FleetIdentityInstallationTransferHttpPostgresTests
                             if (item.Enabled)
                             {
                                 Assert.True(item.Active, $"RLS was enabled but inactive for {item.Table}.");
-                                Assert.False(string.IsNullOrWhiteSpace(item.Policies), $"RLS policy list was empty for {item.Table}.");
+                                var applicablePolicies = item.Policies.Where(policy => policy.Applicable).ToArray();
+                                Assert.NotEmpty(applicablePolicies);
+                                Assert.Contains(applicablePolicies, policy =>
+                                    TenantBound(policy.UsingExpression) || TenantBound(policy.WithCheckExpression));
                             }
+                            else Assert.False(item.Active, $"RLS was disabled but reported active for {item.Table}.");
                         });
                         var evidence = http.RequestServices.GetRequiredService<RequestEvidence>();
-                        evidence.BackendByTrace[http.TraceIdentifier] = Convert.ToInt32(await db.ScalarLongAsync("SELECT pg_backend_pid()", ct: http.RequestAborted));
+                        var backendRow = Assert.Single(await db.QueryAsync(@"SELECT a.pid,a.usename database_user,
+                                   a.application_name,a.backend_start
+                              FROM pg_stat_activity a WHERE a.pid=pg_backend_pid()", ct: http.RequestAborted));
+                        var backend = new BackendIdentity(Convert.ToInt32(backendRow["pid"]),
+                            backendRow["databaseUser"]?.ToString() ?? string.Empty,
+                            backendRow["applicationName"]?.ToString() ?? string.Empty,
+                            UtcOffset(backendRow["backendStart"]!));
+                        Assert.Equal("opstrax_app", backend.DatabaseUser);
+                        Assert.Equal(appApplicationName, backend.ApplicationName);
+                        evidence.BackendByTrace[http.TraceIdentifier] = backend;
                         evidence.RlsByTrace[http.TraceIdentifier] = posture;
                         await next();
                         await tenant.CompleteAsync(http.RequestAborted);
@@ -392,11 +473,12 @@ public sealed class FleetIdentityInstallationTransferHttpPostgresTests
             }
             catch (Exception startupFailure)
             {
+                var failures = new List<Exception> { startupFailure };
                 try { using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(15)); await servingApp.StopAsync(stop.Token); }
-                catch (Exception cleanupFailure) { startupFailure.Data["KestrelStopFailure"] = cleanupFailure.ToString(); }
+                catch (Exception cleanupFailure) { failures.Add(new InvalidOperationException("Kestrel startup stop failed.", cleanupFailure)); }
                 try { await servingApp.DisposeAsync(); }
-                catch (Exception cleanupFailure) { startupFailure.Data["KestrelDisposeFailure"] = cleanupFailure.ToString(); }
-                ExceptionDispatchInfo.Capture(startupFailure).Throw();
+                catch (Exception cleanupFailure) { failures.Add(new InvalidOperationException("Kestrel startup application disposal failed.", cleanupFailure)); }
+                ThrowFailures("Kestrel startup and cleanup failures.", failures);
                 throw;
             }
         }
@@ -408,7 +490,7 @@ public sealed class FleetIdentityInstallationTransferHttpPostgresTests
             Assert.Single(matches);
         }
 
-        internal static string GuardConnection(string connectionString, string expectedRole)
+        internal static string GuardConnection(string connectionString, string expectedRole, string expectedApplicationName)
         {
             Assert.False(string.IsNullOrWhiteSpace(connectionString), "Explicit local database identity required; no fallback.");
             var connection = new NpgsqlConnectionStringBuilder(connectionString);
@@ -416,6 +498,7 @@ public sealed class FleetIdentityInstallationTransferHttpPostgresTests
             Assert.Equal(5433, connection.Port);
             Assert.Equal("opstrax_local", connection.Database);
             Assert.Equal(expectedRole, connection.Username);
+            Assert.Equal(expectedApplicationName, connection.ApplicationName);
             Assert.False(connection.Pooling, "The isolated HTTP fixture requires pooling disabled.");
             connection.Timeout = 5;
             connection.CommandTimeout = 10;
@@ -424,18 +507,24 @@ public sealed class FleetIdentityInstallationTransferHttpPostgresTests
 
         public async ValueTask DisposeAsync()
         {
-            Exception? first = null;
-            try { Client.Dispose(); } catch (Exception error) { first = error; }
+            var failures = new List<Exception>();
+            try { Client.Dispose(); } catch (Exception error) { failures.Add(new InvalidOperationException("HTTP client disposal failed.", error)); }
             try { using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(15)); await app.StopAsync(stop.Token); }
-            catch (Exception error) { first ??= error; }
-            try { await app.DisposeAsync(); } catch (Exception error) { first ??= error; }
-            if (first is not null) ExceptionDispatchInfo.Capture(first).Throw();
+            catch (Exception error) { failures.Add(new InvalidOperationException("Kestrel stop failed.", error)); }
+            try { await app.DisposeAsync(); }
+            catch (Exception error) { failures.Add(new InvalidOperationException("Kestrel application disposal failed.", error)); }
+            ThrowFailures("HTTP client and Kestrel cleanup failures.", failures);
         }
     }
 
-    private sealed class Fixture(string ownerConnection) : IAsyncDisposable
+    private sealed class Fixture(string ownerConnection, string nonce, string ownerApplicationName,
+        string appApplicationName, string systemApplicationName) : IAsyncDisposable
     {
-        public string Prefix { get; } = "G5HTTP-" + Guid.NewGuid().ToString("N")[..12];
+        public string Prefix { get; } = "G5HTTP-" + nonce;
+        private string OwnerApplicationName { get; } = ownerApplicationName;
+        private string AppApplicationName { get; } = appApplicationName;
+        private string SystemApplicationName { get; } = systemApplicationName;
+        private string[] FixtureApplicationNames => [OwnerApplicationName, AppApplicationName, SystemApplicationName];
         public string LateFailureKey { get; } = "late-" + Guid.NewGuid().ToString("N");
         private string Token { get; } = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
         private string TransferKey { get; } = "transfer-" + Guid.NewGuid().ToString("N");
@@ -444,37 +533,44 @@ public sealed class FleetIdentityInstallationTransferHttpPostgresTests
         private KestrelParityHost? host;
         private string? failureTrigger;
         public string LateFailureSourceSha256 { get; private set; } = string.Empty;
+        public string LateFailureSource { get; private set; } = string.Empty;
         private long companyA, companyB, branchA, branchOther, branchB, role, user;
         public long DeviceA, DeviceB, VehicleA, VehicleB, ForeignVehicle, OtherBranchVehicle, PriorInstallation;
+        public long[] PositiveLeakageIdentifiers => [companyA, companyB, DeviceA, DeviceB, VehicleA, VehicleB, ForeignVehicle, OtherBranchVehicle];
 
         public static async Task<Fixture> CreateAsync()
         {
-            static string Local(string key, string role)
+            var nonce = Guid.NewGuid().ToString("N")[..12];
+            var ownerApplicationName = "opstrax-g5-xfer-owner-" + nonce;
+            var appApplicationName = "opstrax-g5-xfer-app-" + nonce;
+            var systemApplicationName = "opstrax-g5-xfer-system-" + nonce;
+            static string Local(string key, string role, string applicationName)
             {
                 var value = Environment.GetEnvironmentVariable(key) ?? string.Empty;
                 var connection = new NpgsqlConnectionStringBuilder(value)
                 {
                     Pooling = false,
-                    ApplicationName = role == "zayra"
-                        ? "opstrax-g5-http-transfer-owner"
-                        : "opstrax-g5-http-transfer-tests"
+                    ApplicationName = applicationName
                 };
-                return KestrelParityHost.GuardConnection(connection.ConnectionString, role);
+                return KestrelParityHost.GuardConnection(connection.ConnectionString, role, applicationName);
             }
-            var fixture = new Fixture(Local("OPSTRAX_TEST_DB", "zayra"));
+            var fixture = new Fixture(Local("OPSTRAX_TEST_DB", "zayra", ownerApplicationName), nonce,
+                ownerApplicationName, appApplicationName, systemApplicationName);
             try
             {
                 fixture.host = await KestrelParityHost.StartAsync(
-                    Local("OPSTRAX_TEST_DB_APP", "opstrax_app"),
-                    Local("OPSTRAX_TEST_DB_SYSTEM", "opstrax_system"));
+                    Local("OPSTRAX_TEST_DB_APP", "opstrax_app", appApplicationName),
+                    Local("OPSTRAX_TEST_DB_SYSTEM", "opstrax_system", systemApplicationName),
+                    appApplicationName, systemApplicationName);
                 await fixture.InitializeAsync();
                 return fixture;
             }
             catch (Exception setupFailure)
             {
+                var failures = new List<Exception> { setupFailure };
                 try { await fixture.DisposeAsync(); }
-                catch (Exception cleanupFailure) { setupFailure.Data["FixtureCleanupFailure"] = cleanupFailure.ToString(); }
-                ExceptionDispatchInfo.Capture(setupFailure).Throw();
+                catch (Exception cleanupFailure) { failures.Add(cleanupFailure); }
+                ThrowFailures("Fixture setup and cleanup failures.", failures);
                 throw;
             }
         }
@@ -507,68 +603,138 @@ public sealed class FleetIdentityInstallationTransferHttpPostgresTests
             NpgsqlConnection? owner = null;
             NpgsqlTransaction? transaction = null;
             Task<Response>[] requests = [];
-            Exception? primary = null;
+            var failures = new List<Exception>();
             var responses = Array.Empty<Response>();
+            var traceA = Guid.NewGuid().ToString("D");
+            var traceB = Guid.NewGuid().ToString("D");
+            Assert.NotEqual(traceA, traceB);
             try
             {
                 owner = new NpgsqlConnection(ownerConnection);
                 await owner.OpenAsync(deadline.Token);
                 transaction = await owner.BeginTransactionAsync(deadline.Token);
+                var resourceIdentity = $"device-install-resource:{companyA}:device:{DeviceA}";
                 await using (var lockCommand = new NpgsqlCommand(
                     "SELECT pg_advisory_xact_lock(hashtextextended(@identity,0)),pg_backend_pid()", owner, transaction))
                 {
-                    lockCommand.Parameters.AddWithValue("@identity", $"device-install-resource:{companyA}:device:{DeviceA}");
+                    lockCommand.Parameters.AddWithValue("@identity", resourceIdentity);
                     await lockCommand.ExecuteNonQueryAsync(deadline.Token);
                 }
-                var ownerPid = owner.ProcessID;
+                var ownerEvidence = await ReadOwnerLockEvidenceAsync(owner, transaction, resourceIdentity);
                 requests =
                 [
-                    TransferAsync(Guid.NewGuid().ToString("D"), currentInstallation, currentVersion),
-                    TransferAsync(Guid.NewGuid().ToString("D"), currentInstallation, currentVersion)
+                    TransferAsync(traceA, currentInstallation, currentVersion),
+                    TransferAsync(traceB, currentInstallation, currentVersion)
                 ];
-                await WaitForBothBlockedAsync(ownerPid, requests);
-                await transaction.RollbackAsync(deadline.Token);
-                await transaction.DisposeAsync();
-                transaction = null;
-                await owner.DisposeAsync();
-                owner = null;
-                responses = await Task.WhenAll(requests).WaitAsync(TimeSpan.FromSeconds(30), deadline.Token);
+                await WaitForBothBlockedAsync(ownerEvidence, traceA, traceB, requests);
             }
-            catch (Exception error) { primary = error; }
+            catch (Exception error) { failures.Add(error); }
             finally
             {
-                async Task Cleanup(string key, Func<Task> action)
+                async Task Cleanup(string step, Func<Task> action)
                 {
                     try { await action(); }
-                    catch (Exception error) { if (primary is null) primary = error; else primary.Data[key] = error.ToString(); }
+                    catch (Exception error) { failures.Add(new InvalidOperationException(step + " failed.", error)); }
                 }
-                if (transaction is not null) await Cleanup("OwnerRollbackFailure", async () => await transaction.RollbackAsync(CancellationToken.None));
-                if (transaction is not null) await Cleanup("OwnerTransactionDisposeFailure", async () => await transaction.DisposeAsync());
-                if (owner is not null) await Cleanup("OwnerConnectionDisposeFailure", async () => await owner.DisposeAsync());
+                // Owner release is mandatory before request drain so the two exact
+                // registered transfers can settle without a cleanup deadlock.
+                if (transaction is not null) await Cleanup("Owner rollback", async () => await transaction.RollbackAsync(CancellationToken.None));
+                if (transaction is not null) await Cleanup("Owner transaction disposal", async () => await transaction.DisposeAsync());
+                if (owner is not null) await Cleanup("Owner connection disposal", async () => await owner.DisposeAsync());
                 if (requests.Length > 0)
-                    await Cleanup("RequestDrainFailure", async () => { await Task.WhenAll(requests).WaitAsync(TimeSpan.FromSeconds(30)); });
+                    await Cleanup("Concurrent request drain", async () =>
+                    {
+                        responses = await Task.WhenAll(requests).WaitAsync(TimeSpan.FromSeconds(30));
+                    });
             }
-            if (primary is not null) ExceptionDispatchInfo.Capture(primary).Throw();
+            ThrowFailures("Concurrent Owner/request failures.", failures);
             return responses;
         }
 
-        private async Task WaitForBothBlockedAsync(int ownerPid, Task<Response>[] requests)
+        private async Task<OwnerLockEvidence> ReadOwnerLockEvidenceAsync(NpgsqlConnection owner,
+            NpgsqlTransaction transaction, string resourceIdentity)
+        {
+            await using var command = new NpgsqlCommand(@"SELECT a.pid,a.usename database_user,a.application_name,a.backend_start,
+                       hashtextextended(@identity,0) resource_hash,l.database::bigint lock_database,
+                       l.classid::bigint lock_classid,l.objid::bigint lock_objid,l.objsubid,l.mode
+                  FROM pg_stat_activity a JOIN pg_locks l ON l.pid=a.pid
+                 WHERE a.pid=pg_backend_pid() AND l.locktype='advisory' AND l.granted", owner, transaction);
+            command.Parameters.AddWithValue("@identity", resourceIdentity);
+            await using var reader = await command.ExecuteReaderAsync(deadline.Token);
+            Assert.True(await reader.ReadAsync(deadline.Token), "Owner advisory lock evidence was absent.");
+            var resourceHash = reader.GetInt64(reader.GetOrdinal("resource_hash"));
+            var expectedClassId = (long)unchecked((uint)(resourceHash >> 32));
+            var expectedObjectId = (long)unchecked((uint)resourceHash);
+            var backend = new BackendIdentity(reader.GetInt32(reader.GetOrdinal("pid")),
+                reader.GetString(reader.GetOrdinal("database_user")), reader.GetString(reader.GetOrdinal("application_name")),
+                UtcOffset(reader.GetValue(reader.GetOrdinal("backend_start"))));
+            var lockIdentity = new AdvisoryLockIdentity(reader.GetInt64(reader.GetOrdinal("lock_database")),
+                reader.GetInt64(reader.GetOrdinal("lock_classid")), reader.GetInt64(reader.GetOrdinal("lock_objid")),
+                reader.GetInt32(reader.GetOrdinal("objsubid")), reader.GetString(reader.GetOrdinal("mode")));
+            Assert.False(await reader.ReadAsync(deadline.Token), "Owner held more than the exact fixture advisory lock.");
+            Assert.Equal(owner.ProcessID, backend.Pid);
+            Assert.Equal("zayra", backend.DatabaseUser);
+            Assert.Equal(OwnerApplicationName, backend.ApplicationName);
+            Assert.Equal(expectedClassId, lockIdentity.ClassId);
+            Assert.Equal(expectedObjectId, lockIdentity.ObjectId);
+            Assert.Equal(1, lockIdentity.ObjectSubId);
+            Assert.Equal("ExclusiveLock", lockIdentity.Mode);
+            Assert.True(lockIdentity.Database > 0);
+            return new OwnerLockEvidence(backend, resourceIdentity, resourceHash, lockIdentity);
+        }
+
+        private async Task WaitForBothBlockedAsync(OwnerLockEvidence owner, string traceA, string traceB,
+            Task<Response>[] requests)
         {
             var stop = DateTime.UtcNow.AddSeconds(15);
             while (DateTime.UtcNow < stop)
             {
                 Assert.DoesNotContain(requests, request => request.IsFaulted || request.IsCanceled || request.IsCompletedSuccessfully);
-                if (host!.Evidence.BackendByTrace.Count >= 2)
+                if (host!.Evidence.BackendByTrace.TryGetValue(traceA, out var backendA) &&
+                    host.Evidence.BackendByTrace.TryGetValue(traceB, out var backendB))
                 {
-                    var pids = host.Evidence.BackendByTrace.Values.Distinct().ToArray();
-                    if (pids.Length >= 2)
+                    Assert.NotEqual(backendA.Pid, backendB.Pid);
+                    foreach (var backend in new[] { backendA, backendB })
                     {
-                        var blocked = await ScalarAsync(@"SELECT COUNT(*) FROM pg_stat_activity a
-                            WHERE a.pid=ANY(@pids) AND a.wait_event_type='Lock'
-                              AND a.query LIKE '%pg_advisory_xact_lock%'
-                              AND @owner=ANY(pg_blocking_pids(a.pid))",
-                            ("pids", pids), ("owner", ownerPid));
-                        if (blocked == 2) return;
+                        Assert.Equal("opstrax_app", backend.DatabaseUser);
+                        Assert.Equal(AppApplicationName, backend.ApplicationName);
+                        Assert.NotEqual(owner.Backend.Pid, backend.Pid);
+                    }
+                    var pids = new[] { backendA.Pid, backendB.Pid };
+                    var rows = await QueryAsync(@"SELECT a.pid,a.usename database_user,a.application_name,a.backend_start,
+                               a.wait_event_type,a.query,l.database::bigint lock_database,
+                               l.classid::bigint lock_classid,l.objid::bigint lock_objid,l.objsubid,l.mode,l.granted,
+                               pg_blocking_pids(a.pid) blockers
+                          FROM pg_stat_activity a JOIN pg_locks l ON l.pid=a.pid
+                         WHERE a.pid=ANY(@pids) AND a.wait_event_type='Lock'
+                           AND l.locktype='advisory' AND NOT l.granted
+                           AND l.database::bigint=@database AND l.classid::bigint=@classid
+                           AND l.objid::bigint=@objid AND l.objsubid=@objsubid AND l.mode=@mode",
+                        ("pids", pids), ("database", owner.Lock.Database), ("classid", owner.Lock.ClassId),
+                        ("objid", owner.Lock.ObjectId), ("objsubid", owner.Lock.ObjectSubId), ("mode", owner.Lock.Mode));
+                    if (rows.Count == 2)
+                    {
+                        Assert.Equal(pids.Order(), rows.Select(row => Convert.ToInt32(row["pid"])).Order());
+                        foreach (var backend in new[] { backendA, backendB })
+                        {
+                            var row = Assert.Single(rows, candidate => Convert.ToInt32(candidate["pid"]) == backend.Pid);
+                            Assert.Equal(backend.DatabaseUser, row["databaseUser"]?.ToString());
+                            Assert.Equal(backend.ApplicationName, row["applicationName"]?.ToString());
+                            Assert.Equal(backend.BackendStart, UtcOffset(row["backendStart"]!));
+                            Assert.Equal("Lock", row["waitEventType"]?.ToString());
+                            Assert.Contains("pg_advisory_xact_lock", row["query"]?.ToString(), StringComparison.Ordinal);
+                            Assert.Equal(owner.Lock.Database, Convert.ToInt64(row["lockDatabase"]));
+                            Assert.Equal(owner.Lock.ClassId, Convert.ToInt64(row["lockClassid"]));
+                            Assert.Equal(owner.Lock.ObjectId, Convert.ToInt64(row["lockObjid"]));
+                            Assert.Equal(owner.Lock.ObjectSubId, Convert.ToInt32(row["objsubid"]));
+                            Assert.Equal(owner.Lock.Mode, row["mode"]?.ToString());
+                            Assert.False(Convert.ToBoolean(row["granted"]));
+                            Assert.Equal(new[] { owner.Backend.Pid }, Assert.IsType<int[]>(row["blockers"]));
+                        }
+                        Assert.Equal($"device-install-resource:{companyA}:device:{DeviceA}", owner.ResourceIdentity);
+                        Assert.Equal((long)unchecked((uint)(owner.ResourceHash >> 32)), owner.Lock.ClassId);
+                        Assert.Equal((long)unchecked((uint)owner.ResourceHash), owner.Lock.ObjectId);
+                        return;
                     }
                 }
                 await Task.Delay(25, deadline.Token);
@@ -603,6 +769,14 @@ public sealed class FleetIdentityInstallationTransferHttpPostgresTests
                 authenticated: state != "missing-bearer");
         }
 
+        public long[] FailureLeakageIdentifiers(string state) => state switch
+        {
+            "foreign-device" => [companyB, DeviceB, VehicleB],
+            "foreign-target" => [companyA, companyB, DeviceA, ForeignVehicle],
+            "out-of-branch-target" => [companyA, DeviceA, OtherBranchVehicle],
+            _ => [companyA, DeviceA, VehicleB]
+        };
+
         private async Task<Response> SendAsync(HttpMethod method, string uri, string trace, object? body, bool authenticated)
         {
             using var request = new HttpRequestMessage(method, uri);
@@ -618,10 +792,10 @@ public sealed class FleetIdentityInstallationTransferHttpPostgresTests
         public async Task InstallLateAuditFailureAsync()
         {
             failureTrigger = "g5_http_audit_fail_" + Guid.NewGuid().ToString("N")[..12];
-            var source = $@"CREATE FUNCTION public.{failureTrigger}() RETURNS trigger LANGUAGE plpgsql AS $$
+            LateFailureSource = $@"CREATE FUNCTION public.{failureTrigger}() RETURNS trigger LANGUAGE plpgsql AS $$
                 BEGIN IF NEW.company_id={companyA} THEN RAISE EXCEPTION 'synthetic_late_audit_failure'; END IF; RETURN NEW; END $$";
-            LateFailureSourceSha256 = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(source))).ToLowerInvariant();
-            await ExecuteAsync(source);
+            LateFailureSourceSha256 = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(LateFailureSource))).ToLowerInvariant();
+            await ExecuteAsync(LateFailureSource);
             await ExecuteAsync($"CREATE TRIGGER {failureTrigger} BEFORE INSERT ON public.audit_logs FOR EACH ROW EXECUTE FUNCTION public.{failureTrigger}()");
         }
 
@@ -632,6 +806,12 @@ public sealed class FleetIdentityInstallationTransferHttpPostgresTests
             'transitions',(SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY x.id),'[]') FROM device_state_transitions x WHERE x.company_id=ANY(@ids)),
             'audit',(SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY x.id),'[]') FROM audit_logs x WHERE x.company_id=ANY(@ids)))::text",
             ("ids", companies.ToArray()));
+
+        public Task<string> TenantBProjectionSnapshotAsync() => TextAsync(@"SELECT jsonb_build_object(
+            'tenant',@cid,
+            'device',(SELECT to_jsonb(d) FROM eld_devices d WHERE d.company_id=@cid AND d.id=@device),
+            'vehicle',(SELECT to_jsonb(v) FROM vehicles v WHERE v.company_id=@cid AND v.id=@vehicle))::text",
+            ("cid", companyB), ("device", DeviceB), ("vehicle", ForeignVehicle));
 
         public async Task AssertPersistedOutcomeAsync(long successorId, string freshTrace)
         {
@@ -646,6 +826,8 @@ public sealed class FleetIdentityInstallationTransferHttpPostgresTests
             Assert.Equal(TransferAt, new DateTimeOffset(Convert.ToDateTime(rows[0]["effectiveTo"]).ToUniversalTime()));
             Assert.Equal(successorId, Convert.ToInt64(rows[1]["id"]));
             Assert.Equal("Installed", rows[1]["status"]);
+            Assert.Equal(TransferAt, UtcOffset(rows[1]["effectiveFrom"]!));
+            Assert.Null(rows[1]["effectiveTo"]);
             Assert.Equal(PriorInstallation, Convert.ToInt64(rows[1]["replacedInstallationId"]));
             Assert.Equal(VehicleB, Convert.ToInt64(rows[1]["vehicleId"]));
             Assert.Equal(VehicleB, Convert.ToInt64(rows[1]["projectedVehicleId"]));
@@ -691,14 +873,56 @@ public sealed class FleetIdentityInstallationTransferHttpPostgresTests
 
         public void AssertObservedRlsPosture(params string[] traces)
         {
+            IReadOnlyList<RlsPosture>? baseline = null;
             Assert.All(traces, trace =>
             {
                 Assert.True(host!.Evidence.RlsByTrace.TryGetValue(trace, out var posture), $"Missing in-request RLS posture for {trace}.");
                 Assert.Equal(5, posture!.Count);
                 Assert.Equal(new[] { "audit_logs", "device_installations", "device_state_transitions", "eld_devices", "idempotency_keys" },
                     posture.Select(item => item.Table).Order(StringComparer.Ordinal));
+                Assert.All(posture, item =>
+                {
+                    Assert.Equal("opstrax_app", item.Role);
+                    Assert.Equal(companyA, item.Tenant);
+                    Assert.All(item.Policies, policy =>
+                    {
+                        Assert.False(string.IsNullOrWhiteSpace(policy.Name));
+                        Assert.Contains(policy.Command, new[] { "r", "a", "w", "d", "*" });
+                        Assert.False(string.IsNullOrWhiteSpace(policy.Roles));
+                    });
+                    if (item.Enabled)
+                    {
+                        Assert.True(item.Active);
+                        var applicable = item.Policies.Where(policy => policy.Applicable).ToArray();
+                        Assert.NotEmpty(applicable);
+                        Assert.Contains(applicable, policy =>
+                            TenantBound(policy.UsingExpression) || TenantBound(policy.WithCheckExpression));
+                    }
+                    else Assert.False(item.Active);
+                });
+                if (baseline is null) baseline = posture;
+                else Assert.Equal(baseline.Select(PostureIdentity), posture.Select(PostureIdentity));
             });
         }
+
+        private static string PostureIdentity(RlsPosture posture) => JsonSerializer.Serialize(new
+        {
+            posture.Table,
+            posture.Enabled,
+            posture.Forced,
+            posture.Active,
+            posture.Tenant,
+            posture.Role,
+            Policies = posture.Policies.Select(policy => new
+            {
+                policy.Name,
+                policy.Command,
+                policy.Roles,
+                policy.UsingExpression,
+                policy.WithCheckExpression,
+                policy.Applicable
+            }).ToArray()
+        });
 
         private async Task InitializeAsync()
         {
@@ -809,21 +1033,27 @@ public sealed class FleetIdentityInstallationTransferHttpPostgresTests
 
         public async ValueTask DisposeAsync()
         {
-            Exception? first = null;
-            async Task Attempt(string key, Func<Task> action)
+            var failures = new List<Exception>();
+            async Task Attempt(string step, Func<Task> action)
             {
                 try { await action(); }
-                catch (Exception error) { if (first is null) first = error; else first.Data[key] = error.ToString(); }
+                catch (Exception error) { failures.Add(new InvalidOperationException(step + " failed.", error)); }
             }
 
             // Every request is awaited by its caller. The host is stopped before
             // database artifacts are removed, so no request can race cleanup.
-            if (host is not null) await Attempt("KestrelCleanupFailure", async () => await host.DisposeAsync());
+            if (host is not null) await Attempt("HTTP client and Kestrel cleanup", async () => await host.DisposeAsync());
             using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(60));
             if (failureTrigger is not null)
             {
-                await Attempt("TriggerCleanupFailure", () => ExecuteAsync($"DROP TRIGGER IF EXISTS {failureTrigger} ON public.audit_logs", cleanup.Token));
-                await Attempt("FunctionCleanupFailure", () => ExecuteAsync($"DROP FUNCTION IF EXISTS public.{failureTrigger}()", cleanup.Token));
+                await Attempt("Late-audit trigger cleanup", () => ExecuteAsync($"DROP TRIGGER IF EXISTS {failureTrigger} ON public.audit_logs", cleanup.Token));
+                await Attempt("Late-audit function cleanup", () => ExecuteAsync($"DROP FUNCTION IF EXISTS public.{failureTrigger}()", cleanup.Token));
+                await Attempt("Late-audit catalog postflight", async () => Assert.Equal(0, await ScalarAsync(@"SELECT
+                    (SELECT COUNT(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid
+                        JOIN pg_namespace n ON n.oid=c.relnamespace
+                       WHERE n.nspname='public' AND c.relname='audit_logs' AND t.tgname=@name AND NOT t.tgisinternal)+
+                    (SELECT COUNT(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+                       WHERE n.nspname='public' AND p.proname=@name AND p.pronargs=0)", cleanup.Token, ("name", failureTrigger))));
             }
             if (companies.Count > 0)
             {
@@ -841,15 +1071,15 @@ public sealed class FleetIdentityInstallationTransferHttpPostgresTests
                         "role_permissions" => "role_id IN(SELECT id FROM roles WHERE company_id=ANY(@ids))",
                         _ => "company_id=ANY(@ids)"
                     };
-                    await Attempt(table + "CleanupFailure", () => ExecuteAsync($"DELETE FROM {table} WHERE {predicate}", cleanup.Token,
+                    await Attempt(table + " row cleanup", () => ExecuteAsync($"DELETE FROM {table} WHERE {predicate}", cleanup.Token,
                         ("ids", companies.ToArray())));
                 }
-                await Attempt("CompanyCleanupFailure", async () => Assert.Equal(companies.Count, await ExecuteAsync(
+                await Attempt("Company row cleanup", async () => Assert.Equal(companies.Count, await ExecuteAsync(
                     "DELETE FROM companies WHERE id=ANY(@ids) AND company_code LIKE @prefix", cleanup.Token,
                     ("ids", companies.ToArray()), ("prefix", Prefix + "%"))));
-                await Attempt("CompanyResidueFailure", async () => Assert.Equal(0, await ScalarAsync(
+                await Attempt("Company residue postflight", async () => Assert.Equal(0, await ScalarAsync(
                     "SELECT COUNT(*) FROM companies WHERE company_code LIKE @prefix", cleanup.Token, ("prefix", Prefix + "%"))));
-                await Attempt("TenantResidueFailure", async () => Assert.Equal(0, await ScalarAsync(@"SELECT
+                await Attempt("Tenant residue postflight", async () => Assert.Equal(0, await ScalarAsync(@"SELECT
                     (SELECT COUNT(*) FROM device_installations WHERE company_id=ANY(@ids))+
                     (SELECT COUNT(*) FROM eld_devices WHERE company_id=ANY(@ids))+
                     (SELECT COUNT(*) FROM idempotency_keys WHERE tenant_id=ANY(@ids))+
@@ -857,15 +1087,21 @@ public sealed class FleetIdentityInstallationTransferHttpPostgresTests
                     (SELECT COUNT(*) FROM audit_logs WHERE company_id=ANY(@ids))+
                     (SELECT COUNT(*) FROM user_sessions WHERE company_id=ANY(@ids))", cleanup.Token, ("ids", companies.ToArray()))));
             }
-            await Attempt("SessionResidueFailure", async () => Assert.Equal(0, await ScalarAsync(
-                "SELECT COUNT(*) FROM pg_stat_activity WHERE application_name LIKE 'opstrax-g5-http-transfer-%' AND pid<>pg_backend_pid()", cleanup.Token)));
-            await Attempt("IdleTransactionResidueFailure", async () => Assert.Equal(0, await ScalarAsync(
-                "SELECT COUNT(*) FROM pg_stat_activity WHERE application_name LIKE 'opstrax-g5-http-transfer-%' AND pid<>pg_backend_pid() AND state='idle in transaction'", cleanup.Token)));
-            await Attempt("WaitResidueFailure", async () => Assert.Equal(0, await ScalarAsync(@"SELECT COUNT(*) FROM pg_locks l
-                JOIN pg_stat_activity a ON a.pid=l.pid WHERE a.application_name LIKE 'opstrax-g5-http-transfer-%'
-                  AND a.pid<>pg_backend_pid() AND NOT l.granted", cleanup.Token)));
-            deadline.Dispose();
-            if (first is not null) ExceptionDispatchInfo.Capture(first).Throw();
+            await Attempt("Exact fixture session residue postflight", async () => Assert.Equal(0, await ScalarAsync(
+                "SELECT COUNT(*) FROM pg_stat_activity WHERE application_name=ANY(@names) AND pid<>pg_backend_pid()", cleanup.Token,
+                ("names", FixtureApplicationNames))));
+            await Attempt("Exact fixture idle-transaction residue postflight", async () => Assert.Equal(0, await ScalarAsync(
+                "SELECT COUNT(*) FROM pg_stat_activity WHERE application_name=ANY(@names) AND pid<>pg_backend_pid() AND state='idle in transaction'", cleanup.Token,
+                ("names", FixtureApplicationNames))));
+            await Attempt("Exact fixture wait residue postflight", async () => Assert.Equal(0, await ScalarAsync(@"SELECT COUNT(*) FROM pg_locks l
+                JOIN pg_stat_activity a ON a.pid=l.pid WHERE a.application_name=ANY(@names)
+                  AND a.pid<>pg_backend_pid() AND NOT l.granted", cleanup.Token, ("names", FixtureApplicationNames))));
+            await Attempt("Fixture deadline disposal", () =>
+            {
+                deadline.Dispose();
+                return Task.CompletedTask;
+            });
+            ThrowFailures("Fixture cleanup failures.", failures);
         }
     }
 }
