@@ -9517,6 +9517,18 @@ public static partial class EndpointMappings
         using (document)
         {
             if (document.RootElement.ValueKind != JsonValueKind.Object) return null;
+            // JsonDocument may defer escaped UTF-16 decoding until Name/GetString.
+            // Validate those decode operations here only; never normalize stream,
+            // cancellation or downstream business/database failures as input errors.
+            try
+            {
+                foreach (var property in document.RootElement.EnumerateObject())
+                {
+                    _ = property.Name;
+                    if (property.Value.ValueKind == JsonValueKind.String) _ = property.Value.GetString();
+                }
+            }
+            catch (InvalidOperationException) { return null; }
             var values = new Dictionary<string, object?>(StringComparer.Ordinal);
             foreach (var property in document.RootElement.EnumerateObject())
             {

@@ -30,6 +30,42 @@ public sealed class CameraManualMetadataBoundaryPostgresTests(ITestOutputHelper 
     private const string PutPath = "/api/dashcam/events/{id:long}";
     private const string ValidCreate = "{\"eventType\":\"Near Miss\",\"title\":\"Synthetic manual observation\",\"severity\":\"High\"}";
 
+    [Theory]
+    [InlineData("{\"eventType\":\"x\",\"title\":\"\\ud800\",\"severity\":\"High\"}",false)]
+    [InlineData("{\"eventType\":\"x\",\"title\":\"\\udc00\",\"severity\":\"High\"}",false)]
+    [InlineData("{\"\\ud800\":\"x\",\"title\":\"valid\",\"severity\":\"High\"}",false)]
+    [InlineData("{\"eventType\":\"x\",\"title\":\"\\ud83d\\ude80\",\"severity\":\"High\"}",true)]
+    public async Task ParserEscapedSurrogates_NoDatabase_ActualPrivateReader(string raw,bool valid)
+    {
+        var http=new DefaultHttpContext();
+        using var body=new MemoryStream(Encoding.UTF8.GetBytes(raw));
+        http.Request.Body=body;
+        http.Request.ContentLength=body.Length;
+        var method=typeof(EndpointMappings).GetMethod("ReadCameraMetadataInput",BindingFlags.NonPublic|BindingFlags.Static)!;
+        var task=(Task)method.Invoke(null,[http,true,CancellationToken.None])!;
+        await task;
+        var result=task.GetType().GetProperty("Result")!.GetValue(task);
+        Assert.Equal(valid,result is not null);
+    }
+
+    [Fact]
+    public async Task ParserNulObservation_NoDatabase_NotDatabaseAdmissionEvidence()
+    {
+        var http=new DefaultHttpContext();
+        using var body=new MemoryStream(Encoding.UTF8.GetBytes("{\"eventType\":\"x\",\"title\":\"escaped\\u0000nul\",\"severity\":\"High\"}"));
+        http.Request.Body=body;
+        var method=typeof(EndpointMappings).GetMethod("ReadCameraMetadataInput",BindingFlags.NonPublic|BindingFlags.Static)!;
+        var task=(Task)method.Invoke(null,[http,true,CancellationToken.None])!;
+        await task;
+        var result=task.GetType().GetProperty("Result")!.GetValue(task);
+        // Current parser observation only; this does not approve PostgreSQL text or
+        // change the product's accepted Unicode policy.
+        Assert.NotNull(result);
+        var values=(Dictionary<string,object?>)result.GetType().GetProperty("Values")!.GetValue(result)!;
+        Assert.Equal("escaped\0nul",values["title"]);
+        output.WriteLine("OBSERVATION: current private reader decodes escaped NUL into metadata text; no database admission was exercised.");
+    }
+
     [Fact]
     public async Task ParentRed_RegisteredSelectedDelegatesDeferBodyBinding()
     {
@@ -136,6 +172,8 @@ public sealed class CameraManualMetadataBoundaryPostgresTests(ITestOutputHelper 
         foreach (var body in new[] { "", "{", "null", "[]", "{}", "{\"title\":\"x\",\"eventType\":\"x\"}",
             ValidCreate[..^1]+",\"title\":\"duplicate\"}", ValidCreate[..^1]+",\"Title\":\"wrong case\"}",
             ValidCreate.Replace("High"," High "), ValidCreate.Replace("High","high"), ValidCreate.Replace("Near Miss"," "),
+            ValidCreate.Replace("Synthetic manual observation","\\ud800"), ValidCreate.Replace("Synthetic manual observation","\\udc00"),
+            "{\"\\ud800\":\"x\",\"title\":\"valid\",\"severity\":\"High\"}",
             ValidCreate.Replace("Near Miss",new string('x',121)), ValidCreate.Replace("Synthetic manual observation",new string('x',221)) }) yield return [false, body];
         foreach (var field in new[] { "eventNumber", "aiConfidence", "aiSummary", "sourceAuthority", "videoProvider", "reviewStatus", "evidenceStatus", "coachingStatus", "falsePositive", "roadFacingClipUrl", "rowVersion" })
             yield return [false, ValidCreate[..^1]+$",\"{field}\":0}}"];
@@ -237,6 +275,8 @@ public sealed class CameraManualMetadataBoundaryPostgresTests(ITestOutputHelper 
         Assert.Equal(403,response.Status);
         Assert.Equal(0,response.BytesRead);
         Assert.Equal(0L,await fixture.ScalarAsync("SELECT COUNT(*) FROM dashcam_events"));
+        Assert.True((bool)(await fixture.ScalarAsync("SELECT is_called FROM security_events_id_seq"))!);
+        Assert.Equal(0L,await fixture.ScalarAsync("SELECT COUNT(*) FROM security_events"));
     }
 
     [Theory]
@@ -275,7 +315,9 @@ public sealed class CameraManualMetadataBoundaryPostgresTests(ITestOutputHelper 
         await using var fixture = await Fixture.CreateAsync(output);
         await fixture.ExecuteAsync("ALTER TABLE audit_logs ADD CONSTRAINT synthetic_audit_failure CHECK(false)");
         var before=await fixture.SnapshotAsync();
-        await Assert.ThrowsAsync<PostgresException>(() => fixture.InvokeAsync(false,ValidCreate,ambient:ambient));
+        var error=await Assert.ThrowsAsync<PostgresException>(() => fixture.InvokeAsync(false,ValidCreate,ambient:ambient));
+        Assert.Equal("23514",error.SqlState);
+        Assert.Equal("synthetic_audit_failure",error.ConstraintName);
         Assert.Equal(before,await fixture.SnapshotAsync());
     }
 
