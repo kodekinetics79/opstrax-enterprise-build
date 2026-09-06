@@ -1,0 +1,46 @@
+name: Enroll Mobile Push Migration
+
+on:
+  push:
+    branches:
+      - feat/mobile-native-push-v1
+    paths:
+      - .github/workflows/mobile-push-enroll-migration.yml
+
+permissions:
+  contents: write
+
+jobs:
+  enroll-stage101:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: feat/mobile-native-push-v1
+      - name: Enroll Stage101 after Stage100
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('tools/apply-neon-predeploy-migrations.sh')
+          text = path.read_text()
+          marker = '  2026_09_03_stage100_dashcam_provider_media_truth\n'
+          line = '  2026_09_05_stage101_mobile_push_tokens\n'
+          if line in text:
+              print('Stage101 already enrolled')
+          else:
+              if marker not in text:
+                  raise SystemExit('Stage100 enrollment marker not found')
+              text = text.replace(marker, marker + '  # Native Driver/Fleet/Customer Expo push token lifecycle; FORCE-RLS and user scoped.\n' + line, 1)
+              path.write_text(text)
+          PY
+          grep -n 'stage101_mobile_push_tokens' tools/apply-neon-predeploy-migrations.sh
+      - name: Commit enrollment
+        run: |
+          if git diff --quiet -- tools/apply-neon-predeploy-migrations.sh; then
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tools/apply-neon-predeploy-migrations.sh
+          git commit -m 'chore(mobile-push): enroll Stage101 migration'
+          git push origin HEAD:feat/mobile-native-push-v1
