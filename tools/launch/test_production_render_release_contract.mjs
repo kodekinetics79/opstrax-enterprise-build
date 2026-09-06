@@ -28,24 +28,19 @@ test("production release applies owner migrations and Stage101 before exact-SHA 
 test("production release deploys the traceable frontend after the exact API and verifies parity", () => {
   const workflow = read(".github", "workflows", "production-render-release.yml");
   const renderDeploy = workflow.indexOf("node tools/render-deploy-exact.mjs");
-  const vercelBuild = workflow.indexOf("vercel build --prod");
-  const vercelDeploy = workflow.indexOf("vercel deploy --prebuilt --prod");
+  const vercelDeploy = workflow.indexOf("vercel deploy --prod --yes");
   const parity = workflow.indexOf("node tools/verify-production-release-exact.mjs");
 
-  assert.ok(vercelBuild > renderDeploy, "frontend build must follow exact API readiness");
-  assert.ok(vercelDeploy > vercelBuild, "Vercel production deploy must use the prebuilt candidate");
+  assert.ok(vercelDeploy > renderDeploy, "frontend deployment must follow exact API readiness");
   assert.ok(parity > vercelDeploy, "customer POC parity verification must follow both deployments");
-  assert.match(workflow, /VITE_DEPLOYMENT_SHA="\$CANDIDATE_SHA"/);
+  assert.match(workflow, /npm install --global vercel@59\.11\.7/);
+  assert.match(workflow, /--project="\$VERCEL_PROJECT_ID"/);
+  assert.match(workflow, /--build-env VITE_DEPLOYMENT_SHA="\$CANDIDATE_SHA"/);
+  assert.match(workflow, /--build-env VITE_APP_ENVIRONMENT=production/);
+  assert.match(workflow, /--build-env VITE_API_BASE_URL="\$PRODUCTION_API_URL"/);
+  assert.doesNotMatch(workflow, /vercel pull|vercel build --prod|--scope="\$VERCEL_ORG_ID"|--token="\$VERCEL_TOKEN"/);
   for (const secret of ["VERCEL_TOKEN", "VERCEL_ORG_ID", "VERCEL_PROJECT_ID"]) {
     assert.match(workflow, new RegExp(`secrets\\.${secret}`));
-  }
-  for (const verb of ["pull", "build", "deploy"]) {
-    const start = workflow.indexOf(`vercel ${verb}`);
-    assert.ok(start >= 0, `Vercel ${verb} command is missing`);
-    const command = workflow.slice(start, start + 360);
-    assert.match(command, /--project="\$VERCEL_PROJECT_ID"/, `Vercel ${verb} must bind the production project explicitly`);
-    assert.match(command, /--scope="\$VERCEL_ORG_ID"/, `Vercel ${verb} must bind the production scope explicitly`);
-    assert.match(command, /--token="\$VERCEL_TOKEN"/, `Vercel ${verb} must use the dedicated production token`);
   }
 });
 
