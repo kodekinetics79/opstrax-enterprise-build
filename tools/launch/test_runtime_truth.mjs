@@ -32,6 +32,8 @@ test("runtime Live is fail-closed on API, database, worker and telemetry truth",
 
 test("runtime provenance is exact in operator diagnostics and speakable-only on tenant About", () => {
   const vite = read("frontend/vite.config.ts");
+  const manifest = read("frontend/scripts/write-deployment-manifest.mjs");
+  const vercel = JSON.parse(read("vercel.json"));
   const diagnostics = read("frontend/src/services/runtimeDiagnostics.ts");
   const about = read("frontend/src/pages/AboutPage.tsx");
   for (const marker of ["VERCEL_GIT_COMMIT_SHA", "VITE_DEPLOYMENT_SHA", "__OPSTRAX_FRONTEND_SHA__", "__OPSTRAX_FRONTEND_ENVIRONMENT__", "__OPSTRAX_API_BASE_URL__"]) {
@@ -39,6 +41,10 @@ test("runtime provenance is exact in operator diagnostics and speakable-only on 
   }
   assert.ok(vite.indexOf("RENDER_GIT_COMMIT") < vite.indexOf("VITE_DEPLOYMENT_SHA"),
     "Render's immutable commit identity must override a stale manually pinned deployment SHA");
+  assert.match(manifest, /frontendEnvironment === "production" && !\/\^\[0-9a-f\]\{40\}\$\//,
+    "production manifest writer must reject unknown or abbreviated source identity");
+  assert.ok(vercel.routes.some((route) => route.src === "/deployment.json" && route.headers?.["Cache-Control"]?.includes("must-revalidate")),
+    "public deployment manifest must not retain stale production provenance");
   for (const marker of ["frontendSha", "apiSha", "frontendEnvironment", "apiEnvironment", "apiBaseUrl"]) {
     assert.ok(diagnostics.includes(marker), `runtime diagnostics omit ${marker}`);
   }

@@ -20,17 +20,17 @@ const NAV_SECTIONS = [
   {
     label: "Operations",
     color: "text-teal-600",
-    items: ["command-center", "fleet-health", "live-dashboard", "map-view", "fleet-live-wall", "alerts"],
+    items: ["command-center", "control-tower", "fleet-health", "live-dashboard", "map-view", "fleet-live-wall", "geofences", "alerts"],
   },
   {
     label: "Fleet",
     color: "text-blue-600",
-    items: ["vehicles", "drivers", "branches", "fleet-utilization", "fleet-workspace", "fleet-cold-chain", "fleet-assets", "fleet-saudi-readiness", "fleet-compliance", "assignments"],
+    items: ["vehicles", "drivers", "branches", "owners", "assignments", "documents", "fleet-utilization", "fleet-workspace", "fleet-cold-chain", "fleet-assets", "fleet-saudi-readiness", "fleet-compliance"],
   },
   {
     label: "Dispatch",
     color: "text-cyan-700",
-    items: ["dispatch-board", "jobs", "trips", "route-plans", "last-mile-delivery", "operations-proof-center", "logistics-workspace"],
+    items: ["load-bookings", "dispatch-board", "jobs", "trips", "route-plans", "last-mile-delivery", "operations-proof-center", "logistics-workspace", "workforce", "driver-messaging"],
   },
   {
     label: "Shipments",
@@ -40,12 +40,16 @@ const NAV_SECTIONS = [
   {
     label: "Safety",
     color: "text-red-600",
-    items: ["incidents", "coaching", "driver-scorecards", "dvir-inspections", "hos-eld"],
+    items: [
+      "safety-center", "dashcam", "incidents", "coaching", "driver-scorecards",
+      "evidence-packages", "traffic-violations", "digital-forms", "dvir-inspections",
+      "hos-eld", "compliance-center",
+    ],
   },
   {
     label: "Maintenance",
     color: "text-amber-700",
-    items: ["work-orders", "preventive-maintenance", "service-history", "downtime"],
+    items: ["maintenance-center", "work-orders", "preventive-maintenance", "service-history", "downtime"],
   },
   {
     label: "Telematics",
@@ -53,9 +57,14 @@ const NAV_SECTIONS = [
     items: ["telematics-control-tower", "iot-devices", "gps-tracking", "obd-j1939", "sensor-health", "cold-chain"],
   },
   {
-    label: "Customers",
+    label: "CRM & Growth",
     color: "text-indigo-600",
-    items: ["customers"],
+    items: ["leads", "sales-pipeline", "opportunities", "campaigns", "account-health", "follow-ups", "support-tickets", "renewals", "upsell-opportunities"],
+  },
+  {
+    label: "Commercial",
+    color: "text-indigo-600",
+    items: ["customers", "contracts", "rate-cards", "price-simulation", "quotations", "customer-eta", "customer-portal", "customer-visibility"],
   },
   {
     // moduleConfig has always declared a "Financials" group, but this nav never
@@ -71,12 +80,12 @@ const NAV_SECTIONS = [
   {
     label: "Reports",
     color: "text-purple-600",
-    items: ["reports-analytics", "predictive-analytics", "sla-kpi", "carbon-tracking"],
+    items: ["reports-analytics", "predictive-analytics", "ai-copilot", "sla-kpi", "carbon-tracking"],
   },
   {
     label: "Admin",
     color: "text-slate-500",
-    items: ["user-management", "audit-logs", "integrations", "settings", "about"],
+    items: ["user-management", "audit-logs", "alert-rules", "feature-flags", "integrations", "settings", "about"],
   },
 ] as const;
 
