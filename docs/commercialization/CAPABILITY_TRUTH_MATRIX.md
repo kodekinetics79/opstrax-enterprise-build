@@ -6,12 +6,13 @@ Current controlled-pilot lane: closed #108 / merged PR #113 under `CR-2026-09-01
 Active Wave 2 lanes: #115 Samsara production connector; #116 certified ELD partner
 Approved changes: `CR-2026-09-01-01` defers #109/#114 without certification; `CR-2026-09-01-02` grants a 30-day G1A controlled-pilot LIMITED GO; `CR-2026-09-02-01` activates G2A/G2B without capability promotion; `CR-2026-09-02-02` restores the original sequential waves and two active Wave 2 lanes, retaining completed code without promoting any capability
 
-> **Production POC warning — 2026-09-06:** the Vercel frontend is an untraceable,
-> older manual deployment and does not have exact-SHA parity with the production
-> API. It is prohibited as certification evidence until
-> `PRODUCTION_POC_TRUTH_INCIDENT_2026-09-06.md` is closed. The signed-in demo
-> tenant contains synthetic data; no evidence from it may be represented as real
-> customer, provider, device, video or regulatory acceptance.
+> **Production POC release truth — 2026-09-06:** the guarded release completed on
+> exact main SHA `a5e8963cde984c3e806f1a3adbc85d523211d80e`; the public
+> frontend manifest and production API readiness endpoint report that same SHA.
+> Signed-in browser acceptance exposed 92 role/entitlement-filtered modules and
+> the unverified Camera Metadata view. The tenant is visibly marked **Demo Data**;
+> its synthetic records remain prohibited as real customer, provider, device,
+> video or regulatory acceptance evidence.
 
 ## Status vocabulary
 
