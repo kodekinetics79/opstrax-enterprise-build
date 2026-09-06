@@ -1,6 +1,26 @@
 import { apiClient, unwrap } from "@/services/apiClient";
 import type { AnyRecord } from "@/types";
 
+export type SafetyCoachingReceipt = { id: string | number; rowVersion: number; replayed: boolean };
+
+function safetyCoachingReceipt(response: { status: number; data: unknown }): SafetyCoachingReceipt {
+  const unknownOutcome = () => new Error("Coaching creation could not be confirmed.");
+  const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value) && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
+  if (!object(response.data) || !Object.hasOwn(response.data, "success") || response.data.success !== true || !Object.hasOwn(response.data, "data") || !object(response.data.data)) throw unknownOutcome();
+  const data = response.data.data;
+  if (["taskId", "task_id", "Id", "row_version", "RowVersion", "Replayed"].some(key => Object.hasOwn(data, key))) throw unknownOutcome();
+  const id = data.id;
+  const validId = typeof id === "number" ? Number.isSafeInteger(id) && id > 0
+    : typeof id === "string" && /^[1-9]\d{0,18}$/.test(id) && BigInt(id) <= 9223372036854775807n;
+  const version = data.rowVersion;
+  if (!Object.hasOwn(data, "id") || !validId || !Object.hasOwn(data, "rowVersion") || typeof version !== "number" || !Number.isSafeInteger(version) || version < 0) throw unknownOutcome();
+  const hasReplay = Object.hasOwn(data, "replayed");
+  if (hasReplay && typeof data.replayed !== "boolean") throw unknownOutcome();
+  const replayed = hasReplay && data.replayed === true;
+  if (replayed ? response.status !== 200 : response.status !== 201 || version !== 0) throw unknownOutcome();
+  return { id: id as string | number, rowVersion: version, replayed };
+}
+
 export const safetyApi = {
   dashboard: () => unwrap<AnyRecord>(apiClient.get("/api/safety/dashboard")),
   summary: () => safetyApi.dashboard(),
@@ -23,7 +43,7 @@ export const safetyApi = {
   createCoaching: (
     id: string | number,
     payload?: { assignedTo?: number; dueDate?: string; notes?: string; coachingType?: string }
-  ) => unwrap<AnyRecord>(apiClient.post(`/api/safety/events/${id}/coaching`, payload ?? {})),
+  ): Promise<SafetyCoachingReceipt> => apiClient.post(`/api/safety/events/${id}/coaching`, payload ?? {}).then(safetyCoachingReceipt),
 
   // Coaching task lifecycle
   completeCoaching:    (taskId: number, outcome?: string) =>

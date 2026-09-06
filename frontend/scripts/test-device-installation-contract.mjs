@@ -26,31 +26,34 @@ assert.match(service, /Object\.hasOwn\(row, "open_alert_count"\)/, "Device-speci
 assert.match(service, /Object\.hasOwn\(row, "active_fault_count"\)/, "Device-specific fault evidence must outrank capped auxiliary feeds");
 assert.match(service, /function deviceRowFromDetail/, "Single-device readbacks must unwrap the nested detail envelope");
 assert.match(service, /const created = deviceRowFromDetail/, "Provision readback must preserve the returned device identity fields");
-assert.match(service, /\/installations\/\$\{current\.id\}\/remove/, "Removal must use the installation endpoint");
-assert.match(service, /expectedRowVersion: current\.rowVersion/, "Removal must send optimistic concurrency state");
-assert.match(service, /idempotencyKey: installationMutationKey\(deviceId\)/, "Installation must be idempotent");
+assert.match(service, /\/installations\/\$\{installationId\}\/remove/, "Removal must use the installation endpoint with its validated installation identity");
+assert.match(service, /removalReason, effectiveTo, expectedRowVersion,/, "Removal must send its captured optimistic concurrency state with the observation");
+assert.match(service, /idempotencyKey: installationMutationKey\(requestedId\)/, "Installation must retain a generated idempotency key for the captured device identity");
 assert.match(service, /\/installations\/transfer/, "Transfer must use the atomic transfer endpoint");
 assert.match(service, /\/api\/telemetry\/installation-quarantine/, "Identity conflicts must use the governed quarantine API");
 assert.match(service, /resolveIdentityQuarantine/, "Operators must have a supported quarantine resolution mutation");
 assert.doesNotMatch(service, /result:\s*"Passed"\s*,/, "Commissioning must never hardcode a successful result");
-assert.match(service, /result: input\.result/, "Commissioning must send the operator-observed result");
+assert.match(service, /const requestedResult = input\.result/, "Commissioning must capture the operator-observed result before asynchronous preflight");
+assert.match(service, /result: requestedResult/, "Commissioning must send the captured operator-observed result");
 assert.match(service, /verificationReference,/, "Commissioning must send the operator-entered evidence reference");
 assert.match(service, /activationVerifiedAt: row\.activation_verified_at/, "Activation heartbeat evidence must be mapped from the installation contract");
 for (const field of ["odometer_at_installation", "commissioning_method", "commissioning_result", "verification_reference", "removal_reason"]) {
   assert.match(service, new RegExp(`row\\.${field}`), `${field} must be mapped back into installation history`);
 }
-assert.match(service, /input\.result === "Passed" && !current\.activationVerifiedAt/, "Only Passed commissioning must require activation evidence");
-assert.match(service, /expectedRowVersion: current\.rowVersion/, "Commissioning must send installation concurrency state");
+assert.match(service, /requestedResult === "Passed" && !current\.activationVerifiedAt/, "Only Passed commissioning must require activation evidence");
+assert.match(service, /const expectedRowVersion = current\.rowVersion/, "Commissioning must capture installation concurrency state");
+assert.match(service, /result: requestedResult,\s*verificationReference,\s*expectedRowVersion,/, "Commissioning must send the captured installation concurrency state with the observation");
 assert.doesNotMatch(service, /deviceRole:\s*"GPS"/, "Installation must not hardcode the device role");
 assert.doesNotMatch(service, /isPrimary:\s*true/, "Installation must not hardcode primary status");
-assert.match(service, /deviceRole: input\.deviceRole\.trim\(\)/, "Installation must send the operator-selected role");
-assert.match(service, /isPrimary: input\.isPrimary/, "Installation must send the operator-selected primary designation");
+assert.match(service, /const deviceRole = typeof input\.deviceRole === "string"/, "Installation must capture and validate the operator-selected role before asynchronous preflight");
+assert.match(service, /const isPrimary = input\.isPrimary/, "Installation must capture the operator-selected primary designation before asynchronous preflight");
+assert.match(service, /vehicleId, deviceRole, isPrimary, installationLocation:/, "Installation request must send the captured role and primary designation");
 for (const field of ["effectiveAt", "installationLocation", "odometerAtInstallation", "commissioningMethod", "assignmentReason", "removalReason"]) {
   assert.match(service, new RegExp(`input\\.${field}`), `${field} must come from operator input`);
 }
 assert.doesNotMatch(service, /Removed by fleet operator|Transferred to another vehicle|Operator installation/, "Installation reasons must not be generic hardcoded claims");
-assert.match(service, /\/api\/telemetry\/devices\/\$\{deviceId\}\/suspend/, "Device suspension must use the persisted backend endpoint");
-assert.match(service, /\/api\/telemetry\/devices\/\$\{deviceId\}\/activate/, "Device activation must use the persisted backend endpoint");
+assert.match(service, /\/api\/telemetry\/devices\/\$\{requestedId\}\/suspend/, "Device suspension must use the persisted backend endpoint with its validated identifier");
+assert.match(service, /\/api\/telemetry\/devices\/\$\{requestedId\}\/activate/, "Device activation must use the persisted backend endpoint with its validated identifier");
 assert.match(service, /\/api\/telemetry\/devices\/\$\{deviceId\}\/rotate-secret/, "Credential rotation must use the one-time backend contract");
 const provisionRequest = service.match(/apiClient\.post\("\/api\/telemetry\/devices\/provision", \{[\s\S]*?\}\)\)/)?.[0] ?? "";
 assert.ok(provisionRequest, "Provision request contract must remain identifiable");
@@ -145,23 +148,23 @@ assert.match(driverDashboard, /Start route to pickup/, "Driver home must not req
 
 // ── DEF-022: submit handlers must never convert/validate inside the mutate argument ──
 // A synchronous throw there is swallowed (zero network I/O, no visible error).
-const assignSubmit = devicesPage.match(/assignMut\.mutate\(\{[\s\S]*?\}\);/)?.[0] ?? "";
+const assignSubmit = devicesPage.match(/assignMut\.mutateAsync\(variables\)/)?.[0] ?? "";
 assert.ok(assignSubmit, "Installation submit mutate call must remain identifiable");
 assert.doesNotMatch(assignSubmit, /toUtcIso\(/, "Installation submit must not call toUtcIso inside the mutate argument (a throw there is silently swallowed)");
-const unassignSubmit = devicesPage.match(/unassignMut\.mutate\(\{[\s\S]*?\}\);/)?.[0] ?? "";
+const unassignSubmit = devicesPage.match(/unassignMut\.mutateAsync\(variables\)/)?.[0] ?? "";
 assert.ok(unassignSubmit, "Removal submit mutate call must remain identifiable");
 assert.doesNotMatch(unassignSubmit, /toUtcIso\(/, "Removal submit must not call toUtcIso inside the mutate argument");
 assert.match(devicesPage, /effectiveAtIso = toUtcIso\(/, "Installation effective time must be converted before mutate, inside try/catch");
 assert.match(devicesPage, /effectiveToIso = toUtcIso\(/, "Removal effective time must be converted before mutate, inside try/catch");
 assert.match(devicesPage, /setFormError\(validationError instanceof Error/, "Hoisted validation failures must land in visible form-error state");
-assert.match(devicesPage, /error=\{formError \?\? \(assignMut\.error \? apiErrorMessage/, "Installation form must merge validation and safe mutation errors into the ModalForm error slot");
-assert.match(devicesPage, /error=\{formError \?\? \(unassignMut\.error instanceof Error/, "Removal form must merge validation and mutation errors into the ModalForm error slot");
-assert.match(devicesPage, /error=\{formError \?\? \(installMut\.error instanceof Error/, "Commissioning form must merge validation and mutation errors into the ModalForm error slot");
+assert.match(devicesPage, /error=\{formError \?\? assignmentError\?\.message \?\? null\}/, "Installation form must merge validation and its owned safe mutation error into the ModalForm error slot");
+assert.match(devicesPage, /error=\{formError \?\? removalError\?\.message \?\? null\}/, "Removal form must merge validation and its owned mutation error into the ModalForm error slot");
+assert.match(devicesPage, /error=\{formError \?\? commissioningError\?\.message \?\? null\}/, "Commissioning form must merge validation and its owned mutation error into the ModalForm error slot");
 assert.match(devicesPage, /setFormError\("Select the observed commissioning result/, "Commissioning submit must surface a visible error instead of a silent bare return");
 assert.match(devicesPage, /Enter a valid odometer at installation/, "Odometer validation must produce a visible error instead of a silent bare return");
 assert.match(devicesPage, /Date\.parse\(effectiveAtIso\) > Date\.now\(\)/, "Installation and transfer must reject a future effective time before mutation");
 assert.match(devicesPage, /max=\{currentLocalMinute\(\)\}/, "The effective-time picker must not offer a future minute");
-assert.match(devicesPage, /apiErrorMessage\(assignMut\.error,/, "Installation and transfer must render a safe server rejection instead of Axios's generic status text");
+assert.match(service, /throw new DeviceInstallationOutcomeError\("rejected"\)/, "Installation and transfer must project a safe rejection instead of Axios's generic status text");
 assert.match(apiErrorMessage, /envelope\.message/, "Handled API message envelopes must be surfaced to the operator");
 assert.match(apiErrorMessage, /genericHttpMessage\.test\(text\)/, "Generic Axios status text must not replace a useful customer-safe error");
 assert.match(apiErrorMessage, /stackFrame\.test\(text\)/, "Diagnostic stack frames must never be rendered in the installation modal");

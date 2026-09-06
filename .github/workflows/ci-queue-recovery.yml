@@ -104,7 +104,11 @@ jobs:
                       raise SystemExit(f'CI job anchor not found: {job}')
                   text = text.replace(anchor, replacement, 1)
 
-          old_exact = "  exact-sha-release-evidence:\n    runs-on: ubuntu-latest\n    if: ${{ always() }}\n"
+          old_exact = (
+              "  exact-sha-release-evidence:\n"
+              "    runs-on: ubuntu-latest\n"
+              "    if: " + "$" + "{{ always() }}\n"
+          )
           exact_expr = "$" + "{{ always() && (github.event_name == 'push' || github.event.pull_request.draft == false) }}"
           new_exact = (
               "  exact-sha-release-evidence:\n"
@@ -123,9 +127,12 @@ jobs:
 
           git diff --check
           grep -Fq 'types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]' .github/workflows/ci.yml
-          grep -Fq 'group: opstrax-ci-${{ github.event.pull_request.number || github.ref }}' .github/workflows/ci.yml
-          test "$(grep -Fc "if: \${{ github.event_name == 'push' || github.event.pull_request.draft == false }}" .github/workflows/ci.yml)" = "3"
-          grep -Fq "if: \${{ always() && (github.event_name == 'push' || github.event.pull_request.draft == false) }}" .github/workflows/ci.yml
+          concurrency_guard='$'"{{ github.event.pull_request.number || github.ref }}"
+          grep -Fq "group: opstrax-ci-${concurrency_guard}" .github/workflows/ci.yml
+          merge_bound_guard='$'"{{ github.event_name == 'push' || github.event.pull_request.draft == false }}"
+          test "$(grep -Fc "if: ${merge_bound_guard}" .github/workflows/ci.yml)" = "3"
+          exact_guard='$'"{{ always() && (github.event_name == 'push' || github.event.pull_request.draft == false) }}"
+          grep -Fq "if: ${exact_guard}" .github/workflows/ci.yml
 
       - name: Run CI contract regressions
         shell: bash

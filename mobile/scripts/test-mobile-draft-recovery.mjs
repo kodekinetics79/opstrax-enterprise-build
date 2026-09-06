@@ -6,7 +6,7 @@ const source = async (path) => readFile(new URL(`../${path}`, import.meta.url), 
 
 test("secure driver drafts are scoped by product stage tenant user and work item", async () => {
   const drafts = await source("src/storage/secureDrafts.ts");
-  assert.match(drafts, /APP_PRODUCT/);
+  assert.match(drafts, /APP_VARIANT/);
   assert.match(drafts, /STAGE_LABEL/);
   assert.match(drafts, /companyId/);
   assert.match(drafts, /userId/);

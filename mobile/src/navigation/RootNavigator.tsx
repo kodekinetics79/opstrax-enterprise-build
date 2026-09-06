@@ -19,7 +19,8 @@ import { CustomerShipmentsScreen } from "@/screens/CustomerShipmentsScreen";
 import { CustomerBillingScreen } from "@/screens/CustomerBillingScreen";
 import { CustomerSupportScreen } from "@/screens/CustomerSupportScreen";
 import { useSession } from "@/auth/SessionProvider";
-import { APP_NAME, APP_PRODUCT } from "@/config";
+import { resolveProductAccess } from "@/auth/productAccess";
+import { APP_NAME, APP_VARIANT } from "@/config";
 import { ActionButton, colors, Panel, Pill, Screen, SectionHeader } from "@/components/ui";
 
 const Stack = createNativeStackNavigator();
@@ -144,7 +145,7 @@ function LoadingSplash() {
 }
 
 function ProductAccessScreen({ role, onSignOut }: { role: string; onSignOut: () => void }) {
-  const productLabel = APP_PRODUCT === "unified" ? "OpsTrax Mobile" : APP_NAME;
+  const productLabel = APP_VARIANT === "unified" ? "OpsTrax Mobile" : APP_NAME;
   return (
     <Screen>
       <Panel variant="solid" tone="amber" style={{ marginTop: 24 }}>
@@ -164,39 +165,30 @@ function ProductAccessScreen({ role, onSignOut }: { role: string; onSignOut: () 
 }
 
 export function RootNavigator() {
-  const { ready, session, normalizedRole, hasPermission, logout } = useSession();
+  const { ready, session, normalizedRole, logout } = useSession();
   if (!ready) return <LoadingSplash />;
-  const directPermissions = new Set((session?.permissions ?? []).map((permission) => permission.trim().toLowerCase()));
-  const isDriver = Boolean(
-    session
-    && directPermissions.has("driver:self")
-    && !directPermissions.has("*")
-    && !directPermissions.has("dashboard:view")
-    && !directPermissions.has("dashboard.view"),
-  );
-  const isCustomer = Boolean(
-    session
-    && normalizedRole === "customerClient"
-    && hasPermission("customer_portal:view"),
-  );
-  const isPlatformAdmin = Boolean(session && normalizedRole === "platformAdmin");
-  const isFleetUser = Boolean(session && !isDriver && !isCustomer && !isPlatformAdmin);
+  const productAccess = resolveProductAccess({
+    variant: APP_VARIANT,
+    hasSession: Boolean(session),
+    normalizedRole,
+    permissions: session?.permissions ?? [],
+  });
 
-  const productAllowsRole = !session
-    || (APP_PRODUCT === "driver" && isDriver)
-    || (APP_PRODUCT === "customer" && isCustomer)
-    || (APP_PRODUCT === "fleet" && isFleetUser)
-    || (APP_PRODUCT === "unified" && !isPlatformAdmin);
-
-  if (session && !productAllowsRole) {
+  if (session && !productAccess.allowed) {
     return <ProductAccessScreen role={normalizedRole} onSignOut={() => void logout()} />;
   }
+
+  const MainComponent = productAccess.experience === "customer"
+    ? CustomerTabs
+    : productAccess.experience === "driver"
+      ? DriverTabs
+      : OperationsTabs;
 
   return (
     <NavigationContainer theme={darkTheme}>
       <Stack.Navigator screenOptions={{ headerShown: false }}>
         {!session ? <Stack.Screen name="Login" component={LoginScreen} /> : (
-          <Stack.Screen name="Main" component={isCustomer ? CustomerTabs : isDriver ? DriverTabs : OperationsTabs} />
+          <Stack.Screen name="Main" component={MainComponent} />
         )}
       </Stack.Navigator>
     </NavigationContainer>

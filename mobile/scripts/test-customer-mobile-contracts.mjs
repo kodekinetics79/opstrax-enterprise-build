@@ -5,9 +5,12 @@ import test from "node:test";
 const source = async (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
 test("customer mobile navigation is role and portal-permission gated", async () => {
-  const navigation = await source("src/navigation/RootNavigator.tsx");
-  assert.match(navigation, /normalizedRole === "customerClient"/);
-  assert.match(navigation, /hasPermission\("customer_portal:view"\)/);
+  const [navigation, productAccess] = await Promise.all([
+    source("src/navigation/RootNavigator.tsx"),
+    source("src/auth/productAccess.ts"),
+  ]);
+  assert.match(productAccess, /normalizedRole === "customerClient"/);
+  assert.match(productAccess, /directPermissions\.has\("customer_portal:view"\)/);
   assert.match(navigation, /component=\{CustomerSupportScreen\}/);
 });
 
@@ -54,21 +57,24 @@ test("customer screens do not expose internal fleet economics or driver risk fie
 });
 
 test("store packaging produces distinct Driver Fleet and Customer products", async () => {
-  const [appConfig, eas, runtimeConfig, navigation] = await Promise.all([
+  const [appConfig, eas, runtimeConfig, navigation, productAccess] = await Promise.all([
     source("app.config.ts"),
     source("eas.json"),
     source("src/config.ts"),
     source("src/navigation/RootNavigator.tsx"),
+    source("src/auth/productAccess.ts"),
   ]);
   for (const product of ["driver", "fleet", "customer"]) {
-    assert.match(appConfig, new RegExp(`${product}: \\{ name: \\"OpsTrax`, "i"));
-    assert.match(eas, new RegExp(`"${product}-production"`));
+    assert.match(appConfig, new RegExp(`${product}:\\s*\\{[\\s\\S]{0,100}name:\\s*"OpsTrax`, "i"));
+    assert.match(eas, new RegExp(`"production-${product}"`));
   }
-  assert.match(appConfig, /Production store builds must set EXPO_PUBLIC_PRODUCT/);
-  assert.match(runtimeConfig, /SECURE_SESSION_KEY = `opstrax\.\$\{storageProduct\}/);
-  assert.match(runtimeConfig, /SECURE_WORKSPACE_JOB_KEY = `opstrax\.\$\{storageProduct\}/);
-  assert.match(navigation, /APP_PRODUCT === "driver" && isDriver/);
-  assert.match(navigation, /APP_PRODUCT === "customer" && isCustomer/);
-  assert.match(navigation, /APP_PRODUCT === "fleet" && isFleetUser/);
-  assert.match(navigation, /normalizedRole === "platformAdmin"/);
+  assert.match(appConfig, /Production OpsTrax builds must set EXPO_PUBLIC_APP_VARIANT/);
+  assert.match(runtimeConfig, /SECURE_SESSION_KEY = `opstrax\.\$\{APP_VARIANT\}/);
+  assert.match(runtimeConfig, /SECURE_WORKSPACE_JOB_KEY = `opstrax\.\$\{APP_VARIANT\}/);
+  assert.match(navigation, /resolveProductAccess/);
+  assert.match(productAccess, /variant === "driver"/);
+  assert.match(productAccess, /variant === "customer"/);
+  assert.match(productAccess, /variant === "fleet"/);
+  assert.match(productAccess, /FLEET_ROLES\.has\(normalizedRole\)/);
+  assert.doesNotMatch(productAccess, /"platformAdmin"/);
 });

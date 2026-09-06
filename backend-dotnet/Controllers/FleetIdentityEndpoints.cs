@@ -656,7 +656,7 @@ public static partial class EndpointMappings
                 await AppendDeviceTransitionAsync(db, companyId, installationBranchId, id, "Installed", "Installed", actorId,
                     "installation_transferred", $"{body.RemovalReason}; {body.AssignmentReason}", http.TraceIdentifier, ct);
                 await audit.LogAsync(http, "device.installation.transferred", "DeviceInstallation", newId,
-                    System.Text.Json.JsonSerializer.Serialize(new { deviceId = id, priorInstallationId = priorId, body.VehicleId, effectiveAt }), ct);
+                    System.Text.Json.JsonSerializer.Serialize(new { deviceId = id, priorInstallationId = priorId, vehicleId = body.VehicleId, effectiveAt }), ct);
                 return Results.Ok(ApiResponse<object>.Ok(new { priorInstallationId = priorId, id = newId, body.VehicleId, effectiveFrom = effectiveAt, status = "Installed" }, "Device transferred"));
             }, ct);
         }

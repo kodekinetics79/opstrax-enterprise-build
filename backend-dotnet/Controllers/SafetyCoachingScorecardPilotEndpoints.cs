@@ -257,12 +257,18 @@ public static partial class EndpointMappings
         return await db.RunInTenantTransactionAsync<IResult>(companyId, async () =>
         {
         var current = await db.QuerySingleAsync(
-            "SELECT ct.status,ct.branch_id FROM coaching_tasks ct WHERE ct.id=@id AND ct.company_id=@cid AND ct.deleted_at IS NULL" + CoachingBranchScope(http) + " FOR UPDATE",
+            "SELECT ct.status,ct.branch_id,ct.driver_acknowledged,ct.acknowledged_at FROM coaching_tasks ct WHERE ct.id=@id AND ct.company_id=@cid AND ct.deleted_at IS NULL" + CoachingBranchScope(http) + " FOR UPDATE",
             c => { c.Parameters.AddWithValue("@id", id); BindTenantAndBranch(c, http); }, ct);
         if (current is null) return Results.NotFound(ApiResponse<object>.Fail("Coaching task not found"));
         var currentStatus = current["status"]?.ToString() ?? string.Empty;
         if (!AllowedCoachingTransition(currentStatus, target))
             return Results.Conflict(ApiResponse<object>.Fail($"Cannot move coaching task from {currentStatus} to {target}."));
+
+        // Escalation preserves workflow topology, but cannot substitute for the
+        // driver's recorded acknowledgement before supervisor completion.
+        if (string.Equals(target, "Completed", StringComparison.OrdinalIgnoreCase) &&
+            (current["driverAcknowledged"] is not true || current["acknowledgedAt"] is null or DBNull))
+            return Results.Conflict(ApiResponse<object>.Fail("A recorded driver acknowledgement is required before completion."));
 
         var affected = await db.ExecuteAsync(
             @"UPDATE coaching_tasks ct SET status=@target,driver_acknowledged=CASE WHEN @target='Driver Acknowledged' THEN TRUE ELSE driver_acknowledged END,

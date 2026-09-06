@@ -4,9 +4,9 @@ Governing products from one shared Expo/React Native codebase:
 
 | Product | iOS bundle ID / Android package | EAS preview | EAS store |
 |---|---|---|---|
-| OpsTrax Driver | `com.kodekinetics.opstrax.driver` | `driver-preview` | `driver-production` |
-| OpsTrax Fleet | `com.kodekinetics.opstrax.fleet` | `fleet-preview` | `fleet-production` |
-| OpsTrax Customer | `com.kodekinetics.opstrax.customer` | `customer-preview` | `customer-production` |
+| OpsTrax Driver | `com.opstrax.driver` | `preview-driver` | `production-driver` |
+| OpsTrax Fleet | `com.opstrax.fleet` | `preview-fleet` | `production-fleet` |
+| OpsTrax Customer | `com.opstrax.customer` | `preview-customer` | `production-customer` |
 
 ## Current platform baseline
 

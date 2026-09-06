@@ -10,7 +10,7 @@ test("production store builds fail closed without privacy and support metadata",
   assert.match(config, /EXPO_PUBLIC_SUPPORT_URL/);
   assert.match(config, /requirePublicHttpsUrl\(PRIVACY_URL/);
   assert.match(config, /requirePublicHttpsUrl\(SUPPORT_URL/);
-  assert.match(config, /Production store builds must set EXPO_PUBLIC_PRODUCT/);
+  assert.match(config, /Production OpsTrax builds must set EXPO_PUBLIC_APP_VARIANT/);
 });
 
 test("account creation automatically requires a direct deletion resource", async () => {

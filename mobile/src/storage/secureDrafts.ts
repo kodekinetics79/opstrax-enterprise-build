@@ -1,5 +1,5 @@
 import * as SecureStore from "expo-secure-store";
-import { APP_PRODUCT, STAGE_LABEL } from "@/config";
+import { APP_VARIANT, STAGE_LABEL } from "@/config";
 
 function safeSegment(value: number | string | null | undefined) {
   return String(value ?? "unknown")
@@ -17,7 +17,7 @@ export function secureDraftKey(
 ) {
   return [
     "opstrax",
-    safeSegment(APP_PRODUCT),
+    safeSegment(APP_VARIANT),
     safeSegment(STAGE_LABEL),
     "draft",
     safeSegment(companyId),
