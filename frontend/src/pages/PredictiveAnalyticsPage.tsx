@@ -100,10 +100,10 @@ export function PredictiveAnalyticsPage() {
         <div>
           <div className="flex items-center gap-2 mb-1">
             <BrainCircuit className="h-5 w-5 text-violet-600" />
-            <span className="text-xs font-bold uppercase tracking-widest text-violet-600">AI-Powered Intelligence</span>
+            <span className="text-xs font-bold uppercase tracking-widest text-violet-600">Operational Intelligence</span>
           </div>
           <h1 className="text-xl font-bold text-slate-900">Fleet Intelligence Center</h1>
-          <p className="text-sm text-slate-500 mt-0.5">Predictive risk scoring for maintenance, driver safety, and SLA performance</p>
+          <p className="text-sm text-slate-500 mt-0.5">Rule-based risk signals for maintenance, driver safety, and SLA performance</p>
         </div>
         <div className="flex items-center gap-3">
           {(() => {
@@ -133,7 +133,7 @@ export function PredictiveAnalyticsPage() {
           { label: "Maintenance Alerts",  value: `${criticalMaint} Critical`,                        icon: <Wrench className="h-5 w-5" />,     accent: "text-amber-700", bg: "bg-amber-50" },
           { label: "Drivers at Risk",     value: `${urgentDrivers} Urgent`,                          icon: <Shield className="h-5 w-5" />,     accent: "text-amber-700", bg: "bg-amber-50" },
           { label: "SLA Breach Risk",     value: `${highSlaRisk} High Risk`,                         icon: <Clock className="h-5 w-5" />,      accent: "text-red-700",   bg: "bg-red-50" },
-          { label: "Avg Confidence",       value: (maintenance.length + driverRisk.length + slaRisk.length) > 0 ? `${avgConfidence}%` : "—", icon: <Activity className="h-5 w-5" />, accent: "text-violet-700",bg: "bg-violet-50" },
+          { label: "Avg Signal Score",     value: (maintenance.length + driverRisk.length + slaRisk.length) > 0 ? `${avgConfidence}%` : "—", icon: <Activity className="h-5 w-5" />, accent: "text-violet-700",bg: "bg-violet-50" },
         ].map((k) => (
           <div key={k.label} className="panel flex items-start gap-3 p-4">
             <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${k.bg} ${k.accent}`}>
@@ -153,7 +153,7 @@ export function PredictiveAnalyticsPage() {
         {/* Open risk items right now, by category (live snapshot — no historical trend data is collected yet) */}
         <div className="panel p-5">
           <p className="section-title mb-0.5">Open Risk Items by Category</p>
-          <p className="text-xs text-slate-400 mb-4">Current predictive risk items — maintenance, safety and SLA</p>
+          <p className="text-xs text-slate-400 mb-4">Current rule-based risk items — maintenance, safety and SLA</p>
           <ResponsiveContainer width="100%" height={200}>
             <BarChart
               data={[
@@ -201,7 +201,7 @@ export function PredictiveAnalyticsPage() {
       {/* Feed tabs */}
       <div className="panel flex gap-1 p-1.5">
         {([
-          { key: "maintenance", label: "Maintenance Predictions", icon: <Wrench className="h-3.5 w-3.5" />, count: maintenance.length },
+          { key: "maintenance", label: "Maintenance Risk Signals", icon: <Wrench className="h-3.5 w-3.5" />, count: maintenance.length },
           { key: "driver-risk", label: "Driver Safety Risk",      icon: <Shield className="h-3.5 w-3.5" />,  count: driverRisk.length },
           { key: "sla-risk",    label: "SLA Breach Risk",         icon: <Clock className="h-3.5 w-3.5" />,  count: slaRisk.length },
         ] as const).map(({ key, label, icon, count }) => (
@@ -213,7 +213,7 @@ export function PredictiveAnalyticsPage() {
         ))}
       </div>
 
-      {/* ── Maintenance Predictions ── */}
+      {/* ── Maintenance risk signals ── */}
       {feed === "maintenance" && (
         <div className="flex flex-col gap-3">
           {maintenance.map((r) => {
@@ -369,7 +369,7 @@ export function PredictiveAnalyticsPage() {
        (feed === "sla-risk"    && slaRisk.length === 0) ? (
         <div className="panel p-10 flex flex-col items-center gap-3 text-center">
           <AlertTriangle className="h-8 w-8 text-slate-300" />
-          <p className="text-slate-500 text-sm">No predictions available at this time.</p>
+          <p className="text-slate-500 text-sm">No risk signals available at this time.</p>
         </div>
       ) : null}
 
