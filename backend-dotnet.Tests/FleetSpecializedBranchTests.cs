@@ -145,7 +145,7 @@ public sealed class FleetSpecializedBranchTests
             var otherZoneId = await db.InsertAsync("INSERT INTO fleet_tms_temperature_zones(company_id,branch_id,code,name,min_celsius,max_celsius) VALUES (@c,NULL,'DEVICE-RACE','Device race',2,8)", c => c.Parameters.AddWithValue("@c", otherCompanyId));
 
             TemperatureDeviceRequest Request(string code, string idem, long zone) =>
-                new(code, code, zone, null, "TRUCK", "Active", 4m, 90m, null, "race", "api", null, idem, null, null, "{}");
+                new(code, code, zone, null, "TRUCK", "Active", null, null, null, "race", "api", null, idem, null, null, "{}");
             Task<IResult> Create(long tenant, long branch, TemperatureDeviceRequest request) =>
                 Invoke("CreateDevice", Principal(tenant, branch), request, Db(), CancellationToken.None);
 
@@ -218,11 +218,40 @@ public sealed class FleetSpecializedBranchTests
             await service.UpsertPolicyAsync(companyId, branchId, "GOVERNED-POLICY", "device", deviceId.ToString(),
                 2, 8, 30, 80, "Critical", true, "Active", "Manual", null, null, null, null, "{}", null);
 
+            var rejectedGatewayClaim = await Invoke("CreateReading", Principal(companyId, branchId),
+                new TemperatureReadingRequest(deviceId, null, zoneId, 4, 50, null, null, "Gateway", null, "operator claim"),
+                service, db, CancellationToken.None);
+            Assert.Equal(StatusCodes.Status400BadRequest, Assert.IsAssignableFrom<IStatusCodeHttpResult>(rejectedGatewayClaim).StatusCode);
+
+            var manual = await Invoke("CreateReading", Principal(companyId, branchId),
+                new TemperatureReadingRequest(deviceId, null, zoneId, 4, 50, null, null, "Manual", null, "manual observation"),
+                service, db, CancellationToken.None);
+            Assert.Equal(StatusCodes.Status200OK, Assert.IsAssignableFrom<IStatusCodeHttpResult>(manual).StatusCode);
+            var afterManual = await db.QuerySingleAsync(@"SELECT last_reported_temperature_celsius,last_ping_at_utc,last_measurement_source
+                FROM fleet_tms_temperature_devices WHERE id=@id", c => c.Parameters.AddWithValue("@id", deviceId));
+            Assert.True(afterManual!["lastReportedTemperatureCelsius"] is null or DBNull);
+            Assert.True(afterManual["lastPingAtUtc"] is null or DBNull);
+            Assert.True(afterManual["lastMeasurementSource"] is null or DBNull);
+            var manualReading = await db.QuerySingleAsync(@"SELECT source,measurement_authority,recorded_at_utc,received_at_utc
+                FROM fleet_tms_temperature_readings WHERE company_id=@c AND notes='manual observation'",
+                c => c.Parameters.AddWithValue("@c", companyId));
+            Assert.Equal("Manual", manualReading!["source"]?.ToString());
+            Assert.Equal("OperatorObserved", manualReading["measurementAuthority"]?.ToString());
+            Assert.NotNull(manualReading["recordedAtUtc"]);
+            Assert.NotNull(manualReading["receivedAtUtc"]);
+
             var claimedBreach = await service.RecordTemperatureReadingAsync(companyId, branchId,
                 new TemperatureReadingRequest(deviceId, null, zoneId, 4, 50, null, null, "gateway", "Breach", null,
                     "Gateway", null, "governed-normal", "corr-normal", null, "{}"));
             Assert.Equal("Normal", claimedBreach["status"]?.ToString());
             Assert.Equal("Gateway", claimedBreach["source"]?.ToString());
+            Assert.Equal("GatewayReported", claimedBreach["measurementAuthority"]?.ToString());
+            var afterGateway = await db.QuerySingleAsync(@"SELECT last_reported_temperature_celsius,last_ping_at_utc,last_measurement_source,last_measurement_observed_at_utc
+                FROM fleet_tms_temperature_devices WHERE id=@id", c => c.Parameters.AddWithValue("@id", deviceId));
+            Assert.Equal(4m, Convert.ToDecimal(afterGateway!["lastReportedTemperatureCelsius"]));
+            Assert.Equal("Gateway", afterGateway["lastMeasurementSource"]?.ToString());
+            Assert.NotNull(afterGateway["lastPingAtUtc"]);
+            Assert.NotNull(afterGateway["lastMeasurementObservedAtUtc"]);
 
             var concealedBreach = await service.RecordTemperatureReadingAsync(companyId, branchId,
                 new TemperatureReadingRequest(deviceId, null, zoneId, 4, 90, null, null, "Sensor", "Normal", null,

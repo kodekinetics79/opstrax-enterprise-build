@@ -53,6 +53,8 @@ public sealed class FleetTmsSecurityHardeningTests
         Assert.Contains("Longitude", FleetTmsColdChainEndpoints.ValidateReadingRequest(longitude), StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Humidity", FleetTmsColdChainEndpoints.ValidateReadingRequest(humidity), StringComparison.OrdinalIgnoreCase);
         Assert.Contains("source", FleetTmsColdChainEndpoints.ValidateReadingRequest(Reading() with { Source = "Invented" }), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("future", FleetTmsColdChainEndpoints.ValidateReadingRequest(Reading() with { ObservedAtUtc = DateTime.UtcNow.AddMinutes(6) }), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("31 days", FleetTmsColdChainEndpoints.ValidateReadingRequest(Reading() with { ObservedAtUtc = DateTime.UtcNow.AddDays(-32) }), StringComparison.OrdinalIgnoreCase);
         Assert.Null(FleetTmsColdChainEndpoints.ValidateReadingRequest(Reading() with { Source = "Gateway" }));
     }
 
@@ -61,6 +63,8 @@ public sealed class FleetTmsSecurityHardeningTests
     {
         Assert.Equal("Sensor", FleetTmsColdChainFoundationService.NormalizeReadingSource(null));
         Assert.Equal("Gateway", FleetTmsColdChainFoundationService.NormalizeReadingSource(" gateway "));
+        Assert.Equal("DeviceReported", FleetTmsColdChainFoundationService.MeasurementAuthority("Sensor"));
+        Assert.Equal("OperatorObserved", FleetTmsColdChainFoundationService.MeasurementAuthority("Manual"));
         Assert.Throws<InvalidOperationException>(() => FleetTmsColdChainFoundationService.NormalizeReadingSource("estimated"));
     }
 
@@ -78,9 +82,8 @@ public sealed class FleetTmsSecurityHardeningTests
     public void DeviceRegistrationKeepsUnobservedTelemetryNull()
     {
         var endpoints = ReadSource("backend-dotnet", "Controllers", "FleetTmsColdChainEndpoints.cs");
-        Assert.Contains("(object?)req.LastReportedTemperatureCelsius ?? DBNull.Value", endpoints, StringComparison.Ordinal);
-        Assert.Contains("(object?)req.BatteryPercent ?? DBNull.Value", endpoints, StringComparison.Ordinal);
-        Assert.Contains("(object?)req.LastPingAtUtc ?? DBNull.Value", endpoints, StringComparison.Ordinal);
+        Assert.Contains("NULL, NULL, NULL, NULL, NULL, @notes", endpoints, StringComparison.Ordinal);
+        Assert.Contains("evidence cannot be asserted during device registration", endpoints, StringComparison.Ordinal);
         Assert.DoesNotContain("req.BatteryPercent ?? 0m", endpoints, StringComparison.Ordinal);
     }
 
@@ -188,7 +191,7 @@ public sealed class FleetTmsSecurityHardeningTests
                     < stage56.IndexOf("INSERT INTO schema_migrations", StringComparison.Ordinal));
     }
 
-    private static TemperatureDeviceRequest Device(decimal? temperature = 0, decimal? battery = 50, string? metadataJson = "{}")
+    private static TemperatureDeviceRequest Device(decimal? temperature = null, decimal? battery = null, string? metadataJson = "{}")
         => new("DEV-1", "Trailer sensor", null, null, "TRK-1", "Active", temperature, battery, null, null,
             null, null, null, null, null, metadataJson);
 

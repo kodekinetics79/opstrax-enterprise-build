@@ -281,10 +281,14 @@ public sealed class FleetTmsColdChainFoundationService(Database db)
              || effectiveHumidityMax.HasValue && req.HumidityPercent.Value > effectiveHumidityMax.Value);
         var isBreach = isTemperatureBreach || isHumidityBreach;
         var status = isBreach ? "Breach" : "Normal";
+        var source = NormalizeReadingSource(req.Source);
+        var measurementAuthority = MeasurementAuthority(source);
+        var receivedAt = DateTimeOffset.UtcNow;
+        var observedAt = NormalizeObservedAt(req.ObservedAtUtc, receivedAt);
 
         var readingId = await PersistTemperatureFlowAsync(companyId, effectiveBranchId, shipmentId, zoneId,
             req, status, policy, effectiveMin, effectiveMax, effectiveHumidityMin, effectiveHumidityMax,
-            isTemperatureBreach, isHumidityBreach, ct);
+            isTemperatureBreach, isHumidityBreach, source, measurementAuthority, observedAt, receivedAt, ct);
 
         var row = await db.QuerySingleAsync(
             @"SELECT *
@@ -303,7 +307,8 @@ public sealed class FleetTmsColdChainFoundationService(Database db)
     private async Task<long> PersistTemperatureFlowAsync(long companyId, long? branchId, long? shipmentId, long? zoneId,
         TemperatureReadingRequest req, string status, ColdChainPolicyRecord? policy, decimal? effectiveMin,
         decimal? effectiveMax, decimal? effectiveHumidityMin, decimal? effectiveHumidityMax,
-        bool isTemperatureBreach, bool isHumidityBreach, CancellationToken ct)
+        bool isTemperatureBreach, bool isHumidityBreach, string source, string measurementAuthority,
+        DateTimeOffset observedAt, DateTimeOffset receivedAt, CancellationToken ct)
     {
         var isBreach = isTemperatureBreach || isHumidityBreach;
         var alertType = (isTemperatureBreach, isHumidityBreach) switch
@@ -327,15 +332,16 @@ FOR UPDATE", connection, transaction);
             long readingId;
             await using (var insertReading = new NpgsqlCommand(@"
 INSERT INTO fleet_tms_temperature_readings
- (company_id, branch_id, device_id, shipment_id, zone_id, temperature_celsius, humidity_percent, latitude, longitude, source, status,
+ (company_id, branch_id, device_id, shipment_id, zone_id, temperature_celsius, humidity_percent, latitude, longitude, source, measurement_authority, status,
   notes, source_channel, client_generated_id, idempotency_key, correlation_id, causation_id, metadata_json,
-  applied_policy_code, applied_policy_scope, applied_min_celsius, applied_max_celsius, recorded_at_utc, created_at_utc)
+  applied_policy_code, applied_policy_scope, applied_min_celsius, applied_max_celsius, recorded_at_utc, received_at_utc, created_at_utc)
 VALUES
- (@companyId,@branchId,@device,@shipment,@zone,@temp,@humidity,@lat,@lng,@source,@status,@notes,@sourceChannel,
-  @clientGeneratedId,@idempotencyKey,@correlationId,@causationId,@metadata::jsonb,@policyCode,@policyScope,@policyMin,@policyMax,NOW(),NOW())
+ (@companyId,@branchId,@device,@shipment,@zone,@temp,@humidity,@lat,@lng,@source,@measurementAuthority,@status,@notes,@sourceChannel,
+  @clientGeneratedId,@idempotencyKey,@correlationId,@causationId,@metadata::jsonb,@policyCode,@policyScope,@policyMin,@policyMax,@observedAt,@receivedAt,NOW())
 ON CONFLICT DO NOTHING RETURNING id", connection, transaction))
             {
-                BindReadingParameters(insertReading, companyId, branchId, shipmentId, zoneId, req, status, policy, effectiveMin, effectiveMax);
+                BindReadingParameters(insertReading, companyId, branchId, shipmentId, zoneId, req, status, policy, effectiveMin, effectiveMax,
+                    source, measurementAuthority, observedAt, receivedAt);
                 var inserted = await insertReading.ExecuteScalarAsync(ct);
                 if (inserted is null)
                 {
@@ -354,13 +360,19 @@ WHERE company_id=@companyId AND branch_id IS NOT DISTINCT FROM @branchId AND ide
 
             await using (var updateDevice = new NpgsqlCommand(@"
 UPDATE fleet_tms_temperature_devices SET last_reported_temperature_celsius=@temp,
- last_ping_at_utc=NOW(), shipment_id=COALESCE(@shipment,shipment_id), zone_id=COALESCE(@zone,zone_id),
+ last_ping_at_utc=@receivedAt, last_measurement_source=@source, last_measurement_observed_at_utc=@observedAt,
+ shipment_id=COALESCE(@shipment,shipment_id), zone_id=COALESCE(@zone,zone_id),
  source_channel=COALESCE(@sourceChannel,source_channel), client_generated_id=COALESCE(@clientGeneratedId,client_generated_id),
  correlation_id=COALESCE(@correlationId,correlation_id),
  causation_id=COALESCE(@causationId,causation_id), metadata_json=COALESCE(@metadata::jsonb,metadata_json), updated_at_utc=NOW()
-WHERE id=@device AND company_id=@companyId AND branch_id IS NOT DISTINCT FROM @branchId", connection, transaction))
+WHERE id=@device AND company_id=@companyId AND branch_id IS NOT DISTINCT FROM @branchId
+  AND @advancesDeviceState", connection, transaction))
             {
                 BindFlowParameters(updateDevice, companyId, branchId, shipmentId, zoneId, req);
+                updateDevice.Parameters.AddWithValue("@source", source);
+                updateDevice.Parameters.AddWithValue("@observedAt", observedAt);
+                updateDevice.Parameters.AddWithValue("@receivedAt", receivedAt);
+                updateDevice.Parameters.AddWithValue("@advancesDeviceState", source is "Sensor" or "Gateway");
                 await updateDevice.ExecuteNonQueryAsync(ct);
             }
 
@@ -391,7 +403,7 @@ ON CONFLICT DO NOTHING", connection, transaction);
             }
 
             await InsertFlowEvent(connection, transaction, companyId, branchId, "cold_chain.temperature_reading.recorded", readingId,
-                new { readingId, req.DeviceId, shipmentId, zoneId, req.TemperatureCelsius, req.HumidityPercent, status, policyCode=policy?.PolicyCode, policyScope=policy?.ScopeType, breach=isBreach }, req, ct);
+                new { readingId, req.DeviceId, shipmentId, zoneId, req.TemperatureCelsius, req.HumidityPercent, source, measurementAuthority, observedAt, receivedAt, status, policyCode=policy?.PolicyCode, policyScope=policy?.ScopeType, breach=isBreach }, req, ct);
             if (isBreach)
                 await InsertFlowEvent(connection, transaction, companyId, branchId, "cold_chain.condition_breach.detected", readingId,
                     new { readingId, req.DeviceId, shipmentId, zoneId, req.TemperatureCelsius, req.HumidityPercent,
@@ -418,19 +430,23 @@ ON CONFLICT DO NOTHING", connection, transaction);
     }
 
     private static void BindReadingParameters(NpgsqlCommand command, long companyId, long? branchId, long? shipmentId, long? zoneId,
-        TemperatureReadingRequest req, string status, ColdChainPolicyRecord? policy, decimal? effectiveMin, decimal? effectiveMax)
+        TemperatureReadingRequest req, string status, ColdChainPolicyRecord? policy, decimal? effectiveMin, decimal? effectiveMax,
+        string source, string measurementAuthority, DateTimeOffset observedAt, DateTimeOffset receivedAt)
     {
         BindFlowParameters(command, companyId, branchId, shipmentId, zoneId, req);
         command.Parameters.AddWithValue("@humidity", (object?)req.HumidityPercent ?? DBNull.Value);
         command.Parameters.AddWithValue("@lat", (object?)req.Latitude ?? DBNull.Value);
         command.Parameters.AddWithValue("@lng", (object?)req.Longitude ?? DBNull.Value);
-        command.Parameters.AddWithValue("@source", NormalizeReadingSource(req.Source));
+        command.Parameters.AddWithValue("@source", source);
+        command.Parameters.AddWithValue("@measurementAuthority", measurementAuthority);
         command.Parameters.AddWithValue("@status", status);
         command.Parameters.AddWithValue("@notes", req.Notes?.Trim() ?? string.Empty);
         command.Parameters.AddWithValue("@policyCode", (object?)policy?.PolicyCode ?? DBNull.Value);
         command.Parameters.AddWithValue("@policyScope", (object?)policy?.ScopeType ?? DBNull.Value);
         command.Parameters.AddWithValue("@policyMin", (object?)effectiveMin ?? DBNull.Value);
         command.Parameters.AddWithValue("@policyMax", (object?)effectiveMax ?? DBNull.Value);
+        command.Parameters.AddWithValue("@observedAt", observedAt);
+        command.Parameters.AddWithValue("@receivedAt", receivedAt);
     }
 
     internal static string NormalizeReadingSource(string? source) => source?.Trim().ToLowerInvariant() switch
@@ -441,6 +457,23 @@ ON CONFLICT DO NOTHING", connection, transaction);
         "import" => "Import",
         _ => throw new InvalidOperationException("Reading source is invalid."),
     };
+
+    internal static string MeasurementAuthority(string source) => source switch
+    {
+        "Sensor" => "DeviceReported",
+        "Gateway" => "GatewayReported",
+        "Manual" => "OperatorObserved",
+        "Import" => "ImportedHistorical",
+        _ => throw new InvalidOperationException("Reading source is invalid."),
+    };
+
+    private static DateTimeOffset NormalizeObservedAt(DateTime? observedAtUtc, DateTimeOffset receivedAt)
+    {
+        if (!observedAtUtc.HasValue) return receivedAt;
+        var value = observedAtUtc.Value;
+        if (value.Kind == DateTimeKind.Unspecified) value = DateTime.SpecifyKind(value, DateTimeKind.Utc);
+        return new DateTimeOffset(value).ToUniversalTime();
+    }
 
     private static async Task InsertFlowEvent(NpgsqlConnection connection, NpgsqlTransaction transaction, long companyId, long? branchId,
         string eventType, long readingId, object payload, TemperatureReadingRequest req, CancellationToken ct)

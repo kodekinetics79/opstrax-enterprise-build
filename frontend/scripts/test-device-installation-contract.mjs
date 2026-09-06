@@ -115,7 +115,17 @@ assert.doesNotMatch(coldChainPage, /humidityPercent:\s*51/, "Cold-chain observat
 assert.doesNotMatch(coldChainPage, /status:\s*'Normal'/, "The client must not fabricate a normal policy result");
 assert.doesNotMatch(coldChainPage, /Manual telemetry sample created|Reviewed by operations/, "Audit evidence must not be replaced with invented notes");
 assert.match(coldChainPage, /No reading/, "Devices without reported temperature evidence must render an honest empty value");
-assert.match(coldChainPage, /Never reported/, "Devices without a reported timestamp must not be presented as live");
+assert.match(coldChainPage, /No authenticated reading/, "Unverified values must not be presented as sensor measurements");
+assert.match(coldChainPage, /Not authenticated/, "Unverified battery values must not be presented as device measurements");
+assert.match(coldChainPage, /Never authenticated/, "Devices without an authenticated timestamp must not be presented as live");
+assert.match(coldChainPage, /Measurement authority/, "The device card must expose measurement authority");
+assert.match(coldChainPage, /Reported calibration status/, "Device registration must label calibration posture as operator-reported metadata");
+assert.match(coldChainPage, /Live measurements require authenticated sensor or gateway ingest/, "Registration must not imply a live device connection");
+
+const coldChainService = readFileSync(resolve(root, "src/services/telematicsService.ts"), "utf8");
+assert.match(coldChainService, /hasAuthoritativeMeasurement = \/\^\(Sensor\|Gateway\)\$\/i\.test/, "Only sensor or gateway sources may advance the live measurement projection");
+assert.match(coldChainService, /hasBattery = hasAuthoritativeMeasurement &&/, "Legacy battery values must be hidden without an authenticated measurement source");
+assert.match(coldChainService, /No authenticated sensor or gateway measurement is available/, "Missing authority must produce an explicit fail-closed action");
 
 const driverPage = readFileSync(resolve(root, "src/pages/driver/DriverAssignmentPage.tsx"), "utf8");
 assert.match(driverPage, /s !== "accepted" \|\| status === "exception"/, "Initial acceptance must use the canonical endpoint while exception recovery remains executable");
