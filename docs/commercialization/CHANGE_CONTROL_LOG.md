@@ -2,6 +2,22 @@
 
 This log records approved changes to the sequencing, gate boundaries, evidence requirements, or commercial claims governed by the Master Commercialization & Certification Action Plan. A change record never substitutes for evidence that the affected capability would otherwise require.
 
+## CR-2026-09-06-01 - Complete software while hardware remains external hold
+
+| Field | Record |
+|---|---|
+| Classification | Class 2 operating-model consolidation; no capability promotion or evidence waiver |
+| Authority | Explicit CTO/program-owner direction on 2026-09-06 to complete, verify and certify the development-controlled scope while hardware procurement remains the last external testing layer |
+| Entry baseline | `main@0af7b14ecf0fde7e833a1db4bb36025746099137`; production POC software `a5e8963cde984c3e806f1a3adbc85d523211d80e` |
+| Governing result | OpsTrax Accelerated Hardening Factory v2.0 becomes the consolidated master at controlled plan revision 2.7 |
+| Execution | Up to six bounded engineering squads; at most two frozen certification candidates; BUILD -> INTEGRATE -> CERTIFY; related defects batched by vertical slice |
+| External dependencies | Physical hardware, provider access, commercial rights, regulatory evidence and unavailable qualified external acceptance become EXTERNAL HOLD and do not block unrelated engineering |
+| Software disposition | Exact candidates may receive SOFTWARE VERIFIED or SOFTWARE READY FOR EXTERNAL CONFIRMATION after applicable software gates pass; those terms do not certify hardware, provider, sensor, video, ELD/HOS or commercial capability |
+| Preserved controls | Exact-SHA evidence, visible Chrome and persisted data for customer claims, real provider/device/regulatory evidence, independent SDET, qualified acceptance, no self-certification, 0 P0/P1 and commercial truth |
+| Immediate capability effect | None. All current external capability gaps retain their existing status and hold. |
+
+Full record: `changes/CR-2026-09-06-01_SOFTWARE_COMPLETION_EXTERNAL_HARDWARE_HOLD.md`.
+
 ## CR-2026-09-02-02 - Restore the original sequence; finish Wave 2
 
 | Field | Record |

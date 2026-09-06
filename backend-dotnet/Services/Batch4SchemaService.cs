@@ -84,6 +84,10 @@ public sealed class Batch4SchemaService(Database db, IConfiguration? configurati
         new("dashcam_events", "created_at", "TIMESTAMPTZ NOT NULL DEFAULT NOW()"),
         new("dashcam_events", "updated_at", "TIMESTAMPTZ NULL"),
         new("dashcam_events", "deleted_at", "TIMESTAMPTZ NULL"),
+        new("dashcam_events", "branch_id", "BIGINT NULL"),
+        new("dashcam_events", "source_authority", "VARCHAR(32) NOT NULL DEFAULT 'LegacyUnverified'"),
+        new("dashcam_events", "media_status", "VARCHAR(32) NOT NULL DEFAULT 'ProviderPending'"),
+        new("dashcam_events", "row_version", "BIGINT NOT NULL DEFAULT 0"),
 
         new("evidence_package_items", "evidence_package_id", "BIGINT NOT NULL DEFAULT 1"),
         new("evidence_package_items", "item_json",           "JSONB NULL"),
@@ -217,7 +221,6 @@ public sealed class Batch4SchemaService(Database db, IConfiguration? configurati
     private static readonly string[] DemoSeeds =
     [
         @"UPDATE safety_events SET event_number=COALESCE(event_number, 'SAFE-' || LPAD(id::TEXT,5,'0')), occurred_at=COALESCE(occurred_at,event_time), location_description=COALESCE(location_description, (ARRAY['Manassas Yard','Woodbridge I-95','Alexandria Medical Zone','Dulles Toll Road','Fairfax Delivery Zone','Arlington Urban Core','Washington DC Service Zone'])[(id%7)+1]), coaching_status=CASE WHEN status='Coaching Assigned' THEN 'Created' ELSE coaching_status END, incident_status=CASE WHEN severity='Critical' THEN 'Open' ELSE incident_status END, risk_score=CASE WHEN risk_score=35 THEN CASE WHEN severity='Critical' THEN 90 WHEN severity='High' THEN 72 ELSE 22+(id%30) END ELSE risk_score END, ai_summary=COALESCE(ai_summary,'OpsTrax AI detected a safety signal requiring review.'), recommended_action=COALESCE(recommended_action, CASE WHEN severity IN ('High','Critical') THEN 'Review and create coaching task' ELSE 'Review event evidence' END)",
-        @"UPDATE dashcam_events SET event_number=COALESCE(event_number, 'VID-' || LPAD(id::TEXT,5,'0')), event_type=COALESCE(event_type,title), occurred_at=COALESCE(occurred_at,event_time), driver_id=COALESCE(driver_id, ((id-1)%20)+1), vehicle_id=COALESCE(vehicle_id, ((id-1)%20)+1), location_description=COALESCE(location_description,'Northern Virginia corridor'), thumbnail_url=COALESCE(thumbnail_url,'/placeholder/dashcam-thumb.jpg'), road_facing_clip_url=COALESCE(road_facing_clip_url,'/placeholder/road-facing.mp4'), driver_facing_clip_url=COALESCE(driver_facing_clip_url,'/placeholder/driver-facing.mp4'), ai_summary=COALESCE(ai_summary,'AI dashcam placeholder summary with driver behavior, road context and exoneration signals.'), review_status=COALESCE(review_status,'Pending Review'), recommended_action=COALESCE(recommended_action,'Review video and determine coaching/evidence path')",
         @"INSERT INTO safety_events (company_id, event_number, event_type, severity, driver_id, vehicle_id, job_id, route_id, location_description, latitude, longitude, speed, posted_speed_limit, occurred_at, status, coaching_status, incident_status, risk_score, ai_summary, recommended_action)
           WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<40)
           SELECT 1, 'SAFE-B4-' || (1000+n),
@@ -234,24 +237,6 @@ public sealed class Batch4SchemaService(Database db, IConfiguration? configurati
                  'AI safety advisor detected preventable risk pattern.',
                  CASE WHEN n%4 = 0 THEN 'Create coaching task and incident review' ELSE 'Review safety evidence' END
           FROM seq WHERE (SELECT COUNT(*) FROM safety_events WHERE deleted_at IS NULL) < 40",
-        @"INSERT INTO dashcam_events (company_id, event_number, safety_event_id, event_type, title, severity, driver_id, vehicle_id, job_id, route_id, location_description, thumbnail_url, road_facing_clip_url, driver_facing_clip_url, video_provider, ai_summary, ai_confidence, review_status, coaching_status, evidence_status, recommended_action, occurred_at)
-          WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<25)
-          SELECT 1, 'VID-B4-' || (2000+n), ((n-1)%40)+1,
-                 (ARRAY['Near Miss','Distracted Driving Placeholder','Tailgating Placeholder','Speeding Video','Collision/Near Miss','Driver Exoneration Review'])[(n%6)+1],
-                 'AI dashcam event ' || n,
-                 (ARRAY['Low','Medium','High','Critical'])[(n%4)+1],
-                 ((n-1)%20)+1, ((n-1)%20)+1, ((n-1)%50)+1, ((n-1)%12)+1,
-                 (ARRAY['Manassas Yard','Woodbridge I-95','Alexandria Medical Zone','Dulles Toll Road','Fairfax Delivery Zone','Arlington Urban Core','Washington DC Service Zone'])[(n%7)+1],
-                 '/placeholder/dashcam-thumb.jpg','/placeholder/road-facing.mp4','/placeholder/driver-facing.mp4',
-                 'OpsTrax Placeholder',
-                 'AI incident summary: vehicle context, video metadata, speed and route evidence are ready for review.',
-                 78+(n%20),
-                 (ARRAY['Pending Review','Reviewed','False Positive Review','Escalated'])[(n%4)+1],
-                 CASE WHEN n%3 = 0 THEN 'Created' ELSE 'Needed' END,
-                 CASE WHEN n%4 = 0 THEN 'Packaged' ELSE 'Not Packaged' END,
-                 CASE WHEN n%5 = 0 THEN 'Potential driver exoneration: below speed limit with external cut-in risk' ELSE 'Review video and build evidence package' END,
-                 NOW() - n * INTERVAL '1 hour'
-          FROM seq WHERE (SELECT COUNT(*) FROM dashcam_events WHERE deleted_at IS NULL) < 25",
         @"INSERT INTO coaching_tasks (company_id, task_number, driver_id, safety_event_id, dashcam_event_id, assigned_to_user_id, coaching_type, priority, status, title, description, ai_script, driver_acknowledged, acknowledged_at, completed_at, before_safety_score, after_safety_score, effectiveness_score, due_at)
           WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<20)
           SELECT 1, 'COACH-B4-' || (3000+n), ((n-1)%20)+1, ((n-1)%40)+1,

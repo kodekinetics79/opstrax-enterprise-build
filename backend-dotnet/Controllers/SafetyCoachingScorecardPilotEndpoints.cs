@@ -113,7 +113,10 @@ public static partial class EndpointMappings
             record,
             notes = await db.QueryAsync("SELECT * FROM coaching_notes WHERE coaching_task_id=@id AND company_id=@cid ORDER BY created_at DESC", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct),
             relatedSafetyEvents = await db.QueryAsync("SELECT * FROM safety_events WHERE id=@id AND company_id=@cid", c => { c.Parameters.AddWithValue("@id", record["safetyEventId"] ?? DBNull.Value); c.Parameters.AddWithValue("@cid", companyId); }, ct),
-            relatedDashcamEvents = await db.QueryAsync("SELECT * FROM dashcam_events WHERE id=@id AND company_id=@cid", c => { c.Parameters.AddWithValue("@id", record["dashcamEventId"] ?? DBNull.Value); c.Parameters.AddWithValue("@cid", companyId); }, ct),
+            relatedDashcamEvents = await db.QueryAsync(
+                $"SELECT {DashcamMetadataColumns} FROM dashcam_events WHERE id=@id AND company_id=@cid" +
+                (GetBranchId(http) is null ? string.Empty : " AND branch_id=@branchId"),
+                c => { c.Parameters.AddWithValue("@id", record["dashcamEventId"] ?? DBNull.Value); BindTenantAndBranch(c, http); }, ct),
             // Recommendations currently have tenant ownership but no branch ownership metadata.
             // Do not expose tenant-wide narrative content to a branch-scoped principal.
             recommendations = GetBranchId(http) is null

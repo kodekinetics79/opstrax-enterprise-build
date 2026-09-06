@@ -117,8 +117,41 @@ public sealed class LegacySafetyComplianceAuthorizationTests
         Assert.Contains("Use the guarded safety-event workflow actions to change lifecycle status", source, StringComparison.Ordinal);
         Assert.Contains("module_key='safety' AND @branchId::BIGINT IS NULL", source, StringComparison.Ordinal);
         Assert.Contains("MapPost(\"/api/safety/events/{id:long}/coaching\", CanonicalCoachingFromSafetyEvent)", source, StringComparison.Ordinal);
-        Assert.Contains("CanonicalCoachingFromDashcamEvent(http, id, body, db, audit, ct)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("CanonicalCoachingFromDashcamEvent(http, id, body, db, audit, ct)", source, StringComparison.Ordinal);
         Assert.Contains("PilotCreateCoachingTask(http, payload, db, audit, ct)", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CameraProviderWorkflowsFailClosedWithoutProviderAuthority()
+    {
+        var result = (IResult)typeof(EndpointMappings)
+            .GetMethod("DashcamWorkflowExternalHold", BindingFlags.NonPublic | BindingFlags.Static)!
+            .Invoke(null, null)!;
+        var http = new DefaultHttpContext
+        {
+            RequestServices = new ServiceCollection().AddLogging().BuildServiceProvider()
+        };
+        http.Response.Body = new MemoryStream();
+
+        await result.ExecuteAsync(http);
+        http.Response.Body.Position = 0;
+        var body = await new StreamReader(http.Response.Body).ReadToEndAsync();
+
+        Assert.Equal(StatusCodes.Status409Conflict, http.Response.StatusCode);
+        Assert.Contains("authoritative provider event", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("certified", body, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void CameraReadsUseSafeMetadataProjectionAndBranchScope()
+    {
+        var source = Source();
+        Assert.Contains("DashcamMetadataColumns", source, StringComparison.Ordinal);
+        Assert.Contains("COUNT(*) stored_event_records", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("dashcam_events_today", source, StringComparison.Ordinal);
+        Assert.Contains("(@branchId::BIGINT IS NULL OR de.branch_id=@branchId)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("SELECT * FROM dashcam_events", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("module_key='dashcam' ORDER BY score", source, StringComparison.Ordinal);
     }
 
     private static DefaultHttpContext Principal(string[] permissions, long? branchId = null)

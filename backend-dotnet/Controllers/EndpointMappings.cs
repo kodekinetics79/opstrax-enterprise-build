@@ -1353,38 +1353,42 @@ public static partial class EndpointMappings
             var denied = RequirePermission(http, "dashcam:manage");
             return denied is not null ? Task.FromResult(denied) : UpdateDashcamEvent(http, id, db, audit, ct);
         });
-        app.MapDelete("/api/dashcam/events/{id:long}", SoftDeleteWithPermission("dashcam_events", "dashcam.event.deleted", "dashcam:manage"));
+        app.MapDelete("/api/dashcam/events/{id:long}", (HttpContext http, long id) =>
+        {
+            var denied = RequirePermission(http, "dashcam:manage");
+            return denied ?? DashcamWorkflowExternalHold();
+        });
         app.MapGet("/api/dashcam/recommendations", (HttpContext http, Database db, CancellationToken ct) =>
         {
             if (RequirePermission(http, "dashcam:view") is { } denied) return Task.FromResult(denied);
-            return OkRows(db,
-                "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='dashcam' ORDER BY score DESC LIMIT 8",
-                c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+            return Task.FromResult<IResult>(Results.Ok(ApiResponse<object>.Ok(
+                Array.Empty<object>(),
+                "No provider-backed camera recommendations are available.")));
         });
         app.MapPost("/api/dashcam/events/{id:long}/review", (HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) =>
         {
             var denied = RequirePermission(http, "dashcam:manage");
-            return denied is not null ? Task.FromResult(denied) : DashcamReview(http, id, db, audit, ct);
+            return Task.FromResult(denied ?? DashcamWorkflowExternalHold());
         });
         app.MapPost("/api/dashcam/events/{id:long}/mark-false-positive", (HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) =>
         {
             var denied = RequirePermission(http, "dashcam:manage");
-            return denied is not null ? Task.FromResult(denied) : DashcamFalsePositive(http, id, db, audit, ct);
+            return Task.FromResult(denied ?? DashcamWorkflowExternalHold());
         });
         app.MapPost("/api/dashcam/events/{id:long}/create-coaching-task", (HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) =>
         {
             var denied = RequirePermission(http, "dashcam:manage");
-            return denied is not null ? Task.FromResult(denied) : CanonicalCoachingFromDashcamEvent(http, id, body, db, audit, ct);
+            return Task.FromResult(denied ?? DashcamWorkflowExternalHold());
         });
         app.MapPost("/api/dashcam/events/{id:long}/create-evidence-package", (HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) =>
         {
             var denied = RequirePermission(http, "dashcam:manage");
-            return denied is not null ? Task.FromResult(denied) : DashcamCreateEvidencePackage(http, id, db, audit, ct);
+            return Task.FromResult(denied ?? DashcamWorkflowExternalHold());
         });
         app.MapPost("/api/dashcam/events/{id:long}/create-incident-report", (HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) =>
         {
             var denied = RequirePermission(http, "dashcam:manage");
-            return denied is not null ? Task.FromResult(denied) : DashcamCreateIncidentReport(http, id, db, audit, ct);
+            return Task.FromResult(denied ?? DashcamWorkflowExternalHold());
         });
 
         app.MapGet("/api/coaching/summary", PilotCoachingSummary);
@@ -5688,6 +5692,15 @@ public static partial class EndpointMappings
             rows = await db.QueryAsync("SELECT * FROM module_records WHERE company_id=@companyId AND module_key=@key" + branchPredicate + " ORDER BY id DESC",
                 c => BindModuleScope(c, companyId, moduleKey, branchId), ct);
         }
+        else if (moduleKey.Equals("dashcam", StringComparison.OrdinalIgnoreCase))
+        {
+            summary = await db.QuerySingleAsync(
+                "SELECT COUNT(*) total FROM dashcam_events de WHERE de.company_id=@companyId AND de.deleted_at IS NULL" + branchPredicate,
+                c => BindModuleScope(c, companyId, moduleKey, branchId), ct);
+            rows = await db.QueryAsync(
+                DashcamSql + " WHERE de.company_id=@companyId AND de.deleted_at IS NULL" + branchPredicate.Replace("branch_id", "de.branch_id", StringComparison.Ordinal) + " ORDER BY de.occurred_at DESC LIMIT 2000",
+                c => BindModuleScope(c, companyId, moduleKey, branchId), ct);
+        }
         else
         {
             // ModuleDefinitions historically embedded unscoped joins and summaries.
@@ -5703,7 +5716,7 @@ public static partial class EndpointMappings
         }
         // ai_recommendations has no durable branch ownership. Suppress it for a
         // branch-bound principal rather than exposing tenant-wide narratives.
-        var insights = branchId is null
+        var insights = branchId is null && !moduleKey.Equals("dashcam", StringComparison.OrdinalIgnoreCase)
             ? await db.QueryAsync("SELECT * FROM ai_recommendations WHERE company_id=@companyId AND module_key=@key ORDER BY score DESC LIMIT 4", c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@key", moduleKey); }, ct)
             : [];
         return Results.Ok(ApiResponse<object>.Ok(new
@@ -5718,6 +5731,8 @@ public static partial class EndpointMappings
 
     private static async Task<IResult> LoadModuleDetail(HttpContext http, string moduleKey, long id, Database db, CancellationToken ct)
     {
+        if (moduleKey.Equals("dashcam", StringComparison.OrdinalIgnoreCase))
+            return await DashcamEventDetail(http, id, db, ct);
         var definition = ModuleDefinitions.GetValueOrDefault(moduleKey) ?? ModuleDefinitions["fallback"];
         var branchId = GetBranchId(http);
         var branchPredicate = ModuleBranchPredicate(moduleKey, definition.TableName, branchId);
@@ -5747,7 +5762,7 @@ public static partial class EndpointMappings
         if (branchId is null) return "";
         return (moduleKey, tableName) switch
         {
-            ("route-planning", "routes") or ("hos-eld", "hos_logs") or ("user-management", "users")
+            ("route-planning", "routes") or ("hos-eld", "hos_logs") or ("user-management", "users") or ("dashcam", "dashcam_events")
                 => " AND branch_id=@branchId",
             ("fuel-idling", "fuel_transactions")
                 => " AND EXISTS (SELECT 1 FROM vehicles module_vehicle WHERE module_vehicle.id=fuel_transactions.vehicle_id AND module_vehicle.company_id=fuel_transactions.company_id AND module_vehicle.branch_id=@branchId AND module_vehicle.deleted_at IS NULL)",
@@ -9297,7 +9312,10 @@ public static partial class EndpointMappings
         LEFT JOIN vehicles v ON v.id=se.vehicle_id AND v.company_id=se.company_id
         LEFT JOIN jobs j ON j.id=se.job_id AND j.company_id=se.company_id
         LEFT JOIN routes r ON r.id=se.route_id AND r.company_id=se.company_id";
-    private const string DashcamSql = @"SELECT de.*, d.full_name driver_name, v.vehicle_code, COALESCE(j.job_number,j.job_code) job_number, r.route_code
+    private const string DashcamMetadataColumns = "id,row_version,event_number,safety_event_id,event_type,title,severity,driver_id,vehicle_id,job_id,route_id,location_description,occurred_at,source_authority,media_status,deleted_at";
+    private const string DashcamSql = @"SELECT de.id,de.row_version,de.event_number,de.safety_event_id,de.event_type,de.title,de.severity,
+        de.driver_id,de.vehicle_id,de.job_id,de.route_id,de.location_description,de.occurred_at,de.source_authority,de.media_status,de.deleted_at,
+        d.full_name driver_name, v.vehicle_code, COALESCE(j.job_number,j.job_code) job_number, r.route_code
         FROM dashcam_events de
         LEFT JOIN drivers d ON d.id=de.driver_id AND d.company_id=de.company_id
         LEFT JOIN vehicles v ON v.id=de.vehicle_id AND v.company_id=de.company_id
@@ -9350,7 +9368,7 @@ public static partial class EndpointMappings
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct)).FirstOrDefault();
         if (record is null) return Results.NotFound(ApiResponse<object>.Fail("Safety event not found"));
         return Results.Ok(ApiResponse<object>.Ok(new { record,
-            dashcamEvents = await db.QueryAsync("SELECT * FROM dashcam_events WHERE safety_event_id=@id AND company_id=@cid AND deleted_at IS NULL", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct),
+            dashcamEvents = await db.QueryAsync($"SELECT {DashcamMetadataColumns} FROM dashcam_events WHERE safety_event_id=@id AND company_id=@cid AND deleted_at IS NULL AND (@branchId::BIGINT IS NULL OR branch_id=@branchId)", c => { c.Parameters.AddWithValue("@id", id); BindDashcamScope(c, http); }, ct),
             coachingTasks = await db.QueryAsync("SELECT * FROM coaching_tasks WHERE safety_event_id=@id AND company_id=@cid AND deleted_at IS NULL", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct),
             incidents = await db.QueryAsync("SELECT * FROM incidents WHERE safety_event_id=@id AND company_id=@cid AND deleted_at IS NULL", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct),
             recommendations = GetBranchId(http) is null ? await TenantModuleRecommendations(db, companyId, "safety", ct) : [],
@@ -9415,33 +9433,29 @@ public static partial class EndpointMappings
     private static async Task<IResult> DashcamSummary(HttpContext http, Database db, CancellationToken ct)
     {
         if (RequirePermission(http, "dashcam:view") is { } denied) return denied;
-        var row = await db.QuerySingleAsync(@"SELECT COUNT(*) dashcam_events_today, SUM(CASE WHEN severity='Critical' THEN 1 ELSE 0 END) critical_video_events, SUM(CASE WHEN review_status LIKE '%Pending%' THEN 1 ELSE 0 END) pending_review,
-            SUM(CASE WHEN review_status='Reviewed' THEN 1 ELSE 0 END) reviewed_events, SUM(CASE WHEN false_positive=TRUE THEN 1 ELSE 0 END) false_positives, SUM(CASE WHEN coaching_status='Created' THEN 1 ELSE 0 END) coaching_created,
-            SUM(CASE WHEN evidence_status='Packaged' THEN 1 ELSE 0 END) evidence_packages, SUM(CASE WHEN event_type LIKE '%Collision%' OR event_type LIKE '%Near Miss%' THEN 1 ELSE 0 END) collision_near_miss,
-            SUM(CASE WHEN event_type LIKE '%Distracted%' THEN 1 ELSE 0 END) distracted_driving_placeholder, SUM(CASE WHEN event_type LIKE '%Tailgating%' THEN 1 ELSE 0 END) tailgating_placeholder,
-            SUM(CASE WHEN event_type LIKE '%Speeding%' THEN 1 ELSE 0 END) speeding_video_events, SUM(CASE WHEN recommended_action LIKE '%exoneration%' THEN 1 ELSE 0 END) driver_exoneration_placeholder
-            FROM dashcam_events WHERE company_id=@cid AND deleted_at IS NULL",
-            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct);
+        var row = await db.QuerySingleAsync(@"SELECT COUNT(*) stored_event_records,
+            COUNT(*) FILTER (WHERE source_authority='LegacyUnverified') unverified_records,
+            COUNT(*) FILTER (WHERE source_authority='ProviderPending') provider_pending_records,
+            COUNT(*) FILTER (WHERE source_authority='Authoritative') authoritative_records,
+            COUNT(*) FILTER (WHERE source_authority='Authoritative' AND media_status='Ready') media_ready_records
+            FROM dashcam_events de WHERE de.company_id=@cid AND de.deleted_at IS NULL
+              AND (@branchId::BIGINT IS NULL OR de.branch_id=@branchId)",
+            c => BindDashcamScope(c, http), ct);
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
     }
     private static Task<IResult> DashcamEvents(HttpContext http, Database db, CancellationToken ct)
     {
         if (RequirePermission(http, "dashcam:view") is { } denied) return Task.FromResult(denied);
-        return OkRows(db, DashcamSql + " WHERE de.company_id=@cid AND de.deleted_at IS NULL ORDER BY de.occurred_at DESC",
-            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+        return OkRows(db, DashcamSql + " WHERE de.company_id=@cid AND de.deleted_at IS NULL AND (@branchId::BIGINT IS NULL OR de.branch_id=@branchId) ORDER BY de.occurred_at DESC",
+            c => BindDashcamScope(c, http), ct: ct);
     }
     private static async Task<IResult> DashcamEventDetail(HttpContext http, long id, Database db, CancellationToken ct)
     {
         if (RequirePermission(http, "dashcam:view") is { } denied) return denied;
-        var companyId = GetCompanyId(http);
-        var record = (await db.QueryAsync(DashcamSql + " WHERE de.id=@id AND de.company_id=@cid",
-            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct)).FirstOrDefault();
+        var record = (await db.QueryAsync(DashcamSql + " WHERE de.id=@id AND de.company_id=@cid AND de.deleted_at IS NULL AND (@branchId::BIGINT IS NULL OR de.branch_id=@branchId)",
+            c => { c.Parameters.AddWithValue("@id", id); BindDashcamScope(c, http); }, ct)).FirstOrDefault();
         if (record is null) return Results.NotFound(ApiResponse<object>.Fail("Dashcam event not found"));
-        return Results.Ok(ApiResponse<object>.Ok(new { record,
-            coachingTasks = await db.QueryAsync("SELECT * FROM coaching_tasks WHERE dashcam_event_id=@id AND company_id=@cid AND deleted_at IS NULL", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct),
-            evidencePackages = await db.QueryAsync("SELECT * FROM evidence_packages WHERE dashcam_event_id=@id AND company_id=@cid AND deleted_at IS NULL", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct),
-            recommendations = await TenantModuleRecommendations(db, companyId, "dashcam", ct),
-            auditTrail = await TenantAuditRows(db, companyId, "DashcamEvent", id, ct) }));
+        return Results.Ok(ApiResponse<object>.Ok(new { record }));
     }
     private const string CameraStage100SourceHash = "b8c9ab16ca90a6afb57814376de2e380c433ef6a7283dcd3d8c1666b86b81ebb";
     private const int CameraMetadataBodyLimit = 32 * 1024;
@@ -9455,6 +9469,13 @@ public static partial class EndpointMappings
     private static IResult CameraMetadataMissing() => Results.NotFound(ApiResponse<object>.Fail("Camera metadata record not found"));
     private static IResult CameraMetadataUnavailable() => Results.Json(ApiResponse<object>.Fail("Camera metadata writes are unavailable"), statusCode: 503);
     private static IResult CameraMetadataStale() => Results.Conflict(ApiResponse<object>.Fail("Camera metadata changed; refresh before retrying"));
+    private static IResult DashcamWorkflowExternalHold() => Results.Conflict(ApiResponse<object>.Fail(
+        "Camera review, coaching, evidence, incident and deletion workflows remain unavailable until an authoritative provider event is connected and verified."));
+    private static void BindDashcamScope(NpgsqlCommand command, HttpContext http)
+    {
+        command.Parameters.AddWithValue("@cid", GetCompanyId(http));
+        command.Parameters.AddWithValue("@branchId", (object?)GetBranchId(http) ?? DBNull.Value);
+    }
     private static bool CameraMetadataJsonMedia(HttpContext http)
     {
         if (!Microsoft.Net.Http.Headers.MediaTypeHeaderValue.TryParse(http.Request.ContentType, out var media)) return false;
@@ -9776,43 +9797,6 @@ public static partial class EndpointMappings
             return Results.Ok(ApiResponse<object>.Ok(CameraMetadataReceipt(row)));
         }, ct);
     }
-    private static async Task<IResult> DashcamReview(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) { await db.ExecuteAsync("UPDATE dashcam_events SET review_status='Reviewed' WHERE id=@id AND company_id=@companyId", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); }, ct); await audit.LogAsync(http, "dashcam.event.reviewed", "DashcamEvent", id, ct: ct); return Results.Ok(ApiResponse<object>.Ok(new { id }, "Dashcam event reviewed")); }
-    private static async Task<IResult> DashcamFalsePositive(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) { await db.ExecuteAsync("UPDATE dashcam_events SET false_positive=TRUE, review_status='False Positive' WHERE id=@id AND company_id=@companyId", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); }, ct); await audit.LogAsync(http, "dashcam.false_positive", "DashcamEvent", id, ct: ct); return Results.Ok(ApiResponse<object>.Ok(new { id }, "Marked false positive")); }
-    private static async Task<IResult> DashcamCreateCoaching(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
-    {
-        var companyId = GetCompanyId(http);
-        var ev = await db.QuerySingleAsync("SELECT * FROM dashcam_events WHERE id=@id AND company_id=@companyId", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); }, ct);
-        if (ev is null) return Results.NotFound(ApiResponse<object>.Fail("Dashcam event not found"));
-        if (Convert.ToBoolean(ev["falsePositive"] ?? false) && !string.Equals(Get(body, "override")?.ToString(), "true", StringComparison.OrdinalIgnoreCase)) return Results.BadRequest(ApiResponse<object>.Fail("False positive dashcam events cannot create coaching without override."));
-        var taskId = await InsertCoaching(http, db, ev["driverId"], null, id, "Video Coaching", ev["severity"], ct);
-        await db.ExecuteAsync("UPDATE dashcam_events SET coaching_status='Created' WHERE id=@id AND company_id=@companyId", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); }, ct);
-        await audit.LogAsync(http, "dashcam.coaching.created", "DashcamEvent", id, ct: ct);
-        return Results.Ok(ApiResponse<object>.Ok(new { id = taskId }, "Coaching task created"));
-    }
-    private static async Task<IResult> DashcamCreateEvidencePackage(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct)
-    {
-        var companyId = GetCompanyId(http);
-        var ev = await db.QuerySingleAsync("SELECT * FROM dashcam_events WHERE id=@id AND company_id=@companyId", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); }, ct);
-        if (ev is null) return Results.NotFound(ApiResponse<object>.Fail("Dashcam event not found"));
-        var packageId = await InsertEvidencePackage(http, db, null, ev["safetyEventId"], id, ev["driverId"], ev["vehicleId"], ev["jobId"], ct);
-        await db.ExecuteAsync("UPDATE dashcam_events SET evidence_status='Package Draft' WHERE id=@id AND company_id=@companyId", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); }, ct);
-        await audit.LogAsync(http, "dashcam.evidence_package.created", "DashcamEvent", id, ct: ct);
-        return Results.Ok(ApiResponse<object>.Ok(new { id = packageId, mediaAvailable = false }, "Evidence package draft created; no media artifact was generated"));
-    }
-    private static async Task<IResult> DashcamCreateIncidentReport(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct)
-    {
-        var companyId = GetCompanyId(http);
-        var ev = await db.QuerySingleAsync("SELECT * FROM dashcam_events WHERE id=@id AND company_id=@companyId", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); }, ct);
-        if (ev is null) return Results.NotFound(ApiResponse<object>.Fail("Dashcam event not found"));
-        ev["dashcamEventId"] = id;
-        var referenceErrors = await ValidateIncidentReferencesAsync(http, ev, db, ct);
-        if (referenceErrors.Count > 0) return Results.BadRequest(ApiResponse<object>.Fail("Incident validation failed", referenceErrors.ToArray()));
-        var incidentId = await InsertIncident(http, db, null, ev, ct);
-        var reportId = await InsertInsuranceReport(http, db, incidentId, null, ct);
-        await audit.LogAsync(http, "dashcam.insurance_report.created", "DashcamEvent", id, ct: ct);
-        return Results.Ok(ApiResponse<object>.Ok(new { incidentId, reportId }, "Incident report created"));
-    }
-
     private static async Task<IResult> CoachingSummary(HttpContext http, Database db, CancellationToken ct)
     {
         if (RequirePermission(http, "safety:view") is { } denied) return denied;
@@ -9838,7 +9822,7 @@ public static partial class EndpointMappings
         return Results.Ok(ApiResponse<object>.Ok(new { record,
             notes = await db.QueryAsync("SELECT * FROM coaching_notes WHERE coaching_task_id=@id AND company_id=@cid ORDER BY created_at DESC", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct),
             relatedSafetyEvents = await db.QueryAsync("SELECT * FROM safety_events WHERE id=@id AND company_id=@cid", c => { c.Parameters.AddWithValue("@id", record["safetyEventId"]); c.Parameters.AddWithValue("@cid", companyId); }, ct),
-            relatedDashcamEvents = await db.QueryAsync("SELECT * FROM dashcam_events WHERE id=@id AND company_id=@cid", c => { c.Parameters.AddWithValue("@id", record["dashcamEventId"]); c.Parameters.AddWithValue("@cid", companyId); }, ct),
+            relatedDashcamEvents = await db.QueryAsync($"SELECT {DashcamMetadataColumns} FROM dashcam_events WHERE id=@id AND company_id=@cid AND (@branchId::BIGINT IS NULL OR branch_id=@branchId)", c => { c.Parameters.AddWithValue("@id", record["dashcamEventId"]); BindDashcamScope(c, http); }, ct),
             recommendations = GetBranchId(http) is null ? await TenantModuleRecommendations(db, companyId, "coaching", ct) : [],
             auditTrail = await TenantAuditRows(db, companyId, "CoachingTask", id, ct) }));
     }
@@ -10996,7 +10980,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         ["dashcam"] = new(
             "dashcam_events",
             "SELECT id, title, severity risk_level, coaching_status status, event_time due_at FROM dashcam_events ORDER BY event_time DESC",
-            "SELECT * FROM dashcam_events WHERE id=@id",
+            $"SELECT {DashcamMetadataColumns} FROM dashcam_events WHERE id=@id",
             "SELECT COUNT(*) total, SUM(CASE WHEN coaching_status <> 'Resolved' THEN 1 ELSE 0 END) active, SUM(CASE WHEN severity IN ('High','Critical') THEN 1 ELSE 0 END) risk_items FROM dashcam_events"),
 
         ["compliance"] = new(
@@ -21407,38 +21391,6 @@ LIMIT 100000",
             ["title"] = $"Safety Event Coaching — {ev["eventType"] ?? "Review"}",
             ["description"] = body.Notes, ["dueAt"] = body.DueDate,
             ["idempotencyKey"] = $"legacy-safety-event-{GetCompanyId(http)}-{id}"
-        };
-        return await PilotCreateCoachingTask(http, payload, db, audit, ct);
-    }
-
-    private static async Task<IResult> CanonicalCoachingFromDashcamEvent(HttpContext http, long id,
-        Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
-    {
-        if (RequirePermission(http, "dashcam:manage") is { } denied) return denied;
-        var ev = await db.QuerySingleAsync(
-            @"SELECT de.driver_id,de.event_type,de.severity,de.false_positive
-              FROM dashcam_events de
-              LEFT JOIN drivers d ON d.id=de.driver_id AND d.company_id=de.company_id
-              LEFT JOIN vehicles v ON v.id=de.vehicle_id AND v.company_id=de.company_id
-              WHERE de.id=@id AND de.company_id=@cid AND de.deleted_at IS NULL
-                AND (@branchId::BIGINT IS NULL OR (COALESCE(d.branch_id,v.branch_id)=@branchId
-                     AND (d.branch_id IS NULL OR d.branch_id=@branchId) AND (v.branch_id IS NULL OR v.branch_id=@branchId)))",
-            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); c.Parameters.AddWithValue("@branchId", (object?)GetBranchId(http) ?? DBNull.Value); }, ct);
-        if (ev is null) return Results.NotFound(ApiResponse<object>.Fail("Dashcam event not found"));
-        if (ev["falsePositive"] is true && !string.Equals(Get(body, "override")?.ToString(), "true", StringComparison.OrdinalIgnoreCase))
-            return Results.BadRequest(ApiResponse<object>.Fail("False-positive dashcam events require an explicit override before coaching."));
-        if (ev["driverId"] is null or DBNull)
-            return Results.BadRequest(ApiResponse<object>.Fail("A dashcam event must have a driver before coaching can be created."));
-        var payload = new Dictionary<string, object?>
-        {
-            ["driverId"] = ev["driverId"], ["dashcamEventId"] = id,
-            ["assignedToUserId"] = Get(body, "assignedToUserId") ?? Get(body, "assignedTo"),
-            ["coachingType"] = Get(body, "coachingType") ?? "Video Coaching",
-            ["priority"] = Get(body, "priority") ?? ev["severity"] ?? "Medium",
-            ["title"] = Get(body, "title") ?? $"Video Coaching — {ev["eventType"] ?? "Review"}",
-            ["description"] = Get(body, "description") ?? Get(body, "notes"),
-            ["dueAt"] = Get(body, "dueAt") ?? Get(body, "dueDate"),
-            ["idempotencyKey"] = $"legacy-dashcam-event-{GetCompanyId(http)}-{id}"
         };
         return await PilotCreateCoachingTask(http, payload, db, audit, ct);
     }
