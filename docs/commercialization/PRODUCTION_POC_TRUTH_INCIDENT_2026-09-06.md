@@ -1,6 +1,6 @@
 # Production POC Truth and Visibility Incident — 2026-09-06
 
-**Status:** OPEN — remediation prepared; production release and customer retest pending  
+**Status:** RESOLVED — production release truth and customer navigation restored at `a5e8963cde984c3e806f1a3adbc85d523211d80e`; camera certification remains external hold
 **Severity:** P0 — customer POC commercial-truth and critical-demo-path failure  
 **Customer surface:** `https://opstrax.vercel.app`  
 **API surface:** `https://osptrax-fleet-management.onrender.com`  
@@ -8,17 +8,18 @@
 
 ## Executive finding
 
-The customer POC frontend is not a traceable representation of current `main`.
-Its Vercel production project was deployed manually while disconnected from Git.
-The running frontend reports an unknown source SHA, while the production API is
-healthy at `44672a3ca2713dafc6d7580f392814be81da6e9f`. The POC therefore cannot be
-used as exact-SHA acceptance or certification evidence.
+At incident discovery, the customer POC frontend was not a traceable
+representation of current `main`. Its Vercel production project had been
+deployed manually while disconnected from Git. The running frontend reported an
+unknown source SHA, while the production API was healthy at
+`44672a3ca2713dafc6d7580f392814be81da6e9f`. That POC could not be used as
+exact-SHA acceptance or certification evidence.
 
-The exposed `/dashcam` route compounds the problem. The old deployed bundle uses
-video-product language around 33 seeded synthetic database records. Current
-source has already replaced that presentation with an explicitly unverified
-camera-metadata view, but those corrections were never released to the customer
-POC. The route was also omitted from the sidebar, together with 28 other declared
+The exposed `/dashcam` route compounded the problem. The old deployed bundle
+used video-product language around 33 seeded synthetic database records. Source
+had already replaced that presentation with an explicitly unverified
+camera-metadata view, but those corrections had not reached the customer POC.
+The route was also omitted from the sidebar, together with 28 other declared
 modules.
 
 No camera, video, provider or AI-video capability is certified. Any prior status
@@ -88,8 +89,11 @@ evidence exists.
 - no camera/video certification claim is made until authentic provider/device,
   media, privacy, field and qualified-human evidence exists.
 
-This incident remains open until those items are preserved against the released
-candidate. A green source build alone does not close it.
+All listed closure items were verified against released candidate
+`a5e8963cde984c3e806f1a3adbc85d523211d80e`. This resolves the production
+deployment-truth and navigation incident. It does not promote any camera, video,
+provider, device, AI assessment, privacy or regulatory capability; those evidence
+requirements retain their stated statuses and external holds.
 
 ## Release attempt log
 
@@ -97,3 +101,25 @@ candidate. A green source build alone does not close it.
 | --- | --- | --- | --- |
 | 2026-09-06 20:05 | `ec596dc9260cca86ecef24672a4ba42daeaad847` | API deployment and readiness passed; Vercel stopped during project-settings pull before build or alias promotion | Incident remains open. The frontend remains on its prior deployment. The follow-up binds every Vercel CLI command to the approved production project and scope before retrying the same candidate. |
 | 2026-09-06 20:47 | `142c39c4f56736adf54119de666bd17e2320a413` | API deployment and readiness passed; Vercel project-settings pull stopped on the CLI user lookup with `User not found (404)` before build or alias promotion | Incident remains open. Vercel issue [#17506](https://github.com/vercel/vercel/issues/17506) documents that project-scoped tokens cannot run `vercel pull`. The next attempt uses a direct production deployment with explicit build inputs and retains the narrower project-scoped credential. |
+| 2026-09-06 21:06 | `a5e8963cde984c3e806f1a3adbc85d523211d80e` | Guarded workflow run `34059921926` passed migrations, exact Render deployment, direct Vercel production deployment, and public frontend/API parity | Release accepted for deployment identity and customer navigation. Independent probes returned the same SHA from `/deployment.json` and `/health/ready`. |
+
+## Signed-in customer acceptance
+
+At 2026-09-06 22:02 UTC, the production tenant session was force-refreshed in
+Firefox at `https://opstrax.vercel.app`. The following visible evidence was
+observed:
+
+- runtime diagnostics showed frontend and API at exact SHA
+  `a5e8963cde984c3e806f1a3adbc85d523211d80e`;
+- the tenant header showed **Demo Data** and **OpsTrax Demo Logistics**;
+- module search showed **92 modules** and the expanded navigation exposed the
+  previously omitted routes, including Owners and Camera Metadata;
+- the Owners route loaded successfully through customer navigation;
+- `/dashcam` rendered **Stored camera metadata** and stated that media, provider
+  connectivity and automated assessments are not provided or verified;
+- the record detail repeated **Manual metadata — unverified** and excluded
+  media, provider and automated-assessment claims.
+
+The 33 stored rows remain seeded synthetic database records. They are suitable
+for demo workflow navigation only and are excluded from camera/video
+certification evidence.
