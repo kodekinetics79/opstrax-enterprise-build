@@ -1356,11 +1356,16 @@ function toColdChainClusterRecord(
   const deviceAlerts = alerts.filter((alert) =>
     String(alert.deviceId) === String(device.id) && !/resolved/i.test(String(alert.status)),
   );
+  const measurementSource = String(device.lastMeasurementSource ?? "");
+  const hasAuthoritativeMeasurement = /^(Sensor|Gateway)$/i.test(measurementSource);
   const temperature = device.lastReportedTemperatureCelsius;
-  const hasTemperature = temperature !== null && temperature !== undefined && Number.isFinite(Number(temperature));
+  const hasTemperature = hasAuthoritativeMeasurement && temperature !== null && temperature !== undefined && Number.isFinite(Number(temperature));
   const battery = device.batteryPercent;
-  const hasBattery = battery !== null && battery !== undefined && Number.isFinite(Number(battery));
-  const lastPingAt = device.lastPingAtUtc ? String(device.lastPingAtUtc) : "";
+  const hasBattery = hasAuthoritativeMeasurement && battery !== null && battery !== undefined && Number.isFinite(Number(battery));
+  const lastPingAt = hasAuthoritativeMeasurement && device.lastPingAtUtc ? String(device.lastPingAtUtc) : "";
+  const measurementObservedAt = hasAuthoritativeMeasurement && device.lastMeasurementObservedAtUtc
+    ? String(device.lastMeasurementObservedAtUtc)
+    : "";
   const lastPingMs = lastPingAt ? new Date(lastPingAt).getTime() : Number.NaN;
   const stale = !Number.isFinite(lastPingMs) || Date.now() - lastPingMs > 15 * 60 * 1000;
   const inactive = !/active|online/i.test(String(device.status));
@@ -1379,7 +1384,7 @@ function toColdChainClusterRecord(
     deviceName: device.name || device.deviceCode,
     serialNumber: device.deviceCode,
     deviceType: "Cold-chain sensor",
-    provider: device.sourceChannel ? String(device.sourceChannel) : "Cold-chain service",
+    provider: hasAuthoritativeMeasurement && device.sourceChannel ? String(device.sourceChannel) : "Unverified",
     vehicleId: "",
     vehicleCode: device.vehicleNumber || "Unassigned",
     driverId: "",
@@ -1400,8 +1405,8 @@ function toColdChainClusterRecord(
     deviceHealthAvailable: false,
     protocolType: "SENSOR",
     positionAvailable: false,
-    positionSource: lastPingAt ? "Cold-chain reading" : "No reading evidence",
-    positionProvider: device.sourceChannel ? String(device.sourceChannel) : "Cold-chain service",
+    positionSource: measurementObservedAt ? `${measurementSource} measurement` : "No authenticated measurement evidence",
+    positionProvider: hasAuthoritativeMeasurement && device.sourceChannel ? String(device.sourceChannel) : "Unverified",
     positionAccuracy: "Not reported",
     positionConfidence: "Not reported",
     deviceFixAt: "—",
@@ -1422,9 +1427,11 @@ function toColdChainClusterRecord(
     sensorStatus,
     powerStatus: hasBattery ? `${Math.round(Number(battery))}% battery` : "Not reported",
     signalStrength: "Not reported",
-    calibrationStatus: "Not reported",
+    calibrationStatus: device.calibrationStatus ? `Reported: ${device.calibrationStatus}` : "Not reported",
     alertStatus: alerting ? "Open" : "Clear",
-    recommendedAction: offlineWarning
+    recommendedAction: !hasAuthoritativeMeasurement
+      ? "No authenticated sensor or gateway measurement is available; keep the device out of automated cold-chain decisions."
+      : offlineWarning
       ? "Restore the device heartbeat before relying on this shipment's temperature posture."
       : alerting
         ? `Investigate the active breach against ${expectedRange}.`
