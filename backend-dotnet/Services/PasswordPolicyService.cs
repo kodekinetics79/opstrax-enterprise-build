@@ -52,8 +52,21 @@ public sealed class PasswordPolicyService(Database db, SecurityEventService secE
 
         if (row is null) return (false, null);
 
-        if (row["lockedUntil"] is DateTime until && until > DateTime.UtcNow)
-            return (true, until);
+        if (row["lockedUntil"] is DateTime until)
+        {
+            if (until > DateTime.UtcNow) return (true, until);
+
+            // The lockout has served its time — retire the counter that produced it.
+            // failed_login_attempts is otherwise only cleared by a SUCCESSFUL login,
+            // so a user who was locked once stayed pinned at the threshold forever:
+            // the lock expired, but the very next typo incremented 5 -> 6, tripped
+            // `newCount >= MaxFailedLoginAttempts` again, and re-locked them for
+            // another full duration. That made a single bad password permanently
+            // un-recoverable without an operator reset.
+            await db.ExecuteAsync(
+                "UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = @uid",
+                c => c.Parameters.AddWithValue("@uid", userId), ct);
+        }
 
         return (false, null);
     }
