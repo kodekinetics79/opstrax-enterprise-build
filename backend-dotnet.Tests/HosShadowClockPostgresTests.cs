@@ -183,10 +183,10 @@ public sealed class HosShadowClockPostgresTests
         await db.ExecuteAsync(
             @"INSERT INTO hos_logs
                 (company_id,driver_id,log_date,country_code,status,start_time,end_time,duration_minutes,
-                 driving_hours,on_duty_hours,source,source_event_id,source_provider,source_device_identifier,
+                 driving_hours,on_duty_hours,cycle_hours_left,source,source_event_id,source_provider,source_device_identifier,
                  source_received_at,source_payload_sha256,source_sequence,provenance_verified)
               VALUES
-                (@c,@d,@date,'CA',@status,@start,@end,@minutes,@driving,@duty,'provider',@event,
+                (@c,@d,@date,'CA',@status,@start,@end,@minutes,@driving,@duty,60,'provider',@event,
                  'Motive','LBB-test',@received,@sha,@seq,@verified)",
             c =>
             {
@@ -211,7 +211,16 @@ public sealed class HosShadowClockPostgresTests
     {
         // Stage103 permits controlled database-owner purge while runtime roles stay
         // append-only. This cleanup also exercises the retention/offboarding path.
-        await db.ExecuteAsync("DELETE FROM companies WHERE id=@c", c => c.Parameters.AddWithValue("@c", companyId));
+        foreach (var sql in new[]
+        {
+            "DELETE FROM hos_shadow_clock_snapshots WHERE company_id=@c",
+            "DELETE FROM hos_exception_authorizations WHERE company_id=@c",
+            "DELETE FROM driver_hos_policy_assignments WHERE company_id=@c",
+            "DELETE FROM hos_logs WHERE company_id=@c",
+            "DELETE FROM drivers WHERE company_id=@c",
+            "DELETE FROM companies WHERE id=@c",
+        })
+            await db.ExecuteAsync(sql, c => c.Parameters.AddWithValue("@c", companyId));
     }
 
     private static Database CreateDatabase() =>
