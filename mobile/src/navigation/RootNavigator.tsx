@@ -1,7 +1,9 @@
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { NavigationContainer, DarkTheme } from "@react-navigation/native";
-import { Pressable, Text, View } from "react-native";
+import { BlurView } from "expo-blur";
+import { LinearGradient } from "expo-linear-gradient";
+import { Platform, StyleSheet, Text, View } from "react-native";
 import { LoginScreen } from "@/screens/LoginScreen";
 import { DashboardScreen } from "@/screens/DashboardScreen";
 import { WorkflowScreen } from "@/screens/WorkflowScreen";
@@ -15,10 +17,11 @@ import { DriverComplianceScreen } from "@/screens/DriverComplianceScreen";
 import { CustomerHomeScreen } from "@/screens/CustomerHomeScreen";
 import { CustomerShipmentsScreen } from "@/screens/CustomerShipmentsScreen";
 import { CustomerBillingScreen } from "@/screens/CustomerBillingScreen";
+import { CustomerSupportScreen } from "@/screens/CustomerSupportScreen";
 import { useSession } from "@/auth/SessionProvider";
 import { resolveProductAccess } from "@/auth/productAccess";
 import { APP_NAME, APP_VARIANT } from "@/config";
-import { colors } from "@/components/ui";
+import { ActionButton, colors, Panel, Pill, Screen, SectionHeader } from "@/components/ui";
 
 const Stack = createNativeStackNavigator();
 const Tabs = createBottomTabNavigator();
@@ -33,14 +36,41 @@ const tabIcons: Record<string, string> = {
   Fleet: "⌁",
   Shipments: "↗",
   Billing: "$",
+  Support: "?",
   More: "•••",
 };
 
 function tabOptions(label: string) {
   return {
     tabBarLabel: label,
-    tabBarIcon: ({ color }: { color: string }) => <Text style={{ color, fontSize: 18, fontWeight: "900" }}>{tabIcons[label] ?? "•"}</Text>,
+    tabBarIcon: ({ color }: { color: string }) => (
+      <Text style={{ color, fontSize: 18, fontWeight: "900" }}>{tabIcons[label] ?? "•"}</Text>
+    ),
   };
+}
+
+function GlassTabBarBackground() {
+  return (
+    <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+      {Platform.OS === "ios" ? (
+        <BlurView intensity={48} tint="dark" style={StyleSheet.absoluteFill} />
+      ) : (
+        <View style={[StyleSheet.absoluteFill, styles.androidGlassFallback]} />
+      )}
+      <LinearGradient
+        colors={["rgba(18,42,65,0.78)", "rgba(4,13,24,0.92)"]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={StyleSheet.absoluteFill}
+      />
+      <LinearGradient
+        colors={["rgba(112,183,255,0.24)", "rgba(39,211,194,0.05)", "rgba(255,255,255,0.02)"]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 0 }}
+        style={styles.glassHighlight}
+      />
+    </View>
+  );
 }
 
 function DriverTabs() {
@@ -61,6 +91,7 @@ function CustomerTabs() {
       <Tabs.Screen name="CustomerHome" component={CustomerHomeScreen} options={{ title: "Your account", ...tabOptions("Home") }} />
       <Tabs.Screen name="CustomerShipments" component={CustomerShipmentsScreen} options={{ title: "Shipments", ...tabOptions("Shipments") }} />
       <Tabs.Screen name="CustomerBilling" component={CustomerBillingScreen} options={{ title: "Billing", ...tabOptions("Billing") }} />
+      <Tabs.Screen name="CustomerSupport" component={CustomerSupportScreen} options={{ title: "Support", ...tabOptions("Support") }} />
       <Tabs.Screen name="CustomerMore" component={SettingsScreen} options={{ title: "Profile & security", ...tabOptions("More") }} />
     </Tabs.Navigator>
   );
@@ -103,48 +134,38 @@ function OperationsTabs() {
 
 function LoadingSplash() {
   return (
-    <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.background, padding: 24 }}>
-      <Text style={{ color: colors.teal, fontSize: 12, fontWeight: "900", letterSpacing: 2, textTransform: "uppercase" }}>OpsTrax</Text>
-      <Text style={{ color: colors.text, fontSize: 22, fontWeight: "900", marginTop: 9 }}>Securing your workspace</Text>
-      <Text style={{ color: colors.muted, marginTop: 8, textAlign: "center", lineHeight: 20 }}>Validating the saved session before any tenant data is shown.</Text>
+    <View style={styles.loadingSplash}>
+      <LinearGradient colors={["#0d2940", colors.background, colors.backgroundDeep]} style={StyleSheet.absoluteFill} />
+      <View pointerEvents="none" style={styles.loadingGlow} />
+      <Text style={styles.loadingBrand}>OpsTrax</Text>
+      <Text style={styles.loadingTitle}>Securing your workspace</Text>
+      <Text style={styles.loadingBody}>Validating the saved session before any tenant data is shown.</Text>
     </View>
   );
 }
 
-function ProductMismatchScreen() {
-  const { logout } = useSession();
+function ProductAccessScreen({ role, onSignOut }: { role: string; onSignOut: () => void }) {
+  const productLabel = APP_VARIANT === "unified" ? "OpsTrax Mobile" : APP_NAME;
   return (
-    <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.background, padding: 28 }}>
-      <View style={{ width: "100%", maxWidth: 460, borderRadius: 24, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.panel, padding: 22, gap: 14 }}>
-        <Text style={{ color: colors.teal, fontSize: 11, fontWeight: "900", letterSpacing: 1.8, textTransform: "uppercase" }}>{APP_NAME}</Text>
-        <Text style={{ color: colors.text, fontSize: 24, fontWeight: "900" }}>Use the OpsTrax app assigned to your role</Text>
-        <Text style={{ color: colors.muted, fontSize: 14, lineHeight: 21 }}>
-          This account is valid, but it is not authorized for the {APP_VARIANT} product experience. OpsTrax keeps Driver, Fleet, and Customer app boundaries separate even though they share the same secure platform.
+    <Screen>
+      <Panel variant="solid" tone="amber" style={{ marginTop: 24 }}>
+        <SectionHeader
+          eyebrow="Product access"
+          title={`This account doesn’t belong in ${productLabel}`}
+          description="OpsTrax keeps Driver, Fleet, Customer, and Platform Administration experiences separated at the product boundary as well as on the server."
+          right={<Pill label="Access blocked" tone="amber" />}
+        />
+        <Text style={{ color: colors.muted, fontSize: 13, lineHeight: 19 }}>
+          Signed-in role: {role}. Use the OpsTrax app assigned by your organization. Platform Super Admin remains available through the secured web control plane rather than the public mobile products.
         </Text>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Sign out"
-          onPress={() => { void logout(); }}
-          style={({ pressed }) => ({
-            minHeight: 50,
-            borderRadius: 17,
-            borderWidth: 1,
-            borderColor: colors.borderStrong,
-            backgroundColor: pressed ? "rgba(112,183,255,0.18)" : "rgba(112,183,255,0.10)",
-            alignItems: "center",
-            justifyContent: "center",
-            paddingHorizontal: 16,
-          })}
-        >
-          <Text style={{ color: colors.text, fontSize: 14, fontWeight: "900" }}>Sign out</Text>
-        </Pressable>
-      </View>
-    </View>
+        <ActionButton label="Sign out and use another account" onPress={onSignOut} variant="secondary" />
+      </Panel>
+    </Screen>
   );
 }
 
 export function RootNavigator() {
-  const { ready, session, normalizedRole } = useSession();
+  const { ready, session, normalizedRole, logout } = useSession();
   if (!ready) return <LoadingSplash />;
   const productAccess = resolveProductAccess({
     variant: APP_VARIANT,
@@ -152,13 +173,16 @@ export function RootNavigator() {
     normalizedRole,
     permissions: session?.permissions ?? [],
   });
-  const MainComponent = productAccess.experience === "mismatch"
-    ? ProductMismatchScreen
-    : productAccess.experience === "customer"
-      ? CustomerTabs
-      : productAccess.experience === "driver"
-        ? DriverTabs
-        : OperationsTabs;
+
+  if (session && !productAccess.allowed) {
+    return <ProductAccessScreen role={normalizedRole} onSignOut={() => void logout()} />;
+  }
+
+  const MainComponent = productAccess.experience === "customer"
+    ? CustomerTabs
+    : productAccess.experience === "driver"
+      ? DriverTabs
+      : OperationsTabs;
 
   return (
     <NavigationContainer theme={darkTheme}>
@@ -176,23 +200,36 @@ const screenOptions = {
   headerShadowVisible: false,
   headerTintColor: colors.text,
   headerTitleStyle: { fontSize: 17, fontWeight: "900" as const },
+  tabBarHideOnKeyboard: true,
   tabBarStyle: {
     position: "absolute" as const,
     left: 12,
     right: 12,
     bottom: 10,
-    height: 72,
-    borderRadius: 24,
+    height: 74,
+    borderRadius: 26,
     borderTopWidth: 1,
     borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: "rgba(6,17,31,0.96)",
+    borderColor: "rgba(170,218,255,0.18)",
+    backgroundColor: "transparent",
     paddingBottom: 9,
     paddingTop: 8,
+    overflow: "hidden" as const,
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.32,
+    shadowRadius: 24,
+    elevation: 18,
   },
+  tabBarBackground: () => <GlassTabBarBackground />,
+  tabBarItemStyle: {
+    borderRadius: 18,
+    marginHorizontal: 3,
+  },
+  tabBarActiveBackgroundColor: "rgba(39,211,194,0.10)",
   tabBarActiveTintColor: colors.teal,
-  tabBarInactiveTintColor: colors.subtle,
-  tabBarLabelStyle: { fontSize: 10, fontWeight: "800" as const },
+  tabBarInactiveTintColor: "rgba(168,183,201,0.72)",
+  tabBarLabelStyle: { fontSize: 10, fontWeight: "800" as const, letterSpacing: 0.15 },
 };
 
 const darkTheme = {
@@ -200,10 +237,20 @@ const darkTheme = {
   colors: {
     ...DarkTheme.colors,
     background: colors.background,
-    card: colors.background,
+    card: "rgba(6,17,31,0.82)",
     border: colors.border,
     text: colors.text,
     primary: colors.teal,
     notification: colors.red,
   },
 };
+
+const styles = StyleSheet.create({
+  androidGlassFallback: { backgroundColor: "rgba(6,17,31,0.90)" },
+  glassHighlight: { position: "absolute", top: 0, left: 12, right: 12, height: 1 },
+  loadingSplash: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.background, padding: 24, overflow: "hidden" },
+  loadingGlow: { position: "absolute", width: 320, height: 320, borderRadius: 320, backgroundColor: colors.teal, opacity: 0.08, top: -120, right: -100 },
+  loadingBrand: { color: colors.teal, fontSize: 12, fontWeight: "900", letterSpacing: 2.4, textTransform: "uppercase" },
+  loadingTitle: { color: colors.text, fontSize: 24, fontWeight: "900", letterSpacing: -0.5, marginTop: 10 },
+  loadingBody: { color: colors.muted, marginTop: 8, textAlign: "center", lineHeight: 20, maxWidth: 320 },
+});

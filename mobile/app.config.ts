@@ -12,7 +12,19 @@ const allowedApiHosts = (process.env.EXPO_PUBLIC_ALLOWED_API_HOSTS ?? "")
   .split(",")
   .map((value: string) => value.trim().toLowerCase())
   .filter(Boolean);
+const PRIVACY_URL = process.env.EXPO_PUBLIC_PRIVACY_URL?.trim() || "";
+const SUPPORT_URL = process.env.EXPO_PUBLIC_SUPPORT_URL?.trim() || "";
+const ACCOUNT_DELETION_URL = process.env.EXPO_PUBLIC_ACCOUNT_DELETION_URL?.trim() || "";
+const ACCOUNT_CREATION_ENABLED = process.env.EXPO_PUBLIC_ACCOUNT_CREATION_ENABLED?.trim().toLowerCase() === "true";
 const hasBundledAssets = existsSync(resolve(__dirname, "assets/icon.png"));
+
+function requirePublicHttpsUrl(value: string, label: string) {
+  if (!value) throw new Error(`${label} must be configured for production store builds.`);
+  const url = new URL(value);
+  if (url.protocol !== "https:" || ["localhost", "127.0.0.1", "::1"].includes(url.hostname)) {
+    throw new Error(`${label} must use a public non-loopback HTTPS URL.`);
+  }
+}
 
 type AppVariant = "driver" | "fleet" | "customer" | "unified";
 
@@ -78,6 +90,11 @@ if (isProductionBuild) {
   if (!allowedApiHosts.length || !allowedApiHosts.includes(apiUrl.hostname.toLowerCase())) {
     throw new Error("Production API host must be listed in EXPO_PUBLIC_ALLOWED_API_HOSTS.");
   }
+  requirePublicHttpsUrl(PRIVACY_URL, "EXPO_PUBLIC_PRIVACY_URL");
+  requirePublicHttpsUrl(SUPPORT_URL, "EXPO_PUBLIC_SUPPORT_URL");
+  if (ACCOUNT_CREATION_ENABLED) {
+    requirePublicHttpsUrl(ACCOUNT_DELETION_URL, "EXPO_PUBLIC_ACCOUNT_DELETION_URL");
+  }
 }
 
 const config: ExpoConfig = {
@@ -115,6 +132,10 @@ const config: ExpoConfig = {
     stage: STAGE,
     appName: product.name,
     appVariant: APP_VARIANT,
+    privacyUrl: PRIVACY_URL,
+    supportUrl: SUPPORT_URL,
+    accountDeletionUrl: ACCOUNT_DELETION_URL,
+    accountCreationEnabled: ACCOUNT_CREATION_ENABLED,
   },
 };
 
