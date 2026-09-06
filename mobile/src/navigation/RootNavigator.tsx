@@ -1,7 +1,7 @@
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { NavigationContainer, DarkTheme } from "@react-navigation/native";
-import { Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { LoginScreen } from "@/screens/LoginScreen";
 import { DashboardScreen } from "@/screens/DashboardScreen";
 import { WorkflowScreen } from "@/screens/WorkflowScreen";
@@ -12,7 +12,12 @@ import { DriverTodayScreen } from "@/screens/DriverTodayScreen";
 import { DriverTripScreen } from "@/screens/DriverTripScreen";
 import { DriverProofScreen } from "@/screens/DriverProofScreen";
 import { DriverComplianceScreen } from "@/screens/DriverComplianceScreen";
+import { CustomerHomeScreen } from "@/screens/CustomerHomeScreen";
+import { CustomerShipmentsScreen } from "@/screens/CustomerShipmentsScreen";
+import { CustomerBillingScreen } from "@/screens/CustomerBillingScreen";
 import { useSession } from "@/auth/SessionProvider";
+import { resolveProductAccess } from "@/auth/productAccess";
+import { APP_NAME, APP_VARIANT } from "@/config";
 import { colors } from "@/components/ui";
 
 const Stack = createNativeStackNavigator();
@@ -26,6 +31,8 @@ const tabIcons: Record<string, string> = {
   Home: "◉",
   Work: "↗",
   Fleet: "⌁",
+  Shipments: "↗",
+  Billing: "$",
   More: "•••",
 };
 
@@ -44,6 +51,17 @@ function DriverTabs() {
       <Tabs.Screen name="DriverProof" component={DriverProofScreen} options={{ title: "Proof", ...tabOptions("Proof") }} />
       <Tabs.Screen name="Compliance" component={DriverComplianceScreen} options={{ title: "Compliance", ...tabOptions("Compliance") }} />
       <Tabs.Screen name="DriverMore" component={SettingsScreen} options={{ title: "Profile & security", ...tabOptions("More") }} />
+    </Tabs.Navigator>
+  );
+}
+
+function CustomerTabs() {
+  return (
+    <Tabs.Navigator screenOptions={screenOptions}>
+      <Tabs.Screen name="CustomerHome" component={CustomerHomeScreen} options={{ title: "Your account", ...tabOptions("Home") }} />
+      <Tabs.Screen name="CustomerShipments" component={CustomerShipmentsScreen} options={{ title: "Shipments", ...tabOptions("Shipments") }} />
+      <Tabs.Screen name="CustomerBilling" component={CustomerBillingScreen} options={{ title: "Billing", ...tabOptions("Billing") }} />
+      <Tabs.Screen name="CustomerMore" component={SettingsScreen} options={{ title: "Profile & security", ...tabOptions("More") }} />
     </Tabs.Navigator>
   );
 }
@@ -93,23 +111,60 @@ function LoadingSplash() {
   );
 }
 
-export function RootNavigator() {
-  const { ready, session } = useSession();
-  if (!ready) return <LoadingSplash />;
-  const directPermissions = new Set((session?.permissions ?? []).map((permission) => permission.trim().toLowerCase()));
-  const isDriver = Boolean(
-    session
-    && directPermissions.has("driver:self")
-    && !directPermissions.has("*")
-    && !directPermissions.has("dashboard:view")
-    && !directPermissions.has("dashboard.view"),
+function ProductMismatchScreen() {
+  const { logout } = useSession();
+  return (
+    <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.background, padding: 28 }}>
+      <View style={{ width: "100%", maxWidth: 460, borderRadius: 24, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.panel, padding: 22, gap: 14 }}>
+        <Text style={{ color: colors.teal, fontSize: 11, fontWeight: "900", letterSpacing: 1.8, textTransform: "uppercase" }}>{APP_NAME}</Text>
+        <Text style={{ color: colors.text, fontSize: 24, fontWeight: "900" }}>Use the OpsTrax app assigned to your role</Text>
+        <Text style={{ color: colors.muted, fontSize: 14, lineHeight: 21 }}>
+          This account is valid, but it is not authorized for the {APP_VARIANT} product experience. OpsTrax keeps Driver, Fleet, and Customer app boundaries separate even though they share the same secure platform.
+        </Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Sign out"
+          onPress={() => { void logout(); }}
+          style={({ pressed }) => ({
+            minHeight: 50,
+            borderRadius: 17,
+            borderWidth: 1,
+            borderColor: colors.borderStrong,
+            backgroundColor: pressed ? "rgba(112,183,255,0.18)" : "rgba(112,183,255,0.10)",
+            alignItems: "center",
+            justifyContent: "center",
+            paddingHorizontal: 16,
+          })}
+        >
+          <Text style={{ color: colors.text, fontSize: 14, fontWeight: "900" }}>Sign out</Text>
+        </Pressable>
+      </View>
+    </View>
   );
+}
+
+export function RootNavigator() {
+  const { ready, session, normalizedRole } = useSession();
+  if (!ready) return <LoadingSplash />;
+  const productAccess = resolveProductAccess({
+    variant: APP_VARIANT,
+    hasSession: Boolean(session),
+    normalizedRole,
+    permissions: session?.permissions ?? [],
+  });
+  const MainComponent = productAccess.experience === "mismatch"
+    ? ProductMismatchScreen
+    : productAccess.experience === "customer"
+      ? CustomerTabs
+      : productAccess.experience === "driver"
+        ? DriverTabs
+        : OperationsTabs;
 
   return (
     <NavigationContainer theme={darkTheme}>
       <Stack.Navigator screenOptions={{ headerShown: false }}>
         {!session ? <Stack.Screen name="Login" component={LoginScreen} /> : (
-          <Stack.Screen name="Main" component={isDriver ? DriverTabs : OperationsTabs} />
+          <Stack.Screen name="Main" component={MainComponent} />
         )}
       </Stack.Navigator>
     </NavigationContainer>

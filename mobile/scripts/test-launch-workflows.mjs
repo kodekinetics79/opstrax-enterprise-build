@@ -75,12 +75,13 @@ test("mobile screens consume the actual nested API contracts", async () => {
 });
 
 test("mobile navigation, login, and persisted state are tenant and identity scoped", async () => {
-  const [navigation, login, workflow] = await Promise.all([
+  const [navigation, login, workflow, productAccess] = await Promise.all([
     source("src/navigation/RootNavigator.tsx"),
     source("src/screens/LoginScreen.tsx"),
     source("src/workflow/WorkflowContext.tsx"),
+    source("src/auth/productAccess.ts"),
   ]);
-  assert.match(navigation, /directPermissions\.has\("driver:self"\)/);
+  assert.match(productAccess, /directPermissions\.has\("driver:self"\)/);
   assert.match(login, /Organization code/);
   assert.match(login, /login\(email, password, companyCode\)/);
   assert.match(navigation, /canProof \? <Tabs\.Screen/);
