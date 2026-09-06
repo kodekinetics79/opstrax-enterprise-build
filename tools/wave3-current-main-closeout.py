@@ -481,9 +481,15 @@ if 'private static Task AuthoritativeHos(' not in core_jobs:
 '''
     core_jobs = replace_once(core_jobs, helper_anchor, helper, 'CoreJobs authoritative HOS helper')
 
-core_jobs = core_jobs.replace(
-    '"DELETE FROM hos_records WHERE company_id=@c", "DELETE FROM vehicles WHERE company_id=@c",',
-    '"DELETE FROM hos_clocks WHERE company_id=@c", "DELETE FROM hos_records WHERE company_id=@c", "DELETE FROM vehicles WHERE company_id=@c",')
+hos_clock_cleanup = '"DELETE FROM hos_clocks WHERE company_id=@c", '
+while hos_clock_cleanup + hos_clock_cleanup in core_jobs:
+    core_jobs = core_jobs.replace(hos_clock_cleanup + hos_clock_cleanup, hos_clock_cleanup)
+if hos_clock_cleanup + '"DELETE FROM hos_records WHERE company_id=@c"' not in core_jobs:
+    core_jobs = replace_once(
+        core_jobs,
+        '"DELETE FROM hos_records WHERE company_id=@c", "DELETE FROM vehicles WHERE company_id=@c",',
+        hos_clock_cleanup + '"DELETE FROM hos_records WHERE company_id=@c", "DELETE FROM vehicles WHERE company_id=@c",',
+        'CoreJobs HOS clock cleanup')
 core_jobs_path.write_text(core_jobs)
 
 # -----------------------------------------------------------------------------

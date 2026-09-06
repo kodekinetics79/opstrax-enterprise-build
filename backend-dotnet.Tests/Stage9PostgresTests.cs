@@ -346,6 +346,11 @@ public class Stage9PostgresTests
             var driverId = await db.InsertAsync(
                 "INSERT INTO drivers(company_id,branch_id,driver_code,full_name,status) VALUES (@c,@b,@code,'Identity Driver','Available')",
                 c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchId); c.Parameters.AddWithValue("@code", $"DRV-{companyId}"); });
+            await db.ExecuteAsync(
+                @"INSERT INTO hos_clocks(company_id,branch_id,driver_id,drive_time_remaining_minutes,shift_time_remaining_minutes,
+                      cycle_time_remaining_minutes,status,clock_source,source_event_id,source_observed_at,source_authority,source_quality,updated_at)
+                  VALUES (@c,@b,@d,480,660,3600,'OK','fixture-authority',@event,NOW(),'Authoritative','verified',NOW())",
+                c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchId); c.Parameters.AddWithValue("@d", driverId); c.Parameters.AddWithValue("@event", $"stage9-{companyId}"); });
             var vehicleId = await db.InsertAsync(
                 @"INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,vin,status,availability_status,out_of_service)
                   VALUES (@c,@b,@code,'Truck','1HGCM82633A004352','Available','available',FALSE)",
@@ -445,6 +450,7 @@ public class Stage9PostgresTests
         await db.ExecuteAsync("DELETE FROM audit_logs WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
         await db.ExecuteAsync("DELETE FROM dispatch_assignments WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
         await db.ExecuteAsync("DELETE FROM jobs WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
+        await db.ExecuteAsync("DELETE FROM hos_clocks WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
         await db.ExecuteAsync("DELETE FROM drivers WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
         await db.ExecuteAsync("DELETE FROM vehicles WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
         await db.ExecuteAsync("DELETE FROM branches WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));

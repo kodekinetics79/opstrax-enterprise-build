@@ -664,7 +664,7 @@ public sealed class CoreJobsBranchHosApiTests
             "DELETE FROM idempotency_keys WHERE tenant_id=@c",
             "DELETE FROM job_status_events WHERE company_id=@c", "DELETE FROM entity_timeline_events WHERE company_id=@c",
             "DELETE FROM audit_logs WHERE company_id=@c", "DELETE FROM documents WHERE company_id=@c", "DELETE FROM jobs WHERE company_id=@c",
-            "DELETE FROM hos_clocks WHERE company_id=@c", "DELETE FROM hos_clocks WHERE company_id=@c", "DELETE FROM hos_clocks WHERE company_id=@c", "DELETE FROM hos_records WHERE company_id=@c", "DELETE FROM vehicles WHERE company_id=@c",
+            "DELETE FROM hos_clocks WHERE company_id=@c", "DELETE FROM hos_records WHERE company_id=@c", "DELETE FROM vehicles WHERE company_id=@c",
             "DELETE FROM drivers WHERE company_id=@c", "DELETE FROM customers WHERE company_id=@c", "DELETE FROM companies WHERE id=@c"
         })
             await db.ExecuteAsync(sql, c => c.Parameters.AddWithValue("@c", company));
