@@ -61,20 +61,32 @@ public sealed class MigrationRunnerEnrollmentParityTests
     [Fact]
     public void PurposeBuiltWrapperFiles_AreActuallyAppliedAfterTheCanonicalRunner()
     {
-        var wrapper = File.ReadAllText(Path.Combine(
+        var complianceWrapper = File.ReadAllText(Path.Combine(
             RepoRoot(), "tools", "apply-canada-ksa-compliance-predeploy.sh"));
+        var shadowWrapper = File.ReadAllText(Path.Combine(
+            RepoRoot(), "tools", "apply-canada-ksa-hos-shadow-predeploy.sh"));
         const string canonicalRunner = "./tools/apply-neon-predeploy-migrations.sh";
+        const string complianceRunner = "./tools/apply-canada-ksa-compliance-predeploy.sh";
 
-        var canonicalRunnerIndex = wrapper.IndexOf(canonicalRunner, StringComparison.Ordinal);
+        var canonicalRunnerIndex = complianceWrapper.IndexOf(canonicalRunner, StringComparison.Ordinal);
         Assert.True(canonicalRunnerIndex >= 0,
             "Canada/KSA predeploy wrapper must run the canonical protected-environment migration chain first.");
+        var complianceRunnerIndex = shadowWrapper.IndexOf(complianceRunner, StringComparison.Ordinal);
+        Assert.True(complianceRunnerIndex >= 0,
+            "Canada/KSA HOS shadow wrapper must run the compliance wrapper, which owns the canonical chain, first.");
 
         foreach (var name in AppliedByPurposeBuiltPredeployWrapper)
         {
             var migrationPath = $"database/migrations/{name}.sql";
+            var wrapper = name.Contains("stage101", StringComparison.Ordinal)
+                ? complianceWrapper
+                : shadowWrapper;
+            var requiredRunnerIndex = name.Contains("stage101", StringComparison.Ordinal)
+                ? canonicalRunnerIndex
+                : complianceRunnerIndex;
             var migrationIndex = wrapper.IndexOf(migrationPath, StringComparison.Ordinal);
-            Assert.True(migrationIndex > canonicalRunnerIndex,
-                $"{name} must be applied by the Canada/KSA predeploy wrapper only after the canonical chain and its fixed-ID bootstrap.");
+            Assert.True(migrationIndex > requiredRunnerIndex,
+                $"{name} must be applied by its Canada/KSA predeploy wrapper only after the canonical chain and prerequisite wrapper.");
         }
     }
 
@@ -255,15 +267,17 @@ public sealed class MigrationRunnerEnrollmentParityTests
         "2026_07_01_stage22_rls_reconcile_coverage",
     ];
 
-    // Applied by the regulated Canada/KSA predeploy wrapper AFTER the canonical chain.
-    // Stage101 cannot be enrolled directly in MIGRATIONS: the wrapper must first reserve
-    // and reconcile Batch6 fixed reference IDs so Stage101 cannot collide with the
-    // runtime fixed-ID seed contract on a fresh protected database. The test above
-    // mechanically verifies that the wrapper invokes the canonical chain first and only
-    // then references this migration.
+    // Applied by the regulated Canada/KSA predeploy wrappers AFTER the canonical chain.
+    // Stage101 cannot be enrolled directly in MIGRATIONS: the compliance wrapper must
+    // first reserve and reconcile Batch6 fixed reference IDs. Stages102/103 remain in
+    // the shadow-only wrapper until qualified regulatory/SDET acceptance permits their
+    // promotion into the production chain. The test above mechanically verifies the
+    // full wrapper sequence and each migration reference.
     private static readonly string[] AppliedByPurposeBuiltPredeployWrapper =
     [
         "2026_09_03_stage101_canada_ksa_compliance_baseline",
+        "2026_09_03_stage102_hos_policy_shadow_engine",
+        "2026_09_03_stage103_hos_shadow_retention_control",
     ];
 
     // Enrolled NOWHERE today: these files are in database/migrations/ but no runner, CI
