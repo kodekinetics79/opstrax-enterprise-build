@@ -244,6 +244,8 @@ MIGRATIONS=(
   2026_09_03_stage100_dashcam_provider_media_truth
   # Native Driver/Fleet/Customer Expo push token lifecycle; FORCE-RLS and user scoped.
   2026_09_05_stage101_mobile_push_tokens
+  # Retire only recognized demo camera rows that still imply provider/video/AI evidence.
+  2026_09_06_stage104_camera_demo_truth_cleanup
 )
 
 echo "Pre-check: validated read-only database identity…"
@@ -395,9 +397,22 @@ BEGIN
       ('2026_08_12_stage77_protected_role_bootstrap'),
       ('2026_08_13_stage78_country_profiles_runtime_contract'),
       ('2026_08_13_stage79_tenant_provisioning_runtime_contract'),
-      ('2026_08_14_stage80_fleet_identity_backbone')) required(version)
+      ('2026_08_14_stage80_fleet_identity_backbone'),
+      ('2026_09_06_stage104_camera_demo_truth_cleanup')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN RAISE EXCEPTION 'Required owner/pilot migration ledger missing or duplicated'; END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM dashcam_events de
+    JOIN companies c ON c.id=de.company_id
+    WHERE de.deleted_at IS NULL
+      AND de.source_authority IN ('LegacyUnverified','ProviderPending')
+      AND de.title ~ '^AI dashcam (review|event) [0-9]+$'
+      AND (de.event_number ~ '^VID-[0-9]{5}$' OR de.event_number ~ '^VID-B4-[0-9]{4}$')
+      AND (LOWER(c.name) LIKE '%demo%' OR LOWER(c.company_code) LIKE '%demo%')
+  ) THEN
+    RAISE EXCEPTION 'Stage104 camera demo truth cleanup is incomplete';
+  END IF;
   IF to_regclass('public.uq_ftms_dorders_company_number') IS NULL
      OR to_regclass('public.telemetry_gateways') IS NULL
      OR to_regclass('public.uq_ftms_route_progress_key') IS NULL

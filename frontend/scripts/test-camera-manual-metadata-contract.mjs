@@ -136,12 +136,10 @@ test("actual camera page feeds the shared DataTable neutral severity and whiteli
   } finally { f.cleanup(); }
 });
 
-test("actual camera summary consumer does not relabel an all-record count as today", () => {
+test("actual camera summary uses an honest all-record wire key and label", () => {
   const f = workflowFixture({ source: pageBuilt.outputFiles[0].text });
   try {
-    // API8c365703 counts company/nondeleted rows without a time predicate;
-    // retain its existing wire key, not its misleading temporal label.
-    const page = f.renderPage("dashcam", { summary: { ...f.view.summary, data: { dashcamEventsToday: 3 } } });
+    const page = f.renderPage("dashcam", { summary: { ...f.view.summary, data: { storedEventRecords: 3 } } });
     const card = component(page, "KpiCard");
     assert.equal(card.props.label, "Stored event records");
     assert.equal(card.props.value, "3");
@@ -260,7 +258,7 @@ function workflowFixture({ source = workflowBuilt.outputFiles[0].text } = {}) {
   const idle = { isError: false, isLoading: false, isFetching: false, fetchStatus: "idle", refetch: async () => {} };
   view = { enabled: true, session: f.session, canManage: true, canExport: true, selectedId: "19", visibleIds: ["19"],
     detail: { ...idle, data: { record: record() } }, rows: { ...idle, data: [record()] },
-    summary: { ...idle, data: { dashcamEventsToday: 1 } }, queryClient: client };
+    summary: { ...idle, data: { storedEventRecords: 1 } }, queryClient: client };
   const render = (patch = {}) => { view = { ...view, ...patch }; cursor = 0; return f.api.useCameraMetadataWorkflow(view); };
   const activateQuery = (key, data, read = async () => data) => {
     const observer = new query.QueryObserver(client, { queryKey: key, queryFn: read, initialData: data, staleTime: Infinity, retry: false });
@@ -567,7 +565,7 @@ test("old successful read completion cannot clear a newer target's warning or re
     const oldRead = deferred(); f.activateReads(() => oldRead.promise);
     f.setResponse(response(receipt(), 200)); let h = edit(f); await h.submit(h.editor); await settle();
     const oldNotice = f.render().notice; assert.equal(f.render().refreshing, true);
-    const nextRows = [record({ id: 20 })], nextSummary = { dashcamEventsToday: 1 }, nextDetail = { record: record({ id: 20 }) };
+    const nextRows = [record({ id: 20 })], nextSummary = { storedEventRecords: 1 }, nextDetail = { record: record({ id: 20 }) };
     for (const [key, data] of [[["dashcam"], nextRows], [["dashcam", "summary"], nextSummary], [["dashcam", "detail", 20], nextDetail]]) {
       const observer = new query.QueryObserver(nextClient, { queryKey: key, queryFn: async () => { throw new Error("new read unavailable"); }, initialData: data, staleTime: Infinity, retry: false });
       stops.push(observer.subscribe(() => {}));

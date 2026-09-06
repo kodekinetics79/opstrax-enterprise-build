@@ -162,7 +162,7 @@ const configs = {
     queryKey: "dashcam", eyebrow: "Camera Metadata", title: "Stored camera metadata", icon: <FileVideo />,
     description: CAMERA_NOTICE,
     useRows: useDashcamEvents, useSummary: useDashcamSummary, useDetail: useDashcamEventDetail, api: dashcamApi, createLabel: "Record Event Metadata",
-    kpis: [["Stored event records","dashcamEventsToday"]],
+    kpis: [["Stored event records","storedEventRecords"]],
     columns: ["eventNumber","eventType","title","recordedLevel","driverName","vehicleCode","jobNumber","routeCode","locationDescription","occurredAt"],
     fields: [],
     actions: [],

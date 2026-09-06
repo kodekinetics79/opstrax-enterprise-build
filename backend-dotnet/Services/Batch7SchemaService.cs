@@ -307,7 +307,7 @@ public sealed class Batch7SchemaService(Database db, IConfiguration? configurati
           ('dvir-compliance',        'DVIR Compliance Report',             'DVIR/Inspections', 'Pre/post-trip inspection compliance rate, defects, and critical findings.',                     'Active'),
           ('safety-events',          'Safety Events Report',               'Safety',           'Safety event register by severity, type, driver, vehicle, and date range.',                    'Active'),
           ('driver-coaching',        'Driver Coaching Report',             'Safety',           'Coaching task completion, acknowledgement rate, and safety score impact.',                      'Active'),
-          ('dashcam-review',         'Dashcam Event Review Report',        'Dashcam/Incidents','AI dashcam events, false positive rate, review status, and coaching linkage.',                  'Active'),
+          ('dashcam-review',         'Camera Metadata Register',           'Dashcam/Incidents','Stored camera metadata and provenance state only; no media, provider, or automated-assessment claim.', 'Pilot'),
           ('incident-register',      'Incident Register Report',           'Dashcam/Incidents','Full incident register with severity, insurance status, and legal review flag.',                'Active'),
           ('fuel-spend',             'Fuel Spend Report',                  'Fuel & Idling',    'Fuel transaction totals by vehicle, driver, fuel type, and region with anomaly flags.',         'Active'),
           ('idle-cost',              'Idle Cost Report',                   'Fuel & Idling',    'Idle event costs, duration by vehicle, driver, and location.',                                  'Active'),
