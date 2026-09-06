@@ -517,6 +517,10 @@ jobs:
           END
           $stage76_ci_terminal$;
           SQL
+      - name: Apply bounded Canada and KSA HOS shadow candidate migrations
+        env:
+          NEON_PG_URI: postgresql://zayra:zayra@127.0.0.1:5433/opstrax_local?sslmode=disable
+        run: bash ./tools/apply-canada-ksa-hos-shadow-predeploy.sh
       - name: Run DB-backed integration suites
         run: dotnet test backend-dotnet.Tests/Opstrax.Tests.csproj --no-build --filter "FullyQualifiedName~Postgres|Category=Integration"
 
