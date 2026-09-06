@@ -35,7 +35,7 @@ export function DriverTripScreen() {
   const [showException, setShowException] = useState(false);
   const [exceptionType, setExceptionType] = useState("route_blocked");
   const [exceptionNotes, setExceptionNotes] = useState("");
-  const [draftReady, setDraftReady] = useState(false);
+  const [hydratedDraftKey, setHydratedDraftKey] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [vehicleRef, setVehicleRef] = useState("");
   const assignment = current.data?.assignment;
@@ -43,10 +43,10 @@ export function DriverTripScreen() {
   const exceptionDraftKey = assignment?.id
     ? secureDraftKey("driver-exception", session?.company.id ?? session?.company.code, session?.user.id, assignment.id)
     : null;
+  const draftReady = exceptionDraftKey !== null && hydratedDraftKey === exceptionDraftKey;
 
   useEffect(() => {
     let active = true;
-    setDraftReady(false);
     if (!exceptionDraftKey) return () => { active = false; };
     void readSecureDraft<ExceptionDraft>(exceptionDraftKey).then((draft) => {
       if (!active) return;
@@ -55,7 +55,7 @@ export function DriverTripScreen() {
         setExceptionNotes(draft.notes ?? "");
         setShowException(Boolean(draft.open || draft.notes));
       }
-      setDraftReady(true);
+      setHydratedDraftKey(exceptionDraftKey);
     });
     return () => { active = false; };
   }, [exceptionDraftKey]);
