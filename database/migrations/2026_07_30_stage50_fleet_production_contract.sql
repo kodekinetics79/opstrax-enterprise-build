@@ -269,6 +269,14 @@ CREATE TABLE IF NOT EXISTS fleet_tms_temperature_devices (
     last_reported_temperature_celsius NUMERIC(6,2) NULL,
     battery_percent                   NUMERIC(6,2) NULL,
     last_ping_at_utc                  TIMESTAMPTZ NULL,
+    sensor_type                       VARCHAR(60) NOT NULL DEFAULT 'Temperature',
+    measurement_unit                  VARCHAR(20) NOT NULL DEFAULT 'Celsius',
+    calibration_status                VARCHAR(30) NOT NULL DEFAULT 'NotReported',
+    calibrated_at_utc                 TIMESTAMPTZ NULL,
+    calibration_due_at_utc            TIMESTAMPTZ NULL,
+    calibration_reference             VARCHAR(160) NULL,
+    last_measurement_source           VARCHAR(30) NULL,
+    last_measurement_observed_at_utc  TIMESTAMPTZ NULL,
     notes                             TEXT         NOT NULL DEFAULT '',
     created_at_utc                    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at_utc                    TIMESTAMPTZ NULL
@@ -285,9 +293,11 @@ CREATE TABLE IF NOT EXISTS fleet_tms_temperature_readings (
     latitude            NUMERIC(10,6) NULL,
     longitude           NUMERIC(10,6) NULL,
     source              VARCHAR(30)  NOT NULL DEFAULT 'Sensor',
+    measurement_authority VARCHAR(40) NOT NULL DEFAULT 'LegacyUnverified',
     status              VARCHAR(30)  NOT NULL DEFAULT 'Normal',
     notes               TEXT         NOT NULL DEFAULT '',
     recorded_at_utc     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    received_at_utc     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     created_at_utc      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -1244,6 +1254,22 @@ ALTER TABLE fleet_tms_temperature_devices ADD COLUMN IF NOT EXISTS causation_id 
 
 ALTER TABLE fleet_tms_temperature_devices ADD COLUMN IF NOT EXISTS metadata_json JSONB NULL;
 
+ALTER TABLE fleet_tms_temperature_devices ADD COLUMN IF NOT EXISTS sensor_type VARCHAR(60) NOT NULL DEFAULT 'Temperature';
+
+ALTER TABLE fleet_tms_temperature_devices ADD COLUMN IF NOT EXISTS measurement_unit VARCHAR(20) NOT NULL DEFAULT 'Celsius';
+
+ALTER TABLE fleet_tms_temperature_devices ADD COLUMN IF NOT EXISTS calibration_status VARCHAR(30) NOT NULL DEFAULT 'NotReported';
+
+ALTER TABLE fleet_tms_temperature_devices ADD COLUMN IF NOT EXISTS calibrated_at_utc TIMESTAMPTZ NULL;
+
+ALTER TABLE fleet_tms_temperature_devices ADD COLUMN IF NOT EXISTS calibration_due_at_utc TIMESTAMPTZ NULL;
+
+ALTER TABLE fleet_tms_temperature_devices ADD COLUMN IF NOT EXISTS calibration_reference VARCHAR(160) NULL;
+
+ALTER TABLE fleet_tms_temperature_devices ADD COLUMN IF NOT EXISTS last_measurement_source VARCHAR(30) NULL;
+
+ALTER TABLE fleet_tms_temperature_devices ADD COLUMN IF NOT EXISTS last_measurement_observed_at_utc TIMESTAMPTZ NULL;
+
 ALTER TABLE fleet_tms_temperature_readings ADD COLUMN IF NOT EXISTS source_channel VARCHAR(40) NULL;
 
 ALTER TABLE fleet_tms_temperature_readings ADD COLUMN IF NOT EXISTS branch_id BIGINT NULL;
@@ -1265,6 +1291,10 @@ ALTER TABLE fleet_tms_temperature_readings ADD COLUMN IF NOT EXISTS applied_poli
 ALTER TABLE fleet_tms_temperature_readings ADD COLUMN IF NOT EXISTS applied_min_celsius NUMERIC(6,2) NULL;
 
 ALTER TABLE fleet_tms_temperature_readings ADD COLUMN IF NOT EXISTS applied_max_celsius NUMERIC(6,2) NULL;
+
+ALTER TABLE fleet_tms_temperature_readings ADD COLUMN IF NOT EXISTS measurement_authority VARCHAR(40) NOT NULL DEFAULT 'LegacyUnverified';
+
+ALTER TABLE fleet_tms_temperature_readings ADD COLUMN IF NOT EXISTS received_at_utc TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
 ALTER TABLE fleet_tms_temperature_alerts ADD COLUMN IF NOT EXISTS source_channel VARCHAR(40) NULL;
 
