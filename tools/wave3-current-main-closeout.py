@@ -52,6 +52,8 @@ if "hc.source_authority='Authoritative'" not in avail:
               WHERE d.company_id=@cid AND d.deleted_at IS NULL
                 AND d.status IN ('Available','Idle')
                 AND COALESCE(d.safety_score,0) >= 65
+                AND hos.drive_time_remaining_minutes >= 60
+                AND LOWER(hos.status) IN ('ok','eligible','available','on duty','on duty (not driving)','driving')
                 AND NOT EXISTS (SELECT 1 FROM dispatch_assignments da2
                                 WHERE da2.driver_id=d.id AND da2.company_id=@cid
                                   AND da2.assignment_status NOT IN ('delivered','cancelled'))" + branchClause + @"
@@ -130,7 +132,8 @@ if "Authoritative HOS clock unavailable or stale" not in eligibility_slice:
         }
         else
         {
-            warnings.Add("Authoritative HOS clock unavailable or stale — manual verification required before dispatch");
+            blocking.Add("Authoritative HOS clock unavailable or stale — cannot dispatch");
+            hosWarning = true;
         }
 
 '''
@@ -366,13 +369,15 @@ public sealed class DispatchHosAuthorityContractTests
         Assert.Contains("FROM hos_clocks hc", s, StringComparison.Ordinal);
         Assert.Contains("hc.source_authority='Authoritative'", s, StringComparison.Ordinal);
         Assert.Contains("hc.source_observed_at >= NOW() - INTERVAL '24 hours'", s, StringComparison.Ordinal);
+        Assert.Contains("hos.drive_time_remaining_minutes >= 60", s, StringComparison.Ordinal);
     }
     [Fact] public void DispatchEligibility_FailsClosedWithoutFreshAuthority()
     {
         var s = Between(Source, "internal static async Task<DispatchEligibilityResult> CheckDispatchEligibilityAsync", "// Safety events — critical unresolved flags.");
         Assert.DoesNotContain("FROM hos_records", s, StringComparison.Ordinal);
         Assert.Contains("source_authority='Authoritative'", s, StringComparison.Ordinal);
-        Assert.Contains("Authoritative HOS clock unavailable or stale", s, StringComparison.Ordinal);
+        Assert.Contains("Authoritative HOS clock unavailable or stale — cannot dispatch", s, StringComparison.Ordinal);
+        Assert.Contains("blocking.Add", s, StringComparison.Ordinal);
     }
 }
 ''')
@@ -437,6 +442,49 @@ public sealed class HosOperationalAlertSourceTruthTests
     }
 }
 ''')
+
+# Keep the existing database-backed dispatch journey aligned with the new
+# authority boundary. Legacy hos_records remain in the fixture deliberately so
+# the test proves they cannot grant eligibility.
+core_jobs_path = Path('backend-dotnet.Tests/CoreJobsBranchHosApiTests.cs')
+core_jobs = core_jobs_path.read_text()
+if 'await AuthoritativeHos(db, companyId, branchId, eligible' not in core_jobs:
+    core_jobs = replace_once(
+        core_jobs,
+        '''            await Hos(db, companyId, eligible, "On Duty", 8m);
+            await Hos(db, companyId, offDuty, "Off Duty", 8m);
+''',
+        '''            await Hos(db, companyId, eligible, "On Duty", 8m);
+            await Hos(db, companyId, offDuty, "Off Duty", 8m);
+            await AuthoritativeHos(db, companyId, branchId, eligible, "OK", 8m);
+''',
+        'CoreJobs authoritative HOS fixture')
+
+if 'private static Task AuthoritativeHos(' not in core_jobs:
+    helper_anchor = '''    private static Task Hos(Database db, long company, long driver, string status, decimal hours) => db.ExecuteAsync(
+        "INSERT INTO hos_records(company_id,driver_id,shift_date,remaining_drive_hours,remaining_shift_hours,hos_status) VALUES (@c,@d,CURRENT_DATE,@h,@h,@s)",
+        c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@d", driver); c.Parameters.AddWithValue("@h", hours); c.Parameters.AddWithValue("@s", status); });
+'''
+    helper = helper_anchor + '''    private static Task AuthoritativeHos(Database db, long company, long branch, long driver, string status, decimal hours) => db.ExecuteAsync(
+        @"INSERT INTO hos_clocks(company_id,branch_id,driver_id,drive_time_remaining_minutes,shift_time_remaining_minutes,cycle_time_remaining_minutes,status,clock_source,source_event_id,source_observed_at,source_authority,source_quality,updated_at)
+          VALUES (@c,@b,@d,@minutes,@minutes,@cycle,@s,'test-certified-provider',@event,NOW(),'Authoritative','Verified',NOW())",
+        c =>
+        {
+            c.Parameters.AddWithValue("@c", company);
+            c.Parameters.AddWithValue("@b", branch);
+            c.Parameters.AddWithValue("@d", driver);
+            c.Parameters.AddWithValue("@minutes", decimal.ToInt32(hours * 60m));
+            c.Parameters.AddWithValue("@cycle", 3600);
+            c.Parameters.AddWithValue("@s", status);
+            c.Parameters.AddWithValue("@event", $"core-jobs-hos-{company}-{driver}");
+        });
+'''
+    core_jobs = replace_once(core_jobs, helper_anchor, helper, 'CoreJobs authoritative HOS helper')
+
+core_jobs = core_jobs.replace(
+    '"DELETE FROM hos_records WHERE company_id=@c", "DELETE FROM vehicles WHERE company_id=@c",',
+    '"DELETE FROM hos_clocks WHERE company_id=@c", "DELETE FROM hos_records WHERE company_id=@c", "DELETE FROM vehicles WHERE company_id=@c",')
+core_jobs_path.write_text(core_jobs)
 
 # -----------------------------------------------------------------------------
 # 6) Evidence ledger — controllable engineering versus external evidence boundary

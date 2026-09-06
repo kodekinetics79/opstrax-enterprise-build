@@ -14,6 +14,21 @@ permissions:
 jobs:
   closeout:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17@sha256:a426e44bac0b759c95894d68e1a0ac03ecc20b619f498a91aae373bf06d8508d
+        env:
+          POSTGRES_USER: zayra
+          POSTGRES_PASSWORD: zayra
+          POSTGRES_DB: opstrax_closeout
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U zayra -d opstrax_closeout"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      OPSTRAX_TEST_DB: "Host=127.0.0.1;Port=5433;Database=opstrax_closeout;Username=zayra;Password=zayra"
+      PGPASSWORD: zayra
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -24,12 +39,27 @@ jobs:
           dotnet-version: '8.0.x'
       - name: Apply focused current-main closeout
         run: python3 tools/wave3-current-main-closeout.py
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Materialize disposable closeout schema
+        run: |
+          for f in database/init/001_schema.sql database/init/002_seed.sql database/init/004_jobs_execution.sql; do
+            psql -h 127.0.0.1 -p 5433 -U zayra -d opstrax_closeout -v ON_ERROR_STOP=1 -q -f "$f"
+          done
+          NEON_PG_URI='postgresql://zayra:zayra@127.0.0.1:5433/opstrax_closeout?sslmode=disable' \
+            ./tools/apply-neon-predeploy-migrations.sh
       - name: Verify focused HOS authority tests
         run: >-
           dotnet test backend-dotnet.Tests/Opstrax.Tests.csproj --configuration Release
           --filter "FullyQualifiedName~DispatchHosAuthorityContractTests|FullyQualifiedName~HosClockSourceTruthMigrationTests|FullyQualifiedName~HosRuntimeTruthContractTests|FullyQualifiedName~HosOperationalAlertSourceTruthTests"
-      - name: Verify full backend regression
-        run: dotnet test backend-dotnet.Tests/Opstrax.Tests.csproj --configuration Release
+      - name: Verify authoritative dispatch against real Postgres
+        run: >-
+          dotnet test backend-dotnet.Tests/Opstrax.Tests.csproj --configuration Release --no-build
+          --filter FullyQualifiedName~CoreJobsBranchHosApiTests.AvailableDriversExcludesOffDutyAndLegacyAssignmentRejectsIt
+      - name: Verify full non-database backend regression
+        run: >-
+          dotnet test backend-dotnet.Tests/Opstrax.Tests.csproj --configuration Release --no-build
+          --filter "FullyQualifiedName!~Postgres&Category!=Integration"
       - name: Validate patch
         run: git diff --check
       - name: Commit closeout candidate

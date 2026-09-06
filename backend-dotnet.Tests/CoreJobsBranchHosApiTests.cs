@@ -519,6 +519,7 @@ public sealed class CoreJobsBranchHosApiTests
                 c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchId); });
             await Hos(db, companyId, eligible, "On Duty", 8m);
             await Hos(db, companyId, offDuty, "Off Duty", 8m);
+            await AuthoritativeHos(db, companyId, branchId, eligible, "OK", 8m);
             var jobId = await db.InsertAsync(
                 "INSERT INTO jobs(company_id,branch_id,job_code,job_type,status) VALUES (@c,@b,@code,'Delivery','Unassigned')",
                 c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branchId); c.Parameters.AddWithValue("@code", $"HOS-{companyId}"); });
@@ -636,6 +637,19 @@ public sealed class CoreJobsBranchHosApiTests
     private static Task Hos(Database db, long company, long driver, string status, decimal hours) => db.ExecuteAsync(
         "INSERT INTO hos_records(company_id,driver_id,shift_date,remaining_drive_hours,remaining_shift_hours,hos_status) VALUES (@c,@d,CURRENT_DATE,@h,@h,@s)",
         c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@d", driver); c.Parameters.AddWithValue("@h", hours); c.Parameters.AddWithValue("@s", status); });
+    private static Task AuthoritativeHos(Database db, long company, long branch, long driver, string status, decimal hours) => db.ExecuteAsync(
+        @"INSERT INTO hos_clocks(company_id,branch_id,driver_id,drive_time_remaining_minutes,shift_time_remaining_minutes,cycle_time_remaining_minutes,status,clock_source,source_event_id,source_observed_at,source_authority,source_quality,updated_at)
+          VALUES (@c,@b,@d,@minutes,@minutes,@cycle,@s,'test-certified-provider',@event,NOW(),'Authoritative','Verified',NOW())",
+        c =>
+        {
+            c.Parameters.AddWithValue("@c", company);
+            c.Parameters.AddWithValue("@b", branch);
+            c.Parameters.AddWithValue("@d", driver);
+            c.Parameters.AddWithValue("@minutes", decimal.ToInt32(hours * 60m));
+            c.Parameters.AddWithValue("@cycle", 3600);
+            c.Parameters.AddWithValue("@s", status);
+            c.Parameters.AddWithValue("@event", $"core-jobs-hos-{company}-{driver}");
+        });
     private static Task<long> Count(Database db, string table, long company, long job) => db.ScalarLongAsync(
         $"SELECT COUNT(*) FROM {table} WHERE company_id=@c AND entity_id=@j", c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@j", job); });
 
@@ -650,7 +664,7 @@ public sealed class CoreJobsBranchHosApiTests
             "DELETE FROM idempotency_keys WHERE tenant_id=@c",
             "DELETE FROM job_status_events WHERE company_id=@c", "DELETE FROM entity_timeline_events WHERE company_id=@c",
             "DELETE FROM audit_logs WHERE company_id=@c", "DELETE FROM documents WHERE company_id=@c", "DELETE FROM jobs WHERE company_id=@c",
-            "DELETE FROM hos_records WHERE company_id=@c", "DELETE FROM vehicles WHERE company_id=@c",
+            "DELETE FROM hos_clocks WHERE company_id=@c", "DELETE FROM hos_clocks WHERE company_id=@c", "DELETE FROM hos_records WHERE company_id=@c", "DELETE FROM vehicles WHERE company_id=@c",
             "DELETE FROM drivers WHERE company_id=@c", "DELETE FROM customers WHERE company_id=@c", "DELETE FROM companies WHERE id=@c"
         })
             await db.ExecuteAsync(sql, c => c.Parameters.AddWithValue("@c", company));
