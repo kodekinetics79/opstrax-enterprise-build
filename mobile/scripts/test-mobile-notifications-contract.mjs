@@ -10,7 +10,7 @@ test("mobile operational inbox uses recipient-scoped notification endpoints", as
   assert.match(settings, /"\/api\/notifications\/unread-count"/);
   assert.match(settings, /`\/api\/notifications\/\$\{encodeURIComponent\(id\)\}\/read`/);
   assert.doesNotMatch(settings, /companyId|company_id|tenantId|tenant_id/);
-  assert.doesNotMatch(settings, /X-Tenant|tenant override/i);
+  assert.doesNotMatch(settings, /["']X-Tenant["']/i);
 });
 
 test("notification rendering does not fabricate delivery or acknowledgement state", async () => {

@@ -56,7 +56,7 @@ export function DriverProofScreen() {
   const [captured, setCaptured] = useState<CapturedAsset | null>(null);
   const [uploaded, setUploaded] = useState<DriverProofArtifact | null>(null);
   const [notes, setNotes] = useState("");
-  const [draftReady, setDraftReady] = useState(false);
+  const [hydratedDraftKey, setHydratedDraftKey] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const assignment = current.data?.assignment;
   const status = String(assignment?.assignmentStatus ?? "").toLowerCase();
@@ -65,14 +65,14 @@ export function DriverProofScreen() {
   const proofDraftKey = assignment?.id
     ? secureDraftKey("driver-proof", session?.company.id ?? session?.company.code, session?.user.id, assignment.id)
     : null;
+  const draftReady = proofDraftKey !== null && hydratedDraftKey === proofDraftKey;
 
   useEffect(() => {
     let active = true;
-    setDraftReady(false);
-    setCaptured(null);
     if (!proofDraftKey) return () => { active = false; };
     void readSecureDraft<ProofDraft>(proofDraftKey).then((draft) => {
       if (!active) return;
+      setCaptured(null);
       if (draft) {
         setNotes(draft.notes ?? "");
         setUploaded(draft.uploaded?.reference ? draft.uploaded : null);
@@ -80,7 +80,7 @@ export function DriverProofScreen() {
         setNotes("");
         setUploaded(null);
       }
-      setDraftReady(true);
+      setHydratedDraftKey(proofDraftKey);
     });
     return () => { active = false; };
   }, [proofDraftKey]);

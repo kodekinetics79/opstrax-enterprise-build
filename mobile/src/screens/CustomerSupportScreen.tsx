@@ -41,9 +41,10 @@ export function CustomerSupportScreen() {
   const [subject, setSubject] = useState("");
   const [comment, setComment] = useState("");
   const [rating, setRating] = useState<number | null>(null);
-  const [draftReady, setDraftReady] = useState(false);
+  const [hydratedDraftKey, setHydratedDraftKey] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const supportDraftKey = secureDraftKey("customer-support", session?.company.id ?? session?.company.code, session?.user.id);
+  const draftReady = hydratedDraftKey === supportDraftKey;
 
   const jobs = useAsyncResource(
     async () => (await api.request.get<{ items?: JsonRecord[] }>("/api/portal/jobs")).items ?? [],
@@ -60,7 +61,6 @@ export function CustomerSupportScreen() {
 
   useEffect(() => {
     let active = true;
-    setDraftReady(false);
     void readSecureDraft<SupportDraft>(supportDraftKey).then((draft) => {
       if (!active) return;
       if (draft) {
@@ -70,7 +70,7 @@ export function CustomerSupportScreen() {
         setComment(draft.comment ?? "");
         setRating(draft.rating ?? null);
       }
-      setDraftReady(true);
+      setHydratedDraftKey(supportDraftKey);
     });
     return () => { active = false; };
   }, [supportDraftKey]);

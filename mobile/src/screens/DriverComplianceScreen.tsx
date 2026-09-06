@@ -42,7 +42,7 @@ export function DriverComplianceScreen() {
   const [results, setResults] = useState<Record<string, ChecklistResult>>({});
   const [attested, setAttested] = useState(false);
   const [idempotencyKey, setIdempotencyKey] = useState("");
-  const [draftReady, setDraftReady] = useState(false);
+  const [hydratedDraftKey, setHydratedDraftKey] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const template = asRecords(templates.data)[0];
@@ -59,10 +59,10 @@ export function DriverComplianceScreen() {
   const dvirDraftKey = vehicleId && template
     ? secureDraftKey("driver-dvir", session?.company.id ?? session?.company.code, session?.user.id, `${vehicleScope}-${String(template.id ?? template.templateName ?? "template")}`)
     : null;
+  const draftReady = dvirDraftKey !== null && hydratedDraftKey === dvirDraftKey;
 
   useEffect(() => {
     let active = true;
-    setDraftReady(false);
     if (!dvirDraftKey) return () => { active = false; };
     void readSecureDraft<DvirDraft>(dvirDraftKey).then((draft) => {
       if (!active) return;
@@ -75,7 +75,7 @@ export function DriverComplianceScreen() {
         setAttested(false);
         setIdempotencyKey(newDvirIdempotencyKey(companyScope, userScope, vehicleScope));
       }
-      setDraftReady(true);
+      setHydratedDraftKey(dvirDraftKey);
     });
     return () => { active = false; };
   }, [companyScope, dvirDraftKey, userScope, vehicleScope]);
