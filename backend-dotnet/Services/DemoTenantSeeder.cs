@@ -451,14 +451,16 @@ public sealed class DemoTenantSeeder(Database db, IConfiguration? config = null)
               INSERT INTO hos_records (company_id,branch_id,driver_id,shift_date,remaining_drive_hours,remaining_shift_hours,remaining_cycle_hours,hos_status,created_at)
                 SELECT @companyId,@branch,@driver1,CURRENT_DATE,2.75,4.25,18.50,'Warning',NOW()-INTERVAL '15 minute'
                 WHERE NOT EXISTS (SELECT 1 FROM hos_records WHERE company_id=@companyId AND driver_id=@driver1 AND shift_date=CURRENT_DATE);
-              UPDATE hos_clocks SET branch_id=@branch,country_code='US',cycle_type='70hr/8day',drive_time_remaining_minutes=165,
-                    shift_time_remaining_minutes=255,cycle_time_remaining_minutes=1110,
-                    status='Warning',hos_warning='2.8h drive time remaining. Plan for a rest stop.'
+              UPDATE hos_clocks SET branch_id=@branch,country_code='US',cycle_type='70hr/8day',
+                    drive_time_remaining_minutes=NULL,shift_time_remaining_minutes=NULL,cycle_time_remaining_minutes=NULL,
+                    status='Unavailable',hos_warning='Authoritative ELD/HOS source not connected',
+                    clock_source=NULL,source_event_id=NULL,source_observed_at=NULL,
+                    source_authority='LegacyUnverified',source_quality=NULL
                 WHERE company_id=@companyId AND driver_id=@driver1;
               INSERT INTO hos_clocks (company_id,branch_id,driver_id,country_code,cycle_type,drive_time_remaining_minutes,
-                    shift_time_remaining_minutes,cycle_time_remaining_minutes,status,hos_warning)
-                SELECT @companyId,@branch,@driver1,'US','70hr/8day',165,255,1110,'Warning',
-                    '2.8h drive time remaining. Plan for a rest stop.'
+                    shift_time_remaining_minutes,cycle_time_remaining_minutes,status,hos_warning,source_authority)
+                SELECT @companyId,@branch,@driver1,'US','70hr/8day',NULL,NULL,NULL,'Unavailable',
+                    'Authoritative ELD/HOS source not connected','LegacyUnverified'
                 WHERE NOT EXISTS (SELECT 1 FROM hos_clocks WHERE company_id=@companyId AND driver_id=@driver1);
               INSERT INTO hos_logs (company_id,branch_id,driver_id,vehicle_id,log_date,driving_hours,on_duty_hours,cycle_hours_left,
                     country_code,status,start_time,end_time,duration_minutes,location,is_certified,source,source_event_id)
