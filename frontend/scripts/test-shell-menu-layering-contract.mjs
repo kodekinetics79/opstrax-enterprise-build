@@ -14,6 +14,34 @@ const read = path => readFileSync(resolve(root, path), "utf8");
 const shell = arg ? execFileSync("git", ["show", `${arg.slice(13)}:frontend/src/layouts/AppShell.tsx`], { cwd: resolve(root, ".."), encoding: "utf8" }) : read("src/layouts/AppShell.tsx");
 const parse = (source, name) => ts.createSourceFile(name, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const shellAst = parse(shell, "AppShell.tsx");
+const moduleConfig = read("src/modules/moduleConfig.ts");
+const moduleConfigAst = parse(moduleConfig, "moduleConfig.ts");
+const unwrap = node => {
+  while (node && (ts.isAsExpression(node) || ts.isSatisfiesExpression(node))) node = node.expression;
+  return node;
+};
+const variableInitializer = (ast, name) => {
+  let result;
+  const visit = node => {
+    if (ts.isVariableDeclaration(node) && node.name.getText() === name) result = unwrap(node.initializer);
+    ts.forEachChild(node, visit);
+  };
+  visit(ast);
+  return result;
+};
+const stringProperty = (object, name) => {
+  const property = object.properties.find(entry => ts.isPropertyAssignment(entry) && entry.name.getText().replace(/["']/g, "") === name);
+  return property && ts.isStringLiteral(property.initializer) ? property.initializer.text : undefined;
+};
+const modulesArray = variableInitializer(moduleConfigAst, "modules");
+const navigationArray = variableInitializer(shellAst, "NAV_SECTIONS");
+assert.ok(ts.isArrayLiteralExpression(modulesArray) && ts.isArrayLiteralExpression(navigationArray));
+const moduleKeys = modulesArray.elements.filter(ts.isObjectLiteralExpression).map(object => stringProperty(object, "key")).filter(Boolean);
+const navigationKeys = new Set(navigationArray.elements.filter(ts.isObjectLiteralExpression).flatMap(section => {
+  const items = section.properties.find(entry => ts.isPropertyAssignment(entry) && entry.name.getText().replace(/["']/g, "") === "items");
+  return items && ts.isArrayLiteralExpression(items.initializer) ? items.initializer.elements.filter(ts.isStringLiteral).map(entry => entry.text) : [];
+}));
+assert.deepEqual(moduleKeys.filter(key => !navigationKeys.has(key)), [], "every declared customer-facing module remains reachable from role/entitlement-filtered navigation");
 function openings(ast) {
   const nodes = [];
   function visit(node) { if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) nodes.push(node); ts.forEachChild(node, visit); }
@@ -85,7 +113,10 @@ assert.match(shell, /\{canViewUserManagement && \([\s\S]*navigate\("\/user-manag
 assert.match(shell, /onClick=\{\(\) => setNotifOpen\(\(v\) => !v\)\}/);
 assert.match(shell, /profileRef\.current && !profileRef\.current\.contains\(e\.target as Node\)/);
 assert.match(shell, /notifRef\.current && !notifRef\.current\.contains\(e\.target as Node\)/);
+assert.match(shell, /label: "Safety",[\s\S]*items: \[[\s\S]*"safety-center", "dashcam", "incidents"[\s\S]*"evidence-packages", "traffic-violations"/, "customer-facing safety routes remain reachable from the sidebar");
+assert.match(moduleConfig, /key: "dashcam",\s+title: "Camera Metadata",\s+route: "\/dashcam"/, "the camera metadata route has an honest customer-facing label");
+assert.match(moduleConfig, /Stored, unverified camera event metadata\. Media, provider connectivity and automated assessments are unavailable\./, "navigation copy does not advertise unavailable video or provider capability");
 assert.match(shell, /ref=\{profileTriggerRef\}[\s\S]*aria-label="Open account menu"[\s\S]*aria-expanded=\{profileOpen\}[\s\S]*aria-haspopup="dialog"[\s\S]*aria-controls="tenant-account-menu"/, "account trigger exposes popup state and relationship");
 assert.match(shell, /id="tenant-account-menu"[\s\S]*role="dialog"[\s\S]*aria-label="Account menu"/, "account popup exposes an accessible dialog name");
 assert.match(shell, /event\.key !== "Escape"[\s\S]*setProfileOpen\(false\)[\s\S]*profileTriggerRef\.current\?\.focus\(\)/, "Escape closes the account popup and restores trigger focus");
-console.log("Shell menu declared positioning/stacking and handler contracts passed (static AST/model only; no browser geometry, hit-test, auth or accessibility claim).");
+console.log("Shell menu visibility, positioning/stacking and handler contracts passed (static AST/model only; no browser geometry, hit-test, auth or accessibility claim).");

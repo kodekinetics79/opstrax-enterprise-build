@@ -1,4 +1,4 @@
-name: Production Render release
+name: Production exact-SHA release
 
 on:
   workflow_dispatch:
@@ -16,12 +16,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: production-render-release
+  group: production-exact-sha-release
   cancel-in-progress: false
 
 jobs:
   migrate-and-deploy:
-    name: Migrate, deploy exact SHA, verify readiness
+    name: Migrate, deploy API and frontend, verify exact-SHA parity
     runs-on: ubuntu-24.04
     timeout-minutes: 55
     environment: production
@@ -73,3 +73,33 @@ jobs:
           RENDER_SERVICE_ID: ${{ vars.RENDER_PRODUCTION_SERVICE_ID }}
           RENDER_HEALTH_URL: ${{ vars.RENDER_PRODUCTION_HEALTH_URL }}
         run: node tools/render-deploy-exact.mjs
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22.23.2'
+
+      - name: Install pinned Vercel CLI
+        run: npm install --global vercel@55.0.0
+
+      - name: Build and deploy the exact frontend candidate
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          : "${VERCEL_TOKEN:?Configure the production environment secret VERCEL_TOKEN}"
+          : "${VERCEL_ORG_ID:?Configure the production environment secret VERCEL_ORG_ID}"
+          : "${VERCEL_PROJECT_ID:?Configure the production environment secret VERCEL_PROJECT_ID}"
+          vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
+          VITE_DEPLOYMENT_SHA="$CANDIDATE_SHA" VITE_APP_ENVIRONMENT=production \
+            vercel build --prod --token="$VERCEL_TOKEN"
+          vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN"
+
+      - name: Verify customer POC frontend and API exact-SHA parity
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          FRONTEND_URL: https://opstrax.vercel.app
+          API_HEALTH_URL: ${{ vars.RENDER_PRODUCTION_HEALTH_URL }}
+        run: node tools/verify-production-release-exact.mjs

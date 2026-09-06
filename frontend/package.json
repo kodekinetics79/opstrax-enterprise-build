@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 10000 --strictPort",
-    "build": "tsc -b && vite build && npm run verify:bundle-budget",
+    "build": "tsc -b && vite build && node scripts/write-deployment-manifest.mjs && npm run verify:bundle-budget",
     "vercel-build": "node scripts/verify-vercel-build-env.mjs && npm run build",
     "preview": "vite preview --host 0.0.0.0 --port 10000 --strictPort",
     "lint": "eslint .",

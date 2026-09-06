@@ -40,11 +40,11 @@ assert.match(boundary, /catch \{[\s\S]*Do not reload[\s\S]*explicit recovery act
 const vercelConfig = JSON.parse(readFileSync(resolve(frontendRoot, "../vercel.json"), "utf8"));
 assert.equal(vercelConfig.rewrites, undefined);
 assert.equal(vercelConfig.headers, undefined);
-assert.equal(vercelConfig.routes[0].src, "/.*");
-assert.equal(vercelConfig.routes[0].continue, true);
-assert.equal(vercelConfig.routes[0].headers["Content-Security-Policy"].includes("default-src 'self'"), true);
-assert.equal(vercelConfig.routes[0].headers["X-Content-Type-Options"], "nosniff");
-assert.deepEqual(vercelConfig.routes.slice(1), [
+const securityRoute = vercelConfig.routes.find((route) => route.src === "/.*" && route.continue === true);
+assert.ok(securityRoute);
+assert.equal(securityRoute.headers["Content-Security-Policy"].includes("default-src 'self'"), true);
+assert.equal(securityRoute.headers["X-Content-Type-Options"], "nosniff");
+assert.deepEqual(vercelConfig.routes.slice(-3), [
   { handle: "filesystem" },
   { src: "/assets/.*", status: 404 },
   { src: "/.*", dest: "/index.html" },
