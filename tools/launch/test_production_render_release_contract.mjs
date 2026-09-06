@@ -39,6 +39,14 @@ test("production release deploys the traceable frontend after the exact API and 
   for (const secret of ["VERCEL_TOKEN", "VERCEL_ORG_ID", "VERCEL_PROJECT_ID"]) {
     assert.match(workflow, new RegExp(`secrets\\.${secret}`));
   }
+  for (const verb of ["pull", "build", "deploy"]) {
+    const start = workflow.indexOf(`vercel ${verb}`);
+    assert.ok(start >= 0, `Vercel ${verb} command is missing`);
+    const command = workflow.slice(start, start + 360);
+    assert.match(command, /--project="\$VERCEL_PROJECT_ID"/, `Vercel ${verb} must bind the production project explicitly`);
+    assert.match(command, /--scope="\$VERCEL_ORG_ID"/, `Vercel ${verb} must bind the production scope explicitly`);
+    assert.match(command, /--token="\$VERCEL_TOKEN"/, `Vercel ${verb} must use the dedicated production token`);
+  }
 });
 
 test("Canada/KSA wrapper preserves canonical chain then applies and verifies Stage101", () => {

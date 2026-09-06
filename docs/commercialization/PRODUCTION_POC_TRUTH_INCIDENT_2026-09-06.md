@@ -90,3 +90,9 @@ evidence exists.
 
 This incident remains open until those items are preserved against the released
 candidate. A green source build alone does not close it.
+
+## Release attempt log
+
+| UTC time | Candidate | Result | Disposition |
+| --- | --- | --- | --- |
+| 2026-09-06 20:05 | `ec596dc9260cca86ecef24672a4ba42daeaad847` | API deployment and readiness passed; Vercel stopped during project-settings pull before build or alias promotion | Incident remains open. The frontend remains on its prior deployment. The follow-up binds every Vercel CLI command to the approved production project and scope before retrying the same candidate. |
