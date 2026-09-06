@@ -40,6 +40,8 @@ public class MobilePushContractTests
         Assert.DoesNotContain("Str(body, \"user_id\")", source);
         Assert.Contains("ProductAllowed(http, product)", source);
         Assert.Contains("SHA256.HashData", source);
+        Assert.Equal(3, source.Split("RequireMobileDeviceAccess(http)", StringSplitOptions.None).Length - 1);
+        Assert.Contains("EndpointMappings.RequirePermission(http", source);
     }
 
     [Fact]

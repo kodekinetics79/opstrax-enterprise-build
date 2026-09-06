@@ -20,6 +20,7 @@ public static class MobileDeviceEndpoints
         Database db,
         CancellationToken ct)
     {
+        if (RequireMobileDeviceAccess(http) is { } permissionDenied) return permissionDenied;
         if (!TryPrincipal(http, out var companyId, out var userId, out var denied)) return denied!;
 
         var token = Str(body, "token")?.Trim();
@@ -84,6 +85,7 @@ public static class MobileDeviceEndpoints
         Database db,
         CancellationToken ct)
     {
+        if (RequireMobileDeviceAccess(http) is { } permissionDenied) return permissionDenied;
         if (!TryPrincipal(http, out var companyId, out var userId, out var denied)) return denied!;
         var token = Str(body, "token")?.Trim();
         if (!ValidExpoToken(token))
@@ -106,6 +108,7 @@ public static class MobileDeviceEndpoints
 
     private static async Task<IResult> ListMine(HttpContext http, Database db, CancellationToken ct)
     {
+        if (RequireMobileDeviceAccess(http) is { } permissionDenied) return permissionDenied;
         if (!TryPrincipal(http, out var companyId, out var userId, out var denied)) return denied!;
         var rows = await db.QueryAsync(
             @"SELECT id,product,platform,provider,app_version,device_os_version,status,
@@ -121,6 +124,23 @@ public static class MobileDeviceEndpoints
                 c.Parameters.AddWithValue("@user", userId);
             }, ct);
         return Results.Ok(ApiResponse<object>.Ok(new { items = rows }));
+    }
+
+    private static IResult? RequireMobileDeviceAccess(HttpContext http)
+    {
+        var permissions = http.Items.TryGetValue(EndpointMappings.AuthPermissionsItemKey, out var raw) && raw is string[] values
+            ? values
+            : [];
+        var requiredPermission = permissions.FirstOrDefault(permission =>
+                permission.Equals("driver:self", StringComparison.OrdinalIgnoreCase))
+            ?? permissions.FirstOrDefault(permission =>
+                permission.Equals("customer_portal:view", StringComparison.OrdinalIgnoreCase))
+            ?? permissions.FirstOrDefault();
+
+        // Device-token lifecycle is authenticated self-service. Requiring one of the
+        // caller's effective grants preserves every supported mobile persona while the
+        // product-specific check below still constrains Driver, Customer and Fleet.
+        return EndpointMappings.RequirePermission(http, requiredPermission ?? "mobile:devices:self");
     }
 
     private static bool TryPrincipal(HttpContext http, out long companyId, out long userId, out IResult? denied)
