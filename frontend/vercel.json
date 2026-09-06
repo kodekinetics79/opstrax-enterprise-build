@@ -2,6 +2,9 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "installCommand": "npm ci --no-audit --no-fund",
   "buildCommand": "npm run vercel-build",
+  "env": {
+    "VITE_PLATFORM_API_BASE_URL": "https://osptrax-fleet-management.onrender.com"
+  },
   "outputDirectory": "dist",
   "headers": [
     {
