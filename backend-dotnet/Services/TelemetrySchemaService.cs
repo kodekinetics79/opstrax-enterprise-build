@@ -266,8 +266,6 @@ public sealed class TelemetrySchemaService(Database db)
 
     private static readonly string[] Seeds =
     [
-        // last_seen_at: spread across last 12 minutes for demo staleness variety
-        "UPDATE eld_devices SET last_seen_at = NOW() - (id % 12) * INTERVAL '1 minute' WHERE last_seen_at IS NULL",
         // Seed default speeding rule for every company that has devices
         @"INSERT INTO telemetry_rules (company_id, rule_type, threshold_value, severity, enabled)
           SELECT DISTINCT company_id, 'speeding', 65, 'High', true
