@@ -2276,6 +2276,7 @@ function DeviceDetailDrawer({
   const latestTelemetry = detail.telemetry[0] ?? null;
   const latestDiagnostic = detail.diagnostics[0] ?? null;
   const latestSensor = detail.sensorReadings[0] ?? null;
+  const latestConnectivityObservation = detail.connectivityObservations[0] ?? null;
   // Values from the live position are already normalized to "—" upstream when null,
   // so a value is meaningful only when it is a non-empty, non-"—" string.
   const cell = (value: unknown): string => {
@@ -2519,6 +2520,29 @@ function DeviceDetailDrawer({
           ) : (
             <p className="mt-4 text-sm text-slate-400">No operator-recorded SIM or eSIM assignment exists for this device.</p>
           )}
+          <div className="mt-4 rounded-xl border border-white/[0.08] bg-black/10 p-4">
+            <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-400">Latest carrier/provider observation</p>
+            {latestConnectivityObservation?.softwareObservationAvailable ? (
+              <>
+                <div className="mt-3">
+                  <MiniGrid rows={[
+                    ["Source", latestConnectivityObservation.sourceProvider],
+                    ["Source authentication", latestConnectivityObservation.sourceAuthenticationStatus],
+                    ["ICCID", `•••• ${latestConnectivityObservation.profileIccidLast4}`],
+                    ["Reported subscription", latestConnectivityObservation.subscriptionStatus],
+                    ["Reported network", latestConnectivityObservation.networkRegistrationStatus],
+                    ["Reported data session", latestConnectivityObservation.dataSessionStatus],
+                    ["Reported roaming", latestConnectivityObservation.roaming == null ? "Unknown" : latestConnectivityObservation.roaming ? "Yes" : "No"],
+                    ["Reported usage", latestConnectivityObservation.usageBytes == null ? "Unknown" : `${latestConnectivityObservation.usageBytes.toLocaleString()} bytes`],
+                    ["Observed", new Date(latestConnectivityObservation.observedAt).toLocaleString()],
+                  ]} />
+                </div>
+                <p className="mt-3 text-xs text-amber-200">Provider-reported software status only. It does not prove radio attachment, telemetry delivery, physical operation, or certification.</p>
+              </>
+            ) : (
+              <p className="mt-3 text-sm text-slate-400">No exact-profile observation from an authenticated carrier/provider adapter is available.</p>
+            )}
+          </div>
           {connectivityOpen && canManageConnectivity ? (
             <form className="mt-4 space-y-3 rounded-xl border border-white/[0.08] bg-black/10 p-4" onSubmit={submitConnectivityProfile} autoComplete="off">
               <p className="text-xs text-slate-400">ICCID, MSISDN and APN are encrypted and will only be shown here as masked/configured values after submission.</p>

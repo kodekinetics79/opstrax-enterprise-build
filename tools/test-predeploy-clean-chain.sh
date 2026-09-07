@@ -789,6 +789,26 @@ BEGIN
     RAISE EXCEPTION 'Clean-chain Stage119 command control-plane boundary failed';
   END IF;
 
+  IF to_regclass('public.device_connectivity_observations') IS NULL
+     OR NOT COALESCE((SELECT c.relrowsecurity AND c.relforcerowsecurity
+                        FROM pg_class c WHERE c.oid=to_regclass('public.device_connectivity_observations')),false)
+     OR NOT has_column_privilege('opstrax_app','device_connectivity_observations','subscription_status','SELECT')
+     OR has_table_privilege('opstrax_app','device_connectivity_observations','INSERT,UPDATE,DELETE')
+     OR has_column_privilege('opstrax_app','device_connectivity_observations','source_account_bidx','SELECT')
+     OR has_column_privilege('opstrax_app','device_connectivity_observations','source_observation_bidx','SELECT')
+     OR has_column_privilege('opstrax_app','device_connectivity_observations','payload_sha256','SELECT')
+     OR NOT has_table_privilege('opstrax_system','device_connectivity_observations','SELECT')
+     OR NOT has_table_privilege('opstrax_system','device_connectivity_observations','INSERT')
+     OR has_table_privilege('opstrax_system','device_connectivity_observations','UPDATE,DELETE')
+     OR (SELECT count(*) FROM pg_policies p
+           WHERE p.schemaname='public' AND p.tablename='device_connectivity_observations'
+             AND p.policyname IN ('tenant_ticket_app','system_control_plane'))<>2
+     OR to_regprocedure('stage120_guard_connectivity_observation()') IS NULL
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('public.device_connectivity_observations')
+          AND tgname='trg_stage120_guard_connectivity_observation' AND NOT tgisinternal AND tgenabled<>'D') THEN
+    RAISE EXCEPTION 'Clean-chain Stage120 connectivity observation boundary failed';
+  END IF;
+
   IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND roles='{public}'::name[])
      OR EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public'
         AND (COALESCE(qual,'') LIKE '%app.current_tenant_id%'

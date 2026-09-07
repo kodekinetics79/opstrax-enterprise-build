@@ -1,0 +1,104 @@
+name: DeviceOps connectivity observation governance
+
+on:
+  pull_request:
+    paths:
+      - 'backend-dotnet/Controllers/EndpointMappings.cs'
+      - 'backend-dotnet/Program.cs'
+      - 'backend-dotnet/Security/PiiProtectionService.cs'
+      - 'backend-dotnet/Services/DeviceConnectivityObservationService.cs'
+      - 'backend-dotnet/Services/TelemetrySchemaService.cs'
+      - 'backend-dotnet.Tests/DeviceConnectivityObservationContractTests.cs'
+      - 'backend-dotnet.Tests/DeviceConnectivityObservationPostgresTests.cs'
+      - 'backend-dotnet.Tests/DeviceConnectivityObservationServiceTests.cs'
+      - 'backend-dotnet.Tests/Fixtures/device_connectivity_test_prerequisites.sql'
+      - 'database/migrations/2026_09_07_stage116_device_connectivity_profiles.sql'
+      - 'database/migrations/2026_09_07_stage120_device_connectivity_observations.sql'
+      - 'tools/apply-neon-predeploy-migrations.sh'
+      - 'tools/test-predeploy-clean-chain.sh'
+      - 'frontend/src/pages/IotDevicesPage.tsx'
+      - 'frontend/src/services/telematicsService.ts'
+      - 'frontend/scripts/test-device-connectivity-observation-contract.mjs'
+      - 'frontend/package.json'
+      - '.github/workflows/device-connectivity-observation-governance.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'backend-dotnet/Controllers/EndpointMappings.cs'
+      - 'backend-dotnet/Program.cs'
+      - 'backend-dotnet/Security/PiiProtectionService.cs'
+      - 'backend-dotnet/Services/DeviceConnectivityObservationService.cs'
+      - 'backend-dotnet/Services/TelemetrySchemaService.cs'
+      - 'backend-dotnet.Tests/DeviceConnectivityObservationContractTests.cs'
+      - 'backend-dotnet.Tests/DeviceConnectivityObservationPostgresTests.cs'
+      - 'backend-dotnet.Tests/DeviceConnectivityObservationServiceTests.cs'
+      - 'backend-dotnet.Tests/Fixtures/device_connectivity_test_prerequisites.sql'
+      - 'database/migrations/2026_09_07_stage116_device_connectivity_profiles.sql'
+      - 'database/migrations/2026_09_07_stage120_device_connectivity_observations.sql'
+      - 'tools/apply-neon-predeploy-migrations.sh'
+      - 'tools/test-predeploy-clean-chain.sh'
+      - 'frontend/src/pages/IotDevicesPage.tsx'
+      - 'frontend/src/services/telematicsService.ts'
+      - 'frontend/scripts/test-device-connectivity-observation-contract.mjs'
+      - 'frontend/package.json'
+      - '.github/workflows/device-connectivity-observation-governance.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: device-connectivity-observation-governance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  exact-profile-provider-observation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: opstrax_deviceops_stage120
+        ports:
+          - 55445:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d opstrax_deviceops_stage120"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGPASSWORD: postgres
+      OPSTRAX_DEVICEOPS_STAGE120_DB: Host=127.0.0.1;Port=55445;Database=opstrax_deviceops_stage120;Username=postgres;Password=postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.22.0
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
+      - name: Build dedicated connectivity-observation database
+        run: |
+          psql -h 127.0.0.1 -p 55445 -U postgres -d opstrax_deviceops_stage120 -v ON_ERROR_STOP=1 -f database/init/001_schema.sql
+          psql -h 127.0.0.1 -p 55445 -U postgres -d opstrax_deviceops_stage120 -v ON_ERROR_STOP=1 -f database/migrations/2026_07_02_stage23_schema_migration_ledger.sql
+          psql -h 127.0.0.1 -p 55445 -U postgres -d opstrax_deviceops_stage120 -v ON_ERROR_STOP=1 -f backend-dotnet.Tests/Fixtures/device_connectivity_test_prerequisites.sql
+          psql -h 127.0.0.1 -p 55445 -U postgres -d opstrax_deviceops_stage120 -v ON_ERROR_STOP=1 -f database/migrations/2026_09_07_stage116_device_connectivity_profiles.sql
+          psql -h 127.0.0.1 -p 55445 -U postgres -d opstrax_deviceops_stage120 -v ON_ERROR_STOP=1 -f database/migrations/2026_09_07_stage120_device_connectivity_observations.sql
+      - name: Verify repeat-safe migration
+        run: psql -h 127.0.0.1 -p 55445 -U postgres -d opstrax_deviceops_stage120 -v ON_ERROR_STOP=1 -f database/migrations/2026_09_07_stage120_device_connectivity_observations.sql
+      - name: Run service, contract and PostgreSQL tests
+        run: >-
+          dotnet test backend-dotnet.Tests/Opstrax.Tests.csproj
+          --filter "FullyQualifiedName~DeviceConnectivityObservationServiceTests|FullyQualifiedName~DeviceConnectivityObservationContractTests|FullyQualifiedName~DeviceConnectivityObservationPostgresTests"
+          --logger "console;verbosity=minimal"
+      - name: Verify customer connectivity truth
+        run: npm --prefix frontend run test:device-connectivity-observation
+      - name: Build customer device surface
+        run: npm --prefix frontend run build

@@ -92,6 +92,7 @@ reapply_late_control_boundaries() {
   psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage117_device_firmware_campaign_planning.sql
   psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage118_device_rma_replacement.sql
   psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage119_device_remote_command_governance.sql
+  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage120_device_connectivity_observations.sql
 }
 
 MIGRATIONS=(
@@ -278,6 +279,8 @@ MIGRATIONS=(
   2026_09_07_stage118_device_rma_replacement
   # Exact-capability remote-command admission; provider delivery and physical outcome remain unclaimed.
   2026_09_07_stage119_device_remote_command_governance
+  # Authenticated provider responses bound to exact current SIM/eSIM profiles; no RF or certification claim.
+  2026_09_07_stage120_device_connectivity_observations
 )
 
 echo "Pre-check: validated read-only database identity…"
@@ -372,7 +375,8 @@ for m in "${MIGRATIONS[@]}"; do
     2026_09_07_stage116_device_connectivity_profiles|\
     2026_09_07_stage117_device_firmware_campaign_planning|\
     2026_09_07_stage118_device_rma_replacement|\
-    2026_09_07_stage119_device_remote_command_governance) repair_migration=true ;;
+    2026_09_07_stage119_device_remote_command_governance|\
+    2026_09_07_stage120_device_connectivity_observations) repair_migration=true ;;
   esac
   if [ "$applied" = "1" ] && [ "$repair_migration" = false ]; then
     echo "── $m: already applied (ledger) — skipping"
@@ -446,7 +450,8 @@ BEGIN
       ('2026_09_07_stage116_device_connectivity_profiles'),
       ('2026_09_07_stage117_device_firmware_campaign_planning'),
       ('2026_09_07_stage118_device_rma_replacement'),
-      ('2026_09_07_stage119_device_remote_command_governance')) required(version)
+      ('2026_09_07_stage119_device_remote_command_governance'),
+      ('2026_09_07_stage120_device_connectivity_observations')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN RAISE EXCEPTION 'Required owner/pilot migration ledger missing or duplicated'; END IF;
   IF EXISTS (
@@ -595,6 +600,29 @@ BEGIN
      AND (has_table_privilege('opstrax_app','device_command_capabilities','INSERT,UPDATE,DELETE')
        OR has_table_privilege('opstrax_app','telematics_device_commands','INSERT,UPDATE,DELETE')) THEN
     RAISE EXCEPTION 'Stage119 app role can mutate command capability or request history';
+  END IF;
+  IF to_regclass('public.device_connectivity_observations') IS NULL
+     OR NOT EXISTS (
+       SELECT 1 FROM pg_trigger
+       WHERE tgrelid='public.device_connectivity_observations'::regclass
+         AND tgname='trg_stage120_guard_connectivity_observation'
+         AND NOT tgisinternal AND tgenabled<>'D'
+     )
+     OR EXISTS (
+       SELECT 1 FROM device_connectivity_observations
+       WHERE source_authentication_status<>'Authenticated'
+          OR reconciliation_status<>'ExactCurrentProfile'
+          OR provider_verified_claim OR physical_connectivity_claim OR certification_claim
+     ) THEN
+    RAISE EXCEPTION 'Stage120 exact-profile provider observation boundary is missing or invalid';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_app')
+     AND (has_table_privilege('opstrax_app','device_connectivity_observations','INSERT,UPDATE,DELETE')
+       OR has_column_privilege('opstrax_app','device_connectivity_observations','profile_iccid_bidx_snapshot','SELECT')
+       OR has_column_privilege('opstrax_app','device_connectivity_observations','source_account_bidx','SELECT')
+       OR has_column_privilege('opstrax_app','device_connectivity_observations','source_observation_bidx','SELECT')
+       OR has_column_privilege('opstrax_app','device_connectivity_observations','payload_sha256','SELECT')) THEN
+    RAISE EXCEPTION 'Stage120 app role can mutate observations or read protected provider identity';
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns
@@ -1681,7 +1709,18 @@ BEGIN
      OR has_table_privilege('opstrax_system','device_command_capabilities','DELETE')
      OR to_regprocedure('stage119_guard_device_command()') IS NULL
      OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('public.telematics_device_commands')
-          AND tgname='trg_stage119_guard_device_command' AND NOT tgisinternal AND tgenabled<>'D') THEN
+          AND tgname='trg_stage119_guard_device_command' AND NOT tgisinternal AND tgenabled<>'D')
+     OR to_regclass('public.device_connectivity_observations') IS NULL
+     OR NOT has_column_privilege('opstrax_app','device_connectivity_observations','subscription_status','SELECT')
+     OR has_table_privilege('opstrax_app','device_connectivity_observations','INSERT,UPDATE,DELETE')
+     OR has_column_privilege('opstrax_app','device_connectivity_observations','source_account_bidx','SELECT')
+     OR NOT has_table_privilege('opstrax_system','device_connectivity_observations','SELECT')
+     OR NOT has_table_privilege('opstrax_system','device_connectivity_observations','INSERT')
+     OR has_table_privilege('opstrax_system','device_connectivity_observations','UPDATE,DELETE')
+     OR NOT COALESCE((SELECT c.relrowsecurity AND c.relforcerowsecurity
+                        FROM pg_class c WHERE c.oid=to_regclass('public.device_connectivity_observations')),false)
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('public.device_connectivity_observations')
+          AND tgname='trg_stage120_guard_connectivity_observation' AND NOT tgisinternal AND tgenabled<>'D') THEN
     RAISE EXCEPTION 'Stage76 is not the effective terminal telemetry boundary';
   END IF;
   IF EXISTS (

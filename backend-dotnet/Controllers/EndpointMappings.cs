@@ -20714,6 +20714,7 @@ LIMIT 100000",
                 SELECT i.id,i.vehicle_id,i.status,i.device_role,i.is_primary
                 FROM device_installations i
                 WHERE i.company_id=e.company_id AND i.device_id=e.id
+                  AND i.branch_id IS NOT DISTINCT FROM e.branch_id
                   AND i.effective_to IS NULL AND i.status IN ('Installed','Verified')
                 ORDER BY i.effective_from DESC,i.id DESC LIMIT 1
               ) current_install ON TRUE
@@ -20763,6 +20764,17 @@ LIMIT 100000",
                WHERE company_id=@cid AND device_id=@id
                  AND (@branchId::BIGINT IS NULL OR branch_id=@branchId)
                ORDER BY effective_from DESC,id DESC LIMIT 100",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
+        var connectivityObservations = await db.QueryAsync(
+            @"SELECT id,device_id,connectivity_profile_id,profile_iccid_last4,source_provider,
+                     source_authentication_status,subscription_status,network_registration_status,
+                     data_session_status,usage_bytes,roaming,observed_at,received_at,
+                     reconciliation_status,provider_verified_claim,physical_connectivity_claim,
+                     certification_claim,created_at
+                FROM device_connectivity_observations
+               WHERE company_id=@cid AND device_id=@id
+                 AND (@branchId::BIGINT IS NULL OR branch_id=@branchId)
+               ORDER BY observed_at DESC,id DESC LIMIT 100",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
         var firmwareCampaigns = await db.QueryAsync(
             @"SELECT c.id campaign_id,c.campaign_name,c.target_firmware_version,c.rollback_firmware_version,
@@ -20885,6 +20897,7 @@ LIMIT 100000",
                 row.GetValueOrDefault("effectiveTo") is null or DBNull &&
                 row.GetValueOrDefault("assignmentStatus")?.ToString() == "Assigned"),
             connectivityProfiles,
+            connectivityObservations,
             firmwareCampaigns,
             rmaCases,
             rmaEvents,

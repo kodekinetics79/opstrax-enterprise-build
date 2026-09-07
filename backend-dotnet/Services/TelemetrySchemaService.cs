@@ -448,6 +448,26 @@ public sealed class TelemetrySchemaService(Database db)
             CONSTRAINT ck_stage119_capability_no_physical_claim CHECK (physical_evidence_claim=FALSE),
             CONSTRAINT ck_stage119_capability_no_certification_claim CHECK (certification_claim=FALSE)
         )",
+
+        @"CREATE TABLE IF NOT EXISTS device_connectivity_observations (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL, branch_id BIGINT NULL, device_id BIGINT NOT NULL,
+            connectivity_profile_id BIGINT NOT NULL, profile_iccid_bidx_snapshot VARCHAR(64) NOT NULL,
+            profile_iccid_last4 VARCHAR(4) NOT NULL, source_provider VARCHAR(80) NOT NULL,
+            source_account_bidx VARCHAR(64) NOT NULL, source_observation_bidx VARCHAR(64) NOT NULL,
+            payload_sha256 VARCHAR(64) NOT NULL, source_authentication_status VARCHAR(24) NOT NULL DEFAULT 'Authenticated',
+            subscription_status VARCHAR(24) NOT NULL, network_registration_status VARCHAR(24) NOT NULL,
+            data_session_status VARCHAR(24) NOT NULL, usage_bytes BIGINT NULL, roaming BOOLEAN NULL,
+            observed_at TIMESTAMPTZ NOT NULL, received_at TIMESTAMPTZ NOT NULL,
+            reconciliation_status VARCHAR(32) NOT NULL DEFAULT 'ExactCurrentProfile',
+            provider_verified_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            physical_connectivity_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            certification_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT ck_stage120_observation_no_provider_claim CHECK (provider_verified_claim=FALSE),
+            CONSTRAINT ck_stage120_observation_no_physical_claim CHECK (physical_connectivity_claim=FALSE),
+            CONSTRAINT ck_stage120_observation_no_certification_claim CHECK (certification_claim=FALSE)
+        )",
     ];
 
     private static readonly string[] Indexes =
@@ -510,6 +530,12 @@ public sealed class TelemetrySchemaService(Database db)
           ON telematics_device_commands(company_id,device_id,created_at DESC,id DESC)",
         @"CREATE INDEX IF NOT EXISTS ix_stage119_commands_capability
           ON telematics_device_commands(company_id,capability_id,created_at DESC,id DESC) WHERE capability_id IS NOT NULL",
+        @"CREATE UNIQUE INDEX IF NOT EXISTS uq_stage120_connectivity_profile_owner
+          ON device_connectivity_profiles(company_id,id,device_id)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage120_observations_device_recent
+          ON device_connectivity_observations(company_id,device_id,observed_at DESC,id DESC)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage120_observations_profile_recent
+          ON device_connectivity_observations(company_id,connectivity_profile_id,observed_at DESC,id DESC)",
     ];
 
     private static readonly string[] Seeds =

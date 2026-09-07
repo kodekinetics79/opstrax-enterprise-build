@@ -480,6 +480,7 @@ export type DeviceDetailRecord = {
   compatibility: DeviceCompatibilityRecord;
   currentConnectivityProfile: DeviceConnectivityProfileRecord | null;
   connectivityProfiles: DeviceConnectivityProfileRecord[];
+  connectivityObservations: DeviceConnectivityObservationRecord[];
   telemetry: TelematicsTelemetrySeedRecord[];
   healthEvents: TelematicsHealthSeedRecord[];
   firmwareUpdates: TelematicsFirmwareSeedRecord[];
@@ -522,6 +523,27 @@ export type DeviceConnectivityProfileInput = {
   changeReason: string;
   sourceReference: string;
   idempotencyKey: string;
+};
+
+export type DeviceConnectivityObservationRecord = {
+  id: string;
+  deviceId: string;
+  connectivityProfileId: string;
+  profileIccidLast4: string;
+  sourceProvider: string;
+  sourceAuthenticationStatus: "Authenticated" | "Unverified";
+  subscriptionStatus: "Unknown" | "Active" | "Suspended" | "Deactivated";
+  networkRegistrationStatus: "Unknown" | "Registered" | "Roaming" | "Denied" | "Detached";
+  dataSessionStatus: "Unknown" | "Attached" | "Detached" | "Blocked";
+  usageBytes: number | null;
+  roaming: boolean | null;
+  observedAt: string;
+  receivedAt: string;
+  reconciliationStatus: "ExactCurrentProfile" | "Unavailable";
+  softwareObservationAvailable: boolean;
+  providerVerifiedClaim: false;
+  physicalConnectivityClaim: false;
+  certificationClaim: false;
 };
 
 export type DeviceFirmwareCampaignRecord = {
@@ -742,6 +764,59 @@ function mapConnectivityProfile(raw: AnyRecord): DeviceConnectivityProfileRecord
     sourceReference: String(row.source_reference ?? ""),
     changeReason: String(row.change_reason ?? ""),
     endReason: row.end_reason == null ? null : String(row.end_reason),
+  };
+}
+
+function mapConnectivityObservation(raw: AnyRecord): DeviceConnectivityObservationRecord {
+  const row = normalizeKeys(raw);
+  const id = canonicalDeviceLifecycleId(row.id);
+  const deviceId = canonicalDeviceLifecycleId(row.device_id);
+  const connectivityProfileId = canonicalDeviceLifecycleId(row.connectivity_profile_id);
+  const observedAt = recordedDeviceCheckIn(row.observed_at, Number.MAX_SAFE_INTEGER);
+  const receivedAt = recordedDeviceCheckIn(row.received_at, Number.MAX_SAFE_INTEGER);
+  const observationOrderValid = observedAt !== null && receivedAt !== null &&
+    Date.parse(observedAt) <= Date.parse(receivedAt) + 5 * 60 * 1000;
+  const requiredFieldsAvailable = [
+    "id", "device_id", "connectivity_profile_id", "profile_iccid_last4", "source_provider",
+    "source_authentication_status", "subscription_status", "network_registration_status",
+    "data_session_status", "observed_at", "received_at", "reconciliation_status",
+    "provider_verified_claim", "physical_connectivity_claim", "certification_claim",
+  ].every((key) => Object.hasOwn(row, key));
+  const providerClaimSafe = row.provider_verified_claim === false;
+  const physicalClaimSafe = row.physical_connectivity_claim === false;
+  const certificationClaimSafe = row.certification_claim === false;
+  const subscriptionValid = ["Unknown", "Active", "Suspended", "Deactivated"].includes(String(row.subscription_status));
+  const networkValid = ["Unknown", "Registered", "Roaming", "Denied", "Detached"].includes(String(row.network_registration_status));
+  const sessionValid = ["Unknown", "Attached", "Detached", "Blocked"].includes(String(row.data_session_status));
+  const softwareObservationAvailable = requiredFieldsAvailable && providerClaimSafe && physicalClaimSafe && certificationClaimSafe &&
+    row.source_authentication_status === "Authenticated" &&
+    row.reconciliation_status === "ExactCurrentProfile" &&
+    subscriptionValid && networkValid && sessionValid &&
+    id !== null && deviceId !== null && connectivityProfileId !== null &&
+    typeof row.source_provider === "string" && /^[a-z0-9][a-z0-9._-]{0,79}$/.test(row.source_provider) &&
+    typeof row.profile_iccid_last4 === "string" && /^\d{4}$/.test(row.profile_iccid_last4) &&
+    observationOrderValid;
+  const usage = Number(row.usage_bytes);
+  return {
+    id: softwareObservationAvailable ? id! : "",
+    deviceId: softwareObservationAvailable ? deviceId! : "",
+    connectivityProfileId: softwareObservationAvailable ? connectivityProfileId! : "",
+    profileIccidLast4: typeof row.profile_iccid_last4 === "string" && /^\d{4}$/.test(row.profile_iccid_last4)
+      ? row.profile_iccid_last4 : "",
+    sourceProvider: softwareObservationAvailable ? String(row.source_provider ?? "") : "Unavailable",
+    sourceAuthenticationStatus: softwareObservationAvailable ? "Authenticated" : "Unverified",
+    subscriptionStatus: softwareObservationAvailable ? row.subscription_status as DeviceConnectivityObservationRecord["subscriptionStatus"] : "Unknown",
+    networkRegistrationStatus: softwareObservationAvailable ? row.network_registration_status as DeviceConnectivityObservationRecord["networkRegistrationStatus"] : "Unknown",
+    dataSessionStatus: softwareObservationAvailable ? row.data_session_status as DeviceConnectivityObservationRecord["dataSessionStatus"] : "Unknown",
+    usageBytes: softwareObservationAvailable && row.usage_bytes != null && Number.isSafeInteger(usage) && usage >= 0 ? usage : null,
+    roaming: softwareObservationAvailable && typeof row.roaming === "boolean" ? row.roaming : null,
+    observedAt: softwareObservationAvailable ? String(observedAt) : "",
+    receivedAt: softwareObservationAvailable ? String(receivedAt) : "",
+    reconciliationStatus: softwareObservationAvailable ? "ExactCurrentProfile" : "Unavailable",
+    softwareObservationAvailable,
+    providerVerifiedClaim: false,
+    physicalConnectivityClaim: false,
+    certificationClaim: false,
   };
 }
 
@@ -2157,6 +2232,8 @@ export const telematicsService = {
       ? detail.connectivity_profiles as AnyRecord[]
       : [];
     const connectivityProfiles = connectivityRows.map(mapConnectivityProfile);
+    const connectivityObservations = (Array.isArray(detail.connectivity_observations)
+      ? detail.connectivity_observations as AnyRecord[] : []).map(mapConnectivityObservation);
     const firmwareCampaignRows = Array.isArray(detail.firmware_campaigns)
       ? detail.firmware_campaigns as AnyRecord[]
       : [];
@@ -2240,6 +2317,7 @@ export const telematicsService = {
       compatibility,
       currentConnectivityProfile,
       connectivityProfiles,
+      connectivityObservations,
       telemetry,
       healthEvents,
       diagnostics,
