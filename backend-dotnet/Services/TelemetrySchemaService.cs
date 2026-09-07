@@ -305,6 +305,64 @@ public sealed class TelemetrySchemaService(Database db)
               OR (assignment_status='Ended' AND effective_to IS NOT NULL AND effective_to>effective_from
                   AND end_reason IS NOT NULL AND BTRIM(end_reason)<>''))
         )",
+
+        // Firmware planning is deliberately non-executable. Both campaign and
+        // target rows are fixed at ExternalHold with remote_upgrade_claim=false.
+        @"CREATE TABLE IF NOT EXISTS device_firmware_campaigns (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL,
+            branch_id BIGINT NULL,
+            campaign_name VARCHAR(160) NOT NULL,
+            target_firmware_version VARCHAR(120) NOT NULL,
+            rollback_firmware_version VARCHAR(120) NULL,
+            rollout_strategy VARCHAR(20) NOT NULL,
+            batch_size INT NOT NULL,
+            scheduled_for TIMESTAMPTZ NOT NULL,
+            maintenance_window_minutes INT NOT NULL,
+            execution_status VARCHAR(24) NOT NULL DEFAULT 'ExternalHold',
+            provider_capability_status VARCHAR(24) NOT NULL DEFAULT 'Unverified',
+            remote_upgrade_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            external_hold_reason VARCHAR(500) NOT NULL,
+            source_reference VARCHAR(240) NOT NULL,
+            change_reason VARCHAR(500) NOT NULL,
+            idempotency_key UUID NOT NULL,
+            created_by BIGINT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT ck_stage117_rollout_strategy CHECK (rollout_strategy IN ('Manual','Canary','Staged')),
+            CONSTRAINT ck_stage117_batch_size CHECK (batch_size BETWEEN 1 AND 100),
+            CONSTRAINT ck_stage117_window CHECK (maintenance_window_minutes BETWEEN 15 AND 720),
+            CONSTRAINT ck_stage117_execution_hold CHECK (execution_status='ExternalHold'),
+            CONSTRAINT ck_stage117_capability_unverified CHECK (provider_capability_status='Unverified'),
+            CONSTRAINT ck_stage117_no_remote_claim CHECK (remote_upgrade_claim=FALSE),
+            UNIQUE(company_id,idempotency_key)
+        )",
+
+        @"CREATE TABLE IF NOT EXISTS device_firmware_campaign_targets (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL,
+            branch_id BIGINT NULL,
+            campaign_id BIGINT NOT NULL,
+            device_id BIGINT NOT NULL,
+            device_serial VARCHAR(120) NOT NULL,
+            manufacturer VARCHAR(120) NULL,
+            device_model VARCHAR(160) NULL,
+            hardware_revision VARCHAR(120) NULL,
+            reported_firmware_version VARCHAR(120) NULL,
+            target_firmware_version VARCHAR(120) NOT NULL,
+            planning_status VARCHAR(32) NOT NULL,
+            planning_reason VARCHAR(500) NOT NULL,
+            rollout_batch INT NOT NULL,
+            delivery_status VARCHAR(24) NOT NULL DEFAULT 'ExternalHold',
+            provider_capability_status VARCHAR(24) NOT NULL DEFAULT 'Unverified',
+            remote_upgrade_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT ck_stage117_target_planning CHECK (planning_status IN ('ReadyForExternalEvidence','BlockedIdentity','AlreadyCurrent')),
+            CONSTRAINT ck_stage117_target_batch CHECK (rollout_batch>=1),
+            CONSTRAINT ck_stage117_target_delivery_hold CHECK (delivery_status='ExternalHold'),
+            CONSTRAINT ck_stage117_target_capability_unverified CHECK (provider_capability_status='Unverified'),
+            CONSTRAINT ck_stage117_target_no_remote_claim CHECK (remote_upgrade_claim=FALSE),
+            UNIQUE(company_id,campaign_id,device_id)
+        )",
     ];
 
     private static readonly string[] Indexes =
@@ -345,6 +403,12 @@ public sealed class TelemetrySchemaService(Database db)
           ON device_connectivity_profiles(company_id,device_id,idempotency_key)",
         @"CREATE INDEX IF NOT EXISTS ix_stage116_connectivity_history
           ON device_connectivity_profiles(company_id,device_id,effective_from DESC,id DESC)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage117_campaigns_company_schedule
+          ON device_firmware_campaigns(company_id,scheduled_for DESC,id DESC)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage117_targets_device_recent
+          ON device_firmware_campaign_targets(company_id,device_id,created_at DESC,id DESC)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage117_targets_campaign_batch
+          ON device_firmware_campaign_targets(company_id,campaign_id,rollout_batch,id)",
     ];
 
     private static readonly string[] Seeds =

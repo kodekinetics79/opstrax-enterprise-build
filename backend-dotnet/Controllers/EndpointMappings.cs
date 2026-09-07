@@ -268,6 +268,7 @@ public static partial class EndpointMappings
         app.MapPost("/api/telemetry/devices/{id:long}/installations/{installationId:long}/remove", DeviceInstallationRemove);
         app.MapPost("/api/telemetry/devices/{id:long}/installations/transfer", DeviceInstallationTransfer);
         app.MapPost("/api/telemetry/devices/{id:long}/connectivity-profiles", DeviceConnectivityProfileReplace);
+        app.MapPost("/api/telemetry/firmware-campaigns", DeviceFirmwareCampaignCreate);
         app.MapGet("/api/telemetry/installation-quarantine", DeviceInstallationQuarantineList);
         app.MapPost("/api/telemetry/installation-quarantine/{id:long}/resolve", DeviceInstallationQuarantineResolve);
         app.MapGet("/api/devices", DeviceList);
@@ -2865,6 +2866,7 @@ public static partial class EndpointMappings
             // Packet-2 mirror: fleet:view no longer reaches the device registry.
             "telemetry.devices.read" or "telemetry.devices.view" => ["telemetry.devices.read", "telemetry.devices.view", "telematics:devices:view", "telematics.devices.view"],
             "telemetry.devices.manage" => ["telemetry.devices.manage", "telematics:devices:create", "telematics:devices:update", "telematics:devices:delete", "telematics:devices:assign", "telematics:providers:manage", "fleet:manage", "fleet.manage"],
+            "telematics:devices:firmware" or "telematics.devices.firmware" => ["telematics:devices:firmware", "telematics.devices.firmware", "maintenance:manage", "maintenance.manage", "telematics:manage", "telematics.manage"],
             // Mirror of the frontend permission group: providers-manage ⇄ devices-manage ⇄ fleet:manage.
             "telematics:providers:manage" or "telematics.providers.manage" => ["telematics:providers:manage", "telematics.providers.manage", "telemetry.devices.manage", "fleet:manage", "fleet.manage"],
             "telemetry.alerts.read" or "telemetry.alerts.view" => ["telemetry.alerts.read", "telemetry.alerts.view", "alerts:view", "alerts.view", "safety:view", "safety.view", "maintenance:view", "maintenance.view"],
@@ -20704,6 +20706,20 @@ LIMIT 100000",
                  AND (@branchId::BIGINT IS NULL OR branch_id=@branchId)
                ORDER BY effective_from DESC,id DESC LIMIT 100",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
+        var firmwareCampaigns = await db.QueryAsync(
+            @"SELECT c.id campaign_id,c.campaign_name,c.target_firmware_version,c.rollback_firmware_version,
+                     c.rollout_strategy,c.batch_size,c.scheduled_for,c.maintenance_window_minutes,
+                     c.execution_status,c.provider_capability_status,c.remote_upgrade_claim,
+                     c.external_hold_reason,c.source_reference,c.change_reason,c.created_at,
+                     t.id target_id,t.device_id,t.device_serial,t.manufacturer,t.device_model,
+                     t.hardware_revision,t.reported_firmware_version,t.planning_status,
+                     t.planning_reason,t.rollout_batch,t.delivery_status
+                FROM device_firmware_campaign_targets t
+                JOIN device_firmware_campaigns c ON c.company_id=t.company_id AND c.id=t.campaign_id
+               WHERE t.company_id=@cid AND t.device_id=@id
+                 AND (@branchId::BIGINT IS NULL OR t.branch_id=@branchId)
+               ORDER BY c.created_at DESC,c.id DESC,t.id DESC LIMIT 100",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
         var current = history.FirstOrDefault(row =>
             row.GetValueOrDefault("effectiveTo") is null or DBNull &&
             row.GetValueOrDefault("status")?.ToString() is "Installed" or "Verified");
@@ -20719,6 +20735,7 @@ LIMIT 100000",
                 row.GetValueOrDefault("effectiveTo") is null or DBNull &&
                 row.GetValueOrDefault("assignmentStatus")?.ToString() == "Assigned"),
             connectivityProfiles,
+            firmwareCampaigns,
             assignmentHistory = transitions
         }, "Device"));
     }
@@ -20938,6 +20955,266 @@ LIMIT 100000",
             note = "Profile inventory recorded. Network attachment and telemetry remain unverified until observed independently."
         }, idempotentReplay ? "Connectivity profile already recorded" : "Connectivity profile recorded"));
     }
+
+    private static async Task<IResult> DeviceFirmwareCampaignCreate(
+        HttpContext http,
+        DeviceFirmwareCampaignRequest? body,
+        Database db,
+        AuditService audit,
+        CancellationToken ct)
+    {
+        if (RequirePermission(http, "telematics:devices:firmware") is { } denied) return denied;
+        var validation = DeviceFirmwareCampaignPolicy.Validate(body, DateTimeOffset.UtcNow);
+        if (validation.Error is not null)
+            return Results.BadRequest(ApiResponse<object>.Fail(validation.Error));
+        var input = validation.Value!;
+        var companyId = GetCompanyId(http);
+        var branchId = GetBranchId(http);
+        var requestedIds = input.DeviceIds.OrderBy(value => value).ToArray();
+
+        // Refuse partial campaigns: every requested target must be visible in the
+        // caller's tenant/branch scope at both admission and commit time.
+        var visibleDevices = await db.QueryAsync(
+            @"SELECT id,branch_id,device_serial,manufacturer,device_model,hardware_revision,
+                     firmware_version,status,device_state
+                FROM eld_devices
+               WHERE company_id=@cid AND id=ANY(@deviceIds) AND deleted_at IS NULL
+                 AND (@branchId::BIGINT IS NULL OR branch_id=@branchId)
+               ORDER BY id",
+            command =>
+            {
+                command.Parameters.AddWithValue("@cid", companyId);
+                command.Parameters.AddWithValue("@deviceIds", NpgsqlDbType.Array | NpgsqlDbType.Bigint, requestedIds);
+                command.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+            }, ct);
+        if (visibleDevices.Count != requestedIds.Length)
+            return Results.BadRequest(ApiResponse<object>.Fail("Every campaign target must be a visible, active device in the current scope."));
+        if (visibleDevices.Any(DeviceUnavailableForFirmwarePlanning))
+            return Results.Conflict(ApiResponse<object>.Fail("Retired, revoked, or decommissioned devices cannot enter a firmware campaign."));
+
+        var actorUserId = GetUserId(http);
+        Dictionary<string, object?> campaign;
+        List<Dictionary<string, object?>> targets;
+        bool idempotentReplay;
+        try
+        {
+            (campaign, targets, idempotentReplay) = await db.RunInSystemTransactionAsync(async () =>
+            {
+                var locks = requestedIds.Select(deviceId => $"firmware-device:{companyId}:{deviceId}")
+                    .Append($"firmware-campaign:{companyId}:{input.IdempotencyKey:D}")
+                    .OrderBy(value => value).ToArray();
+                await db.ExecuteAsync(
+                    @"SELECT pg_advisory_xact_lock(hashtextextended(identity,0))
+                        FROM unnest(@identities::TEXT[]) identity ORDER BY identity",
+                    command => command.Parameters.AddWithValue(
+                        "@identities", NpgsqlDbType.Array | NpgsqlDbType.Text, locks), ct);
+
+                var replay = await db.QuerySingleAsync(
+                    @"SELECT id,campaign_name,target_firmware_version,rollback_firmware_version,
+                             rollout_strategy,batch_size,scheduled_for,maintenance_window_minutes,
+                             execution_status,provider_capability_status,remote_upgrade_claim,
+                             external_hold_reason,source_reference,change_reason,created_at
+                        FROM device_firmware_campaigns
+                       WHERE company_id=@cid AND idempotency_key=@idempotencyKey
+                         AND (@branchId::BIGINT IS NULL OR branch_id=@branchId)",
+                    command =>
+                    {
+                        command.Parameters.AddWithValue("@cid", companyId);
+                        command.Parameters.AddWithValue("@idempotencyKey", input.IdempotencyKey);
+                        command.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+                    }, ct);
+                if (replay is not null)
+                {
+                    var replayTargets = await LoadFirmwareCampaignTargets(db, companyId, Convert.ToInt64(replay["id"]), branchId, ct);
+                    if (!FirmwareCampaignReplayMatches(replay, replayTargets, input))
+                        throw new InvalidOperationException("firmware_idempotency_mismatch");
+                    return (replay, replayTargets, true);
+                }
+
+                var lockedDevices = await db.QueryAsync(
+                    @"SELECT id,branch_id,device_serial,manufacturer,device_model,hardware_revision,
+                             firmware_version,status,device_state
+                        FROM eld_devices
+                       WHERE company_id=@cid AND id=ANY(@deviceIds) AND deleted_at IS NULL
+                         AND (@branchId::BIGINT IS NULL OR branch_id=@branchId)
+                       ORDER BY id FOR UPDATE",
+                    command =>
+                    {
+                        command.Parameters.AddWithValue("@cid", companyId);
+                        command.Parameters.AddWithValue("@deviceIds", NpgsqlDbType.Array | NpgsqlDbType.Bigint, requestedIds);
+                        command.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+                    }, ct);
+                if (lockedDevices.Count != requestedIds.Length || lockedDevices.Any(DeviceUnavailableForFirmwarePlanning))
+                    throw new InvalidOperationException("firmware_targets_changed");
+
+                var campaignBranchIds = lockedDevices
+                    .Select(row => row.GetValueOrDefault("branchId") is null or DBNull ? (long?)null : Convert.ToInt64(row["branchId"]))
+                    .Distinct().ToArray();
+                var campaignBranchId = campaignBranchIds.Length == 1 ? campaignBranchIds[0] : null;
+                const string externalHoldReason = "Provider/device OTA capability and physical upgrade, recovery, rollback, and soak evidence are not yet verified.";
+                var campaignId = await db.InsertAsync(
+                    @"INSERT INTO device_firmware_campaigns
+                        (company_id,branch_id,campaign_name,target_firmware_version,rollback_firmware_version,
+                         rollout_strategy,batch_size,scheduled_for,maintenance_window_minutes,
+                         execution_status,provider_capability_status,remote_upgrade_claim,external_hold_reason,
+                         source_reference,change_reason,idempotency_key,created_by,created_at)
+                       VALUES
+                        (@cid,@branchId,@name,@targetVersion,@rollbackVersion,@strategy,@batchSize,
+                         @scheduledFor,@windowMinutes,'ExternalHold','Unverified',FALSE,@holdReason,
+                         @sourceReference,@changeReason,@idempotencyKey,@actor,NOW())",
+                    command =>
+                    {
+                        command.Parameters.AddWithValue("@cid", companyId);
+                        command.Parameters.AddWithValue("@branchId", (object?)campaignBranchId ?? DBNull.Value);
+                        command.Parameters.AddWithValue("@name", input.CampaignName);
+                        command.Parameters.AddWithValue("@targetVersion", input.TargetFirmwareVersion);
+                        command.Parameters.AddWithValue("@rollbackVersion", (object?)input.RollbackFirmwareVersion ?? DBNull.Value);
+                        command.Parameters.AddWithValue("@strategy", input.RolloutStrategy);
+                        command.Parameters.AddWithValue("@batchSize", input.BatchSize);
+                        command.Parameters.AddWithValue("@scheduledFor", input.ScheduledFor);
+                        command.Parameters.AddWithValue("@windowMinutes", input.MaintenanceWindowMinutes);
+                        command.Parameters.AddWithValue("@holdReason", externalHoldReason);
+                        command.Parameters.AddWithValue("@sourceReference", input.SourceReference);
+                        command.Parameters.AddWithValue("@changeReason", input.ChangeReason);
+                        command.Parameters.AddWithValue("@idempotencyKey", input.IdempotencyKey);
+                        command.Parameters.AddWithValue("@actor", actorUserId);
+                    }, ct);
+
+                var byId = lockedDevices.ToDictionary(row => Convert.ToInt64(row["id"]));
+                for (var index = 0; index < input.DeviceIds.Count; index++)
+                {
+                    var device = byId[input.DeviceIds[index]];
+                    var assessment = DeviceFirmwareCampaignPolicy.AssessTarget(
+                        device.GetValueOrDefault("manufacturer")?.ToString(),
+                        device.GetValueOrDefault("deviceModel")?.ToString(),
+                        device.GetValueOrDefault("hardwareRevision")?.ToString(),
+                        device.GetValueOrDefault("firmwareVersion")?.ToString(),
+                        input.TargetFirmwareVersion);
+                    await db.InsertAsync(
+                        @"INSERT INTO device_firmware_campaign_targets
+                            (company_id,branch_id,campaign_id,device_id,device_serial,manufacturer,device_model,
+                             hardware_revision,reported_firmware_version,target_firmware_version,
+                             planning_status,planning_reason,rollout_batch,delivery_status,
+                             provider_capability_status,remote_upgrade_claim,created_at)
+                           VALUES
+                            (@cid,@branchId,@campaignId,@deviceId,@serial,@manufacturer,@model,
+                             @hardwareRevision,@reportedVersion,@targetVersion,@planningStatus,
+                             @planningReason,@rolloutBatch,'ExternalHold','Unverified',FALSE,NOW())",
+                        command =>
+                        {
+                            command.Parameters.AddWithValue("@cid", companyId);
+                            command.Parameters.AddWithValue("@branchId", device.GetValueOrDefault("branchId") is null or DBNull ? DBNull.Value : device["branchId"]!);
+                            command.Parameters.AddWithValue("@campaignId", campaignId);
+                            command.Parameters.AddWithValue("@deviceId", input.DeviceIds[index]);
+                            command.Parameters.AddWithValue("@serial", device["deviceSerial"]!);
+                            command.Parameters.AddWithValue("@manufacturer", DbNullableText(device, "manufacturer"));
+                            command.Parameters.AddWithValue("@model", DbNullableText(device, "deviceModel"));
+                            command.Parameters.AddWithValue("@hardwareRevision", DbNullableText(device, "hardwareRevision"));
+                            command.Parameters.AddWithValue("@reportedVersion", DbNullableText(device, "firmwareVersion"));
+                            command.Parameters.AddWithValue("@targetVersion", input.TargetFirmwareVersion);
+                            command.Parameters.AddWithValue("@planningStatus", assessment.Status);
+                            command.Parameters.AddWithValue("@planningReason", assessment.Reason);
+                            command.Parameters.AddWithValue("@rolloutBatch", index / input.BatchSize + 1);
+                        }, ct);
+                }
+
+                var insertedCampaign = await db.QuerySingleAsync(
+                    @"SELECT id,campaign_name,target_firmware_version,rollback_firmware_version,
+                             rollout_strategy,batch_size,scheduled_for,maintenance_window_minutes,
+                             execution_status,provider_capability_status,remote_upgrade_claim,
+                             external_hold_reason,source_reference,change_reason,created_at
+                        FROM device_firmware_campaigns WHERE company_id=@cid AND id=@campaignId",
+                    command =>
+                    {
+                        command.Parameters.AddWithValue("@cid", companyId);
+                        command.Parameters.AddWithValue("@campaignId", campaignId);
+                    }, ct);
+                var insertedTargets = await LoadFirmwareCampaignTargets(db, companyId, campaignId, branchId, ct);
+                return (insertedCampaign ?? throw new InvalidOperationException("campaign_not_recorded"), insertedTargets, false);
+            }, ct);
+        }
+        catch (InvalidOperationException ex) when (ex.Message is "firmware_targets_changed" or "campaign_not_recorded")
+        {
+            return Results.Conflict(ApiResponse<object>.Fail("The campaign targets changed while the plan was being recorded. Refresh and try again."));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "firmware_idempotency_mismatch")
+        {
+            return Results.Conflict(ApiResponse<object>.Fail("That idempotency key was already used for a different firmware plan."));
+        }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
+        {
+            return Results.Conflict(ApiResponse<object>.Fail("The firmware campaign conflicted with a concurrent plan. Refresh and try again."));
+        }
+
+        var ready = targets.Count(row => row.GetValueOrDefault("planningStatus")?.ToString() == "ReadyForExternalEvidence");
+        var blocked = targets.Count(row => row.GetValueOrDefault("planningStatus")?.ToString() == "BlockedIdentity");
+        var alreadyCurrent = targets.Count(row => row.GetValueOrDefault("planningStatus")?.ToString() == "AlreadyCurrent");
+        await audit.LogAsync(http, "device.firmware_campaign.planned", "DeviceFirmwareCampaign",
+            Convert.ToInt64(campaign["id"]),
+            $"targets:{targets.Count};ready-for-external-evidence:{ready};blocked-identity:{blocked};already-current:{alreadyCurrent};idempotent:{idempotentReplay}", ct);
+        http.Response.Headers.CacheControl = "no-store";
+        http.Response.Headers.Pragma = "no-cache";
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            campaign,
+            targets,
+            summary = new { total = targets.Count, readyForExternalEvidence = ready, blockedIdentity = blocked, alreadyCurrent },
+            idempotentReplay,
+            remoteUpgradeClaim = false,
+            note = "Campaign planning recorded. No command was dispatched; provider capability and physical upgrade evidence remain on external hold."
+        }, idempotentReplay ? "Firmware campaign already planned" : "Firmware campaign planned"));
+    }
+
+    private static async Task<List<Dictionary<string, object?>>> LoadFirmwareCampaignTargets(
+        Database db, long companyId, long campaignId, long? branchId, CancellationToken ct) => await db.QueryAsync(
+        @"SELECT id,campaign_id,device_id,device_serial,manufacturer,device_model,hardware_revision,
+                 reported_firmware_version,target_firmware_version,planning_status,planning_reason,
+                 rollout_batch,delivery_status,provider_capability_status,remote_upgrade_claim,created_at
+            FROM device_firmware_campaign_targets
+           WHERE company_id=@cid AND campaign_id=@campaignId
+             AND (@branchId::BIGINT IS NULL OR branch_id=@branchId)
+           ORDER BY rollout_batch,id",
+        command =>
+        {
+            command.Parameters.AddWithValue("@cid", companyId);
+            command.Parameters.AddWithValue("@campaignId", campaignId);
+            command.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+        }, ct);
+
+    private static bool FirmwareCampaignReplayMatches(
+        Dictionary<string, object?> campaign,
+        IReadOnlyList<Dictionary<string, object?>> targets,
+        ValidatedDeviceFirmwareCampaign input)
+    {
+        var targetIds = targets.Select(row => Convert.ToInt64(row["deviceId"])).ToArray();
+        return targetIds.SequenceEqual(input.DeviceIds)
+            && string.Equals(campaign.GetValueOrDefault("campaignName")?.ToString(), input.CampaignName, StringComparison.Ordinal)
+            && string.Equals(campaign.GetValueOrDefault("targetFirmwareVersion")?.ToString(), input.TargetFirmwareVersion, StringComparison.Ordinal)
+            && string.Equals(FirmwareText(campaign, "rollbackFirmwareVersion"), input.RollbackFirmwareVersion, StringComparison.Ordinal)
+            && string.Equals(campaign.GetValueOrDefault("rolloutStrategy")?.ToString(), input.RolloutStrategy, StringComparison.Ordinal)
+            && Convert.ToInt32(campaign["batchSize"]) == input.BatchSize
+            && Convert.ToInt32(campaign["maintenanceWindowMinutes"]) == input.MaintenanceWindowMinutes
+            && FirmwareTimestamp(campaign.GetValueOrDefault("scheduledFor")) == input.ScheduledFor
+            && string.Equals(campaign.GetValueOrDefault("sourceReference")?.ToString(), input.SourceReference, StringComparison.Ordinal)
+            && string.Equals(campaign.GetValueOrDefault("changeReason")?.ToString(), input.ChangeReason, StringComparison.Ordinal);
+    }
+
+    private static string? FirmwareText(Dictionary<string, object?> row, string key) =>
+        row.GetValueOrDefault(key) is null or DBNull ? null : row[key]?.ToString();
+
+    private static DateTimeOffset? FirmwareTimestamp(object? value) => value switch
+    {
+        DateTimeOffset timestamp => timestamp.ToUniversalTime(),
+        DateTime timestamp => new DateTimeOffset(DateTime.SpecifyKind(timestamp, DateTimeKind.Utc)),
+        _ => null,
+    };
+
+    private static bool DeviceUnavailableForFirmwarePlanning(Dictionary<string, object?> device) =>
+        device.GetValueOrDefault("status")?.ToString() is "Revoked" or "Retired" ||
+        device.GetValueOrDefault("deviceState")?.ToString() is "Decommissioned" or "Retired";
+
+    private static object DbNullableText(Dictionary<string, object?> row, string key) =>
+        row.GetValueOrDefault(key) is null or DBNull ? DBNull.Value : row[key]!;
 
     private static async Task<object> DeviceCompatibilityProjection(
         Database db, Dictionary<string, object?> device, CancellationToken ct)

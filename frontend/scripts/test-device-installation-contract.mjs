@@ -83,7 +83,8 @@ assert.match(devicesPage, /\{assignTarget && canGovernInstallations \? \(/, "a s
 assert.match(devicesPage, /\{confirmTarget && confirmAllowed \? \(/, "destructive confirmation must fail closed if permission changes");
 assert.doesNotMatch(devicesPage, /Schedule firmware for/, "Unsupported OTA scheduling must not be presented as an operational form");
 assert.doesNotMatch(devicesPage, /onRunDiagnostics|diagnosticsMut/, "Unsupported on-demand diagnostics must not be presented as an operational action");
-assert.match(devicesPage, /OTA scheduling and firmware history are not connected/, "Unsupported OTA must be labelled explicitly as read-only");
+assert.match(devicesPage, /OpsTrax does not dispatch an OTA command from this workflow/, "Firmware planning must state that it does not dispatch OTA commands");
+assert.match(devicesPage, /physical upgrade, recovery, rollback, and soak evidence remain on external hold/, "Firmware planning must preserve the physical-evidence hold");
 assert.doesNotMatch(devicesPage, /Metadata edits were captured/, "Unsupported metadata must not report success");
 assert.match(devicesPage, /Metadata read-only/, "Unsupported metadata must be labelled read-only");
 assert.match(devicesPage, /Installation History/, "The detail drawer must render installation history");

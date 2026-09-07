@@ -46,6 +46,7 @@ import {
   type DeviceConnectivityProfileInput,
   type DeviceCredentialRotationResult,
   type DeviceDetailRecord,
+  type DeviceFirmwareCampaignInput,
   type DeviceIdentityQuarantineRecord,
   type DeviceInstallationInput,
   type DeviceInstallationIntent,
@@ -142,6 +143,32 @@ function newConnectivityProfileForm(): ConnectivityProfileFormState {
     msisdn: "",
     apn: "",
     effectiveAt: currentLocalMinute(),
+    changeReason: "",
+    sourceReference: "",
+    idempotencyKey: crypto.randomUUID(),
+  };
+}
+
+type FirmwareCampaignFormState = {
+  campaignName: string;
+  targetFirmwareVersion: string;
+  rollbackFirmwareVersion: string;
+  rolloutStrategy: DeviceFirmwareCampaignInput["rolloutStrategy"];
+  scheduledFor: string;
+  maintenanceWindowMinutes: string;
+  changeReason: string;
+  sourceReference: string;
+  idempotencyKey: string;
+};
+
+function newFirmwareCampaignForm(): FirmwareCampaignFormState {
+  return {
+    campaignName: "",
+    targetFirmwareVersion: "",
+    rollbackFirmwareVersion: "",
+    rolloutStrategy: "Canary",
+    scheduledFor: currentLocalMinute(),
+    maintenanceWindowMinutes: "60",
     changeReason: "",
     sourceReference: "",
     idempotencyKey: crypto.randomUUID(),
@@ -344,7 +371,7 @@ const DEVICE_TABS: Array<{ key: DeviceTab; label: string }> = [
   { key: "unassigned", label: "Unassigned" },
   { key: "offline", label: "Offline" },
   { key: "attention", label: "Needs Attention" },
-  { key: "firmware", label: "Firmware (read-only)" },
+  { key: "firmware", label: "Firmware planning" },
   { key: "provisioning", label: "Provisioning" },
   { key: "diagnostics", label: "Diagnostics evidence" },
   { key: "quarantine", label: "Identity Quarantine" },
@@ -356,7 +383,7 @@ const DEVICE_TABS: Array<{ key: DeviceTab; label: string }> = [
 function emptyStateForTab(tab: DeviceTab) {
   if (tab === "archived") return { title: "No archived devices", subtitle: "Revoked and retired devices remain visible here with their lifecycle history." };
   if (tab === "offline") return { title: "No offline devices", subtitle: "Every scoped device is checking in within the current monitoring window." };
-  if (tab === "firmware") return { title: "Current version only", subtitle: "OTA scheduling and firmware history are not connected in this pilot. Current versions appear when devices report them." };
+  if (tab === "firmware") return { title: "No devices available for firmware planning", subtitle: "Campaign plans require real devices with reported inventory. Planning does not dispatch an OTA command." };
   if (tab === "providers") return { title: "No providers found", subtitle: "Integrations are pulled from your connected provider catalog." };
   if (tab === "quarantine") return { title: "No unresolved identity conflicts", subtitle: "Every device and installation identity in this fleet is currently unambiguous." };
   return { title: "No devices found", subtitle: "Refine the search, switch tabs, or register a device for this fleet." };
@@ -370,7 +397,7 @@ function activeTabCount(tab: DeviceTab, row: DeviceCommandRecord) {
   if (tab === "unassigned") return !row.assignedVehicleCode;
   if (tab === "offline") return /offline/i.test(row.connectionStatus);
   if (tab === "attention") return /attention|offline/i.test(row.connectionStatus) || row.openAlertCount > 0;
-  if (tab === "firmware") return true; // read-only current-version listing; no OTA/target diff exists in this pilot
+  if (tab === "firmware") return true;
   if (tab === "provisioning") return /provision|awaiting/i.test(row.connectionStatus) || /awaiting|warning/i.test(row.installStatus);
   // Diagnostics is a separate evidence feed, not a device-inventory filter.
   // Never count every registered device as though it had diagnostic evidence.
@@ -625,6 +652,7 @@ export function IotDevicesPage() {
   // Provision, import, revoke/archive, installation, commissioning, suspension,
   // activation, and credential rotation all share this exact server guard.
   const canManageDeviceLifecycle = hasPermission(PERMISSIONS.TELEMETRY_DEVICES_MANAGE);
+  const canPlanFirmware = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_FIRMWARE);
   const canCreate = canManageDeviceLifecycle;
   const canUpdate = canManageDeviceLifecycle;
   const canDelete = canManageDeviceLifecycle;
@@ -1739,6 +1767,7 @@ export function IotDevicesPage() {
 	              <DeviceDetailDrawer
 	                detail={detailQ.data}
 	                canManageConnectivity={canManageDeviceLifecycle}
+	                canPlanFirmware={canPlanFirmware}
 	                lifecycleError={lifecycleError}
 	                onDismissLifecycleError={clearLifecycleError}
 	                actionContracts={
@@ -1966,12 +1995,14 @@ export function IotDevicesPage() {
 function DeviceDetailDrawer({
   detail,
   canManageConnectivity,
+  canPlanFirmware,
   actionContracts,
   lifecycleError,
   onDismissLifecycleError,
 }: {
   detail: DeviceDetailRecord;
   canManageConnectivity: boolean;
+  canPlanFirmware: boolean;
   actionContracts: DeviceActionContract[];
   lifecycleError?: unknown;
   onDismissLifecycleError: () => void;
@@ -2026,6 +2057,59 @@ function DeviceDetailDrawer({
     } catch (error) {
       connectivitySubmitting.current = false;
       setConnectivityError(error instanceof Error ? error.message : "Connectivity profile validation failed.");
+    }
+  };
+  const [firmwareOpen, setFirmwareOpen] = useState(false);
+  const [firmwareForm, setFirmwareForm] = useState<FirmwareCampaignFormState>(newFirmwareCampaignForm);
+  const [firmwareError, setFirmwareError] = useState<string | null>(null);
+  const [firmwareNotice, setFirmwareNotice] = useState<string | null>(null);
+  const firmwareSubmitting = useRef(false);
+  const firmwareMut = useMutation({
+    mutationFn: (input: DeviceFirmwareCampaignInput) => telematicsService.createFirmwareCampaign(input),
+    retry: false,
+    onSuccess: async (result) => {
+      setFirmwareForm(newFirmwareCampaignForm());
+      setFirmwareOpen(false);
+      setFirmwareError(null);
+      setFirmwareNotice(result.note);
+      await queryClient.invalidateQueries({ queryKey: ["telematics", "device"] });
+    },
+    onError: (error) => setFirmwareError(apiErrorMessage(error, "The firmware plan was not recorded.")),
+    onSettled: () => { firmwareSubmitting.current = false; },
+  });
+  const openFirmwareForm = () => {
+    setFirmwareForm(newFirmwareCampaignForm());
+    setFirmwareError(null);
+    setFirmwareNotice(null);
+    firmwareMut.reset();
+    setFirmwareOpen(true);
+  };
+  const submitFirmwareCampaign = (event: FormEvent) => {
+    event.preventDefault();
+    if (!canPlanFirmware || firmwareSubmitting.current || firmwareMut.isPending) return;
+    setFirmwareError(null);
+    try {
+      const scheduledFor = toUtcIso(firmwareForm.scheduledFor, "firmware campaign schedule");
+      const maintenanceWindowMinutes = Number(firmwareForm.maintenanceWindowMinutes);
+      if (!Number.isInteger(maintenanceWindowMinutes) || maintenanceWindowMinutes < 15 || maintenanceWindowMinutes > 720)
+        throw new Error("Maintenance window must be between 15 and 720 minutes.");
+      firmwareSubmitting.current = true;
+      firmwareMut.mutate({
+        campaignName: firmwareForm.campaignName.trim(),
+        targetFirmwareVersion: firmwareForm.targetFirmwareVersion.trim(),
+        rollbackFirmwareVersion: firmwareForm.rollbackFirmwareVersion.trim() || undefined,
+        rolloutStrategy: firmwareForm.rolloutStrategy,
+        scheduledFor,
+        maintenanceWindowMinutes,
+        batchSize: 1,
+        deviceIds: [device.id],
+        changeReason: firmwareForm.changeReason.trim(),
+        sourceReference: firmwareForm.sourceReference.trim(),
+        idempotencyKey: firmwareForm.idempotencyKey,
+      });
+    } catch (error) {
+      firmwareSubmitting.current = false;
+      setFirmwareError(error instanceof Error ? error.message : "Firmware campaign validation failed.");
     }
   };
   // Guard every [0] access — these live sub-feeds are frequently empty. `telemetry`
@@ -2351,9 +2435,67 @@ function DeviceDetailDrawer({
           ) : null}
           <p className="mt-2 text-xs text-slate-400">Registration, installation, commissioning, or live data never certifies hardware. Physical bench, route, recovery, soak, security, and independent acceptance evidence is still required.</p>
         </PanelSection>
-        <PanelSection title="Reported Firmware (read-only)">
-          <MiniGrid rows={[["Current reported version", cell(device.firmwareVersion)]]} />
-          <p className="mt-3 text-sm text-slate-400">OTA scheduling and firmware history are not connected. No firmware operation is available from this page.</p>
+        <PanelSection title="Firmware campaign planning">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-400">Current reported version</p>
+              <p className="mt-1 text-lg font-semibold text-white">{cell(device.firmwareVersion)}</p>
+            </div>
+            {canPlanFirmware ? (
+              <button type="button" className="btn-secondary" onClick={openFirmwareForm} disabled={firmwareMut.isPending}>
+                Plan campaign
+              </button>
+            ) : null}
+          </div>
+          <p className="mt-3 rounded-xl border border-amber-300/25 bg-amber-500/10 p-3 text-sm text-amber-100">
+            Planning record only. OpsTrax does not dispatch an OTA command from this workflow. Provider capability and physical upgrade, recovery, rollback, and soak evidence remain on external hold.
+          </p>
+          {firmwareNotice ? <p role="status" className="mt-3 rounded-lg border border-emerald-400/25 bg-emerald-500/10 p-3 text-sm text-emerald-100">{firmwareNotice}</p> : null}
+          {firmwareOpen && canPlanFirmware ? (
+            <form className="mt-4 space-y-3 rounded-xl border border-white/[0.08] bg-black/10 p-4" onSubmit={submitFirmwareCampaign}>
+              <div className="grid gap-3 md:grid-cols-2">
+                <FormField label="Campaign name"><input className="field w-full" required minLength={3} maxLength={160} value={firmwareForm.campaignName} onChange={(event) => setFirmwareForm((form) => ({ ...form, campaignName: event.target.value }))} disabled={firmwareMut.isPending} /></FormField>
+                <FormField label="Rollout strategy">
+                  <select className="field w-full" value={firmwareForm.rolloutStrategy} onChange={(event) => setFirmwareForm((form) => ({ ...form, rolloutStrategy: event.target.value as DeviceFirmwareCampaignInput["rolloutStrategy"] }))} disabled={firmwareMut.isPending}>
+                    <option value="Canary">Canary</option><option value="Staged">Staged</option><option value="Manual">Manual</option>
+                  </select>
+                </FormField>
+                <FormField label="Target firmware"><input className="field w-full" required maxLength={120} placeholder="e.g. v2.4.1" value={firmwareForm.targetFirmwareVersion} onChange={(event) => setFirmwareForm((form) => ({ ...form, targetFirmwareVersion: event.target.value }))} disabled={firmwareMut.isPending} /></FormField>
+                <FormField label="Rollback version (optional)"><input className="field w-full" maxLength={120} value={firmwareForm.rollbackFirmwareVersion} onChange={(event) => setFirmwareForm((form) => ({ ...form, rollbackFirmwareVersion: event.target.value }))} disabled={firmwareMut.isPending} /></FormField>
+                <FormField label="Planned window start"><input className="field w-full" type="datetime-local" required value={firmwareForm.scheduledFor} onChange={(event) => setFirmwareForm((form) => ({ ...form, scheduledFor: event.target.value }))} disabled={firmwareMut.isPending} /></FormField>
+                <FormField label="Window minutes"><input className="field w-full" type="number" min={15} max={720} required value={firmwareForm.maintenanceWindowMinutes} onChange={(event) => setFirmwareForm((form) => ({ ...form, maintenanceWindowMinutes: event.target.value }))} disabled={firmwareMut.isPending} /></FormField>
+                <FormField label="Source reference"><input className="field w-full" required minLength={3} maxLength={240} placeholder="Change ticket or vendor release" value={firmwareForm.sourceReference} onChange={(event) => setFirmwareForm((form) => ({ ...form, sourceReference: event.target.value }))} disabled={firmwareMut.isPending} /></FormField>
+                <FormField label="Planning reason"><input className="field w-full" required minLength={5} maxLength={500} value={firmwareForm.changeReason} onChange={(event) => setFirmwareForm((form) => ({ ...form, changeReason: event.target.value }))} disabled={firmwareMut.isPending} /></FormField>
+              </div>
+              {firmwareError ? <p role="alert" className="text-sm text-red-300">{firmwareError}</p> : null}
+              <div className="flex justify-end gap-2">
+                <button type="button" className="btn-ghost" disabled={firmwareMut.isPending} onClick={() => { setFirmwareForm(newFirmwareCampaignForm()); setFirmwareOpen(false); setFirmwareError(null); }}>Cancel</button>
+                <button type="submit" className="btn-primary" disabled={firmwareMut.isPending}>{firmwareMut.isPending ? "Recording…" : "Record firmware plan"}</button>
+              </div>
+            </form>
+          ) : null}
+          <div className="mt-4 space-y-3">
+            {detail.firmwareCampaigns.length === 0 ? <p className="text-sm text-slate-400">No firmware campaign plans recorded for this device.</p> : detail.firmwareCampaigns.map((plan) => (
+              <div key={`${plan.campaignId}-${plan.targetId}`} className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div><p className="font-semibold text-white">{plan.campaignName}</p><p className="mt-1 text-xs text-slate-400">Target {cell(plan.targetFirmwareVersion)} · Batch {plan.rolloutBatch || "—"} · {plan.rolloutStrategy}</p></div>
+                  <StatusBadge status={plan.deliveryStatus} />
+                </div>
+                <MiniGrid rows={[
+                  ["Reported at planning", cell(plan.reportedFirmwareVersion)],
+                  ["Target", cell(plan.targetFirmwareVersion)],
+                  ["Rollback", cell(plan.rollbackFirmwareVersion)],
+                  ["Planning eligibility", plan.planningStatus],
+                  ["Provider capability", plan.providerCapabilityStatus],
+                  ["Scheduled", cell(plan.scheduledFor)],
+                  ["Window", plan.maintenanceWindowMinutes ? `${plan.maintenanceWindowMinutes} minutes` : "—"],
+                  ["Source", cell(plan.sourceReference)],
+                ]} />
+                <p className="mt-3 text-sm text-slate-300">{plan.planningReason}</p>
+                <p className="mt-2 text-xs text-amber-200">{plan.externalHoldReason}</p>
+              </div>
+            ))}
+          </div>
         </PanelSection>
         <PanelSection title="Installation History">
           {detail.currentInstallation ? (

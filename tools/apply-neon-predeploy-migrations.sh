@@ -260,6 +260,8 @@ MIGRATIONS=(
   2026_09_07_stage115_device_compatibility_candidate_registry
   # Encrypted SIM/eSIM assignment history; no connectivity state is inferred.
   2026_09_07_stage116_device_connectivity_profiles
+  # Firmware rollout planning only; every target remains ExternalHold and non-executable.
+  2026_09_07_stage117_device_firmware_campaign_planning
 )
 
 echo "Pre-check: validated read-only database identity…"
@@ -419,7 +421,8 @@ BEGIN
       ('2026_09_07_stage113_samsara_account_identity'),
       ('2026_09_07_stage114_camera_asset_reconciliation'),
       ('2026_09_07_stage115_device_compatibility_candidate_registry'),
-      ('2026_09_07_stage116_device_connectivity_profiles')) required(version)
+      ('2026_09_07_stage116_device_connectivity_profiles'),
+      ('2026_09_07_stage117_device_firmware_campaign_planning')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN RAISE EXCEPTION 'Required owner/pilot migration ledger missing or duplicated'; END IF;
   IF EXISTS (
@@ -509,6 +512,32 @@ BEGIN
        OR has_column_privilege('opstrax_app','device_connectivity_profiles','msisdn_encrypted','SELECT')
        OR has_column_privilege('opstrax_app','device_connectivity_profiles','apn_encrypted','SELECT')) THEN
     RAISE EXCEPTION 'Stage116 app role can read encrypted SIM/APN payload columns';
+  END IF;
+  IF to_regclass('public.device_firmware_campaigns') IS NULL
+     OR to_regclass('public.device_firmware_campaign_targets') IS NULL
+     OR NOT EXISTS (
+       SELECT 1 FROM pg_trigger
+       WHERE tgrelid='public.device_firmware_campaigns'::regclass
+         AND tgname='trg_stage117_protect_firmware_campaign' AND NOT tgisinternal
+     )
+     OR EXISTS (
+       SELECT 1 FROM device_firmware_campaigns
+       WHERE execution_status<>'ExternalHold'
+          OR provider_capability_status<>'Unverified'
+          OR remote_upgrade_claim
+     )
+     OR EXISTS (
+       SELECT 1 FROM device_firmware_campaign_targets
+       WHERE delivery_status<>'ExternalHold'
+          OR provider_capability_status<>'Unverified'
+          OR remote_upgrade_claim
+     ) THEN
+    RAISE EXCEPTION 'Stage117 non-executable firmware planning contract is missing or invalid';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_app')
+     AND (has_table_privilege('opstrax_app','device_firmware_campaigns','INSERT,UPDATE,DELETE')
+       OR has_table_privilege('opstrax_app','device_firmware_campaign_targets','INSERT,UPDATE,DELETE')) THEN
+    RAISE EXCEPTION 'Stage117 app role can mutate firmware planning history';
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns

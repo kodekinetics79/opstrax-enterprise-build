@@ -477,6 +477,7 @@ export type DeviceDetailRecord = {
   telemetry: TelematicsTelemetrySeedRecord[];
   healthEvents: TelematicsHealthSeedRecord[];
   firmwareUpdates: TelematicsFirmwareSeedRecord[];
+  firmwareCampaigns: DeviceFirmwareCampaignRecord[];
   diagnostics: TelematicsDiagnosticSeedRecord[];
   currentInstallation: TelematicsInstallationSeedRecord | null;
   installations: TelematicsInstallationSeedRecord[];
@@ -509,6 +510,49 @@ export type DeviceConnectivityProfileInput = {
   msisdn?: string;
   apn?: string;
   effectiveAt: string;
+  changeReason: string;
+  sourceReference: string;
+  idempotencyKey: string;
+};
+
+export type DeviceFirmwareCampaignRecord = {
+  campaignId: string;
+  targetId: string;
+  campaignName: string;
+  targetFirmwareVersion: string;
+  rollbackFirmwareVersion: string | null;
+  rolloutStrategy: "Manual" | "Canary" | "Staged" | "Unknown";
+  batchSize: number;
+  scheduledFor: string;
+  maintenanceWindowMinutes: number;
+  executionStatus: "ExternalHold" | "Unknown";
+  providerCapabilityStatus: "Unverified" | "Unknown";
+  remoteUpgradeClaim: false;
+  externalHoldReason: string;
+  sourceReference: string;
+  changeReason: string;
+  createdAt: string;
+  deviceId: string;
+  deviceSerial: string;
+  manufacturer: string | null;
+  deviceModel: string | null;
+  hardwareRevision: string | null;
+  reportedFirmwareVersion: string | null;
+  planningStatus: "ReadyForExternalEvidence" | "BlockedIdentity" | "AlreadyCurrent" | "Unknown";
+  planningReason: string;
+  rolloutBatch: number;
+  deliveryStatus: "ExternalHold" | "Unknown";
+};
+
+export type DeviceFirmwareCampaignInput = {
+  campaignName: string;
+  targetFirmwareVersion: string;
+  rollbackFirmwareVersion?: string;
+  rolloutStrategy: "Manual" | "Canary" | "Staged";
+  scheduledFor: string;
+  maintenanceWindowMinutes: number;
+  batchSize: number;
+  deviceIds: Array<string | number>;
   changeReason: string;
   sourceReference: string;
   idempotencyKey: string;
@@ -552,6 +596,43 @@ function mapConnectivityProfile(raw: AnyRecord): DeviceConnectivityProfileRecord
     sourceReference: String(row.source_reference ?? ""),
     changeReason: String(row.change_reason ?? ""),
     endReason: row.end_reason == null ? null : String(row.end_reason),
+  };
+}
+
+function mapFirmwareCampaign(raw: AnyRecord): DeviceFirmwareCampaignRecord {
+  const row = normalizeKeys(raw);
+  if (row.remote_upgrade_claim !== false)
+    throw new Error("Firmware planning data did not include the required no-upgrade-claim marker.");
+  return {
+    campaignId: String(row.campaign_id ?? row.id ?? ""),
+    targetId: String(row.target_id ?? row.id ?? ""),
+    campaignName: String(row.campaign_name ?? ""),
+    targetFirmwareVersion: String(row.target_firmware_version ?? ""),
+    rollbackFirmwareVersion: row.rollback_firmware_version == null ? null : String(row.rollback_firmware_version),
+    rolloutStrategy: row.rollout_strategy === "Manual" || row.rollout_strategy === "Canary" || row.rollout_strategy === "Staged"
+      ? row.rollout_strategy : "Unknown",
+    batchSize: Number.isInteger(Number(row.batch_size)) && Number(row.batch_size) > 0 ? Number(row.batch_size) : 0,
+    scheduledFor: String(row.scheduled_for ?? ""),
+    maintenanceWindowMinutes: Number.isInteger(Number(row.maintenance_window_minutes)) && Number(row.maintenance_window_minutes) > 0
+      ? Number(row.maintenance_window_minutes) : 0,
+    executionStatus: row.execution_status === "ExternalHold" ? "ExternalHold" : "Unknown",
+    providerCapabilityStatus: row.provider_capability_status === "Unverified" ? "Unverified" : "Unknown",
+    remoteUpgradeClaim: false,
+    externalHoldReason: String(row.external_hold_reason ?? "Firmware delivery evidence is unavailable."),
+    sourceReference: String(row.source_reference ?? ""),
+    changeReason: String(row.change_reason ?? ""),
+    createdAt: String(row.created_at ?? ""),
+    deviceId: String(row.device_id ?? ""),
+    deviceSerial: String(row.device_serial ?? ""),
+    manufacturer: row.manufacturer == null ? null : String(row.manufacturer),
+    deviceModel: row.device_model == null ? null : String(row.device_model),
+    hardwareRevision: row.hardware_revision == null ? null : String(row.hardware_revision),
+    reportedFirmwareVersion: row.reported_firmware_version == null ? null : String(row.reported_firmware_version),
+    planningStatus: row.planning_status === "ReadyForExternalEvidence" || row.planning_status === "BlockedIdentity" || row.planning_status === "AlreadyCurrent"
+      ? row.planning_status : "Unknown",
+    planningReason: String(row.planning_reason ?? "Planning status unavailable."),
+    rolloutBatch: Number.isInteger(Number(row.rollout_batch)) && Number(row.rollout_batch) > 0 ? Number(row.rollout_batch) : 0,
+    deliveryStatus: row.delivery_status === "ExternalHold" ? "ExternalHold" : "Unknown",
   };
 }
 
@@ -1786,6 +1867,10 @@ export const telematicsService = {
       ? detail.connectivity_profiles as AnyRecord[]
       : [];
     const connectivityProfiles = connectivityRows.map(mapConnectivityProfile);
+    const firmwareCampaignRows = Array.isArray(detail.firmware_campaigns)
+      ? detail.firmware_campaigns as AnyRecord[]
+      : [];
+    const firmwareCampaigns = firmwareCampaignRows.map(mapFirmwareCampaign);
     const responseCurrentConnectivityProfile = detail.current_connectivity_profile && typeof detail.current_connectivity_profile === "object"
       ? mapConnectivityProfile(detail.current_connectivity_profile as AnyRecord)
       : null;
@@ -1849,7 +1934,8 @@ export const telematicsService = {
       telemetry,
       healthEvents,
       diagnostics,
-      firmwareUpdates: [], // no OTA/firmware-schedule endpoint
+      firmwareUpdates: [], // no executed OTA result feed; plans remain separate and ExternalHold
+      firmwareCampaigns,
       currentInstallation,
       installations,
       sensorReadings: [], // no standalone sensor-reading endpoint
@@ -1892,6 +1978,37 @@ export const telematicsService = {
       profile: mapConnectivityProfile(normalized.profile as AnyRecord),
       idempotentReplay: normalized.idempotent_replay === true,
       note: String(normalized.note ?? "Profile inventory recorded; connectivity remains unverified."),
+    };
+  },
+
+  async createFirmwareCampaign(input: DeviceFirmwareCampaignInput) {
+    const session = getSession();
+    ensureManagementAccess(session);
+    const deviceIds = input.deviceIds.map(installationBodyId);
+    if (deviceIds.length < 1 || deviceIds.length > 500 || deviceIds.some(id => id === null))
+      throw new Error("A firmware campaign requires 1-500 valid devices.");
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.idempotencyKey))
+      throw new Error("The firmware planning form session is invalid. Close and reopen it.");
+    const payload = await unwrap<AnyRecord>(apiClient.post("/api/telemetry/firmware-campaigns", {
+      ...input,
+      deviceIds,
+      campaignName: input.campaignName.trim(),
+      targetFirmwareVersion: input.targetFirmwareVersion.trim(),
+      rollbackFirmwareVersion: input.rollbackFirmwareVersion?.trim() || null,
+      changeReason: input.changeReason.trim(),
+      sourceReference: input.sourceReference.trim(),
+    }));
+    const normalized = normalizeKeys(payload);
+    if (normalized.remote_upgrade_claim !== false)
+      throw new Error("The server did not return the required no-upgrade-claim acknowledgement.");
+    if (!normalized.campaign || typeof normalized.campaign !== "object" || !Array.isArray(normalized.targets))
+      throw new Error("The server did not return the recorded firmware plan.");
+    const campaignRow = normalizeKeys(normalized.campaign as AnyRecord);
+    return {
+      campaignId: String(campaignRow.id ?? ""),
+      targets: (normalized.targets as AnyRecord[]).map(target => mapFirmwareCampaign({ ...campaignRow, ...normalizeKeys(target) })),
+      idempotentReplay: normalized.idempotent_replay === true,
+      note: String(normalized.note ?? "Firmware planning recorded; no command was dispatched."),
     };
   },
 
