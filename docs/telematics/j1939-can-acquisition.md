@@ -56,8 +56,16 @@ Abandoned paths age out before the path limit is applied. Malformed or out-of-or
 
 DM1 and DM2 payloads can then pass to `J1939DiagnosticDecoder`. No high-value engine signal is emitted from this acquisition layer, and unavailable values are not converted to zero.
 
+`J1939DiagnosticAcquisition` provides the bounded composition for diagnostic consumers. It returns one of three explicit states for each accepted frame:
+
+- no complete message, covering transport fragments and control frames without asserting that a session remains pending;
+- complete non-diagnostic J1939 message, retaining the message and all capture evidence for another explicitly supported decoder;
+- decoded DM1/DM2 diagnostic message, paired with the complete acquired message and its frame evidence.
+
+A malformed complete DM1/DM2 message fails closed. The failure retains PGN, source address, capture times and capture references for investigation, but it does not copy raw payload bytes into exception text.
+
 ## Verification
 
-The protocol suite covers direct DM1 decoding, PDU1/PDU2 identifier semantics, input rejection, immutable capture copying, multi-packet DM1 reconstruction, evidence retention, bus isolation, concurrent channels, abandoned-path expiry, timestamp regression, invalid transported PGNs and mismatched evidence rejection.
+The protocol suite covers direct DM1 decoding, PDU1/PDU2 identifier semantics, input rejection, immutable capture copying, multi-packet DM1/DM2 reconstruction, diagnostic outcome classification, evidence retention, bounded malformed-diagnostic failures, bus isolation, concurrent channels, abandoned-path expiry, timestamp regression, invalid transported PGNs and mismatched evidence rejection.
 
 Synthetic tests establish deterministic software behavior only. Capability promotion still requires an exact adapter/device/firmware tuple, physical CAN traffic, trusted comparison values, controlled vehicle testing, recovery and soak evidence, and qualified human acceptance under the commercialization plan.

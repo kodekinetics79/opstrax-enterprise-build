@@ -44,6 +44,12 @@ The bounded software candidate now adds the raw classic-CAN acquisition boundary
 
 This advances deterministic software readiness only. J1939, PT40 and OEM status remains DEVELOPMENT / EXTERNAL HOLD until the exact physical evidence and qualified acceptance above exist.
 
+## Third implementation slice — evidence-bearing DM1/DM2 pipeline
+
+The bounded software candidate now composes classic-CAN admission, transport reassembly and the existing J1939-73 DM1/DM2 decoder through `J1939DiagnosticAcquisition`. Every admitted frame produces an explicit outcome: no complete message, complete non-diagnostic J1939 message, or decoded diagnostic message. The first state covers incomplete transfers and transport control frames without falsely asserting that a session remains pending. Complete non-diagnostic traffic retains its acquisition evidence for a later explicitly supported signal registry; it is never mislabelled as a diagnostic or collapsed into invented engine observations.
+
+Malformed complete DM1/DM2 messages fail closed with PGN, source, time and capture-reference provenance while omitting raw payload bytes from exception text. This is an internal integration boundary only. It does not open a CAN interface, persist a vehicle observation, establish the authority of a source ECU, or create a physical compatibility claim.
+
 ## Stop conditions
 
 RED if the lane invents PGN values, uses synthetic frames as physical certification, collapses unavailable values to zero, loses source address/provenance, claims universal J1939/CAN support, or treats a PT40/OEM marketing sheet as wire-level certification.
