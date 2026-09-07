@@ -12146,6 +12146,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var companyId = GetCompanyId(http);
         var adapterUnavailable = false;
         var oauthOnly = false;
+        var unsupportedSamsaraRegion = false;
         var credentialsChanged = Opstrax.Api.Services.Connectors.ConnectorRegistry.ContainsCredentialMutation(body);
         var configured = await RunLockedIntegrationMutationAsync(db, companyId, id, async existing =>
         {
@@ -12165,9 +12166,29 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             // every changed sensitive leaf. The row lock ensures the stored snapshot
             // cannot be invalidated by disconnect between this merge and its write.
             var configJson = connectors.MergeConfigForStorage(body, existing.GetValueOrDefault("configJson"));
+            var providerBoundaryChanged = credentialsChanged;
+            if (string.Equals(integrationKey, "samsara", StringComparison.OrdinalIgnoreCase))
+            {
+                var nextConfig = connectors.DecryptConfig(configJson);
+                if (!Opstrax.Api.Services.Connectors.SamsaraConnector.TryResolveApiRegion(
+                        nextConfig, out var nextRegion, out _))
+                {
+                    unsupportedSamsaraRegion = true;
+                    return 0;
+                }
+                var previousConfig = connectors.DecryptConfig(existing.GetValueOrDefault("configJson"));
+                var previousRegionValid = Opstrax.Api.Services.Connectors.SamsaraConnector.TryResolveApiRegion(
+                    previousConfig, out var previousRegion, out _);
+                // A Samsara cloud change crosses a provider-account boundary just like
+                // a credential change. Drop organization identity and both cursors
+                // before the connector can be re-tested on the selected regional host.
+                providerBoundaryChanged = providerBoundaryChanged
+                    || !previousRegionValid
+                    || !string.Equals(previousRegion, nextRegion, StringComparison.Ordinal);
+            }
             return await db.ExecuteAsync(
                 @"UPDATE integrations SET
-                      config_json = CASE WHEN @credentialsChanged
+                      config_json = CASE WHEN @providerBoundaryChanged
                           THEN @config::jsonb
                               - 'syncCursor'
                               - 'cameraSafetyCursor'
@@ -12185,8 +12206,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                       sync_last_completed_at = NULL,
                       sync_last_ok = NULL,
                       provider_last_event_at = NULL,
-                      provider_account_ref = CASE WHEN @credentialsChanged THEN NULL ELSE provider_account_ref END,
-                      provider_account_verified_at = CASE WHEN @credentialsChanged THEN NULL ELSE provider_account_verified_at END,
+                      provider_account_ref = CASE WHEN @providerBoundaryChanged THEN NULL ELSE provider_account_ref END,
+                      provider_account_verified_at = CASE WHEN @providerBoundaryChanged THEN NULL ELSE provider_account_verified_at END,
                       operation_generation = operation_generation + 1,
                       operation_lease_token = NULL,
                       operation_lease_expires_at = NULL,
@@ -12197,7 +12218,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                     c.Parameters.AddWithValue("@cid", companyId);
                     c.Parameters.AddWithValue("@id", id);
                     c.Parameters.AddWithValue("@config", configJson);
-                    c.Parameters.AddWithValue("@credentialsChanged", credentialsChanged);
+                    c.Parameters.AddWithValue("@providerBoundaryChanged", providerBoundaryChanged);
                 }, ct);
         }, ct);
         if (adapterUnavailable)
@@ -12208,6 +12229,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             return Results.Json(ApiResponse<object>.Fail(
                 "Motive credentials can be changed only through the audited OAuth authorization flow."),
                 statusCode: StatusCodes.Status422UnprocessableEntity);
+        if (unsupportedSamsaraRegion)
+            return Results.BadRequest(ApiResponse<object>.Fail(
+                "Select a supported Samsara cloud region: us, eu, or ca."));
         if (!configured) return Results.NotFound(ApiResponse<object>.Fail("Integration not found"));
         await audit.LogAsync(http, "integration.configured", "Integration", id, ct: ct);
         return await IntegrationDetail(http, id, db, connectors, ct);

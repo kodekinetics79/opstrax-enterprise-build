@@ -95,6 +95,8 @@ The camera page also exposes a separate, read-only provider-intake queue for the
 
 Samsara connection verification now also requires the provider's read-only `GET /me` organization response. The server persists its bounded organization reference only behind the connector boundary, clears it when credentials are replaced or the connector is disconnected, and carries it through the generation-bound operation lease. GPS device discovery and telemetry idempotency are keyed by organization plus asset, and camera event identity uses the same organization boundary. A token for another Samsara organization therefore cannot reuse the prior organization's device installation or camera event identity. Controlled response/database tests support this behavior; a real Samsara organization is still required for field acceptance.
 
+The connector now uses a strict cloud selector for the official Samsara US, EU/UK and Canada API hosts. It does not accept an arbitrary provider URL. Changing the cloud selection clears the verified organization identity and both GPS and camera cursors before a new handshake. Controlled host-routing tests support this behavior; every region remains field blocked until tested with an authorized account in that Samsara cloud.
+
 Verification for this increment uses controlled provider-response fixtures plus the isolated Stage 112 PostgreSQL role. Those fixtures prove parser, retry, cursor, quarantine, independent GPS/camera state and customer-copy behavior; they are software evidence only. No authorized Samsara account was contacted and no real camera event, media object, device or customer journey is claimed by this increment.
 
 ## External evidence still required

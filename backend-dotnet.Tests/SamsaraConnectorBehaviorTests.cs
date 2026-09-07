@@ -26,6 +26,7 @@ public sealed class SamsaraConnectorBehaviorTests
         Assert.True(result.Success, result.Message);
         Assert.Equal(3, handler.Requests.Count);
         Assert.Equal("samsara-org:organization-17", result.ProviderAccountReference);
+        Assert.Equal("us", result.Details!["apiRegion"]);
         Assert.Equal(true, result.Details!["readOrgInformationVerified"]);
         Assert.Equal(true, result.Details["readVehiclesVerified"]);
         Assert.Equal(true, result.Details["readVehicleStatisticsVerified"]);
@@ -33,6 +34,48 @@ public sealed class SamsaraConnectorBehaviorTests
             uri.AbsolutePath == "/fleet/vehicles/stats/feed"
             && uri.Query.Contains("types=gps", StringComparison.Ordinal)
             && uri.Query.Contains("vehicleIds=vehicle-1", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("us", "api.samsara.com")]
+    [InlineData("eu", "api.eu.samsara.com")]
+    [InlineData("ca", "api.ca.samsara.com")]
+    public async Task TestConnection_UsesOnlyTheSelectedRegionalProviderHost(
+        string region,
+        string expectedHost)
+    {
+        var handler = new ScriptedHandler(request =>
+            request.RequestUri!.AbsolutePath == "/me"
+                ? Json(HttpStatusCode.OK, """{"data":{"id":"organization-17"}}""")
+                : request.RequestUri.AbsolutePath == "/fleet/vehicles"
+                    ? Json(HttpStatusCode.OK, """{"data":[]}""")
+                    : Json(HttpStatusCode.OK, """{"data":[],"pagination":{"endCursor":"","hasNextPage":false}}"""));
+
+        var result = await Connector(handler).TestConnectionAsync(Config(region), CancellationToken.None);
+
+        Assert.True(result.Success, result.Message);
+        Assert.Contains(region.ToUpperInvariant(), result.Message, StringComparison.Ordinal);
+        Assert.Equal(region, result.Details!["apiRegion"]);
+        Assert.Equal(3, handler.Requests.Count);
+        Assert.All(handler.Requests, request => Assert.Equal(expectedHost, request.Host));
+    }
+
+    [Fact]
+    public async Task InvalidRegion_FailsBeforeAnyProviderCall()
+    {
+        var handler = new ScriptedHandler(_ =>
+            throw new InvalidOperationException("provider network must not run"));
+        var connector = Connector(handler);
+
+        var handshake = await connector.TestConnectionAsync(Config("apac"), CancellationToken.None);
+        using var body = OperationBody();
+        var sync = await connector.RunActionAsync("sync", Config("apac"), body.RootElement, CancellationToken.None);
+
+        Assert.False(handshake.Success);
+        Assert.Contains("Samsara cloud region", handshake.Message, StringComparison.Ordinal);
+        Assert.False(sync.Success);
+        Assert.Contains("supported Samsara cloud region", sync.Message, StringComparison.Ordinal);
+        Assert.Empty(handler.Requests);
     }
 
     [Fact]
@@ -443,8 +486,12 @@ public sealed class SamsaraConnectorBehaviorTests
             NullLogger<SamsaraConnector>.Instance);
     }
 
-    private static IReadOnlyDictionary<string, string?> Config() =>
-        new Dictionary<string, string?> { ["apiToken"] = "test-token-never-sent-to-real-network" };
+    private static IReadOnlyDictionary<string, string?> Config(string? apiRegion = null) =>
+        new Dictionary<string, string?>
+        {
+            ["apiToken"] = "test-token-never-sent-to-real-network",
+            ["apiRegion"] = apiRegion,
+        };
 
     private static JsonDocument OperationBody(
         string? cursor = null,

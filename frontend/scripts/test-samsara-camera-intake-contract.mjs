@@ -59,4 +59,10 @@ test("Samsara intake UI states the evidence boundary and refreshes camera status
   assert.match(step, /provider payload evidence only/i);
   assert.match(step, /Camera media, provider verification, privacy acceptance, and certification stay on External hold/i);
   assert.doesNotMatch(step, /camera (?:is )?certified|media available|provider verified: yes/i);
+
+  assert.match(page, /key: "apiRegion"/);
+  assert.match(page, /value: "us", label: "United States \/ legacy Canada"/);
+  assert.match(page, /value: "eu", label: "Europe \/ United Kingdom"/);
+  assert.match(page, /value: "ca", label: "Canada cloud"/);
+  assert.match(page, /Changing it requires a new connection test and starts a new provider mapping review/);
 });

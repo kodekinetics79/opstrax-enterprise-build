@@ -50,9 +50,11 @@ import {
 type ConfigField = {
   key: string;
   label: string;
-  type: "text" | "url" | "number";
+  type: "text" | "url" | "number" | "select";
   placeholder?: string;
   note?: string;
+  defaultValue?: string;
+  options?: Array<{ value: string; label: string }>;
 };
 
 type IntegrationOperationResult = {
@@ -156,6 +158,18 @@ function integrationFields(record: IntegrationRecord): ConfigField[] {
   if (record.key === "samsara") {
     return [
       {
+        key: "apiRegion",
+        label: "Samsara cloud region",
+        type: "select",
+        defaultValue: "us",
+        options: [
+          { value: "us", label: "United States / legacy Canada" },
+          { value: "eu", label: "Europe / United Kingdom" },
+          { value: "ca", label: "Canada cloud" },
+        ],
+        note: "Match the region shown in the Samsara dashboard URL. Changing it requires a new connection test and starts a new provider mapping review.",
+      },
+      {
         key: "apiToken",
         label: "Samsara API token",
         type: "text",
@@ -234,7 +248,7 @@ function buildFormState(record: IntegrationRecord) {
       if (isSecretField(field.key) && isRedactedValue(record.config[field.key])) {
         return [field.key, ""];
       }
-      return [field.key, formatConfigValue(record.config[field.key])];
+      return [field.key, formatConfigValue(record.config[field.key]) || field.defaultValue || ""];
     }),
   ) as Record<string, string>;
 }
@@ -553,15 +567,29 @@ function ConfigDrawer({
               return (
                 <div key={field.key}>
                   <label htmlFor={inputId} className="field-label text-[12px] font-bold text-slate-700">{field.label}</label>
-                  <input
-                    id={inputId}
-                    type={field.type}
-                    className="field mt-1 w-full"
-                    value={form[field.key] ?? ""}
-                    onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))}
-                    placeholder={secretSet ? `${REDACTED_MARKER} (set — leave blank to keep)` : field.placeholder}
-                    disabled={!canConfigure}
-                  />
+                  {field.type === "select" ? (
+                    <select
+                      id={inputId}
+                      className="field mt-1 w-full"
+                      value={form[field.key] ?? field.defaultValue ?? ""}
+                      onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))}
+                      disabled={!canConfigure}
+                    >
+                      {(field.options ?? []).map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      id={inputId}
+                      type={field.type}
+                      className="field mt-1 w-full"
+                      value={form[field.key] ?? ""}
+                      onChange={(event) => setForm((current) => ({ ...current, [field.key]: event.target.value }))}
+                      placeholder={secretSet ? `${REDACTED_MARKER} (set — leave blank to keep)` : field.placeholder}
+                      disabled={!canConfigure}
+                    />
+                  )}
                   {secretSet ? (
                     <p className="mt-1 text-xs text-slate-400">Stored secret is set. Leave blank to keep it, or type a new value to replace it.</p>
                   ) : (

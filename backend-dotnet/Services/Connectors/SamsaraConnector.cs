@@ -13,8 +13,8 @@ namespace Opstrax.Api.Services.Connectors;
 // (latest_vehicle_positions + location_events), so Samsara vehicles appear live.
 //
 // Auth:   Bearer <apiToken>  (config key "apiToken" / "apiKey", SENSITIVE)
-// Verify: GET /fleet/vehicles plus a bounded GET of the vehicle stats feed.
-//         Both required read scopes must succeed before the connector is Connected.
+// Verify: GET /me, GET /fleet/vehicles and a bounded GET of the vehicle stats feed.
+//         All required read scopes must succeed before the connector is Connected.
 // Sync:   GET /fleet/vehicles/stats/feed?types=gps,engineStates,obdOdometerMeters
 //         (cursor-paginated; endCursor persisted per-connector so each sync is
 //          incremental). Each vehicle is resolved through a globally unique
@@ -35,12 +35,12 @@ public sealed class SamsaraConnector(
     public IReadOnlyCollection<string> Keys { get; } = new[] { "samsara" };
     public string DisplayName => "Samsara";
 
-    private const string BaseUrl = "https://api.samsara.com";
-
-    private HttpClient Client(string token)
+    private HttpClient Client(string token, Uri apiBaseUri)
     {
         var c = httpFactory.CreateClient("samsara");
-        c.BaseAddress ??= new Uri(BaseUrl);
+        // A named client can carry a default base address. The tenant-selected,
+        // strictly allowlisted Samsara cloud must win for every new operation.
+        c.BaseAddress = apiBaseUri;
         c.Timeout = TimeSpan.FromSeconds(20);
         c.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         return c;
@@ -49,15 +49,41 @@ public sealed class SamsaraConnector(
     private static string? Token(IReadOnlyDictionary<string, string?> config)
         => config.GetValueOrDefault("apiToken") ?? config.GetValueOrDefault("apiKey") ?? config.GetValueOrDefault("token");
 
+    internal static bool TryResolveApiRegion(
+        IReadOnlyDictionary<string, string?> config,
+        out string region,
+        out Uri apiBaseUri)
+    {
+        region = string.IsNullOrWhiteSpace(config.GetValueOrDefault("apiRegion"))
+            ? "us"
+            : config.GetValueOrDefault("apiRegion")!.Trim().ToLowerInvariant();
+        var baseUrl = region switch
+        {
+            "us" => "https://api.samsara.com",
+            "eu" => "https://api.eu.samsara.com",
+            "ca" => "https://api.ca.samsara.com",
+            _ => null,
+        };
+        if (baseUrl is null)
+        {
+            apiBaseUri = null!;
+            return false;
+        }
+        apiBaseUri = new Uri(baseUrl, UriKind.Absolute);
+        return true;
+    }
+
     // ── Real auth handshake ────────────────────────────────────────────────────────
     public async Task<ConnectorResult> TestConnectionAsync(IReadOnlyDictionary<string, string?> config, CancellationToken ct)
     {
         var token = Token(config);
         if (string.IsNullOrWhiteSpace(token))
             return ConnectorResult.Fail("Add a Samsara API token (apiToken) in Configure, then test again. Create one in Samsara → Settings → API Tokens with 'Read Org Information' + 'Read Vehicles' + 'Read Vehicle Statistics'.");
+        if (!TryResolveApiRegion(config, out var apiRegion, out var apiBaseUri))
+            return ConnectorResult.Fail("Select the Samsara cloud region that matches the provider dashboard: United States, Europe / United Kingdom, or Canada.");
         try
         {
-            using var client = Client(token!);
+            using var client = Client(token!, apiBaseUri);
             using var handshakeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             handshakeCts.CancelAfter(TimeSpan.FromSeconds(25));
             string organizationReference;
@@ -146,10 +172,11 @@ public sealed class SamsaraConnector(
             }
 
             return ConnectorResult.Ok(
-                "Connected to Samsara — token, provider organization and all three required read scopes were verified.",
+                $"Connected to Samsara {apiRegion.ToUpperInvariant()} cloud — token, provider organization and all three required read scopes were verified.",
                 new Dictionary<string, object?>
                 {
                     ["sampleVehicleCount"] = sampleVehicleCount,
+                    ["apiRegion"] = apiRegion,
                     ["readOrgInformationVerified"] = true,
                     ["readVehiclesVerified"] = true,
                     ["readVehicleStatisticsVerified"] = true,
@@ -174,6 +201,8 @@ public sealed class SamsaraConnector(
         var token = Token(config);
         if (string.IsNullOrWhiteSpace(token))
             return ConnectorResult.Fail("Missing Samsara API token.");
+        if (!TryResolveApiRegion(config, out _, out var apiBaseUri))
+            return ConnectorResult.Fail("Sync requires a supported Samsara cloud region (us, eu, or ca).");
 
         // The connector doesn't know its own company/cursor — the endpoint passes them
         // in the action body so the sync is tenant-scoped and incremental.
@@ -195,7 +224,7 @@ public sealed class SamsaraConnector(
             IsSyncOperation: telemetrySync,
             ProviderAccountReference: providerAccountReference);
         if (cameraSafetySync)
-            return await RunCameraSafetyActionAsync(token!, operation, body, ct);
+            return await RunCameraSafetyActionAsync(token!, apiBaseUri, operation, body, ct);
 
         var afterCursor = body is { } b2 && b2.TryGetProperty("cursor", out var cur) ? cur.GetString() : null;
         var cursor = afterCursor;
@@ -231,7 +260,7 @@ public sealed class SamsaraConnector(
 
         try
         {
-            using var client = Client(token!);
+            using var client = Client(token!, apiBaseUri);
             var sync = new SamsaraSync(client, scopeFactory, logger,
                 configuration.GetValue<bool>("Samsara:AllowPartialGpsMeasurements"));
             var seenCursors = new HashSet<string>(StringComparer.Ordinal);
@@ -351,6 +380,7 @@ public sealed class SamsaraConnector(
 
     private async Task<ConnectorResult> RunCameraSafetyActionAsync(
         string token,
+        Uri apiBaseUri,
         ConnectorOperationContext operation,
         JsonElement? body,
         CancellationToken ct)
@@ -405,7 +435,7 @@ public sealed class SamsaraConnector(
 
         try
         {
-            using var client = Client(token);
+            using var client = Client(token, apiBaseUri);
             var sync = new SamsaraCameraSafetySync(client, scopeFactory, logger);
             var seenCursors = new HashSet<string>(StringComparer.Ordinal);
             if (!string.IsNullOrWhiteSpace(cursor)) seenCursors.Add(cursor);

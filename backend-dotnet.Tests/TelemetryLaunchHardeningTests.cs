@@ -108,7 +108,7 @@ public sealed class TelemetryLaunchHardeningTests
         Assert.Contains("Status422UnprocessableEntity", sync, StringComparison.Ordinal);
         Assert.Contains("MergeConfigForStorage", configure, StringComparison.Ordinal);
         Assert.Contains("ConnectorRegistry.ContainsCredentialMutation(body)", configure, StringComparison.Ordinal);
-        Assert.Contains("CASE WHEN @credentialsChanged", configure, StringComparison.Ordinal);
+        Assert.Contains("CASE WHEN @providerBoundaryChanged", configure, StringComparison.Ordinal);
         Assert.Contains("- 'syncCursor'", configure, StringComparison.Ordinal);
         Assert.Contains("- 'cameraSafetyCursor'", configure, StringComparison.Ordinal);
         Assert.DoesNotContain("config_json,'{}'::jsonb) ||", configure, StringComparison.Ordinal);
@@ -205,6 +205,7 @@ public sealed class TelemetryLaunchHardeningTests
         var endpoints = Read("backend-dotnet", "Controllers", "EndpointMappings.cs");
         var disconnect = Block(endpoints, "private static async Task<IResult> DisconnectIntegration", "private static async Task<IResult> IntegrationSync");
         var sync = Block(endpoints, "private static async Task<IResult> IntegrationSync", "private static async Task<IResult> ConfigureIntegration");
+        var configure = Block(endpoints, "private static async Task<IResult> ConfigureIntegration", "private static async Task<IResult> IntegrationTestConnection");
         var worker = Read("backend-dotnet", "Services", "ConnectorSyncBackgroundService.cs");
         var operationLease = Read("backend-dotnet", "Services", "Connectors", "ConnectorOperationLease.cs");
         var syncFreshnessMigration = Read("database", "migrations", "2026_09_02_stage96_connector_sync_freshness.sql");
@@ -229,10 +230,16 @@ public sealed class TelemetryLaunchHardeningTests
         Assert.Contains("syncLastAttemptAt = row.GetValueOrDefault", endpoints, StringComparison.Ordinal);
         Assert.Contains("syncLastCompletedAt = row.GetValueOrDefault", endpoints, StringComparison.Ordinal);
         Assert.Contains("isSyncOperation: true", sync, StringComparison.Ordinal);
+        Assert.Contains("providerBoundaryChanged", configure, StringComparison.Ordinal);
+        Assert.Contains("TryResolveApiRegion", configure, StringComparison.Ordinal);
+        Assert.Contains("unsupportedSamsaraRegion", configure, StringComparison.Ordinal);
         Assert.Contains("sync_last_attempt_at", syncFreshnessMigration, StringComparison.Ordinal);
         Assert.Contains("sync_last_completed_at", syncFreshnessMigration, StringComparison.Ordinal);
 
         Assert.Contains("key: \"apiToken\"", page, StringComparison.Ordinal);
+        Assert.Contains("key: \"apiRegion\"", page, StringComparison.Ordinal);
+        Assert.Contains("api.eu.samsara.com", Read("backend-dotnet", "Services", "Connectors", "SamsaraConnector.cs"), StringComparison.Ordinal);
+        Assert.Contains("api.ca.samsara.com", Read("backend-dotnet", "Services", "Connectors", "SamsaraConnector.cs"), StringComparison.Ordinal);
         Assert.Contains("onConnect={() => setConfigTarget(integration)}", page, StringComparison.Ordinal);
         Assert.Contains("provider portal", page, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Discover → Map → Validate", page, StringComparison.Ordinal);

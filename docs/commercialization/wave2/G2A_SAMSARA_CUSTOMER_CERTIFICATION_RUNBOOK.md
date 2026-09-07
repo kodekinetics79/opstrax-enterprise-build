@@ -57,7 +57,7 @@ This exact candidate hardcodes `https://api.samsara.com` and uses bounded pollin
 The authorized administrator must confirm all of the following:
 
 - The test is permitted for the selected Samsara organization and tenant.
-- The administrator has verified that the organization uses the US API cloud (`api.samsara.com`). EU/UK and Canadian regional API clouds are unsupported by this exact candidate.
+- The administrator has matched the connector's cloud selection to the organization dashboard: US (`cloud.samsara.com` → `api.samsara.com`), EU/UK (`cloud.eu.samsara.com` → `api.eu.samsara.com`) or Canada (`cloud.ca.samsara.com` → `api.ca.samsara.com`). A Canadian organization still hosted on the legacy US cloud must select US. Each selected region requires its own real-account evidence and acceptance.
 - The credential is dedicated to this integration and limited to the minimum organization tags and read scopes required by the endpoints under test.
 - The current implementation requires `Read Org Information`, `Read Vehicles`, and `Read Vehicle Statistics`. The handshake must prove all three with distinct read-only provider calls; a valid token missing any one scope must fail closed. The provider-issued organization ID is stored as a server-only account boundary so identical asset IDs from different Samsara organizations cannot share an OpsTrax device identity.
 - The token will be entered only into the OpsTrax server-backed integration form. It must not be pasted into chat, tickets, screenshots, shell history, source code, browser developer tools or the evidence manifest.
@@ -100,7 +100,7 @@ Before the UI journey, prove the operator can reach every required route with th
 
 1. Sign in as an authorized tenant operator with `telematics:providers:manage`.
 2. Open `/integrations`, select Samsara and open Configure.
-3. Enter the dedicated token and save it.
+3. Select the exact Samsara cloud region shown by the provider dashboard, enter the dedicated token and save both. Changing the region invalidates the verified provider identity and both sync cursors until a new connection test succeeds.
 4. Run the real provider handshake. It must read the provider organization, then read at most one vehicle, then make a vehicle-statistics feed request limited to that returned vehicle when one exists.
 5. Record all three endpoint names and status codes, the provider status, last-test timestamp and redacted provider metadata. Do not record the token, provider organization identifier or raw provider body.
 
