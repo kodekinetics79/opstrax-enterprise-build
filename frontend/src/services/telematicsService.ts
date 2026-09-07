@@ -256,6 +256,11 @@ export type DeviceCommandRecord = {
   complianceStatus: string;
   warrantyStatus: string;
   supportStatus: string;
+  deviceOpsGaps: string[];
+  deviceOpsAssessmentAvailable: boolean;
+  openRmaCount: number;
+  highestOpenRmaSeverity: string;
+  nextSupportResponseDueAt: string | null;
   lifecycleStatus: string;
   // Governed installation/commissioning state from eld_devices.device_state.
   // This is distinct from lifecycle status: an Active device can still be
@@ -298,6 +303,7 @@ export type DevicePageResult = {
     online: number;
     neverConnected: number;
     faulted: number | null;
+    readinessGaps: number | null;
   };
 };
 
@@ -1244,6 +1250,24 @@ function mapDeviceRow(
     : row.vehicle_id != null;
 
   const firmware = row.firmware_version == null ? "Unknown" : String(row.firmware_version);
+  const deviceOpsAssessmentFieldsAvailable = [
+    "exact_device_tuple_complete", "current_installation_recorded", "current_connectivity_profile_recorded",
+    "current_telemetry_observed", "software_lifecycle_clear", "open_rma_count", "deviceops_gap_count",
+  ].every((key) => Object.hasOwn(row, key));
+  const openRmaCount = deviceOpsAssessmentFieldsAvailable ? Number(row.open_rma_count ?? 0) : 0;
+  const derivedDeviceOpsGaps = deviceOpsAssessmentFieldsAvailable ? [
+      row.exact_device_tuple_complete === false ? "Complete exact hardware identity" : null,
+      row.current_installation_recorded === false ? "Record current installation" : null,
+      row.current_connectivity_profile_recorded === false ? "Record SIM/eSIM profile" : null,
+      row.current_telemetry_observed === false ? "Restore current telemetry observation" : null,
+      row.software_lifecycle_clear === false ? "Resolve device lifecycle hold" : null,
+      openRmaCount > 0 ? "Resolve open RMA" : null,
+    ].filter((value): value is string => value !== null) : [];
+  const projectedDeviceOpsGapCount = Number(row.deviceops_gap_count);
+  const deviceOpsAssessmentAvailable = deviceOpsAssessmentFieldsAvailable &&
+    Number.isInteger(projectedDeviceOpsGapCount) && projectedDeviceOpsGapCount >= 0 &&
+    projectedDeviceOpsGapCount === derivedDeviceOpsGaps.length;
+  const deviceOpsGaps = deviceOpsAssessmentAvailable ? derivedDeviceOpsGaps : [];
 
   return {
     id: (typeof row.id === "string" || typeof row.id === "number") ? row.id : serial,
@@ -1288,8 +1312,13 @@ function mapDeviceRow(
     installationActivationVerifiedAt: row.activation_verified_at == null ? null : String(row.activation_verified_at),
     deviceRole: String(row.current_installation_role ?? row.device_role ?? ""),
     complianceStatus: "Not assessed",
-    warrantyStatus: "—",
-    supportStatus: "—",
+    warrantyStatus: !deviceOpsAssessmentAvailable ? "Unassessed" : openRmaCount > 0 ? String(row.highest_open_rma_severity ?? "Open") : "No open RMA",
+    supportStatus: !deviceOpsAssessmentAvailable ? "Assessment unavailable" : deviceOpsGaps.length > 0 ? `${deviceOpsGaps.length} listed software gap${deviceOpsGaps.length === 1 ? "" : "s"}` : "No listed software gap",
+    deviceOpsGaps,
+    deviceOpsAssessmentAvailable,
+    openRmaCount,
+    highestOpenRmaSeverity: openRmaCount > 0 ? String(row.highest_open_rma_severity ?? "Unknown") : "None",
+    nextSupportResponseDueAt: row.next_support_response_due_at == null ? null : String(row.next_support_response_due_at),
     lifecycleStatus: revoked ? "Archived" : String(row.status ?? "Unknown"),
     deviceState: String(row.device_state ?? "Unknown"),
     eldStatus: String(row.status ?? "Unknown"),
@@ -1957,6 +1986,9 @@ export const telematicsService = {
         online: Number(summary.online ?? 0),
         neverConnected: Number(summary.neverConnected ?? summary.never_connected ?? 0),
         faulted: summary.faulted == null ? null : Number(summary.faulted),
+        readinessGaps: summary.readinessGaps == null && summary.readiness_gaps == null
+          ? null
+          : Number(summary.readinessGaps ?? summary.readiness_gaps),
       },
     };
   },

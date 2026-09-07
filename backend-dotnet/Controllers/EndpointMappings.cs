@@ -20026,6 +20026,22 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var faultRiskRank = canReadDiagnostics ? "COALESCE(active_fault_risk.risk_rank,0)" : "0";
         var alertRiskAt = canReadAlerts ? "open_alert_risk.risk_at" : "NULL::TIMESTAMPTZ";
         var faultRiskAt = canReadDiagnostics ? "active_fault_risk.risk_at" : "NULL::TIMESTAMPTZ";
+        const string exactDeviceTupleExpression = @"(
+            NULLIF(BTRIM(COALESCE(e.device_serial,'')),'') IS NOT NULL
+            AND NULLIF(BTRIM(COALESCE(e.manufacturer,'')),'') IS NOT NULL
+            AND NULLIF(BTRIM(COALESCE(e.device_model,'')),'') IS NOT NULL
+            AND NULLIF(BTRIM(COALESCE(e.hardware_revision,'')),'') IS NOT NULL
+            AND NULLIF(BTRIM(COALESCE(e.firmware_version,'')),'') IS NOT NULL
+            AND NULLIF(BTRIM(COALESCE(e.provider,'')),'') IS NOT NULL)";
+        var deviceOpsGapExpression = $@"(
+            NOT {exactDeviceTupleExpression}
+            OR current_install.id IS NULL
+            OR current_connectivity.id IS NULL
+            OR e.last_seen_at IS NULL
+            OR e.last_seen_at<NOW()-INTERVAL '15 minutes'
+            OR e.status IN ('Suspended','Malfunction','Diagnostic')
+            OR LOWER(COALESCE(e.device_state,'')) IN ('quarantined','suspended')
+            OR COALESCE(open_rma.open_case_count,0)>0)";
         var lifecycleRiskExpression = @"CASE
             WHEN LOWER(COALESCE(e.device_state,'')) IN ('quarantined','suspended') THEN 650
             WHEN e.status IN ('Suspended','Malfunction') THEN 600
@@ -20083,6 +20099,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             "provisioning" => " AND e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired') AND (e.status ILIKE '%provision%' OR e.device_state ILIKE '%provision%' OR current_install.id IS NULL)",
             "installations" => " AND e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired') AND current_install.id IS NOT NULL",
             "data-health" => " AND e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired') AND e.last_seen_at IS NOT NULL",
+            "readiness" => $" AND e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired') AND {deviceOpsGapExpression}",
             "all" or "firmware" => " AND e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired')",
             _ => " AND e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired')",
         };
@@ -20188,6 +20205,7 @@ LEFT JOIN LATERAL (
   SELECT i.id,i.vehicle_id,i.status,i.device_role,i.is_primary,i.row_version current_installation_row_version,i.activation_verified_at
   FROM device_installations i
   WHERE i.company_id=e.company_id AND i.device_id=e.id
+    AND i.branch_id IS NOT DISTINCT FROM e.branch_id
     AND i.effective_to IS NULL AND i.status IN ('Installed','Verified')
   ORDER BY i.effective_from DESC,i.id DESC LIMIT 1
 ) current_install ON TRUE
@@ -20199,6 +20217,24 @@ LEFT JOIN LATERAL (
   ORDER BY da.assigned_at DESC,da.id DESC LIMIT 1
 ) active_dispatch ON TRUE
 LEFT JOIN drivers d ON d.id=active_dispatch.driver_id AND d.company_id=e.company_id
+LEFT JOIN LATERAL (
+  SELECT p.id FROM device_connectivity_profiles p
+  WHERE p.company_id=e.company_id AND p.device_id=e.id
+    AND p.branch_id IS NOT DISTINCT FROM e.branch_id
+    AND p.effective_to IS NULL AND p.assignment_status='Assigned'
+  ORDER BY p.effective_from DESC,p.id DESC LIMIT 1
+) current_connectivity ON TRUE
+LEFT JOIN LATERAL (
+  SELECT COUNT(*) open_case_count,
+         MIN(CASE c.severity WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END) severity_rank,
+         MIN(c.response_due_at) next_response_due_at
+  FROM device_rma_cases c
+  WHERE c.company_id=e.company_id AND c.device_id=e.id
+    AND c.branch_id IS NOT DISTINCT FROM e.branch_id
+    AND COALESCE((SELECT ev.case_status_after FROM device_rma_events ev
+                  WHERE ev.company_id=c.company_id AND ev.case_id=c.id
+                  ORDER BY ev.sequence_number DESC LIMIT 1),'Open')<>'Resolved'
+) open_rma ON TRUE
 " + positionEvidenceJoin + diagnosticEvidenceJoin;
         var whereSql = @"
 WHERE e.company_id=@cid AND e.deleted_at IS NULL
@@ -20267,6 +20303,22 @@ SELECT e.id, e.device_serial, e.imei, e.device_category, e.device_model, e.manuf
        current_install.status current_installation_status,
        current_install.device_role,current_install.is_primary,current_install.current_installation_row_version,
        current_install.activation_verified_at,
+       " + exactDeviceTupleExpression + @" exact_device_tuple_complete,
+       (current_install.id IS NOT NULL) current_installation_recorded,
+       (current_connectivity.id IS NOT NULL) current_connectivity_profile_recorded,
+       (e.last_seen_at IS NOT NULL AND e.last_seen_at>=NOW()-INTERVAL '15 minutes') current_telemetry_observed,
+       (e.status NOT IN ('Suspended','Malfunction','Diagnostic')
+        AND LOWER(COALESCE(e.device_state,'')) NOT IN ('quarantined','suspended')) software_lifecycle_clear,
+       COALESCE(open_rma.open_case_count,0) open_rma_count,
+       CASE open_rma.severity_rank WHEN 0 THEN 'P0' WHEN 1 THEN 'P1' WHEN 2 THEN 'P2' WHEN 3 THEN 'P3' END highest_open_rma_severity,
+       open_rma.next_response_due_at next_support_response_due_at,
+       (CASE WHEN " + exactDeviceTupleExpression + @" THEN 0 ELSE 1 END
+        + CASE WHEN current_install.id IS NOT NULL THEN 0 ELSE 1 END
+        + CASE WHEN current_connectivity.id IS NOT NULL THEN 0 ELSE 1 END
+        + CASE WHEN e.last_seen_at IS NOT NULL AND e.last_seen_at>=NOW()-INTERVAL '15 minutes' THEN 0 ELSE 1 END
+        + CASE WHEN e.status NOT IN ('Suspended','Malfunction','Diagnostic')
+                    AND LOWER(COALESCE(e.device_state,'')) NOT IN ('quarantined','suspended') THEN 0 ELSE 1 END
+        + CASE WHEN COALESCE(open_rma.open_case_count,0)>0 THEN 1 ELSE 0 END) deviceops_gap_count,
        v.vehicle_code, d.full_name driver_name,
        EXTRACT(EPOCH FROM (NOW() - e.last_seen_at))::BIGINT seconds_since_ping,
        " + (canReadAlerts
@@ -20321,6 +20373,7 @@ SELECT e.id, e.device_serial, e.imei, e.device_category, e.device_model, e.manuf
        COUNT(*) FILTER (WHERE e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired') AND (e.last_seen_at IS NULL OR e.last_seen_at < NOW() - INTERVAL '15 minutes' OR e.status IN ('Suspended','Malfunction'))) offline,
        COUNT(*) FILTER (WHERE e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired') AND (e.last_seen_at IS NULL OR e.last_seen_at < NOW() - INTERVAL '15 minutes'
          OR e.status IN ('Suspended','Malfunction','Diagnostic') OR LOWER(COALESCE(e.device_state,'')) IN ('quarantined','suspended')" + alertAttentionClause + faultAttentionClause + @")) attention,
+       COUNT(*) FILTER (WHERE e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired') AND " + deviceOpsGapExpression + @") readiness_gaps,
        " + (canReadDiagnostics
            ? "COUNT(*) FILTER (WHERE e.revoked_at IS NULL AND e.status NOT IN ('Revoked','Retired') AND EXISTS (SELECT 1 FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active')) faulted"
            : "NULL::BIGINT faulted"),

@@ -75,6 +75,7 @@ type DeviceTab =
   | "quarantine"
   | "installations"
   | "data-health"
+  | "readiness"
   | "providers";
 
 type InstallationFormState = {
@@ -422,6 +423,7 @@ const DEVICE_TABS: Array<{ key: DeviceTab; label: string }> = [
   { key: "quarantine", label: "Identity Quarantine" },
   { key: "installations", label: "Installations" },
   { key: "data-health", label: "Data Health" },
+  { key: "readiness", label: "Software Gaps" },
   { key: "providers", label: "Provider Connections" },
 ];
 
@@ -431,6 +433,7 @@ function emptyStateForTab(tab: DeviceTab) {
   if (tab === "firmware") return { title: "No devices available for firmware planning", subtitle: "Campaign plans require real devices with reported inventory. Planning does not dispatch an OTA command." };
   if (tab === "providers") return { title: "No providers found", subtitle: "Integrations are pulled from your connected provider catalog." };
   if (tab === "quarantine") return { title: "No unresolved identity conflicts", subtitle: "Every device and installation identity in this fleet is currently unambiguous." };
+  if (tab === "readiness") return { title: "No listed software gaps", subtitle: "No active device matches the persisted software gap rules. Hardware, provider, and certification holds remain separate." };
   return { title: "No devices found", subtitle: "Refine the search, switch tabs, or register a device for this fleet." };
 }
 
@@ -449,6 +452,7 @@ function activeTabCount(tab: DeviceTab, row: DeviceCommandRecord) {
   if (tab === "diagnostics") return false;
   if (tab === "installations") return true;
   if (tab === "data-health") return true;
+  if (tab === "readiness") return row.deviceOpsAssessmentAvailable && row.deviceOpsGaps.length > 0;
   return false;
 }
 
@@ -1442,6 +1446,7 @@ export function IotDevicesPage() {
   const archivedCount = devicesQ.data?.summary.archived ?? 0;
   const offlineCount = devicesQ.data?.summary.offline ?? 0;
   const attentionCount = devicesQ.data?.summary.attention ?? 0;
+  const readinessGapCount = devicesQ.data?.summary.readinessGaps ?? null;
   const measuredHealth = currentPageActiveDevices.filter((row) => row.dataHealthAvailable);
   const managedCount = devicesQ.data?.summary.active ?? 0;
   const avgHealth = measuredHealth.length
@@ -1565,13 +1570,14 @@ export function IotDevicesPage() {
         <AssignmentRefreshNotice record={assignmentRecord} busy={assignmentRefreshPending} onRetry={() => { void refreshAssignmentDisplay(assignmentRecord); }} />
       ) : null}
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <KpiCard label="Active Managed Devices" value={managedCount} status={managedCount ? "Active" : "Pending"} icon={<RadioTower className="h-4 w-4" />} />
         <KpiCard label="Offline" value={offlineCount} status={!managedCount ? "Pending" : offlineCount ? "Critical" : "Healthy"} icon={<WifiOff className="h-4 w-4" />} />
         <KpiCard label="Needs Attention" value={attentionCount} status={!managedCount ? "Pending" : attentionCount ? "Watch" : "Healthy"} icon={<Activity className="h-4 w-4" />} />
         <KpiCard label="Page Data Health" value={avgHealth == null ? "Unknown" : `${avgHealth}%`} status={avgHealth == null ? "Pending" : avgHealth >= 85 ? "Healthy" : avgHealth >= 70 ? "Watch" : "Critical"} icon={<Cpu className="h-4 w-4" />} />
+        <KpiCard label="Devices with gaps" value={readinessGapCount ?? "Unknown"} status={!managedCount || readinessGapCount == null ? "Pending" : readinessGapCount ? "Watch" : "Healthy"} icon={<ShieldCheck className="h-4 w-4" />} />
       </div>
-      <p className="text-xs text-slate-500">Data health is a derived signal score for active devices: stale check-in, malfunction state, open telemetry alerts, and active faults reduce the score. Devices without evidence remain Unknown. <button type="button" className="font-semibold text-teal-700 hover:underline" onClick={() => setTab("archived")}>{archivedCount} archived</button> devices are retained separately.</p>
+      <p className="text-xs text-slate-500">Data health is a derived signal score for active devices: stale check-in, malfunction state, open telemetry alerts, and active faults reduce the score. Software gaps are persisted operational facts: incomplete exact identity, missing installation or SIM/eSIM profile, stale or absent telemetry, or an open RMA. Neither measure is certification evidence. <button type="button" className="font-semibold text-teal-700 hover:underline" onClick={() => setTab("archived")}>{archivedCount} archived</button> devices are retained separately.</p>
 
       <div className="panel space-y-4 p-4">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
@@ -1724,7 +1730,7 @@ export function IotDevicesPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-200">
-                  {["Device", "Provider", "Identifier", "Vehicle", "Driver", "Firmware", "Check-in", "Connection", "Lifecycle", "Power", "Signal", "Health", "Install", "Compliance", "Support", "Actions"].map((header) => (
+                  {["Device", "Provider", "Identifier", "Vehicle", "Driver", "Firmware", "Check-in", "Connection", "Lifecycle", "Power", "Signal", "Health", "Install", "Compliance", "Operations gaps", "Actions"].map((header) => (
                     <th key={header} className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500">{header}</th>
                   ))}
                 </tr>
@@ -1758,8 +1764,8 @@ export function IotDevicesPage() {
                     <td className="px-4 py-3"><StatusBadge status={row.installStatus} /></td>
                     <td className="px-4 py-3"><StatusBadge status={row.complianceStatus} /></td>
                     <td className="px-4 py-3 text-slate-700">
-                      <div>{row.warrantyStatus}</div>
-                      <div className="text-xs text-slate-500">{row.supportStatus}</div>
+                      <div>{row.supportStatus}</div>
+                      <div className="text-xs text-slate-500">{!row.deviceOpsAssessmentAvailable ? "Reload after the DeviceOps assessment API is available" : row.openRmaCount > 0 ? `${row.highestOpenRmaSeverity} · ${row.openRmaCount} open RMA${row.openRmaCount === 1 ? "" : "s"}` : row.deviceOpsGaps.join(" · ") || "Hardware/provider certification holds tracked separately"}</div>
                     </td>
                     <td className="px-4 py-3">
                       <button
