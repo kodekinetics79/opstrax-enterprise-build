@@ -11,6 +11,44 @@ namespace Opstrax.Tests;
 public sealed class DevicePageFaultPostgresTests
 {
     [Fact]
+    public async Task ReadinessViewPaginatesOneThousandPersistedDevicesWithoutDroppingFleetTotals()
+    {
+        var db = Db();
+        var suffix = Guid.NewGuid().ToString("N")[..10];
+        var companyId = await db.InsertAsync(
+            "INSERT INTO companies(company_code,name,industry) VALUES (@code,'DeviceOps scale queue test','Transportation')",
+            c => c.Parameters.AddWithValue("@code", $"DOS-{suffix}"));
+        try
+        {
+            await db.ExecuteAsync(
+                @"INSERT INTO eld_devices(company_id,device_serial,status,device_state)
+                  SELECT @cid,'SCALE-' || @suffix || '-' || LPAD(sequence::TEXT,4,'0'),'Provisioning','Registered'
+                    FROM generate_series(1,1000) sequence",
+                c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@suffix", suffix); });
+
+            var http = Principal(companyId, null, "telemetry.devices.read");
+            http.Request.QueryString = new QueryString("?view=readiness&page=10&pageSize=100&sort=serial&direction=asc");
+            using var payload = Payload(await Invoke("TelemetryDevicePage", http, db, CancellationToken.None));
+            var data = payload.RootElement.GetProperty("data");
+            var items = data.GetProperty("items").EnumerateArray().ToArray();
+
+            Assert.Equal(1000, data.GetProperty("total").GetInt64());
+            Assert.Equal(10, data.GetProperty("page").GetInt32());
+            Assert.Equal(100, data.GetProperty("pageSize").GetInt32());
+            Assert.Equal(100, items.Length);
+            Assert.Equal($"SCALE-{suffix}-0901", items[0].GetProperty("deviceSerial").GetString());
+            Assert.Equal($"SCALE-{suffix}-1000", items[^1].GetProperty("deviceSerial").GetString());
+            Assert.Equal(1000, data.GetProperty("summary").GetProperty("active").GetInt64());
+            Assert.Equal(1000, data.GetProperty("summary").GetProperty("readinessGaps").GetInt64());
+        }
+        finally
+        {
+            await db.ExecuteAsync("DELETE FROM eld_devices WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", companyId));
+            await db.ExecuteAsync("DELETE FROM companies WHERE id=@cid", c => c.Parameters.AddWithValue("@cid", companyId));
+        }
+    }
+
+    [Fact]
     public async Task ReadinessViewReturnsPersistedSoftwareGapsWithoutCertificationClaims()
     {
         var db = Db();
