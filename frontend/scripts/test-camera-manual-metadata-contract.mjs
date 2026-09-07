@@ -100,6 +100,8 @@ test("provider status accepts only the exact fail-closed operational projection"
   const f = serviceFixture();
   f.setResponse(response(providerStatusRecord(), 200));
   assert.deepEqual(await f.api.dashcamApi.providerStatus(), providerStatusRecord());
+  f.setResponse(response(providerStatusRecord({ status: "AwaitingCameraIntake" }), 200));
+  assert.equal((await f.api.dashcamApi.providerStatus()).status, "AwaitingCameraIntake");
   for (const invalid of [
     providerStatusRecord({ providerVerified: true }),
     providerStatusRecord({ certificationStatus: "Certified" }),
@@ -197,7 +199,33 @@ test("camera page shows the real provider hold instead of implying camera availa
     assert.match(html, /no provider-backed camera evidence/i);
     assert.match(html, /Provider verified: No/);
     assert.match(html, /Media available: No/);
+    assert.match(html, /Open Samsara camera intake setup/);
     assert.doesNotMatch(html, /connected|certified|ready/i);
+  } finally { f.cleanup(); }
+});
+
+test("camera page distinguishes a connected provider that has no camera intake", () => {
+  const f = workflowFixture({ source: pageBuilt.outputFiles[0].text });
+  try {
+    const page = f.renderPage("dashcam", { providerStatus: { ...f.view.providerStatus, data: providerStatusRecord({ status: "AwaitingCameraIntake" }) } });
+    const panel = component(page, "CameraProviderStatusPanel"); assert.ok(panel);
+    const html = renderToStaticMarkup(panel);
+    assert.match(html, /Provider connected; awaiting camera intake/);
+    assert.match(html, /no successful camera intake has completed/i);
+    assert.match(html, /Configure camera permissions/);
+    assert.doesNotMatch(html, /certified|media available: yes/i);
+  } finally { f.cleanup(); }
+});
+
+test("camera page surfaces connector camera failures as attention required", () => {
+  const f = workflowFixture({ source: pageBuilt.outputFiles[0].text });
+  try {
+    const page = f.renderPage("dashcam", { providerStatus: { ...f.view.providerStatus, data: providerStatusRecord({ status: "AttentionRequired" }) } });
+    const panel = component(page, "CameraProviderStatusPanel"); assert.ok(panel);
+    const html = renderToStaticMarkup(panel);
+    assert.match(html, /Provider intake needs attention/);
+    assert.match(html, /connector reported a camera intake failure/i);
+    assert.doesNotMatch(html, /certified|media available: yes/i);
   } finally { f.cleanup(); }
 });
 

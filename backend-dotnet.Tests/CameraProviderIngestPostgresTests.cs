@@ -372,9 +372,11 @@ public sealed class CameraProviderIngestPostgresTests
             integrationId = await InsertId(database, """
                 INSERT INTO integrations(
                   company_id,provider_name,category,status,integration_key,config_json,
+                  provider_account_ref,provider_account_verified_at,
                   operation_generation,operation_lease_token,operation_lease_expires_at)
                 VALUES(@company,'Samsara','Telematics & ELD','Connected','samsara',
-                  '{"syncCursor":"gps-cursor"}'::jsonb,3,@lease,NOW()+INTERVAL '1 minute')
+                  '{"syncCursor":"gps-cursor"}'::jsonb,'samsara-org:status-test',NOW(),
+                  3,@lease,NOW()+INTERVAL '1 minute')
                 RETURNING id
                 """, command =>
                 {
@@ -385,6 +387,9 @@ public sealed class CameraProviderIngestPostgresTests
                 companyId, integrationId, 3, lease, "samsara", null, "Connected", false);
             var failed = ConnectorResult.Fail("Safety scope denied");
 
+            var cameraStatus = new CameraProviderStatusService(database);
+            Assert.Equal("AwaitingCameraIntake", (await cameraStatus.ReadAsync(companyId, null)).Status);
+
             Assert.Equal(1, await ConnectorOperationLease.CompleteCameraSafetySyncAsync(
                 database, operation, failed, "2026-09-07T00:00:00Z", null, CancellationToken.None));
             var afterFailure = await database.QuerySingleAsync(
@@ -392,6 +397,7 @@ public sealed class CameraProviderIngestPostgresTests
                 command => command.Parameters.AddWithValue("id", integrationId));
             Assert.Equal("Connected", afterFailure!["status"]);
             Assert.Null(afterFailure["operationLeaseToken"]);
+            Assert.Equal("AttentionRequired", (await cameraStatus.ReadAsync(companyId, null)).Status);
             using (var config = JsonDocument.Parse(afterFailure["configJson"]!.ToString()!))
             {
                 Assert.Equal("gps-cursor", config.RootElement.GetProperty("syncCursor").GetString());
@@ -418,6 +424,7 @@ public sealed class CameraProviderIngestPostgresTests
                 "SELECT status,config_json FROM integrations WHERE id=@id",
                 command => command.Parameters.AddWithValue("id", integrationId));
             Assert.Equal("Connected", afterSuccess!["status"]);
+            Assert.Equal("ProviderDataPendingVerification", (await cameraStatus.ReadAsync(companyId, null)).Status);
             using var successfulConfig = JsonDocument.Parse(afterSuccess["configJson"]!.ToString()!);
             Assert.Equal("gps-cursor", successfulConfig.RootElement.GetProperty("syncCursor").GetString());
             Assert.Equal("camera-cursor", successfulConfig.RootElement.GetProperty("cameraSafetyCursor").GetString());

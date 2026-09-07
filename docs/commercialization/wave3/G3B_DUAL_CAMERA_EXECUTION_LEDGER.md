@@ -117,6 +117,8 @@ Camera polling retains its own cursor, completion time and outcome. Losing the o
 
 Focused verification covers the opt-in/default-off rule, success and failure cadence, exact tenant/integration/generation/lease/account request identity, independent camera cursor and start time, UI truth copy, and database preservation of the primary GPS status during camera failure or a no-op lease release. This is local software evidence only. No provider account was contacted, no deployment was performed, and no camera or Samsara capability is certified by this increment.
 
+The Camera Safety status projection also consumes the connector's bounded camera outcome. It distinguishes no current provider connection, a current provider connection awaiting its first camera intake, an unverified successful intake, and an intake/reconciliation condition requiring attention. Provider credentials and organization/event identifiers remain server-side. The status card links directly to the Samsara setup journey and never presents connection evidence as certification.
+
 ## External evidence still required
 
 - authorized Samsara organization/account/token with Safety & Cameras scopes and written commercial integration rights;

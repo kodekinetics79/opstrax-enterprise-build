@@ -251,12 +251,15 @@ const ACTION_PERMISSIONS: Record<Kind, Record<string, string>> = {
 
 export function CameraProviderStatusPanel({ status }: { status: CameraProviderStatus }) {
   const title = status.status === "AwaitingProviderConnection" ? "Awaiting provider connection"
+    : status.status === "AwaitingCameraIntake" ? "Provider connected; awaiting camera intake"
     : status.status === "AttentionRequired" ? "Provider intake needs attention"
       : "Provider data pending verification";
   const message = status.status === "AwaitingProviderConnection"
     ? "No provider intake records have been observed for this scope. This account currently has no provider-backed camera evidence."
+    : status.status === "AwaitingCameraIntake"
+      ? "A provider connection has been observed, but no successful camera intake has completed. Configure camera permissions and run or enable the safety-event intake."
     : status.status === "AttentionRequired"
-      ? "Provider intake records require reconciliation. Quarantined records are excluded from customer event claims."
+      ? "The connector reported a camera intake failure or provider records require reconciliation. Quarantined records are excluded from customer event claims."
       : "Provider intake records exist, but provider authenticity, media access and certification remain unverified.";
   const lastReceipt = status.lastOpsTraxIntakeUtc === null ? "Never observed" : new Date(status.lastOpsTraxIntakeUtc).toLocaleString();
   return <section className="rounded-2xl border border-amber-300 bg-amber-50 p-5" aria-labelledby="camera-provider-status-title">
@@ -285,6 +288,7 @@ export function CameraProviderStatusPanel({ status }: { status: CameraProviderSt
       </div>)}
     </dl>
     <p className="mt-3 text-xs text-slate-600">Provider verified: No · Media available: No · Expired media references: {status.expiredMediaCount}</p>
+    <a className="btn-ghost mt-3 inline-flex text-xs" href="/integrations">Open Samsara camera intake setup</a>
   </section>;
 }
 

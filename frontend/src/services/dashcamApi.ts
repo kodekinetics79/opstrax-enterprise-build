@@ -74,7 +74,7 @@ export function cameraProjection(raw: unknown): AnyRecord | null {
   return { ...values, metadataNotice: CAMERA_NOTICE };
 }
 export type CameraProviderStatus = {
-  status: "AwaitingProviderConnection" | "ProviderDataPendingVerification" | "AttentionRequired";
+  status: "AwaitingProviderConnection" | "AwaitingCameraIntake" | "ProviderDataPendingVerification" | "AttentionRequired";
   verificationStatus: "ExternalHold";
   certificationStatus: "ExternalHold";
   providerVerified: false;
@@ -134,7 +134,7 @@ export function cameraProviderStatus(raw: unknown): CameraProviderStatus {
     "pendingMediaCount", "expiredMediaCount", "lastOpsTraxIntakeUtc"] as const;
   if (Reflect.ownKeys(raw).length !== keys.length || keys.some((key) => !own(raw, key)))
     throw new CameraMetadataError("rejected", "Camera provider status is unavailable.");
-  if (!["AwaitingProviderConnection", "ProviderDataPendingVerification", "AttentionRequired"].includes(String(raw.status))
+  if (!["AwaitingProviderConnection", "AwaitingCameraIntake", "ProviderDataPendingVerification", "AttentionRequired"].includes(String(raw.status))
     || raw.verificationStatus !== "ExternalHold" || raw.certificationStatus !== "ExternalHold"
     || raw.providerVerified !== false || raw.mediaAvailable !== false)
     throw new CameraMetadataError("rejected", "Camera provider status is unavailable.");
