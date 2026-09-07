@@ -121,6 +121,9 @@ assert.match(coldChainPage, /Never authenticated/, "Devices without an authentic
 assert.match(coldChainPage, /Measurement authority/, "The device card must expose measurement authority");
 assert.match(coldChainPage, /Reported calibration status/, "Device registration must label calibration posture as operator-reported metadata");
 assert.match(coldChainPage, /Live measurements require authenticated sensor or gateway ingest/, "Registration must not imply a live device connection");
+assert.match(coldChainPage, /Not measured/, "Missing authenticated readings must not become a numeric compliance claim");
+assert.match(coldChainPage, /Evidence authority:/, "Cold-chain alerts must expose whether evidence came from a device, gateway, or operator");
+assert.doesNotMatch(coldChainPage, />Measured \{formatMeasurement\(alert\.measuredTemperature/, "Alerts must not use an unqualified measured-temperature claim");
 
 const coldChainService = readFileSync(resolve(root, "src/services/telematicsService.ts"), "utf8");
 assert.match(coldChainService, /hasAuthoritativeMeasurement = \/\^\(Sensor\|Gateway\)\$\/i\.test/, "Only sensor or gateway sources may advance the live measurement projection");

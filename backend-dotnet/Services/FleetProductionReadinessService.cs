@@ -382,6 +382,8 @@ public sealed class FleetProductionReadinessService
           ('fleet_tms_temperature_alerts','measured_humidity','numeric(6,2)',false,'',''),
           ('fleet_tms_temperature_alerts','humidity_threshold_min','numeric(6,2)',false,'',''),
           ('fleet_tms_temperature_alerts','humidity_threshold_max','numeric(6,2)',false,'',''),
+          ('fleet_tms_temperature_alerts','measurement_authority','character varying(40)',true,'''LegacyUnverified''::character varying',''),
+          ('fleet_tms_cold_chain_reports','evidence_authority','character varying(40)',true,'''LegacyUnverified''::character varying',''),
           ('customers','sla_health_score','numeric(6,2)',false,'',''),
           ('customers','delivery_experience_score','numeric(6,2)',false,'',''),
           ('customers','risk_score','numeric(6,2)',false,'',''),

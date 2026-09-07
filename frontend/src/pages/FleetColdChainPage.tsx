@@ -118,11 +118,12 @@ export function FleetColdChainPage() {
 
   const metrics = useMemo(() => {
     if (!summary) return [];
+    const compliance = summary.summary.compliancePercent;
     return [
-      { label: 'Active devices', value: summary.summary.activeDevices, icon: Thermometer },
-      { label: 'Readings today', value: summary.summary.readingsToday, icon: Gauge },
+      { label: 'Active device registrations', value: summary.summary.activeDevices, icon: Thermometer },
+      { label: 'Authenticated readings today', value: summary.summary.readingsToday, icon: Gauge },
       { label: 'Open alerts', value: summary.summary.openAlerts, icon: BellRing },
-      { label: 'Compliance', value: `${summary.summary.compliancePercent}%`, icon: Layers3 },
+      { label: 'Authenticated compliance', value: compliance == null ? 'Not measured' : `${compliance}%`, icon: Layers3 },
     ];
   }, [summary]);
 
@@ -277,7 +278,7 @@ export function FleetColdChainPage() {
           meta={<>
             <span className="font-bold text-slate-700 tabular-nums">{devices.length}</span> temperature devices ·{" "}
             <span className="font-bold text-rose-600 tabular-nums">{alerts.length}</span> open alerts ·{" "}
-            <span className="font-bold text-emerald-600 tabular-nums">{summary ? `${summary.summary.compliancePercent}%` : "—"}</span> compliance
+            <span className="font-bold text-emerald-600 tabular-nums">{summary?.summary.compliancePercent == null ? "Not measured" : `${summary.summary.compliancePercent}%`}</span> authenticated compliance
           </>}
           actions={
             <div className="flex flex-wrap gap-2">
@@ -323,7 +324,8 @@ export function FleetColdChainPage() {
                 </div>
                 <div className="rounded-2xl border border-slate-200 bg-white p-4">
                   <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-slate-400">Breach rate</p>
-                  <p className="mt-2 text-2xl font-black text-slate-950">{summary.summary.totalReadings === 0 ? '0%' : `${Math.round((summary.summary.breachReadings / summary.summary.totalReadings) * 100)}%`}</p>
+                  <p className="mt-2 text-2xl font-black text-slate-950">{summary.summary.totalReadings === 0 ? 'Not measured' : `${Math.round((summary.summary.breachReadings / summary.summary.totalReadings) * 100)}%`}</p>
+                  <p className="mt-1 text-xs text-slate-500">Authenticated sensor or gateway readings only</p>
                 </div>
               </div>
               <div className="mt-4 space-y-3">
@@ -511,7 +513,8 @@ export function FleetColdChainPage() {
                       </div>
                       <span className="rounded-full bg-rose-50 px-3 py-1 text-xs font-bold text-rose-700">{alert.severity}</span>
                     </div>
-                    <p className="mt-2 text-sm text-slate-600">Measured {formatMeasurement(alert.measuredTemperature, 1, '°C', 'temperature unavailable')} against {formatMeasurement(alert.thresholdMin, 1, '°C', 'no minimum')} to {formatMeasurement(alert.thresholdMax, 1, '°C', 'no maximum')}.</p>
+                    <p className="mt-2 text-sm text-slate-600">{alert.measurementAuthority === 'OperatorObserved' ? 'Operator observed' : alert.measurementAuthority === 'GatewayReported' ? 'Gateway reported' : 'Device reported'} {formatMeasurement(alert.measuredTemperature, 1, '°C', 'temperature unavailable')} against {formatMeasurement(alert.thresholdMin, 1, '°C', 'no minimum')} to {formatMeasurement(alert.thresholdMax, 1, '°C', 'no maximum')}.</p>
+                    <p className="mt-1 text-xs font-semibold text-slate-500">Evidence authority: {alert.measurementAuthority}</p>
                     <p className="mt-1 text-xs text-slate-500">Triggered {alert.triggeredAtUtc ? new Date(alert.triggeredAtUtc).toLocaleString() : 'at an unavailable time'} · {alert.status}</p>
                     {alert.notes ? <p className="mt-2 text-sm text-slate-500">{alert.notes}</p> : null}
                     <p className="mt-1 text-xs text-slate-500">Reading reference {alert.readingId || 'Unavailable'}</p>

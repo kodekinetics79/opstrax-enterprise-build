@@ -79,6 +79,17 @@ public sealed class FleetTmsSecurityHardeningTests
     }
 
     [Fact]
+    public void ColdChainOperationalMetricsAndReportsRequirePersistedEvidenceAuthority()
+    {
+        var endpoints = ReadSource("backend-dotnet", "Controllers", "FleetTmsColdChainEndpoints.cs");
+        Assert.Contains("measurement_authority IN ('DeviceReported','GatewayReported')", endpoints, StringComparison.Ordinal);
+        Assert.Contains("measurement_authority IN ('DeviceReported','GatewayReported','OperatorObserved')", endpoints, StringComparison.Ordinal);
+        Assert.Contains("NoAuthenticatedMeasurements", endpoints, StringComparison.Ordinal);
+        Assert.Contains("evidence_authority='AuthenticatedDevice'", endpoints, StringComparison.Ordinal);
+        Assert.Contains("No authenticated cold-chain readings found", endpoints, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void DeviceRegistrationKeepsUnobservedTelemetryNull()
     {
         var endpoints = ReadSource("backend-dotnet", "Controllers", "FleetTmsColdChainEndpoints.cs");

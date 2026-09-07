@@ -81,6 +81,7 @@ public sealed class FleetTmsColdChainFoundationSchemaService(Database db)
         @"ALTER TABLE fleet_tms_temperature_alerts ADD COLUMN IF NOT EXISTS acknowledged_at_utc TIMESTAMPTZ NULL",
         @"ALTER TABLE fleet_tms_temperature_alerts ADD COLUMN IF NOT EXISTS acknowledged_by VARCHAR(255) NULL",
         @"ALTER TABLE fleet_tms_temperature_alerts ADD COLUMN IF NOT EXISTS acknowledged_notes TEXT NULL",
+        @"ALTER TABLE fleet_tms_temperature_alerts ADD COLUMN IF NOT EXISTS measurement_authority VARCHAR(40) NOT NULL DEFAULT 'LegacyUnverified'",
         @"ALTER TABLE fleet_tms_cold_chain_reports ADD COLUMN IF NOT EXISTS source_channel VARCHAR(40) NULL",
         @"ALTER TABLE fleet_tms_cold_chain_reports ADD COLUMN IF NOT EXISTS branch_id BIGINT NULL",
         @"ALTER TABLE fleet_tms_cold_chain_reports ADD COLUMN IF NOT EXISTS client_generated_id VARCHAR(120) NULL",
@@ -88,7 +89,8 @@ public sealed class FleetTmsColdChainFoundationSchemaService(Database db)
         @"ALTER TABLE fleet_tms_cold_chain_reports ADD COLUMN IF NOT EXISTS correlation_id VARCHAR(120) NULL",
         @"ALTER TABLE fleet_tms_cold_chain_reports ADD COLUMN IF NOT EXISTS causation_id VARCHAR(120) NULL",
         @"ALTER TABLE fleet_tms_cold_chain_reports ADD COLUMN IF NOT EXISTS metadata_json JSONB NULL",
-        @"ALTER TABLE fleet_tms_cold_chain_reports ADD COLUMN IF NOT EXISTS report_status VARCHAR(40) NOT NULL DEFAULT 'ready'"
+        @"ALTER TABLE fleet_tms_cold_chain_reports ADD COLUMN IF NOT EXISTS report_status VARCHAR(40) NOT NULL DEFAULT 'ready'",
+        @"ALTER TABLE fleet_tms_cold_chain_reports ADD COLUMN IF NOT EXISTS evidence_authority VARCHAR(40) NOT NULL DEFAULT 'LegacyUnverified'"
     ];
 
     private static readonly string[] Tables =

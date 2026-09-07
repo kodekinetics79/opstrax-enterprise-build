@@ -215,6 +215,7 @@ CREATE TABLE IF NOT EXISTS fleet_tms_temperature_alerts (
     measured_humidity    NUMERIC(6,2) NULL,
     humidity_threshold_min NUMERIC(6,2) NULL,
     humidity_threshold_max NUMERIC(6,2) NULL,
+    measurement_authority VARCHAR(40) NOT NULL DEFAULT 'LegacyUnverified',
     triggered_at_utc     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     resolved_at_utc      TIMESTAMPTZ NULL,
     resolved_by          VARCHAR(255) NOT NULL DEFAULT '',
@@ -228,7 +229,8 @@ CREATE TABLE IF NOT EXISTS fleet_tms_temperature_alerts (
   ALTER COLUMN threshold_max DROP NOT NULL,
   ADD COLUMN IF NOT EXISTS measured_humidity NUMERIC(6,2) NULL,
   ADD COLUMN IF NOT EXISTS humidity_threshold_min NUMERIC(6,2) NULL,
-  ADD COLUMN IF NOT EXISTS humidity_threshold_max NUMERIC(6,2) NULL");
+  ADD COLUMN IF NOT EXISTS humidity_threshold_max NUMERIC(6,2) NULL,
+  ADD COLUMN IF NOT EXISTS measurement_authority VARCHAR(40) NOT NULL DEFAULT 'LegacyUnverified'");
 
         await TryCreate("fleet_tms_cold_chain_reports", @"
 CREATE TABLE IF NOT EXISTS fleet_tms_cold_chain_reports (
@@ -242,9 +244,12 @@ CREATE TABLE IF NOT EXISTS fleet_tms_cold_chain_reports (
     max_temperature_celsius NUMERIC(6,2) NOT NULL DEFAULT 0,
     total_readings          INT          NOT NULL DEFAULT 0,
     breach_count            INT          NOT NULL DEFAULT 0,
+    evidence_authority      VARCHAR(40)  NOT NULL DEFAULT 'LegacyUnverified',
     summary_json            JSONB        NOT NULL DEFAULT '{}',
     notes                   TEXT         NOT NULL DEFAULT ''
 )");
+        await db.ExecuteAsync(@"ALTER TABLE fleet_tms_cold_chain_reports
+  ADD COLUMN IF NOT EXISTS evidence_authority VARCHAR(40) NOT NULL DEFAULT 'LegacyUnverified'");
 
         await TryCreate("fleet_tms_refrigeration_unit_health", @"
 CREATE TABLE IF NOT EXISTS fleet_tms_refrigeration_unit_health (

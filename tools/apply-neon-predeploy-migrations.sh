@@ -248,6 +248,8 @@ MIGRATIONS=(
   2026_09_06_stage104_camera_demo_truth_cleanup
   # Separate operator observations from authenticated sensor/gateway measurements.
   2026_09_06_stage105_cold_chain_measurement_authority
+  # Alerts and compliance reports retain the authority of their source readings.
+  2026_09_06_stage106_cold_chain_alert_report_authority
 )
 
 echo "Pre-check: validated read-only database identity…"
@@ -401,7 +403,8 @@ BEGIN
       ('2026_08_13_stage79_tenant_provisioning_runtime_contract'),
       ('2026_08_14_stage80_fleet_identity_backbone'),
       ('2026_09_06_stage104_camera_demo_truth_cleanup'),
-      ('2026_09_06_stage105_cold_chain_measurement_authority')) required(version)
+      ('2026_09_06_stage105_cold_chain_measurement_authority'),
+      ('2026_09_06_stage106_cold_chain_alert_report_authority')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN RAISE EXCEPTION 'Required owner/pilot migration ledger missing or duplicated'; END IF;
   IF EXISTS (
@@ -433,6 +436,17 @@ BEGIN
       AND last_measurement_source NOT IN ('Sensor','Gateway')
   ) THEN
     RAISE EXCEPTION 'Stage105 device state contains a non-device measurement source';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='fleet_tms_temperature_alerts'
+      AND column_name='measurement_authority'
+  ) OR NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='fleet_tms_cold_chain_reports'
+      AND column_name='evidence_authority'
+  ) THEN
+    RAISE EXCEPTION 'Stage106 cold-chain alert/report authority columns are missing';
   END IF;
   IF to_regclass('public.uq_ftms_dorders_company_number') IS NULL
      OR to_regclass('public.telemetry_gateways') IS NULL
