@@ -131,6 +131,18 @@ public sealed class J1939TransportReassemblerTests
     }
 
     [Fact]
+    public void Regressing_capture_time_discards_the_session()
+    {
+        var sut = StartBam();
+
+        var failure = Assert.Throws<J1939TransportException>(() =>
+            sut.Accept(Dt(1, new byte[7], 0x2A, 0xFF, T0.AddMilliseconds(-1))));
+
+        Assert.Contains("time regressed", failure.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, sut.ActiveSessionCount);
+    }
+
+    [Fact]
     public void Abort_from_receiver_removes_directionally_reversed_rts_session()
     {
         var sut = new J1939TransportReassembler();
@@ -232,6 +244,59 @@ public sealed class J1939TransportReassemblerTests
             0xFF,
             new byte[8],
             T0)));
+    }
+
+    [Theory]
+    [InlineData(0x40000)]
+    [InlineData(0x00EF01)]
+    public void Invalid_transported_pgn_is_rejected(int targetPgn)
+    {
+        var sut = new J1939TransportReassembler();
+
+        Assert.Throws<J1939TransportException>(() => sut.Accept(Cm(
+            J1939TransportReassembler.BamControl,
+            10,
+            2,
+            targetPgn,
+            0x2A,
+            0xFF,
+            T0)));
+        Assert.Equal(0, sut.ActiveSessionCount);
+    }
+
+    [Fact]
+    public void Mismatched_acquisition_evidence_is_rejected()
+    {
+        var data = Cm(
+            J1939TransportReassembler.BamControl,
+            10,
+            2,
+            J1939DiagnosticDecoder.Dm1Pgn,
+            0x2A,
+            0xFF,
+            T0).Data;
+        var frame = new J1939TransportFrame(
+            J1939TransportReassembler.TpCmPgn,
+            0x2A,
+            0xFF,
+            data,
+            T0)
+        {
+            Acquisition = new J1939CanFrameEnvelope(
+                0,
+                7,
+                J1939TransportReassembler.TpCmPgn,
+                0x2B,
+                0xFF,
+                true,
+                data,
+                T0,
+                "adapter",
+                "can0",
+                "capture"),
+        };
+
+        Assert.Throws<J1939TransportException>(() => new J1939TransportReassembler().Accept(frame));
     }
 
     [Fact]
