@@ -528,6 +528,7 @@ export interface TemperatureAlert {
   thresholdMin: number;
   thresholdMax: number;
   measuredTemperature: number;
+  measurementAuthority: "DeviceReported" | "GatewayReported" | "OperatorObserved";
   triggeredAtUtc: string;
   resolvedAtUtc?: string | null;
   resolvedBy: string;
@@ -541,6 +542,7 @@ export interface ColdChainReport {
   shipmentNumber: string;
   generatedAtUtc: string;
   compliancePercent: number;
+  evidenceAuthority: "AuthenticatedDevice";
   minTemperatureCelsius: number;
   maxTemperatureCelsius: number;
   totalReadings: number;
@@ -705,8 +707,9 @@ export interface ColdChainSummaryResponse {
     eventLogCount?: number;
     totalReadings: number;
     breachReadings: number;
-    avgTemperatureCelsius: number;
-    compliancePercent: number;
+    avgTemperatureCelsius: number | null;
+    compliancePercent: number | null;
+    evidenceBasis: "NoAuthenticatedMeasurements" | "AuthenticatedDeviceMeasurements";
   };
   zones: TemperatureZone[];
   devices: Array<Pick<TemperatureDevice, "id" | "deviceCode" | "name" | "vehicleNumber" | "status" | "lastReportedTemperatureCelsius" | "batteryPercent" | "lastPingAtUtc" | "notes"> & {

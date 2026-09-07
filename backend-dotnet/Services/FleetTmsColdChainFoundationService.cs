@@ -381,10 +381,10 @@ WHERE id=@device AND company_id=@companyId AND branch_id IS NOT DISTINCT FROM @b
                 await using var alert = new NpgsqlCommand(@"
 INSERT INTO fleet_tms_temperature_alerts
  (company_id,branch_id,device_id,shipment_id,reading_id,alert_type,severity,status,threshold_min,threshold_max,
-  measured_temperature,measured_humidity,humidity_threshold_min,humidity_threshold_max,triggered_at_utc,
+  measured_temperature,measured_humidity,humidity_threshold_min,humidity_threshold_max,measurement_authority,triggered_at_utc,
   notes,source_channel,client_generated_id,idempotency_key,correlation_id,causation_id,
   metadata_json,applied_policy_code,applied_policy_scope)
-VALUES (@companyId,@branchId,@device,@shipment,@reading,@alertType,@severity,'Open',@min,@max,@temp,@humidity,@humidityMin,@humidityMax,NOW(),
+VALUES (@companyId,@branchId,@device,@shipment,@reading,@alertType,@severity,'Open',@min,@max,@temp,@humidity,@humidityMin,@humidityMax,@measurementAuthority,NOW(),
  'Breach derived from the persisted cold-chain policy.',@sourceChannel,@clientGeneratedId,@idempotencyKey,@correlationId,@causationId,
  @metadata::jsonb,@policyCode,@policyScope)
 ON CONFLICT DO NOTHING", connection, transaction);
@@ -397,6 +397,7 @@ ON CONFLICT DO NOTHING", connection, transaction);
                 alert.Parameters.AddWithValue("@humidity", (object?)req.HumidityPercent ?? DBNull.Value);
                 alert.Parameters.AddWithValue("@humidityMin", (object?)effectiveHumidityMin ?? DBNull.Value);
                 alert.Parameters.AddWithValue("@humidityMax", (object?)effectiveHumidityMax ?? DBNull.Value);
+                alert.Parameters.AddWithValue("@measurementAuthority", measurementAuthority);
                 alert.Parameters.AddWithValue("@policyCode", (object?)policy?.PolicyCode ?? DBNull.Value);
                 alert.Parameters.AddWithValue("@policyScope", (object?)policy?.ScopeType ?? DBNull.Value);
                 await alert.ExecuteNonQueryAsync(ct);
@@ -408,7 +409,7 @@ ON CONFLICT DO NOTHING", connection, transaction);
                 await InsertFlowEvent(connection, transaction, companyId, branchId, "cold_chain.condition_breach.detected", readingId,
                     new { readingId, req.DeviceId, shipmentId, zoneId, req.TemperatureCelsius, req.HumidityPercent,
                         effectiveMin, effectiveMax, effectiveHumidityMin, effectiveHumidityMax, alertType,
-                        policyCode=policy?.PolicyCode, policyScope=policy?.ScopeType }, req, ct);
+                        measurementAuthority, policyCode=policy?.PolicyCode, policyScope=policy?.ScopeType }, req, ct);
             return readingId;
         }, ct);
     }

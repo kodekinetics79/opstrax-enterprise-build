@@ -163,26 +163,32 @@ public static class FleetTmsColdChainEndpoints
         if (denied is not null) return denied;
         var companyId = Cid(http);
         void B(NpgsqlCommand c) { c.Parameters.AddWithValue("@companyId", companyId); BindBranch(c, http); }
-        var totalReadings = await db.ScalarLongAsync("SELECT COUNT(*) FROM fleet_tms_temperature_readings WHERE company_id=@companyId" + BranchScope(http), B, ct);
-        var breachReadings = await db.ScalarLongAsync("SELECT COUNT(*) FROM fleet_tms_temperature_readings WHERE company_id=@companyId AND status='Breach'" + BranchScope(http), B, ct);
+        const string authenticatedReading = " AND measurement_authority IN ('DeviceReported','GatewayReported')";
+        const string operationalAlert = " AND measurement_authority IN ('DeviceReported','GatewayReported','OperatorObserved')";
+        var totalReadings = await db.ScalarLongAsync("SELECT COUNT(*) FROM fleet_tms_temperature_readings WHERE company_id=@companyId" + authenticatedReading + BranchScope(http), B, ct);
+        var breachReadings = await db.ScalarLongAsync("SELECT COUNT(*) FROM fleet_tms_temperature_readings WHERE company_id=@companyId AND status='Breach'" + authenticatedReading + BranchScope(http), B, ct);
         var policyCount = await db.ScalarLongAsync("SELECT COUNT(*) FROM fleet_tms_cold_chain_policies WHERE company_id=@companyId" + SharedConfigScope(http), B, ct);
         var eventLogCount = await db.ScalarLongAsync("SELECT COUNT(*) FROM fleet_tms_cold_chain_event_log WHERE company_id=@companyId" + BranchScope(http), B, ct);
+        var avgTemperature = totalReadings == 0
+            ? (decimal?)null
+            : Math.Round(await db.ScalarDecimalAsync("SELECT AVG(temperature_celsius) FROM fleet_tms_temperature_readings WHERE company_id=@companyId" + authenticatedReading + BranchScope(http), B, ct) ?? 0m, 1);
         var summary = new
         {
             activeDevices = await db.ScalarLongAsync("SELECT COUNT(*) FROM fleet_tms_temperature_devices WHERE company_id=@companyId AND status='Active'" + BranchScope(http), B, ct),
-            readingsToday = await db.ScalarLongAsync("SELECT COUNT(*) FROM fleet_tms_temperature_readings WHERE company_id=@companyId AND recorded_at_utc >= date_trunc('day', NOW())" + BranchScope(http), B, ct),
-            openAlerts = await db.ScalarLongAsync("SELECT COUNT(*) FROM fleet_tms_temperature_alerts WHERE company_id=@companyId AND status IN ('Open','InReview')" + BranchScope(http), B, ct),
+            readingsToday = await db.ScalarLongAsync("SELECT COUNT(*) FROM fleet_tms_temperature_readings WHERE company_id=@companyId AND recorded_at_utc >= date_trunc('day', NOW())" + authenticatedReading + BranchScope(http), B, ct),
+            openAlerts = await db.ScalarLongAsync("SELECT COUNT(*) FROM fleet_tms_temperature_alerts WHERE company_id=@companyId AND status IN ('Open','InReview')" + operationalAlert + BranchScope(http), B, ct),
             policyCount,
             eventLogCount,
             totalReadings,
             breachReadings,
-            avgTemperatureCelsius = Math.Round(await db.ScalarDecimalAsync("SELECT COALESCE(AVG(temperature_celsius),0) FROM fleet_tms_temperature_readings WHERE company_id=@companyId" + BranchScope(http), B, ct) ?? 0m, 1),
-            compliancePercent = totalReadings == 0 ? 0m : Math.Round((1m - (breachReadings / (decimal)totalReadings)) * 100m, 1),
+            avgTemperatureCelsius = avgTemperature,
+            compliancePercent = totalReadings == 0 ? (decimal?)null : Math.Round((1m - (breachReadings / (decimal)totalReadings)) * 100m, 1),
+            evidenceBasis = totalReadings == 0 ? "NoAuthenticatedMeasurements" : "AuthenticatedDeviceMeasurements",
         };
         var zones = await db.QueryAsync("SELECT id, code, name, min_celsius, max_celsius, color, is_active, notes FROM fleet_tms_temperature_zones WHERE company_id=@companyId" + SharedConfigScope(http) + " ORDER BY name", B, ct);
         var devices = await db.QueryAsync("SELECT id, device_code, name, vehicle_number, status, sensor_type, measurement_unit, calibration_status, calibrated_at_utc, calibration_due_at_utc, calibration_reference, last_reported_temperature_celsius, battery_percent, last_ping_at_utc, last_measurement_source, last_measurement_observed_at_utc, notes FROM fleet_tms_temperature_devices WHERE company_id=@companyId" + BranchScope(http) + " ORDER BY last_ping_at_utc DESC NULLS LAST LIMIT 6", B, ct);
-        var alerts = await db.QueryAsync("SELECT id, device_id, shipment_id, reading_id, alert_type, severity, status, measured_temperature, threshold_min, threshold_max, measured_humidity, humidity_threshold_min, humidity_threshold_max, triggered_at_utc, resolution_notes, source_channel, client_generated_id, correlation_id, causation_id, metadata_json, applied_policy_code, applied_policy_scope FROM fleet_tms_temperature_alerts WHERE company_id=@companyId AND status <> 'Resolved'" + BranchScope(http) + " ORDER BY triggered_at_utc DESC LIMIT 6", B, ct);
-        var reports = await db.QueryAsync("SELECT id, shipment_id, shipment_number, generated_at_utc, compliance_percent, min_temperature_celsius, max_temperature_celsius, total_readings, breach_count, summary_json, notes, source_channel, client_generated_id, correlation_id, causation_id, metadata_json FROM fleet_tms_cold_chain_reports WHERE company_id=@companyId" + BranchScope(http) + " ORDER BY generated_at_utc DESC LIMIT 6", B, ct);
+        var alerts = await db.QueryAsync("SELECT id, device_id, shipment_id, reading_id, alert_type, severity, status, measured_temperature, threshold_min, threshold_max, measured_humidity, humidity_threshold_min, humidity_threshold_max, measurement_authority, triggered_at_utc, resolution_notes, source_channel, client_generated_id, correlation_id, causation_id, metadata_json, applied_policy_code, applied_policy_scope FROM fleet_tms_temperature_alerts WHERE company_id=@companyId AND status <> 'Resolved'" + operationalAlert + BranchScope(http) + " ORDER BY triggered_at_utc DESC LIMIT 6", B, ct);
+        var reports = await db.QueryAsync("SELECT id, shipment_id, shipment_number, generated_at_utc, compliance_percent, min_temperature_celsius, max_temperature_celsius, total_readings, breach_count, evidence_authority, summary_json, notes, source_channel, client_generated_id, correlation_id, causation_id, metadata_json FROM fleet_tms_cold_chain_reports WHERE company_id=@companyId AND evidence_authority='AuthenticatedDevice'" + BranchScope(http) + " ORDER BY generated_at_utc DESC LIMIT 6", B, ct);
         var policies = await foundation.ListPoliciesAsync(companyId, Bid(http), ct);
         return Ok(new { generatedAtUtc = DateTime.UtcNow, summary, zones, devices, alerts, reports, policies });
     }
@@ -423,11 +429,11 @@ WHERE r.company_id=@companyId AND r.shipment_id=@sid" + BranchScope(http, "r.") 
         var denied = EndpointMappings.RequirePermission(http, "fleet:view");
         if (denied is not null) return denied;
         var companyId = Cid(http);
-        var where = "WHERE a.company_id=@companyId" + BranchScope(http, "a.") + (string.IsNullOrWhiteSpace(status) ? "" : " AND a.status=@status");
+        var where = "WHERE a.company_id=@companyId AND a.measurement_authority IN ('DeviceReported','GatewayReported','OperatorObserved')" + BranchScope(http, "a.") + (string.IsNullOrWhiteSpace(status) ? "" : " AND a.status=@status");
         var items = await db.QueryAsync($@"
 SELECT a.id, a.device_id, d.device_code, a.shipment_id, s.shipment_number, a.reading_id, a.alert_type, a.severity, a.status,
        a.threshold_min, a.threshold_max, a.measured_temperature, a.measured_humidity,
-       a.humidity_threshold_min, a.humidity_threshold_max,
+       a.humidity_threshold_min, a.humidity_threshold_max, a.measurement_authority,
        a.triggered_at_utc, a.resolved_at_utc, a.resolved_by, a.resolution_notes, a.notes
        ,a.source_channel, a.client_generated_id, a.correlation_id, a.causation_id, a.metadata_json,
        a.applied_policy_code, a.applied_policy_scope
@@ -459,15 +465,15 @@ LEFT JOIN fleet_tms_shipments s ON s.id=a.shipment_id
         var denied = EndpointMappings.RequirePermission(http, "fleet:view");
         if (denied is not null) return denied;
         var companyId = Cid(http);
-        var existing = await db.QuerySingleAsync("SELECT * FROM fleet_tms_cold_chain_reports WHERE company_id=@companyId AND shipment_id=@sid" + BranchScope(http) + " ORDER BY generated_at_utc DESC LIMIT 1",
+        var existing = await db.QuerySingleAsync("SELECT * FROM fleet_tms_cold_chain_reports WHERE company_id=@companyId AND shipment_id=@sid AND evidence_authority='AuthenticatedDevice'" + BranchScope(http) + " ORDER BY generated_at_utc DESC LIMIT 1",
             c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@sid", shipmentId); BindBranch(c, http); }, ct);
         if (existing is not null) return Ok(existing);
 
         var shipment = await Row(db, "fleet_tms_shipments", companyId, shipmentId, ct);
         if (shipment is null) return NotFound("Shipment not found for this tenant.");
-        var readings = await db.QueryAsync("SELECT temperature_celsius, status FROM fleet_tms_temperature_readings WHERE company_id=@companyId AND shipment_id=@sid" + BranchScope(http),
+        var readings = await db.QueryAsync("SELECT temperature_celsius, status FROM fleet_tms_temperature_readings WHERE company_id=@companyId AND shipment_id=@sid AND measurement_authority IN ('DeviceReported','GatewayReported')" + BranchScope(http),
             c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@sid", shipmentId); BindBranch(c, http); }, ct);
-        if (readings.Count == 0) return NotFound("No cold-chain readings found for this shipment.");
+        if (readings.Count == 0) return NotFound("No authenticated cold-chain readings found for this shipment.");
 
         var temps = readings.Select(r => Convert.ToDecimal(r["temperatureCelsius"])).ToList();
         var breachCount = readings.Count(r => string.Equals(r["status"]?.ToString(), "Breach", StringComparison.OrdinalIgnoreCase));
@@ -488,8 +494,9 @@ LEFT JOIN fleet_tms_shipments s ON s.id=a.shipment_id
             maxTemperatureCelsius = temps.Max(),
             totalReadings = readings.Count,
             breachCount,
+            evidenceAuthority = "AuthenticatedDevice",
             summaryJson,
-            notes = "Generated on demand from live temperature readings.",
+            notes = "Generated on demand from authenticated device or gateway temperature readings.",
         });
     }
 
