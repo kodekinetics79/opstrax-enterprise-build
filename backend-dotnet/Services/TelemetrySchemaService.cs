@@ -49,6 +49,23 @@ public sealed class TelemetrySchemaService(Database db)
         new("eld_devices", "revoked_at",   "TIMESTAMPTZ NULL"),
         new("eld_devices", "updated_at",   "TIMESTAMPTZ NULL"),
         new("eld_devices", "deleted_at",   "TIMESTAMPTZ NULL"),
+        // Stage119 enriches the Stage66 durable command ledger. Production gets
+        // these columns from the migration; owner-capable local databases retain
+        // parity when explicit runtime DDL is enabled.
+        new("telematics_device_commands", "capability_id", "BIGINT NULL"),
+        new("telematics_device_commands", "device_serial_snapshot", "VARCHAR(120) NULL"),
+        new("telematics_device_commands", "manufacturer_snapshot", "VARCHAR(120) NULL"),
+        new("telematics_device_commands", "device_model_snapshot", "VARCHAR(160) NULL"),
+        new("telematics_device_commands", "hardware_revision_snapshot", "VARCHAR(120) NULL"),
+        new("telematics_device_commands", "firmware_version_snapshot", "VARCHAR(120) NULL"),
+        new("telematics_device_commands", "provider_snapshot", "VARCHAR(120) NULL"),
+        new("telematics_device_commands", "command_class", "VARCHAR(24) NULL"),
+        new("telematics_device_commands", "purpose", "VARCHAR(500) NULL"),
+        new("telematics_device_commands", "source_reference", "VARCHAR(240) NULL"),
+        new("telematics_device_commands", "safety_confirmation_hash", "VARCHAR(64) NULL"),
+        new("telematics_device_commands", "governance_status", "VARCHAR(24) NOT NULL DEFAULT 'LegacyUnverified'"),
+        new("telematics_device_commands", "provider_delivery_claim", "BOOLEAN NOT NULL DEFAULT FALSE"),
+        new("telematics_device_commands", "physical_outcome_claim", "BOOLEAN NOT NULL DEFAULT FALSE"),
         // location_events telemetry enrichment
         // accuracy_meters is in the Batch1 CREATE, but a location_events table created by an
         // older path (pre-column) won't get it via CREATE IF NOT EXISTS — backfill idempotently
@@ -413,6 +430,24 @@ public sealed class TelemetrySchemaService(Database db)
             CONSTRAINT ck_stage118_no_swap_claim CHECK (physical_swap_claim=FALSE),
             UNIQUE(company_id,case_id), UNIQUE(company_id,idempotency_key)
         )",
+
+        @"CREATE TABLE IF NOT EXISTS device_command_capabilities (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL, branch_id BIGINT NULL, device_id BIGINT NOT NULL,
+            device_serial VARCHAR(120) NOT NULL, manufacturer VARCHAR(120) NOT NULL,
+            device_model VARCHAR(160) NOT NULL, hardware_revision VARCHAR(120) NOT NULL,
+            firmware_version VARCHAR(120) NOT NULL, provider VARCHAR(120) NOT NULL,
+            command_type VARCHAR(60) NOT NULL, command_class VARCHAR(24) NOT NULL,
+            capability_status VARCHAR(24) NOT NULL DEFAULT 'Unverified', evidence_source VARCHAR(40) NOT NULL,
+            evidence_reference VARCHAR(240) NOT NULL, observed_at TIMESTAMPTZ NOT NULL,
+            expires_at TIMESTAMPTZ NOT NULL, physical_evidence_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            certification_claim BOOLEAN NOT NULL DEFAULT FALSE, recorded_by BIGINT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NULL,
+            CONSTRAINT ck_stage119_capability_type CHECK (command_type IN ('RequestPosition','RequestDiagnostics','RestartDevice')),
+            CONSTRAINT ck_stage119_capability_status CHECK (capability_status IN ('Unverified','Verified','Rejected','Revoked')),
+            CONSTRAINT ck_stage119_capability_no_physical_claim CHECK (physical_evidence_claim=FALSE),
+            CONSTRAINT ck_stage119_capability_no_certification_claim CHECK (certification_claim=FALSE)
+        )",
     ];
 
     private static readonly string[] Indexes =
@@ -467,6 +502,14 @@ public sealed class TelemetrySchemaService(Database db)
           ON device_rma_events(company_id,case_id,sequence_number)",
         @"CREATE INDEX IF NOT EXISTS ix_stage118_replacements_device
           ON device_rma_replacements(company_id,replacement_device_id,created_at DESC)",
+        @"CREATE UNIQUE INDEX IF NOT EXISTS uq_stage119_capability_evidence
+          ON device_command_capabilities(company_id,device_id,command_type,evidence_reference)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage119_capability_lookup
+          ON device_command_capabilities(company_id,device_id,command_type,capability_status,expires_at DESC,id DESC)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage119_commands_device_recent
+          ON telematics_device_commands(company_id,device_id,created_at DESC,id DESC)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage119_commands_capability
+          ON telematics_device_commands(company_id,capability_id,created_at DESC,id DESC) WHERE capability_id IS NOT NULL",
     ];
 
     private static readonly string[] Seeds =

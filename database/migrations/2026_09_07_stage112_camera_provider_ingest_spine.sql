@@ -214,6 +214,7 @@ BEGIN
     CREATE POLICY system_control_plane ON camera_provider_media_references
       AS PERMISSIVE FOR ALL TO opstrax_system USING (TRUE) WITH CHECK (TRUE);
 
+    REVOKE ALL ON TABLE camera_provider_event_inbox,camera_provider_media_references FROM opstrax_system;
     GRANT SELECT,INSERT,UPDATE ON TABLE camera_provider_event_inbox,camera_provider_media_references TO opstrax_system;
     GRANT USAGE,SELECT ON SEQUENCE camera_provider_event_inbox_id_seq,camera_provider_media_references_id_seq TO opstrax_system;
     GRANT EXECUTE ON FUNCTION stage112_protect_camera_provider_event_identity() TO opstrax_system;

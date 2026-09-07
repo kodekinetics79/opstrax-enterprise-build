@@ -136,6 +136,7 @@ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_system') THEN
     CREATE POLICY system_control_plane ON device_connectivity_profiles
       FOR ALL TO opstrax_system USING (TRUE) WITH CHECK (TRUE);
+    REVOKE ALL ON TABLE device_connectivity_profiles FROM opstrax_system;
     GRANT SELECT,INSERT,UPDATE ON device_connectivity_profiles TO opstrax_system;
     GRANT USAGE,SELECT ON SEQUENCE device_connectivity_profiles_id_seq TO opstrax_system;
     GRANT EXECUTE ON FUNCTION stage116_protect_device_connectivity_profile() TO opstrax_system;

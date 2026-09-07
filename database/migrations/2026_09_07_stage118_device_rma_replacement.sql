@@ -160,6 +160,7 @@ BEGIN
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_system') THEN
       EXECUTE format('CREATE POLICY system_control_plane ON %I FOR ALL TO opstrax_system USING (TRUE) WITH CHECK (TRUE)',t);
+      EXECUTE format('REVOKE ALL ON TABLE %I FROM opstrax_system',t);
       EXECUTE format('GRANT SELECT,INSERT ON TABLE %I TO opstrax_system',t);
     END IF;
     EXECUTE format('REVOKE ALL ON TABLE %I FROM PUBLIC',t);

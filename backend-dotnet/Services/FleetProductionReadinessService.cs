@@ -295,7 +295,7 @@ public sealed class FleetProductionReadinessService
           ('device_state_transitions',true,false,false),('device_installations',true,true,false),
           ('device_installation_evidence',true,false,false),('device_channel_health',true,true,false),
           ('dvir_inspection_results',true,false,false),
-          ('telematics_device_commands',true,true,false),('telemetry_privacy_policies',true,true,false),
+          ('telematics_device_commands',false,false,false),('telemetry_privacy_policies',true,true,false),
           ('fault_codes',true,true,false),('fault_occurrences',true,false,false),
           ('diagnostic_holds',true,true,false),('canonical_telemetry_events',false,false,false),
           ('telemetry_stream_ticket_nonces',true,false,false),

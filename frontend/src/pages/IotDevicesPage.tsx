@@ -50,6 +50,7 @@ import {
   type DeviceRmaCaseInput,
   type DeviceRmaEventInput,
   type DeviceRmaReplacementInput,
+  type DeviceRemoteCommandInput,
   type DeviceIdentityQuarantineRecord,
   type DeviceInstallationInput,
   type DeviceInstallationIntent,
@@ -204,6 +205,19 @@ function newRmaEventForm(): RmaEventFormState {
 
 function newRmaReplacementForm(): RmaReplacementFormState {
   return { replacementDeviceSerial: "", changeReason: "", sourceReference: "", idempotencyKey: crypto.randomUUID() };
+}
+
+type RemoteCommandFormState = {
+  commandType: DeviceRemoteCommandInput["commandType"];
+  purpose: string;
+  sourceReference: string;
+  safetyConfirmation: string;
+  delaySeconds: string;
+  idempotencyKey: string;
+};
+
+function newRemoteCommandForm(commandType: DeviceRemoteCommandInput["commandType"]): RemoteCommandFormState {
+  return { commandType, purpose: "", sourceReference: "", safetyConfirmation: "", delaySeconds: "0", idempotencyKey: crypto.randomUUID() };
 }
 
 type SuspensionMutationVariables = { deviceId: string; sessionGeneration: number; target: ConfirmActionTarget };
@@ -685,6 +699,7 @@ export function IotDevicesPage() {
   const canManageDeviceLifecycle = hasPermission(PERMISSIONS.TELEMETRY_DEVICES_MANAGE);
   const canPlanFirmware = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_FIRMWARE);
   const canManageRma = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_RMA);
+  const canRequestRemoteCommand = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_COMMAND);
   const canCreate = canManageDeviceLifecycle;
   const canUpdate = canManageDeviceLifecycle;
   const canDelete = canManageDeviceLifecycle;
@@ -1801,6 +1816,7 @@ export function IotDevicesPage() {
 	                canManageConnectivity={canManageDeviceLifecycle}
 	                canPlanFirmware={canPlanFirmware}
 	                canManageRma={canManageRma}
+	                canRequestRemoteCommand={canRequestRemoteCommand}
 	                lifecycleError={lifecycleError}
 	                onDismissLifecycleError={clearLifecycleError}
 	                actionContracts={
@@ -2030,6 +2046,7 @@ function DeviceDetailDrawer({
   canManageConnectivity,
   canPlanFirmware,
   canManageRma,
+  canRequestRemoteCommand,
   actionContracts,
   lifecycleError,
   onDismissLifecycleError,
@@ -2038,6 +2055,7 @@ function DeviceDetailDrawer({
   canManageConnectivity: boolean;
   canPlanFirmware: boolean;
   canManageRma: boolean;
+  canRequestRemoteCommand: boolean;
   actionContracts: DeviceActionContract[];
   lifecycleError?: unknown;
   onDismissLifecycleError: () => void;
@@ -2210,6 +2228,43 @@ function DeviceDetailDrawer({
     setRmaError(null);
     rmaReplacementMut.mutate({ caseId: rmaReplacementCaseId, input: rmaReplacementForm });
   };
+  const [remoteCommandForm, setRemoteCommandForm] = useState<RemoteCommandFormState | null>(null);
+  const [remoteCommandError, setRemoteCommandError] = useState<string | null>(null);
+  const [remoteCommandNotice, setRemoteCommandNotice] = useState<string | null>(null);
+  const remoteCommandSubmitting = useRef(false);
+  const remoteCommandMut = useMutation({
+    mutationFn: (input: DeviceRemoteCommandInput) => telematicsService.requestDeviceRemoteCommand(device.id, input),
+    retry: false,
+    onSuccess: async (result) => {
+      setRemoteCommandForm(null); setRemoteCommandError(null); setRemoteCommandNotice(result.note);
+      await queryClient.invalidateQueries({ queryKey: ["telematics", "device"] });
+    },
+    onError: (error) => setRemoteCommandError(apiErrorMessage(error, "The command request was not recorded.")),
+    onSettled: () => { remoteCommandSubmitting.current = false; },
+  });
+  const submitRemoteCommand = (event: FormEvent) => {
+    event.preventDefault();
+    if (!canRequestRemoteCommand || !remoteCommandForm || remoteCommandSubmitting.current || remoteCommandMut.isPending) return;
+    setRemoteCommandError(null);
+    const delaySeconds = Number(remoteCommandForm.delaySeconds);
+    if (remoteCommandForm.commandType === "RestartDevice" &&
+        (!Number.isInteger(delaySeconds) || delaySeconds < 0 || delaySeconds > 300)) {
+      setRemoteCommandError("Restart delay must be a whole number from 0 to 300 seconds.");
+      return;
+    }
+    remoteCommandSubmitting.current = true;
+    remoteCommandMut.mutate({
+      commandType: remoteCommandForm.commandType,
+      payload: remoteCommandForm.commandType === "RestartDevice" ? { delaySeconds } : {},
+      purpose: remoteCommandForm.purpose,
+      sourceReference: remoteCommandForm.sourceReference,
+      safetyConfirmation: remoteCommandForm.safetyConfirmation,
+      idempotencyKey: remoteCommandForm.idempotencyKey,
+    });
+  };
+  const selectedRemoteCommandCapability = remoteCommandForm
+    ? detail.remoteCommandCapabilities.find(capability => capability.commandType === remoteCommandForm.commandType) ?? null
+    : null;
   // Guard every [0] access — these live sub-feeds are frequently empty. `telemetry`
   // is a single live position point (or none), and `diagnostics` are active fault codes.
   const latestTelemetry = detail.telemetry[0] ?? null;
@@ -2591,6 +2646,42 @@ function DeviceDetailDrawer({
                 ]} />
                 <p className="mt-3 text-sm text-slate-300">{plan.planningReason}</p>
                 <p className="mt-2 text-xs text-amber-200">{plan.externalHoldReason}</p>
+              </div>
+            ))}
+          </div>
+        </PanelSection>
+        <PanelSection title="Capability-governed remote commands">
+          <p className="rounded-xl border border-amber-300/25 bg-amber-500/10 p-3 text-sm text-amber-100">
+            A command can be recorded only when current provider or device evidence verifies that exact command for this exact hardware, firmware, provider, and serial. Recording does not prove provider dispatch, device acknowledgement, application, or any physical outcome.
+          </p>
+          {remoteCommandNotice ? <p role="status" className="mt-3 rounded-lg border border-emerald-400/25 bg-emerald-500/10 p-3 text-sm text-emerald-100">{remoteCommandNotice}</p> : null}
+          {remoteCommandError ? <p role="alert" className="mt-3 text-sm text-red-300">{remoteCommandError}</p> : null}
+          <div className="mt-4 grid gap-3 lg:grid-cols-3">
+            {detail.remoteCommandCapabilities.map(capability => (
+              <div key={capability.commandType} className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-4">
+                <div className="flex items-start justify-between gap-2"><div><p className="font-semibold text-white">{capability.displayName}</p><p className="mt-1 text-xs text-slate-400">{capability.commandClass}</p></div><StatusBadge status={capability.requestAdmissionAvailable ? "Evidence verified" : "External hold"} /></div>
+                <MiniGrid rows={[["Capability", capability.capabilityStatus], ["Evidence", cell(capability.evidenceReference)], ["Observed", cell(capability.observedAt)], ["Expires", cell(capability.expiresAt)]]} />
+                {capability.externalHoldReason ? <p className="mt-2 text-xs text-amber-200">{capability.externalHoldReason}</p> : null}
+                {canRequestRemoteCommand ? <button type="button" className="btn-ghost mt-3" disabled={!capability.requestAdmissionAvailable || remoteCommandMut.isPending} title={!capability.requestAdmissionAvailable ? capability.externalHoldReason ?? "Verified capability evidence is required." : `Request ${capability.displayName}`} onClick={() => { setRemoteCommandForm(newRemoteCommandForm(capability.commandType)); setRemoteCommandError(null); setRemoteCommandNotice(null); }}>Request command</button> : null}
+              </div>
+            ))}
+          </div>
+          {remoteCommandForm && selectedRemoteCommandCapability?.requestAdmissionAvailable && canRequestRemoteCommand ? (
+            <form className="mt-4 space-y-3 rounded-xl border border-white/[0.08] bg-black/10 p-4" onSubmit={submitRemoteCommand}>
+              <div><p className="font-semibold text-white">{selectedRemoteCommandCapability.displayName}</p><p className="mt-1 text-xs text-slate-400">Type the exact safety phrase shown below. The phrase is hashed before storage.</p></div>
+              {remoteCommandForm.commandType === "RestartDevice" ? <FormField label="Delay seconds"><input className="field w-full" type="number" min={0} max={300} required value={remoteCommandForm.delaySeconds} onChange={event => setRemoteCommandForm(form => form ? { ...form, delaySeconds: event.target.value } : form)} disabled={remoteCommandMut.isPending} /></FormField> : null}
+              <FormField label="Operational purpose"><textarea className="field h-20 w-full resize-none" required minLength={10} maxLength={500} value={remoteCommandForm.purpose} onChange={event => setRemoteCommandForm(form => form ? { ...form, purpose: event.target.value } : form)} disabled={remoteCommandMut.isPending} /></FormField>
+              <FormField label="Source reference"><input className="field w-full" required minLength={3} maxLength={240} placeholder="Approved ticket or work order" value={remoteCommandForm.sourceReference} onChange={event => setRemoteCommandForm(form => form ? { ...form, sourceReference: event.target.value } : form)} disabled={remoteCommandMut.isPending} /></FormField>
+              <FormField label={`Safety confirmation — ${selectedRemoteCommandCapability.confirmationText}`}><input className="field w-full font-mono" required autoComplete="off" value={remoteCommandForm.safetyConfirmation} onChange={event => setRemoteCommandForm(form => form ? { ...form, safetyConfirmation: event.target.value } : form)} disabled={remoteCommandMut.isPending} /></FormField>
+              <div className="flex justify-end gap-2"><button type="button" className="btn-ghost" disabled={remoteCommandMut.isPending} onClick={() => { setRemoteCommandForm(null); setRemoteCommandError(null); }}>Cancel</button><button type="submit" className="btn-primary" disabled={remoteCommandMut.isPending}>{remoteCommandMut.isPending ? "Recording…" : "Record command request"}</button></div>
+            </form>
+          ) : null}
+          <div className="mt-4 space-y-3">
+            {detail.remoteCommandHistory.length === 0 ? <p className="text-sm text-slate-400">No governed remote-command requests recorded for this device.</p> : detail.remoteCommandHistory.map(command => (
+              <div key={command.id} className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-4">
+                <div className="flex items-start justify-between gap-3"><div><p className="font-semibold text-white">{command.commandType}</p><p className="mt-1 text-sm text-slate-300">{command.purpose || "Legacy command purpose unavailable"}</p></div><StatusBadge status={command.status} /></div>
+                <MiniGrid rows={[["Governance", command.governanceStatus], ["Source", cell(command.sourceReference)], ["Recorded", cell(command.createdAt)], ["Dispatched", cell(command.dispatchedAt)], ["Acknowledged", cell(command.acknowledgedAt)], ["Applied", cell(command.appliedAt)]]} />
+                <p className="mt-2 text-xs text-slate-400">Provider delivery claim: No · Physical outcome claim: No</p>
               </div>
             ))}
           </div>

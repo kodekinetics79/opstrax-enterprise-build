@@ -479,6 +479,8 @@ export type DeviceDetailRecord = {
   firmwareUpdates: TelematicsFirmwareSeedRecord[];
   firmwareCampaigns: DeviceFirmwareCampaignRecord[];
   rmaCases: DeviceRmaCaseRecord[];
+  remoteCommandCapabilities: DeviceRemoteCommandCapabilityRecord[];
+  remoteCommandHistory: DeviceRemoteCommandRecord[];
   diagnostics: TelematicsDiagnosticSeedRecord[];
   currentInstallation: TelematicsInstallationSeedRecord | null;
   installations: TelematicsInstallationSeedRecord[];
@@ -650,6 +652,52 @@ export type DeviceRmaReplacementInput = {
   idempotencyKey: string;
 };
 
+export type DeviceRemoteCommandCapabilityRecord = {
+  commandType: "RequestPosition" | "RequestDiagnostics" | "RestartDevice";
+  displayName: string;
+  commandClass: "Observation" | "Controlled";
+  capabilityStatus: "Unverified" | "Verified" | "Rejected" | "Revoked" | "Unknown";
+  evidenceSource: string | null;
+  evidenceReference: string | null;
+  observedAt: string | null;
+  expiresAt: string | null;
+  requestAdmissionAvailable: boolean;
+  confirmationText: string;
+  externalHold: boolean;
+  externalHoldReason: string | null;
+  certificationClaim: false;
+};
+
+export type DeviceRemoteCommandRecord = {
+  id: string;
+  commandType: string;
+  commandClass: string;
+  status: string;
+  governanceStatus: string;
+  purpose: string;
+  sourceReference: string;
+  attemptCount: number;
+  maxAttempts: number;
+  scheduledFor: string;
+  dispatchedAt: string | null;
+  acknowledgedAt: string | null;
+  appliedAt: string | null;
+  expiresAt: string | null;
+  lastError: string | null;
+  providerDeliveryClaim: false;
+  physicalOutcomeClaim: false;
+  createdAt: string;
+};
+
+export type DeviceRemoteCommandInput = {
+  commandType: "RequestPosition" | "RequestDiagnostics" | "RestartDevice";
+  payload: Record<string, unknown>;
+  purpose: string;
+  sourceReference: string;
+  safetyConfirmation: string;
+  idempotencyKey: string;
+};
+
 export type DeviceCompatibilityRecord = {
   manufacturer: string | null;
   deviceModel: string | null;
@@ -790,6 +838,59 @@ function mapRmaCase(raw: AnyRecord, events: DeviceRmaEventRecord[] = [], replace
     currentStatus: statuses.includes(String(row.current_status)) ? String(row.current_status) as DeviceRmaCaseRecord["currentStatus"] : "Unknown",
     latestEventAt: row.latest_event_at == null ? null : String(row.latest_event_at),
     createdAt: String(row.created_at ?? ""), events, replacement,
+  };
+}
+
+function mapRemoteCommandCapability(raw: AnyRecord): DeviceRemoteCommandCapabilityRecord {
+  const row = normalizeKeys(raw);
+  const commandTypes = ["RequestPosition", "RequestDiagnostics", "RestartDevice"];
+  const commandType = commandTypes.includes(String(row.command_type))
+    ? String(row.command_type) as DeviceRemoteCommandCapabilityRecord["commandType"]
+    : null;
+  if (commandType === null) throw new Error("The command catalog returned an unsupported command type.");
+  const status = ["Unverified", "Verified", "Rejected", "Revoked"].includes(String(row.capability_status))
+    ? String(row.capability_status) as DeviceRemoteCommandCapabilityRecord["capabilityStatus"] : "Unknown";
+  if (row.command_class !== "Observation" && row.command_class !== "Controlled")
+    throw new Error("The command catalog returned an unsupported command class.");
+  const commandClass = row.command_class;
+  const available = row.request_admission_available === true && status === "Verified" &&
+    typeof row.evidence_reference === "string" && row.evidence_reference.trim().length > 0 &&
+    typeof row.expires_at === "string" && row.expires_at.trim().length > 0;
+  if (row.certification_claim !== false)
+    throw new Error("Command capability data crossed the no-certification-claim boundary.");
+  return {
+    commandType, displayName: String(row.display_name ?? commandType), commandClass,
+    capabilityStatus: status, evidenceSource: row.evidence_source == null ? null : String(row.evidence_source),
+    evidenceReference: row.evidence_reference == null ? null : String(row.evidence_reference),
+    observedAt: row.observed_at == null ? null : String(row.observed_at),
+    expiresAt: row.expires_at == null ? null : String(row.expires_at),
+    requestAdmissionAvailable: available,
+    confirmationText: String(row.confirmation_text ?? ""),
+    externalHold: !available,
+    externalHoldReason: available ? null : String(row.external_hold_reason ?? "Verified capability evidence is unavailable."),
+    certificationClaim: false,
+  };
+}
+
+function mapRemoteCommand(raw: AnyRecord): DeviceRemoteCommandRecord {
+  const row = normalizeKeys(raw);
+  if (row.provider_delivery_claim !== false || row.physical_outcome_claim !== false)
+    throw new Error("Command history crossed the unverified delivery or physical-outcome boundary.");
+  return {
+    id: String(row.id ?? ""), commandType: String(row.command_type ?? "Unknown"),
+    commandClass: String(row.command_class ?? "Unknown"), status: String(row.status ?? "Unknown"),
+    governanceStatus: String(row.governance_status ?? "LegacyUnverified"),
+    purpose: String(row.purpose ?? ""), sourceReference: String(row.source_reference ?? ""),
+    attemptCount: Number.isSafeInteger(Number(row.attempt_count)) ? Number(row.attempt_count) : 0,
+    maxAttempts: Number.isSafeInteger(Number(row.max_attempts)) ? Number(row.max_attempts) : 0,
+    scheduledFor: String(row.scheduled_for ?? ""),
+    dispatchedAt: row.dispatched_at == null ? null : String(row.dispatched_at),
+    acknowledgedAt: row.acknowledged_at == null ? null : String(row.acknowledged_at),
+    appliedAt: row.applied_at == null ? null : String(row.applied_at),
+    expiresAt: row.expires_at == null ? null : String(row.expires_at),
+    lastError: row.last_error == null ? null : String(row.last_error),
+    providerDeliveryClaim: false, physicalOutcomeClaim: false,
+    createdAt: String(row.created_at ?? ""),
   };
 }
 
@@ -2036,6 +2137,17 @@ export const telematicsService = {
         rmaEvents.filter(event => event.caseId === caseId),
         rmaReplacements.find(replacement => replacement.caseId === caseId) ?? null);
     });
+    const hasRemoteCommandGovernance = detail.remote_command_governance !== null &&
+      typeof detail.remote_command_governance === "object";
+    const remoteCommandGovernance = normalizeKeys(hasRemoteCommandGovernance
+      ? detail.remote_command_governance as AnyRecord : {});
+    if (hasRemoteCommandGovernance && (remoteCommandGovernance.provider_delivery_claim !== false ||
+        remoteCommandGovernance.physical_outcome_claim !== false))
+      throw new Error("Remote-command governance crossed the unverified outcome boundary.");
+    const remoteCommandCapabilities = (Array.isArray(remoteCommandGovernance.capabilities)
+      ? remoteCommandGovernance.capabilities as AnyRecord[] : []).map(mapRemoteCommandCapability);
+    const remoteCommandHistory = (Array.isArray(remoteCommandGovernance.history)
+      ? remoteCommandGovernance.history as AnyRecord[] : []).map(mapRemoteCommand);
     const responseCurrentConnectivityProfile = detail.current_connectivity_profile && typeof detail.current_connectivity_profile === "object"
       ? mapConnectivityProfile(detail.current_connectivity_profile as AnyRecord)
       : null;
@@ -2102,6 +2214,8 @@ export const telematicsService = {
       firmwareUpdates: [], // no executed OTA result feed; plans remain separate and ExternalHold
       firmwareCampaigns,
       rmaCases,
+      remoteCommandCapabilities,
+      remoteCommandHistory,
       currentInstallation,
       installations,
       sensorReadings: [], // no standalone sensor-reading endpoint
@@ -2239,6 +2353,30 @@ export const telematicsService = {
       replacement: mapRmaReplacement(payload.replacement as AnyRecord),
       idempotentReplay: payload.idempotent_replay === true,
       note: String(payload.note ?? "Replacement planned; no physical swap is claimed."),
+    };
+  },
+
+  async requestDeviceRemoteCommand(deviceId: string | number, input: DeviceRemoteCommandInput) {
+    const session = getSession();
+    ensureManagementAccess(session);
+    const canonicalId = canonicalDeviceLifecycleId(deviceId);
+    if (canonicalId === null) throw new Error("The remote-command device identity is invalid.");
+    const payload = normalizeKeys(await unwrap<AnyRecord>(apiClient.post(
+      `/api/telemetry/devices/${canonicalId}/commands`, {
+        commandType: input.commandType,
+        payload: input.payload,
+        purpose: input.purpose.trim(), sourceReference: input.sourceReference.trim(),
+        safetyConfirmation: input.safetyConfirmation.trim(),
+        idempotencyKey: input.idempotencyKey,
+      })));
+    if (payload.request_recorded !== true || payload.dispatched !== false || payload.acknowledged !== false ||
+        payload.applied !== false || payload.provider_delivery_claim !== false || payload.physical_outcome_claim !== false ||
+        !payload.command || typeof payload.command !== "object")
+      throw new Error("The server did not return a truthful command-request acknowledgement.");
+    return {
+      command: mapRemoteCommand(payload.command as AnyRecord),
+      idempotentReplay: payload.idempotent_replay === true,
+      note: String(payload.note ?? "Command request recorded; dispatch and outcome remain unverified."),
     };
   },
 

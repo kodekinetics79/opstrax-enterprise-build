@@ -272,6 +272,7 @@ public static partial class EndpointMappings
         app.MapPost("/api/telemetry/devices/{id:long}/rma-cases", DeviceRmaCaseCreate);
         app.MapPost("/api/telemetry/rma-cases/{caseId:long}/events", DeviceRmaEventCreate);
         app.MapPost("/api/telemetry/rma-cases/{caseId:long}/replacement", DeviceRmaReplacementCreate);
+        app.MapPost("/api/telemetry/devices/{id:long}/commands", DeviceRemoteCommandCreate);
         app.MapGet("/api/telemetry/installation-quarantine", DeviceInstallationQuarantineList);
         app.MapPost("/api/telemetry/installation-quarantine/{id:long}/resolve", DeviceInstallationQuarantineResolve);
         app.MapGet("/api/devices", DeviceList);
@@ -20762,6 +20763,60 @@ LIMIT 100000",
                  AND (@branchId::BIGINT IS NULL OR c.branch_id=@branchId)
                ORDER BY r.created_at DESC,r.id DESC LIMIT 100",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
+        var commandCapabilityRows = await db.QueryAsync(
+            @"SELECT cap.id,cap.command_type,cap.command_class,cap.capability_status,cap.evidence_source,
+                     cap.evidence_reference,cap.observed_at,cap.expires_at,cap.physical_evidence_claim,
+                     cap.certification_claim,
+                     (cap.capability_status='Verified' AND cap.observed_at<=NOW() AND cap.expires_at>NOW()
+                       AND cap.device_serial IS NOT DISTINCT FROM e.device_serial
+                       AND cap.manufacturer IS NOT DISTINCT FROM e.manufacturer
+                       AND cap.device_model IS NOT DISTINCT FROM e.device_model
+                       AND cap.hardware_revision IS NOT DISTINCT FROM e.hardware_revision
+                       AND cap.firmware_version IS NOT DISTINCT FROM e.firmware_version
+                       AND cap.provider IS NOT DISTINCT FROM e.provider) request_admission_available
+                FROM device_command_capabilities cap
+                JOIN eld_devices e ON e.company_id=cap.company_id AND e.id=cap.device_id
+               WHERE cap.company_id=@cid AND cap.device_id=@id
+                 AND (@branchId::BIGINT IS NULL OR cap.branch_id=@branchId)
+               ORDER BY cap.created_at DESC,cap.id DESC LIMIT 100",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
+        var latestCapabilityByType = commandCapabilityRows
+            .GroupBy(row => row.GetValueOrDefault("commandType")?.ToString() ?? string.Empty, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+        var commandDeviceEligible = !DeviceUnavailableForFirmwarePlanning(device);
+        var commandCapabilities = DeviceRemoteCommandPolicy.Catalog.Select(definition =>
+        {
+            latestCapabilityByType.TryGetValue(definition.CommandType, out var evidence);
+            var available = commandDeviceEligible && evidence?.GetValueOrDefault("requestAdmissionAvailable") is true;
+            return new
+            {
+                definition.CommandType,
+                definition.DisplayName,
+                definition.CommandClass,
+                capabilityStatus = evidence?.GetValueOrDefault("capabilityStatus")?.ToString() ?? "Unverified",
+                evidenceSource = evidence is null ? null : FirmwareText(evidence, "evidenceSource"),
+                evidenceReference = evidence is null ? null : FirmwareText(evidence, "evidenceReference"),
+                observedAt = evidence?.GetValueOrDefault("observedAt"),
+                expiresAt = evidence?.GetValueOrDefault("expiresAt"),
+                requestAdmissionAvailable = available,
+                confirmationText = DeviceRemoteCommandPolicy.ConfirmationFor(definition.CommandType, device["deviceSerial"]!.ToString()!),
+                externalHold = !available,
+                externalHoldReason = available ? null : commandDeviceEligible
+                    ? "No current verified provider/device capability evidence matches this exact device tuple."
+                    : "Retired, revoked, or decommissioned devices cannot accept command requests.",
+                physicalEvidenceClaim = false,
+                certificationClaim = false,
+            };
+        }).ToArray();
+        var commandHistory = await db.QueryAsync(
+            @"SELECT id,command_type,command_class,status,governance_status,purpose,source_reference,
+                     attempt_count,max_attempts,scheduled_for,dispatched_at,acknowledged_at,applied_at,
+                     expires_at,last_error,provider_delivery_claim,physical_outcome_claim,created_at
+                FROM telematics_device_commands
+               WHERE company_id=@cid AND device_id=@id
+                 AND (@branchId::BIGINT IS NULL OR branch_id=@branchId)
+               ORDER BY created_at DESC,id DESC LIMIT 100",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
         var current = history.FirstOrDefault(row =>
             row.GetValueOrDefault("effectiveTo") is null or DBNull &&
             row.GetValueOrDefault("status")?.ToString() is "Installed" or "Verified");
@@ -20781,6 +20836,14 @@ LIMIT 100000",
             rmaCases,
             rmaEvents,
             rmaReplacements,
+            remoteCommandGovernance = new
+            {
+                capabilities = commandCapabilities,
+                history = commandHistory,
+                providerDeliveryClaim = false,
+                physicalOutcomeClaim = false,
+                note = "Command admission requires current exact-device capability evidence. A recorded request does not prove dispatch, acknowledgement, application, or physical outcome."
+            },
             assignmentHistory = transitions
         }, "Device"));
     }
@@ -21664,6 +21727,209 @@ LIMIT 100000",
             note = "Replacement device linked for planning. No physical swap or installation is claimed."
         }, replayed ? "Replacement plan already recorded" : "Replacement plan recorded"));
     }
+
+    private static async Task<IResult> DeviceRemoteCommandCreate(
+        HttpContext http, long id, DeviceRemoteCommandRequest body, Database db, AuditService audit, CancellationToken ct)
+    {
+        if (RequirePermission(http, "telematics:devices:command") is { } denied) return denied;
+        var companyId = GetCompanyId(http);
+        var branchId = GetBranchId(http);
+        var visibleDevice = await db.QuerySingleAsync(
+            @"SELECT id,branch_id,device_serial,manufacturer,device_model,hardware_revision,
+                     firmware_version,provider,status,device_state,revoked_at
+                FROM eld_devices
+               WHERE company_id=@cid AND id=@id AND deleted_at IS NULL
+                 AND (@branchId::BIGINT IS NULL OR branch_id=@branchId)",
+            command =>
+            {
+                command.Parameters.AddWithValue("@cid", companyId);
+                command.Parameters.AddWithValue("@id", id);
+                command.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+            }, ct);
+        if (visibleDevice is null) return Results.NotFound(ApiResponse<object>.Fail("Device not found in the current scope."));
+        if (DeviceUnavailableForFirmwarePlanning(visibleDevice))
+            return Results.Conflict(ApiResponse<object>.Fail("Retired, revoked, or decommissioned devices cannot accept command requests."));
+        var serial = visibleDevice["deviceSerial"]!.ToString()!;
+        var validation = DeviceRemoteCommandPolicy.Validate(body, serial);
+        if (validation.Error is not null)
+            return Results.BadRequest(ApiResponse<object>.Fail(validation.Error));
+        var input = validation.Value!;
+        var actor = GetUserId(http);
+
+        Dictionary<string, object?> recorded;
+        bool replayed;
+        try
+        {
+            (recorded, replayed) = await db.RunInSystemTransactionAsync(async () =>
+            {
+                await db.ExecuteAsync(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(@identity,0))",
+                    command => command.Parameters.AddWithValue("@identity", $"device-command:{companyId}:{id}:{input.Definition.CommandType}"), ct);
+                var replay = await db.QuerySingleAsync(
+                    @"SELECT id,device_id,command_type,(desired_payload=@payload::JSONB) payload_matches,status,command_class,
+                             purpose,source_reference,governance_status,attempt_count,max_attempts,scheduled_for,
+                             dispatched_at,acknowledged_at,applied_at,expires_at,last_error,
+                             provider_delivery_claim,physical_outcome_claim,created_at
+                        FROM telematics_device_commands
+                       WHERE company_id=@cid AND idempotency_key=@key
+                         AND (@branchId::BIGINT IS NULL OR branch_id=@branchId)",
+                    command =>
+                    {
+                        command.Parameters.AddWithValue("@cid", companyId);
+                        command.Parameters.AddWithValue("@key", input.IdempotencyKey.ToString("D"));
+                        command.Parameters.AddWithValue("@payload", input.PayloadJson);
+                        command.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+                    }, ct);
+                if (replay is not null)
+                {
+                    if (!RemoteCommandReplayMatches(replay, id, input))
+                        throw new InvalidOperationException("device_command_idempotency_mismatch");
+                    return (replay, true);
+                }
+
+                var device = await db.QuerySingleAsync(
+                    @"SELECT id,branch_id,device_serial,manufacturer,device_model,hardware_revision,
+                             firmware_version,provider,status,device_state,revoked_at
+                        FROM eld_devices
+                       WHERE company_id=@cid AND id=@id AND deleted_at IS NULL
+                         AND (@branchId::BIGINT IS NULL OR branch_id=@branchId) FOR UPDATE",
+                    command =>
+                    {
+                        command.Parameters.AddWithValue("@cid", companyId);
+                        command.Parameters.AddWithValue("@id", id);
+                        command.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+                    }, ct);
+                if (device is null || DeviceUnavailableForFirmwarePlanning(device) ||
+                    !string.Equals(device.GetValueOrDefault("deviceSerial")?.ToString(), serial, StringComparison.Ordinal))
+                    throw new InvalidOperationException("device_command_device_changed");
+
+                var capability = await db.QuerySingleAsync(
+                    @"SELECT cap.id,cap.command_type,cap.command_class,cap.device_serial,cap.manufacturer,
+                             cap.device_model,cap.hardware_revision,cap.firmware_version,cap.provider,cap.expires_at
+                        FROM device_command_capabilities cap
+                       WHERE cap.company_id=@cid AND cap.device_id=@id AND cap.command_type=@commandType
+                         AND cap.capability_status='Verified' AND cap.observed_at<=NOW() AND cap.expires_at>NOW()
+                         AND cap.device_serial IS NOT DISTINCT FROM @serial
+                         AND cap.manufacturer IS NOT DISTINCT FROM @manufacturer
+                         AND cap.device_model IS NOT DISTINCT FROM @model
+                         AND cap.hardware_revision IS NOT DISTINCT FROM @hardwareRevision
+                         AND cap.firmware_version IS NOT DISTINCT FROM @firmware
+                         AND cap.provider IS NOT DISTINCT FROM @provider
+                         AND (@branchId::BIGINT IS NULL OR cap.branch_id=@branchId)
+                       ORDER BY cap.observed_at DESC,cap.id DESC LIMIT 1 FOR KEY SHARE",
+                    command =>
+                    {
+                        command.Parameters.AddWithValue("@cid", companyId);
+                        command.Parameters.AddWithValue("@id", id);
+                        command.Parameters.AddWithValue("@commandType", input.Definition.CommandType);
+                        command.Parameters.AddWithValue("@serial", device["deviceSerial"]!);
+                        command.Parameters.AddWithValue("@manufacturer", DbNullableText(device, "manufacturer"));
+                        command.Parameters.AddWithValue("@model", DbNullableText(device, "deviceModel"));
+                        command.Parameters.AddWithValue("@hardwareRevision", DbNullableText(device, "hardwareRevision"));
+                        command.Parameters.AddWithValue("@firmware", DbNullableText(device, "firmwareVersion"));
+                        command.Parameters.AddWithValue("@provider", DbNullableText(device, "provider"));
+                        command.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+                    }, ct);
+                if (capability is null) throw new InvalidOperationException("device_command_capability_unavailable");
+                var now = DateTimeOffset.UtcNow;
+                var capabilityExpiry = FirmwareTimestamp(capability["expiresAt"])
+                    ?? throw new InvalidOperationException("device_command_capability_unavailable");
+                var requestedExpiry = now.AddMinutes(input.Definition.TimeToLiveMinutes);
+                var expiresAt = requestedExpiry < capabilityExpiry ? requestedExpiry : capabilityExpiry;
+                if (expiresAt <= now) throw new InvalidOperationException("device_command_capability_unavailable");
+
+                var commandId = await db.InsertAsync(
+                    @"INSERT INTO telematics_device_commands
+                        (company_id,branch_id,device_id,command_type,desired_payload,status,idempotency_key,
+                         attempt_count,max_attempts,scheduled_for,expires_at,requested_by,approved_by,
+                         capability_id,device_serial_snapshot,manufacturer_snapshot,device_model_snapshot,
+                         hardware_revision_snapshot,firmware_version_snapshot,provider_snapshot,command_class,
+                         purpose,source_reference,safety_confirmation_hash,governance_status,
+                         provider_delivery_claim,physical_outcome_claim,created_at)
+                       VALUES(@cid,@branchId,@deviceId,@commandType,@payload::JSONB,'approved',@key,
+                         0,@maxAttempts,@scheduledFor,@expiresAt,@actor,@actor,@capabilityId,@serial,
+                         @manufacturer,@model,@hardwareRevision,@firmware,@provider,@commandClass,@purpose,
+                         @source,@confirmationHash,'EvidenceVerified',FALSE,FALSE,NOW())",
+                    command =>
+                    {
+                        command.Parameters.AddWithValue("@cid", companyId);
+                        command.Parameters.AddWithValue("@branchId", device.GetValueOrDefault("branchId") is null or DBNull ? DBNull.Value : device["branchId"]!);
+                        command.Parameters.AddWithValue("@deviceId", id);
+                        command.Parameters.AddWithValue("@commandType", input.Definition.CommandType);
+                        command.Parameters.AddWithValue("@payload", input.PayloadJson);
+                        command.Parameters.AddWithValue("@key", input.IdempotencyKey.ToString("D"));
+                        command.Parameters.AddWithValue("@maxAttempts", input.Definition.MaxAttempts);
+                        command.Parameters.AddWithValue("@scheduledFor", now);
+                        command.Parameters.AddWithValue("@expiresAt", expiresAt);
+                        command.Parameters.AddWithValue("@actor", actor);
+                        command.Parameters.AddWithValue("@capabilityId", capability["id"]!);
+                        command.Parameters.AddWithValue("@serial", device["deviceSerial"]!);
+                        command.Parameters.AddWithValue("@manufacturer", DbNullableText(device, "manufacturer"));
+                        command.Parameters.AddWithValue("@model", DbNullableText(device, "deviceModel"));
+                        command.Parameters.AddWithValue("@hardwareRevision", DbNullableText(device, "hardwareRevision"));
+                        command.Parameters.AddWithValue("@firmware", DbNullableText(device, "firmwareVersion"));
+                        command.Parameters.AddWithValue("@provider", DbNullableText(device, "provider"));
+                        command.Parameters.AddWithValue("@commandClass", input.Definition.CommandClass);
+                        command.Parameters.AddWithValue("@purpose", input.Purpose);
+                        command.Parameters.AddWithValue("@source", input.SourceReference);
+                        command.Parameters.AddWithValue("@confirmationHash", input.SafetyConfirmationHash);
+                    }, ct);
+                var created = await db.QuerySingleAsync(
+                    @"SELECT id,device_id,command_type,status,command_class,purpose,source_reference,
+                             governance_status,attempt_count,max_attempts,scheduled_for,dispatched_at,
+                             acknowledged_at,applied_at,expires_at,last_error,provider_delivery_claim,
+                             physical_outcome_claim,created_at
+                        FROM telematics_device_commands WHERE company_id=@cid AND id=@commandId",
+                    command =>
+                    {
+                        command.Parameters.AddWithValue("@cid", companyId);
+                        command.Parameters.AddWithValue("@commandId", commandId);
+                    }, ct);
+                return (created ?? throw new InvalidOperationException("device_command_not_recorded"), false);
+            }, ct);
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "device_command_idempotency_mismatch")
+        {
+            return Results.Conflict(ApiResponse<object>.Fail("That idempotency key was already used for a different command request."));
+        }
+        catch (InvalidOperationException ex) when (ex.Message is "device_command_device_changed" or "device_command_not_recorded")
+        {
+            return Results.Conflict(ApiResponse<object>.Fail("The device changed while the command request was being admitted. Refresh and try again."));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "device_command_capability_unavailable")
+        {
+            return Results.Conflict(ApiResponse<object>.Fail("No current verified provider/device capability evidence matches this exact device tuple."));
+        }
+        catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.CheckViolation or PostgresErrorCodes.ForeignKeyViolation or PostgresErrorCodes.UniqueViolation)
+        {
+            return Results.Conflict(ApiResponse<object>.Fail("The command request no longer satisfies the capability or concurrency boundary. Refresh and try again."));
+        }
+
+        await audit.LogAsync(http, "device.command.request_recorded", "TelematicsDeviceCommand",
+            Convert.ToInt64(recorded["id"]),
+            $"device:{id};type:{input.Definition.CommandType};idempotent:{replayed};dispatched:false;applied:false", ct);
+        http.Response.Headers.CacheControl = "no-store";
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            command = recorded,
+            idempotentReplay = replayed,
+            requestRecorded = true,
+            dispatched = false,
+            acknowledged = false,
+            applied = false,
+            providerDeliveryClaim = false,
+            physicalOutcomeClaim = false,
+            note = "Command request admitted by current capability evidence. No provider dispatch, device acknowledgement, application, or physical outcome is claimed by this response."
+        }, replayed ? "Command request already recorded" : "Command request recorded"));
+    }
+
+    private static bool RemoteCommandReplayMatches(
+        Dictionary<string, object?> row, long deviceId, ValidatedDeviceRemoteCommand input) =>
+        Convert.ToInt64(row["deviceId"]) == deviceId &&
+        string.Equals(row.GetValueOrDefault("commandType")?.ToString(), input.Definition.CommandType, StringComparison.Ordinal) &&
+        row.GetValueOrDefault("payloadMatches") is true &&
+        string.Equals(row.GetValueOrDefault("purpose")?.ToString(), input.Purpose, StringComparison.Ordinal) &&
+        string.Equals(row.GetValueOrDefault("sourceReference")?.ToString(), input.SourceReference, StringComparison.Ordinal);
 
     private static Task<Dictionary<string, object?>?> LoadRmaCase(
         Database db, long companyId, long caseId, long? branchId, CancellationToken ct) => db.QuerySingleAsync(

@@ -82,6 +82,18 @@ command -v python3 >/dev/null || { echo "ERROR: python3 is required for secret-s
 # variables. The full credential never enters a process argument or receipt.
 psql_neon() { python3 tools/psql-neon-env.py "$@"; }
 
+# Stage58 intentionally rebuilds generic tenant-table grants. These later slices
+# own narrower control-plane or safe-column boundaries, so replay them after every
+# terminal Stage58/76 reconciliation. Each migration is additive and repeat-safe.
+reapply_late_control_boundaries() {
+  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage112_camera_provider_ingest_spine.sql
+  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage115_device_compatibility_candidate_registry.sql
+  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage116_device_connectivity_profiles.sql
+  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage117_device_firmware_campaign_planning.sql
+  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage118_device_rma_replacement.sql
+  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage119_device_remote_command_governance.sql
+}
+
 MIGRATIONS=(
   # The dated migrations are additive overlays. A genuinely empty Neon database
   # must first receive the canonical 001 predecessor that owns core tables such
@@ -264,6 +276,8 @@ MIGRATIONS=(
   2026_09_07_stage117_device_firmware_campaign_planning
   # Append-only RMA/custody and replacement planning; physical and warranty evidence remain unverified.
   2026_09_07_stage118_device_rma_replacement
+  # Exact-capability remote-command admission; provider delivery and physical outcome remain unclaimed.
+  2026_09_07_stage119_device_remote_command_governance
 )
 
 echo "Pre-check: validated read-only database identity…"
@@ -352,7 +366,13 @@ for m in "${MIGRATIONS[@]}"; do
     2026_08_13_stage79_tenant_provisioning_runtime_contract|\
     2026_08_14_stage80_fleet_identity_backbone|\
     2026_08_21_stage83_company_security_settings_runtime_contract|\
-    2026_08_21_stage84_driver_hos_runtime_contract) repair_migration=true ;;
+    2026_08_21_stage84_driver_hos_runtime_contract|\
+    2026_09_07_stage112_camera_provider_ingest_spine|\
+    2026_09_07_stage115_device_compatibility_candidate_registry|\
+    2026_09_07_stage116_device_connectivity_profiles|\
+    2026_09_07_stage117_device_firmware_campaign_planning|\
+    2026_09_07_stage118_device_rma_replacement|\
+    2026_09_07_stage119_device_remote_command_governance) repair_migration=true ;;
   esac
   if [ "$applied" = "1" ] && [ "$repair_migration" = false ]; then
     echo "── $m: already applied (ledger) — skipping"
@@ -425,7 +445,8 @@ BEGIN
       ('2026_09_07_stage115_device_compatibility_candidate_registry'),
       ('2026_09_07_stage116_device_connectivity_profiles'),
       ('2026_09_07_stage117_device_firmware_campaign_planning'),
-      ('2026_09_07_stage118_device_rma_replacement')) required(version)
+      ('2026_09_07_stage118_device_rma_replacement'),
+      ('2026_09_07_stage119_device_remote_command_governance')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN RAISE EXCEPTION 'Required owner/pilot migration ledger missing or duplicated'; END IF;
   IF EXISTS (
@@ -559,6 +580,21 @@ BEGIN
        OR has_table_privilege('opstrax_app','device_rma_events','INSERT,UPDATE,DELETE')
        OR has_table_privilege('opstrax_app','device_rma_replacements','INSERT,UPDATE,DELETE')) THEN
     RAISE EXCEPTION 'Stage118 app role can mutate RMA history';
+  END IF;
+  IF to_regclass('public.device_command_capabilities') IS NULL
+     OR to_regprocedure('stage119_guard_device_command()') IS NULL
+     OR NOT EXISTS (
+       SELECT 1 FROM pg_trigger WHERE tgrelid='public.telematics_device_commands'::regclass
+         AND tgname='trg_stage119_guard_device_command' AND NOT tgisinternal AND tgenabled<>'D'
+     )
+     OR EXISTS (SELECT 1 FROM device_command_capabilities WHERE physical_evidence_claim OR certification_claim)
+     OR EXISTS (SELECT 1 FROM telematics_device_commands WHERE provider_delivery_claim OR physical_outcome_claim) THEN
+    RAISE EXCEPTION 'Stage119 capability-governed command boundary is missing or invalid';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_app')
+     AND (has_table_privilege('opstrax_app','device_command_capabilities','INSERT,UPDATE,DELETE')
+       OR has_table_privilege('opstrax_app','telematics_device_commands','INSERT,UPDATE,DELETE')) THEN
+    RAISE EXCEPTION 'Stage119 app role can mutate command capability or request history';
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns
@@ -845,6 +881,8 @@ if [ "$stage58_already_applied" = "1" ]; then
   psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_02_stage67_telematics_diagnostics_integrity.sql
   echo "Applying terminal Stage76 telemetry ACL reconciliation…"
   psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_11_stage76_telematics_security_hardening.sql
+  echo "Reapplying late safe-column and control-plane boundaries after Stage76…"
+  reapply_late_control_boundaries
   psql_neon -v ON_ERROR_STOP=1 <<'SQL'
 DO $stage58_rerun$
 BEGIN
@@ -854,7 +892,21 @@ BEGIN
      OR NOT has_function_privilege('opstrax_system','opstrax_security.issue_tenant_ticket(bigint,integer,bigint,integer)','EXECUTE')
      OR has_function_privilege('opstrax_app','opstrax_security.issue_tenant_ticket(bigint,integer,bigint,integer)','EXECUTE')
      OR has_table_privilege('opstrax_app','eld_devices','SELECT')
-     OR has_column_privilege('opstrax_app','eld_devices','hmac_secret_encrypted','SELECT') THEN
+     OR has_column_privilege('opstrax_app','eld_devices','hmac_secret_encrypted','SELECT')
+     OR NOT has_table_privilege('opstrax_app','telematics_device_commands','SELECT')
+     OR has_table_privilege('opstrax_app','telematics_device_commands','INSERT,UPDATE,DELETE')
+     OR NOT has_table_privilege('opstrax_system','telematics_device_commands','SELECT')
+     OR NOT has_table_privilege('opstrax_system','telematics_device_commands','INSERT')
+     OR NOT has_table_privilege('opstrax_system','telematics_device_commands','UPDATE')
+     OR has_table_privilege('opstrax_system','telematics_device_commands','DELETE')
+     OR NOT has_table_privilege('opstrax_app','device_command_capabilities','SELECT')
+     OR has_table_privilege('opstrax_app','device_command_capabilities','INSERT,UPDATE,DELETE')
+     OR NOT has_table_privilege('opstrax_system','device_command_capabilities','SELECT')
+     OR NOT has_table_privilege('opstrax_system','device_command_capabilities','INSERT')
+     OR NOT has_table_privilege('opstrax_system','device_command_capabilities','UPDATE')
+     OR has_table_privilege('opstrax_system','device_command_capabilities','DELETE')
+     OR NOT COALESCE((SELECT c.relrowsecurity AND c.relforcerowsecurity
+                        FROM pg_class c WHERE c.oid=to_regclass('public.telematics_device_commands')),false) THEN
     RAISE EXCEPTION 'Stage58/59/67/76 terminal rerun verification failed';
   END IF;
 END
@@ -1601,6 +1653,8 @@ $verify_stage67_credentials$;
 SQL
 echo "Applying terminal Stage76 telemetry default-deny/runtime ACL reconciliation…"
 psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_08_11_stage76_telematics_security_hardening.sql
+echo "Reapplying late safe-column and control-plane boundaries after Stage76…"
+reapply_late_control_boundaries
 psql_neon -v ON_ERROR_STOP=1 -q <<'SQL'
 DO $verify_stage76_terminal$
 BEGIN
@@ -1609,7 +1663,25 @@ BEGIN
      OR has_table_privilege('opstrax_app','eld_devices','SELECT')
      OR has_column_privilege('opstrax_app','eld_devices','api_key_hash','SELECT')
      OR has_column_privilege('opstrax_app','eld_devices','hmac_secret_encrypted','SELECT')
-     OR NOT has_column_privilege('opstrax_app','eld_devices','device_serial','SELECT') THEN
+     OR NOT has_column_privilege('opstrax_app','eld_devices','device_serial','SELECT')
+     OR NOT has_table_privilege('opstrax_app','telematics_device_commands','SELECT')
+     OR has_table_privilege('opstrax_app','telematics_device_commands','INSERT,UPDATE,DELETE')
+     OR NOT has_table_privilege('opstrax_system','telematics_device_commands','SELECT')
+     OR NOT has_table_privilege('opstrax_system','telematics_device_commands','INSERT')
+     OR NOT has_table_privilege('opstrax_system','telematics_device_commands','UPDATE')
+     OR has_table_privilege('opstrax_system','telematics_device_commands','DELETE')
+     OR NOT COALESCE((SELECT c.relrowsecurity AND c.relforcerowsecurity
+                        FROM pg_class c WHERE c.oid=to_regclass('public.telematics_device_commands')),false)
+     OR to_regclass('public.device_command_capabilities') IS NULL
+     OR NOT has_table_privilege('opstrax_app','device_command_capabilities','SELECT')
+     OR has_table_privilege('opstrax_app','device_command_capabilities','INSERT,UPDATE,DELETE')
+     OR NOT has_table_privilege('opstrax_system','device_command_capabilities','SELECT')
+     OR NOT has_table_privilege('opstrax_system','device_command_capabilities','INSERT')
+     OR NOT has_table_privilege('opstrax_system','device_command_capabilities','UPDATE')
+     OR has_table_privilege('opstrax_system','device_command_capabilities','DELETE')
+     OR to_regprocedure('stage119_guard_device_command()') IS NULL
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('public.telematics_device_commands')
+          AND tgname='trg_stage119_guard_device_command' AND NOT tgisinternal AND tgenabled<>'D') THEN
     RAISE EXCEPTION 'Stage76 is not the effective terminal telemetry boundary';
   END IF;
   IF EXISTS (

@@ -749,7 +749,7 @@ BEGIN
     ('compliance_violations'),('eld_devices'),('eld_malfunction_history'),
     ('hos_certifications'),('fault_codes'),('fault_occurrences'),('device_state_transitions'),
     ('device_installations'),('device_installation_evidence'),
-    ('device_channel_health'),('telematics_device_commands'),
+    ('device_channel_health'),
     ('telemetry_privacy_policies'),('demo_fixture_versions')) required(table_name)
   JOIN pg_class c ON c.oid=to_regclass('public.'||required.table_name)
   WHERE NOT c.relrowsecurity OR NOT c.relforcerowsecurity
@@ -766,6 +766,27 @@ BEGIN
           AND p.cmd='ALL' AND p.qual='true' AND p.with_check='true');
   IF COALESCE(cardinality(bad_tables),0)>0 THEN
     RAISE EXCEPTION 'Clean-chain pilot policy reconciliation failed: %',bad_tables;
+  END IF;
+
+  IF to_regclass('public.device_command_capabilities') IS NULL
+     OR to_regclass('public.telematics_device_commands') IS NULL
+     OR EXISTS (
+    SELECT 1 FROM (VALUES ('device_command_capabilities'),('telematics_device_commands')) governed(table_name)
+    JOIN pg_class c ON c.oid=to_regclass('public.'||governed.table_name)
+    WHERE NOT c.relrowsecurity OR NOT c.relforcerowsecurity
+       OR NOT has_table_privilege('opstrax_app',table_name,'SELECT')
+       OR has_table_privilege('opstrax_app',table_name,'INSERT,UPDATE,DELETE')
+       OR NOT has_table_privilege('opstrax_system',table_name,'SELECT')
+       OR NOT has_table_privilege('opstrax_system',table_name,'INSERT')
+       OR NOT has_table_privilege('opstrax_system',table_name,'UPDATE')
+       OR has_table_privilege('opstrax_system',table_name,'DELETE')
+       OR (SELECT count(*) FROM pg_policies p
+             WHERE p.schemaname='public' AND p.tablename=governed.table_name
+               AND p.policyname IN ('tenant_ticket_app','system_control_plane'))<>2
+  ) OR to_regprocedure('stage119_guard_device_command()') IS NULL
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('public.telematics_device_commands')
+          AND tgname='trg_stage119_guard_device_command' AND NOT tgisinternal AND tgenabled<>'D') THEN
+    RAISE EXCEPTION 'Clean-chain Stage119 command control-plane boundary failed';
   END IF;
 
   IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND roles='{public}'::name[])
