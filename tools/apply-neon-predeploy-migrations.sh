@@ -262,6 +262,8 @@ MIGRATIONS=(
   2026_09_07_stage116_device_connectivity_profiles
   # Firmware rollout planning only; every target remains ExternalHold and non-executable.
   2026_09_07_stage117_device_firmware_campaign_planning
+  # Append-only RMA/custody and replacement planning; physical and warranty evidence remain unverified.
+  2026_09_07_stage118_device_rma_replacement
 )
 
 echo "Pre-check: validated read-only database identity…"
@@ -422,7 +424,8 @@ BEGIN
       ('2026_09_07_stage114_camera_asset_reconciliation'),
       ('2026_09_07_stage115_device_compatibility_candidate_registry'),
       ('2026_09_07_stage116_device_connectivity_profiles'),
-      ('2026_09_07_stage117_device_firmware_campaign_planning')) required(version)
+      ('2026_09_07_stage117_device_firmware_campaign_planning'),
+      ('2026_09_07_stage118_device_rma_replacement')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN RAISE EXCEPTION 'Required owner/pilot migration ledger missing or duplicated'; END IF;
   IF EXISTS (
@@ -538,6 +541,24 @@ BEGIN
      AND (has_table_privilege('opstrax_app','device_firmware_campaigns','INSERT,UPDATE,DELETE')
        OR has_table_privilege('opstrax_app','device_firmware_campaign_targets','INSERT,UPDATE,DELETE')) THEN
     RAISE EXCEPTION 'Stage117 app role can mutate firmware planning history';
+  END IF;
+  IF to_regclass('public.device_rma_cases') IS NULL
+     OR to_regclass('public.device_rma_events') IS NULL
+     OR to_regclass('public.device_rma_replacements') IS NULL
+     OR EXISTS (SELECT 1 FROM device_rma_cases WHERE warranty_evidence_status<>'Unverified' OR physical_evidence_claim)
+     OR EXISTS (SELECT 1 FROM device_rma_events WHERE evidence_status<>'Unverified' OR physical_completion_claim)
+     OR EXISTS (SELECT 1 FROM device_rma_replacements WHERE replacement_status<>'Planned' OR physical_swap_status<>'ExternalHold' OR physical_swap_claim)
+     OR NOT EXISTS (
+       SELECT 1 FROM pg_trigger WHERE tgrelid='public.device_rma_cases'::regclass
+         AND tgname='trg_stage118_protect_history' AND NOT tgisinternal
+     ) THEN
+    RAISE EXCEPTION 'Stage118 append-only RMA and planning-only replacement contract is missing or invalid';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_app')
+     AND (has_table_privilege('opstrax_app','device_rma_cases','INSERT,UPDATE,DELETE')
+       OR has_table_privilege('opstrax_app','device_rma_events','INSERT,UPDATE,DELETE')
+       OR has_table_privilege('opstrax_app','device_rma_replacements','INSERT,UPDATE,DELETE')) THEN
+    RAISE EXCEPTION 'Stage118 app role can mutate RMA history';
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns

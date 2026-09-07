@@ -478,6 +478,7 @@ export type DeviceDetailRecord = {
   healthEvents: TelematicsHealthSeedRecord[];
   firmwareUpdates: TelematicsFirmwareSeedRecord[];
   firmwareCampaigns: DeviceFirmwareCampaignRecord[];
+  rmaCases: DeviceRmaCaseRecord[];
   diagnostics: TelematicsDiagnosticSeedRecord[];
   currentInstallation: TelematicsInstallationSeedRecord | null;
   installations: TelematicsInstallationSeedRecord[];
@@ -558,6 +559,97 @@ export type DeviceFirmwareCampaignInput = {
   idempotencyKey: string;
 };
 
+export type DeviceRmaEventRecord = {
+  id: string;
+  caseId: string;
+  sequenceNumber: number;
+  eventType: "CaseOpened" | "ReturnAuthorized" | "Shipped" | "Received" | "VendorDisposition" | "ReplacementLinked" | "CaseClosed" | "Unknown";
+  caseStatusAfter: "Open" | "AwaitingReturn" | "InTransit" | "UnderReview" | "ReplacementPlanned" | "Resolved" | "Unknown";
+  occurredAt: string;
+  custodyLocation: string | null;
+  trackingReference: string | null;
+  evidenceReference: string;
+  evidenceStatus: "Unverified";
+  notes: string;
+  physicalCompletionClaim: false;
+  recordedAt: string;
+};
+
+export type DeviceRmaReplacementRecord = {
+  id: string;
+  caseId: string;
+  failedDeviceId: string;
+  failedDeviceSerial: string;
+  replacementDeviceId: string;
+  replacementDeviceSerial: string;
+  replacementManufacturer: string | null;
+  replacementDeviceModel: string | null;
+  replacementHardwareRevision: string | null;
+  replacementFirmwareVersion: string | null;
+  replacementStatus: "Planned";
+  physicalSwapStatus: "ExternalHold";
+  physicalSwapClaim: false;
+  changeReason: string;
+  sourceReference: string;
+  createdAt: string;
+};
+
+export type DeviceRmaCaseRecord = {
+  id: string;
+  deviceId: string;
+  deviceSerial: string;
+  manufacturer: string | null;
+  deviceModel: string | null;
+  hardwareRevision: string | null;
+  reportedFirmwareVersion: string | null;
+  severity: "P0" | "P1" | "P2" | "P3" | "Unknown";
+  failureCategory: string;
+  failureDescription: string;
+  observedAt: string;
+  warrantyPosture: "Unknown" | "ClaimedInWarranty" | "ClaimedOutOfWarranty" | "NotApplicable";
+  warrantyReference: string | null;
+  warrantyEvidenceStatus: "Unverified";
+  supportSlaReference: string;
+  responseDueAt: string;
+  sourceReference: string;
+  physicalEvidenceClaim: false;
+  currentStatus: "Open" | "AwaitingReturn" | "InTransit" | "UnderReview" | "ReplacementPlanned" | "Resolved" | "Unknown";
+  latestEventAt: string | null;
+  createdAt: string;
+  events: DeviceRmaEventRecord[];
+  replacement: DeviceRmaReplacementRecord | null;
+};
+
+export type DeviceRmaCaseInput = {
+  severity: "P0" | "P1" | "P2" | "P3";
+  failureCategory: "Power" | "Connectivity" | "GNSS" | "CAN" | "Camera" | "Firmware" | "PhysicalDamage" | "Intermittent" | "Other";
+  failureDescription: string;
+  observedAt: string;
+  warrantyPosture: "Unknown" | "ClaimedInWarranty" | "ClaimedOutOfWarranty" | "NotApplicable";
+  warrantyReference?: string;
+  supportSlaReference: string;
+  responseDueAt: string;
+  sourceReference: string;
+  idempotencyKey: string;
+};
+
+export type DeviceRmaEventInput = {
+  eventType: "ReturnAuthorized" | "Shipped" | "Received" | "VendorDisposition" | "CaseClosed";
+  occurredAt: string;
+  custodyLocation?: string;
+  trackingReference?: string;
+  evidenceReference: string;
+  notes: string;
+  idempotencyKey: string;
+};
+
+export type DeviceRmaReplacementInput = {
+  replacementDeviceSerial: string;
+  changeReason: string;
+  sourceReference: string;
+  idempotencyKey: string;
+};
+
 export type DeviceCompatibilityRecord = {
   manufacturer: string | null;
   deviceModel: string | null;
@@ -633,6 +725,71 @@ function mapFirmwareCampaign(raw: AnyRecord): DeviceFirmwareCampaignRecord {
     planningReason: String(row.planning_reason ?? "Planning status unavailable."),
     rolloutBatch: Number.isInteger(Number(row.rollout_batch)) && Number(row.rollout_batch) > 0 ? Number(row.rollout_batch) : 0,
     deliveryStatus: row.delivery_status === "ExternalHold" ? "ExternalHold" : "Unknown",
+  };
+}
+
+function mapRmaEvent(raw: AnyRecord): DeviceRmaEventRecord {
+  const row = normalizeKeys(raw);
+  if (row.physical_completion_claim !== false || row.evidence_status !== "Unverified")
+    throw new Error("RMA event data crossed the unverified physical-evidence boundary.");
+  const eventTypes = ["CaseOpened", "ReturnAuthorized", "Shipped", "Received", "VendorDisposition", "ReplacementLinked", "CaseClosed"];
+  const statuses = ["Open", "AwaitingReturn", "InTransit", "UnderReview", "ReplacementPlanned", "Resolved"];
+  return {
+    id: String(row.id ?? ""), caseId: String(row.case_id ?? ""),
+    sequenceNumber: Number.isSafeInteger(Number(row.sequence_number)) ? Number(row.sequence_number) : 0,
+    eventType: eventTypes.includes(String(row.event_type)) ? String(row.event_type) as DeviceRmaEventRecord["eventType"] : "Unknown",
+    caseStatusAfter: statuses.includes(String(row.case_status_after)) ? String(row.case_status_after) as DeviceRmaEventRecord["caseStatusAfter"] : "Unknown",
+    occurredAt: String(row.occurred_at ?? ""),
+    custodyLocation: row.custody_location == null ? null : String(row.custody_location),
+    trackingReference: row.tracking_reference == null ? null : String(row.tracking_reference),
+    evidenceReference: String(row.evidence_reference ?? ""), evidenceStatus: "Unverified",
+    notes: String(row.notes ?? ""), physicalCompletionClaim: false,
+    recordedAt: String(row.recorded_at ?? ""),
+  };
+}
+
+function mapRmaReplacement(raw: AnyRecord): DeviceRmaReplacementRecord {
+  const row = normalizeKeys(raw);
+  if (row.physical_swap_claim !== false || row.physical_swap_status !== "ExternalHold" || row.replacement_status !== "Planned")
+    throw new Error("RMA replacement data crossed the planning-only boundary.");
+  return {
+    id: String(row.id ?? ""), caseId: String(row.case_id ?? ""),
+    failedDeviceId: String(row.failed_device_id ?? ""), failedDeviceSerial: String(row.failed_device_serial ?? ""),
+    replacementDeviceId: String(row.replacement_device_id ?? ""), replacementDeviceSerial: String(row.replacement_device_serial ?? ""),
+    replacementManufacturer: row.replacement_manufacturer == null ? null : String(row.replacement_manufacturer),
+    replacementDeviceModel: row.replacement_device_model == null ? null : String(row.replacement_device_model),
+    replacementHardwareRevision: row.replacement_hardware_revision == null ? null : String(row.replacement_hardware_revision),
+    replacementFirmwareVersion: row.replacement_firmware_version == null ? null : String(row.replacement_firmware_version),
+    replacementStatus: "Planned", physicalSwapStatus: "ExternalHold", physicalSwapClaim: false,
+    changeReason: String(row.change_reason ?? ""), sourceReference: String(row.source_reference ?? ""),
+    createdAt: String(row.created_at ?? ""),
+  };
+}
+
+function mapRmaCase(raw: AnyRecord, events: DeviceRmaEventRecord[] = [], replacement: DeviceRmaReplacementRecord | null = null): DeviceRmaCaseRecord {
+  const row = normalizeKeys(raw);
+  if (row.physical_evidence_claim !== false || row.warranty_evidence_status !== "Unverified")
+    throw new Error("RMA case data crossed the unverified evidence boundary.");
+  const severities = ["P0", "P1", "P2", "P3"];
+  const statuses = ["Open", "AwaitingReturn", "InTransit", "UnderReview", "ReplacementPlanned", "Resolved"];
+  const warranty = ["Unknown", "ClaimedInWarranty", "ClaimedOutOfWarranty", "NotApplicable"];
+  return {
+    id: String(row.id ?? ""), deviceId: String(row.device_id ?? ""), deviceSerial: String(row.device_serial ?? ""),
+    manufacturer: row.manufacturer == null ? null : String(row.manufacturer),
+    deviceModel: row.device_model == null ? null : String(row.device_model),
+    hardwareRevision: row.hardware_revision == null ? null : String(row.hardware_revision),
+    reportedFirmwareVersion: row.reported_firmware_version == null ? null : String(row.reported_firmware_version),
+    severity: severities.includes(String(row.severity)) ? String(row.severity) as DeviceRmaCaseRecord["severity"] : "Unknown",
+    failureCategory: String(row.failure_category ?? ""), failureDescription: String(row.failure_description ?? ""),
+    observedAt: String(row.observed_at ?? ""),
+    warrantyPosture: warranty.includes(String(row.warranty_posture)) ? String(row.warranty_posture) as DeviceRmaCaseRecord["warrantyPosture"] : "Unknown",
+    warrantyReference: row.warranty_reference == null ? null : String(row.warranty_reference),
+    warrantyEvidenceStatus: "Unverified", supportSlaReference: String(row.support_sla_reference ?? ""),
+    responseDueAt: String(row.response_due_at ?? ""), sourceReference: String(row.source_reference ?? ""),
+    physicalEvidenceClaim: false,
+    currentStatus: statuses.includes(String(row.current_status)) ? String(row.current_status) as DeviceRmaCaseRecord["currentStatus"] : "Unknown",
+    latestEventAt: row.latest_event_at == null ? null : String(row.latest_event_at),
+    createdAt: String(row.created_at ?? ""), events, replacement,
   };
 }
 
@@ -1871,6 +2028,14 @@ export const telematicsService = {
       ? detail.firmware_campaigns as AnyRecord[]
       : [];
     const firmwareCampaigns = firmwareCampaignRows.map(mapFirmwareCampaign);
+    const rmaEvents = (Array.isArray(detail.rma_events) ? detail.rma_events as AnyRecord[] : []).map(mapRmaEvent);
+    const rmaReplacements = (Array.isArray(detail.rma_replacements) ? detail.rma_replacements as AnyRecord[] : []).map(mapRmaReplacement);
+    const rmaCases = (Array.isArray(detail.rma_cases) ? detail.rma_cases as AnyRecord[] : []).map(rawCase => {
+      const caseId = String(normalizeKeys(rawCase).id ?? "");
+      return mapRmaCase(rawCase,
+        rmaEvents.filter(event => event.caseId === caseId),
+        rmaReplacements.find(replacement => replacement.caseId === caseId) ?? null);
+    });
     const responseCurrentConnectivityProfile = detail.current_connectivity_profile && typeof detail.current_connectivity_profile === "object"
       ? mapConnectivityProfile(detail.current_connectivity_profile as AnyRecord)
       : null;
@@ -1936,6 +2101,7 @@ export const telematicsService = {
       diagnostics,
       firmwareUpdates: [], // no executed OTA result feed; plans remain separate and ExternalHold
       firmwareCampaigns,
+      rmaCases,
       currentInstallation,
       installations,
       sensorReadings: [], // no standalone sensor-reading endpoint
@@ -2009,6 +2175,70 @@ export const telematicsService = {
       targets: (normalized.targets as AnyRecord[]).map(target => mapFirmwareCampaign({ ...campaignRow, ...normalizeKeys(target) })),
       idempotentReplay: normalized.idempotent_replay === true,
       note: String(normalized.note ?? "Firmware planning recorded; no command was dispatched."),
+    };
+  },
+
+  async createDeviceRmaCase(deviceId: string | number, input: DeviceRmaCaseInput) {
+    const session = getSession();
+    ensureManagementAccess(session);
+    const canonicalId = canonicalDeviceLifecycleId(deviceId);
+    if (canonicalId === null) throw new Error("The RMA device identity is invalid.");
+    const normalizedInput = {
+      ...input,
+      failureDescription: input.failureDescription.trim(),
+      warrantyReference: input.warrantyReference?.trim() || null,
+      supportSlaReference: input.supportSlaReference.trim(),
+      sourceReference: input.sourceReference.trim(),
+    };
+    const payload = normalizeKeys(await unwrap<AnyRecord>(apiClient.post(
+      `/api/telemetry/devices/${canonicalId}/rma-cases`, normalizedInput)));
+    if (payload.physical_evidence_claim !== false || !payload.rma_case || typeof payload.rma_case !== "object")
+      throw new Error("The server did not return a fail-closed RMA acknowledgement.");
+    return {
+      rmaCase: mapRmaCase(payload.rma_case as AnyRecord),
+      idempotentReplay: payload.idempotent_replay === true,
+      note: String(payload.note ?? "RMA case recorded; physical and warranty evidence remain unverified."),
+    };
+  },
+
+  async appendDeviceRmaEvent(caseId: string | number, input: DeviceRmaEventInput) {
+    const session = getSession();
+    ensureManagementAccess(session);
+    const canonicalId = canonicalDeviceLifecycleId(caseId);
+    if (canonicalId === null) throw new Error("The RMA case identity is invalid.");
+    const payload = normalizeKeys(await unwrap<AnyRecord>(apiClient.post(
+      `/api/telemetry/rma-cases/${canonicalId}/events`, {
+        ...input,
+        custodyLocation: input.custodyLocation?.trim() || null,
+        trackingReference: input.trackingReference?.trim() || null,
+        evidenceReference: input.evidenceReference.trim(), notes: input.notes.trim(),
+      })));
+    if (payload.physical_completion_claim !== false || !payload.rma_event || typeof payload.rma_event !== "object")
+      throw new Error("The server did not return a fail-closed custody acknowledgement.");
+    return {
+      event: mapRmaEvent(payload.rma_event as AnyRecord),
+      idempotentReplay: payload.idempotent_replay === true,
+      note: String(payload.note ?? "Custody event recorded; physical verification remains external."),
+    };
+  },
+
+  async planDeviceRmaReplacement(caseId: string | number, input: DeviceRmaReplacementInput) {
+    const session = getSession();
+    ensureManagementAccess(session);
+    const canonicalId = canonicalDeviceLifecycleId(caseId);
+    if (canonicalId === null) throw new Error("The RMA case identity is invalid.");
+    const payload = normalizeKeys(await unwrap<AnyRecord>(apiClient.post(
+      `/api/telemetry/rma-cases/${canonicalId}/replacement`, {
+        ...input,
+        replacementDeviceSerial: input.replacementDeviceSerial.trim(),
+        changeReason: input.changeReason.trim(), sourceReference: input.sourceReference.trim(),
+      })));
+    if (payload.physical_swap_claim !== false || !payload.replacement || typeof payload.replacement !== "object")
+      throw new Error("The server did not return a planning-only replacement acknowledgement.");
+    return {
+      replacement: mapRmaReplacement(payload.replacement as AnyRecord),
+      idempotentReplay: payload.idempotent_replay === true,
+      note: String(payload.note ?? "Replacement planned; no physical swap is claimed."),
     };
   },
 

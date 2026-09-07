@@ -295,12 +295,13 @@ export function StatusBadge({ status }: { status?: unknown }) {
    ============================================================ */
 export function RiskBadge({ risk }: { risk?: unknown }) {
   const text = String(risk ?? "Low");
+  const severity = text.trim().toUpperCase();
   // 700-level text for WCAG AA contrast on the light tinted pill (see StatusBadge).
-  const cls = /critical/i.test(text)
+  const cls = severity === "P0" || /critical/i.test(text)
     ? "border-red-400/35 bg-red-500/12 text-red-700 font-extrabold"
-    : /high/i.test(text)
+    : severity === "P1" || /high/i.test(text)
     ? "border-red-400/25 bg-red-500/8 text-red-700"
-    : /medium|warning/i.test(text)
+    : severity === "P2" || /medium|warning/i.test(text)
     ? "border-amber-400/30 bg-amber-500/10 text-amber-700"
     : "border-emerald-400/25 bg-emerald-500/8 text-emerald-700";
   return (

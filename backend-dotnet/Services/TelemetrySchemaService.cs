@@ -363,6 +363,56 @@ public sealed class TelemetrySchemaService(Database db)
             CONSTRAINT ck_stage117_target_no_remote_claim CHECK (remote_upgrade_claim=FALSE),
             UNIQUE(company_id,campaign_id,device_id)
         )",
+
+        @"CREATE TABLE IF NOT EXISTS device_rma_cases (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL, branch_id BIGINT NULL, device_id BIGINT NOT NULL,
+            device_serial VARCHAR(120) NOT NULL, manufacturer VARCHAR(120) NULL,
+            device_model VARCHAR(160) NULL, hardware_revision VARCHAR(120) NULL,
+            reported_firmware_version VARCHAR(120) NULL, severity VARCHAR(2) NOT NULL,
+            failure_category VARCHAR(40) NOT NULL, failure_description VARCHAR(1000) NOT NULL,
+            observed_at TIMESTAMPTZ NOT NULL, warranty_posture VARCHAR(32) NOT NULL,
+            warranty_reference VARCHAR(240) NULL, warranty_evidence_status VARCHAR(24) NOT NULL DEFAULT 'Unverified',
+            support_sla_reference VARCHAR(240) NOT NULL, response_due_at TIMESTAMPTZ NOT NULL,
+            source_reference VARCHAR(240) NOT NULL, physical_evidence_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            idempotency_key UUID NOT NULL, created_by BIGINT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT ck_stage118_case_severity CHECK (severity IN ('P0','P1','P2','P3')),
+            CONSTRAINT ck_stage118_warranty_unverified CHECK (warranty_evidence_status='Unverified'),
+            CONSTRAINT ck_stage118_case_no_physical_claim CHECK (physical_evidence_claim=FALSE),
+            UNIQUE(company_id,idempotency_key)
+        )",
+
+        @"CREATE TABLE IF NOT EXISTS device_rma_events (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL, branch_id BIGINT NULL, case_id BIGINT NOT NULL, device_id BIGINT NOT NULL,
+            sequence_number INT NOT NULL, event_type VARCHAR(40) NOT NULL, case_status_after VARCHAR(32) NOT NULL,
+            occurred_at TIMESTAMPTZ NOT NULL, custody_location VARCHAR(240) NULL,
+            tracking_reference VARCHAR(240) NULL, evidence_reference VARCHAR(240) NOT NULL,
+            evidence_status VARCHAR(24) NOT NULL DEFAULT 'Unverified', notes VARCHAR(1000) NOT NULL,
+            physical_completion_claim BOOLEAN NOT NULL DEFAULT FALSE, idempotency_key UUID NOT NULL,
+            recorded_by BIGINT NULL, recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT ck_stage118_event_evidence_unverified CHECK (evidence_status='Unverified'),
+            CONSTRAINT ck_stage118_event_no_physical_claim CHECK (physical_completion_claim=FALSE),
+            UNIQUE(company_id,case_id,sequence_number), UNIQUE(company_id,idempotency_key)
+        )",
+
+        @"CREATE TABLE IF NOT EXISTS device_rma_replacements (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL, branch_id BIGINT NULL, case_id BIGINT NOT NULL,
+            failed_device_id BIGINT NOT NULL, failed_device_serial VARCHAR(120) NOT NULL,
+            replacement_device_id BIGINT NOT NULL, replacement_device_serial VARCHAR(120) NOT NULL,
+            replacement_manufacturer VARCHAR(120) NULL, replacement_device_model VARCHAR(160) NULL,
+            replacement_hardware_revision VARCHAR(120) NULL, replacement_firmware_version VARCHAR(120) NULL,
+            replacement_status VARCHAR(24) NOT NULL DEFAULT 'Planned', physical_swap_status VARCHAR(24) NOT NULL DEFAULT 'ExternalHold',
+            physical_swap_claim BOOLEAN NOT NULL DEFAULT FALSE, change_reason VARCHAR(500) NOT NULL,
+            source_reference VARCHAR(240) NOT NULL, idempotency_key UUID NOT NULL,
+            created_by BIGINT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT ck_stage118_replacement_distinct CHECK (failed_device_id<>replacement_device_id),
+            CONSTRAINT ck_stage118_replacement_status CHECK (replacement_status='Planned'),
+            CONSTRAINT ck_stage118_swap_external_hold CHECK (physical_swap_status='ExternalHold'),
+            CONSTRAINT ck_stage118_no_swap_claim CHECK (physical_swap_claim=FALSE),
+            UNIQUE(company_id,case_id), UNIQUE(company_id,idempotency_key)
+        )",
     ];
 
     private static readonly string[] Indexes =
@@ -409,6 +459,14 @@ public sealed class TelemetrySchemaService(Database db)
           ON device_firmware_campaign_targets(company_id,device_id,created_at DESC,id DESC)",
         @"CREATE INDEX IF NOT EXISTS ix_stage117_targets_campaign_batch
           ON device_firmware_campaign_targets(company_id,campaign_id,rollout_batch,id)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage118_cases_device_recent
+          ON device_rma_cases(company_id,device_id,created_at DESC,id DESC)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage118_cases_severity_due
+          ON device_rma_cases(company_id,severity,response_due_at,id)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage118_events_case_sequence
+          ON device_rma_events(company_id,case_id,sequence_number)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage118_replacements_device
+          ON device_rma_replacements(company_id,replacement_device_id,created_at DESC)",
     ];
 
     private static readonly string[] Seeds =

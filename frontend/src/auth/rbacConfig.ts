@@ -106,6 +106,7 @@ export const PERMISSIONS = {
   TELEMATICS_DEVICES_ASSIGN: "telematics:devices:assign",
   TELEMATICS_DEVICES_DIAGNOSTICS: "telematics:devices:diagnostics",
   TELEMATICS_DEVICES_FIRMWARE: "telematics:devices:firmware",
+  TELEMATICS_DEVICES_RMA: "telematics:devices:rma",
   TELEMATICS_DEVICES_EXPORT: "telematics:devices:export",
   TELEMATICS_PROVIDERS_MANAGE: "telematics:providers:manage",
   TELEMATICS_GPS_VIEW: "telematics:gps:view",
@@ -284,6 +285,7 @@ const PERMISSION_GROUPS: Record<Permission, string[]> = {
   [P.TELEMATICS_DEVICES_ASSIGN]: ["fleet.manage", "fleet:manage", "dispatch.manage", "dispatch:manage", "telematics.manage", "telematics:manage"],
   [P.TELEMATICS_DEVICES_DIAGNOSTICS]: ["maintenance.manage", "maintenance:manage", "compliance.manage", "compliance:manage", "telematics.manage", "telematics:manage"],
   [P.TELEMATICS_DEVICES_FIRMWARE]: ["maintenance.manage", "maintenance:manage", "telematics.manage", "telematics:manage"],
+  [P.TELEMATICS_DEVICES_RMA]: ["maintenance.update", "maintenance:update", "maintenance.manage", "maintenance:manage", "telematics.manage", "telematics:manage"],
   [P.TELEMATICS_DEVICES_EXPORT]: ["telematics.devices.export", "telematics:devices:export"],
   [P.TELEMATICS_PROVIDERS_MANAGE]: ["settings.manage", "settings:manage", "fleet.manage", "fleet:manage", "telematics.manage", "telematics:manage"],
   // PAGE-GATING token, same reasoning: this group is merged into

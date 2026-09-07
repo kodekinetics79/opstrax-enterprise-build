@@ -41,6 +41,7 @@ Current capability is device registry + connection/telemetry operations. It is n
 7. A dedicated isolated PostgreSQL and frontend contract workflow verifies migration repeat safety, database refusal of certification promotion or tuple drift, fail-closed projection and the production frontend build.
 8. Stage 116 adds encrypted SIM/eSIM assignment history with exact effective time, source reference, change reason and idempotency. ICCID, MSISDN and APN payloads are encrypted; the tenant application role can read only masked last-four/configured projections. One current profile is allowed per device and per ICCID, and ended history is immutable.
 9. Stage 117 adds immutable firmware campaign planning with explicit target/rollback versions, rollout strategy, batches, maintenance windows and exact per-device identity snapshots. Every campaign and target is fixed at `ExternalHold`; provider capability is `Unverified`, `remote_upgrade_claim` is false, and the workflow cannot dispatch an OTA command.
+10. Stage 118 adds append-only RMA cases, P0/P1/P2/P3 severity, failure/warranty/SLA facts, custody events and one exact registered replacement-device plan. Warranty and custody evidence stay `Unverified`; replacement stays `Planned / ExternalHold`; every response and customer screen denies a physical swap or readiness claim.
 
 ## Current truth disposition
 
@@ -52,10 +53,10 @@ Current capability is device registry + connection/telemetry operations. It is n
 | Device online state | Authenticated telemetry only | Provider/device evidence pending |
 | SIM/eSIM and carrier lifecycle | First assignment/change-history slice implemented | Inventory only; network attachment remains unverified |
 | Firmware campaigns | Planning, batching, eligibility and rollback intent implemented | ExternalHold; no command dispatch or remote-upgrade claim |
-| RMA/warranty/replacement | Not implemented | Not applicable |
+| RMA/warranty/replacement | Support cases, custody references, SLA due dates and exact replacement planning implemented | Warranty/physical evidence Unverified; swap ExternalHold |
 | Remote command governance | Not complete | No general command-support claim |
 
-The next safe software sequence is RMA/replacement and capability-negotiated command governance. Carrier API reconciliation, activation/suspension status and usage telemetry remain later SIM lifecycle work. Firmware delivery adapters and result reconciliation remain blocked until exact provider/device capability is observed. Physical bench, route, recovery, 24/72-hour soak, installation repeatability, procurement, warranty and independent acceptance remain EXTERNAL HOLD and must not block those engineering slices.
+The next safe software sequence is capability-negotiated command governance. Carrier API reconciliation, activation/suspension status and usage telemetry remain later SIM lifecycle work. Firmware delivery adapters and result reconciliation remain blocked until exact provider/device capability is observed. RMA custody references and replacement plans remain operator-recorded facts until vendor and physical evidence is independently checked. Physical bench, route, recovery, 24/72-hour soak, installation repeatability, procurement, warranty and independent acceptance remain EXTERNAL HOLD and must not block those engineering slices.
 
 ## Stop conditions
 

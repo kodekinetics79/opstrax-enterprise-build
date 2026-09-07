@@ -269,6 +269,9 @@ public static partial class EndpointMappings
         app.MapPost("/api/telemetry/devices/{id:long}/installations/transfer", DeviceInstallationTransfer);
         app.MapPost("/api/telemetry/devices/{id:long}/connectivity-profiles", DeviceConnectivityProfileReplace);
         app.MapPost("/api/telemetry/firmware-campaigns", DeviceFirmwareCampaignCreate);
+        app.MapPost("/api/telemetry/devices/{id:long}/rma-cases", DeviceRmaCaseCreate);
+        app.MapPost("/api/telemetry/rma-cases/{caseId:long}/events", DeviceRmaEventCreate);
+        app.MapPost("/api/telemetry/rma-cases/{caseId:long}/replacement", DeviceRmaReplacementCreate);
         app.MapGet("/api/telemetry/installation-quarantine", DeviceInstallationQuarantineList);
         app.MapPost("/api/telemetry/installation-quarantine/{id:long}/resolve", DeviceInstallationQuarantineResolve);
         app.MapGet("/api/devices", DeviceList);
@@ -2867,6 +2870,7 @@ public static partial class EndpointMappings
             "telemetry.devices.read" or "telemetry.devices.view" => ["telemetry.devices.read", "telemetry.devices.view", "telematics:devices:view", "telematics.devices.view"],
             "telemetry.devices.manage" => ["telemetry.devices.manage", "telematics:devices:create", "telematics:devices:update", "telematics:devices:delete", "telematics:devices:assign", "telematics:providers:manage", "fleet:manage", "fleet.manage"],
             "telematics:devices:firmware" or "telematics.devices.firmware" => ["telematics:devices:firmware", "telematics.devices.firmware", "maintenance:manage", "maintenance.manage", "telematics:manage", "telematics.manage"],
+            "telematics:devices:rma" or "telematics.devices.rma" => ["telematics:devices:rma", "telematics.devices.rma", "maintenance:update", "maintenance.update", "maintenance:manage", "maintenance.manage", "telematics:manage", "telematics.manage"],
             // Mirror of the frontend permission group: providers-manage ⇄ devices-manage ⇄ fleet:manage.
             "telematics:providers:manage" or "telematics.providers.manage" => ["telematics:providers:manage", "telematics.providers.manage", "telemetry.devices.manage", "fleet:manage", "fleet.manage"],
             "telemetry.alerts.read" or "telemetry.alerts.view" => ["telemetry.alerts.read", "telemetry.alerts.view", "alerts:view", "alerts.view", "safety:view", "safety.view", "maintenance:view", "maintenance.view"],
@@ -20720,6 +20724,44 @@ LIMIT 100000",
                  AND (@branchId::BIGINT IS NULL OR t.branch_id=@branchId)
                ORDER BY c.created_at DESC,c.id DESC,t.id DESC LIMIT 100",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
+        var rmaCases = await db.QueryAsync(
+            @"SELECT c.id,c.device_id,c.device_serial,c.manufacturer,c.device_model,c.hardware_revision,
+                     c.reported_firmware_version,c.severity,c.failure_category,c.failure_description,
+                     c.observed_at,c.warranty_posture,c.warranty_reference,c.warranty_evidence_status,
+                     c.support_sla_reference,c.response_due_at,c.source_reference,c.physical_evidence_claim,
+                     c.created_at,COALESCE(latest.case_status_after,'Open') current_status,
+                     latest.occurred_at latest_event_at
+                FROM device_rma_cases c
+                LEFT JOIN LATERAL (
+                  SELECT e.case_status_after,e.occurred_at FROM device_rma_events e
+                   WHERE e.company_id=c.company_id AND e.case_id=c.id
+                   ORDER BY e.sequence_number DESC LIMIT 1
+                ) latest ON TRUE
+               WHERE c.company_id=@cid AND c.device_id=@id
+                 AND (@branchId::BIGINT IS NULL OR c.branch_id=@branchId)
+               ORDER BY c.created_at DESC,c.id DESC LIMIT 100",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
+        var rmaEvents = await db.QueryAsync(
+            @"SELECT e.id,e.case_id,e.sequence_number,e.event_type,e.case_status_after,e.occurred_at,
+                     e.custody_location,e.tracking_reference,e.evidence_reference,e.evidence_status,
+                     e.notes,e.physical_completion_claim,e.recorded_at
+                FROM device_rma_events e
+                JOIN device_rma_cases c ON c.company_id=e.company_id AND c.id=e.case_id
+               WHERE e.company_id=@cid AND c.device_id=@id
+                 AND (@branchId::BIGINT IS NULL OR c.branch_id=@branchId)
+               ORDER BY c.created_at DESC,c.id DESC,e.sequence_number DESC LIMIT 1000",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
+        var rmaReplacements = await db.QueryAsync(
+            @"SELECT r.id,r.case_id,r.failed_device_id,r.failed_device_serial,r.replacement_device_id,
+                     r.replacement_device_serial,r.replacement_manufacturer,r.replacement_device_model,
+                     r.replacement_hardware_revision,r.replacement_firmware_version,r.replacement_status,
+                     r.physical_swap_status,r.physical_swap_claim,r.change_reason,r.source_reference,r.created_at
+                FROM device_rma_replacements r
+                JOIN device_rma_cases c ON c.company_id=r.company_id AND c.id=r.case_id
+               WHERE r.company_id=@cid AND c.device_id=@id
+                 AND (@branchId::BIGINT IS NULL OR c.branch_id=@branchId)
+               ORDER BY r.created_at DESC,r.id DESC LIMIT 100",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
         var current = history.FirstOrDefault(row =>
             row.GetValueOrDefault("effectiveTo") is null or DBNull &&
             row.GetValueOrDefault("status")?.ToString() is "Installed" or "Verified");
@@ -20736,6 +20778,9 @@ LIMIT 100000",
                 row.GetValueOrDefault("assignmentStatus")?.ToString() == "Assigned"),
             connectivityProfiles,
             firmwareCampaigns,
+            rmaCases,
+            rmaEvents,
+            rmaReplacements,
             assignmentHistory = transitions
         }, "Device"));
     }
@@ -21212,6 +21257,493 @@ LIMIT 100000",
     private static bool DeviceUnavailableForFirmwarePlanning(Dictionary<string, object?> device) =>
         device.GetValueOrDefault("status")?.ToString() is "Revoked" or "Retired" ||
         device.GetValueOrDefault("deviceState")?.ToString() is "Decommissioned" or "Retired";
+
+    private static async Task<IResult> DeviceRmaCaseCreate(
+        HttpContext http, long id, DeviceRmaCaseRequest? body, Database db, AuditService audit, CancellationToken ct)
+    {
+        if (RequirePermission(http, "telematics:devices:rma") is { } denied) return denied;
+        var validation = DeviceRmaPolicy.ValidateCase(body, DateTimeOffset.UtcNow);
+        if (validation.Error is not null) return Results.BadRequest(ApiResponse<object>.Fail(validation.Error));
+        var input = validation.Value!;
+        var companyId = GetCompanyId(http);
+        var branchId = GetBranchId(http);
+        var actor = GetUserId(http);
+        Dictionary<string, object?> recorded;
+        bool replayed;
+        try
+        {
+            (recorded, replayed) = await db.RunInSystemTransactionAsync(async () =>
+            {
+                await db.ExecuteAsync("SELECT pg_advisory_xact_lock(hashtextextended(@identity,0))",
+                    command => command.Parameters.AddWithValue("@identity", $"device-rma-case:{companyId}:{input.IdempotencyKey:D}"), ct);
+                var replay = await db.QuerySingleAsync(
+                    @"SELECT c.id,c.company_id,c.branch_id,c.device_id,c.device_serial,c.manufacturer,c.device_model,
+                             c.hardware_revision,c.reported_firmware_version,c.severity,c.failure_category,
+                             c.failure_description,c.observed_at,c.warranty_posture,c.warranty_reference,
+                             c.warranty_evidence_status,c.support_sla_reference,c.response_due_at,
+                             c.source_reference,c.physical_evidence_claim,c.created_at,
+                             COALESCE(latest.case_status_after,'Open') current_status,latest.occurred_at latest_event_at
+                        FROM device_rma_cases c
+                        LEFT JOIN LATERAL (
+                          SELECT case_status_after,occurred_at FROM device_rma_events
+                           WHERE company_id=c.company_id AND case_id=c.id ORDER BY sequence_number DESC LIMIT 1
+                        ) latest ON TRUE
+                       WHERE c.company_id=@cid AND c.device_id=@deviceId AND c.idempotency_key=@key
+                         AND (@branchId::BIGINT IS NULL OR c.branch_id=@branchId)",
+                    command =>
+                    {
+                        command.Parameters.AddWithValue("@cid", companyId);
+                        command.Parameters.AddWithValue("@deviceId", id);
+                        command.Parameters.AddWithValue("@key", input.IdempotencyKey);
+                        command.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+                    }, ct);
+                if (replay is not null)
+                {
+                    if (!RmaCaseReplayMatches(replay, input)) throw new InvalidOperationException("rma_idempotency_mismatch");
+                    return (replay, true);
+                }
+                var device = await db.QuerySingleAsync(
+                    @"SELECT id,branch_id,device_serial,manufacturer,device_model,hardware_revision,
+                             firmware_version,status,device_state
+                        FROM eld_devices
+                       WHERE company_id=@cid AND id=@deviceId AND deleted_at IS NULL
+                         AND (@branchId::BIGINT IS NULL OR branch_id=@branchId) FOR UPDATE",
+                    command =>
+                    {
+                        command.Parameters.AddWithValue("@cid", companyId);
+                        command.Parameters.AddWithValue("@deviceId", id);
+                        command.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+                    }, ct);
+                if (device is null) throw new InvalidOperationException("rma_device_missing");
+                if (DeviceUnavailableForFirmwarePlanning(device)) throw new InvalidOperationException("rma_device_terminal");
+                var caseId = await db.InsertAsync(
+                    @"INSERT INTO device_rma_cases
+                        (company_id,branch_id,device_id,device_serial,manufacturer,device_model,hardware_revision,
+                         reported_firmware_version,severity,failure_category,failure_description,observed_at,
+                         warranty_posture,warranty_reference,warranty_evidence_status,support_sla_reference,
+                         response_due_at,source_reference,physical_evidence_claim,idempotency_key,created_by,created_at)
+                       VALUES(@cid,@branchId,@deviceId,@serial,@manufacturer,@model,@hardwareRevision,@firmware,
+                         @severity,@category,@description,@observedAt,@warranty,@warrantyReference,'Unverified',
+                         @slaReference,@responseDueAt,@sourceReference,FALSE,@key,@actor,NOW())",
+                    command =>
+                    {
+                        command.Parameters.AddWithValue("@cid", companyId);
+                        command.Parameters.AddWithValue("@branchId", device.GetValueOrDefault("branchId") is null or DBNull ? DBNull.Value : device["branchId"]!);
+                        command.Parameters.AddWithValue("@deviceId", id);
+                        command.Parameters.AddWithValue("@serial", device["deviceSerial"]!);
+                        command.Parameters.AddWithValue("@manufacturer", DbNullableText(device, "manufacturer"));
+                        command.Parameters.AddWithValue("@model", DbNullableText(device, "deviceModel"));
+                        command.Parameters.AddWithValue("@hardwareRevision", DbNullableText(device, "hardwareRevision"));
+                        command.Parameters.AddWithValue("@firmware", DbNullableText(device, "firmwareVersion"));
+                        command.Parameters.AddWithValue("@severity", input.Severity);
+                        command.Parameters.AddWithValue("@category", input.FailureCategory);
+                        command.Parameters.AddWithValue("@description", input.FailureDescription);
+                        command.Parameters.AddWithValue("@observedAt", input.ObservedAt);
+                        command.Parameters.AddWithValue("@warranty", input.WarrantyPosture);
+                        command.Parameters.AddWithValue("@warrantyReference", (object?)input.WarrantyReference ?? DBNull.Value);
+                        command.Parameters.AddWithValue("@slaReference", input.SupportSlaReference);
+                        command.Parameters.AddWithValue("@responseDueAt", input.ResponseDueAt);
+                        command.Parameters.AddWithValue("@sourceReference", input.SourceReference);
+                        command.Parameters.AddWithValue("@key", input.IdempotencyKey);
+                        command.Parameters.AddWithValue("@actor", actor);
+                    }, ct);
+                await db.InsertAsync(
+                    @"INSERT INTO device_rma_events
+                        (company_id,branch_id,case_id,device_id,sequence_number,event_type,case_status_after,
+                         occurred_at,evidence_reference,evidence_status,notes,physical_completion_claim,
+                         idempotency_key,recorded_by,recorded_at)
+                       VALUES(@cid,@branchId,@caseId,@deviceId,1,'CaseOpened','Open',@occurredAt,
+                         @evidence,'Unverified',@notes,FALSE,@key,@actor,NOW())",
+                    command =>
+                    {
+                        command.Parameters.AddWithValue("@cid", companyId);
+                        command.Parameters.AddWithValue("@branchId", device.GetValueOrDefault("branchId") is null or DBNull ? DBNull.Value : device["branchId"]!);
+                        command.Parameters.AddWithValue("@caseId", caseId);
+                        command.Parameters.AddWithValue("@deviceId", id);
+                        command.Parameters.AddWithValue("@occurredAt", input.ObservedAt);
+                        command.Parameters.AddWithValue("@evidence", input.SourceReference);
+                        command.Parameters.AddWithValue("@notes", input.FailureDescription);
+                        command.Parameters.AddWithValue("@key", input.IdempotencyKey);
+                        command.Parameters.AddWithValue("@actor", actor);
+                    }, ct);
+                var created = await LoadRmaCase(db, companyId, caseId, branchId, ct);
+                return (created ?? throw new InvalidOperationException("rma_not_recorded"), false);
+            }, ct);
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "rma_idempotency_mismatch")
+        {
+            return Results.Conflict(ApiResponse<object>.Fail("That idempotency key was already used for a different RMA case."));
+        }
+        catch (InvalidOperationException ex) when (ex.Message is "rma_device_missing" or "rma_device_terminal")
+        {
+            return Results.Conflict(ApiResponse<object>.Fail("The device is unavailable for a new RMA case in the current scope."));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "rma_not_recorded")
+        {
+            return Results.Conflict(ApiResponse<object>.Fail("The RMA case could not be read after recording."));
+        }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
+        {
+            return Results.Conflict(ApiResponse<object>.Fail("The RMA case conflicted with a concurrent request. Refresh before retrying."));
+        }
+        await audit.LogAsync(http, "device.rma_case.opened", "DeviceRmaCase", Convert.ToInt64(recorded["id"]),
+            $"device:{id};severity:{input.Severity};category:{input.FailureCategory};idempotent:{replayed}", ct);
+        http.Response.Headers.CacheControl = "no-store";
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            rmaCase = recorded,
+            idempotentReplay = replayed,
+            physicalEvidenceClaim = false,
+            note = "RMA case recorded. Warranty acceptance and physical custody remain unverified."
+        }, replayed ? "RMA case already recorded" : "RMA case opened"));
+    }
+
+    private static async Task<IResult> DeviceRmaEventCreate(
+        HttpContext http, long caseId, DeviceRmaEventRequest? body, Database db, AuditService audit, CancellationToken ct)
+    {
+        if (RequirePermission(http, "telematics:devices:rma") is { } denied) return denied;
+        var initial = DeviceRmaPolicy.ValidateEvent(body, "Open", DateTimeOffset.UtcNow);
+        if (initial.Error is not null) return Results.BadRequest(ApiResponse<object>.Fail(initial.Error));
+        var input = initial.Value!;
+        var companyId = GetCompanyId(http);
+        var branchId = GetBranchId(http);
+        var actor = GetUserId(http);
+        Dictionary<string, object?> recorded;
+        bool replayed;
+        try
+        {
+            (recorded, replayed) = await db.RunInSystemTransactionAsync(async () =>
+            {
+                await db.ExecuteAsync("SELECT pg_advisory_xact_lock(hashtextextended(@identity,0))",
+                    command => command.Parameters.AddWithValue("@identity", $"device-rma-event:{companyId}:{caseId}"), ct);
+                var replay = await db.QuerySingleAsync(
+                    @"SELECT e.id,e.case_id,e.device_id,e.sequence_number,e.event_type,e.case_status_after,
+                             e.occurred_at,e.custody_location,e.tracking_reference,e.evidence_reference,
+                             e.evidence_status,e.notes,e.physical_completion_claim,e.recorded_at
+                        FROM device_rma_events e JOIN device_rma_cases c
+                         ON c.company_id=e.company_id AND c.id=e.case_id
+                       WHERE e.company_id=@cid AND e.case_id=@caseId AND e.idempotency_key=@key
+                         AND (@branchId::BIGINT IS NULL OR c.branch_id=@branchId)",
+                    command =>
+                    {
+                        command.Parameters.AddWithValue("@cid", companyId);
+                        command.Parameters.AddWithValue("@caseId", caseId);
+                        command.Parameters.AddWithValue("@key", input.IdempotencyKey);
+                        command.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+                    }, ct);
+                if (replay is not null)
+                {
+                    if (!RmaEventReplayMatches(replay, input)) throw new InvalidOperationException("rma_event_idempotency_mismatch");
+                    return (replay, true);
+                }
+                var rmaCase = await LoadRmaCase(db, companyId, caseId, branchId, ct);
+                if (rmaCase is null) throw new InvalidOperationException("rma_case_missing");
+                var validation = DeviceRmaPolicy.ValidateEvent(body, rmaCase["currentStatus"]?.ToString() ?? "Open", DateTimeOffset.UtcNow);
+                if (validation.Error is not null) throw new InvalidOperationException($"rma_event_invalid:{validation.Error}");
+                input = validation.Value!;
+                var latestAt = FirmwareTimestamp(rmaCase.GetValueOrDefault("latestEventAt"));
+                if (latestAt is not null && input.OccurredAt < latestAt)
+                    throw new InvalidOperationException("rma_event_out_of_order");
+                var nextSequence = Convert.ToInt32(rmaCase.GetValueOrDefault("latestSequence") ?? 0) + 1;
+                var eventId = await db.InsertAsync(
+                    @"INSERT INTO device_rma_events
+                        (company_id,branch_id,case_id,device_id,sequence_number,event_type,case_status_after,
+                         occurred_at,custody_location,tracking_reference,evidence_reference,evidence_status,
+                         notes,physical_completion_claim,idempotency_key,recorded_by,recorded_at)
+                       VALUES(@cid,@branchId,@caseId,@deviceId,@sequence,@eventType,@statusAfter,@occurredAt,
+                         @location,@tracking,@evidence,'Unverified',@notes,FALSE,@key,@actor,NOW())",
+                    command =>
+                    {
+                        command.Parameters.AddWithValue("@cid", companyId);
+                        command.Parameters.AddWithValue("@branchId", rmaCase.GetValueOrDefault("branchId") is null or DBNull ? DBNull.Value : rmaCase["branchId"]!);
+                        command.Parameters.AddWithValue("@caseId", caseId);
+                        command.Parameters.AddWithValue("@deviceId", rmaCase["deviceId"]!);
+                        command.Parameters.AddWithValue("@sequence", nextSequence);
+                        command.Parameters.AddWithValue("@eventType", input.EventType);
+                        command.Parameters.AddWithValue("@statusAfter", input.StatusAfter);
+                        command.Parameters.AddWithValue("@occurredAt", input.OccurredAt);
+                        command.Parameters.AddWithValue("@location", (object?)input.CustodyLocation ?? DBNull.Value);
+                        command.Parameters.AddWithValue("@tracking", (object?)input.TrackingReference ?? DBNull.Value);
+                        command.Parameters.AddWithValue("@evidence", input.EvidenceReference);
+                        command.Parameters.AddWithValue("@notes", input.Notes);
+                        command.Parameters.AddWithValue("@key", input.IdempotencyKey);
+                        command.Parameters.AddWithValue("@actor", actor);
+                    }, ct);
+                var created = await LoadRmaEvent(db, companyId, eventId, branchId, ct);
+                return (created ?? throw new InvalidOperationException("rma_event_not_recorded"), false);
+            }, ct);
+        }
+        catch (InvalidOperationException ex) when (ex.Message.StartsWith("rma_event_invalid:", StringComparison.Ordinal))
+        {
+            return Results.Conflict(ApiResponse<object>.Fail(ex.Message[18..]));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "rma_event_idempotency_mismatch")
+        {
+            return Results.Conflict(ApiResponse<object>.Fail("That idempotency key was already used for a different RMA event."));
+        }
+        catch (InvalidOperationException ex) when (ex.Message is "rma_case_missing" or "rma_event_not_recorded")
+        {
+            return Results.NotFound(ApiResponse<object>.Fail("RMA case not found in the current scope."));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "rma_event_out_of_order")
+        {
+            return Results.Conflict(ApiResponse<object>.Fail("The custody event cannot precede the latest recorded event."));
+        }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
+        {
+            return Results.Conflict(ApiResponse<object>.Fail("The RMA event conflicted with a concurrent request. Refresh before retrying."));
+        }
+        await audit.LogAsync(http, "device.rma_event.recorded", "DeviceRmaCase", caseId,
+            $"event:{input.EventType};status:{input.StatusAfter};idempotent:{replayed}", ct);
+        http.Response.Headers.CacheControl = "no-store";
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            rmaEvent = recorded,
+            idempotentReplay = replayed,
+            physicalCompletionClaim = false,
+            note = "Custody event recorded from the supplied reference. Physical verification remains external."
+        }, replayed ? "RMA event already recorded" : "RMA event recorded"));
+    }
+
+    private static async Task<IResult> DeviceRmaReplacementCreate(
+        HttpContext http, long caseId, DeviceRmaReplacementRequest? body, Database db, AuditService audit, CancellationToken ct)
+    {
+        if (RequirePermission(http, "telematics:devices:rma") is { } denied) return denied;
+        var validation = DeviceRmaPolicy.ValidateReplacement(body);
+        if (validation.Error is not null) return Results.BadRequest(ApiResponse<object>.Fail(validation.Error));
+        var input = validation.Value!;
+        var companyId = GetCompanyId(http);
+        var branchId = GetBranchId(http);
+        var actor = GetUserId(http);
+        Dictionary<string, object?> recorded;
+        bool replayed;
+        try
+        {
+            (recorded, replayed) = await db.RunInSystemTransactionAsync(async () =>
+            {
+                var locks = new[]
+                {
+                    $"device-rma-event:{companyId}:{caseId}",
+                    $"device-rma-replacement:{companyId}:{input.ReplacementDeviceSerial}",
+                }.OrderBy(value => value).ToArray();
+                await db.ExecuteAsync(
+                    @"SELECT pg_advisory_xact_lock(hashtextextended(identity,0))
+                        FROM unnest(@identities::TEXT[]) identity ORDER BY identity",
+                    command => command.Parameters.AddWithValue("@identities", NpgsqlDbType.Array | NpgsqlDbType.Text, locks), ct);
+                var replay = await db.QuerySingleAsync(
+                    @"SELECT r.id,r.case_id,r.failed_device_id,r.failed_device_serial,r.replacement_device_id,
+                             r.replacement_device_serial,r.replacement_manufacturer,r.replacement_device_model,
+                             r.replacement_hardware_revision,r.replacement_firmware_version,r.replacement_status,
+                             r.physical_swap_status,r.physical_swap_claim,r.change_reason,r.source_reference,r.created_at
+                        FROM device_rma_replacements r JOIN device_rma_cases c
+                         ON c.company_id=r.company_id AND c.id=r.case_id
+                       WHERE r.company_id=@cid AND r.case_id=@caseId AND r.idempotency_key=@key
+                         AND (@branchId::BIGINT IS NULL OR c.branch_id=@branchId)",
+                    command =>
+                    {
+                        command.Parameters.AddWithValue("@cid", companyId);
+                        command.Parameters.AddWithValue("@caseId", caseId);
+                        command.Parameters.AddWithValue("@key", input.IdempotencyKey);
+                        command.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+                    }, ct);
+                if (replay is not null)
+                {
+                    if (!RmaReplacementReplayMatches(replay, input)) throw new InvalidOperationException("rma_replacement_idempotency_mismatch");
+                    return (replay, true);
+                }
+                var rmaCase = await LoadRmaCase(db, companyId, caseId, branchId, ct);
+                if (rmaCase is null) throw new InvalidOperationException("rma_case_missing");
+                if (rmaCase.GetValueOrDefault("currentStatus")?.ToString() == "Resolved")
+                    throw new InvalidOperationException("rma_case_resolved");
+                var existing = await db.QuerySingleAsync(
+                    "SELECT id FROM device_rma_replacements WHERE company_id=@cid AND case_id=@caseId",
+                    command => { command.Parameters.AddWithValue("@cid", companyId); command.Parameters.AddWithValue("@caseId", caseId); }, ct);
+                if (existing is not null) throw new InvalidOperationException("rma_replacement_exists");
+                var replacement = await db.QuerySingleAsync(
+                    @"SELECT id,branch_id,device_serial,manufacturer,device_model,hardware_revision,
+                             firmware_version,status,device_state
+                        FROM eld_devices
+                       WHERE company_id=@cid AND UPPER(BTRIM(device_serial))=@serial AND deleted_at IS NULL
+                         AND (@branchId::BIGINT IS NULL OR branch_id=@branchId)
+                         AND NOT EXISTS (
+                           SELECT 1 FROM device_installations active_install
+                            WHERE active_install.company_id=eld_devices.company_id
+                              AND active_install.device_id=eld_devices.id
+                              AND active_install.effective_to IS NULL
+                              AND active_install.status IN ('Installed','Verified')
+                         ) FOR UPDATE",
+                    command =>
+                    {
+                        command.Parameters.AddWithValue("@cid", companyId);
+                        command.Parameters.AddWithValue("@serial", input.ReplacementDeviceSerial);
+                        command.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+                    }, ct);
+                if (replacement is null || DeviceUnavailableForFirmwarePlanning(replacement))
+                    throw new InvalidOperationException("rma_replacement_missing");
+                if (Convert.ToInt64(replacement["id"]) == Convert.ToInt64(rmaCase["deviceId"]))
+                    throw new InvalidOperationException("rma_replacement_same_device");
+                var latestAt = FirmwareTimestamp(rmaCase.GetValueOrDefault("latestEventAt"));
+                if (latestAt is not null && latestAt > DateTimeOffset.UtcNow)
+                    throw new InvalidOperationException("rma_event_out_of_order");
+                var replacementId = await db.InsertAsync(
+                    @"INSERT INTO device_rma_replacements
+                        (company_id,branch_id,case_id,failed_device_id,failed_device_serial,replacement_device_id,
+                         replacement_device_serial,replacement_manufacturer,replacement_device_model,
+                         replacement_hardware_revision,replacement_firmware_version,replacement_status,
+                         physical_swap_status,physical_swap_claim,change_reason,source_reference,
+                         idempotency_key,created_by,created_at)
+                       VALUES(@cid,@branchId,@caseId,@failedId,@failedSerial,@replacementId,@replacementSerial,
+                         @manufacturer,@model,@hardwareRevision,@firmware,'Planned','ExternalHold',FALSE,
+                         @reason,@source,@key,@actor,NOW())",
+                    command =>
+                    {
+                        command.Parameters.AddWithValue("@cid", companyId);
+                        command.Parameters.AddWithValue("@branchId", rmaCase.GetValueOrDefault("branchId") is null or DBNull ? DBNull.Value : rmaCase["branchId"]!);
+                        command.Parameters.AddWithValue("@caseId", caseId);
+                        command.Parameters.AddWithValue("@failedId", rmaCase["deviceId"]!);
+                        command.Parameters.AddWithValue("@failedSerial", rmaCase["deviceSerial"]!);
+                        command.Parameters.AddWithValue("@replacementId", replacement["id"]!);
+                        command.Parameters.AddWithValue("@replacementSerial", replacement["deviceSerial"]!);
+                        command.Parameters.AddWithValue("@manufacturer", DbNullableText(replacement, "manufacturer"));
+                        command.Parameters.AddWithValue("@model", DbNullableText(replacement, "deviceModel"));
+                        command.Parameters.AddWithValue("@hardwareRevision", DbNullableText(replacement, "hardwareRevision"));
+                        command.Parameters.AddWithValue("@firmware", DbNullableText(replacement, "firmwareVersion"));
+                        command.Parameters.AddWithValue("@reason", input.ChangeReason);
+                        command.Parameters.AddWithValue("@source", input.SourceReference);
+                        command.Parameters.AddWithValue("@key", input.IdempotencyKey);
+                        command.Parameters.AddWithValue("@actor", actor);
+                    }, ct);
+                var nextSequence = Convert.ToInt32(rmaCase.GetValueOrDefault("latestSequence") ?? 0) + 1;
+                await db.InsertAsync(
+                    @"INSERT INTO device_rma_events
+                        (company_id,branch_id,case_id,device_id,sequence_number,event_type,case_status_after,
+                         occurred_at,evidence_reference,evidence_status,notes,physical_completion_claim,
+                         idempotency_key,recorded_by,recorded_at)
+                       VALUES(@cid,@branchId,@caseId,@deviceId,@sequence,'ReplacementLinked','ReplacementPlanned',
+                         NOW(),@source,'Unverified',@notes,FALSE,@key,@actor,NOW())",
+                    command =>
+                    {
+                        command.Parameters.AddWithValue("@cid", companyId);
+                        command.Parameters.AddWithValue("@branchId", rmaCase.GetValueOrDefault("branchId") is null or DBNull ? DBNull.Value : rmaCase["branchId"]!);
+                        command.Parameters.AddWithValue("@caseId", caseId);
+                        command.Parameters.AddWithValue("@deviceId", rmaCase["deviceId"]!);
+                        command.Parameters.AddWithValue("@sequence", nextSequence);
+                        command.Parameters.AddWithValue("@source", input.SourceReference);
+                        command.Parameters.AddWithValue("@notes", input.ChangeReason);
+                        command.Parameters.AddWithValue("@key", Guid.NewGuid());
+                        command.Parameters.AddWithValue("@actor", actor);
+                    }, ct);
+                var created = await LoadRmaReplacement(db, companyId, replacementId, branchId, ct);
+                return (created ?? throw new InvalidOperationException("rma_replacement_not_recorded"), false);
+            }, ct);
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "rma_replacement_idempotency_mismatch")
+        {
+            return Results.Conflict(ApiResponse<object>.Fail("That idempotency key was already used for a different replacement plan."));
+        }
+        catch (InvalidOperationException ex) when (ex.Message is "rma_case_missing" or "rma_replacement_missing")
+        {
+            return Results.NotFound(ApiResponse<object>.Fail("The RMA case or replacement device was not found in the current scope."));
+        }
+        catch (InvalidOperationException ex) when (ex.Message is "rma_case_resolved" or "rma_replacement_exists" or "rma_replacement_same_device" or "rma_replacement_not_recorded" or "rma_event_out_of_order")
+        {
+            return Results.Conflict(ApiResponse<object>.Fail("The replacement plan conflicts with the current RMA case or device state."));
+        }
+        catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.UniqueViolation or PostgresErrorCodes.ForeignKeyViolation)
+        {
+            return Results.Conflict(ApiResponse<object>.Fail("The replacement plan conflicted with a concurrent change. Refresh before retrying."));
+        }
+        await audit.LogAsync(http, "device.rma_replacement.planned", "DeviceRmaCase", caseId,
+            $"replacement:{recorded["replacementDeviceId"]};idempotent:{replayed}", ct);
+        http.Response.Headers.CacheControl = "no-store";
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            replacement = recorded,
+            idempotentReplay = replayed,
+            physicalSwapClaim = false,
+            note = "Replacement device linked for planning. No physical swap or installation is claimed."
+        }, replayed ? "Replacement plan already recorded" : "Replacement plan recorded"));
+    }
+
+    private static Task<Dictionary<string, object?>?> LoadRmaCase(
+        Database db, long companyId, long caseId, long? branchId, CancellationToken ct) => db.QuerySingleAsync(
+        @"SELECT c.id,c.company_id,c.branch_id,c.device_id,c.device_serial,c.manufacturer,c.device_model,
+                 c.hardware_revision,c.reported_firmware_version,c.severity,c.failure_category,
+                 c.failure_description,c.observed_at,c.warranty_posture,c.warranty_reference,
+                 c.warranty_evidence_status,c.support_sla_reference,c.response_due_at,
+                 c.source_reference,c.physical_evidence_claim,c.created_at,
+                 COALESCE(latest.case_status_after,'Open') current_status,
+                 latest.occurred_at latest_event_at,COALESCE(latest.sequence_number,0) latest_sequence
+            FROM device_rma_cases c
+            LEFT JOIN LATERAL (
+              SELECT case_status_after,occurred_at,sequence_number FROM device_rma_events
+               WHERE company_id=c.company_id AND case_id=c.id ORDER BY sequence_number DESC LIMIT 1
+            ) latest ON TRUE
+           WHERE c.company_id=@cid AND c.id=@caseId
+             AND (@branchId::BIGINT IS NULL OR c.branch_id=@branchId)",
+        command =>
+        {
+            command.Parameters.AddWithValue("@cid", companyId);
+            command.Parameters.AddWithValue("@caseId", caseId);
+            command.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+        }, ct);
+
+    private static Task<Dictionary<string, object?>?> LoadRmaEvent(
+        Database db, long companyId, long eventId, long? branchId, CancellationToken ct) => db.QuerySingleAsync(
+        @"SELECT e.id,e.case_id,e.device_id,e.sequence_number,e.event_type,e.case_status_after,
+                 e.occurred_at,e.custody_location,e.tracking_reference,e.evidence_reference,
+                 e.evidence_status,e.notes,e.physical_completion_claim,e.recorded_at
+            FROM device_rma_events e JOIN device_rma_cases c
+             ON c.company_id=e.company_id AND c.id=e.case_id
+           WHERE e.company_id=@cid AND e.id=@eventId
+             AND (@branchId::BIGINT IS NULL OR c.branch_id=@branchId)",
+        command =>
+        {
+            command.Parameters.AddWithValue("@cid", companyId);
+            command.Parameters.AddWithValue("@eventId", eventId);
+            command.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+        }, ct);
+
+    private static Task<Dictionary<string, object?>?> LoadRmaReplacement(
+        Database db, long companyId, long replacementId, long? branchId, CancellationToken ct) => db.QuerySingleAsync(
+        @"SELECT r.id,r.case_id,r.failed_device_id,r.failed_device_serial,r.replacement_device_id,
+                 r.replacement_device_serial,r.replacement_manufacturer,r.replacement_device_model,
+                 r.replacement_hardware_revision,r.replacement_firmware_version,r.replacement_status,
+                 r.physical_swap_status,r.physical_swap_claim,r.change_reason,r.source_reference,r.created_at
+            FROM device_rma_replacements r JOIN device_rma_cases c
+             ON c.company_id=r.company_id AND c.id=r.case_id
+           WHERE r.company_id=@cid AND r.id=@replacementId
+             AND (@branchId::BIGINT IS NULL OR c.branch_id=@branchId)",
+        command =>
+        {
+            command.Parameters.AddWithValue("@cid", companyId);
+            command.Parameters.AddWithValue("@replacementId", replacementId);
+            command.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+        }, ct);
+
+    private static bool RmaCaseReplayMatches(Dictionary<string, object?> row, ValidatedDeviceRmaCase input) =>
+        string.Equals(row.GetValueOrDefault("severity")?.ToString(), input.Severity, StringComparison.Ordinal) &&
+        string.Equals(row.GetValueOrDefault("failureCategory")?.ToString(), input.FailureCategory, StringComparison.Ordinal) &&
+        string.Equals(row.GetValueOrDefault("failureDescription")?.ToString(), input.FailureDescription, StringComparison.Ordinal) &&
+        FirmwareTimestamp(row.GetValueOrDefault("observedAt")) == input.ObservedAt &&
+        string.Equals(row.GetValueOrDefault("warrantyPosture")?.ToString(), input.WarrantyPosture, StringComparison.Ordinal) &&
+        string.Equals(FirmwareText(row, "warrantyReference"), input.WarrantyReference, StringComparison.Ordinal) &&
+        string.Equals(row.GetValueOrDefault("supportSlaReference")?.ToString(), input.SupportSlaReference, StringComparison.Ordinal) &&
+        FirmwareTimestamp(row.GetValueOrDefault("responseDueAt")) == input.ResponseDueAt &&
+        string.Equals(row.GetValueOrDefault("sourceReference")?.ToString(), input.SourceReference, StringComparison.Ordinal);
+
+    private static bool RmaEventReplayMatches(Dictionary<string, object?> row, ValidatedDeviceRmaEvent input) =>
+        string.Equals(row.GetValueOrDefault("eventType")?.ToString(), input.EventType, StringComparison.Ordinal) &&
+        FirmwareTimestamp(row.GetValueOrDefault("occurredAt")) == input.OccurredAt &&
+        string.Equals(FirmwareText(row, "custodyLocation"), input.CustodyLocation, StringComparison.Ordinal) &&
+        string.Equals(FirmwareText(row, "trackingReference"), input.TrackingReference, StringComparison.Ordinal) &&
+        string.Equals(row.GetValueOrDefault("evidenceReference")?.ToString(), input.EvidenceReference, StringComparison.Ordinal) &&
+        string.Equals(row.GetValueOrDefault("notes")?.ToString(), input.Notes, StringComparison.Ordinal);
+
+    private static bool RmaReplacementReplayMatches(Dictionary<string, object?> row, ValidatedDeviceRmaReplacement input) =>
+        string.Equals(row.GetValueOrDefault("replacementDeviceSerial")?.ToString(), input.ReplacementDeviceSerial, StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(row.GetValueOrDefault("changeReason")?.ToString(), input.ChangeReason, StringComparison.Ordinal) &&
+        string.Equals(row.GetValueOrDefault("sourceReference")?.ToString(), input.SourceReference, StringComparison.Ordinal);
 
     private static object DbNullableText(Dictionary<string, object?> row, string key) =>
         row.GetValueOrDefault(key) is null or DBNull ? DBNull.Value : row[key]!;

@@ -88,7 +88,7 @@ public static class PermissionPolicy
         Manage("customers:manage", "customers:view", "customers:create", "customers:update", "customers:delete", "customer.account:create", "customer.account:update", "customer.account:delete");
         Manage("crm:manage", "crm:view", "customers:create", "customers:update", "customers:delete");
         Manage("safety:manage", "safety:view", "safety:create", "safety:update", "safety:review");
-        Manage("maintenance:manage", "maintenance:view", "maintenance:create", "maintenance:update", "maintenance:close", "maintenance:review");
+        Manage("maintenance:manage", "maintenance:view", "maintenance:create", "maintenance:update", "maintenance:close", "maintenance:review", "telematics:devices:rma");
         Manage("compliance:manage", "compliance:view", "compliance:update", "compliance:export");
         Manage("alerts:manage", "alerts:view", "alerts:acknowledge", "alerts:close", "telemetry.alerts.manage");
         Manage("reports:manage", "reports:view", "reports:export");
