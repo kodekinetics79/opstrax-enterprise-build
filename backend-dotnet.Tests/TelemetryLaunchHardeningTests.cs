@@ -273,6 +273,49 @@ public sealed class TelemetryLaunchHardeningTests
     }
 
     [Fact]
+    public void AutomaticCameraSafetyWorker_RequiresOptInAndUsesIndependentCadenceAndBoundary()
+    {
+        var now = new DateTimeOffset(2026, 9, 7, 16, 0, 0, TimeSpan.Zero);
+        Assert.False(ConnectorSyncBackgroundService.CameraSafetyPollingDue(null, now));
+        Assert.False(ConnectorSyncBackgroundService.CameraSafetyPollingDue(
+            "{\"cameraSafetyAutoSync\":\"disabled\"}", now));
+        Assert.True(ConnectorSyncBackgroundService.CameraSafetyPollingDue(
+            "{\"cameraSafetyAutoSync\":\"enabled\"}", now));
+        Assert.False(ConnectorSyncBackgroundService.CameraSafetyPollingDue(
+            "{\"cameraSafetyAutoSync\":\"enabled\",\"cameraSafetyLastCompletedAt\":\"2026-09-07T15:56:00.0000000+00:00\",\"cameraSafetyLastOk\":true}", now));
+        Assert.True(ConnectorSyncBackgroundService.CameraSafetyPollingDue(
+            "{\"cameraSafetyAutoSync\":\"enabled\",\"cameraSafetyLastCompletedAt\":\"2026-09-07T15:55:00.0000000+00:00\",\"cameraSafetyLastOk\":true}", now));
+        Assert.False(ConnectorSyncBackgroundService.CameraSafetyPollingDue(
+            "{\"cameraSafetyAutoSync\":\"enabled\",\"cameraSafetyLastCompletedAt\":\"2026-09-07T15:46:00.0000000+00:00\",\"cameraSafetyLastOk\":false}", now));
+        Assert.True(ConnectorSyncBackgroundService.CameraSafetyPollingDue(
+            "{\"cameraSafetyAutoSync\":\"enabled\",\"cameraSafetyLastCompletedAt\":\"2026-09-07T15:45:00.0000000+00:00\",\"cameraSafetyLastOk\":false}", now));
+
+        var operation = new ConnectorOperationContext(
+            17, 23, 6, Guid.Parse("22222222-2222-2222-2222-222222222222"),
+            "samsara",
+            "{\"cameraSafetyAutoSync\":\"enabled\",\"cameraSafetyCursor\":\"camera-cursor\",\"cameraSafetyStartTime\":\"2026-09-06T12:00:00.0000000+00:00\"}",
+            "Connected", false, "samsara-org:verified-account");
+
+        using var body = ConnectorSyncBackgroundService.BuildCameraSafetyOperationBody(
+            operation, operation.ConfigJson, now, out var startTime, out var cursor);
+
+        Assert.Equal("camera-cursor", cursor);
+        Assert.Equal("2026-09-06T12:00:00.0000000+00:00", startTime);
+        Assert.Equal("sync-camera-safety", body.RootElement.GetProperty("action").GetString());
+        Assert.Equal(17, body.RootElement.GetProperty("companyId").GetInt64());
+        Assert.Equal(23, body.RootElement.GetProperty("integrationId").GetInt64());
+        Assert.Equal(6, body.RootElement.GetProperty("operationGeneration").GetInt64());
+        Assert.Equal("22222222-2222-2222-2222-222222222222",
+            body.RootElement.GetProperty("operationLeaseToken").GetString());
+        Assert.Equal("samsara-org:verified-account",
+            body.RootElement.GetProperty("providerAccountReference").GetString());
+        Assert.Equal("camera-cursor", body.RootElement.GetProperty("cursor").GetString());
+        Assert.Equal(startTime, body.RootElement.GetProperty("startTime").GetString());
+        Assert.Equal(5, body.RootElement.GetProperty("maxPages").GetInt32());
+        Assert.Equal(60, body.RootElement.GetProperty("maxDurationSeconds").GetInt32());
+    }
+
+    [Fact]
     public void GatewayProvisionRequiresTheSameAuthenticatedEncryptionEnvelopeAsRotation()
     {
         var endpoints = Read("backend-dotnet", "Controllers", "EndpointMappings.cs");

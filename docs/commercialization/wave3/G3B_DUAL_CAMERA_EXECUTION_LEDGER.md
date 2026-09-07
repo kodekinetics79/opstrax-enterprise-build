@@ -109,6 +109,14 @@ The intake ledger retains the exact device and installation IDs used for the mat
 
 The isolated PostgreSQL oracle applies Stages 112–114 twice and exercises exact-account matching, wrong-account isolation, out-of-period handling, inactive-device quarantine, overlapping-installation quarantine and repair, pending-to-matched replay, mapping-drift quarantine and database-level mapping immutability. The bounded camera/connector regression set passed **125/125** locally, and both provider-device and installation-period lookups were shown to be index eligible. These results are software integration evidence. They do not prove an authentic Samsara event or camera device and do not change the external-hold or certification status.
 
+## 2026-09-07 INTEGRATE increment — explicit automatic safety-event polling
+
+The scheduled Samsara worker now carries the verified provider-organization boundary into both GPS and camera requests. A customer can explicitly select **Automatic camera safety intake** in the Samsara configuration; the default remains **Manual only**. After a successful GPS cycle, an enabled connector takes a new generation-bound lease and runs a bounded five-page/60-second safety-event pull. Successful camera intake follows the normal five-minute connector cadence; camera failures use a 15-minute retry cadence.
+
+Camera polling retains its own cursor, completion time and outcome. Losing the optional Safety & Cameras permission records `AttentionRequired` for that lane without changing a healthy GPS connector to `Error`. A concurrent configuration change or disconnect invalidates the lease, and a second eligibility check prevents stale opt-in state from authorizing provider I/O. The customer UI states these boundaries and continues to label media, provider verification, privacy acceptance and certification as **External hold**.
+
+Focused verification covers the opt-in/default-off rule, success and failure cadence, exact tenant/integration/generation/lease/account request identity, independent camera cursor and start time, UI truth copy, and database preservation of the primary GPS status during camera failure or a no-op lease release. This is local software evidence only. No provider account was contacted, no deployment was performed, and no camera or Samsara capability is certified by this increment.
+
 ## External evidence still required
 
 - authorized Samsara organization/account/token with Safety & Cameras scopes and written commercial integration rights;

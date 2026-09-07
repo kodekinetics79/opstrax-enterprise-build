@@ -176,6 +176,17 @@ function integrationFields(record: IntegrationRecord): ConfigField[] {
         placeholder: "Paste a tenant-authorized token",
         note: "Account-safe GPS discovery requires Read Org Information, Read Vehicles, and Read Vehicle Statistics. Camera intake separately requires Read Safety Events & Scores; the connection test does not claim that camera scope. OpsTrax stores the token encrypted and never displays it again.",
       },
+      {
+        key: "cameraSafetyAutoSync",
+        label: "Automatic camera safety intake",
+        type: "select",
+        defaultValue: "disabled",
+        options: [
+          { value: "disabled", label: "Manual only" },
+          { value: "enabled", label: "Every scheduled connector cycle" },
+        ],
+        note: "Runs only after a successful GPS cycle and records provider event metadata. A missing camera permission does not mark GPS disconnected. Camera media, privacy acceptance, provider verification, and certification remain on External hold.",
+      },
     ];
   }
   // Motive uses a server-side OAuth code exchange. Provider client credentials
@@ -700,7 +711,7 @@ function ConfigDrawer({
                     </span>
                   </div>
                   <p className="mt-1 text-xs leading-5 text-slate-600">
-                    Pull the real Samsara safety-event stream into the protected intake ledger. This records provider payload evidence only. Camera media, provider verification, privacy acceptance, and certification stay on External hold.
+                    Pull the real Samsara safety-event stream into the protected intake ledger. This records provider payload evidence only. When automatic intake is enabled, it runs after successful scheduled GPS cycles and backs off after a camera failure without marking GPS disconnected. Camera media, provider verification, privacy acceptance, and certification stay on External hold.
                   </p>
                   <button
                     type="button"

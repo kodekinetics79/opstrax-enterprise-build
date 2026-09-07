@@ -423,6 +423,25 @@ public sealed class CameraProviderIngestPostgresTests
             Assert.Equal("camera-cursor", successfulConfig.RootElement.GetProperty("cameraSafetyCursor").GetString());
             Assert.True(successfulConfig.RootElement.GetProperty("cameraSafetyLastOk").GetBoolean());
             Assert.Equal("ProviderDataPendingVerification", successfulConfig.RootElement.GetProperty("cameraSafetyStatus").GetString());
+
+            var noOpLease = Guid.NewGuid();
+            await database.ExecuteAsync("""
+                UPDATE integrations SET operation_lease_token=@lease,
+                  operation_lease_expires_at=NOW()+INTERVAL '1 minute' WHERE id=@id
+                """, command =>
+                {
+                    command.Parameters.AddWithValue("lease", noOpLease);
+                    command.Parameters.AddWithValue("id", integrationId);
+                });
+            operation = operation with { LeaseToken = noOpLease };
+            Assert.Equal(1, await ConnectorOperationLease.ReleaseWithoutStatusChangeAsync(
+                database, operation, CancellationToken.None));
+            var afterNoOpRelease = await database.QuerySingleAsync(
+                "SELECT status,config_json,operation_lease_token FROM integrations WHERE id=@id",
+                command => command.Parameters.AddWithValue("id", integrationId));
+            Assert.Equal("Connected", afterNoOpRelease!["status"]);
+            Assert.Null(afterNoOpRelease["operationLeaseToken"]);
+            Assert.Equal(afterSuccess["configJson"]?.ToString(), afterNoOpRelease["configJson"]?.ToString());
         }
         finally
         {

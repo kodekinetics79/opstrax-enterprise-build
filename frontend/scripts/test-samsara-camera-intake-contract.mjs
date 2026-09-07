@@ -61,6 +61,11 @@ test("Samsara intake UI states the evidence boundary and refreshes camera status
   assert.doesNotMatch(step, /camera (?:is )?certified|media available|provider verified: yes/i);
 
   assert.match(page, /key: "apiRegion"/);
+  assert.match(page, /key: "cameraSafetyAutoSync"/);
+  assert.match(page, /value: "disabled", label: "Manual only"/);
+  assert.match(page, /value: "enabled", label: "Every scheduled connector cycle"/);
+  assert.match(page, /runs after successful scheduled GPS cycles/i);
+  assert.match(page, /without marking GPS disconnected/i);
   assert.match(page, /value: "us", label: "United States \/ legacy Canada"/);
   assert.match(page, /value: "eu", label: "Europe \/ United Kingdom"/);
   assert.match(page, /value: "ca", label: "Canada cloud"/);

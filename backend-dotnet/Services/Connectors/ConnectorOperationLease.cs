@@ -201,6 +201,21 @@ public static class ConnectorOperationLease
                     c.Parameters.AddWithValue("@isSyncOperation", operation.IsSyncOperation);
                 }, ct), ct);
 
+    // Some auxiliary provider actions own independent health state. When their
+    // eligibility changes after lease acquisition, release the fence without
+    // changing the integration's primary GPS status or freshness fields.
+    public static Task<int> ReleaseWithoutStatusChangeAsync(
+        Database db,
+        ConnectorOperationContext operation,
+        CancellationToken ct) => db.RunInSystemTransactionAsync(async () =>
+            await db.ExecuteAsync(
+                @"UPDATE integrations SET
+                      operation_lease_token=NULL,operation_lease_expires_at=NULL,updated_at=NOW()
+                  WHERE company_id=@cid AND id=@id
+                    AND operation_generation=@generation
+                    AND operation_lease_token=@token",
+                c => Bind(c, operation), ct), ct);
+
     private static void Bind(Npgsql.NpgsqlCommand command, ConnectorOperationContext operation)
     {
         command.Parameters.AddWithValue("@cid", operation.CompanyId);
