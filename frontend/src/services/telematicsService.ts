@@ -223,6 +223,8 @@ export type DeviceCommandRecord = {
   deviceName: string;
   deviceType: string;
   deviceCategory: string;
+  manufacturer: string;
+  hardwareRevision: string;
   provider: string;
   providerCode: string;
   serialNumber: string;
@@ -469,6 +471,7 @@ function normalizeMalfunctionInput(notes: string): { malfunctionCode: string; ma
 
 export type DeviceDetailRecord = {
   device: DeviceCommandRecord;
+  compatibility: DeviceCompatibilityRecord;
   telemetry: TelematicsTelemetrySeedRecord[];
   healthEvents: TelematicsHealthSeedRecord[];
   firmwareUpdates: TelematicsFirmwareSeedRecord[];
@@ -479,6 +482,22 @@ export type DeviceDetailRecord = {
   providers: TelematicsProviderSeedRecord[];
   auditLog: AnyRecord[];
   assignmentHistory: AnyRecord[];
+};
+
+export type DeviceCompatibilityRecord = {
+  manufacturer: string | null;
+  deviceModel: string | null;
+  hardwareRevision: string | null;
+  firmwareVersion: string | null;
+  exactTupleComplete: boolean;
+  missingIdentityFields: string[];
+  registryStatus: string;
+  certificationStatus: "ExternalHold";
+  maximumTier: "Unverified";
+  candidateSha: string | null;
+  externalHold: true;
+  externalHoldReason: string;
+  certificationClaim: false;
 };
 
 // The one-time secrets a provisioned device uses to authenticate its live telemetry
@@ -839,6 +858,8 @@ function mapDeviceRow(
     deviceName: String(row.device_model ?? serial ?? "Telematics device"),
     deviceType: String(row.device_model ?? row.device_category ?? "Unknown device"),
     deviceCategory: String(row.device_category ?? "Unknown"),
+    manufacturer: String(row.manufacturer ?? ""),
+    hardwareRevision: String(row.hardware_revision ?? ""),
     provider: String(row.provider ?? "Unknown"),
     // No provider registry endpoint — derive a stable code from the real provider name.
     providerCode: String(row.provider ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-"),
@@ -1678,6 +1699,34 @@ export const telematicsService = {
     const deviceFaults = faults.filter((fault) => String(fault.device_id ?? "") === serial);
     const deviceAlerts = alerts.filter((alert) => String(alert.device_serial ?? "") === serial);
     const position = positionForDevice(scoped, positions);
+    const compatibilityRow = normalizeKeys(
+      detail.compatibility && typeof detail.compatibility === "object"
+        ? detail.compatibility as AnyRecord
+        : {},
+    );
+    const compatibility: DeviceCompatibilityRecord = {
+      manufacturer: typeof compatibilityRow.manufacturer === "string" && compatibilityRow.manufacturer.trim()
+        ? compatibilityRow.manufacturer.trim() : null,
+      deviceModel: typeof compatibilityRow.device_model === "string" && compatibilityRow.device_model.trim()
+        ? compatibilityRow.device_model.trim() : null,
+      hardwareRevision: typeof compatibilityRow.hardware_revision === "string" && compatibilityRow.hardware_revision.trim()
+        ? compatibilityRow.hardware_revision.trim() : null,
+      firmwareVersion: typeof compatibilityRow.firmware_version === "string" && compatibilityRow.firmware_version.trim()
+        ? compatibilityRow.firmware_version.trim() : null,
+      exactTupleComplete: compatibilityRow.exact_tuple_complete === true,
+      missingIdentityFields: Array.isArray(compatibilityRow.missing_identity_fields)
+        ? compatibilityRow.missing_identity_fields.map(String) : ["compatibility status unavailable"],
+      registryStatus: String(compatibilityRow.registry_status ?? "Unregistered"),
+      // Fail closed if an older or malformed API omits the Stage115 projection.
+      certificationStatus: "ExternalHold",
+      maximumTier: "Unverified",
+      candidateSha: typeof compatibilityRow.candidate_sha === "string" && /^[0-9a-f]{40}$/.test(compatibilityRow.candidate_sha)
+        ? compatibilityRow.candidate_sha : null,
+      externalHold: true,
+      externalHoldReason: String(compatibilityRow.external_hold_reason
+        ?? "Compatibility evidence is unavailable. Hardware certification remains on external hold."),
+      certificationClaim: false,
+    };
 
     // Telemetry: derived from the single live position snapshot (one point, or none).
     const telemetry: TelematicsTelemetrySeedRecord[] = position
@@ -1727,6 +1776,7 @@ export const telematicsService = {
 
     return {
       device: scoped,
+      compatibility,
       telemetry,
       healthEvents,
       diagnostics,
@@ -1827,7 +1877,9 @@ export const telematicsService = {
       deviceSerial: serial,
       imei: imei || null,
       deviceCategory,
-      deviceModel: payload.deviceName ?? payload.deviceType ?? "Device",
+      deviceModel: payload.deviceName ?? payload.deviceType ?? "",
+      manufacturer: payload.manufacturer ?? "",
+      hardwareRevision: payload.hardwareRevision ?? "",
       provider: payload.provider ?? "",
       firmwareVersion: payload.firmwareVersion ?? "",
       notes: payload.notes ?? "",

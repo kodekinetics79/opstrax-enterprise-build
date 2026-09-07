@@ -18097,7 +18097,9 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         // authenticate by device_serial + HMAC leave it null. When present it is the key the
         // trusted gateway resolves the device by, so it is globally unique (ux_eld_devices_imei).
         string? Imei = null,
-        string? DeviceCategory = null
+        string? DeviceCategory = null,
+        string? Manufacturer = null,
+        string? HardwareRevision = null
     );
 
     private sealed record DeviceAssignBody(long? VehicleId, long? DriverId);
@@ -19922,7 +19924,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var companyId = GetCompanyId(http);
         var branchId = GetBranchId(http);
         var devices = await db.QueryAsync(
-            @"SELECT e.id, e.device_serial, e.imei, e.device_category, e.device_model, e.provider, e.status, e.device_state,
+            @"SELECT e.id, e.device_serial, e.imei, e.device_category, e.device_model, e.manufacturer,
+                     e.hardware_revision, e.provider, e.status, e.device_state,
                      current_install.vehicle_id, active_dispatch.driver_id, e.firmware_version,
                      e.last_seen_at, e.revoked_at, e.created_at, e.row_version,
                      current_install.id current_installation_id,
@@ -20248,7 +20251,8 @@ WHERE e.company_id=@cid AND e.deleted_at IS NULL
                 : "0 active_fault_count"),
         };
         var items = await db.QueryAsync(@"
-SELECT e.id, e.device_serial, e.imei, e.device_category, e.device_model, e.provider, e.status, e.device_state,
+SELECT e.id, e.device_serial, e.imei, e.device_category, e.device_model, e.manufacturer,
+       e.hardware_revision, e.provider, e.status, e.device_state,
        current_install.vehicle_id, active_dispatch.driver_id, e.firmware_version,
        e.last_seen_at, e.revoked_at, e.created_at, e.row_version,
        current_install.id current_installation_id,
@@ -20336,8 +20340,8 @@ SELECT e.id, e.device_serial, e.imei, e.device_category, e.device_model, e.provi
     {
         if (RequirePermission(http, "telematics:devices:export") is { } denied) return denied;
         var rows = await db.QueryAsync(@"
-SELECT e.device_serial, e.imei, e.device_category, e.device_model, e.provider,
-       e.firmware_version, e.status, e.device_state, b.branch_code,
+SELECT e.device_serial, e.imei, e.device_category, e.manufacturer, e.device_model,
+       e.hardware_revision, e.provider, e.firmware_version, e.status, e.device_state, b.branch_code,
        v.vehicle_code, d.full_name driver_name, e.last_seen_at, e.revoked_at, e.created_at
 FROM eld_devices e
 LEFT JOIN branches b ON b.id=e.branch_id AND b.company_id=e.company_id
@@ -20367,7 +20371,7 @@ LIMIT 100000",
         var csv = new System.Text.StringBuilder();
         if (rows.Count == 0)
         {
-            csv.AppendLine("deviceSerial,imei,deviceCategory,deviceModel,provider,firmwareVersion,status,deviceState,branchCode,vehicleCode,driverName,lastSeenAt,revokedAt,createdAt");
+            csv.AppendLine("deviceSerial,imei,deviceCategory,manufacturer,deviceModel,hardwareRevision,provider,firmwareVersion,status,deviceState,branchCode,vehicleCode,driverName,lastSeenAt,revokedAt,createdAt");
         }
         else
         {
@@ -20382,8 +20386,8 @@ LIMIT 100000",
     private static IResult DevicesImportTemplate(HttpContext http)
     {
         if (RequirePermission(http, "telemetry.devices.read") is { } denied) return denied;
-        const string csv = "deviceSerial,branchCode,imei,deviceCategory,deviceModel,provider,firmwareVersion,notes\n" +
-                           "GPS-000001,CL-HQ,352099001000001,GPS,Concox GT06,Certification Provider,1.0.0,Certification inventory\n";
+        const string csv = "deviceSerial,branchCode,imei,deviceCategory,manufacturer,deviceModel,hardwareRevision,provider,firmwareVersion,notes\n" +
+                           "GPS-000001,CL-HQ,352099001000001,GPS,Example Manufacturer,Example Model,Rev A,,1.0.0,Replace all example values with observed inventory data\n";
         return Results.File(System.Text.Encoding.UTF8.GetBytes(csv), "text/csv", "devices-import-template.csv");
     }
 
@@ -20394,6 +20398,9 @@ LIMIT 100000",
         var serial = ImportStr(row, "deviceSerial")?.ToUpperInvariant();
         var imei = ImportStr(row, "imei");
         var requestedCategory = ImportStr(row, "deviceCategory");
+        var manufacturer = ImportStr(row, "manufacturer");
+        var hardwareRevision = ImportStr(row, "hardwareRevision");
+        var firmwareVersion = ImportStr(row, "firmwareVersion");
         if (serial is null)
             errors.Add("deviceSerial is required.");
         else if (serial.Length is < 4 or > 120 ||
@@ -20403,6 +20410,12 @@ LIMIT 100000",
             errors.Add("imei must contain exactly 15 digits.");
         if (requestedCategory is null || !InstallationRoles.Contains(requestedCategory))
             errors.Add("deviceCategory is required and must be a supported hardware role.");
+        if (manufacturer?.Length > 120)
+            errors.Add("manufacturer must be 120 characters or fewer.");
+        if (hardwareRevision?.Length > 120)
+            errors.Add("hardwareRevision must be 120 characters or fewer.");
+        if (firmwareVersion?.Length > 120)
+            errors.Add("firmwareVersion must be 120 characters or fewer.");
 
         if (serial is not null && !fileIdentities.Add(serial))
             errors.Add($"Duplicate device identity '{serial}' earlier in this file.");
@@ -20567,10 +20580,10 @@ LIMIT 100000",
                 {
                     var id = await db.InsertWithSavepointAsync(
                         @"INSERT INTO eld_devices
-                            (company_id, branch_id, device_serial, imei, device_category, device_model, provider,
-                             firmware_version, notes, api_key_hash, hmac_secret, hmac_secret_encrypted,
+                            (company_id, branch_id, device_serial, imei, device_category, manufacturer, device_model,
+                             hardware_revision, provider, firmware_version, notes, api_key_hash, hmac_secret, hmac_secret_encrypted,
                              hmac_key_version, hmac_rotated_at, credential_revoked_reason, status, created_at)
-                          VALUES (@cid,@branch,@serial,@imei,@category,@model,@provider,@firmware,@notes,
+                          VALUES (@cid,@branch,@serial,@imei,@category,@manufacturer,@model,@hardwareRevision,@provider,@firmware,@notes,
                                   encode(sha256(@rawKey::bytea),'hex'),NULL,@hmacEncrypted,1,NOW(),NULL,'Active',NOW())",
                         c =>
                         {
@@ -20579,7 +20592,9 @@ LIMIT 100000",
                             c.Parameters.AddWithValue("@serial", serial);
                             c.Parameters.AddWithValue("@imei", (object?)imei ?? DBNull.Value);
                             c.Parameters.AddWithValue("@category", category);
+                            c.Parameters.AddWithValue("@manufacturer", (object?)ImportStr(candidate.Row, "manufacturer") ?? DBNull.Value);
                             c.Parameters.AddWithValue("@model", (object?)ImportStr(candidate.Row, "deviceModel") ?? DBNull.Value);
+                            c.Parameters.AddWithValue("@hardwareRevision", (object?)ImportStr(candidate.Row, "hardwareRevision") ?? DBNull.Value);
                             c.Parameters.AddWithValue("@provider", (object?)ImportStr(candidate.Row, "provider") ?? DBNull.Value);
                             c.Parameters.AddWithValue("@firmware", (object?)ImportStr(candidate.Row, "firmwareVersion") ?? DBNull.Value);
                             c.Parameters.AddWithValue("@notes", (object?)ImportStr(candidate.Row, "notes") ?? DBNull.Value);
@@ -20618,7 +20633,8 @@ LIMIT 100000",
             || HasPermission(permissions, "maintenance:view");
         var canReadAlerts = HasPermission(permissions, "telemetry.alerts.read");
         var device = await db.QuerySingleAsync(
-            @"SELECT e.id, e.device_serial, e.imei, e.device_category, e.device_model, e.provider, e.status, e.device_state,
+            @"SELECT e.id, e.device_serial, e.imei, e.device_category, e.device_model, e.manufacturer,
+                     e.hardware_revision, e.provider, e.status, e.device_state,
                      current_install.vehicle_id, active_dispatch.driver_id, e.firmware_version, e.notes,
                      e.last_seen_at, e.revoked_at, e.created_at, e.row_version,
                      EXTRACT(EPOCH FROM (NOW() - e.last_seen_at))::BIGINT seconds_since_ping,
@@ -20681,14 +20697,79 @@ LIMIT 100000",
         var current = history.FirstOrDefault(row =>
             row.GetValueOrDefault("effectiveTo") is null or DBNull &&
             row.GetValueOrDefault("status")?.ToString() is "Installed" or "Verified");
+        var compatibility = await DeviceCompatibilityProjection(db, device, ct);
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             device,
+            compatibility,
             currentInstallation = current,
             installationHistory = history,
             installationEvidence,
             assignmentHistory = transitions
         }, "Device"));
+    }
+
+    private static async Task<object> DeviceCompatibilityProjection(
+        Database db, Dictionary<string, object?> device, CancellationToken ct)
+    {
+        static string? Value(Dictionary<string, object?> row, string key) =>
+            row.GetValueOrDefault(key) is null or DBNull ? null : Clean(row[key]?.ToString());
+
+        var manufacturer = Value(device, "manufacturer");
+        var model = Value(device, "deviceModel");
+        var hardwareRevision = Value(device, "hardwareRevision");
+        var firmwareVersion = Value(device, "firmwareVersion");
+        var missingIdentityFields = new List<string>();
+        if (manufacturer is null) missingIdentityFields.Add("manufacturer");
+        if (model is null) missingIdentityFields.Add("device model");
+        if (hardwareRevision is null) missingIdentityFields.Add("hardware revision");
+        if (firmwareVersion is null) missingIdentityFields.Add("reported firmware version");
+
+        Dictionary<string, object?>? candidate = null;
+        if (missingIdentityFields.Count == 0)
+        {
+            candidate = await db.QuerySingleAsync(
+                @"SELECT id,software_candidate_sha,engineering_status,certification_status,external_hold_reason,created_at
+                    FROM device_compatibility_candidates
+                   WHERE UPPER(BTRIM(manufacturer))=UPPER(BTRIM(@manufacturer))
+                     AND UPPER(BTRIM(device_model))=UPPER(BTRIM(@model))
+                     AND UPPER(BTRIM(hardware_revision))=UPPER(BTRIM(@hardwareRevision))
+                     AND UPPER(BTRIM(firmware_version))=UPPER(BTRIM(@firmwareVersion))
+                   ORDER BY created_at DESC,id DESC LIMIT 1",
+                command =>
+                {
+                    command.Parameters.AddWithValue("@manufacturer", manufacturer!);
+                    command.Parameters.AddWithValue("@model", model!);
+                    command.Parameters.AddWithValue("@hardwareRevision", hardwareRevision!);
+                    command.Parameters.AddWithValue("@firmwareVersion", firmwareVersion!);
+                }, ct);
+        }
+
+        var reason = candidate?["externalHoldReason"]?.ToString();
+        if (string.IsNullOrWhiteSpace(reason))
+        {
+            reason = missingIdentityFields.Count > 0
+                ? "Complete the exact manufacturer, model, hardware revision, and reported firmware tuple before candidate matching."
+                : "No frozen compatibility candidate is registered for this exact hardware and firmware tuple.";
+        }
+
+        return new
+        {
+            manufacturer,
+            deviceModel = model,
+            hardwareRevision,
+            firmwareVersion,
+            exactTupleComplete = missingIdentityFields.Count == 0,
+            missingIdentityFields,
+            registryStatus = candidate?["engineeringStatus"]?.ToString() ?? "Unregistered",
+            certificationStatus = "ExternalHold",
+            maximumTier = "Unverified",
+            candidateSha = candidate?["softwareCandidateSha"] is null or DBNull
+                ? null : candidate["softwareCandidateSha"]?.ToString(),
+            externalHold = true,
+            externalHoldReason = reason,
+            certificationClaim = false,
+        };
     }
 
     // ── POST /api/devices/provision ───────────────────────────────────────────────
@@ -20729,6 +20810,15 @@ LIMIT 100000",
         var imei = string.IsNullOrWhiteSpace(body.Imei) ? null : body.Imei.Trim();
         if (imei is not null && !System.Text.RegularExpressions.Regex.IsMatch(imei, "^[0-9]{15}$"))
             return Results.BadRequest(ApiResponse<object>.Fail("imei must contain exactly 15 digits"));
+        var manufacturer = Clean(body.Manufacturer);
+        var hardwareRevision = Clean(body.HardwareRevision);
+        var firmwareVersion = Clean(body.FirmwareVersion);
+        if (manufacturer?.Length > 120)
+            return Results.BadRequest(ApiResponse<object>.Fail("manufacturer must be 120 characters or fewer"));
+        if (hardwareRevision?.Length > 120)
+            return Results.BadRequest(ApiResponse<object>.Fail("hardwareRevision must be 120 characters or fewer"));
+        if (firmwareVersion?.Length > 120)
+            return Results.BadRequest(ApiResponse<object>.Fail("firmwareVersion must be 120 characters or fewer"));
 
         long deviceId;
         try
@@ -20754,11 +20844,13 @@ LIMIT 100000",
                     throw new InvalidOperationException("device_identity_conflict");
                 var createdDeviceId = await db.InsertAsync(
                 @"INSERT INTO eld_devices
-                    (company_id, branch_id, device_serial, imei, device_category, device_model, provider, vehicle_id, driver_id,
+                    (company_id, branch_id, device_serial, imei, device_category, device_model, manufacturer, hardware_revision,
+                     provider, vehicle_id, driver_id,
                      firmware_version, notes, api_key_hash, hmac_secret, hmac_secret_encrypted,
                      hmac_key_version, hmac_rotated_at, credential_revoked_reason, status, created_at)
                   VALUES
-                    (@cid, @branch, @serial, @imei, @category, @model, @provider, @vid, @did, @fw, @notes,
+                    (@cid, @branch, @serial, @imei, @category, @model, @manufacturer, @hardwareRevision,
+                     @provider, @vid, @did, @fw, @notes,
                      encode(sha256(@rawKey::bytea), 'hex'), NULL, @hmacEncrypted,
                      1, NOW(), NULL, 'Active', NOW())",
                 c =>
@@ -20769,10 +20861,12 @@ LIMIT 100000",
                     c.Parameters.AddWithValue("@imei",     (object?)imei        ?? DBNull.Value);
                     c.Parameters.AddWithValue("@category", deviceCategory);
                     c.Parameters.AddWithValue("@model",    body.DeviceModel    ?? (object)DBNull.Value);
+                    c.Parameters.AddWithValue("@manufacturer", (object?)manufacturer ?? DBNull.Value);
+                    c.Parameters.AddWithValue("@hardwareRevision", (object?)hardwareRevision ?? DBNull.Value);
                     c.Parameters.AddWithValue("@provider", body.Provider       ?? (object)DBNull.Value);
                     c.Parameters.AddWithValue("@vid",      DBNull.Value);
                     c.Parameters.AddWithValue("@did",      DBNull.Value);
-                    c.Parameters.AddWithValue("@fw",       body.FirmwareVersion ?? (object)DBNull.Value);
+                    c.Parameters.AddWithValue("@fw",       (object?)firmwareVersion ?? DBNull.Value);
                     c.Parameters.AddWithValue("@notes",    body.Notes          ?? (object)DBNull.Value);
                     c.Parameters.AddWithValue("@rawKey",   rawApiKey);
                     c.Parameters.AddWithValue("@hmacEncrypted", encryptedHmacSecret);

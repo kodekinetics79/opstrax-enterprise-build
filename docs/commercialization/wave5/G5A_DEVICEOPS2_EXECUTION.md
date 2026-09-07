@@ -1,8 +1,9 @@
 # G5A DeviceOps 2.0 — Current-Build Execution Baseline
 
 Parent: #143 / #110  
-Entry: `main@1f3b5de029b33e9315fb96c80988e610665c41b0`  
-State: ACTIVE under `CR-2026-09-03-04` when v2.5 merges.
+Original entry: `main@1f3b5de029b33e9315fb96c80988e610665c41b0`
+Current software lane: `hardening/deviceops-software-followup-20260907`
+State: BUILD / INTEGRATE. Hardware certification remains EXTERNAL HOLD.
 
 ## Existing product foundation to preserve
 
@@ -29,10 +30,31 @@ Current capability is device registry + connection/telemetry operations. It is n
 8. **Operator UX** — exception-first health queues, bulk workflows, compact enterprise density, truthful unavailable states.
 9. **Scale/acceptance** — 1K+ inventory, export integrity, tenant/branch adversarial tests and exact-SHA Chrome journeys.
 
-## First implementation slice
+## Completed software slices
 
-Do not create another parallel device table. Reconcile the current `eld_devices` / device-facing API contract and introduce only the normalized lifecycle tables/columns required for support/certification concerns. Production migration enrollment is mandatory; startup schema and production migration must remain equivalent. This lane takes the schema-authority slot only when the integration board grants it.
+1. The existing `eld_devices` inventory and effective-dated `device_installations` history remain the canonical device and installation records. No parallel device master was created.
+2. Compatibility tier evaluation is now bound to one exact software candidate SHA, one exact manufacturer/model/hardware revision/firmware tuple, required evidence references and independent acceptance. A reviewer cannot self-certify both mandatory perspectives.
+3. Stage 115 adds an exact-tuple engineering candidate registry. Database constraints and an immutable-identity trigger lock every row to `ExternalHold`; the application role can only read it. No GT06, PT40 or OEM candidate rows are seeded.
+4. Single-device and bulk onboarding preserve manufacturer, model, hardware revision and reported firmware as operator-recorded inventory. Missing fields fail closed in the customer surface. Registration never becomes compatibility evidence.
+5. Device details now expose compatibility truth: exact tuple completeness, frozen candidate SHA when one exists, maximum tier `Unverified`, the external-hold reason and required physical evidence.
+6. Legacy empty-database startup no longer writes invented `last_seen_at` values. A device becomes online only through an authenticated telemetry observation.
+7. A dedicated isolated PostgreSQL and frontend contract workflow verifies migration repeat safety, database refusal of certification promotion or tuple drift, fail-closed projection and the production frontend build.
+
+## Current truth disposition
+
+| Concern | Software status | Certification status |
+| --- | --- | --- |
+| Inventory and exact hardware tuple | Implemented for single and bulk onboarding | Operator-recorded; not identity proof |
+| Effective installation history | Existing foundation retained | Physical commissioning evidence pending |
+| Compatibility candidate registry | Implemented, immutable tuple/SHA | EXTERNAL HOLD / Unverified |
+| Device online state | Authenticated telemetry only | Provider/device evidence pending |
+| SIM/eSIM and carrier lifecycle | Not implemented | Not applicable |
+| Firmware campaigns | Read-only reported version only | No remote-upgrade claim |
+| RMA/warranty/replacement | Not implemented | Not applicable |
+| Remote command governance | Not complete | No general command-support claim |
+
+The next safe software sequence is SIM/carrier lifecycle, firmware campaign control, RMA/replacement and capability-negotiated command governance. Physical bench, route, recovery, 24/72-hour soak, installation repeatability, procurement, warranty and independent acceptance remain EXTERNAL HOLD and must not block those engineering slices.
 
 ## Stop conditions
 
-Any design that conflates `connected`, `commissioned`, `certified`, or `production supported`; exposes secrets; creates a generic GT06/J1939/OEM certified row without physical evidence; or bypasses tenant/branch ownership is RED and must not merge.
+Any design that conflates `connected`, `commissioned`, `certified`, or `production supported`; exposes secrets; creates a generic GT06/J1939/OEM certified row without physical evidence; seeds an unobserved hardware identity; converts missing telemetry into a check-in; or bypasses tenant/branch ownership is RED and must not merge.

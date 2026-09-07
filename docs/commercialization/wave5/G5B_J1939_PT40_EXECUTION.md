@@ -50,6 +50,10 @@ The bounded software candidate now composes classic-CAN admission, transport rea
 
 Malformed complete DM1/DM2 messages fail closed with PGN, source, time and capture-reference provenance while omitting raw payload bytes from exception text. This is an internal integration boundary only. It does not open a CAN interface, persist a vehicle observation, establish the authority of a source ECU, or create a physical compatibility claim.
 
+## DeviceOps registry integration
+
+Stage 115 provides the shared exact manufacturer/model/hardware revision/firmware and software-SHA candidate identity needed by a later PT40 or OEM certification candidate. It deliberately seeds no PT40, GT06, J1939 adapter or OEM record and its database contract fixes every engineering candidate at `ExternalHold` / `Unverified`. A candidate may be recorded only after the exact physical tuple is observed; tier promotion requires the evidence gates in this document and a separately frozen certification candidate.
+
 ## Stop conditions
 
 RED if the lane invents PGN values, uses synthetic frames as physical certification, collapses unavailable values to zero, loses source address/provenance, claims universal J1939/CAN support, or treats a PT40/OEM marketing sheet as wire-level certification.

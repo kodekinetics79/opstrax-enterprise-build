@@ -256,6 +256,8 @@ MIGRATIONS=(
   2026_09_07_stage113_samsara_account_identity
   # Preserve the exact effective installation used to reconcile a provider camera event.
   2026_09_07_stage114_camera_asset_reconciliation
+  # Exact hardware/firmware + software-SHA candidates remain read-only and ExternalHold.
+  2026_09_07_stage115_device_compatibility_candidate_registry
 )
 
 echo "Pre-check: validated read-only database identity…"
@@ -413,7 +415,8 @@ BEGIN
       ('2026_09_06_stage106_cold_chain_alert_report_authority'),
       ('2026_09_07_stage112_camera_provider_ingest_spine'),
       ('2026_09_07_stage113_samsara_account_identity'),
-      ('2026_09_07_stage114_camera_asset_reconciliation')) required(version)
+      ('2026_09_07_stage114_camera_asset_reconciliation'),
+      ('2026_09_07_stage115_device_compatibility_candidate_registry')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN RAISE EXCEPTION 'Required owner/pilot migration ledger missing or duplicated'; END IF;
   IF EXISTS (
@@ -465,6 +468,18 @@ BEGIN
       AND NOT tgisinternal
   ) THEN
     RAISE EXCEPTION 'Stage114 camera asset reconciliation contract is missing or invalid';
+  END IF;
+  IF to_regclass('public.device_compatibility_candidates') IS NULL
+     OR NOT EXISTS (
+       SELECT 1 FROM pg_constraint
+       WHERE conrelid='public.device_compatibility_candidates'::regclass
+         AND conname='ck_stage115_candidate_external_hold'
+     )
+     OR EXISTS (
+       SELECT 1 FROM device_compatibility_candidates
+       WHERE certification_status <> 'ExternalHold'
+     ) THEN
+    RAISE EXCEPTION 'Stage115 device compatibility candidates escaped ExternalHold';
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns

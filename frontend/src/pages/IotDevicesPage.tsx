@@ -295,6 +295,9 @@ type ConnectFormState = {
   deviceCategory: string;
   provider: string;
   deviceModel: string;
+  manufacturer: string;
+  hardwareRevision: string;
+  firmwareVersion: string;
 };
 
 const defaultConnectForm: ConnectFormState = {
@@ -303,6 +306,9 @@ const defaultConnectForm: ConnectFormState = {
   deviceCategory: "",
   provider: "",
   deviceModel: "",
+  manufacturer: "",
+  hardwareRevision: "",
+  firmwareVersion: "",
 };
 
 const DEVICE_TABS: Array<{ key: DeviceTab; label: string }> = [
@@ -892,8 +898,11 @@ export function IotDevicesPage() {
         imei: payload.imei.trim(),
         deviceCategory: payload.deviceCategory,
         provider: payload.provider.trim(),
-        deviceName: payload.deviceModel.trim() || payload.serialNumber.trim(),
-        deviceType: payload.deviceModel.trim() || "Device",
+        deviceName: payload.deviceModel.trim(),
+        deviceType: payload.deviceModel.trim(),
+        manufacturer: payload.manufacturer.trim(),
+        hardwareRevision: payload.hardwareRevision.trim(),
+        firmwareVersion: payload.firmwareVersion.trim(),
       }),
     onSuccess: async (result) => {
       setProvisionResult(result);
@@ -1384,7 +1393,7 @@ export function IotDevicesPage() {
               canExport={false}
               config={{
                 entity: "devices",
-                columns: ["deviceSerial", "branchCode", "imei", "deviceCategory", "deviceModel", "provider", "firmwareVersion", "notes"],
+                columns: ["deviceSerial", "branchCode", "imei", "deviceCategory", "manufacturer", "deviceModel", "hardwareRevision", "provider", "firmwareVersion", "notes"],
                 requiredColumns: ["deviceSerial", "deviceCategory"],
                 templateEndpoint: "/api/telemetry/devices/import-template",
                 importPreview: telematicsService.previewDeviceImport,
@@ -2155,6 +2164,30 @@ function DeviceDetailDrawer({
       </div>
 
       <div className="mt-6 grid gap-4 xl:grid-cols-2">
+        <PanelSection title="Hardware compatibility truth">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.16em] text-amber-300">Certification status</p>
+              <p className="mt-1 text-lg font-semibold text-white">External hold</p>
+            </div>
+            <StatusBadge status={detail.compatibility.registryStatus} />
+          </div>
+          <div className="mt-4">
+            <MiniGrid rows={[
+              ["Manufacturer", cell(detail.compatibility.manufacturer)],
+              ["Exact model", cell(detail.compatibility.deviceModel)],
+              ["Hardware revision", cell(detail.compatibility.hardwareRevision)],
+              ["Reported firmware", cell(detail.compatibility.firmwareVersion)],
+              ["Frozen software candidate", detail.compatibility.candidateSha ? detail.compatibility.candidateSha.slice(0, 12) : "—"],
+              ["Maximum certified tier", detail.compatibility.maximumTier],
+            ]} />
+          </div>
+          <p className="mt-3 text-sm text-amber-100">{detail.compatibility.externalHoldReason}</p>
+          {detail.compatibility.missingIdentityFields.length > 0 ? (
+            <p className="mt-2 text-xs text-slate-400">Missing exact identity: {detail.compatibility.missingIdentityFields.join(", ")}.</p>
+          ) : null}
+          <p className="mt-2 text-xs text-slate-400">Registration, installation, commissioning, or live data never certifies hardware. Physical bench, route, recovery, soak, security, and independent acceptance evidence is still required.</p>
+        </PanelSection>
         <PanelSection title="Reported Firmware (read-only)">
           <MiniGrid rows={[["Current reported version", cell(device.firmwareVersion)]]} />
           <p className="mt-3 text-sm text-slate-400">OTA scheduling and firmware history are not connected. No firmware operation is available from this page.</p>
@@ -2302,9 +2335,42 @@ function ConnectDeviceDialog({
               aria-label="Device model or friendly name"
             />
           </FormField>
+          <FormField label="Manufacturer (optional)">
+            <input
+              className="field w-full"
+              value={form.manufacturer}
+              onChange={(event) => onChange({ ...form, manufacturer: event.target.value })}
+              placeholder="Exact label from the device"
+              maxLength={120}
+              aria-label="Exact device manufacturer"
+            />
+          </FormField>
+          <FormField label="Hardware revision (optional)">
+            <input
+              className="field w-full"
+              value={form.hardwareRevision}
+              onChange={(event) => onChange({ ...form, hardwareRevision: event.target.value })}
+              placeholder="Exact revision from the device"
+              maxLength={120}
+              aria-label="Exact hardware revision"
+            />
+          </FormField>
+          <FormField label="Reported firmware version (optional)">
+            <input
+              className="field w-full"
+              value={form.firmwareVersion}
+              onChange={(event) => onChange({ ...form, firmwareVersion: event.target.value })}
+              placeholder="Exact version reported by the device"
+              maxLength={120}
+              aria-label="Reported firmware version"
+            />
+          </FormField>
           <p className="text-xs text-slate-500">
             The device is registered uninstalled. After copying its one-time credentials,
             use Install on vehicle to create the governed effective-dated installation.
+          </p>
+          <p className="text-xs text-slate-500 md:col-span-2">
+            Hardware identity fields are operator-recorded candidate data. They do not prove physical identity, compatibility, or certification.
           </p>
         </div>
 

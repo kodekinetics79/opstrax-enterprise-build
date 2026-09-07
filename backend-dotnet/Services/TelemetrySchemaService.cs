@@ -27,6 +27,10 @@ public sealed class TelemetrySchemaService(Database db)
     [
         // eld_devices security + lifecycle columns
         new("eld_devices", "company_id",   "BIGINT NOT NULL DEFAULT 1"),
+        // Operator-recorded hardware identity. Presence alone never grants a
+        // compatibility tier; the Stage115 registry stays ExternalHold-only.
+        new("eld_devices", "manufacturer", "VARCHAR(120) NULL"),
+        new("eld_devices", "hardware_revision", "VARCHAR(120) NULL"),
         // IMEI is the hardware GPS-tracker identifier (GT06/Concox/PT40-class) the trusted
         // gateway resolves a device by. An identifier, never a credential. Also created by
         // migration 2026_07_11_stage32_device_imei.sql for restricted-role prod that skips
@@ -238,6 +242,30 @@ public sealed class TelemetrySchemaService(Database db)
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             UNIQUE (company_id, vehicle_id)
         )",
+
+        // Owner-capable empty-database bootstrap parity for Stage115. No rows are
+        // seeded, and this table has no product mutation endpoint.
+        @"CREATE TABLE IF NOT EXISTS device_compatibility_candidates (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            manufacturer VARCHAR(120) NOT NULL,
+            device_model VARCHAR(160) NOT NULL,
+            hardware_revision VARCHAR(120) NOT NULL,
+            firmware_version VARCHAR(120) NOT NULL,
+            software_candidate_sha VARCHAR(40) NOT NULL,
+            engineering_status VARCHAR(24) NOT NULL DEFAULT 'Candidate',
+            certification_status VARCHAR(24) NOT NULL DEFAULT 'ExternalHold',
+            external_hold_reason VARCHAR(500) NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NULL,
+            CONSTRAINT ck_stage115_candidate_manufacturer CHECK (BTRIM(manufacturer) <> ''),
+            CONSTRAINT ck_stage115_candidate_model CHECK (BTRIM(device_model) <> ''),
+            CONSTRAINT ck_stage115_candidate_hardware_revision CHECK (BTRIM(hardware_revision) <> ''),
+            CONSTRAINT ck_stage115_candidate_firmware CHECK (BTRIM(firmware_version) <> ''),
+            CONSTRAINT ck_stage115_candidate_sha CHECK (software_candidate_sha ~ '^[0-9a-f]{40}$'),
+            CONSTRAINT ck_stage115_candidate_engineering_status CHECK (engineering_status IN ('Candidate','Deferred','Rejected')),
+            CONSTRAINT ck_stage115_candidate_external_hold CHECK (certification_status='ExternalHold'),
+            CONSTRAINT ck_stage115_candidate_hold_reason CHECK (BTRIM(external_hold_reason) <> '')
+        )",
     ];
 
     private static readonly string[] Indexes =
@@ -262,6 +290,14 @@ public sealed class TelemetrySchemaService(Database db)
         "CREATE INDEX IF NOT EXISTS idx_tr_company ON telemetry_rules(company_id, rule_type, enabled)",
         "CREATE INDEX IF NOT EXISTS idx_tlsa_company_updated ON telemetry_live_asset_states(company_id, updated_at)",
         "CREATE INDEX IF NOT EXISTS idx_tlsa_company_risk ON telemetry_live_asset_states(company_id, risk_level, open_alert_count)",
+        @"CREATE UNIQUE INDEX IF NOT EXISTS uq_stage115_device_compatibility_tuple_candidate
+          ON device_compatibility_candidates (
+            UPPER(BTRIM(manufacturer)),UPPER(BTRIM(device_model)),
+            UPPER(BTRIM(hardware_revision)),UPPER(BTRIM(firmware_version)),software_candidate_sha)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage115_device_compatibility_lookup
+          ON device_compatibility_candidates (
+            UPPER(BTRIM(manufacturer)),UPPER(BTRIM(device_model)),
+            UPPER(BTRIM(hardware_revision)),UPPER(BTRIM(firmware_version)),created_at DESC,id DESC)",
     ];
 
     private static readonly string[] Seeds =
