@@ -56,6 +56,29 @@ Proceed without fabricating provider data:
 9. SDET contract cases for duplicate/reordered events, missing driver, late assignment, cross-tenant ID collision, offline retrieval, expired media URL and revoked access;
 10. visible Chrome responsive/overflow/accessibility acceptance after a real provider event is available.
 
+## 2026-09-07 BUILD increment — provider intake spine
+
+Status: **BUILD COMPLETE / INTEGRATE OPEN / CERTIFY EXTERNAL HOLD**
+
+Stage 112 and `CameraProviderIngestService` now provide a provider-neutral intake boundary for exact authenticated payload bytes. The service calculates its own SHA-256 fingerprint, scopes the idempotency identity by tenant + provider + provider account + provider event, serializes concurrent duplicates, and quarantines a reused identity carrying different bytes. It retains opaque media identifiers, expiry, camera role, recording mode, retention and privacy metadata without storing a URL, signed query string, media bytes, AI conclusion or playable-media claim.
+
+The intake relations are FORCE-RLS control-plane tables. `opstrax_system` receives the minimum read/insert/update path; `opstrax_app` receives no direct provider-identity access. Internal branch/vehicle/driver/trip references are checked against the owning tenant before persistence. A later replay may add a valid driver assignment, while a cross-tenant identity is quarantined and not retained as a linked vehicle or driver.
+
+Independent test coverage currently proves:
+
+- exact payload hashing and bounded payload admission;
+- UTC/future-time rejection;
+- URL and signed-link rejection at the media-identity boundary;
+- expired-media state without access promotion;
+- one stored identity and exact replay count under eight simultaneous deliveries;
+- same-payload replay and late driver assignment;
+- different-payload reuse quarantine without overwriting the first fingerprint;
+- provider-account separation for reused provider event IDs;
+- cross-tenant reference quarantine;
+- repeat-safe migration application, FORCE RLS, system-only grants and permanent `ExternalHold` constraints.
+
+This increment does **not** establish provider authenticity, ingest a real Samsara event, retrieve or display media, create an authoritative `dashcam_events` record, or satisfy Chrome/customer acceptance. The next INTEGRATE package must connect an authenticated provider adapter, add the safe provider-pending customer projection and reconciliation observability, and exercise it with authentic account data. Certification remains blocked on the external evidence listed below.
+
 ## External evidence still required
 
 - authorized Samsara organization/account/token with Safety & Cameras scopes and written commercial integration rights;

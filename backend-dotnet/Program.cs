@@ -181,6 +181,8 @@ builder.Services.AddSingleton<ServiceRunTracker>();
 builder.Services.AddSingleton<ConfigValidationService>();
 builder.Services.AddSingleton<FleetProductionReadinessService>();
 builder.Services.AddSingleton<TelemetryLiveStateService>();
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<CameraProviderIngestService>();
 // Agentic Brain — the model behind the AI foundation's empty reasoning slot.
 builder.Services.AddSingleton<AgenticBrainService>();
 builder.Services.AddScoped<IncidentService>();

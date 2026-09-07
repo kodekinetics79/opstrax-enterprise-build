@@ -250,6 +250,8 @@ MIGRATIONS=(
   2026_09_06_stage105_cold_chain_measurement_authority
   # Alerts and compliance reports retain the authority of their source readings.
   2026_09_06_stage106_cold_chain_alert_report_authority
+  # Provider-neutral camera intake remains ExternalHold until real provider certification.
+  2026_09_07_stage112_camera_provider_ingest_spine
 )
 
 echo "Pre-check: validated read-only database identity…"
@@ -404,7 +406,8 @@ BEGIN
       ('2026_08_14_stage80_fleet_identity_backbone'),
       ('2026_09_06_stage104_camera_demo_truth_cleanup'),
       ('2026_09_06_stage105_cold_chain_measurement_authority'),
-      ('2026_09_06_stage106_cold_chain_alert_report_authority')) required(version)
+      ('2026_09_06_stage106_cold_chain_alert_report_authority'),
+      ('2026_09_07_stage112_camera_provider_ingest_spine')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN RAISE EXCEPTION 'Required owner/pilot migration ledger missing or duplicated'; END IF;
   IF EXISTS (
@@ -418,6 +421,19 @@ BEGIN
       AND (LOWER(c.name) LIKE '%demo%' OR LOWER(c.company_code) LIKE '%demo%')
   ) THEN
     RAISE EXCEPTION 'Stage104 camera demo truth cleanup is incomplete';
+  END IF;
+  IF to_regclass('public.camera_provider_event_inbox') IS NULL
+     OR to_regclass('public.camera_provider_media_references') IS NULL THEN
+    RAISE EXCEPTION 'Stage112 camera provider intake tables are missing';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM camera_provider_event_inbox
+    WHERE provider_verification_status <> 'ExternalHold'
+  ) OR EXISTS (
+    SELECT 1 FROM camera_provider_media_references
+    WHERE access_status <> 'ExternalHold'
+  ) THEN
+    RAISE EXCEPTION 'Stage112 camera provider evidence escaped ExternalHold';
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns
