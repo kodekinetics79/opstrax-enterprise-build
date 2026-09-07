@@ -101,6 +101,35 @@ public sealed class CameraProviderIngestPostgresTests
             Assert.Null(mismatchStored!["vehicleId"]);
             Assert.Equal("Quarantined", mismatchStored["processingStatus"]);
 
+            var derivedConflict = await service.IngestAsync(
+                companyId,
+                Envelope($"derived-conflict-{suffix}", branchId, vehicleId, driverId),
+                payload);
+            var changedDerivedFields = await service.IngestAsync(
+                companyId,
+                Envelope($"derived-conflict-{suffix}", branchId, vehicleId, driverId) with { EventType = "Crash" },
+                payload);
+            Assert.Equal(CameraProviderIngestDisposition.Accepted, derivedConflict.Disposition);
+            Assert.Equal(CameraProviderIngestDisposition.Quarantined, changedDerivedFields.Disposition);
+            Assert.Equal("derived_payload_conflict", changedDerivedFields.QuarantineReason);
+            Assert.Equal(0, changedDerivedFields.MediaReferenceCount);
+
+            var mediaConflict = await service.IngestAsync(
+                companyId,
+                Envelope($"media-conflict-{suffix}", branchId, vehicleId, driverId),
+                payload);
+            var changedMediaEnvelope = Envelope($"media-conflict-{suffix}", branchId, vehicleId, driverId) with
+            {
+                MediaReferences = [new("RoadFacing", "Video", "video/mp4", "opaque-media-2", Now.AddMinutes(-2), 10_000, Now.AddHours(1), "Triggered", "Safety30Days", "privacy-v1")]
+            };
+            var changedMedia = await service.IngestAsync(companyId, changedMediaEnvelope, payload);
+            Assert.Equal(CameraProviderIngestDisposition.Accepted, mediaConflict.Disposition);
+            Assert.Equal(CameraProviderIngestDisposition.Quarantined, changedMedia.Disposition);
+            Assert.Equal("derived_payload_conflict", changedMedia.QuarantineReason);
+            Assert.Equal(1, await database.ScalarLongAsync(
+                "SELECT COUNT(*) FROM camera_provider_media_references WHERE provider_event_inbox_id=@id",
+                c => c.Parameters.AddWithValue("id", mediaConflict.InboxId)));
+
             var otherAccount = await service.IngestAsync(
                 companyId,
                 Envelope($"event-{suffix}", branchId, vehicleId, driverId) with { ProviderAccountReference = "account-test-2" },

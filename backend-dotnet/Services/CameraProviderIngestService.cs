@@ -212,7 +212,9 @@ public sealed partial class CameraProviderIngestService(
 
             var resolution = await ResolveReferencesAsync(companyId, prepared, ct);
             var existing = await database.QuerySingleAsync("""
-                SELECT id,payload_sha256,processing_status,reconciliation_status,quarantine_reason,seen_count
+                SELECT id,payload_sha256,payload_schema_version,event_type,occurred_at_utc,provider_received_at_utc,
+                       vehicle_external_id,driver_external_id,trip_external_id,
+                       processing_status,reconciliation_status,quarantine_reason,seen_count
                 FROM camera_provider_event_inbox
                 WHERE company_id=@company AND provider_key=@provider AND provider_account_ref=@account AND provider_event_id=@event
                 FOR UPDATE
@@ -237,9 +239,10 @@ public sealed partial class CameraProviderIngestService(
                         ExternalHold, "Quarantined", seenCount, 0, "payload_identity_conflict");
                 }
 
-                var priorPayloadConflict = Equals(existing["processingStatus"], "Quarantined")
-                    && Equals(existing["quarantineReason"], "payload_identity_conflict");
-                if (priorPayloadConflict)
+                var priorQuarantineReason = existing["quarantineReason"]?.ToString();
+                var priorEvidenceConflict = Equals(existing["processingStatus"], "Quarantined")
+                    && priorQuarantineReason is "payload_identity_conflict" or "derived_payload_conflict";
+                if (priorEvidenceConflict)
                 {
                     await database.ExecuteAsync("""
                         UPDATE camera_provider_event_inbox
@@ -248,7 +251,24 @@ public sealed partial class CameraProviderIngestService(
                         """, c => { c.Parameters.AddWithValue("id", inboxId); c.Parameters.AddWithValue("company", companyId); }, ct);
                     return new CameraProviderIngestResult(
                         inboxId, CameraProviderIngestDisposition.Quarantined, prepared.PayloadSha256,
-                        ExternalHold, "Quarantined", seenCount, 0, "payload_identity_conflict");
+                        ExternalHold, "Quarantined", seenCount, 0, priorQuarantineReason);
+                }
+
+                if (!ProviderProjectionMatches(existing, prepared)
+                    || !await StoredMediaMatchesAsync(
+                        companyId, inboxId, prepared.MediaReferences,
+                        allowInitialPopulation: priorQuarantineReason == "tenant_reference_mismatch", ct: ct))
+                {
+                    await database.ExecuteAsync("""
+                        UPDATE camera_provider_event_inbox
+                        SET last_received_at_utc=GREATEST(last_received_at_utc,clock_timestamp()),seen_count=seen_count+1,
+                            processing_status='Quarantined',reconciliation_status='Quarantined',
+                            quarantine_reason='derived_payload_conflict',updated_at_utc=clock_timestamp()
+                        WHERE id=@id AND company_id=@company
+                        """, c => { c.Parameters.AddWithValue("id", inboxId); c.Parameters.AddWithValue("company", companyId); }, ct);
+                    return new CameraProviderIngestResult(
+                        inboxId, CameraProviderIngestDisposition.Quarantined, prepared.PayloadSha256,
+                        ExternalHold, "Quarantined", seenCount, 0, "derived_payload_conflict");
                 }
 
                 await database.ExecuteAsync("""
@@ -390,6 +410,68 @@ public sealed partial class CameraProviderIngestService(
         }
         return media.Count;
     }
+
+    private async Task<bool> StoredMediaMatchesAsync(
+        long companyId,
+        long inboxId,
+        IReadOnlyList<PreparedMedia> expected,
+        bool allowInitialPopulation,
+        CancellationToken ct)
+    {
+        var rows = await database.QueryAsync("""
+            SELECT camera_role,media_kind,content_type,provider_media_id,captured_at_utc,duration_milliseconds,
+                   provider_expires_at_utc,retrieval_status,recording_mode,retention_class,privacy_policy_version
+            FROM camera_provider_media_references
+            WHERE company_id=@company AND provider_event_inbox_id=@inbox
+            ORDER BY camera_role,provider_media_id
+            """, c =>
+            {
+                c.Parameters.AddWithValue("company", companyId);
+                c.Parameters.AddWithValue("inbox", inboxId);
+            }, ct);
+
+        // A reference-mismatch quarantine stores no media. That empty state may
+        // be populated later from the same payload once internal references exist.
+        if (rows.Count == 0) return expected.Count == 0 || allowInitialPopulation;
+        if (rows.Count != expected.Count) return false;
+
+        var ordered = expected.OrderBy(item => item.CameraRole, StringComparer.Ordinal)
+            .ThenBy(item => item.ProviderMediaId, StringComparer.Ordinal).ToArray();
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var row = rows[i];
+            var item = ordered[i];
+            if (!Equals(row["cameraRole"], item.CameraRole)
+                || !Equals(row["mediaKind"], item.MediaKind)
+                || !Equals(row["contentType"], item.ContentType)
+                || !Equals(row["providerMediaId"], item.ProviderMediaId)
+                || !SameInstant(row["capturedAtUtc"], item.CapturedAtUtc)
+                || !SameNullableInt(row["durationMilliseconds"], item.DurationMilliseconds)
+                || !SameInstant(row["providerExpiresAtUtc"], item.ProviderExpiresAtUtc)
+                || !Equals(row["retrievalStatus"], item.RetrievalStatus)
+                || !Equals(row["recordingMode"], item.RecordingMode)
+                || !Equals(row["retentionClass"], item.RetentionClass)
+                || !Equals(row["privacyPolicyVersion"], item.PrivacyPolicyVersion))
+                return false;
+        }
+        return true;
+    }
+
+    private static bool ProviderProjectionMatches(Dictionary<string, object?> stored, PreparedEvent item) =>
+        Equals(stored["payloadSchemaVersion"], item.PayloadSchemaVersion)
+        && Equals(stored["eventType"], item.EventType)
+        && SameInstant(stored["occurredAtUtc"], item.OccurredAtUtc)
+        && SameInstant(stored["providerReceivedAtUtc"], item.ProviderReceivedAtUtc)
+        && Equals(stored["vehicleExternalId"], item.VehicleExternalId)
+        && Equals(stored["driverExternalId"], item.DriverExternalId)
+        && Equals(stored["tripExternalId"], item.TripExternalId);
+
+    private static bool SameInstant(object? stored, DateTime? expected) =>
+        stored is null ? expected is null
+        : expected is not null && stored is DateTime value && value.ToUniversalTime() == DateTime.SpecifyKind(expected.Value, DateTimeKind.Utc);
+
+    private static bool SameNullableInt(object? stored, int? expected) =>
+        stored is null ? expected is null : expected is not null && Convert.ToInt32(stored) == expected.Value;
 
     private static void BindIdentity(NpgsqlCommand command, long companyId, PreparedEvent item)
     {
