@@ -47,6 +47,7 @@ public sealed class J1939TransportReassembler
             throw new ArgumentOutOfRangeException(nameof(frame), "Only J1939 TP.CM and TP.DT frames are accepted.");
         if (frame.Data.Length != 8)
             throw new J1939TransportException("A J1939 transport frame must contain exactly eight data bytes.");
+        ValidateAcquisitionEvidence(frame);
 
         ExpireSessions(frame.ReceivedAt);
         return frame.Pgn == TpCmPgn ? AcceptConnectionManagement(frame) : AcceptDataTransfer(frame);
@@ -84,6 +85,7 @@ public sealed class J1939TransportReassembler
         var packetCount = data[3];
         var targetPgn = DecodePgn(data);
 
+        ValidateTargetPgn(targetPgn);
         if (payloadBytes is < MinPayloadBytes or > MaxPayloadBytes)
             throw new J1939TransportException($"Advertised payload length {payloadBytes} is outside {MinPayloadBytes}..{MaxPayloadBytes} bytes.");
         if (packetCount < 2)
@@ -110,7 +112,8 @@ public sealed class J1939TransportReassembler
             payloadBytes,
             packetCount,
             control == BamControl,
-            frame.ReceivedAt));
+            frame.ReceivedAt,
+            frame.Acquisition));
         return null;
     }
 
@@ -122,6 +125,11 @@ public sealed class J1939TransportReassembler
 
         var data = frame.Data.Span;
         var sequence = data[0];
+        if (frame.ReceivedAt < session.LastFrameAt)
+        {
+            _sessions.Remove(key);
+            throw new J1939TransportException("TP.DT capture time regressed within the transport session. Session discarded.");
+        }
         if (sequence != session.NextSequence)
         {
             _sessions.Remove(key);
@@ -135,6 +143,8 @@ public sealed class J1939TransportReassembler
         session.BytesWritten += copyCount;
         session.NextSequence++;
         session.LastFrameAt = frame.ReceivedAt;
+        if (frame.Acquisition is not null)
+            session.Frames.Add(frame.Acquisition);
 
         if (sequence < session.PacketCount)
             return null;
@@ -153,7 +163,10 @@ public sealed class J1939TransportReassembler
             session.Buffer,
             session.IsBroadcast,
             session.FirstFrameAt,
-            frame.ReceivedAt);
+            frame.ReceivedAt)
+        {
+            Frames = Array.AsReadOnly(session.Frames.ToArray()),
+        };
     }
 
     private void ExpireSessions(DateTimeOffset now)
@@ -178,6 +191,29 @@ public sealed class J1939TransportReassembler
     private static int DecodePgn(ReadOnlySpan<byte> data)
         => data[5] | (data[6] << 8) | (data[7] << 16);
 
+    private static void ValidateTargetPgn(int targetPgn)
+    {
+        if (targetPgn is < 0 or > 0x3FFFF)
+            throw new J1939TransportException("The transported PGN is outside the 18-bit J1939 range.");
+
+        var pduFormat = (targetPgn >> 8) & 0xFF;
+        if (pduFormat < 240 && (targetPgn & 0xFF) != 0)
+            throw new J1939TransportException("A transported PDU1 PGN must have a zero group-extension byte.");
+    }
+
+    private static void ValidateAcquisitionEvidence(J1939TransportFrame frame)
+    {
+        if (frame.Acquisition is not { } evidence) return;
+        if (evidence.Pgn != frame.Pgn ||
+            evidence.SourceAddress != frame.SourceAddress ||
+            evidence.DestinationAddress != frame.DestinationAddress ||
+            evidence.CapturedAt != frame.ReceivedAt ||
+            !evidence.Data.Span.SequenceEqual(frame.Data.Span))
+        {
+            throw new J1939TransportException("Transport frame fields do not match the attached acquisition evidence.");
+        }
+    }
+
     private readonly record struct SessionKey(byte SourceAddress, byte DestinationAddress);
 
     private sealed class Session(
@@ -185,7 +221,8 @@ public sealed class J1939TransportReassembler
         int payloadBytes,
         byte packetCount,
         bool isBroadcast,
-        DateTimeOffset firstFrameAt)
+        DateTimeOffset firstFrameAt,
+        J1939CanFrameEnvelope? acquisition)
     {
         public int TargetPgn { get; } = targetPgn;
         public int PayloadBytes { get; } = payloadBytes;
@@ -196,6 +233,7 @@ public sealed class J1939TransportReassembler
         public byte NextSequence { get; set; } = 1;
         public int BytesWritten { get; set; }
         public byte[] Buffer { get; } = new byte[payloadBytes];
+        public List<J1939CanFrameEnvelope> Frames { get; } = acquisition is null ? [] : [acquisition];
     }
 }
 
@@ -204,7 +242,10 @@ public sealed record J1939TransportFrame(
     byte SourceAddress,
     byte DestinationAddress,
     ReadOnlyMemory<byte> Data,
-    DateTimeOffset ReceivedAt);
+    DateTimeOffset ReceivedAt)
+{
+    public J1939CanFrameEnvelope? Acquisition { get; init; }
+}
 
 public sealed record J1939ReassembledMessage(
     int Pgn,
@@ -213,6 +254,9 @@ public sealed record J1939ReassembledMessage(
     byte[] Payload,
     bool IsBroadcast,
     DateTimeOffset FirstFrameAt,
-    DateTimeOffset CompletedAt);
+    DateTimeOffset CompletedAt)
+{
+    public IReadOnlyList<J1939CanFrameEnvelope> Frames { get; init; } = Array.Empty<J1939CanFrameEnvelope>();
+}
 
 public sealed class J1939TransportException(string message) : Exception(message);

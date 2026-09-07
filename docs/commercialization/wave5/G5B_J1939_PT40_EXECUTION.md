@@ -38,6 +38,12 @@ State: ACTIVE under `CR-2026-09-03-04` when v2.5 merges.
 
 The first code slice is the J1939 acquisition/reassembly contract and hostile-input test harness around the existing decoder. It must not insert guessed vehicle signals or alter DM1/DM2 semantics. Physical CAN source evidence remains mandatory before capability promotion.
 
+## Second implementation slice — classic CAN acquisition
+
+The bounded software candidate now adds the raw classic-CAN acquisition boundary described in [`docs/telematics/j1939-can-acquisition.md`](../../telematics/j1939-can-acquisition.md): 29-bit identifier parsing, copied per-frame provenance, adapter/channel isolation, concurrent-bus safety, transport integration and hostile-input rejection. Transported message priority remains unavailable because TP.CM does not carry the target message's original priority.
+
+This advances deterministic software readiness only. J1939, PT40 and OEM status remains DEVELOPMENT / EXTERNAL HOLD until the exact physical evidence and qualified acceptance above exist.
+
 ## Stop conditions
 
 RED if the lane invents PGN values, uses synthetic frames as physical certification, collapses unavailable values to zero, loses source address/provenance, claims universal J1939/CAN support, or treats a PT40/OEM marketing sheet as wire-level certification.
