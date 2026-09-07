@@ -54,12 +54,35 @@ public sealed class SamsaraConnector(
     {
         var token = Token(config);
         if (string.IsNullOrWhiteSpace(token))
-            return ConnectorResult.Fail("Add a Samsara API token (apiToken) in Configure, then test again. Create one in Samsara → Settings → API Tokens with 'Read Vehicles' + 'Read Vehicle Statistics'.");
+            return ConnectorResult.Fail("Add a Samsara API token (apiToken) in Configure, then test again. Create one in Samsara → Settings → API Tokens with 'Read Org Information' + 'Read Vehicles' + 'Read Vehicle Statistics'.");
         try
         {
             using var client = Client(token!);
             using var handshakeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             handshakeCts.CancelAfter(TimeSpan.FromSeconds(25));
+            string organizationReference;
+            using (var organizationCts = CancellationTokenSource.CreateLinkedTokenSource(handshakeCts.Token))
+            {
+                organizationCts.CancelAfter(SamsaraResponseReader.RequestTimeout);
+                using var organizationResponse = await client.GetAsync("/me", HttpCompletionOption.ResponseHeadersRead, organizationCts.Token);
+                if ((int)organizationResponse.StatusCode is 401 or 403)
+                    return ConnectorResult.Fail("Samsara rejected the token or its 'Read Org Information' scope; connection was not accepted.");
+                if (!organizationResponse.IsSuccessStatusCode)
+                    return ConnectorResult.Fail($"Samsara organization access returned HTTP {(int)organizationResponse.StatusCode}.");
+                try
+                {
+                    using var organizationDocument = await SamsaraResponseReader.ReadJsonAsync(organizationResponse.Content, organizationCts.Token);
+                    organizationReference = ReadOrganizationReference(organizationDocument.RootElement);
+                }
+                catch (JsonException)
+                {
+                    return ConnectorResult.Fail("Samsara organization access returned malformed JSON; connection was not accepted.");
+                }
+                catch (InvalidDataException ex)
+                {
+                    return ConnectorResult.Fail($"Samsara organization access returned an invalid response envelope: {ex.Message}");
+                }
+            }
             int sampleVehicleCount;
             string? sampleVehicleId;
             using (var vehiclesCts = CancellationTokenSource.CreateLinkedTokenSource(handshakeCts.Token))
@@ -123,13 +146,15 @@ public sealed class SamsaraConnector(
             }
 
             return ConnectorResult.Ok(
-                "Connected to Samsara — token and both required read scopes were verified.",
+                "Connected to Samsara — token, provider organization and all three required read scopes were verified.",
                 new Dictionary<string, object?>
                 {
                     ["sampleVehicleCount"] = sampleVehicleCount,
+                    ["readOrgInformationVerified"] = true,
                     ["readVehiclesVerified"] = true,
                     ["readVehicleStatisticsVerified"] = true,
-                });
+                },
+                providerAccountReference: organizationReference);
         }
         catch (SamsaraResponseReader.ResponseTooLargeException) { return ConnectorResult.Fail("Samsara response exceeded the allowed size; connection was not accepted."); }
         catch (OperationCanceledException) { return ConnectorResult.Fail("Samsara did not respond in time (timeout)."); }
@@ -157,11 +182,18 @@ public sealed class SamsaraConnector(
         long integrationId = body is { } bi && bi.TryGetProperty("integrationId", out var iid) && iid.TryGetInt64(out var i) ? i : 0;
         long operationGeneration = body is { } bg && bg.TryGetProperty("operationGeneration", out var gen) && gen.TryGetInt64(out var g) ? g : -1;
         var operationLeaseTokenRaw = body is { } bl && bl.TryGetProperty("operationLeaseToken", out var lease) ? lease.GetString() : null;
+        var providerAccountReference = body is { } ba && ba.TryGetProperty("providerAccountReference", out var account)
+            ? account.GetString()
+            : null;
         if (integrationId <= 0 || operationGeneration < 0 || !Guid.TryParse(operationLeaseTokenRaw, out var operationLeaseToken))
             return ConnectorResult.Fail("Sync requires a valid generation-bound connector operation lease.");
+        if (!IsOrganizationReference(providerAccountReference))
+            return ConnectorResult.Fail(
+                "Sync requires a verified Samsara organization identity. Test the provider connection again with the 'Read Org Information' scope.");
         var operation = new ConnectorOperationContext(
             companyId, integrationId, operationGeneration, operationLeaseToken, "samsara", null, "Connected",
-            IsSyncOperation: telemetrySync);
+            IsSyncOperation: telemetrySync,
+            ProviderAccountReference: providerAccountReference);
         if (cameraSafetySync)
             return await RunCameraSafetyActionAsync(token!, operation, body, ct);
 
@@ -291,6 +323,30 @@ public sealed class SamsaraConnector(
                     : "their latest cursor will resume on a later run; no partial page is claimed."),
                 persistCursor: !paginationIntegrityFailure);
         }
+    }
+
+    internal static string ReadOrganizationReference(JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Object
+            || !root.TryGetProperty("data", out var data)
+            || data.ValueKind != JsonValueKind.Object
+            || !data.TryGetProperty("id", out var id)
+            || id.ValueKind != JsonValueKind.String)
+            throw new InvalidDataException("the required data.id is missing.");
+        var value = id.GetString()?.Trim();
+        if (string.IsNullOrWhiteSpace(value) || value.Length > 140
+            || value.Any(character => char.IsControl(character) || char.IsWhiteSpace(character)))
+            throw new InvalidDataException("the organization identifier is invalid.");
+        return $"samsara-org:{value}";
+    }
+
+    internal static bool IsOrganizationReference(string? value)
+    {
+        if (value is not { Length: > 12 and <= 160 }
+            || !value.StartsWith("samsara-org:", StringComparison.Ordinal))
+            return false;
+        return value["samsara-org:".Length..]
+            .All(character => !char.IsControl(character) && !char.IsWhiteSpace(character));
     }
 
     private async Task<ConnectorResult> RunCameraSafetyActionAsync(

@@ -141,7 +141,9 @@ public sealed class SamsaraOldSchemaRefusalPostgresTests
             };
             _isolatedConnection = isolated.ConnectionString;
             Db = new Database(Configuration(allowPartial: true));
-            Operation = new ConnectorOperationContext(7, 11, 0, Guid.NewGuid(), "samsara", null, "Connected", true);
+            Operation = new ConnectorOperationContext(
+                7, 11, 0, Guid.NewGuid(), "samsara", null, "Connected", true,
+                "samsara-org:old-schema-test");
         }
 
         public static async Task<Fixture> CreateAsync(int nullableMask)
@@ -279,6 +281,7 @@ public sealed class SamsaraOldSchemaRefusalPostgresTests
             {
                 companyId = Operation.CompanyId, integrationId = Operation.IntegrationId,
                 operationGeneration = Operation.Generation, operationLeaseToken = Operation.LeaseToken,
+                providerAccountReference = Operation.ProviderAccountReference,
                 cursor = BeforeCursor,
             }));
             return await connector.RunActionAsync("sync", new Dictionary<string, string?> { ["apiToken"] = "synthetic-schema-token" },

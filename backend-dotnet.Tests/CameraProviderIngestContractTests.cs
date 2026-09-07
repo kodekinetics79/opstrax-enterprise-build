@@ -87,6 +87,7 @@ public sealed class CameraProviderIngestContractTests
         var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../"));
         var sql = File.ReadAllText(Path.Combine(root, "database", "migrations", "2026_09_07_stage112_camera_provider_ingest_spine.sql"));
         var runner = File.ReadAllText(Path.Combine(root, "tools", "apply-neon-predeploy-migrations.sh"));
+        var accountIdentity = File.ReadAllText(Path.Combine(root, "database", "migrations", "2026_09_07_stage113_samsara_account_identity.sql"));
         var service = File.ReadAllText(Path.Combine(root, "backend-dotnet", "Services", "CameraProviderIngestService.cs"));
         var status = File.ReadAllText(Path.Combine(root, "backend-dotnet", "Services", "CameraProviderStatusService.cs"));
         var endpoints = File.ReadAllText(Path.Combine(root, "backend-dotnet", "Controllers", "EndpointMappings.cs"));
@@ -118,7 +119,16 @@ public sealed class CameraProviderIngestContractTests
         Assert.DoesNotContain("ProviderMediaId", exposedEventFields);
         Assert.Contains("/api/dashcam/provider-status", endpoints, StringComparison.Ordinal);
         Assert.Contains("/api/dashcam/provider-events", endpoints, StringComparison.Ordinal);
+        var integrationColumnsStart = endpoints.IndexOf("private const string IntegrationCols", StringComparison.Ordinal);
+        var integrationColumnsEnd = endpoints.IndexOf("private static async Task<IResult?> RequireIntegrationsModule", integrationColumnsStart, StringComparison.Ordinal);
+        Assert.True(integrationColumnsStart >= 0 && integrationColumnsEnd > integrationColumnsStart);
+        var exposedIntegrationColumns = endpoints[integrationColumnsStart..integrationColumnsEnd];
+        Assert.DoesNotContain("provider_account_ref", exposedIntegrationColumns, StringComparison.Ordinal);
+        Assert.DoesNotContain("provider_account_verified_at", exposedIntegrationColumns, StringComparison.Ordinal);
         Assert.Contains("2026_09_07_stage112_camera_provider_ingest_spine", runner, StringComparison.Ordinal);
         Assert.Contains("Stage112 camera provider evidence escaped ExternalHold", runner, StringComparison.Ordinal);
+        Assert.Contains("provider_account_ref", accountIdentity, StringComparison.Ordinal);
+        Assert.Contains("uq_stage113_provider_asset_identity", accountIdentity, StringComparison.Ordinal);
+        Assert.Contains("2026_09_07_stage113_samsara_account_identity", runner, StringComparison.Ordinal);
     }
 }

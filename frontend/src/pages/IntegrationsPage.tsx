@@ -160,7 +160,7 @@ function integrationFields(record: IntegrationRecord): ConfigField[] {
         label: "Samsara API token",
         type: "text",
         placeholder: "Paste a tenant-authorized token",
-        note: "GPS requires Read Vehicles and Read Vehicle Statistics. Camera intake separately requires Read Safety Events & Scores; the connection test does not claim that camera scope. OpsTrax stores the token encrypted and never displays it again.",
+        note: "Account-safe GPS discovery requires Read Org Information, Read Vehicles, and Read Vehicle Statistics. Camera intake separately requires Read Safety Events & Scores; the connection test does not claim that camera scope. OpsTrax stores the token encrypted and never displays it again.",
       },
     ];
   }

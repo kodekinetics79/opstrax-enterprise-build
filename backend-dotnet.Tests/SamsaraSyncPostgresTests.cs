@@ -25,8 +25,8 @@ public sealed class SamsaraSyncPostgresTests
         try
         {
             var integrationId = await db.InsertAsync(
-                @"INSERT INTO integrations(company_id,provider_name,category,status,integration_key,config_json)
-                   VALUES(@cid,'Samsara','Telematics & ELD','Connected','samsara','{}'::jsonb) RETURNING id",
+                @"INSERT INTO integrations(company_id,provider_name,category,status,integration_key,config_json,provider_account_ref,provider_account_verified_at)
+                   VALUES(@cid,'Samsara','Telematics & ELD','Connected','samsara','{}'::jsonb,'samsara-org:sync-test',NOW()) RETURNING id",
                 c => c.Parameters.AddWithValue("@cid", companyId));
             var operation = await ConnectorOperationLease.TryAcquireAsync(
                 db, companyId, integrationId, ["Connected"], TimeSpan.FromSeconds(180), CancellationToken.None);
@@ -45,6 +45,7 @@ public sealed class SamsaraSyncPostgresTests
             {
                 companyId, integrationId, operationGeneration = operation!.Generation,
                 operationLeaseToken = operation.LeaseToken.ToString(),
+                providerAccountReference = "samsara-org:sync-test",
             }));
             var result = await connector.RunActionAsync("sync",
                 new Dictionary<string, string?> { ["apiToken"] = "synthetic-test-token" }, body.RootElement, CancellationToken.None);
@@ -90,8 +91,8 @@ public sealed class SamsaraSyncPostgresTests
             "INSERT INTO companies(company_code,name,industry) VALUES(@code,'Connector configuration lock test','Transportation') RETURNING id",
             c => c.Parameters.AddWithValue("@code", $"SCL-{suffix[..10]}"));
         var integrationId = await dbConfigure.InsertAsync(
-            @"INSERT INTO integrations(company_id,provider_name,category,status,integration_key,config_json)
-              VALUES(@cid,'Samsara','Telematics & ELD','Connected','samsara','{""apiToken"":""old-secret""}'::jsonb) RETURNING id",
+            @"INSERT INTO integrations(company_id,provider_name,category,status,integration_key,config_json,provider_account_ref,provider_account_verified_at)
+              VALUES(@cid,'Samsara','Telematics & ELD','Connected','samsara','{""apiToken"":""old-secret""}'::jsonb,'samsara-org:sync-test',NOW()) RETURNING id",
             c => c.Parameters.AddWithValue("@cid", companyId));
 
         try
@@ -183,8 +184,8 @@ public sealed class SamsaraSyncPostgresTests
             "INSERT INTO companies(company_code,name,industry) VALUES(@code,'Samsara sync lock order test','Transportation') RETURNING id",
             c => c.Parameters.AddWithValue("@code", $"SLO-{suffix[..10]}"));
         var integrationId = await dbSync.InsertAsync(
-            @"INSERT INTO integrations(company_id,provider_name,category,status,integration_key,config_json)
-              VALUES(@cid,'Samsara','Telematics & ELD','Connected','samsara','{}'::jsonb) RETURNING id",
+            @"INSERT INTO integrations(company_id,provider_name,category,status,integration_key,config_json,provider_account_ref,provider_account_verified_at)
+              VALUES(@cid,'Samsara','Telematics & ELD','Connected','samsara','{}'::jsonb,'samsara-org:sync-test',NOW()) RETURNING id",
             c => c.Parameters.AddWithValue("@cid", companyId));
 
         try
@@ -263,7 +264,10 @@ public sealed class SamsaraSyncPostgresTests
             "INSERT INTO companies(company_code,name,industry) VALUES(@code,'Samsara discovery race test','Transportation') RETURNING id",
             c => c.Parameters.AddWithValue("@code", $"SDR-{suffix[..10]}"));
         var providerVehicleId = $"race-{suffix}";
-        var serial = $"samsara-{providerVehicleId}";
+        const string accountReference = "samsara-org:discovery-race-test";
+        var operation = new ConnectorOperationContext(
+            companyId, 1, 0, Guid.NewGuid(), "samsara", null, "Connected", true, accountReference);
+        var serial = SamsaraSync.DeviceSerial(companyId, accountReference, providerVehicleId);
 
         try
         {
@@ -276,7 +280,7 @@ public sealed class SamsaraSyncPostgresTests
                     c => c.Parameters.AddWithValue("@serial", serial));
                 firstLockAcquired.SetResult();
                 var id = await SamsaraSync.EnsureDiscoveredDeviceAsync(
-                    dbFirst, companyId, providerVehicleId, DateTime.UtcNow.AddMinutes(-1), CancellationToken.None);
+                    dbFirst, operation, providerVehicleId, DateTime.UtcNow.AddMinutes(-1), CancellationToken.None);
                 await allowFirstCommit.Task;
                 return id;
             });
@@ -284,7 +288,7 @@ public sealed class SamsaraSyncPostgresTests
 
             var second = dbSecond.RunInSystemTransactionAsync(() =>
                 SamsaraSync.EnsureDiscoveredDeviceAsync(
-                    dbSecond, companyId, providerVehicleId, DateTime.UtcNow, CancellationToken.None));
+                    dbSecond, operation, providerVehicleId, DateTime.UtcNow, CancellationToken.None));
             Assert.NotSame(second, await Task.WhenAny(second, Task.Delay(150)));
             allowFirstCommit.SetResult();
             var firstId = await first;
@@ -332,8 +336,8 @@ public sealed class SamsaraSyncPostgresTests
                     });
                 companyIds.Add(companyId);
                 ids.Add(await db.InsertAsync(
-                    @"INSERT INTO integrations(company_id,provider_name,category,status,integration_key,config_json)
-                      VALUES(@cid,@name,'Telematics & ELD','Connected','samsara','{}'::jsonb) RETURNING id",
+                    @"INSERT INTO integrations(company_id,provider_name,category,status,integration_key,config_json,provider_account_ref,provider_account_verified_at)
+                      VALUES(@cid,@name,'Telematics & ELD','Connected','samsara','{}'::jsonb,'samsara-org:sync-test',NOW()) RETURNING id",
                     c =>
                     {
                         c.Parameters.AddWithValue("@cid", companyId);
@@ -379,8 +383,8 @@ public sealed class SamsaraSyncPostgresTests
             "INSERT INTO companies(company_code,name,industry) VALUES(@code,'Samsara lease barrier test','Transportation') RETURNING id",
             c => c.Parameters.AddWithValue("@code", $"SLB-{suffix[..10]}"));
         var integrationId = await db.InsertAsync(
-            @"INSERT INTO integrations(company_id,provider_name,category,status,integration_key,config_json)
-              VALUES(@cid,'Samsara','Telematics & ELD','Connected','samsara','{}'::jsonb) RETURNING id",
+            @"INSERT INTO integrations(company_id,provider_name,category,status,integration_key,config_json,provider_account_ref,provider_account_verified_at)
+              VALUES(@cid,'Samsara','Telematics & ELD','Connected','samsara','{}'::jsonb,'samsara-org:sync-test',NOW()) RETURNING id",
             c => c.Parameters.AddWithValue("@cid", companyId));
 
         try
@@ -451,8 +455,8 @@ public sealed class SamsaraSyncPostgresTests
             "INSERT INTO companies(company_code,name,industry) VALUES(@code,'Connector health clocks','Transportation') RETURNING id",
             c => c.Parameters.AddWithValue("@code", $"SHC-{suffix[..10]}"));
         var integrationId = await db.InsertAsync(
-            @"INSERT INTO integrations(company_id,provider_name,category,status,integration_key,config_json)
-              VALUES(@cid,'Samsara','Telematics & ELD','Connected','samsara','{}'::jsonb) RETURNING id",
+            @"INSERT INTO integrations(company_id,provider_name,category,status,integration_key,config_json,provider_account_ref,provider_account_verified_at)
+              VALUES(@cid,'Samsara','Telematics & ELD','Connected','samsara','{}'::jsonb,'samsara-org:sync-test',NOW()) RETURNING id",
             c => c.Parameters.AddWithValue("@cid", companyId));
 
         try
@@ -527,8 +531,8 @@ public sealed class SamsaraSyncPostgresTests
             "INSERT INTO companies(company_code,name,industry) VALUES(@code,'Provider freshness clock','Transportation') RETURNING id",
             c => c.Parameters.AddWithValue("@code", $"PFC-{suffix[..10]}"));
         var integrationId = await db.InsertAsync(
-            @"INSERT INTO integrations(company_id,provider_name,category,status,integration_key,config_json)
-              VALUES(@cid,'Samsara','Telematics & ELD','Connected','samsara','{}'::jsonb) RETURNING id",
+            @"INSERT INTO integrations(company_id,provider_name,category,status,integration_key,config_json,provider_account_ref,provider_account_verified_at)
+              VALUES(@cid,'Samsara','Telematics & ELD','Connected','samsara','{}'::jsonb,'samsara-org:sync-test',NOW()) RETURNING id",
             c => c.Parameters.AddWithValue("@cid", companyId));
 
         try
@@ -579,8 +583,8 @@ public sealed class SamsaraSyncPostgresTests
             "INSERT INTO companies(company_code,name,industry) VALUES(@code,'Samsara replay test','Transportation') RETURNING id",
             c => c.Parameters.AddWithValue("@code", $"SAM-{suffix[..10]}"));
         var integrationId = await db.InsertAsync(
-            @"INSERT INTO integrations(company_id,provider_name,category,status,integration_key,config_json)
-              VALUES(@cid,'Samsara','Telematics & ELD','Connected','samsara','{}'::jsonb) RETURNING id",
+            @"INSERT INTO integrations(company_id,provider_name,category,status,integration_key,config_json,provider_account_ref,provider_account_verified_at)
+              VALUES(@cid,'Samsara','Telematics & ELD','Connected','samsara','{}'::jsonb,'samsara-org:sync-test',NOW()) RETURNING id",
             c => c.Parameters.AddWithValue("@cid", companyId));
         var operation = await ConnectorOperationLease.TryAcquireAsync(
             db, companyId, integrationId, ["Connected"], TimeSpan.FromSeconds(180), CancellationToken.None);
@@ -602,13 +606,14 @@ public sealed class SamsaraSyncPostgresTests
             });
         var providerVehicleId = $"provider-{suffix}";
         var deviceId = await db.InsertAsync(
-            @"INSERT INTO eld_devices(company_id,device_serial,provider,vehicle_id,status,last_seen_at)
-              VALUES(@cid,@serial,'Samsara',@vid,'Provisioning',NULL)
+            @"INSERT INTO eld_devices(company_id,device_serial,provider,provider_account_ref,provider_external_id,vehicle_id,status,last_seen_at)
+              VALUES(@cid,@serial,'Samsara','samsara-org:sync-test',@external,@vid,'Provisioning',NULL)
               RETURNING id",
             c =>
             {
                 c.Parameters.AddWithValue("@cid", companyId);
-                c.Parameters.AddWithValue("@serial", $"samsara-{providerVehicleId}");
+                c.Parameters.AddWithValue("@serial", SamsaraSync.DeviceSerial(companyId, "samsara-org:sync-test", providerVehicleId));
+                c.Parameters.AddWithValue("@external", providerVehicleId);
                 c.Parameters.AddWithValue("@vid", vehicleId);
             });
         var initialInstallationAt = DateTimeOffset.UtcNow.AddHours(-3);
@@ -817,7 +822,7 @@ public sealed class SamsaraSyncPostgresTests
                 c =>
                 {
                     c.Parameters.AddWithValue("@cid", companyId);
-                    c.Parameters.AddWithValue("@serial", $"samsara-{newProviderVehicleId}");
+                    c.Parameters.AddWithValue("@serial", SamsaraSync.DeviceSerial(companyId, "samsara-org:sync-test", newProviderVehicleId));
                 });
             Assert.NotNull(discovered);
             var lastSeen = discovered!["lastSeenAt"] switch
@@ -834,7 +839,7 @@ public sealed class SamsaraSyncPostgresTests
                 c =>
                 {
                     c.Parameters.AddWithValue("@cid", companyId);
-                    c.Parameters.AddWithValue("@serial", $"samsara-{newProviderVehicleId}");
+                    c.Parameters.AddWithValue("@serial", SamsaraSync.DeviceSerial(companyId, "samsara-org:sync-test", newProviderVehicleId));
                 });
             Assert.NotNull(unmatchedHistory);
             Assert.True(unmatchedHistory!["vehicleId"] is null or DBNull);

@@ -252,6 +252,8 @@ MIGRATIONS=(
   2026_09_06_stage106_cold_chain_alert_report_authority
   # Provider-neutral camera intake remains ExternalHold until real provider certification.
   2026_09_07_stage112_camera_provider_ingest_spine
+  # Bind Samsara assets to the provider-issued organization identity verified by /me.
+  2026_09_07_stage113_samsara_account_identity
 )
 
 echo "Pre-check: validated read-only database identity…"
@@ -407,7 +409,8 @@ BEGIN
       ('2026_09_06_stage104_camera_demo_truth_cleanup'),
       ('2026_09_06_stage105_cold_chain_measurement_authority'),
       ('2026_09_06_stage106_cold_chain_alert_report_authority'),
-      ('2026_09_07_stage112_camera_provider_ingest_spine')) required(version)
+      ('2026_09_07_stage112_camera_provider_ingest_spine'),
+      ('2026_09_07_stage113_samsara_account_identity')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN RAISE EXCEPTION 'Required owner/pilot migration ledger missing or duplicated'; END IF;
   IF EXISTS (
@@ -434,6 +437,18 @@ BEGIN
     WHERE access_status <> 'ExternalHold'
   ) THEN
     RAISE EXCEPTION 'Stage112 camera provider evidence escaped ExternalHold';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid='public.integrations'::regclass
+      AND conname='ck_stage113_provider_account_verification_pair'
+      AND convalidated
+  ) OR NOT EXISTS (
+    SELECT 1 FROM pg_index
+    WHERE indexrelid='public.uq_stage113_provider_asset_identity'::regclass
+      AND indisunique AND indisvalid AND indisready
+  ) THEN
+    RAISE EXCEPTION 'Stage113 provider account identity contract is missing or invalid';
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns

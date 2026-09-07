@@ -11,10 +11,12 @@ namespace Opstrax.Tests;
 public sealed class SamsaraConnectorBehaviorTests
 {
     [Fact]
-    public async Task TestConnection_VerifiesVehicleAndStatisticsScopes()
+    public async Task TestConnection_VerifiesOrganizationVehicleAndStatisticsScopes()
     {
         var handler = new ScriptedHandler(request =>
-            request.RequestUri!.AbsolutePath == "/fleet/vehicles"
+            request.RequestUri!.AbsolutePath == "/me"
+                ? Json(HttpStatusCode.OK, """{"data":{"id":"organization-17","name":"Test Fleet"}}""")
+                : request.RequestUri.AbsolutePath == "/fleet/vehicles"
                 ? Json(HttpStatusCode.OK, """{"data":[{"id":"vehicle-1"}]}""")
                 : Json(HttpStatusCode.OK, """{"data":[],"pagination":{"endCursor":"probe-cursor","hasNextPage":false}}"""));
         var connector = Connector(handler);
@@ -22,8 +24,10 @@ public sealed class SamsaraConnectorBehaviorTests
         var result = await connector.TestConnectionAsync(Config(), CancellationToken.None);
 
         Assert.True(result.Success, result.Message);
-        Assert.Equal(2, handler.Requests.Count);
-        Assert.Equal(true, result.Details!["readVehiclesVerified"]);
+        Assert.Equal(3, handler.Requests.Count);
+        Assert.Equal("samsara-org:organization-17", result.ProviderAccountReference);
+        Assert.Equal(true, result.Details!["readOrgInformationVerified"]);
+        Assert.Equal(true, result.Details["readVehiclesVerified"]);
         Assert.Equal(true, result.Details["readVehicleStatisticsVerified"]);
         Assert.Contains(handler.Requests, uri =>
             uri.AbsolutePath == "/fleet/vehicles/stats/feed"
@@ -35,7 +39,9 @@ public sealed class SamsaraConnectorBehaviorTests
     public async Task TestConnection_FailsWhenStatisticsScopeIsDenied()
     {
         var handler = new ScriptedHandler(request =>
-            request.RequestUri!.AbsolutePath == "/fleet/vehicles"
+            request.RequestUri!.AbsolutePath == "/me"
+                ? Json(HttpStatusCode.OK, """{"data":{"id":"organization-17"}}""")
+                : request.RequestUri.AbsolutePath == "/fleet/vehicles"
                 ? Json(HttpStatusCode.OK, """{"data":[{"id":"vehicle-1"}]}""")
                 : Json(HttpStatusCode.Forbidden, "{}"));
         var connector = Connector(handler);
@@ -44,14 +50,16 @@ public sealed class SamsaraConnectorBehaviorTests
 
         Assert.False(result.Success);
         Assert.Contains("Read Vehicle Statistics", result.Message, StringComparison.Ordinal);
-        Assert.Equal(2, handler.Requests.Count);
+        Assert.Equal(3, handler.Requests.Count);
     }
 
     [Fact]
     public async Task TestConnection_FailsWhenStatisticsEnvelopeOmitsData()
     {
         var handler = new ScriptedHandler(request =>
-            request.RequestUri!.AbsolutePath == "/fleet/vehicles"
+            request.RequestUri!.AbsolutePath == "/me"
+                ? Json(HttpStatusCode.OK, """{"data":{"id":"organization-17"}}""")
+                : request.RequestUri.AbsolutePath == "/fleet/vehicles"
                 ? Json(HttpStatusCode.OK, """{"data":[]}""")
                 : Json(HttpStatusCode.OK, """{"pagination":{"endCursor":"probe-cursor","hasNextPage":false}}"""));
         var connector = Connector(handler);
@@ -60,7 +68,20 @@ public sealed class SamsaraConnectorBehaviorTests
 
         Assert.False(result.Success);
         Assert.Contains("required data array", result.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(2, handler.Requests.Count);
+        Assert.Equal(3, handler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task TestConnection_FailsBeforeAssetAccessWhenOrganizationScopeIsDenied()
+    {
+        var handler = new ScriptedHandler(_ => Json(HttpStatusCode.Forbidden, "{}"));
+
+        var result = await Connector(handler).TestConnectionAsync(Config(), CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.Contains("Read Org Information", result.Message, StringComparison.Ordinal);
+        Assert.Null(result.ProviderAccountReference);
+        Assert.Single(handler.Requests);
     }
 
     [Fact]
@@ -76,6 +97,21 @@ public sealed class SamsaraConnectorBehaviorTests
         Assert.Contains("pagination", result.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(0, Convert.ToInt32(result.Details!["pagesCommitted"]));
         Assert.Null(result.Details["nextCursor"]);
+    }
+
+    [Fact]
+    public async Task Sync_RequiresVerifiedOrganizationBeforeProviderCall()
+    {
+        var handler = new ScriptedHandler(_ =>
+            throw new InvalidOperationException("provider network must not run"));
+        var connector = Connector(handler);
+        using var body = OperationBody(providerAccountReference: null);
+
+        var result = await connector.RunActionAsync("sync", Config(), body.RootElement, CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.Contains("verified Samsara organization identity", result.Message, StringComparison.Ordinal);
+        Assert.Empty(handler.Requests);
     }
 
     [Fact]
@@ -410,13 +446,16 @@ public sealed class SamsaraConnectorBehaviorTests
     private static IReadOnlyDictionary<string, string?> Config() =>
         new Dictionary<string, string?> { ["apiToken"] = "test-token-never-sent-to-real-network" };
 
-    private static JsonDocument OperationBody(string? cursor = null) => JsonDocument.Parse(
+    private static JsonDocument OperationBody(
+        string? cursor = null,
+        string? providerAccountReference = "samsara-org:test-17") => JsonDocument.Parse(
         JsonSerializer.Serialize(new
         {
             companyId = 17,
             integrationId = 23,
             operationGeneration = 0,
             operationLeaseToken = "11111111-1111-1111-1111-111111111111",
+            providerAccountReference,
             cursor,
         }));
 
@@ -429,6 +468,7 @@ public sealed class SamsaraConnectorBehaviorTests
             integrationId = 23,
             operationGeneration = 0,
             operationLeaseToken = "11111111-1111-1111-1111-111111111111",
+            providerAccountReference = "samsara-org:test-17",
             cursor,
             startTime,
         }));

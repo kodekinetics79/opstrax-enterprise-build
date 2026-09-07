@@ -17,26 +17,38 @@ public sealed class SamsaraResponseBoundsTests
         new Dictionary<string, string?> { ["apiToken"] = "synthetic-test-token" };
 
     [Theory]
-    [InlineData(false, 0)]
-    [InlineData(false, 1)]
-    [InlineData(false, 2)]
-    [InlineData(true, 0)]
-    [InlineData(true, 1)]
-    [InlineData(true, 2)]
-    public async Task Handshake_RejectsOversizedBodyAtEitherScope(bool statistics, int lengthMode)
+    [InlineData(0, 0)]
+    [InlineData(0, 1)]
+    [InlineData(0, 2)]
+    [InlineData(1, 0)]
+    [InlineData(1, 1)]
+    [InlineData(1, 2)]
+    [InlineData(2, 0)]
+    [InlineData(2, 1)]
+    [InlineData(2, 2)]
+    public async Task Handshake_RejectsOversizedBodyAtEveryRequiredScope(int oversizedCall, int lengthMode)
     {
         var stream = new SamsaraBodyFixture([], endless: true);
         using var content = new SamsaraContentFixture(stream, lengthMode == 0 ? null : lengthMode == 1 ? 1 : ResponseLimit + 1);
         var calls = 0;
-        var connector = Connector(_ => Task.FromResult(++calls == 1 && statistics
-            ? Json("""{"data":[{"id":"synthetic-vehicle"}]}""")
-            : new HttpResponseMessage(HttpStatusCode.OK) { Content = content }));
+        var connector = Connector(_ =>
+        {
+            var call = calls++;
+            if (call == oversizedCall)
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = content });
+            return Task.FromResult(call switch
+            {
+                0 => Json("""{"data":{"id":"synthetic-organization"}}"""),
+                1 => Json("""{"data":[{"id":"synthetic-vehicle"}]}"""),
+                _ => Json(CompletePage),
+            });
+        });
 
         var result = await connector.TestConnectionAsync(Config, CancellationToken.None);
 
         Assert.False(result.Success);
         Assert.Contains("exceeded", result.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(statistics ? 2 : 1, calls);
+        Assert.Equal(oversizedCall + 1, calls);
         Assert.Equal(lengthMode == 2 ? 0 : ResponseLimit + 1, stream.BytesRead);
         Assert.False(content.WasBuffered);
         Assert.True(content.Disposed);
@@ -183,7 +195,7 @@ public sealed class SamsaraResponseBoundsTests
             if (++aggregateCalls == 1)
             {
                 await Task.Delay(TimeSpan.FromSeconds(12));
-                return Json("""{"data":[]}""");
+                return Json("""{"data":{"id":"synthetic-organization"}}""");
             }
             return new(HttpStatusCode.OK) { Content = aggregateContent };
         });
@@ -222,7 +234,8 @@ public sealed class SamsaraResponseBoundsTests
     internal static JsonDocument OperationBody(string? cursor = null) => JsonDocument.Parse(JsonSerializer.Serialize(new
     {
         companyId = 17, integrationId = 23, operationGeneration = 0,
-        operationLeaseToken = "11111111-1111-1111-1111-111111111111", cursor,
+        operationLeaseToken = "11111111-1111-1111-1111-111111111111",
+        providerAccountReference = "samsara-org:test-17", cursor,
     }));
 
     internal static HttpResponseMessage Json(string body) => new(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") };

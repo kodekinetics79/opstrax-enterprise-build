@@ -18,6 +18,8 @@ namespace Opstrax.Tests;
 [Trait("Category", "Integration")]
 public sealed class SamsaraPartialGpsPostgresTests
 {
+    private const string AccountReference = "samsara-org:partial-gps-test";
+
     [Fact]
     public async Task FailureOnSecondLiveProjectionRollsBackBothVehiclesAndAllAlerts()
     {
@@ -27,8 +29,8 @@ public sealed class SamsaraPartialGpsPostgresTests
             SELECT company_id,branch_id,@code,'truck','legacy-fleet-identifier',@code FROM vehicles WHERE company_id=@cid AND id=@vid RETURNING id",
             c => { c.Parameters.AddWithValue("@code", "SPR-" + suffix[..12]); c.Parameters.AddWithValue("@cid", fixture.CompanyId); c.Parameters.AddWithValue("@vid", fixture.VehicleId); });
         var providerSecond = "synthetic-second-" + suffix;
-        var secondDevice = await fixture.Db.InsertAsync("INSERT INTO eld_devices(company_id,device_serial,provider,vehicle_id,status) VALUES(@cid,@serial,'Samsara',@vid,'Provisioning') RETURNING id",
-            c => { c.Parameters.AddWithValue("@cid", fixture.CompanyId); c.Parameters.AddWithValue("@serial", "samsara-" + providerSecond); c.Parameters.AddWithValue("@vid", secondVehicle); });
+        var secondDevice = await fixture.Db.InsertAsync("INSERT INTO eld_devices(company_id,device_serial,provider,provider_account_ref,provider_external_id,vehicle_id,status) VALUES(@cid,@serial,'Samsara',@account,@external,@vid,'Provisioning') RETURNING id",
+            c => { c.Parameters.AddWithValue("@cid", fixture.CompanyId); c.Parameters.AddWithValue("@serial", SamsaraSync.DeviceSerial(fixture.CompanyId, AccountReference, providerSecond)); c.Parameters.AddWithValue("@account", AccountReference); c.Parameters.AddWithValue("@external", providerSecond); c.Parameters.AddWithValue("@vid", secondVehicle); });
         await fixture.Db.ExecuteAsync(@"INSERT INTO device_installations(company_id,branch_id,device_id,vehicle_id,status,device_role,is_primary,effective_from,installed_at,source)
             SELECT company_id,branch_id,@did,id,'Installed','GPS',TRUE,NOW()-INTERVAL '3 hours',NOW()-INTERVAL '3 hours','synthetic-projection-test' FROM vehicles WHERE company_id=@cid AND id=@vid",
             c => { c.Parameters.AddWithValue("@did", secondDevice); c.Parameters.AddWithValue("@cid", fixture.CompanyId); c.Parameters.AddWithValue("@vid", secondVehicle); });
@@ -382,10 +384,10 @@ public sealed class SamsaraPartialGpsPostgresTests
             {
                 var suffix = Guid.NewGuid().ToString("N")[..10];
                 f.CompanyId = await f.Db.InsertAsync("INSERT INTO companies(company_code,name,industry) VALUES(@code,'Synthetic partial GPS','Transportation') RETURNING id", c => c.Parameters.AddWithValue("@code", $"SPG-{suffix}"));
-                var integrationId = await f.Db.InsertAsync("INSERT INTO integrations(company_id,provider_name,category,status,integration_key,config_json) VALUES(@cid,'Samsara','Telematics & ELD','Connected','samsara','{}') RETURNING id", c => c.Parameters.AddWithValue("@cid", f.CompanyId));
+                var integrationId = await f.Db.InsertAsync("INSERT INTO integrations(company_id,provider_name,category,status,integration_key,config_json,provider_account_ref,provider_account_verified_at) VALUES(@cid,'Samsara','Telematics & ELD','Connected','samsara','{}',@account,NOW()) RETURNING id", c => { c.Parameters.AddWithValue("@cid", f.CompanyId); c.Parameters.AddWithValue("@account", AccountReference); });
                 var branchId = await f.Db.InsertAsync("INSERT INTO branches(company_id,branch_code,name,status) VALUES(@cid,@code,'Synthetic branch','Active') RETURNING id", c => { c.Parameters.AddWithValue("@cid", f.CompanyId); c.Parameters.AddWithValue("@code", $"SPG-B-{suffix}"); });
                 f.VehicleId = await f.Db.InsertAsync("INSERT INTO vehicles(company_id,branch_id,vehicle_code,type,vin_exception_type,alternate_identifier) VALUES(@cid,@bid,@code,'truck','legacy-fleet-identifier',@code) RETURNING id", c => { c.Parameters.AddWithValue("@cid", f.CompanyId); c.Parameters.AddWithValue("@bid", branchId); c.Parameters.AddWithValue("@code", $"SPG-V-{suffix}"); });
-                var deviceId = await f.Db.InsertAsync("INSERT INTO eld_devices(company_id,device_serial,provider,vehicle_id,status) VALUES(@cid,@serial,'Samsara',@vid,'Provisioning') RETURNING id", c => { c.Parameters.AddWithValue("@cid", f.CompanyId); c.Parameters.AddWithValue("@vid", f.VehicleId); c.Parameters.AddWithValue("@serial", $"samsara-{f.ProviderVehicleId}"); });
+                var deviceId = await f.Db.InsertAsync("INSERT INTO eld_devices(company_id,device_serial,provider,provider_account_ref,provider_external_id,vehicle_id,status) VALUES(@cid,@serial,'Samsara',@account,@external,@vid,'Provisioning') RETURNING id", c => { c.Parameters.AddWithValue("@cid", f.CompanyId); c.Parameters.AddWithValue("@vid", f.VehicleId); c.Parameters.AddWithValue("@serial", SamsaraSync.DeviceSerial(f.CompanyId, AccountReference, f.ProviderVehicleId)); c.Parameters.AddWithValue("@account", AccountReference); c.Parameters.AddWithValue("@external", f.ProviderVehicleId); });
                 await f.Db.ExecuteAsync(@"INSERT INTO device_installations(company_id,branch_id,device_id,vehicle_id,status,device_role,is_primary,effective_from,installed_at,source)
                     VALUES(@cid,@bid,@did,@vid,'Installed','GPS',TRUE,NOW()-INTERVAL '3 hours',NOW()-INTERVAL '3 hours','synthetic-partial-test')",
                     c => { c.Parameters.AddWithValue("@cid", f.CompanyId); c.Parameters.AddWithValue("@bid", branchId); c.Parameters.AddWithValue("@did", deviceId); c.Parameters.AddWithValue("@vid", f.VehicleId); });

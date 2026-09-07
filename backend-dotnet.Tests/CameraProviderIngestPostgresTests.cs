@@ -16,6 +16,89 @@ public sealed class CameraProviderIngestPostgresTests
     private static readonly DateTimeOffset Now = new(2026, 9, 7, 12, 0, 0, TimeSpan.Zero);
 
     [Fact]
+    public async Task SamsaraAccountIdentity_SurvivesSameOrganizationRotationAndSeparatesAnotherOrganization()
+    {
+        var database = new Database(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["ConnectionStrings:DefaultConnection"] = GuardedConnection(),
+        }).Build());
+        var suffix = Guid.NewGuid().ToString("N");
+        var companyId = await InsertId(database,
+            "INSERT INTO companies(company_code,name,industry) VALUES(@code,'Camera account boundary','Transportation') RETURNING id",
+            command => command.Parameters.AddWithValue("code", $"CAB-{suffix[..10]}"));
+        const string firstAccount = "samsara-org:account-one";
+        const string secondAccount = "samsara-org:account-two";
+        var providerAsset = $"asset-{suffix}";
+        try
+        {
+            var integrationId = await InsertId(database,
+                @"INSERT INTO integrations(company_id,provider_name,category,status,integration_key,config_json)
+                  VALUES(@company,'Samsara','Safety & Cameras','Pending','samsara','{}'::jsonb) RETURNING id",
+                command => command.Parameters.AddWithValue("company", companyId));
+
+            async Task<ConnectorOperationContext> Verify(string account)
+            {
+                var handshake = await ConnectorOperationLease.TryAcquireAsync(
+                    database, companyId, integrationId, ["Pending"], TimeSpan.FromSeconds(30), CancellationToken.None);
+                Assert.NotNull(handshake);
+                Assert.Equal(1, await ConnectorOperationLease.CompleteTestAsync(
+                    database, handshake!, ConnectorResult.Ok("verified", providerAccountReference: account), CancellationToken.None));
+                var sync = await ConnectorOperationLease.TryAcquireAsync(
+                    database, companyId, integrationId, ["Connected"], TimeSpan.FromSeconds(30), CancellationToken.None,
+                    isSyncOperation: true);
+                Assert.NotNull(sync);
+                Assert.Equal(account, sync!.ProviderAccountReference);
+                return sync;
+            }
+
+            async Task<long> Discover(ConnectorOperationContext operation)
+            {
+                var device = await database.RunInSystemTransactionAsync(async () =>
+                {
+                    await ConnectorOperationLease.AssertCurrentForWriteAsync(database, operation, CancellationToken.None);
+                    return await SamsaraSync.EnsureDiscoveredDeviceAsync(
+                        database, operation, providerAsset, Now.UtcDateTime, CancellationToken.None);
+                });
+                Assert.NotNull(device);
+                Assert.Equal(1, await ConnectorOperationLease.CompleteSyncAsync(
+                    database, operation, ConnectorResult.Ok("complete"), null, CancellationToken.None));
+                return device!.Value;
+            }
+
+            var firstOperation = await Verify(firstAccount);
+            var firstDevice = await Discover(firstOperation);
+
+            Assert.Equal(1, await RotateAsync(database, companyId, integrationId));
+            var rotatedSameAccount = await Verify(firstAccount);
+            var sameDevice = await Discover(rotatedSameAccount);
+            Assert.Equal(firstDevice, sameDevice);
+
+            Assert.Equal(1, await RotateAsync(database, companyId, integrationId));
+            var anotherAccount = await Verify(secondAccount);
+            var anotherDevice = await Discover(anotherAccount);
+            Assert.NotEqual(firstDevice, anotherDevice);
+            Assert.Equal(2, await database.ScalarLongAsync(
+                "SELECT COUNT(*) FROM eld_devices WHERE company_id=@company AND provider_external_id=@asset",
+                command => { command.Parameters.AddWithValue("company", companyId); command.Parameters.AddWithValue("asset", providerAsset); }));
+            Assert.NotEqual(
+                SamsaraSync.EventIdempotencyKey(firstAccount, providerAsset, Now.UtcDateTime),
+                SamsaraSync.EventIdempotencyKey(secondAccount, providerAsset, Now.UtcDateTime));
+        }
+        finally
+        {
+            await database.ExecuteAsync("DELETE FROM eld_devices WHERE company_id=@company; DELETE FROM integrations WHERE company_id=@company; DELETE FROM companies WHERE id=@company",
+                command => command.Parameters.AddWithValue("company", companyId));
+        }
+    }
+
+    private static Task<int> RotateAsync(Database database, long companyId, long integrationId) =>
+        database.ExecuteAsync(
+            @"UPDATE integrations SET status='Pending',provider_account_ref=NULL,provider_account_verified_at=NULL,
+                  operation_generation=operation_generation+1,operation_lease_token=NULL,operation_lease_expires_at=NULL
+              WHERE company_id=@company AND id=@integration",
+            command => { command.Parameters.AddWithValue("company", companyId); command.Parameters.AddWithValue("integration", integrationId); });
+
+    [Fact]
     public async Task ConnectorLeaseFence_RejectsInvalidatedGenerationWithoutLedgerWrite()
     {
         var database = new Database(new ConfigurationBuilder().AddInMemoryCollection(

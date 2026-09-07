@@ -55,7 +55,8 @@ public sealed class SamsaraCameraSafetySync(
         using var document = await GetJsonWithRetryAsync(url, ct);
         var page = ParsePage(
             document.RootElement,
-            $"opstrax-integration:{operation.IntegrationId}:generation:{operation.Generation}",
+            operation.ProviderAccountReference
+                ?? throw new InvalidDataException("Samsara camera intake requires a verified provider organization identity."),
             retrievedAtUtc);
 
         if (page.Events.Count == 0)

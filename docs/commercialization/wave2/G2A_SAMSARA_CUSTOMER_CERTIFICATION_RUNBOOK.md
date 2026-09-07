@@ -59,7 +59,7 @@ The authorized administrator must confirm all of the following:
 - The test is permitted for the selected Samsara organization and tenant.
 - The administrator has verified that the organization uses the US API cloud (`api.samsara.com`). EU/UK and Canadian regional API clouds are unsupported by this exact candidate.
 - The credential is dedicated to this integration and limited to the minimum organization tags and read scopes required by the endpoints under test.
-- The current implementation requires `Read Vehicles` and `Read Vehicle Statistics`. The handshake must prove both with distinct read-only provider calls; a valid token with only one scope must fail closed.
+- The current implementation requires `Read Org Information`, `Read Vehicles`, and `Read Vehicle Statistics`. The handshake must prove all three with distinct read-only provider calls; a valid token missing any one scope must fail closed. The provider-issued organization ID is stored as a server-only account boundary so identical asset IDs from different Samsara organizations cannot share an OpsTrax device identity.
 - The token will be entered only into the OpsTrax server-backed integration form. It must not be pasted into chat, tickets, screenshots, shell history, source code, browser developer tools or the evidence manifest.
 - A provider-side revocation/rotation owner and rollback window are agreed before the first connection.
 
@@ -101,15 +101,16 @@ Before the UI journey, prove the operator can reach every required route with th
 1. Sign in as an authorized tenant operator with `telematics:providers:manage`.
 2. Open `/integrations`, select Samsara and open Configure.
 3. Enter the dedicated token and save it.
-4. Run the real provider handshake. It must first read at most one vehicle, then make a vehicle-statistics feed request limited to that returned vehicle when one exists.
-5. Record both endpoint names, both status codes, the provider status, last-test timestamp and redacted provider metadata. Do not record the token or raw provider body.
+4. Run the real provider handshake. It must read the provider organization, then read at most one vehicle, then make a vehicle-statistics feed request limited to that returned vehicle when one exists.
+5. Record all three endpoint names and status codes, the provider status, last-test timestamp and redacted provider metadata. Do not record the token, provider organization identifier or raw provider body.
 
-Pass only if both real requests succeed, both required response envelopes validate and OpsTrax reports Connected. A catalog entry, saved token, one-scope success, seeded status or mocked response is not a pass.
+Pass only if all three real requests succeed, all required response envelopes validate and OpsTrax reports Connected. A catalog entry, saved token, partial-scope success, seeded status or mocked response is not a pass.
 
 ### B. Discover
 
 1. Select **Run device discovery**.
 2. Record vehicles seen, unmatched and rejected counts.
+3. Treat the first account-bound discovery after upgrading as a new mapping review. Legacy Samsara device rows have no verified provider-organization identity, so OpsTrax does not infer or copy their installation assignment onto newly discovered account-bound devices.
 3. Confirm discovered provider identities appear without an inferred OpsTrax asset assignment.
 4. Retain one real unmatched example and one provider identity/provenance example, redacted as needed.
 

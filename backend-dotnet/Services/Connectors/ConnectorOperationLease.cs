@@ -12,7 +12,8 @@ public sealed record ConnectorOperationContext(
     string IntegrationKey,
     object? ConfigJson,
     string Status,
-    bool IsSyncOperation);
+    bool IsSyncOperation,
+    string? ProviderAccountReference = null);
 
 public sealed class StaleConnectorOperationException(string message) : InvalidOperationException(message);
 
@@ -46,7 +47,7 @@ public static class ConnectorOperationLease
                     AND status = ANY(@statuses)
                     AND (operation_lease_token IS NULL OR operation_lease_expires_at <= NOW())
                   RETURNING company_id,id,operation_generation,operation_lease_token,
-                            integration_key,config_json,status",
+                            integration_key,config_json,status,provider_account_ref",
                 c =>
                 {
                     c.Parameters.AddWithValue("@token", token);
@@ -65,7 +66,8 @@ public static class ConnectorOperationLease
                 row["integrationKey"]?.ToString() ?? "",
                 row.GetValueOrDefault("configJson"),
                 row["status"]?.ToString() ?? "",
-                isSyncOperation);
+                isSyncOperation,
+                row.GetValueOrDefault("providerAccountRef")?.ToString());
         }, ct);
     }
 
@@ -97,6 +99,8 @@ public static class ConnectorOperationLease
                 @"UPDATE integrations SET
                       status=CASE WHEN @ok THEN 'Connected' ELSE 'Error' END,
                       last_tested_at=NOW(),last_test_ok=@ok,last_test_message=@message,
+                      provider_account_ref=CASE WHEN @ok THEN @providerAccount ELSE NULL END,
+                      provider_account_verified_at=CASE WHEN @ok AND @providerAccount IS NOT NULL THEN NOW() ELSE NULL END,
                       operation_lease_token=NULL,operation_lease_expires_at=NULL,updated_at=NOW()
                   WHERE company_id=@cid AND id=@id
                     AND operation_generation=@generation
@@ -107,6 +111,10 @@ public static class ConnectorOperationLease
                     Bind(c, operation);
                     c.Parameters.AddWithValue("@ok", result.Success);
                     c.Parameters.AddWithValue("@message", (object?)result.Message ?? DBNull.Value);
+                    c.Parameters.Add(new NpgsqlParameter("@providerAccount", NpgsqlDbType.Varchar)
+                    {
+                        Value = (object?)result.ProviderAccountReference ?? DBNull.Value
+                    });
                 }, ct), ct);
 
     public static Task<int> CompleteSyncAsync(
