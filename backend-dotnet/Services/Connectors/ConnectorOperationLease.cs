@@ -138,6 +138,43 @@ public static class ConnectorOperationLease
                     });
                 }, ct), ct);
 
+    // Camera safety uses the same generation-bound provider-operation fence as GPS,
+    // but owns an independent cursor and outcome. A missing Safety & Cameras scope
+    // must not turn a working vehicle-statistics connection into Integration.Error.
+    public static Task<int> CompleteCameraSafetySyncAsync(
+        Database db,
+        ConnectorOperationContext operation,
+        ConnectorResult result,
+        string startTimeUtc,
+        string? nextCursor,
+        CancellationToken ct) => db.RunInSystemTransactionAsync(async () =>
+            await db.ExecuteAsync(
+                @"UPDATE integrations SET
+                      config_json=COALESCE(config_json,'{}'::jsonb)
+                        || jsonb_build_object(
+                             'cameraSafetyStartTime',@startTime::text,
+                             'cameraSafetyLastCompletedAt',@completedAt::text,
+                             'cameraSafetyLastOk',@ok,
+                             'cameraSafetyStatus',CASE WHEN @ok THEN 'ProviderDataPendingVerification' ELSE 'AttentionRequired' END)
+                        || CASE WHEN @cursor IS NULL THEN '{}'::jsonb
+                                ELSE jsonb_build_object('cameraSafetyCursor',@cursor::text) END,
+                      operation_lease_token=NULL,operation_lease_expires_at=NULL,updated_at=NOW()
+                  WHERE company_id=@cid AND id=@id
+                    AND operation_generation=@generation
+                    AND operation_lease_token=@token
+                    AND operation_lease_expires_at > NOW()",
+                c =>
+                {
+                    Bind(c, operation);
+                    c.Parameters.AddWithValue("@ok", result.Success);
+                    c.Parameters.AddWithValue("@startTime", startTimeUtc);
+                    c.Parameters.AddWithValue("@completedAt", DateTimeOffset.UtcNow.ToString("O"));
+                    c.Parameters.Add(new NpgsqlParameter("@cursor", NpgsqlDbType.Text)
+                    {
+                        Value = (object?)nextCursor ?? DBNull.Value
+                    });
+                }, ct), ct);
+
     public static Task<int> ReleaseAsErrorAsync(
         Database db,
         ConnectorOperationContext operation,

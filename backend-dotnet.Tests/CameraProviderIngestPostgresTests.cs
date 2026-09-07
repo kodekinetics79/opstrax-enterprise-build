@@ -1,9 +1,11 @@
 using System.Text;
+using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using Opstrax.Api.Data;
 using Opstrax.Api.Services;
+using Opstrax.Api.Services.Connectors;
 using Xunit.Sdk;
 
 namespace Opstrax.Tests;
@@ -12,6 +14,84 @@ namespace Opstrax.Tests;
 public sealed class CameraProviderIngestPostgresTests
 {
     private static readonly DateTimeOffset Now = new(2026, 9, 7, 12, 0, 0, TimeSpan.Zero);
+
+    [Fact]
+    public async Task CameraSyncCompletion_PreservesGpsHealthAndOwnsIndependentCursor()
+    {
+        var database = new Database(new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["ConnectionStrings:DefaultConnection"] = GuardedConnection() }).Build());
+        var suffix = Guid.NewGuid().ToString("N");
+        var companyId = await InsertId(database,
+            "INSERT INTO companies(company_code,name,industry) VALUES(@code,'Camera cursor tenant','Testing') RETURNING id",
+            command => command.Parameters.AddWithValue("code", $"CURSOR-{suffix}"));
+        long integrationId = 0;
+        try
+        {
+            var lease = Guid.NewGuid();
+            integrationId = await InsertId(database, """
+                INSERT INTO integrations(
+                  company_id,provider_name,category,status,integration_key,config_json,
+                  operation_generation,operation_lease_token,operation_lease_expires_at)
+                VALUES(@company,'Samsara','Telematics & ELD','Connected','samsara',
+                  '{"syncCursor":"gps-cursor"}'::jsonb,3,@lease,NOW()+INTERVAL '1 minute')
+                RETURNING id
+                """, command =>
+                {
+                    command.Parameters.AddWithValue("company", companyId);
+                    command.Parameters.AddWithValue("lease", lease);
+                });
+            var operation = new ConnectorOperationContext(
+                companyId, integrationId, 3, lease, "samsara", null, "Connected", false);
+            var failed = ConnectorResult.Fail("Safety scope denied");
+
+            Assert.Equal(1, await ConnectorOperationLease.CompleteCameraSafetySyncAsync(
+                database, operation, failed, "2026-09-07T00:00:00Z", null, CancellationToken.None));
+            var afterFailure = await database.QuerySingleAsync(
+                "SELECT status,config_json,operation_lease_token FROM integrations WHERE id=@id",
+                command => command.Parameters.AddWithValue("id", integrationId));
+            Assert.Equal("Connected", afterFailure!["status"]);
+            Assert.Null(afterFailure["operationLeaseToken"]);
+            using (var config = JsonDocument.Parse(afterFailure["configJson"]!.ToString()!))
+            {
+                Assert.Equal("gps-cursor", config.RootElement.GetProperty("syncCursor").GetString());
+                Assert.False(config.RootElement.GetProperty("cameraSafetyLastOk").GetBoolean());
+                Assert.Equal("AttentionRequired", config.RootElement.GetProperty("cameraSafetyStatus").GetString());
+                Assert.False(config.RootElement.TryGetProperty("cameraSafetyCursor", out _));
+            }
+
+            var nextLease = Guid.NewGuid();
+            await database.ExecuteAsync("""
+                UPDATE integrations SET operation_lease_token=@lease,
+                  operation_lease_expires_at=NOW()+INTERVAL '1 minute' WHERE id=@id
+                """, command =>
+                {
+                    command.Parameters.AddWithValue("lease", nextLease);
+                    command.Parameters.AddWithValue("id", integrationId);
+                });
+            operation = operation with { LeaseToken = nextLease };
+            Assert.Equal(1, await ConnectorOperationLease.CompleteCameraSafetySyncAsync(
+                database, operation, ConnectorResult.Ok("recorded"),
+                "2026-09-07T00:00:00Z", "camera-cursor", CancellationToken.None));
+
+            var afterSuccess = await database.QuerySingleAsync(
+                "SELECT status,config_json FROM integrations WHERE id=@id",
+                command => command.Parameters.AddWithValue("id", integrationId));
+            Assert.Equal("Connected", afterSuccess!["status"]);
+            using var successfulConfig = JsonDocument.Parse(afterSuccess["configJson"]!.ToString()!);
+            Assert.Equal("gps-cursor", successfulConfig.RootElement.GetProperty("syncCursor").GetString());
+            Assert.Equal("camera-cursor", successfulConfig.RootElement.GetProperty("cameraSafetyCursor").GetString());
+            Assert.True(successfulConfig.RootElement.GetProperty("cameraSafetyLastOk").GetBoolean());
+            Assert.Equal("ProviderDataPendingVerification", successfulConfig.RootElement.GetProperty("cameraSafetyStatus").GetString());
+        }
+        finally
+        {
+            if (integrationId > 0)
+                await database.ExecuteAsync("DELETE FROM integrations WHERE id=@id",
+                    command => command.Parameters.AddWithValue("id", integrationId));
+            await database.ExecuteAsync("DELETE FROM companies WHERE id=@id",
+                command => command.Parameters.AddWithValue("id", companyId));
+        }
+    }
 
     [Fact]
     public async Task Intake_IsReplaySafeQuarantinesConflictsAndSupportsLateAssignment()

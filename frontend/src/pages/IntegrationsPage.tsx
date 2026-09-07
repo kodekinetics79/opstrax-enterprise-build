@@ -160,7 +160,7 @@ function integrationFields(record: IntegrationRecord): ConfigField[] {
         label: "Samsara API token",
         type: "text",
         placeholder: "Paste a tenant-authorized token",
-        note: "Requires Read Vehicles and Read Vehicle Statistics. OpsTrax stores the token encrypted and never displays it again.",
+        note: "GPS requires Read Vehicles and Read Vehicle Statistics. Camera intake separately requires Read Safety Events & Scores; the connection test does not claim that camera scope. OpsTrax stores the token encrypted and never displays it again.",
       },
     ];
   }
@@ -290,6 +290,7 @@ function ConfigDrawer({
   const [testResult, setTestResult] = useState<{ success: boolean; message: string; details?: Record<string, unknown> | null } | null>(null);
   const [discoveryResult, setDiscoveryResult] = useState<IntegrationTestResult | null>(null);
   const [validationResult, setValidationResult] = useState<IntegrationTestResult | null>(null);
+  const [cameraSafetyResult, setCameraSafetyResult] = useState<IntegrationTestResult | null>(null);
 
   useEffect(() => {
     setForm(buildFormState(integration));
@@ -297,6 +298,7 @@ function ConfigDrawer({
     setTestResult(null);
     setDiscoveryResult(null);
     setValidationResult(null);
+    setCameraSafetyResult(null);
   }, [integration]);
 
   useEffect(() => {
@@ -418,6 +420,24 @@ function ConfigDrawer({
       setDiscoveryResult({
         success: false,
         message: error instanceof Error ? error.message : "Device discovery failed. Please try again.",
+      });
+      void qc.invalidateQueries({ queryKey: ["integrations"] });
+    },
+  });
+
+  const cameraSafetyMut = useMutation({
+    mutationFn: () => integrationsApi.syncCameraSafety(integration.id),
+    onSuccess: async (result: IntegrationTestResult) => {
+      setCameraSafetyResult(result);
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["integrations"] }),
+        qc.invalidateQueries({ queryKey: ["dashcam", "provider-status"] }),
+      ]);
+    },
+    onError: (error) => {
+      setCameraSafetyResult({
+        success: false,
+        message: error instanceof Error ? error.message : "Camera safety intake failed. Please try again.",
       });
       void qc.invalidateQueries({ queryKey: ["integrations"] });
     },
@@ -638,6 +658,39 @@ function ConfigDrawer({
                       {validationResult.details ? (
                         <p className="mt-1 tabular-nums">
                           Written {Number(validationResult.details.positionsWritten ?? 0)} · Unmatched {Number(validationResult.details.unmatched ?? 0)} · Historical {Number(validationResult.details.historicalOnly ?? 0)} · Rejected {Number(validationResult.details.rejected ?? 0)}
+                        </p>
+                      ) : null}
+                    </div>
+                  )}
+                </li>
+                <li className="rounded-xl border border-amber-200 bg-amber-50/60 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm font-bold text-slate-800">4. Intake camera safety events</p>
+                    <span className="rounded-full border border-amber-300 bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-amber-700">
+                      External hold
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs leading-5 text-slate-600">
+                    Pull the real Samsara safety-event stream into the protected intake ledger. This records provider payload evidence only. Camera media, provider verification, privacy acceptance, and certification stay on External hold.
+                  </p>
+                  <button
+                    type="button"
+                    className="btn-ghost mt-2 text-xs"
+                    disabled={!canManage || cameraSafetyMut.isPending || !(testResult?.success || integration.lastTestOk)}
+                    onClick={() => {
+                      setCameraSafetyResult(null);
+                      cameraSafetyMut.mutate();
+                    }}
+                  >
+                    {cameraSafetyMut.isPending ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Activity className="h-3.5 w-3.5" />}
+                    {cameraSafetyMut.isPending ? "Recording provider events..." : "Sync camera safety intake"}
+                  </button>
+                  {cameraSafetyResult && (
+                    <div role="status" aria-live="polite" className={`mt-2 rounded-lg border px-3 py-2 text-xs ${cameraSafetyResult.success ? "border-amber-200 bg-white text-amber-900" : "border-red-200 bg-red-50 text-red-700"}`}>
+                      <p className="font-semibold">{cameraSafetyResult.message}</p>
+                      {cameraSafetyResult.details ? (
+                        <p className="mt-1 tabular-nums">
+                          Observed {Number(cameraSafetyResult.details.eventsObserved ?? 0)} · Accepted {Number(cameraSafetyResult.details.eventsAccepted ?? 0)} · Replayed {Number(cameraSafetyResult.details.eventsReplayed ?? 0)} · Quarantined {Number(cameraSafetyResult.details.eventsQuarantined ?? 0)}
                         </p>
                       ) : null}
                     </div>

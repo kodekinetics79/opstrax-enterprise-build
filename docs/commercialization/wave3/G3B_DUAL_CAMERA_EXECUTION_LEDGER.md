@@ -83,6 +83,16 @@ The customer camera page now reads a separate tenant/branch-scoped operational s
 
 This completes the safe status/observability slice only. A provider-pending camera event will not appear in the customer event table until a real authenticated adapter has parsed an authentic provider response and the customer projection is proven against that provider account.
 
+## 2026-09-07 INTEGRATE increment — Samsara safety-event intake adapter
+
+Status: **INTEGRATE CODE COMPLETE / PROVIDER EXECUTION EXTERNAL HOLD / CERTIFY EXTERNAL HOLD**
+
+The registered Samsara connector now has a separate bounded camera-safety lane using the Safety Events Stream with an `updatedAtTime` cursor. It parses exact provider event bytes, rejects ambiguous asset identities, malformed timestamps, duplicate IDs and broken pagination, then sends the accepted envelope to the Stage 112 protected ledger. The camera cursor, completion time and result are stored separately from GPS health, so a missing camera permission cannot mark working telematics as failed. Credential replacement clears both provider cursors, and the intake account reference includes the connector generation so evidence from different credential generations cannot collide.
+
+The Samsara configuration journey now exposes a distinct **Intake camera safety events** action and refreshes the customer camera status projection after it runs. The result shows observed, accepted, replayed and quarantined counts while continuing to state that media, provider verification, privacy acceptance and certification are on External hold. The adapter does not ingest signed media URLs and does not manufacture a playable clip or authoritative safety event.
+
+Verification for this increment uses controlled provider-response fixtures plus the isolated Stage 112 PostgreSQL role. Those fixtures prove parser, retry, cursor, quarantine, independent GPS/camera state and customer-copy behavior; they are software evidence only. No authorized Samsara account was contacted and no real camera event, media object, device or customer journey is claimed by this increment.
+
 ## External evidence still required
 
 - authorized Samsara organization/account/token with Safety & Cameras scopes and written commercial integration rights;

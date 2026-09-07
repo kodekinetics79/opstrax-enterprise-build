@@ -989,6 +989,7 @@ public static partial class EndpointMappings
         app.MapPost("/api/integrations/{id:long}/connect", IntegrationTestConnection);
         app.MapPost("/api/integrations/{id:long}/disconnect", DisconnectIntegration);
         app.MapPost("/api/integrations/{id:long}/sync", IntegrationSync);
+        app.MapPost("/api/integrations/{id:long}/camera-safety/sync", IntegrationCameraSafetySync);
         app.MapPost("/api/integrations/{id:long}/configure", ConfigureIntegration);
         app.MapPost("/api/integrations/{id:long}/oauth/motive/start", MotiveOAuthStart);
         app.MapPost("/api/integrations/{id:long}/oauth/motive/preflight", MotiveOAuthPreflight);
@@ -12036,6 +12037,90 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             result.Success ? "Sync completed" : "Sync failed"));
     }
 
+    private static async Task<IResult> IntegrationCameraSafetySync(
+        HttpContext http,
+        long id,
+        Database db,
+        AuditService audit,
+        Opstrax.Api.Services.Connectors.ConnectorRegistry connectors,
+        CancellationToken ct)
+    {
+        if (IntegrationsManageGuard(http) is { } denied) return denied;
+        if (await RequireIntegrationsModule(http, db, ct) is { } gated) return gated;
+        var companyId = GetCompanyId(http);
+        if (await RequireAvailableIntegrationAdapterAsync(db, companyId, id, connectors, ct) is { } unavailable)
+            return unavailable;
+
+        var provider = await db.QuerySingleAsync(
+            "SELECT integration_key FROM integrations WHERE company_id=@cid AND id=@id LIMIT 1",
+            command =>
+            {
+                command.Parameters.AddWithValue("@cid", companyId);
+                command.Parameters.AddWithValue("@id", id);
+            }, ct);
+        if (provider is null) return Results.NotFound(ApiResponse<object>.Fail("Integration not found"));
+        if (!string.Equals(provider["integrationKey"]?.ToString(), "samsara", StringComparison.OrdinalIgnoreCase))
+            return Results.Json(
+                ApiResponse<object>.Fail("Camera safety sync is currently available only for the Samsara adapter."),
+                statusCode: StatusCodes.Status422UnprocessableEntity);
+
+        // Share the provider-operation fence with GPS so configure/disconnect can
+        // invalidate either action, while leaving GPS sync status and cursor alone.
+        var operation = await Opstrax.Api.Services.Connectors.ConnectorOperationLease.TryAcquireAsync(
+            db, companyId, id, ["Connected"], TimeSpan.FromSeconds(90), ct,
+            isSyncOperation: false);
+        if (operation is null)
+            return Results.Conflict(ApiResponse<object>.Fail(
+                "Verify the Samsara connection and wait for any active connector operation before syncing camera safety events."));
+
+        var storedConfig = Opstrax.Api.Services.Connectors.ConnectorRegistry.RedactConfig(operation.ConfigJson);
+        var cursor = storedConfig.TryGetValue("cameraSafetyCursor", out var cursorValue)
+            ? cursorValue?.ToString()
+            : null;
+        var startTime = storedConfig.TryGetValue("cameraSafetyStartTime", out var startValue)
+            ? startValue?.ToString()
+            : DateTimeOffset.UtcNow.AddHours(-24).ToString("O");
+        var connector = connectors.Resolve(operation.IntegrationKey);
+        var config = connectors.DecryptConfig(operation.ConfigJson);
+        using var bodyDocument = System.Text.Json.JsonDocument.Parse(
+            System.Text.Json.JsonSerializer.Serialize(new
+            {
+                action = "sync-camera-safety",
+                companyId,
+                integrationId = id,
+                operationGeneration = operation.Generation,
+                operationLeaseToken = operation.LeaseToken,
+                cursor,
+                startTime,
+                maxPages = 20,
+                maxDurationSeconds = 75,
+            }));
+        var result = await connector.RunActionAsync(
+            "sync-camera-safety", config, bodyDocument.RootElement, ct);
+        var nextCursor = result.Details?.GetValueOrDefault("nextCursor")?.ToString();
+        var affected = await Opstrax.Api.Services.Connectors.ConnectorOperationLease.CompleteCameraSafetySyncAsync(
+            db, operation, result, startTime ?? string.Empty, nextCursor, ct);
+        if (affected == 0)
+            return Results.Conflict(ApiResponse<object>.Fail(
+                "The connector operation was invalidated before completion; stale camera safety state was not committed."));
+
+        await audit.LogAsync(
+            http,
+            result.Success ? "integration.camera_safety.synced" : "integration.camera_safety.sync_failed",
+            "Integration",
+            id,
+            detailsJson: System.Text.Json.JsonSerializer.Serialize(new
+            {
+                message = result.Message,
+                providerVerificationStatus = CameraProviderIngestService.ExternalHold,
+                certificationStatus = CameraProviderIngestService.ExternalHold,
+            }),
+            ct: ct);
+        return Results.Ok(ApiResponse<object>.Ok(
+            new { success = result.Success, message = result.Message, details = result.Details },
+            result.Success ? "Camera safety intake completed" : "Camera safety intake failed"));
+    }
+
     private static async Task<IResult> ConfigureIntegration(HttpContext http, long id, System.Text.Json.JsonElement body, Database db, AuditService audit,
         Opstrax.Api.Services.Connectors.ConnectorRegistry connectors, CancellationToken ct)
     {
@@ -12044,6 +12129,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         var companyId = GetCompanyId(http);
         var adapterUnavailable = false;
         var oauthOnly = false;
+        var credentialsChanged = Opstrax.Api.Services.Connectors.ConnectorRegistry.ContainsCredentialMutation(body);
         var configured = await RunLockedIntegrationMutationAsync(db, companyId, id, async existing =>
         {
             var isCustom = existing.TryGetValue("isCustom", out var customRaw) && customRaw is bool custom && custom;
@@ -12064,7 +12150,16 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             var configJson = connectors.MergeConfigForStorage(body, existing.GetValueOrDefault("configJson"));
             return await db.ExecuteAsync(
                 @"UPDATE integrations SET
-                      config_json = @config::jsonb,
+                      config_json = CASE WHEN @credentialsChanged
+                          THEN @config::jsonb
+                              - 'syncCursor'
+                              - 'cameraSafetyCursor'
+                              - 'cameraSafetyStartTime'
+                              - 'cameraSafetyLastCompletedAt'
+                              - 'cameraSafetyLastOk'
+                              - 'cameraSafetyStatus'
+                          ELSE @config::jsonb
+                      END,
                       status = 'Pending',
                       last_tested_at = NULL,
                       last_test_ok = NULL,
@@ -12083,6 +12178,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
                     c.Parameters.AddWithValue("@cid", companyId);
                     c.Parameters.AddWithValue("@id", id);
                     c.Parameters.AddWithValue("@config", configJson);
+                    c.Parameters.AddWithValue("@credentialsChanged", credentialsChanged);
                 }, ct);
         }, ct);
         if (adapterUnavailable)
@@ -12157,7 +12253,8 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         // generic action body to provide that scope: the dedicated /sync route builds
         // companyId from the authenticated tenant and the stored connector cursor.
         if (action.Equals("sync", StringComparison.OrdinalIgnoreCase) ||
-            action.Equals("sync-telemetry", StringComparison.OrdinalIgnoreCase))
+            action.Equals("sync-telemetry", StringComparison.OrdinalIgnoreCase) ||
+            action.Equals("sync-camera-safety", StringComparison.OrdinalIgnoreCase))
             return Results.Json(ApiResponse<object>.Fail("Use the tenant-scoped integration sync endpoint"),
                 statusCode: StatusCodes.Status422UnprocessableEntity);
 

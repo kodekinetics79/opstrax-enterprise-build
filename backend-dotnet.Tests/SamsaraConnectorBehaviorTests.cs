@@ -284,6 +284,82 @@ public sealed class SamsaraConnectorBehaviorTests
     }
 
     [Fact]
+    public async Task CameraSafetySync_UsesDedicatedStreamAndKeepsExternalHoldsExplicit()
+    {
+        var handler = new ScriptedHandler(_ => Json(HttpStatusCode.OK,
+            """{"data":[],"pagination":{"endCursor":"camera-next","hasNextPage":false}}"""));
+        var connector = Connector(handler);
+        using var body = CameraOperationBody();
+
+        var result = await connector.RunActionAsync(
+            "sync-camera-safety", Config(), body.RootElement, CancellationToken.None);
+
+        Assert.True(result.Success, result.Message);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal("/safety-events/stream", request.AbsolutePath);
+        Assert.Contains("startTime=2026-09-07T00%3A00%3A00", request.Query, StringComparison.Ordinal);
+        Assert.Contains("queryByTimeField=updatedAtTime", request.Query, StringComparison.Ordinal);
+        Assert.DoesNotContain("/fleet/vehicles/stats/feed", request.AbsolutePath, StringComparison.Ordinal);
+        Assert.Equal("camera-next", result.Details!["nextCursor"]);
+        Assert.Equal("ExternalHold", result.Details["providerVerificationStatus"]);
+        Assert.Equal("ExternalHold", result.Details["certificationStatus"]);
+        Assert.Equal(false, result.Details["mediaAvailable"]);
+    }
+
+    [Fact]
+    public async Task CameraSafetySync_DeniedScopeFailsWithoutClaimingProviderEvidence()
+    {
+        var handler = new ScriptedHandler(_ => Json(HttpStatusCode.Forbidden, "{}"));
+        var connector = Connector(handler);
+        using var body = CameraOperationBody();
+
+        var result = await connector.RunActionAsync(
+            "sync-camera-safety", Config(), body.RootElement, CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.Contains("Safety Events & Scores", result.Message, StringComparison.Ordinal);
+        Assert.Equal(0, result.Details!["eventsObserved"]);
+        Assert.Null(result.Details["nextCursor"]);
+        Assert.Equal("ExternalHold", result.Details["providerVerificationStatus"]);
+    }
+
+    [Fact]
+    public async Task CameraSafetySync_RejectsCursorCycleWithoutPublishingCyclicCursor()
+    {
+        var cursors = new Queue<string>(["A", "B", "A"]);
+        var handler = new ScriptedHandler(_ => Json(HttpStatusCode.OK,
+            $$$"""{"data":[],"pagination":{"endCursor":"{{{cursors.Dequeue()}}}","hasNextPage":true}}"""));
+        var connector = Connector(handler);
+        using var body = CameraOperationBody();
+
+        var result = await connector.RunActionAsync(
+            "sync-camera-safety", Config(), body.RootElement, CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.Contains("did not advance", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(3, handler.Requests.Count);
+        Assert.Null(result.Details!["nextCursor"]);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("2026-09-06T20:00:00-04:00")]
+    [InlineData("not-a-time")]
+    public async Task CameraSafetySync_RequiresStableUtcStartTime(string? startTime)
+    {
+        var handler = new ScriptedHandler(_ => throw new InvalidOperationException("network must not run"));
+        var connector = Connector(handler);
+        using var body = CameraOperationBody(startTime: startTime);
+
+        var result = await connector.RunActionAsync(
+            "sync-camera-safety", Config(), body.RootElement, CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.Contains("stable RFC 3339 UTC", result.Message, StringComparison.Ordinal);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
     public void SyncSource_DeduplicatesBeforeProjectionAndProjectsAlertsInOneTransaction()
     {
         var source = ReadRepositoryFile("backend-dotnet", "Services", "Connectors", "SamsaraSync.cs");
@@ -320,6 +396,8 @@ public sealed class SamsaraConnectorBehaviorTests
             {
                 ["Samsara:MaxPagesPerSync"] = maxPages.ToString(),
                 ["Samsara:InterPageDelayMs"] = "0",
+                ["Samsara:CameraSafetyMaxPagesPerSync"] = maxPages.ToString(),
+                ["Samsara:CameraSafetyInterPageDelayMs"] = "200",
             })
             .Build();
         return new SamsaraConnector(
@@ -340,6 +418,19 @@ public sealed class SamsaraConnectorBehaviorTests
             operationGeneration = 0,
             operationLeaseToken = "11111111-1111-1111-1111-111111111111",
             cursor,
+        }));
+
+    private static JsonDocument CameraOperationBody(
+        string? cursor = null,
+        string? startTime = "2026-09-07T00:00:00Z") => JsonDocument.Parse(
+        JsonSerializer.Serialize(new
+        {
+            companyId = 17,
+            integrationId = 23,
+            operationGeneration = 0,
+            operationLeaseToken = "11111111-1111-1111-1111-111111111111",
+            cursor,
+            startTime,
         }));
 
     private static HttpResponseMessage Json(HttpStatusCode status, string body) => new(status)

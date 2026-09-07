@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Opstrax.Api.Data;
+using Opstrax.Api.Services;
 
 namespace Opstrax.Api.Services.Connectors;
 
@@ -138,9 +139,12 @@ public sealed class SamsaraConnector(
     // ── Live actions: sync ─────────────────────────────────────────────────────────
     public async Task<ConnectorResult> RunActionAsync(string action, IReadOnlyDictionary<string, string?> config, JsonElement? body, CancellationToken ct)
     {
-        if (!string.Equals(action, "sync", StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(action, "sync-telemetry", StringComparison.OrdinalIgnoreCase))
-            return ConnectorResult.Fail($"Action '{action}' is not supported by Samsara. Use 'sync'.");
+        var telemetrySync = string.Equals(action, "sync", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(action, "sync-telemetry", StringComparison.OrdinalIgnoreCase);
+        var cameraSafetySync = string.Equals(action, "sync-camera-safety", StringComparison.OrdinalIgnoreCase);
+        if (!telemetrySync && !cameraSafetySync)
+            return ConnectorResult.Fail(
+                $"Action '{action}' is not supported by Samsara. Use 'sync' or 'sync-camera-safety'.");
 
         var token = Token(config);
         if (string.IsNullOrWhiteSpace(token))
@@ -157,7 +161,10 @@ public sealed class SamsaraConnector(
             return ConnectorResult.Fail("Sync requires a valid generation-bound connector operation lease.");
         var operation = new ConnectorOperationContext(
             companyId, integrationId, operationGeneration, operationLeaseToken, "samsara", null, "Connected",
-            IsSyncOperation: true);
+            IsSyncOperation: telemetrySync);
+        if (cameraSafetySync)
+            return await RunCameraSafetyActionAsync(token!, operation, body, ct);
+
         var afterCursor = body is { } b2 && b2.TryGetProperty("cursor", out var cur) ? cur.GetString() : null;
         var cursor = afterCursor;
         var positionsWritten = 0;
@@ -282,6 +289,165 @@ public sealed class SamsaraConnector(
                 (paginationIntegrityFailure
                     ? "the pre-run durable cursor was preserved because pagination integrity failed."
                     : "their latest cursor will resume on a later run; no partial page is claimed."),
+                persistCursor: !paginationIntegrityFailure);
+        }
+    }
+
+    private async Task<ConnectorResult> RunCameraSafetyActionAsync(
+        string token,
+        ConnectorOperationContext operation,
+        JsonElement? body,
+        CancellationToken ct)
+    {
+        var startTimeRaw = body is { } bs && bs.TryGetProperty("startTime", out var start)
+            ? start.GetString()
+            : null;
+        if (!DateTimeOffset.TryParseExact(
+                startTimeRaw,
+                ["yyyy-MM-dd'T'HH:mm:ssK", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFFK"],
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None,
+                out var startTime)
+            || startTime.Offset != TimeSpan.Zero)
+            return ConnectorResult.Fail(
+                "Samsara camera safety sync requires a stable RFC 3339 UTC startTime.");
+
+        var cursor = body is { } b2 && b2.TryGetProperty("cursor", out var cur) ? cur.GetString() : null;
+        var eventsObserved = 0;
+        var eventsAccepted = 0;
+        var eventsReplayed = 0;
+        var eventsQuarantined = 0;
+        var pagesCommitted = 0;
+        var hasNextPage = false;
+        var paginationIntegrityFailure = false;
+        var requestedDurationSeconds = body is { } bmd
+            && bmd.TryGetProperty("maxDurationSeconds", out var mds)
+            && mds.TryGetInt32(out var requestedSeconds)
+                ? requestedSeconds
+                : configuration.GetValue("Samsara:CameraSafetyMaxDurationSeconds", 60);
+        var maxDurationSeconds = Math.Clamp(requestedDurationSeconds, 10, 90);
+        using var boundedCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        boundedCts.CancelAfter(TimeSpan.FromSeconds(maxDurationSeconds));
+
+        ConnectorResult Failure(string message, bool persistCursor = true) => ConnectorResult.Fail(
+            message,
+            new Dictionary<string, object?>
+            {
+                ["lane"] = "camera-safety",
+                ["eventsObserved"] = eventsObserved,
+                ["eventsAccepted"] = eventsAccepted,
+                ["eventsReplayed"] = eventsReplayed,
+                ["eventsQuarantined"] = eventsQuarantined,
+                ["nextCursor"] = persistCursor && pagesCommitted > 0 ? cursor : null,
+                ["hasNextPage"] = hasNextPage,
+                ["boundedPartial"] = pagesCommitted > 0,
+                ["pagesCommitted"] = pagesCommitted,
+                ["providerVerificationStatus"] = CameraProviderIngestService.ExternalHold,
+                ["certificationStatus"] = CameraProviderIngestService.ExternalHold,
+                ["mediaAvailable"] = false,
+            });
+
+        try
+        {
+            using var client = Client(token);
+            var sync = new SamsaraCameraSafetySync(client, scopeFactory, logger);
+            var seenCursors = new HashSet<string>(StringComparer.Ordinal);
+            if (!string.IsNullOrWhiteSpace(cursor)) seenCursors.Add(cursor);
+            var completed = false;
+            var configuredMaxPages = Math.Clamp(
+                configuration.GetValue("Samsara:CameraSafetyMaxPagesPerSync", 20), 1, 100);
+            var requestedMaxPages = body is { } bmp
+                && bmp.TryGetProperty("maxPages", out var mp)
+                && mp.TryGetInt32(out var requestedPages)
+                    ? requestedPages
+                    : configuredMaxPages;
+            var maxPages = Math.Clamp(requestedMaxPages, 1, configuredMaxPages);
+            var interPageDelayMs = Math.Clamp(
+                configuration.GetValue("Samsara:CameraSafetyInterPageDelayMs", 250), 200, 2_000);
+            var runCt = boundedCts.Token;
+
+            for (var page = 0; page < maxPages; page++)
+            {
+                var pageSummary = await sync.RunAsync(
+                    operation, startTime, cursor, DateTimeOffset.UtcNow, runCt);
+                eventsObserved += pageSummary.EventsObserved;
+                eventsAccepted += pageSummary.EventsAccepted;
+                eventsReplayed += pageSummary.EventsReplayed;
+                eventsQuarantined += pageSummary.EventsQuarantined;
+                hasNextPage = pageSummary.HasNextPage;
+
+                if (pageSummary.EventsQuarantined > 0)
+                    throw new InvalidDataException(
+                        "Samsara camera evidence entered quarantine; the durable cursor was not advanced past that page.");
+
+                pagesCommitted++;
+                if (!hasNextPage)
+                {
+                    if (!string.IsNullOrWhiteSpace(pageSummary.NextCursor)) cursor = pageSummary.NextCursor;
+                    completed = true;
+                    break;
+                }
+
+                var candidateCursor = pageSummary.NextCursor;
+                if (string.IsNullOrWhiteSpace(candidateCursor) || !seenCursors.Add(candidateCursor))
+                {
+                    paginationIntegrityFailure = true;
+                    throw new InvalidOperationException(
+                        "Samsara camera safety pagination did not advance its cursor.");
+                }
+                cursor = candidateCursor;
+                await Task.Delay(TimeSpan.FromMilliseconds(interPageDelayMs), runCt);
+            }
+
+            var boundedPartial = !completed && hasNextPage;
+            return ConnectorResult.Ok(
+                $"Recorded {eventsObserved} Samsara safety event(s) in the provider intake ledger; "
+                + "provider verification, camera media and certification remain on External hold."
+                + (boundedPartial
+                    ? $" Reached the bounded {maxPages}-page run limit; the returned cursor will resume the backlog."
+                    : string.Empty),
+                new Dictionary<string, object?>
+                {
+                    ["lane"] = "camera-safety",
+                    ["eventsObserved"] = eventsObserved,
+                    ["eventsAccepted"] = eventsAccepted,
+                    ["eventsReplayed"] = eventsReplayed,
+                    ["eventsQuarantined"] = eventsQuarantined,
+                    ["nextCursor"] = cursor,
+                    ["hasNextPage"] = hasNextPage,
+                    ["boundedPartial"] = boundedPartial,
+                    ["providerVerificationStatus"] = CameraProviderIngestService.ExternalHold,
+                    ["certificationStatus"] = CameraProviderIngestService.ExternalHold,
+                    ["mediaAvailable"] = false,
+                });
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return Failure(ex.Message);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested && boundedCts.IsCancellationRequested)
+        {
+            return Failure(
+                "Samsara camera safety sync reached its bounded duration. Complete pages were retained; the latest committed cursor will resume the backlog.");
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (SamsaraResponseReader.ResponseTooLargeException)
+        {
+            return Failure(
+                "Samsara camera safety response exceeded the allowed size. Complete pages were retained; the oversized page was not consumed.");
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex,
+                "Samsara camera safety sync failed for company {Company}", operation.CompanyId);
+            return Failure(
+                $"Samsara camera safety sync failed: {ex.Message} Complete pages were retained; "
+                + (paginationIntegrityFailure
+                    ? "the pre-run durable cursor was preserved because pagination integrity failed."
+                    : "the latest committed cursor will resume the backlog."),
                 persistCursor: !paginationIntegrityFailure);
         }
     }

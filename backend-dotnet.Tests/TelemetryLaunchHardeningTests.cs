@@ -107,7 +107,10 @@ public sealed class TelemetryLaunchHardeningTests
         Assert.DoesNotContain("SetIntegrationStatus(http, id, \"Connected\"", sync, StringComparison.Ordinal);
         Assert.Contains("Status422UnprocessableEntity", sync, StringComparison.Ordinal);
         Assert.Contains("MergeConfigForStorage", configure, StringComparison.Ordinal);
-        Assert.Contains("config_json = @config::jsonb", configure, StringComparison.Ordinal);
+        Assert.Contains("ConnectorRegistry.ContainsCredentialMutation(body)", configure, StringComparison.Ordinal);
+        Assert.Contains("CASE WHEN @credentialsChanged", configure, StringComparison.Ordinal);
+        Assert.Contains("- 'syncCursor'", configure, StringComparison.Ordinal);
+        Assert.Contains("- 'cameraSafetyCursor'", configure, StringComparison.Ordinal);
         Assert.DoesNotContain("config_json,'{}'::jsonb) ||", configure, StringComparison.Ordinal);
         Assert.Contains("ConnectorOperationLease.CompleteTestAsync", testConnection, StringComparison.Ordinal);
         Assert.Contains("last_tested_at=NOW()", operationLease, StringComparison.Ordinal);
@@ -188,7 +191,7 @@ public sealed class TelemetryLaunchHardeningTests
         AssertOrdered(configure, "!connectors.HasAdapter(integrationKey)", "MergeConfigForStorage");
         Assert.Contains("No credentials were stored", configure, StringComparison.Ordinal);
         Assert.Contains("Status422UnprocessableEntity", configure, StringComparison.Ordinal);
-        Assert.Equal(3, Count(endpoints, "RequireAvailableIntegrationAdapterAsync(db, companyId, id, connectors, ct)"));
+        Assert.Equal(4, Count(endpoints, "RequireAvailableIntegrationAdapterAsync(db, companyId, id, connectors, ct)"));
         Assert.Contains("adapterAvailable: boolean", api, StringComparison.Ordinal);
         Assert.Contains("if (record.adapterAvailable !== true) return []", page, StringComparison.Ordinal);
         Assert.Contains("Adapter unavailable — evaluation only", page, StringComparison.Ordinal);
