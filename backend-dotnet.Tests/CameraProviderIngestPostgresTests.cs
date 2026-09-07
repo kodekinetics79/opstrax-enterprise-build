@@ -99,6 +99,209 @@ public sealed class CameraProviderIngestPostgresTests
             command => { command.Parameters.AddWithValue("company", companyId); command.Parameters.AddWithValue("integration", integrationId); });
 
     [Fact]
+    public async Task ProviderAsset_ReconcilesOnlyThroughExactAccountAndEventTimeInstallation()
+    {
+        var connectionString = GuardedConnection();
+        var database = new Database(new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> {
+                ["ConnectionStrings:DefaultConnection"] = connectionString,
+                ["ConnectionStrings:SystemConnection"] = connectionString,
+                ["Rls:EnforceTenantContext"] = "false"
+            }).Build());
+        var service = new CameraProviderIngestService(
+            database, new FixedTimeProvider(Now), NullLogger<CameraProviderIngestService>.Instance);
+        var suffix = Guid.NewGuid().ToString("N");
+        var companyId = await InsertId(database,
+            "INSERT INTO companies(company_code,name,industry) VALUES(@code,'Camera mapping tenant','Transportation') RETURNING id",
+            command => command.Parameters.AddWithValue("code", $"MAP-{suffix[..10]}"));
+
+        try
+        {
+            var branchOne = await InsertId(database,
+                "INSERT INTO branches(company_id,branch_code,name) VALUES(@company,@code,'Mapping branch one') RETURNING id",
+                command => { command.Parameters.AddWithValue("company", companyId); command.Parameters.AddWithValue("code", $"MB1-{suffix}"); });
+            var branchTwo = await InsertId(database,
+                "INSERT INTO branches(company_id,branch_code,name) VALUES(@company,@code,'Mapping branch two') RETURNING id",
+                command => { command.Parameters.AddWithValue("company", companyId); command.Parameters.AddWithValue("code", $"MB2-{suffix}"); });
+            var vehicleOne = await InsertId(database,
+                "INSERT INTO vehicles(company_id,branch_id,vehicle_code,type) VALUES(@company,@branch,@code,'Truck') RETURNING id",
+                command => { command.Parameters.AddWithValue("company", companyId); command.Parameters.AddWithValue("branch", branchOne); command.Parameters.AddWithValue("code", $"MV1-{suffix}"); });
+            var vehicleTwo = await InsertId(database,
+                "INSERT INTO vehicles(company_id,branch_id,vehicle_code,type) VALUES(@company,@branch,@code,'Truck') RETURNING id",
+                command => { command.Parameters.AddWithValue("company", companyId); command.Parameters.AddWithValue("branch", branchTwo); command.Parameters.AddWithValue("code", $"MV2-{suffix}"); });
+
+            async Task<long> Device(string asset, string account, string status = "Active") => await InsertId(database, """
+                INSERT INTO eld_devices(device_serial,device_model,provider,status,company_id,device_state,provider_account_ref,provider_external_id)
+                VALUES(@serial,'Samsara vehicle','Samsara',@status,@company,'Provisioned',@account,@asset)
+                RETURNING id
+                """, command =>
+                {
+                    command.Parameters.AddWithValue("serial", $"MAP-{suffix}-{asset}");
+                    command.Parameters.AddWithValue("status", status);
+                    command.Parameters.AddWithValue("company", companyId);
+                    command.Parameters.AddWithValue("account", account);
+                    command.Parameters.AddWithValue("asset", asset);
+                });
+
+            async Task<long> Installation(long deviceId, long vehicleId, long branchId, DateTimeOffset from, DateTimeOffset? to = null) =>
+                await InsertId(database, """
+                    INSERT INTO device_installations(company_id,branch_id,device_id,vehicle_id,status,effective_from,effective_to)
+                    VALUES(@company,@branch,@device,@vehicle,@status,@from,@to)
+                    RETURNING id
+                    """, command =>
+                    {
+                        command.Parameters.AddWithValue("company", companyId);
+                        command.Parameters.AddWithValue("branch", branchId);
+                        command.Parameters.AddWithValue("device", deviceId);
+                        command.Parameters.AddWithValue("vehicle", vehicleId);
+                        command.Parameters.AddWithValue("status", to.HasValue ? "Removed" : "Verified");
+                        command.Parameters.AddWithValue("from", from);
+                        command.Parameters.Add("to", NpgsqlTypes.NpgsqlDbType.TimestampTz).Value =
+                            to.HasValue ? to.Value : DBNull.Value;
+                    });
+
+            const string account = "samsara-org:mapping-account";
+            var payload = Encoding.UTF8.GetBytes("{\"provider\":\"account-bound-camera-event\"}");
+            var exactAsset = $"asset-exact-{suffix}";
+            var exactDevice = await Device(exactAsset, account);
+            var exactInstallation = await Installation(exactDevice, vehicleOne, branchOne, Now.AddHours(-1));
+            var exactEnvelope = Envelope($"mapped-{suffix}", null, null, null) with
+            {
+                ProviderAccountReference = account,
+                VehicleExternalId = exactAsset
+            };
+
+            var matched = await service.IngestAsync(companyId, exactEnvelope, payload);
+            Assert.Equal(CameraProviderIngestDisposition.Accepted, matched.Disposition);
+            Assert.Equal("Matched", matched.ReconciliationStatus);
+            Assert.Equal("ExternalHold", matched.ProviderVerificationStatus);
+            var stored = await database.QuerySingleAsync("""
+                SELECT device_id,device_installation_id,vehicle_id,branch_id
+                FROM camera_provider_event_inbox WHERE id=@id
+                """, command => command.Parameters.AddWithValue("id", matched.InboxId));
+            Assert.Equal(exactDevice, stored!["deviceId"]);
+            Assert.Equal(exactInstallation, stored["deviceInstallationId"]);
+            Assert.Equal(vehicleOne, stored["vehicleId"]);
+            Assert.Equal(branchOne, stored["branchId"]);
+
+            var wrongAccount = await service.IngestAsync(companyId, exactEnvelope with
+            {
+                ProviderEventId = $"wrong-account-{suffix}",
+                ProviderAccountReference = "samsara-org:another-account"
+            }, payload);
+            Assert.Equal("Pending", wrongAccount.ReconciliationStatus);
+
+            var futureAsset = $"asset-future-{suffix}";
+            var futureDevice = await Device(futureAsset, account);
+            await Installation(futureDevice, vehicleOne, branchOne, Now.AddMinutes(-1));
+            var outsideEffectivePeriod = await service.IngestAsync(companyId, exactEnvelope with
+            {
+                ProviderEventId = $"outside-period-{suffix}",
+                VehicleExternalId = futureAsset
+            }, payload);
+            Assert.Equal("Pending", outsideEffectivePeriod.ReconciliationStatus);
+
+            var inactiveAsset = $"asset-inactive-{suffix}";
+            await Device(inactiveAsset, account, "Inactive");
+            var ineligible = await service.IngestAsync(companyId, exactEnvelope with
+            {
+                ProviderEventId = $"ineligible-{suffix}",
+                VehicleExternalId = inactiveAsset
+            }, payload);
+            Assert.Equal(CameraProviderIngestDisposition.Quarantined, ineligible.Disposition);
+            Assert.Equal("provider_asset_device_ineligible", ineligible.QuarantineReason);
+
+            var ambiguousAsset = $"asset-ambiguous-{suffix}";
+            var ambiguousDevice = await Device(ambiguousAsset, account);
+            var supersededInstallation = await Installation(ambiguousDevice, vehicleOne, branchOne, Now.AddHours(-2));
+            var retainedInstallation = await Installation(ambiguousDevice, vehicleTwo, branchTwo, Now.AddHours(-1));
+            var ambiguousEnvelope = exactEnvelope with
+            {
+                ProviderEventId = $"ambiguous-{suffix}",
+                VehicleExternalId = ambiguousAsset
+            };
+            var ambiguous = await service.IngestAsync(companyId, ambiguousEnvelope, payload);
+            Assert.Equal(CameraProviderIngestDisposition.Quarantined, ambiguous.Disposition);
+            Assert.Equal("provider_asset_mapping_ambiguous", ambiguous.QuarantineReason);
+
+            await database.ExecuteAsync(
+                "UPDATE device_installations SET effective_to=@ended,status='Removed' WHERE id=@id",
+                command => { command.Parameters.AddWithValue("ended", Now.AddHours(-1)); command.Parameters.AddWithValue("id", supersededInstallation); });
+            var ambiguityResolved = await service.IngestAsync(companyId, ambiguousEnvelope, payload);
+            Assert.Equal(CameraProviderIngestDisposition.Replay, ambiguityResolved.Disposition);
+            Assert.Equal("Matched", ambiguityResolved.ReconciliationStatus);
+            var resolvedAmbiguity = await database.QuerySingleAsync("""
+                SELECT device_id,device_installation_id,vehicle_id,branch_id
+                FROM camera_provider_event_inbox WHERE id=@id
+                """, command => command.Parameters.AddWithValue("id", ambiguityResolved.InboxId));
+            Assert.Equal(ambiguousDevice, resolvedAmbiguity!["deviceId"]);
+            Assert.Equal(retainedInstallation, resolvedAmbiguity["deviceInstallationId"]);
+            Assert.Equal(vehicleTwo, resolvedAmbiguity["vehicleId"]);
+            Assert.Equal(branchTwo, resolvedAmbiguity["branchId"]);
+
+            var lateAsset = $"asset-late-{suffix}";
+            var lateDevice = await Device(lateAsset, account);
+            var lateEnvelope = exactEnvelope with
+            {
+                ProviderEventId = $"late-{suffix}",
+                VehicleExternalId = lateAsset
+            };
+            var pending = await service.IngestAsync(companyId, lateEnvelope, payload);
+            Assert.Equal("Pending", pending.ReconciliationStatus);
+            var lateInstallation = await Installation(lateDevice, vehicleTwo, branchTwo, Now.AddHours(-1));
+            var reconciled = await service.IngestAsync(companyId, lateEnvelope, payload);
+            Assert.Equal(CameraProviderIngestDisposition.Replay, reconciled.Disposition);
+            Assert.Equal("Matched", reconciled.ReconciliationStatus);
+            var lateStored = await database.QuerySingleAsync("""
+                SELECT device_id,device_installation_id,vehicle_id,branch_id
+                FROM camera_provider_event_inbox WHERE id=@id
+                """, command => command.Parameters.AddWithValue("id", reconciled.InboxId));
+            Assert.Equal(lateDevice, lateStored!["deviceId"]);
+            Assert.Equal(lateInstallation, lateStored["deviceInstallationId"]);
+            Assert.Equal(vehicleTwo, lateStored["vehicleId"]);
+            Assert.Equal(branchTwo, lateStored["branchId"]);
+
+            await database.ExecuteAsync(
+                "UPDATE device_installations SET effective_to=@occurred,status='Removed' WHERE id=@id",
+                command => { command.Parameters.AddWithValue("occurred", Now.AddMinutes(-2)); command.Parameters.AddWithValue("id", lateInstallation); });
+            var mappingDrift = await service.IngestAsync(companyId, lateEnvelope, payload);
+            Assert.Equal(CameraProviderIngestDisposition.Quarantined, mappingDrift.Disposition);
+            Assert.Equal("derived_mapping_conflict", mappingDrift.QuarantineReason);
+            var preserved = await database.QuerySingleAsync("""
+                SELECT device_id,device_installation_id,vehicle_id,branch_id,reconciliation_status
+                FROM camera_provider_event_inbox WHERE id=@id
+                """, command => command.Parameters.AddWithValue("id", reconciled.InboxId));
+            Assert.Equal(lateDevice, preserved!["deviceId"]);
+            Assert.Equal(lateInstallation, preserved["deviceInstallationId"]);
+            Assert.Equal(vehicleTwo, preserved["vehicleId"]);
+            Assert.Equal(branchTwo, preserved["branchId"]);
+            Assert.Equal("Quarantined", preserved["reconciliationStatus"]);
+
+            var immutable = await Assert.ThrowsAsync<PostgresException>(() => database.ExecuteAsync(
+                "UPDATE camera_provider_event_inbox SET device_id=@device,device_installation_id=@installation WHERE id=@id",
+                command =>
+                {
+                    command.Parameters.AddWithValue("device", exactDevice);
+                    command.Parameters.AddWithValue("installation", exactInstallation);
+                    command.Parameters.AddWithValue("id", reconciled.InboxId);
+                }));
+            Assert.Equal(PostgresErrorCodes.CheckViolation, immutable.SqlState);
+            Assert.Equal("ck_camera_provider_device_mapping_immutable", immutable.ConstraintName);
+        }
+        finally
+        {
+            await database.ExecuteAsync("""
+                DELETE FROM camera_provider_event_inbox WHERE company_id=@company;
+                DELETE FROM device_installations WHERE company_id=@company;
+                DELETE FROM eld_devices WHERE company_id=@company;
+                DELETE FROM vehicles WHERE company_id=@company;
+                DELETE FROM branches WHERE company_id=@company;
+                DELETE FROM companies WHERE id=@company
+                """, command => command.Parameters.AddWithValue("company", companyId));
+        }
+    }
+
+    [Fact]
     public async Task ConnectorLeaseFence_RejectsInvalidatedGenerationWithoutLedgerWrite()
     {
         var database = new Database(new ConfigurationBuilder().AddInMemoryCollection(

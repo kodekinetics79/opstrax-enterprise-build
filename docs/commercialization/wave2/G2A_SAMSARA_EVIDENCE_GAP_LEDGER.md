@@ -47,6 +47,7 @@ The following results are readiness evidence only and do not substitute for prov
 - Row-locked configuration tests cover configure-first and disconnect-first ordering and prove cleared credentials cannot be resurrected.
 - The database test also exposed and fixed a pre-conflict identity-trigger interaction: transaction-scoped advisory locking now prevents discovery from falsely quarantining an existing device.
 - Concurrent first discovery now has executable PostgreSQL evidence: both contenders resolve one device identity and create no ambiguity quarantine.
+- Camera safety intake now resolves the provider asset through the same verified organization boundary and the installation effective at event occurrence. Controlled PostgreSQL tests cover wrong-account isolation, missing/out-of-period mappings, inactive devices, overlapping installation repair and immutable mapping-drift quarantine. This is readiness evidence only; no authentic provider event or media is claimed.
 - Worker fairness has executable PostgreSQL evidence: failed attempts advance a durable attempt clock so a repeatedly failing prefix cannot permanently exclude later tenants from the bounded candidate window.
 - Samsara event-time transfer/backfill test proves delayed pre-transfer data stays on the ended installation and cannot overwrite the new vehicle's live state.
 - Valid provider fixes older than seven days are retained in history; impossible/future/invalid fixes are explicitly counted as rejected.
@@ -55,7 +56,7 @@ The following results are readiness evidence only and do not substitute for prov
 - Frontend lint, full contract suite, production build and bundle budget all passed.
 - Three independent AI SDET perspectives identified and re-reviewed the Stage 96 enrollment, sync/handshake truth, provider-event freshness, bounded-time and pagination-integrity cursor progress, recovery-runbook and announcement defects. A later main-agent hardening review found that the handshake proved only `Read Vehicles`, not the separate `Read Vehicle Statistics` scope, and that a malformed 200 response could omit required pagination state. The replacement working tree fixes both and adds regression coverage. AI review is supporting assurance only, not qualified-human Appendix B sign-off.
 - Exact candidate `1792c9b1882db51c7c43676aba0448bb4d6a346d` passed all 11 hosted controls in [workflow run `33628368029`](https://github.com/kodekinetics79/opstrax-enterprise-build/actions/runs/33628368029), including that run's exact-SHA evidence package. Those hosted results do not cover the later two-scope handshake/pagination working tree; no exact-SHA Wave 2 deployment or authenticated provider browser journey is claimed.
-- The current connector is a bounded polling implementation fixed to the US API cloud (`https://api.samsara.com`). EU/UK and Canada regional API clouds and webhook delivery are not claimed by this candidate.
+- The current connector is a bounded polling implementation with a strict selector for the official US, EU/UK and Canada API clouds. Each region remains field blocked until exercised with an authorized account in that cloud. Webhook delivery is not claimed by this candidate.
 
 ## Non-negotiable external dependencies
 

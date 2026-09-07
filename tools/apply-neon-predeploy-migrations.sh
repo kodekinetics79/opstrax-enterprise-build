@@ -254,6 +254,8 @@ MIGRATIONS=(
   2026_09_07_stage112_camera_provider_ingest_spine
   # Bind Samsara assets to the provider-issued organization identity verified by /me.
   2026_09_07_stage113_samsara_account_identity
+  # Preserve the exact effective installation used to reconcile a provider camera event.
+  2026_09_07_stage114_camera_asset_reconciliation
 )
 
 echo "Pre-check: validated read-only database identity…"
@@ -410,7 +412,8 @@ BEGIN
       ('2026_09_06_stage105_cold_chain_measurement_authority'),
       ('2026_09_06_stage106_cold_chain_alert_report_authority'),
       ('2026_09_07_stage112_camera_provider_ingest_spine'),
-      ('2026_09_07_stage113_samsara_account_identity')) required(version)
+      ('2026_09_07_stage113_samsara_account_identity'),
+      ('2026_09_07_stage114_camera_asset_reconciliation')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN RAISE EXCEPTION 'Required owner/pilot migration ledger missing or duplicated'; END IF;
   IF EXISTS (
@@ -449,6 +452,19 @@ BEGIN
       AND indisunique AND indisvalid AND indisready
   ) THEN
     RAISE EXCEPTION 'Stage113 provider account identity contract is missing or invalid';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid='public.camera_provider_event_inbox'::regclass
+      AND conname='fk_stage114_camera_device_installation'
+      AND convalidated
+  ) OR NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgrelid='public.camera_provider_event_inbox'::regclass
+      AND tgname='trg_stage114_protect_camera_device_mapping'
+      AND NOT tgisinternal
+  ) THEN
+    RAISE EXCEPTION 'Stage114 camera asset reconciliation contract is missing or invalid';
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns

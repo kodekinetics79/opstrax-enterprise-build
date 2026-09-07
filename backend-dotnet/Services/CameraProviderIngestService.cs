@@ -106,6 +106,8 @@ public sealed partial class CameraProviderIngestService(
         IReadOnlyList<PreparedMedia> MediaReferences);
 
     private sealed record ReferenceResolution(
+        long? DeviceId,
+        long? DeviceInstallationId,
         long? BranchId,
         long? VehicleId,
         long? DriverId,
@@ -242,6 +244,7 @@ public sealed partial class CameraProviderIngestService(
             var existing = await database.QuerySingleAsync("""
                 SELECT id,payload_sha256,payload_schema_version,event_type,occurred_at_utc,provider_received_at_utc,
                        vehicle_external_id,driver_external_id,trip_external_id,
+                       device_id,device_installation_id,branch_id,vehicle_id,
                        processing_status,reconciliation_status,quarantine_reason,seen_count
                 FROM camera_provider_event_inbox
                 WHERE company_id=@company AND provider_key=@provider AND provider_account_ref=@account AND provider_event_id=@event
@@ -269,7 +272,7 @@ public sealed partial class CameraProviderIngestService(
 
                 var priorQuarantineReason = existing["quarantineReason"]?.ToString();
                 var priorEvidenceConflict = Equals(existing["processingStatus"], "Quarantined")
-                    && priorQuarantineReason is "payload_identity_conflict" or "derived_payload_conflict";
+                    && priorQuarantineReason is "payload_identity_conflict" or "derived_payload_conflict" or "derived_mapping_conflict";
                 if (priorEvidenceConflict)
                 {
                     await database.ExecuteAsync("""
@@ -282,26 +285,41 @@ public sealed partial class CameraProviderIngestService(
                         ExternalHold, "Quarantined", seenCount, 0, priorQuarantineReason);
                 }
 
-                if (!ProviderProjectionMatches(existing, prepared)
-                    || !await StoredMediaMatchesAsync(
-                        companyId, inboxId, prepared.MediaReferences,
-                        allowInitialPopulation: priorQuarantineReason == "tenant_reference_mismatch", ct: ct))
+                var providerProjectionMatches = ProviderProjectionMatches(existing, prepared);
+                var storedDeviceMappingCanAdvance = StoredDeviceMappingCanAdvance(existing, resolution);
+                var storedMediaMatches = await StoredMediaMatchesAsync(
+                    companyId, inboxId, prepared.MediaReferences,
+                    allowInitialPopulation: priorQuarantineReason is "tenant_reference_mismatch"
+                        or "provider_asset_mapping_ambiguous"
+                        or "provider_asset_mapping_invalid"
+                        or "provider_asset_device_ineligible",
+                    ct: ct);
+                if (!providerProjectionMatches || !storedDeviceMappingCanAdvance || !storedMediaMatches)
                 {
+                    var conflictReason = providerProjectionMatches && storedMediaMatches
+                        ? "derived_mapping_conflict"
+                        : "derived_payload_conflict";
                     await database.ExecuteAsync("""
                         UPDATE camera_provider_event_inbox
                         SET last_received_at_utc=GREATEST(last_received_at_utc,clock_timestamp()),seen_count=seen_count+1,
                             processing_status='Quarantined',reconciliation_status='Quarantined',
-                            quarantine_reason='derived_payload_conflict',updated_at_utc=clock_timestamp()
+                            quarantine_reason=@reason,updated_at_utc=clock_timestamp()
                         WHERE id=@id AND company_id=@company
-                        """, c => { c.Parameters.AddWithValue("id", inboxId); c.Parameters.AddWithValue("company", companyId); }, ct);
+                        """, c =>
+                        {
+                            c.Parameters.AddWithValue("reason", conflictReason);
+                            c.Parameters.AddWithValue("id", inboxId);
+                            c.Parameters.AddWithValue("company", companyId);
+                        }, ct);
                     return new CameraProviderIngestResult(
                         inboxId, CameraProviderIngestDisposition.Quarantined, prepared.PayloadSha256,
-                        ExternalHold, "Quarantined", seenCount, 0, "derived_payload_conflict");
+                        ExternalHold, "Quarantined", seenCount, 0, conflictReason);
                 }
 
                 await database.ExecuteAsync("""
                     UPDATE camera_provider_event_inbox
-                    SET branch_id=@branch,vehicle_id=@vehicle,driver_id=@driver,trip_id=@trip,
+                    SET device_id=@device,device_installation_id=@installation,
+                        branch_id=@branch,vehicle_id=@vehicle,driver_id=@driver,trip_id=@trip,
                         reconciliation_status=@reconciliation,processing_status=@processing,
                         quarantine_reason=@reason,last_received_at_utc=GREATEST(last_received_at_utc,clock_timestamp()),seen_count=seen_count+1,updated_at_utc=clock_timestamp()
                     WHERE id=@id AND company_id=@company
@@ -319,10 +337,10 @@ public sealed partial class CameraProviderIngestService(
                 INSERT INTO camera_provider_event_inbox
                   (company_id,branch_id,provider_key,provider_account_ref,provider_event_id,payload_schema_version,payload_sha256,
                    event_type,occurred_at_utc,provider_received_at_utc,vehicle_external_id,driver_external_id,trip_external_id,
-                   vehicle_id,driver_id,trip_id,reconciliation_status,processing_status,quarantine_reason)
+                   device_id,device_installation_id,vehicle_id,driver_id,trip_id,reconciliation_status,processing_status,quarantine_reason)
                 VALUES
                   (@company,@branch,@provider,@account,@event,@schema,@hash,@eventType,@occurred,@received,
-                   @externalVehicle,@externalDriver,@externalTrip,@vehicle,@driver,@trip,@reconciliation,@processing,@reason)
+                   @externalVehicle,@externalDriver,@externalTrip,@device,@installation,@vehicle,@driver,@trip,@reconciliation,@processing,@reason)
                 RETURNING id,seen_count
                 """, c => BindInsert(c, companyId, prepared, resolution), ct)
                 ?? throw new InvalidOperationException("Camera provider intake did not return its ledger identity.");
@@ -347,33 +365,114 @@ public sealed partial class CameraProviderIngestService(
     private async Task<ReferenceResolution> ResolveReferencesAsync(long companyId, PreparedEvent item, CancellationToken ct)
     {
         var invalid = false;
+        long? deviceId = null;
+        long? installationId = null;
+        long? mappedVehicleId = null;
+        long? mappedBranchId = null;
         long? branch = null;
         var knownBranches = new HashSet<long>();
+
+        if (item.VehicleExternalId is not null)
+        {
+            var devices = await database.QueryAsync("""
+                SELECT id,status,device_state
+                FROM eld_devices
+                WHERE company_id=@company AND deleted_at IS NULL
+                  AND LOWER(BTRIM(provider))=@provider
+                  AND provider_account_ref=@account
+                  AND provider_external_id=@external
+                  AND NULLIF(BTRIM(provider),'') IS NOT NULL
+                  AND NULLIF(BTRIM(provider_account_ref),'') IS NOT NULL
+                  AND NULLIF(BTRIM(provider_external_id),'') IS NOT NULL
+                FOR SHARE
+                """, c =>
+                {
+                    c.Parameters.AddWithValue("company", companyId);
+                    c.Parameters.AddWithValue("provider", item.ProviderKey);
+                    c.Parameters.AddWithValue("account", item.ProviderAccountReference);
+                    c.Parameters.AddWithValue("external", item.VehicleExternalId);
+                }, ct);
+
+            if (devices.Count > 1)
+                return new(null, null, null, null, null, null, "Quarantined", "provider_asset_mapping_ambiguous");
+
+            if (devices.Count == 1)
+            {
+                var device = devices[0];
+                var status = device["status"]?.ToString()?.Trim().ToLowerInvariant();
+                var state = device["deviceState"]?.ToString()?.Trim().ToLowerInvariant();
+                if (status is not ("active" or "provisioning" or "pending")
+                    || state is "suspended" or "quarantined" or "lost" or "decommissioning" or "decommissioned" or "retired")
+                    return new(null, null, null, null, null, null, "Quarantined", "provider_asset_device_ineligible");
+
+                var matchingDeviceId = Convert.ToInt64(device["id"]);
+                var installations = await database.QueryAsync("""
+                    SELECT i.id,i.vehicle_id,i.branch_id installation_branch_id
+                    FROM device_installations i
+                    WHERE i.company_id=@company AND i.device_id=@device
+                      AND i.status IN ('Installed','Verified','Removed')
+                      AND (i.status IN ('Installed','Verified')
+                           OR (i.status='Removed' AND i.effective_to IS NOT NULL))
+                      AND i.effective_from<=@occurred
+                      AND (i.effective_to IS NULL OR i.effective_to>@occurred)
+                    ORDER BY i.effective_from DESC,i.id DESC
+                    LIMIT 2
+                    FOR SHARE OF i
+                    """, c =>
+                    {
+                        c.Parameters.AddWithValue("company", companyId);
+                        c.Parameters.AddWithValue("device", matchingDeviceId);
+                        c.Parameters.AddWithValue("occurred", NpgsqlDbType.TimestampTz, item.OccurredAtUtc);
+                    }, ct);
+
+                if (installations.Count > 1)
+                    return new(null, null, null, null, null, null, "Quarantined", "provider_asset_mapping_ambiguous");
+
+                if (installations.Count == 1)
+                {
+                    var installation = installations[0];
+                    var installationVehicle = OptionalLong(installation, "vehicleId");
+                    if (!installationVehicle.HasValue)
+                        return new(null, null, null, null, null, null, "Quarantined", "provider_asset_mapping_invalid");
+
+                    var installationBranch = OptionalLong(installation, "installationBranchId");
+                    deviceId = matchingDeviceId;
+                    installationId = Convert.ToInt64(installation["id"]);
+                    mappedVehicleId = installationVehicle;
+                    mappedBranchId = installationBranch;
+                }
+            }
+        }
 
         if (item.BranchId is { } requestedBranch)
         {
             var row = await database.QuerySingleAsync(
-                "SELECT id FROM branches WHERE id=@id AND company_id=@company AND deleted_at IS NULL",
+                "SELECT id FROM branches WHERE id=@id AND company_id=@company AND deleted_at IS NULL FOR SHARE",
                 c => { c.Parameters.AddWithValue("id", requestedBranch); c.Parameters.AddWithValue("company", companyId); }, ct);
             if (row is null) invalid = true;
             else { branch = requestedBranch; knownBranches.Add(requestedBranch); }
         }
 
         Dictionary<string, object?>? vehicle = null;
-        if (item.VehicleId is { } vehicleId)
+        var resolvedVehicleId = item.VehicleId ?? mappedVehicleId;
+        if (resolvedVehicleId is { } vehicleId)
         {
             vehicle = await database.QuerySingleAsync(
-                "SELECT id,branch_id FROM vehicles WHERE id=@id AND company_id=@company AND deleted_at IS NULL",
+                "SELECT id,branch_id FROM vehicles WHERE id=@id AND company_id=@company AND deleted_at IS NULL FOR SHARE",
                 c => { c.Parameters.AddWithValue("id", vehicleId); c.Parameters.AddWithValue("company", companyId); }, ct);
             if (vehicle is null) invalid = true;
             else if (vehicle["branchId"] is not null) knownBranches.Add(Convert.ToInt64(vehicle["branchId"]));
         }
+        if (mappedVehicleId.HasValue && item.VehicleId.HasValue && mappedVehicleId != item.VehicleId)
+            invalid = true;
+        if (mappedBranchId.HasValue)
+            knownBranches.Add(mappedBranchId.Value);
 
         Dictionary<string, object?>? driver = null;
         if (item.DriverId is { } driverId)
         {
             driver = await database.QuerySingleAsync(
-                "SELECT id,branch_id FROM drivers WHERE id=@id AND company_id=@company AND deleted_at IS NULL",
+                "SELECT id,branch_id FROM drivers WHERE id=@id AND company_id=@company AND deleted_at IS NULL FOR SHARE",
                 c => { c.Parameters.AddWithValue("id", driverId); c.Parameters.AddWithValue("company", companyId); }, ct);
             if (driver is null) invalid = true;
             else if (driver["branchId"] is not null) knownBranches.Add(Convert.ToInt64(driver["branchId"]));
@@ -383,12 +482,12 @@ public sealed partial class CameraProviderIngestService(
         if (item.TripId is { } tripId)
         {
             trip = await database.QuerySingleAsync(
-                "SELECT id,vehicle_id,driver_id FROM trips WHERE id=@id AND company_id=@company",
+                "SELECT id,vehicle_id,driver_id FROM trips WHERE id=@id AND company_id=@company FOR SHARE",
                 c => { c.Parameters.AddWithValue("id", tripId); c.Parameters.AddWithValue("company", companyId); }, ct);
             if (trip is null) invalid = true;
             else
             {
-                if (item.VehicleId is { } selectedVehicle && trip["vehicleId"] is not null && Convert.ToInt64(trip["vehicleId"]) != selectedVehicle) invalid = true;
+                if (resolvedVehicleId is { } selectedVehicle && trip["vehicleId"] is not null && Convert.ToInt64(trip["vehicleId"]) != selectedVehicle) invalid = true;
                 if (item.DriverId is { } selectedDriver && trip["driverId"] is not null && Convert.ToInt64(trip["driverId"]) != selectedDriver) invalid = true;
             }
         }
@@ -399,11 +498,14 @@ public sealed partial class CameraProviderIngestService(
         if (!branch.HasValue && knownBranches.Count == 1) branch = knownBranches.Single();
 
         if (invalid)
-            return new(branch, vehicle is null ? null : item.VehicleId, driver is null ? null : item.DriverId,
+            return new(null, null, branch, vehicle is null ? null : resolvedVehicleId, driver is null ? null : item.DriverId,
                 trip is null ? null : item.TripId, "Quarantined", "tenant_reference_mismatch");
-        var matched = item.VehicleId.HasValue || item.DriverId.HasValue || item.TripId.HasValue;
-        return new(branch, item.VehicleId, item.DriverId, item.TripId, matched ? "Matched" : "Pending", null);
+        var matched = resolvedVehicleId.HasValue || item.DriverId.HasValue || item.TripId.HasValue;
+        return new(deviceId, installationId, branch, resolvedVehicleId, item.DriverId, item.TripId, matched ? "Matched" : "Pending", null);
     }
+
+    private static long? OptionalLong(Dictionary<string, object?> row, string key) =>
+        row.GetValueOrDefault(key) is { } value and not DBNull ? Convert.ToInt64(value) : null;
 
     private async Task<int> UpsertMediaAsync(long companyId, long inboxId, IReadOnlyList<PreparedMedia> media, CancellationToken ct)
     {
@@ -494,6 +596,16 @@ public sealed partial class CameraProviderIngestService(
         && Equals(stored["driverExternalId"], item.DriverExternalId)
         && Equals(stored["tripExternalId"], item.TripExternalId);
 
+    private static bool StoredDeviceMappingCanAdvance(Dictionary<string, object?> stored, ReferenceResolution resolution)
+    {
+        var storedDevice = OptionalLong(stored, "deviceId");
+        if (!storedDevice.HasValue) return true;
+        return storedDevice == resolution.DeviceId
+            && OptionalLong(stored, "deviceInstallationId") == resolution.DeviceInstallationId
+            && OptionalLong(stored, "vehicleId") == resolution.VehicleId
+            && OptionalLong(stored, "branchId") == resolution.BranchId;
+    }
+
     private static bool SameInstant(object? stored, DateTime? expected) =>
         stored is null ? expected is null
         : expected is not null && stored is DateTime value && value.ToUniversalTime() == DateTime.SpecifyKind(expected.Value, DateTimeKind.Utc);
@@ -513,6 +625,8 @@ public sealed partial class CameraProviderIngestService(
     {
         command.Parameters.AddWithValue("company", companyId);
         command.Parameters.AddWithValue("id", inboxId);
+        AddNullable(command, "device", NpgsqlDbType.Bigint, resolution.DeviceId);
+        AddNullable(command, "installation", NpgsqlDbType.Bigint, resolution.DeviceInstallationId);
         AddNullable(command, "branch", NpgsqlDbType.Bigint, resolution.BranchId);
         AddNullable(command, "vehicle", NpgsqlDbType.Bigint, resolution.VehicleId);
         AddNullable(command, "driver", NpgsqlDbType.Bigint, resolution.DriverId);
@@ -525,6 +639,8 @@ public sealed partial class CameraProviderIngestService(
     private static void BindInsert(NpgsqlCommand command, long companyId, PreparedEvent item, ReferenceResolution resolution)
     {
         BindIdentity(command, companyId, item);
+        AddNullable(command, "device", NpgsqlDbType.Bigint, resolution.DeviceId);
+        AddNullable(command, "installation", NpgsqlDbType.Bigint, resolution.DeviceInstallationId);
         AddNullable(command, "branch", NpgsqlDbType.Bigint, resolution.BranchId);
         command.Parameters.AddWithValue("schema", item.PayloadSchemaVersion);
         command.Parameters.AddWithValue("hash", item.PayloadSha256);

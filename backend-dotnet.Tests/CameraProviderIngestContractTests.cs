@@ -88,6 +88,7 @@ public sealed class CameraProviderIngestContractTests
         var sql = File.ReadAllText(Path.Combine(root, "database", "migrations", "2026_09_07_stage112_camera_provider_ingest_spine.sql"));
         var runner = File.ReadAllText(Path.Combine(root, "tools", "apply-neon-predeploy-migrations.sh"));
         var accountIdentity = File.ReadAllText(Path.Combine(root, "database", "migrations", "2026_09_07_stage113_samsara_account_identity.sql"));
+        var assetReconciliation = File.ReadAllText(Path.Combine(root, "database", "migrations", "2026_09_07_stage114_camera_asset_reconciliation.sql"));
         var service = File.ReadAllText(Path.Combine(root, "backend-dotnet", "Services", "CameraProviderIngestService.cs"));
         var status = File.ReadAllText(Path.Combine(root, "backend-dotnet", "Services", "CameraProviderStatusService.cs"));
         var endpoints = File.ReadAllText(Path.Combine(root, "backend-dotnet", "Controllers", "EndpointMappings.cs"));
@@ -130,5 +131,10 @@ public sealed class CameraProviderIngestContractTests
         Assert.Contains("provider_account_ref", accountIdentity, StringComparison.Ordinal);
         Assert.Contains("uq_stage113_provider_asset_identity", accountIdentity, StringComparison.Ordinal);
         Assert.Contains("2026_09_07_stage113_samsara_account_identity", runner, StringComparison.Ordinal);
+        Assert.Contains("fk_stage114_camera_device_installation", assetReconciliation, StringComparison.Ordinal);
+        Assert.Contains("ck_camera_provider_device_mapping_immutable", assetReconciliation, StringComparison.Ordinal);
+        Assert.Contains("2026_09_07_stage114_camera_asset_reconciliation", runner, StringComparison.Ordinal);
+        Assert.Contains("provider_account_ref=@account", service, StringComparison.Ordinal);
+        Assert.Contains("i.effective_from<=@occurred", service, StringComparison.Ordinal);
     }
 }

@@ -25,3 +25,17 @@ ALTER TABLE eld_devices
   ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ NULL,
   ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ NULL,
   ADD COLUMN IF NOT EXISTS device_state TEXT NOT NULL DEFAULT 'Provisioned';
+
+-- Stage114 resolves provider assets through the fleet installation that was
+-- effective at event occurrence. Production receives this table and its full
+-- integrity contract from Stage66/80; the disposable oracle needs this minimum.
+CREATE TABLE IF NOT EXISTS device_installations (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  company_id BIGINT NOT NULL,
+  branch_id BIGINT NULL,
+  device_id BIGINT NOT NULL,
+  vehicle_id BIGINT NOT NULL,
+  status VARCHAR(40) NOT NULL,
+  effective_from TIMESTAMPTZ NOT NULL,
+  effective_to TIMESTAMPTZ NULL
+);
