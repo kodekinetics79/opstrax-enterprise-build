@@ -71,18 +71,7 @@ public sealed class ConnectorSyncBackgroundService(
                 var stored = ConnectorRegistry.RedactConfig(operation.ConfigJson);
                 var cursor = stored.TryGetValue("syncCursor", out var cv) ? cv?.ToString() : null;
 
-                using var body = System.Text.Json.JsonDocument.Parse(
-                    System.Text.Json.JsonSerializer.Serialize(new
-                    {
-                        action = "sync",
-                        companyId,
-                        integrationId = id,
-                        operationGeneration = operation.Generation,
-                        operationLeaseToken = operation.LeaseToken,
-                        cursor,
-                        maxPages = 5,
-                        maxDurationSeconds = 60,
-                    }));
+                using var body = BuildSyncOperationBody(operation, cursor);
                 var result = await connector.RunActionAsync("sync", config, body.RootElement, token);
 
                 var nextCursor = result.Details?.GetValueOrDefault("nextCursor")?.ToString();
@@ -96,6 +85,22 @@ public sealed class ConnectorSyncBackgroundService(
             }
         });
     }
+
+    internal static System.Text.Json.JsonDocument BuildSyncOperationBody(
+        ConnectorOperationContext operation,
+        string? cursor) => System.Text.Json.JsonDocument.Parse(
+        System.Text.Json.JsonSerializer.Serialize(new
+        {
+            action = "sync",
+            companyId = operation.CompanyId,
+            integrationId = operation.IntegrationId,
+            operationGeneration = operation.Generation,
+            operationLeaseToken = operation.LeaseToken,
+            providerAccountReference = operation.ProviderAccountReference,
+            cursor,
+            maxPages = 5,
+            maxDurationSeconds = 60,
+        }));
 
     internal static Task<List<Dictionary<string, object?>>> SelectCandidateRowsAsync(
         Database db,

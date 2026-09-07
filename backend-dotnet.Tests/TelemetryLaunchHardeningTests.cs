@@ -1,4 +1,5 @@
 using Opstrax.Api.Services;
+using Opstrax.Api.Services.Connectors;
 
 namespace Opstrax.Tests;
 
@@ -250,6 +251,25 @@ public sealed class TelemetryLaunchHardeningTests
         Assert.Contains("unwrap<IntegrationTestResult>(apiClient.post(`/api/integrations/${id}/sync`", api, StringComparison.Ordinal);
         Assert.DoesNotContain("isMatchedToDevice: true", telemetry, StringComparison.Ordinal);
         Assert.Contains("no persisted provider-device mapping has been verified", telemetry, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AutomaticSamsaraWorker_CarriesVerifiedProviderAccountBoundary()
+    {
+        var operation = new ConnectorOperationContext(
+            17, 23, 5, Guid.Parse("11111111-1111-1111-1111-111111111111"),
+            "samsara", null, "Connected", true, "samsara-org:verified-account");
+
+        using var body = ConnectorSyncBackgroundService.BuildSyncOperationBody(operation, "durable-cursor");
+
+        Assert.Equal(17, body.RootElement.GetProperty("companyId").GetInt64());
+        Assert.Equal(23, body.RootElement.GetProperty("integrationId").GetInt64());
+        Assert.Equal(5, body.RootElement.GetProperty("operationGeneration").GetInt64());
+        Assert.Equal("11111111-1111-1111-1111-111111111111",
+            body.RootElement.GetProperty("operationLeaseToken").GetString());
+        Assert.Equal("samsara-org:verified-account",
+            body.RootElement.GetProperty("providerAccountReference").GetString());
+        Assert.Equal("durable-cursor", body.RootElement.GetProperty("cursor").GetString());
     }
 
     [Fact]
