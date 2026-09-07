@@ -266,6 +266,45 @@ public sealed class TelemetrySchemaService(Database db)
             CONSTRAINT ck_stage115_candidate_external_hold CHECK (certification_status='ExternalHold'),
             CONSTRAINT ck_stage115_candidate_hold_reason CHECK (BTRIM(external_hold_reason) <> '')
         )",
+
+        // Encrypted SIM/eSIM assignment history. Startup creates no profiles: every
+        // row must come from an explicit operator action with a source reference.
+        @"CREATE TABLE IF NOT EXISTS device_connectivity_profiles (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL,
+            branch_id BIGINT NULL,
+            device_id BIGINT NOT NULL,
+            profile_kind VARCHAR(20) NOT NULL,
+            carrier_name VARCHAR(120) NOT NULL,
+            iccid_encrypted TEXT NOT NULL,
+            iccid_bidx VARCHAR(64) NOT NULL,
+            iccid_last4 VARCHAR(4) NOT NULL,
+            msisdn_encrypted TEXT NULL,
+            msisdn_bidx VARCHAR(64) NULL,
+            msisdn_last4 VARCHAR(4) NULL,
+            apn_encrypted TEXT NULL,
+            apn_bidx VARCHAR(64) NULL,
+            apn_configured BOOLEAN NOT NULL DEFAULT FALSE,
+            assignment_status VARCHAR(20) NOT NULL DEFAULT 'Assigned',
+            effective_from TIMESTAMPTZ NOT NULL,
+            effective_to TIMESTAMPTZ NULL,
+            source_reference VARCHAR(240) NOT NULL,
+            change_reason VARCHAR(500) NOT NULL,
+            end_reason VARCHAR(500) NULL,
+            idempotency_key UUID NOT NULL,
+            created_by BIGINT NULL,
+            ended_by BIGINT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NULL,
+            CONSTRAINT ck_stage116_profile_kind CHECK (profile_kind IN ('PhysicalSIM','eSIM')),
+            CONSTRAINT ck_stage116_iccid_encrypted CHECK (iccid_encrypted LIKE 'enc:%'),
+            CONSTRAINT ck_stage116_iccid_bidx CHECK (iccid_bidx ~ '^[0-9a-f]{64}$'),
+            CONSTRAINT ck_stage116_iccid_last4 CHECK (iccid_last4 ~ '^[0-9]{4}$'),
+            CONSTRAINT ck_stage116_assignment_lifecycle CHECK (
+              (assignment_status='Assigned' AND effective_to IS NULL AND end_reason IS NULL AND ended_by IS NULL)
+              OR (assignment_status='Ended' AND effective_to IS NOT NULL AND effective_to>effective_from
+                  AND end_reason IS NOT NULL AND BTRIM(end_reason)<>''))
+        )",
     ];
 
     private static readonly string[] Indexes =
@@ -298,6 +337,14 @@ public sealed class TelemetrySchemaService(Database db)
           ON device_compatibility_candidates (
             UPPER(BTRIM(manufacturer)),UPPER(BTRIM(device_model)),
             UPPER(BTRIM(hardware_revision)),UPPER(BTRIM(firmware_version)),created_at DESC,id DESC)",
+        @"CREATE UNIQUE INDEX IF NOT EXISTS uq_stage116_connectivity_current_device
+          ON device_connectivity_profiles(company_id,device_id) WHERE effective_to IS NULL",
+        @"CREATE UNIQUE INDEX IF NOT EXISTS uq_stage116_connectivity_current_iccid
+          ON device_connectivity_profiles(iccid_bidx) WHERE effective_to IS NULL",
+        @"CREATE UNIQUE INDEX IF NOT EXISTS uq_stage116_connectivity_idempotency
+          ON device_connectivity_profiles(company_id,device_id,idempotency_key)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage116_connectivity_history
+          ON device_connectivity_profiles(company_id,device_id,effective_from DESC,id DESC)",
     ];
 
     private static readonly string[] Seeds =

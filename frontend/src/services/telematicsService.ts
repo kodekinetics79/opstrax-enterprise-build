@@ -472,6 +472,8 @@ function normalizeMalfunctionInput(notes: string): { malfunctionCode: string; ma
 export type DeviceDetailRecord = {
   device: DeviceCommandRecord;
   compatibility: DeviceCompatibilityRecord;
+  currentConnectivityProfile: DeviceConnectivityProfileRecord | null;
+  connectivityProfiles: DeviceConnectivityProfileRecord[];
   telemetry: TelematicsTelemetrySeedRecord[];
   healthEvents: TelematicsHealthSeedRecord[];
   firmwareUpdates: TelematicsFirmwareSeedRecord[];
@@ -482,6 +484,34 @@ export type DeviceDetailRecord = {
   providers: TelematicsProviderSeedRecord[];
   auditLog: AnyRecord[];
   assignmentHistory: AnyRecord[];
+};
+
+export type DeviceConnectivityProfileRecord = {
+  id: string;
+  deviceId: string;
+  profileKind: "PhysicalSIM" | "eSIM" | "Unknown";
+  carrierName: string;
+  iccidLast4: string;
+  msisdnLast4: string | null;
+  apnConfigured: boolean;
+  assignmentStatus: "Assigned" | "Ended" | "Unknown";
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  sourceReference: string;
+  changeReason: string;
+  endReason: string | null;
+};
+
+export type DeviceConnectivityProfileInput = {
+  profileKind: "PhysicalSIM" | "eSIM";
+  carrierName: string;
+  iccid: string;
+  msisdn?: string;
+  apn?: string;
+  effectiveAt: string;
+  changeReason: string;
+  sourceReference: string;
+  idempotencyKey: string;
 };
 
 export type DeviceCompatibilityRecord = {
@@ -499,6 +529,31 @@ export type DeviceCompatibilityRecord = {
   externalHoldReason: string;
   certificationClaim: false;
 };
+
+function mapConnectivityProfile(raw: AnyRecord): DeviceConnectivityProfileRecord {
+  const row = normalizeKeys(raw);
+  const iccidLast4 = typeof row.iccid_last4 === "string" && /^\d{4}$/.test(row.iccid_last4)
+    ? row.iccid_last4 : "";
+  const msisdnLast4 = typeof row.msisdn_last4 === "string" && /^\d{4}$/.test(row.msisdn_last4)
+    ? row.msisdn_last4 : null;
+  return {
+    id: String(row.id ?? ""),
+    deviceId: String(row.device_id ?? ""),
+    profileKind: row.profile_kind === "PhysicalSIM" || row.profile_kind === "eSIM"
+      ? row.profile_kind : "Unknown",
+    carrierName: String(row.carrier_name ?? ""),
+    iccidLast4,
+    msisdnLast4,
+    apnConfigured: row.apn_configured === true,
+    assignmentStatus: row.assignment_status === "Assigned" || row.assignment_status === "Ended"
+      ? row.assignment_status : "Unknown",
+    effectiveFrom: String(row.effective_from ?? ""),
+    effectiveTo: row.effective_to == null ? null : String(row.effective_to),
+    sourceReference: String(row.source_reference ?? ""),
+    changeReason: String(row.change_reason ?? ""),
+    endReason: row.end_reason == null ? null : String(row.end_reason),
+  };
+}
 
 // The one-time secrets a provisioned device uses to authenticate its live telemetry
 // stream — the equivalent of a Render/Vercel deploy token. Shown once, never again.
@@ -1727,6 +1782,18 @@ export const telematicsService = {
         ?? "Compatibility evidence is unavailable. Hardware certification remains on external hold."),
       certificationClaim: false,
     };
+    const connectivityRows = Array.isArray(detail.connectivity_profiles)
+      ? detail.connectivity_profiles as AnyRecord[]
+      : [];
+    const connectivityProfiles = connectivityRows.map(mapConnectivityProfile);
+    const responseCurrentConnectivityProfile = detail.current_connectivity_profile && typeof detail.current_connectivity_profile === "object"
+      ? mapConnectivityProfile(detail.current_connectivity_profile as AnyRecord)
+      : null;
+    const currentConnectivityProfile = responseCurrentConnectivityProfile !== null
+      && responseCurrentConnectivityProfile.effectiveTo == null
+      && responseCurrentConnectivityProfile.assignmentStatus === "Assigned"
+      ? responseCurrentConnectivityProfile
+      : connectivityProfiles.find((profile) => profile.effectiveTo == null && profile.assignmentStatus === "Assigned") ?? null;
 
     // Telemetry: derived from the single live position snapshot (one point, or none).
     const telemetry: TelematicsTelemetrySeedRecord[] = position
@@ -1777,6 +1844,8 @@ export const telematicsService = {
     return {
       device: scoped,
       compatibility,
+      currentConnectivityProfile,
+      connectivityProfiles,
       telemetry,
       healthEvents,
       diagnostics,
@@ -1789,6 +1858,40 @@ export const telematicsService = {
       assignmentHistory: Array.isArray(detail.assignment_history)
         ? (detail.assignment_history as AnyRecord[]).map(normalizeKeys)
         : [],
+    };
+  },
+
+  async replaceDeviceConnectivityProfile(deviceId: string | number, input: DeviceConnectivityProfileInput) {
+    const session = getSession();
+    ensureManagementAccess(session);
+    const requestedId = String(deviceId);
+    if (!/^\d+$/.test(requestedId) || Number(requestedId) <= 0) throw new Error("A valid device is required.");
+    if (!/^[0-9]{18,22}$/.test(input.iccid.trim())) throw new Error("ICCID must contain 18-22 digits.");
+    if (input.msisdn?.trim() && !/^\+[1-9][0-9]{7,14}$/.test(input.msisdn.trim()))
+      throw new Error("MSISDN must use E.164 format, for example +14165550123.");
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.idempotencyKey))
+      throw new Error("The connectivity form session is invalid. Close and reopen it.");
+    const payload = await unwrap<AnyRecord>(apiClient.post(
+      `/api/telemetry/devices/${requestedId}/connectivity-profiles`,
+      {
+        ...input,
+        carrierName: input.carrierName.trim(),
+        iccid: input.iccid.trim(),
+        msisdn: input.msisdn?.trim() || null,
+        apn: input.apn?.trim() || null,
+        changeReason: input.changeReason.trim(),
+        sourceReference: input.sourceReference.trim(),
+      },
+    ));
+    const normalized = normalizeKeys(payload);
+    if (normalized.connectivity_claim !== false)
+      throw new Error("The server did not return the required fail-closed connectivity acknowledgement.");
+    if (!normalized.profile || typeof normalized.profile !== "object")
+      throw new Error("The server did not return the recorded connectivity profile.");
+    return {
+      profile: mapConnectivityProfile(normalized.profile as AnyRecord),
+      idempotentReplay: normalized.idempotent_replay === true,
+      note: String(normalized.note ?? "Profile inventory recorded; connectivity remains unverified."),
     };
   },
 

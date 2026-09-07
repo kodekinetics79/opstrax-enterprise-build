@@ -43,6 +43,7 @@ import {
   getInstallationIntent,
   type DeviceCommandRecord,
   type DeviceCommissioningInput,
+  type DeviceConnectivityProfileInput,
   type DeviceCredentialRotationResult,
   type DeviceDetailRecord,
   type DeviceIdentityQuarantineRecord,
@@ -120,6 +121,32 @@ type CommissioningRecordedOutcome = {
   result: DeviceCommissioningInput["result"];
   rowVersion: number;
 };
+
+type ConnectivityProfileFormState = {
+  profileKind: DeviceConnectivityProfileInput["profileKind"];
+  carrierName: string;
+  iccid: string;
+  msisdn: string;
+  apn: string;
+  effectiveAt: string;
+  changeReason: string;
+  sourceReference: string;
+  idempotencyKey: string;
+};
+
+function newConnectivityProfileForm(): ConnectivityProfileFormState {
+  return {
+    profileKind: "PhysicalSIM",
+    carrierName: "",
+    iccid: "",
+    msisdn: "",
+    apn: "",
+    effectiveAt: currentLocalMinute(),
+    changeReason: "",
+    sourceReference: "",
+    idempotencyKey: crypto.randomUUID(),
+  };
+}
 
 type SuspensionMutationVariables = { deviceId: string; sessionGeneration: number; target: ConfirmActionTarget };
 type ActivationMutationVariables = { deviceId: string; sessionGeneration: number; target: DeviceCommandRecord };
@@ -1711,6 +1738,7 @@ export function IotDevicesPage() {
 	            ) : (
 	              <DeviceDetailDrawer
 	                detail={detailQ.data}
+	                canManageConnectivity={canManageDeviceLifecycle}
 	                lifecycleError={lifecycleError}
 	                onDismissLifecycleError={clearLifecycleError}
 	                actionContracts={
@@ -1937,16 +1965,69 @@ export function IotDevicesPage() {
 
 function DeviceDetailDrawer({
   detail,
+  canManageConnectivity,
   actionContracts,
   lifecycleError,
   onDismissLifecycleError,
 }: {
   detail: DeviceDetailRecord;
+  canManageConnectivity: boolean;
   actionContracts: DeviceActionContract[];
   lifecycleError?: unknown;
   onDismissLifecycleError: () => void;
 }) {
   const { device } = detail;
+  const queryClient = useQueryClient();
+  const [connectivityOpen, setConnectivityOpen] = useState(false);
+  const [connectivityForm, setConnectivityForm] = useState<ConnectivityProfileFormState>(newConnectivityProfileForm);
+  const [connectivityError, setConnectivityError] = useState<string | null>(null);
+  const [connectivityNotice, setConnectivityNotice] = useState<string | null>(null);
+  const connectivitySubmitting = useRef(false);
+  const connectivityMut = useMutation({
+    mutationFn: (input: DeviceConnectivityProfileInput) => telematicsService.replaceDeviceConnectivityProfile(device.id, input),
+    retry: false,
+    onSuccess: async (result) => {
+      // Clear plaintext SIM inventory immediately after the server acknowledges it.
+      setConnectivityForm(newConnectivityProfileForm());
+      setConnectivityOpen(false);
+      setConnectivityError(null);
+      setConnectivityNotice(result.note);
+      await queryClient.invalidateQueries({ queryKey: ["telematics", "device"] });
+    },
+    onError: (error) => setConnectivityError(apiErrorMessage(error, "The connectivity profile was not recorded.")),
+    onSettled: () => { connectivitySubmitting.current = false; },
+  });
+  const openConnectivityForm = () => {
+    setConnectivityForm(newConnectivityProfileForm());
+    setConnectivityError(null);
+    setConnectivityNotice(null);
+    connectivityMut.reset();
+    setConnectivityOpen(true);
+  };
+  const submitConnectivityProfile = (event: FormEvent) => {
+    event.preventDefault();
+    if (!canManageConnectivity || connectivitySubmitting.current || connectivityMut.isPending) return;
+    setConnectivityError(null);
+    try {
+      const effectiveAt = toUtcIso(connectivityForm.effectiveAt, "connectivity profile effective time");
+      if (Date.parse(effectiveAt) > Date.now() + 5 * 60_000)
+        throw new Error("Connectivity profile effective time cannot be more than five minutes in the future.");
+      connectivitySubmitting.current = true;
+      connectivityMut.mutate({
+        ...connectivityForm,
+        effectiveAt,
+        carrierName: connectivityForm.carrierName.trim(),
+        iccid: connectivityForm.iccid.trim(),
+        msisdn: connectivityForm.msisdn.trim() || undefined,
+        apn: connectivityForm.apn.trim() || undefined,
+        changeReason: connectivityForm.changeReason.trim(),
+        sourceReference: connectivityForm.sourceReference.trim(),
+      });
+    } catch (error) {
+      connectivitySubmitting.current = false;
+      setConnectivityError(error instanceof Error ? error.message : "Connectivity profile validation failed.");
+    }
+  };
   // Guard every [0] access — these live sub-feeds are frequently empty. `telemetry`
   // is a single live position point (or none), and `diagnostics` are active fault codes.
   const latestTelemetry = detail.telemetry[0] ?? null;
@@ -2164,6 +2245,88 @@ function DeviceDetailDrawer({
       </div>
 
       <div className="mt-6 grid gap-4 xl:grid-cols-2">
+        <PanelSection title="SIM / eSIM inventory">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-semibold text-white">
+                {detail.currentConnectivityProfile
+                  ? `${detail.currentConnectivityProfile.profileKind} · ${detail.currentConnectivityProfile.carrierName}`
+                  : "No current connectivity profile"}
+              </p>
+              <p className="mt-1 text-xs text-slate-400">Inventory assignment only. Network attachment and live telemetry require separate observed evidence.</p>
+            </div>
+            {canManageConnectivity ? (
+              <button type="button" className="btn-secondary shrink-0" onClick={openConnectivityForm} disabled={connectivityMut.isPending}>
+                {detail.currentConnectivityProfile ? "Change profile" : "Record profile"}
+              </button>
+            ) : null}
+          </div>
+          {connectivityNotice ? <p role="status" className="mt-3 rounded-lg border border-emerald-300/30 bg-emerald-500/10 p-3 text-sm text-emerald-100">{connectivityNotice}</p> : null}
+          {detail.currentConnectivityProfile ? (
+            <div className="mt-4">
+              <MiniGrid rows={[
+                ["ICCID", `•••• ${detail.currentConnectivityProfile.iccidLast4}`],
+                ["MSISDN", detail.currentConnectivityProfile.msisdnLast4 ? `•••• ${detail.currentConnectivityProfile.msisdnLast4}` : "—"],
+                ["APN", detail.currentConnectivityProfile.apnConfigured ? "Configured · protected" : "Not recorded"],
+                ["Effective", cell(detail.currentConnectivityProfile.effectiveFrom)],
+                ["Source", cell(detail.currentConnectivityProfile.sourceReference)],
+                ["Assignment", detail.currentConnectivityProfile.assignmentStatus],
+              ]} />
+            </div>
+          ) : (
+            <p className="mt-4 text-sm text-slate-400">No operator-recorded SIM or eSIM assignment exists for this device.</p>
+          )}
+          {connectivityOpen && canManageConnectivity ? (
+            <form className="mt-4 space-y-3 rounded-xl border border-white/[0.08] bg-black/10 p-4" onSubmit={submitConnectivityProfile} autoComplete="off">
+              <p className="text-xs text-slate-400">ICCID, MSISDN and APN are encrypted and will only be shown here as masked/configured values after submission.</p>
+              <div className="grid gap-3 md:grid-cols-2">
+                <label className="field-label">Profile type
+                  <select className="field mt-1 w-full" value={connectivityForm.profileKind} onChange={(event) => setConnectivityForm((form) => ({ ...form, profileKind: event.target.value as DeviceConnectivityProfileInput["profileKind"] }))} disabled={connectivityMut.isPending}>
+                    <option value="PhysicalSIM">Physical SIM</option>
+                    <option value="eSIM">eSIM</option>
+                  </select>
+                </label>
+                <label className="field-label">Carrier
+                  <input className="field mt-1 w-full" value={connectivityForm.carrierName} onChange={(event) => setConnectivityForm((form) => ({ ...form, carrierName: event.target.value }))} minLength={2} maxLength={120} required disabled={connectivityMut.isPending} />
+                </label>
+                <label className="field-label">ICCID
+                  <input className="field mt-1 w-full" inputMode="numeric" pattern="[0-9]{18,22}" value={connectivityForm.iccid} onChange={(event) => setConnectivityForm((form) => ({ ...form, iccid: event.target.value }))} required disabled={connectivityMut.isPending} />
+                </label>
+                <label className="field-label">MSISDN · optional E.164
+                  <input className="field mt-1 w-full" inputMode="tel" placeholder="+14165550123" value={connectivityForm.msisdn} onChange={(event) => setConnectivityForm((form) => ({ ...form, msisdn: event.target.value }))} disabled={connectivityMut.isPending} />
+                </label>
+                <label className="field-label">APN · optional
+                  <input className="field mt-1 w-full" value={connectivityForm.apn} onChange={(event) => setConnectivityForm((form) => ({ ...form, apn: event.target.value }))} maxLength={253} disabled={connectivityMut.isPending} />
+                </label>
+                <label className="field-label">Effective time
+                  <input className="field mt-1 w-full" type="datetime-local" max={currentLocalMinute()} value={connectivityForm.effectiveAt} onChange={(event) => setConnectivityForm((form) => ({ ...form, effectiveAt: event.target.value }))} required disabled={connectivityMut.isPending} />
+                </label>
+                <label className="field-label md:col-span-2">Change reason
+                  <input className="field mt-1 w-full" value={connectivityForm.changeReason} onChange={(event) => setConnectivityForm((form) => ({ ...form, changeReason: event.target.value }))} minLength={5} maxLength={500} placeholder="Initial assignment, carrier change, or SIM replacement" required disabled={connectivityMut.isPending} />
+                </label>
+                <label className="field-label md:col-span-2">Source reference
+                  <input className="field mt-1 w-full" value={connectivityForm.sourceReference} onChange={(event) => setConnectivityForm((form) => ({ ...form, sourceReference: event.target.value }))} minLength={3} maxLength={240} placeholder="Carrier portal, purchase order, or installer record" required disabled={connectivityMut.isPending} />
+                </label>
+              </div>
+              {connectivityError ? <p role="alert" className="text-sm text-red-300">{connectivityError}</p> : null}
+              <div className="flex justify-end gap-2">
+                <button type="button" className="btn-ghost" disabled={connectivityMut.isPending} onClick={() => { setConnectivityForm(newConnectivityProfileForm()); setConnectivityOpen(false); setConnectivityError(null); }}>Cancel</button>
+                <button type="submit" className="btn-primary" disabled={connectivityMut.isPending}>{connectivityMut.isPending ? "Recording…" : "Record inventory change"}</button>
+              </div>
+            </form>
+          ) : null}
+          {detail.connectivityProfiles.length > 1 ? (
+            <div className="mt-4">
+              <p className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-slate-400">Assignment history</p>
+              <TimelineList rows={detail.connectivityProfiles.map((profile) => ({
+                id: profile.id,
+                title: `${profile.profileKind} · ${profile.carrierName} · •••• ${profile.iccidLast4}`,
+                subtitle: `${profile.assignmentStatus} · ${profile.sourceReference}${profile.endReason ? ` · ${profile.endReason}` : ""}`,
+                meta: `${profile.effectiveFrom}${profile.effectiveTo ? ` → ${profile.effectiveTo}` : " → current"}`,
+              }))} emptyText="No connectivity profile history recorded." />
+            </div>
+          ) : null}
+        </PanelSection>
         <PanelSection title="Hardware compatibility truth">
           <div className="flex items-center justify-between gap-3">
             <div>

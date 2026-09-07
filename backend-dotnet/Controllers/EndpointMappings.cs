@@ -267,6 +267,7 @@ public static partial class EndpointMappings
         app.MapPost("/api/telemetry/devices/{id:long}/installations/{installationId:long}/commission", DeviceInstallationCommission);
         app.MapPost("/api/telemetry/devices/{id:long}/installations/{installationId:long}/remove", DeviceInstallationRemove);
         app.MapPost("/api/telemetry/devices/{id:long}/installations/transfer", DeviceInstallationTransfer);
+        app.MapPost("/api/telemetry/devices/{id:long}/connectivity-profiles", DeviceConnectivityProfileReplace);
         app.MapGet("/api/telemetry/installation-quarantine", DeviceInstallationQuarantineList);
         app.MapPost("/api/telemetry/installation-quarantine/{id:long}/resolve", DeviceInstallationQuarantineResolve);
         app.MapGet("/api/devices", DeviceList);
@@ -20694,6 +20695,15 @@ LIMIT 100000",
                  AND (@branchId::BIGINT IS NULL OR i.branch_id=@branchId)
                ORDER BY e.captured_at DESC,e.id DESC",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
+        var connectivityProfiles = await db.QueryAsync(
+            @"SELECT id,device_id,profile_kind,carrier_name,iccid_last4,msisdn_last4,
+                     apn_configured,assignment_status,effective_from,effective_to,
+                     source_reference,change_reason,end_reason,created_at,updated_at
+                FROM device_connectivity_profiles
+               WHERE company_id=@cid AND device_id=@id
+                 AND (@branchId::BIGINT IS NULL OR branch_id=@branchId)
+               ORDER BY effective_from DESC,id DESC LIMIT 100",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
         var current = history.FirstOrDefault(row =>
             row.GetValueOrDefault("effectiveTo") is null or DBNull &&
             row.GetValueOrDefault("status")?.ToString() is "Installed" or "Verified");
@@ -20705,8 +20715,228 @@ LIMIT 100000",
             currentInstallation = current,
             installationHistory = history,
             installationEvidence,
+            currentConnectivityProfile = connectivityProfiles.FirstOrDefault(row =>
+                row.GetValueOrDefault("effectiveTo") is null or DBNull &&
+                row.GetValueOrDefault("assignmentStatus")?.ToString() == "Assigned"),
+            connectivityProfiles,
             assignmentHistory = transitions
         }, "Device"));
+    }
+
+    private static async Task<IResult> DeviceConnectivityProfileReplace(
+        HttpContext http,
+        long id,
+        DeviceConnectivityProfileRequest? body,
+        Database db,
+        AuditService audit,
+        CancellationToken ct)
+    {
+        if (RequirePermission(http, "telemetry.devices.manage") is { } denied) return denied;
+        var validation = DeviceConnectivityProfilePolicy.Validate(body, DateTimeOffset.UtcNow);
+        if (validation.Error is not null)
+            return Results.BadRequest(ApiResponse<object>.Fail(validation.Error));
+        var input = validation.Value!;
+        var companyId = GetCompanyId(http);
+        var branchId = GetBranchId(http);
+
+        // Establish tenant/branch ownership on the request-scoped app connection first.
+        var visibleDevice = await db.QuerySingleAsync(
+            @"SELECT id,branch_id,status,device_state FROM eld_devices
+               WHERE id=@id AND company_id=@cid AND deleted_at IS NULL
+                 AND (@branchId::BIGINT IS NULL OR branch_id=@branchId)",
+            command =>
+            {
+                command.Parameters.AddWithValue("@id", id);
+                command.Parameters.AddWithValue("@cid", companyId);
+                command.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+            }, ct);
+        if (visibleDevice is null) return Results.NotFound(ApiResponse<object>.Fail("Device not found"));
+        if (visibleDevice["status"]?.ToString() is "Revoked" or "Retired" ||
+            visibleDevice["deviceState"]?.ToString() is "Decommissioned" or "Retired")
+            return Results.Conflict(ApiResponse<object>.Fail("A retired or decommissioned device cannot receive a connectivity profile."));
+
+        var pii = http.RequestServices.GetRequiredService<PiiProtectionService>();
+        if (!pii.Enabled)
+            return Results.Json(
+                ApiResponse<object>.Fail("Connectivity profile encryption is unavailable. No SIM data was stored."),
+                statusCode: StatusCodes.Status503ServiceUnavailable);
+
+        var iccidEncrypted = pii.Encrypt(input.Iccid);
+        var iccidBidx = pii.BlindIndex(input.Iccid);
+        var msisdnEncrypted = input.Msisdn is null ? null : pii.Encrypt(input.Msisdn);
+        var msisdnBidx = input.Msisdn is null ? null : pii.BlindIndex(input.Msisdn);
+        var apnEncrypted = input.Apn is null ? null : pii.Encrypt(input.Apn);
+        var apnBidx = input.Apn is null ? null : pii.BlindIndex(input.Apn);
+        if (iccidEncrypted?.StartsWith("enc:", StringComparison.Ordinal) != true || iccidBidx is null ||
+            (input.Msisdn is not null && (msisdnEncrypted?.StartsWith("enc:", StringComparison.Ordinal) != true || msisdnBidx is null)) ||
+            (input.Apn is not null && (apnEncrypted?.StartsWith("enc:", StringComparison.Ordinal) != true || apnBidx is null)))
+            return Results.Json(
+                ApiResponse<object>.Fail("Connectivity profile encryption failed. No SIM data was stored."),
+                statusCode: StatusCodes.Status503ServiceUnavailable);
+
+        var actorUserId = GetUserId(http);
+        Dictionary<string, object?> stored;
+        bool idempotentReplay;
+        try
+        {
+            (stored, idempotentReplay) = await db.RunInSystemTransactionAsync(async () =>
+            {
+                await db.ExecuteAsync(
+                    @"SELECT pg_advisory_xact_lock(hashtextextended(identity,0))
+                        FROM unnest(@identities::TEXT[]) identity ORDER BY identity",
+                    command => command.Parameters.AddWithValue(
+                        "@identities", NpgsqlDbType.Array | NpgsqlDbType.Text,
+                        new[] { $"connectivity-device:{companyId}:{id}", $"connectivity-iccid:{iccidBidx}" }.OrderBy(value => value).ToArray()), ct);
+
+                var replay = await db.QuerySingleAsync(
+                    @"SELECT id,device_id,profile_kind,carrier_name,iccid_last4,msisdn_last4,
+                             apn_configured,assignment_status,effective_from,effective_to,
+                             source_reference,change_reason,end_reason,created_at,updated_at
+                        FROM device_connectivity_profiles
+                       WHERE company_id=@cid AND device_id=@deviceId AND idempotency_key=@idempotencyKey",
+                    command =>
+                    {
+                        command.Parameters.AddWithValue("@cid", companyId);
+                        command.Parameters.AddWithValue("@deviceId", id);
+                        command.Parameters.AddWithValue("@idempotencyKey", input.IdempotencyKey);
+                    }, ct);
+                if (replay is not null) return (replay, true);
+
+                var device = await db.QuerySingleAsync(
+                    @"SELECT branch_id,status,device_state FROM eld_devices
+                       WHERE id=@id AND company_id=@cid AND deleted_at IS NULL FOR UPDATE",
+                    command =>
+                    {
+                        command.Parameters.AddWithValue("@id", id);
+                        command.Parameters.AddWithValue("@cid", companyId);
+                    }, ct);
+                if (device is null) throw new InvalidOperationException("device_unavailable");
+                if (device["status"]?.ToString() is "Revoked" or "Retired" ||
+                    device["deviceState"]?.ToString() is "Decommissioned" or "Retired")
+                    throw new InvalidOperationException("device_unavailable");
+
+                var current = await db.QuerySingleAsync(
+                    @"SELECT id,profile_kind,carrier_name,iccid_bidx,msisdn_bidx,apn_bidx,effective_from
+                        FROM device_connectivity_profiles
+                       WHERE company_id=@cid AND device_id=@deviceId AND effective_to IS NULL
+                       FOR UPDATE",
+                    command =>
+                    {
+                        command.Parameters.AddWithValue("@cid", companyId);
+                        command.Parameters.AddWithValue("@deviceId", id);
+                    }, ct);
+                if (current is not null)
+                {
+                    var currentFrom = current["effectiveFrom"] switch
+                    {
+                        DateTimeOffset timestamp => timestamp.ToUniversalTime(),
+                        DateTime timestamp => new DateTimeOffset(DateTime.SpecifyKind(timestamp, DateTimeKind.Utc)),
+                        _ => throw new InvalidOperationException("profile_history_invalid")
+                    };
+                    if (input.EffectiveAt <= currentFrom)
+                        throw new InvalidOperationException("effective_order");
+                    var unchanged = string.Equals(current["profileKind"]?.ToString(), input.ProfileKind, StringComparison.Ordinal)
+                        && string.Equals(current["carrierName"]?.ToString(), input.CarrierName, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(current["iccidBidx"]?.ToString(), iccidBidx, StringComparison.Ordinal)
+                        && string.Equals(current["msisdnBidx"] is null or DBNull ? null : current["msisdnBidx"]?.ToString(), msisdnBidx, StringComparison.Ordinal)
+                        && string.Equals(current["apnBidx"] is null or DBNull ? null : current["apnBidx"]?.ToString(), apnBidx, StringComparison.Ordinal);
+                    if (unchanged) throw new InvalidOperationException("no_profile_change");
+
+                    await db.ExecuteAsync(
+                        @"UPDATE device_connectivity_profiles
+                             SET assignment_status='Ended',effective_to=@effectiveAt,end_reason=@reason,
+                                 ended_by=@actor,updated_at=NOW()
+                           WHERE id=@currentId AND company_id=@cid AND effective_to IS NULL",
+                        command =>
+                        {
+                            command.Parameters.AddWithValue("@effectiveAt", input.EffectiveAt);
+                            command.Parameters.AddWithValue("@reason", input.ChangeReason);
+                            command.Parameters.AddWithValue("@actor", actorUserId);
+                            command.Parameters.AddWithValue("@currentId", Convert.ToInt64(current["id"]));
+                            command.Parameters.AddWithValue("@cid", companyId);
+                        }, ct);
+                }
+
+                var profileId = await db.InsertAsync(
+                    @"INSERT INTO device_connectivity_profiles
+                        (company_id,branch_id,device_id,profile_kind,carrier_name,
+                         iccid_encrypted,iccid_bidx,iccid_last4,
+                         msisdn_encrypted,msisdn_bidx,msisdn_last4,
+                         apn_encrypted,apn_bidx,apn_configured,assignment_status,effective_from,
+                         source_reference,change_reason,idempotency_key,created_by,created_at)
+                       VALUES
+                        (@cid,@branchId,@deviceId,@profileKind,@carrier,
+                         @iccidEncrypted,@iccidBidx,@iccidLast4,
+                         @msisdnEncrypted,@msisdnBidx,@msisdnLast4,
+                         @apnEncrypted,@apnBidx,@apnConfigured,'Assigned',@effectiveAt,
+                         @sourceReference,@changeReason,@idempotencyKey,@actor,NOW())",
+                    command =>
+                    {
+                        command.Parameters.AddWithValue("@cid", companyId);
+                        command.Parameters.AddWithValue("@branchId", device["branchId"] is null or DBNull ? DBNull.Value : device["branchId"]!);
+                        command.Parameters.AddWithValue("@deviceId", id);
+                        command.Parameters.AddWithValue("@profileKind", input.ProfileKind);
+                        command.Parameters.AddWithValue("@carrier", input.CarrierName);
+                        command.Parameters.AddWithValue("@iccidEncrypted", iccidEncrypted!);
+                        command.Parameters.AddWithValue("@iccidBidx", iccidBidx);
+                        command.Parameters.AddWithValue("@iccidLast4", DeviceConnectivityProfilePolicy.LastFour(input.Iccid));
+                        command.Parameters.AddWithValue("@msisdnEncrypted", (object?)msisdnEncrypted ?? DBNull.Value);
+                        command.Parameters.AddWithValue("@msisdnBidx", (object?)msisdnBidx ?? DBNull.Value);
+                        command.Parameters.AddWithValue("@msisdnLast4", input.Msisdn is null ? DBNull.Value : DeviceConnectivityProfilePolicy.LastFour(input.Msisdn));
+                        command.Parameters.AddWithValue("@apnEncrypted", (object?)apnEncrypted ?? DBNull.Value);
+                        command.Parameters.AddWithValue("@apnBidx", (object?)apnBidx ?? DBNull.Value);
+                        command.Parameters.AddWithValue("@apnConfigured", input.Apn is not null);
+                        command.Parameters.AddWithValue("@effectiveAt", input.EffectiveAt);
+                        command.Parameters.AddWithValue("@sourceReference", input.SourceReference);
+                        command.Parameters.AddWithValue("@changeReason", input.ChangeReason);
+                        command.Parameters.AddWithValue("@idempotencyKey", input.IdempotencyKey);
+                        command.Parameters.AddWithValue("@actor", actorUserId);
+                    }, ct);
+                var inserted = await db.QuerySingleAsync(
+                    @"SELECT id,device_id,profile_kind,carrier_name,iccid_last4,msisdn_last4,
+                             apn_configured,assignment_status,effective_from,effective_to,
+                             source_reference,change_reason,end_reason,created_at,updated_at
+                        FROM device_connectivity_profiles WHERE id=@profileId AND company_id=@cid",
+                    command =>
+                    {
+                        command.Parameters.AddWithValue("@profileId", profileId);
+                        command.Parameters.AddWithValue("@cid", companyId);
+                    }, ct);
+                return (inserted ?? throw new InvalidOperationException("profile_not_recorded"), false);
+            }, ct);
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "effective_order")
+        {
+            return Results.Conflict(ApiResponse<object>.Fail("effectiveAt must be later than the current profile assignment."));
+        }
+        catch (InvalidOperationException ex) when (ex.Message == "no_profile_change")
+        {
+            return Results.Conflict(ApiResponse<object>.Fail("The submitted profile matches the current assignment. No history row was created."));
+        }
+        catch (InvalidOperationException ex) when (ex.Message is "device_unavailable" or "profile_not_recorded" or "profile_history_invalid")
+        {
+            return Results.Conflict(ApiResponse<object>.Fail("The device changed while the connectivity profile was being recorded. Refresh and try again."));
+        }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
+        {
+            return Results.Conflict(ApiResponse<object>.Fail(
+                ex.ConstraintName == "uq_stage116_connectivity_current_iccid"
+                    ? "That ICCID is currently assigned to another device."
+                    : "The connectivity profile conflicted with a concurrent change. Refresh and try again."));
+        }
+
+        await audit.LogAsync(http, "device.connectivity_profile.recorded", "DeviceConnectivityProfile",
+            Convert.ToInt64(stored["id"]),
+            $"device:{id};kind:{input.ProfileKind};carrier:{input.CarrierName};iccid-last4:{DeviceConnectivityProfilePolicy.LastFour(input.Iccid)};idempotent:{idempotentReplay}", ct);
+        http.Response.Headers.CacheControl = "no-store";
+        http.Response.Headers.Pragma = "no-cache";
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            profile = stored,
+            idempotentReplay,
+            connectivityClaim = false,
+            note = "Profile inventory recorded. Network attachment and telemetry remain unverified until observed independently."
+        }, idempotentReplay ? "Connectivity profile already recorded" : "Connectivity profile recorded"));
     }
 
     private static async Task<object> DeviceCompatibilityProjection(

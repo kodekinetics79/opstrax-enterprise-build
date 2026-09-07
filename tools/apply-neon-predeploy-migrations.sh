@@ -258,6 +258,8 @@ MIGRATIONS=(
   2026_09_07_stage114_camera_asset_reconciliation
   # Exact hardware/firmware + software-SHA candidates remain read-only and ExternalHold.
   2026_09_07_stage115_device_compatibility_candidate_registry
+  # Encrypted SIM/eSIM assignment history; no connectivity state is inferred.
+  2026_09_07_stage116_device_connectivity_profiles
 )
 
 echo "Pre-check: validated read-only database identity…"
@@ -416,7 +418,8 @@ BEGIN
       ('2026_09_07_stage112_camera_provider_ingest_spine'),
       ('2026_09_07_stage113_samsara_account_identity'),
       ('2026_09_07_stage114_camera_asset_reconciliation'),
-      ('2026_09_07_stage115_device_compatibility_candidate_registry')) required(version)
+      ('2026_09_07_stage115_device_compatibility_candidate_registry'),
+      ('2026_09_07_stage116_device_connectivity_profiles')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN RAISE EXCEPTION 'Required owner/pilot migration ledger missing or duplicated'; END IF;
   IF EXISTS (
@@ -480,6 +483,32 @@ BEGIN
        WHERE certification_status <> 'ExternalHold'
      ) THEN
     RAISE EXCEPTION 'Stage115 device compatibility candidates escaped ExternalHold';
+  END IF;
+  IF to_regclass('public.device_connectivity_profiles') IS NULL
+     OR NOT EXISTS (
+       SELECT 1 FROM pg_constraint
+       WHERE conrelid='public.device_connectivity_profiles'::regclass
+         AND conname='ck_stage116_assignment_lifecycle'
+     )
+     OR NOT EXISTS (
+       SELECT 1 FROM pg_trigger
+       WHERE tgrelid='public.device_connectivity_profiles'::regclass
+         AND tgname='trg_stage116_protect_device_connectivity_profile'
+         AND NOT tgisinternal
+     )
+     OR EXISTS (
+       SELECT 1 FROM device_connectivity_profiles
+       WHERE iccid_encrypted NOT LIKE 'enc:%'
+          OR (msisdn_encrypted IS NOT NULL AND msisdn_encrypted NOT LIKE 'enc:%')
+          OR (apn_encrypted IS NOT NULL AND apn_encrypted NOT LIKE 'enc:%')
+     ) THEN
+    RAISE EXCEPTION 'Stage116 encrypted connectivity profile contract is missing or invalid';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_app')
+     AND (has_column_privilege('opstrax_app','device_connectivity_profiles','iccid_encrypted','SELECT')
+       OR has_column_privilege('opstrax_app','device_connectivity_profiles','msisdn_encrypted','SELECT')
+       OR has_column_privilege('opstrax_app','device_connectivity_profiles','apn_encrypted','SELECT')) THEN
+    RAISE EXCEPTION 'Stage116 app role can read encrypted SIM/APN payload columns';
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns
