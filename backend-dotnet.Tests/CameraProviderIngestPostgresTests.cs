@@ -375,7 +375,21 @@ public sealed class CameraProviderIngestPostgresTests
             Assert.Equal(1, tenant.UnmatchedEventCount);
             Assert.Equal(1, tenant.QuarantinedEventCount);
             Assert.Equal(4, tenant.PendingMediaCount);
-            Assert.NotNull(tenant.LastProviderReceiptUtc);
+            Assert.NotNull(tenant.LastOpsTraxIntakeUtc);
+            var tenantPending = await status.ReadPendingEventsAsync(companyId, null);
+            Assert.Equal(4, tenantPending.Count);
+            Assert.All(tenantPending, row =>
+            {
+                Assert.Equal("ExternalHold", row.VerificationStatus);
+                Assert.False(row.ProviderVerified);
+                Assert.False(row.MediaAvailable);
+                Assert.StartsWith("intake-", row.IntakeReference, StringComparison.Ordinal);
+            });
+            Assert.Equal("Unavailable", Assert.Single(tenantPending, row => row.ProcessingStatus == "Quarantined").EventType);
+            var branchOnePending = await status.ReadPendingEventsAsync(companyId, branchOne);
+            var branchOneRecord = Assert.Single(branchOnePending);
+            Assert.Equal($"SV1-{suffix}", branchOneRecord.VehicleCode);
+            Assert.Equal(2, branchOneRecord.MediaReferenceCount);
 
             var scoped = await status.ReadAsync(companyId, branchOne);
             Assert.Equal(1, scoped.ObservedEventCount);
@@ -387,11 +401,12 @@ public sealed class CameraProviderIngestPostgresTests
             Assert.Equal(1, isolated.ObservedEventCount);
             Assert.Equal(1, isolated.MatchedEventCount);
             Assert.Equal(1, isolated.PendingMediaCount);
+            Assert.Single(await status.ReadPendingEventsAsync(otherCompanyId, null));
 
             var empty = await status.ReadAsync(companyId, long.MaxValue);
             Assert.Equal("AwaitingProviderConnection", empty.Status);
             Assert.Equal(0, empty.ObservedEventCount);
-            Assert.Null(empty.LastProviderReceiptUtc);
+            Assert.Null(empty.LastOpsTraxIntakeUtc);
         }
         finally
         {

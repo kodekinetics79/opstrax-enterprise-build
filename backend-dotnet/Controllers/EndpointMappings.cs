@@ -1343,6 +1343,7 @@ public static partial class EndpointMappings
 
         app.MapGet("/api/dashcam/summary", DashcamSummary);
         app.MapGet("/api/dashcam/provider-status", DashcamProviderStatus);
+        app.MapGet("/api/dashcam/provider-events", DashcamProviderEvents);
         app.MapGet("/api/dashcam/events", DashcamEvents);
         app.MapGet("/api/dashcam/events/{id:long}", DashcamEventDetail);
         app.MapPost("/api/dashcam/events", (HttpContext http, Database db, AuditService audit, CancellationToken ct) =>
@@ -9452,6 +9453,15 @@ public static partial class EndpointMappings
     {
         if (RequirePermission(http, "dashcam:view") is { } denied) return denied;
         var result = await status.ReadAsync(GetCompanyId(http), GetBranchId(http), ct);
+        return Results.Ok(ApiResponse<object>.Ok(result));
+    }
+    private static async Task<IResult> DashcamProviderEvents(
+        HttpContext http,
+        CameraProviderStatusService status,
+        CancellationToken ct)
+    {
+        if (RequirePermission(http, "dashcam:view") is { } denied) return denied;
+        var result = await status.ReadPendingEventsAsync(GetCompanyId(http), GetBranchId(http), ct);
         return Results.Ok(ApiResponse<object>.Ok(result));
     }
     private static Task<IResult> DashcamEvents(HttpContext http, Database db, CancellationToken ct)

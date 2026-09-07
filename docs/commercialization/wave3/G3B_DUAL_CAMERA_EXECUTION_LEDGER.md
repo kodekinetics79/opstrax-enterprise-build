@@ -91,6 +91,8 @@ The registered Samsara connector now has a separate bounded camera-safety lane u
 
 The Samsara configuration journey now exposes a distinct **Intake camera safety events** action and refreshes the customer camera status projection after it runs. The result shows observed, accepted, replayed and quarantined counts while continuing to state that media, provider verification, privacy acceptance and certification are on External hold. The adapter does not ingest signed media URLs and does not manufacture a playable clip or authoritative safety event.
 
+The camera page also exposes a separate, read-only provider-intake queue for the current tenant and branch. It shows the event classification, occurrence time, safe matched vehicle label and reconciliation state while suppressing provider accounts, provider event IDs, external asset identities, payload hashes and media identifiers. Quarantined classifications are shown as unavailable. The queue has no review, coaching, export or evidence action and remains visibly marked External hold.
+
 Verification for this increment uses controlled provider-response fixtures plus the isolated Stage 112 PostgreSQL role. Those fixtures prove parser, retry, cursor, quarantine, independent GPS/camera state and customer-copy behavior; they are software evidence only. No authorized Samsara account was contacted and no real camera event, media object, device or customer journey is claimed by this increment.
 
 ## External evidence still required

@@ -52,7 +52,11 @@ const response = (data = receipt(), status = 201) => ({ status, data: { success:
 const record = (patch = {}) => ({ id: 19, rowVersion: 3, sourceAuthority: "LegacyUnverified", deletedAt: null, ...input(), driverId: 7, occurredAt: "2025-01-01T12:00:00.000Z", ...patch });
 const providerStatusRecord = (patch = {}) => ({ status: "AwaitingProviderConnection", verificationStatus: "ExternalHold", certificationStatus: "ExternalHold",
   providerVerified: false, mediaAvailable: false, observedEventCount: 0, matchedEventCount: 0, unmatchedEventCount: 0,
-  quarantinedEventCount: 0, pendingMediaCount: 0, expiredMediaCount: 0, lastProviderReceiptUtc: null, ...patch });
+  quarantinedEventCount: 0, pendingMediaCount: 0, expiredMediaCount: 0, lastOpsTraxIntakeUtc: null, ...patch });
+const providerEventRecord = (patch = {}) => ({ intakeReference: "intake-23", eventType: "Samsara:Braking",
+  occurredAtUtc: "2025-01-01T12:00:00.000Z", receivedAtUtc: "2025-01-01T12:01:00.000Z",
+  reconciliationStatus: "Pending", processingStatus: "PendingVerification", verificationStatus: "ExternalHold",
+  providerVerified: false, mediaAvailable: false, vehicleCode: null, driverName: null, mediaReferenceCount: 0, ...patch });
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const settle = async () => { for (let i = 0; i < 15; i++) await Promise.resolve(); await new Promise((resolve) => setImmediate(resolve)); };
 
@@ -100,12 +104,28 @@ test("provider status accepts only the exact fail-closed operational projection"
     providerStatusRecord({ providerVerified: true }),
     providerStatusRecord({ certificationStatus: "Certified" }),
     providerStatusRecord({ observedEventCount: 1 }),
-    providerStatusRecord({ observedEventCount: 1, matchedEventCount: 1, lastProviderReceiptUtc: null }),
-    providerStatusRecord({ observedEventCount: 1, matchedEventCount: 1, pendingMediaCount: 9, lastProviderReceiptUtc: "2025-01-01T12:00:00.000Z" }),
+    providerStatusRecord({ observedEventCount: 1, matchedEventCount: 1, lastOpsTraxIntakeUtc: null }),
+    providerStatusRecord({ observedEventCount: 1, matchedEventCount: 1, pendingMediaCount: 9, lastOpsTraxIntakeUtc: "2025-01-01T12:00:00.000Z" }),
     { ...providerStatusRecord(), providerName: "private-provider" },
   ]) {
     f.setResponse(response(invalid, 200));
     await assert.rejects(() => f.api.dashcamApi.providerStatus(), /unavailable/);
+  }
+});
+
+test("provider intake records expose only the bounded unverified projection", async () => {
+  const f = serviceFixture();
+  f.setResponse(response([providerEventRecord()], 200));
+  assert.deepEqual(await f.api.dashcamApi.providerEvents(), [providerEventRecord()]);
+  for (const invalid of [
+    [providerEventRecord({ providerVerified: true })],
+    [providerEventRecord({ verificationStatus: "Verified" })],
+    [providerEventRecord({ mediaAvailable: true })],
+    [providerEventRecord({ processingStatus: "Quarantined" })],
+    [{ ...providerEventRecord(), providerEventId: "private-provider-id" }],
+  ]) {
+    f.setResponse(response(invalid, 200));
+    await assert.rejects(() => f.api.dashcamApi.providerEvents(), /unavailable/);
   }
 });
 
@@ -178,6 +198,23 @@ test("camera page shows the real provider hold instead of implying camera availa
     assert.match(html, /Provider verified: No/);
     assert.match(html, /Media available: No/);
     assert.doesNotMatch(html, /connected|certified|ready/i);
+  } finally { f.cleanup(); }
+});
+
+test("camera provider queue renders only safe unverified fields and no customer actions", () => {
+  const f = workflowFixture({ source: pageBuilt.outputFiles[0].text });
+  try {
+    const providerRow = { ...providerEventRecord({ vehicleCode: "TRK-7" }), providerEventId: "private-event-id", payloadSha256: "private-hash" };
+    const page = f.renderPage("dashcam", { providerEvents: { ...f.view.providerEvents, data: [providerRow] } });
+    const panel = component(page, "CameraProviderPendingEventsPanel"); assert.ok(panel);
+    const html = renderToStaticMarkup(panel);
+    assert.match(html, /Camera safety intake queue/);
+    assert.match(html, /Samsara:Braking/);
+    assert.match(html, /TRK-7/);
+    assert.match(html, /External hold/);
+    assert.match(html, /cannot be reviewed, coached, exported, or used as certification evidence/i);
+    assert.doesNotMatch(html, /private-event-id|private-hash/);
+    assert.equal(elements(panel).filter((element) => element.type === "button" || element.type === "a").length, 0);
   } finally { f.cleanup(); }
 });
 
@@ -287,12 +324,12 @@ function workflowFixture({ source = workflowBuilt.outputFiles[0].text } = {}) {
   const f = serviceFixture(source, (name) => name === "react" ? hooks
     : name === "@tanstack/react-query" ? { ...query, useMutation, useQueryClient: () => client }
     : name === "camera-test-auth" ? { useAuth: () => ({ session: view.session }) }
-    : name === "camera-test-queries" ? new Proxy({}, { get: (_, key) => () => String(key).includes("ProviderStatus") ? view.providerStatus : String(key).includes("Summary") ? view.summary : String(key).includes("Detail") ? view.detail : view.rows })
+    : name === "camera-test-queries" ? new Proxy({}, { get: (_, key) => () => String(key).includes("ProviderStatus") ? view.providerStatus : String(key).includes("ProviderEvents") ? view.providerEvents : String(key).includes("Summary") ? view.summary : String(key).includes("Detail") ? view.detail : view.rows })
     : require(name), document, FixtureUrl);
   const idle = { isError: false, isLoading: false, isFetching: false, fetchStatus: "idle", refetch: async () => {} };
   view = { enabled: true, session: f.session, canManage: true, canExport: true, selectedId: "19", visibleIds: ["19"],
     detail: { ...idle, data: { record: record() } }, rows: { ...idle, data: [record()] },
-    summary: { ...idle, data: { storedEventRecords: 1 } }, providerStatus: { ...idle, data: providerStatusRecord() }, queryClient: client };
+    summary: { ...idle, data: { storedEventRecords: 1 } }, providerStatus: { ...idle, data: providerStatusRecord() }, providerEvents: { ...idle, data: [] }, queryClient: client };
   const render = (patch = {}) => { view = { ...view, ...patch }; cursor = 0; return f.api.useCameraMetadataWorkflow(view); };
   const activateQuery = (key, data, read = async () => data) => {
     const observer = new query.QueryObserver(client, { queryKey: key, queryFn: read, initialData: data, staleTime: Infinity, retry: false });

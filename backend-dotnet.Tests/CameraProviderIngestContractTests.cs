@@ -105,12 +105,19 @@ public sealed class CameraProviderIngestContractTests
         Assert.Contains("RunInSystemTransactionAsync", status, StringComparison.Ordinal);
         Assert.Contains("e.company_id=@company AND (@branch::BIGINT IS NULL OR e.branch_id=@branch)", status, StringComparison.Ordinal);
         var exposedStatusFields = typeof(CameraProviderOperationalStatus).GetProperties().Select(property => property.Name).ToArray();
+        var exposedEventFields = typeof(CameraProviderPendingEvent).GetProperties().Select(property => property.Name).ToArray();
         Assert.DoesNotContain("ProviderKey", exposedStatusFields);
         Assert.DoesNotContain("ProviderAccountReference", exposedStatusFields);
         Assert.DoesNotContain("ProviderEventId", exposedStatusFields);
         Assert.DoesNotContain("PayloadSha256", exposedStatusFields);
         Assert.DoesNotContain("ProviderMediaId", exposedStatusFields);
+        Assert.DoesNotContain("ProviderKey", exposedEventFields);
+        Assert.DoesNotContain("ProviderAccountReference", exposedEventFields);
+        Assert.DoesNotContain("ProviderEventId", exposedEventFields);
+        Assert.DoesNotContain("PayloadSha256", exposedEventFields);
+        Assert.DoesNotContain("ProviderMediaId", exposedEventFields);
         Assert.Contains("/api/dashcam/provider-status", endpoints, StringComparison.Ordinal);
+        Assert.Contains("/api/dashcam/provider-events", endpoints, StringComparison.Ordinal);
         Assert.Contains("2026_09_07_stage112_camera_provider_ingest_spine", runner, StringComparison.Ordinal);
         Assert.Contains("Stage112 camera provider evidence escaped ExternalHold", runner, StringComparison.Ordinal);
     }

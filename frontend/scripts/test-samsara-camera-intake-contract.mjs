@@ -52,6 +52,7 @@ test("Samsara intake UI states the evidence boundary and refreshes camera status
   const mutation = page.slice(start, end);
   assert.match(mutation, /integrationsApi\.syncCameraSafety\(integration\.id\)/);
   assert.match(mutation, /\["dashcam", "provider-status"\]/);
+  assert.match(mutation, /\["dashcam", "provider-events"\]/);
 
   const step = page.slice(page.indexOf("4. Intake camera safety events"), page.indexOf("</li>", page.indexOf("4. Intake camera safety events")));
   assert.match(step, /External hold/i);

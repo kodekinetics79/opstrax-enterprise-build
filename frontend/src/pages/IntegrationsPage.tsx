@@ -432,6 +432,7 @@ function ConfigDrawer({
       await Promise.all([
         qc.invalidateQueries({ queryKey: ["integrations"] }),
         qc.invalidateQueries({ queryKey: ["dashcam", "provider-status"] }),
+        qc.invalidateQueries({ queryKey: ["dashcam", "provider-events"] }),
       ]);
     },
     onError: (error) => {

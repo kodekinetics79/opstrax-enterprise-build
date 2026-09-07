@@ -2,7 +2,7 @@ import { FormEvent, ReactNode, useMemo, useState, useRef } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Download, FileVideo, Gavel, PackageCheck, PenTool, Plus, ShieldAlert, UserCheck, X } from "lucide-react";
 import { AiInsightCard, DataTable, EmptyState, KpiCard, LoadingState, RiskBadge, StatusBadge, PageHeader, exportCsv, labelize } from "@/components/ui";
-import { useCoachingSummary, useCoachingTaskDetail, useCoachingTasks, useDashcamEventDetail, useDashcamEvents, useDashcamProviderStatus, useDashcamSummary, useEvidencePackageDetail, useEvidencePackages, useEvidenceSummary, useIncidentDetail, useIncidents, useIncidentsSummary, useSafetyEventDetail, useSafetyEvents, useSafetySummary } from "@/hooks/useBatch4";
+import { useCoachingSummary, useCoachingTaskDetail, useCoachingTasks, useDashcamEventDetail, useDashcamEvents, useDashcamProviderEvents, useDashcamProviderStatus, useDashcamSummary, useEvidencePackageDetail, useEvidencePackages, useEvidenceSummary, useIncidentDetail, useIncidents, useIncidentsSummary, useSafetyEventDetail, useSafetyEvents, useSafetySummary } from "@/hooks/useBatch4";
 import { useHasDirectPermission, useHasPermission } from "@/hooks/usePermission";
 import { useSingleFlight } from "@/hooks/useSingleFlight";
 import { useDialogFocus } from "@/hooks/useDialogFocus";
@@ -10,7 +10,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { CameraMetadataDialog, useCameraMetadataWorkflow } from "@/components/CameraMetadataDialog";
 import { coachingApi } from "@/services/coachingApi";
 import { CAMERA_NOTICE, cameraProjection, cameraRecord, dashcamApi } from "@/services/dashcamApi";
-import type { CameraProviderStatus } from "@/services/dashcamApi";
+import type { CameraProviderPendingEvent, CameraProviderStatus } from "@/services/dashcamApi";
 import { evidenceApi } from "@/services/evidenceApi";
 import { incidentsApi } from "@/services/incidentsApi";
 import { safetyApi } from "@/services/safetyApi";
@@ -258,7 +258,7 @@ export function CameraProviderStatusPanel({ status }: { status: CameraProviderSt
     : status.status === "AttentionRequired"
       ? "Provider intake records require reconciliation. Quarantined records are excluded from customer event claims."
       : "Provider intake records exist, but provider authenticity, media access and certification remain unverified.";
-  const lastReceipt = status.lastProviderReceiptUtc === null ? "Never observed" : new Date(status.lastProviderReceiptUtc).toLocaleString();
+  const lastReceipt = status.lastOpsTraxIntakeUtc === null ? "Never observed" : new Date(status.lastOpsTraxIntakeUtc).toLocaleString();
   return <section className="rounded-2xl border border-amber-300 bg-amber-50 p-5" aria-labelledby="camera-provider-status-title">
     <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
       <div>
@@ -269,7 +269,7 @@ export function CameraProviderStatusPanel({ status }: { status: CameraProviderSt
       <div className="text-sm text-slate-700">
         <p><strong>Verification:</strong> External hold</p>
         <p><strong>Certification:</strong> External hold</p>
-        <p><strong>Last provider receipt:</strong> {lastReceipt}</p>
+        <p><strong>Last OpsTrax intake:</strong> {lastReceipt}</p>
       </div>
     </div>
     <dl className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
@@ -288,6 +288,31 @@ export function CameraProviderStatusPanel({ status }: { status: CameraProviderSt
   </section>;
 }
 
+export function CameraProviderPendingEventsPanel({ rows }: { rows: readonly CameraProviderPendingEvent[] }) {
+  if (rows.length === 0) return null;
+  return <section className="rounded-2xl border border-slate-200 bg-white p-5" aria-labelledby="camera-provider-events-title">
+    <div>
+      <p className="text-xs font-bold uppercase tracking-[0.16em] text-amber-700">Unverified provider records</p>
+      <h2 id="camera-provider-events-title" className="mt-1 text-lg font-semibold text-slate-900">Camera safety intake queue</h2>
+      <p className="mt-2 max-w-4xl text-sm text-slate-600">These records are separate from stored camera metadata. They cannot be reviewed, coached, exported, or used as certification evidence until provider, media, privacy, and device checks pass.</p>
+    </div>
+    <div className="mt-4 overflow-x-auto">
+      <table className="min-w-full text-left text-sm">
+        <thead className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500"><tr>
+          <th className="px-3 py-2">Event</th><th className="px-3 py-2">Occurred</th><th className="px-3 py-2">Vehicle</th><th className="px-3 py-2">Reconciliation</th><th className="px-3 py-2">Evidence</th>
+        </tr></thead>
+        <tbody>{rows.map((row) => <tr key={row.intakeReference} className="border-b border-slate-100 last:border-0">
+          <td className="px-3 py-3 font-medium text-slate-900">{row.eventType}</td>
+          <td className="px-3 py-3 text-slate-700">{new Date(row.occurredAtUtc).toLocaleString()}</td>
+          <td className="px-3 py-3 text-slate-700">{row.vehicleCode ?? "Not matched"}</td>
+          <td className="px-3 py-3 text-slate-700">{row.reconciliationStatus}</td>
+          <td className="px-3 py-3"><span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-800">External hold</span></td>
+        </tr>)}</tbody>
+      </table>
+    </div>
+  </section>;
+}
+
 export function Batch4SafetyPage({ kind }: { kind: Kind }) {
   const { session } = useAuth();
   const config = configs[kind];
@@ -301,6 +326,7 @@ export function Batch4SafetyPage({ kind }: { kind: Kind }) {
   const rowsQuery = config.useRows();
   const summary = config.useSummary();
   const providerStatus = useDashcamProviderStatus(kind === "dashcam");
+  const providerEvents = useDashcamProviderEvents(kind === "dashcam");
   const [selected, setSelected] = useState<AnyRecord | null>(null);
   const safetyDetailOwner = useRef({ generation: 0, id: undefined as string | number | undefined, retrying: false });
   const [safetyDetailRetrying, setSafetyDetailRetrying] = useState(false);
@@ -659,12 +685,12 @@ export function Batch4SafetyPage({ kind }: { kind: Kind }) {
     }
   }} onClose={() => closeSafetyCoaching(safetyCoachingDialog.session)} onSubmit={() => submitSafetyCoaching(safetyCoachingDialog.session, safetyCoachingDraftRevision, safetyCoachingDescription)} /> : null;
   const safetyCoachingFeedback = <>{safetyCoachingReceipt}{safetyCoachingInput}</>;
-  if (rowsQuery.isLoading || summary.isLoading || (kind === "dashcam" && providerStatus.isLoading)) return kind === "safety" ? <>{safetyCoachingFeedback}<LoadingState /></> : <LoadingState />;
-  if (rowsQuery.isError || summary.isError || (kind === "dashcam" && (providerStatus.isError || !providerStatus.data || !Array.isArray(rowsQuery.data)))) {
+  if (rowsQuery.isLoading || summary.isLoading || (kind === "dashcam" && (providerStatus.isLoading || providerEvents.isLoading))) return kind === "safety" ? <>{safetyCoachingFeedback}<LoadingState /></> : <LoadingState />;
+  if (rowsQuery.isError || summary.isError || (kind === "dashcam" && (providerStatus.isError || providerEvents.isError || !providerStatus.data || !providerEvents.data || !Array.isArray(rowsQuery.data)))) {
     const unavailable = <div>{cameraNotice}<EmptyState
       title={`${config.eyebrow} unavailable`}
       subtitle="Unable to load live records right now. No empty or healthy state has been inferred."
-      action={<button type="button" className="btn-secondary" disabled={rowsQuery.isFetching || summary.isFetching || providerStatus.isFetching} onClick={() => { void rowsQuery.refetch(); void summary.refetch(); if (kind === "dashcam") void providerStatus.refetch(); }}>{rowsQuery.isFetching || summary.isFetching || providerStatus.isFetching ? "Retrying…" : "Retry live data"}</button>}
+      action={<button type="button" className="btn-secondary" disabled={rowsQuery.isFetching || summary.isFetching || providerStatus.isFetching || providerEvents.isFetching} onClick={() => { void rowsQuery.refetch(); void summary.refetch(); if (kind === "dashcam") { void providerStatus.refetch(); void providerEvents.refetch(); } }}>{rowsQuery.isFetching || summary.isFetching || providerStatus.isFetching || providerEvents.isFetching ? "Retrying…" : "Retry live data"}</button>}
     /></div>;
     return kind === "safety" ? <>{safetyCoachingFeedback}{unavailable}</> : unavailable;
   }
@@ -697,6 +723,7 @@ export function Batch4SafetyPage({ kind }: { kind: Kind }) {
       }
     />
     {kind === "dashcam" ? <CameraProviderStatusPanel status={providerStatus.data!} /> : null}
+    {kind === "dashcam" ? <CameraProviderPendingEventsPanel rows={providerEvents.data!} /> : null}
     {cameraNotice}
     {operationError && kind !== "dashcam" ? <div role="alert" className="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">{operationError instanceof Error ? operationError.message : "The incident action could not be completed."}</div> : null}
     {kind === "dashcam" && Array.isArray(rowsQuery.data) && rowsQuery.data.some((row) => !cameraProjection(row)) ? <p role="alert">Some stored metadata is unavailable because its identity or fields cannot be interpreted safely. It cannot be edited or exported.</p> : null}

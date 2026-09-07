@@ -85,13 +85,53 @@ export type CameraProviderStatus = {
   quarantinedEventCount: number;
   pendingMediaCount: number;
   expiredMediaCount: number;
-  lastProviderReceiptUtc: string | null;
+  lastOpsTraxIntakeUtc: string | null;
 };
+export type CameraProviderPendingEvent = {
+  intakeReference: string;
+  eventType: string;
+  occurredAtUtc: string;
+  receivedAtUtc: string;
+  reconciliationStatus: "Pending" | "Matched" | "Quarantined";
+  processingStatus: "PendingVerification" | "Quarantined";
+  verificationStatus: "ExternalHold";
+  providerVerified: false;
+  mediaAvailable: false;
+  vehicleCode: string | null;
+  driverName: string | null;
+  mediaReferenceCount: number;
+};
+export function cameraProviderEvents(raw: unknown): readonly CameraProviderPendingEvent[] {
+  if (!Array.isArray(raw) || raw.length > 200)
+    throw new CameraMetadataError("rejected", "Camera provider records are unavailable.");
+  const keys = ["intakeReference", "eventType", "occurredAtUtc", "receivedAtUtc", "reconciliationStatus",
+    "processingStatus", "verificationStatus", "providerVerified", "mediaAvailable", "vehicleCode", "driverName",
+    "mediaReferenceCount"] as const;
+  return Object.freeze(raw.map((value) => {
+    if (!plain(value) || Reflect.ownKeys(value).length !== keys.length || keys.some((key) => !own(value, key)))
+      throw new CameraMetadataError("rejected", "Camera provider records are unavailable.");
+    if (typeof value.intakeReference !== "string" || !/^intake-[1-9]\d{0,18}$/.test(value.intakeReference)
+      || typeof value.eventType !== "string" || !value.eventType.trim() || value.eventType.length > 120
+      || !["Pending", "Matched", "Quarantined"].includes(String(value.reconciliationStatus))
+      || !["PendingVerification", "Quarantined"].includes(String(value.processingStatus))
+      || value.verificationStatus !== "ExternalHold" || value.providerVerified !== false || value.mediaAvailable !== false
+      || (value.processingStatus === "Quarantined") !== (value.reconciliationStatus === "Quarantined")
+      || ![value.vehicleCode, value.driverName].every((item) => item === null || typeof item === "string")
+      || typeof value.mediaReferenceCount !== "number" || !Number.isSafeInteger(value.mediaReferenceCount)
+      || value.mediaReferenceCount < 0 || value.mediaReferenceCount > 8)
+      throw new CameraMetadataError("rejected", "Camera provider records are unavailable.");
+    const occurredAtUtc = cameraUtc(value.occurredAtUtc);
+    const receivedAtUtc = cameraUtc(value.receivedAtUtc);
+    if (!occurredAtUtc || !receivedAtUtc)
+      throw new CameraMetadataError("rejected", "Camera provider records are unavailable.");
+    return Object.freeze({ ...value, occurredAtUtc, receivedAtUtc }) as CameraProviderPendingEvent;
+  }));
+}
 export function cameraProviderStatus(raw: unknown): CameraProviderStatus {
   if (!plain(raw)) throw new CameraMetadataError("rejected", "Camera provider status is unavailable.");
   const keys = ["status", "verificationStatus", "certificationStatus", "providerVerified", "mediaAvailable",
     "observedEventCount", "matchedEventCount", "unmatchedEventCount", "quarantinedEventCount",
-    "pendingMediaCount", "expiredMediaCount", "lastProviderReceiptUtc"] as const;
+    "pendingMediaCount", "expiredMediaCount", "lastOpsTraxIntakeUtc"] as const;
   if (Reflect.ownKeys(raw).length !== keys.length || keys.some((key) => !own(raw, key)))
     throw new CameraMetadataError("rejected", "Camera provider status is unavailable.");
   if (!["AwaitingProviderConnection", "ProviderDataPendingVerification", "AttentionRequired"].includes(String(raw.status))
@@ -105,10 +145,10 @@ export function cameraProviderStatus(raw: unknown): CameraProviderStatus {
   if (observed !== Number(raw.matchedEventCount) + Number(raw.unmatchedEventCount) + Number(raw.quarantinedEventCount)
     || Number(raw.pendingMediaCount) + Number(raw.expiredMediaCount) > observed * 8)
     throw new CameraMetadataError("rejected", "Camera provider status is unavailable.");
-  const last = raw.lastProviderReceiptUtc === null ? null : cameraUtc(raw.lastProviderReceiptUtc);
-  if ((observed === 0 && raw.lastProviderReceiptUtc !== null) || (observed > 0 && last === null))
+  const last = raw.lastOpsTraxIntakeUtc === null ? null : cameraUtc(raw.lastOpsTraxIntakeUtc);
+  if ((observed === 0 && raw.lastOpsTraxIntakeUtc !== null) || (observed > 0 && last === null))
     throw new CameraMetadataError("rejected", "Camera provider status is unavailable.");
-  return Object.freeze({ ...raw, lastProviderReceiptUtc: last }) as CameraProviderStatus;
+  return Object.freeze({ ...raw, lastOpsTraxIntakeUtc: last }) as CameraProviderStatus;
 }
 export function cameraUtc(value: unknown, now = Date.now()): string | null {
   if (typeof value !== "string") return null;
@@ -230,6 +270,7 @@ async function writeCamera(id: string | null, input: unknown, session: UserSessi
 export const dashcamApi = {
   summary: () => unwrap<AnyRecord>(apiClient.get("/api/dashcam/summary")),
   providerStatus: async () => cameraProviderStatus(await unwrap<unknown>(apiClient.get("/api/dashcam/provider-status"))),
+  providerEvents: async () => cameraProviderEvents(await unwrap<unknown>(apiClient.get("/api/dashcam/provider-events"))),
   events: async () => { const rows = await unwrap<AnyRecord[]>(apiClient.get("/api/dashcam/events")); if (!Array.isArray(rows)) throw new CameraMetadataError("rejected", "Stored camera records are unavailable."); return rows; },
   detail: (id: string | number) => { const key = cameraId(id); if (!key) throw invalid(); return unwrap<AnyRecord>(apiClient.get(`/api/dashcam/events/${key}`)); },
   create: (payload: AnyRecord, session?: UserSession) => writeCamera(null, payload, session),
