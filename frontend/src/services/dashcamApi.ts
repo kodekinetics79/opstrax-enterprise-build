@@ -6,6 +6,7 @@ export const CAMERA_NOTICE = "Stored metadata only. Media, provider and automate
 export const CAMERA_FIELDS = ["eventType", "title", "severity", "safetyEventId", "driverId", "vehicleId", "jobId", "routeId", "locationDescription", "occurredAt"] as const;
 const references = new Set(["safetyEventId", "driverId", "vehicleId", "jobId", "routeId"]);
 const severities = new Set(["Low", "Medium", "High", "Critical"]);
+const sourceAuthorities = new Set(["LegacyUnverified", "ProviderPending", "Authoritative"]);
 const own = (value: object, key: string) => Object.prototype.hasOwnProperty.call(value, key);
 const plain = (value: unknown): value is AnyRecord => value !== null && typeof value === "object"
   && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
@@ -40,7 +41,11 @@ function field(row: AnyRecord, key: string): { valid: boolean; present: boolean;
 export function cameraRecord(raw: unknown) {
   if (!plain(raw)) return null;
   const id = field(raw, "id"), version = field(raw, "rowVersion"), authority = field(raw, "sourceAuthority"), deletion = field(raw, "deletedAt");
-  if (![id, version, authority, deletion].every((item) => item.valid) || !cameraId(id.value)) return null;
+  const recordVersion = cameraVersion(version.value);
+  if (![id, version, authority, deletion].every((item) => item.valid && item.present)
+    || !cameraId(id.value) || recordVersion === null
+    || typeof authority.value !== "string" || !sourceAuthorities.has(authority.value)
+    || deletion.value !== null) return null;
   const values: AnyRecord = { id: cameraId(id.value) };
   for (const key of ["eventNumber", ...CAMERA_FIELDS, "driverName", "vehicleCode", "jobNumber", "routeCode"]) {
     const item = field(raw, key);
@@ -58,8 +63,8 @@ export function cameraRecord(raw: unknown) {
   const source = authority.value === "LegacyUnverified" ? "Manual metadata — unverified"
     : authority.value === "ProviderPending" ? "Provider pending — not verified in this view"
       : authority.value === "Authoritative" ? "Stored provider authority — not verified in this view" : "Source authority unavailable";
-  return { id: cameraId(id.value)!, version: cameraVersion(version.value), values,
-    manual: authority.present && authority.value === "LegacyUnverified" && deletion.present && deletion.value === null && cameraVersion(version.value) !== null,
+  return { id: cameraId(id.value)!, version: recordVersion, values,
+    manual: authority.value === "LegacyUnverified",
     source, authority: authority.value, deletion: deletion.value };
 }
 export function cameraProjection(raw: unknown): AnyRecord | null {

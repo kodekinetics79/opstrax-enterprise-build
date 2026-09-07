@@ -657,11 +657,16 @@ test("manual admission uses own sourceAuthority, active marker and exact core id
   const { cameraRecord, cameraProjection } = serviceFixture().api;
   assert.equal(cameraRecord(record()).manual, true);
   assert.equal(cameraRecord({ id: 19, row_version: "3", source_authority: "LegacyUnverified", deleted_at: null }).manual, true);
-  for (const patch of [{ sourceAuthority: undefined }, { sourceAuthority: "ProviderPending" }, { sourceAuthority: "Authoritative" },
-    { sourceAuthority: "Unknown" }, { sourceAuthority: {} }, { sourceAuthority: "" }, { deletedAt: "2025-01-01" },
-    { deletedAt: undefined }, { rowVersion: Number.MAX_SAFE_INTEGER + 1 }]) assert.equal(cameraRecord(record(patch)).manual, false);
+  assert.equal(cameraRecord(record({ sourceAuthority: "ProviderPending" })).manual, false);
+  assert.equal(cameraRecord(record({ sourceAuthority: "Authoritative" })).manual, false);
+  for (const patch of [{ sourceAuthority: undefined }, { sourceAuthority: "Unknown" }, { sourceAuthority: {} },
+    { sourceAuthority: "" }, { deletedAt: "2025-01-01" }, { deletedAt: undefined },
+    { rowVersion: Number.MAX_SAFE_INTEGER + 1 }, { rowVersion: undefined }]) {
+    assert.equal(cameraRecord(record(patch)), null);
+    assert.equal(cameraProjection(record(patch)), null);
+  }
   const sourceEventOnly = record(); delete sourceEventOnly.sourceAuthority; sourceEventOnly.sourceEvent = "LegacyUnverified";
-  assert.equal(cameraRecord(sourceEventOnly).manual, false);
+  assert.equal(cameraRecord(sourceEventOnly), null);
   for (const patch of [{ source_authority: "Authoritative" }, { row_version: 4 }, { deleted_at: "2025-01-01" },
     { Id: 20 }, { id: Number.MAX_SAFE_INTEGER + 1 }, { driverId: true }, { driverId: Number.MAX_SAFE_INTEGER + 1 }, { vehicleId: [] }]) {
     assert.equal(cameraProjection(record(patch)), null);
