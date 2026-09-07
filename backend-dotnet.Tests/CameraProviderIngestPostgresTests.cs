@@ -16,6 +16,61 @@ public sealed class CameraProviderIngestPostgresTests
     private static readonly DateTimeOffset Now = new(2026, 9, 7, 12, 0, 0, TimeSpan.Zero);
 
     [Fact]
+    public async Task ConnectorLeaseFence_RejectsInvalidatedGenerationWithoutLedgerWrite()
+    {
+        var database = new Database(new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["ConnectionStrings:DefaultConnection"] = GuardedConnection() }).Build());
+        var service = new CameraProviderIngestService(
+            database, new FixedTimeProvider(Now), NullLogger<CameraProviderIngestService>.Instance);
+        var suffix = Guid.NewGuid().ToString("N");
+        var companyId = await InsertId(database,
+            "INSERT INTO companies(company_code,name,industry) VALUES(@code,'Camera lease tenant','Testing') RETURNING id",
+            command => command.Parameters.AddWithValue("code", $"LEASE-{suffix}"));
+        long integrationId = 0;
+        try
+        {
+            var staleLease = Guid.NewGuid();
+            integrationId = await InsertId(database, """
+                INSERT INTO integrations(
+                  company_id,provider_name,category,status,integration_key,config_json,
+                  operation_generation,operation_lease_token,operation_lease_expires_at)
+                VALUES(@company,'Samsara','Telematics & ELD','Connected','samsara','{}'::jsonb,
+                  8,@lease,NOW()+INTERVAL '1 minute') RETURNING id
+                """, command =>
+                {
+                    command.Parameters.AddWithValue("company", companyId);
+                    command.Parameters.AddWithValue("lease", staleLease);
+                });
+            var operation = new ConnectorOperationContext(
+                companyId, integrationId, 8, staleLease, "samsara", null, "Connected", false);
+            await database.ExecuteAsync(
+                "UPDATE integrations SET operation_generation=9,operation_lease_token=NULL WHERE id=@id",
+                command => command.Parameters.AddWithValue("id", integrationId));
+            var envelope = Envelope($"stale-operation-{suffix}", null, null, null);
+
+            await Assert.ThrowsAsync<StaleConnectorOperationException>(() =>
+                service.IngestUnderConnectorLeaseAsync(
+                    operation, envelope, Encoding.UTF8.GetBytes("{\"provider\":\"stale\"}")));
+            Assert.Equal(0, await database.ScalarLongAsync(
+                "SELECT COUNT(*) FROM camera_provider_event_inbox WHERE company_id=@company AND provider_event_id=@event",
+                command =>
+                {
+                    command.Parameters.AddWithValue("company", companyId);
+                    command.Parameters.AddWithValue("event", envelope.ProviderEventId);
+                }));
+        }
+        finally
+        {
+            if (integrationId > 0)
+                await database.ExecuteAsync("DELETE FROM integrations WHERE id=@id",
+                    command => command.Parameters.AddWithValue("id", integrationId));
+            await database.ExecuteAsync(
+                "DELETE FROM camera_provider_event_inbox WHERE company_id=@company; DELETE FROM companies WHERE id=@company",
+                command => command.Parameters.AddWithValue("company", companyId));
+        }
+    }
+
+    [Fact]
     public async Task CameraSyncCompletion_PreservesGpsHealthAndOwnsIndependentCursor()
     {
         var database = new Database(new ConfigurationBuilder().AddInMemoryCollection(

@@ -69,8 +69,8 @@ public sealed class SamsaraCameraSafetySync(
         foreach (var item in page.Events)
         {
             ct.ThrowIfCancellationRequested();
-            var result = await intake.IngestAsync(
-                operation.CompanyId,
+            var result = await intake.IngestUnderConnectorLeaseAsync(
+                operation,
                 item.Envelope,
                 item.AuthenticatedPayload,
                 ct);

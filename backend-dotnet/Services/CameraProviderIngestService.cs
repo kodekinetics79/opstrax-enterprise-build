@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using Npgsql;
 using NpgsqlTypes;
 using Opstrax.Api.Data;
+using Opstrax.Api.Services.Connectors;
 
 namespace Opstrax.Api.Services;
 
@@ -192,17 +193,44 @@ public sealed partial class CameraProviderIngestService(
             externalVehicle, externalDriver, externalTrip, normalizedMedia);
     }
 
-    public async Task<CameraProviderIngestResult> IngestAsync(
+    public Task<CameraProviderIngestResult> IngestAsync(
         long companyId,
         CameraProviderEventEnvelope envelope,
         ReadOnlyMemory<byte> authenticatedPayload,
+        CancellationToken ct = default) =>
+        IngestCoreAsync(companyId, envelope, authenticatedPayload, operation: null, ct);
+
+    internal Task<CameraProviderIngestResult> IngestUnderConnectorLeaseAsync(
+        ConnectorOperationContext operation,
+        CameraProviderEventEnvelope envelope,
+        ReadOnlyMemory<byte> authenticatedPayload,
         CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        if (operation.CompanyId <= 0)
+            throw Invalid("The connector operation company ID is invalid.");
+        return IngestCoreAsync(operation.CompanyId, envelope, authenticatedPayload, operation, ct);
+    }
+
+    private async Task<CameraProviderIngestResult> IngestCoreAsync(
+        long companyId,
+        CameraProviderEventEnvelope envelope,
+        ReadOnlyMemory<byte> authenticatedPayload,
+        ConnectorOperationContext? operation,
+        CancellationToken ct)
     {
         if (companyId <= 0) throw Invalid("The company ID is invalid.");
         var prepared = Prepare(envelope, authenticatedPayload, clock.GetUtcNow());
 
         var result = await database.RunInSystemTransactionAsync(async () =>
         {
+            // Provider data may be persisted only while the exact connector generation
+            // and lease are current. Configure/disconnect can invalidate the operation
+            // while the remote response is in flight; this fence shares the transaction
+            // with the ledger write so stale-generation evidence leaves no side effect.
+            if (operation is not null)
+                await ConnectorOperationLease.AssertCurrentForWriteAsync(database, operation, ct);
+
             if (await database.ScalarLongAsync("SELECT COUNT(*) FROM companies WHERE id=@company", c => c.Parameters.AddWithValue("company", companyId), ct) != 1)
                 throw Invalid("The company does not exist.");
 
