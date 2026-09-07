@@ -88,6 +88,8 @@ public sealed class CameraProviderIngestContractTests
         var sql = File.ReadAllText(Path.Combine(root, "database", "migrations", "2026_09_07_stage112_camera_provider_ingest_spine.sql"));
         var runner = File.ReadAllText(Path.Combine(root, "tools", "apply-neon-predeploy-migrations.sh"));
         var service = File.ReadAllText(Path.Combine(root, "backend-dotnet", "Services", "CameraProviderIngestService.cs"));
+        var status = File.ReadAllText(Path.Combine(root, "backend-dotnet", "Services", "CameraProviderStatusService.cs"));
+        var endpoints = File.ReadAllText(Path.Combine(root, "backend-dotnet", "Controllers", "EndpointMappings.cs"));
 
         Assert.Contains("camera_provider_event_inbox FORCE ROW LEVEL SECURITY", sql, StringComparison.Ordinal);
         Assert.Contains("camera_provider_media_references FORCE ROW LEVEL SECURITY", sql, StringComparison.Ordinal);
@@ -100,6 +102,15 @@ public sealed class CameraProviderIngestContractTests
         Assert.Contains("ck_camera_provider_media_identity_immutable", sql, StringComparison.Ordinal);
         Assert.DoesNotContain("source_authority='Authoritative'", sql, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("INSERT INTO dashcam_events", service, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("RunInSystemTransactionAsync", status, StringComparison.Ordinal);
+        Assert.Contains("e.company_id=@company AND (@branch::BIGINT IS NULL OR e.branch_id=@branch)", status, StringComparison.Ordinal);
+        var exposedStatusFields = typeof(CameraProviderOperationalStatus).GetProperties().Select(property => property.Name).ToArray();
+        Assert.DoesNotContain("ProviderKey", exposedStatusFields);
+        Assert.DoesNotContain("ProviderAccountReference", exposedStatusFields);
+        Assert.DoesNotContain("ProviderEventId", exposedStatusFields);
+        Assert.DoesNotContain("PayloadSha256", exposedStatusFields);
+        Assert.DoesNotContain("ProviderMediaId", exposedStatusFields);
+        Assert.Contains("/api/dashcam/provider-status", endpoints, StringComparison.Ordinal);
         Assert.Contains("2026_09_07_stage112_camera_provider_ingest_spine", runner, StringComparison.Ordinal);
         Assert.Contains("Stage112 camera provider evidence escaped ExternalHold", runner, StringComparison.Ordinal);
     }

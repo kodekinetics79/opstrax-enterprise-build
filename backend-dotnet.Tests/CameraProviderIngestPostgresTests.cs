@@ -172,6 +172,107 @@ public sealed class CameraProviderIngestPostgresTests
     }
 
     [Fact]
+    public async Task ProviderStatus_IsTenantAndBranchScopedAndCountsEventsOnce()
+    {
+        var connectionString = GuardedConnection();
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> {
+                ["ConnectionStrings:DefaultConnection"] = connectionString,
+                ["ConnectionStrings:SystemConnection"] = connectionString,
+                ["Rls:EnforceTenantContext"] = "false"
+            }).Build();
+        var database = new Database(configuration);
+        var intake = new CameraProviderIngestService(
+            database, new FixedTimeProvider(Now), NullLogger<CameraProviderIngestService>.Instance);
+        var status = new CameraProviderStatusService(database);
+        var suffix = Guid.NewGuid().ToString("N");
+        long companyId = 0, otherCompanyId = 0;
+
+        try
+        {
+            companyId = await InsertId(database,
+                "INSERT INTO companies(company_code,name,industry) VALUES(@code,'Camera status tenant','Testing') RETURNING id",
+                c => c.Parameters.AddWithValue("code", $"STATUS-{suffix}"));
+            otherCompanyId = await InsertId(database,
+                "INSERT INTO companies(company_code,name,industry) VALUES(@code,'Camera status other','Testing') RETURNING id",
+                c => c.Parameters.AddWithValue("code", $"STATUS-OTHER-{suffix}"));
+            var branchOne = await InsertId(database,
+                "INSERT INTO branches(company_id,branch_code,name) VALUES(@company,@code,'Camera branch one') RETURNING id",
+                c => { c.Parameters.AddWithValue("company", companyId); c.Parameters.AddWithValue("code", $"SB1-{suffix}"); });
+            var branchTwo = await InsertId(database,
+                "INSERT INTO branches(company_id,branch_code,name) VALUES(@company,@code,'Camera branch two') RETURNING id",
+                c => { c.Parameters.AddWithValue("company", companyId); c.Parameters.AddWithValue("code", $"SB2-{suffix}"); });
+            var otherBranch = await InsertId(database,
+                "INSERT INTO branches(company_id,branch_code,name) VALUES(@company,@code,'Other camera branch') RETURNING id",
+                c => { c.Parameters.AddWithValue("company", otherCompanyId); c.Parameters.AddWithValue("code", $"SBO-{suffix}"); });
+            var vehicleOne = await InsertId(database,
+                "INSERT INTO vehicles(company_id,branch_id,vehicle_code,type) VALUES(@company,@branch,@code,'Truck') RETURNING id",
+                c => { c.Parameters.AddWithValue("company", companyId); c.Parameters.AddWithValue("branch", branchOne); c.Parameters.AddWithValue("code", $"SV1-{suffix}"); });
+            var vehicleTwo = await InsertId(database,
+                "INSERT INTO vehicles(company_id,branch_id,vehicle_code,type) VALUES(@company,@branch,@code,'Truck') RETURNING id",
+                c => { c.Parameters.AddWithValue("company", companyId); c.Parameters.AddWithValue("branch", branchTwo); c.Parameters.AddWithValue("code", $"SV2-{suffix}"); });
+            var otherVehicle = await InsertId(database,
+                "INSERT INTO vehicles(company_id,branch_id,vehicle_code,type) VALUES(@company,@branch,@code,'Truck') RETURNING id",
+                c => { c.Parameters.AddWithValue("company", otherCompanyId); c.Parameters.AddWithValue("branch", otherBranch); c.Parameters.AddWithValue("code", $"SVO-{suffix}"); });
+            var payload = Encoding.UTF8.GetBytes("{\"provider\":\"status-evidence\"}");
+            var twoMedia = Envelope($"status-b1-{suffix}", branchOne, vehicleOne, null) with
+            {
+                MediaReferences =
+                [
+                    new("RoadFacing", "Video", "video/mp4", "status-road", Now.AddMinutes(-2), 10_000, Now.AddHours(1), "Triggered", "Safety30Days", "privacy-v1"),
+                    new("DriverFacing", "Image", "image/jpeg", "status-driver", Now.AddMinutes(-2), null, Now.AddHours(1), "Triggered", "Safety30Days", "privacy-v1")
+                ]
+            };
+            await intake.IngestAsync(companyId, twoMedia, payload);
+            await intake.IngestAsync(companyId, Envelope($"status-b2-{suffix}", branchTwo, vehicleTwo, null), payload);
+            await intake.IngestAsync(companyId, Envelope($"status-pending-{suffix}", null, null, null), payload);
+            await intake.IngestAsync(companyId, Envelope($"status-quarantine-{suffix}", null, otherVehicle, null), payload);
+            await intake.IngestAsync(otherCompanyId, Envelope($"status-other-{suffix}", otherBranch, otherVehicle, null), payload);
+
+            var tenant = await status.ReadAsync(companyId, null);
+            Assert.Equal("ProviderDataPendingVerification", tenant.Status);
+            Assert.Equal("ExternalHold", tenant.VerificationStatus);
+            Assert.Equal("ExternalHold", tenant.CertificationStatus);
+            Assert.False(tenant.ProviderVerified);
+            Assert.False(tenant.MediaAvailable);
+            Assert.Equal(4, tenant.ObservedEventCount);
+            Assert.Equal(2, tenant.MatchedEventCount);
+            Assert.Equal(1, tenant.UnmatchedEventCount);
+            Assert.Equal(1, tenant.QuarantinedEventCount);
+            Assert.Equal(4, tenant.PendingMediaCount);
+            Assert.NotNull(tenant.LastProviderReceiptUtc);
+
+            var scoped = await status.ReadAsync(companyId, branchOne);
+            Assert.Equal(1, scoped.ObservedEventCount);
+            Assert.Equal(1, scoped.MatchedEventCount);
+            Assert.Equal(2, scoped.PendingMediaCount);
+            Assert.Equal(0, scoped.QuarantinedEventCount);
+
+            var isolated = await status.ReadAsync(otherCompanyId, null);
+            Assert.Equal(1, isolated.ObservedEventCount);
+            Assert.Equal(1, isolated.MatchedEventCount);
+            Assert.Equal(1, isolated.PendingMediaCount);
+
+            var empty = await status.ReadAsync(companyId, long.MaxValue);
+            Assert.Equal("AwaitingProviderConnection", empty.Status);
+            Assert.Equal(0, empty.ObservedEventCount);
+            Assert.Null(empty.LastProviderReceiptUtc);
+        }
+        finally
+        {
+            if (companyId > 0 || otherCompanyId > 0)
+            {
+                await database.ExecuteAsync("""
+                    DELETE FROM camera_provider_event_inbox WHERE company_id IN (@company,@other);
+                    DELETE FROM vehicles WHERE company_id IN (@company,@other);
+                    DELETE FROM branches WHERE company_id IN (@company,@other);
+                    DELETE FROM companies WHERE id IN (@company,@other)
+                    """, c => { c.Parameters.AddWithValue("company", companyId); c.Parameters.AddWithValue("other", otherCompanyId); });
+            }
+        }
+    }
+
+    [Fact]
     public async Task ConcurrentIdenticalDelivery_HasOneIdentityAndExactSeenCount()
     {
         var connectionString = GuardedConnection();

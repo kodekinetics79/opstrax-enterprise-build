@@ -50,6 +50,9 @@ const input = () => ({ eventType: "Near Miss", title: "Manual note", severity: "
 const receipt = (patch = {}) => ({ id: 19, rowVersion: 4, dataSource: "stored_metadata", provenanceStatus: "unverified", mediaAvailable: false, automatedAssessmentAvailable: false, ...patch });
 const response = (data = receipt(), status = 201) => ({ status, data: { success: true, data } });
 const record = (patch = {}) => ({ id: 19, rowVersion: 3, sourceAuthority: "LegacyUnverified", deletedAt: null, ...input(), driverId: 7, occurredAt: "2025-01-01T12:00:00.000Z", ...patch });
+const providerStatusRecord = (patch = {}) => ({ status: "AwaitingProviderConnection", verificationStatus: "ExternalHold", certificationStatus: "ExternalHold",
+  providerVerified: false, mediaAvailable: false, observedEventCount: 0, matchedEventCount: 0, unmatchedEventCount: 0,
+  quarantinedEventCount: 0, pendingMediaCount: 0, expiredMediaCount: 0, lastProviderReceiptUtc: null, ...patch });
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const settle = async () => { for (let i = 0; i < 15; i++) await Promise.resolve(); await new Promise((resolve) => setImmediate(resolve)); };
 
@@ -87,6 +90,23 @@ test("invalid primitives, aliases, bounds, unsafe JSON IDs and versions send no 
     assert.throws(() => f.api.dashcamApi.update(id, { rowVersion: 3, title: "Changed" }, f.session));
   }
   assert.equal(f.calls.length, 0);
+});
+
+test("provider status accepts only the exact fail-closed operational projection", async () => {
+  const f = serviceFixture();
+  f.setResponse(response(providerStatusRecord(), 200));
+  assert.deepEqual(await f.api.dashcamApi.providerStatus(), providerStatusRecord());
+  for (const invalid of [
+    providerStatusRecord({ providerVerified: true }),
+    providerStatusRecord({ certificationStatus: "Certified" }),
+    providerStatusRecord({ observedEventCount: 1 }),
+    providerStatusRecord({ observedEventCount: 1, matchedEventCount: 1, lastProviderReceiptUtc: null }),
+    providerStatusRecord({ observedEventCount: 1, matchedEventCount: 1, pendingMediaCount: 9, lastProviderReceiptUtc: "2025-01-01T12:00:00.000Z" }),
+    { ...providerStatusRecord(), providerName: "private-provider" },
+  ]) {
+    f.setResponse(response(invalid, 200));
+    await assert.rejects(() => f.api.dashcamApi.providerStatus(), /unavailable/);
+  }
 });
 
 const query = require("@tanstack/react-query");
@@ -144,6 +164,20 @@ test("actual camera summary uses an honest all-record wire key and label", () =>
     assert.equal(card.props.label, "Stored event records");
     assert.equal(card.props.value, "3");
     assert.doesNotMatch(renderToStaticMarkup(card), /today/i);
+  } finally { f.cleanup(); }
+});
+
+test("camera page shows the real provider hold instead of implying camera availability", () => {
+  const f = workflowFixture({ source: pageBuilt.outputFiles[0].text });
+  try {
+    const page = f.renderPage("dashcam", { providerStatus: { ...f.view.providerStatus, data: providerStatusRecord() } });
+    const panel = component(page, "CameraProviderStatusPanel"); assert.ok(panel);
+    const html = renderToStaticMarkup(panel);
+    assert.match(html, /Awaiting provider connection/);
+    assert.match(html, /no provider-backed camera evidence/i);
+    assert.match(html, /Provider verified: No/);
+    assert.match(html, /Media available: No/);
+    assert.doesNotMatch(html, /connected|certified|ready/i);
   } finally { f.cleanup(); }
 });
 
@@ -253,12 +287,12 @@ function workflowFixture({ source = workflowBuilt.outputFiles[0].text } = {}) {
   const f = serviceFixture(source, (name) => name === "react" ? hooks
     : name === "@tanstack/react-query" ? { ...query, useMutation, useQueryClient: () => client }
     : name === "camera-test-auth" ? { useAuth: () => ({ session: view.session }) }
-    : name === "camera-test-queries" ? new Proxy({}, { get: (_, key) => () => String(key).includes("Summary") ? view.summary : String(key).includes("Detail") ? view.detail : view.rows })
+    : name === "camera-test-queries" ? new Proxy({}, { get: (_, key) => () => String(key).includes("ProviderStatus") ? view.providerStatus : String(key).includes("Summary") ? view.summary : String(key).includes("Detail") ? view.detail : view.rows })
     : require(name), document, FixtureUrl);
   const idle = { isError: false, isLoading: false, isFetching: false, fetchStatus: "idle", refetch: async () => {} };
   view = { enabled: true, session: f.session, canManage: true, canExport: true, selectedId: "19", visibleIds: ["19"],
     detail: { ...idle, data: { record: record() } }, rows: { ...idle, data: [record()] },
-    summary: { ...idle, data: { storedEventRecords: 1 } }, queryClient: client };
+    summary: { ...idle, data: { storedEventRecords: 1 } }, providerStatus: { ...idle, data: providerStatusRecord() }, queryClient: client };
   const render = (patch = {}) => { view = { ...view, ...patch }; cursor = 0; return f.api.useCameraMetadataWorkflow(view); };
   const activateQuery = (key, data, read = async () => data) => {
     const observer = new query.QueryObserver(client, { queryKey: key, queryFn: read, initialData: data, staleTime: Infinity, retry: false });

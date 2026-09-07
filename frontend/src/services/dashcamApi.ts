@@ -73,6 +73,43 @@ export function cameraProjection(raw: unknown): AnyRecord | null {
   const { safetyEventId: _link, ...values } = record.values;
   return { ...values, metadataNotice: CAMERA_NOTICE };
 }
+export type CameraProviderStatus = {
+  status: "AwaitingProviderConnection" | "ProviderDataPendingVerification" | "AttentionRequired";
+  verificationStatus: "ExternalHold";
+  certificationStatus: "ExternalHold";
+  providerVerified: false;
+  mediaAvailable: false;
+  observedEventCount: number;
+  matchedEventCount: number;
+  unmatchedEventCount: number;
+  quarantinedEventCount: number;
+  pendingMediaCount: number;
+  expiredMediaCount: number;
+  lastProviderReceiptUtc: string | null;
+};
+export function cameraProviderStatus(raw: unknown): CameraProviderStatus {
+  if (!plain(raw)) throw new CameraMetadataError("rejected", "Camera provider status is unavailable.");
+  const keys = ["status", "verificationStatus", "certificationStatus", "providerVerified", "mediaAvailable",
+    "observedEventCount", "matchedEventCount", "unmatchedEventCount", "quarantinedEventCount",
+    "pendingMediaCount", "expiredMediaCount", "lastProviderReceiptUtc"] as const;
+  if (Reflect.ownKeys(raw).length !== keys.length || keys.some((key) => !own(raw, key)))
+    throw new CameraMetadataError("rejected", "Camera provider status is unavailable.");
+  if (!["AwaitingProviderConnection", "ProviderDataPendingVerification", "AttentionRequired"].includes(String(raw.status))
+    || raw.verificationStatus !== "ExternalHold" || raw.certificationStatus !== "ExternalHold"
+    || raw.providerVerified !== false || raw.mediaAvailable !== false)
+    throw new CameraMetadataError("rejected", "Camera provider status is unavailable.");
+  const counts = keys.slice(5, 11);
+  if (counts.some((key) => typeof raw[key] !== "number" || !Number.isSafeInteger(raw[key]) || Number(raw[key]) < 0))
+    throw new CameraMetadataError("rejected", "Camera provider status is unavailable.");
+  const observed = Number(raw.observedEventCount);
+  if (observed !== Number(raw.matchedEventCount) + Number(raw.unmatchedEventCount) + Number(raw.quarantinedEventCount)
+    || Number(raw.pendingMediaCount) + Number(raw.expiredMediaCount) > observed * 8)
+    throw new CameraMetadataError("rejected", "Camera provider status is unavailable.");
+  const last = raw.lastProviderReceiptUtc === null ? null : cameraUtc(raw.lastProviderReceiptUtc);
+  if ((observed === 0 && raw.lastProviderReceiptUtc !== null) || (observed > 0 && last === null))
+    throw new CameraMetadataError("rejected", "Camera provider status is unavailable.");
+  return Object.freeze({ ...raw, lastProviderReceiptUtc: last }) as CameraProviderStatus;
+}
 export function cameraUtc(value: unknown, now = Date.now()): string | null {
   if (typeof value !== "string") return null;
   const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,7}))?Z$/.exec(value);
@@ -192,6 +229,7 @@ async function writeCamera(id: string | null, input: unknown, session: UserSessi
 
 export const dashcamApi = {
   summary: () => unwrap<AnyRecord>(apiClient.get("/api/dashcam/summary")),
+  providerStatus: async () => cameraProviderStatus(await unwrap<unknown>(apiClient.get("/api/dashcam/provider-status"))),
   events: async () => { const rows = await unwrap<AnyRecord[]>(apiClient.get("/api/dashcam/events")); if (!Array.isArray(rows)) throw new CameraMetadataError("rejected", "Stored camera records are unavailable."); return rows; },
   detail: (id: string | number) => { const key = cameraId(id); if (!key) throw invalid(); return unwrap<AnyRecord>(apiClient.get(`/api/dashcam/events/${key}`)); },
   create: (payload: AnyRecord, session?: UserSession) => writeCamera(null, payload, session),

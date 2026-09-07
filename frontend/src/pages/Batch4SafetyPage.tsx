@@ -2,7 +2,7 @@ import { FormEvent, ReactNode, useMemo, useState, useRef } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Download, FileVideo, Gavel, PackageCheck, PenTool, Plus, ShieldAlert, UserCheck, X } from "lucide-react";
 import { AiInsightCard, DataTable, EmptyState, KpiCard, LoadingState, RiskBadge, StatusBadge, PageHeader, exportCsv, labelize } from "@/components/ui";
-import { useCoachingSummary, useCoachingTaskDetail, useCoachingTasks, useDashcamEventDetail, useDashcamEvents, useDashcamSummary, useEvidencePackageDetail, useEvidencePackages, useEvidenceSummary, useIncidentDetail, useIncidents, useIncidentsSummary, useSafetyEventDetail, useSafetyEvents, useSafetySummary } from "@/hooks/useBatch4";
+import { useCoachingSummary, useCoachingTaskDetail, useCoachingTasks, useDashcamEventDetail, useDashcamEvents, useDashcamProviderStatus, useDashcamSummary, useEvidencePackageDetail, useEvidencePackages, useEvidenceSummary, useIncidentDetail, useIncidents, useIncidentsSummary, useSafetyEventDetail, useSafetyEvents, useSafetySummary } from "@/hooks/useBatch4";
 import { useHasDirectPermission, useHasPermission } from "@/hooks/usePermission";
 import { useSingleFlight } from "@/hooks/useSingleFlight";
 import { useDialogFocus } from "@/hooks/useDialogFocus";
@@ -10,6 +10,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { CameraMetadataDialog, useCameraMetadataWorkflow } from "@/components/CameraMetadataDialog";
 import { coachingApi } from "@/services/coachingApi";
 import { CAMERA_NOTICE, cameraProjection, cameraRecord, dashcamApi } from "@/services/dashcamApi";
+import type { CameraProviderStatus } from "@/services/dashcamApi";
 import { evidenceApi } from "@/services/evidenceApi";
 import { incidentsApi } from "@/services/incidentsApi";
 import { safetyApi } from "@/services/safetyApi";
@@ -248,6 +249,45 @@ const ACTION_PERMISSIONS: Record<Kind, Record<string, string>> = {
   },
 };
 
+export function CameraProviderStatusPanel({ status }: { status: CameraProviderStatus }) {
+  const title = status.status === "AwaitingProviderConnection" ? "Awaiting provider connection"
+    : status.status === "AttentionRequired" ? "Provider intake needs attention"
+      : "Provider data pending verification";
+  const message = status.status === "AwaitingProviderConnection"
+    ? "No provider intake records have been observed for this scope. This account currently has no provider-backed camera evidence."
+    : status.status === "AttentionRequired"
+      ? "Provider intake records require reconciliation. Quarantined records are excluded from customer event claims."
+      : "Provider intake records exist, but provider authenticity, media access and certification remain unverified.";
+  const lastReceipt = status.lastProviderReceiptUtc === null ? "Never observed" : new Date(status.lastProviderReceiptUtc).toLocaleString();
+  return <section className="rounded-2xl border border-amber-300 bg-amber-50 p-5" aria-labelledby="camera-provider-status-title">
+    <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+      <div>
+        <p className="text-xs font-bold uppercase tracking-[0.16em] text-amber-800">Camera provider intake</p>
+        <h2 id="camera-provider-status-title" className="mt-1 text-lg font-semibold text-slate-900">{title}</h2>
+        <p className="mt-2 max-w-3xl text-sm text-slate-700">{message}</p>
+      </div>
+      <div className="text-sm text-slate-700">
+        <p><strong>Verification:</strong> External hold</p>
+        <p><strong>Certification:</strong> External hold</p>
+        <p><strong>Last provider receipt:</strong> {lastReceipt}</p>
+      </div>
+    </div>
+    <dl className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      {[
+        ["Observed events", status.observedEventCount],
+        ["Matched pending", status.matchedEventCount],
+        ["Unmatched", status.unmatchedEventCount],
+        ["Quarantined", status.quarantinedEventCount],
+        ["Pending media", status.pendingMediaCount],
+      ].map(([label, value]) => <div key={String(label)} className="rounded-xl border border-amber-200 bg-white px-4 py-3">
+        <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</dt>
+        <dd className="mt-1 text-xl font-semibold text-slate-900">{value}</dd>
+      </div>)}
+    </dl>
+    <p className="mt-3 text-xs text-slate-600">Provider verified: No · Media available: No · Expired media references: {status.expiredMediaCount}</p>
+  </section>;
+}
+
 export function Batch4SafetyPage({ kind }: { kind: Kind }) {
   const { session } = useAuth();
   const config = configs[kind];
@@ -260,6 +300,7 @@ export function Batch4SafetyPage({ kind }: { kind: Kind }) {
   const exportPermission = ACTION_PERMISSIONS[kind].export;
   const rowsQuery = config.useRows();
   const summary = config.useSummary();
+  const providerStatus = useDashcamProviderStatus(kind === "dashcam");
   const [selected, setSelected] = useState<AnyRecord | null>(null);
   const safetyDetailOwner = useRef({ generation: 0, id: undefined as string | number | undefined, retrying: false });
   const [safetyDetailRetrying, setSafetyDetailRetrying] = useState(false);
@@ -618,12 +659,12 @@ export function Batch4SafetyPage({ kind }: { kind: Kind }) {
     }
   }} onClose={() => closeSafetyCoaching(safetyCoachingDialog.session)} onSubmit={() => submitSafetyCoaching(safetyCoachingDialog.session, safetyCoachingDraftRevision, safetyCoachingDescription)} /> : null;
   const safetyCoachingFeedback = <>{safetyCoachingReceipt}{safetyCoachingInput}</>;
-  if (rowsQuery.isLoading || summary.isLoading) return kind === "safety" ? <>{safetyCoachingFeedback}<LoadingState /></> : <LoadingState />;
-  if (rowsQuery.isError || summary.isError || (kind === "dashcam" && !Array.isArray(rowsQuery.data))) {
+  if (rowsQuery.isLoading || summary.isLoading || (kind === "dashcam" && providerStatus.isLoading)) return kind === "safety" ? <>{safetyCoachingFeedback}<LoadingState /></> : <LoadingState />;
+  if (rowsQuery.isError || summary.isError || (kind === "dashcam" && (providerStatus.isError || !providerStatus.data || !Array.isArray(rowsQuery.data)))) {
     const unavailable = <div>{cameraNotice}<EmptyState
       title={`${config.eyebrow} unavailable`}
       subtitle="Unable to load live records right now. No empty or healthy state has been inferred."
-      action={<button type="button" className="btn-secondary" disabled={rowsQuery.isFetching || summary.isFetching} onClick={() => { void rowsQuery.refetch(); void summary.refetch(); }}>{rowsQuery.isFetching || summary.isFetching ? "Retrying…" : "Retry live data"}</button>}
+      action={<button type="button" className="btn-secondary" disabled={rowsQuery.isFetching || summary.isFetching || providerStatus.isFetching} onClick={() => { void rowsQuery.refetch(); void summary.refetch(); if (kind === "dashcam") void providerStatus.refetch(); }}>{rowsQuery.isFetching || summary.isFetching || providerStatus.isFetching ? "Retrying…" : "Retry live data"}</button>}
     /></div>;
     return kind === "safety" ? <>{safetyCoachingFeedback}{unavailable}</> : unavailable;
   }
@@ -655,13 +696,14 @@ export function Batch4SafetyPage({ kind }: { kind: Kind }) {
         </>
       }
     />
+    {kind === "dashcam" ? <CameraProviderStatusPanel status={providerStatus.data!} /> : null}
     {cameraNotice}
     {operationError && kind !== "dashcam" ? <div role="alert" className="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">{operationError instanceof Error ? operationError.message : "The incident action could not be completed."}</div> : null}
     {kind === "dashcam" && Array.isArray(rowsQuery.data) && rowsQuery.data.some((row) => !cameraProjection(row)) ? <p role="alert">Some stored metadata is unavailable because its identity or fields cannot be interpreted safely. It cannot be edited or exported.</p> : null}
     <div className="grid gap-6 sm:grid-cols-3 xl:grid-cols-5">{config.kpis.slice(0, 5).map(([label,key]) => <KpiCard key={key} label={label} value={kind === "dashcam" ? (typeof s[key] === "number" && Number.isSafeInteger(s[key]) && Number(s[key]) >= 0 ? String(s[key]) : "Unavailable") : String(s[key] ?? 0)} status={/critical|overdue|missing|rejected/i.test(label) ? "Critical" : undefined} />)}</div>
     <div className="flex flex-col gap-3 xl:flex-row xl:items-center"><input className="field xl:max-w-md" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={`Search ${config.eyebrow.toLowerCase()} by driver, vehicle, route, event, status...`} /><select className="field xl:max-w-[180px]" value={filter} onChange={(e) => setFilter(e.target.value)}><option>All</option><option>Critical</option><option>High</option><option>Pending</option><option>Reviewed</option><option>Open</option><option>Closed</option><option>Locked</option></select></div>
     {!rows.length ? (
-      <EmptyState title={`No ${config.eyebrow.toLowerCase()} records`} subtitle="Try another filter or create the first record." />
+      <EmptyState title={`No ${config.eyebrow.toLowerCase()} records`} subtitle={kind === "dashcam" ? "No provider event has been projected into this view. Manual entries remain explicitly unverified." : "Try another filter or create the first record."} />
     ) : (
       <DataTable rows={kind === "dashcam" ? rows.map(({ severity, ...metadata }) => ({ ...metadata, recordedLevel: severity ?? "Unavailable" })) : rows} columns={config.columns} onSelect={(row) => { if (kind !== "dashcam" || camera.canLeave()) selectRecord(row); }} />
     )}

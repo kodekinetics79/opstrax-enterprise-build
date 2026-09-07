@@ -58,7 +58,7 @@ Proceed without fabricating provider data:
 
 ## 2026-09-07 BUILD increment — provider intake spine
 
-Status: **BUILD COMPLETE / INTEGRATE OPEN / CERTIFY EXTERNAL HOLD**
+Status: **BUILD COMPLETE / INTEGRATE PARTIAL / CERTIFY EXTERNAL HOLD**
 
 Stage 112 and `CameraProviderIngestService` now provide a provider-neutral intake boundary for exact authenticated payload bytes. The service calculates its own SHA-256 fingerprint, scopes the idempotency identity by tenant + provider + provider account + provider event, serializes concurrent duplicates, and quarantines a reused identity carrying different bytes. It retains opaque media identifiers, expiry, camera role, recording mode, retention and privacy metadata without storing a URL, signed query string, media bytes, AI conclusion or playable-media claim.
 
@@ -78,6 +78,10 @@ Independent test coverage currently proves:
 - repeat-safe migration application, FORCE RLS, system-only grants and permanent `ExternalHold` constraints.
 
 This increment does **not** establish provider authenticity, ingest a real Samsara event, retrieve or display media, create an authoritative `dashcam_events` record, or satisfy Chrome/customer acceptance. The next INTEGRATE package must connect an authenticated provider adapter, add the safe provider-pending customer projection and reconciliation observability, and exercise it with authentic account data. Certification remains blocked on the external evidence listed below.
+
+The customer camera page now reads a separate tenant/branch-scoped operational status projection from the system-only intake ledger. It shows whether the scope has received any provider intake records, how many are matched, unmatched or quarantined, how many opaque media references remain pending or expired, and the last provider receipt time. It always reports provider verification, media availability and certification as unavailable/`ExternalHold`. Provider accounts, event IDs, payload hashes and media identifiers are never returned by this endpoint. An account with no intake records now says that it has no provider-backed camera evidence instead of implying an empty-but-connected camera service.
+
+This completes the safe status/observability slice only. A provider-pending camera event will not appear in the customer event table until a real authenticated adapter has parsed an authentic provider response and the customer projection is proven against that provider account.
 
 ## External evidence still required
 

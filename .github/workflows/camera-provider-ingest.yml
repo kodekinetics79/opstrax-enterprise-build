@@ -4,21 +4,33 @@ on:
   pull_request:
     paths:
       - 'backend-dotnet/Services/CameraProviderIngestService.cs'
+      - 'backend-dotnet/Services/CameraProviderStatusService.cs'
+      - 'backend-dotnet/Controllers/EndpointMappings.cs'
       - 'backend-dotnet/Program.cs'
       - 'backend-dotnet.Tests/CameraProviderIngestContractTests.cs'
       - 'backend-dotnet.Tests/CameraProviderIngestPostgresTests.cs'
       - 'database/migrations/2026_09_07_stage112_camera_provider_ingest_spine.sql'
       - 'tools/apply-neon-predeploy-migrations.sh'
+      - 'frontend/src/services/dashcamApi.ts'
+      - 'frontend/src/hooks/useBatch4.ts'
+      - 'frontend/src/pages/Batch4SafetyPage.tsx'
+      - 'frontend/scripts/test-camera-manual-metadata-contract.mjs'
       - '.github/workflows/camera-provider-ingest.yml'
   push:
     branches: [main]
     paths:
       - 'backend-dotnet/Services/CameraProviderIngestService.cs'
+      - 'backend-dotnet/Services/CameraProviderStatusService.cs'
+      - 'backend-dotnet/Controllers/EndpointMappings.cs'
       - 'backend-dotnet/Program.cs'
       - 'backend-dotnet.Tests/CameraProviderIngestContractTests.cs'
       - 'backend-dotnet.Tests/CameraProviderIngestPostgresTests.cs'
       - 'database/migrations/2026_09_07_stage112_camera_provider_ingest_spine.sql'
       - 'tools/apply-neon-predeploy-migrations.sh'
+      - 'frontend/src/services/dashcamApi.ts'
+      - 'frontend/src/hooks/useBatch4.ts'
+      - 'frontend/src/pages/Batch4SafetyPage.tsx'
+      - 'frontend/scripts/test-camera-manual-metadata-contract.mjs'
       - '.github/workflows/camera-provider-ingest.yml'
   workflow_dispatch:
 
@@ -55,6 +67,13 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.22.0
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
       - name: Build dedicated camera database
         run: |
           psql -h 127.0.0.1 -p 55443 -U postgres -d opstrax_camera_stage112 -v ON_ERROR_STOP=1 -f database/init/001_schema.sql
@@ -67,3 +86,7 @@ jobs:
           dotnet test backend-dotnet.Tests/Opstrax.Tests.csproj
           --filter "FullyQualifiedName~CameraProviderIngestContractTests|FullyQualifiedName~CameraProviderIngestPostgresTests"
           --logger "console;verbosity=minimal"
+      - name: Run camera frontend contracts
+        run: npm --prefix frontend run test:camera-manual-metadata
+      - name: Build camera customer surface
+        run: npm --prefix frontend run build
