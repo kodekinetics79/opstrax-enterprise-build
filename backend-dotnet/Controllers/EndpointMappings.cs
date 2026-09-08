@@ -1648,20 +1648,8 @@ public static partial class EndpointMappings
         app.MapPost("/api/carriers", CreateCarrier);
         app.MapPut("/api/carriers/{id:long}", UpdateCarrier);
         app.MapDelete("/api/carriers/{id:long}", SoftDeleteWithPermission("carriers", "carrier.deleted", "finance:manage"));
-        app.MapGet("/api/carriers/{id:long}/performance", (HttpContext http, long id, Database db, CancellationToken ct) =>
-        {
-            // Same dual-audience gate as the Carriers list (fleet OR finance).
-            if (RequirePermission(http, "fleet:view") is { } fleetDenied && RequirePermission(http, "finance:view") is not null)
-                return Task.FromResult(fleetDenied);
-            return OkRows(db, "SELECT cp.* FROM carrier_performance cp JOIN carriers ca ON ca.id=cp.carrier_id AND ca.company_id=@cid WHERE cp.carrier_id=@id ORDER BY cp.period_start DESC LIMIT 12", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct: ct);
-        });
-        app.MapGet("/api/carriers/{id:long}/documents", (HttpContext http, long id, Database db, CancellationToken ct) =>
-        {
-            // Same dual-audience gate as the Carriers list (fleet OR finance).
-            if (RequirePermission(http, "fleet:view") is { } fleetDenied && RequirePermission(http, "finance:view") is not null)
-                return Task.FromResult(fleetDenied);
-            return OkRows(db, "SELECT cd.* FROM carrier_documents cd JOIN carriers ca ON ca.id=cd.carrier_id AND ca.company_id=@cid WHERE cd.carrier_id=@id ORDER BY cd.expiry_date", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct: ct);
-        });
+        app.MapGet("/api/carriers/{id:long}/performance", CarrierPerformance);
+        app.MapGet("/api/carriers/{id:long}/documents", CarrierDocuments);
         app.MapPost("/api/carriers/{id:long}/status", CarrierStatus);
         app.MapGet("/api/carriers/recommendations", (HttpContext http, Database db, CancellationToken ct) =>
         {
@@ -16202,104 +16190,257 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
 
     private static async Task<IResult> CarriersSummary(HttpContext http, Database db, CancellationToken ct)
     {
-        // Same dual-audience gate as the Carriers list (fleet OR finance).
         if (RequirePermission(http, "fleet:view") is { } fleetDenied && RequirePermission(http, "finance:view") is not null)
             return fleetDenied;
         var companyId = GetCompanyId(http);
         var row = await db.QuerySingleAsync(
             @"SELECT
-                SUM(CASE WHEN status='Active' THEN 1 ELSE 0 END) active_carriers,
-                SUM(CASE WHEN status='Pending' THEN 1 ELSE 0 END) pending_carriers,
-                SUM(CASE WHEN status='Suspended' THEN 1 ELSE 0 END) suspended_carriers,
-                SUM(CASE WHEN compliance_status IN ('Non-Compliant','At Risk') THEN 1 ELSE 0 END) compliance_risk_carriers,
-                SUM(CASE WHEN insurance_expiry BETWEEN CURRENT_DATE AND CURRENT_DATE + 60 * INTERVAL '1 day' THEN 1 ELSE 0 END) insurance_expiring,
-                ROUND(AVG(performance_score),1) average_carrier_score,
-                ROUND(AVG(on_time_percent),1) on_time_performance,
-                CONCAT('$', TO_CHAR((COALESCE((SELECT SUM(cp.expense_total) FROM carrier_performance cp JOIN carriers ca ON ca.id=cp.carrier_id AND ca.company_id=@cid WHERE cp.period_start >= DATE_TRUNC('month', CURRENT_DATE)),0))::numeric, 'FM9,999,999,990.00')) carrier_cost_this_month,
-                (SELECT COUNT(*) FROM carrier_documents cd JOIN carriers ca2 ON ca2.id=cd.carrier_id AND ca2.company_id=@cid WHERE cd.status IN ('Expired','Expiring')) documents_missing,
-                SUM(CASE WHEN contract_status='Active' THEN 1 ELSE 0 END) contracts_active,
-                SUM(CASE WHEN performance_score >= 90 THEN 1 ELSE 0 END) preferred_carriers,
+                COUNT(*) FILTER (WHERE ca.status='Active') active_carriers,
+                COUNT(*) FILTER (WHERE ca.status='Pending') pending_carriers,
+                COUNT(*) FILTER (WHERE ca.status='Suspended') suspended_carriers,
+                COUNT(*) FILTER (WHERE ca.compliance_evidence_status IN ('authority_verified','provider_verified')) verified_compliance_carriers,
+                COUNT(*) FILTER (WHERE COALESCE(ca.data_origin,'legacy_unverified')='legacy_unverified') legacy_origin_unverified,
+                (SELECT COUNT(*) FROM carrier_documents cd
+                   JOIN carriers owner ON owner.id=cd.carrier_id AND owner.company_id=cd.company_id
+                  WHERE cd.company_id=@cid AND owner.deleted_at IS NULL
+                    AND COALESCE(owner.data_origin,'legacy_unverified')<>'demo_seed'
+                    AND COALESCE(cd.data_origin,'legacy_unverified')<>'demo_seed') documents_recorded,
+                (SELECT COUNT(*) FROM carrier_documents cd
+                   JOIN carriers owner ON owner.id=cd.carrier_id AND owner.company_id=cd.company_id
+                  WHERE cd.company_id=@cid AND owner.deleted_at IS NULL
+                    AND COALESCE(owner.data_origin,'legacy_unverified')<>'demo_seed'
+                    AND COALESCE(cd.data_origin,'legacy_unverified')<>'demo_seed'
+                    AND cd.verification_status IN ('authority_verified','provider_verified')) verified_documents,
+                (SELECT COUNT(*) FROM carrier_documents cd
+                   JOIN carriers owner ON owner.id=cd.carrier_id AND owner.company_id=cd.company_id
+                  WHERE cd.company_id=@cid AND owner.deleted_at IS NULL
+                    AND COALESCE(owner.data_origin,'legacy_unverified')<>'demo_seed'
+                    AND COALESCE(cd.data_origin,'legacy_unverified')<>'demo_seed'
+                    AND COALESCE(cd.verification_status,'unverified')='unverified') documents_needing_verification,
+                (SELECT COUNT(*) FROM carrier_performance cp
+                   JOIN carriers owner ON owner.id=cp.carrier_id AND owner.company_id=cp.company_id
+                  WHERE cp.company_id=@cid AND owner.deleted_at IS NULL
+                    AND COALESCE(owner.data_origin,'legacy_unverified')<>'demo_seed'
+                    AND ((cp.data_origin='job_derived' AND cp.calculation_status='calculated_from_jobs')
+                      OR (cp.data_origin='provider_import' AND cp.calculation_status='provider_reported'))) performance_evidence_records,
                 COUNT(*) total
-              FROM carriers WHERE company_id=@cid AND deleted_at IS NULL",
+              FROM carriers ca
+             WHERE ca.company_id=@cid AND ca.deleted_at IS NULL
+               AND COALESCE(ca.data_origin,'legacy_unverified')<>'demo_seed'",
             c => c.Parameters.AddWithValue("@cid", companyId), ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
     }
 
     private static Task<IResult> Carriers(HttpContext http, Database db, CancellationToken ct)
     {
-        // Carriers are consumed by both fleet (TMS workspace) and finance (carrier
-        // management) audiences — allow either permission, deny only when both fail.
         if (RequirePermission(http, "fleet:view") is { } fleetDenied && RequirePermission(http, "finance:view") is not null)
             return Task.FromResult(fleetDenied);
         return OkRows(db,
-            @"SELECT c.*,
-                     CASE WHEN c.compliance_status='Non-Compliant' OR c.risk_score >= 70 THEN 'High'
-                          WHEN c.compliance_status='At Risk' OR c.risk_score >= 40 THEN 'Medium'
-                          ELSE 'Low' END risk_heat_score,
-                     COALESCE(c.recommended_action, CASE WHEN c.compliance_status='Non-Compliant' THEN 'Suspend carrier — compliance risk' WHEN c.insurance_expiry < CURRENT_DATE + 60 * INTERVAL '1 day' THEN 'Renew insurance immediately' ELSE 'Monitor performance' END) recommended_action
+            @"SELECT c.id, c.carrier_number, c.name, c.mc_number, c.contact_name, c.phone, c.email,
+                     c.region, c.status, c.insurance_expiry, c.notes,
+                     CASE COALESCE(c.data_origin,'legacy_unverified')
+                       WHEN 'manual_entry' THEN 'Manual entry'
+                       WHEN 'provider_import' THEN 'Provider import'
+                       ELSE 'Legacy origin unverified' END record_origin,
+                     CASE WHEN c.compliance_evidence_status IN ('authority_verified','provider_verified')
+                          THEN c.compliance_status ELSE 'Unverified' END compliance_status,
+                     COALESCE(c.compliance_evidence_status,'unverified') compliance_evidence_status,
+                     CASE WHEN EXISTS (
+                            SELECT 1 FROM carrier_documents insurance
+                             WHERE insurance.company_id=c.company_id AND insurance.carrier_id=c.id
+                               AND LOWER(insurance.document_type) LIKE '%insurance%'
+                               AND insurance.verification_status IN ('authority_verified','provider_verified')
+                               AND COALESCE(insurance.data_origin,'legacy_unverified')<>'demo_seed')
+                          THEN 'Verified document recorded'
+                          WHEN c.insurance_expiry IS NULL THEN 'Not recorded'
+                          ELSE 'Self-reported / unverified' END insurance_evidence_status,
+                     (SELECT COUNT(*) FROM carrier_documents cd
+                       WHERE cd.company_id=c.company_id AND cd.carrier_id=c.id
+                         AND COALESCE(cd.data_origin,'legacy_unverified')<>'demo_seed') document_count,
+                     (SELECT COUNT(*) FROM carrier_documents cd
+                       WHERE cd.company_id=c.company_id AND cd.carrier_id=c.id
+                         AND COALESCE(cd.data_origin,'legacy_unverified')<>'demo_seed'
+                         AND cd.verification_status IN ('authority_verified','provider_verified')) verified_document_count,
+                     (SELECT COUNT(*) FROM carrier_performance cp
+                       WHERE cp.company_id=c.company_id AND cp.carrier_id=c.id
+                         AND ((cp.data_origin='job_derived' AND cp.calculation_status='calculated_from_jobs')
+                           OR (cp.data_origin='provider_import' AND cp.calculation_status='provider_reported'))) performance_evidence_count,
+                     CASE WHEN COALESCE(c.compliance_evidence_status,'unverified') NOT IN ('authority_verified','provider_verified')
+                          THEN 'Verify authority and insurance evidence'
+                          WHEN c.insurance_expiry IS NOT NULL AND c.insurance_expiry < CURRENT_DATE
+                          THEN 'Review recorded insurance expiry'
+                          WHEN c.insurance_expiry IS NOT NULL AND c.insurance_expiry <= CURRENT_DATE + 60
+                          THEN 'Review upcoming recorded insurance expiry'
+                          ELSE 'No evidence action recorded' END recommended_action
               FROM carriers c
               WHERE c.deleted_at IS NULL AND c.company_id=@cid
-              ORDER BY ARRAY_POSITION(ARRAY['Non-Compliant','At Risk','Compliant'], c.compliance_status), c.performance_score DESC",
+                AND COALESCE(c.data_origin,'legacy_unverified')<>'demo_seed'
+              ORDER BY c.name, c.id",
             c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
     }
 
     private static async Task<IResult> CarrierDetail(HttpContext http, long id, Database db, CancellationToken ct)
     {
-        // Same dual-audience gate as the Carriers list (fleet OR finance).
         if (RequirePermission(http, "fleet:view") is { } fleetDenied && RequirePermission(http, "finance:view") is not null)
             return fleetDenied;
         var companyId = GetCompanyId(http);
-        // Tenant-scoped parent gate: once the carrier is confirmed to belong to this
-        // company, the carrier_id-keyed sub-queries below cannot cross tenants.
-        var record = await db.QuerySingleAsync("SELECT * FROM carriers WHERE id=@id AND company_id=@cid AND deleted_at IS NULL", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+        var record = await db.QuerySingleAsync(
+            @"SELECT c.id, c.carrier_number, c.name, c.mc_number, c.contact_name, c.phone, c.email,
+                     c.region, c.status, c.insurance_expiry, c.notes,
+                     CASE COALESCE(c.data_origin,'legacy_unverified')
+                       WHEN 'manual_entry' THEN 'Manual entry'
+                       WHEN 'provider_import' THEN 'Provider import'
+                       ELSE 'Legacy origin unverified' END record_origin,
+                     CASE WHEN c.compliance_evidence_status IN ('authority_verified','provider_verified')
+                          THEN c.compliance_status ELSE 'Unverified' END compliance_status,
+                     COALESCE(c.compliance_evidence_status,'unverified') compliance_evidence_status,
+                     CASE WHEN c.insurance_expiry IS NULL THEN 'Not recorded'
+                          WHEN EXISTS (SELECT 1 FROM carrier_documents insurance
+                            WHERE insurance.company_id=c.company_id AND insurance.carrier_id=c.id
+                              AND LOWER(insurance.document_type) LIKE '%insurance%'
+                              AND insurance.verification_status IN ('authority_verified','provider_verified')
+                              AND COALESCE(insurance.data_origin,'legacy_unverified')<>'demo_seed')
+                          THEN 'Verified document recorded' ELSE 'Self-reported / unverified' END insurance_evidence_status,
+                     CASE WHEN c.compliance_evidence_status IN ('authority_verified','provider_verified')
+                          THEN 'No evidence action recorded' ELSE 'Verify authority and insurance evidence' END recommended_action
+                FROM carriers c
+               WHERE c.id=@id AND c.company_id=@cid AND c.deleted_at IS NULL
+                 AND COALESCE(c.data_origin,'legacy_unverified')<>'demo_seed'",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
         if (record is null) return Results.NotFound(ApiResponse<object>.Fail("Carrier not found"));
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             record,
-            performance = await db.QueryAsync("SELECT * FROM carrier_performance WHERE carrier_id=@id ORDER BY period_start DESC LIMIT 12", c => c.Parameters.AddWithValue("@id", id), ct),
-            documents = await db.QueryAsync("SELECT * FROM carrier_documents WHERE carrier_id=@id ORDER BY expiry_date", c => c.Parameters.AddWithValue("@id", id), ct),
-            contracts = await db.QueryAsync("SELECT * FROM contracts WHERE carrier_id=@id AND deleted_at IS NULL ORDER BY expiry_date DESC LIMIT 8", c => c.Parameters.AddWithValue("@id", id), ct),
-            expenses = await db.QueryAsync("SELECT * FROM expenses WHERE carrier_id=@id AND deleted_at IS NULL ORDER BY expense_date DESC LIMIT 8", c => c.Parameters.AddWithValue("@id", id), ct),
+            performance = await CarrierPerformanceRows(db, companyId, id, ct),
+            documents = await CarrierDocumentRows(db, companyId, id, ct),
+            contracts = await db.QueryAsync(
+                @"SELECT id, contract_number, title, contract_type, status, currency, base_rate,
+                         effective_date, expiry_date,
+                         CASE COALESCE(data_origin,'legacy_unverified') WHEN 'manual_entry' THEN 'Manual entry'
+                           WHEN 'provider_import' THEN 'Provider import' ELSE 'Legacy origin unverified' END record_origin
+                    FROM contracts WHERE carrier_id=@id AND company_id=@cid AND deleted_at IS NULL
+                     AND COALESCE(data_origin,'legacy_unverified')<>'demo_seed'
+                    ORDER BY expiry_date DESC NULLS LAST LIMIT 8",
+                c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct),
+            expenses = await db.QueryAsync(
+                @"SELECT id, expense_number, title, category, amount, currency, expense_date,
+                         approval_status, receipt_status
+                    FROM expenses WHERE carrier_id=@id AND company_id=@cid AND deleted_at IS NULL
+                     AND COALESCE(expense_number,'') NOT LIKE 'EXP-B5-%'
+                    ORDER BY expense_date DESC LIMIT 8",
+                c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct),
             recommendations = await TenantModuleRecommendations(db, companyId, "carrier-management", ct),
             auditTrail = await TenantAuditRows(db, companyId, "Carrier", id, ct)
         }));
     }
 
+    private static Task<IResult> CarrierPerformance(HttpContext http, long id, Database db, CancellationToken ct)
+    {
+        if (RequirePermission(http, "fleet:view") is { } fleetDenied && RequirePermission(http, "finance:view") is not null)
+            return Task.FromResult(fleetDenied);
+        return CarrierPerformanceResult(db, GetCompanyId(http), id, ct);
+    }
+
+    private static async Task<IResult> CarrierPerformanceResult(Database db, long companyId, long id, CancellationToken ct)
+        => Results.Ok(ApiResponse<object>.Ok(await CarrierPerformanceRows(db, companyId, id, ct)));
+
+    private static Task<List<Dictionary<string, object?>>> CarrierPerformanceRows(Database db, long companyId, long id, CancellationToken ct)
+        => db.QueryAsync(
+            @"SELECT cp.id, cp.period_start, cp.period_end, cp.jobs_handled, cp.on_time_percent,
+                     cp.incident_count, cp.expense_total, cp.performance_score,
+                     CASE cp.data_origin WHEN 'job_derived' THEN 'Calculated from recorded jobs'
+                       WHEN 'provider_import' THEN 'Provider reported' END record_origin,
+                     cp.calculation_status
+                FROM carrier_performance cp
+                JOIN carriers ca ON ca.id=cp.carrier_id AND ca.company_id=cp.company_id
+               WHERE cp.carrier_id=@id AND cp.company_id=@cid AND ca.deleted_at IS NULL
+                 AND COALESCE(ca.data_origin,'legacy_unverified')<>'demo_seed'
+                 AND ((cp.data_origin='job_derived' AND cp.calculation_status='calculated_from_jobs')
+                   OR (cp.data_origin='provider_import' AND cp.calculation_status='provider_reported'))
+               ORDER BY cp.period_start DESC LIMIT 12",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+
+    private static Task<IResult> CarrierDocuments(HttpContext http, long id, Database db, CancellationToken ct)
+    {
+        if (RequirePermission(http, "fleet:view") is { } fleetDenied && RequirePermission(http, "finance:view") is not null)
+            return Task.FromResult(fleetDenied);
+        return CarrierDocumentsResult(db, GetCompanyId(http), id, ct);
+    }
+
+    private static async Task<IResult> CarrierDocumentsResult(Database db, long companyId, long id, CancellationToken ct)
+        => Results.Ok(ApiResponse<object>.Ok(await CarrierDocumentRows(db, companyId, id, ct)));
+
+    private static Task<List<Dictionary<string, object?>>> CarrierDocumentRows(Database db, long companyId, long id, CancellationToken ct)
+        => db.QueryAsync(
+            @"SELECT cd.id, cd.document_type, cd.document_number, cd.expiry_date, cd.status,
+                     cd.file_url, COALESCE(cd.verification_status,'unverified') verification_status,
+                     CASE COALESCE(cd.data_origin,'legacy_unverified')
+                       WHEN 'manual_entry' THEN 'Manual entry'
+                       WHEN 'provider_import' THEN 'Provider import'
+                       ELSE 'Legacy origin unverified' END record_origin,
+                     cd.verified_at
+                FROM carrier_documents cd
+                JOIN carriers ca ON ca.id=cd.carrier_id AND ca.company_id=cd.company_id
+               WHERE cd.carrier_id=@id AND cd.company_id=@cid AND ca.deleted_at IS NULL
+                 AND COALESCE(ca.data_origin,'legacy_unverified')<>'demo_seed'
+                 AND COALESCE(cd.data_origin,'legacy_unverified')<>'demo_seed'
+               ORDER BY cd.expiry_date NULLS LAST, cd.id",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); }, ct);
+
     private static async Task<IResult> CreateCarrier(HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
         var denied = RequirePermission(http, "finance:manage");
         if (denied is not null) return denied;
-        var email = Get(body, "email")?.ToString();
-        if (!IsBlank(email) && !email!.Contains('@'))
+        var name = (Get(body, "carrierName") is { } carrierName and not DBNull ? carrierName : Get(body, "name"))?.ToString()?.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+            return Results.BadRequest(ApiResponse<object>.Fail("Carrier name is required"));
+        if (name.Length > 220)
+            return Results.BadRequest(ApiResponse<object>.Fail("Carrier name cannot exceed 220 characters"));
+        var email = !IsBlank(Get(body, "email")) ? Get(body, "email")!.ToString()!.Trim() : null;
+        if (email is not null && !email.Contains('@'))
             return Results.BadRequest(ApiResponse<object>.Fail("Carrier email is not valid"));
         var companyId = GetCompanyId(http);
+        var status = !IsBlank(Get(body, "status")) ? Get(body, "status")!.ToString()!.Trim() : "Pending";
+        if (status is not ("Pending" or "Active" or "Suspended" or "Inactive"))
+            return Results.BadRequest(ApiResponse<object>.Fail("Carrier status is not valid"));
+        var insurance = TryDateN(body, "insuranceExpiry");
+        if (!IsBlank(Get(body, "insuranceExpiry")) && insurance is null)
+            return Results.BadRequest(ApiResponse<object>.Fail("Insurance expiry date is not valid"));
+        var number = !IsBlank(Get(body, "carrierNumber"))
+            ? Get(body, "carrierNumber")!.ToString()!.Trim()
+            : $"CAR-{DateTimeOffset.UtcNow:yyyyMMddHHmmssfff}";
+        if (number.Length > 80)
+            return Results.BadRequest(ApiResponse<object>.Fail("Carrier number cannot exceed 80 characters"));
+        var mc = !IsBlank(Get(body, "mcNumber")) ? Get(body, "mcNumber")!.ToString()!.Trim() : null;
+        if (mc?.Length > 80)
+            return Results.BadRequest(ApiResponse<object>.Fail("MC number cannot exceed 80 characters"));
+        var duplicate = await db.ScalarLongAsync(
+            @"SELECT COUNT(*) FROM carriers
+               WHERE company_id=@companyId AND deleted_at IS NULL
+                 AND (LOWER(BTRIM(carrier_number))=LOWER(BTRIM(@number))
+                   OR (@mc::TEXT IS NOT NULL AND LOWER(BTRIM(mc_number))=LOWER(BTRIM(@mc))))",
+            c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@number", number); c.Parameters.AddWithValue("@mc", (object?)mc ?? DBNull.Value); }, ct);
+        if (duplicate > 0) return Results.Conflict(ApiResponse<object>.Fail("Carrier number or MC number already exists"));
         var id = await db.InsertAsync(
             @"INSERT INTO carriers (company_id, carrier_number, name, mc_number, contact_name, phone, email,
                 region, status, compliance_status, insurance_expiry, contract_status,
-                on_time_percent, safety_score, cost_score, performance_score, risk_score, recommended_action, notes)
+                on_time_percent, safety_score, cost_score, performance_score, risk_score, recommended_action, notes,
+                data_origin, compliance_evidence_status)
               VALUES (@companyId, @number, @name, @mc, @contact, @phone, @email,
-                @region, COALESCE(@status,'Active'), COALESCE(@compliance,'Compliant'), @insurance, COALESCE(@contract,'Active'),
-                COALESCE(@onTime,90), COALESCE(@safety,88), COALESCE(@cost,82), COALESCE(@perf,86), COALESCE(@risk,20), @action, @notes)",
+                @region, @status, 'Unverified', @insurance, 'Not Recorded',
+                0, 0, 0, 0, 0, NULL, @notes, 'manual_entry', 'unverified')",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
-                c.Parameters.AddWithValue("@number", $"CAR-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}");
-                c.Parameters.AddWithValue("@name", Get(body, "carrierName") ?? Get(body, "name"));
-                c.Parameters.AddWithValue("@mc", Get(body, "mcNumber"));
+                c.Parameters.AddWithValue("@number", number);
+                c.Parameters.AddWithValue("@name", name);
+                c.Parameters.AddWithValue("@mc", (object?)mc ?? DBNull.Value);
                 c.Parameters.AddWithValue("@contact", Get(body, "contactName"));
                 c.Parameters.AddWithValue("@phone", Get(body, "phone"));
-                c.Parameters.AddWithValue("@email", email);
+                c.Parameters.AddWithValue("@email", (object?)email ?? DBNull.Value);
                 c.Parameters.AddWithValue("@region", Get(body, "region"));
-                c.Parameters.AddWithValue("@status", Get(body, "status"));
-                c.Parameters.AddWithValue("@compliance", Get(body, "complianceStatus"));
-                c.Parameters.AddWithValue("@insurance", Get(body, "insuranceExpiry"));
-                c.Parameters.AddWithValue("@contract", Get(body, "contractStatus"));
-                c.Parameters.AddWithValue("@onTime", Get(body, "onTimePercent"));
-                c.Parameters.AddWithValue("@safety", Get(body, "safetyScore"));
-                c.Parameters.AddWithValue("@cost", Get(body, "costScore"));
-                c.Parameters.AddWithValue("@perf", Get(body, "performanceScore"));
-                c.Parameters.AddWithValue("@risk", Get(body, "riskScore"));
-                c.Parameters.AddWithValue("@action", Get(body, "recommendedAction"));
+                c.Parameters.AddWithValue("@status", status);
+                c.Parameters.AddWithValue("@insurance", (object?)insurance ?? DBNull.Value);
                 c.Parameters.AddWithValue("@notes", Get(body, "notes"));
             }, ct);
         await audit.LogAsync(http, "carrier.created", "Carrier", id, ct: ct);
@@ -16310,32 +16451,60 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
     {
         var denied = RequirePermission(http, "finance:manage");
         if (denied is not null) return denied;
-        await db.ExecuteAsync(
+        var suppliedName = Get(body, "carrierName") is { } carrierName and not DBNull ? carrierName : Get(body, "name");
+        var name = !IsBlank(suppliedName) ? suppliedName!.ToString()!.Trim() : null;
+        if ((body.ContainsKey("name") || body.ContainsKey("carrierName")) && string.IsNullOrWhiteSpace(name))
+            return Results.BadRequest(ApiResponse<object>.Fail("Carrier name cannot be blank"));
+        if (name?.Length > 220)
+            return Results.BadRequest(ApiResponse<object>.Fail("Carrier name cannot exceed 220 characters"));
+        var email = !IsBlank(Get(body, "email")) ? Get(body, "email")!.ToString()!.Trim() : null;
+        if (email is not null && !email.Contains('@'))
+            return Results.BadRequest(ApiResponse<object>.Fail("Carrier email is not valid"));
+        string? status = null;
+        if (!IsBlank(Get(body, "status")))
+        {
+            status = Get(body, "status")!.ToString()!.Trim();
+            if (status is not ("Pending" or "Active" or "Suspended" or "Inactive"))
+                return Results.BadRequest(ApiResponse<object>.Fail("Carrier status is not valid"));
+        }
+        var insurance = TryDateN(body, "insuranceExpiry");
+        if (!IsBlank(Get(body, "insuranceExpiry")) && insurance is null)
+            return Results.BadRequest(ApiResponse<object>.Fail("Insurance expiry date is not valid"));
+        var companyId = GetCompanyId(http);
+        var mc = !IsBlank(Get(body, "mcNumber")) ? Get(body, "mcNumber")!.ToString()!.Trim() : null;
+        var number = !IsBlank(Get(body, "carrierNumber")) ? Get(body, "carrierNumber")!.ToString()!.Trim() : null;
+        if (mc?.Length > 80 || number?.Length > 80)
+            return Results.BadRequest(ApiResponse<object>.Fail("Carrier number and MC number cannot exceed 80 characters"));
+        if ((mc is not null || number is not null) && await db.ScalarLongAsync(
+            @"SELECT COUNT(*) FROM carriers WHERE company_id=@companyId AND id<>@id AND deleted_at IS NULL
+                 AND ((@number::TEXT IS NOT NULL AND LOWER(BTRIM(carrier_number))=LOWER(BTRIM(@number)))
+                   OR (@mc::TEXT IS NOT NULL AND LOWER(BTRIM(mc_number))=LOWER(BTRIM(@mc))))",
+            c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@number", (object?)number ?? DBNull.Value); c.Parameters.AddWithValue("@mc", (object?)mc ?? DBNull.Value); }, ct) > 0)
+            return Results.Conflict(ApiResponse<object>.Fail("Carrier number or MC number already exists"));
+        var affected = await db.ExecuteAsync(
             @"UPDATE carriers SET name=COALESCE(@name,name), contact_name=COALESCE(@contact,contact_name),
                 phone=COALESCE(@phone,phone), email=COALESCE(@email,email), region=COALESCE(@region,region),
-                compliance_status=COALESCE(@compliance,compliance_status),
-                insurance_expiry=COALESCE(@insurance,insurance_expiry),
-                contract_status=COALESCE(@contract,contract_status),
-                on_time_percent=COALESCE(@onTime,on_time_percent), safety_score=COALESCE(@safety,safety_score),
-                performance_score=COALESCE(@perf,performance_score), notes=COALESCE(@notes,notes)
-              WHERE id=@id AND company_id=@companyId",
+                carrier_number=COALESCE(@number,carrier_number), mc_number=COALESCE(@mc,mc_number), status=COALESCE(@status,status),
+                insurance_expiry=COALESCE(@insurance,insurance_expiry), notes=COALESCE(@notes,notes),
+                data_origin='manual_entry', updated_at=NOW()
+              WHERE id=@id AND company_id=@companyId AND deleted_at IS NULL
+                AND COALESCE(data_origin,'legacy_unverified')<>'demo_seed'",
             c =>
             {
                 c.Parameters.AddWithValue("@id", id);
-                c.Parameters.AddWithValue("@companyId", GetCompanyId(http));
-                c.Parameters.AddWithValue("@name", Get(body, "carrierName") ?? Get(body, "name"));
+                c.Parameters.AddWithValue("@companyId", companyId);
+                c.Parameters.AddWithValue("@name", (object?)name ?? DBNull.Value);
                 c.Parameters.AddWithValue("@contact", Get(body, "contactName"));
                 c.Parameters.AddWithValue("@phone", Get(body, "phone"));
-                c.Parameters.AddWithValue("@email", Get(body, "email"));
+                c.Parameters.AddWithValue("@email", (object?)email ?? DBNull.Value);
                 c.Parameters.AddWithValue("@region", Get(body, "region"));
-                c.Parameters.AddWithValue("@compliance", Get(body, "complianceStatus"));
-                c.Parameters.AddWithValue("@insurance", Get(body, "insuranceExpiry"));
-                c.Parameters.AddWithValue("@contract", Get(body, "contractStatus"));
-                c.Parameters.AddWithValue("@onTime", Get(body, "onTimePercent"));
-                c.Parameters.AddWithValue("@safety", Get(body, "safetyScore"));
-                c.Parameters.AddWithValue("@perf", Get(body, "performanceScore"));
+                c.Parameters.AddWithValue("@number", (object?)number ?? DBNull.Value);
+                c.Parameters.AddWithValue("@mc", (object?)mc ?? DBNull.Value);
+                c.Parameters.AddWithValue("@status", (object?)status ?? DBNull.Value);
+                c.Parameters.AddWithValue("@insurance", (object?)insurance ?? DBNull.Value);
                 c.Parameters.AddWithValue("@notes", Get(body, "notes"));
             }, ct);
+        if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Carrier not found"));
         await audit.LogAsync(http, "carrier.updated", "Carrier", id, ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id }, "Carrier updated"));
     }
@@ -16345,8 +16514,14 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
         var denied = RequirePermission(http, "finance:manage");
         if (denied is not null) return denied;
         var status = Get(body, "status")?.ToString() ?? "Active";
-        await db.ExecuteAsync("UPDATE carriers SET status=@status WHERE id=@id AND company_id=@companyId",
+        if (status is not ("Pending" or "Active" or "Suspended" or "Inactive"))
+            return Results.BadRequest(ApiResponse<object>.Fail("Carrier status is not valid"));
+        var affected = await db.ExecuteAsync(
+            @"UPDATE carriers SET status=@status, data_origin='manual_entry', updated_at=NOW()
+               WHERE id=@id AND company_id=@companyId AND deleted_at IS NULL
+                 AND COALESCE(data_origin,'legacy_unverified')<>'demo_seed'",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); c.Parameters.AddWithValue("@status", status); }, ct);
+        if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Carrier not found"));
         await audit.LogAsync(http, "carrier.status.changed", "Carrier", id, ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id, status }, "Carrier status updated"));
     }

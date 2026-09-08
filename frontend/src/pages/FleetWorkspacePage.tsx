@@ -31,7 +31,7 @@ const MODULES: Record<FleetMode, { label: string; short: string; description: st
   tracking:    { label: 'Tracking',    short: 'Tracking',    description: 'Movement events, geofences and telemetry exceptions.' },
   maintenance: { label: 'Maintenance', short: 'Maint.',      description: 'Work orders, downtime and vendor activity.' },
   fuel:        { label: 'Fuel',        short: 'Fuel',        description: 'Fueling events, spend and anomaly review.' },
-  carriers:    { label: 'Carriers',    short: 'Carriers',    description: 'External capacity — compliance, on-time and cost posture.' },
+  carriers:    { label: 'Carriers',    short: 'Carriers',    description: 'External capacity records with explicit compliance and performance evidence state.' },
 };
 
 const MODE_ORDER: FleetMode[] = ['command', 'shipments', 'vehicles', 'tracking', 'maintenance', 'fuel', 'carriers'];
@@ -44,8 +44,10 @@ interface CarrierRow {
   region: string;
   status: string;
   compliance: string;
-  onTime: number;
-  performance: number;
+  complianceEvidence: string;
+  documentCount: number;
+  verifiedDocumentCount: number;
+  performanceEvidenceCount: number;
   action: string;
 }
 
@@ -68,8 +70,10 @@ function toCarrierRow(raw: AnyRecord): CarrierRow {
     region: String(raw.region ?? ''),
     status: String(raw.status ?? '—'),
     compliance: String(raw.complianceStatus ?? '—'),
-    onTime: num(raw.onTimePercent),
-    performance: num(raw.performanceScore),
+    complianceEvidence: String(raw.complianceEvidenceStatus ?? 'unverified'),
+    documentCount: num(raw.documentCount),
+    verifiedDocumentCount: num(raw.verifiedDocumentCount),
+    performanceEvidenceCount: num(raw.performanceEvidenceCount),
     action: String(raw.recommendedAction ?? ''),
   };
 }
@@ -235,8 +239,8 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
       case 'carriers':
         return [
           { label: 'On record', value: String(carriers.length) },
-          { label: 'Compliance risk', value: String(carriers.filter((c) => !/^compliant$/i.test(c.compliance)).length) },
-          { label: 'Avg on-time', value: carriers.length ? `${fmt0(carriers.reduce((s, c) => s + num(c.onTime), 0) / carriers.length)}%` : '—' },
+          { label: 'Need verification', value: String(carriers.filter((c) => !/^(authority|provider)_verified$/i.test(c.complianceEvidence)).length) },
+          { label: 'Performance evidence', value: String(carriers.reduce((sum, c) => sum + c.performanceEvidenceCount, 0)) },
         ];
       default:
         return [
@@ -252,8 +256,8 @@ export function FleetWorkspacePage({ mode: initialMode = 'command' }: { mode?: F
     if (summary?.fuelAlerts) rows.push({ id: 'fuel-alerts', label: 'Fuel alerts', detail: `${summary.fuelAlerts} fueling events need review.`, led: 'deck-led-amber' });
     if (summary?.openMaintenance) rows.push({ id: 'maintenance', label: 'Maintenance queue', detail: `${summary.openMaintenance} work orders open or in progress.`, led: 'deck-led-amber' });
     if (summary?.enRoute) rows.push({ id: 'movement', label: 'Freight in motion', detail: `${summary.enRoute} shipments on the road now.`, led: 'deck-led-sky' });
-    const carriersAtRisk = carriers.filter((c) => !/^compliant$/i.test(c.compliance)).length;
-    if (carriersAtRisk) rows.push({ id: 'carrier-compliance', label: 'Carrier compliance', detail: `${carriersAtRisk} carriers not fully compliant.`, led: 'deck-led-red' });
+    const carriersAwaitingEvidence = carriers.filter((c) => !/^(authority|provider)_verified$/i.test(c.complianceEvidence)).length;
+    if (carriersAwaitingEvidence) rows.push({ id: 'carrier-compliance', label: 'Carrier evidence', detail: `${carriersAwaitingEvidence} carrier records await authority or provider verification.`, led: 'deck-led-amber' });
     return rows.slice(0, 4);
   }, [carriers, summary]);
 
@@ -785,9 +789,9 @@ function CarrierCard({ carrier, onManage }: { carrier: CarrierRow; onManage: () 
     <BoardCard>
       <CardHead title={carrier.name} subtitle={[carrier.number, carrier.region].filter(Boolean).join(' · ') || '—'}
         chip={<CardChip text={carrier.compliance} tone={statusTone(carrier.compliance)} />} />
-      <div className="space-y-1.5">
-        <RailMeter label="On-time" value={`${fmt0(carrier.onTime)}%`} pct={carrier.onTime} fill="deck-fill-emerald" />
-        <RailMeter label="Performance" value={fmt0(carrier.performance)} pct={carrier.performance} fill="deck-fill-sky" />
+      <div className="space-y-1.5 text-[11px] font-semibold text-slate-500">
+        <p>{carrier.verifiedDocumentCount} verified of {carrier.documentCount} recorded documents</p>
+        <p>{carrier.performanceEvidenceCount} evidence-qualified performance records</p>
       </div>
       {carrier.action && <p className="text-[11px] font-semibold text-slate-500">{carrier.action}</p>}
       <button type="button" onClick={onManage} className="btn-ghost mt-auto h-9 justify-center px-3 text-xs">

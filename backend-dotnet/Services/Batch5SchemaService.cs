@@ -67,6 +67,64 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
                          AND con.company_id=cr.company_id
                          AND con.data_origin='demo_seed')",
             ct: ct);
+        await db.ExecuteAsync(
+            @"UPDATE carriers
+                 SET data_origin=CASE
+                     WHEN company_id=1 AND (carrier_number LIKE 'CAR-B5-%'
+                       OR (mc_number ~ '^MC-9000[1-6]$' AND name IN
+                           ('Blue Ridge Carrier','Capital Freight','Dulles Express','Potomac Partner','NOVA Regional','Arlington Courier'))
+                       )
+                       THEN 'demo_seed'
+                     ELSE COALESCE(data_origin, 'legacy_unverified') END,
+                     compliance_evidence_status=CASE
+                     WHEN company_id=1 AND (carrier_number LIKE 'CAR-B5-%'
+                       OR (mc_number ~ '^MC-9000[1-6]$' AND name IN
+                           ('Blue Ridge Carrier','Capital Freight','Dulles Express','Potomac Partner','NOVA Regional','Arlington Courier'))
+                       )
+                       THEN 'demo_seed'
+                     ELSE COALESCE(compliance_evidence_status, 'unverified') END
+               WHERE data_origin IS NULL OR compliance_evidence_status IS NULL
+                  OR (company_id=1 AND (carrier_number LIKE 'CAR-B5-%'
+                      OR (mc_number ~ '^MC-9000[1-6]$' AND name IN
+                          ('Blue Ridge Carrier','Capital Freight','Dulles Express','Potomac Partner','NOVA Regional','Arlington Courier'))));
+              UPDATE carrier_documents cd
+                 SET data_origin=CASE
+                     WHEN (cd.company_id=1 AND cd.document_number ~ '^DOC-CAR-00(0[1-9]|1[0-5])$')
+                       OR EXISTS (SELECT 1 FROM carriers ca WHERE ca.id=cd.carrier_id
+                                  AND ca.company_id=cd.company_id AND ca.data_origin='demo_seed')
+                         THEN 'demo_seed'
+                     ELSE COALESCE(cd.data_origin, 'legacy_unverified') END,
+                     verification_status=CASE
+                     WHEN (cd.company_id=1 AND cd.document_number ~ '^DOC-CAR-00(0[1-9]|1[0-5])$')
+                       OR EXISTS (SELECT 1 FROM carriers ca WHERE ca.id=cd.carrier_id
+                                  AND ca.company_id=cd.company_id AND ca.data_origin='demo_seed')
+                         THEN 'demo_seed'
+                     ELSE COALESCE(cd.verification_status, 'unverified') END
+               WHERE cd.data_origin IS NULL OR cd.verification_status IS NULL
+                  OR (cd.company_id=1 AND cd.document_number ~ '^DOC-CAR-00(0[1-9]|1[0-5])$')
+                  OR EXISTS (SELECT 1 FROM carriers ca WHERE ca.id=cd.carrier_id
+                             AND ca.company_id=cd.company_id AND ca.data_origin='demo_seed');
+              UPDATE carrier_performance cp
+                 SET data_origin=CASE
+                     WHEN (cp.company_id=1 AND cp.expense_total BETWEEN 2801 AND 2810
+                           AND cp.jobs_handled=12+(cp.expense_total-2800)::INT)
+                       OR EXISTS (SELECT 1 FROM carriers ca WHERE ca.id=cp.carrier_id
+                                  AND ca.company_id=cp.company_id AND ca.data_origin='demo_seed')
+                         THEN 'demo_seed'
+                     ELSE COALESCE(cp.data_origin, 'legacy_unverified') END,
+                     calculation_status=CASE
+                     WHEN (cp.company_id=1 AND cp.expense_total BETWEEN 2801 AND 2810
+                           AND cp.jobs_handled=12+(cp.expense_total-2800)::INT)
+                       OR EXISTS (SELECT 1 FROM carriers ca WHERE ca.id=cp.carrier_id
+                                  AND ca.company_id=cp.company_id AND ca.data_origin='demo_seed')
+                         THEN 'demo_seed'
+                     ELSE COALESCE(cp.calculation_status, 'unverified') END
+               WHERE cp.data_origin IS NULL OR cp.calculation_status IS NULL
+                  OR (cp.company_id=1 AND cp.expense_total BETWEEN 2801 AND 2810
+                      AND cp.jobs_handled=12+(cp.expense_total-2800)::INT)
+                  OR EXISTS (SELECT 1 FROM carriers ca WHERE ca.id=cp.carrier_id
+                             AND ca.company_id=cp.company_id AND ca.data_origin='demo_seed')",
+            ct: ct);
         // Fabricated business rows for a REAL tenant (hardcoded company_id/tenant_id=1).
         // These used to run on EVERY boot, inventing safety events / contracts / invoices /
         // SLA + cost records that the product then presented as fact. Now they require the
@@ -146,6 +204,16 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
         new("carriers", "notes",                "TEXT NULL"),
         new("carriers", "updated_at",           "TIMESTAMPTZ NULL"),
         new("carriers", "deleted_at",           "TIMESTAMPTZ NULL"),
+        new("carriers", "data_origin",          "VARCHAR(80) NULL"),
+        new("carriers", "compliance_evidence_status", "VARCHAR(80) NULL"),
+
+        new("carrier_documents", "data_origin",         "VARCHAR(80) NULL"),
+        new("carrier_documents", "verification_status", "VARCHAR(80) NULL"),
+        new("carrier_documents", "verified_at",         "TIMESTAMPTZ NULL"),
+        new("carrier_documents", "verified_by",         "BIGINT NULL"),
+
+        new("carrier_performance", "data_origin",       "VARCHAR(80) NULL"),
+        new("carrier_performance", "calculation_status", "VARCHAR(80) NULL"),
 
         new("contracts", "contract_number",         "VARCHAR(80) NULL"),
         new("contracts", "carrier_id",              "BIGINT NULL"),
@@ -243,6 +311,8 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
             carrier_id BIGINT NOT NULL, document_type VARCHAR(120) NOT NULL,
             document_number VARCHAR(120) NULL, expiry_date DATE NULL,
             status VARCHAR(50) NOT NULL DEFAULT 'Active', file_url VARCHAR(400) NULL,
+            data_origin VARCHAR(80) NULL, verification_status VARCHAR(80) NULL,
+            verified_at TIMESTAMPTZ NULL, verified_by BIGINT NULL,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
 
         @"CREATE TABLE IF NOT EXISTS carrier_performance (
@@ -251,6 +321,7 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
             jobs_handled INT NOT NULL DEFAULT 0, on_time_percent DECIMAL(6,2) NOT NULL DEFAULT 90,
             incident_count INT NOT NULL DEFAULT 0, expense_total DECIMAL(12,2) NOT NULL DEFAULT 0,
             performance_score DECIMAL(6,2) NOT NULL DEFAULT 85,
+            data_origin VARCHAR(80) NULL, calculation_status VARCHAR(80) NULL,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
 
         @"CREATE TABLE IF NOT EXISTS cost_margin_records (
@@ -516,13 +587,17 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
               safety_score        = CASE WHEN safety_score=88 THEN GREATEST(68,96-(id%4)*7) ELSE safety_score END,
               performance_score   = CASE WHEN performance_score=86 THEN GREATEST(70,95-(id%4)*6) ELSE performance_score END,
               risk_score          = CASE WHEN risk_score=20 THEN 12+(id%6)*10 ELSE risk_score END,
-              recommended_action  = COALESCE(recommended_action, CASE WHEN compliance_status='Non-Compliant' THEN 'Suspend carrier — compliance risk' WHEN insurance_expiry < CURRENT_DATE + 60 * INTERVAL '1 day' THEN 'Renew insurance immediately' ELSE 'Monitor performance' END)
-          WHERE carrier_number IS NULL",
+              recommended_action  = COALESCE(recommended_action, CASE WHEN compliance_status='Non-Compliant' THEN 'Suspend carrier — compliance risk' WHEN insurance_expiry < CURRENT_DATE + 60 * INTERVAL '1 day' THEN 'Renew insurance immediately' ELSE 'Monitor performance' END),
+              data_origin='demo_seed', compliance_evidence_status='demo_seed'
+          WHERE company_id=1 AND carrier_number IS NULL
+            AND mc_number ~ '^MC-9000[1-6]$'
+            AND name IN ('Blue Ridge Carrier','Capital Freight','Dulles Express','Potomac Partner','NOVA Regional','Arlington Courier')",
 
         @"INSERT INTO carriers
             (company_id, carrier_number, name, mc_number, contact_name, phone, email, region, status,
              compliance_status, insurance_expiry, contract_status, on_time_percent, safety_score,
-             cost_score, performance_score, risk_score, recommended_action, notes)
+             cost_score, performance_score, risk_score, recommended_action, notes,
+             data_origin, compliance_evidence_status)
           WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<10)
           SELECT 1,
             'CAR-B5-' || (4000+n),
@@ -544,30 +619,41 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
             CASE WHEN n%5=0 THEN 'Suspend carrier — compliance risk'
                  WHEN n%4=0 THEN 'Review carrier compliance before next tender'
                  ELSE 'Monitor carrier performance quarterly' END,
-            CASE WHEN n%5=0 THEN 'Carrier suspended pending compliance review.' ELSE NULL END
+            CASE WHEN n%5=0 THEN 'Carrier suspended pending compliance review.' ELSE NULL END,
+            'demo_seed', 'demo_seed'
           FROM seq
           WHERE (SELECT COUNT(*) FROM carriers WHERE carrier_number LIKE 'CAR-B5-%') < 10",
 
         @"INSERT INTO carrier_documents
-            (company_id, carrier_id, document_type, document_number, expiry_date, status)
-          WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<15)
-          SELECT 1, ((n-1)%10)+1,
+            (company_id, carrier_id, document_type, document_number, expiry_date, status,
+             data_origin, verification_status)
+          WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<15),
+          demo_carriers AS (SELECT ARRAY_AGG(id ORDER BY id) ids FROM carriers WHERE company_id=1 AND data_origin='demo_seed')
+          SELECT 1,
+            (SELECT ids[((n-1)%ARRAY_LENGTH(ids,1))+1] FROM demo_carriers),
             (ARRAY['Operating Authority','Insurance Certificate','Safety Rating','MC Number','DOT Registration'])[(n%5)+1],
             'DOC-CAR-' || LPAD(n::TEXT,4,'0'),
             CURRENT_DATE + (n%18-3) * INTERVAL '1 month',
-            CASE WHEN n%5=0 THEN 'Expired' WHEN n%6=0 THEN 'Expiring' ELSE 'Active' END
+            CASE WHEN n%5=0 THEN 'Expired' WHEN n%6=0 THEN 'Expiring' ELSE 'Active' END,
+            'demo_seed', 'demo_seed'
           FROM seq
-          WHERE (SELECT COUNT(*) FROM carrier_documents) < 15",
+          WHERE (SELECT ARRAY_LENGTH(ids,1) FROM demo_carriers) > 0
+            AND (SELECT COUNT(*) FROM carrier_documents WHERE data_origin='demo_seed') < 15",
 
         @"INSERT INTO carrier_performance
-            (company_id, carrier_id, period_start, period_end, jobs_handled, on_time_percent, incident_count, expense_total, performance_score)
-          WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<10)
-          SELECT 1, ((n-1)%10)+1,
+            (company_id, carrier_id, period_start, period_end, jobs_handled, on_time_percent, incident_count, expense_total, performance_score,
+             data_origin, calculation_status)
+          WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<10),
+          demo_carriers AS (SELECT ARRAY_AGG(id ORDER BY id) ids FROM carriers WHERE company_id=1 AND data_origin='demo_seed')
+          SELECT 1,
+            (SELECT ids[((n-1)%ARRAY_LENGTH(ids,1))+1] FROM demo_carriers),
             CURRENT_DATE - n * INTERVAL '1 month',
             CURRENT_DATE - (n-1) * INTERVAL '1 month',
-            12+(n%28), GREATEST(70, 97-(n%4)*6), n%4, ROUND((2800+(n%3200))::NUMERIC, 2), GREATEST(68, 95-(n%5)*5)
+            12+(n%28), GREATEST(70, 97-(n%4)*6), n%4, ROUND((2800+(n%3200))::NUMERIC, 2), GREATEST(68, 95-(n%5)*5),
+            'demo_seed', 'demo_seed'
           FROM seq
-          WHERE (SELECT COUNT(*) FROM carrier_performance) < 10",
+          WHERE (SELECT ARRAY_LENGTH(ids,1) FROM demo_carriers) > 0
+            AND (SELECT COUNT(*) FROM carrier_performance WHERE data_origin='demo_seed') < 10",
 
         @"INSERT INTO cost_margin_records
             (company_id, entity_type, entity_id, customer_id, job_id, route_id, vehicle_id, driver_id,

@@ -532,7 +532,9 @@ CREATE TABLE IF NOT EXISTS carriers (
   name VARCHAR(220) NOT NULL,
   mc_number VARCHAR(80) NULL,
   safety_rating VARCHAR(80) NOT NULL DEFAULT 'Satisfactory',
-  status VARCHAR(50) NOT NULL DEFAULT 'Active'
+  status VARCHAR(50) NOT NULL DEFAULT 'Active',
+  data_origin VARCHAR(80) NULL,
+  compliance_evidence_status VARCHAR(80) NULL
 );
 
 CREATE TABLE IF NOT EXISTS documents (
@@ -1219,6 +1221,10 @@ CREATE TABLE IF NOT EXISTS carrier_documents (
   expiry_date DATE NULL,
   status VARCHAR(50) NOT NULL DEFAULT 'Active',
   file_url VARCHAR(400) NULL,
+  data_origin VARCHAR(80) NULL,
+  verification_status VARCHAR(80) NULL,
+  verified_at TIMESTAMPTZ NULL,
+  verified_by BIGINT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -1233,6 +1239,8 @@ CREATE TABLE IF NOT EXISTS carrier_performance (
   incident_count INT NOT NULL DEFAULT 0,
   expense_total DECIMAL(12,2) NOT NULL DEFAULT 0,
   performance_score DECIMAL(6,2) NOT NULL DEFAULT 85,
+  data_origin VARCHAR(80) NULL,
+  calculation_status VARCHAR(80) NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

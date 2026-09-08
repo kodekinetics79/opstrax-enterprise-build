@@ -39,7 +39,7 @@ const FILTER_OPTIONS: Record<Kind, string[]> = {
   "fuel":          ["All","Normal","Anomaly Detected","Under Review","Excessive","Warning"],
   "expenses":      ["All","Pending","Approved","Rejected","Missing","High"],
   "contracts":     ["All","Active","Expiring Soon","Expired","High","Medium"],
-  "carriers":      ["All","Active","Pending","Suspended","Compliant","Non-Compliant","At Risk"],
+  "carriers":      ["All","Active","Pending","Suspended","Inactive","Unverified"],
   "cost-margin":   ["All","Calculated","Cost evidence unavailable","Issued revenue unavailable"],
   "cost-leakage":  ["All","Open","Acknowledged","In Progress","Critical","High"],
 };
@@ -82,18 +82,18 @@ const configs = {
     sections: [["Recorded Contract Rates","rates",["rateCode","recordOrigin","rateType","baseRate","currency","effectiveDate","status"]]] as [string,string,string[]][],
   },
   carriers: {
-    queryKey: "carriers", eyebrow: "Carrier Management", title: "Partner carrier registry and performance", icon: <Truck />,
-    description: "Partner carriers, compliance status, insurance tracking, performance scoring, cost governance and carrier document management.",
+    queryKey: "carriers", eyebrow: "Carrier Evidence", title: "Recorded carrier registry and evidence", icon: <Truck />,
+    description: "Persisted carrier records, documents and evidence-qualified performance. Authority, insurance and compliance remain unverified until supporting evidence is independently recorded.",
     useRows: useCarriers, useSummary: useCarriersSummary, useDetail: useCarrierDetail,
     api: { create: carriersApi.create, update: (id: string | number, p: AnyRecord) => carriersApi.update(id, p) },
     createLabel: "Add Carrier",
-    kpis: [["Active Carriers","activeCarriers"],["Compliance Risk","complianceRiskCarriers"],["Insurance Expiring","insuranceExpiring"],["Avg Performance","averageCarrierScore"],["On-Time %","onTimePerformance"],["Preferred","preferredCarriers"],["Docs Missing","documentsMissing"],["Total","total"]],
-    columns: ["carrierNumber","name","region","complianceStatus","contractStatus","onTimePercent","safetyScore","performanceScore","riskScore","insuranceExpiry","status","recommendedAction"],
-    fields: [["name","Carrier Name"],["mcNumber","MC Number"],["contactName","Contact Name"],["phone","Phone"],["email","Email"],["region","Region"],["status","Status"],["complianceStatus","Compliance Status"],["insuranceExpiry","Insurance Expiry"],["contractStatus","Contract Status"],["notes","Notes"]],
+    kpis: [["Active Carriers","activeCarriers"],["Pending","pendingCarriers"],["Verified Compliance","verifiedComplianceCarriers"],["Documents Recorded","documentsRecorded"],["Verified Documents","verifiedDocuments"],["Need Verification","documentsNeedingVerification"],["Performance Evidence","performanceEvidenceRecords"],["Legacy Origin Unverified","legacyOriginUnverified"],["Total","total"]],
+    columns: ["carrierNumber","recordOrigin","name","mcNumber","region","complianceStatus","complianceEvidenceStatus","insuranceExpiry","insuranceEvidenceStatus","documentCount","verifiedDocumentCount","performanceEvidenceCount","status","recommendedAction"],
+    fields: [["carrierNumber","Carrier Number"],["name","Carrier Name"],["mcNumber","MC Number"],["contactName","Contact Name"],["phone","Phone"],["email","Email"],["region","Region"],["status","Status"],["insuranceExpiry","Self-reported Insurance Expiry"],["notes","Notes"]],
     actions: ["setStatus"],
     sections: [
-      ["Performance History","performance",["periodStart","periodEnd","jobsHandled","onTimePercent","incidentCount","performanceScore"]],
-      ["Documents","documents",["documentType","documentNumber","status","expiryDate"]],
+      ["Evidence-qualified Performance","performance",["periodStart","periodEnd","recordOrigin","calculationStatus","jobsHandled","onTimePercent","incidentCount","performanceScore"]],
+      ["Recorded Documents","documents",["documentType","documentNumber","recordOrigin","verificationStatus","status","expiryDate","verifiedAt"]],
     ] as [string,string,string[]][],
   },
   "cost-margin": {
@@ -557,6 +557,7 @@ function Drawer({ config, detail, loading, onClose, onEdit, onAction }: {
   const isCostMargin = config.queryKey === "cost-margin";
   const isCostLeakage = config.queryKey === "cost-leakage";
   const isContract = config.queryKey === "contracts";
+  const isCarrier = config.queryKey === "carriers";
   const isFuelTransaction = isFuel && Boolean(record.transactionNumber);
   const isFuelAnomaly = isFuel && Boolean(record.anomalyType);
   const fuelAnomalyReviewable = ["open", "under review"].includes(String(record.status ?? "").toLowerCase());
@@ -579,8 +580,8 @@ function Drawer({ config, detail, loading, onClose, onEdit, onAction }: {
           {/* Status badges + actions */}
           <div className="flex flex-wrap items-center gap-2">
             <StatusBadge status={record.status ?? record.approvalStatus ?? record.complianceStatus} />
-            {!isExpense && !isCostMargin && !isContract && <RiskBadge risk={record.severity ?? record.riskScore ?? record.anomalyStatus} />}
-            <span className="badge">{isExpense ? String(record.recordOrigin ?? "Recorded expense") : isCostMargin ? "Recorded financial evidence" : isCostLeakage ? String(record.recordOrigin ?? "Runtime detector") : isFuel || isContract ? String(record.recordOrigin ?? "Origin unavailable") : "OpsTrax Finance Intelligence"}</span>
+            {!isExpense && !isCostMargin && !isContract && !isCarrier && <RiskBadge risk={record.severity ?? record.riskScore ?? record.anomalyStatus} />}
+            <span className="badge">{isExpense ? String(record.recordOrigin ?? "Recorded expense") : isCostMargin ? "Recorded financial evidence" : isCostLeakage ? String(record.recordOrigin ?? "Runtime detector") : isFuel || isContract || isCarrier ? String(record.recordOrigin ?? "Origin unavailable") : "OpsTrax Finance Intelligence"}</span>
           </div>
 
           <div className="flex flex-wrap gap-3">
@@ -601,7 +602,7 @@ function Drawer({ config, detail, loading, onClose, onEdit, onAction }: {
           <div className="grid gap-4 lg:grid-cols-3">
             <Info title="Primary Details" record={record} keys={Object.keys(record).slice(0, 10)} />
             <Info
-              title={isExpense ? "Financial / Approval" : isCostMargin ? "Financial Evidence" : isCostLeakage ? "Detected Evidence" : "Financial / Risk"}
+              title={isExpense ? "Financial / Approval" : isCostMargin ? "Financial Evidence" : isCostLeakage ? "Detected Evidence" : isCarrier ? "Evidence Status" : "Financial / Risk"}
               record={record}
               keys={isExpense
                 ? ["amount","currency","approvalStatus","receiptStatus","recordOrigin","recordAttention"]
@@ -611,6 +612,8 @@ function Drawer({ config, detail, loading, onClose, onEdit, onAction }: {
                     ? ["estimatedLoss","currency","amountEvidenceStatus","category","severity","dataOrigin","actionsCount","openActionEstimatedSavings"]
                   : isFuel
                     ? ["totalCost","currency","quantity","unit","unitPrice","estimatedCost","costEvidenceStatus","estimatedLoss","amountEvidenceStatus","dataOrigin","anomalyStatus"]
+                    : isCarrier
+                      ? ["recordOrigin","complianceStatus","complianceEvidenceStatus","insuranceExpiry","insuranceEvidenceStatus"]
                     : ["totalCost","amount","baseRate","estimatedLoss","marginPercent","marginRisk","riskScore","anomalyStatus","complianceStatus","approvalStatus"]}
             />
             <Info title="Recommended Action" record={record} keys={["recommendedAction","thresholdStatus","source","ownerRole","notes"]} />
@@ -762,7 +765,7 @@ function defaultForm(kind: Kind): AnyRecord {
   if (kind === "fuel")       return { fuelType: "Diesel", quantity: "", unit: "Gallons", unitPrice: "", currency: "USD", paymentMethod: "Fleet Card", fuelDate: today };
   if (kind === "expenses")   return { categoryName: "", amount: "", currency: "", receiptStatus: "Missing", expenseDate: today };
   if (kind === "contracts")  return { contractType: "Customer", rateType: "Per Mile", baseRate: "", currency: "USD", status: "Draft", effectiveDate: today };
-  if (kind === "carriers")   return { status: "Active", complianceStatus: "Compliant", contractStatus: "Active", onTimePercent: 90, safetyScore: 88, performanceScore: 86, riskScore: 20 };
+  if (kind === "carriers")   return { status: "Pending" };
   return {};
 }
 
