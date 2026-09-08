@@ -12,6 +12,7 @@ const liveMap = fs.readFileSync(new URL("../src/pages/LiveMapPage.tsx", import.m
 const liveMapComponent = fs.readFileSync(new URL("../src/components/LiveMap.tsx", import.meta.url), "utf8");
 const geofences = fs.readFileSync(new URL("../src/pages/GeofenceManagementPage.tsx", import.meta.url), "utf8");
 const controlTower = fs.readFileSync(new URL("../src/pages/ControlTowerPage.tsx", import.meta.url), "utf8");
+const commandCenter = fs.readFileSync(new URL("../src/pages/CommandCenterPage.tsx", import.meta.url), "utf8");
 const moduleConfig = fs.readFileSync(new URL("../src/modules/moduleConfig.ts", import.meta.url), "utf8");
 
 assert.doesNotMatch(
@@ -134,6 +135,10 @@ assert.match(controlTower, /provider, media, privacy, device, and certification 
 assert.doesNotMatch(controlTower, /aiSummary \|\| event\.eventType/, "Unverified AI camera summaries must not be presented as evidence");
 assert.match(vehicles, /No provider-verified, media-ready camera evidence is available for this vehicle/, "Vehicle detail must distinguish absent verified media from no camera events");
 assert.match(controlTower, /summarizeControlTowerStatus/, "Aggregate status must use the tested evidence summary");
+assert.match(commandCenter, /Current Exception Queue/, "Command Center must describe persisted exceptions without a live-data claim");
+assert.match(commandCenter, /Fleet status evidence unavailable/, "Missing fleet snapshot evidence must remain visibly unavailable");
+assert.match(commandCenter, /Needs Service/, "The vehicle-state slice must describe service attention rather than inferred device connectivity");
+assert.doesNotMatch(commandCenter, /Live Exception Queue|live fleet status|ready to respond|key: "offline"/, "Command Center must not imply live device or readiness evidence from vehicle defaults");
 assert.doesNotMatch(
   liveMap,
   /kpis\.(?:liveCoverage|connectedUnits|degradedUnits|deviceOfflineUnits|cameraOfflineUnits|connectivityCoverage)/,

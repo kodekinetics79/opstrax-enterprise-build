@@ -111,6 +111,15 @@ public sealed class ControlTowerBranchIsolationPostgresTests
             Assert.Equal(JsonValueKind.Null, restrictedDetail.GetProperty("record").GetProperty("readinessScore").ValueKind);
             Assert.Equal(JsonValueKind.Null, restrictedDetail.GetProperty("record").GetProperty("dataQualityScore").ValueKind);
 
+            var commandCenter = Payload(await InvokeCommandCenter(
+                Principal(company, branchA, "dashboard:view"), db)).GetProperty("data");
+            Assert.Equal(1, commandCenter.GetProperty("fleetTotal").GetInt64());
+            Assert.Equal(1, commandCenter.GetProperty("fleetStatus").GetProperty("driving").GetInt64());
+            Assert.Equal(0, commandCenter.GetProperty("fleetStatus").GetProperty("attention").GetInt64());
+            Assert.Equal(100, commandCenter.GetProperty("readinessPct").GetInt32());
+            Assert.Contains("1 vehicle on active routes", commandCenter.GetProperty("briefItems")[0].GetString());
+            Assert.DoesNotContain("device", commandCenter.GetProperty("briefItems")[0].GetString(), StringComparison.OrdinalIgnoreCase);
+
             var tenantPayload = Payload(await Invoke(Principal(company, null, "dashboard:view", "dashcam:view", "telematics:devices:view"), db));
             var tenantData = tenantPayload.GetProperty("data");
             Assert.Equal(3, tenantData.GetProperty("entities").GetArrayLength());
@@ -241,6 +250,12 @@ public sealed class ControlTowerBranchIsolationPostgresTests
     {
         var method = typeof(EndpointMappings).GetMethod("ControlTowerVehicleDetail", BindingFlags.NonPublic | BindingFlags.Static)!;
         return await (Task<IResult>)method.Invoke(null, [http, vehicleId, db, CancellationToken.None])!;
+    }
+
+    private static async Task<IResult> InvokeCommandCenter(DefaultHttpContext http, Database db)
+    {
+        var method = typeof(EndpointMappings).GetMethod("CommandCenterSummary", BindingFlags.NonPublic | BindingFlags.Static)!;
+        return await (Task<IResult>)method.Invoke(null, [http, db, CancellationToken.None])!;
     }
 
     private static JsonElement Payload(IResult result)

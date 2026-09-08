@@ -4347,7 +4347,7 @@ public static partial class EndpointMappings
         var slaExceptions = await db.ScalarLongAsync("SELECT COUNT(*) FROM jobs WHERE company_id=@cid AND deleted_at IS NULL AND (sla_status='At Risk' OR status IN ('Delayed','At Risk'))" + BranchScope, Bind, ct);
         var delayed       = await db.ScalarLongAsync("SELECT COUNT(*) FROM jobs WHERE company_id=@cid AND deleted_at IS NULL AND status='Delayed'" + BranchScope, Bind, ct);
         var overdue       = await db.ScalarLongAsync("SELECT COUNT(*) FROM jobs WHERE company_id=@cid AND deleted_at IS NULL AND assigned_vehicle_id IS NULL AND scheduled_start < NOW()" + BranchScope, Bind, ct);
-        var fleetOnRoad   = await db.ScalarLongAsync("SELECT COUNT(*) FROM vehicles WHERE company_id=@cid AND deleted_at IS NULL AND device_status='Online' AND status IN ('On Route','En Route','Driving','Active','Idle','At Stop','Delayed')" + BranchScope, Bind, ct);
+        var fleetOnRoad   = await db.ScalarLongAsync("SELECT COUNT(*) FROM vehicles WHERE company_id=@cid AND deleted_at IS NULL AND NOT out_of_service AND status IN ('On Route','En Route','Driving','Active','Idle','At Stop','Delayed')" + BranchScope, Bind, ct);
         var safety24h     = await db.ScalarLongAsync("SELECT COUNT(*) FROM safety_events WHERE company_id=@cid AND deleted_at IS NULL AND COALESCE(occurred_at,event_time,created_at) > NOW()-INTERVAL '24 hours'" + BranchScope, Bind, ct);
         var maintCount    = await db.ScalarLongAsync("SELECT COUNT(*) FROM vehicles WHERE company_id=@cid AND deleted_at IS NULL AND (out_of_service OR status='Maintenance')" + BranchScope, Bind, ct);
         var totalFleet    = await db.ScalarLongAsync("SELECT COUNT(*) FROM vehicles WHERE company_id=@cid AND deleted_at IS NULL" + BranchScope, Bind, ct);
@@ -4372,14 +4372,14 @@ public static partial class EndpointMappings
         // ── Fleet status mix (drives the four fleet chips) ──────────────────────
         var fs = await db.QuerySingleAsync(
             @"SELECT
-                SUM(CASE WHEN device_status='Online' AND status IN ('On Route','En Route','Driving','Active','Delayed') THEN 1 ELSE 0 END) driving,
-                SUM(CASE WHEN device_status='Online' AND status IN ('Idle','At Stop') THEN 1 ELSE 0 END) idling,
-                SUM(CASE WHEN device_status='Online' AND status IN ('Available','Parked','Standby','Maintenance') THEN 1 ELSE 0 END) parked,
-                SUM(CASE WHEN device_status<>'Online' THEN 1 ELSE 0 END) offline
+                SUM(CASE WHEN NOT out_of_service AND status NOT IN ('Maintenance','Out of Service') AND status IN ('On Route','En Route','Driving','Active','Delayed') THEN 1 ELSE 0 END) driving,
+                SUM(CASE WHEN NOT out_of_service AND status NOT IN ('Maintenance','Out of Service') AND status IN ('Idle','At Stop') THEN 1 ELSE 0 END) idling,
+                SUM(CASE WHEN NOT out_of_service AND status NOT IN ('Maintenance','Out of Service') AND status IN ('Available','Parked','Standby') THEN 1 ELSE 0 END) parked,
+                SUM(CASE WHEN out_of_service OR status IN ('Maintenance','Out of Service') THEN 1 ELSE 0 END) attention
               FROM vehicles WHERE company_id=@cid AND deleted_at IS NULL" + BranchScope, Bind, ct);
         long FsVal(string k) => fs != null && fs.TryGetValue(k, out var v) && v != null ? Convert.ToInt64(v) : 0;
-        var offline = FsVal("offline");
-        var fleetStatus = new { driving = FsVal("driving"), idling = FsVal("idling"), parked = FsVal("parked"), offline };
+        var needsService = FsVal("attention");
+        var fleetStatus = new { driving = FsVal("driving"), idling = FsVal("idling"), parked = FsVal("parked"), attention = needsService };
 
         // ── Exception queue (jobs at risk + fleet down + recent safety) ─────────
         var exRows = await db.QueryAsync(
@@ -4453,11 +4453,11 @@ public static partial class EndpointMappings
         string S(long n) => n == 1 ? "" : "s";
         var briefItems = new List<string>
         {
-            $"{fleetOnRoad} vehicles on active routes — {offline} offline device{S(offline)}.",
+            $"{fleetOnRoad} vehicle{S(fleetOnRoad)} on active routes — {needsService} marked for maintenance or out of service.",
             slaExceptions > 0 ? $"{slaExceptions} job{S(slaExceptions)} at SLA risk, {delayed} already delayed." : "All shipments within committed SLA windows.",
             overdue > 0 ? $"{overdue} job{S(overdue)} past dispatch window awaiting assignment." : "No jobs past dispatch window.",
             safety24h > 0 ? $"{safety24h} safety event{S(safety24h)} logged in the last 24 hours." : "No safety events in the last 24 hours.",
-            maintCount > 0 ? $"{maintCount} vehicle{S(maintCount)} in maintenance or out of service." : "Full fleet mechanically available.",
+            maintCount > 0 ? $"{maintCount} vehicle{S(maintCount)} in maintenance or out of service." : "No vehicle is currently marked for maintenance or out of service.",
         };
 
         // ── Priority actions (next-best operational moves) ──────────────────────
@@ -4466,7 +4466,7 @@ public static partial class EndpointMappings
         if (overdue > 0)       priorityActions.Add(new { title = $"Assign {overdue} overdue job{S(overdue)}", detail = "Past dispatch window — allocate vehicle and driver", entityRoute = "/dispatch" });
         if (maintCount > 0)    priorityActions.Add(new { title = $"Clear {maintCount} vehicle{S(maintCount)} in maintenance", detail = "Return units to service or raise work orders", entityRoute = "/work-orders" });
         if (safety24h > 0)     priorityActions.Add(new { title = $"Review {safety24h} safety event{S(safety24h)}", detail = "Triage dashcam evidence and coaching queue", entityRoute = "/incidents" });
-        if (priorityActions.Count == 0) priorityActions.Add(new { title = "Fleet operating within normal parameters", detail = "No priority interventions required right now", entityRoute = "/vehicles" });
+        if (priorityActions.Count == 0) priorityActions.Add(new { title = "No current priority exception recorded", detail = "Continue monitoring the available job, vehicle, and safety feeds", entityRoute = "/vehicles" });
 
         // ── Live trend series (7-point) ─────────────────────────────────────────
         // Throughput: jobs scheduled in the CURRENT ISO week by weekday (Mon→Sun) — the
@@ -4487,20 +4487,19 @@ public static partial class EndpointMappings
         // The safety-trends table has no production writer (demo seed only) — that series
         // is intentionally absent from this payload until a real aggregation job exists.
 
-        var totalVehicles = fleetStatus.driving + fleetStatus.idling + fleetStatus.parked + offline;
-        var readinessPct = totalVehicles > 0 ? (int)Math.Round((fleetStatus.driving + fleetStatus.idling) * 100.0 / totalVehicles) : 0;
+        var operationalPct = totalFleet > 0 ? (int)Math.Round((totalFleet - needsService) * 100.0 / totalFleet) : 0;
         var critCount = exceptions.Count(e => (e.severity as string) == "Critical");
         var warnCount = exceptions.Count(e => (e.severity as string) == "Warning");
 
         return Results.Ok(ApiResponse<object>.Ok(new
         {
-            operationalStatus = "Active command posture",
+            operationalStatus = "Current operational posture",
             generatedAt = DateTime.UtcNow,
             posture = critCount > 0 ? "Elevated" : warnCount > 0 ? "Guarded" : "Stable",
             kpis,
             fleetStatus,
-            fleetTotal = totalVehicles,
-            readinessPct,
+            fleetTotal = totalFleet,
+            readinessPct = operationalPct,
             criticalCount = critCount,
             warningCount = warnCount,
             exceptions,

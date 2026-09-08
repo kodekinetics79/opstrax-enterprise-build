@@ -34,10 +34,10 @@ const POSTURE: Record<string, string> = {
 const KPI_ROUTES = ["/jobs", "/alerts", "/dispatch", "/vehicles", "/incidents"];
 
 const FLEET_CFG = [
-  { key: "driving", label: "Driving", color: chart.teal600 },
-  { key: "idling",  label: "Idling",  color: chart.amber500 },
-  { key: "parked",  label: "Parked",  color: chart.slate500 },
-  { key: "offline", label: "Offline", color: chart.red500 },
+  { key: "driving",   label: "On Road", color: chart.teal600 },
+  { key: "idling",    label: "Idle / Stop", color: chart.amber500 },
+  { key: "parked",    label: "Available / Parked", color: chart.slate500 },
+  { key: "attention", label: "Needs Service", color: chart.red500 },
 ];
 
 const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -93,8 +93,8 @@ export function CommandCenterPage() {
 
   // API-measured values only: no client-side derivation, no fabricated denominators,
   // no default posture — absence stays absent.
-  const fleetTotal   = Number(data.fleetTotal ?? 0);
-  const readinessPct = typeof data.readinessPct === "number" && fleetTotal > 0 ? data.readinessPct : null;
+  const fleetTotal   = asNum(data.fleetTotal);
+  const readinessPct = typeof data.readinessPct === "number" && fleetTotal != null && fleetTotal > 0 ? data.readinessPct : null;
   const posture      = typeof data.posture === "string" && POSTURE[data.posture] ? data.posture : null;
   const critCount    = Number(data.criticalCount ?? 0);
   const warnCount    = Number(data.warningCount ?? 0);
@@ -102,7 +102,8 @@ export function CommandCenterPage() {
   const weeklyJobs = ((charts.weeklyJobs  as number[]) ?? []).map((v, i) => ({ d: DOW[i] ?? String(i + 1), v: Number(v) }));
   const costData   = ((charts.costLeakage as number[]) ?? []).map((v, i) => ({ d: `D${i + 1}`, v: Number(v) }));
 
-  const donut = FLEET_CFG.map(f => ({ name: f.label, value: Number(fleetStatus[f.key] ?? 0), color: f.color }));
+  const fleetStatusAvailable = FLEET_CFG.every((item) => asNum(fleetStatus[item.key]) != null);
+  const donut = FLEET_CFG.map(f => ({ name: f.label, value: asNum(fleetStatus[f.key]) ?? 0, color: f.color }));
 
   // Real "as of" time from the payload. If the feed carries no parseable timestamp
   // we drop the label rather than imply a fresh sync.
@@ -185,11 +186,11 @@ export function CommandCenterPage() {
 
       {/* ── Triage grid: queue → actions → capacity ────────── */}
       <div className="grid items-stretch gap-3 xl:grid-cols-[1.6fr_1fr_0.9fr]">
-        {/* Live Exception Queue — the decision layer */}
+        {/* Current Exception Queue — the decision layer */}
         <section className="flex min-w-0 max-h-[420px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-2.5">
             <AlertOctagon className="h-4 w-4 shrink-0 text-red-500" />
-            <p className="text-sm font-bold text-slate-900">Live Exception Queue</p>
+            <p className="text-sm font-bold text-slate-900">Current Exception Queue</p>
             <p className="hidden text-[11px] text-slate-400 sm:block">severity-first · act top-down</p>
             <button type="button" onClick={() => navigate("/alerts")} className="ml-auto inline-flex items-center gap-0.5 text-[11px] font-semibold text-teal-700 hover:underline">
               All <ArrowRight className="h-3 w-3" />
@@ -200,7 +201,7 @@ export function CommandCenterPage() {
             <div className="flex flex-1 flex-col items-center justify-center gap-1.5 py-10">
               <CheckCircle2 className="h-8 w-8 text-emerald-500" />
               <p className="text-sm font-semibold text-slate-600">No active exceptions{asOf ? ` · as of ${asOf}` : ""}</p>
-              <p className="text-xs text-slate-400">Job, fleet and safety feeds are clear.</p>
+              <p className="text-xs text-slate-400">No current job, vehicle-service, or safety exception is recorded in this view.</p>
             </div>
           ) : (
             <ul className="min-h-0 flex-1 divide-y divide-slate-50 overflow-y-auto">
@@ -274,15 +275,20 @@ export function CommandCenterPage() {
         <section className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="flex items-center justify-between gap-2">
             <p className="flex items-center gap-1.5 text-sm font-bold text-slate-900"><Truck className="h-3.5 w-3.5 text-slate-400" /> Fleet Snapshot</p>
-            <span className="text-[11px] font-semibold text-slate-400 tabular-nums">{fleetTotal} unit{fleetTotal === 1 ? "" : "s"}</span>
+            <span className="text-[11px] font-semibold text-slate-400 tabular-nums">{fleetTotal == null ? "— units" : `${fleetTotal} unit${fleetTotal === 1 ? "" : "s"}`}</span>
           </div>
 
-          {fleetTotal === 0 ? (
+          {fleetTotal == null || !fleetStatusAvailable ? (
+            <div className="mt-3 rounded-xl border border-dashed border-slate-300 bg-slate-50/60 px-3 py-6 text-center">
+              <p className="text-xs font-semibold text-slate-600">Fleet status evidence unavailable</p>
+              <p className="mt-1 text-[11px] text-slate-400">Refresh the dashboard to retry the current operational snapshot.</p>
+            </div>
+          ) : fleetTotal === 0 ? (
             <button type="button" onClick={() => navigate("/vehicles")}
               className="mt-3 flex w-full flex-col items-center gap-1.5 rounded-xl border border-dashed border-slate-300 bg-slate-50/60 px-3 py-6 text-center transition hover:border-teal-300">
               <Truck className="h-6 w-6 text-slate-300" />
               <p className="text-xs font-semibold text-slate-600">No vehicles yet</p>
-              <p className="text-[11px] text-slate-400">Add your first vehicle to see live fleet status.</p>
+              <p className="text-[11px] text-slate-400">Add your first vehicle to see current fleet status.</p>
             </button>
           ) : (
             <>
@@ -299,19 +305,19 @@ export function CommandCenterPage() {
                   {readinessPct != null && (
                     <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
                       <span className="text-lg font-bold leading-none text-slate-900 tabular-nums">{readinessPct}%</span>
-                      <span className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">ready</span>
+                      <span className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">operational</span>
                     </div>
                   )}
                 </div>
               )}
               {fleetTotal < 4 && readinessPct != null && (
-                <p className="mt-2 text-xs font-medium text-slate-500"><span className="font-bold text-slate-900 tabular-nums">{readinessPct}%</span> ready to respond</p>
+                <p className="mt-2 text-xs font-medium text-slate-500"><span className="font-bold text-slate-900 tabular-nums">{readinessPct}%</span> not marked for service</p>
               )}
               <div className="mt-3 grid grid-cols-2 gap-1.5">
                 {FLEET_CFG.map(f => {
                   const c = Number(fleetStatus[f.key] ?? 0);
                   return (
-                    <button key={f.key} type="button" onClick={() => navigate(f.key === "offline" ? "/iot-devices" : "/vehicles")}
+                    <button key={f.key} type="button" onClick={() => navigate(f.key === "attention" ? "/work-orders" : "/vehicles")}
                       className="flex items-center gap-2 rounded-lg border border-slate-100 bg-slate-50/60 px-2 py-1.5 text-left transition hover:border-slate-300">
                       <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: f.color }} />
                       <div className="min-w-0">
@@ -399,7 +405,7 @@ export function CommandCenterPage() {
             const oos = asNum(fleetHealthBridge.data?.oosVehicles);
             const blocked = asNum(fleetHealthBridge.data?.criticalDefectVehicles);
             // Bars scale against the whole fleet so ready-vs-blocked reads instantly.
-            const max = Math.max(asNum(fleetHealthBridge.data?.totalVehicles) ?? fleetTotal, 1);
+            const max = Math.max(asNum(fleetHealthBridge.data?.totalVehicles) ?? fleetTotal ?? 0, 1);
             return (
               <div className="mt-3 space-y-2">
                 <MiniBar label={`Dispatch-ready of ${max}`} value={ready} max={max} color={chart.emerald600} absentReason={absent} />

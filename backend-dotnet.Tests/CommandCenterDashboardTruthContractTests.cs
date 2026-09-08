@@ -87,6 +87,17 @@ public sealed class CommandCenterDashboardTruthContractTests
         Assert.Contains("date_trunc('week', NOW())", method, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void CommandCenterSummary_DoesNot_Treat_Legacy_Device_Defaults_As_Operational_Evidence()
+    {
+        var method = Method("private static async Task<IResult> CommandCenterSummary(", "private static async Task<IResult> ControlTowerSummary(");
+
+        Assert.DoesNotContain("device_status", method, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("offline device", method, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("out_of_service OR status IN ('Maintenance','Out of Service')", method, StringComparison.Ordinal);
+        Assert.Contains("No vehicle is currently marked for maintenance or out of service", method, StringComparison.Ordinal);
+    }
+
     private static string Method(string startMarker, string endMarker)
     {
         var source = Read("backend-dotnet", "Controllers", "EndpointMappings.cs");
