@@ -19,6 +19,7 @@ public sealed class ExecutiveAnalyticsEvidencePostgresTests
         await new Batch7SchemaService(db).EnsureAsync();
         await db.ExecuteAsync(File.ReadAllText(Path.Combine(RepoRoot, "database", "migrations", "2026_09_08_sla_kpi_evidence_integrity.sql")));
         await db.ExecuteAsync(File.ReadAllText(Path.Combine(RepoRoot, "database", "migrations", "2026_09_08_executive_analytics_evidence_integrity.sql")));
+        await db.ExecuteAsync(File.ReadAllText(Path.Combine(RepoRoot, "database", "migrations", "2026_09_08_dispatch_analytics_evidence_integrity.sql")));
         var suffix = Guid.NewGuid().ToString("N")[..10];
         var company = await Company(db, $"EXEC-A-{suffix}");
         var other = await Company(db, $"EXEC-B-{suffix}");
@@ -33,6 +34,12 @@ public sealed class ExecutiveAnalyticsEvidencePostgresTests
 
             await Sla(db, company, customer, $"SLA-VER-{suffix}", "job_derived", "calculated_from_events", "Met");
             await Sla(db, company, customer, $"SLA-LEG-{suffix}", "legacy_unverified", "unverified", "Breached");
+            var activeAssignment = await Assignment(db, company, "assigned", "user_workflow", "recorded_by_authenticated_actor");
+            var deliveredAssignment = await Assignment(db, company, "delivered", "user_workflow", "recorded_by_authenticated_actor");
+            var legacyAssignment = await Assignment(db, company, "assigned", "legacy_unverified", "unverified");
+            await DispatchException(db, company, activeAssignment, "user_workflow", "recorded_by_authenticated_actor");
+            await DispatchException(db, company, legacyAssignment, "legacy_unverified", "unverified");
+            await DeliveryProof(db, company, deliveredAssignment);
 
             var http = Principal(company, "dashboard:view", "reports:view", "customer_portal:view", "dispatch:view", "safety:view", "maintenance:view");
             var snapshots = Data(await Invoke("ExecutiveSnapshots", http, db, CancellationToken.None))
@@ -69,11 +76,16 @@ public sealed class ExecutiveAnalyticsEvidencePostgresTests
             var operations = JsonSerializer.Serialize(Value(await Invoke("AnalyticsOperations", http, db, CancellationToken.None)));
             Assert.Contains("\"activeTrips\":null", operations);
             Assert.Contains("\"routeComplianceAvg\":null", operations);
-            Assert.Contains("source provenance", operations);
+            Assert.Contains("\"activeAssignments\":1", operations);
+            Assert.Contains("\"openExceptions\":1", operations);
+            Assert.Contains("authenticated workflow provenance", operations);
 
             var dispatch = JsonSerializer.Serialize(Value(await Invoke("AnalyticsDispatch", http, db, CancellationToken.None)));
-            Assert.Contains("\"currentlyAssigned\":null", dispatch);
-            Assert.Contains("\"statusDistribution\":[]", dispatch);
+            Assert.Contains("\"currentlyAssigned\":1", dispatch);
+            Assert.Contains("\"delivered\":1", dispatch);
+            Assert.Contains("\"openExceptions\":1", dispatch);
+            Assert.Contains("\"proofsLast7d\":1", dispatch);
+            Assert.DoesNotContain("legacy_unverified", dispatch);
 
             var safety = JsonSerializer.Serialize(Value(await Invoke("AnalyticsSafety", http, db, CancellationToken.None)));
             Assert.Contains("\"safetyEventsLast30d\":null", safety);
@@ -144,11 +156,37 @@ public sealed class ExecutiveAnalyticsEvidencePostgresTests
           VALUES(@company,@company,@number,@customer,'On-Time Delivery',@number,100,100,'%',@status,@origin,@evidence,NOW())",
         c => { c.Parameters.AddWithValue("@company", company); c.Parameters.AddWithValue("@number", number); c.Parameters.AddWithValue("@customer", customer); c.Parameters.AddWithValue("@status", status); c.Parameters.AddWithValue("@origin", origin); c.Parameters.AddWithValue("@evidence", evidence); });
 
+    private static Task<long> Assignment(Database db, long company, string status, string origin, string verification) => db.InsertAsync(
+        @"INSERT INTO dispatch_assignments(company_id,status,assignment_status,assigned_at,created_at,updated_at,data_origin,verification_status)
+          VALUES(@company,@status,@status,NOW(),NOW(),NOW(),@origin,@verification) RETURNING id",
+        c => { c.Parameters.AddWithValue("@company", company); c.Parameters.AddWithValue("@status", status); c.Parameters.AddWithValue("@origin", origin); c.Parameters.AddWithValue("@verification", verification); });
+
+    private static Task DispatchException(Database db, long company, long assignment, string origin, string verification) => db.ExecuteAsync(
+        @"INSERT INTO dispatch_exceptions(company_id,assignment_id,exception_type,severity,status,created_at,data_origin,verification_status)
+          VALUES(@company,@assignment,'customer_hold','High','open',NOW(),@origin,@verification)",
+        c => { c.Parameters.AddWithValue("@company", company); c.Parameters.AddWithValue("@assignment", assignment); c.Parameters.AddWithValue("@origin", origin); c.Parameters.AddWithValue("@verification", verification); });
+
+    private static async Task DeliveryProof(Database db, long company, long assignment)
+    {
+        var proof = await db.InsertAsync(
+            @"INSERT INTO dispatch_proofs(company_id,assignment_id,proof_type,confirmed_at,confirmed_by_user_id,confirmed_by_driver_id,evidence_hash)
+              VALUES(@company,@assignment,'delivery',NOW(),95,95,'sha256:test') RETURNING id",
+            c => { c.Parameters.AddWithValue("@company", company); c.Parameters.AddWithValue("@assignment", assignment); });
+        await db.ExecuteAsync(
+            @"INSERT INTO dispatch_proof_artifacts(company_id,proof_id,kind,reference,content_type,size_bytes)
+              VALUES(@company,@proof,'signature','test://signature','image/png',128)",
+            c => { c.Parameters.AddWithValue("@company", company); c.Parameters.AddWithValue("@proof", proof); });
+    }
+
     private static async Task Cleanup(Database db, long company, long other)
     {
         await db.ExecuteAsync(@"DELETE FROM sla_breaches WHERE tenant_id=@company OR tenant_id=@other;
             DELETE FROM sla_records WHERE company_id=@company OR company_id=@other;
             DELETE FROM executive_snapshots WHERE tenant_id=@company OR tenant_id=@other;
+            DELETE FROM dispatch_proof_artifacts WHERE company_id=@company OR company_id=@other;
+            DELETE FROM dispatch_proofs WHERE company_id=@company OR company_id=@other;
+            DELETE FROM dispatch_exceptions WHERE company_id=@company OR company_id=@other;
+            DELETE FROM dispatch_assignments WHERE company_id=@company OR company_id=@other;
             DELETE FROM vehicles WHERE company_id=@company OR company_id=@other;
             DELETE FROM customers WHERE company_id=@company OR company_id=@other;
             DELETE FROM companies WHERE id=@company OR id=@other;",

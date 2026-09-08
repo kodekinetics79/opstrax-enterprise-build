@@ -11588,8 +11588,8 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
 
     private static Task InsertJobAssignment(Database db, long companyId, long? branchId, long jobId, long vehicleId, long driverId, DispatchMatch match, CancellationToken ct)
         => db.ExecuteAsync(
-            @"INSERT INTO dispatch_assignments (company_id, branch_id, job_id, vehicle_id, driver_id, match_score, status, assignment_status, eligibility_json)
-              VALUES (@companyId, @branchId, @jobId, @vehicleId, @driverId, @score, 'Assigned', 'assigned', @reasons::jsonb)",
+            @"INSERT INTO dispatch_assignments (company_id, branch_id, job_id, vehicle_id, driver_id, match_score, status, assignment_status, eligibility_json, data_origin, verification_status)
+              VALUES (@companyId, @branchId, @jobId, @vehicleId, @driverId, @score, 'Assigned', 'assigned', @reasons::jsonb, 'user_workflow', 'recorded_by_authenticated_actor')",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
@@ -19348,6 +19348,16 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
         @"((data_origin='runtime_computed' AND verification_status='calculated_from_qualified_sources')
            OR (data_origin='manual_entry' AND verification_status='manual_verified')
            OR (data_origin='provider_import' AND verification_status='provider_verified'))";
+
+    private const string QualifiedDispatchAssignmentSql =
+        @"((da.data_origin='user_workflow' AND da.verification_status='recorded_by_authenticated_actor')
+           OR (da.data_origin='runtime_workflow' AND da.verification_status='derived_from_qualified_workflow')
+           OR (da.data_origin='provider_import' AND da.verification_status='provider_verified'))";
+
+    private const string QualifiedDispatchExceptionSql =
+        @"((de.data_origin='user_workflow' AND de.verification_status='recorded_by_authenticated_actor')
+           OR (de.data_origin='runtime_workflow' AND de.verification_status='derived_from_qualified_workflow')
+           OR (de.data_origin='provider_import' AND de.verification_status='provider_verified'))";
 
     private static string String(System.Collections.Generic.IDictionary<string, object?> row, string key)
         => row.TryGetValue(key, out var v) ? v?.ToString() ?? "" : "";
@@ -27328,13 +27338,14 @@ LIMIT 100000",
                  planned_pickup_at, planned_delivery_at,
                  assigned_by_user_id, notes, override_reason,
                  safety_overridden, hos_overridden, eligibility_json,
-                 assigned_at, acceptance_due_at)
+                 assigned_at, acceptance_due_at, data_origin, verification_status)
               VALUES (@cid, @branchId, @jid, @vid, @did, @rid, @tripId, @tid,
                       'assigned', 'Assigned', @score,
                       @pickup, @delivery,
                       @uid, @notes, @override,
                       @safetyOvr, @hosOvr, @elig::jsonb,
-                      NOW(), NOW() + INTERVAL '10 minutes')",
+                      NOW(), NOW() + INTERVAL '10 minutes',
+                      'user_workflow', 'recorded_by_authenticated_actor')",
             c =>
             {
                 c.Parameters.AddWithValue("@cid",       companyId);
@@ -27499,8 +27510,10 @@ LIMIT 100000",
         var exId = await db.InsertAsync(
             @"INSERT INTO dispatch_exceptions
                 (company_id, assignment_id, job_id, trip_id,
-                 exception_type, severity, status, title, notes, created_by)
-              VALUES (@cid, @aid, @jid, @tid, @etype, @sev, 'open', @title, @notes, @uid)",
+                 exception_type, severity, status, title, notes, created_by,
+                 data_origin, verification_status)
+              VALUES (@cid, @aid, @jid, @tid, @etype, @sev, 'open', @title, @notes, @uid,
+                      'user_workflow', 'recorded_by_authenticated_actor')",
             c =>
             {
                 c.Parameters.AddWithValue("@cid",   companyId);
@@ -27644,10 +27657,11 @@ LIMIT 100000",
                         (company_id,branch_id,job_id,trip_id,vehicle_id,driver_id,route_id,trailer_id,
                          assignment_status,status,match_score,planned_pickup_at,planned_delivery_at,
                          assigned_by_user_id,notes,eligibility_json,assigned_at,acceptance_due_at,
-                         supersedes_assignment_id,driver_change_reason)
+                         supersedes_assignment_id,driver_change_reason,data_origin,verification_status)
                       VALUES (@cid,@branch,@job,@trip,@vehicle,@driver,@route,@trailer,
                               'assigned','Assigned',@score,@pickup,@delivery,@actor,@notes,@eligibility::jsonb,
-                              @effective,@effective+INTERVAL '10 minutes',@prior,@reason)",
+                              @effective,@effective+INTERVAL '10 minutes',@prior,@reason,
+                              'user_workflow','recorded_by_authenticated_actor')",
                     c =>
                     {
                         c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branch", (object?)assignmentBranch ?? DBNull.Value);
@@ -30266,8 +30280,8 @@ LIMIT 100000",
             var userId = http.Items.TryGetValue(AuthUserIdItemKey, out var uid) && uid is not null ? Convert.ToInt64(uid) : 0L;
             var exId = await db.InsertAsync(
                 @"INSERT INTO dispatch_exceptions
-                    (company_id,assignment_id,exception_type,severity,status,title,notes,created_by)
-                  VALUES (@cid,@aid,@type,@sev,'open',@title,@notes,@uid)",
+                    (company_id,assignment_id,exception_type,severity,status,title,notes,created_by,data_origin,verification_status)
+                  VALUES (@cid,@aid,@type,@sev,'open',@title,@notes,@uid,'user_workflow','recorded_by_authenticated_actor')",
                 c =>
                 {
                     c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@aid", id);
@@ -31355,45 +31369,97 @@ LIMIT 100000",
         }, "Evidence-qualified executive record counts"));
     }
 
-    private static Task<IResult> AnalyticsOperations(HttpContext http, Database db, CancellationToken ct)
+    private static async Task<IResult> AnalyticsOperations(HttpContext http, Database db, CancellationToken ct)
     {
+        var c = GetCompanyId(http);
         var denied = RequirePermission(http, "dispatch:view");
-        if (denied is not null) return Task.FromResult<IResult>(denied);
-        if (RequireAnalyticsBranchScope(http) is { } branchDenied) return Task.FromResult<IResult>(branchDenied);
-        ct.ThrowIfCancellationRequested();
+        if (denied is not null) return denied;
+        if (RequireAnalyticsBranchScope(http) is { } branchDenied) return branchDenied;
 
-        return Task.FromResult<IResult>(Results.Ok(ApiResponse<object>.Ok(new
+        var activeAssignments = await db.ScalarLongAsync(
+            $@"SELECT COUNT(*) FROM dispatch_assignments da
+                WHERE da.company_id=@c AND da.assignment_status NOT IN ('delivered','cancelled')
+                  AND {QualifiedDispatchAssignmentSql}",
+            p => p.Parameters.AddWithValue("@c", c), ct);
+        var openExceptions = await db.ScalarLongAsync(
+            $@"SELECT COUNT(*) FROM dispatch_exceptions de
+                JOIN dispatch_assignments da ON da.id=de.assignment_id AND da.company_id=de.company_id
+               WHERE de.company_id=@c AND de.status NOT IN ('resolved','Resolved')
+                 AND {QualifiedDispatchAssignmentSql} AND {QualifiedDispatchExceptionSql}",
+            p => p.Parameters.AddWithValue("@c", c), ct);
+        var exceptionTypes = await db.QueryAsync(
+            $@"SELECT de.exception_type,COUNT(*) cnt
+                 FROM dispatch_exceptions de
+                 JOIN dispatch_assignments da ON da.id=de.assignment_id AND da.company_id=de.company_id
+                WHERE de.company_id=@c AND de.created_at>=NOW()-30*INTERVAL '1 day'
+                  AND {QualifiedDispatchAssignmentSql} AND {QualifiedDispatchExceptionSql}
+                GROUP BY de.exception_type ORDER BY cnt DESC LIMIT 5",
+            p => p.Parameters.AddWithValue("@c", c), ct);
+
+        return Results.Ok(ApiResponse<object>.Ok(new
         {
             activeTrips = (long?)null,
             tripsToday = (long?)null,
             routeComplianceAvg = (decimal?)null,
-            openExceptions = (long?)null,
-            activeAssignments = (long?)null,
-            exceptionBreakdown = Array.Empty<object>(),
+            openExceptions,
+            activeAssignments,
+            exceptionBreakdown = exceptionTypes,
             insightType = "System Analytics Insight",
-            evidenceStatus = "Unavailable until trip, assignment and exception rows carry recorded source provenance."
-        }, "Operations analytics awaiting qualified evidence")));
+            evidenceStatus = "Assignment and exception counts use authenticated workflow provenance. Trip and route-compliance metrics remain unavailable until trip provenance is recorded."
+        }, "Evidence-qualified operations analytics"));
     }
 
-    private static Task<IResult> AnalyticsDispatch(HttpContext http, Database db, CancellationToken ct)
+    private static async Task<IResult> AnalyticsDispatch(HttpContext http, Database db, CancellationToken ct)
     {
+        var c = GetCompanyId(http);
         var denied = RequirePermission(http, "dispatch:view");
-        if (denied is not null) return Task.FromResult<IResult>(denied);
-        if (RequireAnalyticsBranchScope(http) is { } branchDenied) return Task.FromResult<IResult>(branchDenied);
-        ct.ThrowIfCancellationRequested();
+        if (denied is not null) return denied;
+        if (RequireAnalyticsBranchScope(http) is { } branchDenied) return branchDenied;
 
-        return Task.FromResult<IResult>(Results.Ok(ApiResponse<object>.Ok(new
+        async Task<long> AssignmentCount(string predicate) => await db.ScalarLongAsync(
+            $@"SELECT COUNT(*) FROM dispatch_assignments da
+                WHERE da.company_id=@c AND {predicate} AND {QualifiedDispatchAssignmentSql}",
+            p => p.Parameters.AddWithValue("@c", c), ct);
+        var assigned = await AssignmentCount("da.assignment_status='assigned'");
+        var accepted = await AssignmentCount("da.assignment_status='accepted'");
+        var inTransit = await AssignmentCount("da.assignment_status IN ('en_route_pickup','in_transit','arrived_pickup','loaded','arrived_delivery')");
+        var delivered = await AssignmentCount("da.assignment_status='delivered' AND COALESCE(da.updated_at,da.actual_delivery_at,da.assigned_at)>=NOW()-7*INTERVAL '1 day'");
+        var exceptions = await db.ScalarLongAsync(
+            $@"SELECT COUNT(*) FROM dispatch_exceptions de
+                JOIN dispatch_assignments da ON da.id=de.assignment_id AND da.company_id=de.company_id
+               WHERE de.company_id=@c AND de.status NOT IN ('resolved','Resolved')
+                 AND {QualifiedDispatchAssignmentSql} AND {QualifiedDispatchExceptionSql}",
+            p => p.Parameters.AddWithValue("@c", c), ct);
+        var proofs = await db.ScalarLongAsync(
+            $@"SELECT COUNT(*) FROM dispatch_proofs dp
+                JOIN dispatch_assignments da ON da.id=dp.assignment_id AND da.company_id=dp.company_id
+               WHERE dp.company_id=@c AND dp.proof_type='delivery'
+                 AND dp.confirmed_at>=NOW()-7*INTERVAL '1 day'
+                 AND dp.confirmed_by_driver_id IS NOT NULL
+                 AND EXISTS (SELECT 1 FROM dispatch_proof_artifacts dpa
+                              WHERE dpa.company_id=dp.company_id AND dpa.proof_id=dp.id)
+                 AND {QualifiedDispatchAssignmentSql}",
+            p => p.Parameters.AddWithValue("@c", c), ct);
+        var statusDist = await db.QueryAsync(
+            $@"SELECT da.assignment_status AS status,COUNT(*) cnt
+                 FROM dispatch_assignments da
+                WHERE da.company_id=@c AND da.created_at>=NOW()-30*INTERVAL '1 day'
+                  AND {QualifiedDispatchAssignmentSql}
+                GROUP BY da.assignment_status ORDER BY cnt DESC",
+            p => p.Parameters.AddWithValue("@c", c), ct);
+
+        return Results.Ok(ApiResponse<object>.Ok(new
         {
-            currentlyAssigned = (long?)null,
-            accepted = (long?)null,
-            inTransit = (long?)null,
-            delivered = (long?)null,
-            openExceptions = (long?)null,
-            proofsLast7d = (long?)null,
-            statusDistribution = Array.Empty<object>(),
+            currentlyAssigned = assigned,
+            accepted,
+            inTransit,
+            delivered,
+            openExceptions = exceptions,
+            proofsLast7d = proofs,
+            statusDistribution = statusDist,
             insightType = "System Analytics Insight",
-            evidenceStatus = "Unavailable until assignment, exception and proof rows carry recorded source provenance."
-        }, "Dispatch analytics awaiting qualified evidence")));
+            evidenceStatus = "Assignments and exceptions use authenticated workflow provenance. Delivery proofs require a tenant-owned assignment, driver confirmation and a registered persisted artifact."
+        }, "Evidence-qualified dispatch analytics"));
     }
 
     private static Task<IResult> AnalyticsSafety(HttpContext http, Database db, CancellationToken ct)

@@ -376,7 +376,9 @@ CREATE TABLE IF NOT EXISTS dispatch_assignments (
   driver_id BIGINT NULL,
   match_score DECIMAL(6,2) NOT NULL DEFAULT 90,
   status VARCHAR(50) NOT NULL DEFAULT 'Assigned',
-  assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  data_origin VARCHAR(80) NOT NULL DEFAULT 'legacy_unverified',
+  verification_status VARCHAR(80) NOT NULL DEFAULT 'unverified'
 );
 
 CREATE TABLE IF NOT EXISTS trips (

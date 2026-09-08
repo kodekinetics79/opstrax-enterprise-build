@@ -17,7 +17,7 @@ public sealed class ExecutiveAnalyticsEvidenceSourceTests
         Assert.DoesNotContain("SELECT * FROM executive_snapshots", executive);
 
         var analyticsStart = handlers.IndexOf("private static async Task<IResult> AnalyticsExecutive", StringComparison.Ordinal);
-        var analyticsEnd = handlers.IndexOf("private static Task<IResult> AnalyticsOperations", analyticsStart, StringComparison.Ordinal);
+        var analyticsEnd = handlers.IndexOf("private static async Task<IResult> AnalyticsOperations", analyticsStart, StringComparison.Ordinal);
         var analytics = handlers[analyticsStart..analyticsEnd];
         Assert.Contains("RecordedFleetCountsFor", analytics);
         Assert.DoesNotContain("fleetUtilTarget    = 88m", analytics);
@@ -51,12 +51,22 @@ public sealed class ExecutiveAnalyticsEvidenceSourceTests
     }
 
     [Fact]
-    public void UnqualifiedOperationalPanels_FailClosedInsteadOfAggregatingLegacyRows()
+    public void OperationalPanels_RequireProvenanceAndUnsupportedPanelsFailClosed()
     {
         var handlers = File.ReadAllText(Path.Combine(RepoRoot, "backend-dotnet", "Controllers", "EndpointMappings.cs"));
 
-        AssertFailClosed("AnalyticsOperations", "AnalyticsDispatch");
-        AssertFailClosed("AnalyticsDispatch", "AnalyticsSafety");
+        var operationsStart = handlers.IndexOf("private static async Task<IResult> AnalyticsOperations", StringComparison.Ordinal);
+        var dispatchStart = handlers.IndexOf("private static async Task<IResult> AnalyticsDispatch", operationsStart, StringComparison.Ordinal);
+        var safetyStart = handlers.IndexOf("private static Task<IResult> AnalyticsSafety", dispatchStart, StringComparison.Ordinal);
+        var operations = handlers[operationsStart..dispatchStart];
+        var dispatch = handlers[dispatchStart..safetyStart];
+        Assert.Contains("QualifiedDispatchAssignmentSql", operations);
+        Assert.Contains("QualifiedDispatchExceptionSql", operations);
+        Assert.Contains("QualifiedDispatchAssignmentSql", dispatch);
+        Assert.Contains("dispatch_proof_artifacts", dispatch);
+        Assert.DoesNotContain("legacy_unverified", operations);
+        Assert.DoesNotContain("legacy_unverified", dispatch);
+
         AssertFailClosed("AnalyticsSafety", "AnalyticsMaintenance");
         AssertFailClosed("AnalyticsMaintenance", "AnalyticsCustomer");
 
@@ -76,5 +86,22 @@ public sealed class ExecutiveAnalyticsEvidenceSourceTests
             Assert.DoesNotContain("db.Scalar", section);
             Assert.DoesNotContain("db.Query", section);
         }
+    }
+
+    [Fact]
+    public void DispatchWorkflowWrites_StampEvidenceWhileUnspecifiedRowsDefaultToUnverified()
+    {
+        var handlers = File.ReadAllText(Path.Combine(RepoRoot, "backend-dotnet", "Controllers", "EndpointMappings.cs"));
+        var stage9 = File.ReadAllText(Path.Combine(RepoRoot, "backend-dotnet", "Services", "Stage9OperationalFoundationService.cs"));
+        var schema = File.ReadAllText(Path.Combine(RepoRoot, "backend-dotnet", "Services", "DispatchSchemaService.cs"));
+        var migration = File.ReadAllText(Path.Combine(RepoRoot, "database", "migrations", "2026_09_08_dispatch_analytics_evidence_integrity.sql"));
+
+        Assert.Contains("'user_workflow', 'recorded_by_authenticated_actor'", handlers);
+        Assert.Contains("'user_workflow','recorded_by_authenticated_actor'", handlers);
+        Assert.Contains("'user_workflow','recorded_by_authenticated_actor'", stage9);
+        Assert.Contains("DEFAULT 'legacy_unverified'", schema);
+        Assert.Contains("DEFAULT 'unverified'", schema);
+        Assert.Contains("ck_dispatch_assignments_evidence", migration);
+        Assert.Contains("ck_dispatch_exceptions_evidence", migration);
     }
 }

@@ -297,12 +297,13 @@ public sealed class Stage9OperationalFoundationService(
             @"INSERT INTO dispatch_assignments
                 (company_id,branch_id,job_id,trip_id,vehicle_id,driver_id,match_score,
                  assignment_status,status,assigned_by_user_id,assigned_at,acceptance_due_at,
-                 eligibility_json,notes)
+                 eligibility_json,notes,data_origin,verification_status)
               VALUES (@companyId,@branchId,@jobId,@tripId,@vehicleId,@driverId,@score,
                       'assigned','Assigned',@actor,NOW(),NOW()+INTERVAL '10 minutes',
                       jsonb_build_object('source','smart_assignment','recommendationId',@recommendationId,
                                          'riskLevel',@riskLevel,'score',@rawScore),
-                      'Created from accepted smart-assignment recommendation')",
+                      'Created from accepted smart-assignment recommendation',
+                      'user_workflow','recorded_by_authenticated_actor')",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
