@@ -285,7 +285,8 @@ BEGIN
       ('2026_08_13_stage78_country_profiles_runtime_contract'),
       ('2026_08_13_stage79_tenant_provisioning_runtime_contract'),
       ('2026_08_11_stage76_telematics_security_hardening'),
-      ('2026_09_07_stage124_rma_support_ownership')) required(version)
+      ('2026_09_07_stage124_rma_support_ownership'),
+      ('2026_09_07_stage125_device_spare_pool')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN
     RAISE EXCEPTION 'Clean-chain target ledgers are missing or duplicated';
@@ -896,6 +897,44 @@ BEGIN
                  WHERE support_action_status<>'OperatorRecorded' OR support_response_claim
                     OR physical_outcome_claim OR warranty_acceptance_claim) THEN
     RAISE EXCEPTION 'Clean-chain Stage124 RMA support boundary failed';
+  END IF;
+
+  IF to_regclass('public.device_spare_pool_entries') IS NULL
+     OR to_regclass('public.device_spare_pool_events') IS NULL
+     OR NOT COALESCE((SELECT c.relrowsecurity AND c.relforcerowsecurity
+                        FROM pg_class c WHERE c.oid=to_regclass('public.device_spare_pool_entries')),false)
+     OR NOT COALESCE((SELECT c.relrowsecurity AND c.relforcerowsecurity
+                        FROM pg_class c WHERE c.oid=to_regclass('public.device_spare_pool_events')),false)
+     OR NOT has_table_privilege('opstrax_app','device_spare_pool_entries','SELECT')
+     OR NOT has_table_privilege('opstrax_app','device_spare_pool_events','SELECT')
+     OR has_table_privilege('opstrax_app','device_spare_pool_entries','INSERT,UPDATE,DELETE')
+     OR has_table_privilege('opstrax_app','device_spare_pool_events','INSERT,UPDATE,DELETE')
+     OR NOT has_table_privilege('opstrax_system','device_spare_pool_entries','SELECT,INSERT')
+     OR NOT has_table_privilege('opstrax_system','device_spare_pool_events','SELECT,INSERT')
+     OR has_table_privilege('opstrax_system','device_spare_pool_entries','UPDATE,DELETE')
+     OR has_table_privilege('opstrax_system','device_spare_pool_events','UPDATE,DELETE')
+     OR (SELECT count(*) FROM pg_policies p WHERE p.schemaname='public'
+           AND p.tablename IN ('device_spare_pool_entries','device_spare_pool_events')
+           AND p.policyname IN ('tenant_ticket_app','system_control_plane'))<>4
+     OR to_regprocedure('stage125_guard_spare_pool_entry()') IS NULL
+     OR to_regprocedure('stage125_guard_spare_pool_event()') IS NULL
+     OR to_regprocedure('stage125_guard_device_pool_terminal_transition()') IS NULL
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger
+                      WHERE tgrelid=to_regclass('public.device_spare_pool_entries')
+                        AND tgname='trg_stage125_guard_spare_pool_entry' AND NOT tgisinternal AND tgenabled<>'D')
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger
+                      WHERE tgrelid=to_regclass('public.device_spare_pool_events')
+                        AND tgname='trg_stage125_guard_spare_pool_event' AND NOT tgisinternal AND tgenabled<>'D')
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger
+                      WHERE tgrelid=to_regclass('public.eld_devices')
+                        AND tgname='trg_stage125_guard_device_pool_terminal' AND NOT tgisinternal AND tgenabled<>'D')
+     OR EXISTS (SELECT 1 FROM device_spare_pool_entries
+                  WHERE inventory_assurance_status<>'OperatorRecordedUnverified'
+                     OR physical_possession_claim OR condition_verified_claim OR certification_claim)
+     OR EXISTS (SELECT 1 FROM device_spare_pool_events
+                  WHERE event_status<>'OperatorRecorded' OR physical_possession_claim
+                     OR condition_verified_claim OR compatibility_claim OR certification_claim) THEN
+    RAISE EXCEPTION 'Clean-chain Stage125 spare-pool boundary failed';
   END IF;
 
   IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND roles='{public}'::name[])

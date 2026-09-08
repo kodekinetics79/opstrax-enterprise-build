@@ -51,6 +51,7 @@ import {
   type DeviceRmaEventInput,
   type DeviceRmaReplacementInput,
   type DeviceRmaSupportActionInput,
+  type DeviceSparePoolActionInput,
   type DeviceRemoteCommandInput,
   type DeviceRetirementInput,
   type DeviceIdentityQuarantineRecord,
@@ -255,6 +256,15 @@ function newRmaSupportForm(actionType: DeviceRmaSupportActionInput["actionType"]
   return {
     actionType, supportQueue, escalationSeverity: actionType === "Escalate" ? "P2" : undefined,
     actionReason: "", sourceReference: "", effectiveAt: currentLocalMinute(), idempotencyKey: crypto.randomUUID(),
+  };
+}
+
+type SparePoolFormState = Omit<DeviceSparePoolActionInput, "effectiveAt"> & { effectiveAt: string; poolName: string; rmaCaseId: string };
+
+function newSparePoolForm(actionType: DeviceSparePoolActionInput["actionType"], poolName = "Primary Spares"): SparePoolFormState {
+  return {
+    actionType, poolName: actionType === "Add" ? poolName : "", rmaCaseId: "", actionReason: "",
+    sourceReference: "", effectiveAt: currentLocalMinute(), idempotencyKey: crypto.randomUUID(),
   };
 }
 
@@ -2501,6 +2511,40 @@ function DeviceDetailDrawer({
       setRmaError(error instanceof Error ? error.message : "RMA support action validation failed.");
     }
   };
+  const [sparePoolForm, setSparePoolForm] = useState<SparePoolFormState | null>(null);
+  const [sparePoolError, setSparePoolError] = useState<string | null>(null);
+  const [sparePoolNotice, setSparePoolNotice] = useState<string | null>(null);
+  const sparePoolSubmitting = useRef(false);
+  const sparePoolMut = useMutation({
+    mutationFn: (input: DeviceSparePoolActionInput) => telematicsService.recordDeviceSparePoolAction(device.id, input),
+    retry: false,
+    onSuccess: async (result) => {
+      setSparePoolForm(null); setSparePoolError(null); setSparePoolNotice(result.note);
+      await queryClient.invalidateQueries({ queryKey: ["telematics", "device"] });
+    },
+    onError: (error) => setSparePoolError(apiErrorMessage(error, "The spare-pool action was not recorded.")),
+    onSettled: () => { sparePoolSubmitting.current = false; },
+  });
+  const submitSparePool = (event: FormEvent) => {
+    event.preventDefault();
+    if (!canManageRma || !sparePoolForm || sparePoolSubmitting.current || sparePoolMut.isPending) return;
+    setSparePoolError(null);
+    try {
+      sparePoolSubmitting.current = true;
+      sparePoolMut.mutate({
+        actionType: sparePoolForm.actionType,
+        poolName: sparePoolForm.actionType === "Add" ? sparePoolForm.poolName : undefined,
+        rmaCaseId: sparePoolForm.actionType === "Reserve" ? sparePoolForm.rmaCaseId : undefined,
+        actionReason: sparePoolForm.actionReason,
+        sourceReference: sparePoolForm.sourceReference,
+        effectiveAt: toUtcIso(sparePoolForm.effectiveAt, "spare-pool action time"),
+        idempotencyKey: sparePoolForm.idempotencyKey,
+      });
+    } catch (error) {
+      sparePoolSubmitting.current = false;
+      setSparePoolError(error instanceof Error ? error.message : "Spare-pool validation failed.");
+    }
+  };
   const [remoteCommandForm, setRemoteCommandForm] = useState<RemoteCommandFormState | null>(null);
   const [remoteCommandError, setRemoteCommandError] = useState<string | null>(null);
   const [remoteCommandNotice, setRemoteCommandNotice] = useState<string | null>(null);
@@ -3087,6 +3131,42 @@ function DeviceDetailDrawer({
               </div>
             ))}
           </div>
+        </PanelSection>
+        <PanelSection title="Spare-device pool planning">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-400">Software inventory plan</p>
+              <p className="mt-1 text-lg font-semibold text-white">{detail.sparePool?.currentState ?? "Not in a spare pool"}</p>
+            </div>
+            {canManageRma && !sparePoolForm ? (
+              <div className="flex flex-wrap gap-2">
+                {!detail.sparePool && !detail.currentInstallation ? <button type="button" className="btn-secondary" disabled={sparePoolMut.isPending} onClick={() => { setSparePoolForm(newSparePoolForm("Add")); setSparePoolError(null); setSparePoolNotice(null); }}>Add to pool</button> : null}
+                {detail.sparePool?.currentState === "Available" ? <><button type="button" className="btn-secondary" disabled={sparePoolMut.isPending} onClick={() => { setSparePoolForm(newSparePoolForm("Reserve", detail.sparePool!.poolName)); setSparePoolError(null); setSparePoolNotice(null); }}>Reserve for RMA</button><button type="button" className="btn-ghost" disabled={sparePoolMut.isPending} onClick={() => { setSparePoolForm(newSparePoolForm("Remove", detail.sparePool!.poolName)); setSparePoolError(null); setSparePoolNotice(null); }}>Remove from plan</button></> : null}
+                {detail.sparePool?.currentState === "Reserved" ? <button type="button" className="btn-secondary" disabled={sparePoolMut.isPending} onClick={() => { setSparePoolForm(newSparePoolForm("Release", detail.sparePool!.poolName)); setSparePoolError(null); setSparePoolNotice(null); }}>Release reservation</button> : null}
+              </div>
+            ) : null}
+          </div>
+          <p className="mt-3 rounded-xl border border-amber-300/25 bg-amber-500/10 p-3 text-sm text-amber-100">
+            Pool availability and reservation are operator-recorded planning facts. They do not prove physical possession, device condition, compatibility, installation, or certification.
+          </p>
+          {!detail.sparePool && detail.currentInstallation ? <p className="mt-3 text-sm text-slate-400">Record removal from the current installation before adding this device to a spare-pool plan.</p> : null}
+          {sparePoolNotice ? <p role="status" className="mt-3 rounded-lg border border-emerald-400/25 bg-emerald-500/10 p-3 text-sm text-emerald-100">{sparePoolNotice}</p> : null}
+          {sparePoolError ? <p role="alert" className="mt-3 text-sm text-red-300">{sparePoolError}</p> : null}
+          {detail.sparePool ? <div className="mt-4"><MiniGrid rows={[["Pool", detail.sparePool.poolName], ["Current state", detail.sparePool.currentState], ["Inventory assurance", detail.sparePool.inventoryAssuranceStatus], ["Physical possession", "Unverified"], ["Condition", "Unverified"], ["Certification", "Not claimed"], ["Entry source", detail.sparePool.sourceReference]]} /></div> : null}
+          {sparePoolForm && canManageRma ? (
+            <form className="mt-4 space-y-3 rounded-xl border border-white/[0.08] bg-black/10 p-4" onSubmit={submitSparePool}>
+              <p className="font-semibold text-white">{sparePoolForm.actionType === "Add" ? "Add device to spare-pool plan" : sparePoolForm.actionType === "Reserve" ? "Reserve spare for an RMA case" : sparePoolForm.actionType === "Release" ? "Release spare reservation" : "Remove device from spare-pool plan"}</p>
+              <div className="grid gap-3 md:grid-cols-2">
+                {sparePoolForm.actionType === "Add" ? <FormField label="Pool name"><input className="field w-full" required minLength={3} maxLength={120} value={sparePoolForm.poolName} onChange={event => setSparePoolForm(form => form ? ({ ...form, poolName: event.target.value }) : form)} disabled={sparePoolMut.isPending} /></FormField> : null}
+                {sparePoolForm.actionType === "Reserve" ? <FormField label="RMA case number"><input className="field w-full" required inputMode="numeric" pattern="[0-9]+" value={sparePoolForm.rmaCaseId} onChange={event => setSparePoolForm(form => form ? ({ ...form, rmaCaseId: event.target.value }) : form)} placeholder="Case number shown as RMA #" disabled={sparePoolMut.isPending} /></FormField> : null}
+                <FormField label="Effective at"><input className="field w-full" type="datetime-local" required max={currentLocalMinute()} value={sparePoolForm.effectiveAt} onChange={event => setSparePoolForm(form => form ? ({ ...form, effectiveAt: event.target.value }) : form)} disabled={sparePoolMut.isPending} /></FormField>
+                <FormField label="Source reference"><input className="field w-full" required minLength={3} maxLength={240} value={sparePoolForm.sourceReference} onChange={event => setSparePoolForm(form => form ? ({ ...form, sourceReference: event.target.value }) : form)} placeholder="Inventory ticket or RMA reference" disabled={sparePoolMut.isPending} /></FormField>
+              </div>
+              <FormField label="Action reason"><textarea className="field h-20 w-full resize-none" required minLength={5} maxLength={500} value={sparePoolForm.actionReason} onChange={event => setSparePoolForm(form => form ? ({ ...form, actionReason: event.target.value }) : form)} disabled={sparePoolMut.isPending} /></FormField>
+              <div className="flex justify-end gap-2"><button type="button" className="btn-ghost" disabled={sparePoolMut.isPending} onClick={() => setSparePoolForm(null)}>Cancel</button><button type="submit" className="btn-primary" disabled={sparePoolMut.isPending}>{sparePoolMut.isPending ? "Recording…" : "Record planning action"}</button></div>
+            </form>
+          ) : null}
+          {detail.sparePool ? <div className="mt-4"><TimelineList rows={detail.sparePool.events.map(poolEvent => ({ id: `spare-${poolEvent.id}`, title: `${poolEvent.actionType} · ${poolEvent.stateAfter}`, subtitle: `${poolEvent.actionReason} · ${poolEvent.sourceReference}${poolEvent.rmaCaseId ? ` · RMA #${poolEvent.rmaCaseId}` : ""} · ${poolEvent.eventStatus}`, meta: poolEvent.effectiveAt }))} emptyText="No spare-pool history recorded." /></div> : null}
         </PanelSection>
         <PanelSection title="Installer work packages">
           <div className="flex items-start justify-between gap-4">

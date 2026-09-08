@@ -595,6 +595,49 @@ public sealed class TelemetrySchemaService(Database db)
             CONSTRAINT ck_stage124_no_warranty_claim CHECK (warranty_acceptance_claim=FALSE),
             UNIQUE(company_id,idempotency_key)
         )",
+
+        @"CREATE TABLE IF NOT EXISTS device_spare_pool_entries (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL, branch_id BIGINT NULL, device_id BIGINT NOT NULL,
+            device_serial_snapshot VARCHAR(120) NOT NULL, pool_name VARCHAR(120) NOT NULL,
+            entry_reason VARCHAR(500) NOT NULL, source_reference VARCHAR(240) NOT NULL,
+            idempotency_key UUID NOT NULL,
+            inventory_assurance_status VARCHAR(40) NOT NULL DEFAULT 'OperatorRecordedUnverified',
+            physical_possession_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            condition_verified_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            certification_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            added_by BIGINT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT ck_stage125_pool_assurance CHECK (inventory_assurance_status='OperatorRecordedUnverified'),
+            CONSTRAINT ck_stage125_pool_no_possession CHECK (physical_possession_claim=FALSE),
+            CONSTRAINT ck_stage125_pool_no_condition CHECK (condition_verified_claim=FALSE),
+            CONSTRAINT ck_stage125_pool_no_certification CHECK (certification_claim=FALSE),
+            UNIQUE(company_id,id), UNIQUE(company_id,device_id), UNIQUE(company_id,idempotency_key)
+        )",
+
+        @"CREATE TABLE IF NOT EXISTS device_spare_pool_events (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL, branch_id BIGINT NULL, entry_id BIGINT NOT NULL,
+            device_id BIGINT NOT NULL, action_type VARCHAR(24) NOT NULL, state_after VARCHAR(24) NOT NULL,
+            rma_case_id BIGINT NULL, failed_device_id BIGINT NULL, action_reason VARCHAR(500) NOT NULL,
+            source_reference VARCHAR(240) NOT NULL, effective_at TIMESTAMPTZ NOT NULL,
+            idempotency_key UUID NOT NULL, event_status VARCHAR(32) NOT NULL DEFAULT 'OperatorRecorded',
+            physical_possession_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            condition_verified_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            compatibility_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            certification_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            recorded_by BIGINT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT ck_stage125_pool_event_pair CHECK ((action_type,state_after) IN
+              (('Added','Available'),('Reserved','Reserved'),('Released','Available'),('Removed','Removed'))),
+            CONSTRAINT ck_stage125_pool_event_case_pair CHECK
+              ((action_type IN ('Reserved','Released') AND rma_case_id IS NOT NULL AND failed_device_id IS NOT NULL) OR
+               (action_type IN ('Added','Removed') AND rma_case_id IS NULL AND failed_device_id IS NULL)),
+            CONSTRAINT ck_stage125_pool_event_status CHECK (event_status='OperatorRecorded'),
+            CONSTRAINT ck_stage125_pool_event_no_possession CHECK (physical_possession_claim=FALSE),
+            CONSTRAINT ck_stage125_pool_event_no_condition CHECK (condition_verified_claim=FALSE),
+            CONSTRAINT ck_stage125_pool_event_no_compatibility CHECK (compatibility_claim=FALSE),
+            CONSTRAINT ck_stage125_pool_event_no_certification CHECK (certification_claim=FALSE),
+            UNIQUE(company_id,idempotency_key)
+        )",
     ];
 
     private static readonly string[] Indexes =
@@ -677,6 +720,10 @@ public sealed class TelemetrySchemaService(Database db)
           ON device_rma_support_actions(company_id,case_id,effective_at DESC,id DESC)",
         @"CREATE INDEX IF NOT EXISTS ix_stage124_support_owner_queue
           ON device_rma_support_actions(company_id,owner_user_id,support_queue,effective_at DESC,id DESC)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage125_pool_entry_lookup
+          ON device_spare_pool_entries(company_id,pool_name,device_serial_snapshot,id)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage125_pool_event_recent
+          ON device_spare_pool_events(company_id,entry_id,effective_at DESC,id DESC)",
     ];
 
     private static readonly string[] Seeds =

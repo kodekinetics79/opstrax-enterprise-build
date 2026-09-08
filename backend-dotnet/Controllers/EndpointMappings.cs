@@ -279,6 +279,7 @@ public static partial class EndpointMappings
         app.MapPost("/api/telemetry/rma-cases/{caseId:long}/events", DeviceRmaEventCreate);
         app.MapPost("/api/telemetry/rma-cases/{caseId:long}/replacement", DeviceRmaReplacementCreate);
         app.MapPost("/api/telemetry/rma-cases/{caseId:long}/support-actions", DeviceRmaSupportActionCreate);
+        app.MapPost("/api/telemetry/devices/{id:long}/spare-pool-actions", DeviceSparePoolActionCreate);
         app.MapPost("/api/telemetry/devices/{id:long}/commands", DeviceRemoteCommandCreate);
         app.MapGet("/api/telemetry/installation-quarantine", DeviceInstallationQuarantineList);
         app.MapPost("/api/telemetry/installation-quarantine/{id:long}/resolve", DeviceInstallationQuarantineResolve);
@@ -20848,6 +20849,25 @@ LIMIT 100000",
                  AND (@branchId::BIGINT IS NULL OR c.branch_id=@branchId)
                ORDER BY c.created_at DESC,c.id DESC,a.effective_at DESC,a.id DESC LIMIT 1000",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
+        var sparePoolEntry = await db.QuerySingleAsync(
+            @"SELECT id,device_id,device_serial_snapshot,pool_name,entry_reason,source_reference,
+                     inventory_assurance_status,physical_possession_claim,condition_verified_claim,
+                     certification_claim,added_by,created_at
+                FROM device_spare_pool_entries
+               WHERE company_id=@cid AND device_id=@id
+                 AND (@branchId::BIGINT IS NULL OR branch_id=@branchId)",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
+        var sparePoolEvents = await db.QueryAsync(
+            @"SELECT e.id,e.entry_id,e.device_id,e.action_type,e.state_after,e.rma_case_id,
+                     e.failed_device_id,e.action_reason,e.source_reference,e.effective_at,e.event_status,
+                     e.physical_possession_claim,e.condition_verified_claim,e.compatibility_claim,
+                     e.certification_claim,e.recorded_by,e.created_at
+                FROM device_spare_pool_events e
+                JOIN device_spare_pool_entries entry ON entry.company_id=e.company_id AND entry.id=e.entry_id
+               WHERE e.company_id=@cid AND entry.device_id=@id
+                 AND (@branchId::BIGINT IS NULL OR entry.branch_id=@branchId)
+               ORDER BY e.effective_at DESC,e.id DESC LIMIT 100",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
         var commandCapabilityRows = await db.QueryAsync(
             @"SELECT cap.id,cap.command_type,cap.command_class,cap.capability_status,cap.evidence_source,
                      cap.evidence_reference,cap.observed_at,cap.expires_at,cap.physical_evidence_claim,
@@ -20930,6 +20950,8 @@ LIMIT 100000",
             rmaEvents,
             rmaReplacements,
             rmaSupportActions,
+            sparePoolEntry,
+            sparePoolEvents,
             remoteCommandGovernance = new
             {
                 capabilities = commandCapabilities,

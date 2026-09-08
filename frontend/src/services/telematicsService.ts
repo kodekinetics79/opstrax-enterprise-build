@@ -573,6 +573,7 @@ export type DeviceDetailRecord = {
   firmwareUpdates: TelematicsFirmwareSeedRecord[];
   firmwareCampaigns: DeviceFirmwareCampaignRecord[];
   rmaCases: DeviceRmaCaseRecord[];
+  sparePool: DeviceSparePoolRecord | null;
   remoteCommandCapabilities: DeviceRemoteCommandCapabilityRecord[];
   remoteCommandHistory: DeviceRemoteCommandRecord[];
   diagnostics: TelematicsDiagnosticSeedRecord[];
@@ -837,6 +838,53 @@ export type DeviceRmaSupportActionInput = {
   actionType: "TakeOwnership" | "Escalate";
   supportQueue: string;
   escalationSeverity?: "P0" | "P1" | "P2" | "P3";
+  actionReason: string;
+  sourceReference: string;
+  effectiveAt: string;
+  idempotencyKey: string;
+};
+
+export type DeviceSparePoolEventRecord = {
+  id: string;
+  entryId: string;
+  deviceId: string;
+  actionType: "Added" | "Reserved" | "Released" | "Removed";
+  stateAfter: "Available" | "Reserved" | "Removed";
+  rmaCaseId: string | null;
+  failedDeviceId: string | null;
+  actionReason: string;
+  sourceReference: string;
+  effectiveAt: string;
+  eventStatus: "OperatorRecorded";
+  physicalPossessionClaim: false;
+  conditionVerifiedClaim: false;
+  compatibilityClaim: false;
+  certificationClaim: false;
+  recordedBy: string;
+  createdAt: string;
+};
+
+export type DeviceSparePoolRecord = {
+  id: string;
+  deviceId: string;
+  deviceSerialSnapshot: string;
+  poolName: string;
+  entryReason: string;
+  sourceReference: string;
+  inventoryAssuranceStatus: "OperatorRecordedUnverified";
+  physicalPossessionClaim: false;
+  conditionVerifiedClaim: false;
+  certificationClaim: false;
+  addedBy: string;
+  createdAt: string;
+  currentState: "Available" | "Reserved" | "Removed";
+  events: DeviceSparePoolEventRecord[];
+};
+
+export type DeviceSparePoolActionInput = {
+  actionType: "Add" | "Reserve" | "Release" | "Remove";
+  poolName?: string;
+  rmaCaseId?: string;
   actionReason: string;
   sourceReference: string;
   effectiveAt: string;
@@ -1137,6 +1185,50 @@ function mapRmaSupportAction(raw: AnyRecord): DeviceRmaSupportActionRecord {
     effectiveAt: String(row.effective_at ?? ""), supportActionStatus: "OperatorRecorded",
     supportResponseClaim: false, physicalOutcomeClaim: false, warrantyAcceptanceClaim: false,
     recordedBy: String(row.recorded_by ?? ""), createdAt: String(row.created_at ?? ""),
+  };
+}
+
+function mapSparePoolEvent(raw: AnyRecord): DeviceSparePoolEventRecord {
+  const row = normalizeKeys(raw);
+  const actions = ["Added", "Reserved", "Released", "Removed"];
+  const states = ["Available", "Reserved", "Removed"];
+  const id = canonicalDeviceLifecycleId(row.id);
+  const entryId = canonicalDeviceLifecycleId(row.entry_id);
+  const deviceId = canonicalDeviceLifecycleId(row.device_id);
+  const rmaCaseId = row.rma_case_id == null ? null : canonicalDeviceLifecycleId(row.rma_case_id);
+  const failedDeviceId = row.failed_device_id == null ? null : canonicalDeviceLifecycleId(row.failed_device_id);
+  if (!id || !entryId || !deviceId || !actions.includes(String(row.action_type)) || !states.includes(String(row.state_after)) ||
+      (row.rma_case_id != null && !rmaCaseId) || (row.failed_device_id != null && !failedDeviceId) ||
+      row.event_status !== "OperatorRecorded" || row.physical_possession_claim !== false ||
+      row.condition_verified_claim !== false || row.compatibility_claim !== false || row.certification_claim !== false)
+    throw new Error("Spare-pool event crossed the operator-recorded no-evidence-claim boundary.");
+  return {
+    id, entryId, deviceId,
+    actionType: String(row.action_type) as DeviceSparePoolEventRecord["actionType"],
+    stateAfter: String(row.state_after) as DeviceSparePoolEventRecord["stateAfter"],
+    rmaCaseId, failedDeviceId, actionReason: String(row.action_reason ?? ""),
+    sourceReference: String(row.source_reference ?? ""), effectiveAt: String(row.effective_at ?? ""),
+    eventStatus: "OperatorRecorded", physicalPossessionClaim: false, conditionVerifiedClaim: false,
+    compatibilityClaim: false, certificationClaim: false, recordedBy: String(row.recorded_by ?? ""),
+    createdAt: String(row.created_at ?? ""),
+  };
+}
+
+function mapSparePool(raw: AnyRecord, events: DeviceSparePoolEventRecord[]): DeviceSparePoolRecord {
+  const row = normalizeKeys(raw);
+  const id = canonicalDeviceLifecycleId(row.id);
+  const deviceId = canonicalDeviceLifecycleId(row.device_id);
+  if (!id || !deviceId || row.inventory_assurance_status !== "OperatorRecordedUnverified" ||
+      row.physical_possession_claim !== false || row.condition_verified_claim !== false || row.certification_claim !== false ||
+      events.length === 0 || events.some(event => event.entryId !== id || event.deviceId !== deviceId))
+    throw new Error("Spare-pool entry crossed the unverified inventory-planning boundary.");
+  return {
+    id, deviceId, deviceSerialSnapshot: String(row.device_serial_snapshot ?? ""),
+    poolName: String(row.pool_name ?? ""), entryReason: String(row.entry_reason ?? ""),
+    sourceReference: String(row.source_reference ?? ""), inventoryAssuranceStatus: "OperatorRecordedUnverified",
+    physicalPossessionClaim: false, conditionVerifiedClaim: false, certificationClaim: false,
+    addedBy: String(row.added_by ?? ""), createdAt: String(row.created_at ?? ""),
+    currentState: events[0].stateAfter, events,
   };
 }
 
@@ -2631,6 +2723,10 @@ export const telematicsService = {
         rmaReplacements.find(replacement => replacement.caseId === caseId) ?? null,
         rmaSupportActions.filter(action => action.caseId === caseId));
     });
+    const sparePoolEvents = (Array.isArray(detail.spare_pool_events) ? detail.spare_pool_events as AnyRecord[] : []).map(mapSparePoolEvent);
+    const sparePool = detail.spare_pool_entry && typeof detail.spare_pool_entry === "object"
+      ? mapSparePool(detail.spare_pool_entry as AnyRecord, sparePoolEvents)
+      : null;
     const hasRemoteCommandGovernance = detail.remote_command_governance !== null &&
       typeof detail.remote_command_governance === "object";
     const remoteCommandGovernance = normalizeKeys(hasRemoteCommandGovernance
@@ -2709,6 +2805,7 @@ export const telematicsService = {
       firmwareUpdates: [], // no executed OTA result feed; plans remain separate and ExternalHold
       firmwareCampaigns,
       rmaCases,
+      sparePool,
       remoteCommandCapabilities,
       remoteCommandHistory,
       currentInstallation,
@@ -2987,6 +3084,36 @@ export const telematicsService = {
       idempotentReplay: payload.idempotent_replay === true,
       note: String(payload.note ?? "RMA support routing recorded; response and outcomes remain unverified."),
     };
+  },
+
+  async recordDeviceSparePoolAction(deviceId: string | number, input: DeviceSparePoolActionInput) {
+    const session = getSession();
+    ensureManagementAccess(session);
+    const canonicalId = canonicalDeviceLifecycleId(deviceId);
+    if (canonicalId === null) throw new Error("The spare-pool device identity is invalid.");
+    if (input.rmaCaseId !== undefined && canonicalDeviceLifecycleId(input.rmaCaseId) === null)
+      throw new Error("The RMA case identity is invalid.");
+    const payload = normalizeKeys(await unwrap<AnyRecord>(apiClient.post(
+      `/api/telemetry/devices/${canonicalId}/spare-pool-actions`, {
+        ...input,
+        poolName: input.actionType === "Add" ? input.poolName?.trim() : null,
+        rmaCaseId: input.actionType === "Reserve" ? input.rmaCaseId : null,
+        actionReason: input.actionReason.trim(), sourceReference: input.sourceReference.trim(),
+      })));
+    if (payload.physical_possession_claim !== false || payload.condition_verified_claim !== false ||
+        payload.compatibility_claim !== false || payload.certification_claim !== false ||
+        !payload.entry || typeof payload.entry !== "object" || !payload.pool_event || typeof payload.pool_event !== "object")
+      throw new Error("The server did not return a fail-closed spare-pool planning acknowledgement.");
+    const poolEvent = mapSparePoolEvent(payload.pool_event as AnyRecord);
+    const entry = mapSparePool(payload.entry as AnyRecord, [poolEvent]);
+    const expectedAction = { Add: "Added", Reserve: "Reserved", Release: "Released", Remove: "Removed" }[input.actionType];
+    if (poolEvent.actionType !== expectedAction || poolEvent.actionReason !== input.actionReason.trim() ||
+        poolEvent.sourceReference !== input.sourceReference.trim() ||
+        (input.actionType === "Add" && entry.poolName !== input.poolName?.trim()) ||
+        (input.actionType === "Reserve" && poolEvent.rmaCaseId !== input.rmaCaseId))
+      throw new Error("The recorded spare-pool action does not match the submitted facts.");
+    return { entry, poolEvent, idempotentReplay: payload.idempotent_replay === true,
+      note: String(payload.note ?? "Spare-pool planning recorded; physical state remains unverified.") };
   },
 
   async requestDeviceRemoteCommand(deviceId: string | number, input: DeviceRemoteCommandInput) {

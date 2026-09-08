@@ -248,6 +248,11 @@ public static partial class EndpointMappings
             return Results.Conflict(ApiResponse<object>.Fail(
                 "The retirement conflicted with a concurrent lifecycle change. Refresh and try again."));
         }
+        catch (PostgresException ex) when (ex.ConstraintName == "ck_stage125_device_not_in_pool")
+        {
+            return Results.Conflict(ApiResponse<object>.Fail(
+                "Remove the device from its spare-pool plan before retiring it."));
+        }
 
         http.Response.Headers.CacheControl = "no-store";
         http.Response.Headers.Pragma = "no-cache";
