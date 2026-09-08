@@ -15047,20 +15047,24 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
         if (RequirePermission(http, "finance:view") is { } denied) return denied;
         var row = await db.QuerySingleAsync(
             @"SELECT
-                CONCAT('$', TO_CHAR((COALESCE(SUM(CASE WHEN expense_date >= DATE_TRUNC('month', CURRENT_DATE) THEN amount ELSE 0 END),0))::numeric, 'FM9,999,999,990.00')) total_expenses_this_month,
                 SUM(CASE WHEN approval_status='Pending' THEN 1 ELSE 0 END) pending_approval,
                 SUM(CASE WHEN approval_status='Approved' THEN 1 ELSE 0 END) approved_expenses,
                 SUM(CASE WHEN approval_status='Rejected' THEN 1 ELSE 0 END) rejected_expenses,
-                CONCAT('$', TO_CHAR((COALESCE(SUM(CASE WHEN category_name='Fuel' THEN amount ELSE 0 END),0))::numeric, 'FM9,999,999,990.00')) fuel_expenses,
-                CONCAT('$', TO_CHAR((COALESCE(SUM(CASE WHEN category_name='Maintenance' THEN amount ELSE 0 END),0))::numeric, 'FM9,999,999,990.00')) maintenance_expenses,
-                CONCAT('$', TO_CHAR((COALESCE(SUM(CASE WHEN category_name='Driver Reimbursement' THEN amount ELSE 0 END),0))::numeric, 'FM9,999,999,990.00')) driver_expenses,
-                CONCAT('$', TO_CHAR((COALESCE(SUM(CASE WHEN category_name='Carrier Charge' THEN amount ELSE 0 END),0))::numeric, 'FM9,999,999,990.00')) carrier_expenses,
-                SUM(CASE WHEN risk_score >= 60 THEN 1 ELSE 0 END) unusual_expenses,
-                CONCAT('$', TO_CHAR((COALESCE(AVG(amount),0))::numeric, 'FM9,999,999,990.00')) average_expense_amount,
                 SUM(CASE WHEN receipt_status='Missing' THEN 1 ELSE 0 END) missing_receipts,
                 COUNT(*) total
               FROM expenses WHERE company_id=@cid AND deleted_at IS NULL", p => p.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
-        return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
+        var monthlyTotals = await db.QueryAsync(
+            @"SELECT UPPER(currency) currency, SUM(amount)::numeric amount, COUNT(*) record_count
+                FROM expenses
+               WHERE company_id=@cid AND deleted_at IS NULL
+                 AND expense_date >= DATE_TRUNC('month', CURRENT_DATE)
+               GROUP BY UPPER(currency)
+               ORDER BY UPPER(currency)",
+            p => p.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct);
+        var summary = row ?? new Dictionary<string, object?>();
+        summary["monthlyTotals"] = monthlyTotals;
+        summary["monetaryEvidence"] = "Persisted expenses grouped by recorded currency; currencies are not combined or converted.";
+        return Results.Ok(ApiResponse<object>.Ok(summary));
     }
 
     private static Task<IResult> Expenses(HttpContext http, Database db, CancellationToken ct)
@@ -15068,13 +15072,18 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
         if (RequirePermission(http, "finance:view") is { } denied) return Task.FromResult(denied);
         return OkRows(db,
             @"SELECT e.*, v.vehicle_code, d.full_name driver_name, j.job_code, c.name customer_name,
-                     CASE WHEN e.risk_score >= 65 THEN 'High' WHEN e.risk_score >= 40 THEN 'Medium' ELSE 'Low' END risk_heat_score,
-                     COALESCE(e.recommended_action, CASE WHEN e.receipt_status='Missing' THEN 'Upload receipt before approval' ELSE 'Review and approve expense' END) recommended_action
+                     CASE WHEN e.expense_number LIKE 'EXP-B5-%' THEN 'Demo Data' ELSE 'Tenant Recorded' END record_origin,
+                     CASE WHEN e.receipt_status='Missing' THEN 'Receipt Required'
+                          WHEN e.approval_status='Pending' THEN 'Approval Required'
+                          ELSE 'No Pending Workflow' END record_attention,
+                     CASE WHEN e.receipt_status='Missing' THEN 'Upload receipt before approval'
+                          WHEN e.approval_status='Pending' THEN 'Review persisted expense and decide approval'
+                          ELSE NULL END recommended_action
               FROM expenses e
-              LEFT JOIN vehicles v ON v.id=e.vehicle_id
-              LEFT JOIN drivers d ON d.id=e.driver_id
-              LEFT JOIN jobs j ON j.id=e.job_id
-              LEFT JOIN customers c ON c.id=e.customer_id
+              LEFT JOIN vehicles v ON v.id=e.vehicle_id AND v.company_id=e.company_id
+              LEFT JOIN drivers d ON d.id=e.driver_id AND d.company_id=e.company_id
+              LEFT JOIN jobs j ON j.id=e.job_id AND j.company_id=e.company_id
+              LEFT JOIN customers c ON c.id=e.customer_id AND c.company_id=e.company_id
               WHERE e.company_id=@cid AND e.deleted_at IS NULL
               ORDER BY ARRAY_POSITION(ARRAY['Pending','Rejected','Approved'], e.approval_status), e.expense_date DESC", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
     }
@@ -15083,12 +15092,19 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
     {
         if (RequirePermission(http, "finance:view") is { } denied) return denied;
         var record = await db.QuerySingleAsync(
-            @"SELECT e.*, v.vehicle_code, d.full_name driver_name, j.job_code, c.name customer_name
+            @"SELECT e.*, v.vehicle_code, d.full_name driver_name, j.job_code, c.name customer_name,
+                     CASE WHEN e.expense_number LIKE 'EXP-B5-%' THEN 'Demo Data' ELSE 'Tenant Recorded' END record_origin,
+                     CASE WHEN e.receipt_status='Missing' THEN 'Receipt Required'
+                          WHEN e.approval_status='Pending' THEN 'Approval Required'
+                          ELSE 'No Pending Workflow' END record_attention,
+                     CASE WHEN e.receipt_status='Missing' THEN 'Upload receipt before approval'
+                          WHEN e.approval_status='Pending' THEN 'Review persisted expense and decide approval'
+                          ELSE NULL END recommended_action
               FROM expenses e
-              LEFT JOIN vehicles v ON v.id=e.vehicle_id
-              LEFT JOIN drivers d ON d.id=e.driver_id
-              LEFT JOIN jobs j ON j.id=e.job_id
-              LEFT JOIN customers c ON c.id=e.customer_id
+              LEFT JOIN vehicles v ON v.id=e.vehicle_id AND v.company_id=e.company_id
+              LEFT JOIN drivers d ON d.id=e.driver_id AND d.company_id=e.company_id
+              LEFT JOIN jobs j ON j.id=e.job_id AND j.company_id=e.company_id
+              LEFT JOIN customers c ON c.id=e.customer_id AND c.company_id=e.company_id
               WHERE e.id=@id AND e.company_id=@cid AND e.deleted_at IS NULL",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct);
         if (record is null) return Results.NotFound(ApiResponse<object>.Fail("Expense not found"));
@@ -15104,63 +15120,52 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
     {
         var denied = RequirePermission(http, "finance:manage");
         if (denied is not null) return denied;
-        var amount = Convert.ToDouble(Get(body, "amount") ?? 0);
-        if (amount < 0) return Results.BadRequest(ApiResponse<object>.Fail("Expense amount must be non-negative"));
         var companyId = GetCompanyId(http);
+        var (input, errors) = await ValidateExpenseInput(body, null, companyId, db, ct);
+        if (input is null) return Results.BadRequest(ApiResponse<object>.Fail("Expense validation failed", errors));
+        var number = $"EXP-{DateTimeOffset.UtcNow:yyyyMMddHHmmssfff}-{Guid.NewGuid():N}"[..31].ToUpperInvariant();
         var id = await db.InsertAsync(
-            @"INSERT INTO expenses (company_id, expense_number, category_name, amount, currency, expense_date,
+            @"INSERT INTO expenses (company_id, expense_number, category, title, category_name, amount, currency, expense_date,
                 vehicle_id, driver_id, job_id, route_id, customer_id, carrier_id, vendor_name,
                 status, approval_status, receipt_status, risk_score, recommended_action, notes)
-              VALUES (@companyId, @number, COALESCE(@category,'Miscellaneous'), @amount, COALESCE(@currency,'USD'),
-                COALESCE(@date, CURRENT_DATE), @vehicle, @driver, @job, @route, @customer, @carrier, @vendor,
-                COALESCE(@status,'Pending'), COALESCE(@approval,'Pending'), COALESCE(@receipt,'Missing'),
-                COALESCE(@risk,20), @action, @notes)",
+              VALUES (@companyId, @number, @category, @title, @category, @amount, @currency,
+                @date, @vehicle, @driver, @job, @route, @customer, @carrier, @vendor,
+                'Pending', 'Pending', @receipt, 0, NULL, @notes)",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
-                c.Parameters.AddWithValue("@number", $"EXP-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}");
-                c.Parameters.AddWithValue("@category", Get(body, "categoryName"));
-                c.Parameters.AddWithValue("@amount", amount);
-                c.Parameters.AddWithValue("@currency", Get(body, "currency"));
-                c.Parameters.AddWithValue("@date", Get(body, "expenseDate"));
-                c.Parameters.AddWithValue("@vehicle", Get(body, "vehicleId"));
-                c.Parameters.AddWithValue("@driver", Get(body, "driverId"));
-                c.Parameters.AddWithValue("@job", Get(body, "jobId"));
-                c.Parameters.AddWithValue("@route", Get(body, "routeId"));
-                c.Parameters.AddWithValue("@customer", Get(body, "customerId"));
-                c.Parameters.AddWithValue("@carrier", Get(body, "carrierId"));
-                c.Parameters.AddWithValue("@vendor", Get(body, "vendorName"));
-                c.Parameters.AddWithValue("@status", Get(body, "status"));
-                c.Parameters.AddWithValue("@approval", Get(body, "approvalStatus"));
-                c.Parameters.AddWithValue("@receipt", Get(body, "receiptStatus"));
-                c.Parameters.AddWithValue("@risk", Get(body, "riskScore"));
-                c.Parameters.AddWithValue("@action", Get(body, "recommendedAction"));
-                c.Parameters.AddWithValue("@notes", Get(body, "notes"));
+                c.Parameters.AddWithValue("@number", number);
+                BindExpense(c, input);
             }, ct);
         await audit.LogAsync(http, "expense.created", "Expense", id, ct: ct);
-        return Results.Created($"/api/expenses/{id}", ApiResponse<object>.Ok(new { id }, "Expense created"));
+        return Results.Created($"/api/expenses/{id}", ApiResponse<object>.Ok(new { id, expenseNumber = number, approvalStatus = "Pending", recordOrigin = "Tenant Recorded" }, "Expense created"));
     }
 
     private static async Task<IResult> UpdateExpense(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
         var denied = RequirePermission(http, "finance:manage");
         if (denied is not null) return denied;
-        await db.ExecuteAsync(
-            @"UPDATE expenses SET category_name=COALESCE(@category,category_name), amount=COALESCE(@amount,amount),
-                expense_date=COALESCE(@date,expense_date), vendor_name=COALESCE(@vendor,vendor_name),
-                receipt_status=COALESCE(@receipt,receipt_status), notes=COALESCE(@notes,notes)
-              WHERE id=@id AND company_id=@companyId",
+        var companyId = GetCompanyId(http);
+        var current = await db.QuerySingleAsync("SELECT * FROM expenses WHERE id=@id AND company_id=@companyId AND deleted_at IS NULL",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); }, ct);
+        if (current is null) return Results.NotFound(ApiResponse<object>.Fail("Expense not found"));
+        if (!string.Equals(current.GetValueOrDefault("approvalStatus")?.ToString(), "Pending", StringComparison.OrdinalIgnoreCase))
+            return Results.Conflict(ApiResponse<object>.Fail("Only pending expenses can be edited"));
+        var (input, errors) = await ValidateExpenseInput(body, current, companyId, db, ct);
+        if (input is null) return Results.BadRequest(ApiResponse<object>.Fail("Expense validation failed", errors));
+        var affected = await db.ExecuteAsync(
+            @"UPDATE expenses SET category=@category, title=@title, category_name=@category, amount=@amount,
+                currency=@currency, expense_date=@date, vehicle_id=@vehicle, driver_id=@driver,
+                job_id=@job, route_id=@route, customer_id=@customer, carrier_id=@carrier,
+                vendor_name=@vendor, receipt_status=@receipt, notes=@notes, updated_at=NOW()
+              WHERE id=@id AND company_id=@companyId AND deleted_at IS NULL AND approval_status='Pending'",
             c =>
             {
                 c.Parameters.AddWithValue("@id", id);
-                c.Parameters.AddWithValue("@companyId", GetCompanyId(http));
-                c.Parameters.AddWithValue("@category", Get(body, "categoryName"));
-                c.Parameters.AddWithValue("@amount", Get(body, "amount"));
-                c.Parameters.AddWithValue("@date", Get(body, "expenseDate"));
-                c.Parameters.AddWithValue("@vendor", Get(body, "vendorName"));
-                c.Parameters.AddWithValue("@receipt", Get(body, "receiptStatus"));
-                c.Parameters.AddWithValue("@notes", Get(body, "notes"));
+                c.Parameters.AddWithValue("@companyId", companyId);
+                BindExpense(c, input);
             }, ct);
+        if (affected == 0) return Results.Conflict(ApiResponse<object>.Fail("Expense changed before this update; reload and try again"));
         await audit.LogAsync(http, "expense.updated", "Expense", id, ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id }, "Expense updated"));
     }
@@ -15169,8 +15174,10 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
     {
         var denied = RequirePermission(http, "finance:manage");
         if (denied is not null) return denied;
-        await db.ExecuteAsync("UPDATE expenses SET approval_status='Approved', status='Approved' WHERE id=@id AND company_id=@companyId",
-            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); }, ct);
+        var companyId = GetCompanyId(http);
+        var affected = await db.ExecuteAsync("UPDATE expenses SET approval_status='Approved', status='Approved', updated_at=NOW() WHERE id=@id AND company_id=@companyId AND deleted_at IS NULL AND approval_status='Pending' AND receipt_status='Uploaded'",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); }, ct);
+        if (affected == 0) return await ExpenseTransitionFailure(db, companyId, id, ct);
         await audit.LogAsync(http, "expense.approved", "Expense", id, ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id }, "Expense approved"));
     }
@@ -15179,8 +15186,10 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
     {
         var denied = RequirePermission(http, "finance:manage");
         if (denied is not null) return denied;
-        await db.ExecuteAsync("UPDATE expenses SET approval_status='Rejected', status='Rejected' WHERE id=@id AND company_id=@companyId",
-            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); }, ct);
+        var companyId = GetCompanyId(http);
+        var affected = await db.ExecuteAsync("UPDATE expenses SET approval_status='Rejected', status='Rejected', updated_at=NOW() WHERE id=@id AND company_id=@companyId AND deleted_at IS NULL AND approval_status='Pending'",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); }, ct);
+        if (affected == 0) return await ExpenseTransitionFailure(db, companyId, id, ct);
         await audit.LogAsync(http, "expense.rejected", "Expense", id, ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id }, "Expense rejected"));
     }
@@ -15188,14 +15197,104 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
     private static Task<IResult> ExpenseImportPreview(HttpContext http, Dictionary<string, object?> body, CancellationToken ct)
     {
         if (RequirePermission(http, "finance:manage") is { } denied) return Task.FromResult(denied);
-        return Task.FromResult(Results.Ok(ApiResponse<object>.Ok(new
+        return Task.FromResult<IResult>(Results.Json(
+            ApiResponse<object>.Fail("Expense import is unavailable", "A file-backed parser and persisted preview evidence are not configured."),
+            statusCode: StatusCodes.Status501NotImplemented));
+    }
+
+    private sealed record ExpenseInput(
+        string Category, decimal Amount, string Currency, DateOnly ExpenseDate,
+        long? VehicleId, long? DriverId, long? JobId, long? RouteId, long? CustomerId, long? CarrierId,
+        string? VendorName, string ReceiptStatus, string? Notes);
+
+    private static async Task<(ExpenseInput? Input, string[] Errors)> ValidateExpenseInput(
+        Dictionary<string, object?> body, Dictionary<string, object?>? current, long companyId, Database db, CancellationToken ct)
+    {
+        object? Value(string key)
         {
-            source = "Expense Import Placeholder",
-            detectedRows = 18,
-            validRows = 17,
-            warnings = new[] { "1 row missing category — defaulted to Miscellaneous" },
-            columns = new[] { "expenseNumber", "category", "amount", "expenseDate", "vehicleCode", "vendorName" }
-        }, "Expense import preview generated")));
+            if (body.ContainsKey(key)) return Get(body, key) is DBNull ? null : Get(body, key);
+            return current?.GetValueOrDefault(key);
+        }
+        var errors = new List<string>();
+        var category = Value("categoryName")?.ToString()?.Trim() ?? string.Empty;
+        if (category.Length == 0) errors.Add("Category is required.");
+        else if (category.Length > 120) errors.Add("Category cannot exceed 120 characters.");
+
+        var amountText = Convert.ToString(Value("amount"), CultureInfo.InvariantCulture);
+        if (!decimal.TryParse(amountText, NumberStyles.Number, CultureInfo.InvariantCulture, out var amount) || amount <= 0)
+            errors.Add("Amount must be greater than zero.");
+
+        var currency = (Value("currency")?.ToString()?.Trim() ?? string.Empty).ToUpperInvariant();
+        if (currency.Length != 3 || currency.Any(ch => ch is < 'A' or > 'Z'))
+            errors.Add("Currency must be a three-letter ISO code.");
+
+        var rawDate = Value("expenseDate");
+        DateOnly expenseDate;
+        if (rawDate is DateOnly dateOnly) expenseDate = dateOnly;
+        else if (rawDate is DateTime dateTime) expenseDate = DateOnly.FromDateTime(dateTime);
+        else if (!DateOnly.TryParse(rawDate?.ToString(), CultureInfo.InvariantCulture, DateTimeStyles.None, out expenseDate))
+        {
+            expenseDate = default;
+            errors.Add("Expense date is required and must be a valid date.");
+        }
+
+        var receipt = Value("receiptStatus")?.ToString()?.Trim() ?? "Missing";
+        if (receipt is not ("Missing" or "Uploaded")) errors.Add("Receipt status must be Missing or Uploaded.");
+
+        var ids = new Dictionary<string, long?>();
+        foreach (var (field, table) in new[]
+        {
+            ("vehicleId", "vehicles"), ("driverId", "drivers"), ("jobId", "jobs"),
+            ("routeId", "routes"), ("customerId", "customers"), ("carrierId", "carriers")
+        })
+        {
+            var parsed = OptionalPositiveId(Value(field));
+            ids[field] = parsed.id;
+            if (!parsed.valid) errors.Add($"{field} must be a positive integer.");
+            else if (parsed.id.HasValue && await db.ScalarLongAsync(
+                $"SELECT COUNT(*) FROM {table} WHERE id=@id AND company_id=@companyId AND deleted_at IS NULL",
+                c => { c.Parameters.AddWithValue("@id", parsed.id.Value); c.Parameters.AddWithValue("@companyId", companyId); }, ct) == 0)
+                errors.Add($"{field} must reference a record in this tenant.");
+        }
+
+        var vendor = Value("vendorName")?.ToString()?.Trim();
+        if (vendor?.Length > 180) errors.Add("Vendor name cannot exceed 180 characters.");
+        var notes = Value("notes")?.ToString()?.Trim();
+        if (notes?.Length > 4000) errors.Add("Notes cannot exceed 4,000 characters.");
+        if (errors.Count > 0) return (null, errors.ToArray());
+        return (new ExpenseInput(category, amount, currency, expenseDate,
+            ids["vehicleId"], ids["driverId"], ids["jobId"], ids["routeId"], ids["customerId"], ids["carrierId"],
+            string.IsNullOrWhiteSpace(vendor) ? null : vendor, receipt, string.IsNullOrWhiteSpace(notes) ? null : notes), []);
+    }
+
+    private static void BindExpense(NpgsqlCommand command, ExpenseInput input)
+    {
+        command.Parameters.AddWithValue("@category", input.Category);
+        command.Parameters.AddWithValue("@title", $"{input.Category} expense");
+        command.Parameters.AddWithValue("@amount", input.Amount);
+        command.Parameters.AddWithValue("@currency", input.Currency);
+        command.Parameters.AddWithValue("@date", input.ExpenseDate);
+        command.Parameters.AddWithValue("@vehicle", input.VehicleId ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("@driver", input.DriverId ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("@job", input.JobId ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("@route", input.RouteId ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("@customer", input.CustomerId ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("@carrier", input.CarrierId ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("@vendor", input.VendorName ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("@receipt", input.ReceiptStatus);
+        command.Parameters.AddWithValue("@notes", input.Notes ?? (object)DBNull.Value);
+    }
+
+    private static async Task<IResult> ExpenseTransitionFailure(Database db, long companyId, long id, CancellationToken ct)
+    {
+        var state = await db.QuerySingleAsync(
+            "SELECT approval_status,receipt_status FROM expenses WHERE id=@id AND company_id=@companyId AND deleted_at IS NULL",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); }, ct);
+        if (state is null) return Results.NotFound(ApiResponse<object>.Fail("Expense not found"));
+        if (string.Equals(state.GetValueOrDefault("approvalStatus")?.ToString(), "Pending", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(state.GetValueOrDefault("receiptStatus")?.ToString(), "Uploaded", StringComparison.OrdinalIgnoreCase))
+            return Results.Conflict(ApiResponse<object>.Fail("A persisted receipt is required before approval"));
+        return Results.Conflict(ApiResponse<object>.Fail($"Expense is already {state.GetValueOrDefault("approvalStatus")}"));
     }
 
     // =====================================================================

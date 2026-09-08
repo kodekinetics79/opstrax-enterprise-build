@@ -22,6 +22,7 @@ import { costMarginApi } from "@/services/costMarginApi";
 import { expensesApi } from "@/services/expensesApi";
 import { fuelApi } from "@/services/fuelApi";
 import type { AnyRecord } from "@/types";
+import { apiErrorMessage } from "@/utils/apiErrorMessage";
 
 type Kind = "fuel" | "expenses" | "contracts" | "carriers" | "cost-margin" | "cost-leakage";
 
@@ -59,13 +60,13 @@ const configs = {
   },
   expenses: {
     queryKey: "expenses", eyebrow: "Expenses", title: "Operating expense register and approval workflow", icon: <WalletCards />,
-    description: "Operating expenses, approval workflow, anomaly detection, receipt tracking, cost allocation and AI expense governance recommendations.",
+    description: "Persisted operating expenses, receipt tracking and explicit approval decisions. Monetary totals stay separated by their recorded currency.",
     useRows: useExpenses, useSummary: useExpensesSummary, useDetail: useExpenseDetail,
     api: { create: expensesApi.create, update: (id: string | number, p: AnyRecord) => expensesApi.update(id, p) },
     createLabel: "Create Expense",
-    kpis: [["Expenses This Month","totalExpensesThisMonth"],["Pending Approval","pendingApproval"],["Approved","approvedExpenses"],["Rejected","rejectedExpenses"],["Unusual","unusualExpenses"],["Missing Receipts","missingReceipts"],["Avg Amount","averageExpenseAmount"],["Total","total"]],
-    columns: ["expenseNumber","categoryName","amount","approvalStatus","receiptStatus","vendorName","vehicleCode","driverName","riskScore","expenseDate","recommendedAction"],
-    fields: [["categoryName","Category"],["amount","Amount"],["currency","Currency"],["expenseDate","Expense Date"],["vehicleId","Vehicle ID"],["driverId","Driver ID"],["jobId","Job ID"],["customerId","Customer ID"],["vendorName","Vendor Name"],["approvalStatus","Approval Status"],["receiptStatus","Receipt Status"],["notes","Notes"]],
+    kpis: [["Total Records","total"],["Pending Approval","pendingApproval"],["Approved","approvedExpenses"],["Rejected","rejectedExpenses"],["Missing Receipts","missingReceipts"]],
+    columns: ["expenseNumber","recordOrigin","categoryName","amount","currency","approvalStatus","receiptStatus","vendorName","vehicleCode","driverName","expenseDate","recordAttention"],
+    fields: [["categoryName","Category"],["amount","Amount"],["currency","Currency"],["expenseDate","Expense Date"],["vehicleId","Vehicle ID"],["driverId","Driver ID"],["jobId","Job ID"],["customerId","Customer ID"],["vendorName","Vendor Name"],["receiptStatus","Receipt Status"],["notes","Notes"]],
     actions: ["approve","reject"],
     sections: [] as [string,string,string[]][],
   },
@@ -201,7 +202,8 @@ export function Batch5FinancePage({ kind }: { kind: Kind }) {
     );
   }
 
-  const s = summaryQ.data ?? {};
+  const summaryData = summaryQ.data ?? {};
+  const s = summaryData;
 
   return (
     <div className="flex h-full flex-col gap-8 overflow-y-auto">
@@ -238,6 +240,28 @@ export function Batch5FinancePage({ kind }: { kind: Kind }) {
 
       {/* Module Chart */}
       <ModuleChart kind={kind} rows={rowsQ.data ?? []} vehicleSummary={vehicleAggQ.data as AnyRecord[] | undefined} />
+
+      {kind === "expenses" && (
+        <div className="panel p-4 text-sm text-slate-600">
+          <p className="font-semibold text-slate-900">Recorded monthly totals by currency</p>
+          {((summaryData.monthlyTotals as AnyRecord[] | undefined) ?? []).length > 0 ? (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {((summaryData.monthlyTotals as AnyRecord[]) ?? []).map((total) => (
+                <span key={String(total.currency)} className="badge">
+                  {String(total.currency)} {Number(total.amount ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} · {String(total.recordCount ?? 0)} records
+                </span>
+              ))}
+            </div>
+          ) : <p className="mt-2">No persisted expenses are recorded for this month.</p>}
+          <p className="mt-2 text-xs text-slate-500">Currencies are displayed separately; no exchange-rate conversion is claimed.</p>
+        </div>
+      )}
+
+      {act.isError && (
+        <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          {apiErrorMessage(act.error, "The expense workflow action was rejected. Reload the record and try again.")}
+        </p>
+      )}
 
       {/* Search + Filter bar */}
       <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
@@ -284,7 +308,8 @@ export function Batch5FinancePage({ kind }: { kind: Kind }) {
           fields={config.fields}
           initial={editing}
           saving={save.isPending}
-          onClose={() => setEditing(null)}
+          error={save.isError ? apiErrorMessage(save.error, "The record could not be saved. Review the fields and try again.") : null}
+          onClose={() => { save.reset(); setEditing(null); }}
           onSave={(payload) => save.mutate(payload)}
         />
       )}
@@ -449,6 +474,8 @@ function Drawer({ config, detail, loading, onClose, onEdit, onAction }: {
     record.carrierNumber ?? record.leakageNumber ?? record.leakage_number ??
     record.entityLabel ?? record.entity_label ?? `Record ${record.id}`
   );
+  const isExpense = config.queryKey === "expenses";
+  const expensePending = String(record.approvalStatus ?? "").toLowerCase() === "pending";
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/55 backdrop-blur-sm">
@@ -466,17 +493,17 @@ function Drawer({ config, detail, loading, onClose, onEdit, onAction }: {
           {/* Status badges + actions */}
           <div className="flex flex-wrap items-center gap-2">
             <StatusBadge status={record.status ?? record.approvalStatus ?? record.complianceStatus} />
-            <RiskBadge risk={record.severity ?? record.marginRisk ?? record.riskScore ?? record.anomalyStatus} />
-            <span className="badge">OpsTrax Finance Intelligence</span>
+            {!isExpense && <RiskBadge risk={record.severity ?? record.marginRisk ?? record.riskScore ?? record.anomalyStatus} />}
+            <span className="badge">{isExpense ? String(record.recordOrigin ?? "Recorded expense") : "OpsTrax Finance Intelligence"}</span>
           </div>
 
           <div className="flex flex-wrap gap-3">
-            {!!config.createLabel && (
+            {!!config.createLabel && (!isExpense || expensePending) && (
               <button type="button" className="btn-primary" onClick={() => onEdit(record)}>
                 <PenTool className="h-4 w-4" /> Edit
               </button>
             )}
-            {config.actions.map((type) => (
+            {config.actions.filter(() => !isExpense || expensePending).map((type) => (
               <button key={type} type="button" className="btn-ghost" onClick={() => onAction(type, record)}>
                 {actionLabel(type)}
               </button>
@@ -487,7 +514,7 @@ function Drawer({ config, detail, loading, onClose, onEdit, onAction }: {
           {/* Info grid */}
           <div className="grid gap-4 lg:grid-cols-3">
             <Info title="Primary Details" record={record} keys={Object.keys(record).slice(0, 10)} />
-            <Info title="Financial / Risk" record={record} keys={["totalCost","amount","baseRate","estimatedLoss","marginPercent","marginRisk","riskScore","anomalyStatus","complianceStatus","approvalStatus"]} />
+            <Info title={isExpense ? "Financial / Approval" : "Financial / Risk"} record={record} keys={isExpense ? ["amount","currency","approvalStatus","receiptStatus","recordOrigin","recordAttention"] : ["totalCost","amount","baseRate","estimatedLoss","marginPercent","marginRisk","riskScore","anomalyStatus","complianceStatus","approvalStatus"]} />
             <Info title="Recommended Action" record={record} keys={["recommendedAction","thresholdStatus","source","ownerRole","notes"]} />
           </div>
 
@@ -518,11 +545,12 @@ function Drawer({ config, detail, loading, onClose, onEdit, onAction }: {
 /* ──────────────────────────────────────────────────────────
    CREATE / EDIT MODAL
 ────────────────────────────────────────────────────────── */
-function Modal({ title, fields, initial, saving, onClose, onSave }: {
+function Modal({ title, fields, initial, saving, error, onClose, onSave }: {
   title: string;
   fields: string[][];
   initial: AnyRecord;
   saving: boolean;
+  error?: string | null;
   onClose: () => void;
   onSave: (payload: AnyRecord) => void;
 }) {
@@ -553,6 +581,7 @@ function Modal({ title, fields, initial, saving, onClose, onSave }: {
             {saving ? "Saving…" : "Save"}
           </button>
         </div>
+        {error && <p role="alert" className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</p>}
       </form>
     </div>
   );
@@ -634,7 +663,7 @@ function actionLabel(type: string): string {
 function defaultForm(kind: Kind): AnyRecord {
   const today = new Date().toISOString().split("T")[0];
   if (kind === "fuel")       return { fuelType: "Diesel", quantity: 50, unitPrice: 3.89, paymentMethod: "Fleet Card", anomalyStatus: "Normal", fuelDate: today };
-  if (kind === "expenses")   return { categoryName: "Fuel", amount: 250, currency: "USD", approvalStatus: "Pending", receiptStatus: "Uploaded", expenseDate: today };
+  if (kind === "expenses")   return { categoryName: "", amount: "", currency: "", receiptStatus: "Missing", expenseDate: today };
   if (kind === "contracts")  return { contractType: "Customer", rateType: "Per Mile", baseRate: 2.85, currency: "USD", status: "Active", marginRisk: "Low", effectiveDate: today };
   if (kind === "carriers")   return { status: "Active", complianceStatus: "Compliant", contractStatus: "Active", onTimePercent: 90, safetyScore: 88, performanceScore: 86, riskScore: 20 };
   return {};
