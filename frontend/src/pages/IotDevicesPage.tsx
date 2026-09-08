@@ -51,6 +51,7 @@ import {
   type DeviceRmaEventInput,
   type DeviceRmaReplacementInput,
   type DeviceRemoteCommandInput,
+  type DeviceRetirementInput,
   type DeviceIdentityQuarantineRecord,
   type DeviceInstallationInput,
   type DeviceInstallationArtifactReferenceInput,
@@ -261,13 +262,28 @@ function newRemoteCommandForm(commandType: DeviceRemoteCommandInput["commandType
   return { commandType, purpose: "", sourceReference: "", safetyConfirmation: "", delaySeconds: "0", idempotencyKey: crypto.randomUUID() };
 }
 
+type RetirementFormState = Pick<DeviceRetirementInput,
+  "retirementReason" | "dispositionPlan" | "sourceReference" | "safetyConfirmation"> & {
+  idempotencyKey: string;
+};
+
+function newRetirementForm(): RetirementFormState {
+  return {
+    retirementReason: "",
+    dispositionPlan: "ReturnToVendor",
+    sourceReference: "",
+    safetyConfirmation: "",
+    idempotencyKey: crypto.randomUUID(),
+  };
+}
+
 type SuspensionMutationVariables = { deviceId: string; sessionGeneration: number; target: ConfirmActionTarget };
 type ActivationMutationVariables = { deviceId: string; sessionGeneration: number; target: DeviceCommandRecord };
 
 // DEF-023: destructive/lifecycle actions confirm through the in-app accessible
 // ConfirmDialog (native window.confirm cannot be completed by automation and is
 // invisible to assistive technology).
-type ConfirmableLifecycleAction = "archive" | "suspend" | "rotate-credentials";
+type ConfirmableLifecycleAction = "suspend" | "rotate-credentials";
 
 type ConfirmActionTarget = {
   action: ConfirmableLifecycleAction;
@@ -282,12 +298,6 @@ const CONFIRM_ACTION_COPY: Record<
   ConfirmableLifecycleAction,
   { title: string; confirmLabel: string; variant: "default" | "danger"; message: (deviceName: string) => string }
 > = {
-  archive: {
-    title: "Revoke and archive device",
-    confirmLabel: "Revoke & Archive",
-    variant: "danger",
-    message: (deviceName) => `Permanently revoke and archive ${deviceName}? All device credentials are invalidated, future ingestion is blocked, and this action cannot be reactivated. Its lifecycle history remains visible. Use Suspend for a reversible stop.`,
-  },
   suspend: {
     title: "Suspend device",
     confirmLabel: "Suspend Device",
@@ -520,13 +530,12 @@ function buildActionContracts(
   device: DeviceCommandRecord,
   {
     canUpdate,
-    canDelete,
     canAssign,
     canManageLifecycle,
     canRecover,
     onAssign,
     onUnassign,
-    onArchive,
+    onRetire,
     onMarkInstalled,
     onRefresh,
     onFlagAttention,
@@ -536,13 +545,12 @@ function buildActionContracts(
     onRotateSecret,
   }: {
     canUpdate: boolean;
-    canDelete: boolean;
     canAssign: boolean;
     canManageLifecycle: boolean;
     canRecover: boolean;
     onAssign: () => void;
     onUnassign: () => void;
-    onArchive: () => void;
+    onRetire: () => void;
     onMarkInstalled: () => void;
     onRefresh: () => void;
     onFlagAttention: () => void;
@@ -691,13 +699,22 @@ function buildActionContracts(
       onClick: inRecovery ? onResolve : onFlagAttention,
     },
     {
-      key: "archive",
-      label: "Revoke & Archive",
+      key: "retire",
+      label: "Retire device",
       icon: <Trash2 className="h-4 w-4" />,
-      visible: canDelete,
-      state: archived ? "state-blocked" : canDelete ? "ready" : "permission-blocked",
-      reason: archived ? "This device is already revoked and archived." : canDelete ? "Permanently revokes credentials and archives the device. Use Suspend for a reversible stop." : "Requires TELEMATICS_DEVICES_DELETE.",
-      onClick: onArchive,
+      visible: canManageLifecycle,
+      state: archived ? "state-blocked"
+        : !canManageLifecycle ? "permission-blocked"
+        : hasCurrentVehicle || device.currentInstallationId ? "state-blocked"
+        : device.rowVersion == null ? "state-blocked"
+        : "ready",
+      reason: archived ? "This device is already retired or revoked."
+        : !canManageLifecycle ? "Requires TELEMETRY_DEVICES_MANAGE."
+        : hasCurrentVehicle || device.currentInstallationId
+          ? "Record physical removal from the current installation before retirement."
+          : device.rowVersion == null ? "Reload the device to obtain its current revision."
+          : "Records software retirement, ends the current connectivity profile, and permanently invalidates device credentials.",
+      onClick: onRetire,
     },
   ];
 
@@ -738,7 +755,7 @@ export function IotDevicesPage() {
   const { session } = useAuth();
 
   const canDiagnostics = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_DIAGNOSTICS);
-  // Provision, import, revoke/archive, installation, commissioning, suspension,
+  // Provision, import, retirement, installation, commissioning, suspension,
   // activation, and credential rotation all share this exact server guard.
   const canManageDeviceLifecycle = hasPermission(PERMISSIONS.TELEMETRY_DEVICES_MANAGE);
   const canPlanFirmware = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_FIRMWARE);
@@ -746,7 +763,6 @@ export function IotDevicesPage() {
   const canRequestRemoteCommand = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_COMMAND);
   const canCreate = canManageDeviceLifecycle;
   const canUpdate = canManageDeviceLifecycle;
-  const canDelete = canManageDeviceLifecycle;
   const canGovernInstallations = canManageDeviceLifecycle;
   const lifecyclePermissionRef = useRef(canManageDeviceLifecycle);
   lifecyclePermissionRef.current = canManageDeviceLifecycle;
@@ -843,6 +859,8 @@ export function IotDevicesPage() {
   const [confirmTarget, setConfirmTarget] = useState<ConfirmActionTarget | null>(null);
   const confirmTargetRef = useRef<ConfirmActionTarget | null>(null);
   confirmTargetRef.current = confirmTarget;
+  const [retirementTarget, setRetirementTarget] = useState<DeviceCommandRecord | null>(null);
+  const [retirementForm, setRetirementForm] = useState<RetirementFormState>(newRetirementForm);
 
   useEffect(() => {
     if (canManageDeviceLifecycle) return;
@@ -856,7 +874,7 @@ export function IotDevicesPage() {
     commissioningRefreshContext.current = { record: null, generation: commissioningRefreshContext.current.generation + 1, sessionGeneration: null, target: null };
     suspensionRefreshContext.current = { deviceId: null, generation: suspensionRefreshContext.current.generation + 1, sessionGeneration: null, target: null };
     activationRefreshContext.current = { deviceId: null, generation: activationRefreshContext.current.generation + 1, sessionGeneration: null, target: null };
-    setAssignTarget(null); setRemovalTarget(null); setCommissionTarget(null); setConfirmTarget(null);
+    setAssignTarget(null); setRemovalTarget(null); setCommissionTarget(null); setConfirmTarget(null); setRetirementTarget(null);
     setAssignmentError(null); setRemovalError(null); setCommissioningError(null); setSuspensionError(null); setActivationError(null);
     setAssignmentRecord(null); setRemovalRecord(null); setCommissioningRecord(null); setSuspensionReceiptId(null); setActivationReceiptId(null);
     setAssignmentRefreshWarning(false); setRemovalRefreshWarning(false); setCommissioningRefreshWarning(false); setSuspensionRefreshWarning(false); setActivationRefreshWarning(false);
@@ -1058,12 +1076,22 @@ export function IotDevicesPage() {
       await refreshAll();
     },
   });
-  const archiveMut = useMutation({
-    mutationFn: (id: string | number) => telematicsService.archiveDevice(id),
-    onSuccess: async () => {
-      setConfirmTarget(null);
-      setSelectedId(null);
-      setNotice("Device credentials revoked and device archived permanently.");
+  const retirementMut = useMutation({
+    mutationFn: ({ device, form }: { device: DeviceCommandRecord; form: RetirementFormState }) => {
+      if (device.rowVersion == null) throw new Error("Reload the device to obtain its current revision before retirement.");
+      return telematicsService.retireDevice(device.id, {
+        ...form,
+        expectedRowVersion: device.rowVersion,
+        effectiveAt: new Date().toISOString(),
+      });
+    },
+    retry: false,
+    onSuccess: async (result) => {
+      setRetirementTarget(null);
+      setRetirementForm(newRetirementForm());
+      setNotice(result.idempotentReplay
+        ? `Retirement receipt ${result.retirement.id} was already recorded.`
+        : `Device retired with receipt ${result.retirement.id}. Physical disposition remains unverified.`);
       await refreshAll();
     },
   });
@@ -1282,11 +1310,27 @@ export function IotDevicesPage() {
     });
   };
 
+  const openRetirement = (target: DeviceCommandRecord) => {
+    if (!canManageDeviceLifecycle || target.currentInstallationId || target.assignedVehicleId || target.rowVersion == null) return;
+    retirementMut.reset();
+    setRetirementForm(newRetirementForm());
+    setRetirementTarget(target);
+  };
+
+  const submitRetirement = (event: FormEvent) => {
+    event.preventDefault();
+    if (!canManageDeviceLifecycle || !retirementTarget || retirementMut.isPending) return;
+    const reason = retirementForm.retirementReason.trim();
+    const source = retirementForm.sourceReference.trim();
+    const confirmation = retirementForm.safetyConfirmation.trim();
+    retirementMut.mutate({ device: retirementTarget, form: { ...retirementForm,
+      retirementReason: reason, sourceReference: source, safetyConfirmation: confirmation } });
+  };
+
   // DEF-023: run/cancel the confirmed lifecycle action through the existing mutations.
   const runConfirmedAction = () => {
     if (!confirmTarget) return;
-    if (confirmTarget.action === "archive" && canDelete) archiveMut.mutate(confirmTarget.device.id);
-    else if (confirmTarget.action === "suspend" && canManageDeviceLifecycle && lifecyclePermissionRef.current && !suspensionSession.current.pending) {
+    if (confirmTarget.action === "suspend" && canManageDeviceLifecycle && lifecyclePermissionRef.current && !suspensionSession.current.pending) {
       if (confirmTargetRef.current !== confirmTarget) return;
       const target = confirmTarget;
       const admitted = { deviceId: String(target.device.id), generation: suspensionSession.current.generation + 1, pending: true, target };
@@ -1299,8 +1343,7 @@ export function IotDevicesPage() {
   };
   const cancelConfirmedAction = () => {
     if (!confirmTarget) return;
-    if (confirmTarget.action === "archive") archiveMut.reset();
-    else if (confirmTarget.action === "suspend") {
+    if (confirmTarget.action === "suspend") {
       if (suspensionSession.current.pending) return;
       suspensionSession.current = { deviceId: null, generation: suspensionSession.current.generation + 1, pending: false, target: null };
       setSuspensionError(null); suspendMut.reset();
@@ -1309,18 +1352,14 @@ export function IotDevicesPage() {
     setConfirmTarget(null);
   };
   const confirmBusy =
-    confirmTarget?.action === "archive" ? archiveMut.isPending
-    : confirmTarget?.action === "suspend" ? suspendMut.isPending
+    confirmTarget?.action === "suspend" ? suspendMut.isPending
     : confirmTarget?.action === "rotate-credentials" ? rotateSecretMut.isPending
     : false;
   const confirmActionError =
-    confirmTarget?.action === "archive" ? archiveMut.error
-    : confirmTarget?.action === "suspend" ? suspensionError
+    confirmTarget?.action === "suspend" ? suspensionError
     : confirmTarget?.action === "rotate-credentials" ? rotateSecretMut.error
     : null;
-  const confirmAllowed = confirmTarget?.action === "archive"
-    ? canDelete
-    : confirmTarget?.action === "suspend" || confirmTarget?.action === "rotate-credentials"
+  const confirmAllowed = confirmTarget?.action === "suspend" || confirmTarget?.action === "rotate-credentials"
       ? canManageDeviceLifecycle
       : false;
 
@@ -1870,13 +1909,12 @@ export function IotDevicesPage() {
 	                  selectedRecord
 	                    ? buildActionContracts(selectedRecord, {
 	                      canUpdate,
-	                      canDelete,
 	                      canAssign: canGovernInstallations,
 	                      canManageLifecycle: canManageDeviceLifecycle,
 	                      canRecover,
 	                      onAssign: () => openInstallation(selectedRecord),
 	                      onUnassign: () => openRemoval(selectedRecord),
-	                      onArchive: () => canDelete && openConfirm({ action: "archive", device: selectedRecord }),
+	                      onRetire: () => openRetirement(selectedRecord),
 	                      onMarkInstalled: () => openCommissioning(selectedRecord),
 	                      onRefresh: () => selectedRecord && void refreshMut.mutate(selectedRecord.id),
 	                      onFlagAttention: () => canRecover && setAttentionTarget(selectedRecord),
@@ -2068,6 +2106,56 @@ export function IotDevicesPage() {
             <FormField label="Corrected IMEI"><input className="field w-full" value={quarantineResolution.correctedImei} onChange={(event) => setQuarantineResolution((value) => ({ ...value, correctedImei: event.target.value }))} /></FormField>
           </div>
           <FormField label="Resolution notes"><textarea className="field h-28 w-full resize-none" minLength={8} maxLength={2000} required value={quarantineResolution.resolutionNotes} onChange={(event) => setQuarantineResolution((value) => ({ ...value, resolutionNotes: event.target.value }))} /></FormField>
+        </ModalForm>
+      ) : null}
+
+      {retirementTarget && canManageDeviceLifecycle ? (
+        <ModalForm
+          title={`Retire ${retirementTarget.deviceName}`}
+          onClose={() => { if (!retirementMut.isPending) { setRetirementTarget(null); retirementMut.reset(); } }}
+          onSubmit={submitRetirement}
+          submitLabel="Retire device permanently"
+          busy={retirementMut.isPending}
+          error={retirementMut.error instanceof Error ? retirementMut.error.message : null}
+        >
+          <p className="rounded-xl border border-amber-300/30 bg-amber-500/10 p-3 text-sm text-amber-100">
+            This records software retirement, invalidates all device credentials, and ends the current SIM/eSIM profile. The disposition selection is a plan only; physical disposal and certification remain unverified.
+          </p>
+          <InfoBlock title="Retirement preconditions" items={[
+            ["Device serial", retirementTarget.serialNumber],
+            ["Current installation", "None recorded"],
+            ["Device revision", String(retirementTarget.rowVersion ?? "Unavailable")],
+            ["Connectivity profile", "Will end at the retirement time if one is active"],
+          ]} />
+          <FormField label="Disposition plan">
+            <select className="field w-full" required value={retirementForm.dispositionPlan}
+              onChange={event => setRetirementForm(form => ({ ...form, dispositionPlan: event.target.value as RetirementFormState["dispositionPlan"] }))}
+              disabled={retirementMut.isPending}>
+              <option value="ReturnToVendor">Return to vendor</option>
+              <option value="Recycle">Recycle</option>
+              <option value="SecureStorage">Secure storage</option>
+              <option value="Other">Other</option>
+            </select>
+          </FormField>
+          <FormField label="Retirement reason">
+            <textarea className="field h-24 w-full resize-none" required minLength={5} maxLength={500}
+              value={retirementForm.retirementReason}
+              onChange={event => setRetirementForm(form => ({ ...form, retirementReason: event.target.value }))}
+              disabled={retirementMut.isPending} />
+          </FormField>
+          <FormField label="Source reference">
+            <input className="field w-full" required minLength={3} maxLength={240}
+              value={retirementForm.sourceReference}
+              onChange={event => setRetirementForm(form => ({ ...form, sourceReference: event.target.value }))}
+              disabled={retirementMut.isPending} />
+          </FormField>
+          <FormField label={`Type RETIRE ${retirementTarget.serialNumber} to confirm`}>
+            <input className="field w-full font-mono" required autoComplete="off"
+              pattern={(`RETIRE ${retirementTarget.serialNumber}`).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}
+              value={retirementForm.safetyConfirmation}
+              onChange={event => setRetirementForm(form => ({ ...form, safetyConfirmation: event.target.value }))}
+              disabled={retirementMut.isPending} />
+          </FormField>
         </ModalForm>
       ) : null}
 
@@ -2596,13 +2684,28 @@ function DeviceDetailDrawer({
       </div>
 
       <div className="mt-6 grid gap-4 xl:grid-cols-2">
-        <PanelSection title="Assignment History">
-          <TimelineList rows={detail.assignmentHistory.map((row) => ({
-            id: String(row.id ?? ""),
-            title: `${cell(row.fromState)} → ${cell(row.toState)}`,
-            subtitle: cell(row.reason) !== "—" ? cell(row.reason) : cell(row.reasonCode),
-            meta: cell(row.occurredAt) === "—" ? "" : String(row.occurredAt),
-          }))} emptyText="No assignment history available for this device." />
+        {detail.retirementRecord ? (
+          <PanelSection title="Retirement Receipt">
+            <MiniGrid rows={[
+              ["Receipt", detail.retirementRecord.id],
+              ["Effective", new Date(detail.retirementRecord.effectiveAt).toLocaleString()],
+              ["Reason", detail.retirementRecord.retirementReason],
+              ["Disposition plan", detail.retirementRecord.dispositionPlan.replace(/([a-z])([A-Z])/g, "$1 $2")],
+              ["Source", detail.retirementRecord.sourceReference],
+              ["Credentials", detail.retirementRecord.credentialsRevoked ? "Revoked" : "Unverified"],
+              ["Physical disposition", detail.retirementRecord.physicalDispositionStatus],
+              ["Certification", detail.retirementRecord.certificationClaim ? "Claimed" : "Not claimed"],
+            ]} />
+            <p className="mt-3 text-xs text-amber-200">The disposition is an operator plan. This receipt does not prove return, recycling, storage, destruction, or hardware certification.</p>
+          </PanelSection>
+        ) : null}
+        <PanelSection title="Device Lifecycle History">
+          <TimelineList rows={detail.lifecycleHistory.map((row) => ({
+            id: row.id,
+            title: `${row.fromState ?? "Initial"} → ${row.toState}`,
+            subtitle: row.reason || row.reasonCode,
+            meta: row.occurredAt,
+          }))} emptyText="No lifecycle history is available for this device." />
         </PanelSection>
         <PanelSection title="Health Timeline">
           {/* Live: real telemetry alerts for this device (empty when none exist). */}

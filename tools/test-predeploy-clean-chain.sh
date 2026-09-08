@@ -854,6 +854,28 @@ BEGIN
     RAISE EXCEPTION 'Clean-chain Stage122 installation work-link boundary failed';
   END IF;
 
+  IF to_regclass('public.device_retirement_records') IS NULL
+     OR NOT COALESCE((SELECT c.relrowsecurity AND c.relforcerowsecurity
+                        FROM pg_class c WHERE c.oid=to_regclass('public.device_retirement_records')),false)
+     OR NOT has_table_privilege('opstrax_app','device_retirement_records','SELECT')
+     OR has_table_privilege('opstrax_app','device_retirement_records','INSERT,UPDATE,DELETE')
+     OR NOT has_table_privilege('opstrax_system','device_retirement_records','SELECT,INSERT')
+     OR has_table_privilege('opstrax_system','device_retirement_records','UPDATE,DELETE')
+     OR (SELECT count(*) FROM pg_policies p
+           WHERE p.schemaname='public' AND p.tablename='device_retirement_records'
+             AND p.policyname IN ('tenant_ticket_app','system_control_plane'))<>2
+     OR to_regprocedure('stage123_guard_device_retirement()') IS NULL
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger
+                      WHERE tgrelid=to_regclass('public.device_retirement_records')
+                        AND tgname='trg_stage123_guard_device_retirement'
+                        AND NOT tgisinternal AND tgenabled<>'D')
+     OR EXISTS (SELECT 1 FROM device_retirement_records
+                 WHERE NOT credentials_revoked OR record_status<>'OperatorRecorded'
+                    OR physical_disposition_status<>'Unverified'
+                    OR physical_disposition_claim OR certification_claim) THEN
+    RAISE EXCEPTION 'Clean-chain Stage123 device-retirement boundary failed';
+  END IF;
+
   IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND roles='{public}'::name[])
      OR EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public'
         AND (COALESCE(qual,'') LIKE '%app.current_tenant_id%'

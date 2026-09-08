@@ -68,7 +68,7 @@ assert.match(service, /device-installations\/import-commit[\s\S]*timeout: 120000
 assert.match(importer, /action: "create" \| "update" \| "skip" \| "error"/, "Already-recorded rows have a neutral preview state");
 assert.match(importer, /config\.atomic === true && invalid > 0/, "Atomic imports cannot commit a known-invalid preview");
 assert.match(command, /exportTelemetryClusterCsv\(kind,[\s\S]*Export every authorized row matching the current search and filter/, "Paged export fetches the complete authorized result set");
-assert.match(devices, /Revoke & Archive[\s\S]*Use Suspend for a reversible stop/, "Permanent credential revocation is not mislabeled as reversible archive");
+assert.match(devices, /Retire device[\s\S]*Records software retirement[\s\S]*Physical disposition remains unverified/, "Permanent credential revocation is presented as governed software retirement without a physical claim");
 
 assert.match(service, /pageSize: 10_000[\s\S]*purpose: "export"[\s\S]*new Set\(identities\)\.size[\s\S]*exportComplete/, "Cluster export uses one bounded snapshot and fails closed on duplicate or incomplete identities");
 assert.match(service, /purpose: "export"/, "Cluster export declares its server-enforced export purpose");

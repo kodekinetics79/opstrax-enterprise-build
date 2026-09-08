@@ -47,6 +47,7 @@ public sealed class TelemetrySchemaService(Database db)
         new("eld_devices", "hmac_previous_valid_until", "TIMESTAMPTZ NULL"),
         new("eld_devices", "last_seen_at", "TIMESTAMPTZ NULL"),
         new("eld_devices", "revoked_at",   "TIMESTAMPTZ NULL"),
+        new("eld_devices", "retired_at",   "TIMESTAMPTZ NULL"),
         new("eld_devices", "updated_at",   "TIMESTAMPTZ NULL"),
         new("eld_devices", "deleted_at",   "TIMESTAMPTZ NULL"),
         // Stage119 enriches the Stage66 durable command ledger. Production gets
@@ -539,6 +540,33 @@ public sealed class TelemetrySchemaService(Database db)
             UNIQUE(company_id,work_package_id), UNIQUE(company_id,installation_id),
             UNIQUE(company_id,idempotency_key)
         )",
+
+        @"CREATE TABLE IF NOT EXISTS device_retirement_records (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL, branch_id BIGINT NULL, device_id BIGINT NOT NULL,
+            device_serial_snapshot VARCHAR(120) NOT NULL, retirement_reason VARCHAR(500) NOT NULL,
+            disposition_plan VARCHAR(32) NOT NULL, source_reference VARCHAR(240) NOT NULL,
+            effective_at TIMESTAMPTZ NOT NULL, prior_status VARCHAR(40) NOT NULL,
+            prior_device_state VARCHAR(40) NOT NULL, row_version_before BIGINT NOT NULL,
+            row_version_after BIGINT NOT NULL, ended_connectivity_profile_id BIGINT NULL,
+            credentials_revoked BOOLEAN NOT NULL DEFAULT TRUE,
+            record_status VARCHAR(32) NOT NULL DEFAULT 'OperatorRecorded',
+            physical_disposition_status VARCHAR(32) NOT NULL DEFAULT 'Unverified',
+            physical_disposition_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            certification_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            idempotency_key UUID NOT NULL, retired_by BIGINT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT ck_stage123_retirement_disposition CHECK
+              (disposition_plan IN ('ReturnToVendor','Recycle','SecureStorage','Other')),
+            CONSTRAINT ck_stage123_retirement_version CHECK
+              (row_version_before>=1 AND row_version_after=row_version_before+1),
+            CONSTRAINT ck_stage123_credentials_revoked CHECK (credentials_revoked=TRUE),
+            CONSTRAINT ck_stage123_record_status CHECK (record_status='OperatorRecorded'),
+            CONSTRAINT ck_stage123_physical_status CHECK (physical_disposition_status='Unverified'),
+            CONSTRAINT ck_stage123_no_physical_claim CHECK (physical_disposition_claim=FALSE),
+            CONSTRAINT ck_stage123_no_certification_claim CHECK (certification_claim=FALSE),
+            UNIQUE(company_id,device_id), UNIQUE(company_id,idempotency_key)
+        )",
     ];
 
     private static readonly string[] Indexes =
@@ -615,6 +643,8 @@ public sealed class TelemetrySchemaService(Database db)
           ON device_installation_artifact_references(company_id,work_package_id,captured_at DESC,id DESC)",
         @"CREATE INDEX IF NOT EXISTS ix_stage122_links_device_recent
           ON device_installation_work_package_links(company_id,device_id,linked_at DESC,id DESC)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage123_retirement_recent
+          ON device_retirement_records(company_id,effective_at DESC,id DESC)",
     ];
 
     private static readonly string[] Seeds =

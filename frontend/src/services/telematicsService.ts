@@ -582,7 +582,51 @@ export type DeviceDetailRecord = {
   sensorReadings: TelematicsSensorSeedRecord[];
   providers: TelematicsProviderSeedRecord[];
   auditLog: AnyRecord[];
-  assignmentHistory: AnyRecord[];
+  retirementRecord: DeviceRetirementRecord | null;
+  lifecycleHistory: DeviceLifecycleTransitionRecord[];
+};
+
+export type DeviceLifecycleTransitionRecord = {
+  id: string;
+  fromState: string | null;
+  toState: string;
+  reasonCode: string;
+  reason: string | null;
+  actorUserId: string | null;
+  correlationId: string;
+  occurredAt: string;
+};
+
+export type DeviceRetirementRecord = {
+  id: string;
+  deviceId: string;
+  deviceSerial: string;
+  retirementReason: string;
+  dispositionPlan: "ReturnToVendor" | "Recycle" | "SecureStorage" | "Other";
+  sourceReference: string;
+  effectiveAt: string;
+  priorStatus: string;
+  priorDeviceState: string;
+  rowVersionBefore: number;
+  rowVersionAfter: number;
+  endedConnectivityProfileId: string | null;
+  credentialsRevoked: true;
+  recordStatus: "OperatorRecorded";
+  physicalDispositionStatus: "Unverified";
+  physicalDispositionClaim: false;
+  certificationClaim: false;
+  retiredBy: string;
+  createdAt: string;
+};
+
+export type DeviceRetirementInput = {
+  retirementReason: string;
+  dispositionPlan: DeviceRetirementRecord["dispositionPlan"];
+  sourceReference: string;
+  effectiveAt: string;
+  expectedRowVersion: number;
+  idempotencyKey: string;
+  safetyConfirmation: string;
 };
 
 export type DeviceConnectivityProfileRecord = {
@@ -905,6 +949,66 @@ function mapConnectivityObservation(raw: AnyRecord): DeviceConnectivityObservati
     providerVerifiedClaim: false,
     physicalConnectivityClaim: false,
     certificationClaim: false,
+  };
+}
+
+function mapDeviceLifecycleTransition(raw: AnyRecord): DeviceLifecycleTransitionRecord {
+  const row = normalizeKeys(raw);
+  const id = canonicalDeviceLifecycleId(row.id);
+  const occurredAt = recordedDeviceCheckIn(row.occurred_at, Number.MAX_SAFE_INTEGER);
+  if (id === null || occurredAt === null || typeof row.to_state !== "string" || !row.to_state.trim() ||
+      typeof row.reason_code !== "string" || !row.reason_code.trim() ||
+      typeof row.correlation_id !== "string" || !row.correlation_id.trim())
+    throw new Error("Device lifecycle history was incomplete or malformed.");
+  return {
+    id,
+    fromState: row.from_state == null ? null : String(row.from_state),
+    toState: row.to_state,
+    reasonCode: row.reason_code,
+    reason: row.reason == null ? null : String(row.reason),
+    actorUserId: row.actor_user_id == null ? null : String(row.actor_user_id),
+    correlationId: row.correlation_id,
+    occurredAt,
+  };
+}
+
+function mapDeviceRetirement(raw: AnyRecord): DeviceRetirementRecord {
+  const row = normalizeKeys(raw);
+  const id = canonicalDeviceLifecycleId(row.id);
+  const deviceId = canonicalDeviceLifecycleId(row.device_id);
+  const retiredBy = canonicalDeviceLifecycleId(row.retired_by);
+  const effectiveAt = recordedDeviceCheckIn(row.effective_at, Number.MAX_SAFE_INTEGER);
+  const createdAt = recordedDeviceCheckIn(row.created_at, Number.MAX_SAFE_INTEGER);
+  const before = parseRowVersion(row.row_version_before);
+  const after = parseRowVersion(row.row_version_after);
+  const disposition = row.disposition_plan;
+  if (id === null || deviceId === null || retiredBy === null || effectiveAt === null || createdAt === null ||
+      before == null || after !== before + 1 ||
+      !["ReturnToVendor", "Recycle", "SecureStorage", "Other"].includes(String(disposition)) ||
+      row.credentials_revoked !== true || row.record_status !== "OperatorRecorded" ||
+      row.physical_disposition_status !== "Unverified" || row.physical_disposition_claim !== false ||
+      row.certification_claim !== false)
+    throw new Error("The server did not preserve the governed unverified retirement boundary.");
+  return {
+    id,
+    deviceId,
+    deviceSerial: String(row.device_serial_snapshot ?? ""),
+    retirementReason: String(row.retirement_reason ?? ""),
+    dispositionPlan: disposition as DeviceRetirementRecord["dispositionPlan"],
+    sourceReference: String(row.source_reference ?? ""),
+    effectiveAt,
+    priorStatus: String(row.prior_status ?? ""),
+    priorDeviceState: String(row.prior_device_state ?? ""),
+    rowVersionBefore: before,
+    rowVersionAfter: after,
+    endedConnectivityProfileId: row.ended_connectivity_profile_id == null ? null : String(row.ended_connectivity_profile_id),
+    credentialsRevoked: true,
+    recordStatus: "OperatorRecorded",
+    physicalDispositionStatus: "Unverified",
+    physicalDispositionClaim: false,
+    certificationClaim: false,
+    retiredBy,
+    createdAt,
   };
 }
 
@@ -2557,9 +2661,12 @@ export const telematicsService = {
       sensorReadings: [], // no standalone sensor-reading endpoint
       providers: await buildProviderAuditForDevice(scoped, session),
       auditLog: [], // no device audit-log endpoint
-      assignmentHistory: Array.isArray(detail.assignment_history)
-        ? (detail.assignment_history as AnyRecord[]).map(normalizeKeys)
-        : [],
+      retirementRecord: detail.retirement_record && typeof detail.retirement_record === "object"
+        ? mapDeviceRetirement(detail.retirement_record as AnyRecord) : null,
+      lifecycleHistory: (Array.isArray(detail.lifecycle_history)
+        ? detail.lifecycle_history as AnyRecord[]
+        : Array.isArray(detail.assignment_history) ? detail.assignment_history as AnyRecord[] : [])
+        .map(mapDeviceLifecycleTransition),
     };
   },
 
@@ -3108,6 +3215,38 @@ export const telematicsService = {
     // POST /api/telemetry/devices/{id}/revoke (revocation is the real "archive").
     await unwrap<AnyRecord>(apiClient.post(`/api/telemetry/devices/${id}/revoke`, {}));
     return { success: true };
+  },
+
+  async retireDevice(deviceId: string | number, input: DeviceRetirementInput) {
+    const session = getSession();
+    ensureManagementAccess(session);
+    const requestedId = canonicalDeviceLifecycleId(deviceId);
+    if (requestedId === null) throw new Error("A valid device is required before retirement.");
+    if (!Number.isInteger(input.expectedRowVersion) || input.expectedRowVersion < 1)
+      throw new Error("Reload the device to obtain its current revision before retirement.");
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.idempotencyKey))
+      throw new Error("The retirement form session is invalid. Close and reopen it.");
+    const payload = normalizeKeys(await unwrap<AnyRecord>(apiClient.post(
+      `/api/telemetry/devices/${requestedId}/retire`, {
+        ...input,
+        retirementReason: input.retirementReason.trim(),
+        sourceReference: input.sourceReference.trim(),
+        safetyConfirmation: input.safetyConfirmation.trim(),
+      })));
+    if (payload.credentials_revoked !== true || payload.physical_disposition_claim !== false ||
+        payload.certification_claim !== false || !payload.retirement || typeof payload.retirement !== "object")
+      throw new Error("The server did not return a truthful retirement acknowledgement.");
+    const retirement = mapDeviceRetirement(payload.retirement as AnyRecord);
+    if (retirement.deviceId !== requestedId || retirement.rowVersionBefore !== input.expectedRowVersion ||
+        retirement.retirementReason !== input.retirementReason.trim() ||
+        retirement.dispositionPlan !== input.dispositionPlan ||
+        retirement.sourceReference !== input.sourceReference.trim())
+      throw new Error("The retirement receipt did not match the submitted device revision and facts.");
+    return {
+      retirement,
+      idempotentReplay: payload.idempotent_replay === true,
+      note: String(payload.note ?? "Software retirement recorded; physical disposition remains unverified."),
+    };
   },
 
   async unassignDevice(deviceId: string | number, input: DeviceInstallationRemovalInput): Promise<DeviceRemovalReceipt> {

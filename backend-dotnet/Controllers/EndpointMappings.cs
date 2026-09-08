@@ -273,6 +273,7 @@ public static partial class EndpointMappings
         app.MapPost("/api/telemetry/devices/{id:long}/installation-work-packages/{workPackageId:long}/artifact-references", DeviceInstallationArtifactReferenceCreate);
         app.MapPost("/api/telemetry/devices/{id:long}/installation-work-packages/{workPackageId:long}/installation-links", DeviceInstallationWorkPackageLinkCreate);
         app.MapPost("/api/telemetry/devices/{id:long}/connectivity-profiles", DeviceConnectivityProfileReplace);
+        app.MapPost("/api/telemetry/devices/{id:long}/retire", DeviceRetirementCreate);
         app.MapPost("/api/telemetry/firmware-campaigns", DeviceFirmwareCampaignCreate);
         app.MapPost("/api/telemetry/devices/{id:long}/rma-cases", DeviceRmaCaseCreate);
         app.MapPost("/api/telemetry/rma-cases/{caseId:long}/events", DeviceRmaEventCreate);
@@ -19940,7 +19941,7 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
             @"SELECT e.id, e.device_serial, e.imei, e.device_category, e.device_model, e.manufacturer,
                      e.hardware_revision, e.provider, e.status, e.device_state,
                      current_install.vehicle_id, active_dispatch.driver_id, e.firmware_version,
-                     e.last_seen_at, e.revoked_at, e.created_at, e.row_version,
+                     e.last_seen_at, e.revoked_at, e.retired_at, e.created_at, e.row_version,
                      current_install.id current_installation_id,
                      current_install.status current_installation_status,
                      current_install.device_role,current_install.is_primary,
@@ -20408,7 +20409,7 @@ SELECT e.id, e.device_serial, e.imei, e.device_category, e.device_model, e.manuf
         var rows = await db.QueryAsync(@"
 SELECT e.device_serial, e.imei, e.device_category, e.manufacturer, e.device_model,
        e.hardware_revision, e.provider, e.firmware_version, e.status, e.device_state, b.branch_code,
-       v.vehicle_code, d.full_name driver_name, e.last_seen_at, e.revoked_at, e.created_at
+       v.vehicle_code, d.full_name driver_name, e.last_seen_at, e.revoked_at, e.retired_at, e.created_at
 FROM eld_devices e
 LEFT JOIN branches b ON b.id=e.branch_id AND b.company_id=e.company_id
 LEFT JOIN LATERAL (
@@ -20702,7 +20703,7 @@ LIMIT 100000",
             @"SELECT e.id, e.device_serial, e.imei, e.device_category, e.device_model, e.manufacturer,
                      e.hardware_revision, e.provider, e.status, e.device_state,
                      current_install.vehicle_id, active_dispatch.driver_id, e.firmware_version, e.notes,
-                     e.last_seen_at, e.revoked_at, e.created_at, e.row_version,
+                     e.last_seen_at, e.revoked_at, e.retired_at, e.created_at, e.row_version,
                      EXTRACT(EPOCH FROM (NOW() - e.last_seen_at))::BIGINT seconds_since_ping,
                      " + (canReadDiagnostics
                          ? "(SELECT COUNT(*) FROM fault_codes fc WHERE fc.company_id=e.company_id AND fc.device_id=e.device_serial AND LOWER(fc.status)='active')"
@@ -20889,6 +20890,10 @@ LIMIT 100000",
                  AND (@branchId::BIGINT IS NULL OR branch_id=@branchId)
                ORDER BY created_at DESC,id DESC LIMIT 100",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
+        var retirementRecord = await db.QuerySingleAsync(
+            RetirementProjection + @" WHERE company_id=@cid AND device_id=@id
+                AND (@branchId::BIGINT IS NULL OR branch_id=@branchId)",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
         var current = history.FirstOrDefault(row =>
             row.GetValueOrDefault("effectiveTo") is null or DBNull &&
             row.GetValueOrDefault("status")?.ToString() is "Installed" or "Verified");
@@ -20920,6 +20925,8 @@ LIMIT 100000",
                 physicalOutcomeClaim = false,
                 note = "Command admission requires current exact-device capability evidence. A recorded request does not prove dispatch, acknowledgement, application, or physical outcome."
             },
+            retirementRecord,
+            lifecycleHistory = transitions,
             assignmentHistory = transitions
         }, "Device"));
     }
