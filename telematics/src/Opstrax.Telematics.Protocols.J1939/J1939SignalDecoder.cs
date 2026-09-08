@@ -11,14 +11,17 @@ namespace Opstrax.Telematics.Protocols.J1939;
 public static class J1939SignalDecoder
 {
     public const int ElectronicEngineController1Pgn = 61444;
+    public const int EngineHoursRevolutionsPgn = 65253;
+    public const int VehicleElectricalPower1Pgn = 65271;
     public const int EngineSpeedSpn = 190;
+    public const int EngineTotalHoursSpn = 247;
+    public const int BatteryPotentialSpn = 168;
 
-    private const ushort MaximumValidTwoByteValue = 0xFAFF;
-    private const ushort MinimumParameterSpecificValue = 0xFB00;
-    private const ushort MaximumParameterSpecificValue = 0xFDFF;
-    private const ushort MinimumErrorIndicatorValue = 0xFE00;
-    private const ushort MaximumErrorIndicatorValue = 0xFEFF;
-    private const ushort MinimumNotAvailableValue = 0xFF00;
+    private const byte MaximumValidMostSignificantByte = 0xFA;
+    private const byte MinimumParameterSpecificMostSignificantByte = 0xFB;
+    private const byte MaximumParameterSpecificMostSignificantByte = 0xFD;
+    private const byte ErrorIndicatorMostSignificantByte = 0xFE;
+    private const byte NotAvailableMostSignificantByte = 0xFF;
 
     private static readonly IReadOnlyList<J1939SignalDefinition> Catalog = Array.AsReadOnly(
     [
@@ -34,6 +37,34 @@ public static class J1939SignalDecoder
             Resolution: 0.125d,
             Offset: 0d,
             Unit: "rpm",
+            Endianness: J1939SignalEndianness.LittleEndian,
+            SpecificationReference: "SAE J1939DA; Cummins A079E226 section 6.3.4"),
+        new J1939SignalDefinition(
+            EngineHoursRevolutionsPgn,
+            "Engine Hours, Revolutions (HOURS)",
+            PgnLengthBytes: 8,
+            EngineTotalHoursSpn,
+            "Engine Total Hours of Operation",
+            VssSignals.EngineHours,
+            StartByteOneBased: 1,
+            LengthBytes: 4,
+            Resolution: 0.05d,
+            Offset: 0d,
+            Unit: "h",
+            Endianness: J1939SignalEndianness.LittleEndian,
+            SpecificationReference: "SAE J1939DA; Cummins A079E226 section 6.3.4"),
+        new J1939SignalDefinition(
+            VehicleElectricalPower1Pgn,
+            "Vehicle Electrical Power 1 (VEP1)",
+            PgnLengthBytes: 8,
+            BatteryPotentialSpn,
+            "Battery Potential / Power Input 1",
+            VssSignals.BatteryVoltage,
+            StartByteOneBased: 5,
+            LengthBytes: 2,
+            Resolution: 0.05d,
+            Offset: 0d,
+            Unit: "V",
             Endianness: J1939SignalEndianness.LittleEndian,
             SpecificationReference: "SAE J1939DA; Cummins A079E226 section 6.3.4"),
     ]);
@@ -88,19 +119,26 @@ public static class J1939SignalDecoder
         ReadOnlySpan<byte> payload,
         J1939SignalDefinition definition)
     {
-        if (definition.LengthBytes != 2 || definition.Endianness != J1939SignalEndianness.LittleEndian)
+        if (definition.LengthBytes is not (2 or 4) ||
+            definition.Endianness != J1939SignalEndianness.LittleEndian)
             throw new InvalidOperationException("The J1939 signal catalog contains a decoder shape that is not implemented.");
 
         var offset = definition.StartByteOneBased - 1;
-        var rawValue = BinaryPrimitives.ReadUInt16LittleEndian(payload.Slice(offset, definition.LengthBytes));
-        var status = rawValue switch
+        var encoded = payload.Slice(offset, definition.LengthBytes);
+        var rawValue = definition.LengthBytes switch
         {
-            <= MaximumValidTwoByteValue => J1939SignalStatus.Valid,
-            >= MinimumParameterSpecificValue and <= MaximumParameterSpecificValue =>
+            2 => BinaryPrimitives.ReadUInt16LittleEndian(encoded),
+            4 => BinaryPrimitives.ReadUInt32LittleEndian(encoded),
+            _ => throw new InvalidOperationException("The J1939 signal catalog contains an unsupported numeric width."),
+        };
+        var mostSignificantByte = encoded[^1];
+        var status = mostSignificantByte switch
+        {
+            <= MaximumValidMostSignificantByte => J1939SignalStatus.Valid,
+            >= MinimumParameterSpecificMostSignificantByte and <= MaximumParameterSpecificMostSignificantByte =>
                 J1939SignalStatus.ParameterSpecificIndicator,
-            >= MinimumErrorIndicatorValue and <= MaximumErrorIndicatorValue =>
-                J1939SignalStatus.ErrorIndicator,
-            >= MinimumNotAvailableValue => J1939SignalStatus.NotAvailable,
+            ErrorIndicatorMostSignificantByte => J1939SignalStatus.ErrorIndicator,
+            NotAvailableMostSignificantByte => J1939SignalStatus.NotAvailable,
         };
 
         var value = status == J1939SignalStatus.Valid
@@ -146,7 +184,7 @@ public sealed record J1939SignalDefinition(
 public sealed record J1939SignalObservation(
     J1939SignalDefinition Definition,
     J1939SignalStatus Status,
-    ushort RawValue,
+    ulong RawValue,
     double? Value);
 
 /// <summary>

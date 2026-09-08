@@ -8,9 +8,12 @@ public sealed class J1939SignalDecoderTests
     private static readonly DateTimeOffset T0 = new(2026, 9, 8, 12, 0, 0, TimeSpan.Zero);
 
     [Fact]
-    public void Catalog_declares_only_the_reviewed_engine_speed_mapping()
+    public void Catalog_declares_only_the_three_reviewed_signal_mappings()
     {
-        var definition = Assert.Single(J1939SignalDecoder.SupportedSignals);
+        Assert.Equal(3, J1939SignalDecoder.SupportedSignals.Count);
+        var definition = Assert.Single(
+            J1939SignalDecoder.SupportedSignals,
+            entry => entry.Spn == J1939SignalDecoder.EngineSpeedSpn);
 
         Assert.Equal(J1939SignalDecoder.ElectronicEngineController1Pgn, definition.Pgn);
         Assert.Equal("Electronic Engine Controller 1 (EEC1)", definition.PgnName);
@@ -39,12 +42,80 @@ public sealed class J1939SignalDecoderTests
         Assert.Same(message, result!.Message);
         var observation = Assert.Single(result.Observations);
         Assert.Equal(J1939SignalStatus.Valid, observation.Status);
-        Assert.Equal((ushort)12000, observation.RawValue);
+        Assert.Equal(12000UL, observation.RawValue);
         Assert.Equal(1500d, observation.Value);
         Assert.Equal(VssSignals.EngineSpeed, observation.Definition.CanonicalPath);
         Assert.Equal("capture-eec1", Assert.Single(result.Message.Frames).CaptureReference);
         Assert.Equal((byte)0x00, result.Message.SourceAddress);
         Assert.Equal(T0, result.Message.CompletedAt);
+    }
+
+    [Fact]
+    public void Four_byte_engine_hours_are_scaled_without_losing_precision()
+    {
+        var message = Message(
+            [0x72, 0x60, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF],
+            J1939SignalDecoder.EngineHoursRevolutionsPgn);
+
+        Assert.True(J1939SignalDecoder.TryDecode(message, out var result));
+
+        var observation = Assert.Single(result!.Observations);
+        Assert.Equal(J1939SignalDecoder.EngineTotalHoursSpn, observation.Definition.Spn);
+        Assert.Equal(VssSignals.EngineHours, observation.Definition.CanonicalPath);
+        Assert.Equal(J1939SignalStatus.Valid, observation.Status);
+        Assert.Equal(24690UL, observation.RawValue);
+        Assert.Equal(1234.5d, observation.Value);
+        Assert.Equal("h", observation.Definition.Unit);
+    }
+
+    [Fact]
+    public void Battery_potential_maps_to_the_existing_canonical_voltage_signal()
+    {
+        var message = Message(
+            [0xFF, 0xFF, 0xFF, 0xFF, 0xFC, 0x00, 0xFF, 0xFF],
+            J1939SignalDecoder.VehicleElectricalPower1Pgn);
+
+        Assert.True(J1939SignalDecoder.TryDecode(message, out var result));
+
+        var observation = Assert.Single(result!.Observations);
+        Assert.Equal(J1939SignalDecoder.BatteryPotentialSpn, observation.Definition.Spn);
+        Assert.Equal(VssSignals.BatteryVoltage, observation.Definition.CanonicalPath);
+        Assert.Equal(J1939SignalStatus.Valid, observation.Status);
+        Assert.Equal(252UL, observation.RawValue);
+        Assert.Equal(12.6d, observation.Value!.Value, precision: 6);
+        Assert.Equal("V", observation.Definition.Unit);
+    }
+
+    [Theory]
+    [InlineData(0xFAFFFFFF, J1939SignalStatus.Valid, 210554060.75d)]
+    [InlineData(0xFB000000, J1939SignalStatus.ParameterSpecificIndicator, null)]
+    [InlineData(0xFDFFFFFF, J1939SignalStatus.ParameterSpecificIndicator, null)]
+    [InlineData(0xFE000001, J1939SignalStatus.ErrorIndicator, null)]
+    [InlineData(0xFEFFFFFF, J1939SignalStatus.ErrorIndicator, null)]
+    [InlineData(0xFF000001, J1939SignalStatus.NotAvailable, null)]
+    [InlineData(0xFFFFFFFF, J1939SignalStatus.NotAvailable, null)]
+    public void Four_byte_indicator_ranges_are_classified_before_scaling(
+        uint rawValue,
+        J1939SignalStatus expectedStatus,
+        double? expectedValue)
+    {
+        var payload = new byte[]
+        {
+            (byte)(rawValue & 0xFF),
+            (byte)((rawValue >> 8) & 0xFF),
+            (byte)((rawValue >> 16) & 0xFF),
+            (byte)(rawValue >> 24),
+            0xFF, 0xFF, 0xFF, 0xFF,
+        };
+
+        Assert.True(J1939SignalDecoder.TryDecode(
+            Message(payload, J1939SignalDecoder.EngineHoursRevolutionsPgn),
+            out var result));
+
+        var observation = Assert.Single(result!.Observations);
+        Assert.Equal(expectedStatus, observation.Status);
+        Assert.Equal((ulong)rawValue, observation.RawValue);
+        Assert.Equal(expectedValue, observation.Value);
     }
 
     [Fact]
@@ -82,7 +153,7 @@ public sealed class J1939SignalDecoderTests
 
         var observation = Assert.Single(result!.Observations);
         Assert.Equal(expectedStatus, observation.Status);
-        Assert.Equal(rawValue, observation.RawValue);
+        Assert.Equal((ulong)rawValue, observation.RawValue);
         Assert.Null(observation.Value);
     }
 
@@ -115,12 +186,14 @@ public sealed class J1939SignalDecoderTests
         Assert.DoesNotContain("2E", failure.Message, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static J1939AcquiredMessage Message(byte[] payload)
+    private static J1939AcquiredMessage Message(
+        byte[] payload,
+        int pgn = J1939SignalDecoder.ElectronicEngineController1Pgn)
     {
         var frame = new J1939CanFrameEnvelope(
             RawIdentifier: 0x0CF00400,
             Priority: 3,
-            Pgn: J1939SignalDecoder.ElectronicEngineController1Pgn,
+            Pgn: pgn,
             SourceAddress: 0x00,
             DestinationAddress: J1939CanIdentifier.GlobalAddress,
             IsPeerToPeer: false,
@@ -131,7 +204,7 @@ public sealed class J1939SignalDecoderTests
             CaptureReference: "capture-eec1");
 
         return new J1939AcquiredMessage(
-            J1939SignalDecoder.ElectronicEngineController1Pgn,
+            pgn,
             SourceAddress: 0x00,
             DestinationAddress: J1939CanIdentifier.GlobalAddress,
             Payload: payload,

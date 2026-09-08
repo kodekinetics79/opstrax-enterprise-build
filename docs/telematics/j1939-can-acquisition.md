@@ -66,27 +66,29 @@ A malformed complete DM1/DM2 message fails closed. The failure retains PGN, sour
 
 ## Explicit signal catalog
 
-The current software catalog contains exactly one reviewed mapping:
+The current software catalog contains exactly three reviewed mappings:
 
 | PGN | PGN name | SPN | Signal | Position | Encoding | Canonical path |
 | --- | --- | --- | --- | --- | --- | --- |
 | 61444 | Electronic Engine Controller 1 (EEC1) | 190 | Engine Speed | bytes 4–5 of an 8-byte payload | unsigned little-endian, 0.125 rpm/bit, zero offset | `Vehicle.Powertrain.CombustionEngine.Speed` |
+| 65253 | Engine Hours, Revolutions (HOURS) | 247 | Engine Total Hours of Operation | bytes 1–4 of an 8-byte payload | unsigned little-endian, 0.05 h/bit, zero offset | `Vehicle.Powertrain.CombustionEngine.EngineHours` |
+| 65271 | Vehicle Electrical Power 1 (VEP1) | 168 | Battery Potential / Power Input 1 | bytes 5–6 of an 8-byte payload | unsigned little-endian, 0.05 V/bit, zero offset | `Vehicle.LowVoltageBattery.CurrentVoltage` |
 
 The mapping is cross-checked against the public [Cummins A079E226 installation manual, section 6.3.4](https://www.cummins.com/sites/default/files/2025-08/onan-rv-generator-installation-manual-hglca-a.pdf). The canonical path and `rpm` unit follow the [COVESA VSS combustion-engine catalog](https://github.com/COVESA/vehicle_signal_specification/blob/master/spec/Powertrain/CombustionEngine.vspec). SAE J1939DA remains the assignment authority.
 
-Two-byte J1939 indicator ranges are classified before scaling:
+J1939 indicator ranges are classified from the most-significant byte before scaling. For a two-byte value, the ranges are:
 
 - `0x0000`–`0xFAFF`: valid numeric value;
 - `0xFB00`–`0xFDFF`: parameter-specific indicator, not interpreted by this decoder;
 - `0xFE00`–`0xFEFF`: error indicator;
 - `0xFF00`–`0xFFFF`: not available.
 
-Only a valid value receives an RPM reading. An error, unavailable or parameter-specific indicator retains its status and raw numeric code while its decoded value remains null. An unlisted PGN remains unsupported even if its bytes look plausible. A supported fixed-length PGN with any other payload length fails closed with bounded provenance and no raw bytes in exception text.
+The same most-significant-byte rule is applied to the four-byte engine-hours value. Only a valid value receives a scaled reading. An error, unavailable or parameter-specific indicator retains its status and raw numeric code while its decoded value remains null. An unlisted PGN remains unsupported even if its bytes look plausible. A supported fixed-length PGN with any other payload length fails closed with bounded provenance and no raw bytes in exception text.
 
 `J1939MessageAcquisition` provides the general routing boundary: incomplete transport traffic, unsupported complete messages, decoded DM1/DM2 diagnostics and decoded catalog signals are distinct outcomes. The signal result retains the original `J1939AcquiredMessage`, including source address, timestamps, adapter/channel and ordered capture references.
 
 ## Verification
 
-The protocol suite covers direct DM1 decoding, PDU1/PDU2 identifier semantics, input rejection, immutable capture copying, multi-packet DM1/DM2 reconstruction, diagnostic outcome classification, explicit signal routing, little-endian engine-speed scaling, all two-byte indicator ranges, unsupported-PGN behavior, evidence retention, bounded malformed-message failures, bus isolation, concurrent channels, abandoned-path expiry, timestamp regression, invalid transported PGNs and mismatched evidence rejection.
+The protocol suite covers direct DM1 decoding, PDU1/PDU2 identifier semantics, input rejection, immutable capture copying, multi-packet DM1/DM2 reconstruction, diagnostic outcome classification, explicit signal routing, little-endian RPM/hours/voltage scaling, two-byte and four-byte indicator ranges, unsupported-PGN behavior, evidence retention, bounded malformed-message failures, bus isolation, concurrent channels, abandoned-path expiry, timestamp regression, invalid transported PGNs and mismatched evidence rejection.
 
 Synthetic tests establish deterministic software behavior only. Capability promotion still requires an exact adapter/device/firmware tuple, physical CAN traffic, trusted comparison values, controlled vehicle testing, recovery and soak evidence, and qualified human acceptance under the commercialization plan.

@@ -43,6 +43,21 @@ public sealed class J1939MessageAcquisitionTests
     }
 
     [Fact]
+    public void Engine_hours_routes_through_the_same_signal_pipeline()
+    {
+        var sut = new J1939MessageAcquisition();
+
+        var result = sut.Accept(Frame(
+            Identifier(6, J1939SignalDecoder.EngineHoursRevolutionsPgn, 0x00),
+            [0x72, 0x60, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF],
+            "hours-1234-5"));
+
+        Assert.Equal(J1939MessageAcquisitionStatus.SignalsDecoded, result.Status);
+        Assert.Equal(1234.5d, Assert.Single(result.Signals!.Observations).Value);
+        Assert.Equal("hours-1234-5", Assert.Single(result.Message!.Frames).CaptureReference);
+    }
+
+    [Fact]
     public void Unlisted_complete_pgn_remains_explicitly_unsupported()
     {
         const int unlistedPgn = 0x00F001;

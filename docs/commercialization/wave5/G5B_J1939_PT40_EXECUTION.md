@@ -58,6 +58,12 @@ The decoder evaluates the SAE J1939 two-byte indicator ranges before applying sc
 
 `J1939MessageAcquisition` routes complete messages to the existing DM1/DM2 path, the exact signal catalog or an explicit unsupported outcome. This completes catalog item 5 and the deterministic software portion of item 6 for one signal. It does not prove that any ECU broadcasts the signal, that an adapter acquired it correctly, or that a vehicle reference value agrees. Those claims remain DEVELOPMENT / EXTERNAL HOLD through bench, controlled-route, recovery and soak testing.
 
+## Fifth implementation slice — engine hours and battery potential
+
+The explicit catalog now also admits HOURS PGN 65253 / SPN 247 Engine Total Hours of Operation at bytes 1–4 with 0.05 h/bit and VEP1 PGN 65271 / SPN 168 Battery Potential / Power Input 1 at bytes 5–6 with 0.05 V/bit. They map to the COVESA-style `Vehicle.Powertrain.CombustionEngine.EngineHours` and `Vehicle.LowVoltageBattery.CurrentVoltage` paths.
+
+The numeric decoder now handles reviewed unsigned two- and four-byte little-endian definitions while classifying the indicator range from the most-significant byte before scaling. Focused tests cover real numeric values and every four-byte indicator boundary. The exact ECU/device/adapter/firmware tuple and agreement with trusted physical reference readings remain EXTERNAL HOLD.
+
 ## DeviceOps registry integration
 
 Stage 115 provides the shared exact manufacturer/model/hardware revision/firmware and software-SHA candidate identity needed by a later PT40 or OEM certification candidate. It deliberately seeds no PT40, GT06, J1939 adapter or OEM record and its database contract fixes every engineering candidate at `ExternalHold` / `Unverified`. A candidate may be recorded only after the exact physical tuple is observed; tier promotion requires the evidence gates in this document and a separately frozen certification candidate.
