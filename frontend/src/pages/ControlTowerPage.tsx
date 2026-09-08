@@ -14,6 +14,7 @@ import type { AnyRecord } from "@/types";
 
 export function ControlTowerPage() {
   const hasPermission = useHasPermission();
+  const canViewDeviceEvidence = hasPermission(PERMISSIONS.TELEMATICS_DEVICES_VIEW);
   const canViewCameraEvidence = hasPermission(PERMISSIONS.SAFETY_EVIDENCE_VIEW);
   const [selected, setSelected] = useState<AnyRecord | null>(null);
   const [activeFilter, setActiveFilter] = useState("All");
@@ -91,7 +92,7 @@ export function ControlTowerPage() {
   // Event data comes only from the authenticated, tenant-scoped .NET summary.
   // Live positions use the ticketed .NET telemetry stream above.
   const events = (data.events as AnyRecord[]) || [];
-  const tabs = ["Dispatch", "Active Trips", "Diagnostics", ...(canViewCameraEvidence ? ["Verified Camera Evidence"] : [])];
+  const tabs = ["Dispatch", "Active Trips", ...((canViewDeviceEvidence || canViewCameraEvidence) ? ["Diagnostics"] : []), ...(canViewCameraEvidence ? ["Verified Camera Evidence"] : [])];
 
   return (
     <div className="control-tower flex h-full flex-col gap-6 overflow-y-auto">
@@ -104,7 +105,7 @@ export function ControlTowerPage() {
       <ControlStatusStrip kpis={kpis} generatedAt={data.generatedAt} alertCount={alertCount} actionCount={actionQueue.length} alertsAvailable={alerts.isSuccess} />
       <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-6">
         <KpiCard label="Tracked Vehicles" value={String(kpis.trackedEntities ?? entities.length)} icon={<RadioTower />} status="Active" />
-        <KpiCard label="Online Device Evidence" value={kpis.onlineDevices == null ? "—" : String(kpis.onlineDevices)} icon={<Satellite />} status={kpis.onlineDevices == null ? "Unavailable" : "Reported"} />
+        {canViewDeviceEvidence && <KpiCard label="Online Device Evidence" value={kpis.onlineDevices == null ? "—" : String(kpis.onlineDevices)} icon={<Satellite />} status={kpis.onlineDevices == null ? "Unavailable" : "Reported"} />}
         <KpiCard label="Open Telemetry Alerts" value={alerts.isSuccess ? String(alertCount) : "—"} icon={<Bell />} status={!alerts.isSuccess ? "Unavailable" : alertCount > 0 ? "Review" : "Reported"} />
         <KpiCard label="Telemetry Quality" value={kpis.telemetryQuality == null ? "—" : String(kpis.telemetryQuality)} icon={<Gauge />} status={kpis.telemetryQuality == null ? "Unavailable" : "Reported"} />
         <KpiCard label="High Risk Units" value={kpis.highRiskUnits == null ? "—" : String(kpis.highRiskUnits)} icon={<ShieldAlert />} status={kpis.highRiskUnits == null ? "Unavailable" : Number(kpis.highRiskUnits) > 0 ? "Review" : "Reported"} />
@@ -123,7 +124,7 @@ export function ControlTowerPage() {
                 }
               </div>
             </div>
-            <div className="flex flex-wrap gap-2">{["All","Speeding","Device offline",...(canViewCameraEvidence ? ["Camera attention"] : []),"Fleet risk","Delayed"].map((filter) => <button type="button" key={filter} className={filter === activeFilter ? "btn-primary" : "btn-ghost"} onClick={() => setActiveFilter(filter)}>{filter}</button>)}</div>
+            <div className="flex flex-wrap gap-2">{["All","Speeding",...(canViewDeviceEvidence ? ["Device attention","Device evidence unavailable"] : []),...(canViewCameraEvidence ? ["Camera attention"] : []),"Fleet risk","Delayed"].map((filter) => <button type="button" key={filter} className={filter === activeFilter ? "btn-primary" : "btn-ghost"} onClick={() => setActiveFilter(filter)}>{filter}</button>)}</div>
           </div>
           <div className="map-surface mt-4 h-[660px]">
             <LiveMap entities={entities} geofences={geofences} onSelect={setSelected} />

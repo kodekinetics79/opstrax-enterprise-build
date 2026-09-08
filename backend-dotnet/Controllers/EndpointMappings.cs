@@ -4515,29 +4515,48 @@ public static partial class EndpointMappings
         if (RequirePermission(http, "dashboard:view") is { } denied) return denied;
         var companyId = GetCompanyId(http);
         var branchId = GetBranchId(http);
+        var canViewDeviceEvidence = RequirePermission(http, "telematics:devices:view") is null;
         var canViewCameraEvidence = RequirePermission(http, "dashcam:view") is null;
         void BindScope(NpgsqlCommand command)
         {
             command.Parameters.AddWithValue("@companyId", companyId);
             command.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+            command.Parameters.AddWithValue("@canViewDeviceEvidence", canViewDeviceEvidence);
             command.Parameters.AddWithValue("@canViewCameraEvidence", canViewCameraEvidence);
         }
         var entities = await db.QueryAsync(
-            @"SELECT v.id, v.id vehicleId, v.assigned_driver_id driverId, v.vehicle_code label, 'vehicle' entity_type, COALESCE(v.status, le.event_type) status,
-                     le.lat, le.lng, le.speed_mph speedMph, le.heading, le.event_type eventType, le.event_time eventTime, v.type vehicleType, v.device_status deviceStatus,
-                     CASE WHEN @canViewCameraEvidence THEN COALESCE(current_camera.camera_status,'Unknown') ELSE 'Unknown' END cameraStatus,
-                     v.readiness_score readinessScore, v.data_quality_score dataQualityScore, v.risk_score riskScore, d.full_name driverName,
+            @"SELECT v.id, v.id vehicle_id, v.assigned_driver_id driver_id, v.vehicle_code label, 'vehicle' entity_type, COALESCE(v.status, le.event_type) status,
+                     le.lat, le.lng, le.speed_mph, le.heading, le.event_type, le.event_time, v.type vehicle_type,
+                     CASE WHEN @canViewDeviceEvidence THEN current_device.device_status ELSE 'Unknown' END device_status,
+                     CASE WHEN @canViewCameraEvidence THEN COALESCE(current_camera.camera_status,'Unknown') ELSE 'Unknown' END camera_status,
+                     CASE WHEN @canViewDeviceEvidence AND current_device.device_count>0 THEN v.readiness_score END readiness_score,
+                     CASE WHEN @canViewDeviceEvidence AND current_device.device_count>0 THEN v.data_quality_score END data_quality_score,
+                     v.risk_score, d.full_name driver_name,
                      CASE WHEN le.speed_mph > 65 THEN 'Speeding watch'
-                          WHEN v.device_status <> 'Online' THEN 'Device offline'
+                          WHEN @canViewDeviceEvidence AND current_device.device_count=0 THEN 'Device evidence unavailable'
+                          WHEN @canViewDeviceEvidence AND current_device.device_status <> 'Online' THEN 'Device attention'
                           WHEN @canViewCameraEvidence AND current_camera.device_id IS NOT NULL AND current_camera.camera_status <> 'Online' THEN 'Camera attention'
                           WHEN v.risk_score >= 70 THEN 'Fleet risk'
                           ELSE 'Normal' END live_alert,
                      CASE WHEN v.risk_score >= 70 OR le.speed_mph > 65 THEN 'High'
-                          WHEN v.device_status <> 'Online' OR (@canViewCameraEvidence AND current_camera.device_id IS NOT NULL AND current_camera.camera_status <> 'Online') THEN 'Medium'
+                          WHEN (@canViewDeviceEvidence AND current_device.device_count>0 AND current_device.device_status <> 'Online')
+                            OR (@canViewCameraEvidence AND current_camera.device_id IS NOT NULL AND current_camera.camera_status <> 'Online') THEN 'Medium'
                           ELSE 'Low' END risk_level
               FROM vehicles v
               INNER JOIN (SELECT le1.* FROM location_events le1 INNER JOIN (SELECT vehicle_id, MAX(id) max_id FROM location_events WHERE company_id=@companyId GROUP BY vehicle_id) le2 ON le1.id=le2.max_id WHERE le1.company_id=@companyId) le ON v.id=le.vehicle_id
               LEFT JOIN drivers d ON d.id=v.assigned_driver_id AND d.company_id=v.company_id AND d.branch_id=v.branch_id
+              LEFT JOIN LATERAL (
+                SELECT COUNT(e.id) device_count,
+                       CASE WHEN COUNT(e.id)=0 THEN 'Unknown'
+                            WHEN BOOL_OR(LOWER(COALESCE(e.device_state,'')) ~ '(revoked|suspend|offline|malfunction|fault|quarantin)') THEN 'Attention required'
+                            WHEN MAX(e.last_seen_at) IS NULL THEN 'No check-in'
+                            WHEN MAX(e.last_seen_at) >= NOW()-INTERVAL '15 minutes' THEN 'Online'
+                            ELSE 'Stale' END device_status
+                FROM device_installations i
+                JOIN eld_devices e ON e.id=i.device_id AND e.company_id=i.company_id AND e.deleted_at IS NULL
+                WHERE i.company_id=v.company_id AND i.vehicle_id=v.id AND i.effective_to IS NULL
+                  AND i.status IN ('Installed','Verified') AND i.device_role IN ('GPS','ELD','OBD-II','J1939/CAN')
+              ) current_device ON TRUE
               LEFT JOIN LATERAL (
                 SELECT e.id device_id,
                        CASE WHEN e.last_seen_at IS NULL THEN 'No check-in'
@@ -4569,7 +4588,7 @@ public static partial class EndpointMappings
             : [];
         var kpis = await db.QuerySingleAsync(
             @"SELECT (SELECT COUNT(*) FROM vehicles scoped_v WHERE scoped_v.deleted_at IS NULL AND scoped_v.company_id=@companyId AND (@branchId::BIGINT IS NULL OR scoped_v.branch_id=@branchId)) tracked_entities,
-                     SUM(CASE WHEN v.device_status='Online' THEN 1 ELSE 0 END) online_devices,
+                     CASE WHEN @canViewDeviceEvidence THEN SUM(CASE WHEN current_device.device_count>0 AND current_device.device_status='Online' THEN 1 ELSE 0 END) END online_devices,
                      CASE WHEN @canViewCameraEvidence THEN SUM(CASE WHEN current_camera.last_seen_at >= NOW()-INTERVAL '15 minutes'
                           AND LOWER(COALESCE(current_camera.device_state,'')) !~ '(revoked|suspend|offline|malfunction|fault|quarantin)' THEN 1 ELSE 0 END) END online_cameras,
                      SUM(CASE WHEN v.status IN ('Available','Active','On Route','Idle') THEN 1 ELSE 0 END) active_units,
@@ -4578,9 +4597,21 @@ public static partial class EndpointMappings
                        INNER JOIN (SELECT vehicle_id, MAX(id) max_id FROM location_events WHERE company_id=@companyId GROUP BY vehicle_id) latest ON le2.id=latest.max_id
                        INNER JOIN vehicles scoped_v ON scoped_v.id=le2.vehicle_id AND scoped_v.company_id=le2.company_id AND scoped_v.deleted_at IS NULL
                        WHERE le2.company_id=@companyId AND le2.speed_mph > 65 AND (@branchId::BIGINT IS NULL OR scoped_v.branch_id=@branchId)) speed_alerts,
-                     ROUND(AVG(v.data_quality_score) FILTER (WHERE LOWER(COALESCE(v.device_status,'')) NOT IN ('','unknown','unavailable')),1) telemetry_quality,
-                     ROUND(AVG(v.readiness_score) FILTER (WHERE LOWER(COALESCE(v.device_status,'')) NOT IN ('','unknown','unavailable')),1) fleet_readiness
+                     CASE WHEN @canViewDeviceEvidence THEN ROUND(AVG(v.data_quality_score) FILTER (WHERE current_device.device_count>0),1) END telemetry_quality,
+                     CASE WHEN @canViewDeviceEvidence THEN ROUND(AVG(v.readiness_score) FILTER (WHERE current_device.device_count>0),1) END fleet_readiness
               FROM vehicles v
+              LEFT JOIN LATERAL (
+                SELECT COUNT(e.id) device_count,
+                       CASE WHEN COUNT(e.id)=0 THEN 'Unknown'
+                            WHEN BOOL_OR(LOWER(COALESCE(e.device_state,'')) ~ '(revoked|suspend|offline|malfunction|fault|quarantin)') THEN 'Attention required'
+                            WHEN MAX(e.last_seen_at) IS NULL THEN 'No check-in'
+                            WHEN MAX(e.last_seen_at) >= NOW()-INTERVAL '15 minutes' THEN 'Online'
+                            ELSE 'Stale' END device_status
+                FROM device_installations i
+                JOIN eld_devices e ON e.id=i.device_id AND e.company_id=i.company_id AND e.deleted_at IS NULL
+                WHERE i.company_id=v.company_id AND i.vehicle_id=v.id AND i.effective_to IS NULL
+                  AND i.status IN ('Installed','Verified') AND i.device_role IN ('GPS','ELD','OBD-II','J1939/CAN')
+              ) current_device ON TRUE
               LEFT JOIN LATERAL (
                 SELECT e.last_seen_at,e.device_state
                 FROM device_installations i
@@ -4603,14 +4634,32 @@ public static partial class EndpointMappings
               WHERE j.deleted_at IS NULL AND j.company_id=@companyId AND (@branchId::BIGINT IS NULL OR j.branch_id=@branchId)
               ORDER BY j.risk_score DESC, j.scheduled_start LIMIT 10", BindScope, ct: ct);
         var diagnostics = await db.QueryAsync(
-            @"SELECT v.id, v.vehicle_code, v.device_status,
+            @"SELECT v.id, v.vehicle_code,
+                     CASE WHEN @canViewDeviceEvidence THEN current_device.device_status ELSE 'Unknown' END device_status,
                      CASE WHEN @canViewCameraEvidence THEN COALESCE(current_camera.camera_status,'Unknown') ELSE 'Unknown' END camera_status,
-                     v.readiness_score, v.data_quality_score, v.risk_score,
-                     CASE WHEN v.device_status <> 'Online' THEN 'Recover gateway connection'
+                     CASE WHEN @canViewDeviceEvidence AND current_device.device_count>0 THEN v.readiness_score END readiness_score,
+                     CASE WHEN @canViewDeviceEvidence AND current_device.device_count>0 THEN v.data_quality_score END data_quality_score,
+                     v.risk_score,
+                     CASE WHEN NOT @canViewDeviceEvidence AND NOT @canViewCameraEvidence THEN 'Evidence access limited'
+                          WHEN @canViewDeviceEvidence AND current_device.device_count=0 THEN 'Verify telemetry device installation'
+                          WHEN @canViewDeviceEvidence AND current_device.device_status <> 'Online' THEN 'Investigate telemetry device evidence'
                           WHEN @canViewCameraEvidence AND current_camera.device_id IS NOT NULL AND current_camera.camera_status <> 'Online' THEN 'Verify camera health'
                           WHEN v.risk_score >= 70 THEN 'Create maintenance/safety review'
-                          ELSE 'Healthy telemetry' END recommended_action
+                          WHEN @canViewDeviceEvidence THEN 'Telemetry evidence current'
+                          ELSE 'Device evidence access required' END recommended_action
               FROM vehicles v
+              LEFT JOIN LATERAL (
+                SELECT COUNT(e.id) device_count,
+                       CASE WHEN COUNT(e.id)=0 THEN 'Unknown'
+                            WHEN BOOL_OR(LOWER(COALESCE(e.device_state,'')) ~ '(revoked|suspend|offline|malfunction|fault|quarantin)') THEN 'Attention required'
+                            WHEN MAX(e.last_seen_at) IS NULL THEN 'No check-in'
+                            WHEN MAX(e.last_seen_at) >= NOW()-INTERVAL '15 minutes' THEN 'Online'
+                            ELSE 'Stale' END device_status
+                FROM device_installations i
+                JOIN eld_devices e ON e.id=i.device_id AND e.company_id=i.company_id AND e.deleted_at IS NULL
+                WHERE i.company_id=v.company_id AND i.vehicle_id=v.id AND i.effective_to IS NULL
+                  AND i.status IN ('Installed','Verified') AND i.device_role IN ('GPS','ELD','OBD-II','J1939/CAN')
+              ) current_device ON TRUE
               LEFT JOIN LATERAL (
                 SELECT e.id device_id,
                        CASE WHEN e.last_seen_at IS NULL THEN 'No check-in'

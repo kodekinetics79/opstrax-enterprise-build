@@ -29,6 +29,7 @@ public sealed class ControlTowerBranchIsolationPostgresTests
             var ownDriver = await Driver(db, company, branchA, $"OWN-DRV-{suffix}");
             var foreignDriver = await Driver(db, company, branchB, $"FOREIGN-DRV-{suffix}");
             var unallocatedDriver = await Driver(db, company, null, $"NULL-DRV-{suffix}");
+            await TelemetryDevice(db, company, branchA, ownVehicle, $"OWN-DEV-{suffix}");
             await Location(db, company, ownVehicle, 71);
             await Location(db, company, foreignVehicle, 72);
             await Location(db, company, unallocatedVehicle, 73);
@@ -63,7 +64,7 @@ public sealed class ControlTowerBranchIsolationPostgresTests
                   VALUES (@cid,@cid,'control.test','control-tower',@title,'Tenant-wide recommendation','Tenant-wide recommendation',1,'active')",
                 c => { c.Parameters.AddWithValue("@cid", company); c.Parameters.AddWithValue("@title", $"Tenant rec {suffix}"); });
 
-            var branchPayload = Payload(await Invoke(Principal(company, branchA, "dashboard:view", "dashcam:view"), db));
+            var branchPayload = Payload(await Invoke(Principal(company, branchA, "dashboard:view", "dashcam:view", "telematics:devices:view"), db));
             var branchData = branchPayload.GetProperty("data");
             Assert.Equal(1, branchData.GetProperty("entities").GetArrayLength());
             Assert.Equal($"OWN-{suffix}", branchData.GetProperty("entities")[0].GetProperty("label").GetString());
@@ -99,11 +100,11 @@ public sealed class ControlTowerBranchIsolationPostgresTests
             Assert.All(branchData.GetProperty("actionQueue").EnumerateArray(), item => Assert.DoesNotContain("Unallocated", item.GetProperty("title").GetString()));
             Assert.All(branchData.GetProperty("actionQueue").EnumerateArray(), item => Assert.DoesNotContain("Unknown", item.GetProperty("title").GetString()));
 
-            var tenantPayload = Payload(await Invoke(Principal(company, null, "dashboard:view", "dashcam:view"), db));
+            var tenantPayload = Payload(await Invoke(Principal(company, null, "dashboard:view", "dashcam:view", "telematics:devices:view"), db));
             var tenantData = tenantPayload.GetProperty("data");
             Assert.Equal(3, tenantData.GetProperty("entities").GetArrayLength());
             Assert.Equal(3, tenantData.GetProperty("kpis").GetProperty("trackedEntities").GetInt64());
-            Assert.Equal(3, tenantData.GetProperty("kpis").GetProperty("onlineDevices").GetInt64());
+            Assert.Equal(1, tenantData.GetProperty("kpis").GetProperty("onlineDevices").GetInt64());
             Assert.Equal(0, tenantData.GetProperty("kpis").GetProperty("onlineCameras").GetInt64());
             Assert.Equal(3, tenantData.GetProperty("kpis").GetProperty("activeUnits").GetInt64());
             Assert.Equal(3, tenantData.GetProperty("kpis").GetProperty("highRiskUnits").GetInt64());
@@ -118,6 +119,8 @@ public sealed class ControlTowerBranchIsolationPostgresTests
 
             var dashboardOnly = Payload(await Invoke(Principal(company, branchA, "dashboard:view"), db)).GetProperty("data");
             Assert.Empty(dashboardOnly.GetProperty("safetyVideo").EnumerateArray());
+            Assert.Equal("Unknown", dashboardOnly.GetProperty("entities")[0].GetProperty("deviceStatus").GetString());
+            Assert.Equal(JsonValueKind.Null, dashboardOnly.GetProperty("kpis").GetProperty("onlineDevices").ValueKind);
             Assert.Equal(JsonValueKind.Null, dashboardOnly.GetProperty("kpis").GetProperty("onlineCameras").ValueKind);
         }
         finally
@@ -128,6 +131,8 @@ public sealed class ControlTowerBranchIsolationPostgresTests
             await db.ExecuteAsync("DELETE FROM dashcam_events WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", company));
             await db.ExecuteAsync("DELETE FROM jobs WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", company));
             await db.ExecuteAsync("DELETE FROM ai_recommendations WHERE tenant_id=@cid", c => c.Parameters.AddWithValue("@cid", company));
+            await db.ExecuteAsync("DELETE FROM device_installations WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", company));
+            await db.ExecuteAsync("DELETE FROM eld_devices WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", company));
             await db.ExecuteAsync("DELETE FROM vehicles WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", company));
             await db.ExecuteAsync("DELETE FROM drivers WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", company));
             await db.ExecuteAsync("DELETE FROM branches WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", company));
@@ -147,6 +152,24 @@ public sealed class ControlTowerBranchIsolationPostgresTests
     private static Task<long> Driver(Database db, long company, long? branch, string code) => db.InsertAsync(
         "INSERT INTO drivers(company_id,branch_id,driver_code,full_name) VALUES (@cid,@branch,@code,@code)",
         c => { c.Parameters.AddWithValue("@cid", company); c.Parameters.AddWithValue("@branch", (object?)branch ?? DBNull.Value); c.Parameters.AddWithValue("@code", code); });
+
+    private static async Task TelemetryDevice(Database db, long company, long branch, long vehicle, string serial)
+    {
+        var device = await db.InsertAsync(
+            @"INSERT INTO eld_devices(company_id,device_serial,status,device_state,api_key_hash,hmac_secret_encrypted,hmac_key_version,last_seen_at)
+              VALUES (@cid,@serial,'Active','Registered',encode(sha256(@serial::bytea),'hex'),repeat('b',32),1,NOW()-INTERVAL '1 minute')",
+            c => { c.Parameters.AddWithValue("@cid", company); c.Parameters.AddWithValue("@serial", serial); });
+        await db.ExecuteAsync(
+            @"INSERT INTO device_installations(company_id,branch_id,device_id,vehicle_id,status,device_role,is_primary,effective_from,installed_at,source)
+              VALUES (@cid,@branch,@device,@vehicle,'Installed','GPS',TRUE,NOW()-INTERVAL '2 hours',NOW()-INTERVAL '2 hours','control-tower-test')",
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid", company);
+                c.Parameters.AddWithValue("@branch", branch);
+                c.Parameters.AddWithValue("@device", device);
+                c.Parameters.AddWithValue("@vehicle", vehicle);
+            });
+    }
 
     private static Task Location(Database db, long company, long vehicle, int speed) => db.ExecuteAsync(
         "INSERT INTO location_events(company_id,vehicle_id,lat,lng,speed_mph,event_type,event_time) VALUES (@cid,@vehicle,43,-79,@speed,'position',NOW())",

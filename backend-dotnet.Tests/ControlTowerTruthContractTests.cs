@@ -16,8 +16,12 @@ public sealed class ControlTowerTruthContractTests
         Assert.DoesNotContain("placeholder", summary, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("competitorGapAnalysis", summary, StringComparison.Ordinal);
         Assert.DoesNotContain("available = true", summary, StringComparison.Ordinal);
+        Assert.Contains("var canViewDeviceEvidence = RequirePermission(http, \"telematics:devices:view\") is null", summary, StringComparison.Ordinal);
         Assert.Contains("var canViewCameraEvidence = RequirePermission(http, \"dashcam:view\") is null", summary, StringComparison.Ordinal);
+        Assert.Contains("i.device_role IN ('GPS','ELD','OBD-II','J1939/CAN')", summary, StringComparison.Ordinal);
         Assert.Contains("de.source_authority='Authoritative' AND de.media_status='Ready'", summary, StringComparison.Ordinal);
+        Assert.DoesNotContain("v.device_status deviceStatus", summary, StringComparison.Ordinal);
+        Assert.DoesNotContain("SUM(CASE WHEN v.device_status='Online'", summary, StringComparison.Ordinal);
         Assert.DoesNotContain("v.camera_status cameraStatus", summary, StringComparison.Ordinal);
         Assert.DoesNotContain("SUM(CASE WHEN v.camera_status='Online'", summary, StringComparison.Ordinal);
     }
