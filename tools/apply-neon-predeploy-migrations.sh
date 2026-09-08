@@ -99,6 +99,7 @@ reapply_late_control_boundaries() {
   psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage124_rma_support_ownership.sql
   psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage125_device_spare_pool.sql
   psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage126_device_support_tier_history.sql
+  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_08_stage128_device_compatibility_capability_catalog.sql
 }
 
 MIGRATIONS=(
@@ -299,6 +300,8 @@ MIGRATIONS=(
   2026_09_07_stage125_device_spare_pool
   # Operator-recorded device support routing; commercial, provider, hardware and certification claims remain false.
   2026_09_07_stage126_device_support_tier_history
+  # Engineering-declared capability catalog; physical, provider and certification claims remain false.
+  2026_09_08_stage128_device_compatibility_capability_catalog
 )
 
 echo "Pre-check: validated read-only database identity…"
@@ -400,7 +403,8 @@ for m in "${MIGRATIONS[@]}"; do
     2026_09_07_stage123_device_retirement|\
     2026_09_07_stage124_rma_support_ownership|\
     2026_09_07_stage125_device_spare_pool|\
-    2026_09_07_stage126_device_support_tier_history) repair_migration=true ;;
+    2026_09_07_stage126_device_support_tier_history|\
+    2026_09_08_stage128_device_compatibility_capability_catalog) repair_migration=true ;;
   esac
   if [ "$applied" = "1" ] && [ "$repair_migration" = false ]; then
     echo "── $m: already applied (ledger) — skipping"
@@ -481,7 +485,8 @@ BEGIN
       ('2026_09_07_stage123_device_retirement'),
       ('2026_09_07_stage124_rma_support_ownership'),
       ('2026_09_07_stage125_device_spare_pool'),
-      ('2026_09_07_stage126_device_support_tier_history')) required(version)
+      ('2026_09_07_stage126_device_support_tier_history'),
+      ('2026_09_08_stage128_device_compatibility_capability_catalog')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN RAISE EXCEPTION 'Required owner/pilot migration ledger missing or duplicated'; END IF;
   IF EXISTS (
@@ -818,6 +823,22 @@ BEGIN
                      OR commercial_entitlement_verified_claim OR provider_support_claim
                      OR hardware_supportability_claim OR certification_claim) THEN
     RAISE EXCEPTION 'Stage126 device support-tier boundary is missing or invalid';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='public' AND table_name='device_compatibility_candidates'
+                     AND column_name='capability_declaration_status')
+     OR to_regprocedure('stage128_valid_capability_list(text[],integer)') IS NULL
+     OR to_regprocedure('stage128_protect_capability_declaration()') IS NULL
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger
+                      WHERE tgrelid=to_regclass('public.device_compatibility_candidates')
+                        AND tgname='trg_stage128_protect_capability_declaration'
+                        AND NOT tgisinternal AND tgenabled<>'D')
+     OR EXISTS (SELECT 1 FROM device_compatibility_candidates
+                  WHERE catalog_support_tier<>'Unverified'
+                     OR certification_reference IS NOT NULL OR certification_date IS NOT NULL
+                     OR physical_evidence_claim OR provider_evidence_claim OR certification_claim
+                     OR capability_declaration_status NOT IN ('NotRecorded','EngineeringDeclaredUnverified')) THEN
+    RAISE EXCEPTION 'Stage128 compatibility capability boundary is missing or invalid';
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns
@@ -2012,7 +2033,18 @@ BEGIN
      OR NOT EXISTS (SELECT 1 FROM pg_trigger
                       WHERE tgrelid=to_regclass('public.eld_devices')
                         AND tgname='trg_stage126_guard_device_support_terminal'
-                        AND NOT tgisinternal AND tgenabled<>'D') THEN
+                        AND NOT tgisinternal AND tgenabled<>'D')
+     OR to_regprocedure('stage128_valid_capability_list(text[],integer)') IS NULL
+     OR to_regprocedure('stage128_protect_capability_declaration()') IS NULL
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger
+                      WHERE tgrelid=to_regclass('public.device_compatibility_candidates')
+                        AND tgname='trg_stage128_protect_capability_declaration'
+                        AND NOT tgisinternal AND tgenabled<>'D')
+     OR EXISTS (SELECT 1 FROM device_compatibility_candidates
+                  WHERE catalog_support_tier<>'Unverified'
+                     OR certification_reference IS NOT NULL OR certification_date IS NOT NULL
+                     OR physical_evidence_claim OR provider_evidence_claim OR certification_claim
+                     OR capability_declaration_status NOT IN ('NotRecorded','EngineeringDeclaredUnverified')) THEN
     RAISE EXCEPTION 'Stage76 is not the effective terminal telemetry boundary';
   END IF;
   IF EXISTS (

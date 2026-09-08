@@ -10,6 +10,7 @@ on:
       - 'backend-dotnet.Tests/DeviceCompatibilityTruthTests.cs'
       - 'backend-dotnet.Tests/TelemetryCredentialHardeningTests.cs'
       - 'database/migrations/2026_09_07_stage115_device_compatibility_candidate_registry.sql'
+      - 'database/migrations/2026_09_08_stage128_device_compatibility_capability_catalog.sql'
       - 'tools/apply-neon-predeploy-migrations.sh'
       - 'frontend/src/pages/IotDevicesPage.tsx'
       - 'frontend/src/services/telematicsService.ts'
@@ -26,6 +27,7 @@ on:
       - 'backend-dotnet.Tests/DeviceCompatibilityTruthTests.cs'
       - 'backend-dotnet.Tests/TelemetryCredentialHardeningTests.cs'
       - 'database/migrations/2026_09_07_stage115_device_compatibility_candidate_registry.sql'
+      - 'database/migrations/2026_09_08_stage128_device_compatibility_capability_catalog.sql'
       - 'tools/apply-neon-predeploy-migrations.sh'
       - 'frontend/src/pages/IotDevicesPage.tsx'
       - 'frontend/src/services/telematicsService.ts'
@@ -51,17 +53,17 @@ jobs:
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: opstrax_deviceops_stage115
+          POSTGRES_DB: opstrax_deviceops_stage128
         ports:
-          - 55443:5432
+          - 55454:5432
         options: >-
-          --health-cmd "pg_isready -U postgres -d opstrax_deviceops_stage115"
+          --health-cmd "pg_isready -U postgres -d opstrax_deviceops_stage128"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
     env:
       PGPASSWORD: postgres
-      OPSTRAX_DEVICEOPS_STAGE115_DB: Host=127.0.0.1;Port=55443;Database=opstrax_deviceops_stage115;Username=postgres;Password=postgres
+      OPSTRAX_DEVICEOPS_STAGE128_DB: Host=127.0.0.1;Port=55454;Database=opstrax_deviceops_stage128;Username=postgres;Password=postgres
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -76,11 +78,14 @@ jobs:
         run: npm ci --prefix frontend
       - name: Build dedicated DeviceOps database
         run: |
-          psql -h 127.0.0.1 -p 55443 -U postgres -d opstrax_deviceops_stage115 -v ON_ERROR_STOP=1 -f database/init/001_schema.sql
-          psql -h 127.0.0.1 -p 55443 -U postgres -d opstrax_deviceops_stage115 -v ON_ERROR_STOP=1 -f database/migrations/2026_07_02_stage23_schema_migration_ledger.sql
-          psql -h 127.0.0.1 -p 55443 -U postgres -d opstrax_deviceops_stage115 -v ON_ERROR_STOP=1 -f database/migrations/2026_09_07_stage115_device_compatibility_candidate_registry.sql
+          psql -h 127.0.0.1 -p 55454 -U postgres -d opstrax_deviceops_stage128 -v ON_ERROR_STOP=1 -f database/init/001_schema.sql
+          psql -h 127.0.0.1 -p 55454 -U postgres -d opstrax_deviceops_stage128 -v ON_ERROR_STOP=1 -f database/migrations/2026_07_02_stage23_schema_migration_ledger.sql
+          psql -h 127.0.0.1 -p 55454 -U postgres -d opstrax_deviceops_stage128 -v ON_ERROR_STOP=1 -f database/migrations/2026_09_07_stage115_device_compatibility_candidate_registry.sql
+          psql -h 127.0.0.1 -p 55454 -U postgres -d opstrax_deviceops_stage128 -v ON_ERROR_STOP=1 -f database/migrations/2026_09_08_stage128_device_compatibility_capability_catalog.sql
       - name: Verify repeat-safe migration
-        run: psql -h 127.0.0.1 -p 55443 -U postgres -d opstrax_deviceops_stage115 -v ON_ERROR_STOP=1 -f database/migrations/2026_09_07_stage115_device_compatibility_candidate_registry.sql
+        run: |
+          psql -h 127.0.0.1 -p 55454 -U postgres -d opstrax_deviceops_stage128 -v ON_ERROR_STOP=1 -f database/migrations/2026_09_07_stage115_device_compatibility_candidate_registry.sql
+          psql -h 127.0.0.1 -p 55454 -U postgres -d opstrax_deviceops_stage128 -v ON_ERROR_STOP=1 -f database/migrations/2026_09_08_stage128_device_compatibility_capability_catalog.sql
       - name: Run DeviceOps truth and PostgreSQL tests
         run: >-
           dotnet test backend-dotnet.Tests/Opstrax.Tests.csproj

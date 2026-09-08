@@ -31,6 +31,23 @@ public sealed class TelemetrySchemaService(Database db)
         // compatibility tier; the Stage115 registry stays ExternalHold-only.
         new("eld_devices", "manufacturer", "VARCHAR(120) NULL"),
         new("eld_devices", "hardware_revision", "VARCHAR(120) NULL"),
+        // Stage128 capability-catalog parity for owner-capable existing local
+        // databases. The production migration supplies the constraints and
+        // immutable declaration boundary.
+        new("device_compatibility_candidates", "capability_declaration_status", "VARCHAR(40) NOT NULL DEFAULT 'NotRecorded'"),
+        new("device_compatibility_candidates", "protocol_names", "TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[]"),
+        new("device_compatibility_candidates", "supported_fields", "TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[]"),
+        new("device_compatibility_candidates", "supported_events", "TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[]"),
+        new("device_compatibility_candidates", "supported_commands", "TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[]"),
+        new("device_compatibility_candidates", "known_limitations", "VARCHAR(2000) NOT NULL DEFAULT 'Capability metadata has not been recorded for this candidate.'"),
+        new("device_compatibility_candidates", "declaration_source_reference", "VARCHAR(240) NULL"),
+        new("device_compatibility_candidates", "declared_at", "TIMESTAMPTZ NULL"),
+        new("device_compatibility_candidates", "catalog_support_tier", "VARCHAR(32) NOT NULL DEFAULT 'Unverified'"),
+        new("device_compatibility_candidates", "certification_reference", "VARCHAR(240) NULL"),
+        new("device_compatibility_candidates", "certification_date", "DATE NULL"),
+        new("device_compatibility_candidates", "physical_evidence_claim", "BOOLEAN NOT NULL DEFAULT FALSE"),
+        new("device_compatibility_candidates", "provider_evidence_claim", "BOOLEAN NOT NULL DEFAULT FALSE"),
+        new("device_compatibility_candidates", "certification_claim", "BOOLEAN NOT NULL DEFAULT FALSE"),
         // IMEI is the hardware GPS-tracker identifier (GT06/Concox/PT40-class) the trusted
         // gateway resolves a device by. An identifier, never a credential. Also created by
         // migration 2026_07_11_stage32_device_imei.sql for restricted-role prod that skips
@@ -273,6 +290,20 @@ public sealed class TelemetrySchemaService(Database db)
             engineering_status VARCHAR(24) NOT NULL DEFAULT 'Candidate',
             certification_status VARCHAR(24) NOT NULL DEFAULT 'ExternalHold',
             external_hold_reason VARCHAR(500) NOT NULL,
+            capability_declaration_status VARCHAR(40) NOT NULL DEFAULT 'NotRecorded',
+            protocol_names TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+            supported_fields TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+            supported_events TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+            supported_commands TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+            known_limitations VARCHAR(2000) NOT NULL DEFAULT 'Capability metadata has not been recorded for this candidate.',
+            declaration_source_reference VARCHAR(240) NULL,
+            declared_at TIMESTAMPTZ NULL,
+            catalog_support_tier VARCHAR(32) NOT NULL DEFAULT 'Unverified',
+            certification_reference VARCHAR(240) NULL,
+            certification_date DATE NULL,
+            physical_evidence_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            provider_evidence_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            certification_claim BOOLEAN NOT NULL DEFAULT FALSE,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMPTZ NULL,
             CONSTRAINT ck_stage115_candidate_manufacturer CHECK (BTRIM(manufacturer) <> ''),

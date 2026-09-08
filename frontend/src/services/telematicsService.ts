@@ -987,6 +987,19 @@ export type DeviceCompatibilityRecord = {
   candidateSha: string | null;
   externalHold: true;
   externalHoldReason: string;
+  capabilityDeclarationStatus: "NotRecorded" | "EngineeringDeclaredUnverified";
+  protocols: string[];
+  supportedFields: string[];
+  supportedEvents: string[];
+  supportedCommands: string[];
+  knownLimitations: string;
+  declarationSourceReference: string | null;
+  declaredAt: string | null;
+  catalogSupportTier: "Unverified";
+  certificationReference: null;
+  certificationDate: null;
+  physicalEvidenceClaim: false;
+  providerEvidenceClaim: false;
   certificationClaim: false;
 };
 
@@ -2750,6 +2763,14 @@ export const telematicsService = {
         ? detail.compatibility as AnyRecord
         : {},
     );
+    const capabilityDeclarationStatus = compatibilityRow.capability_declaration_status === "EngineeringDeclaredUnverified"
+      ? "EngineeringDeclaredUnverified" as const
+      : "NotRecorded" as const;
+    const compatibilityList = (value: unknown): string[] => capabilityDeclarationStatus === "EngineeringDeclaredUnverified"
+      && Array.isArray(value)
+      ? [...new Set(value.filter((item): item is string => typeof item === "string")
+        .map(item => item.trim()).filter(item => item.length > 0))]
+      : [];
     const compatibility: DeviceCompatibilityRecord = {
       manufacturer: typeof compatibilityRow.manufacturer === "string" && compatibilityRow.manufacturer.trim()
         ? compatibilityRow.manufacturer.trim() : null,
@@ -2771,6 +2792,27 @@ export const telematicsService = {
       externalHold: true,
       externalHoldReason: String(compatibilityRow.external_hold_reason
         ?? "Compatibility evidence is unavailable. Hardware certification remains on external hold."),
+      capabilityDeclarationStatus,
+      protocols: compatibilityList(compatibilityRow.protocols),
+      supportedFields: compatibilityList(compatibilityRow.supported_fields),
+      supportedEvents: compatibilityList(compatibilityRow.supported_events),
+      supportedCommands: compatibilityList(compatibilityRow.supported_commands),
+      knownLimitations: typeof compatibilityRow.known_limitations === "string" && compatibilityRow.known_limitations.trim()
+        ? compatibilityRow.known_limitations.trim()
+        : "Capability metadata has not been recorded for this candidate.",
+      declarationSourceReference: capabilityDeclarationStatus === "EngineeringDeclaredUnverified"
+        && typeof compatibilityRow.declaration_source_reference === "string"
+        && compatibilityRow.declaration_source_reference.trim()
+        ? compatibilityRow.declaration_source_reference.trim() : null,
+      declaredAt: capabilityDeclarationStatus === "EngineeringDeclaredUnverified"
+        && typeof compatibilityRow.declared_at === "string"
+        && Number.isFinite(Date.parse(compatibilityRow.declared_at))
+        ? compatibilityRow.declared_at : null,
+      catalogSupportTier: "Unverified",
+      certificationReference: null,
+      certificationDate: null,
+      physicalEvidenceClaim: false,
+      providerEvidenceClaim: false,
       certificationClaim: false,
     };
     const connectivityRows = Array.isArray(detail.connectivity_profiles)

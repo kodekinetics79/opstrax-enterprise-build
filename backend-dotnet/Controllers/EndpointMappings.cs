@@ -20428,6 +20428,13 @@ SELECT e.id, e.device_serial, e.imei, e.device_category, e.device_model, e.manuf
             "supportRoutingResponseTargetMinutes", "supportRecordStatus",
             "supportCommercialEntitlementVerifiedClaim", "supportProviderClaim",
             "supportHardwareSupportabilityClaim", "supportCertificationClaim",
+            "compatibilityRegistryStatus", "compatibilityCandidateSha",
+            "capabilityDeclarationStatus", "compatibilityProtocols",
+            "compatibilitySupportedFields", "compatibilitySupportedEvents",
+            "compatibilitySupportedCommands", "compatibilityKnownLimitations",
+            "compatibilityCatalogSupportTier", "compatibilityCertificationReference",
+            "compatibilityCertificationDate", "compatibilityPhysicalEvidenceClaim",
+            "compatibilityProviderEvidenceClaim", "compatibilityCertificationClaim",
             "deviceOpsGapCount", "lastSeenAt", "revokedAt", "retiredAt", "createdAt",
             "evidenceBoundary", "certificationClaim"
         ];
@@ -20471,6 +20478,24 @@ SELECT e.device_serial AS ""deviceSerial"", e.imei AS ""imei"",
        COALESCE(current_support.provider_support_claim,FALSE) AS ""supportProviderClaim"",
        COALESCE(current_support.hardware_supportability_claim,FALSE) AS ""supportHardwareSupportabilityClaim"",
        COALESCE(current_support.certification_claim,FALSE) AS ""supportCertificationClaim"",
+       COALESCE(current_candidate.engineering_status,'Unregistered') AS ""compatibilityRegistryStatus"",
+       current_candidate.software_candidate_sha AS ""compatibilityCandidateSha"",
+       COALESCE(current_candidate.capability_declaration_status,'NotRecorded') AS ""capabilityDeclarationStatus"",
+       CASE WHEN current_candidate.capability_declaration_status='EngineeringDeclaredUnverified'
+            THEN ARRAY_TO_STRING(current_candidate.protocol_names,' | ') ELSE NULL END AS ""compatibilityProtocols"",
+       CASE WHEN current_candidate.capability_declaration_status='EngineeringDeclaredUnverified'
+            THEN ARRAY_TO_STRING(current_candidate.supported_fields,' | ') ELSE NULL END AS ""compatibilitySupportedFields"",
+       CASE WHEN current_candidate.capability_declaration_status='EngineeringDeclaredUnverified'
+            THEN ARRAY_TO_STRING(current_candidate.supported_events,' | ') ELSE NULL END AS ""compatibilitySupportedEvents"",
+       CASE WHEN current_candidate.capability_declaration_status='EngineeringDeclaredUnverified'
+            THEN ARRAY_TO_STRING(current_candidate.supported_commands,' | ') ELSE NULL END AS ""compatibilitySupportedCommands"",
+       COALESCE(current_candidate.known_limitations,
+                'No frozen compatibility candidate is registered for this exact hardware and firmware tuple.')
+         AS ""compatibilityKnownLimitations"",
+       'Unverified'::TEXT AS ""compatibilityCatalogSupportTier"",
+       NULL::TEXT AS ""compatibilityCertificationReference"", NULL::DATE AS ""compatibilityCertificationDate"",
+       FALSE AS ""compatibilityPhysicalEvidenceClaim"", FALSE AS ""compatibilityProviderEvidenceClaim"",
+       FALSE AS ""compatibilityCertificationClaim"",
        (CASE WHEN NULLIF(BTRIM(COALESCE(e.device_serial,'')),'') IS NOT NULL
                    AND NULLIF(BTRIM(COALESCE(e.manufacturer,'')),'') IS NOT NULL
                    AND NULLIF(BTRIM(COALESCE(e.device_model,'')),'') IS NOT NULL
@@ -20482,7 +20507,9 @@ SELECT e.device_serial AS ""deviceSerial"", e.imei AS ""imei"",
         + CASE WHEN e.last_seen_at IS NOT NULL AND e.last_seen_at>=NOW()-INTERVAL '15 minutes' THEN 0 ELSE 1 END
         + CASE WHEN e.status NOT IN ('Suspended','Malfunction','Diagnostic')
                     AND LOWER(COALESCE(e.device_state,'')) NOT IN ('quarantined','suspended') THEN 0 ELSE 1 END
-        + CASE WHEN COALESCE(open_rma.open_case_count,0)>0 THEN 1 ELSE 0 END) AS ""deviceOpsGapCount"",
+        + CASE WHEN COALESCE(open_rma.open_case_count,0)>0 THEN 1 ELSE 0 END
+        + CASE WHEN current_candidate.capability_declaration_status='EngineeringDeclaredUnverified' THEN 0 ELSE 1 END)
+         AS ""deviceOpsGapCount"",
        e.last_seen_at AS ""lastSeenAt"", e.revoked_at AS ""revokedAt"",
        e.retired_at AS ""retiredAt"", e.created_at AS ""createdAt"",
        'OperationalRecordOnly'::TEXT AS ""evidenceBoundary"", FALSE AS ""certificationClaim""
@@ -20545,6 +20572,17 @@ LEFT JOIN LATERAL (
     AND se.branch_id IS NOT DISTINCT FROM e.branch_id
   ORDER BY se.effective_at DESC,se.id DESC LIMIT 1
 ) current_support ON TRUE
+LEFT JOIN LATERAL (
+  SELECT candidate.software_candidate_sha,candidate.engineering_status,
+         candidate.capability_declaration_status,candidate.protocol_names,candidate.supported_fields,
+         candidate.supported_events,candidate.supported_commands,candidate.known_limitations
+  FROM device_compatibility_candidates candidate
+  WHERE UPPER(BTRIM(candidate.manufacturer))=UPPER(BTRIM(e.manufacturer))
+    AND UPPER(BTRIM(candidate.device_model))=UPPER(BTRIM(e.device_model))
+    AND UPPER(BTRIM(candidate.hardware_revision))=UPPER(BTRIM(e.hardware_revision))
+    AND UPPER(BTRIM(candidate.firmware_version))=UPPER(BTRIM(e.firmware_version))
+  ORDER BY candidate.created_at DESC,candidate.id DESC LIMIT 1
+) current_candidate ON TRUE
 WHERE e.company_id=@cid AND e.deleted_at IS NULL
   AND (@branchId::BIGINT IS NULL OR e.branch_id=@branchId)
 ORDER BY e.device_serial
@@ -22257,6 +22295,11 @@ LIMIT 100000",
     {
         static string? Value(Dictionary<string, object?> row, string key) =>
             row.GetValueOrDefault(key) is null or DBNull ? null : Clean(row[key]?.ToString());
+        static string[] DeclaredList(Dictionary<string, object?>? row, string key) =>
+            row?.GetValueOrDefault(key) is string[] values
+                ? values.Select(Clean).Where(value => value is not null).Cast<string>()
+                    .Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
+                : [];
 
         var manufacturer = Value(device, "manufacturer");
         var model = Value(device, "deviceModel");
@@ -22272,7 +22315,9 @@ LIMIT 100000",
         if (missingIdentityFields.Count == 0)
         {
             candidate = await db.QuerySingleAsync(
-                @"SELECT id,software_candidate_sha,engineering_status,certification_status,external_hold_reason,created_at
+                @"SELECT id,software_candidate_sha,engineering_status,certification_status,external_hold_reason,
+                         capability_declaration_status,protocol_names,supported_fields,supported_events,
+                         supported_commands,known_limitations,declaration_source_reference,declared_at,created_at
                     FROM device_compatibility_candidates
                    WHERE UPPER(BTRIM(manufacturer))=UPPER(BTRIM(@manufacturer))
                      AND UPPER(BTRIM(device_model))=UPPER(BTRIM(@model))
@@ -22296,6 +22341,19 @@ LIMIT 100000",
                 : "No frozen compatibility candidate is registered for this exact hardware and firmware tuple.";
         }
 
+        var hasDeclaration = string.Equals(
+            candidate?.GetValueOrDefault("capabilityDeclarationStatus")?.ToString(),
+            "EngineeringDeclaredUnverified",
+            StringComparison.Ordinal);
+        var protocols = hasDeclaration ? DeclaredList(candidate, "protocolNames") : [];
+        var supportedFields = hasDeclaration ? DeclaredList(candidate, "supportedFields") : [];
+        var supportedEvents = hasDeclaration ? DeclaredList(candidate, "supportedEvents") : [];
+        var supportedCommands = hasDeclaration ? DeclaredList(candidate, "supportedCommands") : [];
+        var declarationSourceReference = hasDeclaration ? Value(candidate!, "declarationSourceReference") : null;
+        var declaredAt = hasDeclaration ? FirmwareTimestamp(candidate!.GetValueOrDefault("declaredAt")) : null;
+        var limitations = Value(candidate ?? new Dictionary<string, object?>(), "knownLimitations")
+            ?? "Capability metadata has not been recorded for this candidate.";
+
         return new
         {
             manufacturer,
@@ -22311,6 +22369,19 @@ LIMIT 100000",
                 ? null : candidate["softwareCandidateSha"]?.ToString(),
             externalHold = true,
             externalHoldReason = reason,
+            capabilityDeclarationStatus = hasDeclaration ? "EngineeringDeclaredUnverified" : "NotRecorded",
+            protocols,
+            supportedFields,
+            supportedEvents,
+            supportedCommands,
+            knownLimitations = limitations,
+            declarationSourceReference,
+            declaredAt,
+            catalogSupportTier = "Unverified",
+            certificationReference = (string?)null,
+            certificationDate = (string?)null,
+            physicalEvidenceClaim = false,
+            providerEvidenceClaim = false,
             certificationClaim = false,
         };
     }

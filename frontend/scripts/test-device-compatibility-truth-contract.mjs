@@ -11,6 +11,11 @@ const page = readFileSync(resolve(root, "src/pages/IotDevicesPage.tsx"), "utf8")
 test("client compatibility projection stays fail-closed regardless of API vocabulary", () => {
   assert.match(service, /certificationStatus:\s*"ExternalHold"/);
   assert.match(service, /maximumTier:\s*"Unverified"/);
+  assert.match(service, /catalogSupportTier:\s*"Unverified"/);
+  assert.match(service, /certificationReference:\s*null/);
+  assert.match(service, /certificationDate:\s*null/);
+  assert.match(service, /physicalEvidenceClaim:\s*false/);
+  assert.match(service, /providerEvidenceClaim:\s*false/);
   assert.match(service, /certificationClaim:\s*false/);
   assert.doesNotMatch(service, /certificationStatus:\s*String\(compatibilityRow/);
   assert.doesNotMatch(service, /maximumTier:\s*String\(compatibilityRow/);
@@ -36,6 +41,17 @@ test("device details show the external hold and every required physical evidence
   assert.match(page, /Hardware compatibility truth/);
   assert.match(page, /Certification status/);
   assert.match(page, />External hold</);
-  assert.match(page, /Physical bench, route, recovery, soak, security, and independent acceptance evidence is still required/);
+  assert.match(page, /Physical bench, route, recovery, soak, security, provider, and independent acceptance evidence is still required/);
   assert.match(page, /Registration, installation, commissioning, or live data never certifies hardware/);
+});
+
+test("capability catalog is visible but remains explicitly engineering-declared and unverified", () => {
+  for (const label of [
+    "Capability declaration", "Protocols", "Supported fields", "Supported events",
+    "Supported commands", "Known limitations", "Catalog support tier",
+    "Certification reference", "Certification date",
+  ]) assert.match(page, new RegExp(label));
+  assert.match(page, /Engineering-declared \/ unverified/);
+  assert.match(page, /Engineering-declared capabilities describe intended software behavior only/);
+  assert.match(service, /capabilityDeclarationStatus === "EngineeringDeclaredUnverified"/);
 });

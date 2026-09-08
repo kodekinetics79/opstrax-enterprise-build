@@ -27,6 +27,13 @@ public sealed class DeviceInventoryExportIntegrityPostgresTests
         "supportRoutingResponseTargetMinutes", "supportRecordStatus",
         "supportCommercialEntitlementVerifiedClaim", "supportProviderClaim",
         "supportHardwareSupportabilityClaim", "supportCertificationClaim",
+        "compatibilityRegistryStatus", "compatibilityCandidateSha",
+        "capabilityDeclarationStatus", "compatibilityProtocols",
+        "compatibilitySupportedFields", "compatibilitySupportedEvents",
+        "compatibilitySupportedCommands", "compatibilityKnownLimitations",
+        "compatibilityCatalogSupportTier", "compatibilityCertificationReference",
+        "compatibilityCertificationDate", "compatibilityPhysicalEvidenceClaim",
+        "compatibilityProviderEvidenceClaim", "compatibilityCertificationClaim",
         "deviceOpsGapCount", "lastSeenAt", "revokedAt", "retiredAt", "createdAt",
         "evidenceBoundary", "certificationClaim"
     ];
@@ -81,6 +88,7 @@ public sealed class DeviceInventoryExportIntegrityPostgresTests
                 });
             await AddSpareProjection(db, company, branchA, actor, firstDevice, suffix);
             await AddSupportProjection(db, company, branchA, actor, firstDevice, suffix);
+            var candidateSha = await AddCompatibilityProjection(db, suffix);
 
             var all = Lines(Csv(await Invoke(Principal(company, null), db)));
             Assert.Equal(string.Join(',', ExpectedColumns), all[0]);
@@ -89,6 +97,7 @@ public sealed class DeviceInventoryExportIntegrityPostgresTests
             Assert.StartsWith($"EXPORT-{suffix}-1000,", all[^1], StringComparison.Ordinal);
             Assert.Contains(",Operations Spares,Available,OperatorRecordedUnverified,False,False,False,False,", all[1], StringComparison.Ordinal);
             Assert.Contains(",Assigned,Priority,AlwaysOn,30,OperatorRecordedUnverified,False,False,False,False,", all[1], StringComparison.Ordinal);
+            Assert.Contains($",Candidate,{candidateSha},EngineeringDeclaredUnverified,J1939 | HTTPS,latitude | longitude,position | diagnostic,RequestPosition,No remote restart declared,Unverified,,,False,False,False,", all[1], StringComparison.Ordinal);
             Assert.EndsWith(",OperationalRecordOnly,False", all[1], StringComparison.Ordinal);
             Assert.DoesNotContain("FOREIGN", string.Join('\n', all), StringComparison.Ordinal);
 
@@ -170,6 +179,22 @@ public sealed class DeviceInventoryExportIntegrityPostgresTests
                 command.Parameters.AddWithValue("@source", $"EXPORT-SUPPORT-{suffix}"); command.Parameters.AddWithValue("@key", Guid.NewGuid());
                 command.Parameters.AddWithValue("@actor", actor);
             });
+
+    private static async Task<string> AddCompatibilityProjection(Database db, string suffix)
+    {
+        var sha = suffix.PadRight(40, 'e')[..40];
+        await db.ExecuteAsync(
+            @"INSERT INTO device_compatibility_candidates
+                (manufacturer,device_model,hardware_revision,firmware_version,software_candidate_sha,
+                 external_hold_reason,capability_declaration_status,protocol_names,supported_fields,
+                 supported_events,supported_commands,known_limitations,declaration_source_reference,declared_at)
+              VALUES('=HYPERLINK','Exact Model','Rev A','1.2.3',@sha,'External evidence pending',
+                     'EngineeringDeclaredUnverified',ARRAY['J1939','HTTPS'],ARRAY['latitude','longitude'],
+                     ARRAY['position','diagnostic'],ARRAY['RequestPosition'],'No remote restart declared',
+                     'engineering://export-integrity',NOW())",
+            command => command.Parameters.AddWithValue("@sha", sha));
+        return sha;
+    }
 
     private static DefaultHttpContext Principal(long company, long? branch)
     {

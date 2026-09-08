@@ -287,7 +287,8 @@ BEGIN
       ('2026_08_11_stage76_telematics_security_hardening'),
       ('2026_09_07_stage124_rma_support_ownership'),
       ('2026_09_07_stage125_device_spare_pool'),
-      ('2026_09_07_stage126_device_support_tier_history')) required(version)
+      ('2026_09_07_stage126_device_support_tier_history'),
+      ('2026_09_08_stage128_device_compatibility_capability_catalog')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN
     RAISE EXCEPTION 'Clean-chain target ledgers are missing or duplicated';
@@ -963,6 +964,23 @@ BEGIN
                      OR commercial_entitlement_verified_claim OR provider_support_claim
                      OR hardware_supportability_claim OR certification_claim) THEN
     RAISE EXCEPTION 'Clean-chain Stage126 support-tier boundary failed';
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='public' AND table_name='device_compatibility_candidates'
+                     AND column_name='capability_declaration_status')
+     OR to_regprocedure('stage128_valid_capability_list(text[],integer)') IS NULL
+     OR to_regprocedure('stage128_protect_capability_declaration()') IS NULL
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger
+                      WHERE tgrelid=to_regclass('public.device_compatibility_candidates')
+                        AND tgname='trg_stage128_protect_capability_declaration'
+                        AND NOT tgisinternal AND tgenabled<>'D')
+     OR EXISTS (SELECT 1 FROM device_compatibility_candidates
+                  WHERE catalog_support_tier<>'Unverified'
+                     OR certification_reference IS NOT NULL OR certification_date IS NOT NULL
+                     OR physical_evidence_claim OR provider_evidence_claim OR certification_claim
+                     OR capability_declaration_status NOT IN ('NotRecorded','EngineeringDeclaredUnverified')) THEN
+    RAISE EXCEPTION 'Clean-chain Stage128 compatibility capability boundary failed';
   END IF;
 
   IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND roles='{public}'::name[])

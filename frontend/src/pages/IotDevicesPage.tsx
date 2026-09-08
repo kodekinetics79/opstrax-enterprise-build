@@ -3000,13 +3000,25 @@ function DeviceDetailDrawer({
               ["Reported firmware", cell(detail.compatibility.firmwareVersion)],
               ["Frozen software candidate", detail.compatibility.candidateSha ? detail.compatibility.candidateSha.slice(0, 12) : "—"],
               ["Maximum certified tier", detail.compatibility.maximumTier],
+              ["Capability declaration", detail.compatibility.capabilityDeclarationStatus === "EngineeringDeclaredUnverified" ? "Engineering-declared / unverified" : "Not recorded"],
+              ["Protocols", detail.compatibility.protocols.length > 0 ? detail.compatibility.protocols.join(", ") : "Not recorded"],
+              ["Supported fields", detail.compatibility.supportedFields.length > 0 ? detail.compatibility.supportedFields.join(", ") : "Not recorded"],
+              ["Supported events", detail.compatibility.supportedEvents.length > 0 ? detail.compatibility.supportedEvents.join(", ") : "Not recorded"],
+              ["Supported commands", detail.compatibility.supportedCommands.length > 0 ? detail.compatibility.supportedCommands.join(", ") : "None declared"],
+              ["Catalog support tier", detail.compatibility.catalogSupportTier],
+              ["Certification reference", detail.compatibility.certificationReference ?? "Not issued"],
+              ["Certification date", detail.compatibility.certificationDate ?? "Not issued"],
             ]} />
           </div>
+          <p className="mt-3 text-sm text-slate-200"><span className="font-semibold text-white">Known limitations:</span> {detail.compatibility.knownLimitations}</p>
+          {detail.compatibility.declarationSourceReference ? (
+            <p className="mt-2 text-xs text-slate-400">Declaration source: {detail.compatibility.declarationSourceReference}{detail.compatibility.declaredAt ? ` · ${detail.compatibility.declaredAt}` : ""}</p>
+          ) : null}
           <p className="mt-3 text-sm text-amber-100">{detail.compatibility.externalHoldReason}</p>
           {detail.compatibility.missingIdentityFields.length > 0 ? (
             <p className="mt-2 text-xs text-slate-400">Missing exact identity: {detail.compatibility.missingIdentityFields.join(", ")}.</p>
           ) : null}
-          <p className="mt-2 text-xs text-slate-400">Registration, installation, commissioning, or live data never certifies hardware. Physical bench, route, recovery, soak, security, and independent acceptance evidence is still required.</p>
+          <p className="mt-2 text-xs text-slate-400">Engineering-declared capabilities describe intended software behavior only. Registration, installation, commissioning, or live data never certifies hardware. Physical bench, route, recovery, soak, security, provider, and independent acceptance evidence is still required.</p>
         </PanelSection>
         <PanelSection title="Firmware campaign planning">
           <div className="flex items-start justify-between gap-4">
