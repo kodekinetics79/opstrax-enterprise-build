@@ -360,6 +360,8 @@ public sealed class EndpointMappingsSecurityHardeningTests
             "DetentionReviewService.GetEvidenceByTokenAsync validates token, expiry and revocation"),
         new("GET /api/customer-eta/track/{trackingCode}", PublicReason.CapabilityToken,
             "customer_eta_links.secure_token AND public_status='Active' AND expires_at > NOW()"),
+        new("POST /api/customer-eta/track/{trackingCode}/feedback", PublicReason.CapabilityToken,
+            "the same active, unexpired customer_eta_links.secure_token resolves company, customer and job server-side; rating and comment are bounded"),
         // exposed at R1 by fixing the ' char-literal bug:
         new("GET /api/customer-visibility/tracking/{token}", PublicReason.CapabilityToken,
             "customer_visibility.public_tracking_token AND share_enabled AND expires_at > NOW() "

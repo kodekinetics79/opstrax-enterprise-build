@@ -209,7 +209,10 @@ assert.match(notificationCenter, /Persisted notifications, escalations and ackno
 assert.doesNotMatch(customerVisibility, /real-time ETA/i, "Customer Visibility must not claim real-time ETA without freshness evidence");
 assert.match(customerVisibility, /recorded ETA evidence from available dispatch and telemetry sources/, "Customer Visibility must state its ETA evidence boundary");
 assert.doesNotMatch(customerEta, /Real-time delivery visibility|Real-time driver location/, "Customer ETA must not claim real-time records without freshness evidence");
-assert.match(customerEta, /Recorded driver location/, "Customer ETA must label driver location as recorded evidence");
+assert.match(customerEta, /Queued messages are not presented as provider-delivered/, "Customer ETA must disclose the provider-delivery boundary");
+assert.match(customerEta, /Bulk Queue Updates/, "Bulk ETA actions must be labeled as queued work");
+assert.match(customerEta, /No SLA assessment is available/, "Missing public SLA evidence must remain unavailable");
+assert.doesNotMatch(customerEta, /customerExperienceScore|customer_experience_score|Experience Score|ETA updates sent to all|\?\? "High"/, "Customer ETA must not synthesize experience, delivery, or confidence claims");
 assert.doesNotMatch(
   liveMap,
   /kpis\.(?:liveCoverage|connectedUnits|degradedUnits|deviceOfflineUnits|cameraOfflineUnits|connectivityCoverage)/,

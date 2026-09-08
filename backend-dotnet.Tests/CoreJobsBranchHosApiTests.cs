@@ -315,6 +315,79 @@ public sealed class CoreJobsBranchHosApiTests
     }
 
     [Fact]
+    public async Task CustomerEtaSummaryUsesBranchScopedPersistedFeedbackAndConfidence()
+    {
+        var db = Db();
+        await EnsureJobRuntimeSchema(db);
+        var companyId = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + Random.Shared.Next(4_000_000, 4_900_000);
+        const long branchA = 9241;
+        const long branchB = 9242;
+        await SeedCompany(db, companyId);
+        try
+        {
+            var customerId = await db.InsertAsync(
+                "INSERT INTO customers(company_id,customer_code,name,status) VALUES (@c,@code,'ETA Scope Customer','Active')",
+                c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@code", $"ETA-SCOPE-CUS-{companyId}"); });
+            async Task<long> Job(long branch, string suffix) => await db.InsertAsync(
+                @"INSERT INTO jobs(company_id,branch_id,customer_id,job_code,job_number,job_type,status,priority,eta,sla_status,customer_update_status,risk_score)
+                  VALUES (@c,@b,@customer,@code,@code,'Delivery','At Risk','High',NOW()+INTERVAL '2 hours','At Risk','Queued',80)",
+                c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@b", branch); c.Parameters.AddWithValue("@customer", customerId); c.Parameters.AddWithValue("@code", $"ETA-SCOPE-{suffix}-{companyId}"); });
+            var jobA = await Job(branchA, "VISIBLE");
+            var jobB = await Job(branchB, "HIDDEN");
+
+            foreach (var row in new[] { (jobA, "Sent"), (jobA, "Queued"), (jobB, "Sent") })
+                await db.ExecuteAsync(
+                    "INSERT INTO customer_communications(company_id,customer_id,job_id,channel,message,status) VALUES (@c,@customer,@j,'In-App','Scoped ETA record',@status)",
+                    c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@customer", customerId); c.Parameters.AddWithValue("@j", row.Item1); c.Parameters.AddWithValue("@status", row.Item2); });
+            foreach (var row in new[] { (jobA, 4), (jobB, 1) })
+                await db.ExecuteAsync(
+                    "INSERT INTO customer_feedback(company_id,customer_id,job_id,rating,comment,feedback_type) VALUES (@c,@customer,@j,@rating,'Scoped feedback','eta_test')",
+                    c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@customer", customerId); c.Parameters.AddWithValue("@j", row.Item1); c.Parameters.AddWithValue("@rating", row.Item2); });
+            foreach (var row in new[] { (jobA, "Low"), (jobB, "High") })
+                await db.ExecuteAsync(
+                    "INSERT INTO eta_updates(company_id,customer_id,job_id,eta,confidence_level,message,channel,status) VALUES (@c,@customer,@j,NOW()+INTERVAL '2 hours',@confidence,'Scoped ETA','In-App','Sent')",
+                    c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@customer", customerId); c.Parameters.AddWithValue("@j", row.Item1); c.Parameters.AddWithValue("@confidence", row.Item2); });
+
+            var http = Principal(companyId, branchA);
+            http.Items[EndpointMappings.AuthPermissionsItemKey] = new[] { "customer_portal:view", "dispatch:view" };
+            var summaryResult = Assert.IsAssignableFrom<IValueHttpResult>(await Invoke("CustomerEtaSummary", http, db, CancellationToken.None));
+            using var summaryJson = JsonDocument.Parse(JsonSerializer.Serialize(summaryResult.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+            var data = summaryJson.RootElement.GetProperty("data");
+            var summary = data.GetProperty("summary");
+            Assert.Equal(1, summary.GetProperty("totalTracked").GetInt64());
+            Assert.Equal(1, summary.GetProperty("communicationsSent").GetInt64());
+            Assert.Equal(1, summary.GetProperty("pendingCommunications").GetInt64());
+            Assert.Equal(4m, summary.GetProperty("averageFeedbackRating").GetDecimal());
+            Assert.Equal(1, summary.GetProperty("feedbackResponseCount").GetInt64());
+            var payload = summaryJson.RootElement.GetRawText();
+            Assert.Contains($"ETA-SCOPE-VISIBLE-{companyId}", payload, StringComparison.Ordinal);
+            Assert.Contains("\"etaConfidenceLevel\":\"Low\"", payload, StringComparison.Ordinal);
+            Assert.DoesNotContain($"ETA-SCOPE-HIDDEN-{companyId}", payload, StringComparison.Ordinal);
+
+            var communicationsResult = Assert.IsAssignableFrom<IValueHttpResult>(await Invoke("CustomerEtaCommunications", http, db, CancellationToken.None));
+            var communicationsPayload = JsonSerializer.Serialize(communicationsResult.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            Assert.Equal(2, JsonDocument.Parse(communicationsPayload).RootElement.GetProperty("data").GetArrayLength());
+            Assert.DoesNotContain($"ETA-SCOPE-HIDDEN-{companyId}", communicationsPayload, StringComparison.Ordinal);
+
+            var publicToken = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+            await db.ExecuteAsync(
+                @"INSERT INTO customer_eta_links(company_id,customer_id,job_id,tracking_code,secure_token,public_status,expires_at)
+                  VALUES (@c,@customer,@j,@tracking,@token,'Active',NOW()+INTERVAL '1 day')",
+                c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@customer", customerId); c.Parameters.AddWithValue("@j", jobA); c.Parameters.AddWithValue("@tracking", $"ETA-PUBLIC-{companyId}"); c.Parameters.AddWithValue("@token", publicToken); });
+            var feedback = await Invoke("CustomerEtaPublicFeedback", publicToken,
+                new Dictionary<string, object?> { ["rating"] = 5, ["comments"] = "Tracking page worked." }, db, CancellationToken.None);
+            Assert.Equal(StatusCodes.Status200OK, Assert.IsAssignableFrom<IStatusCodeHttpResult>(feedback).StatusCode);
+            Assert.Equal(1, await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM customer_feedback WHERE company_id=@c AND job_id=@j AND rating=5 AND comment='Tracking page worked.' AND feedback_type='eta_tracking'",
+                c => { c.Parameters.AddWithValue("@c", companyId); c.Parameters.AddWithValue("@j", jobA); }));
+            var invalidFeedback = await Invoke("CustomerEtaPublicFeedback", "invalid-token",
+                new Dictionary<string, object?> { ["rating"] = 5 }, db, CancellationToken.None);
+            Assert.Equal(StatusCodes.Status404NotFound, Assert.IsAssignableFrom<IStatusCodeHttpResult>(invalidFeedback).StatusCode);
+        }
+        finally { await Cleanup(db, companyId); }
+    }
+
+    [Fact]
     public async Task ShipmentRegisterFiltersExportAndImportStayBranchScopedAndRejectBadRows()
     {
         var db = Db();
@@ -660,14 +733,23 @@ public sealed class CoreJobsBranchHosApiTests
             "DELETE FROM outbox_messages WHERE tenant_id=@c", "DELETE FROM billing_confidence_records WHERE company_id=@c",
             "DELETE FROM proof_artifacts WHERE company_id=@c", "DELETE FROM proof_packages WHERE company_id=@c",
             "DELETE FROM dispatch_assignments WHERE company_id=@c", "DELETE FROM proof_of_delivery WHERE company_id=@c",
-            "DELETE FROM customer_eta_links WHERE company_id=@c", "DELETE FROM eta_updates WHERE company_id=@c", "DELETE FROM customer_communications WHERE company_id=@c",
+            "DELETE FROM customer_eta_links WHERE company_id=@c", "DELETE FROM eta_updates WHERE company_id=@c", "DELETE FROM customer_communications WHERE company_id=@c", "DELETE FROM customer_feedback WHERE company_id=@c",
             "DELETE FROM idempotency_keys WHERE tenant_id=@c",
             "DELETE FROM job_status_events WHERE company_id=@c", "DELETE FROM entity_timeline_events WHERE company_id=@c",
             "DELETE FROM audit_logs WHERE company_id=@c", "DELETE FROM documents WHERE company_id=@c", "DELETE FROM jobs WHERE company_id=@c",
             "DELETE FROM hos_clocks WHERE company_id=@c", "DELETE FROM hos_records WHERE company_id=@c", "DELETE FROM vehicles WHERE company_id=@c",
             "DELETE FROM drivers WHERE company_id=@c", "DELETE FROM customers WHERE company_id=@c", "DELETE FROM companies WHERE id=@c"
         })
-            await db.ExecuteAsync(sql, c => c.Parameters.AddWithValue("@c", company));
+        {
+            try
+            {
+                await db.ExecuteAsync(sql, c => c.Parameters.AddWithValue("@c", company));
+            }
+            catch (Npgsql.PostgresException ex) when (ex.SqlState is Npgsql.PostgresErrorCodes.UndefinedTable or Npgsql.PostgresErrorCodes.UndefinedColumn)
+            {
+                // Disposable integration databases may intentionally contain only the schema under test.
+            }
+        }
     }
 
     private sealed class NoopEvents : IDomainEventPublisher

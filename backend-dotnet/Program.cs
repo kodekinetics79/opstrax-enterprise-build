@@ -702,6 +702,11 @@ app.UseWhen(
                 path.StartsWith("/api/maintenance/fault-codes/ingest", StringComparison.OrdinalIgnoreCase) ||
                 (context.Request.Method.Equals("GET", StringComparison.OrdinalIgnoreCase) &&
                  path.StartsWith("/api/customer-eta/track/", StringComparison.OrdinalIgnoreCase)) ||
+                // Customer feedback is authorized by the same active, expiring ETA
+                // capability token and is validated again by the endpoint before insert.
+                (context.Request.Method.Equals("POST", StringComparison.OrdinalIgnoreCase) &&
+                 path.StartsWith("/api/customer-eta/track/", StringComparison.OrdinalIgnoreCase) &&
+                 path.EndsWith("/feedback", StringComparison.OrdinalIgnoreCase)) ||
                 // Customer-facing public tracking — token-scoped, expiring, revocable; no user session
                 (context.Request.Method.Equals("GET", StringComparison.OrdinalIgnoreCase) &&
                  path.StartsWith("/api/customer-visibility/tracking/", StringComparison.OrdinalIgnoreCase)) ||

@@ -519,6 +519,7 @@ public static partial class EndpointMappings
 
         app.MapGet("/api/customer-eta/summary", CustomerEtaSummary);
         app.MapGet("/api/customer-eta/track/{trackingCode}", CustomerEtaTrack);
+        app.MapPost("/api/customer-eta/track/{trackingCode}/feedback", CustomerEtaPublicFeedback);
         app.MapGet("/api/customer-eta/job/{jobId:long}", CustomerEtaJob);
         app.MapPost("/api/customer-eta/job/{jobId:long}/send-update", (HttpContext http, long jobId, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) =>
         {
@@ -7264,9 +7265,9 @@ public static partial class EndpointMappings
                 return Results.BadRequest(ApiResponse<object>.Fail("ETA must be a valid timestamp"));
             requestedEta = parsedEta;
         }
-        var confidence = IsBlank(Get(body, "confidenceLevel")) ? "High" : Get(body, "confidenceLevel")!.ToString()!.Trim();
-        if (confidence is not ("Low" or "Medium" or "High"))
-            return Results.BadRequest(ApiResponse<object>.Fail("ETA confidence must be Low, Medium, or High"));
+        var confidence = IsBlank(Get(body, "confidenceLevel")) ? "Unspecified" : Get(body, "confidenceLevel")!.ToString()!.Trim();
+        if (confidence is not ("Low" or "Medium" or "High" or "Unspecified"))
+            return Results.BadRequest(ApiResponse<object>.Fail("ETA confidence must be Low, Medium, High, or Unspecified"));
         var channel = IsBlank(Get(body, "channel")) ? "Email/SMS" : Get(body, "channel")!.ToString()!.Trim();
         if (channel is not ("Email" or "SMS" or "Email/SMS" or "In-App"))
             return Results.BadRequest(ApiResponse<object>.Fail("ETA channel must be Email, SMS, Email/SMS, or In-App"));
@@ -7859,14 +7860,21 @@ public static partial class EndpointMappings
     {
         if (RequirePermission(http, "dispatch:update") is { } denied) return denied;
         var (branchClause, branchId) = StrictBranchFilter(http, "j");
-        var jobs = await db.QueryAsync("SELECT id FROM jobs j WHERE j.company_id=@cid AND j.deleted_at IS NULL" + branchClause + " AND (j.status IN ('Delayed','At Risk') OR j.customer_update_status <> 'Sent') LIMIT 10",
+        var jobs = await db.QueryAsync("SELECT id FROM jobs j WHERE j.company_id=@cid AND j.deleted_at IS NULL" + branchClause + " AND (j.status IN ('Delayed','At Risk') OR j.customer_update_status IS DISTINCT FROM 'Sent') LIMIT 10",
             c => { c.Parameters.AddWithValue("@cid", GetCompanyId(http)); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct);
+        var queued = 0;
+        var failed = 0;
         foreach (var job in jobs)
         {
-            await SendEta(http, Convert.ToInt64(job["id"]), new Dictionary<string, object?>(), db, audit, ct);
+            var result = await SendEta(http, Convert.ToInt64(job["id"]), new Dictionary<string, object?>(), db, audit, ct);
+            if (result is IStatusCodeHttpResult statusResult && statusResult.StatusCode is >= 200 and < 300) queued++;
+            else failed++;
         }
-        await audit.LogAsync(http, "dispatch.eta.bulk.sent", "Dispatch", null, ct: ct);
-        return Results.Ok(ApiResponse<object>.Ok(new { sent = jobs.Count }, "Bulk ETA updates sent"));
+        await audit.LogAsync(http, "dispatch.eta.bulk.queued", "Dispatch", null,
+            detailsJson: JsonSerializer.Serialize(new { candidates = jobs.Count, queued, failed, providerDeliveryClaim = false }), ct: ct);
+        return Results.Ok(ApiResponse<object>.Ok(
+            new { candidates = jobs.Count, queued, failed, providerDeliveryClaim = false },
+            $"Bulk ETA processing completed: {queued} queued, {failed} failed. Provider delivery is not claimed."));
     }
 
     private static Task<IResult> Routes(HttpContext http, Database db, CancellationToken ct)
@@ -8637,17 +8645,27 @@ public static partial class EndpointMappings
         if (RequireInternalUser(http) is { } internalDenied) return internalDenied;
         if (RequirePermission(http, "customer_portal:view") is { } denied) return denied;
         var companyId = GetCompanyId(http);
+        var (branchClause, branchId) = StrictBranchFilter(http, "j");
         var row = await db.QuerySingleAsync(
-            @"SELECT COUNT(*) total_tracked,
-                     SUM(CASE WHEN j.status IN ('Delayed','At Risk') OR j.sla_status='At Risk' THEN 1 ELSE 0 END) eta_risk,
-                     SUM(CASE WHEN j.customer_update_status <> 'Sent' THEN 1 ELSE 0 END) updates_needed,
-                     SUM(CASE WHEN cc.status='Sent' THEN 1 ELSE 0 END) communications_sent,
-                     SUM(CASE WHEN cc.status <> 'Sent' THEN 1 ELSE 0 END) pending_communications,
-                     ROUND(AVG(CASE WHEN j.status IN ('Completed','Delivered') THEN 96 WHEN j.status IN ('Delayed','At Risk') THEN 72 ELSE 88 END),1) customer_experience_score
+            @"WITH scoped_jobs AS (
+                SELECT j.id
+                FROM jobs j
+                WHERE j.company_id=@cid AND j.deleted_at IS NULL" + branchClause + @"
+              )
+              SELECT COUNT(*) total_tracked,
+                     COUNT(*) FILTER (WHERE j.status IN ('Delayed','At Risk') OR j.sla_status='At Risk') eta_risk,
+                     COUNT(*) FILTER (WHERE j.customer_update_status IS DISTINCT FROM 'Sent') updates_needed,
+                     (SELECT COUNT(*) FROM customer_communications cc JOIN scoped_jobs sj ON sj.id=cc.job_id
+                       WHERE cc.company_id=@cid AND cc.status='Sent') communications_sent,
+                     (SELECT COUNT(*) FROM customer_communications cc JOIN scoped_jobs sj ON sj.id=cc.job_id
+                       WHERE cc.company_id=@cid AND cc.status<>'Sent') pending_communications,
+                     (SELECT ROUND(AVG(cf.rating)::numeric,1) FROM customer_feedback cf JOIN scoped_jobs sj ON sj.id=cf.job_id
+                       WHERE cf.company_id=@cid AND cf.rating BETWEEN 1 AND 5) average_feedback_rating,
+                     (SELECT COUNT(*) FROM customer_feedback cf JOIN scoped_jobs sj ON sj.id=cf.job_id
+                       WHERE cf.company_id=@cid AND cf.rating BETWEEN 1 AND 5) feedback_response_count
               FROM jobs j
-              LEFT JOIN customer_communications cc ON cc.job_id=j.id
-              WHERE j.company_id=@cid AND j.deleted_at IS NULL",
-            c => c.Parameters.AddWithValue("@cid", companyId), ct);
+              WHERE j.company_id=@cid AND j.deleted_at IS NULL" + branchClause,
+            c => { c.Parameters.AddWithValue("@cid", companyId); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct);
         var jobs = await db.QueryAsync(
             @"SELECT j.id, COALESCE(j.job_number,j.job_code) job_number, j.tracking_code, j.status, j.eta, j.sla_status, j.customer_update_status,
                      c.name customer_name, d.full_name driver_name, v.vehicle_code,
@@ -8655,15 +8673,21 @@ public static partial class EndpointMappings
                        WHERE cel.job_id=j.id AND cel.company_id=j.company_id
                          AND cel.public_status='Active' AND cel.expires_at > NOW()
                        ORDER BY cel.id DESC LIMIT 1) tracking_token,
-                     CASE WHEN j.risk_score >= 70 OR j.sla_status='At Risk' THEN 'At Risk' WHEN j.risk_score >= 45 THEN 'Medium' ELSE 'High' END eta_confidence_level,
-                     CASE WHEN j.customer_update_status <> 'Sent' OR j.sla_status='At Risk' THEN 'Send customer update' ELSE 'Monitor' END recommended_action
+                     NULLIF(eu.confidence_level,'Unspecified') eta_confidence_level,
+                     CASE WHEN j.customer_update_status IS DISTINCT FROM 'Sent' OR j.sla_status='At Risk' THEN 'Record or queue customer update' ELSE 'Monitor' END recommended_action
               FROM jobs j
-              LEFT JOIN customers c ON c.id=j.customer_id
-              LEFT JOIN drivers d ON d.id=j.assigned_driver_id
-              LEFT JOIN vehicles v ON v.id=j.assigned_vehicle_id
-              WHERE j.company_id=@cid AND j.deleted_at IS NULL AND (j.customer_update_status <> 'Sent' OR j.status IN ('Delayed','At Risk') OR j.sla_status='At Risk')
+              LEFT JOIN customers c ON c.id=j.customer_id AND c.company_id=j.company_id
+              LEFT JOIN drivers d ON d.id=j.assigned_driver_id AND d.company_id=j.company_id
+              LEFT JOIN vehicles v ON v.id=j.assigned_vehicle_id AND v.company_id=j.company_id
+              LEFT JOIN LATERAL (
+                SELECT confidence_level FROM eta_updates
+                WHERE company_id=j.company_id AND job_id=j.id
+                ORDER BY created_at DESC,id DESC LIMIT 1
+              ) eu ON TRUE
+              WHERE j.company_id=@cid AND j.deleted_at IS NULL" + branchClause + @"
+                AND (j.customer_update_status IS DISTINCT FROM 'Sent' OR j.status IN ('Delayed','At Risk') OR j.sla_status='At Risk')
               ORDER BY j.risk_score DESC, j.scheduled_start LIMIT 16",
-            c => c.Parameters.AddWithValue("@cid", companyId), ct);
+            c => { c.Parameters.AddWithValue("@cid", companyId); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct);
         return Results.Ok(ApiResponse<object>.Ok(new { summary = row, jobs }));
     }
 
@@ -8676,10 +8700,15 @@ public static partial class EndpointMappings
     private static async Task<IResult> CustomerEtaTrack(string trackingCode, Database db, CancellationToken ct)
     {
         var row = await db.QuerySingleAsync(
-            @"SELECT j.id, COALESCE(j.job_number,j.job_code) reference, j.status, j.eta, j.sla_status, j.proof_status,
-                     CASE WHEN j.risk_score >= 70 OR j.sla_status='At Risk' THEN 'At Risk' WHEN j.risk_score >= 45 THEN 'Medium' ELSE 'High' END eta_confidence_level
+            @"SELECT j.id, COALESCE(j.job_number,j.job_code) reference, j.status, j.eta, j.scheduled_start, j.sla_status, j.proof_status,
+                     NULLIF(eu.confidence_level,'Unspecified') eta_confidence_level
               FROM customer_eta_links cel
               JOIN jobs j ON j.id = cel.job_id AND j.company_id = cel.company_id AND j.deleted_at IS NULL
+              LEFT JOIN LATERAL (
+                SELECT confidence_level FROM eta_updates
+                WHERE company_id=j.company_id AND job_id=j.id
+                ORDER BY created_at DESC,id DESC LIMIT 1
+              ) eu ON TRUE
               WHERE cel.secure_token = @code
                 AND cel.public_status = 'Active'
                 AND cel.expires_at > NOW()
@@ -8691,14 +8720,45 @@ public static partial class EndpointMappings
             tracking = row,
             timeline = new[]
             {
-                new { label = "Scheduled", complete = true },
+                new { label = "Scheduled", complete = row["scheduledStart"] is not (null or DBNull) },
                 new { label = "Assigned", complete = !string.Equals(row["status"]?.ToString(), "Unassigned", StringComparison.OrdinalIgnoreCase) },
                 new { label = "En Route", complete = new[] { "En Route", "In Progress", "At Stop", "Completed", "Delivered" }.Contains(row["status"]?.ToString()) },
                 new { label = "Arrived", complete = new[] { "At Stop", "Completed", "Delivered" }.Contains(row["status"]?.ToString()) },
                 new { label = "Completed", complete = new[] { "Completed", "Delivered" }.Contains(row["status"]?.ToString()) }
             },
-            customerMessage = "Connected transport. Intelligent control. Enterprise execution."
+            customerMessage = (string?)null
         }));
+    }
+
+    private static async Task<IResult> CustomerEtaPublicFeedback(string trackingCode, Dictionary<string, object?> body, Database db, CancellationToken ct)
+    {
+        if (!int.TryParse(Get(body, "rating")?.ToString(), out var rating) || rating is < 1 or > 5)
+            return Results.BadRequest(ApiResponse<object>.Fail("Rating must be between 1 and 5"));
+        var comments = Get(body, "comments") is DBNull ? null : Get(body, "comments")?.ToString()?.Trim();
+        if (comments?.Length > 1000)
+            return Results.BadRequest(ApiResponse<object>.Fail("Feedback comments cannot exceed 1000 characters"));
+        var link = await db.QuerySingleAsync(
+            @"SELECT cel.company_id,cel.job_id,cel.customer_id
+              FROM customer_eta_links cel
+              JOIN jobs j ON j.id=cel.job_id AND j.company_id=cel.company_id AND j.deleted_at IS NULL
+              WHERE cel.secure_token=@code AND cel.public_status='Active' AND cel.expires_at>NOW()
+              LIMIT 1",
+            c => c.Parameters.AddWithValue("@code", trackingCode), ct);
+        if (link is null) return Results.NotFound(ApiResponse<object>.Fail("Tracking link is invalid, expired, or revoked"));
+        var companyId = Convert.ToInt64(link["companyId"]);
+        var jobId = Convert.ToInt64(link["jobId"]);
+        var id = await db.InsertAsync(
+            @"INSERT INTO customer_feedback (company_id,customer_id,job_id,rating,comment,feedback_type,status)
+              VALUES (@companyId,@customerId,@jobId,@rating,@comment,'eta_tracking','open')",
+            c =>
+            {
+                c.Parameters.AddWithValue("@companyId", companyId);
+                c.Parameters.AddWithValue("@customerId", link["customerId"] ?? (object)DBNull.Value);
+                c.Parameters.AddWithValue("@jobId", jobId);
+                c.Parameters.AddWithValue("@rating", rating);
+                c.Parameters.AddWithValue("@comment", (object?)comments ?? DBNull.Value);
+            }, ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { id }, "Feedback received"));
     }
 
     private static Task<IResult> CustomerEtaJob(HttpContext http, long jobId, Database db, CancellationToken ct)
@@ -8709,17 +8769,33 @@ public static partial class EndpointMappings
 
     private static async Task<IResult> CustomerEtaFeedback(HttpContext http, long jobId, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
+        if (RequireInternalUser(http) is { } internalDenied) return internalDenied;
+        if (!int.TryParse(Get(body, "rating")?.ToString(), out var rating) || rating is < 1 or > 5)
+            return Results.BadRequest(ApiResponse<object>.Fail("Rating must be between 1 and 5"));
+        var comments = Get(body, "comments") is DBNull ? null : Get(body, "comments")?.ToString()?.Trim();
+        if (comments?.Length > 1000)
+            return Results.BadRequest(ApiResponse<object>.Fail("Feedback comments cannot exceed 1000 characters"));
         var companyId = GetCompanyId(http);
+        var (branchClause, branchId) = StrictBranchFilter(http, "j");
+        var job = await db.QuerySingleAsync(
+            @"SELECT j.id,j.customer_id FROM jobs j
+              WHERE j.id=@jobId AND j.company_id=@companyId AND j.deleted_at IS NULL" + branchClause,
+            c =>
+            {
+                c.Parameters.AddWithValue("@jobId", jobId);
+                c.Parameters.AddWithValue("@companyId", companyId);
+                if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId.Value);
+            }, ct);
+        if (job is null) return Results.NotFound(ApiResponse<object>.Fail("Job not found"));
         var id = await db.InsertAsync(
-            @"INSERT INTO customer_feedback (company_id, job_id, tracking_code, rating, sentiment, comments)
-              VALUES (@companyId, @jobId, @tracking, @rating, @sentiment, @comments)", c =>
+            @"INSERT INTO customer_feedback (company_id,customer_id,job_id,rating,comment,feedback_type,status)
+              VALUES (@companyId,@customerId,@jobId,@rating,@comment,'eta_internal','open')", c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
+                c.Parameters.AddWithValue("@customerId", job["customerId"] ?? (object)DBNull.Value);
                 c.Parameters.AddWithValue("@jobId", jobId);
-                c.Parameters.AddWithValue("@tracking", Get(body, "trackingCode"));
-                c.Parameters.AddWithValue("@rating", Get(body, "rating"));
-                c.Parameters.AddWithValue("@sentiment", Get(body, "sentiment") is DBNull ? "Pending Review" : Get(body, "sentiment"));
-                c.Parameters.AddWithValue("@comments", Get(body, "comments"));
+                c.Parameters.AddWithValue("@rating", rating);
+                c.Parameters.AddWithValue("@comment", (object?)comments ?? DBNull.Value);
             }, ct);
         await audit.LogAsync(http, "customer.eta.feedback.received", "Job", jobId, ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id }, "Feedback received"));
@@ -8729,14 +8805,15 @@ public static partial class EndpointMappings
     {
         if (RequireInternalUser(http) is { } internalDenied) return Task.FromResult(internalDenied);
         if (RequirePermission(http, "customer_portal:view") is { } denied) return Task.FromResult(denied);
+        var (branchClause, branchId) = StrictBranchFilter(http, "j");
         return OkRows(db,
             @"SELECT cc.*, c.name customer_name, COALESCE(j.job_number,j.job_code) job_number, j.tracking_code
               FROM customer_communications cc
-              LEFT JOIN customers c ON c.id=cc.customer_id
-              LEFT JOIN jobs j ON j.id=cc.job_id
-              WHERE cc.company_id=@cid
+              JOIN jobs j ON j.id=cc.job_id AND j.company_id=cc.company_id AND j.deleted_at IS NULL
+              LEFT JOIN customers c ON c.id=cc.customer_id AND c.company_id=cc.company_id
+              WHERE cc.company_id=@cid" + branchClause + @"
               ORDER BY cc.sent_at DESC LIMIT 50",
-            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+            c => { c.Parameters.AddWithValue("@cid", GetCompanyId(http)); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct: ct);
     }
 
     private const string MaintenanceBaseSql =
