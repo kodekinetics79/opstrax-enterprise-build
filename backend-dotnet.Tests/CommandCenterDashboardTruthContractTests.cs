@@ -53,6 +53,48 @@ public sealed class CommandCenterDashboardTruthContractTests
     }
 
     [Fact]
+    public void FleetHealthRiskBoard_UsesScopedDiagnosticEvidenceWithoutDefaultScores()
+    {
+        var method = Method("private static async Task<IResult> FleetHealthRisks(", "private static async Task<IResult> FleetHealthVehicleDetail(");
+
+        var snakeLookups = Regex.Matches(method, "(?:L|V|VN|S)\\([^,]+, \\\"([a-z0-9]+_[a-z0-9_]+)\\\"\\)");
+        Assert.True(snakeLookups.Count == 0,
+            $"snake_case row lookups can never match ToCamel'd query rows: {string.Join(", ", snakeLookups.Select(m => m.Groups[1].Value))}");
+
+        Assert.Contains("GetBranchId(http)", method, StringComparison.Ordinal);
+        Assert.Contains("@branchId::bigint IS NULL OR v.branch_id=@branchId", method, StringComparison.Ordinal);
+        Assert.Contains("@branchId::bigint IS NULL OR d.branch_id=@branchId", method, StringComparison.Ordinal);
+        Assert.Contains("FROM fault_occurrences", method, StringComparison.Ordinal);
+        Assert.Contains("fo.source_event_id=fc.last_source_event_id", method, StringComparison.Ordinal);
+        Assert.DoesNotContain("0 active_faults", method, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("v.device_status", method, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("COALESCE(v.readiness_score", method, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("COALESCE(d.safety_score", method, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void AnalyticsRates_StayNullWithoutMeasuredDenominators()
+    {
+        var source = Read("backend-dotnet", "Controllers", "EndpointMappings.cs");
+        var operations = Slice(source, "private static async Task<IResult> AnalyticsOperations(", "private static async Task<IResult> AnalyticsDispatch(");
+        var safety = Slice(source, "private static async Task<IResult> AnalyticsSafety(", "private static async Task<IResult> AnalyticsMaintenance(");
+        var customer = Slice(source, "private static async Task<IResult> AnalyticsCustomer(", "private static async Task<IResult> AnalyticsTrends(");
+        var trends = Slice(source, "private static async Task<IResult> AnalyticsTrends(", "private static async Task<IResult> AnalyticsInsights(");
+        var insights = Slice(source, "private static async Task<IResult> AnalyticsInsights(", "// ══════════════════════════════════════════════════════════════════════════\n    // P9");
+
+        Assert.Contains("avgCompliance.HasValue", operations, StringComparison.Ordinal);
+        Assert.DoesNotContain("avgCompliance ?? 0", operations, StringComparison.Ordinal);
+        Assert.Contains("avgSafety.HasValue", safety, StringComparison.Ordinal);
+        Assert.DoesNotContain("avgSafety ?? 0", safety, StringComparison.Ordinal);
+        Assert.Contains("decimal? metRate", customer, StringComparison.Ordinal);
+        Assert.Contains(": null", customer, StringComparison.Ordinal);
+        Assert.DoesNotContain("otd30 ?? 0", trends, StringComparison.Ordinal);
+        Assert.DoesNotContain("otd7  ?? 0", trends, StringComparison.Ordinal);
+        Assert.Contains("otd7.HasValue && otd30.HasValue", trends, StringComparison.Ordinal);
+        Assert.DoesNotContain("No significant operational alerts at this time", insights, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void SafetyDashboard_Emits_Null_Not_Perfect_Score_When_Unscored()
     {
         var method = Method("private static async Task<IResult> SafetyDashboard(", "// ── GET /api/safety/rules");
@@ -104,6 +146,11 @@ public sealed class CommandCenterDashboardTruthContractTests
     private static string Method(string startMarker, string endMarker)
     {
         var source = Read("backend-dotnet", "Controllers", "EndpointMappings.cs");
+        return Slice(source, startMarker, endMarker);
+    }
+
+    private static string Slice(string source, string startMarker, string endMarker)
+    {
         var start = source.IndexOf(startMarker, StringComparison.Ordinal);
         Assert.True(start >= 0, $"start marker not found: {startMarker}");
         var end = source.IndexOf(endMarker, start + startMarker.Length, StringComparison.Ordinal);

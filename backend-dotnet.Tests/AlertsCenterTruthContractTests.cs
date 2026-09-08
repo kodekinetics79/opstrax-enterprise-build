@@ -46,6 +46,21 @@ public sealed class AlertsCenterTruthContractTests
         Assert.Contains("Stage131 alert source identity boundary is missing", runner, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void AlertRuleConfigurationDoesNotFabricateExecutionEvidence()
+    {
+        var method = Section(
+            "private static Task<IResult> AlertRulesList",
+            "// ── End Alerts");
+
+        Assert.DoesNotContain("triggered_today", method, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("last_triggered_at", method, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("COALESCE(status, 'Active')", method, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("COALESCE(channels, 'In-App')", method, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("COALESCE(company_id, tenant_id, 1)", method, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("COALESCE(company_id, tenant_id) = @cid", method, StringComparison.Ordinal);
+    }
+
     private static string Section(string startMarker, string endMarker)
     {
         var source = Read("backend-dotnet", "Controllers", "EndpointMappings.cs");

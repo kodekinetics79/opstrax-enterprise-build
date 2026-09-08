@@ -29,7 +29,11 @@ public sealed class ControlTowerBranchIsolationPostgresTests
             var ownDriver = await Driver(db, company, branchA, $"OWN-DRV-{suffix}");
             var foreignDriver = await Driver(db, company, branchB, $"FOREIGN-DRV-{suffix}");
             var unallocatedDriver = await Driver(db, company, null, $"NULL-DRV-{suffix}");
-            await TelemetryDevice(db, company, branchA, ownVehicle, $"OWN-DEV-{suffix}");
+            var ownDeviceSerial = $"OWN-DEV-{suffix}";
+            await TelemetryDevice(db, company, branchA, ownVehicle, ownDeviceSerial);
+            await VerifiedFault(db, company, branchA, ownVehicle, ownDeviceSerial, $"own-fault-{suffix}");
+            await VerifiedFault(db, company, branchB, foreignVehicle, $"FOREIGN-DIAG-{suffix}", $"foreign-fault-{suffix}");
+            await UnverifiedFaultProjection(db, company, null, unallocatedVehicle, $"UNVERIFIED-DIAG-{suffix}", $"unverified-fault-{suffix}");
             await Location(db, company, ownVehicle, 71);
             await Location(db, company, foreignVehicle, 72);
             await Location(db, company, unallocatedVehicle, 73);
@@ -139,6 +143,13 @@ public sealed class ControlTowerBranchIsolationPostgresTests
             Assert.Equal("Open Telemetry Alerts", commandCenterWithAlerts.GetProperty("kpis")[1].GetProperty("label").GetString());
             Assert.Equal(1, commandCenterWithAlerts.GetProperty("kpis")[1].GetProperty("value").GetInt64());
 
+            var branchRisks = Payload(await InvokeFleetHealthRisks(
+                Principal(company, branchA, "dashboard:view"), db)).GetProperty("data").EnumerateArray().ToArray();
+            var branchVehicleRisk = Assert.Single(branchRisks);
+            Assert.Equal("vehicle", branchVehicleRisk.GetProperty("entityType").GetString());
+            Assert.Equal($"OWN-{suffix}", branchVehicleRisk.GetProperty("displayName").GetString());
+            Assert.Equal(1, branchVehicleRisk.GetProperty("metrics").GetProperty("activeFaultCodes").GetInt64());
+
             var branchAlerts = Payload(await InvokeAlertsList(
                 Principal(company, branchA, "alerts:view"), db)).GetProperty("data");
             Assert.Single(branchAlerts.EnumerateArray());
@@ -227,6 +238,13 @@ public sealed class ControlTowerBranchIsolationPostgresTests
                 Principal(company, null, "alerts:view"), db)).GetProperty("data");
             Assert.Equal(2, tenantAlerts.GetArrayLength());
 
+            var tenantRisks = Payload(await InvokeFleetHealthRisks(
+                Principal(company, null, "dashboard:view"), db)).GetProperty("data").EnumerateArray().ToArray();
+            Assert.Equal(2, tenantRisks.Length);
+            Assert.Contains(tenantRisks, risk => risk.GetProperty("displayName").GetString() == $"OWN-{suffix}");
+            Assert.Contains(tenantRisks, risk => risk.GetProperty("displayName").GetString() == $"FOREIGN-{suffix}");
+            Assert.DoesNotContain(tenantRisks, risk => risk.GetProperty("displayName").GetString() == $"NULL-{suffix}");
+
             var dashboardOnly = Payload(await Invoke(Principal(company, branchA, "dashboard:view"), db)).GetProperty("data");
             Assert.Empty(dashboardOnly.GetProperty("safetyVideo").EnumerateArray());
             Assert.Equal("Unknown", dashboardOnly.GetProperty("entities")[0].GetProperty("deviceStatus").GetString());
@@ -235,6 +253,8 @@ public sealed class ControlTowerBranchIsolationPostgresTests
         }
         finally
         {
+            await db.ExecuteAsync("DELETE FROM fault_codes WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", company));
+            await db.ExecuteAsync("DELETE FROM fault_occurrences WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", company));
             await db.ExecuteAsync("DELETE FROM operational_events WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", company));
             await db.ExecuteAsync("DELETE FROM alert_follow_up_tasks WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", company));
             await db.ExecuteAsync("DELETE FROM audit_logs WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", company));
@@ -283,6 +303,67 @@ public sealed class ControlTowerBranchIsolationPostgresTests
                 c.Parameters.AddWithValue("@branch", branch);
                 c.Parameters.AddWithValue("@device", device);
                 c.Parameters.AddWithValue("@vehicle", vehicle);
+            });
+    }
+
+    private static async Task VerifiedFault(
+        Database db, long company, long? branch, long vehicle, string device, string sourceEvent)
+    {
+        var observedAt = DateTimeOffset.UtcNow.AddMinutes(-2);
+        var identity = $"J1939:SA:1:SPN:{Math.Abs(sourceEvent.GetHashCode()) % 100000}:FMI:5";
+        await db.InsertAsync(
+            @"INSERT INTO fault_occurrences(company_id,branch_id,device_id,vehicle_id,source_event_id,
+                dtc_ordinal,canonical_dtc,observed_at,protocol,code,occurrence_count,payload_fingerprint)
+              VALUES(@cid,@branch,@device,@vehicle,@event,0,@identity,@observed,'J1939','SPN-100-FMI-5',1,@fingerprint)",
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid", company);
+                c.Parameters.AddWithValue("@branch", (object?)branch ?? DBNull.Value);
+                c.Parameters.AddWithValue("@device", device);
+                c.Parameters.AddWithValue("@vehicle", vehicle);
+                c.Parameters.AddWithValue("@event", sourceEvent);
+                c.Parameters.AddWithValue("@identity", identity);
+                c.Parameters.AddWithValue("@observed", observedAt);
+                c.Parameters.AddWithValue("@fingerprint", new string('a', 64));
+            });
+        await db.InsertAsync(
+            @"INSERT INTO fault_codes(company_id,branch_id,device_id,vehicle_id,source_event_id,
+                canonical_identity,last_source_event_id,code_type,protocol,code,severity,status,
+                observed_at,last_observed_at,first_seen_at,last_seen_at)
+              VALUES(@cid,@branch,@device,@vehicle,@event,@identity,@event,'J1939','J1939','SPN-100-FMI-5',
+                'Warning','active',@observed,@observed,@observed,@observed)",
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid", company);
+                c.Parameters.AddWithValue("@branch", (object?)branch ?? DBNull.Value);
+                c.Parameters.AddWithValue("@device", device);
+                c.Parameters.AddWithValue("@vehicle", vehicle);
+                c.Parameters.AddWithValue("@event", sourceEvent);
+                c.Parameters.AddWithValue("@identity", identity);
+                c.Parameters.AddWithValue("@observed", observedAt);
+            });
+    }
+
+    private static Task<long> UnverifiedFaultProjection(
+        Database db, long company, long? branch, long vehicle, string device, string sourceEvent)
+    {
+        var observedAt = DateTimeOffset.UtcNow.AddMinutes(-2);
+        var identity = $"J1939:SA:2:SPN:{Math.Abs(sourceEvent.GetHashCode()) % 100000}:FMI:7";
+        return db.InsertAsync(
+            @"INSERT INTO fault_codes(company_id,branch_id,device_id,vehicle_id,source_event_id,
+                canonical_identity,last_source_event_id,code_type,protocol,code,severity,status,
+                observed_at,last_observed_at,first_seen_at,last_seen_at)
+              VALUES(@cid,@branch,@device,@vehicle,@event,@identity,@event,'J1939','J1939','SPN-200-FMI-7',
+                'Critical','active',@observed,@observed,@observed,@observed)",
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid", company);
+                c.Parameters.AddWithValue("@branch", (object?)branch ?? DBNull.Value);
+                c.Parameters.AddWithValue("@device", device);
+                c.Parameters.AddWithValue("@vehicle", vehicle);
+                c.Parameters.AddWithValue("@event", sourceEvent);
+                c.Parameters.AddWithValue("@identity", identity);
+                c.Parameters.AddWithValue("@observed", observedAt);
             });
     }
 
@@ -397,6 +478,12 @@ public sealed class ControlTowerBranchIsolationPostgresTests
     private static async Task<IResult> InvokeCommandCenter(DefaultHttpContext http, Database db)
     {
         var method = typeof(EndpointMappings).GetMethod("CommandCenterSummary", BindingFlags.NonPublic | BindingFlags.Static)!;
+        return await (Task<IResult>)method.Invoke(null, [http, db, CancellationToken.None])!;
+    }
+
+    private static async Task<IResult> InvokeFleetHealthRisks(DefaultHttpContext http, Database db)
+    {
+        var method = typeof(EndpointMappings).GetMethod("FleetHealthRisks", BindingFlags.NonPublic | BindingFlags.Static)!;
         return await (Task<IResult>)method.Invoke(null, [http, db, CancellationToken.None])!;
     }
 

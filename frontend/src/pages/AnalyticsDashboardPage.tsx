@@ -63,10 +63,35 @@ function TrendArrow({ value }: { value: string | undefined }) {
   return <Minus className="h-4 w-4 text-slate-400" />;
 }
 
+function metric(row: Record<string, unknown>, key: string): number | null {
+  const value = row[key];
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function thresholdTone(value: number | null, target: number | null, below: string): string {
+  if (value === null || target === null) return "text-slate-800";
+  return value >= target ? "text-emerald-600" : below;
+}
+
+function positiveTone(value: number | null, tone: string): string {
+  return value !== null && value > 0 ? tone : "text-slate-800";
+}
+
+function bandTone(value: number | null, high: number, middle: number): string {
+  if (value === null) return "text-slate-800";
+  return value >= high ? "text-emerald-600" : value >= middle ? "text-amber-600" : "text-red-600";
+}
+
+function metricText(value: number | null, prefix = "", suffix = ""): string | undefined {
+  return value === null ? undefined : `${prefix}${value}${suffix}`;
+}
+
 function SectionLabel() {
   return (
     <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
-      System Analytics Insight · computed from live fleet data
+      System Analytics Insight · computed from current persisted operational records
     </p>
   );
 }
@@ -100,20 +125,20 @@ function ExecutivePanel() {
   if (q.isLoading) return <LoadingState />;
   if (q.isError) return <EmptyState title="Unavailable" subtitle="Executive analytics require dashboard:view permission." />;
   const d = q.data ?? {};
-  const n = (k: string) => d[k] as number ?? 0;
+  const n = (k: string) => metric(d, k);
   return (
     <div className="space-y-4">
       <SectionLabel />
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-        <KpiCard label="Fleet Utilization" value={n("fleetUtilization")} unit="%" target={`${n("fleetUtilTarget")}%`} color={n("fleetUtilization") >= n("fleetUtilTarget") ? "text-emerald-600" : "text-amber-600"} />
-        <KpiCard label="On-Time Delivery" value={n("onTimeDeliveryRate")} unit="%" target={`${n("otdTarget")}%`} color={n("onTimeDeliveryRate") >= n("otdTarget") ? "text-emerald-600" : "text-red-600"} />
-        <KpiCard label="Driver Safety Avg" value={n("driverSafetyAvg")} sub="out of 100" target={`${n("safetyTarget")}`} color={n("driverSafetyAvg") >= n("safetyTarget") ? "text-emerald-600" : "text-amber-600"} />
-        <KpiCard label="Open Safety Events" value={n("openSafetyIncidents")} color={n("openSafetyIncidents") > 0 ? "text-red-600" : "text-slate-800"} />
-        <KpiCard label="Open Exceptions" value={n("openExceptions")} color={n("openExceptions") > 0 ? "text-amber-600" : "text-slate-800"} />
-        <KpiCard label="Maintenance Overdue" value={n("maintenanceOverdue")} color={n("maintenanceOverdue") > 0 ? "text-red-600" : "text-slate-800"} />
-        <KpiCard label="Active Vehicles" value={n("vehicleActive")} sub={`of ${n("vehicleTotal")} total`} />
+        <KpiCard label="Fleet Utilization" value={n("fleetUtilization")} unit="%" target={metricText(n("fleetUtilTarget"), "", "%")} color={thresholdTone(n("fleetUtilization"), n("fleetUtilTarget"), "text-amber-600")} />
+        <KpiCard label="On-Time Delivery" value={n("onTimeDeliveryRate")} unit="%" target={metricText(n("otdTarget"), "", "%")} color={thresholdTone(n("onTimeDeliveryRate"), n("otdTarget"), "text-red-600")} />
+        <KpiCard label="Driver Safety Avg" value={n("driverSafetyAvg")} sub={n("driverSafetyAvg") === null ? undefined : "out of 100"} target={metricText(n("safetyTarget"))} color={thresholdTone(n("driverSafetyAvg"), n("safetyTarget"), "text-amber-600")} />
+        <KpiCard label="Open Safety Events" value={n("openSafetyIncidents")} color={positiveTone(n("openSafetyIncidents"), "text-red-600")} />
+        <KpiCard label="Open Exceptions" value={n("openExceptions")} color={positiveTone(n("openExceptions"), "text-amber-600")} />
+        <KpiCard label="Maintenance Overdue" value={n("maintenanceOverdue")} color={positiveTone(n("maintenanceOverdue"), "text-red-600")} />
+        <KpiCard label="Active Vehicles" value={n("vehicleActive")} sub={metricText(n("vehicleTotal"), "of ", " total")} />
         <KpiCard label="Drivers" value={n("driverTotal")} />
-        <KpiCard label="Jobs (30d)" value={n("jobsTotal")} sub={`${n("jobsCompleted")} completed`} />
+        <KpiCard label="Jobs (30d)" value={n("jobsTotal")} sub={metricText(n("jobsCompleted"), "", " completed")} />
         <KpiCard label="Proofs Captured (30d)" value={n("proofCaptured30d")} />
       </div>
     </div>
@@ -125,16 +150,16 @@ function OperationsPanel() {
   if (q.isLoading) return <LoadingState />;
   if (q.isError) return <EmptyState title="Unavailable" subtitle="Operations analytics require dispatch:view permission." />;
   const d = q.data ?? {};
-  const n = (k: string) => d[k] as number ?? 0;
+  const n = (k: string) => metric(d, k);
   const breakdown = (d["exceptionBreakdown"] as Record<string, unknown>[]) ?? [];
   return (
     <div className="space-y-4">
       <SectionLabel />
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-        <KpiCard label="Active Trips" value={n("activeTrips")} color={n("activeTrips") > 0 ? "text-blue-600" : "text-slate-800"} />
+        <KpiCard label="Active Trips" value={n("activeTrips")} color={positiveTone(n("activeTrips"), "text-blue-600")} />
         <KpiCard label="Trips Today" value={n("tripsToday")} />
-        <KpiCard label="Route Compliance" value={n("routeComplianceAvg")} unit="%" color={n("routeComplianceAvg") >= 85 ? "text-emerald-600" : "text-amber-600"} target="85%" />
-        <KpiCard label="Open Exceptions" value={n("openExceptions")} color={n("openExceptions") > 0 ? "text-amber-600" : "text-slate-800"} />
+        <KpiCard label="Route Compliance" value={n("routeComplianceAvg")} unit="%" color={thresholdTone(n("routeComplianceAvg"), 85, "text-amber-600")} target="85%" />
+        <KpiCard label="Open Exceptions" value={n("openExceptions")} color={positiveTone(n("openExceptions"), "text-amber-600")} />
         <KpiCard label="Active Assignments" value={n("activeAssignments")} />
       </div>
       {breakdown.length > 0 && (
@@ -152,7 +177,7 @@ function DispatchPanel() {
   if (q.isLoading) return <LoadingState />;
   if (q.isError) return <EmptyState title="Unavailable" subtitle="Dispatch analytics require dispatch:view permission." />;
   const d = q.data ?? {};
-  const n = (k: string) => d[k] as number ?? 0;
+  const n = (k: string) => metric(d, k);
   const dist = (d["statusDistribution"] as Record<string, unknown>[]) ?? [];
   return (
     <div className="space-y-4">
@@ -160,9 +185,9 @@ function DispatchPanel() {
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
         <KpiCard label="Assigned" value={n("currentlyAssigned")} />
         <KpiCard label="Accepted" value={n("accepted")} />
-        <KpiCard label="In Transit" value={n("inTransit")} color="text-blue-600" />
-        <KpiCard label="Delivered (7d)" value={n("delivered")} color="text-emerald-600" />
-        <KpiCard label="Exceptions Open" value={n("openExceptions")} color={n("openExceptions") > 0 ? "text-amber-600" : "text-slate-800"} />
+        <KpiCard label="In Transit" value={n("inTransit")} color={positiveTone(n("inTransit"), "text-blue-600")} />
+        <KpiCard label="Delivered (7d)" value={n("delivered")} color={positiveTone(n("delivered"), "text-emerald-600")} />
+        <KpiCard label="Exceptions Open" value={n("openExceptions")} color={positiveTone(n("openExceptions"), "text-amber-600")} />
         <KpiCard label="Proofs (7d)" value={n("proofsLast7d")} />
       </div>
       {dist.length > 0 && (
@@ -180,7 +205,7 @@ function SafetyPanel() {
   if (q.isLoading) return <LoadingState />;
   if (q.isError) return <EmptyState title="Unavailable" subtitle="Safety analytics require safety:view permission." />;
   const d = q.data ?? {};
-  const n = (k: string) => d[k] as number ?? 0;
+  const n = (k: string) => metric(d, k);
   const eventTypes = (d["eventTypeBreakdown"] as Record<string, unknown>[]) ?? [];
   const riskDrivers = (d["topRiskDrivers"] as Record<string, unknown>[]) ?? [];
   return (
@@ -188,10 +213,10 @@ function SafetyPanel() {
       <SectionLabel />
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
         <KpiCard label="Safety Events (30d)" value={n("safetyEventsLast30d")} />
-        <KpiCard label="Critical Events" value={n("criticalEvents")} color={n("criticalEvents") > 0 ? "text-red-600" : "text-slate-800"} />
-        <KpiCard label="Open Coaching Tasks" value={n("openCoachingTasks")} color={n("openCoachingTasks") > 0 ? "text-amber-600" : "text-slate-800"} />
-        <KpiCard label="Coaching Overdue" value={n("overdueCoachingTasks")} color={n("overdueCoachingTasks") > 0 ? "text-red-600" : "text-slate-800"} />
-        <KpiCard label="Driver Safety Avg" value={n("driverSafetyAvg")} sub="out of 100" color={n("driverSafetyAvg") >= 85 ? "text-emerald-600" : "text-amber-600"} />
+        <KpiCard label="Critical Events" value={n("criticalEvents")} color={positiveTone(n("criticalEvents"), "text-red-600")} />
+        <KpiCard label="Open Coaching Tasks" value={n("openCoachingTasks")} color={positiveTone(n("openCoachingTasks"), "text-amber-600")} />
+        <KpiCard label="Coaching Overdue" value={n("overdueCoachingTasks")} color={positiveTone(n("overdueCoachingTasks"), "text-red-600")} />
+        <KpiCard label="Driver Safety Avg" value={n("driverSafetyAvg")} sub={n("driverSafetyAvg") === null ? undefined : "out of 100"} color={thresholdTone(n("driverSafetyAvg"), 85, "text-amber-600")} />
       </div>
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         {eventTypes.length > 0 && (
@@ -216,17 +241,17 @@ function MaintenancePanel() {
   if (q.isLoading) return <LoadingState />;
   if (q.isError) return <EmptyState title="Unavailable" subtitle="Maintenance analytics require maintenance:view permission." />;
   const d = q.data ?? {};
-  const n = (k: string) => d[k] as number ?? 0;
+  const n = (k: string) => metric(d, k);
   const faults = (d["recurringFaultCodes"] as Record<string, unknown>[]) ?? [];
   const defects = (d["defectsByCategory"] as Record<string, unknown>[]) ?? [];
   return (
     <div className="space-y-4">
       <SectionLabel />
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-        <KpiCard label="Vehicles OOS" value={n("vehiclesOutOfService")} color={n("vehiclesOutOfService") > 0 ? "text-red-600" : "text-slate-800"} />
-        <KpiCard label="Critical Defects Open" value={n("criticalDefectsOpen")} color={n("criticalDefectsOpen") > 0 ? "text-red-600" : "text-slate-800"} />
-        <KpiCard label="Open Work Orders" value={n("openWorkOrders")} color={n("openWorkOrders") > 0 ? "text-amber-600" : "text-slate-800"} />
-        <KpiCard label="PM Overdue" value={n("pmOverdue")} color={n("pmOverdue") > 0 ? "text-amber-600" : "text-slate-800"} />
+        <KpiCard label="Vehicles OOS" value={n("vehiclesOutOfService")} color={positiveTone(n("vehiclesOutOfService"), "text-red-600")} />
+        <KpiCard label="Critical Defects Open" value={n("criticalDefectsOpen")} color={positiveTone(n("criticalDefectsOpen"), "text-red-600")} />
+        <KpiCard label="Open Work Orders" value={n("openWorkOrders")} color={positiveTone(n("openWorkOrders"), "text-amber-600")} />
+        <KpiCard label="PM Overdue" value={n("pmOverdue")} color={positiveTone(n("pmOverdue"), "text-amber-600")} />
         <KpiCard label="DVIRs (7d)" value={n("dvirLast7d")} />
       </div>
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -252,17 +277,17 @@ function CustomerPanel() {
   if (q.isLoading) return <LoadingState />;
   if (q.isError) return <EmptyState title="Unavailable" subtitle="Customer analytics require customer_portal:view permission." />;
   const d = q.data ?? {};
-  const n = (k: string) => d[k] as number ?? 0;
+  const n = (k: string) => metric(d, k);
   const byType = (d["slaByType"] as Record<string, unknown>[]) ?? [];
   return (
     <div className="space-y-4">
       <SectionLabel />
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-        <KpiCard label="SLA Met Rate" value={n("metRate")} unit="%" color={n("metRate") >= 95 ? "text-emerald-600" : n("metRate") >= 85 ? "text-amber-600" : "text-red-600"} target="95%" />
-        <KpiCard label="SLA Met" value={n("slaMet")} color="text-emerald-600" />
-        <KpiCard label="At Risk" value={n("slaAtRisk")} color={n("slaAtRisk") > 0 ? "text-amber-600" : "text-slate-800"} />
-        <KpiCard label="Breached" value={n("slaBreached")} color={n("slaBreached") > 0 ? "text-red-600" : "text-slate-800"} />
-        <KpiCard label="Open Breaches" value={n("openBreaches")} color={n("openBreaches") > 0 ? "text-red-600" : "text-slate-800"} />
+        <KpiCard label="SLA Met Rate" value={n("metRate")} unit="%" color={bandTone(n("metRate"), 95, 85)} target="95%" />
+        <KpiCard label="SLA Met" value={n("slaMet")} color={positiveTone(n("slaMet"), "text-emerald-600")} />
+        <KpiCard label="At Risk" value={n("slaAtRisk")} color={positiveTone(n("slaAtRisk"), "text-amber-600")} />
+        <KpiCard label="Breached" value={n("slaBreached")} color={positiveTone(n("slaBreached"), "text-red-600")} />
+        <KpiCard label="Open Breaches" value={n("openBreaches")} color={positiveTone(n("openBreaches"), "text-red-600")} />
         <KpiCard label="Total SLA Records" value={n("slaTotal")} />
       </div>
       {byType.length > 0 && (
@@ -319,10 +344,14 @@ function TrendsPanel() {
 function InsightsSidebar() {
   const q = useAnalyticsInsights();
   if (q.isLoading) return null;
+  if (q.isError) return <div className="panel p-4 text-xs text-slate-500">System insight records are unavailable.</div>;
   const insights = (q.data as Record<string, unknown>[]) ?? [];
   return (
     <div className="panel p-4 space-y-3">
       <p className="text-xs font-bold uppercase tracking-widest text-slate-500">System Analytics Insights</p>
+      {insights.length === 0 && (
+        <p className="text-xs leading-5 text-slate-500">No data-driven insight is available from the current operational records.</p>
+      )}
       {insights.map((ins, i) => (
         <div key={i} className="flex gap-2">
           {(ins["severity"] as string) === "critical" && <AlertTriangle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />}
@@ -362,7 +391,7 @@ export function AnalyticsDashboardPage() {
       <div>
         <h1 className="text-xl font-bold text-slate-800">Analytics Dashboard</h1>
         <p className="text-sm text-slate-500 mt-0.5">
-          Live KPIs computed from operational data. All metrics labeled as System Analytics Insight.
+          KPIs computed from current persisted operational records. Missing denominators and unmeasured scores remain unavailable.
         </p>
       </div>
 

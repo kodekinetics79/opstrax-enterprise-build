@@ -1,6 +1,6 @@
 import { FormEvent, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, CheckCircle2, Download, Edit3, Pause, Play, Plus, ShieldAlert, Trash2, X, Zap } from "lucide-react";
+import { Bell, Download, Edit3, Pause, Play, Plus, ShieldAlert, Trash2, X, Zap } from "lucide-react";
 import { ErrorState, KpiCard, LoadingState, PageHeader, StatusBadge, RiskBadge, exportCsv } from "@/components/ui";
 import { useHasPermission } from "@/hooks/usePermission";
 import { apiClient, unwrap } from "@/services/apiClient";
@@ -18,13 +18,6 @@ async function createRule(payload: AnyRecord) { return apiClient.post("/api/aler
 async function updateRule(id: string, payload: AnyRecord) { return apiClient.put(`/api/alert-rules/${id}`, payload); }
 async function deleteRule(id: string) { return apiClient.delete(`/api/alert-rules/${id}`); }
 async function toggleRule(id: string, enabled: boolean) { return apiClient.put(`/api/alert-rules/${id}/toggle`, { enabled }); }
-
-function formatLastTriggered(value: unknown) {
-  if (!value) return "Never triggered";
-  const date = new Date(String(value));
-  if (Number.isNaN(date.getTime())) return String(value);
-  return date.toLocaleString();
-}
 
 const FIELDS: [string, string, string?][] = [
   ["name",       "Rule Name"],
@@ -70,7 +63,6 @@ export function AlertRulesPage() {
 
   const activeCount   = rules.filter((r) => String(r.status) === "Active").length;
   const criticalCount = rules.filter((r) => String(r.priority) === "Critical").length;
-  const todayCount    = rules.reduce((s, r) => s + Number(r.triggeredToday ?? 0), 0);
   const channelSet    = [...new Set(rules.flatMap((r) => String(r.channels ?? "").split(/,\s*/)))].filter(Boolean).length;
 
   if (rulesQ.isLoading) return <LoadingState />;
@@ -80,8 +72,8 @@ export function AlertRulesPage() {
     <div className="flex h-full flex-col gap-6 overflow-y-auto">
       <PageHeader
         eyebrow="Alert Rules"
-        title="Live alert thresholds and escalation channels"
-        description="These rules are now backed by the alert rules table in the backend, not a seeded frontend fallback. Changes here update the live alert-control record for the active tenant."
+        title="Alert threshold configurations"
+        description="Persisted rule configurations for the active tenant. Enabled status records configuration intent; this page does not claim that a rule evaluator or notification delivery has run."
         actions={
           <>
             <button type="button" className="btn-primary" onClick={() => setEditing({ status: "Active", priority: "Medium", category: "Speed" })} disabled={!canManage} title={!canManage ? "You do not have permission." : undefined}>
@@ -96,10 +88,10 @@ export function AlertRulesPage() {
 
       {/* KPIs */}
       <div className="grid gap-4 md:grid-cols-4">
-        <KpiCard label="Active Rules"        value={String(activeCount)}   icon={<Bell />}        status="Active"  />
-        <KpiCard label="Critical Thresholds" value={String(criticalCount)} icon={<ShieldAlert />} status="Review"  />
-        <KpiCard label="Triggered Today"     value={String(todayCount)}    icon={<Zap />}         status={todayCount > 5 ? "Risk" : "Healthy"} />
-        <KpiCard label="Channel Types"       value={String(channelSet)}    icon={<CheckCircle2 />}status="Healthy" />
+        <KpiCard label="Saved Configurations" value={String(rules.length)} icon={<Bell />} />
+        <KpiCard label="Enabled Configurations" value={String(activeCount)} icon={<Zap />} />
+        <KpiCard label="Critical Configurations" value={String(criticalCount)} icon={<ShieldAlert />} />
+        <KpiCard label="Configured Channel Types" value={String(channelSet)} icon={<Bell />} />
       </div>
 
       {/* Filters */}
@@ -124,41 +116,34 @@ export function AlertRulesPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50">
-                {["Rule", "Category", "Threshold", "Action", "Channels", "Priority", "Triggered Today", "Last Triggered", "Status", ""].map((h) => (
+                {["Rule", "Category", "Threshold", "Intended Action", "Configured Channels", "Priority", "Configuration", ""].map((h) => (
                   <th key={h} className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-500 whitespace-nowrap">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {!filtered.length && (
-                <tr><td colSpan={10} className="px-4 py-10 text-center text-sm text-slate-400">No live alert rules are available for this tenant yet.</td></tr>
+                <tr><td colSpan={8} className="px-4 py-10 text-center text-sm text-slate-400">No alert-rule configurations are saved for this tenant.</td></tr>
               )}
               {filtered.map((r) => {
                 const isActive = String(r.status) === "Active";
                 return (
                   <tr key={String(r.id)} className="transition hover:bg-slate-50">
-                    <td className="px-4 py-3 font-medium text-slate-900 whitespace-nowrap">{String(r.name)}</td>
-                    <td className="px-4 py-3 text-slate-500">{String(r.category)}</td>
-                    <td className="px-4 py-3 font-mono text-xs text-slate-700 whitespace-nowrap">{String(r.threshold)}</td>
-                    <td className="px-4 py-3 text-slate-600 max-w-45 truncate">{String(r.action)}</td>
+                    <td className="px-4 py-3 font-medium text-slate-900 whitespace-nowrap">{r.name == null ? "—" : String(r.name)}</td>
+                    <td className="px-4 py-3 text-slate-500">{r.category == null ? "—" : String(r.category)}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-slate-700 whitespace-nowrap">{r.threshold == null ? "—" : String(r.threshold)}</td>
+                    <td className="px-4 py-3 text-slate-600 max-w-45 truncate">{r.action == null ? "—" : String(r.action)}</td>
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap gap-1">
-                        {String(r.channels ?? "").split(/,\s*/).map((ch) => (
+                        {String(r.channels ?? "").split(/,\s*/).filter(Boolean).map((ch) => (
                           <span key={ch} className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600">{ch}</span>
                         ))}
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      <RiskBadge risk={r.priority} />
+                      {r.priority == null ? <span className="text-slate-300">—</span> : <RiskBadge risk={r.priority} />}
                     </td>
-                    <td className="px-4 py-3 text-center">
-                      {Number(r.triggeredToday) > 0
-                        ? <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-red-100 text-[10px] font-bold text-red-700">{Number(r.triggeredToday)}</span>
-                        : <span className="text-slate-300">—</span>
-                      }
-                    </td>
-                    <td className="px-4 py-3 text-xs text-slate-400 whitespace-nowrap">{formatLastTriggered(r.lastTriggered)}</td>
-                    <td className="px-4 py-3"><StatusBadge status={r.status} /></td>
+                    <td className="px-4 py-3">{r.status == null ? <span className="text-slate-300">—</span> : <StatusBadge status={r.status} />}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1">
                         <button type="button" aria-label="Edit rule" className="icon-btn text-slate-400" title="Edit rule" disabled={!canManage} onClick={() => setEditing(r)}><Edit3 className="h-3.5 w-3.5" /></button>

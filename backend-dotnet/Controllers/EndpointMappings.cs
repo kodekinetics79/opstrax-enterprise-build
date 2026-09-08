@@ -2185,7 +2185,7 @@ public static partial class EndpointMappings
             if (denied is not null) return denied;
             var c = GetCompanyId(http);
             var name = body.GetValueOrDefault("name")?.ToString() ?? "";
-            await db.ExecuteAsync(
+            var affected = await db.ExecuteAsync(
                 @"UPDATE alert_rules
                   SET rule_name = COALESCE(NULLIF(@name, ''), rule_name),
                       status = COALESCE(@st, status),
@@ -2197,7 +2197,7 @@ public static partial class EndpointMappings
                       recipients = COALESCE(@recipients, recipients),
                       updated_at = NOW()
                   WHERE id=@id
-                    AND COALESCE(company_id, tenant_id, 1)=@c
+                    AND COALESCE(company_id, tenant_id)=@c
                     AND deleted_at IS NULL",
                 cmd =>
                 {
@@ -2212,6 +2212,7 @@ public static partial class EndpointMappings
                     cmd.Parameters.AddWithValue("@id", id);
                     cmd.Parameters.AddWithValue("@c", c);
                 }, ct);
+            if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Alert rule not found"));
             await audit.LogAsync(http, "alert_rule.updated", "AlertRule", id, JsonSerializer.Serialize(new { name }), ct);
             return Results.Ok(ApiResponse<object>.Ok(new { id }, "Alert rule updated"));
         });
@@ -2219,13 +2220,14 @@ public static partial class EndpointMappings
             var denied = RequirePermission(http, "alerts:manage");
             if (denied is not null) return denied;
             var c = GetCompanyId(http);
-            await db.ExecuteAsync(
+            var affected = await db.ExecuteAsync(
                 @"UPDATE alert_rules
                   SET status=@s, updated_at=NOW()
                   WHERE id=@id
-                    AND COALESCE(company_id, tenant_id, 1)=@c
+                    AND COALESCE(company_id, tenant_id)=@c
                     AND deleted_at IS NULL",
                 cmd => { cmd.Parameters.AddWithValue("@s", body.Enabled ? "Active" : "Paused"); cmd.Parameters.AddWithValue("@id", id); cmd.Parameters.AddWithValue("@c", c); }, ct);
+            if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Alert rule not found"));
             await audit.LogAsync(http, "alert_rule.toggled", "AlertRule", id, JsonSerializer.Serialize(new { enabled = body.Enabled }), ct);
             return Results.Ok(ApiResponse<object>.Ok(new { id, enabled = body.Enabled }, "Alert rule status updated"));
         });
@@ -2233,13 +2235,14 @@ public static partial class EndpointMappings
             var denied = RequirePermission(http, "alerts:manage");
             if (denied is not null) return denied;
             var c = GetCompanyId(http);
-            await db.ExecuteAsync(
+            var affected = await db.ExecuteAsync(
                 @"UPDATE alert_rules
                   SET deleted_at=NOW(), updated_at=NOW()
                   WHERE id=@id
-                    AND COALESCE(company_id, tenant_id, 1)=@c
+                    AND COALESCE(company_id, tenant_id)=@c
                     AND deleted_at IS NULL",
                 cmd => { cmd.Parameters.AddWithValue("@id", id); cmd.Parameters.AddWithValue("@c", c); }, ct);
+            if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Alert rule not found"));
             await audit.LogAsync(http, "alert_rule.deleted", "AlertRule", id, ct: ct);
             return Results.Ok(ApiResponse<object>.Ok(new { id }, "Alert rule deleted"));
         });
@@ -18276,20 +18279,18 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
             @"SELECT
                 id,
                 COALESCE(rule_key, 'ALR-' || id::TEXT) AS ""ruleKey"",
-                COALESCE(NULLIF(rule_name, ''), 'Alert rule') AS name,
-                COALESCE(NULLIF(category, ''), NULLIF(module_name, ''), 'Operations') AS category,
-                COALESCE(threshold_text, '') AS threshold,
-                COALESCE(action_type, 'Create operational alert') AS action,
-                COALESCE(channels, 'In-App') AS channels,
-                COALESCE(priority, 'Medium') AS priority,
-                COALESCE(recipients, '') AS recipients,
-                COALESCE(status, 'Active') AS status,
-                COALESCE(triggered_today, 0) AS ""triggeredToday"",
-                last_triggered_at AS ""lastTriggered"",
+                NULLIF(rule_name, '') AS name,
+                COALESCE(NULLIF(category, ''), NULLIF(module_name, '')) AS category,
+                NULLIF(threshold_text, '') AS threshold,
+                NULLIF(action_type, '') AS action,
+                NULLIF(channels, '') AS channels,
+                NULLIF(priority, '') AS priority,
+                NULLIF(recipients, '') AS recipients,
+                NULLIF(status, '') AS status,
                 updated_at AS ""updatedAt"",
                 created_at AS ""createdAt""
               FROM alert_rules
-              WHERE COALESCE(company_id, tenant_id, 1) = @cid
+              WHERE COALESCE(company_id, tenant_id) = @cid
                 AND deleted_at IS NULL
               ORDER BY category, name",
             c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
@@ -30112,7 +30113,7 @@ LIMIT 100000",
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             activeTrips, tripsToday,
-            routeComplianceAvg = Math.Round(avgCompliance ?? 0, 1),
+            routeComplianceAvg = avgCompliance.HasValue ? Math.Round(avgCompliance.Value, 1) : (decimal?)null,
             openExceptions, activeAssignments,
             exceptionBreakdown = exceptionTypes,
             insightType = "System Analytics Insight",
@@ -30176,7 +30177,7 @@ LIMIT 100000",
             criticalEvents,
             openCoachingTasks = openCoaching,
             overdueCoachingTasks = overdueCoach,
-            driverSafetyAvg = Math.Round(avgSafety ?? 0, 1),
+            driverSafetyAvg = avgSafety.HasValue ? Math.Round(avgSafety.Value, 1) : (decimal?)null,
             eventTypeBreakdown = eventTypes,
             topRiskDrivers,
             insightType = "System Analytics Insight",
@@ -30229,7 +30230,7 @@ LIMIT 100000",
             "SELECT sla_type, COUNT(*) total, SUM(CASE WHEN status='Met' THEN 1 ELSE 0 END) met, SUM(CASE WHEN status='Breached' THEN 1 ELSE 0 END) breached FROM sla_records WHERE tenant_id=@c GROUP BY sla_type",
             p => p.Parameters.AddWithValue("@c", c), ct);
 
-        decimal metRate = slaTotal > 0 ? Math.Round(slaMet * 100m / slaTotal, 1) : 0;
+        decimal? metRate = slaTotal > 0 ? Math.Round(slaMet * 100m / slaTotal, 1) : null;
 
         return Results.Ok(ApiResponse<object>.Ok(new
         {
@@ -30268,11 +30269,11 @@ LIMIT 100000",
 
         // 30-day vs 7-day OTD comparison
         var otd30 = await db.ScalarDecimalAsync(
-            @"SELECT COALESCE(SUM(CASE WHEN status IN ('Completed','Delivered') AND (sla_status IS NULL OR sla_status NOT IN ('Breached','Critical')) THEN 1 ELSE 0 END) * 100.0 / NULLIF(SUM(CASE WHEN status IN ('Completed','Delivered') THEN 1 ELSE 0 END),0), 0)
+            @"SELECT SUM(CASE WHEN status IN ('Completed','Delivered') AND (sla_status IS NULL OR sla_status NOT IN ('Breached','Critical')) THEN 1 ELSE 0 END) * 100.0 / NULLIF(SUM(CASE WHEN status IN ('Completed','Delivered') THEN 1 ELSE 0 END),0)
               FROM jobs WHERE company_id=@c AND created_at >= NOW() - 30 * INTERVAL '1 day'",
             p => p.Parameters.AddWithValue("@c", c), ct);
         var otd7 = await db.ScalarDecimalAsync(
-            @"SELECT COALESCE(SUM(CASE WHEN status IN ('Completed','Delivered') AND (sla_status IS NULL OR sla_status NOT IN ('Breached','Critical')) THEN 1 ELSE 0 END) * 100.0 / NULLIF(SUM(CASE WHEN status IN ('Completed','Delivered') THEN 1 ELSE 0 END),0), 0)
+            @"SELECT SUM(CASE WHEN status IN ('Completed','Delivered') AND (sla_status IS NULL OR sla_status NOT IN ('Breached','Critical')) THEN 1 ELSE 0 END) * 100.0 / NULLIF(SUM(CASE WHEN status IN ('Completed','Delivered') THEN 1 ELSE 0 END),0)
               FROM jobs WHERE company_id=@c AND created_at >= NOW() - 7 * INTERVAL '1 day'",
             p => p.Parameters.AddWithValue("@c", c), ct);
 
@@ -30280,9 +30281,11 @@ LIMIT 100000",
         {
             dispatchDailyTrend = dispatchTrend,
             safetyDailyTrend   = safetyTrend,
-            otdLast30d   = Math.Round(otd30 ?? 0, 1),
-            otdLast7d    = Math.Round(otd7  ?? 0, 1),
-            otdTrend     = (otd7 ?? 0) >= (otd30 ?? 0) ? "improving" : "declining",
+            otdLast30d   = otd30.HasValue ? Math.Round(otd30.Value, 1) : (decimal?)null,
+            otdLast7d    = otd7.HasValue ? Math.Round(otd7.Value, 1) : (decimal?)null,
+            otdTrend     = otd7.HasValue && otd30.HasValue
+                ? (otd7.Value >= otd30.Value ? "improving" : "declining")
+                : null,
             insightType  = "System Analytics Insight",
         }, "Trend analytics"));
     }
@@ -30369,17 +30372,6 @@ LIMIT 100000",
                 severity = overdueCoach > 3 ? "warning" : "info",
                 insightType = "System Analytics Insight",
                 dataSource  = "coaching_tasks — due_date < today, status not Completed",
-            });
-
-        if (insights.Count == 0)
-            insights.Add(new
-            {
-                type     = "all_clear",
-                title    = "No significant operational alerts at this time",
-                detail   = "Key metrics are within normal ranges. Continue monitoring for emerging trends.",
-                severity = "positive",
-                insightType = "System Analytics Insight",
-                dataSource  = "Multiple operational tables",
             });
 
         return Results.Ok(ApiResponse<object>.Ok(insights, $"{insights.Count} system analytics insights"));
@@ -31530,13 +31522,15 @@ LIMIT 100000",
                 dataSource = "dispatch_exceptions.status",
             });
 
-        if (insights.Count == 0)
+        var totalVehicles = ToLong(row.GetValueOrDefault("totalVehicles"));
+        var totalActiveDrivers = ToLong(row.GetValueOrDefault("totalActiveDrivers"));
+        if (insights.Count == 0 && (totalVehicles > 0 || totalActiveDrivers > 0))
             insights.Add(new
             {
-                type       = "all_clear",
-                severity   = "positive",
-                message    = "Fleet health metrics are within normal operating range. No urgent actions required.",
-                dataSource = "All fleet health tables — real-time aggregate",
+                type       = "no_open_risk_records",
+                severity   = "info",
+                message    = "No open defect, overdue maintenance, safety, coaching, or dispatch-exception records were found for the current fleet scope.",
+                dataSource = "Current persisted fleet-health records",
             });
 
         return Results.Ok(ApiResponse<object>.Ok(new
@@ -31569,6 +31563,7 @@ LIMIT 100000",
     {
         if (RequirePermission(http, "dashboard:view") is { } denied) return denied;
         var cid = GetCompanyId(http);
+        var branchId = GetBranchId(http);
 
         // Vehicle risk query — priority score computed entirely in SQL
         var vehicleRows = await db.QueryAsync(@"
@@ -31577,9 +31572,8 @@ LIMIT 100000",
               v.vehicle_code,
               v.type                         vehicle_type,
               v.status,
-              v.device_status,
               CASE WHEN v.status='Out of Service' THEN 1 ELSE 0 END out_of_service,
-              COALESCE(v.readiness_score,50) readiness_score,
+              v.readiness_score,
               COALESCE(v.risk_score,20)      base_risk_score,
 
               (SELECT COUNT(*) FROM dvir_defects dd
@@ -31593,7 +31587,14 @@ LIMIT 100000",
                WHERE dr.vehicle_id=v.id AND dd.company_id=@cid
                  AND dd.status NOT IN ('resolved','Resolved')) open_defects,
 
-              0 active_faults,
+              (SELECT COUNT(*) FROM fault_codes fc
+               WHERE fc.company_id=@cid AND fc.vehicle_id=v.id
+                 AND LOWER(fc.status)='active'
+                 AND EXISTS (
+                   SELECT 1 FROM fault_occurrences fo
+                    WHERE fo.company_id=fc.company_id
+                      AND fo.device_id=fc.device_id
+                      AND fo.source_event_id=fc.last_source_event_id)) active_faults,
 
               (SELECT COUNT(*) FROM work_orders wo
                WHERE wo.vehicle_id=v.id AND wo.company_id=@cid
@@ -31612,7 +31613,7 @@ LIMIT 100000",
                    JOIN dvir_reports dr2 ON dr2.id=dd2.dvir_report_id
                    WHERE dr2.vehicle_id=v.id AND dd2.company_id=@cid
                      AND dr2.safe_to_operate=FALSE
-                     AND dd2.status NOT IN ('resolved','Resolved')) * 30
+                     AND dd2.status NOT IN ('resolved','Resolved')) * 55
                 + (SELECT COUNT(*) FROM maintenance_items mi2
                    WHERE mi2.vehicle_id=v.id AND mi2.company_id=@cid
                      AND mi2.deleted_at IS NULL
@@ -31622,17 +31623,25 @@ LIMIT 100000",
                    WHERE wo2.vehicle_id=v.id AND wo2.company_id=@cid
                      AND wo2.status NOT IN ('Completed','Cancelled')
                      AND wo2.deleted_at IS NULL) * 4
-                + CASE WHEN v.device_status='Offline' THEN 12 ELSE 0 END
+                + (SELECT COUNT(*) FROM fault_codes fc2
+                   WHERE fc2.company_id=@cid AND fc2.vehicle_id=v.id
+                     AND LOWER(fc2.status)='active'
+                     AND EXISTS (
+                       SELECT 1 FROM fault_occurrences fo2
+                        WHERE fo2.company_id=fc2.company_id
+                          AND fo2.device_id=fc2.device_id
+                          AND fo2.source_event_id=fc2.last_source_event_id)) * 8
                 + COALESCE(v.risk_score,20) * 0.35
               , 1)) priority_score
 
             FROM vehicles v
             WHERE v.company_id=@cid AND v.deleted_at IS NULL
+              AND (@branchId::bigint IS NULL OR v.branch_id=@branchId)
             ) sub
             WHERE sub.priority_score >= 15
             ORDER BY sub.priority_score DESC
             LIMIT 25",
-            c => c.Parameters.AddWithValue("@cid", cid), ct);
+            c => { c.Parameters.AddWithValue("@cid", cid); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
 
         // Driver risk query — priority score computed entirely in SQL
         var driverRows = await db.QueryAsync(@"
@@ -31641,7 +31650,7 @@ LIMIT 100000",
               d.driver_code,
               d.full_name,
               d.status,
-              COALESCE(d.safety_score,100) safety_score,
+              d.safety_score,
               COALESCE(d.risk_score,0)     base_risk_score,
 
               (SELECT COUNT(*) FROM safety_events se
@@ -31662,9 +31671,10 @@ LIMIT 100000",
                  AND ct.status NOT IN ('Completed','Cancelled','Driver Acknowledged')) open_coaching,
 
               LEAST(100, ROUND(
-                CASE WHEN COALESCE(d.safety_score,100) < 65 THEN 70
-                     WHEN COALESCE(d.safety_score,100) < 75 THEN 40
-                     WHEN COALESCE(d.safety_score,100) < 85 THEN 20
+                CASE WHEN d.safety_score IS NULL THEN 0
+                     WHEN d.safety_score < 65 THEN 80
+                     WHEN d.safety_score < 75 THEN 55
+                     WHEN d.safety_score < 85 THEN 20
                      ELSE 5 END
                 + (SELECT COUNT(*) FROM safety_events se2
                    WHERE se2.driver_id=d.id AND se2.company_id=@cid
@@ -31682,14 +31692,17 @@ LIMIT 100000",
             FROM drivers d
             WHERE d.company_id=@cid AND d.deleted_at IS NULL
               AND d.status NOT IN ('Inactive','Deleted')
+              AND (@branchId::bigint IS NULL OR d.branch_id=@branchId)
             ) sub
             WHERE sub.priority_score >= 15
             ORDER BY sub.priority_score DESC
             LIMIT 25",
-            c => c.Parameters.AddWithValue("@cid", cid), ct);
+            c => { c.Parameters.AddWithValue("@cid", cid); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
 
         static double V(Dictionary<string, object?> row, string key, double fallback = 0) =>
             row.GetValueOrDefault(key) is { } v and not DBNull ? Convert.ToDouble(v) : fallback;
+        static double? VN(Dictionary<string, object?> row, string key) =>
+            row.GetValueOrDefault(key) is { } v and not DBNull ? Convert.ToDouble(v) : null;
         static long L(Dictionary<string, object?> row, string key) =>
             row.GetValueOrDefault(key) is { } v and not DBNull ? Convert.ToInt64(v) : 0L;
         static string S(Dictionary<string, object?> row, string key) =>
@@ -31701,14 +31714,13 @@ LIMIT 100000",
 
         foreach (var veh in vehicleRows)
         {
-            var oos        = L(veh, "out_of_service") == 1;
-            var critDef    = L(veh, "critical_defects");
-            var openDef    = L(veh, "open_defects");
-            var activeFlt  = L(veh, "active_faults");
-            var openWo     = L(veh, "open_work_orders");
-            var overduePm  = L(veh, "overdue_pm");
-            var offline    = string.Equals(S(veh, "device_status"), "Offline", StringComparison.OrdinalIgnoreCase);
-            var score      = V(veh, "priority_score");
+            var oos        = L(veh, "outOfService") == 1;
+            var critDef    = L(veh, "criticalDefects");
+            var openDef    = L(veh, "openDefects");
+            var activeFlt  = L(veh, "activeFaults");
+            var openWo     = L(veh, "openWorkOrders");
+            var overduePm  = L(veh, "overduePm");
+            var score      = V(veh, "priorityScore");
 
             var reasons = new List<string>();
             if (oos)          reasons.Add("Vehicle is out of service");
@@ -31717,7 +31729,6 @@ LIMIT 100000",
             if (activeFlt > 0) reasons.Add($"{activeFlt} active fault code(s)");
             if (overduePm > 0) reasons.Add($"{overduePm} overdue PM item(s)");
             if (openWo > 0)   reasons.Add($"{openWo} open work order(s)");
-            if (offline)      reasons.Add("Telematics device offline");
 
             var action =
                 oos || critDef > 0
@@ -31728,20 +31739,18 @@ LIMIT 100000",
                     ? "Diagnose and clear active fault codes"
                 : openWo > 0
                     ? "Review and expedite open work orders"
-                : offline
-                    ? "Investigate telematics device connectivity"
                 : "Monitor vehicle condition";
 
             // Only surface vehicles that actually carry a risk signal — otherwise the
             // board fills with empty "LOW / no reason" cards (one per healthy vehicle).
-            if (reasons.Count == 0 && score < 40) continue;
+            if (reasons.Count == 0) continue;
 
             risks.Add(new
             {
                 entityType       = "vehicle",
                 entityId         = L(veh, "id"),
-                displayName      = S(veh, "vehicle_code"),
-                vehicleType      = S(veh, "vehicle_type"),
+                displayName      = S(veh, "vehicleCode"),
+                vehicleType      = S(veh, "vehicleType"),
                 status           = S(veh, "status"),
                 severity         = Severity(score, oos),
                 priorityScore    = score,
@@ -31757,31 +31766,30 @@ LIMIT 100000",
                     activeFaultCodes = activeFlt,
                     openWorkOrders   = openWo,
                     overduePm,
-                    deviceOffline    = offline,
-                    readinessScore   = V(veh, "readiness_score"),
-                    baseRiskScore    = V(veh, "base_risk_score"),
+                    readinessScore   = VN(veh, "readinessScore"),
+                    baseRiskScore    = V(veh, "baseRiskScore"),
                 },
             });
         }
 
         foreach (var drv in driverRows)
         {
-            var safetyScore   = V(drv, "safety_score", 100);
-            var openEvents    = L(drv, "open_safety_events");
-            var overdueCoach  = L(drv, "overdue_coaching");
-            var openCoach     = L(drv, "open_coaching");
-            var score         = V(drv, "priority_score");
+            var safetyScore   = VN(drv, "safetyScore");
+            var openEvents    = L(drv, "openSafetyEvents");
+            var overdueCoach  = L(drv, "overdueCoaching");
+            var openCoach     = L(drv, "openCoaching");
+            var score         = V(drv, "priorityScore");
 
             var reasons = new List<string>();
-            if (safetyScore < 65) reasons.Add($"Safety score critically low ({safetyScore}%)");
-            else if (safetyScore < 75) reasons.Add($"Safety score below threshold ({safetyScore}%)");
-            else if (safetyScore < 85) reasons.Add($"Safety score needs attention ({safetyScore}%)");
+            if (safetyScore is double measuredSafety && measuredSafety < 65) reasons.Add($"Safety score critically low ({measuredSafety}%)");
+            else if (safetyScore is double belowThresholdSafety && belowThresholdSafety < 75) reasons.Add($"Safety score below threshold ({belowThresholdSafety}%)");
+            else if (safetyScore is double attentionSafety && attentionSafety < 85) reasons.Add($"Safety score needs attention ({attentionSafety}%)");
             if (openEvents > 0)   reasons.Add($"{openEvents} unresolved safety event(s)");
             if (overdueCoach > 0) reasons.Add($"{overdueCoach} overdue coaching task(s)");
             if (openCoach > overdueCoach) reasons.Add($"{openCoach - overdueCoach} pending coaching task(s)");
 
             var action =
-                safetyScore < 65
+                safetyScore is double measuredScore && measuredScore < 65
                     ? "Assign immediate safety review and coaching session"
                 : overdueCoach > 0
                     ? "Complete overdue coaching task immediately"
@@ -31791,14 +31799,14 @@ LIMIT 100000",
 
             // Only surface drivers with a real risk signal — a healthy driver (good safety
             // score, no open events/coaching) should not appear as a "risk" card.
-            if (reasons.Count == 0 && score < 40) continue;
+            if (reasons.Count == 0) continue;
 
             risks.Add(new
             {
                 entityType       = "driver",
                 entityId         = L(drv, "id"),
-                displayName      = S(drv, "full_name"),
-                driverCode       = S(drv, "driver_code"),
+                displayName      = S(drv, "fullName"),
+                driverCode       = S(drv, "driverCode"),
                 status           = S(drv, "status"),
                 severity         = Severity(score),
                 priorityScore    = score,
@@ -31812,7 +31820,7 @@ LIMIT 100000",
                     openSafetyEvents  = openEvents,
                     overdueCoaching   = overdueCoach,
                     openCoachingTasks = openCoach,
-                    baseRiskScore     = V(drv, "base_risk_score"),
+                    baseRiskScore     = V(drv, "baseRiskScore"),
                 },
             });
         }
@@ -32025,7 +32033,6 @@ LIMIT 100000",
         long activeFaults,
         long overduePm,
         long openWorkOrders,
-        bool deviceOffline,
         double baseRiskScore)
     {
         var raw =
@@ -32034,7 +32041,6 @@ LIMIT 100000",
             + activeFaults    * 8.0
             + overduePm       * 10.0
             + openWorkOrders  * 4.0
-            + (deviceOffline  ? 12.0 : 0.0)
             + baseRiskScore   * 0.35;
         return Math.Min(100.0, Math.Round(raw, 1));
     }

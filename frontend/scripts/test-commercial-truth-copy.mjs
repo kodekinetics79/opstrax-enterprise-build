@@ -18,6 +18,9 @@ const aiCopilot = fs.readFileSync(new URL("../src/pages/AiCopilotPage.tsx", impo
 const accountHealth = fs.readFileSync(new URL("../src/pages/AccountHealthPage.tsx", import.meta.url), "utf8");
 const modulePage = fs.readFileSync(new URL("../src/pages/ModulePage.tsx", import.meta.url), "utf8");
 const executive = fs.readFileSync(new URL("../src/pages/ExecutivePage.tsx", import.meta.url), "utf8");
+const alertRules = fs.readFileSync(new URL("../src/pages/AlertRulesPage.tsx", import.meta.url), "utf8");
+const analytics = fs.readFileSync(new URL("../src/pages/AnalyticsDashboardPage.tsx", import.meta.url), "utf8");
+const fleetIntelligence = fs.readFileSync(new URL("../src/pages/FleetIntelligencePage.tsx", import.meta.url), "utf8");
 const moduleConfig = fs.readFileSync(new URL("../src/modules/moduleConfig.ts", import.meta.url), "utf8");
 
 assert.doesNotMatch(
@@ -171,6 +174,12 @@ assert.match(modulePage, /No recorded recommendations are available for this mod
 assert.doesNotMatch(executive, /useExecutiveSnapshots|useExecutiveAiRecs|AI Live Monitoring|emptySummary/, "Executive UI must not present seeded snapshots, recommendations, or missing-data zeros as current evidence");
 assert.match(executive, /Current aggregates from persisted records in the authorized tenant scope/, "Executive UI must disclose the source and authorization scope of its metrics");
 assert.match(executive, /do not certify provider, device, or regulatory evidence/, "Executive record counts must not be presented as certification evidence");
+assert.match(alertRules, /Enabled status records configuration intent/, "Alert rules must distinguish configuration from execution evidence");
+assert.doesNotMatch(alertRules, /Triggered Today|Last Triggered|live alert-control|No live alert rules/i, "Alert rules must not show unwritten execution counters or claim live enforcement");
+assert.match(analytics, /Missing denominators and unmeasured scores remain unavailable/, "Analytics must disclose missing evidence");
+assert.doesNotMatch(analytics, /computed from live fleet data|Live KPIs/, "Persisted analytics must not be marketed as live telemetry");
+assert.match(fleetIntelligence, /Missing measurements remain unavailable/, "Fleet Intelligence must disclose missing measurements");
+assert.doesNotMatch(fleetIntelligence, /OBD \/ J1939 live|Live Telematics Alerts|every figure pulled live|value=\{offline \? "offline" : "online"\}/, "Fleet Intelligence must not infer live connectivity or diagnostic clearance");
 assert.doesNotMatch(
   liveMap,
   /kpis\.(?:liveCoverage|connectedUnits|degradedUnits|deviceOfflineUnits|cameraOfflineUnits|connectivityCoverage)/,
