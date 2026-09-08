@@ -356,7 +356,8 @@ public sealed class SafetyBackgroundService(
             sourceEventId,
             ActorTypes.System,
             "SafetyBackgroundService",
-            status: "active");
+            status: "active",
+            moduleKey: "safety");
     }
 
     private async Task CreateRepeatedSpeedingRecommendationAsync(long companyId, long? driverId, long count, decimal weight, CancellationToken ct)
@@ -390,7 +391,8 @@ public sealed class SafetyBackgroundService(
             sourceEventId,
             ActorTypes.System,
             "SafetyBackgroundService",
-            status: "active");
+            status: "active",
+            moduleKey: "safety");
     }
 
     // Returns (score, event_count, breakdown_json) for a driver in a given day window.

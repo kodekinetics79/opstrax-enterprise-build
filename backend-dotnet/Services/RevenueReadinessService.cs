@@ -1374,7 +1374,8 @@ public sealed class RevenueReadinessService(
             sourceEventId,
             ActorTypes.System,
             "revenue-readiness",
-            status: "active");
+            status: "active",
+            moduleKey: "cost-leakage");
 
         _ = ai.CreateActionRequest(
             companyId.ToString(CultureInfo.InvariantCulture),

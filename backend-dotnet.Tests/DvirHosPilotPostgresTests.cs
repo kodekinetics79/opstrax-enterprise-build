@@ -362,9 +362,9 @@ public sealed class DvirHosPilotPostgresTests
         {
             var title = $"Other branch HOS narrative {seed.CompanyId}";
             await db.InsertAsync(
-                @"INSERT INTO ai_recommendations(company_id,tenant_id,module_key,title,score)
-                  VALUES(@c,@c,'hos-eld',@title,99)",
-                c => { c.Parameters.AddWithValue("@c", seed.CompanyId); c.Parameters.AddWithValue("@title", title); });
+                @"INSERT INTO ai_recommendations(company_id,tenant_id,module_key,title,score,source_event_id,actor_type,actor_id)
+                  VALUES(@c,@c,'hos-eld',@title,99,@source,'system','hos-test')",
+                c => { c.Parameters.AddWithValue("@c", seed.CompanyId); c.Parameters.AddWithValue("@title", title); c.Parameters.AddWithValue("@source", $"hos:test:{seed.CompanyId}"); });
             var branchResult = await Invoke("HosRecommendationsPilot", Principal(seed.CompanyId, seed.BranchA, "compliance:view"), db, CancellationToken.None);
             Assert.DoesNotContain(title, JsonSerializer.Serialize(Assert.IsAssignableFrom<IValueHttpResult>(branchResult).Value), StringComparison.Ordinal);
             var tenantResult = await Invoke("HosRecommendationsPilot", Principal(seed.CompanyId, null, "compliance:view"), db, CancellationToken.None);

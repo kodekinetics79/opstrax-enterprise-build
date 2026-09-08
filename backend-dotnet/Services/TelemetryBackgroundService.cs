@@ -169,7 +169,8 @@ public sealed class TelemetryBackgroundService(
                     "high",
                     alertId.ToString(),
                     ActorTypes.System,
-                    "telemetry-background");
+                    "telemetry-background",
+                    moduleKey: "control-tower");
 
             await db.ExecuteAsync(
                     "UPDATE telemetry_alerts SET ai_recommendation_id=@rid, updated_at=NOW() WHERE id=@id AND company_id=@cid",

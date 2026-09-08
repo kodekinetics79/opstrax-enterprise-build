@@ -217,9 +217,9 @@ public sealed class SafetyCoachingScorecardPilotPostgresTests
             Assert.Equal("Completed", (await db.QuerySingleAsync("SELECT status FROM coaching_tasks WHERE id=@id AND company_id=@c", c => { c.Parameters.AddWithValue("@id", taskId); c.Parameters.AddWithValue("@c", company); }))!["status"]);
             Assert.Equal(1, await db.ScalarLongAsync("SELECT COUNT(*) FROM coaching_notes WHERE coaching_task_id=@id AND note_type='Completion Outcome'", c => c.Parameters.AddWithValue("@id", taskId)));
 
-            await db.ExecuteAsync(@"INSERT INTO ai_recommendations(company_id,tenant_id,recommendation_type,module_key,title,summary,body,score,status)
-                                    VALUES(@c,@c,'coaching','coaching','Tenant-wide coaching narrative','Sensitive cross-branch coaching narrative','Sensitive cross-branch coaching narrative',99,'Recommended')",
-                c => c.Parameters.AddWithValue("@c", company));
+            await db.ExecuteAsync(@"INSERT INTO ai_recommendations(company_id,tenant_id,recommendation_type,module_key,title,summary,body,score,status,source_event_id,actor_type,actor_id)
+                                    VALUES(@c,@c,'coaching','coaching','Tenant-wide coaching narrative','Sensitive cross-branch coaching narrative','Sensitive cross-branch coaching narrative',99,'Recommended',@source,'system','coaching-test')",
+                c => { c.Parameters.AddWithValue("@c", company); c.Parameters.AddWithValue("@source", $"coaching:test:{taskId}"); });
             var detail = Assert.IsAssignableFrom<IValueHttpResult>(await Invoke("PilotCoachingTaskDetail", Principal(company, branchA, user, "safety:view"), taskId, db, CancellationToken.None));
             var branchDetailJson = JsonSerializer.Serialize(detail.Value);
             Assert.Contains("\"recommendations\":[]", branchDetailJson);

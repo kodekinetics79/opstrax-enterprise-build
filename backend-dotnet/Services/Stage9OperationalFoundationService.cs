@@ -557,7 +557,8 @@ public sealed class Stage9OperationalFoundationService(
                 requirementId.ToString(CultureInfo.InvariantCulture),
                 ActorTypes.System,
                 "stage9-service",
-                status: "active");
+                status: "active",
+                moduleKey: "dispatch");
         }
 
         return await LoadByIdAsync("site_access_requirements", companyId, requirementId, ct);
@@ -621,7 +622,8 @@ public sealed class Stage9OperationalFoundationService(
                 id.ToString(CultureInfo.InvariantCulture),
                 ActorTypes.System,
                 "stage9-service",
-                status: "active");
+                status: "active",
+                moduleKey: "dispatch");
         }
 
         return updated;
@@ -1264,7 +1266,8 @@ public sealed class Stage9OperationalFoundationService(
                 id.ToString(CultureInfo.InvariantCulture),
                 ActorTypes.System,
                 "stage9-service",
-                status: "active");
+                status: "active",
+                moduleKey: "proof-of-delivery");
 
             return new(false, "Proof package requires at least one artifact or an exception note");
         }
@@ -1382,7 +1385,8 @@ public sealed class Stage9OperationalFoundationService(
                 id.ToString(CultureInfo.InvariantCulture),
                 ActorTypes.System,
                 "stage9-service",
-                status: "active");
+                status: "active",
+                moduleKey: "proof-of-delivery");
         }
 
         var confidenceScore = hardBlocked ? 0.35m : Math.Min(0.98m, 0.55m + (artifactCount * 0.1m) + (blockers.Count == 0 ? 0.2m : 0m));
@@ -1806,6 +1810,7 @@ public sealed class Stage9OperationalFoundationService(
                   FROM ai_recommendations
                   WHERE company_id=@companyId
                     AND module_key IN ('dispatch', 'control-tower', 'command-center')
+                    " + EndpointMappings.GroundedRecommendationSql + @"
                   ORDER BY id DESC
                   LIMIT 1",
                 c => c.Parameters.AddWithValue("@companyId", companyId), ct);

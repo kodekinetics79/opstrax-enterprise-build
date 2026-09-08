@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Linq;
 using System.Text.Json;
+using Opstrax.Api.Controllers;
 using Opstrax.Api.Data;
 using Opstrax.Api.Foundation;
 
@@ -336,6 +337,7 @@ public sealed class TelemetryLiveStateService(Database db)
                   FROM ai_recommendations
                   WHERE company_id=@tenantId
                     AND @branchId::BIGINT IS NULL
+                    " + EndpointMappings.GroundedRecommendationSql + @"
                     AND (recommendation_type LIKE 'telemetry.%'
                          OR module_key LIKE 'telemetry.%'
                          OR module_key IN ('control-tower', 'command-center', 'dispatch'))

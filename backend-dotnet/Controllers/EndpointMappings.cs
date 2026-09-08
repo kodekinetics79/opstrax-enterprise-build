@@ -38,6 +38,15 @@ public static partial class EndpointMappings
          WHERE request.tenant_id=@tenantId
          ORDER BY request.created_at DESC
          LIMIT 20";
+    // A recommendation is customer-visible only when a runtime producer records both
+    // the triggering source and the producing actor. Legacy demo rows have no such
+    // provenance and must never be presented as current operational advice.
+    internal const string GroundedRecommendationSql = @"
+        AND NULLIF(BTRIM(source_event_id), '') IS NOT NULL
+        AND NULLIF(BTRIM(actor_type), '') IS NOT NULL
+        AND NULLIF(BTRIM(actor_id), '') IS NOT NULL
+        AND source_event_id NOT ILIKE 'seed%'
+        AND actor_id NOT ILIKE '%seed%'";
     private static readonly HashSet<string> AllowedUserStatuses = new(StringComparer.OrdinalIgnoreCase)
     {
         "Active", "Inactive", "Pending", "Suspended"
@@ -526,7 +535,7 @@ public static partial class EndpointMappings
         {
             if (RequireInternalUser(http) is { } internalDenied) return Task.FromResult(internalDenied);
             if (RequirePermission(http, "customer_portal:view") is { } denied) return Task.FromResult(denied);
-            return OkRows(db, "SELECT * FROM ai_recommendations WHERE module_key IN ('customer-eta','customer-portal') AND company_id=@cid ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+            return OkRows(db, "SELECT * FROM ai_recommendations WHERE module_key IN ('customer-eta','customer-portal') AND company_id=@cid" + GroundedRecommendationSql + " ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
         });
 
         // ── P5 Customer Visibility + ETA Risk Engine ─────────────────────────────────
@@ -1200,7 +1209,7 @@ public static partial class EndpointMappings
             // ai_recommendations has no durable branch-owned relation. A branch-bound
             // principal must not inherit tenant-wide maintenance narratives.
             return GetBranchId(http) is null
-                ? OkRows(db, "SELECT * FROM ai_recommendations WHERE module_key='maintenance' AND company_id=@cid ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct)
+                ? OkRows(db, "SELECT * FROM ai_recommendations WHERE module_key='maintenance' AND company_id=@cid" + GroundedRecommendationSql + " ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct)
                 : BranchBoundMaintenanceRecommendations();
         });
         app.MapGet("/api/maintenance", MaintenanceItems);
@@ -1286,7 +1295,7 @@ public static partial class EndpointMappings
         app.MapGet("/api/dvir/recommendations", (HttpContext http, Database db, CancellationToken ct) =>
         {
             if (RequirePermission(http, "maintenance:view") is { } denied) return Task.FromResult(denied);
-            return OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key IN ('dvir','dvir-inspections') ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+            return OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key IN ('dvir','dvir-inspections')" + GroundedRecommendationSql + " ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
         });
         app.MapGet("/api/dvir/reports", DvirReportsPilot);
         app.MapGet("/api/dvir/reports/{id:long}", DvirDetailPilot);
@@ -1310,7 +1319,7 @@ public static partial class EndpointMappings
         app.MapGet("/api/documents/recommendations", (HttpContext http, Database db, CancellationToken ct) =>
         {
             if (RequirePermission(http, "compliance:view") is { } denied) return Task.FromResult(denied);
-            return OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='documents' AND @branchId::BIGINT IS NULL ORDER BY score DESC LIMIT 8",
+            return OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='documents' AND @branchId::BIGINT IS NULL" + GroundedRecommendationSql + " ORDER BY score DESC LIMIT 8",
                 c => { c.Parameters.AddWithValue("@cid", GetCompanyId(http)); c.Parameters.AddWithValue("@branchId", (object?)GetBranchId(http) ?? DBNull.Value); }, ct: ct);
         });
         app.MapGet("/api/documents", Documents);
@@ -1340,7 +1349,7 @@ public static partial class EndpointMappings
         {
             if (RequirePermission(http, "safety:view") is { } denied) return Task.FromResult(denied);
             return OkRows(db,
-                "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='safety' AND @branchId::BIGINT IS NULL ORDER BY score DESC LIMIT 8",
+                "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='safety' AND @branchId::BIGINT IS NULL" + GroundedRecommendationSql + " ORDER BY score DESC LIMIT 8",
                 c => { c.Parameters.AddWithValue("@cid", GetCompanyId(http)); c.Parameters.AddWithValue("@branchId", (object?)GetBranchId(http) ?? DBNull.Value); }, ct: ct);
         });
         app.MapGet("/api/safety/trends", SafetyScorecardTrends);
@@ -1427,7 +1436,7 @@ public static partial class EndpointMappings
             if (RequirePermission(http, "safety:view") is { } denied) return Task.FromResult(denied);
             if (GetBranchId(http) is not null)
                 return Task.FromResult<IResult>(Results.Ok(ApiResponse<object>.Ok(Array.Empty<object>(), "Recommendations omitted because they do not have branch ownership metadata")));
-            return OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='coaching' ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+            return OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='coaching'" + GroundedRecommendationSql + " ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
         });
         app.MapPost("/api/coaching/tasks/{id:long}/assign", (HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) =>
         {
@@ -1578,7 +1587,7 @@ public static partial class EndpointMappings
         app.MapGet("/api/fuel/recommendations", (HttpContext http, Database db, CancellationToken ct) =>
         {
             if (RequirePermission(http, "fuel:view") is { } denied) return Task.FromResult(denied);
-            return OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='fuel-idling' ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+            return OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='fuel-idling'" + GroundedRecommendationSql + " ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
         });
         app.MapPost("/api/fuel/import-preview", FuelImportPreview);
         app.MapPost("/api/fuel/anomalies/{id:long}/review", (HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct) =>
@@ -1605,7 +1614,7 @@ public static partial class EndpointMappings
         app.MapGet("/api/expenses/recommendations", (HttpContext http, Database db, CancellationToken ct) =>
         {
             if (RequirePermission(http, "finance:view") is { } denied) return Task.FromResult(denied);
-            return OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='expenses' ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+            return OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='expenses'" + GroundedRecommendationSql + " ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
         });
         app.MapPost("/api/expenses/import-preview", ExpenseImportPreview);
 
@@ -1627,7 +1636,7 @@ public static partial class EndpointMappings
         app.MapGet("/api/contracts/recommendations", (HttpContext http, Database db, CancellationToken ct) =>
         {
             if (RequirePermission(http, "contract.view") is { } denied) return Task.FromResult(denied);
-            return OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='contracts-rates' ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+            return OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='contracts-rates'" + GroundedRecommendationSql + " ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
         });
         app.MapPost("/api/contracts/{id:long}/activate", ContractActivate);
         app.MapPost("/api/contracts/{id:long}/expire", ContractExpire);
@@ -1659,7 +1668,7 @@ public static partial class EndpointMappings
             // Same dual-audience gate as the Carriers list (fleet OR finance).
             if (RequirePermission(http, "fleet:view") is { } fleetDenied && RequirePermission(http, "finance:view") is not null)
                 return Task.FromResult(fleetDenied);
-            return OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='carrier-management' ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+            return OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='carrier-management'" + GroundedRecommendationSql + " ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
         });
 
         // ===== BATCH 5: PREDICTIVE COST & MARGIN ================================
@@ -1824,7 +1833,7 @@ public static partial class EndpointMappings
         app.MapGet("/api/cost-margin/recommendations", (HttpContext http, Database db, CancellationToken ct) =>
         {
             if (RequirePermission(http, "finance:view") is { } denied) return Task.FromResult(denied);
-            return OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='predictive-margin' ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+            return OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='predictive-margin'" + GroundedRecommendationSql + " ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
         });
         app.MapPost("/api/cost-margin/recalculate", CostMarginRecalculate);
         app.MapPost("/api/cost-margin/jobs/{jobId:long}/recalculate", (HttpContext http, long jobId, Database db, AuditService audit, CancellationToken ct) => CostMarginRecalculateJob(http, jobId, db, audit, ct));
@@ -1835,7 +1844,7 @@ public static partial class EndpointMappings
         app.MapGet("/api/cost-leakage/recommendations", (HttpContext http, Database db, CancellationToken ct) =>
         {
             if (RequirePermission(http, "finance:view") is { } denied) return Task.FromResult(denied);
-            return OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='cost-leakage' ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+            return OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='cost-leakage'" + GroundedRecommendationSql + " ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
         });
         app.MapPost("/api/cost-leakage/items/{id:long}/acknowledge", CostLeakageAcknowledge);
         app.MapPost("/api/cost-leakage/items/{id:long}/create-action", CostLeakageCreateAction);
@@ -1871,7 +1880,7 @@ public static partial class EndpointMappings
         app.MapGet("/api/compliance/vehicle-status", (HttpContext http, Database db, CancellationToken ct) =>
             RequirePermission(http, "compliance:view") is { } denied ? Task.FromResult(denied) : OkRows(db, "SELECT vcs.*, v.vehicle_code, v.type vehicle_type, cp.profile_name FROM vehicle_compliance_status vcs JOIN vehicles v ON v.id=vcs.vehicle_id AND v.company_id=@cid LEFT JOIN compliance_profiles cp ON cp.id=vcs.profile_id WHERE vcs.company_id=@cid AND (@branchId::BIGINT IS NULL OR v.branch_id=@branchId) ORDER BY ARRAY_POSITION(ARRAY['Violation','Warning','Compliant'], vcs.overall_status), v.vehicle_code", c => BindComplianceScope(c, http), ct: ct));
         app.MapGet("/api/compliance/ai/recommendations", (HttpContext http, Database db, CancellationToken ct) =>
-            RequirePermission(http, "compliance:view") is { } denied ? Task.FromResult(denied) : OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='compliance' AND @branchId::BIGINT IS NULL ORDER BY score DESC LIMIT 10", c => BindComplianceScope(c, http), ct: ct));
+            RequirePermission(http, "compliance:view") is { } denied ? Task.FromResult(denied) : OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='compliance' AND @branchId::BIGINT IS NULL" + GroundedRecommendationSql + " ORDER BY score DESC LIMIT 10", c => BindComplianceScope(c, http), ct: ct));
 
         // ===== BATCH 6: HOS / ELD ================================================
         app.MapGet("/api/hos/summary", HosSummaryPilot);
@@ -1930,7 +1939,7 @@ public static partial class EndpointMappings
         app.MapGet("/api/reports/ai/recommendations", (HttpContext http, Database db, CancellationToken ct) =>
         {
             if (RequirePermission(http, "reports:view") is { } denied) return Task.FromResult(denied);
-            return OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='reports-analytics' ORDER BY score DESC LIMIT 10", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+            return OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='reports-analytics'" + GroundedRecommendationSql + " ORDER BY score DESC LIMIT 10", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
         });
 
         // ===== P8 REPORTING + ANALYTICS ENGINE ====================================
@@ -2036,7 +2045,7 @@ public static partial class EndpointMappings
         app.MapGet("/api/kpi/ai/recommendations", (HttpContext http, Database db, CancellationToken ct) =>
         {
             if (RequirePermission(http, "reports:view") is { } denied) return Task.FromResult(denied);
-            return OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='sla-kpi' ORDER BY score DESC LIMIT 10", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+            return OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='sla-kpi'" + GroundedRecommendationSql + " ORDER BY score DESC LIMIT 10", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
         });
         app.MapGet("/api/sla/records", (HttpContext http, Database db, CancellationToken ct) =>
         {
@@ -2092,7 +2101,7 @@ public static partial class EndpointMappings
         app.MapGet("/api/audit/ai/recommendations", (HttpContext http, Database db, CancellationToken ct) =>
         {
             if (RequirePermission(http, "audit:view") is { } denied) return Task.FromResult(denied);
-            return OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='audit-logs' ORDER BY score DESC LIMIT 10", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+            return OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='audit-logs'" + GroundedRecommendationSql + " ORDER BY score DESC LIMIT 10", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
         });
 
         // ===== ADMIN / GOVERNANCE ==============================================
@@ -2132,7 +2141,7 @@ public static partial class EndpointMappings
         {
             if (RequirePermission(http, "reports:view") is { } denied) return Task.FromResult(denied);
             return OkRows(db,
-                "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='executive' ORDER BY score DESC LIMIT 10",
+                "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='executive'" + GroundedRecommendationSql + " ORDER BY score DESC LIMIT 10",
                 c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
         });
 
@@ -4593,7 +4602,7 @@ public static partial class EndpointMappings
                      OR (LOWER(oe.entity_type) IN ('job','jobs','shipment','shipments') AND EXISTS (SELECT 1 FROM jobs j WHERE j.id=oe.entity_id AND j.company_id=oe.company_id AND j.branch_id=@branchId AND j.deleted_at IS NULL)))
               ORDER BY oe.event_time DESC LIMIT 20", BindScope, ct: ct);
         var recommendations = branchId is null
-            ? await db.QueryAsync("SELECT * FROM ai_recommendations WHERE tenant_id=@companyId AND module_key='control-tower' ORDER BY score DESC LIMIT 6", c => c.Parameters.AddWithValue("@companyId", companyId), ct: ct)
+            ? await db.QueryAsync("SELECT * FROM ai_recommendations WHERE tenant_id=@companyId AND module_key='control-tower'" + GroundedRecommendationSql + " ORDER BY score DESC LIMIT 6", c => c.Parameters.AddWithValue("@companyId", companyId), ct: ct)
             : [];
         var kpis = await db.QuerySingleAsync(
             @"SELECT (SELECT COUNT(*) FROM vehicles scoped_v WHERE scoped_v.deleted_at IS NULL AND scoped_v.company_id=@companyId AND (@branchId::BIGINT IS NULL OR scoped_v.branch_id=@branchId)) tracked_entities,
@@ -5896,7 +5905,7 @@ public static partial class EndpointMappings
         // ai_recommendations has no durable branch ownership. Suppress it for a
         // branch-bound principal rather than exposing tenant-wide narratives.
         var insights = branchId is null && !moduleKey.Equals("dashcam", StringComparison.OrdinalIgnoreCase)
-            ? await db.QueryAsync("SELECT * FROM ai_recommendations WHERE company_id=@companyId AND module_key=@key ORDER BY score DESC LIMIT 4", c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@key", moduleKey); }, ct)
+            ? await db.QueryAsync("SELECT * FROM ai_recommendations WHERE company_id=@companyId AND module_key=@key" + GroundedRecommendationSql + " ORDER BY score DESC LIMIT 4", c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@key", moduleKey); }, ct)
             : [];
         return Results.Ok(ApiResponse<object>.Ok(new
         {
@@ -10931,7 +10940,7 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
     private static Task<List<Dictionary<string, object?>>> TenantModuleRecommendations(
         Database db, long companyId, string module, CancellationToken ct)
         => db.QueryAsync(
-            "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key=@module ORDER BY score DESC LIMIT 8",
+            "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key=@module" + GroundedRecommendationSql + " ORDER BY score DESC LIMIT 8",
             c =>
             {
                 c.Parameters.AddWithValue("@cid", companyId);
@@ -18298,7 +18307,7 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
         var kpiCrit    = await db.ScalarLongAsync("SELECT COUNT(*) FROM kpi_metrics WHERE tenant_id=@cid AND status='Critical'", BindTenant, ct);
         var slaBreach  = await db.ScalarLongAsync("SELECT COUNT(*) FROM sla_breaches WHERE tenant_id=@cid AND status='Open'", BindTenant, ct);
         var auditToday = await db.ScalarLongAsync("SELECT COUNT(*) FROM audit_logs WHERE company_id=@cid AND created_at::date=CURRENT_DATE", BindTenant, ct);
-        var aiRecs     = await db.QueryAsync("SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='executive' ORDER BY score DESC LIMIT 5", BindTenant, ct);
+        var aiRecs     = await db.QueryAsync("SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='executive'" + GroundedRecommendationSql + " ORDER BY score DESC LIMIT 5", BindTenant, ct);
         return Results.Ok(ApiResponse<object>.Ok(new { latest, trend, kpiCritical = kpiCrit, openSlaBreaches = slaBreach, auditActionsToday = auditToday, aiRecommendations = aiRecs }, "Executive summary"));
     }
 
@@ -18956,7 +18965,8 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
                     "medium",
                     eventId.ToString(CultureInfo.InvariantCulture),
                     ActorTypes.ApiKey,
-                    deviceId.ToString(CultureInfo.InvariantCulture));
+                    deviceId.ToString(CultureInfo.InvariantCulture),
+                    moduleKey: "control-tower");
 
                 await db.ExecuteAsync(
                     "UPDATE telemetry_alerts SET ai_recommendation_id=@rid, updated_at=NOW() WHERE id=@id AND company_id=@cid",
@@ -19022,7 +19032,8 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
                             "high",
                             eventId.ToString(CultureInfo.InvariantCulture),
                             ActorTypes.ApiKey,
-                            deviceId.ToString(CultureInfo.InvariantCulture));
+                            deviceId.ToString(CultureInfo.InvariantCulture),
+                            moduleKey: "control-tower");
 
                         await db.ExecuteAsync(
                             "UPDATE telemetry_alerts SET ai_recommendation_id=@rid, updated_at=NOW() WHERE id=@id AND company_id=@cid",

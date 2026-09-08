@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using Opstrax.Api.Controllers;
 using Opstrax.Api.Data;
 using Opstrax.Api.Foundation;
 
@@ -47,6 +48,7 @@ public sealed class SafetyMaintenanceFoundationService(Database db, PostgresAiFo
             @"SELECT id, recommendation_type, title, summary, confidence_score, urgency_score, risk_level, status, source_event_id, created_at
               FROM ai_recommendations
               WHERE company_id=@companyId
+                " + EndpointMappings.GroundedRecommendationSql + @"
                 AND (
                     recommendation_type LIKE 'safety.%'
                     OR recommendation_type LIKE 'maintenance.%'
@@ -158,7 +160,8 @@ public sealed class SafetyMaintenanceFoundationService(Database db, PostgresAiFo
                     sourceEventId,
                     ActorTypes.System,
                     "safety-maintenance-foundation",
-                    status: "active");
+                    status: "active",
+                    moduleKey: "fleet-health");
             }
         }
 

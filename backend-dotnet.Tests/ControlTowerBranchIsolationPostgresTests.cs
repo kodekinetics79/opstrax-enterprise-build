@@ -70,9 +70,13 @@ public sealed class ControlTowerBranchIsolationPostgresTests
             await DashcamEvent(db, company, ownVehicle, ownDriver, $"PENDING-MEDIA-{suffix}", "Authoritative", "ProviderPending");
 
             await db.ExecuteAsync(
+                @"INSERT INTO ai_recommendations(company_id,tenant_id,recommendation_type,module_key,title,summary,body,score,status,source_event_id,actor_type,actor_id)
+                  VALUES (@cid,@cid,'control.test','control-tower',@title,'Tenant-wide recommendation','Tenant-wide recommendation',1,'active',@source,'system','control-tower-test')",
+                c => { c.Parameters.AddWithValue("@cid", company); c.Parameters.AddWithValue("@title", $"Tenant rec {suffix}"); c.Parameters.AddWithValue("@source", $"telemetry:test:{suffix}"); });
+            await db.ExecuteAsync(
                 @"INSERT INTO ai_recommendations(company_id,tenant_id,recommendation_type,module_key,title,summary,body,score,status)
-                  VALUES (@cid,@cid,'control.test','control-tower',@title,'Tenant-wide recommendation','Tenant-wide recommendation',1,'active')",
-                c => { c.Parameters.AddWithValue("@cid", company); c.Parameters.AddWithValue("@title", $"Tenant rec {suffix}"); });
+                  VALUES (@cid,@cid,'control.test','control-tower',@title,'Legacy ungrounded recommendation','Legacy ungrounded recommendation',100,'active')",
+                c => { c.Parameters.AddWithValue("@cid", company); c.Parameters.AddWithValue("@title", $"Legacy rec {suffix}"); });
 
             var branchPayload = Payload(await Invoke(Principal(company, branchA, "dashboard:view", "dashcam:view", "telematics:devices:view"), db));
             var branchData = branchPayload.GetProperty("data");
@@ -213,7 +217,10 @@ public sealed class ControlTowerBranchIsolationPostgresTests
             Assert.Equal(2, tenantData.GetProperty("jobs").GetArrayLength());
             Assert.Equal(3, tenantData.GetProperty("diagnostics").GetArrayLength());
             Assert.Equal(6, tenantData.GetProperty("safetyVideo").GetArrayLength());
-            Assert.Single(tenantData.GetProperty("recommendations").EnumerateArray());
+            var tenantRecommendations = tenantData.GetProperty("recommendations").EnumerateArray().ToArray();
+            Assert.Single(tenantRecommendations);
+            Assert.Equal($"Tenant rec {suffix}", tenantRecommendations[0].GetProperty("title").GetString());
+            Assert.DoesNotContain($"Legacy rec {suffix}", tenantData.GetProperty("recommendations").GetRawText(), StringComparison.Ordinal);
             Assert.Equal(11, tenantData.GetProperty("actionQueue").GetArrayLength());
 
             var tenantAlerts = Payload(await InvokeAlertsList(

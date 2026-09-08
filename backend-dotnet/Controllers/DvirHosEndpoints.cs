@@ -923,8 +923,8 @@ public static partial class EndpointMappings
             return Results.Ok(ApiResponse<object>.Ok(Array.Empty<object>(),
                 "No branch-scoped HOS/ELD recommendations are available"));
         return await OkRows(db,
-            @"SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='hos-eld'
-              ORDER BY score DESC,id DESC LIMIT 10",
+            @"SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='hos-eld'" +
+              EndpointMappings.GroundedRecommendationSql + " ORDER BY score DESC,id DESC LIMIT 10",
             c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
     }
 
