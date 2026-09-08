@@ -238,7 +238,7 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
 
         new("audit_logs", "entity_type",            "VARCHAR(100) NULL"),
         new("idling_events", "threshold_status",         "VARCHAR(80) NOT NULL DEFAULT 'Normal'"),
-        new("idling_events", "risk_score",               "DECIMAL(6,2) NOT NULL DEFAULT 20"),
+        new("idling_events", "risk_score",               "DECIMAL(6,2) NULL"),
         new("idling_events", "recommended_action",       "VARCHAR(260) NULL"),
         new("idling_events", "data_origin",              "VARCHAR(80) NULL"),
         new("idling_events", "verification_status",      "VARCHAR(80) NOT NULL DEFAULT 'unverified'"),
@@ -246,6 +246,7 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
         new("idling_events", "deleted_at",               "TIMESTAMPTZ NULL"),
         new("fuel_anomalies", "currency",                "VARCHAR(10) NULL"),
         new("fuel_anomalies", "data_origin",             "VARCHAR(80) NULL"),
+        new("fuel_anomalies", "verification_status",     "VARCHAR(80) NOT NULL DEFAULT 'unverified'"),
         new("fuel_anomalies", "amount_evidence_status",  "VARCHAR(40) NULL"),
         new("cost_margin_records", "carrier_cost",       "DECIMAL(12,2) NOT NULL DEFAULT 0"),
         new("cost_margin_records", "expense_total",      "DECIMAL(12,2) NOT NULL DEFAULT 0"),
@@ -275,7 +276,7 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
             started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), ended_at TIMESTAMPTZ NULL,
             duration_minutes DECIMAL(8,2) NOT NULL DEFAULT 0, estimated_fuel_burn DECIMAL(10,3) NOT NULL DEFAULT 0,
             estimated_cost DECIMAL(12,2) NOT NULL DEFAULT 0, currency VARCHAR(10) NOT NULL DEFAULT 'USD',
-            threshold_status VARCHAR(80) NOT NULL DEFAULT 'Normal', risk_score DECIMAL(6,2) NOT NULL DEFAULT 20,
+            threshold_status VARCHAR(80) NOT NULL DEFAULT 'Normal', risk_score DECIMAL(6,2) NULL,
             recommended_action VARCHAR(260) NULL, data_origin VARCHAR(80) NULL,
             verification_status VARCHAR(80) NOT NULL DEFAULT 'unverified',
             cost_evidence_status VARCHAR(40) NULL,
@@ -288,6 +289,7 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
             anomaly_type VARCHAR(120) NOT NULL, severity VARCHAR(50) NOT NULL DEFAULT 'Medium',
             description TEXT NULL, estimated_loss DECIMAL(12,2) NOT NULL DEFAULT 0,
             currency VARCHAR(10) NULL, data_origin VARCHAR(80) NULL,
+            verification_status VARCHAR(80) NOT NULL DEFAULT 'unverified',
             amount_evidence_status VARCHAR(40) NULL, status VARCHAR(80) NOT NULL DEFAULT 'Open',
             reviewed_at TIMESTAMPTZ NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
 
@@ -463,13 +465,13 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
 
         @"INSERT INTO fuel_anomalies
             (company_id, fuel_transaction_id, vehicle_id, driver_id, anomaly_type, severity, description,
-             estimated_loss, currency, data_origin, amount_evidence_status, status)
+             estimated_loss, currency, data_origin, verification_status, amount_evidence_status, status)
           WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<12)
           SELECT 1, ((n-1)%50)+1, ((n-1)%20)+1, ((n-1)%20)+1,
             (ARRAY['Quantity vs Odometer Mismatch','Unusual Station','High Unit Price','Repeated Fill-up','High Cost per Mile','Off-route Purchase'])[(n%6)+1],
             (ARRAY['Low','Medium','High','Critical'])[(n%4)+1],
             'AI fuel advisor detected anomaly: ' || (ARRAY['fuel quantity inconsistent with odometer delta','transaction at unusual station outside normal route corridor','unit price 18% above regional average — possible mis-key','duplicate fill-up within 4 hours of prior transaction','cost per mile significantly above fleet average','fuel purchase recorded outside active job route'])[(n%6)+1],
-            ROUND((28 + (n%120))::NUMERIC, 2), 'USD', 'demo_seed', 'Recorded estimate',
+            ROUND((28 + (n%120))::NUMERIC, 2), 'USD', 'demo_seed', 'demo_seed', 'Recorded estimate',
             (ARRAY['Open','Under Review','Resolved','Closed'])[(n%4)+1]
           FROM seq
           WHERE (SELECT COUNT(*) FROM fuel_anomalies) < 12",

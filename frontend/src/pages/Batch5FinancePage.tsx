@@ -28,11 +28,24 @@ type Kind = "fuel" | "expenses" | "contracts" | "carriers" | "cost-margin" | "co
 /* ── Per-module tab definitions ── */
 const MODULE_TABS: Partial<Record<Kind, Array<{ label: string; columns: string[] }>>> = {
   fuel: [
-    { label: "Transactions",  columns: ["transactionNumber","recordOrigin","vehicleCode","driverName","fuelType","quantity","unit","unitPrice","totalCost","currency","odometer","fuelStation","paymentMethod","anomalyStatus","fuelDate"] },
-    { label: "Idling Events", columns: ["eventNumber","recordOrigin","vehicleCode","driverName","locationDescription","durationMinutes","estimatedCost","currency","costEvidenceStatus","thresholdStatus","riskScore"] },
-    { label: "Anomaly Findings", columns: ["anomalyType","recordOrigin","severity","description","estimatedLoss","currency","amountEvidenceStatus","status"] },
+    { label: "Transactions",  columns: ["transactionNumber","recordOrigin","evidenceStatus","vehicleCode","driverName","fuelType","quantity","unit","unitPrice","totalCost","currency","odometer","fuelStation","paymentMethod","anomalyStatus","fuelDate"] },
+    { label: "Idling Events", columns: ["eventNumber","recordOrigin","evidenceStatus","vehicleCode","driverName","locationDescription","durationMinutes","estimatedCost","currency","costEvidenceStatus","thresholdStatus"] },
+    { label: "Anomaly Findings", columns: ["anomalyType","recordOrigin","evidenceStatus","severity","description","estimatedLoss","currency","amountEvidenceStatus","status"] },
   ],
 };
+
+const IDLING_CREATE_FIELDS = [
+  ["vehicleId","Vehicle ID"], ["driverId","Driver ID"], ["jobId","Job ID"], ["routeId","Route ID"],
+  ["locationDescription","Location"], ["startedAt","Started At"], ["endedAt","Ended At"],
+  ["durationMinutes","Duration Minutes"], ["estimatedFuelBurn","Estimated Fuel Burn"],
+  ["estimatedCost","Estimated Cost"], ["currency","Currency"],
+  ["thresholdStatus","Threshold Status"], ["recommendedAction","Recommended Action"],
+];
+
+const IDLING_UPDATE_FIELDS = [
+  ["thresholdStatus","Threshold Status"], ["riskScore","Recorded Risk Score"],
+  ["recommendedAction","Recommended Action"],
+];
 
 /* ── Per-module filter options ── */
 const FILTER_OPTIONS: Record<Kind, string[]> = {
@@ -51,7 +64,7 @@ const configs = {
     useRows: useFuelTransactions, useSummary: useFuelSummary, useDetail: useFuelTransaction,
     api: { create: fuelApi.createTransaction, update: (id: string | number, p: AnyRecord) => fuelApi.updateTransaction(id, p) },
     createLabel: "Record Transaction",
-    kpis: [["Evidence-Qualified Transactions","fuelTransactions"],["Open Runtime Findings","openAnomalies"],["High Idle Vehicles","highIdleVehicles"],["Idling Events Today","idlingEventsToday"],["Legacy Fuel Origin Unverified","legacyUnverifiedTransactions"]],
+    kpis: [["Evidence-Qualified Transactions","fuelTransactions"],["Qualified Runtime Findings","openAnomalies"],["Qualified High-Idle Vehicles","highIdleVehicles"],["Qualified Idling Events Today","idlingEventsToday"],["Unverified Fuel Records","unverifiedTransactions"]],
     columns: ["transactionNumber","recordOrigin","vehicleCode","driverName","fuelType","quantity","unit","unitPrice","totalCost","currency","odometer","fuelStation","paymentMethod","anomalyStatus","fuelDate"],
     fields: [["transactionNumber","Transaction #"],["vehicleId","Vehicle ID"],["driverId","Driver ID"],["jobId","Job ID"],["fuelDate","Fuel Date"],["fuelType","Fuel Type"],["quantity","Quantity"],["unit","Unit (Gallons or Liters)"],["unitPrice","Unit Price"],["currency","Currency"],["odometer","Odometer"],["fuelStation","Fuel Station"],["paymentMethod","Payment Method"],["region","Region"],["notes","Notes"]],
     actions: ["reviewAnomaly"],
@@ -154,6 +167,16 @@ export function Batch5FinancePage({ kind }: { kind: Kind }) {
     ? [rowsQ.data ?? [], idlingQ.data ?? [], anomalyQ.data ?? []]
     : [rowsQ.data ?? []];
   const safeTab = Math.min(activeTab, tabSources.length - 1);
+  const fuelActionLabel = kind !== "fuel"
+    ? config.createLabel
+    : safeTab === 0
+      ? "Record Transaction"
+      : safeTab === 1
+        ? "Record Idling Event"
+        : "";
+  const modalFields = kind === "fuel" && safeTab === 1
+    ? (editing?.id ? IDLING_UPDATE_FIELDS : IDLING_CREATE_FIELDS)
+    : config.fields;
   const standardDetail = config.useDetail(kind === "fuel" ? undefined : selected?.id as string | number | undefined);
   const fuelDetail = useQuery({
     queryKey: ["fuel", "selected-detail", safeTab, selected?.id],
@@ -174,6 +197,11 @@ export function Batch5FinancePage({ kind }: { kind: Kind }) {
 
   const save = useMutation({
     mutationFn: (payload: AnyRecord) => {
+      if (kind === "fuel" && safeTab === 1) {
+        return payload.id
+          ? fuelApi.updateIdlingEvent(payload.id as string | number, payload)
+          : fuelApi.createIdlingEvent(payload);
+      }
       if (!config.api.create || !config.api.update) return Promise.resolve({} as AnyRecord);
       return (payload.id ? config.api.update(payload.id as string | number, payload) : config.api.create(payload));
     },
@@ -201,12 +229,22 @@ export function Batch5FinancePage({ kind }: { kind: Kind }) {
     return matchesSearch && matchesFilter;
   }), [tabRows, search, filter]);
 
-  if (rowsQ.isLoading) return <LoadingState />;
-  if (rowsQ.isError) {
+  const fuelSupplementLoading = kind === "fuel" && (idlingQ.isLoading || anomalyQ.isLoading || vehicleAggQ.isLoading);
+  const fuelSupplementError = kind === "fuel" && (idlingQ.isError || anomalyQ.isError || vehicleAggQ.isError);
+  if (rowsQ.isLoading || summaryQ.isLoading || fuelSupplementLoading) return <LoadingState />;
+  if (rowsQ.isError || summaryQ.isError || fuelSupplementError) {
     return (
       <ErrorState
         message={`Unable to load ${config.title}. Check backend connectivity and retry.`}
-        onRetry={rowsQ.refetch ? () => void rowsQ.refetch?.() : undefined}
+        onRetry={() => {
+          void rowsQ.refetch?.();
+          void summaryQ.refetch?.();
+          if (kind === "fuel") {
+            void idlingQ.refetch();
+            void anomalyQ.refetch();
+            void vehicleAggQ.refetch();
+          }
+        }}
       />
     );
   }
@@ -223,9 +261,9 @@ export function Batch5FinancePage({ kind }: { kind: Kind }) {
         description={config.description}
         actions={
           <>
-            {config.createLabel && (
-              <button className="btn-primary" onClick={() => setEditing(defaultForm(kind))}>
-                <Plus className="h-4 w-4" /> {config.createLabel}
+            {fuelActionLabel && (
+              <button className="btn-primary" onClick={() => setEditing(kind === "fuel" && safeTab === 1 ? defaultIdlingForm() : defaultForm(kind))}>
+                <Plus className="h-4 w-4" /> {fuelActionLabel}
               </button>
             )}
             <button className="btn-ghost" onClick={() => exportCsv(kind, displayRows)}>
@@ -241,7 +279,7 @@ export function Batch5FinancePage({ kind }: { kind: Kind }) {
           <KpiCard
             key={key}
             label={label}
-            value={String(s[key] ?? 0)}
+            value={s[key] == null ? "—" : String(s[key])}
             status={/anomaly|missing|critical|leakage|unusual|rejected/i.test(label) ? "Critical" : /pending|risk|expir/i.test(label) ? "pending" : undefined}
           />
         ))}
@@ -262,7 +300,7 @@ export function Batch5FinancePage({ kind }: { kind: Kind }) {
                   </span>
                 ))}
               </div>
-            ) : <p className="mt-2">No non-demo fuel transactions are recorded.</p>}
+            ) : <p className="mt-2">No evidence-qualified fuel transactions are available. Unverified records, if present, remain in the transaction list.</p>}
             <p className="mt-2 text-xs text-slate-500">Currencies and measurement units remain separate. No MPG result is claimed without distance evidence.</p>
           </div>
           <div className="panel p-4 text-sm text-slate-600">
@@ -271,11 +309,11 @@ export function Batch5FinancePage({ kind }: { kind: Kind }) {
               <div className="mt-2 flex flex-wrap gap-2">
                 {((summaryData.idlingByCurrency as AnyRecord[]) ?? []).map((total) => (
                   <span key={String(total.currency)} className="badge">
-                    {String(total.currency)} · estimated cost {Number(total.recordedEstimatedCost ?? 0).toLocaleString()} · {Number(total.durationMinutes ?? 0).toLocaleString()} minutes · {String(total.eventCount ?? 0)} events
+                    {String(total.currency)} · estimated cost {total.recordedEstimatedCost == null ? "unavailable" : Number(total.recordedEstimatedCost).toLocaleString()} · {Number(total.durationMinutes ?? 0).toLocaleString()} minutes · {String(total.eventCount ?? 0)} events
                   </span>
                 ))}
               </div>
-            ) : <p className="mt-2">No non-demo idling events are recorded today.</p>}
+            ) : <p className="mt-2">No evidence-qualified idling events are available today. Absence does not establish that no idling occurred.</p>}
             <p className="mt-2 text-xs text-slate-500">Costs remain estimates supplied with each event; they are not certified savings.</p>
           </div>
         </div>
@@ -371,15 +409,15 @@ export function Batch5FinancePage({ kind }: { kind: Kind }) {
         detail={detail.data}
         loading={detail.isLoading}
         onClose={() => setSelected(null)}
-        onEdit={(r) => { if (config.createLabel) setEditing(r); }}
+        onEdit={(r) => { if (fuelActionLabel) setEditing(r); }}
         onAction={(type, row) => act.mutate({ type, row })}
       />
 
       {/* Create / Edit Modal */}
       {editing && (
         <Modal
-          title={config.createLabel}
-          fields={config.fields}
+          title={editing.id ? `Edit ${safeTab === 1 && kind === "fuel" ? "Idling Event" : config.eyebrow}` : fuelActionLabel}
+          fields={modalFields}
           initial={editing}
           saving={save.isPending}
           error={save.isError ? apiErrorMessage(save.error, "The record could not be saved. Review the fields and try again.") : null}
@@ -548,7 +586,7 @@ function Drawer({ config, detail, loading, onClose, onEdit, onAction }: {
   if (!record) return null;
 
   const title = String(
-    record.transactionNumber ?? record.expenseNumber ?? record.contractNumber ??
+    record.transactionNumber ?? record.eventNumber ?? record.expenseNumber ?? record.contractNumber ??
     record.carrierNumber ?? record.leakageNumber ?? record.leakage_number ??
     record.entityLabel ?? record.entity_label ?? `Record ${record.id}`
   );
@@ -559,6 +597,7 @@ function Drawer({ config, detail, loading, onClose, onEdit, onAction }: {
   const isContract = config.queryKey === "contracts";
   const isCarrier = config.queryKey === "carriers";
   const isFuelTransaction = isFuel && Boolean(record.transactionNumber);
+  const isFuelIdling = isFuel && Boolean(record.eventNumber);
   const isFuelAnomaly = isFuel && Boolean(record.anomalyType);
   const fuelAnomalyReviewable = ["open", "under review"].includes(String(record.status ?? "").toLowerCase());
   const expensePending = String(record.approvalStatus ?? "").toLowerCase() === "pending";
@@ -580,12 +619,12 @@ function Drawer({ config, detail, loading, onClose, onEdit, onAction }: {
           {/* Status badges + actions */}
           <div className="flex flex-wrap items-center gap-2">
             <StatusBadge status={record.status ?? record.approvalStatus ?? record.complianceStatus} />
-            {!isExpense && !isCostMargin && !isContract && !isCarrier && <RiskBadge risk={record.severity ?? record.riskScore ?? record.anomalyStatus} />}
+            {!isExpense && !isCostMargin && !isContract && !isCarrier && (!isFuel || isFuelAnomaly) && <RiskBadge risk={record.severity ?? record.riskScore ?? record.anomalyStatus} />}
             <span className="badge">{isExpense ? String(record.recordOrigin ?? "Recorded expense") : isCostMargin ? "Recorded financial evidence" : isCostLeakage ? String(record.recordOrigin ?? "Runtime detector") : isFuel || isContract || isCarrier ? String(record.recordOrigin ?? "Origin unavailable") : "OpsTrax Finance Intelligence"}</span>
           </div>
 
           <div className="flex flex-wrap gap-3">
-            {!!config.createLabel && (!isExpense || expensePending) && (!isFuel || isFuelTransaction) && (
+            {!!config.createLabel && (!isExpense || expensePending) && (!isFuel || isFuelTransaction || isFuelIdling) && (
               <button type="button" className="btn-primary" onClick={() => onEdit(record)}>
                 <PenTool className="h-4 w-4" /> Edit
               </button>
@@ -767,6 +806,16 @@ function defaultForm(kind: Kind): AnyRecord {
   if (kind === "contracts")  return { contractType: "Customer", rateType: "Per Mile", baseRate: "", currency: "USD", status: "Draft", effectiveDate: today };
   if (kind === "carriers")   return { status: "Pending" };
   return {};
+}
+
+function defaultIdlingForm(): AnyRecord {
+  return {
+    durationMinutes: "",
+    estimatedFuelBurn: "",
+    estimatedCost: "",
+    currency: "USD",
+    thresholdStatus: "Normal",
+  };
 }
 
 async function runAction(kind: Kind, type: string, row: AnyRecord): Promise<AnyRecord> {

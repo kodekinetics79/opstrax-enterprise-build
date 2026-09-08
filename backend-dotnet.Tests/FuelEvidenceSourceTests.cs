@@ -18,8 +18,14 @@ public sealed class FuelEvidenceSourceTests
         Assert.Contains("Fuel-card import is not configured", handlers);
         Assert.Contains("'manual_entry'", handlers);
         Assert.Contains("'Not Evaluated'", handlers);
+        Assert.Contains("recorded_by_authenticated_actor", handlers);
+        Assert.Contains("derived_from_qualified_telemetry", handlers);
+        Assert.Contains("derived_from_qualified_transaction", handlers);
+        Assert.Contains("@branchId::BIGINT IS NULL OR v.branch_id=@branchId", handlers);
+        Assert.Contains("branchId is null ? await TenantModuleRecommendations", handlers);
         Assert.DoesNotContain("average_mpg_placeholder", handlers);
         Assert.DoesNotContain("estimated_savings_opportunity", handlers);
+        Assert.DoesNotContain("COALESCE(@risk,20)", handlers);
         Assert.DoesNotContain("'Integration Ready' fuel_card_import_status", handlers);
         Assert.DoesNotContain("detectedRows = 28", handlers);
         Assert.DoesNotContain("CONCAT('$'", handlers);
@@ -34,9 +40,16 @@ public sealed class FuelEvidenceSourceTests
         var config = source[start..end];
 
         Assert.Contains("Recorded fuel and idling evidence", config);
-        Assert.Contains("Legacy Fuel Origin Unverified", config);
+        Assert.Contains("Unverified Fuel Records", config);
         Assert.DoesNotContain("Savings Opportunity", config);
         Assert.DoesNotContain("Spend Today", config);
+        Assert.Contains("evidenceStatus", source);
+        Assert.Contains("No evidence-qualified fuel transactions are available", source);
+        Assert.Contains("Absence does not establish that no idling occurred", source);
+        Assert.Contains("fuelApi.createIdlingEvent", source);
+        Assert.Contains("fuelApi.updateIdlingEvent", source);
+        Assert.Contains("recordedEstimatedCost == null ? \"unavailable\"", source);
+        Assert.DoesNotContain("String(s[key] ?? 0)", source);
         Assert.Contains("Currencies and measurement units remain separate", source);
         Assert.Contains("Fuel-card provider import: not configured", source);
         Assert.DoesNotContain("Anomaly detection active", source);

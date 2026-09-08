@@ -23,6 +23,7 @@ const analytics = fs.readFileSync(new URL("../src/pages/AnalyticsDashboardPage.t
 const fleetIntelligence = fs.readFileSync(new URL("../src/pages/FleetIntelligencePage.tsx", import.meta.url), "utf8");
 const fleetHealth = fs.readFileSync(new URL("../src/pages/FleetHealthPage.tsx", import.meta.url), "utf8");
 const fleetUtilization = fs.readFileSync(new URL("../src/pages/FleetUtilizationPage.tsx", import.meta.url), "utf8");
+const batch5Finance = fs.readFileSync(new URL("../src/pages/Batch5FinancePage.tsx", import.meta.url), "utf8");
 const compliance = fs.readFileSync(new URL("../src/pages/CompliancePage.tsx", import.meta.url), "utf8");
 const operatingModule = fs.readFileSync(new URL("../src/pages/OperatingModulePage.tsx", import.meta.url), "utf8");
 const fleetOverview = fs.readFileSync(new URL("../src/pages/FleetOverviewPage.tsx", import.meta.url), "utf8");
@@ -199,6 +200,11 @@ assert.match(fleetUtilization, /No qualified trip-hour evidence is available/, "
 assert.match(fleetUtilization, /readiness evidence unavailable/, "Fleet Utilization must disclose missing readiness evidence");
 assert.match(fleetUtilization, /An empty queue does not prove/, "Fleet Utilization must not treat an empty action queue as clearance");
 assert.doesNotMatch(fleetUtilization, /deployabilityScore|riskScore|Export live view|No idle drag detected|all within range/i, "Fleet Utilization must not manufacture readiness, risk, or healthy zero-value claims");
+assert.match(batch5Finance, /Unverified Fuel Records/, "Fuel KPIs must expose unverified records instead of hiding them");
+assert.match(batch5Finance, /No evidence-qualified fuel transactions are available/, "Fuel empty state must describe missing qualified evidence");
+assert.match(batch5Finance, /Absence does not establish that no idling occurred/, "Idling empty state must not claim an all-clear result");
+assert.match(batch5Finance, /fuelApi\.createIdlingEvent/, "Fuel UI must expose the persisted idling-event workflow");
+assert.doesNotMatch(batch5Finance, /String\(s\[key\] \?\? 0\)|Legacy Fuel Origin Unverified/, "Fuel UI must not replace missing metrics with zero or use the obsolete provenance label");
 assert.match(compliance, /do not certify regulatory compliance/, "Compliance recommendations must retain the certification boundary");
 assert.doesNotMatch(compliance, /recommendations based on live fleet data|No cross-border issues found/, "Compliance must not overstate record absence or evidence currency");
 assert.match(operatingModule, /No connected production records/, "Unwired operating modules must disclose the absent data source");
