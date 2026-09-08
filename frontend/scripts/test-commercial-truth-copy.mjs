@@ -15,6 +15,8 @@ const controlTower = fs.readFileSync(new URL("../src/pages/ControlTowerPage.tsx"
 const commandCenter = fs.readFileSync(new URL("../src/pages/CommandCenterPage.tsx", import.meta.url), "utf8");
 const alertsCenter = fs.readFileSync(new URL("../src/pages/AlertsCenterPage.tsx", import.meta.url), "utf8");
 const aiCopilot = fs.readFileSync(new URL("../src/pages/AiCopilotPage.tsx", import.meta.url), "utf8");
+const accountHealth = fs.readFileSync(new URL("../src/pages/AccountHealthPage.tsx", import.meta.url), "utf8");
+const modulePage = fs.readFileSync(new URL("../src/pages/ModulePage.tsx", import.meta.url), "utf8");
 const moduleConfig = fs.readFileSync(new URL("../src/modules/moduleConfig.ts", import.meta.url), "utf8");
 
 assert.doesNotMatch(
@@ -154,6 +156,17 @@ assert.match(aiCopilot, /Availability checked on request/, "Copilot must not cla
 assert.match(aiCopilot, /No generated answer or substitute recommendation was created/, "Copilot failures must fail visibly without synthetic answers");
 assert.match(aiCopilot, /Current persisted records within your account and branch access/, "Copilot evidence must disclose its persisted authorization scope");
 assert.doesNotMatch(aiCopilot, /Operations Copilot ready|Live evidence|Evidence is pulled from live fleet data/, "Copilot UI must not make unverified readiness or live-evidence claims");
+assert.doesNotMatch(
+  accountHealth,
+  /activeContracts\s*\?\?\s*1|slaTimer:\s*String\(c\.sentAt\s*\?\s*"Live"|Derived from live customer and contract state|upsellOpportunity:\s*\/ftl/i,
+  "Customer-success pages must not manufacture contracts, support tickets, follow-ups, or upsell opportunities",
+);
+assert.match(accountHealth, /Follow-up workflow unavailable/, "Missing follow-up workflow must be explicit");
+assert.match(accountHealth, /Customer communication records are not support tickets/, "Communications must not be relabeled as support tickets");
+assert.match(accountHealth, /does not infer sales opportunities/, "Missing upsell workflow must remain unavailable");
+assert.match(accountHealth, /Persisted customer health scores, SLA evidence and at-risk status/, "Account health copy must identify its persisted evidence scope");
+assert.doesNotMatch(modulePage, /Operational recommendations will surface as live events/, "Empty module insight panels must not promise live recommendations");
+assert.match(modulePage, /No recorded recommendations are available for this module/, "Empty module insight panels must disclose missing recommendations");
 assert.doesNotMatch(
   liveMap,
   /kpis\.(?:liveCoverage|connectedUnits|degradedUnits|deviceOfflineUnits|cameraOfflineUnits|connectivityCoverage)/,
