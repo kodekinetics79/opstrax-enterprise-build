@@ -48,26 +48,28 @@ public sealed class ControlTowerBranchIsolationPostgresTests
             await OperationalEvent(db, company, "Driver", unallocatedDriver, $"Unallocated driver event {suffix}");
             await OperationalEvent(db, company, "Vehicle", unallocatedVehicle, $"Unallocated vehicle event {suffix}");
             await OperationalEvent(db, company, "Asset", ownVehicle, $"Unknown entity event {suffix}");
-            await DashcamEvent(db, company, ownVehicle, null, $"OWN-CAM-{suffix}");
-            await DashcamEvent(db, company, foreignVehicle, null, $"FOREIGN-CAM-{suffix}");
-            await DashcamEvent(db, company, unallocatedVehicle, null, $"NULL-CAM-{suffix}");
-            await DashcamEvent(db, company, ownVehicle, foreignDriver, $"OWN-VEH-FOREIGN-DRV-{suffix}");
-            await DashcamEvent(db, company, foreignVehicle, ownDriver, $"FOREIGN-VEH-OWN-DRV-{suffix}");
-            await DashcamEvent(db, company, null, ownDriver, $"OWN-DRV-ONLY-{suffix}");
-            await DashcamEvent(db, company, null, foreignDriver, $"FOREIGN-DRV-ONLY-{suffix}");
+            await DashcamEvent(db, company, ownVehicle, null, $"OWN-CAM-{suffix}", "Authoritative", "Ready");
+            await DashcamEvent(db, company, foreignVehicle, null, $"FOREIGN-CAM-{suffix}", "Authoritative", "Ready");
+            await DashcamEvent(db, company, unallocatedVehicle, null, $"NULL-CAM-{suffix}", "Authoritative", "Ready");
+            await DashcamEvent(db, company, ownVehicle, foreignDriver, $"OWN-VEH-FOREIGN-DRV-{suffix}", "Authoritative", "Ready");
+            await DashcamEvent(db, company, foreignVehicle, ownDriver, $"FOREIGN-VEH-OWN-DRV-{suffix}", "Authoritative", "Ready");
+            await DashcamEvent(db, company, null, ownDriver, $"OWN-DRV-ONLY-{suffix}", "Authoritative", "Ready");
+            await DashcamEvent(db, company, null, foreignDriver, $"FOREIGN-DRV-ONLY-{suffix}", "Authoritative", "Ready");
+            await DashcamEvent(db, company, ownVehicle, ownDriver, $"LEGACY-CAM-{suffix}", "LegacyUnverified", "ProviderPending");
+            await DashcamEvent(db, company, ownVehicle, ownDriver, $"PENDING-MEDIA-{suffix}", "Authoritative", "ProviderPending");
 
             await db.ExecuteAsync(
                 @"INSERT INTO ai_recommendations(company_id,tenant_id,recommendation_type,module_key,title,summary,body,score,status)
                   VALUES (@cid,@cid,'control.test','control-tower',@title,'Tenant-wide recommendation','Tenant-wide recommendation',1,'active')",
                 c => { c.Parameters.AddWithValue("@cid", company); c.Parameters.AddWithValue("@title", $"Tenant rec {suffix}"); });
 
-            var branchPayload = Payload(await Invoke(Principal(company, branchA), db));
+            var branchPayload = Payload(await Invoke(Principal(company, branchA, "dashboard:view", "dashcam:view"), db));
             var branchData = branchPayload.GetProperty("data");
             Assert.Equal(1, branchData.GetProperty("entities").GetArrayLength());
             Assert.Equal($"OWN-{suffix}", branchData.GetProperty("entities")[0].GetProperty("label").GetString());
             Assert.Equal(1, branchData.GetProperty("kpis").GetProperty("trackedEntities").GetInt64());
             Assert.Equal(1, branchData.GetProperty("kpis").GetProperty("onlineDevices").GetInt64());
-            Assert.Equal(1, branchData.GetProperty("kpis").GetProperty("onlineCameras").GetInt64());
+            Assert.Equal(0, branchData.GetProperty("kpis").GetProperty("onlineCameras").GetInt64());
             Assert.Equal(1, branchData.GetProperty("kpis").GetProperty("activeUnits").GetInt64());
             Assert.Equal(1, branchData.GetProperty("kpis").GetProperty("highRiskUnits").GetInt64());
             Assert.Equal(1, branchData.GetProperty("kpis").GetProperty("speedAlerts").GetInt64());
@@ -89,18 +91,20 @@ public sealed class ControlTowerBranchIsolationPostgresTests
             Assert.Contains(branchSafety, item => item.GetProperty("eventNumber").GetString() == $"OWN-DRV-ONLY-{suffix}" && item.GetProperty("driverName").GetString() == $"OWN-DRV-{suffix}");
             var crossLinked = Assert.Single(branchSafety, item => item.GetProperty("eventNumber").GetString() == $"OWN-VEH-FOREIGN-DRV-{suffix}");
             Assert.Equal(JsonValueKind.Null, crossLinked.GetProperty("driverName").ValueKind);
+            Assert.DoesNotContain(branchSafety, item => item.GetProperty("eventNumber").GetString() == $"LEGACY-CAM-{suffix}");
+            Assert.DoesNotContain(branchSafety, item => item.GetProperty("eventNumber").GetString() == $"PENDING-MEDIA-{suffix}");
             Assert.Empty(branchData.GetProperty("recommendations").EnumerateArray());
             Assert.Equal(4, branchData.GetProperty("actionQueue").GetArrayLength());
             Assert.All(branchData.GetProperty("actionQueue").EnumerateArray(), item => Assert.DoesNotContain("Foreign", item.GetProperty("title").GetString()));
             Assert.All(branchData.GetProperty("actionQueue").EnumerateArray(), item => Assert.DoesNotContain("Unallocated", item.GetProperty("title").GetString()));
             Assert.All(branchData.GetProperty("actionQueue").EnumerateArray(), item => Assert.DoesNotContain("Unknown", item.GetProperty("title").GetString()));
 
-            var tenantPayload = Payload(await Invoke(Principal(company, null), db));
+            var tenantPayload = Payload(await Invoke(Principal(company, null, "dashboard:view", "dashcam:view"), db));
             var tenantData = tenantPayload.GetProperty("data");
             Assert.Equal(3, tenantData.GetProperty("entities").GetArrayLength());
             Assert.Equal(3, tenantData.GetProperty("kpis").GetProperty("trackedEntities").GetInt64());
             Assert.Equal(3, tenantData.GetProperty("kpis").GetProperty("onlineDevices").GetInt64());
-            Assert.Equal(3, tenantData.GetProperty("kpis").GetProperty("onlineCameras").GetInt64());
+            Assert.Equal(0, tenantData.GetProperty("kpis").GetProperty("onlineCameras").GetInt64());
             Assert.Equal(3, tenantData.GetProperty("kpis").GetProperty("activeUnits").GetInt64());
             Assert.Equal(3, tenantData.GetProperty("kpis").GetProperty("highRiskUnits").GetInt64());
             Assert.Equal(3, tenantData.GetProperty("kpis").GetProperty("speedAlerts").GetInt64());
@@ -111,6 +115,10 @@ public sealed class ControlTowerBranchIsolationPostgresTests
             Assert.Equal(6, tenantData.GetProperty("safetyVideo").GetArrayLength());
             Assert.Single(tenantData.GetProperty("recommendations").EnumerateArray());
             Assert.Equal(11, tenantData.GetProperty("actionQueue").GetArrayLength());
+
+            var dashboardOnly = Payload(await Invoke(Principal(company, branchA, "dashboard:view"), db)).GetProperty("data");
+            Assert.Empty(dashboardOnly.GetProperty("safetyVideo").EnumerateArray());
+            Assert.Equal(JsonValueKind.Null, dashboardOnly.GetProperty("kpis").GetProperty("onlineCameras").ValueKind);
         }
         finally
         {
@@ -157,17 +165,34 @@ public sealed class ControlTowerBranchIsolationPostgresTests
         "INSERT INTO operational_events(company_id,entity_type,entity_id,event_type,title,severity,event_time) VALUES (@cid,@type,@id,'branch.test',@title,'Warning',NOW())",
         c => { c.Parameters.AddWithValue("@cid", company); c.Parameters.AddWithValue("@type", type); c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@title", title); });
 
-    private static Task DashcamEvent(Database db, long company, long? vehicle, long? driver, string eventNumber) => db.ExecuteAsync(
-        "INSERT INTO dashcam_events(company_id,event_number,event_type,title,severity,vehicle_id,driver_id,occurred_at) VALUES (@cid,@number,'branch.test',@number,'Warning',@vehicle,@driver,NOW())",
-        c => { c.Parameters.AddWithValue("@cid", company); c.Parameters.AddWithValue("@number", eventNumber); c.Parameters.AddWithValue("@vehicle", (object?)vehicle ?? DBNull.Value); c.Parameters.AddWithValue("@driver", (object?)driver ?? DBNull.Value); });
+    private static Task DashcamEvent(Database db, long company, long? vehicle, long? driver, string eventNumber, string authority, string mediaStatus) => db.ExecuteAsync(
+        @"INSERT INTO dashcam_events(company_id,event_number,event_type,title,severity,vehicle_id,driver_id,occurred_at,source_authority,media_status,
+            video_provider,provider_event_id,provider_received_at,provider_payload_hash,road_facing_media_ref)
+          VALUES (@cid,@number,'branch.test',@number,'Warning',@vehicle,@driver,NOW(),@authority,@mediaStatus,
+            @provider,@providerEvent,CASE WHEN @authoritative THEN NOW() END,@payloadHash,@mediaRef)",
+        c =>
+        {
+            var authoritative = authority == "Authoritative";
+            c.Parameters.AddWithValue("@cid", company);
+            c.Parameters.AddWithValue("@number", eventNumber);
+            c.Parameters.AddWithValue("@vehicle", (object?)vehicle ?? DBNull.Value);
+            c.Parameters.AddWithValue("@driver", (object?)driver ?? DBNull.Value);
+            c.Parameters.AddWithValue("@authority", authority);
+            c.Parameters.AddWithValue("@mediaStatus", mediaStatus);
+            c.Parameters.AddWithValue("@authoritative", authoritative);
+            c.Parameters.AddWithValue("@provider", authoritative ? "test-provider" : DBNull.Value);
+            c.Parameters.AddWithValue("@providerEvent", authoritative ? eventNumber : DBNull.Value);
+            c.Parameters.AddWithValue("@payloadHash", authoritative ? new string('a', 64) : DBNull.Value);
+            c.Parameters.AddWithValue("@mediaRef", authoritative && mediaStatus == "Ready" ? $"test-media:{eventNumber}" : DBNull.Value);
+        });
 
-    private static DefaultHttpContext Principal(long company, long? branch)
+    private static DefaultHttpContext Principal(long company, long? branch, params string[] permissions)
     {
         var http = new DefaultHttpContext();
         http.Items[EndpointMappings.AuthUserIdItemKey] = 41L;
         http.Items[EndpointMappings.AuthCompanyIdItemKey] = company;
         http.Items[EndpointMappings.AuthRoleItemKey] = branch is null ? "Tenant Administrator" : "Fleet Manager";
-        http.Items[EndpointMappings.AuthPermissionsItemKey] = new[] { "dashboard:view" };
+        http.Items[EndpointMappings.AuthPermissionsItemKey] = permissions.Length == 0 ? ["dashboard:view"] : permissions;
         if (branch is not null) http.Items[EndpointMappings.AuthBranchIdItemKey] = branch.Value;
         return http;
     }

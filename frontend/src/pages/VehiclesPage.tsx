@@ -152,6 +152,7 @@ export function VehiclesPage({ embedded = false }: { embedded?: boolean }) {
   const canDelete = canManageFleet;
   const canAssign = canManageFleet;
   const canExport = hasPermission("vehicles:export");
+  const canViewCameraEvidence = hasPermission(PERMISSIONS.SAFETY_EVIDENCE_VIEW);
 
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("All");
@@ -577,6 +578,7 @@ export function VehiclesPage({ embedded = false }: { embedded?: boolean }) {
         <VehicleDrawer
           record={selectedRecord} detail={detail.data} loading={detail.isLoading}
           canUpdate={canUpdate && !archivedView} canDelete={canDelete && !archivedView} canAssign={canAssign && !archivedView} canReactivate={canUpdate && archivedView} assigning={assign.isPending}
+          canViewCameraEvidence={canViewCameraEvidence}
           lifecycleBusy={lifecycleBusy}
           lifecycleSelectionPreparing={lifecycleSelectionPreparing}
           lifecycleSelectionUnavailable={lifecycleSelectionUnavailable}
@@ -789,9 +791,9 @@ function DriverAssignmentModal({ vehicle, drivers, saving, serverError, onClose,
 
 /* ------------------------------------------------------------------ drawer */
 
-function VehicleDrawer({ record, detail, loading, canUpdate, canDelete, canAssign, canReactivate, assigning, lifecycleBusy, lifecycleSelectionPreparing, lifecycleSelectionUnavailable, lifecycleStatusError, lifecycleNeedsRefresh, lifecycleError, onClose, onEdit, onDelete, onReactivate, onRetryLifecycleStatus, onAssign, onNavigate }: {
+function VehicleDrawer({ record, detail, loading, canUpdate, canDelete, canAssign, canReactivate, canViewCameraEvidence, assigning, lifecycleBusy, lifecycleSelectionPreparing, lifecycleSelectionUnavailable, lifecycleStatusError, lifecycleNeedsRefresh, lifecycleError, onClose, onEdit, onDelete, onReactivate, onRetryLifecycleStatus, onAssign, onNavigate }: {
   record: AnyRecord; detail?: AnyRecord; loading: boolean;
-  canUpdate: boolean; canDelete: boolean; canAssign: boolean; canReactivate: boolean; assigning: boolean;
+  canUpdate: boolean; canDelete: boolean; canAssign: boolean; canReactivate: boolean; canViewCameraEvidence: boolean; assigning: boolean;
   lifecycleBusy: boolean; lifecycleSelectionPreparing: boolean; lifecycleSelectionUnavailable: boolean;
   lifecycleStatusError: string | null; lifecycleNeedsRefresh: boolean; lifecycleError: string | null;
   onClose: () => void; onEdit: () => void; onDelete: () => void; onReactivate: () => void; onRetryLifecycleStatus: () => void;
@@ -965,8 +967,8 @@ function VehicleDrawer({ record, detail, loading, canUpdate, canDelete, canAssig
           <DrawerTable title="Upcoming maintenance" icon={<Wrench className="h-4 w-4" />} rows={detail?.maintenance as AnyRecord[]} cols={["serviceType", "status", "priority", "dueDate"]} loading={loading} onEmpty="No maintenance items scheduled." />
           <DrawerTable title="Safety events" icon={<ShieldAlert className="h-4 w-4" />} rows={detail?.safetyEvents as AnyRecord[]} cols={["eventNumber", "eventType", "severity", "reviewStatus"]} loading={loading} onEmpty="No safety events on record." />
 
-          {/* Dashcam / video events */}
-          <DrawerSection title="Video events" icon={<Video className="h-4 w-4" />} count={((detail?.videoEvents as AnyRecord[]) || []).length} loading={loading}>
+          {/* Only authorized, provider-authoritative, media-ready camera events reach this collection. */}
+          {canViewCameraEvidence ? <DrawerSection title="Verified camera evidence" icon={<Video className="h-4 w-4" />} count={((detail?.videoEvents as AnyRecord[]) || []).length} loading={loading}>
             {((detail?.videoEvents as AnyRecord[]) || []).length ? (
               <div className="grid grid-cols-2 gap-2.5">
                 {((detail?.videoEvents as AnyRecord[]) || []).slice(0, 4).map((v, i) => (
@@ -984,8 +986,8 @@ function VehicleDrawer({ record, detail, loading, canUpdate, canDelete, canAssig
                   </div>
                 ))}
               </div>
-            ) : <EmptyLine text="No dashcam video events captured." />}
-          </DrawerSection>
+            ) : <EmptyLine text="No provider-verified, media-ready camera evidence is available for this vehicle." />}
+          </DrawerSection> : null}
         </div>
       </aside>
     </div>

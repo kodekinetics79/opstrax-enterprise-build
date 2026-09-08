@@ -4515,24 +4515,41 @@ public static partial class EndpointMappings
         if (RequirePermission(http, "dashboard:view") is { } denied) return denied;
         var companyId = GetCompanyId(http);
         var branchId = GetBranchId(http);
+        var canViewCameraEvidence = RequirePermission(http, "dashcam:view") is null;
         void BindScope(NpgsqlCommand command)
         {
             command.Parameters.AddWithValue("@companyId", companyId);
             command.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value);
+            command.Parameters.AddWithValue("@canViewCameraEvidence", canViewCameraEvidence);
         }
         var entities = await db.QueryAsync(
             @"SELECT v.id, v.id vehicleId, v.assigned_driver_id driverId, v.vehicle_code label, 'vehicle' entity_type, COALESCE(v.status, le.event_type) status,
-                     le.lat, le.lng, le.speed_mph speedMph, le.heading, le.event_type eventType, le.event_time eventTime, v.type vehicleType, v.device_status deviceStatus, v.camera_status cameraStatus,
+                     le.lat, le.lng, le.speed_mph speedMph, le.heading, le.event_type eventType, le.event_time eventTime, v.type vehicleType, v.device_status deviceStatus,
+                     CASE WHEN @canViewCameraEvidence THEN COALESCE(current_camera.camera_status,'Unknown') ELSE 'Unknown' END cameraStatus,
                      v.readiness_score readinessScore, v.data_quality_score dataQualityScore, v.risk_score riskScore, d.full_name driverName,
                      CASE WHEN le.speed_mph > 65 THEN 'Speeding watch'
                           WHEN v.device_status <> 'Online' THEN 'Device offline'
-                          WHEN v.camera_status <> 'Online' THEN 'Camera offline'
+                          WHEN @canViewCameraEvidence AND current_camera.device_id IS NOT NULL AND current_camera.camera_status <> 'Online' THEN 'Camera attention'
                           WHEN v.risk_score >= 70 THEN 'Fleet risk'
                           ELSE 'Normal' END live_alert,
-                     CASE WHEN v.risk_score >= 70 OR le.speed_mph > 65 THEN 'High' WHEN v.device_status <> 'Online' OR v.camera_status <> 'Online' THEN 'Medium' ELSE 'Low' END risk_level
+                     CASE WHEN v.risk_score >= 70 OR le.speed_mph > 65 THEN 'High'
+                          WHEN v.device_status <> 'Online' OR (@canViewCameraEvidence AND current_camera.device_id IS NOT NULL AND current_camera.camera_status <> 'Online') THEN 'Medium'
+                          ELSE 'Low' END risk_level
               FROM vehicles v
               INNER JOIN (SELECT le1.* FROM location_events le1 INNER JOIN (SELECT vehicle_id, MAX(id) max_id FROM location_events WHERE company_id=@companyId GROUP BY vehicle_id) le2 ON le1.id=le2.max_id WHERE le1.company_id=@companyId) le ON v.id=le.vehicle_id
               LEFT JOIN drivers d ON d.id=v.assigned_driver_id AND d.company_id=v.company_id AND d.branch_id=v.branch_id
+              LEFT JOIN LATERAL (
+                SELECT e.id device_id,
+                       CASE WHEN e.last_seen_at IS NULL THEN 'No check-in'
+                            WHEN LOWER(COALESCE(e.device_state,'')) ~ '(revoked|suspend|offline|malfunction|fault|quarantin)' THEN COALESCE(NULLIF(BTRIM(e.device_state),''),'Attention required')
+                            WHEN e.last_seen_at >= NOW()-INTERVAL '15 minutes' THEN 'Online'
+                            ELSE 'Stale' END camera_status
+                FROM device_installations i
+                JOIN eld_devices e ON e.id=i.device_id AND e.company_id=i.company_id AND e.deleted_at IS NULL
+                WHERE i.company_id=v.company_id AND i.vehicle_id=v.id AND i.effective_to IS NULL
+                  AND i.status IN ('Installed','Verified') AND i.device_role='Dashcam'
+                ORDER BY i.is_primary DESC,i.effective_from DESC,i.id DESC LIMIT 1
+              ) current_camera ON TRUE
               WHERE v.deleted_at IS NULL AND v.company_id=@companyId
                 AND (@branchId::BIGINT IS NULL OR v.branch_id=@branchId)
               ORDER BY le.event_time DESC LIMIT 24", BindScope, ct: ct);
@@ -4553,20 +4570,26 @@ public static partial class EndpointMappings
         var kpis = await db.QuerySingleAsync(
             @"SELECT (SELECT COUNT(*) FROM vehicles scoped_v WHERE scoped_v.deleted_at IS NULL AND scoped_v.company_id=@companyId AND (@branchId::BIGINT IS NULL OR scoped_v.branch_id=@branchId)) tracked_entities,
                      SUM(CASE WHEN v.device_status='Online' THEN 1 ELSE 0 END) online_devices,
-                     SUM(CASE WHEN v.camera_status='Online' THEN 1 ELSE 0 END) online_cameras,
+                     CASE WHEN @canViewCameraEvidence THEN SUM(CASE WHEN current_camera.last_seen_at >= NOW()-INTERVAL '15 minutes'
+                          AND LOWER(COALESCE(current_camera.device_state,'')) !~ '(revoked|suspend|offline|malfunction|fault|quarantin)' THEN 1 ELSE 0 END) END online_cameras,
                      SUM(CASE WHEN v.status IN ('Available','Active','On Route','Idle') THEN 1 ELSE 0 END) active_units,
                      SUM(CASE WHEN v.risk_score >= 70 THEN 1 ELSE 0 END) high_risk_units,
                      (SELECT COUNT(*) FROM location_events le2
                        INNER JOIN (SELECT vehicle_id, MAX(id) max_id FROM location_events WHERE company_id=@companyId GROUP BY vehicle_id) latest ON le2.id=latest.max_id
                        INNER JOIN vehicles scoped_v ON scoped_v.id=le2.vehicle_id AND scoped_v.company_id=le2.company_id AND scoped_v.deleted_at IS NULL
                        WHERE le2.company_id=@companyId AND le2.speed_mph > 65 AND (@branchId::BIGINT IS NULL OR scoped_v.branch_id=@branchId)) speed_alerts,
-                     ROUND(AVG(v.data_quality_score) FILTER (
-                         WHERE LOWER(COALESCE(v.device_status,'')) NOT IN ('','unknown','unavailable')
-                            OR LOWER(COALESCE(v.camera_status,'')) NOT IN ('','unknown','unavailable')),1) telemetry_quality,
-                     ROUND(AVG(v.readiness_score) FILTER (
-                         WHERE LOWER(COALESCE(v.device_status,'')) NOT IN ('','unknown','unavailable')
-                            OR LOWER(COALESCE(v.camera_status,'')) NOT IN ('','unknown','unavailable')),1) fleet_readiness
-              FROM vehicles v WHERE v.deleted_at IS NULL AND v.company_id=@companyId AND (@branchId::BIGINT IS NULL OR v.branch_id=@branchId)", BindScope, ct: ct);
+                     ROUND(AVG(v.data_quality_score) FILTER (WHERE LOWER(COALESCE(v.device_status,'')) NOT IN ('','unknown','unavailable')),1) telemetry_quality,
+                     ROUND(AVG(v.readiness_score) FILTER (WHERE LOWER(COALESCE(v.device_status,'')) NOT IN ('','unknown','unavailable')),1) fleet_readiness
+              FROM vehicles v
+              LEFT JOIN LATERAL (
+                SELECT e.last_seen_at,e.device_state
+                FROM device_installations i
+                JOIN eld_devices e ON e.id=i.device_id AND e.company_id=i.company_id AND e.deleted_at IS NULL
+                WHERE i.company_id=v.company_id AND i.vehicle_id=v.id AND i.effective_to IS NULL
+                  AND i.status IN ('Installed','Verified') AND i.device_role='Dashcam'
+                ORDER BY i.is_primary DESC,i.effective_from DESC,i.id DESC LIMIT 1
+              ) current_camera ON TRUE
+              WHERE v.deleted_at IS NULL AND v.company_id=@companyId AND (@branchId::BIGINT IS NULL OR v.branch_id=@branchId)", BindScope, ct: ct);
         var jobs = await db.QueryAsync(
             @"SELECT j.id, COALESCE(j.job_number,j.job_code) job_number, j.status, j.priority, j.sla_status, j.eta,
                      c.name customer_name, v.vehicle_code, d.full_name driver_name,
@@ -4580,22 +4603,41 @@ public static partial class EndpointMappings
               WHERE j.deleted_at IS NULL AND j.company_id=@companyId AND (@branchId::BIGINT IS NULL OR j.branch_id=@branchId)
               ORDER BY j.risk_score DESC, j.scheduled_start LIMIT 10", BindScope, ct: ct);
         var diagnostics = await db.QueryAsync(
-            @"SELECT v.id, v.vehicle_code, v.device_status, v.camera_status, v.readiness_score, v.data_quality_score, v.risk_score,
+            @"SELECT v.id, v.vehicle_code, v.device_status,
+                     CASE WHEN @canViewCameraEvidence THEN COALESCE(current_camera.camera_status,'Unknown') ELSE 'Unknown' END camera_status,
+                     v.readiness_score, v.data_quality_score, v.risk_score,
                      CASE WHEN v.device_status <> 'Online' THEN 'Recover gateway connection'
-                          WHEN v.camera_status <> 'Online' THEN 'Verify camera health'
+                          WHEN @canViewCameraEvidence AND current_camera.device_id IS NOT NULL AND current_camera.camera_status <> 'Online' THEN 'Verify camera health'
                           WHEN v.risk_score >= 70 THEN 'Create maintenance/safety review'
                           ELSE 'Healthy telemetry' END recommended_action
-              FROM vehicles v WHERE v.deleted_at IS NULL AND v.company_id=@companyId AND (@branchId::BIGINT IS NULL OR v.branch_id=@branchId)
+              FROM vehicles v
+              LEFT JOIN LATERAL (
+                SELECT e.id device_id,
+                       CASE WHEN e.last_seen_at IS NULL THEN 'No check-in'
+                            WHEN LOWER(COALESCE(e.device_state,'')) ~ '(revoked|suspend|offline|malfunction|fault|quarantin)' THEN COALESCE(NULLIF(BTRIM(e.device_state),''),'Attention required')
+                            WHEN e.last_seen_at >= NOW()-INTERVAL '15 minutes' THEN 'Online'
+                            ELSE 'Stale' END camera_status
+                FROM device_installations i
+                JOIN eld_devices e ON e.id=i.device_id AND e.company_id=i.company_id AND e.deleted_at IS NULL
+                WHERE i.company_id=v.company_id AND i.vehicle_id=v.id AND i.effective_to IS NULL
+                  AND i.status IN ('Installed','Verified') AND i.device_role='Dashcam'
+                ORDER BY i.is_primary DESC,i.effective_from DESC,i.id DESC LIMIT 1
+              ) current_camera ON TRUE
+              WHERE v.deleted_at IS NULL AND v.company_id=@companyId AND (@branchId::BIGINT IS NULL OR v.branch_id=@branchId)
               ORDER BY v.risk_score DESC, v.data_quality_score LIMIT 10", BindScope, ct: ct);
-        var safetyVideo = await db.QueryAsync(
+        List<Dictionary<string, object?>> safetyVideo = [];
+        if (canViewCameraEvidence)
+            safetyVideo = await db.QueryAsync(
             @"SELECT de.id, de.event_number, de.event_type, de.severity, de.review_status, de.evidence_status, de.thumbnail_url,
-                     d.full_name driver_name, v.vehicle_code, de.ai_summary
+                     de.source_authority, de.media_status,
+                     d.full_name driver_name, v.vehicle_code
               FROM dashcam_events de
               LEFT JOIN drivers d ON d.id=de.driver_id AND d.company_id=de.company_id AND d.deleted_at IS NULL
                 AND (@branchId::BIGINT IS NULL OR d.branch_id=@branchId)
               LEFT JOIN vehicles v ON v.id=de.vehicle_id AND v.company_id=de.company_id AND v.deleted_at IS NULL
                 AND (@branchId::BIGINT IS NULL OR v.branch_id=@branchId)
               WHERE de.deleted_at IS NULL AND de.company_id=@companyId
+                AND de.source_authority='Authoritative' AND de.media_status='Ready'
                 AND (@branchId::BIGINT IS NULL OR v.id IS NOT NULL OR (de.vehicle_id IS NULL AND d.id IS NOT NULL))
               ORDER BY de.occurred_at DESC LIMIT 6", BindScope, ct: ct);
         var actionQueue = await db.QueryAsync(
@@ -4701,12 +4743,21 @@ public static partial class EndpointMappings
                   if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId.Value);
               }, ct);
         if (record is null) return Results.NotFound(ApiResponse<object>.Fail("Vehicle not found"));
+        List<Dictionary<string, object?>> videoEvents = [];
+        if (RequirePermission(http, "dashcam:view") is null)
+            videoEvents = await db.QueryAsync(
+                @"SELECT event_number,event_type,severity,review_status,evidence_status,thumbnail_url,source_authority,media_status
+                  FROM dashcam_events
+                  WHERE vehicle_id=@id AND deleted_at IS NULL AND company_id=@companyId
+                    AND source_authority='Authoritative' AND media_status='Ready'
+                  ORDER BY occurred_at DESC LIMIT 4",
+                c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); }, ct);
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             record,
             activeJobs = await db.QueryAsync("SELECT id, COALESCE(job_number,job_code) job_number, status, sla_status, eta, priority FROM jobs WHERE assigned_vehicle_id=@id AND deleted_at IS NULL AND company_id=@companyId ORDER BY scheduled_start DESC LIMIT 6", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); }, ct),
             safetyEvents = await db.QueryAsync("SELECT event_number, event_type, severity, review_status, occurred_at FROM safety_events WHERE vehicle_id=@id AND deleted_at IS NULL AND company_id=@companyId ORDER BY occurred_at DESC LIMIT 6", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); }, ct),
-            videoEvents = await db.QueryAsync("SELECT event_number, event_type, severity, review_status, evidence_status, thumbnail_url FROM dashcam_events WHERE vehicle_id=@id AND deleted_at IS NULL AND company_id=@companyId ORDER BY occurred_at DESC LIMIT 4", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); }, ct),
+            videoEvents,
             maintenance = await db.QueryAsync("SELECT service_type, status, priority, due_date, risk_score FROM maintenance_items WHERE vehicle_id=@id AND deleted_at IS NULL AND company_id=@companyId ORDER BY due_date LIMIT 5", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); }, ct),
             replayTrail = await db.QueryAsync("SELECT lat, lng, speed_mph, heading, event_type, event_time FROM location_events WHERE vehicle_id=@id AND company_id=@companyId ORDER BY event_time DESC LIMIT 20", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); }, ct)
         }));
@@ -5229,6 +5280,15 @@ public static partial class EndpointMappings
               WHERE v.id=@id AND v.company_id=@cid" + lifecycleClause + branchClause,
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId); }, ct);
         if (record is null) return Results.NotFound(ApiResponse<object>.Fail("Vehicle not found"));
+        List<Dictionary<string, object?>> videoEvents = [];
+        if (RequirePermission(http, "dashcam:view") is null)
+            videoEvents = await db.QueryAsync(
+                @"SELECT event_number,event_type,severity,review_status,evidence_status,thumbnail_url,source_authority,media_status
+                  FROM dashcam_events
+                  WHERE vehicle_id=@id AND deleted_at IS NULL AND company_id=@cid
+                    AND source_authority='Authoritative' AND media_status='Ready'
+                  ORDER BY occurred_at DESC LIMIT 4",
+                c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct);
         return Results.Ok(ApiResponse<object>.Ok(new
         {
             record,
@@ -5267,6 +5327,7 @@ public static partial class EndpointMappings
                 c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct),
             compliance = await db.QueryAsync("SELECT * FROM compliance_documents WHERE related_entity_type='Vehicle' AND related_entity_id=@id ORDER BY expiry_date LIMIT 8", c => c.Parameters.AddWithValue("@id", id), ct),
             safetyEvents = await db.QueryAsync("SELECT * FROM safety_events WHERE vehicle_id=@id ORDER BY event_time DESC LIMIT 8", c => c.Parameters.AddWithValue("@id", id), ct),
+            videoEvents,
             trips = await db.QueryAsync("SELECT * FROM trips WHERE vehicle_id=@id ORDER BY started_at DESC LIMIT 8", c => c.Parameters.AddWithValue("@id", id), ct),
             costSummary = await db.QuerySingleAsync("SELECT COALESCE(SUM(total_cost),0) fuel_cost, COALESCE(SUM(idle_minutes),0) idle_minutes FROM fuel_transactions WHERE vehicle_id=@id", c => c.Parameters.AddWithValue("@id", id), ct),
             auditTrail = await AuditTrail(db, "Vehicle", id, GetCompanyId(http), ct)
