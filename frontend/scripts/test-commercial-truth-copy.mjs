@@ -29,6 +29,7 @@ const reports = fs.readFileSync(new URL("../src/pages/ReportsPage.tsx", import.m
 const notificationCenter = fs.readFileSync(new URL("../src/pages/NotificationCenterPage.tsx", import.meta.url), "utf8");
 const customerVisibility = fs.readFileSync(new URL("../src/pages/CustomerVisibilityPage.tsx", import.meta.url), "utf8");
 const customerEta = fs.readFileSync(new URL("../src/pages/CustomerEtaPage.tsx", import.meta.url), "utf8");
+const driverMessaging = fs.readFileSync(new URL("../src/pages/DriverMessagingPage.tsx", import.meta.url), "utf8");
 const moduleConfig = fs.readFileSync(new URL("../src/modules/moduleConfig.ts", import.meta.url), "utf8");
 
 assert.doesNotMatch(
@@ -213,6 +214,11 @@ assert.match(customerEta, /Queued messages are not presented as provider-deliver
 assert.match(customerEta, /Bulk Queue Updates/, "Bulk ETA actions must be labeled as queued work");
 assert.match(customerEta, /No SLA assessment is available/, "Missing public SLA evidence must remain unavailable");
 assert.doesNotMatch(customerEta, /customerExperienceScore|customer_experience_score|Experience Score|ETA updates sent to all|\?\? "High"/, "Customer ETA must not synthesize experience, delivery, or confidence claims");
+assert.match(driverMessaging, /Record In-App Message/, "Driver messaging must describe the persisted action without claiming provider delivery");
+assert.match(driverMessaging, /Delivery outside the in-app conversation is not claimed/, "Driver messaging must preserve its delivery boundary");
+assert.match(driverMessaging, /active driver accounts in your authorized branch scope/, "Broadcast recipients must disclose their persisted authorization scope");
+assert.match(driverMessaging, /unwrap<AnyRecord\[]>\(apiClient\.get\("\/api\/driver-messages"\)\)/, "Driver messaging must unwrap the API envelope before calculating evidence counts");
+assert.doesNotMatch(driverMessaging, /status="Healthy"|<option>SMS<\/option>|Broadcast sent to all drivers|Depot — Morning Shift|Long-Haul Drivers/, "Driver messaging must not show synthetic health, external channels, or unmodeled recipient segments");
 assert.doesNotMatch(
   liveMap,
   /kpis\.(?:liveCoverage|connectedUnits|degradedUnits|deviceOfflineUnits|cameraOfflineUnits|connectivityCoverage)/,

@@ -2249,68 +2249,9 @@ public static partial class EndpointMappings
         });
 
         // ===== DRIVER MESSAGING =====================================================
-        app.MapGet("/api/driver-messages", (HttpContext http, Database db, CancellationToken ct) =>
-        {
-            if (RequirePermission(http, "dispatch:view") is { } denied) return Task.FromResult(denied);
-            return OkRows(db,
-            @"SELECT id, record_code, title subject, status,
-                     tags channel, secondary_value recipient,
-                     numeric_value replies, updated_at sent_at
-              FROM module_records
-              WHERE company_id=@cid AND module_key='driver-messages' AND deleted_at IS NULL
-              ORDER BY created_at DESC LIMIT 100",
-            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
-        });
-        app.MapPost("/api/driver-messages", async (HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, NotificationService notif, CancellationToken ct) => {
-            if (RequirePermission(http, "dispatch:manage") is { } denied) return denied;
-            var c = GetCompanyId(http);
-            var code = $"MSG-{Guid.NewGuid():N}"[..16];
-            var subject   = body.GetValueOrDefault("subject")?.ToString() ?? "Message";
-            var recipient = body.GetValueOrDefault("recipient")?.ToString() ?? "";
-            // Compose posts the message text as `body`; fall back to the subject if empty.
-            var messageText = body.GetValueOrDefault("body")?.ToString();
-            if (string.IsNullOrWhiteSpace(messageText)) messageText = subject;
-            // History/KPI row for the Driver Messaging page (GET /api/driver-messages reads this).
-            await db.ExecuteAsync(@"INSERT INTO module_records (company_id,module_key,record_code,title,status,tags,secondary_value,numeric_value) VALUES(@c,'driver-messages',@code,@subj,'Delivered',@ch,@recv,0)",
-                cmd => { cmd.Parameters.AddWithValue("@c", c); cmd.Parameters.AddWithValue("@code", code); cmd.Parameters.AddWithValue("@subj", subject); cmd.Parameters.AddWithValue("@ch", body.GetValueOrDefault("channel")?.ToString() ?? "In-App"); cmd.Parameters.AddWithValue("@recv", recipient); }, ct);
-            // Actually deliver the message: resolve the recipient driver (the composer posts the
-            // driver's display name or code, tenant-scoped) and raise a real in-app notification so
-            // it reaches the driver instead of only recording a hardcoded 'Delivered' row.
-            if (!string.IsNullOrWhiteSpace(recipient))
-            {
-                var driverRow = await db.QuerySingleAsync(
-                    @"SELECT id FROM drivers
-                      WHERE company_id=@c AND deleted_at IS NULL
-                        AND (full_name=@r OR driver_code=@r)
-                      LIMIT 1",
-                    cmd => { cmd.Parameters.AddWithValue("@c", c); cmd.Parameters.AddWithValue("@r", recipient); }, ct);
-                var driverId = driverRow?["id"] is not null and not DBNull ? Convert.ToInt64(driverRow["id"]) : (long?)null;
-                if (driverId.HasValue)
-                    await notif.CreateAsync(c, "driver_message.sent", "driver_message", null,
-                        "info", subject, messageText,
-                        "driver", ct, targetDriverId: driverId.Value);
-            }
-            await audit.LogAsync(http, "driver_message.sent", "DriverMessage", 0, $"Sent driver message: {subject}", ct: ct);
-            return Results.Ok(ApiResponse<object>.Ok(new { code, subject }));
-        });
-        app.MapPost("/api/driver-messages/broadcast", async (HttpContext http, Dictionary<string, object?> body, Database db, AuditService audit, NotificationService notif, CancellationToken ct) => {
-            if (RequirePermission(http, "dispatch:manage") is { } denied) return denied;
-            var c = GetCompanyId(http);
-            var code = $"BCAST-{Guid.NewGuid():N}"[..18];
-            var subject = body.GetValueOrDefault("subject")?.ToString() ?? "Broadcast";
-            var messageText = body.GetValueOrDefault("body")?.ToString();
-            if (string.IsNullOrWhiteSpace(messageText)) messageText = subject;
-            // History/KPI row (GET /api/driver-messages reads this).
-            await db.ExecuteAsync(@"INSERT INTO module_records (company_id,module_key,record_code,title,status,tags,secondary_value) VALUES(@c,'driver-messages',@code,@subj,'Delivered','Broadcast',@grp)",
-                cmd => { cmd.Parameters.AddWithValue("@c", c); cmd.Parameters.AddWithValue("@code", code); cmd.Parameters.AddWithValue("@subj", subject); cmd.Parameters.AddWithValue("@grp", body.GetValueOrDefault("group")?.ToString() ?? "All Drivers"); }, ct);
-            // Actually deliver: audience "driver" with no target role-broadcasts to every Active
-            // Driver user in this tenant. Sub-group segmentation (shift/lane) is not modeled yet,
-            // so a broadcast reaches all drivers; the requested group is kept on the history row.
-            await notif.CreateAsync(c, "driver_message.broadcast", "driver_message", null,
-                "info", subject, messageText, "driver", ct);
-            await audit.LogAsync(http, "driver_message.broadcast", "DriverMessage", 0, $"Broadcast sent: {subject}", ct: ct);
-            return Results.Ok(ApiResponse<object>.Ok(new { code, subject }));
-        });
+        app.MapGet("/api/driver-messages", DriverMessageHistory);
+        app.MapPost("/api/driver-messages", DriverMessageCreate);
+        app.MapPost("/api/driver-messages/broadcast", DriverMessageBroadcast);
 
         // ===== P7 NOTIFICATIONS + MESSAGING + ESCALATION ============================
         app.MapGet("/api/notifications",              NotificationList);
@@ -28119,6 +28060,240 @@ LIMIT 100000",
 
         await audit.LogAsync(http, "notification.bulk_acknowledged", "Notification", null, ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { acknowledged = rows }));
+    }
+
+    // ── Driver messaging customer surface ──────────────────────────────────────
+
+    private static async Task<IResult> DriverMessageHistory(HttpContext http, Database db, CancellationToken ct)
+    {
+        if (RequireInternalUser(http) is { } internalDenied) return internalDenied;
+        if (RequirePermission(http, "dispatch:view") is { } denied) return denied;
+        var companyId = GetCompanyId(http);
+        var (driverBranchClause, branchId) = StrictBranchFilter(http, "d");
+        var direct = await db.QueryAsync(
+            @"SELECT c.id,('CONV-' || c.id::text) record_code,COALESCE(c.subject,'Message') subject,
+                     CASE WHEN COUNT(m.id)=0 THEN 'No Messages'
+                          WHEN d.user_id IS NULL THEN 'Recipient Unavailable'
+                          ELSE 'Recorded In-App' END status,
+                     'In-App' channel,COALESCE(d.full_name,d.driver_code) recipient,
+                     COUNT(m.id) FILTER (WHERE m.sender_user_id=d.user_id) replies,
+                     COUNT(m.id) FILTER (WHERE m.sender_user_id<>d.user_id AND m.read_at IS NOT NULL) reads,
+                     CASE WHEN d.user_id IS NULL THEN 0 ELSE 1 END recipients,
+                     MAX(m.sent_at) sent_at,'Conversation' record_type,c.id conversation_id
+              FROM messaging_conversations c
+              JOIN drivers d ON d.id=c.driver_id AND d.company_id=c.company_id AND d.deleted_at IS NULL
+              LEFT JOIN messaging_messages m ON m.conversation_id=c.id AND m.company_id=c.company_id
+              WHERE c.company_id=@cid" + driverBranchClause + @"
+              GROUP BY c.id,c.subject,d.id,d.full_name,d.driver_code,d.user_id
+              ORDER BY MAX(m.sent_at) DESC NULLS LAST,c.id DESC LIMIT 100",
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid", companyId);
+                if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId.Value);
+            }, ct);
+        var broadcastBranchClause = branchId is null ? "" : " AND mr.metadata_json->>'branchId'=@branchIdText";
+        var broadcasts = await db.QueryAsync(
+            @"SELECT mr.id,mr.record_code,mr.title subject,'Recorded In-App' status,'Broadcast' channel,
+                     COALESCE(mr.owner_name,'Driver accounts in current scope') recipient,
+                     0::bigint replies,delivery.reads,delivery.recipients,
+                     COALESCE(mr.updated_at,mr.created_at) sent_at,'Broadcast' record_type,NULL::bigint conversation_id
+              FROM module_records mr
+              JOIN LATERAL (
+                SELECT COUNT(*) recipients,
+                       COUNT(*) FILTER (WHERE nr.read_at IS NOT NULL OR LOWER(nr.status) IN ('read','acknowledged')) reads
+                FROM notification_recipients nr
+                WHERE nr.company_id=mr.company_id
+                  AND nr.notification_id=CASE
+                    WHEN mr.metadata_json->>'notificationId' ~ '^[0-9]+$'
+                    THEN (mr.metadata_json->>'notificationId')::bigint
+                    ELSE NULL END
+                  AND nr.delivered_at IS NOT NULL
+              ) delivery ON delivery.recipients>0
+              WHERE mr.company_id=@cid AND mr.module_key='driver-messages' AND mr.deleted_at IS NULL
+                AND mr.tags='Broadcast'
+                AND mr.metadata_json->>'notificationId' ~ '^[0-9]+$'" + broadcastBranchClause + @"
+              ORDER BY COALESCE(mr.updated_at,mr.created_at) DESC LIMIT 100",
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid", companyId);
+                if (branchId is not null) c.Parameters.AddWithValue("@branchIdText", branchId.Value.ToString());
+            }, ct);
+
+        static DateTimeOffset RecordedAt(Dictionary<string, object?> row)
+        {
+            var raw = row.GetValueOrDefault("sentAt");
+            if (raw is DateTimeOffset dto) return dto;
+            if (raw is DateTime dt) return new DateTimeOffset(dt);
+            return DateTimeOffset.TryParse(raw?.ToString(), out var parsed) ? parsed : DateTimeOffset.MinValue;
+        }
+
+        return Results.Ok(ApiResponse<object>.Ok(
+            direct.Concat(broadcasts).OrderByDescending(RecordedAt).Take(100).ToList()));
+    }
+
+    private static async Task<IResult> DriverMessageCreate(HttpContext http, Dictionary<string, object?> body,
+        Database db, AuditService audit, NotificationService notifications, CancellationToken ct)
+    {
+        if (RequireInternalUser(http) is { } internalDenied) return internalDenied;
+        if (RequirePermission(http, "dispatch:manage") is { } denied) return denied;
+        if (!TryPositiveLong(Get(body, "recipientId"), out var driverId))
+            return Results.BadRequest(ApiResponse<object>.Fail("A recipient driver is required"));
+        var channel = Get(body, "channel")?.ToString()?.Trim() ?? "In-App";
+        if (!string.Equals(channel, "In-App", StringComparison.OrdinalIgnoreCase))
+            return Results.Conflict(ApiResponse<object>.Fail("External driver-message delivery is not configured; use In-App"));
+        var subject = Get(body, "subject")?.ToString()?.Trim() ?? "";
+        var message = Get(body, "body")?.ToString()?.Trim() ?? "";
+        if (subject.Length is < 1 or > 200)
+            return Results.BadRequest(ApiResponse<object>.Fail("Subject must be between 1 and 200 characters"));
+        if (message.Length is < 1 or > 4000)
+            return Results.BadRequest(ApiResponse<object>.Fail("Message must be between 1 and 4000 characters"));
+
+        var companyId = GetCompanyId(http);
+        var userId = GetUserId(http);
+        var userRole = http.Items.TryGetValue(AuthRoleItemKey, out var role) ? role?.ToString() ?? "" : "";
+        var (branchClause, branchId) = StrictBranchFilter(http, "d");
+        var driver = await db.QuerySingleAsync(
+            @"SELECT d.id,d.full_name,d.user_id
+              FROM drivers d
+              JOIN users u ON u.id=d.user_id AND u.company_id=d.company_id AND u.status='Active'
+              WHERE d.id=@driverId AND d.company_id=@companyId AND d.deleted_at IS NULL" + branchClause + " LIMIT 1",
+            c =>
+            {
+                c.Parameters.AddWithValue("@driverId", driverId);
+                c.Parameters.AddWithValue("@companyId", companyId);
+                if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId.Value);
+            }, ct);
+        if (driver is null)
+            return Results.NotFound(ApiResponse<object>.Fail("No active in-app driver account was found in the authorized branch"));
+
+        var persisted = await db.RunInTenantTransactionAsync(companyId, async () =>
+        {
+            var conversationId = await db.InsertAsync(
+                @"INSERT INTO messaging_conversations(company_id,subject,status,created_by,driver_id,updated_at)
+                  VALUES (@companyId,@subject,'open',@userId,@driverId,NOW())",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@companyId", companyId);
+                    c.Parameters.AddWithValue("@subject", subject);
+                    c.Parameters.AddWithValue("@userId", userId);
+                    c.Parameters.AddWithValue("@driverId", driverId);
+                }, ct);
+            var messageId = await db.InsertAsync(
+                @"INSERT INTO messaging_messages(conversation_id,company_id,sender_user_id,sender_role,body,sent_at)
+                  VALUES (@conversationId,@companyId,@userId,@userRole,@message,NOW())",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@conversationId", conversationId);
+                    c.Parameters.AddWithValue("@companyId", companyId);
+                    c.Parameters.AddWithValue("@userId", userId);
+                    c.Parameters.AddWithValue("@userRole", userRole);
+                    c.Parameters.AddWithValue("@message", message);
+                }, ct);
+            await audit.LogAsync(http, "driver_message.recorded_in_app", "MessagingConversation", conversationId,
+                JsonSerializer.Serialize(new { driverId, messageId, deliveryClaim = false }), ct);
+            return (conversationId, messageId);
+        }, ct);
+
+        long? notificationId = null;
+        try
+        {
+            var created = await notifications.CreateAsync(companyId, "message.received", "MessagingConversation",
+                persisted.conversationId, "info", "New message from dispatch", message, "driver", ct,
+                targetDriverId: driverId, dedupeKey: $"msg:conv:{persisted.conversationId}:driver",
+                suppressionWindow: TimeSpan.FromMinutes(5));
+            if (created > 0) notificationId = created;
+        }
+        catch (Exception ex) { LogSafeEndpointFailure(http, ex, "driver-message.notify"); }
+
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            persisted.conversationId,
+            persisted.messageId,
+            notificationId,
+            recordStatus = "Recorded In-App",
+            deliveryClaim = false
+        }, "Message recorded in the driver's in-app conversation"));
+    }
+
+    private static async Task<IResult> DriverMessageBroadcast(HttpContext http, Dictionary<string, object?> body,
+        Database db, AuditService audit, NotificationService notifications, CancellationToken ct)
+    {
+        if (RequireInternalUser(http) is { } internalDenied) return internalDenied;
+        if (RequirePermission(http, "dispatch:manage") is { } denied) return denied;
+        var group = Get(body, "group")?.ToString()?.Trim() ?? "All Active Drivers";
+        if (!string.Equals(group, "All Active Drivers", StringComparison.Ordinal))
+            return Results.Conflict(ApiResponse<object>.Fail("That driver segment is not backed by a persisted membership source"));
+        var subject = Get(body, "subject")?.ToString()?.Trim() ?? "";
+        var message = Get(body, "body")?.ToString()?.Trim() ?? "";
+        if (subject.Length is < 1 or > 200)
+            return Results.BadRequest(ApiResponse<object>.Fail("Subject must be between 1 and 200 characters"));
+        if (message.Length is < 1 or > 4000)
+            return Results.BadRequest(ApiResponse<object>.Fail("Message must be between 1 and 4000 characters"));
+
+        var companyId = GetCompanyId(http);
+        var (branchClause, branchId) = StrictBranchFilter(http, "d");
+        var targetRows = await db.QueryAsync(
+            @"SELECT DISTINCT u.id
+              FROM drivers d
+              JOIN users u ON u.id=d.user_id AND u.company_id=d.company_id AND u.status='Active'
+              WHERE d.company_id=@companyId AND d.deleted_at IS NULL" + branchClause,
+            c =>
+            {
+                c.Parameters.AddWithValue("@companyId", companyId);
+                if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId.Value);
+            }, ct);
+        var targetUserIds = targetRows.Select(r => Convert.ToInt64(r["id"])).Distinct().ToArray();
+        if (targetUserIds.Length == 0)
+            return Results.Conflict(ApiResponse<object>.Fail("No active driver accounts exist in the authorized scope"));
+
+        return await db.RunInTenantTransactionAsync<IResult>(companyId, async () =>
+        {
+            var notificationId = await notifications.CreateAsync(companyId, "driver_message.broadcast",
+                "DriverMessageBroadcast", null, "info", subject, message, "driver", ct,
+                targetUserIds: targetUserIds);
+            var recipientCount = await db.ScalarLongAsync(
+                @"SELECT COUNT(*) FROM notification_recipients
+                  WHERE notification_id=@notificationId AND company_id=@companyId AND delivered_at IS NOT NULL",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@notificationId", notificationId);
+                    c.Parameters.AddWithValue("@companyId", companyId);
+                }, ct);
+            if (recipientCount != targetUserIds.Length)
+                throw new InvalidOperationException("In-app broadcast recipient evidence did not match the authorized target set.");
+
+            var code = $"BCAST-{Guid.NewGuid():N}"[..18];
+            var metadata = JsonSerializer.Serialize(new
+            {
+                notificationId,
+                recipientCount,
+                branchId,
+                evidence = "notification_recipients.delivered_at"
+            });
+            await db.ExecuteAsync(
+                @"INSERT INTO module_records
+                    (company_id,module_key,record_code,title,status,tags,owner_name,numeric_value,metadata_json,created_by_user_id,updated_at)
+                  VALUES (@companyId,'driver-messages',@code,@subject,'Recorded In-App','Broadcast',@recipient,0,@metadata::jsonb,@userId,NOW())",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@companyId", companyId);
+                    c.Parameters.AddWithValue("@code", code);
+                    c.Parameters.AddWithValue("@subject", subject);
+                    c.Parameters.AddWithValue("@recipient", $"{recipientCount} active driver account{(recipientCount == 1 ? "" : "s")}");
+                    c.Parameters.AddWithValue("@metadata", metadata);
+                    c.Parameters.AddWithValue("@userId", GetUserId(http));
+                }, ct);
+            await audit.LogAsync(http, "driver_message.broadcast.recorded_in_app", "Notification", notificationId,
+                JsonSerializer.Serialize(new { recipientCount, branchId, deliveryClaim = false }), ct);
+            return Results.Ok(ApiResponse<object>.Ok(new
+            {
+                code,
+                notificationId,
+                recipientCount,
+                recordStatus = "Recorded In-App",
+                deliveryClaim = false
+            }, "Broadcast recorded in the authorized drivers' in-app inboxes"));
+        }, ct);
     }
 
     // ── P7 Messaging Handlers ──────────────────────────────────────────────────

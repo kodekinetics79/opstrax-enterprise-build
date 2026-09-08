@@ -388,6 +388,119 @@ public sealed class CoreJobsBranchHosApiTests
     }
 
     [Fact]
+    public async Task DriverMessagingPersistsAuthorizedConversationsAndEvidenceBackedBroadcasts()
+    {
+        var db = Db();
+        await EnsureJobRuntimeSchema(db);
+        await new NotificationSchemaService(db).EnsureAsync();
+        await new AlertWorkflowSchemaService(db).EnsureAsync();
+        var companyId = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + Random.Shared.Next(5_000_000, 5_900_000);
+        const long branchA = 9251;
+        const long branchB = 9252;
+        await SeedCompany(db, companyId);
+        try
+        {
+            async Task<(long UserId, long DriverId)> DriverAccount(long branch, string suffix)
+            {
+                var userId = await db.InsertAsync(
+                    @"INSERT INTO users(company_id,branch_id,full_name,email,role_name,status)
+                      VALUES (@companyId,@branch,@name,@email,'Driver','Active')",
+                    c =>
+                    {
+                        c.Parameters.AddWithValue("@companyId", companyId);
+                        c.Parameters.AddWithValue("@branch", branch);
+                        c.Parameters.AddWithValue("@name", $"Messaging Driver {suffix}");
+                        c.Parameters.AddWithValue("@email", $"messaging-{suffix}-{companyId}@example.test");
+                    });
+                var driverId = await Driver(db, companyId, branch, $"MSG-{suffix}-{companyId}", $"Messaging Driver {suffix}");
+                await db.ExecuteAsync("UPDATE drivers SET user_id=@userId WHERE id=@driverId AND company_id=@companyId",
+                    c =>
+                    {
+                        c.Parameters.AddWithValue("@userId", userId);
+                        c.Parameters.AddWithValue("@driverId", driverId);
+                        c.Parameters.AddWithValue("@companyId", companyId);
+                    });
+                return (userId, driverId);
+            }
+
+            var visible = await DriverAccount(branchA, "VISIBLE");
+            var hidden = await DriverAccount(branchB, "HIDDEN");
+            var http = Principal(companyId, branchA);
+            http.Items[EndpointMappings.AuthPermissionsItemKey] = new[] { "dispatch:view", "dispatch:manage" };
+            var audit = new AuditService(db);
+            var notifications = new NotificationService(db);
+
+            var created = await Invoke("DriverMessageCreate", http, new Dictionary<string, object?>
+            {
+                ["recipientId"] = visible.DriverId,
+                ["channel"] = "In-App",
+                ["subject"] = "Persisted dispatch instruction",
+                ["body"] = "Proceed to the assigned stop."
+            }, db, audit, notifications, CancellationToken.None);
+            Assert.Equal(StatusCodes.Status200OK, Assert.IsAssignableFrom<IStatusCodeHttpResult>(created).StatusCode);
+            var createdPayload = JsonSerializer.Serialize(Assert.IsAssignableFrom<IValueHttpResult>(created).Value, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            Assert.Contains("\"recordStatus\":\"Recorded In-App\"", createdPayload, StringComparison.Ordinal);
+            Assert.Contains("\"deliveryClaim\":false", createdPayload, StringComparison.Ordinal);
+            Assert.Equal(1, await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM messaging_conversations WHERE company_id=@companyId AND driver_id=@driverId AND subject='Persisted dispatch instruction'",
+                c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@driverId", visible.DriverId); }));
+            Assert.Equal(1, await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM messaging_messages WHERE company_id=@companyId AND body='Proceed to the assigned stop.'",
+                c => c.Parameters.AddWithValue("@companyId", companyId)));
+            Assert.Equal(1, await db.ScalarLongAsync(
+                @"SELECT COUNT(*) FROM notification_recipients nr
+                  JOIN notifications n ON n.id=nr.notification_id AND n.company_id=nr.company_id
+                  WHERE nr.company_id=@companyId AND n.event_type='message.received' AND nr.user_id=@userId AND nr.delivered_at IS NOT NULL",
+                c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@userId", visible.UserId); }));
+
+            var crossBranch = await Invoke("DriverMessageCreate", http, new Dictionary<string, object?>
+            {
+                ["recipientId"] = hidden.DriverId,
+                ["channel"] = "In-App",
+                ["subject"] = "Must not cross branch",
+                ["body"] = "Blocked"
+            }, db, audit, notifications, CancellationToken.None);
+            Assert.Equal(StatusCodes.Status404NotFound, Assert.IsAssignableFrom<IStatusCodeHttpResult>(crossBranch).StatusCode);
+            var externalChannel = await Invoke("DriverMessageCreate", http, new Dictionary<string, object?>
+            {
+                ["recipientId"] = visible.DriverId,
+                ["channel"] = "SMS",
+                ["subject"] = "No provider",
+                ["body"] = "Blocked"
+            }, db, audit, notifications, CancellationToken.None);
+            Assert.Equal(StatusCodes.Status409Conflict, Assert.IsAssignableFrom<IStatusCodeHttpResult>(externalChannel).StatusCode);
+
+            var broadcast = await Invoke("DriverMessageBroadcast", http, new Dictionary<string, object?>
+            {
+                ["group"] = "All Active Drivers",
+                ["subject"] = "Branch operations notice",
+                ["body"] = "Check the in-app operations notice."
+            }, db, audit, notifications, CancellationToken.None);
+            Assert.Equal(StatusCodes.Status200OK, Assert.IsAssignableFrom<IStatusCodeHttpResult>(broadcast).StatusCode);
+            Assert.Equal(1, await db.ScalarLongAsync(
+                @"SELECT COUNT(*) FROM notification_recipients nr
+                  JOIN notifications n ON n.id=nr.notification_id AND n.company_id=nr.company_id
+                  WHERE nr.company_id=@companyId AND n.event_type='driver_message.broadcast' AND nr.user_id=@userId AND nr.delivered_at IS NOT NULL",
+                c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@userId", visible.UserId); }));
+            Assert.Equal(0, await db.ScalarLongAsync(
+                @"SELECT COUNT(*) FROM notification_recipients nr
+                  JOIN notifications n ON n.id=nr.notification_id AND n.company_id=nr.company_id
+                  WHERE nr.company_id=@companyId AND n.event_type='driver_message.broadcast' AND nr.user_id=@userId",
+                c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@userId", hidden.UserId); }));
+
+            var history = Assert.IsAssignableFrom<IValueHttpResult>(await Invoke("DriverMessageHistory", http, db, CancellationToken.None));
+            var historyPayload = JsonSerializer.Serialize(history.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            Assert.Contains("Messaging Driver VISIBLE", historyPayload, StringComparison.Ordinal);
+            Assert.Contains("Persisted dispatch instruction", historyPayload, StringComparison.Ordinal);
+            Assert.Contains("Branch operations notice", historyPayload, StringComparison.Ordinal);
+            Assert.Contains("\"recipients\":1", historyPayload, StringComparison.Ordinal);
+            Assert.DoesNotContain("Messaging Driver HIDDEN", historyPayload, StringComparison.Ordinal);
+            Assert.DoesNotContain("\"status\":\"Delivered\"", historyPayload, StringComparison.Ordinal);
+        }
+        finally { await Cleanup(db, companyId); }
+    }
+
+    [Fact]
     public async Task ShipmentRegisterFiltersExportAndImportStayBranchScopedAndRejectBadRows()
     {
         var db = Db();
@@ -730,6 +843,9 @@ public sealed class CoreJobsBranchHosApiTests
     {
         foreach (var sql in new[]
         {
+            "DELETE FROM notification_recipients WHERE company_id=@c", "DELETE FROM notifications WHERE company_id=@c",
+            "DELETE FROM messaging_messages WHERE company_id=@c", "DELETE FROM messaging_conversations WHERE company_id=@c",
+            "DELETE FROM module_records WHERE company_id=@c",
             "DELETE FROM outbox_messages WHERE tenant_id=@c", "DELETE FROM billing_confidence_records WHERE company_id=@c",
             "DELETE FROM proof_artifacts WHERE company_id=@c", "DELETE FROM proof_packages WHERE company_id=@c",
             "DELETE FROM dispatch_assignments WHERE company_id=@c", "DELETE FROM proof_of_delivery WHERE company_id=@c",
@@ -738,7 +854,7 @@ public sealed class CoreJobsBranchHosApiTests
             "DELETE FROM job_status_events WHERE company_id=@c", "DELETE FROM entity_timeline_events WHERE company_id=@c",
             "DELETE FROM audit_logs WHERE company_id=@c", "DELETE FROM documents WHERE company_id=@c", "DELETE FROM jobs WHERE company_id=@c",
             "DELETE FROM hos_clocks WHERE company_id=@c", "DELETE FROM hos_records WHERE company_id=@c", "DELETE FROM vehicles WHERE company_id=@c",
-            "DELETE FROM drivers WHERE company_id=@c", "DELETE FROM customers WHERE company_id=@c", "DELETE FROM companies WHERE id=@c"
+            "DELETE FROM drivers WHERE company_id=@c", "DELETE FROM users WHERE company_id=@c", "DELETE FROM customers WHERE company_id=@c", "DELETE FROM companies WHERE id=@c"
         })
         {
             try
