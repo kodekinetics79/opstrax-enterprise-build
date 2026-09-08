@@ -462,9 +462,8 @@ public static partial class EndpointMappings
         app.MapGet("/api/dispatch/exceptions",                         DispatchExceptionsList);
 
         // ── Agentic Ops Copilot — supervised autonomy ────────────────────────────
-        // The AI foundation's reasoning slot, filled: an agent proposes dispatch actions;
-        // a human dispatcher approves; the action executes through existing dispatch logic,
-        // fully audited. Reads/writes tenant-scoped ai_recommendations (status='proposed').
+        // The agent proposes dispatch actions and a human dispatcher can record approval
+        // or dismiss them. Approval is audited but does not claim the action was executed.
         app.MapGet("/api/ai/recommendations", AgenticRecommendationsList);
         app.MapPost("/api/ai/recommendations/{id:long}/approve", AgenticRecommendationApprove);
         app.MapPost("/api/ai/recommendations/{id:long}/dismiss", AgenticRecommendationDismiss);
@@ -1509,13 +1508,7 @@ public static partial class EndpointMappings
             return denied is not null ? Task.FromResult(denied) : EvidenceLock(http, id, db, audit, ct);
         });
 
-        app.MapGet("/api/ai/insights", (HttpContext http, Database db, CancellationToken ct) =>
-        {
-            if (RequirePermission(http, "dashboard:view") is { } denied) return Task.FromResult(denied);
-            return OkRows(db,
-                "SELECT * FROM ai_insights WHERE company_id=@cid ORDER BY created_at DESC LIMIT 30",
-                c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
-        });
+        app.MapGet("/api/ai/insights", AiInsights);
         app.MapPost("/api/ai/ask", AiAsk);
 
         // ===== BATCH 5: FUEL & IDLING ===========================================
@@ -10371,77 +10364,139 @@ public static partial class EndpointMappings
     }
     private static async Task<IResult> EvidenceLock(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) { await db.ExecuteAsync("UPDATE evidence_packages SET locked=TRUE, status='Locked' WHERE id=@id AND company_id=@companyId", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", GetCompanyId(http)); }, ct); await audit.LogAsync(http, "evidence.package.locked", "EvidencePackage", id, ct: ct); return Results.Ok(ApiResponse<object>.Ok(new { id }, "Evidence package locked")); }
 
-    private static async Task<IResult> AiAsk(HttpContext http, Dictionary<string, object?> body, Database db, CancellationToken ct)
+    private static async Task<IResult> AiInsights(HttpContext http, Database db, CancellationToken ct)
+    {
+        var denied = RequirePermission(http, "dashboard:view");
+        if (denied is not null) return denied;
+        var rows = await db.QueryAsync(
+            AlertsSql + " WHERE 1=1" + AlertsScopeSql +
+            " ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Warning','Info'], ta.severity), ta.created_at DESC LIMIT 30",
+            c => BindAlertScope(c, http), ct);
+        return Results.Ok(ApiResponse<object>.Ok(rows, "Recorded telemetry alert evidence"));
+    }
+
+    private static async Task<IResult> AiAsk(HttpContext http, Dictionary<string, object?> body, Database db, AgenticBrainService brain, CancellationToken ct)
     {
         var denied = RequirePermission(http, "dashboard:view");
         if (denied is not null) return denied;
         var companyId = GetCompanyId(http);
-        var prompt   = Get(body, "prompt")?.ToString() ?? "Executive Summary";
+        var branchId = GetBranchId(http);
+        var prompt   = Get(body, "prompt")?.ToString()?.Trim() ?? "";
         var category = Get(body, "category")?.ToString() ?? "General";
+        if (string.IsNullOrWhiteSpace(prompt))
+            return Results.BadRequest(ApiResponse<object>.Fail("Enter a question for the operations assistant."));
+        if (!brain.Enabled)
+            return Results.Json(
+                ApiResponse<object>.Fail("Operations assistant unavailable", "No AI provider is configured; no answer was generated."),
+                statusCode: StatusCodes.Status503ServiceUnavailable);
 
-        // Gather live fleet context from the database
+        // Build a compact, authorized context from tables with operational writers.
+        // Missing values stay missing; the model is never given seed-only insight or
+        // command-center recommendation rows to pass off as current evidence.
         var dispSummary  = await db.QuerySingleAsync(
-            "SELECT COUNT(*) total, SUM(CASE WHEN assignment_status='exception' THEN 1 ELSE 0 END) exceptions, SUM(CASE WHEN assignment_status='delivered' THEN 1 ELSE 0 END) completed FROM dispatch_assignments WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId), ct: ct);
-        var safeSummary  = await db.QuerySingleAsync("SELECT ROUND(100-AVG(LEAST(risk_score,95)),1) fleet_safety_score, COUNT(*) total_events, SUM(CASE WHEN status NOT IN ('Resolved','Dismissed') THEN 1 ELSE 0 END) open_events FROM safety_events WHERE deleted_at IS NULL AND company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId), ct: ct);
-        var maintSummary = await db.QuerySingleAsync("SELECT COUNT(*) maintenance_due, SUM(CASE WHEN priority='Critical' THEN 1 ELSE 0 END) critical FROM maintenance_items WHERE status NOT IN ('Completed','Cancelled','Closed') AND company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId), ct: ct);
-        var alertSummary = await db.QuerySingleAsync("SELECT COUNT(*) total, SUM(CASE WHEN severity='Critical' THEN 1 ELSE 0 END) critical FROM ai_insights WHERE company_id=@companyId AND status='Open'", c => c.Parameters.AddWithValue("@companyId", companyId), ct: ct);
-        var evidence     = await db.QueryAsync("SELECT title, body, severity FROM ai_insights WHERE company_id=@companyId ORDER BY created_at DESC LIMIT 5", c => c.Parameters.AddWithValue("@companyId", companyId), ct: ct);
-        var actions      = await db.QueryAsync("SELECT title, priority, status FROM command_center_actions WHERE company_id=@companyId ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Medium','Low'], priority) LIMIT 4", c => c.Parameters.AddWithValue("@companyId", companyId), ct: ct);
+            @"SELECT COUNT(*) total_jobs,
+                     COUNT(*) FILTER (WHERE status IN ('Exception','At Risk') OR sla_status IN ('At Risk','Breached','Critical')) exception_jobs,
+                     COUNT(*) FILTER (WHERE status IN ('Completed','Delivered')) completed_jobs
+                FROM jobs
+               WHERE company_id=@companyId AND deleted_at IS NULL
+                 AND (@branchId::BIGINT IS NULL OR branch_id=@branchId)",
+            c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct: ct);
+        var safeSummary  = await db.QuerySingleAsync(
+            @"SELECT COUNT(*) total_events,
+                     COUNT(*) FILTER (WHERE review_status NOT IN ('Closed','Dismissed','Resolved')) open_events,
+                     COUNT(*) FILTER (WHERE severity='Critical' AND review_status NOT IN ('Closed','Dismissed','Resolved')) critical_events
+                FROM safety_events
+               WHERE company_id=@companyId
+                 AND (@branchId::BIGINT IS NULL OR branch_id=@branchId)",
+            c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct: ct);
+        var maintSummary = await db.QuerySingleAsync(
+            @"SELECT COUNT(*) FILTER (WHERE mi.status NOT IN ('Completed','Cancelled','Closed')) open_items,
+                     COUNT(*) FILTER (WHERE mi.status NOT IN ('Completed','Cancelled','Closed') AND mi.priority='Critical') critical_items
+                FROM maintenance_items mi
+                LEFT JOIN vehicles v ON v.id=mi.vehicle_id AND v.company_id=mi.company_id AND v.deleted_at IS NULL
+               WHERE mi.company_id=@companyId
+                 AND (@branchId::BIGINT IS NULL OR v.branch_id=@branchId)",
+            c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct: ct);
+        var alertSummary = await db.QuerySingleAsync(
+            @"SELECT COUNT(*) FILTER (WHERE ta.status IN ('Open','Acknowledged')) active_alerts,
+                     COUNT(*) FILTER (WHERE ta.status IN ('Open','Acknowledged') AND ta.severity='Critical') critical_alerts
+                FROM telemetry_alerts ta
+                LEFT JOIN vehicles v ON v.id=ta.vehicle_id AND v.company_id=ta.company_id AND v.deleted_at IS NULL
+                LEFT JOIN drivers d ON d.id=ta.driver_id AND d.company_id=ta.company_id AND d.deleted_at IS NULL
+                LEFT JOIN eld_devices e ON e.id=ta.device_id AND e.company_id=ta.company_id
+                LEFT JOIN LATERAL (
+                  SELECT i.branch_id FROM device_installations i
+                   WHERE i.company_id=ta.company_id AND i.device_id=ta.device_id
+                     AND i.effective_to IS NULL AND i.status IN ('Installed','Verified')
+                   ORDER BY i.is_primary DESC, COALESCE(i.effective_from,i.installed_at) DESC, i.id DESC LIMIT 1
+                ) device_scope ON TRUE
+               WHERE 1=1" + AlertsScopeSql,
+            c => BindAlertScope(c, http), ct: ct);
+        var evidence = await db.QueryAsync(
+            AlertsSql + " WHERE ta.status IN ('Open','Acknowledged')" + AlertsScopeSql +
+            " ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Warning','Info'], ta.severity), ta.created_at DESC LIMIT 5",
+            c => BindAlertScope(c, http), ct);
 
-        var fleetCtx = $"""
-Fleet Operations Context (live data):
-- Dispatch: {dispSummary?["total"] ?? "?"} total jobs, {dispSummary?["exceptions"] ?? "?"} exceptions, {dispSummary?["completed"] ?? "?"} completed today
-- Safety: Fleet score {safeSummary?["fleetSafetyScore"] ?? "?"}/100, {safeSummary?["openEvents"] ?? "?"} open events
-- Maintenance: {maintSummary?["maintenanceDue"] ?? "?"} items due, {maintSummary?["critical"] ?? "?"} critical
-- Alerts: {alertSummary?["total"] ?? "?"} open alerts, {alertSummary?["critical"] ?? "?"} critical
-""";
+        var fleetCtx = JsonSerializer.Serialize(new
+        {
+            question = prompt,
+            requestedCategory = category,
+            scope = branchId is null ? "tenant" : "branch",
+            asOfUtc = DateTime.UtcNow,
+            dispatch = dispSummary,
+            safety = safeSummary,
+            maintenance = maintSummary,
+            telemetryAlerts = alertSummary,
+            alertEvidence = evidence,
+        });
 
         var systemPrompt = """
-You are OpsTrax AI, an intelligent operations assistant for a transport & fleet management platform.
-You help fleet managers, dispatchers, and executives make fast, data-driven decisions.
-Respond concisely (3-5 sentences), be specific to the data provided, and always end with 2-3 concrete next actions.
-Format: start with a direct assessment, then list actions as "Action 1:", "Action 2:", etc.
+You are the OpsTrax operations assistant. Use only the persisted, authorized context in the user message.
+Do not invent fleet facts, provider/device evidence, legal conclusions, current conditions, or measurements.
+When the context cannot answer the question, say exactly which evidence is unavailable.
+Return one JSON object with: summary (string), suggested_next_steps (array of at most three strings), and confidence (number from 0 to 1).
 """;
 
-        var ollamaBase  = Environment.GetEnvironmentVariable("OLLAMA_BASE_URL") ?? "http://localhost:11434";
-        var ollamaModel = Environment.GetEnvironmentVariable("OLLAMA_MODEL")    ?? "qwen2.5-coder:7b";
-        var ollamaKey   = Environment.GetEnvironmentVariable("OLLAMA_API_KEY");
+        var result = await brain.DecideAsync(systemPrompt, fleetCtx, ct);
+        if (!result.Ok)
+            return Results.Json(
+                ApiResponse<object>.Fail("Operations assistant unavailable", "The configured AI provider did not return a usable answer; no answer was generated."),
+                statusCode: StatusCodes.Status503ServiceUnavailable);
 
-        string aiSummary;
+        string summary;
+        string[] suggestedNextSteps;
         try
         {
-            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
-            if (!string.IsNullOrWhiteSpace(ollamaKey))
-                client.DefaultRequestHeaders.Authorization =
-                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", ollamaKey);
-
-            var payload = new
-            {
-                model    = ollamaModel,
-                messages = new[]
-                {
-                    new { role = "system", content = systemPrompt },
-                    new { role = "user",   content = $"{fleetCtx}\n\nQuestion: {prompt}" }
-                },
-                stream = false
-            };
-            var resp = await client.PostAsJsonAsync($"{ollamaBase}/api/chat", payload, ct);
-            resp.EnsureSuccessStatusCode();
-            var json   = await resp.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
-            aiSummary  = json.GetProperty("message").GetProperty("content").GetString()
-                         ?? "Unable to parse AI response.";
+            using var response = JsonDocument.Parse(result.OutputJson);
+            summary = response.RootElement.TryGetProperty("summary", out var summaryElement)
+                ? summaryElement.GetString()?.Trim() ?? ""
+                : "";
+            suggestedNextSteps = response.RootElement.TryGetProperty("suggested_next_steps", out var stepsElement) && stepsElement.ValueKind == JsonValueKind.Array
+                ? stepsElement.EnumerateArray()
+                    .Where(step => step.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(step.GetString()))
+                    .Select(step => step.GetString()!.Trim())
+                    .Take(3)
+                    .ToArray()
+                : [];
         }
-        catch (Exception)
+        catch (JsonException)
         {
-            aiSummary = $"OpsTrax AI reviewed {category}. {fleetCtx.Replace("\n","; ")} — AI service temporarily unavailable.";
+            return Results.Json(
+                ApiResponse<object>.Fail("Operations assistant unavailable", "The configured AI provider returned an invalid answer; no answer was generated."),
+                statusCode: StatusCodes.Status503ServiceUnavailable);
         }
+        if (string.IsNullOrWhiteSpace(summary))
+            return Results.Json(
+                ApiResponse<object>.Fail("Operations assistant unavailable", "The configured AI provider returned an empty answer; no answer was generated."),
+                statusCode: StatusCodes.Status503ServiceUnavailable);
 
         return Results.Ok(ApiResponse<object>.Ok(new
         {
-            summary          = aiSummary,
+            summary,
             evidence,
-            recommendedActions  = actions,
-            suggestedNextSteps  = new[] { "Send proactive ETA updates", "Pull delayed jobs into dispatch review", "Schedule high-priority maintenance", "Coach drivers with repeated safety signals" },
+            suggestedNextSteps,
+            confidence = result.Confidence,
+            generatedAt = DateTime.UtcNow,
         }));
     }
 
@@ -13250,78 +13305,117 @@ Format: start with a direct assessment, then list actions as "Action 1:", "Actio
         if (RequirePermission(http, "dispatch:view") is { } denied) return denied;
         var status = http.Request.Query["status"].FirstOrDefault() ?? "proposed";
         return await OkRows(db,
-            @"SELECT id, recommendation_type, title, summary, confidence_score, urgency_score,
-                     impact_json, reason_json, proposed_action_json, risk_level, status,
-                     source_event_id, actor_type, actor_id, created_at
-              FROM ai_recommendations
-              WHERE company_id=@cid AND status=@status
-              ORDER BY urgency_score DESC NULLS LAST, created_at DESC LIMIT 50",
-            c => { c.Parameters.AddWithValue("@cid", GetCompanyId(http)); c.Parameters.AddWithValue("@status", status); }, ct: ct);
+            @"SELECT ar.id, ar.recommendation_type, ar.title, ar.summary, ar.confidence_score, ar.urgency_score,
+                     ar.impact_json, ar.reason_json, ar.proposed_action_json, ar.risk_level, ar.status,
+                     ar.source_event_id, ar.actor_type, ar.actor_id, ar.created_at
+                FROM ai_recommendations ar
+                JOIN dispatch_exceptions dex
+                  ON ar.source_event_id='dispatch_exception:' || dex.id::TEXT
+                 AND dex.company_id=ar.company_id
+                JOIN dispatch_assignments da
+                  ON da.id=dex.assignment_id AND da.company_id=dex.company_id
+                LEFT JOIN jobs j ON j.id=dex.job_id AND j.company_id=dex.company_id
+                LEFT JOIN vehicles v ON v.id=da.vehicle_id AND v.company_id=da.company_id AND v.deleted_at IS NULL
+               WHERE ar.company_id=@cid AND ar.status=@status
+                 AND ar.recommendation_type='dispatch_copilot'
+                 AND ar.actor_type='agent' AND ar.actor_id='dispatch-copilot'
+                 AND (@branchId::BIGINT IS NULL OR COALESCE(j.branch_id,v.branch_id)=@branchId)
+               ORDER BY ar.urgency_score DESC NULLS LAST, ar.created_at DESC LIMIT 50",
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid", GetCompanyId(http));
+                c.Parameters.AddWithValue("@status", status);
+                c.Parameters.AddWithValue("@branchId", (object?)GetBranchId(http) ?? DBNull.Value);
+            }, ct: ct);
     }
 
     private static async Task<IResult> AgenticRecommendationDismiss(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct)
     {
         if (RequirePermission(http, "dispatch:manage") is { } denied) return denied;
         var affected = await db.ExecuteAsync(
-            "UPDATE ai_recommendations SET status='dismissed' WHERE company_id=@cid AND id=@id AND status='proposed'",
-            c => { c.Parameters.AddWithValue("@cid", GetCompanyId(http)); c.Parameters.AddWithValue("@id", id); }, ct);
+            @"UPDATE ai_recommendations ar SET status='dismissed'
+               WHERE ar.company_id=@cid AND ar.id=@id AND ar.status='proposed'
+                 AND ar.recommendation_type='dispatch_copilot'
+                 AND ar.actor_type='agent' AND ar.actor_id='dispatch-copilot'
+                 AND EXISTS (
+                   SELECT 1
+                     FROM dispatch_exceptions dex
+                     JOIN dispatch_assignments da ON da.id=dex.assignment_id AND da.company_id=dex.company_id
+                     LEFT JOIN jobs j ON j.id=dex.job_id AND j.company_id=dex.company_id
+                     LEFT JOIN vehicles v ON v.id=da.vehicle_id AND v.company_id=da.company_id AND v.deleted_at IS NULL
+                    WHERE ar.source_event_id='dispatch_exception:' || dex.id::TEXT
+                      AND dex.company_id=ar.company_id
+                      AND (@branchId::BIGINT IS NULL OR COALESCE(j.branch_id,v.branch_id)=@branchId))",
+            c =>
+            {
+                c.Parameters.AddWithValue("@cid", GetCompanyId(http));
+                c.Parameters.AddWithValue("@id", id);
+                c.Parameters.AddWithValue("@branchId", (object?)GetBranchId(http) ?? DBNull.Value);
+            }, ct);
         if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Proposed recommendation not found"));
         await audit.LogAsync(http, "agentic.recommendation.dismissed", "AiRecommendation", id, ct: ct);
         return Results.Ok(ApiResponse<object>.Ok(new { id, status = "dismissed" }));
     }
 
-    // Approve a proposed action: re-validate, execute through EXISTING dispatch logic under
-    // the request's tenant scope (RLS-enforced), record the outcome + audit. The agent
-    // itself never executes — this human-gated path is the only mutation route.
+    // Approve a proposed action under the request's tenant and branch scope. Approval is
+    // an audited decision record; a separate, real operational workflow must execute it.
     private static async Task<IResult> AgenticRecommendationApprove(HttpContext http, long id, Database db, AuditService audit, CancellationToken ct)
     {
         if (RequirePermission(http, "dispatch:manage") is { } denied) return denied;
         var companyId = GetCompanyId(http);
-        var rec = await db.QuerySingleAsync(
-            "SELECT id, status, proposed_action_json FROM ai_recommendations WHERE company_id=@cid AND id=@id LIMIT 1",
-            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); }, ct);
-        if (rec is null) return Results.NotFound(ApiResponse<object>.Fail("Recommendation not found"));
-        if (rec.TryGetValue("status", out var st) && !string.Equals(st?.ToString(), "proposed", StringComparison.OrdinalIgnoreCase))
-            return Results.Conflict(ApiResponse<object>.Fail("Recommendation is not in a proposed state"));
-
-        var actionJson = rec.GetValueOrDefault("proposedActionJson")?.ToString() ?? "{}";
-        string actionType = "escalate"; long? assignmentId = null; string? exceptionType = null;
-        try
+        return await db.RunInTenantTransactionAsync<IResult>(companyId, async () =>
         {
-            using var doc = System.Text.Json.JsonDocument.Parse(actionJson);
-            var el = doc.RootElement;
-            if (el.TryGetProperty("action_type", out var at) && at.ValueKind == System.Text.Json.JsonValueKind.String) actionType = at.GetString() ?? actionType;
-            if (el.TryGetProperty("resource_id", out var ri) && long.TryParse(ri.ToString(), out var aid)) assignmentId = aid;
-            if (el.TryGetProperty("action_detail", out var ad) && ad.ValueKind == System.Text.Json.JsonValueKind.String) exceptionType = ad.GetString();
-        }
-        catch { return Results.BadRequest(ApiResponse<object>.Fail("Proposed action payload is malformed")); }
-
-        // v1 executor: the state-changing action types route to existing, audited dispatch
-        // logic; advisory types (notify_customer/monitor/escalate) are recorded as approved
-        // without a mutation (the human acts on the guidance). Everything is audit-logged.
-        var outcome = "approved";
-        if (assignmentId is { } aId)
-        {
-            if (actionType is "open_work_order" or "escalate")
+            var rec = await db.QuerySingleAsync(
+            @"SELECT ar.id, ar.status, ar.proposed_action_json, dex.assignment_id source_assignment_id
+                FROM ai_recommendations ar
+                JOIN dispatch_exceptions dex
+                  ON ar.source_event_id='dispatch_exception:' || dex.id::TEXT
+                 AND dex.company_id=ar.company_id
+                JOIN dispatch_assignments da
+                  ON da.id=dex.assignment_id AND da.company_id=dex.company_id
+                LEFT JOIN jobs j ON j.id=dex.job_id AND j.company_id=dex.company_id
+                LEFT JOIN vehicles v ON v.id=da.vehicle_id AND v.company_id=da.company_id AND v.deleted_at IS NULL
+               WHERE ar.company_id=@cid AND ar.id=@id
+                 AND ar.recommendation_type='dispatch_copilot'
+                 AND ar.actor_type='agent' AND ar.actor_id='dispatch-copilot'
+                 AND (@branchId::BIGINT IS NULL OR COALESCE(j.branch_id,v.branch_id)=@branchId)
+               LIMIT 1
+               FOR UPDATE OF ar, dex, da",
+            c =>
             {
-                // Raise a formal dispatch exception the ops team works — a safe, real mutation.
-                await db.ExecuteAsync(
-                    @"INSERT INTO dispatch_exceptions (company_id, assignment_id, exception_type, severity, title, notes, status, created_at)
-                      VALUES (@cid, @aid, @type, 'medium', @title, @notes, 'open', NOW())",
-                    c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@aid", aId);
-                           c.Parameters.AddWithValue("@type", (object?)(actionType == "open_work_order" ? "maintenance" : "escalation") ?? DBNull.Value);
-                           c.Parameters.AddWithValue("@title", (object?)exceptionType ?? "Copilot-recommended action");
-                           c.Parameters.AddWithValue("@notes", "Raised from approved Agentic Ops Copilot recommendation"); }, ct);
-                outcome = "executed";
-            }
-        }
+                c.Parameters.AddWithValue("@cid", companyId);
+                c.Parameters.AddWithValue("@id", id);
+                c.Parameters.AddWithValue("@branchId", (object?)GetBranchId(http) ?? DBNull.Value);
+            }, ct);
+            if (rec is null) return Results.NotFound(ApiResponse<object>.Fail("Recommendation not found"));
+            if (rec.TryGetValue("status", out var st) && !string.Equals(st?.ToString(), "proposed", StringComparison.OrdinalIgnoreCase))
+                return Results.Conflict(ApiResponse<object>.Fail("Recommendation is not in a proposed state"));
 
-        await db.ExecuteAsync(
-            "UPDATE ai_recommendations SET status='executed' WHERE company_id=@cid AND id=@id",
-            c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); }, ct);
-        await audit.LogAsync(http, "agentic.recommendation.approved", "AiRecommendation", id,
-            detailsJson: System.Text.Json.JsonSerializer.Serialize(new { actionType, assignmentId, outcome }), ct: ct);
-        return Results.Ok(ApiResponse<object>.Ok(new { id, actionType, outcome, status = "executed" }));
+            var actionJson = rec.GetValueOrDefault("proposedActionJson")?.ToString() ?? "{}";
+            string actionType = "escalate"; long? assignmentId = null; string? exceptionType = null;
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(actionJson);
+                var el = doc.RootElement;
+                if (el.TryGetProperty("action_type", out var at) && at.ValueKind == System.Text.Json.JsonValueKind.String) actionType = at.GetString() ?? actionType;
+                if (el.TryGetProperty("resource_id", out var ri) && long.TryParse(ri.ToString(), out var aid)) assignmentId = aid;
+                if (el.TryGetProperty("action_detail", out var ad) && ad.ValueKind == System.Text.Json.JsonValueKind.String) exceptionType = ad.GetString();
+            }
+            catch { return Results.BadRequest(ApiResponse<object>.Fail("Proposed action payload is malformed")); }
+            var sourceAssignmentId = Convert.ToInt64(rec["sourceAssignmentId"], CultureInfo.InvariantCulture);
+            if (assignmentId is null || assignmentId.Value != sourceAssignmentId)
+                return Results.BadRequest(ApiResponse<object>.Fail("Proposed action is not bound to its recorded dispatch exception"));
+            if (actionType is not ("reassign_driver" or "reroute" or "notify_customer" or "open_work_order" or "escalate" or "monitor"))
+                return Results.BadRequest(ApiResponse<object>.Fail("Proposed action type is not supported"));
+
+            await db.ExecuteAsync(
+                "UPDATE ai_recommendations SET status='approved' WHERE company_id=@cid AND id=@id AND status='proposed'",
+                c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@id", id); }, ct);
+            await audit.LogAsync(http, "agentic.recommendation.approved", "AiRecommendation", id,
+                detailsJson: System.Text.Json.JsonSerializer.Serialize(new { actionType, assignmentId, exceptionType, outcome = "approval_recorded" }), ct: ct);
+            return Results.Ok(ApiResponse<object>.Ok(new { id, actionType, outcome = "approval_recorded", status = "approved" },
+                "Recommendation approval recorded; the proposed operational action has not been executed."));
+        }, ct);
     }
 
     // ===== ENTITY CSV IMPORT — vehicles + drivers ==================================

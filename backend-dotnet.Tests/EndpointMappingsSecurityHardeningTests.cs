@@ -114,12 +114,58 @@ public sealed class EndpointMappingsSecurityHardeningTests
     }
 
     [Fact]
-    public void AiFallback_DoesNotExposeExceptionMessages()
+    public void AiUnavailable_DoesNotFabricateAnAssistantAnswer()
     {
         var aiAsk = MethodSource("AiAsk(", "private static Func<HttpContext");
 
         Assert.DoesNotContain("ex.Message", aiAsk, StringComparison.Ordinal);
-        Assert.Contains("AI service temporarily unavailable.", aiAsk, StringComparison.Ordinal);
+        Assert.DoesNotContain("OpsTrax AI reviewed", aiAsk, StringComparison.Ordinal);
+        Assert.DoesNotContain("Send proactive ETA updates", aiAsk, StringComparison.Ordinal);
+        Assert.DoesNotContain("command_center_actions", aiAsk, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("ai_insights", aiAsk, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("if (!brain.Enabled)", aiAsk, StringComparison.Ordinal);
+        Assert.Contains("StatusCodes.Status503ServiceUnavailable", aiAsk, StringComparison.Ordinal);
+        Assert.Contains("no answer was generated", aiAsk, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("FROM telemetry_alerts ta", aiAsk, StringComparison.Ordinal);
+        Assert.Contains("GetBranchId(http)", aiAsk, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AiEvidenceAndDispatchProposals_RequireRecordedSourcesAndBranchScope()
+    {
+        var source = Source();
+        var insights = SourceBlock(
+            source,
+            "private static async Task<IResult> AiInsights(",
+            "private static async Task<IResult> AiAsk(");
+        var list = SourceBlock(
+            source,
+            "private static async Task<IResult> AgenticRecommendationsList(",
+            "private static async Task<IResult> AgenticRecommendationDismiss(");
+        var dismiss = SourceBlock(
+            source,
+            "private static async Task<IResult> AgenticRecommendationDismiss(",
+            "private static async Task<IResult> AgenticRecommendationApprove(");
+        var approve = SourceBlock(
+            source,
+            "private static async Task<IResult> AgenticRecommendationApprove(",
+            "// ===== ENTITY CSV IMPORT");
+
+        Assert.Contains("AlertsSql", insights, StringComparison.Ordinal);
+        Assert.Contains("AlertsScopeSql", insights, StringComparison.Ordinal);
+        Assert.DoesNotContain("ai_insights", insights, StringComparison.OrdinalIgnoreCase);
+
+        foreach (var handler in new[] { list, dismiss, approve })
+        {
+            Assert.Contains("dispatch_exceptions", handler, StringComparison.Ordinal);
+            Assert.Contains("dispatch-copilot", handler, StringComparison.Ordinal);
+            Assert.Contains("@branchId", handler, StringComparison.Ordinal);
+        }
+        Assert.Contains("source_assignment_id", approve, StringComparison.Ordinal);
+        Assert.Contains("assignmentId.Value != sourceAssignmentId", approve, StringComparison.Ordinal);
+        Assert.Contains("FOR UPDATE OF ar, dex, da", approve, StringComparison.Ordinal);
+        Assert.Contains("status='approved'", approve, StringComparison.Ordinal);
+        Assert.DoesNotContain("status='executed'", approve, StringComparison.Ordinal);
     }
 
     [Fact]

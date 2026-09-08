@@ -42,6 +42,14 @@ public sealed class ControlTowerBranchIsolationPostgresTests
 
             var ownJob = await Job(db, company, branchA, $"OWN-JOB-{suffix}");
             var foreignJob = await Job(db, company, branchB, $"FOREIGN-JOB-{suffix}");
+            var ownAssignment = await DispatchAssignment(db, company, branchA, ownJob, ownVehicle);
+            var foreignAssignment = await DispatchAssignment(db, company, branchB, foreignJob, foreignVehicle);
+            var ownException = await DispatchException(db, company, ownAssignment, ownJob, $"Own dispatch exception {suffix}");
+            var foreignException = await DispatchException(db, company, foreignAssignment, foreignJob, $"Foreign dispatch exception {suffix}");
+            var ownProposal = await AgenticRecommendation(db, company, ownException, ownAssignment, $"Own Copilot proposal {suffix}");
+            var mismatchedProposal = await AgenticRecommendation(db, company, ownException, foreignAssignment, $"Mismatched Copilot proposal {suffix}");
+            await AgenticRecommendation(db, company, foreignException, foreignAssignment, $"Foreign Copilot proposal {suffix}");
+            await AgenticRecommendation(db, company, long.MaxValue, ownAssignment, $"Unbound Copilot proposal {suffix}");
             await OperationalEvent(db, company, "Vehicle", ownVehicle, $"Own event {suffix}");
             await OperationalEvent(db, company, "Vehicle", foreignVehicle, $"Foreign event {suffix}");
             await OperationalEvent(db, company, "Job", ownJob, $"Own job event {suffix}");
@@ -133,6 +141,29 @@ public sealed class ControlTowerBranchIsolationPostgresTests
             Assert.Equal($"Own telemetry alert {suffix}", branchAlerts[0].GetProperty("body").GetString());
             Assert.Equal("Telematics", branchAlerts[0].GetProperty("category").GetString());
             Assert.Equal("/control-tower", branchAlerts[0].GetProperty("entityRoute").GetString());
+            var branchAiEvidence = Payload(await InvokeAiInsights(
+                Principal(company, branchA, "dashboard:view"), db)).GetProperty("data");
+            Assert.Single(branchAiEvidence.EnumerateArray());
+            Assert.Equal($"Own telemetry alert {suffix}", branchAiEvidence[0].GetProperty("body").GetString());
+            var branchProposals = Payload(await InvokeAgenticList(
+                Principal(company, branchA, "dispatch:view"), db)).GetProperty("data");
+            Assert.Equal(2, branchProposals.GetArrayLength());
+            Assert.Contains(branchProposals.EnumerateArray(), proposal => proposal.GetProperty("title").GetString() == $"Own Copilot proposal {suffix}");
+            Assert.Contains(branchProposals.EnumerateArray(), proposal => proposal.GetProperty("title").GetString() == $"Mismatched Copilot proposal {suffix}");
+            Assert.DoesNotContain(branchProposals.EnumerateArray(), proposal => proposal.GetProperty("title").GetString() == $"Foreign Copilot proposal {suffix}");
+            Assert.DoesNotContain(branchProposals.EnumerateArray(), proposal => proposal.GetProperty("title").GetString() == $"Unbound Copilot proposal {suffix}");
+            var dispatchManager = Principal(company, branchA, "dispatch:manage");
+            Assert.Equal(StatusCodes.Status400BadRequest, Status(await InvokeAgenticApprove(dispatchManager, mismatchedProposal, db)));
+            var exceptionCountBeforeApproval = await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM dispatch_exceptions WHERE company_id=@cid",
+                c => c.Parameters.AddWithValue("@cid", company));
+            var approval = Payload(await InvokeAgenticApprove(dispatchManager, ownProposal, db)).GetProperty("data");
+            Assert.Equal("approved", approval.GetProperty("status").GetString());
+            Assert.Equal("approval_recorded", approval.GetProperty("outcome").GetString());
+            Assert.Equal(exceptionCountBeforeApproval, await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM dispatch_exceptions WHERE company_id=@cid",
+                c => c.Parameters.AddWithValue("@cid", company)));
+            Assert.Equal(StatusCodes.Status409Conflict, Status(await InvokeAgenticApprove(dispatchManager, ownProposal, db)));
             var branchAlertSummary = Payload(await InvokeAlertsSummary(
                 Principal(company, branchA, "alerts:view"), db)).GetProperty("data");
             Assert.Equal(1, branchAlertSummary.GetProperty("total").GetInt64());
@@ -204,8 +235,10 @@ public sealed class ControlTowerBranchIsolationPostgresTests
             await db.ExecuteAsync("DELETE FROM location_events WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", company));
             await db.ExecuteAsync("DELETE FROM geofences WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", company));
             await db.ExecuteAsync("DELETE FROM dashcam_events WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", company));
-            await db.ExecuteAsync("DELETE FROM jobs WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", company));
             await db.ExecuteAsync("DELETE FROM ai_recommendations WHERE tenant_id=@cid", c => c.Parameters.AddWithValue("@cid", company));
+            await db.ExecuteAsync("DELETE FROM dispatch_exceptions WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", company));
+            await db.ExecuteAsync("DELETE FROM dispatch_assignments WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", company));
+            await db.ExecuteAsync("DELETE FROM jobs WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", company));
             await db.ExecuteAsync("DELETE FROM device_installations WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", company));
             await db.ExecuteAsync("DELETE FROM eld_devices WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", company));
             await db.ExecuteAsync("DELETE FROM vehicles WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", company));
@@ -262,6 +295,49 @@ public sealed class ControlTowerBranchIsolationPostgresTests
         @"INSERT INTO jobs(company_id,branch_id,job_code,job_number,job_type,status,priority,sla_status,scheduled_start)
           VALUES (@cid,@branch,@code,@code,'Delivery','At Risk','High','At Risk',NOW())",
         c => { c.Parameters.AddWithValue("@cid", company); c.Parameters.AddWithValue("@branch", branch); c.Parameters.AddWithValue("@code", code); });
+
+    private static Task<long> DispatchAssignment(Database db, long company, long branch, long job, long vehicle) => db.InsertAsync(
+        @"INSERT INTO dispatch_assignments(company_id,branch_id,job_id,vehicle_id,status,assignment_status)
+          VALUES (@cid,@branch,@job,@vehicle,'Assigned','assigned')",
+        c =>
+        {
+            c.Parameters.AddWithValue("@cid", company);
+            c.Parameters.AddWithValue("@branch", branch);
+            c.Parameters.AddWithValue("@job", job);
+            c.Parameters.AddWithValue("@vehicle", vehicle);
+        });
+
+    private static Task<long> DispatchException(Database db, long company, long assignment, long job, string title) => db.InsertAsync(
+        @"INSERT INTO dispatch_exceptions(company_id,assignment_id,job_id,exception_type,severity,status,title)
+          VALUES (@cid,@assignment,@job,'delay','High','open',@title)",
+        c =>
+        {
+            c.Parameters.AddWithValue("@cid", company);
+            c.Parameters.AddWithValue("@assignment", assignment);
+            c.Parameters.AddWithValue("@job", job);
+            c.Parameters.AddWithValue("@title", title);
+        });
+
+    private static Task<long> AgenticRecommendation(Database db, long company, long exception, long actionAssignment, string title) => db.InsertAsync(
+        @"INSERT INTO ai_recommendations
+            (company_id,tenant_id,recommendation_type,module_key,title,summary,body,confidence_score,urgency_score,
+             impact_json,reason_json,proposed_action_json,risk_level,status,score,source_event_id,actor_type,actor_id)
+          VALUES
+            (@cid,@cid,'dispatch_copilot','dispatch',@title,'Recorded proposal','Recorded proposal',0.8,0.9,
+             '{}'::jsonb,'{}'::jsonb,@action::jsonb,'high','proposed',0.8,@source,'agent','dispatch-copilot')",
+        c =>
+        {
+            c.Parameters.AddWithValue("@cid", company);
+            c.Parameters.AddWithValue("@title", title);
+            c.Parameters.AddWithValue("@source", $"dispatch_exception:{exception}");
+            c.Parameters.AddWithValue("@action", JsonSerializer.Serialize(new
+            {
+                action_type = "monitor",
+                resource_type = "dispatch_assignment",
+                resource_id = actionAssignment.ToString(),
+                action_detail = "Observe the recorded exception",
+            }));
+        });
 
     private static Task OperationalEvent(Database db, long company, string type, long id, string title) => db.ExecuteAsync(
         "INSERT INTO operational_events(company_id,entity_type,entity_id,event_type,title,severity,event_time) VALUES (@cid,@type,@id,'branch.test',@title,'Warning',NOW())",
@@ -321,6 +397,25 @@ public sealed class ControlTowerBranchIsolationPostgresTests
     {
         var method = typeof(EndpointMappings).GetMethod("AlertsList", BindingFlags.NonPublic | BindingFlags.Static)!;
         return await (Task<IResult>)method.Invoke(null, [http, db, CancellationToken.None])!;
+    }
+
+    private static async Task<IResult> InvokeAiInsights(DefaultHttpContext http, Database db)
+    {
+        var method = typeof(EndpointMappings).GetMethod("AiInsights", BindingFlags.NonPublic | BindingFlags.Static)!;
+        return await (Task<IResult>)method.Invoke(null, [http, db, CancellationToken.None])!;
+    }
+
+    private static async Task<IResult> InvokeAgenticList(DefaultHttpContext http, Database db)
+    {
+        var method = typeof(EndpointMappings).GetMethod("AgenticRecommendationsList", BindingFlags.NonPublic | BindingFlags.Static)!;
+        return await (Task<IResult>)method.Invoke(null, [http, db, CancellationToken.None])!;
+    }
+
+    private static async Task<IResult> InvokeAgenticApprove(DefaultHttpContext http, long recommendationId, Database db)
+    {
+        var method = typeof(EndpointMappings).GetMethod("AgenticRecommendationApprove", BindingFlags.NonPublic | BindingFlags.Static)!;
+        return await (Task<IResult>)method.Invoke(null,
+            [http, recommendationId, db, new Opstrax.Api.Services.AuditService(db), CancellationToken.None])!;
     }
 
     private static async Task<IResult> InvokeAlertsSummary(DefaultHttpContext http, Database db)

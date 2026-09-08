@@ -14,6 +14,7 @@ const geofences = fs.readFileSync(new URL("../src/pages/GeofenceManagementPage.t
 const controlTower = fs.readFileSync(new URL("../src/pages/ControlTowerPage.tsx", import.meta.url), "utf8");
 const commandCenter = fs.readFileSync(new URL("../src/pages/CommandCenterPage.tsx", import.meta.url), "utf8");
 const alertsCenter = fs.readFileSync(new URL("../src/pages/AlertsCenterPage.tsx", import.meta.url), "utf8");
+const aiCopilot = fs.readFileSync(new URL("../src/pages/AiCopilotPage.tsx", import.meta.url), "utf8");
 const moduleConfig = fs.readFileSync(new URL("../src/modules/moduleConfig.ts", import.meta.url), "utf8");
 
 assert.doesNotMatch(
@@ -149,6 +150,10 @@ assert.doesNotMatch(
   /Live alerts command room|live backend|live queue|Live lanes|Live operating pressure|no demo queue|no fake feed|No demo fallback/i,
   "Alerts Center must not market database records as live or make unprovable no-demo claims",
 );
+assert.match(aiCopilot, /Availability checked on request/, "Copilot must not claim readiness before checking the configured provider");
+assert.match(aiCopilot, /No generated answer or substitute recommendation was created/, "Copilot failures must fail visibly without synthetic answers");
+assert.match(aiCopilot, /Current persisted records within your account and branch access/, "Copilot evidence must disclose its persisted authorization scope");
+assert.doesNotMatch(aiCopilot, /Operations Copilot ready|Live evidence|Evidence is pulled from live fleet data/, "Copilot UI must not make unverified readiness or live-evidence claims");
 assert.doesNotMatch(
   liveMap,
   /kpis\.(?:liveCoverage|connectedUnits|degradedUnits|deviceOfflineUnits|cameraOfflineUnits|connectivityCoverage)/,

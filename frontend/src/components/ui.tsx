@@ -656,7 +656,7 @@ export function EmptyState({ title = "No records found", subtitle, action }: { t
 /* ============================================================
    AI INSIGHT CARD
    ============================================================ */
-export function AiInsightCard({ insight }: { insight: AnyRecord }) {
+export function AiInsightCard({ insight, label = "System Fleet Insight" }: { insight: AnyRecord; label?: string }) {
   const score = Number(insight.score || insight.confidence || 0);
   return (
     <div className="relative overflow-hidden rounded-[20px] border border-violet-200 bg-gradient-to-br from-violet-50 via-white to-white p-4 shadow-sm">
@@ -668,7 +668,7 @@ export function AiInsightCard({ insight }: { insight: AnyRecord }) {
             <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-violet-100 border border-violet-200">
               <Sparkles className="h-3.5 w-3.5 text-violet-600" />
             </div>
-            <span className="text-[10px] font-black uppercase tracking-[0.24em] text-violet-600">System Fleet Insight</span>
+            <span className="text-[10px] font-black uppercase tracking-[0.24em] text-violet-600">{label}</span>
           </div>
           {score > 0 && (
             <span className="text-[10px] font-bold text-violet-400/70">{score}% confidence</span>
