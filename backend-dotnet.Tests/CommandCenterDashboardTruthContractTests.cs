@@ -32,8 +32,9 @@ public sealed class CommandCenterDashboardTruthContractTests
         Assert.Contains("GetValueOrDefault(\"dispatchReadyVehicles\")", method, StringComparison.Ordinal);
         Assert.Contains("GetValueOrDefault(\"oosVehicles\")", method, StringComparison.Ordinal);
         Assert.Contains("GetValueOrDefault(\"criticalDefectVehicles\")", method, StringComparison.Ordinal);
-        Assert.Contains("GetValueOrDefault(\"avgFleetReadiness\")", method, StringComparison.Ordinal);
         Assert.Contains("GetValueOrDefault(\"avgSafetyScore\")", method, StringComparison.Ordinal);
+        Assert.Contains("GetValueOrDefault(\"qualifiedReadinessVehicles\")", method, StringComparison.Ordinal);
+        Assert.Contains("GetValueOrDefault(\"qualifiedDriverScores\")", method, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -53,6 +54,13 @@ public sealed class CommandCenterDashboardTruthContractTests
         Assert.DoesNotContain(", 50)", method, StringComparison.Ordinal);
         Assert.DoesNotContain(", 100)", method, StringComparison.Ordinal);
         Assert.Contains("double? fleetHealthScore", method, StringComparison.Ordinal);
+        Assert.Contains("QualifiedDriverSafetyScoreSql", method, StringComparison.Ordinal);
+        Assert.Contains("QualifiedDvirReportSql", method, StringComparison.Ordinal);
+        Assert.Contains("QualifiedMaintenanceItemSql", method, StringComparison.Ordinal);
+        Assert.Contains("WITH latest_driver_scores AS", method, StringComparison.Ordinal);
+        Assert.Contains("COALESCE(v.out_of_service,FALSE)=TRUE", method, StringComparison.Ordinal);
+        Assert.DoesNotContain("drivers.safety_score", method, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("unavailable_incomplete_qualified_coverage", method, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -73,6 +81,14 @@ public sealed class CommandCenterDashboardTruthContractTests
         Assert.DoesNotContain("v.device_status", method, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("COALESCE(v.readiness_score", method, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("COALESCE(d.safety_score", method, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("v.risk_score", method, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("d.risk_score", method, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("QualifiedDriverSafetyScoreSql", method, StringComparison.Ordinal);
+        Assert.Contains("QualifiedSafetyEventSql", method, StringComparison.Ordinal);
+        Assert.Contains("QualifiedCoachingTaskSql", method, StringComparison.Ordinal);
+        Assert.Contains("QualifiedMaintenanceItemSql", method, StringComparison.Ordinal);
+        Assert.Contains("QualifiedWorkOrderSql", method, StringComparison.Ordinal);
+        Assert.Contains("QualifiedFaultOccurrenceSql", method, StringComparison.Ordinal);
     }
 
     [Fact]

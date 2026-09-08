@@ -150,6 +150,25 @@ public sealed class ControlTowerBranchIsolationPostgresTests
             Assert.Equal($"OWN-{suffix}", branchVehicleRisk.GetProperty("displayName").GetString());
             Assert.Equal(1, branchVehicleRisk.GetProperty("metrics").GetProperty("activeFaultCodes").GetInt64());
 
+            var fleetHealthVehicleDetail = Payload(await InvokeFleetHealthVehicleDetail(
+                Principal(company, branchA, "vehicles:view"), ownVehicle, db)).GetProperty("data");
+            Assert.Equal($"OWN-{suffix}", fleetHealthVehicleDetail.GetProperty("vehicle").GetProperty("vehicleCode").GetString());
+            Assert.Equal(JsonValueKind.Null, fleetHealthVehicleDetail.GetProperty("vehicle").GetProperty("readinessScore").ValueKind);
+            Assert.Equal(JsonValueKind.Null, fleetHealthVehicleDetail.GetProperty("vehicle").GetProperty("riskScore").ValueKind);
+            Assert.Equal("Unknown", fleetHealthVehicleDetail.GetProperty("vehicle").GetProperty("deviceStatus").GetString());
+            Assert.Single(fleetHealthVehicleDetail.GetProperty("activeFaultCodes").EnumerateArray());
+            Assert.Equal(StatusCodes.Status404NotFound, Status(await InvokeFleetHealthVehicleDetail(
+                Principal(company, branchA, "vehicles:view"), foreignVehicle, db)));
+
+            var fleetHealthDriverDetail = Payload(await InvokeFleetHealthDriverDetail(
+                Principal(company, branchA, "drivers:view"), ownDriver, db)).GetProperty("data");
+            Assert.Equal($"OWN-DRV-{suffix}", fleetHealthDriverDetail.GetProperty("driver").GetProperty("driverCode").GetString());
+            Assert.Equal(JsonValueKind.Null, fleetHealthDriverDetail.GetProperty("driver").GetProperty("safetyScore").ValueKind);
+            Assert.Equal(JsonValueKind.Null, fleetHealthDriverDetail.GetProperty("driver").GetProperty("riskScore").ValueKind);
+            Assert.Equal(JsonValueKind.Null, fleetHealthDriverDetail.GetProperty("hosStatus").ValueKind);
+            Assert.Equal(StatusCodes.Status404NotFound, Status(await InvokeFleetHealthDriverDetail(
+                Principal(company, branchA, "drivers:view"), foreignDriver, db)));
+
             var branchAlerts = Payload(await InvokeAlertsList(
                 Principal(company, branchA, "alerts:view"), db)).GetProperty("data");
             Assert.Single(branchAlerts.EnumerateArray());
@@ -258,6 +277,10 @@ public sealed class ControlTowerBranchIsolationPostgresTests
                 Principal(company, null, "dashboard:view"), db)).GetProperty("data");
             Assert.Equal(3, tenantFleetHealth.GetProperty("totalVehicles").GetInt64());
             Assert.Equal(2, tenantFleetHealth.GetProperty("dispatchReadyVehicles").GetInt64());
+            Assert.Equal(JsonValueKind.Null, tenantFleetHealth.GetProperty("fleetHealthScore").ValueKind);
+            Assert.Equal(JsonValueKind.Null, tenantFleetHealth.GetProperty("avgFleetReadiness").ValueKind);
+            Assert.Equal(JsonValueKind.Null, tenantFleetHealth.GetProperty("avgSafetyScore").ValueKind);
+            Assert.Equal("unavailable_incomplete_qualified_coverage", tenantFleetHealth.GetProperty("evidenceStatus").GetString());
         }
         finally
         {
@@ -499,6 +522,18 @@ public sealed class ControlTowerBranchIsolationPostgresTests
     {
         var method = typeof(EndpointMappings).GetMethod("FleetHealthSummary", BindingFlags.NonPublic | BindingFlags.Static)!;
         return await (Task<IResult>)method.Invoke(null, [http, db, CancellationToken.None])!;
+    }
+
+    private static async Task<IResult> InvokeFleetHealthVehicleDetail(DefaultHttpContext http, long vehicleId, Database db)
+    {
+        var method = typeof(EndpointMappings).GetMethod("FleetHealthVehicleDetail", BindingFlags.NonPublic | BindingFlags.Static)!;
+        return await (Task<IResult>)method.Invoke(null, [http, vehicleId, db, CancellationToken.None])!;
+    }
+
+    private static async Task<IResult> InvokeFleetHealthDriverDetail(DefaultHttpContext http, long driverId, Database db)
+    {
+        var method = typeof(EndpointMappings).GetMethod("FleetHealthDriverDetail", BindingFlags.NonPublic | BindingFlags.Static)!;
+        return await (Task<IResult>)method.Invoke(null, [http, driverId, db, CancellationToken.None])!;
     }
 
     private static async Task<IResult> InvokeAlertsList(DefaultHttpContext http, Database db)

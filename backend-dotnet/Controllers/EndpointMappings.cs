@@ -19445,6 +19445,19 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
                  AND ((dr_defect_source.data_origin='user_workflow' AND dr_defect_source.verification_status='recorded_by_authenticated_actor')
                    OR (dr_defect_source.data_origin='provider_import' AND dr_defect_source.verification_status='provider_verified'))))";
 
+    private const string RecordedFleetHealthVehicleSql =
+        @"NOT (v.company_id=1
+            AND v.vin ~ '^VINOPSTRAX[0-9]{6}$'
+            AND v.vehicle_code ~ '^(TRK|VAN|BOX|REEFER)-1[0-9]{2}$')";
+
+    private const string RecordedFleetHealthDriverSql =
+        @"NOT (d.company_id=1
+            AND d.driver_code ~ '^DRV-0(0[1-9]|1[0-9]|20)$'
+            AND d.email ~ '^driver([1-9]|1[0-9]|20)@opstrax[.]example$')";
+
+    private const string QualifiedFaultOccurrenceSql =
+        @"fo.payload_fingerprint ~ '^[0-9a-f]{64}$'";
+
     private static string String(System.Collections.Generic.IDictionary<string, object?> row, string key)
         => row.TryGetValue(key, out var v) ? v?.ToString() ?? "" : "";
 
@@ -32826,112 +32839,161 @@ LIMIT 100000",
         var cid = GetCompanyId(http);
         var branchId = GetBranchId(http);
 
-        var row = await db.QuerySingleAsync(@"
+        var row = await db.QuerySingleAsync($@"
+            WITH latest_driver_scores AS (
+              SELECT DISTINCT ON (dss.company_id,dss.driver_id)
+                     dss.company_id,dss.driver_id,dss.score_30d
+              FROM driver_safety_scores dss
+              WHERE dss.company_id=@cid AND {QualifiedDriverSafetyScoreSql}
+              ORDER BY dss.company_id,dss.driver_id,dss.computed_at DESC,dss.id DESC
+            )
             SELECT
               -- Vehicle readiness
               (SELECT COUNT(*) FROM vehicles v
                WHERE v.company_id=@cid AND v.deleted_at IS NULL
-                 AND (@branchId::bigint IS NULL OR v.branch_id=@branchId)) total_vehicles,
+                 AND (@branchId::bigint IS NULL OR v.branch_id=@branchId)
+                 AND {RecordedFleetHealthVehicleSql}) total_vehicles,
 
               (SELECT COUNT(*) FROM vehicles v
                WHERE v.company_id=@cid AND v.deleted_at IS NULL
                  AND v.status='Active'
                  AND COALESCE(v.out_of_service,FALSE)=FALSE
                  AND (@branchId::bigint IS NULL OR v.branch_id=@branchId)
+                 AND {RecordedFleetHealthVehicleSql}
                  AND NOT EXISTS (
                    SELECT 1 FROM dvir_defects dd
                    JOIN dvir_reports dr ON dr.id=dd.dvir_report_id
                    WHERE dr.vehicle_id=v.id AND dd.company_id=@cid
                      AND dr.safe_to_operate=FALSE
                      AND dd.status NOT IN ('resolved','Resolved')
+                     AND {QualifiedDvirDefectSql} AND {QualifiedDvirDefectSourceSql}
                  )
                  AND NOT EXISTS (
                    SELECT 1 FROM diagnostic_holds dh
                    WHERE dh.company_id=v.company_id AND dh.vehicle_id=v.id
                      AND dh.status IN ('active','acknowledged')
+                     AND EXISTS (
+                       SELECT 1 FROM fault_codes fc
+                       JOIN fault_occurrences fo ON fo.company_id=fc.company_id
+                         AND fo.device_id=fc.device_id AND fo.source_event_id=fc.last_source_event_id
+                       WHERE fc.id=dh.fault_code_id AND fc.company_id=dh.company_id
+                         AND {QualifiedFaultOccurrenceSql})
                  )
               ) dispatch_ready_vehicles,
 
               (SELECT COUNT(*) FROM vehicles v
                WHERE v.company_id=@cid AND v.deleted_at IS NULL
                  AND (@branchId::bigint IS NULL OR v.branch_id=@branchId)
-                 AND v.status='Out of Service') oos_vehicles,
+                 AND {RecordedFleetHealthVehicleSql}
+                 AND (v.status='Out of Service' OR COALESCE(v.out_of_service,FALSE)=TRUE)) oos_vehicles,
 
-              (SELECT COUNT(DISTINCT dr.vehicle_id)
+              (SELECT COUNT(DISTINCT v.id)
                FROM dvir_defects dd
                JOIN dvir_reports dr ON dr.id=dd.dvir_report_id
+               JOIN vehicles v ON v.id=dr.vehicle_id AND v.company_id=dd.company_id
                WHERE dd.company_id=@cid AND dr.vehicle_id IS NOT NULL
+                 AND v.deleted_at IS NULL AND {RecordedFleetHealthVehicleSql}
                  AND dr.safe_to_operate=FALSE
                  AND dd.status NOT IN ('resolved','Resolved')
-                 AND (@branchId::bigint IS NULL OR EXISTS (
-                   SELECT 1 FROM vehicles vb WHERE vb.id=dr.vehicle_id
-                     AND vb.company_id=dd.company_id AND vb.branch_id=@branchId))) critical_defect_vehicles,
+                 AND {QualifiedDvirDefectSql} AND {QualifiedDvirDefectSourceSql}
+                 AND (@branchId::bigint IS NULL OR v.branch_id=@branchId)) critical_defect_vehicles,
 
-              (SELECT COUNT(DISTINCT wo.vehicle_id)
+              (SELECT COUNT(DISTINCT v.id)
                FROM work_orders wo
+               JOIN vehicles v ON v.id=wo.vehicle_id AND v.company_id=wo.company_id
                WHERE wo.company_id=@cid AND wo.vehicle_id IS NOT NULL
+                 AND v.deleted_at IS NULL AND {RecordedFleetHealthVehicleSql}
                  AND wo.status NOT IN ('Completed','Cancelled')
                  AND wo.deleted_at IS NULL
-                 AND (@branchId::bigint IS NULL OR EXISTS (
-                   SELECT 1 FROM vehicles vb WHERE vb.id=wo.vehicle_id
-                     AND vb.company_id=wo.company_id AND vb.branch_id=@branchId))) open_wo_vehicles,
+                 AND {QualifiedWorkOrderSql} AND {QualifiedWorkOrderSourceSql}
+                 AND (@branchId::bigint IS NULL OR v.branch_id=@branchId)) open_wo_vehicles,
 
-              (SELECT COUNT(DISTINCT mi.vehicle_id)
+              (SELECT COUNT(DISTINCT v.id)
                FROM maintenance_items mi
+               JOIN vehicles v ON v.id=mi.vehicle_id AND v.company_id=mi.company_id
                WHERE mi.company_id=@cid AND mi.deleted_at IS NULL
+                 AND v.deleted_at IS NULL AND {RecordedFleetHealthVehicleSql}
                  AND (mi.status='Overdue'
                    OR (mi.due_date IS NOT NULL AND mi.due_date < CURRENT_DATE))
-                 AND (@branchId::bigint IS NULL OR EXISTS (
-                   SELECT 1 FROM vehicles vb WHERE vb.id=mi.vehicle_id
-                     AND vb.company_id=mi.company_id AND vb.branch_id=@branchId))) overdue_pm_vehicles,
-
-              -- AVG ignores NULL readiness rows; an unmeasured fleet yields NULL, never a default
-              (SELECT ROUND(AVG(v.readiness_score),1)
-               FROM vehicles v
-               WHERE v.company_id=@cid AND v.deleted_at IS NULL
-                 AND (@branchId::bigint IS NULL OR v.branch_id=@branchId)) avg_fleet_readiness,
+                 AND {QualifiedMaintenanceItemSql}
+                 AND (@branchId::bigint IS NULL OR v.branch_id=@branchId)) overdue_pm_vehicles,
 
               -- Driver safety
               (SELECT COUNT(*) FROM drivers d
                WHERE d.company_id=@cid AND d.deleted_at IS NULL
                  AND (@branchId::bigint IS NULL OR d.branch_id=@branchId)
-                 AND d.status='Active') total_active_drivers,
+                 AND d.status='Active'
+                 AND {RecordedFleetHealthDriverSql}) total_active_drivers,
 
-              (SELECT COUNT(*) FROM drivers d
-               WHERE d.company_id=@cid AND d.deleted_at IS NULL
+              (SELECT COUNT(*) FROM latest_driver_scores dss
+               JOIN drivers d ON d.id=dss.driver_id AND d.company_id=dss.company_id
+               WHERE dss.company_id=@cid AND d.deleted_at IS NULL
                  AND d.status='Active'
                  AND (@branchId::bigint IS NULL OR d.branch_id=@branchId)
-                 AND d.safety_score < 75) below_safety_threshold,
+                 AND {RecordedFleetHealthDriverSql}
+                 AND dss.score_30d < 75) below_safety_threshold,
 
-              (SELECT COUNT(DISTINCT se.driver_id)
+              (SELECT COUNT(DISTINCT d.id)
                FROM safety_events se
+               JOIN drivers d ON d.id=se.driver_id AND d.company_id=se.company_id
                WHERE se.company_id=@cid AND se.driver_id IS NOT NULL
+                 AND d.deleted_at IS NULL AND {RecordedFleetHealthDriverSql}
                  AND se.review_status NOT IN
                    ('Resolved','Acknowledged','resolved','acknowledged')
-                 AND (@branchId::bigint IS NULL OR se.branch_id=@branchId)
-                 AND se.deleted_at IS NULL) open_event_drivers,
+                 AND (@branchId::bigint IS NULL OR d.branch_id=@branchId)
+                 AND se.deleted_at IS NULL
+                 AND {QualifiedSafetyEventSql}) open_event_drivers,
 
               (SELECT COUNT(*) FROM coaching_tasks ct
+               JOIN drivers d ON d.id=ct.driver_id AND d.company_id=ct.company_id
                WHERE ct.company_id=@cid AND ct.deleted_at IS NULL
+                 AND d.deleted_at IS NULL AND {RecordedFleetHealthDriverSql}
                  AND ct.status NOT IN ('Completed','Cancelled','Driver Acknowledged')
-                 AND (@branchId::bigint IS NULL OR EXISTS (
-                   SELECT 1 FROM drivers db WHERE db.id=ct.driver_id
-                     AND db.company_id=ct.company_id AND db.branch_id=@branchId))
-                 AND ct.due_at IS NOT NULL AND ct.due_at < NOW()) overdue_coaching_count,
-
-              (SELECT ROUND(AVG(d.safety_score),1)
-               FROM drivers d
-               WHERE d.company_id=@cid AND d.deleted_at IS NULL
                  AND (@branchId::bigint IS NULL OR d.branch_id=@branchId)
-                 AND d.status='Active') avg_safety_score,
+                 AND ct.due_at IS NOT NULL AND ct.due_at < NOW()
+                 AND {QualifiedCoachingTaskSql} AND {QualifiedCoachingSourceSql}) overdue_coaching_count,
+
+              (SELECT ROUND(AVG(dss.score_30d),1)
+               FROM latest_driver_scores dss
+               JOIN drivers d ON d.id=dss.driver_id AND d.company_id=dss.company_id
+               WHERE dss.company_id=@cid AND d.deleted_at IS NULL
+                 AND (@branchId::bigint IS NULL OR d.branch_id=@branchId)
+                 AND d.status='Active' AND {RecordedFleetHealthDriverSql}
+              ) avg_safety_score,
+
+              (SELECT COUNT(*) FROM latest_driver_scores dss
+               JOIN drivers d ON d.id=dss.driver_id AND d.company_id=dss.company_id
+               WHERE dss.company_id=@cid AND d.deleted_at IS NULL
+                 AND (@branchId::bigint IS NULL OR d.branch_id=@branchId)
+                 AND d.status='Active' AND {RecordedFleetHealthDriverSql}
+              ) qualified_driver_scores,
+
+              (SELECT COUNT(*) FROM vehicles v
+               WHERE v.company_id=@cid AND v.deleted_at IS NULL
+                 AND (@branchId::bigint IS NULL OR v.branch_id=@branchId)
+                 AND {RecordedFleetHealthVehicleSql}
+                 AND (
+                   EXISTS (SELECT 1 FROM dvir_reports dr
+                            WHERE dr.company_id=v.company_id AND dr.vehicle_id=v.id
+                              AND dr.deleted_at IS NULL AND {QualifiedDvirReportSql})
+                   OR EXISTS (SELECT 1 FROM maintenance_items mi
+                              WHERE mi.company_id=v.company_id AND mi.vehicle_id=v.id
+                                AND mi.deleted_at IS NULL AND {QualifiedMaintenanceItemSql})
+                   OR EXISTS (SELECT 1 FROM work_orders wo
+                              WHERE wo.company_id=v.company_id AND wo.vehicle_id=v.id
+                                AND wo.deleted_at IS NULL AND {QualifiedWorkOrderSql} AND {QualifiedWorkOrderSourceSql})
+                 )) qualified_readiness_vehicles,
 
               -- Dispatch exceptions (from dispatch_assignments flagged as exceptions)
-              (SELECT COUNT(*) FROM dispatch_assignments da
-               WHERE da.company_id=@cid
-                 AND (@branchId::bigint IS NULL OR EXISTS (
-                   SELECT 1 FROM jobs j WHERE j.id=da.job_id
-                     AND j.company_id=da.company_id AND j.branch_id=@branchId))
-                 AND da.status IN ('Exception','Cancelled','Failed')) open_dispatch_exceptions
+              (SELECT COUNT(*) FROM dispatch_exceptions de
+               JOIN dispatch_assignments da ON da.id=de.assignment_id AND da.company_id=de.company_id
+               LEFT JOIN jobs j ON j.id=da.job_id AND j.company_id=da.company_id
+               LEFT JOIN vehicles v ON v.id=da.vehicle_id AND v.company_id=da.company_id AND v.deleted_at IS NULL
+               WHERE de.company_id=@cid
+                 AND (@branchId::bigint IS NULL OR COALESCE(j.branch_id,v.branch_id)=@branchId)
+                 AND (v.id IS NULL OR {RecordedFleetHealthVehicleSql})
+                 AND LOWER(de.status) NOT IN ('resolved','closed','dismissed')
+                 AND {QualifiedDispatchAssignmentSql} AND {QualifiedDispatchExceptionSql}) open_dispatch_exceptions
 
             FROM (SELECT 1) _dual",
             c =>
@@ -32951,9 +33013,19 @@ LIMIT 100000",
         static long ToLong(object? v) =>
             v is not null and not DBNull ? Convert.ToInt64(v) : 0L;
 
-        var avgReadiness = ToNullableDouble(row.GetValueOrDefault("avgFleetReadiness"));
-        var avgSafety    = ToNullableDouble(row.GetValueOrDefault("avgSafetyScore"));
-        // Composite only when both inputs are genuinely measured; otherwise null, never a default.
+        var totalVehicles = ToLong(row.GetValueOrDefault("totalVehicles"));
+        var dispatchReadyVehicles = ToLong(row.GetValueOrDefault("dispatchReadyVehicles"));
+        var totalActiveDrivers = ToLong(row.GetValueOrDefault("totalActiveDrivers"));
+        var qualifiedReadinessVehicles = ToLong(row.GetValueOrDefault("qualifiedReadinessVehicles"));
+        var qualifiedDriverScores = ToLong(row.GetValueOrDefault("qualifiedDriverScores"));
+        var avgReadiness = totalVehicles > 0 && qualifiedReadinessVehicles == totalVehicles
+            ? Math.Round(dispatchReadyVehicles * 100d / totalVehicles, 1)
+            : (double?)null;
+        var measuredSafety = ToNullableDouble(row.GetValueOrDefault("avgSafetyScore"));
+        var avgSafety = totalActiveDrivers > 0 && qualifiedDriverScores == totalActiveDrivers
+            ? measuredSafety
+            : null;
+        // Composite only when both fleets have complete qualified coverage.
         double? fleetHealthScore = avgReadiness is double r && avgSafety is double s
             ? Math.Round(r * 0.6 + s * 0.4, 1)
             : null;
@@ -32990,7 +33062,7 @@ LIMIT 100000",
                 type       = "driver_safety",
                 severity   = belowSafety >= 3 ? "high" : "medium",
                 message    = $"{belowSafety} driver(s) are below the 75% safety score threshold.",
-                dataSource = "drivers.safety_score",
+                dataSource = "driver_safety_scores.score_30d",
             });
 
         var overdueCoaching = ToLong(row.GetValueOrDefault("overdueCoachingCount"));
@@ -33013,15 +33085,13 @@ LIMIT 100000",
                 dataSource = "dispatch_exceptions.status",
             });
 
-        var totalVehicles = ToLong(row.GetValueOrDefault("totalVehicles"));
-        var totalActiveDrivers = ToLong(row.GetValueOrDefault("totalActiveDrivers"));
         if (insights.Count == 0 && (totalVehicles > 0 || totalActiveDrivers > 0))
             insights.Add(new
             {
-                type       = "no_open_risk_records",
+                type       = "no_open_qualified_risk_records",
                 severity   = "info",
-                message    = "No open defect, overdue maintenance, safety, coaching, or dispatch-exception records were found for the current fleet scope.",
-                dataSource = "Current persisted fleet-health records",
+                message    = "No open risk was found in the evidence-qualified records available for this fleet scope. Unmeasured vehicles or drivers remain unavailable.",
+                dataSource = "Evidence-qualified fleet-health records",
             });
 
         return Results.Ok(ApiResponse<object>.Ok(new
@@ -33029,6 +33099,12 @@ LIMIT 100000",
             fleetHealthScore,
             avgFleetReadiness         = avgReadiness,
             avgSafetyScore            = avgSafety,
+            readinessEvidenceCoverage = totalVehicles > 0
+                ? Math.Round(qualifiedReadinessVehicles * 100d / totalVehicles, 1)
+                : (double?)null,
+            driverScoreCoverage       = totalActiveDrivers > 0
+                ? Math.Round(qualifiedDriverScores * 100d / totalActiveDrivers, 1)
+                : (double?)null,
             totalVehicles             = row.GetValueOrDefault("totalVehicles"),
             dispatchReadyVehicles     = row.GetValueOrDefault("dispatchReadyVehicles"),
             oosVehicles               = row.GetValueOrDefault("oosVehicles"),
@@ -33041,6 +33117,9 @@ LIMIT 100000",
             overdueCoachingCount      = row.GetValueOrDefault("overdueCoachingCount"),
             openDispatchExceptions    = row.GetValueOrDefault("openDispatchExceptions"),
             insightType               = "System Fleet Insight",
+            evidenceStatus            = fleetHealthScore.HasValue
+                ? "calculated_from_complete_qualified_coverage"
+                : "unavailable_incomplete_qualified_coverage",
             systemInsights            = insights,
         }, "Fleet health summary"));
     }
@@ -33056,26 +33135,27 @@ LIMIT 100000",
         var branchId = GetBranchId(http);
 
         // Vehicle risk query — priority score computed entirely in SQL
-        var vehicleRows = await db.QueryAsync(@"
+        var vehicleRows = await db.QueryAsync($@"
             SELECT * FROM (SELECT
               v.id,
               v.vehicle_code,
               v.type                         vehicle_type,
               v.status,
-              CASE WHEN v.status='Out of Service' THEN 1 ELSE 0 END out_of_service,
-              v.readiness_score,
-              COALESCE(v.risk_score,20)      base_risk_score,
+              CASE WHEN v.status='Out of Service' OR COALESCE(v.out_of_service,FALSE)=TRUE THEN 1 ELSE 0 END out_of_service,
+              NULL::numeric                  readiness_score,
 
               (SELECT COUNT(*) FROM dvir_defects dd
                JOIN dvir_reports dr ON dr.id=dd.dvir_report_id
-               WHERE dr.vehicle_id=v.id AND dd.company_id=@cid
+                 WHERE dr.vehicle_id=v.id AND dd.company_id=@cid
                  AND dr.safe_to_operate=FALSE
-                 AND dd.status NOT IN ('resolved','Resolved')) critical_defects,
+                 AND dd.status NOT IN ('resolved','Resolved')
+                 AND {QualifiedDvirDefectSql} AND {QualifiedDvirDefectSourceSql}) critical_defects,
 
               (SELECT COUNT(*) FROM dvir_defects dd
                JOIN dvir_reports dr ON dr.id=dd.dvir_report_id
                WHERE dr.vehicle_id=v.id AND dd.company_id=@cid
-                 AND dd.status NOT IN ('resolved','Resolved')) open_defects,
+                 AND dd.status NOT IN ('resolved','Resolved')
+                 AND {QualifiedDvirDefectSql} AND {QualifiedDvirDefectSourceSql}) open_defects,
 
               (SELECT COUNT(*) FROM fault_codes fc
                WHERE fc.company_id=@cid AND fc.vehicle_id=v.id
@@ -33084,35 +33164,68 @@ LIMIT 100000",
                    SELECT 1 FROM fault_occurrences fo
                     WHERE fo.company_id=fc.company_id
                       AND fo.device_id=fc.device_id
-                      AND fo.source_event_id=fc.last_source_event_id)) active_faults,
+                      AND fo.source_event_id=fc.last_source_event_id
+                      AND {QualifiedFaultOccurrenceSql})) active_faults,
 
               (SELECT COUNT(*) FROM work_orders wo
                WHERE wo.vehicle_id=v.id AND wo.company_id=@cid
                  AND wo.status NOT IN ('Completed','Cancelled')
-                 AND wo.deleted_at IS NULL) open_work_orders,
+                 AND wo.deleted_at IS NULL
+                 AND {QualifiedWorkOrderSql} AND {QualifiedWorkOrderSourceSql}) open_work_orders,
 
               (SELECT COUNT(*) FROM maintenance_items mi
                WHERE mi.vehicle_id=v.id AND mi.company_id=@cid
                  AND mi.deleted_at IS NULL
                  AND (mi.status='Overdue'
-                   OR (mi.due_date IS NOT NULL AND mi.due_date < CURRENT_DATE))) overdue_pm,
+                   OR (mi.due_date IS NOT NULL AND mi.due_date < CURRENT_DATE))
+                 AND {QualifiedMaintenanceItemSql}) overdue_pm,
 
               LEAST(100, ROUND(
-                CASE WHEN v.status='Out of Service' THEN 80 ELSE 0 END
+                CASE WHEN v.status='Out of Service' OR COALESCE(v.out_of_service,FALSE)=TRUE THEN 80 ELSE 0 END
                 + (SELECT COUNT(*) FROM dvir_defects dd2
                    JOIN dvir_reports dr2 ON dr2.id=dd2.dvir_report_id
                    WHERE dr2.vehicle_id=v.id AND dd2.company_id=@cid
                      AND dr2.safe_to_operate=FALSE
-                     AND dd2.status NOT IN ('resolved','Resolved')) * 55
+                     AND dd2.status NOT IN ('resolved','Resolved')
+                     AND ((dd2.data_origin='dvir_workflow' AND dd2.verification_status='derived_from_qualified_source')
+                       OR (dd2.data_origin='provider_import' AND dd2.verification_status='provider_verified'))
+                     AND EXISTS (SELECT 1 FROM dvir_reports dr_source
+                                  WHERE dr_source.id=dd2.dvir_report_id AND dr_source.company_id=dd2.company_id
+                                    AND dr_source.deleted_at IS NULL
+                                    AND ((dr_source.data_origin='user_workflow' AND dr_source.verification_status='recorded_by_authenticated_actor')
+                                      OR (dr_source.data_origin='provider_import' AND dr_source.verification_status='provider_verified')))) * 55
                 + (SELECT COUNT(*) FROM maintenance_items mi2
                    WHERE mi2.vehicle_id=v.id AND mi2.company_id=@cid
                      AND mi2.deleted_at IS NULL
                      AND (mi2.status='Overdue'
-                       OR (mi2.due_date IS NOT NULL AND mi2.due_date < CURRENT_DATE))) * 10
+                       OR (mi2.due_date IS NOT NULL AND mi2.due_date < CURRENT_DATE))
+                     AND ((mi2.data_origin='user_workflow' AND mi2.verification_status='recorded_by_authenticated_actor')
+                       OR (mi2.data_origin='runtime_pm' AND mi2.verification_status='derived_from_qualified_source'))) * 10
                 + (SELECT COUNT(*) FROM work_orders wo2
                    WHERE wo2.vehicle_id=v.id AND wo2.company_id=@cid
                      AND wo2.status NOT IN ('Completed','Cancelled')
-                     AND wo2.deleted_at IS NULL) * 4
+                     AND wo2.deleted_at IS NULL
+                     AND ((wo2.data_origin='user_workflow' AND wo2.verification_status='recorded_by_authenticated_actor')
+                       OR (wo2.data_origin='workflow_derived' AND wo2.verification_status='derived_from_qualified_source'))
+                     AND (wo2.maintenance_item_id IS NULL OR EXISTS (
+                       SELECT 1 FROM maintenance_items mi_source WHERE mi_source.id=wo2.maintenance_item_id
+                         AND mi_source.company_id=wo2.company_id AND mi_source.deleted_at IS NULL
+                         AND ((mi_source.data_origin='user_workflow' AND mi_source.verification_status='recorded_by_authenticated_actor')
+                           OR (mi_source.data_origin='runtime_pm' AND mi_source.verification_status='derived_from_qualified_source'))))
+                     AND (wo2.dvir_report_id IS NULL OR EXISTS (
+                       SELECT 1 FROM dvir_reports dr_source WHERE dr_source.id=wo2.dvir_report_id
+                         AND dr_source.company_id=wo2.company_id AND dr_source.deleted_at IS NULL
+                         AND ((dr_source.data_origin='user_workflow' AND dr_source.verification_status='recorded_by_authenticated_actor')
+                           OR (dr_source.data_origin='provider_import' AND dr_source.verification_status='provider_verified'))))
+                     AND (wo2.defect_id IS NULL OR EXISTS (
+                       SELECT 1 FROM dvir_defects dd_source
+                       JOIN dvir_reports dr_defect_source ON dr_defect_source.id=dd_source.dvir_report_id
+                         AND dr_defect_source.company_id=dd_source.company_id
+                       WHERE dd_source.id=wo2.defect_id AND dd_source.company_id=wo2.company_id
+                         AND ((dd_source.data_origin='dvir_workflow' AND dd_source.verification_status='derived_from_qualified_source')
+                           OR (dd_source.data_origin='provider_import' AND dd_source.verification_status='provider_verified'))
+                         AND ((dr_defect_source.data_origin='user_workflow' AND dr_defect_source.verification_status='recorded_by_authenticated_actor')
+                           OR (dr_defect_source.data_origin='provider_import' AND dr_defect_source.verification_status='provider_verified'))))) * 4
                 + (SELECT COUNT(*) FROM fault_codes fc2
                    WHERE fc2.company_id=@cid AND fc2.vehicle_id=v.id
                      AND LOWER(fc2.status)='active'
@@ -33120,71 +33233,100 @@ LIMIT 100000",
                        SELECT 1 FROM fault_occurrences fo2
                         WHERE fo2.company_id=fc2.company_id
                           AND fo2.device_id=fc2.device_id
-                          AND fo2.source_event_id=fc2.last_source_event_id)) * 8
-                + COALESCE(v.risk_score,20) * 0.35
+                          AND fo2.source_event_id=fc2.last_source_event_id
+                          AND fo2.payload_fingerprint ~ '^[0-9a-f]{{64}}$')) * 8
               , 1)) priority_score
 
             FROM vehicles v
             WHERE v.company_id=@cid AND v.deleted_at IS NULL
               AND (@branchId::bigint IS NULL OR v.branch_id=@branchId)
+              AND {RecordedFleetHealthVehicleSql}
             ) sub
-            WHERE sub.priority_score >= 15
+            WHERE sub.priority_score > 0
             ORDER BY sub.priority_score DESC
             LIMIT 25",
             c => { c.Parameters.AddWithValue("@cid", cid); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
 
         // Driver risk query — priority score computed entirely in SQL
-        var driverRows = await db.QueryAsync(@"
+        var driverRows = await db.QueryAsync($@"
             SELECT * FROM (SELECT
               d.id,
               d.driver_code,
               d.full_name,
               d.status,
-              d.safety_score,
-              COALESCE(d.risk_score,0)     base_risk_score,
+              qualified_score.score_30d    safety_score,
 
               (SELECT COUNT(*) FROM safety_events se
                WHERE se.driver_id=d.id AND se.company_id=@cid
                  AND se.review_status NOT IN
                    ('Resolved','Acknowledged','resolved','acknowledged')
-                 AND se.deleted_at IS NULL) open_safety_events,
+                 AND se.deleted_at IS NULL
+                 AND {QualifiedSafetyEventSql}) open_safety_events,
 
               (SELECT COUNT(*) FROM coaching_tasks ct
                WHERE ct.driver_id=d.id AND ct.company_id=@cid
                  AND ct.deleted_at IS NULL
                  AND ct.status NOT IN ('Completed','Cancelled','Driver Acknowledged')
-                 AND ct.due_at IS NOT NULL AND ct.due_at < NOW()) overdue_coaching,
+                 AND ct.due_at IS NOT NULL AND ct.due_at < NOW()
+                 AND {QualifiedCoachingTaskSql} AND {QualifiedCoachingSourceSql}) overdue_coaching,
 
               (SELECT COUNT(*) FROM coaching_tasks ct
                WHERE ct.driver_id=d.id AND ct.company_id=@cid
                  AND ct.deleted_at IS NULL
-                 AND ct.status NOT IN ('Completed','Cancelled','Driver Acknowledged')) open_coaching,
+                 AND ct.status NOT IN ('Completed','Cancelled','Driver Acknowledged')
+                 AND {QualifiedCoachingTaskSql} AND {QualifiedCoachingSourceSql}) open_coaching,
 
               LEAST(100, ROUND(
-                CASE WHEN d.safety_score IS NULL THEN 0
-                     WHEN d.safety_score < 65 THEN 80
-                     WHEN d.safety_score < 75 THEN 55
-                     WHEN d.safety_score < 85 THEN 20
+                CASE WHEN qualified_score.score_30d IS NULL THEN 0
+                     WHEN qualified_score.score_30d < 65 THEN 80
+                     WHEN qualified_score.score_30d < 75 THEN 55
+                     WHEN qualified_score.score_30d < 85 THEN 20
                      ELSE 5 END
                 + (SELECT COUNT(*) FROM safety_events se2
                    WHERE se2.driver_id=d.id AND se2.company_id=@cid
                      AND se2.review_status NOT IN
                        ('Resolved','Acknowledged','resolved','acknowledged')
-                     AND se2.deleted_at IS NULL) * 12
+                     AND se2.deleted_at IS NULL
+                     AND ((se2.data_origin='user_workflow' AND se2.verification_status='recorded_by_authenticated_actor')
+                       OR (se2.data_origin='runtime_detection' AND se2.verification_status='derived_from_qualified_source')
+                       OR (se2.data_origin='provider_import' AND se2.verification_status='provider_verified'))) * 12
                 + (SELECT COUNT(*) FROM coaching_tasks ct2
                    WHERE ct2.driver_id=d.id AND ct2.company_id=@cid
                      AND ct2.deleted_at IS NULL
                      AND ct2.status NOT IN ('Completed','Cancelled','Driver Acknowledged')
-                     AND ct2.due_at IS NOT NULL AND ct2.due_at < NOW()) * 15
-                + COALESCE(d.risk_score,0) * 0.3
+                     AND ct2.due_at IS NOT NULL AND ct2.due_at < NOW()
+                     AND ((ct2.data_origin='user_workflow' AND ct2.verification_status='recorded_by_authenticated_actor')
+                       OR (ct2.data_origin='runtime_detection' AND ct2.verification_status='derived_from_qualified_source')
+                       OR (ct2.data_origin='provider_import' AND ct2.verification_status='provider_verified'))
+                     AND (ct2.safety_event_id IS NULL OR EXISTS (
+                       SELECT 1 FROM safety_events source_event
+                       WHERE source_event.id=ct2.safety_event_id AND source_event.company_id=ct2.company_id
+                         AND source_event.deleted_at IS NULL
+                         AND ((source_event.data_origin='user_workflow' AND source_event.verification_status='recorded_by_authenticated_actor')
+                           OR (source_event.data_origin='runtime_detection' AND source_event.verification_status='derived_from_qualified_source')
+                           OR (source_event.data_origin='provider_import' AND source_event.verification_status='provider_verified'))))
+                     AND (ct2.dashcam_event_id IS NULL OR EXISTS (
+                       SELECT 1 FROM dashcam_events camera_source
+                       WHERE camera_source.id=ct2.dashcam_event_id AND camera_source.company_id=ct2.company_id
+                         AND camera_source.deleted_at IS NULL AND camera_source.source_authority='Authoritative'
+                         AND camera_source.media_status='Ready'))) * 15
               , 1)) priority_score
 
             FROM drivers d
+            LEFT JOIN LATERAL (
+              SELECT dss.score_30d
+              FROM driver_safety_scores dss
+              WHERE dss.company_id=d.company_id AND dss.driver_id=d.id
+                AND {QualifiedDriverSafetyScoreSql}
+              ORDER BY dss.computed_at DESC
+              LIMIT 1
+            ) qualified_score ON TRUE
             WHERE d.company_id=@cid AND d.deleted_at IS NULL
               AND d.status NOT IN ('Inactive','Deleted')
               AND (@branchId::bigint IS NULL OR d.branch_id=@branchId)
+              AND {RecordedFleetHealthDriverSql}
             ) sub
-            WHERE sub.priority_score >= 15
+            WHERE sub.priority_score > 0
             ORDER BY sub.priority_score DESC
             LIMIT 25",
             c => { c.Parameters.AddWithValue("@cid", cid); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
@@ -33257,7 +33399,6 @@ LIMIT 100000",
                     openWorkOrders   = openWo,
                     overduePm,
                     readinessScore   = VN(veh, "readinessScore"),
-                    baseRiskScore    = V(veh, "baseRiskScore"),
                 },
             });
         }
@@ -33310,7 +33451,6 @@ LIMIT 100000",
                     openSafetyEvents  = openEvents,
                     overdueCoaching   = overdueCoach,
                     openCoachingTasks = openCoach,
-                    baseRiskScore     = V(drv, "baseRiskScore"),
                 },
             });
         }
@@ -33336,10 +33476,14 @@ LIMIT 100000",
         var (branchClause, branchId) = StrictBranchFilter(http, "v");
 
         var veh = await db.QuerySingleAsync(
-            @"SELECT v.*, d.full_name assigned_driver_name, d.driver_code
+            $@"SELECT v.id,v.company_id,v.branch_id,v.vehicle_code,v.type,v.status,v.out_of_service,
+                     v.odometer_miles,v.assigned_driver_id,d.full_name assigned_driver_name,d.driver_code,
+                     NULL::numeric readiness_score,NULL::numeric risk_score,NULL::numeric data_quality_score,
+                     'Unknown'::text device_status,'Unknown'::text camera_status
               FROM vehicles v
-              LEFT JOIN drivers d ON d.id=v.assigned_driver_id
-              WHERE v.id=@id AND v.company_id=@cid AND v.deleted_at IS NULL" + branchClause,
+              LEFT JOIN drivers d ON d.id=v.assigned_driver_id AND d.company_id=v.company_id AND d.deleted_at IS NULL
+              WHERE v.id=@id AND v.company_id=@cid AND v.deleted_at IS NULL
+                AND {RecordedFleetHealthVehicleSql}" + branchClause,
             c =>
             {
                 c.Parameters.AddWithValue("@id", id);
@@ -33351,64 +33495,84 @@ LIMIT 100000",
             return Results.NotFound(ApiResponse<object>.Fail("Vehicle not found"));
 
         var openDefects = await db.QueryAsync(
-            @"SELECT dd.id, dd.defect_description, dd.severity, dd.status,
+            $@"SELECT dd.id, dd.defect_description, dd.severity, dd.status,
                      dr.safe_to_operate, dd.created_at, dd.row_version
               FROM dvir_defects dd
               JOIN dvir_reports dr ON dr.id=dd.dvir_report_id
               WHERE dr.vehicle_id=@id AND dd.company_id=@cid
                 AND dd.status NOT IN ('resolved','Resolved')
+                AND {QualifiedDvirDefectSql} AND {QualifiedDvirDefectSourceSql}
               ORDER BY CASE WHEN dr.safe_to_operate=FALSE THEN 0 ELSE 1 END,
                        ARRAY_POSITION(ARRAY['Critical','Major','Minor'], dd.severity), dd.id DESC
               LIMIT 10",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", cid); }, ct);
 
-        var activeFaults = Array.Empty<Dictionary<string, object?>>();
+        var activeFaults = await db.QueryAsync(
+            $@"SELECT fc.id,fc.code,fc.description,fc.controller component,
+                      fc.occurrence_count recurrence_count,fc.severity,fc.last_observed_at
+                 FROM fault_codes fc
+                WHERE fc.vehicle_id=@id AND fc.company_id=@cid AND LOWER(fc.status)='active'
+                  AND EXISTS (
+                    SELECT 1 FROM fault_occurrences fo
+                     WHERE fo.company_id=fc.company_id AND fo.device_id=fc.device_id
+                       AND fo.source_event_id=fc.last_source_event_id
+                       AND {QualifiedFaultOccurrenceSql})
+                ORDER BY fc.last_observed_at DESC,fc.id DESC LIMIT 10",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", cid); }, ct);
 
         var openWorkOrders = await db.QueryAsync(
-            @"SELECT wo.id, COALESCE(wo.work_order_number, wo.work_order_code) work_order_number,
+            $@"SELECT wo.id, COALESCE(wo.work_order_number, wo.work_order_code) work_order_number,
                      wo.title, wo.status, wo.priority, wo.due_date, wo.estimated_cost,
                      COALESCE(wo.created_date, wo.created_at) created_date
               FROM work_orders wo
               WHERE wo.vehicle_id=@id AND wo.company_id=@cid
                 AND wo.status NOT IN ('Completed','Cancelled')
                 AND wo.deleted_at IS NULL
+                AND {QualifiedWorkOrderSql} AND {QualifiedWorkOrderSourceSql}
               ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Normal','Low'], wo.priority), wo.due_date
               LIMIT 10",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", cid); }, ct);
 
         var overduePm = await db.QueryAsync(
-            @"SELECT mi.id, COALESCE(mi.service_type, mi.category) service_type,
+            $@"SELECT mi.id, COALESCE(mi.service_type, mi.category) service_type,
                      mi.status, mi.due_date, mi.due_odometer due_mileage, mi.risk_level
               FROM maintenance_items mi
               WHERE mi.vehicle_id=@id AND mi.company_id=@cid AND mi.deleted_at IS NULL
                 AND (mi.status='Overdue'
                   OR (mi.due_date IS NOT NULL AND mi.due_date < CURRENT_DATE))
+                AND {QualifiedMaintenanceItemSql}
               ORDER BY mi.due_date
               LIMIT 10",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", cid); }, ct);
 
         var recentInspections = await db.QueryAsync(
-            @"SELECT dr.id, dr.inspection_type, dr.inspection_status status, dr.safe_to_operate,
+            $@"SELECT dr.id, dr.inspection_type, dr.inspection_status status, dr.safe_to_operate,
                      dr.submitted_at, dr.driver_id,
-                     (SELECT COUNT(*) FROM dvir_defects dd WHERE dd.dvir_report_id=dr.id) defect_count,
+                     (SELECT COUNT(*) FROM dvir_defects dd
+                       WHERE dd.dvir_report_id=dr.id AND dd.company_id=dr.company_id
+                         AND {QualifiedDvirDefectSql} AND {QualifiedDvirDefectSourceSql}) defect_count,
                      (SELECT COUNT(*) FROM dvir_defects dd WHERE dd.dvir_report_id=dr.id
-                       AND dd.status NOT IN ('resolved','Resolved')) critical_defect_count
+                       AND dd.company_id=dr.company_id
+                       AND dd.status NOT IN ('resolved','Resolved')
+                       AND {QualifiedDvirDefectSql} AND {QualifiedDvirDefectSourceSql}) critical_defect_count
               FROM dvir_reports dr
               WHERE dr.vehicle_id=@id AND dr.company_id=@cid
+                AND dr.deleted_at IS NULL AND {QualifiedDvirReportSql}
               ORDER BY dr.submitted_at DESC
               LIMIT 5",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", cid); }, ct);
 
         var currentAssignment = await db.QuerySingleAsync(
-            @"SELECT da.id, da.status,
+            $@"SELECT da.id, da.status,
                      j.pickup_address, j.dropoff_address delivery_address,
                      j.scheduled_start scheduled_pickup_at, j.scheduled_end scheduled_delivery_at,
                      d.full_name driver_name
               FROM dispatch_assignments da
-              LEFT JOIN drivers d ON d.id=da.driver_id
-              LEFT JOIN jobs j ON j.id=da.job_id
+              LEFT JOIN drivers d ON d.id=da.driver_id AND d.company_id=da.company_id AND d.deleted_at IS NULL
+              LEFT JOIN jobs j ON j.id=da.job_id AND j.company_id=da.company_id
               WHERE da.vehicle_id=@id AND da.company_id=@cid
                 AND da.status NOT IN ('delivered','cancelled','Delivered','Cancelled')
+                AND {QualifiedDispatchAssignmentSql}
               ORDER BY da.assigned_at DESC
               LIMIT 1",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", cid); }, ct);
@@ -33435,10 +33599,20 @@ LIMIT 100000",
         var (branchClause, branchId) = StrictBranchFilter(http, "d");
 
         var drv = await db.QuerySingleAsync(
-            @"SELECT d.*, v.vehicle_code assigned_vehicle_code
+            $@"SELECT d.id,d.company_id,d.branch_id,d.driver_code,d.full_name,d.status,d.assigned_vehicle_id,
+                     qualified_score.score_30d safety_score,NULL::numeric risk_score,
+                     v.vehicle_code assigned_vehicle_code
               FROM drivers d
-              LEFT JOIN vehicles v ON v.id=d.assigned_vehicle_id
-              WHERE d.id=@id AND d.company_id=@cid AND d.deleted_at IS NULL" + branchClause,
+              LEFT JOIN vehicles v ON v.id=d.assigned_vehicle_id AND v.company_id=d.company_id
+                AND {RecordedFleetHealthVehicleSql}
+              LEFT JOIN LATERAL (
+                SELECT dss.score_30d FROM driver_safety_scores dss
+                 WHERE dss.company_id=d.company_id AND dss.driver_id=d.id
+                   AND {QualifiedDriverSafetyScoreSql}
+                 ORDER BY dss.computed_at DESC LIMIT 1
+              ) qualified_score ON TRUE
+              WHERE d.id=@id AND d.company_id=@cid AND d.deleted_at IS NULL
+                AND {RecordedFleetHealthDriverSql}" + branchClause,
             c =>
             {
                 c.Parameters.AddWithValue("@id", id);
@@ -33454,28 +33628,30 @@ LIMIT 100000",
         drv.Remove("licenseNumberBidx");
 
         var openEvents = await db.QueryAsync(
-            @"SELECT se.id, se.event_number, se.event_type, se.severity,
+            $@"SELECT se.id, se.event_number, se.event_type, se.severity,
                      se.review_status, se.description, se.occurred_at,
                      v.vehicle_code
               FROM safety_events se
-              LEFT JOIN vehicles v ON v.id=se.vehicle_id
+              LEFT JOIN vehicles v ON v.id=se.vehicle_id AND v.company_id=se.company_id AND v.deleted_at IS NULL
               WHERE se.driver_id=@id AND se.company_id=@cid
                 AND se.review_status NOT IN
                   ('Resolved','Acknowledged','resolved','acknowledged')
                 AND se.deleted_at IS NULL
+                AND {QualifiedSafetyEventSql}
               ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Medium','Low'], se.severity),
                        se.occurred_at DESC
               LIMIT 10",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", cid); }, ct);
 
         var coachingTasks = await db.QueryAsync(
-            @"SELECT ct.id, ct.task_number, ct.coaching_type, ct.priority,
+            $@"SELECT ct.id, ct.task_number, ct.coaching_type, ct.priority,
                      ct.status, ct.title, ct.description, ct.due_at,
                      ct.driver_acknowledged, ct.acknowledged_at
               FROM coaching_tasks ct
               WHERE ct.driver_id=@id AND ct.company_id=@cid
                 AND ct.status NOT IN ('Completed','Cancelled','Driver Acknowledged')
                 AND ct.deleted_at IS NULL
+                AND {QualifiedCoachingTaskSql} AND {QualifiedCoachingSourceSql}
               ORDER BY ct.due_at, ARRAY_POSITION(ARRAY['Critical','High','Normal','Low'], ct.priority)
               LIMIT 10",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", cid); }, ct);
@@ -33484,21 +33660,26 @@ LIMIT 100000",
             @"SELECT hc.drive_time_remaining_minutes, hc.shift_time_remaining_minutes,
                      hc.status hos_status, hc.duty_status, hc.last_synced_at last_updated_at
               FROM hos_clocks hc
-              WHERE hc.driver_id=@id
-              ORDER BY hc.last_synced_at DESC
+              WHERE hc.driver_id=@id AND hc.company_id=@cid
+                AND hc.source_authority='Authoritative'
+                AND NULLIF(BTRIM(hc.clock_source),'') IS NOT NULL
+                AND NULLIF(BTRIM(hc.source_event_id),'') IS NOT NULL
+                AND hc.source_observed_at IS NOT NULL
+              ORDER BY hc.source_observed_at DESC
               LIMIT 1",
-            c => c.Parameters.AddWithValue("@id", id), ct);
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", cid); }, ct);
 
         var currentAssignment = await db.QuerySingleAsync(
-            @"SELECT da.id, da.status,
+            $@"SELECT da.id, da.status,
                      j.pickup_address, j.dropoff_address delivery_address,
                      j.scheduled_start scheduled_pickup_at, j.scheduled_end scheduled_delivery_at,
                      v.vehicle_code
               FROM dispatch_assignments da
-              LEFT JOIN vehicles v ON v.id=da.vehicle_id
-              LEFT JOIN jobs j ON j.id=da.job_id
+              LEFT JOIN vehicles v ON v.id=da.vehicle_id AND v.company_id=da.company_id AND v.deleted_at IS NULL
+              LEFT JOIN jobs j ON j.id=da.job_id AND j.company_id=da.company_id
               WHERE da.driver_id=@id AND da.company_id=@cid
                 AND da.status NOT IN ('delivered','cancelled','Delivered','Cancelled')
+                AND {QualifiedDispatchAssignmentSql}
               ORDER BY da.assigned_at DESC
               LIMIT 1",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", cid); }, ct);
@@ -33522,34 +33703,31 @@ LIMIT 100000",
         long criticalDefects,
         long activeFaults,
         long overduePm,
-        long openWorkOrders,
-        double baseRiskScore)
+        long openWorkOrders)
     {
         var raw =
             (outOfService    ? 80.0 : 0.0)
             + criticalDefects * 55.0
             + activeFaults    * 8.0
             + overduePm       * 10.0
-            + openWorkOrders  * 4.0
-            + baseRiskScore   * 0.35;
+            + openWorkOrders  * 4.0;
         return Math.Min(100.0, Math.Round(raw, 1));
     }
 
     internal static double ComputeDriverRiskScore(
-        double safetyScore,
+        double? safetyScore,
         long openSafetyEvents,
-        long overdueCoaching,
-        double baseRiskScore)
+        long overdueCoaching)
     {
         var safetyComponent =
+            safetyScore is null ? 0.0 :
             safetyScore < 65 ? 80.0 :
             safetyScore < 75 ? 55.0 :
             safetyScore < 85 ? 20.0 : 5.0;
         var raw =
             safetyComponent
             + openSafetyEvents  * 12.0
-            + overdueCoaching   * 15.0
-            + baseRiskScore     * 0.3;
+            + overdueCoaching   * 15.0;
         return Math.Min(100.0, Math.Round(raw, 1));
     }
 

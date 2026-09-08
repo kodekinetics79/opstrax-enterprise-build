@@ -114,6 +114,8 @@ function ReadinessStrip({ summary }: { summary: AnyRecord }) {
   const oos       = num(summary.oosVehicles);
   const blockers  = num(summary.criticalDefectVehicles);
   const avgSafety = optional(summary.avgSafetyScore);
+  const readinessCoverage = optional(summary.readinessEvidenceCoverage);
+  const driverCoverage = optional(summary.driverScoreCoverage);
 
   return (
     <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-wrap gap-6 items-center shadow-sm">
@@ -179,6 +181,15 @@ function ReadinessStrip({ summary }: { summary: AnyRecord }) {
           <p className="text-xs text-slate-500">vehicles</p>
         </div>
       </div>
+      {score == null && (
+        <div className="w-full rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+          <p className="font-semibold">Fleet health score unavailable until qualified evidence covers the current fleet.</p>
+          <p className="mt-1 text-amber-700">
+            Vehicle readiness coverage: {readinessCoverage == null ? "unavailable" : `${readinessCoverage}%`}
+            {" · "}Driver score coverage: {driverCoverage == null ? "unavailable" : `${driverCoverage}%`}
+          </p>
+        </div>
+      )}
     </div>
   );
 }
@@ -997,6 +1008,7 @@ export function FleetHealthPage() {
 
   const summaryData = summary.data ?? {};
   const insights    = (summaryData.systemInsights as AnyRecord[]) ?? [];
+  const hasCompleteEvidence = summaryData.evidenceStatus === "calculated_from_complete_qualified_coverage";
 
   if (summary.isLoading) return <LoadingState />;
 
@@ -1111,11 +1123,15 @@ export function FleetHealthPage() {
           </div>
         ) : filtered.length === 0 ? (
           <div className="bg-white border border-slate-200 rounded-xl p-12 text-center">
-            <CheckCircle className="h-10 w-10 text-emerald-400 mx-auto mb-3" />
+            {hasCompleteEvidence
+              ? <CheckCircle className="h-10 w-10 text-emerald-400 mx-auto mb-3" />
+              : <AlertTriangle className="h-10 w-10 text-amber-400 mx-auto mb-3" />}
             <p className="text-base font-semibold text-slate-700 mb-1">No risk items match the current filter</p>
             <p className="text-sm text-slate-500">
               {allRisks.length === 0
-                ? "All vehicles and drivers are currently within acceptable operational parameters."
+                ? hasCompleteEvidence
+                  ? "No open risk was found in the evidence-qualified records for the current scope."
+                  : "Current evidence coverage is incomplete, so an empty risk list does not confirm that vehicles and drivers are within acceptable parameters."
                 : "Try adjusting the severity or category filters."}
             </p>
           </div>
@@ -1246,7 +1262,7 @@ export function FleetHealthPage() {
 
         {/* Footer note */}
         <p className="text-xs text-slate-400 text-center pb-4">
-          System Fleet Insight — rule-based guidance from current persisted operational records.
+          System Fleet Insight — rule-based guidance from evidence-qualified operational records.
           Not AI-generated. Updated every 60 seconds.
         </p>
       </div>

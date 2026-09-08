@@ -123,6 +123,7 @@ export function ExecutivePage() {
         <div className="mb-3">
           <h2 className="section-title">Current Record Counts</h2>
           <p className="mt-1 text-xs text-slate-500">Known generated fixtures are excluded. Derived score, SLA, safety, maintenance, exception and proof claims remain unavailable until their source provenance is recorded.</p>
+          <p className="mt-1 text-xs text-slate-400">These operational counts do not certify provider, device, or regulatory evidence.</p>
         </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {metrics.map((metric) => (

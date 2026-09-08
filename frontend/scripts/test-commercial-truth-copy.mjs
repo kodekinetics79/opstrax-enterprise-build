@@ -181,7 +181,7 @@ assert.match(accountHealth, /Persisted customer health scores, SLA evidence and 
 assert.doesNotMatch(modulePage, /Operational recommendations will surface as live events/, "Empty module insight panels must not promise live recommendations");
 assert.match(modulePage, /No recorded recommendations are available for this module/, "Empty module insight panels must disclose missing recommendations");
 assert.doesNotMatch(executive, /useExecutiveSnapshots|useExecutiveAiRecs|AI Live Monitoring|emptySummary/, "Executive UI must not present seeded snapshots, recommendations, or missing-data zeros as current evidence");
-assert.match(executive, /Current aggregates from persisted records in the authorized tenant scope/, "Executive UI must disclose the source and authorization scope of its metrics");
+assert.match(executive, /Evidence-qualified record counts in the authorized tenant scope/, "Executive UI must disclose the source and authorization scope of its metrics");
 assert.match(executive, /do not certify provider, device, or regulatory evidence/, "Executive record counts must not be presented as certification evidence");
 assert.match(alertRules, /Enabled status records configuration intent/, "Alert rules must distinguish configuration from execution evidence");
 assert.doesNotMatch(alertRules, /Triggered Today|Last Triggered|live alert-control|No live alert rules/i, "Alert rules must not show unwritten execution counters or claim live enforcement");
@@ -190,6 +190,9 @@ assert.doesNotMatch(analytics, /computed from live fleet data|Live KPIs/, "Persi
 assert.match(fleetIntelligence, /Missing measurements remain unavailable/, "Fleet Intelligence must disclose missing measurements");
 assert.doesNotMatch(fleetIntelligence, /OBD \/ J1939 live|Live Telematics Alerts|every figure pulled live|value=\{offline \? "offline" : "online"\}/, "Fleet Intelligence must not infer live connectivity or diagnostic clearance");
 assert.match(fleetHealth, /Missing or unmeasured safety evidence is not treated as a normal result/, "Fleet Health must not interpret missing driver evidence as normal");
+assert.match(fleetHealth, /Fleet health score unavailable until qualified evidence covers the current fleet/, "Fleet Health must keep incomplete score coverage visibly unavailable");
+assert.match(fleetHealth, /an empty risk list does not confirm that vehicles and drivers are within acceptable parameters/, "Fleet Health must not treat an empty qualified queue as fleet-wide clearance when coverage is incomplete");
+assert.match(fleetHealth, /System Fleet Insight — rule-based guidance from evidence-qualified operational records/, "Fleet Health must disclose the source boundary of its guidance");
 assert.doesNotMatch(fleetHealth, /live operational data|All drivers within normal parameters|All vehicles within normal parameters|metrics\.deviceOffline|safetyScore, 100/, "Fleet Health must not fabricate live, connectivity, normal, or perfect-score evidence");
 assert.match(compliance, /do not certify regulatory compliance/, "Compliance recommendations must retain the certification boundary");
 assert.doesNotMatch(compliance, /recommendations based on live fleet data|No cross-border issues found/, "Compliance must not overstate record absence or evidence currency");
