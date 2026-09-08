@@ -54,7 +54,17 @@ public sealed class Batch7SchemaService(Database db, IConfiguration? configurati
                         AND sr.tenant_id=sb.tenant_id AND sr.data_origin='demo_seed')
                   THEN 'demo_seed' ELSE COALESCE(sb.data_origin,'legacy_unverified') END
            WHERE sb.data_origin IS NULL OR EXISTS (SELECT 1 FROM sla_records sr WHERE sr.id=sb.sla_record_id
-                     AND sr.tenant_id=sb.tenant_id AND sr.data_origin='demo_seed')",
+                     AND sr.tenant_id=sb.tenant_id AND sr.data_origin='demo_seed');
+          UPDATE executive_snapshots
+             SET data_origin=CASE WHEN tenant_id=1 AND id BETWEEN 1 AND 10
+                    AND snapshot_date BETWEEN DATE '2026-05-15' AND DATE '2026-05-24'
+                  THEN 'demo_seed' ELSE COALESCE(data_origin,'legacy_unverified') END,
+                 verification_status=CASE WHEN tenant_id=1 AND id BETWEEN 1 AND 10
+                    AND snapshot_date BETWEEN DATE '2026-05-15' AND DATE '2026-05-24'
+                  THEN 'demo_seed' ELSE COALESCE(verification_status,'unverified') END
+           WHERE data_origin IS NULL OR verification_status IS NULL
+              OR (tenant_id=1 AND id BETWEEN 1 AND 10
+                  AND snapshot_date BETWEEN DATE '2026-05-15' AND DATE '2026-05-24')",
         ct: ct);
 
     private async Task EnsureColumnAsync(string table, string column, string definition, CancellationToken ct)
@@ -129,6 +139,8 @@ public sealed class Batch7SchemaService(Database db, IConfiguration? configurati
         new("kpi_targets", "data_origin",        "VARCHAR(80) NULL"),
         new("kpi_targets", "verification_status", "VARCHAR(80) NULL"),
         new("sla_breaches", "data_origin",       "VARCHAR(80) NULL"),
+        new("executive_snapshots", "data_origin", "VARCHAR(80) NULL"),
+        new("executive_snapshots", "verification_status", "VARCHAR(80) NULL"),
     ];
 
     private static readonly string[] Tables =
@@ -278,6 +290,8 @@ public sealed class Batch7SchemaService(Database db, IConfiguration? configurati
             top_risks_json JSONB NULL,
             top_savings_json JSONB NULL,
             ai_brief TEXT NULL,
+            data_origin VARCHAR(80) NULL,
+            verification_status VARCHAR(80) NULL,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )",
 

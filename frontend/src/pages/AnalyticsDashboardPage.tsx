@@ -91,7 +91,7 @@ function metricText(value: number | null, prefix = "", suffix = ""): string | un
 function SectionLabel() {
   return (
     <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
-      System Analytics Insight · computed from current persisted operational records
+      System Analytics Insight · evidence status is shown by each data surface
     </p>
   );
 }
@@ -129,17 +129,13 @@ function ExecutivePanel() {
   return (
     <div className="space-y-4">
       <SectionLabel />
+      <p className="text-xs text-slate-500">Recorded tenant rows; known generated fixtures excluded. Derived rates remain unavailable until their inputs have provenance.</p>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-        <KpiCard label="Fleet Utilization" value={n("fleetUtilization")} unit="%" target={metricText(n("fleetUtilTarget"), "", "%")} color={thresholdTone(n("fleetUtilization"), n("fleetUtilTarget"), "text-amber-600")} />
-        <KpiCard label="On-Time Delivery" value={n("onTimeDeliveryRate")} unit="%" target={metricText(n("otdTarget"), "", "%")} color={thresholdTone(n("onTimeDeliveryRate"), n("otdTarget"), "text-red-600")} />
-        <KpiCard label="Driver Safety Avg" value={n("driverSafetyAvg")} sub={n("driverSafetyAvg") === null ? undefined : "out of 100"} target={metricText(n("safetyTarget"))} color={thresholdTone(n("driverSafetyAvg"), n("safetyTarget"), "text-amber-600")} />
-        <KpiCard label="Open Safety Events" value={n("openSafetyIncidents")} color={positiveTone(n("openSafetyIncidents"), "text-red-600")} />
-        <KpiCard label="Open Exceptions" value={n("openExceptions")} color={positiveTone(n("openExceptions"), "text-amber-600")} />
-        <KpiCard label="Maintenance Overdue" value={n("maintenanceOverdue")} color={positiveTone(n("maintenanceOverdue"), "text-red-600")} />
-        <KpiCard label="Active Vehicles" value={n("vehicleActive")} sub={metricText(n("vehicleTotal"), "of ", " total")} />
-        <KpiCard label="Drivers" value={n("driverTotal")} />
-        <KpiCard label="Jobs (30d)" value={n("jobsTotal")} sub={metricText(n("jobsCompleted"), "", " completed")} />
-        <KpiCard label="Proofs Captured (30d)" value={n("proofCaptured30d")} />
+        <KpiCard label="Recorded Vehicles" value={n("vehicleTotal")} />
+        <KpiCard label="Operational Vehicles" value={n("vehicleActive")} />
+        <KpiCard label="Recorded Drivers" value={n("driverTotal")} />
+        <KpiCard label="Jobs Recorded (30d)" value={n("jobsTotal")} />
+        <KpiCard label="Jobs Recorded Complete (30d)" value={n("jobsCompleted")} />
       </div>
     </div>
   );
@@ -282,13 +278,14 @@ function CustomerPanel() {
   return (
     <div className="space-y-4">
       <SectionLabel />
+      <p className="text-xs text-slate-500">Only evidence-qualified SLA measurements and breaches are included.</p>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-        <KpiCard label="SLA Met Rate" value={n("metRate")} unit="%" color={bandTone(n("metRate"), 95, 85)} target="95%" />
-        <KpiCard label="SLA Met" value={n("slaMet")} color={positiveTone(n("slaMet"), "text-emerald-600")} />
-        <KpiCard label="At Risk" value={n("slaAtRisk")} color={positiveTone(n("slaAtRisk"), "text-amber-600")} />
-        <KpiCard label="Breached" value={n("slaBreached")} color={positiveTone(n("slaBreached"), "text-red-600")} />
-        <KpiCard label="Open Breaches" value={n("openBreaches")} color={positiveTone(n("openBreaches"), "text-red-600")} />
-        <KpiCard label="Total SLA Records" value={n("slaTotal")} />
+        <KpiCard label="Verified SLA Met Rate" value={n("metRate")} unit="%" />
+        <KpiCard label="Verified SLA Met" value={n("slaMet")} color={positiveTone(n("slaMet"), "text-emerald-600")} />
+        <KpiCard label="Verified At Risk" value={n("slaAtRisk")} color={positiveTone(n("slaAtRisk"), "text-amber-600")} />
+        <KpiCard label="Verified Breached" value={n("slaBreached")} color={positiveTone(n("slaBreached"), "text-red-600")} />
+        <KpiCard label="Verified Open Breaches" value={n("openBreaches")} color={positiveTone(n("openBreaches"), "text-red-600")} />
+        <KpiCard label="Verified SLA Records" value={n("slaTotal")} />
       </div>
       {byType.length > 0 && (
         <div className="panel p-4">
@@ -311,12 +308,12 @@ function TrendsPanel() {
     <div className="space-y-4">
       <SectionLabel />
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <KpiCard label="OTD Last 30d" value={d["otdLast30d"] as number} unit="%" />
-        <KpiCard label="OTD Last 7d" value={d["otdLast7d"] as number} unit="%" />
+        <KpiCard label="Verified OTD Last 30d" value={d["otdLast30d"] as number} unit="%" />
+        <KpiCard label="Verified OTD Last 7d" value={d["otdLast7d"] as number} unit="%" />
         <div className="panel p-4 flex items-center gap-3">
           <TrendArrow value={d["otdTrend"] as string} />
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">OTD Trend</p>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Verified OTD Trend</p>
             <p className="text-sm font-semibold text-slate-700 capitalize">{String(d["otdTrend"] ?? "—")}</p>
           </div>
         </div>

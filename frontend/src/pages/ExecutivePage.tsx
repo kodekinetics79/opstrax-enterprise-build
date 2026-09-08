@@ -76,28 +76,17 @@ export function ExecutivePage() {
   }
 
   const metrics = [
-    { label: "Vehicles", value: summary.vehicleTotal, detail: "Current vehicle records", route: "/vehicles" },
-    { label: "Active Vehicles", value: summary.vehicleActive, detail: "Records in an active operating state", route: "/vehicles" },
-    { label: "Drivers", value: summary.driverTotal, detail: "Current driver records", route: "/drivers" },
-    { label: "Jobs Created", value: summary.jobsTotal, detail: "Persisted in the last 30 days", route: "/jobs" },
-    { label: "Jobs Completed", value: summary.jobsCompleted, detail: "Completed or delivered in the last 30 days", route: "/jobs" },
-    { label: "Proofs Captured", value: summary.proofCaptured30d, detail: "Persisted in the last 30 days", route: "/proof-of-delivery" },
-    { label: "Open Exceptions", value: summary.openExceptions, detail: "Current unresolved dispatch exceptions", route: "/dispatch", tone: "text-amber-700" },
-    { label: "Safety Reviews", value: summary.openSafetyIncidents, detail: "Events awaiting review from the last 30 days", route: "/safety", tone: "text-red-700" },
-    { label: "Maintenance Overdue", value: summary.maintenanceOverdue, detail: "Open maintenance records past due", route: "/maintenance", tone: "text-red-700" },
-  ];
-
-  const rates = [
-    { label: "Fleet Utilization", value: summary.fleetUtilization, unit: "%", detail: "Active vehicle records divided by current vehicle records" },
-    { label: "On-time Delivery", value: summary.onTimeDeliveryRate, unit: "%", detail: "Completed jobs without a recorded SLA breach in the last 30 days" },
-    { label: "Driver Safety Average", value: summary.driverSafetyAvg, detail: "Average persisted driver safety score" },
+    { label: "Vehicles", value: summary.vehicleTotal, detail: "Recorded rows; known generated fixtures excluded", route: "/vehicles" },
+    { label: "Operational Vehicles", value: summary.vehicleActive, detail: "Recorded operational status; known generated fixtures excluded", route: "/vehicles" },
+    { label: "Drivers", value: summary.driverTotal, detail: "Recorded rows; known generated fixtures excluded", route: "/drivers" },
+    { label: "Jobs Created", value: summary.jobsTotal, detail: "Recorded in the last 30 days; known generated fixtures excluded", route: "/jobs" },
+    { label: "Jobs Completed", value: summary.jobsCompleted, detail: "Recorded complete or delivered in the last 30 days; known generated fixtures excluded", route: "/jobs" },
   ];
   const computedAt = summary.computedAt;
 
   function handleExport() {
     exportCsv("executive-operational-summary", [
       ...metrics.map((metric) => ({ metric: metric.label, value: optionalNumber(metric.value), evidence: metric.detail })),
-      ...rates.map((metric) => ({ metric: metric.label, value: optionalNumber(metric.value), unit: metric.unit ?? "", evidence: metric.detail })),
       { metric: "Computed At", value: String(computedAt ?? "Unavailable"), evidence: "API response timestamp" },
     ]);
   }
@@ -107,7 +96,7 @@ export function ExecutivePage() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-xl font-extrabold text-slate-900">Executive Operations</h1>
-          <p className="mt-0.5 text-sm text-slate-500">Current aggregates from persisted records in the authorized tenant scope</p>
+          <p className="mt-0.5 text-sm text-slate-500">Evidence-qualified record counts in the authorized tenant scope</p>
           <p className="mt-1 text-xs text-slate-400">
             {computedAt ? `Computed ${new Date(String(computedAt)).toLocaleString()}` : "Computation time unavailable"}
           </p>
@@ -133,26 +122,17 @@ export function ExecutivePage() {
       <section>
         <div className="mb-3">
           <h2 className="section-title">Current Record Counts</h2>
-          <p className="mt-1 text-xs text-slate-500">These counts describe stored operational records; they do not certify provider, device, or regulatory evidence.</p>
+          <p className="mt-1 text-xs text-slate-500">Known generated fixtures are excluded. Derived score, SLA, safety, maintenance, exception and proof claims remain unavailable until their source provenance is recorded.</p>
         </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {metrics.map((metric) => (
             <button key={metric.label} type="button" className="text-left" onClick={() => navigate(metric.route)}>
-              <MetricCard label={metric.label} value={metric.value} detail={metric.detail} tone={metric.tone} />
+              <MetricCard label={metric.label} value={metric.value} detail={metric.detail} />
             </button>
           ))}
         </div>
       </section>
 
-      <section>
-        <div className="mb-3">
-          <h2 className="section-title">Derived Current Rates</h2>
-          <p className="mt-1 text-xs text-slate-500">A rate remains unavailable when its required population has no records.</p>
-        </div>
-        <div className="grid gap-4 sm:grid-cols-3">
-          {rates.map((metric) => <MetricCard key={metric.label} {...metric} />)}
-        </div>
-      </section>
     </div>
   );
 }

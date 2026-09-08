@@ -2099,13 +2099,7 @@ public static partial class EndpointMappings
         app.MapPut("/api/admin/roles/{id:long}", UpdateAdminRole);
 
         // ===== BATCH 7: EXECUTIVE DASHBOARD ======================================
-        app.MapGet("/api/executive/snapshots", (HttpContext http, Database db, CancellationToken ct) =>
-        {
-            if (RequirePermission(http, "reports:view") is { } denied) return Task.FromResult(denied);
-            return OkRows(db,
-                "SELECT * FROM executive_snapshots WHERE tenant_id=@cid ORDER BY snapshot_date DESC LIMIT 14",
-                c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
-        });
+        app.MapGet("/api/executive/snapshots", (HttpContext http, Database db, CancellationToken ct) => ExecutiveSnapshots(http, db, ct));
         app.MapGet("/api/executive/summary", ExecutiveSummary);
         app.MapGet("/api/executive/ai/recommendations", (HttpContext http, Database db, CancellationToken ct) =>
         {
@@ -17224,7 +17218,11 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
                  AND scoped_route.company_id=sr.company_id
                  AND scoped_route.company_id=@tenantId))";
 
-    private static async Task<List<object>> RecordedKpiRows(long companyId, Database db, CancellationToken ct)
+    private sealed record RecordedFleetCounts(
+        long VehicleTotal, long OperationalVehicles, long DriverTotal,
+        long JobsTotal30d, long JobsCompleted30d);
+
+    private static async Task<RecordedFleetCounts> RecordedFleetCountsFor(long companyId, Database db, CancellationToken ct)
     {
         async Task<long> Count(string sql) => await db.ScalarLongAsync(sql,
             p => p.Parameters.AddWithValue("@c", companyId), ct);
@@ -17245,13 +17243,20 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
         var jobsTotal = await Count($"SELECT COUNT(*) FROM jobs WHERE company_id=@c AND created_at >= NOW()-30*INTERVAL '1 day' AND {recordedJob}");
         var jobsCompleted = await Count($"SELECT COUNT(*) FROM jobs WHERE company_id=@c AND status IN ('Completed','Delivered') AND created_at >= NOW()-30*INTERVAL '1 day' AND {recordedJob}");
 
+        return new(vehicleTotal, operationalVehicles, driverTotal, jobsTotal, jobsCompleted);
+    }
+
+    private static async Task<List<object>> RecordedKpiRows(long companyId, Database db, CancellationToken ct)
+    {
+        var counts = await RecordedFleetCountsFor(companyId, db, ct);
+
         return
         [
-            Measurement("recorded-vehicles", "Recorded vehicles", "Fleet", vehicleTotal, "Current non-demo vehicle registry rows."),
-            Measurement("operational-vehicles", "Vehicles in an operational status", "Fleet", operationalVehicles, "Current non-demo vehicle rows whose recorded status is operational."),
-            Measurement("recorded-drivers", "Recorded drivers", "Workforce", driverTotal, "Current non-demo driver registry rows."),
-            Measurement("recorded-jobs-30d", "Jobs recorded in last 30 days", "Operations", jobsTotal, "Non-demo job rows created during the last 30 days."),
-            Measurement("completed-jobs-30d", "Jobs recorded complete in last 30 days", "Operations", jobsCompleted, "Non-demo job rows with a recorded Completed or Delivered status."),
+            Measurement("recorded-vehicles", "Recorded vehicles", "Fleet", counts.VehicleTotal, "Current non-demo vehicle registry rows."),
+            Measurement("operational-vehicles", "Vehicles in an operational status", "Fleet", counts.OperationalVehicles, "Current non-demo vehicle rows whose recorded status is operational."),
+            Measurement("recorded-drivers", "Recorded drivers", "Workforce", counts.DriverTotal, "Current non-demo driver registry rows."),
+            Measurement("recorded-jobs-30d", "Jobs recorded in last 30 days", "Operations", counts.JobsTotal30d, "Non-demo job rows created during the last 30 days."),
+            Measurement("completed-jobs-30d", "Jobs recorded complete in last 30 days", "Operations", counts.JobsCompleted30d, "Non-demo job rows with a recorded Completed or Delivered status."),
         ];
 
         static object Measurement(string code, string name, string category, long actual, string explanation) => new
@@ -19284,14 +19289,65 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
         if (RequirePermission(http, "reports:view") is { } denied) return denied;
         var companyId = GetCompanyId(http);
         void BindTenant(NpgsqlCommand c) => c.Parameters.AddWithValue("@cid", companyId);
-        var latest     = await db.QueryAsync("SELECT * FROM executive_snapshots WHERE tenant_id=@cid ORDER BY snapshot_date DESC LIMIT 1", BindTenant, ct);
-        var trend      = await db.QueryAsync("SELECT snapshot_date, fleet_readiness_score AS fleet_health_score, safety_health_score AS safety_score, compliance_health_score AS compliance_score, cost_health_score AS financial_score, ROUND((operations_health_score+safety_health_score+compliance_health_score+fleet_readiness_score)/4,1) AS overall_score FROM executive_snapshots WHERE tenant_id=@cid ORDER BY snapshot_date DESC LIMIT 14", BindTenant, ct);
-        var kpiCrit    = await db.ScalarLongAsync("SELECT COUNT(*) FROM kpi_metrics WHERE tenant_id=@cid AND status='Critical'", BindTenant, ct);
-        var slaBreach  = await db.ScalarLongAsync("SELECT COUNT(*) FROM sla_breaches WHERE tenant_id=@cid AND status='Open'", BindTenant, ct);
+        var latest = await db.QueryAsync(
+            $@"SELECT id,snapshot_date,operations_health_score,cost_health_score,
+                      safety_health_score,compliance_health_score,customer_sla_score,
+                      fleet_readiness_score,dispatch_readiness_score,top_risks_json,
+                      top_savings_json,ai_brief,data_origin,verification_status,created_at
+                 FROM executive_snapshots
+                WHERE tenant_id=@cid AND {QualifiedExecutiveSnapshotSql}
+                ORDER BY snapshot_date DESC LIMIT 1", BindTenant, ct);
+        var trend = await db.QueryAsync(
+            $@"SELECT snapshot_date,fleet_readiness_score AS fleet_health_score,
+                      safety_health_score AS safety_score,compliance_health_score AS compliance_score,
+                      cost_health_score AS financial_score,
+                      ROUND((operations_health_score+safety_health_score+compliance_health_score+fleet_readiness_score)/4,1) AS overall_score,
+                      data_origin,verification_status
+                 FROM executive_snapshots
+                WHERE tenant_id=@cid AND {QualifiedExecutiveSnapshotSql}
+                ORDER BY snapshot_date DESC LIMIT 14", BindTenant, ct);
+        var kpiCrit = await db.ScalarLongAsync(
+            @"SELECT COUNT(DISTINCT km.id)
+                FROM kpi_metrics km
+                JOIN kpi_targets kt ON kt.tenant_id=km.tenant_id AND kt.kpi_code=km.kpi_code
+               WHERE km.tenant_id=@cid AND km.status='Critical' AND km.data_origin='runtime_computed'
+                 AND kt.status='Active' AND kt.data_origin IN ('manual_entry','provider_import')
+                 AND kt.verification_status='verified'", BindTenant, ct);
+        var slaBreach = await db.ScalarLongAsync(
+            $@"SELECT COUNT(*)
+                 FROM sla_breaches sb
+                 JOIN sla_records sr ON sr.id=sb.sla_record_id AND sr.tenant_id=sb.tenant_id AND sr.company_id=@cid
+                WHERE sb.tenant_id=@cid AND sb.status IN ('Open','Escalated','Under Investigation')
+                  AND sb.data_origin IN ('derived_from_sla','provider_import','manual_entry')
+                  AND {QualifiedSlaEvidenceSql} AND {QualifiedSlaEntityScopeSql}",
+            p =>
+            {
+                p.Parameters.AddWithValue("@cid", companyId);
+                p.Parameters.AddWithValue("@tenantId", companyId);
+            }, ct);
         var auditToday = await db.ScalarLongAsync("SELECT COUNT(*) FROM audit_logs WHERE company_id=@cid AND created_at::date=CURRENT_DATE", BindTenant, ct);
         var aiRecs     = await db.QueryAsync("SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='executive'" + GroundedRecommendationSql + " ORDER BY score DESC LIMIT 5", BindTenant, ct);
         return Results.Ok(ApiResponse<object>.Ok(new { latest, trend, kpiCritical = kpiCrit, openSlaBreaches = slaBreach, auditActionsToday = auditToday, aiRecommendations = aiRecs }, "Executive summary"));
     }
+
+    private static async Task<IResult> ExecutiveSnapshots(HttpContext http, Database db, CancellationToken ct)
+    {
+        if (RequirePermission(http, "reports:view") is { } denied) return denied;
+        return await OkRows(db,
+            $@"SELECT id,snapshot_date,operations_health_score,cost_health_score,
+                      safety_health_score,compliance_health_score,customer_sla_score,
+                      fleet_readiness_score,dispatch_readiness_score,top_risks_json,
+                      top_savings_json,ai_brief,data_origin,verification_status,created_at
+                 FROM executive_snapshots
+                WHERE tenant_id=@cid AND {QualifiedExecutiveSnapshotSql}
+                ORDER BY snapshot_date DESC LIMIT 14",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+    }
+
+    private const string QualifiedExecutiveSnapshotSql =
+        @"((data_origin='runtime_computed' AND verification_status='calculated_from_qualified_sources')
+           OR (data_origin='manual_entry' AND verification_status='manual_verified')
+           OR (data_origin='provider_import' AND verification_status='provider_verified'))";
 
     private static string String(System.Collections.Generic.IDictionary<string, object?> row, string key)
         => row.TryGetValue(key, out var v) ? v?.ToString() ?? "" : "";
@@ -31274,39 +31330,29 @@ LIMIT 100000",
         if (denied is not null) return denied;
         if (RequireAnalyticsBranchScope(http) is { } branchDenied) return branchDenied;
 
-        var vehicleTotal  = await db.ScalarLongAsync("SELECT COUNT(*) FROM vehicles WHERE company_id=@c AND deleted_at IS NULL", p => p.Parameters.AddWithValue("@c", c), ct);
-        var vehicleActive = await db.ScalarLongAsync("SELECT COUNT(*) FROM vehicles WHERE company_id=@c AND deleted_at IS NULL AND status IN ('Active','In Transit','Assigned')", p => p.Parameters.AddWithValue("@c", c), ct);
-        var driverTotal   = await db.ScalarLongAsync("SELECT COUNT(*) FROM drivers WHERE company_id=@c AND deleted_at IS NULL", p => p.Parameters.AddWithValue("@c", c), ct);
-        var avgSafety     = await db.ScalarDecimalAsync("SELECT AVG(safety_score) FROM drivers WHERE company_id=@c AND deleted_at IS NULL", p => p.Parameters.AddWithValue("@c", c), ct);
-        var jobsTotal     = await db.ScalarLongAsync("SELECT COUNT(*) FROM jobs WHERE company_id=@c AND created_at >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
-        var jobsCompleted = await db.ScalarLongAsync("SELECT COUNT(*) FROM jobs WHERE company_id=@c AND status IN ('Completed','Delivered') AND created_at >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
-        var jobsOnTime    = await db.ScalarLongAsync("SELECT COUNT(*) FROM jobs WHERE company_id=@c AND status IN ('Completed','Delivered') AND (sla_status IS NULL OR sla_status NOT IN ('Breached','Critical')) AND created_at >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
-        var openIncidents = await db.ScalarLongAsync("SELECT COUNT(*) FROM safety_events WHERE company_id=@c AND review_status NOT IN ('Closed','Dismissed') AND event_time >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
-        var maintOverdue  = await db.ScalarLongAsync("SELECT COUNT(*) FROM maintenance_items WHERE company_id=@c AND status='Open' AND due_date < CURRENT_DATE", p => p.Parameters.AddWithValue("@c", c), ct);
-        var openExcept    = await db.ScalarLongAsync("SELECT COUNT(*) FROM dispatch_exceptions WHERE company_id=@c AND status NOT IN ('resolved','Resolved')", p => p.Parameters.AddWithValue("@c", c), ct);
-        var proofCount    = await db.ScalarLongAsync("SELECT COUNT(*) FROM proof_of_delivery WHERE company_id=@c AND captured_at >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
-
-        decimal? fleetUtil = vehicleTotal > 0 ? Math.Round(vehicleActive * 100m / vehicleTotal, 1) : null;
-        decimal? otdRate = jobsCompleted > 0 ? Math.Round(jobsOnTime * 100m / jobsCompleted, 1) : null;
-        decimal? safetyAvg = avgSafety.HasValue ? Math.Round(avgSafety.Value, 1) : null;
+        var recorded = await RecordedFleetCountsFor(c, db, ct);
 
         return Results.Ok(ApiResponse<object>.Ok(new
         {
-            fleetUtilization   = fleetUtil,
-            fleetUtilTarget    = 88m,
-            onTimeDeliveryRate = otdRate,
-            otdTarget          = 96m,
-            driverSafetyAvg    = safetyAvg,
-            safetyTarget       = 85m,
-            openSafetyIncidents = openIncidents,
-            openExceptions     = openExcept,
-            maintenanceOverdue = maintOverdue,
-            proofCaptured30d   = proofCount,
-            vehicleTotal, vehicleActive,
-            driverTotal, jobsTotal, jobsCompleted,
+            fleetUtilization = (decimal?)null,
+            fleetUtilTarget = (decimal?)null,
+            onTimeDeliveryRate = (decimal?)null,
+            otdTarget = (decimal?)null,
+            driverSafetyAvg = (decimal?)null,
+            safetyTarget = (decimal?)null,
+            openSafetyIncidents = (long?)null,
+            openExceptions = (long?)null,
+            maintenanceOverdue = (long?)null,
+            proofCaptured30d = (long?)null,
+            vehicleTotal = recorded.VehicleTotal,
+            vehicleActive = recorded.OperationalVehicles,
+            driverTotal = recorded.DriverTotal,
+            jobsTotal = recorded.JobsTotal30d,
+            jobsCompleted = recorded.JobsCompleted30d,
             computedAt = DateTime.UtcNow,
             insightType = "System Analytics Insight",
-        }, "Executive analytics from persisted fleet records"));
+            evidenceStatus = "Recorded tenant rows; known generated fixtures excluded. Score, SLA, safety, maintenance, exception and proof claims remain unavailable until source provenance is recorded."
+        }, "Evidence-qualified executive record counts"));
     }
 
     private static async Task<IResult> AnalyticsOperations(HttpContext http, Database db, CancellationToken ct)
@@ -31437,14 +31483,36 @@ LIMIT 100000",
         if (denied is not null) return denied;
         if (RequireAnalyticsBranchScope(http) is { } branchDenied) return branchDenied;
 
-        var slaTotal   = await db.ScalarLongAsync("SELECT COUNT(*) FROM sla_records WHERE tenant_id=@c", p => p.Parameters.AddWithValue("@c", c), ct);
-        var slaMet     = await db.ScalarLongAsync("SELECT COUNT(*) FROM sla_records WHERE tenant_id=@c AND status='Met'", p => p.Parameters.AddWithValue("@c", c), ct);
-        var slaAtRisk  = await db.ScalarLongAsync("SELECT COUNT(*) FROM sla_records WHERE tenant_id=@c AND status='At Risk'", p => p.Parameters.AddWithValue("@c", c), ct);
-        var slaBreached = await db.ScalarLongAsync("SELECT COUNT(*) FROM sla_records WHERE tenant_id=@c AND status='Breached'", p => p.Parameters.AddWithValue("@c", c), ct);
-        var openBreaches = await db.ScalarLongAsync("SELECT COUNT(*) FROM sla_breaches WHERE tenant_id=@c AND status='Open'", p => p.Parameters.AddWithValue("@c", c), ct);
+        async Task<long> SlaCount(string? status = null) => await db.ScalarLongAsync(
+            $@"SELECT COUNT(*) FROM sla_records sr
+                WHERE sr.tenant_id=@tenantId AND sr.company_id=@tenantId
+                  AND {QualifiedSlaEvidenceSql} AND {QualifiedSlaEntityScopeSql}"
+                + (status is null ? "" : " AND sr.status=@status"),
+            p =>
+            {
+                p.Parameters.AddWithValue("@tenantId", c);
+                if (status is not null) p.Parameters.AddWithValue("@status", status);
+            }, ct);
+        var slaTotal = await SlaCount();
+        var slaMet = await SlaCount("Met");
+        var slaAtRisk = await SlaCount("At Risk");
+        var slaBreached = await SlaCount("Breached");
+        var openBreaches = await db.ScalarLongAsync(
+            $@"SELECT COUNT(*) FROM sla_breaches sb
+                 JOIN sla_records sr ON sr.id=sb.sla_record_id AND sr.tenant_id=sb.tenant_id AND sr.company_id=@tenantId
+                WHERE sb.tenant_id=@tenantId AND sb.status IN ('Open','Escalated','Under Investigation')
+                  AND sb.data_origin IN ('derived_from_sla','provider_import','manual_entry')
+                  AND {QualifiedSlaEvidenceSql} AND {QualifiedSlaEntityScopeSql}",
+            p => p.Parameters.AddWithValue("@tenantId", c), ct);
         var slaByType  = await db.QueryAsync(
-            "SELECT sla_type, COUNT(*) total, SUM(CASE WHEN status='Met' THEN 1 ELSE 0 END) met, SUM(CASE WHEN status='Breached' THEN 1 ELSE 0 END) breached FROM sla_records WHERE tenant_id=@c GROUP BY sla_type",
-            p => p.Parameters.AddWithValue("@c", c), ct);
+            $@"SELECT sr.sla_type,COUNT(*) total,
+                      SUM(CASE WHEN sr.status='Met' THEN 1 ELSE 0 END) met,
+                      SUM(CASE WHEN sr.status='Breached' THEN 1 ELSE 0 END) breached
+                 FROM sla_records sr
+                WHERE sr.tenant_id=@tenantId AND sr.company_id=@tenantId
+                  AND {QualifiedSlaEvidenceSql} AND {QualifiedSlaEntityScopeSql}
+                GROUP BY sr.sla_type",
+            p => p.Parameters.AddWithValue("@tenantId", c), ct);
 
         decimal? metRate = slaTotal > 0 ? Math.Round(slaMet * 100m / slaTotal, 1) : null;
 
@@ -31454,7 +31522,8 @@ LIMIT 100000",
             openBreaches, metRate,
             slaByType,
             insightType = "System Analytics Insight",
-        }, "Customer analytics"));
+            evidenceStatus = "Only verified SLA measurements and their qualified breaches are included."
+        }, "Verified customer SLA analytics"));
     }
 
     private static async Task<IResult> AnalyticsTrends(HttpContext http, Database db, CancellationToken ct)
@@ -31464,34 +31533,29 @@ LIMIT 100000",
         if (denied is not null) return denied;
         if (RequireAnalyticsBranchScope(http) is { } branchDenied) return branchDenied;
 
-        // 7-day daily dispatch activity
-        var dispatchTrend = await db.QueryAsync(
-            @"SELECT created_at::date AS day,
-                     SUM(CASE WHEN assignment_status='delivered' THEN 1 ELSE 0 END) AS delivered,
-                     SUM(CASE WHEN assignment_status='exception' THEN 1 ELSE 0 END) AS exceptions,
-                     COUNT(*) AS total
-              FROM dispatch_assignments
-              WHERE company_id=@c AND created_at >= NOW() - 7 * INTERVAL '1 day'
-              GROUP BY created_at::date ORDER BY day",
-            p => p.Parameters.AddWithValue("@c", c), ct);
+        // Dispatch and safety source rows do not yet carry end-to-end provenance,
+        // so their historical trends stay unavailable instead of mixing demo rows
+        // into customer analytics.
+        var dispatchTrend = Array.Empty<object>();
+        var safetyTrend = Array.Empty<object>();
 
-        // 7-day daily safety events
-        var safetyTrend = await db.QueryAsync(
-            @"SELECT event_time::date AS day, severity, COUNT(*) AS cnt
-              FROM safety_events
-              WHERE company_id=@c AND event_time >= NOW() - 7 * INTERVAL '1 day'
-              GROUP BY event_time::date, severity ORDER BY day",
-            p => p.Parameters.AddWithValue("@c", c), ct);
-
-        // 30-day vs 7-day OTD comparison
+        // 30-day vs 7-day verified on-time-delivery SLA comparison.
         var otd30 = await db.ScalarDecimalAsync(
-            @"SELECT SUM(CASE WHEN status IN ('Completed','Delivered') AND (sla_status IS NULL OR sla_status NOT IN ('Breached','Critical')) THEN 1 ELSE 0 END) * 100.0 / NULLIF(SUM(CASE WHEN status IN ('Completed','Delivered') THEN 1 ELSE 0 END),0)
-              FROM jobs WHERE company_id=@c AND created_at >= NOW() - 30 * INTERVAL '1 day'",
-            p => p.Parameters.AddWithValue("@c", c), ct);
+            $@"SELECT SUM(CASE WHEN sr.status='Met' THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0)
+                  FROM sla_records sr
+                 WHERE sr.tenant_id=@tenantId AND sr.company_id=@tenantId
+                   AND sr.sla_type='On-Time Delivery'
+                   AND sr.measured_at >= NOW()-30*INTERVAL '1 day'
+                   AND {QualifiedSlaEvidenceSql} AND {QualifiedSlaEntityScopeSql}",
+            p => p.Parameters.AddWithValue("@tenantId", c), ct);
         var otd7 = await db.ScalarDecimalAsync(
-            @"SELECT SUM(CASE WHEN status IN ('Completed','Delivered') AND (sla_status IS NULL OR sla_status NOT IN ('Breached','Critical')) THEN 1 ELSE 0 END) * 100.0 / NULLIF(SUM(CASE WHEN status IN ('Completed','Delivered') THEN 1 ELSE 0 END),0)
-              FROM jobs WHERE company_id=@c AND created_at >= NOW() - 7 * INTERVAL '1 day'",
-            p => p.Parameters.AddWithValue("@c", c), ct);
+            $@"SELECT SUM(CASE WHEN sr.status='Met' THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0)
+                  FROM sla_records sr
+                 WHERE sr.tenant_id=@tenantId AND sr.company_id=@tenantId
+                   AND sr.sla_type='On-Time Delivery'
+                   AND sr.measured_at >= NOW()-7*INTERVAL '1 day'
+                   AND {QualifiedSlaEvidenceSql} AND {QualifiedSlaEntityScopeSql}",
+            p => p.Parameters.AddWithValue("@tenantId", c), ct);
 
         return Results.Ok(ApiResponse<object>.Ok(new
         {
@@ -31503,7 +31567,8 @@ LIMIT 100000",
                 ? (otd7.Value >= otd30.Value ? "improving" : "declining")
                 : null,
             insightType  = "System Analytics Insight",
-        }, "Trend analytics"));
+            evidenceStatus = "OTD uses verified SLA measurements. Dispatch and safety trends await source provenance."
+        }, "Evidence-qualified trend analytics"));
     }
 
     // Rule-based system analytics insights derived from real data.
@@ -31517,9 +31582,17 @@ LIMIT 100000",
 
         var insights = new List<object>();
 
-        // On-time delivery trend
-        var otd30 = await db.ScalarDecimalAsync(@"SELECT COALESCE(SUM(CASE WHEN status IN ('Completed','Delivered') AND (sla_status IS NULL OR sla_status NOT IN ('Breached','Critical')) THEN 1 ELSE 0 END) * 100.0 / NULLIF(SUM(CASE WHEN status IN ('Completed','Delivered') THEN 1 ELSE 0 END),0), null) FROM jobs WHERE company_id=@c AND created_at >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
-        var otd7  = await db.ScalarDecimalAsync(@"SELECT COALESCE(SUM(CASE WHEN status IN ('Completed','Delivered') AND (sla_status IS NULL OR sla_status NOT IN ('Breached','Critical')) THEN 1 ELSE 0 END) * 100.0 / NULLIF(SUM(CASE WHEN status IN ('Completed','Delivered') THEN 1 ELSE 0 END),0), null) FROM jobs WHERE company_id=@c AND created_at >= NOW() - 7 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
+        // On-time delivery insight from verified SLA measurements only.
+        async Task<decimal?> Otd(int days) => await db.ScalarDecimalAsync(
+            $@"SELECT SUM(CASE WHEN sr.status='Met' THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0)
+                  FROM sla_records sr
+                 WHERE sr.tenant_id=@tenantId AND sr.company_id=@tenantId
+                   AND sr.sla_type='On-Time Delivery'
+                   AND sr.measured_at >= NOW()-{days}*INTERVAL '1 day'
+                   AND {QualifiedSlaEvidenceSql} AND {QualifiedSlaEntityScopeSql}",
+            p => p.Parameters.AddWithValue("@tenantId", c), ct);
+        var otd30 = await Otd(30);
+        var otd7 = await Otd(7);
         if (otd30.HasValue && otd7.HasValue)
         {
             var diff = Math.Round(otd7.Value - otd30.Value, 1);
@@ -31531,66 +31604,11 @@ LIMIT 100000",
                     detail   = $"Last 7 days: {Math.Round(otd7.Value, 1)}% vs last 30-day average: {Math.Round(otd30.Value, 1)}%.",
                     severity = diff <= -5 ? "warning" : diff < 0 ? "info" : "positive",
                     insightType = "System Analytics Insight",
-                    dataSource  = "jobs table — computed from status and sla_status",
+                    dataSource  = "verified On-Time Delivery SLA measurements",
                 });
         }
 
-        // Route compliance
-        var compAvg = await db.ScalarDecimalAsync("SELECT AVG(compliance_score) FROM trips WHERE company_id=@c AND started_at >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
-        if (compAvg.HasValue && compAvg.Value < 85)
-        {
-            var lowCount = await db.ScalarLongAsync("SELECT COUNT(*) FROM trips WHERE company_id=@c AND compliance_score < 70 AND started_at >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
-            insights.Add(new
-            {
-                type     = "route_compliance",
-                title    = $"Route compliance average is {Math.Round(compAvg.Value, 1)} — below the 85-point target",
-                detail   = $"{lowCount} trips in the last 30 days scored below 70. Review route adherence and investigate recurring deviation patterns.",
-                severity = compAvg.Value < 70 ? "critical" : "warning",
-                insightType = "System Analytics Insight",
-                dataSource  = "trips.compliance_score",
-            });
-        }
-
-        // Safety events
-        var safetyCount = await db.ScalarLongAsync("SELECT COUNT(*) FROM safety_events WHERE company_id=@c AND severity='Critical' AND review_status NOT IN ('Closed','Dismissed') AND event_time >= NOW() - 7 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
-        if (safetyCount > 0)
-            insights.Add(new
-            {
-                type     = "safety_critical",
-                title    = $"{safetyCount} unreviewed critical safety events in the last 7 days",
-                detail   = "Critical safety events require manager review within 24 hours per policy. Coaching assignments should follow within 48 hours.",
-                severity = "critical",
-                insightType = "System Analytics Insight",
-                dataSource  = "safety_events — severity=Critical, review_status not Closed",
-            });
-
-        // Maintenance
-        var oosCount = await db.ScalarLongAsync("SELECT COUNT(*) FROM vehicles WHERE company_id=@c AND out_of_service=TRUE AND deleted_at IS NULL", p => p.Parameters.AddWithValue("@c", c), ct);
-        if (oosCount > 0)
-            insights.Add(new
-            {
-                type     = "fleet_oos",
-                title    = $"{oosCount} vehicle{(oosCount > 1 ? "s are" : " is")} currently out of service",
-                detail   = $"Fleet utilization is directly impacted. Prioritize work orders for these vehicles. Check DVIR reports for root cause defects.",
-                severity = "warning",
-                insightType = "System Analytics Insight",
-                dataSource  = "vehicles.out_of_service",
-            });
-
-        // Coaching overdue
-        var overdueCoach = await db.ScalarLongAsync("SELECT COUNT(*) FROM coaching_tasks WHERE company_id=@c AND status NOT IN ('Completed','Cancelled') AND due_at < CURRENT_DATE AND deleted_at IS NULL", p => p.Parameters.AddWithValue("@c", c), ct);
-        if (overdueCoach > 0)
-            insights.Add(new
-            {
-                type     = "coaching_overdue",
-                title    = $"{overdueCoach} coaching task{(overdueCoach > 1 ? "s are" : " is")} overdue",
-                detail   = "Overdue coaching tasks indicate a safety process gap. Assign to safety managers for immediate follow-through.",
-                severity = overdueCoach > 3 ? "warning" : "info",
-                insightType = "System Analytics Insight",
-                dataSource  = "coaching_tasks — due_date < today, status not Completed",
-            });
-
-        return Results.Ok(ApiResponse<object>.Ok(insights, $"{insights.Count} system analytics insights"));
+        return Results.Ok(ApiResponse<object>.Ok(insights, $"{insights.Count} evidence-qualified system analytics insights"));
     }
 
     // ══════════════════════════════════════════════════════════════════════════

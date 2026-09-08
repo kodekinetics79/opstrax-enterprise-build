@@ -1612,6 +1612,8 @@ CREATE TABLE IF NOT EXISTS executive_snapshots (
   top_risks_json JSONB NULL,
   top_savings_json JSONB NULL,
   ai_brief TEXT NULL,
+  data_origin VARCHAR(80) NULL,
+  verification_status VARCHAR(80) NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
