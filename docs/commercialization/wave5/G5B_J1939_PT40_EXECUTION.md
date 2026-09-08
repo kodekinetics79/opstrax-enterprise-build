@@ -102,6 +102,8 @@ The customer maintenance surfaces can now read received canonical CAN diagnostic
 
 The customer fault list now distinguishes `CanonicalCanObservation`, `AuthenticatedDeviceObservation` and legacy/unclassified records, and separately reports whether a persisted vehicle/review hold exists. The diagnostics pages derive protocol and latest diagnostic time from the fault record when no GPS position exists. Raw evidence JSON is omitted from the list response, and the maintenance insight no longer states that an automatic defect was created without a persisted action.
 
+The pre-existing diagnostic-hold ledger and acknowledge/verified-resolve endpoints are now visible in a dedicated Maintenance tab. Acknowledgement explicitly leaves availability unchanged. Resolution requires one accepted verification type, an evidence reference and notes; the server then rechecks all diagnostic, DVIR and work-order blockers. This exposes the governed workflow without making CAN observations create holds automatically.
+
 ## DeviceOps registry integration
 
 Stage 115 provides the shared exact manufacturer/model/hardware revision/firmware and software-SHA candidate identity needed by a later PT40 or OEM certification candidate. It deliberately seeds no PT40, GT06, J1939 adapter or OEM record and its database contract fixes every engineering candidate at `ExternalHold` / `Unverified`. A candidate may be recorded only after the exact physical tuple is observed; tier promotion requires the evidence gates in this document and a separately frozen certification candidate.

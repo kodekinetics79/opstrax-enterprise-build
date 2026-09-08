@@ -12,7 +12,7 @@ import { useDialogFocus } from "@/hooks/useDialogFocus";
 import { useHasPermission } from "@/hooks/usePermission";
 import type { AnyRecord } from "@/types";
 
-const TABS = ["Overview", "Defects", "Inspections", "Work Orders", "PM Rules", "Fault Codes"] as const;
+const TABS = ["Overview", "Defects", "Inspections", "Work Orders", "PM Rules", "Fault Codes", "Diagnostic Holds"] as const;
 type Tab = (typeof TABS)[number];
 
 export function MaintenanceCommandPage() {
@@ -24,6 +24,7 @@ export function MaintenanceCommandPage() {
   const [createOpen, setCreateOpen] = useState(Boolean(requestedVehicleId));
   const [completionTarget, setCompletionTarget] = useState<AnyRecord | null>(null);
   const [resolveTarget, setResolveTarget] = useState<AnyRecord | null>(null);
+  const [resolveHoldTarget, setResolveHoldTarget] = useState<AnyRecord | null>(null);
   const [notice, setNotice] = useState<{ kind: "success" | "error"; message: string } | null>(null);
   const qc = useQueryClient();
 
@@ -57,10 +58,16 @@ export function MaintenanceCommandPage() {
     queryFn: () => maintenanceApi.faultCodes("active"),
     staleTime: 30_000,
   });
+  const diagnosticHolds = useQuery<AnyRecord[]>({
+    queryKey: ["maintenance", "diagnostic-holds"],
+    queryFn: () => maintenanceApi.diagnosticHolds(),
+    staleTime: 15_000,
+  });
 
   const hasPermission = useHasPermission();
   const canManage = hasPermission("maintenance:manage");
   const canClose  = hasPermission("maintenance:close");
+  const canUpdateDiagnosticHold = canManage || hasPermission("maintenance:update") || hasPermission("telematics:manage");
   const canExport = hasPermission("reports:export");
   const vehicles = useQuery<AnyRecord[]>({
     queryKey: ["vehicles", "maintenance-selector"],
@@ -88,6 +95,26 @@ export function MaintenanceCommandPage() {
   const reviewInspection = useMutation({
     mutationFn: (record: AnyRecord) => maintenanceApi.reviewInspection(Number(record.id), Number(record["rowVersion"] ?? record["row_version"])),
     onSuccess: invalidateAll,
+  });
+  const acknowledgeDiagnosticHold = useMutation({
+    mutationFn: (record: AnyRecord) => maintenanceApi.acknowledgeDiagnosticHold(Number(record.id)),
+    onSuccess: () => {
+      invalidateAll();
+      setNotice({ kind: "success", message: "Diagnostic hold acknowledged. Vehicle availability is unchanged until verified resolution." });
+    },
+  });
+  const resolveDiagnosticHold = useMutation({
+    mutationFn: ({ id, resolutionNote, verificationType, evidenceReference }: {
+      id: number;
+      resolutionNote: string;
+      verificationType: "technician_scan" | "provider_diagnostic" | "service_record";
+      evidenceReference: string;
+    }) => maintenanceApi.resolveDiagnosticHold(id, { resolutionNote, verificationType, evidenceReference }),
+    onSuccess: () => {
+      invalidateAll();
+      setResolveHoldTarget(null);
+      setNotice({ kind: "success", message: "Diagnostic hold resolved with verification evidence. Vehicle availability was re-evaluated against every remaining blocker." });
+    },
   });
   const completeWo = useMutation({
     mutationFn: ({ id, actualCost, notes }: { id: number; actualCost: number; notes: string }) =>
@@ -268,6 +295,23 @@ export function MaintenanceCommandPage() {
               isLoading={faultCodes.isLoading}
             />
           )}
+
+          {activeTab === "Diagnostic Holds" && (
+            <DiagnosticHoldsTab
+              rows={diagnosticHolds.data ?? []}
+              isLoading={diagnosticHolds.isLoading}
+              canUpdate={canUpdateDiagnosticHold}
+              isAcknowledging={acknowledgeDiagnosticHold.isPending}
+              error={diagnosticHolds.isError
+                ? errorMessage(diagnosticHolds.error, "Diagnostic holds could not be loaded.")
+                : acknowledgeDiagnosticHold.isError
+                  ? errorMessage(acknowledgeDiagnosticHold.error, "Diagnostic hold could not be acknowledged.")
+                  : null}
+              onRetry={() => void diagnosticHolds.refetch()}
+              onAcknowledge={(record) => acknowledgeDiagnosticHold.mutate(record)}
+              onResolve={setResolveHoldTarget}
+            />
+          )}
         </div>
       </section>
 
@@ -298,6 +342,17 @@ export function MaintenanceCommandPage() {
           id: Number(resolveTarget.id),
           rowVersion: Number(resolveTarget.rowVersion ?? resolveTarget.row_version),
           notes,
+        })}
+      />}
+      {resolveHoldTarget && <ResolveDiagnosticHoldDialog
+        hold={resolveHoldTarget}
+        pending={resolveDiagnosticHold.isPending}
+        error={resolveDiagnosticHold.isError
+          ? errorMessage(resolveDiagnosticHold.error, "Diagnostic hold could not be resolved.")
+          : null}
+        onClose={() => { if (!resolveDiagnosticHold.isPending) setResolveHoldTarget(null); }}
+        onSubmit={(resolutionNote, verificationType, evidenceReference) => resolveDiagnosticHold.mutate({
+          id: Number(resolveHoldTarget.id), resolutionNote, verificationType, evidenceReference,
         })}
       />}
     </div>
@@ -537,6 +592,57 @@ function FaultCodesTab({ rows, isLoading }: { rows: AnyRecord[]; isLoading: bool
       columns={["vehicleCode", "code", "protocol", "severity", "evidenceClassification", "safetyActionStatus", "sourceAddress", "bus", "occurrenceCount", "lastObservedAt", "status"]}
     />
   );
+}
+
+function DiagnosticHoldsTab({
+  rows, isLoading, canUpdate, isAcknowledging, error, onRetry, onAcknowledge, onResolve,
+}: {
+  rows: AnyRecord[];
+  isLoading: boolean;
+  canUpdate: boolean;
+  isAcknowledging: boolean;
+  error: string | null;
+  onRetry: () => void;
+  onAcknowledge: (record: AnyRecord) => void;
+  onResolve: (record: AnyRecord) => void;
+}) {
+  if (isLoading) return <LoadingState />;
+  if (error) return <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+    <p>{error}</p><button type="button" className="btn-ghost mt-3 text-xs" onClick={onRetry}>Retry</button>
+  </div>;
+  if (!rows.length) return <Empty icon={<ShieldAlert className="h-8 w-8 text-slate-300" />} message="No diagnostic holds recorded" />;
+  return <div className="space-y-3">
+    <p className="text-sm text-slate-600">These rows are persisted safety actions. Fault observations without a hold remain in the Fault Codes tab as observation-only evidence.</p>
+    {rows.map((hold) => {
+      const status = String(hold.status ?? "unknown");
+      const canAcknowledge = status.toLowerCase() === "active";
+      const canResolve = ["active", "acknowledged"].includes(status.toLowerCase());
+      return <article key={String(hold.id)} className="rounded-xl border border-slate-200 bg-white p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="font-semibold text-slate-950">{String(hold.vehicleCode ?? `Vehicle ${hold.vehicleId ?? "—"}`)}</h3>
+              <StatusBadge status={status} />
+              <RiskBadge risk={String(hold.severity ?? "Critical")} />
+            </div>
+            <p className="mt-1 font-mono text-sm text-slate-700">{String(hold.canonicalDtc ?? hold.code ?? "Diagnostic code unavailable")}</p>
+            <p className="mt-2 text-sm text-slate-600">{String(hold.reason ?? "No hold reason recorded")}</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {canAcknowledge && <button type="button" className="btn-ghost text-xs" disabled={!canUpdate || isAcknowledging} onClick={() => onAcknowledge(hold)}>{isAcknowledging ? "Acknowledging…" : "Acknowledge"}</button>}
+            {canResolve && <button type="button" className="btn-primary text-xs" disabled={!canUpdate} onClick={() => onResolve(hold)}>Resolve with evidence</button>}
+          </div>
+        </div>
+        <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+          <div><dt className="text-slate-500">Device</dt><dd className="font-medium text-slate-800">{String(hold.deviceId ?? "—")}</dd></div>
+          <div><dt className="text-slate-500">Source event</dt><dd className="break-all font-mono text-xs text-slate-800">{String(hold.sourceEventId ?? "—")}</dd></div>
+          <div><dt className="text-slate-500">First observed</dt><dd className="font-medium text-slate-800">{fmtDateTime(hold.firstObservedAt)}</dd></div>
+          <div><dt className="text-slate-500">Last observed</dt><dd className="font-medium text-slate-800">{fmtDateTime(hold.lastObservedAt)}</dd></div>
+        </dl>
+        {!canUpdate && canResolve && <p className="mt-3 text-xs text-slate-500">Maintenance update or telematics management permission is required to change this hold.</p>}
+      </article>;
+    })}
+  </div>;
 }
 
 // ── Defect Card ───────────────────────────────────────────────────────────────
@@ -791,6 +897,54 @@ function ResolveDefectDialog({ defect, pending, error, onClose, onSubmit }: {
   </div>;
 }
 
+type DiagnosticVerificationType = "technician_scan" | "provider_diagnostic" | "service_record";
+
+function ResolveDiagnosticHoldDialog({ hold, pending, error, onClose, onSubmit }: {
+  hold: AnyRecord;
+  pending: boolean;
+  error: string | null;
+  onClose: () => void;
+  onSubmit: (resolutionNote: string, verificationType: DiagnosticVerificationType, evidenceReference: string) => void;
+}) {
+  const dialogRef = useDialogFocus<HTMLDivElement>(true, onClose);
+  const [resolutionNote, setResolutionNote] = useState("");
+  const [verificationType, setVerificationType] = useState<DiagnosticVerificationType>("technician_scan");
+  const [evidenceReference, setEvidenceReference] = useState("");
+  const [validation, setValidation] = useState<string | null>(null);
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (resolutionNote.trim().length < 3)
+      return setValidation("Add resolution notes describing the verified repair or diagnostic outcome.");
+    if (evidenceReference.trim().length < 2)
+      return setValidation("Add the technician scan, provider diagnostic, or service record reference.");
+    setValidation(null);
+    onSubmit(resolutionNote.trim(), verificationType, evidenceReference.trim());
+  };
+  return <div ref={dialogRef} className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="alertdialog" aria-modal="true" aria-labelledby="resolve-diagnostic-hold-title" aria-describedby="resolve-diagnostic-hold-description">
+    <form className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl" onSubmit={submit} noValidate>
+      <div className="flex items-start justify-between gap-4"><div>
+        <h2 id="resolve-diagnostic-hold-title" className="text-xl font-semibold text-slate-950">Resolve diagnostic hold</h2>
+        <p id="resolve-diagnostic-hold-description" className="mt-1 text-sm text-slate-600">Record verification evidence for {String(hold.vehicleCode ?? "this vehicle")}. Resolution re-evaluates availability against all remaining blockers.</p>
+      </div><button type="button" className="icon-btn" onClick={onClose} disabled={pending} aria-label="Close diagnostic hold resolution dialog"><X className="h-5 w-5" /></button></div>
+      {(validation || error) && <p role="alert" className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{validation || error}</p>}
+      <label className="field-label mt-5 block">Verification type <span aria-hidden="true">*</span>
+        <select autoFocus className="input mt-1" value={verificationType} onChange={(event) => setVerificationType(event.target.value as DiagnosticVerificationType)} required>
+          <option value="technician_scan">Technician scan</option>
+          <option value="provider_diagnostic">Provider diagnostic</option>
+          <option value="service_record">Service record</option>
+        </select>
+      </label>
+      <label className="field-label mt-4 block">Evidence reference <span aria-hidden="true">*</span>
+        <input className="input mt-1" value={evidenceReference} onChange={(event) => setEvidenceReference(event.target.value)} maxLength={500} placeholder="Scan report, provider case, or service record reference" required />
+      </label>
+      <label className="field-label mt-4 block">Resolution notes <span aria-hidden="true">*</span>
+        <textarea className="input mt-1 min-h-28" value={resolutionNote} onChange={(event) => setResolutionNote(event.target.value)} maxLength={2000} required />
+      </label>
+      <div className="mt-6 flex justify-end gap-3"><button type="button" className="btn-ghost" onClick={onClose} disabled={pending}>Cancel</button><button type="submit" className="btn-primary" disabled={pending} aria-busy={pending}>{pending ? "Resolving…" : "Resolve with evidence"}</button></div>
+    </form>
+  </div>;
+}
+
 function vehicleLabel(vehicle: AnyRecord): string {
   const code = String(vehicle.vehicleCode ?? vehicle.code ?? vehicle.unitNumber ?? `Vehicle ${vehicle.id}`);
   const plate = vehicle.plateNumber ?? vehicle.plate_number ?? vehicle.licensePlate ?? vehicle.registrationNumber;
@@ -814,4 +968,10 @@ function Empty({ icon, message }: { icon: React.ReactNode; message: string }) {
 function fmtDate(val: unknown): string {
   if (!val) return "--";
   try { return new Date(String(val)).toLocaleDateString(); } catch { return String(val); }
+}
+
+function fmtDateTime(val: unknown): string {
+  if (!val) return "—";
+  const date = new Date(String(val));
+  return Number.isNaN(date.getTime()) ? String(val) : date.toLocaleString();
 }
