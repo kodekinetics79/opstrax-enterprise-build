@@ -668,21 +668,33 @@ public class RevenueReadinessPostgresTests
         Assert.Equal(250.00m, byType["completed_job_no_charge"].DetectedAmount); // rate card minimum_charge
         Assert.Equal(job1, byType["completed_job_no_charge"].EntityId);
         Assert.Equal(475.25m, byType["stale_draft_charge"].DetectedAmount); // draft charge amount
+        Assert.Equal("USD", byType["stale_draft_charge"].Currency);
+        Assert.Equal("Recorded", byType["stale_draft_charge"].AmountEvidenceStatus);
+        Assert.Equal("runtime_detector", byType["stale_draft_charge"].DataOrigin);
+        Assert.Equal("Open", byType["stale_draft_charge"].Status);
         Assert.Equal(draftCharge.Id, byType["stale_draft_charge"].EntityId);
 
         // Correctly-billed job produced nothing.
         Assert.DoesNotContain(outcome.Signals, s => s.EntityType == "job" && s.EntityId == job3);
         // Persisted to cost_leakage_items — exactly 2 open signals for this tenant.
         Assert.Equal(2, await db.ScalarLongAsync(
-            "SELECT COUNT(*) FROM cost_leakage_items WHERE company_id=@c AND status='open' AND category IN ('completed_job_no_charge','stale_draft_charge')",
+            "SELECT COUNT(*) FROM cost_leakage_items WHERE company_id=@c AND LOWER(status)='open' AND data_origin='runtime_detector' AND category IN ('completed_job_no_charge','stale_draft_charge')",
             c => c.Parameters.AddWithValue("@c", companyId)));
 
-        // Idempotent: re-running creates no duplicates.
+        // Idempotent: re-running creates no duplicates, preserves workflow state, and repairs
+        // evidence metadata on a legacy runtime row instead of silently hiding it from the queue.
+        await db.ExecuteAsync(
+            @"UPDATE cost_leakage_items
+                 SET status='Acknowledged', currency=NULL, data_origin=NULL, amount_evidence_status=NULL
+               WHERE company_id=@c AND category='stale_draft_charge'",
+            c => c.Parameters.AddWithValue("@c", companyId));
         var rerun = await service.DetectRevenueLeakageAsync(companyId, 7);
         Assert.Equal(0, rerun.SignalsCreated);
         Assert.Equal(2, rerun.SignalsAlreadyOpen);
+        Assert.Equal("Acknowledged", rerun.Signals.Single(s => s.SignalType == "stale_draft_charge").Status);
+        Assert.Equal("USD", rerun.Signals.Single(s => s.SignalType == "stale_draft_charge").Currency);
         Assert.Equal(2, await db.ScalarLongAsync(
-            "SELECT COUNT(*) FROM cost_leakage_items WHERE company_id=@c AND status='open'",
+            "SELECT COUNT(*) FROM cost_leakage_items WHERE company_id=@c AND LOWER(status) IN ('open','acknowledged') AND data_origin='runtime_detector' AND amount_evidence_status='Recorded'",
             c => c.Parameters.AddWithValue("@c", companyId)));
 
         await db.ExecuteAsync("DELETE FROM cost_leakage_items WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", companyId));

@@ -1823,7 +1823,7 @@ public static partial class EndpointMappings
             if (RequirePermission(http, "finance:view") is { } denied) return Task.FromResult(denied);
             return OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='predictive-margin'" + GroundedRecommendationSql + " ORDER BY score DESC LIMIT 8", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
         });
-        app.MapPost("/api/cost-margin/recalculate", CostMarginRecalculate);
+        app.MapPost("/api/cost-margin/recalculate", (Delegate)CostMarginRecalculate);
         app.MapPost("/api/cost-margin/jobs/{jobId:long}/recalculate", (HttpContext http, long jobId, Database db, CancellationToken ct) => CostMarginRecalculateJob(http, jobId, db, ct));
 
         // ===== BATCH 5: COST LEAKAGE INTELLIGENCE ================================
@@ -15917,24 +15917,56 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
     {
         if (RequirePermission(http, "finance:view") is { } denied) return denied;
         var cid = GetCompanyId(http);
-        var row = await db.QuerySingleAsync(
+        var counts = await db.QuerySingleAsync(
             @"SELECT
-                CONCAT('$', TO_CHAR((COALESCE(SUM(estimated_loss),0))::numeric, 'FM9,999,999,990.00')) total_estimated_leakage,
-                CONCAT('$', TO_CHAR((COALESCE(SUM(projected_monthly_loss),0))::numeric, 'FM9,999,999,990.00')) monthly_leakage_projection,
-                SUM(CASE WHEN status='Open' THEN 1 ELSE 0 END) open_items,
-                SUM(CASE WHEN severity IN ('High','Critical') THEN 1 ELSE 0 END) critical_leakage_items,
-                SUM(CASE WHEN status='Acknowledged' THEN 1 ELSE 0 END) acknowledged_items,
-                SUM(CASE WHEN status='In Progress' THEN 1 ELSE 0 END) in_progress_items,
-                (SELECT COUNT(*) FROM cost_leakage_actions WHERE status='Open' AND company_id=@cid) open_actions,
-                CONCAT('$', TO_CHAR((COALESCE((SELECT SUM(estimated_savings) FROM cost_leakage_actions WHERE status='Open' AND company_id=@cid),0))::numeric, 'FM9,999,999,990.00')) recoverable_savings,
-                SUM(CASE WHEN category='Idle Time' THEN 1 ELSE 0 END) idle_leakage_count,
-                SUM(CASE WHEN category='Fuel Anomaly' THEN 1 ELSE 0 END) fuel_anomaly_count,
-                SUM(CASE WHEN category='Carrier Overcharge' THEN 1 ELSE 0 END) carrier_overcharge_count,
-                SUM(CASE WHEN category='Underpriced Contract' THEN 1 ELSE 0 END) underpriced_count,
+                SUM(CASE WHEN LOWER(status)='open' THEN 1 ELSE 0 END) open_items,
+                SUM(CASE WHEN LOWER(severity) IN ('high','critical') THEN 1 ELSE 0 END) high_severity_items,
+                SUM(CASE WHEN LOWER(status)='acknowledged' THEN 1 ELSE 0 END) acknowledged_items,
+                SUM(CASE WHEN LOWER(status)='in progress' THEN 1 ELSE 0 END) in_progress_items,
+                SUM(CASE WHEN amount_evidence_status='Unavailable' THEN 1 ELSE 0 END) amount_unavailable_items,
+                (SELECT COUNT(*)
+                   FROM cost_leakage_actions action
+                   JOIN cost_leakage_items item
+                     ON item.id=action.cost_leakage_item_id AND item.company_id=action.company_id
+                  WHERE action.company_id=@cid AND LOWER(action.status) IN ('open','in progress')
+                    AND item.leakage_number LIKE 'RLK-%' AND item.deleted_at IS NULL) open_actions,
                 COUNT(*) total
-              FROM cost_leakage_items WHERE company_id=@cid",
+              FROM cost_leakage_items
+              WHERE company_id=@cid AND leakage_number LIKE 'RLK-%'
+                AND data_origin='runtime_detector' AND deleted_at IS NULL",
             c => c.Parameters.AddWithValue("@cid", cid), ct);
-        return Results.Ok(ApiResponse<object>.Ok(row ?? new Dictionary<string, object?>()));
+        var byCurrency = await db.QueryAsync(
+            @"WITH action_totals AS (
+                  SELECT action.cost_leakage_item_id,
+                         SUM(action.estimated_savings) estimated_savings
+                    FROM cost_leakage_actions action
+                   WHERE action.company_id=@cid AND LOWER(action.status) IN ('open','in progress')
+                   GROUP BY action.cost_leakage_item_id
+              )
+              SELECT COALESCE(NULLIF(item.currency,''),'Unknown') currency,
+                     SUM(item.estimated_loss) detected_loss,
+                     COALESCE(SUM(actions.estimated_savings),0) open_action_estimated_savings,
+                     COUNT(*) item_count
+                FROM cost_leakage_items item
+                LEFT JOIN action_totals actions ON actions.cost_leakage_item_id=item.id
+               WHERE item.company_id=@cid AND item.leakage_number LIKE 'RLK-%'
+                 AND item.data_origin='runtime_detector' AND item.deleted_at IS NULL
+               GROUP BY COALESCE(NULLIF(item.currency,''),'Unknown')
+               ORDER BY currency",
+            c => c.Parameters.AddWithValue("@cid", cid), ct);
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            openItems = counts?.GetValueOrDefault("openItems") ?? 0,
+            highSeverityItems = counts?.GetValueOrDefault("highSeverityItems") ?? 0,
+            acknowledgedItems = counts?.GetValueOrDefault("acknowledgedItems") ?? 0,
+            inProgressItems = counts?.GetValueOrDefault("inProgressItems") ?? 0,
+            amountUnavailableItems = counts?.GetValueOrDefault("amountUnavailableItems") ?? 0,
+            openActions = counts?.GetValueOrDefault("openActions") ?? 0,
+            total = counts?.GetValueOrDefault("total") ?? 0,
+            byCurrency,
+            dataOrigin = "runtime_detector",
+            calculationPolicy = "Detected loss and action estimates are grouped by currency and never combined."
+        }));
     }
 
     private static Task<IResult> CostLeakageItems(HttpContext http, Database db, CancellationToken ct)
@@ -15942,10 +15974,16 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
         if (RequirePermission(http, "finance:view") is { } denied) return Task.FromResult(denied);
         return OkRows(db,
             @"SELECT cli.*,
-                     (SELECT COUNT(*) FROM cost_leakage_actions a WHERE a.cost_leakage_item_id=cli.id AND a.status <> 'Cancelled') actions_count,
-                     (SELECT ROUND(SUM(a.estimated_savings),2) FROM cost_leakage_actions a WHERE a.cost_leakage_item_id=cli.id) potential_savings
+                     'Runtime detector' record_origin,
+                     (SELECT COUNT(*) FROM cost_leakage_actions a
+                       WHERE a.company_id=cli.company_id AND a.cost_leakage_item_id=cli.id
+                         AND LOWER(a.status) <> 'cancelled') actions_count,
+                     (SELECT ROUND(SUM(a.estimated_savings),2) FROM cost_leakage_actions a
+                       WHERE a.company_id=cli.company_id AND a.cost_leakage_item_id=cli.id
+                         AND LOWER(a.status) IN ('open','in progress')) open_action_estimated_savings
               FROM cost_leakage_items cli
-              WHERE cli.company_id=@cid
+              WHERE cli.company_id=@cid AND cli.leakage_number LIKE 'RLK-%'
+                AND cli.data_origin='runtime_detector' AND cli.deleted_at IS NULL
               ORDER BY ARRAY_POSITION(ARRAY['Critical','High','Medium','Low'], cli.severity), cli.estimated_loss DESC",
             c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
     }
@@ -15953,38 +15991,86 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
     private static async Task<IResult> CostLeakageAcknowledge(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
         if (RequirePermission(http, "finance:manage") is { } denied) return denied;
-        var affected = await db.ExecuteAsync("UPDATE cost_leakage_items SET status='Acknowledged' WHERE id=@id AND company_id=@cid",
-            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", GetCompanyId(http)); }, ct);
-        if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Cost leakage item not found"));
-        await audit.LogAsync(http, "cost.leakage.acknowledged", "CostLeakage", id, ct: ct);
-        return Results.Ok(ApiResponse<object>.Ok(new { id }, "Cost leakage item acknowledged"));
+        var cid = GetCompanyId(http);
+        return await db.RunInTenantTransactionAsync<IResult>(cid, async () =>
+        {
+            var item = await db.QuerySingleAsync(
+                @"SELECT status FROM cost_leakage_items
+                   WHERE id=@id AND company_id=@cid AND leakage_number LIKE 'RLK-%'
+                     AND data_origin='runtime_detector' AND deleted_at IS NULL FOR UPDATE",
+                c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", cid); }, ct);
+            if (item is null) return Results.NotFound(ApiResponse<object>.Fail("Cost leakage item not found"));
+            if (!string.Equals(item["status"]?.ToString(), "Open", StringComparison.OrdinalIgnoreCase))
+                return Results.Conflict(ApiResponse<object>.Fail("Invalid state", "Only an open leakage item can be acknowledged."));
+            await db.ExecuteAsync("UPDATE cost_leakage_items SET status='Acknowledged',updated_at=NOW() WHERE id=@id AND company_id=@cid",
+                c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", cid); }, ct);
+            await audit.LogAsync(http, "cost.leakage.acknowledged", "CostLeakage", id, ct: ct);
+            return Results.Ok(ApiResponse<object>.Ok(new { id, status = "Acknowledged" }, "Cost leakage item acknowledged"));
+        }, ct);
     }
 
     private static async Task<IResult> CostLeakageCreateAction(HttpContext http, long id, Dictionary<string, object?> body, Database db, AuditService audit, CancellationToken ct)
     {
         if (RequirePermission(http, "finance:manage") is { } denied) return denied;
         var cid = GetCompanyId(http);
-        // Ownership guard FIRST: this tenant-scoped UPDATE also proves the item belongs to the
-        // caller's company — otherwise an action could be attached to another tenant's item by id.
-        var owned = await db.ExecuteAsync("UPDATE cost_leakage_items SET status='In Progress' WHERE id=@id AND company_id=@cid",
-            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", cid); }, ct);
-        if (owned == 0) return Results.NotFound(ApiResponse<object>.Fail("Cost leakage item not found"));
+        var rawTitle = Get(body, "actionTitle");
+        var title = rawTitle is null or DBNull ? null : rawTitle.ToString()?.Trim();
+        if (string.IsNullOrWhiteSpace(title) || title.Length > 220)
+            return Results.BadRequest(ApiResponse<object>.Fail("Invalid action", "Action title is required and cannot exceed 220 characters."));
+        var savingsText = Convert.ToString(Get(body, "estimatedSavings"), CultureInfo.InvariantCulture);
+        if (!decimal.TryParse(savingsText, NumberStyles.Number, CultureInfo.InvariantCulture, out var savings) || savings <= 0)
+            return Results.BadRequest(ApiResponse<object>.Fail("Invalid action", "Estimated savings must be a recorded amount greater than zero."));
+        var (validAssignee, assigneeId) = OptionalPositiveId(Get(body, "assignedToUserId"));
+        if (!validAssignee)
+            return Results.BadRequest(ApiResponse<object>.Fail("Invalid action", "Assigned user must be a positive user ID."));
+        DateTimeOffset? dueAt = null;
+        var rawDue = Get(body, "dueAt");
+        var dueText = rawDue is null or DBNull ? null : rawDue.ToString();
+        if (!string.IsNullOrWhiteSpace(dueText))
+        {
+            if (!DateTimeOffset.TryParse(dueText, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var parsedDue))
+                return Results.BadRequest(ApiResponse<object>.Fail("Invalid action", "Due date must be a valid timestamp."));
+            dueAt = parsedDue;
+        }
+        if (dueAt.HasValue && dueAt.Value <= DateTimeOffset.UtcNow)
+            return Results.BadRequest(ApiResponse<object>.Fail("Invalid action", "Due date must be in the future."));
+        if (assigneeId.HasValue && await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM users WHERE id=@user AND company_id=@cid AND status='Active'",
+                c => { c.Parameters.AddWithValue("@user", assigneeId.Value); c.Parameters.AddWithValue("@cid", cid); }, ct) == 0)
+            return Results.BadRequest(ApiResponse<object>.Fail("Invalid action", "Assigned user does not belong to this company or is inactive."));
 
-        var actionId = await db.InsertAsync(
-            @"INSERT INTO cost_leakage_actions (company_id, cost_leakage_item_id, action_title, action_description, estimated_savings, status, assigned_to_user_id, due_at)
-              VALUES (@cid, @itemId, @title, @description, COALESCE(@savings,0), 'Open', @user, @due)",
-            c =>
-            {
-                c.Parameters.AddWithValue("@cid", cid);
-                c.Parameters.AddWithValue("@itemId", id);
-                c.Parameters.AddWithValue("@title", Get(body, "actionTitle") ?? "Cost recovery action");
-                c.Parameters.AddWithValue("@description", Get(body, "actionDescription"));
-                c.Parameters.AddWithValue("@savings", Get(body, "estimatedSavings"));
-                c.Parameters.AddWithValue("@user", Get(body, "assignedToUserId") ?? 1);
-                c.Parameters.AddWithValue("@due", Get(body, "dueAt"));
-            }, ct);
-        await audit.LogAsync(http, "cost.leakage.action.created", "CostLeakage", id, ct: ct);
-        return Results.Created($"/api/cost-leakage/items/{id}/actions/{actionId}", ApiResponse<object>.Ok(new { id = actionId }, "Cost leakage action created"));
+        return await db.RunInTenantTransactionAsync<IResult>(cid, async () =>
+        {
+            var item = await db.QuerySingleAsync(
+                @"SELECT status FROM cost_leakage_items
+                   WHERE id=@id AND company_id=@cid AND leakage_number LIKE 'RLK-%'
+                     AND data_origin='runtime_detector' AND deleted_at IS NULL FOR UPDATE",
+                c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", cid); }, ct);
+            if (item is null) return Results.NotFound(ApiResponse<object>.Fail("Cost leakage item not found"));
+            if (string.Equals(item["status"]?.ToString(), "Resolved", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(item["status"]?.ToString(), "Cancelled", StringComparison.OrdinalIgnoreCase))
+                return Results.Conflict(ApiResponse<object>.Fail("Invalid state", "A resolved or cancelled leakage item cannot receive a new action."));
+
+            var actionId = await db.InsertAsync(
+                @"INSERT INTO cost_leakage_actions
+                    (company_id,cost_leakage_item_id,action_title,action_description,estimated_savings,status,assigned_to_user_id,due_at)
+                  VALUES (@cid,@itemId,@title,@description,@savings,'Open',@user,@due)",
+                c =>
+                {
+                    c.Parameters.AddWithValue("@cid", cid);
+                    c.Parameters.AddWithValue("@itemId", id);
+                    c.Parameters.AddWithValue("@title", title);
+                    c.Parameters.AddWithValue("@description", Get(body, "actionDescription"));
+                    c.Parameters.AddWithValue("@savings", savings);
+                    c.Parameters.AddWithValue("@user", (object?)assigneeId ?? DBNull.Value);
+                    c.Parameters.AddWithValue("@due", (object?)dueAt ?? DBNull.Value);
+                }, ct);
+            await db.ExecuteAsync("UPDATE cost_leakage_items SET status='In Progress',updated_at=NOW() WHERE id=@id AND company_id=@cid",
+                c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", cid); }, ct);
+            await audit.LogAsync(http, "cost.leakage.action.created", "CostLeakage", id, $"actionId:{actionId}", ct);
+            return Results.Created($"/api/cost-leakage/items/{id}/actions/{actionId}",
+                ApiResponse<object>.Ok(new { id = actionId, status = "Open" }, "Cost leakage action created"));
+        }, ct);
     }
 
     // ===== BATCH 6 HANDLERS =================================================

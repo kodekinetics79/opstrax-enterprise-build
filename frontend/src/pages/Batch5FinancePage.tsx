@@ -109,15 +109,15 @@ const configs = {
     sections: [] as [string,string,string[]][],
   },
   "cost-leakage": {
-    queryKey: "cost-leakage", eyebrow: "Cost Leakage Intelligence", title: "ROI and cost leakage action queue", icon: <TrendingDown />,
-    description: "Leakage categories, estimated dollar loss, recoverable savings opportunities, acknowledgement workflow and cost recovery action queue.",
+    queryKey: "cost-leakage", eyebrow: "Revenue Leakage Evidence", title: "Recorded revenue leakage review queue", icon: <TrendingDown />,
+    description: "Runtime findings derived from completed jobs, billable charges and contract minimums, with currency and evidence status shown explicitly.",
     useRows: useCostLeakageItems, useSummary: useCostLeakageSummary, useDetail: useCostLeakageItemDetail,
     api: { create: null as unknown as (p: AnyRecord) => Promise<AnyRecord>, update: null as unknown as (id: string | number, p: AnyRecord) => Promise<AnyRecord> },
     createLabel: "",
-    kpis: [["Total Leakage","totalEstimatedLeakage"],["Monthly Projection","monthlyLeakageProjection"],["Open Items","openItems"],["Critical","criticalLeakageItems"],["Recoverable","recoverableSavings"],["Open Actions","openActions"],["Acknowledged","acknowledgedItems"],["Total","total"]],
-    columns: ["leakageNumber","category","title","severity","estimatedLoss","projectedMonthlyLoss","status","ownerRole","recommendedAction"],
+    kpis: [["Open Items","openItems"],["High Severity","highSeverityItems"],["In Progress","inProgressItems"],["Acknowledged","acknowledgedItems"],["Amount Unavailable","amountUnavailableItems"],["Open Actions","openActions"],["Total","total"]],
+    columns: ["leakageNumber","category","title","severity","estimatedLoss","currency","amountEvidenceStatus","status","ownerRole","recordOrigin"],
     fields: [],
-    actions: ["acknowledge","createAction"],
+    actions: ["acknowledge"],
     sections: [] as [string,string,string[]][],
   },
 } satisfies Record<Kind, {
@@ -269,6 +269,22 @@ export function Batch5FinancePage({ kind }: { kind: Kind }) {
             </div>
           ) : <p className="mt-2">No jobs have issued-invoice or approved-expense evidence yet.</p>}
           <p className="mt-2 text-xs text-slate-500">Margins remain unavailable when either evidence side is missing. Currencies are never combined.</p>
+        </div>
+      )}
+
+      {kind === "cost-leakage" && (
+        <div className="panel p-4 text-sm text-slate-600">
+          <p className="font-semibold text-slate-900">Detected loss and action estimates by currency</p>
+          {((summaryData.byCurrency as AnyRecord[] | undefined) ?? []).length > 0 ? (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {((summaryData.byCurrency as AnyRecord[]) ?? []).map((total) => (
+                <span key={String(total.currency)} className="badge">
+                  {String(total.currency)} · detected {Number(total.detectedLoss ?? 0).toLocaleString()} · open action estimates {Number(total.openActionEstimatedSavings ?? 0).toLocaleString()} · {String(total.itemCount ?? 0)} findings
+                </span>
+              ))}
+            </div>
+          ) : <p className="mt-2">No runtime revenue leakage findings are recorded.</p>}
+          <p className="mt-2 text-xs text-slate-500">Currencies are never combined. “Unknown” means the source record did not preserve a currency.</p>
         </div>
       )}
 
@@ -442,26 +458,29 @@ function ModuleChart({ kind, rows, vehicleSummary }: {
 
   if (kind === "cost-leakage") {
     const byCategory = Object.entries(
-      rows.reduce<Record<string, number>>((acc, r) => {
+      rows.reduce<Record<string, { loss: number; currency: string; category: string }>>((acc, r) => {
         const cat = String(r.category ?? "Other");
-        acc[cat] = (acc[cat] ?? 0) + Number(r.estimatedLoss ?? r.estimated_loss ?? 0);
+        const currency = String(r.currency ?? "Unknown");
+        const key = `${currency}:${cat}`;
+        const current = acc[key] ?? { loss: 0, currency, category: cat };
+        acc[key] = { ...current, loss: current.loss + Number(r.estimatedLoss ?? r.estimated_loss ?? 0) };
         return acc;
       }, {})
     )
-      .map(([name, loss]) => ({ name: name.length > 18 ? name.slice(0, 16) + "…" : name, loss }))
+      .map(([, item]) => ({ name: `${item.currency} · ${item.category}`.slice(0, 24), loss: item.loss }))
       .sort((a, b) => b.loss - a.loss)
       .slice(0, 8);
 
     if (!byCategory.length) return null;
     return (
       <div className="panel p-5">
-        <p className="section-title mb-4">Estimated Leakage by Category</p>
+        <p className="section-title mb-4">Recorded leakage by category and currency</p>
         <ResponsiveContainer width="100%" height={220}>
           <BarChart data={byCategory} layout="vertical" margin={{ top: 0, right: 24, bottom: 0, left: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.06)" horizontal={false} />
-            <XAxis type="number" tick={{ fill: chart.slate500, fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `$${v >= 1000 ? `${(v/1000).toFixed(0)}k` : v}`} />
+            <XAxis type="number" tick={{ fill: chart.slate500, fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={(v: number) => v >= 1000 ? `${(v/1000).toFixed(0)}k` : String(v)} />
             <YAxis type="category" dataKey="name" tick={{ fill: chart.slate400, fontSize: 11 }} axisLine={false} tickLine={false} width={130} />
-            <ChartTooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v: unknown) => [`$${Number(v ?? 0).toFixed(2)}`, "Est. Leakage"]} />
+            <ChartTooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v: unknown) => [Number(v ?? 0).toFixed(2), "Detected amount"]} />
             <Bar dataKey="loss" fill="rgba(248,113,113,.7)" radius={[0, 3, 3, 0]} />
           </BarChart>
         </ResponsiveContainer>
@@ -494,7 +513,9 @@ function Drawer({ config, detail, loading, onClose, onEdit, onAction }: {
   );
   const isExpense = config.queryKey === "expenses";
   const isCostMargin = config.queryKey === "cost-margin";
+  const isCostLeakage = config.queryKey === "cost-leakage";
   const expensePending = String(record.approvalStatus ?? "").toLowerCase() === "pending";
+  const leakageOpen = String(record.status ?? "").toLowerCase() === "open";
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/55 backdrop-blur-sm">
@@ -513,7 +534,7 @@ function Drawer({ config, detail, loading, onClose, onEdit, onAction }: {
           <div className="flex flex-wrap items-center gap-2">
             <StatusBadge status={record.status ?? record.approvalStatus ?? record.complianceStatus} />
             {!isExpense && !isCostMargin && <RiskBadge risk={record.severity ?? record.marginRisk ?? record.riskScore ?? record.anomalyStatus} />}
-            <span className="badge">{isExpense ? String(record.recordOrigin ?? "Recorded expense") : isCostMargin ? "Recorded financial evidence" : "OpsTrax Finance Intelligence"}</span>
+            <span className="badge">{isExpense ? String(record.recordOrigin ?? "Recorded expense") : isCostMargin ? "Recorded financial evidence" : isCostLeakage ? String(record.recordOrigin ?? "Runtime detector") : "OpsTrax Finance Intelligence"}</span>
           </div>
 
           <div className="flex flex-wrap gap-3">
@@ -522,7 +543,7 @@ function Drawer({ config, detail, loading, onClose, onEdit, onAction }: {
                 <PenTool className="h-4 w-4" /> Edit
               </button>
             )}
-            {config.actions.filter(() => !isExpense || expensePending).map((type) => (
+            {config.actions.filter(() => (!isExpense || expensePending) && (!isCostLeakage || leakageOpen)).map((type) => (
               <button key={type} type="button" className="btn-ghost" onClick={() => onAction(type, record)}>
                 {actionLabel(type)}
               </button>
@@ -534,12 +555,14 @@ function Drawer({ config, detail, loading, onClose, onEdit, onAction }: {
           <div className="grid gap-4 lg:grid-cols-3">
             <Info title="Primary Details" record={record} keys={Object.keys(record).slice(0, 10)} />
             <Info
-              title={isExpense ? "Financial / Approval" : isCostMargin ? "Financial Evidence" : "Financial / Risk"}
+              title={isExpense ? "Financial / Approval" : isCostMargin ? "Financial Evidence" : isCostLeakage ? "Detected Evidence" : "Financial / Risk"}
               record={record}
               keys={isExpense
                 ? ["amount","currency","approvalStatus","receiptStatus","recordOrigin","recordAttention"]
                 : isCostMargin
                   ? ["revenueEstimate","totalCost","marginEstimate","marginPercent","currency","invoiceCount","costRecordCount","dataOrigin"]
+                  : isCostLeakage
+                    ? ["estimatedLoss","currency","amountEvidenceStatus","category","severity","dataOrigin","actionsCount","openActionEstimatedSavings"]
                   : ["totalCost","amount","baseRate","estimatedLoss","marginPercent","marginRisk","riskScore","anomalyStatus","complianceStatus","approvalStatus"]}
             />
             <Info title="Recommended Action" record={record} keys={["recommendedAction","thresholdStatus","source","ownerRole","notes"]} />
@@ -682,7 +705,6 @@ function actionLabel(type: string): string {
     setStatus:     "Update Status",
     recalculate:   "Recalculate Margin",
     acknowledge:   "Acknowledge",
-    createAction:  "Create Recovery Action",
   };
   return map[type] ?? labelize(type);
 }
@@ -702,7 +724,5 @@ async function runAction(kind: Kind, type: string, row: AnyRecord): Promise<AnyR
   if (kind === "expenses")     return type === "approve" ? expensesApi.approve(id) : expensesApi.reject(id);
   if (kind === "contracts")    return type === "activate" ? contractsApi.activate(id) : contractsApi.expire(id);
   if (kind === "carriers")     return carriersApi.setStatus(id, { status: "Active" });
-  return type === "acknowledge"
-    ? costLeakageApi.acknowledge(id)
-    : costLeakageApi.createAction(id, { actionTitle: "Cost recovery action", estimatedSavings: 500 });
+  return costLeakageApi.acknowledge(id);
 }

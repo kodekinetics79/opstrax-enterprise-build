@@ -250,9 +250,12 @@ public sealed record RevenueLeakageSignalRecord(
     string EntityType,
     long EntityId,
     decimal DetectedAmount,
+    string? Currency,
+    string AmountEvidenceStatus,
     string Severity,
     string Status,
-    string Title);
+    string Title,
+    string DataOrigin);
 
 public sealed record RevenueLeakageDetectionOutcome(
     long CompanyId,
@@ -2017,11 +2020,23 @@ public sealed class RevenueReadinessService(
     // per (entity, signal_type).
     public async Task<RevenueLeakageDetectionOutcome> DetectRevenueLeakageAsync(long companyId, int stalenessDays = 7, CancellationToken ct = default)
     {
-        var candidates = new List<(string SignalType, string EntityType, long EntityId, decimal Amount, string Severity, string Title, string Description)>();
+        return await db.RunInTenantTransactionAsync(companyId, async () =>
+        {
+            await db.ExecuteAsync(
+                "SELECT pg_advisory_xact_lock(hashtextextended('revenue-leakage:' || CAST(@companyId AS text), 0))",
+                c => c.Parameters.AddWithValue("@companyId", companyId), ct);
+            return await DetectRevenueLeakageCoreAsync(companyId, stalenessDays, ct);
+        }, ct);
+    }
+
+    private async Task<RevenueLeakageDetectionOutcome> DetectRevenueLeakageCoreAsync(long companyId, int stalenessDays, CancellationToken ct)
+    {
+        var candidates = new List<(string SignalType, string EntityType, long EntityId, decimal Amount, string? Currency, string Severity, string Title, string Description)>();
 
         // Signal 1 — completed/delivered job with NO charge (uncaptured revenue).
         var noCharge = await db.QueryAsync(
-            @"SELECT j.id, j.job_code, COALESCE(rc.minimum_charge, 0) AS expected
+            @"SELECT j.id, j.job_code, COALESCE(rc.minimum_charge, 0) AS expected,
+                     UPPER(rc.currency) currency
               FROM jobs j
               LEFT JOIN rate_cards rc ON rc.id = j.rate_card_id AND rc.company_id = j.company_id
               WHERE j.company_id=@companyId
@@ -2031,7 +2046,7 @@ public sealed class RevenueReadinessService(
         foreach (var r in noCharge)
         {
             var amt = Dec(r, "expected");
-            candidates.Add(("completed_job_no_charge", "job", L(r, "id"), amt,
+            candidates.Add(("completed_job_no_charge", "job", L(r, "id"), amt, S(r, "currency"),
                 amt >= 500m ? "High" : "Medium",
                 $"Completed job {S(r, "jobCode")} has no billable charge",
                 "Job is completed/delivered but no job_charge exists — revenue is uncaptured."));
@@ -2039,7 +2054,7 @@ public sealed class RevenueReadinessService(
 
         // Signal 2 — charge stuck in 'draft' past the staleness threshold.
         var stale = await db.QueryAsync(
-            @"SELECT jc.id, jc.charge_code, jc.job_id, jc.amount
+            @"SELECT jc.id, jc.charge_code, jc.job_id, jc.amount, UPPER(jc.currency) currency
               FROM job_charges jc
               WHERE jc.company_id=@companyId
                 AND LOWER(jc.status) = 'draft'
@@ -2052,7 +2067,7 @@ public sealed class RevenueReadinessService(
         foreach (var r in stale)
         {
             var amt = Dec(r, "amount");
-            candidates.Add(("stale_draft_charge", "charge", L(r, "id"), amt,
+            candidates.Add(("stale_draft_charge", "charge", L(r, "id"), amt, S(r, "currency"),
                 amt >= 500m ? "High" : "Medium",
                 $"Draft charge {S(r, "chargeCode")} uninvoiced for over {stalenessDays} days",
                 "Charge has been in draft beyond the staleness threshold — revenue at risk of never being billed."));
@@ -2060,20 +2075,22 @@ public sealed class RevenueReadinessService(
 
         // Signal 3 — completed job billed BELOW the contract minimum charge (has charges but short).
         var below = await db.QueryAsync(
-            @"SELECT j.id, j.job_code, rc.minimum_charge, COALESCE(SUM(jc.amount), 0) AS charged
+            @"SELECT j.id, j.job_code, rc.minimum_charge, UPPER(rc.currency) currency,
+                     COALESCE(SUM(jc.amount), 0) AS charged
               FROM jobs j
               JOIN rate_cards rc ON rc.id = j.rate_card_id AND rc.company_id = j.company_id
               JOIN job_charges jc ON jc.company_id = j.company_id AND jc.job_id = j.id
+                 AND UPPER(jc.currency)=UPPER(rc.currency)
               WHERE j.company_id=@companyId
                 AND LOWER(j.status) IN ('completed','delivered','ready_to_bill')
                 AND rc.minimum_charge > 0
-              GROUP BY j.id, j.job_code, rc.minimum_charge
+              GROUP BY j.id, j.job_code, rc.minimum_charge, UPPER(rc.currency)
               HAVING COALESCE(SUM(jc.amount), 0) < rc.minimum_charge",
             c => c.Parameters.AddWithValue("@companyId", companyId), ct);
         foreach (var r in below)
         {
             var shortfall = Dec(r, "minimumCharge") - Dec(r, "charged");
-            candidates.Add(("below_contract_rate", "job", L(r, "id"), shortfall,
+            candidates.Add(("below_contract_rate", "job", L(r, "id"), shortfall, S(r, "currency"),
                 shortfall >= 200m ? "High" : "Medium",
                 $"Job {S(r, "jobCode")} billed below contract minimum",
                 "Sum of job charges is below the rate card minimum_charge for this job."));
@@ -2084,10 +2101,12 @@ public sealed class RevenueReadinessService(
         var alreadyOpen = 0;
         foreach (var cand in candidates)
         {
-            var existingId = await db.ScalarLongAsync(
-                @"SELECT COALESCE(MAX(id), 0) FROM cost_leakage_items
+            var existing = await db.QuerySingleAsync(
+                @"SELECT id, status FROM cost_leakage_items
                   WHERE company_id=@companyId AND entity_type=@et AND entity_id=@eid AND category=@cat
-                    AND status IN ('open','reviewed') AND deleted_at IS NULL",
+                    AND LOWER(status) IN ('open','reviewed','acknowledged','in progress') AND deleted_at IS NULL
+                  ORDER BY id DESC
+                  LIMIT 1",
                 c =>
                 {
                     c.Parameters.AddWithValue("@companyId", companyId);
@@ -2097,17 +2116,39 @@ public sealed class RevenueReadinessService(
                 }, ct);
 
             var leakageNumber = $"RLK-{cand.SignalType}-{cand.EntityId}";
-            if (existingId > 0)
+            if (existing is not null)
             {
+                var existingId = L(existing, "id");
+                var existingStatus = S(existing, "status") ?? "Open";
+                await db.ExecuteAsync(
+                    @"UPDATE cost_leakage_items
+                         SET currency=COALESCE(currency, @currency),
+                             data_origin='runtime_detector',
+                             amount_evidence_status=COALESCE(amount_evidence_status, @amountStatus),
+                             updated_at=NOW()
+                       WHERE id=@id AND company_id=@companyId",
+                    c =>
+                    {
+                        c.Parameters.AddWithValue("@currency", (object?)cand.Currency ?? DBNull.Value);
+                        c.Parameters.AddWithValue("@amountStatus", cand.Amount > 0 ? "Recorded" : "Unavailable");
+                        c.Parameters.AddWithValue("@id", existingId);
+                        c.Parameters.AddWithValue("@companyId", companyId);
+                    }, ct);
                 alreadyOpen++;
-                signals.Add(new RevenueLeakageSignalRecord(existingId, leakageNumber, cand.SignalType, cand.EntityType, cand.EntityId, cand.Amount, cand.Severity, "open", cand.Title));
+                signals.Add(new RevenueLeakageSignalRecord(existingId, leakageNumber, cand.SignalType, cand.EntityType,
+                    cand.EntityId, cand.Amount, cand.Currency, cand.Amount > 0 ? "Recorded" : "Unavailable",
+                    cand.Severity, existingStatus, cand.Title, "runtime_detector"));
                 continue;
             }
 
             var id = await db.InsertAsync(
                 @"INSERT INTO cost_leakage_items
-                    (company_id, leakage_number, category, entity_type, entity_id, title, description, estimated_loss, severity, status, risk_score, recommended_action, owner_role)
-                  VALUES (@companyId, @num, @cat, @et, @eid, @title, @desc, @amount, @sev, 'open', @risk, @action, 'Finance')",
+                    (company_id, leakage_number, category, entity_type, entity_id, title, description,
+                     estimated_loss, currency, data_origin, amount_evidence_status, severity, status,
+                     risk_score, recommended_action, owner_role)
+                  VALUES (@companyId, @num, @cat, @et, @eid, @title, @desc,
+                          @amount, @currency, 'runtime_detector', @amountStatus, @sev, 'Open',
+                          @risk, @action, 'Finance')",
                 c =>
                 {
                     c.Parameters.AddWithValue("@companyId", companyId);
@@ -2118,12 +2159,16 @@ public sealed class RevenueReadinessService(
                     c.Parameters.AddWithValue("@title", cand.Title);
                     c.Parameters.AddWithValue("@desc", cand.Description);
                     c.Parameters.AddWithValue("@amount", cand.Amount);
+                    c.Parameters.AddWithValue("@currency", (object?)cand.Currency ?? DBNull.Value);
+                    c.Parameters.AddWithValue("@amountStatus", cand.Amount > 0 ? "Recorded" : "Unavailable");
                     c.Parameters.AddWithValue("@sev", cand.Severity);
                     c.Parameters.AddWithValue("@risk", cand.Severity == "High" ? 80m : 50m);
                     c.Parameters.AddWithValue("@action", "Review and bill the uncaptured or underbilled revenue.");
                 }, ct);
             created++;
-            signals.Add(new RevenueLeakageSignalRecord(id, leakageNumber, cand.SignalType, cand.EntityType, cand.EntityId, cand.Amount, cand.Severity, "open", cand.Title));
+            signals.Add(new RevenueLeakageSignalRecord(id, leakageNumber, cand.SignalType, cand.EntityType,
+                cand.EntityId, cand.Amount, cand.Currency, cand.Amount > 0 ? "Recorded" : "Unavailable",
+                cand.Severity, "Open", cand.Title, "runtime_detector"));
         }
 
         return new RevenueLeakageDetectionOutcome(companyId, created, alreadyOpen, signals);

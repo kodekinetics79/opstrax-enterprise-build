@@ -9,6 +9,15 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
         foreach (var col in Columns) await EnsureColumnAsync(col.Table, col.Name, col.Definition, ct);
         foreach (var sql in Tables) await db.ExecuteAsync(sql, ct: ct);
         foreach (var sql in Indexes) { try { await db.ExecuteAsync(sql, ct: ct); } catch { } }
+        await db.ExecuteAsync(
+            @"UPDATE cost_leakage_items
+                 SET data_origin=COALESCE(data_origin, 'runtime_detector'),
+                     amount_evidence_status=COALESCE(
+                         amount_evidence_status,
+                         CASE WHEN estimated_loss > 0 THEN 'Recorded' ELSE 'Unavailable' END)
+               WHERE leakage_number LIKE 'RLK-%'
+                 AND (data_origin IS NULL OR amount_evidence_status IS NULL)",
+            ct: ct);
         // Fabricated business rows for a REAL tenant (hardcoded company_id/tenant_id=1).
         // These used to run on EVERY boot, inventing safety events / contracts / invoices /
         // SLA + cost records that the product then presented as fact. Now they require the
@@ -117,7 +126,12 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
 
         new("cost_margin_predictions", "recommendation", "TEXT NULL"),
 
-        new("cost_leakage_items", "owner_role", "VARCHAR(120) NULL")
+        new("cost_leakage_items", "owner_role", "VARCHAR(120) NULL"),
+        new("cost_leakage_items", "risk_score", "DECIMAL(6,2) NOT NULL DEFAULT 40"),
+        new("cost_leakage_items", "deleted_at", "TIMESTAMPTZ NULL"),
+        new("cost_leakage_items", "currency", "VARCHAR(10) NULL"),
+        new("cost_leakage_items", "data_origin", "VARCHAR(80) NULL"),
+        new("cost_leakage_items", "amount_evidence_status", "VARCHAR(40) NULL")
     ];
 
     private static readonly string[] Tables =
@@ -205,10 +219,13 @@ public sealed class Batch5SchemaService(Database db, IConfiguration? configurati
             entity_type VARCHAR(80) NULL, entity_id BIGINT NULL, title VARCHAR(220) NOT NULL,
             description TEXT NULL, estimated_loss DECIMAL(12,2) NOT NULL DEFAULT 0,
             projected_monthly_loss DECIMAL(12,2) NOT NULL DEFAULT 0,
+            currency VARCHAR(10) NULL, data_origin VARCHAR(80) NULL,
+            amount_evidence_status VARCHAR(40) NULL,
             severity VARCHAR(50) NOT NULL DEFAULT 'Medium', status VARCHAR(80) NOT NULL DEFAULT 'Open',
+            risk_score DECIMAL(6,2) NOT NULL DEFAULT 40,
             owner_role VARCHAR(120) NULL, recommended_action VARCHAR(260) NULL,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            updated_at TIMESTAMPTZ NULL)",
+            updated_at TIMESTAMPTZ NULL, deleted_at TIMESTAMPTZ NULL)",
 
         @"CREATE TABLE IF NOT EXISTS cost_leakage_actions (
             id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, company_id BIGINT NOT NULL DEFAULT 1,
