@@ -98,6 +98,7 @@ reapply_late_control_boundaries() {
   psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage123_device_retirement.sql
   psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage124_rma_support_ownership.sql
   psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage125_device_spare_pool.sql
+  psql_neon -v ON_ERROR_STOP=1 -q -f database/migrations/2026_09_07_stage126_device_support_tier_history.sql
 }
 
 MIGRATIONS=(
@@ -296,6 +297,8 @@ MIGRATIONS=(
   2026_09_07_stage124_rma_support_ownership
   # Exact-device spare-pool planning; possession, condition, compatibility and certification remain unverified.
   2026_09_07_stage125_device_spare_pool
+  # Operator-recorded device support routing; commercial, provider, hardware and certification claims remain false.
+  2026_09_07_stage126_device_support_tier_history
 )
 
 echo "Pre-check: validated read-only database identity…"
@@ -396,7 +399,8 @@ for m in "${MIGRATIONS[@]}"; do
     2026_09_07_stage122_installation_work_package_links|\
     2026_09_07_stage123_device_retirement|\
     2026_09_07_stage124_rma_support_ownership|\
-    2026_09_07_stage125_device_spare_pool) repair_migration=true ;;
+    2026_09_07_stage125_device_spare_pool|\
+    2026_09_07_stage126_device_support_tier_history) repair_migration=true ;;
   esac
   if [ "$applied" = "1" ] && [ "$repair_migration" = false ]; then
     echo "── $m: already applied (ledger) — skipping"
@@ -476,7 +480,8 @@ BEGIN
       ('2026_09_07_stage122_installation_work_package_links'),
       ('2026_09_07_stage123_device_retirement'),
       ('2026_09_07_stage124_rma_support_ownership'),
-      ('2026_09_07_stage125_device_spare_pool')) required(version)
+      ('2026_09_07_stage125_device_spare_pool'),
+      ('2026_09_07_stage126_device_support_tier_history')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN RAISE EXCEPTION 'Required owner/pilot migration ledger missing or duplicated'; END IF;
   IF EXISTS (
@@ -786,6 +791,33 @@ BEGIN
                   WHERE event_status<>'OperatorRecorded' OR physical_possession_claim
                      OR condition_verified_claim OR compatibility_claim OR certification_claim) THEN
     RAISE EXCEPTION 'Stage125 spare-pool boundary is missing or invalid';
+  END IF;
+  IF to_regclass('public.device_support_tier_events') IS NULL
+     OR NOT COALESCE((SELECT c.relrowsecurity AND c.relforcerowsecurity
+                        FROM pg_class c WHERE c.oid=to_regclass('public.device_support_tier_events')),false)
+     OR (to_regprocedure('opstrax_security.current_tenant_id()') IS NOT NULL
+         AND NOT has_table_privilege('opstrax_app','device_support_tier_events','SELECT'))
+     OR has_table_privilege('opstrax_app','device_support_tier_events','INSERT,UPDATE,DELETE')
+     OR (EXISTS (SELECT 1 FROM pg_roles WHERE rolname='opstrax_system') AND (
+           NOT has_table_privilege('opstrax_system','device_support_tier_events','SELECT,INSERT')
+        OR has_table_privilege('opstrax_system','device_support_tier_events','UPDATE,DELETE')))
+     OR EXISTS (SELECT 1 FROM pg_policies p WHERE p.schemaname='public'
+                  AND p.tablename='device_support_tier_events' AND p.roles='{public}'::name[])
+     OR to_regprocedure('stage126_guard_device_support_tier_event()') IS NULL
+     OR to_regprocedure('stage126_guard_device_support_terminal_transition()') IS NULL
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger
+                      WHERE tgrelid=to_regclass('public.device_support_tier_events')
+                        AND tgname='trg_stage126_guard_device_support_tier_event'
+                        AND NOT tgisinternal AND tgenabled<>'D')
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger
+                      WHERE tgrelid=to_regclass('public.eld_devices')
+                        AND tgname='trg_stage126_guard_device_support_terminal'
+                        AND NOT tgisinternal AND tgenabled<>'D')
+     OR EXISTS (SELECT 1 FROM device_support_tier_events
+                  WHERE record_status<>'OperatorRecordedUnverified'
+                     OR commercial_entitlement_verified_claim OR provider_support_claim
+                     OR hardware_supportability_claim OR certification_claim) THEN
+    RAISE EXCEPTION 'Stage126 device support-tier boundary is missing or invalid';
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns
@@ -1963,6 +1995,23 @@ BEGIN
      OR NOT EXISTS (SELECT 1 FROM pg_trigger
                       WHERE tgrelid=to_regclass('public.eld_devices')
                         AND tgname='trg_stage125_guard_device_pool_terminal'
+                        AND NOT tgisinternal AND tgenabled<>'D')
+     OR to_regclass('public.device_support_tier_events') IS NULL
+     OR NOT has_table_privilege('opstrax_app','device_support_tier_events','SELECT')
+     OR has_table_privilege('opstrax_app','device_support_tier_events','INSERT,UPDATE,DELETE')
+     OR NOT has_table_privilege('opstrax_system','device_support_tier_events','SELECT,INSERT')
+     OR has_table_privilege('opstrax_system','device_support_tier_events','UPDATE,DELETE')
+     OR NOT COALESCE((SELECT c.relrowsecurity AND c.relforcerowsecurity
+                        FROM pg_class c WHERE c.oid=to_regclass('public.device_support_tier_events')),false)
+     OR to_regprocedure('stage126_guard_device_support_tier_event()') IS NULL
+     OR to_regprocedure('stage126_guard_device_support_terminal_transition()') IS NULL
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger
+                      WHERE tgrelid=to_regclass('public.device_support_tier_events')
+                        AND tgname='trg_stage126_guard_device_support_tier_event'
+                        AND NOT tgisinternal AND tgenabled<>'D')
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger
+                      WHERE tgrelid=to_regclass('public.eld_devices')
+                        AND tgname='trg_stage126_guard_device_support_terminal'
                         AND NOT tgisinternal AND tgenabled<>'D') THEN
     RAISE EXCEPTION 'Stage76 is not the effective terminal telemetry boundary';
   END IF;

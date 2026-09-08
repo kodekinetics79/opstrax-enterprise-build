@@ -280,6 +280,7 @@ public static partial class EndpointMappings
         app.MapPost("/api/telemetry/rma-cases/{caseId:long}/replacement", DeviceRmaReplacementCreate);
         app.MapPost("/api/telemetry/rma-cases/{caseId:long}/support-actions", DeviceRmaSupportActionCreate);
         app.MapPost("/api/telemetry/devices/{id:long}/spare-pool-actions", DeviceSparePoolActionCreate);
+        app.MapPost("/api/telemetry/devices/{id:long}/support-tier-actions", DeviceSupportTierActionCreate);
         app.MapPost("/api/telemetry/devices/{id:long}/commands", DeviceRemoteCommandCreate);
         app.MapGet("/api/telemetry/installation-quarantine", DeviceInstallationQuarantineList);
         app.MapPost("/api/telemetry/installation-quarantine/{id:long}/resolve", DeviceInstallationQuarantineResolve);
@@ -20868,6 +20869,17 @@ LIMIT 100000",
                  AND (@branchId::BIGINT IS NULL OR entry.branch_id=@branchId)
                ORDER BY e.effective_at DESC,e.id DESC LIMIT 100",
             c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
+        var supportTierEvents = await db.QueryAsync(
+            @"SELECT id,device_id,device_serial_snapshot,action_type,state_after,tier_code,
+                     coverage_window,routing_response_target_minutes,escalation_policy_reference,
+                     commercial_reference,action_reason,source_reference,effective_at,record_status,
+                     commercial_entitlement_verified_claim,provider_support_claim,
+                     hardware_supportability_claim,certification_claim,recorded_by,created_at
+                FROM device_support_tier_events
+               WHERE company_id=@cid AND device_id=@id
+                 AND (@branchId::BIGINT IS NULL OR branch_id=@branchId)
+               ORDER BY effective_at DESC,id DESC LIMIT 100",
+            c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
         var commandCapabilityRows = await db.QueryAsync(
             @"SELECT cap.id,cap.command_type,cap.command_class,cap.capability_status,cap.evidence_source,
                      cap.evidence_reference,cap.observed_at,cap.expires_at,cap.physical_evidence_claim,
@@ -20952,6 +20964,7 @@ LIMIT 100000",
             rmaSupportActions,
             sparePoolEntry,
             sparePoolEvents,
+            supportTierEvents,
             remoteCommandGovernance = new
             {
                 capabilities = commandCapabilities,

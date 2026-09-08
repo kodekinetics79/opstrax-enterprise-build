@@ -286,7 +286,8 @@ BEGIN
       ('2026_08_13_stage79_tenant_provisioning_runtime_contract'),
       ('2026_08_11_stage76_telematics_security_hardening'),
       ('2026_09_07_stage124_rma_support_ownership'),
-      ('2026_09_07_stage125_device_spare_pool')) required(version)
+      ('2026_09_07_stage125_device_spare_pool'),
+      ('2026_09_07_stage126_device_support_tier_history')) required(version)
     WHERE (SELECT count(*) FROM schema_migrations sm WHERE sm.version=required.version)<>1
   ) THEN
     RAISE EXCEPTION 'Clean-chain target ledgers are missing or duplicated';
@@ -935,6 +936,33 @@ BEGIN
                   WHERE event_status<>'OperatorRecorded' OR physical_possession_claim
                      OR condition_verified_claim OR compatibility_claim OR certification_claim) THEN
     RAISE EXCEPTION 'Clean-chain Stage125 spare-pool boundary failed';
+  END IF;
+
+  IF to_regclass('public.device_support_tier_events') IS NULL
+     OR NOT COALESCE((SELECT c.relrowsecurity AND c.relforcerowsecurity
+                        FROM pg_class c WHERE c.oid=to_regclass('public.device_support_tier_events')),false)
+     OR NOT has_table_privilege('opstrax_app','device_support_tier_events','SELECT')
+     OR has_table_privilege('opstrax_app','device_support_tier_events','INSERT,UPDATE,DELETE')
+     OR NOT has_table_privilege('opstrax_system','device_support_tier_events','SELECT,INSERT')
+     OR has_table_privilege('opstrax_system','device_support_tier_events','UPDATE,DELETE')
+     OR (SELECT count(*) FROM pg_policies p WHERE p.schemaname='public'
+           AND p.tablename='device_support_tier_events'
+           AND p.policyname IN ('tenant_ticket_app','system_control_plane'))<>2
+     OR to_regprocedure('stage126_guard_device_support_tier_event()') IS NULL
+     OR to_regprocedure('stage126_guard_device_support_terminal_transition()') IS NULL
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger
+                      WHERE tgrelid=to_regclass('public.device_support_tier_events')
+                        AND tgname='trg_stage126_guard_device_support_tier_event'
+                        AND NOT tgisinternal AND tgenabled<>'D')
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger
+                      WHERE tgrelid=to_regclass('public.eld_devices')
+                        AND tgname='trg_stage126_guard_device_support_terminal'
+                        AND NOT tgisinternal AND tgenabled<>'D')
+     OR EXISTS (SELECT 1 FROM device_support_tier_events
+                  WHERE record_status<>'OperatorRecordedUnverified'
+                     OR commercial_entitlement_verified_claim OR provider_support_claim
+                     OR hardware_supportability_claim OR certification_claim) THEN
+    RAISE EXCEPTION 'Clean-chain Stage126 support-tier boundary failed';
   END IF;
 
   IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND roles='{public}'::name[])

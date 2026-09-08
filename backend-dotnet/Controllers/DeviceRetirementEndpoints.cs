@@ -253,6 +253,11 @@ public static partial class EndpointMappings
             return Results.Conflict(ApiResponse<object>.Fail(
                 "Remove the device from its spare-pool plan before retiring it."));
         }
+        catch (PostgresException ex) when (ex.ConstraintName == "ck_stage126_device_support_tier_active")
+        {
+            return Results.Conflict(ApiResponse<object>.Fail(
+                "End the device's active support-tier plan before retiring it."));
+        }
 
         http.Response.Headers.CacheControl = "no-store";
         http.Response.Headers.Pragma = "no-cache";

@@ -574,6 +574,7 @@ export type DeviceDetailRecord = {
   firmwareCampaigns: DeviceFirmwareCampaignRecord[];
   rmaCases: DeviceRmaCaseRecord[];
   sparePool: DeviceSparePoolRecord | null;
+  supportTierEvents: DeviceSupportTierEventRecord[];
   remoteCommandCapabilities: DeviceRemoteCommandCapabilityRecord[];
   remoteCommandHistory: DeviceRemoteCommandRecord[];
   diagnostics: TelematicsDiagnosticSeedRecord[];
@@ -885,6 +886,42 @@ export type DeviceSparePoolActionInput = {
   actionType: "Add" | "Reserve" | "Release" | "Remove";
   poolName?: string;
   rmaCaseId?: string;
+  actionReason: string;
+  sourceReference: string;
+  effectiveAt: string;
+  idempotencyKey: string;
+};
+
+export type DeviceSupportTierEventRecord = {
+  id: string;
+  deviceId: string;
+  deviceSerialSnapshot: string;
+  actionType: "Assigned" | "Changed" | "Ended";
+  stateAfter: "Assigned" | "NotAssigned";
+  tierCode: "Standard" | "Priority" | "CriticalOps" | "Custom";
+  coverageWindow: "BusinessHours" | "ExtendedHours" | "AlwaysOn" | "Custom";
+  routingResponseTargetMinutes: number;
+  escalationPolicyReference: string;
+  commercialReference: string;
+  actionReason: string;
+  sourceReference: string;
+  effectiveAt: string;
+  recordStatus: "OperatorRecordedUnverified";
+  commercialEntitlementVerifiedClaim: false;
+  providerSupportClaim: false;
+  hardwareSupportabilityClaim: false;
+  certificationClaim: false;
+  recordedBy: string;
+  createdAt: string;
+};
+
+export type DeviceSupportTierActionInput = {
+  actionType: "Assign" | "Change" | "End";
+  tierCode?: DeviceSupportTierEventRecord["tierCode"];
+  coverageWindow?: DeviceSupportTierEventRecord["coverageWindow"];
+  routingResponseTargetMinutes?: number;
+  escalationPolicyReference?: string;
+  commercialReference?: string;
   actionReason: string;
   sourceReference: string;
   effectiveAt: string;
@@ -1229,6 +1266,39 @@ function mapSparePool(raw: AnyRecord, events: DeviceSparePoolEventRecord[]): Dev
     physicalPossessionClaim: false, conditionVerifiedClaim: false, certificationClaim: false,
     addedBy: String(row.added_by ?? ""), createdAt: String(row.created_at ?? ""),
     currentState: events[0].stateAfter, events,
+  };
+}
+
+function mapDeviceSupportTierEvent(raw: AnyRecord): DeviceSupportTierEventRecord {
+  const row = normalizeKeys(raw);
+  const actions = ["Assigned", "Changed", "Ended"];
+  const states = ["Assigned", "NotAssigned"];
+  const tiers = ["Standard", "Priority", "CriticalOps", "Custom"];
+  const coverage = ["BusinessHours", "ExtendedHours", "AlwaysOn", "Custom"];
+  const id = canonicalDeviceLifecycleId(row.id);
+  const deviceId = canonicalDeviceLifecycleId(row.device_id);
+  const target = Number(row.routing_response_target_minutes);
+  if (!id || !deviceId || !actions.includes(String(row.action_type)) || !states.includes(String(row.state_after)) ||
+      !tiers.includes(String(row.tier_code)) || !coverage.includes(String(row.coverage_window)) ||
+      !Number.isInteger(target) || target < 15 || target > 10080 ||
+      row.record_status !== "OperatorRecordedUnverified" ||
+      row.commercial_entitlement_verified_claim !== false || row.provider_support_claim !== false ||
+      row.hardware_supportability_claim !== false || row.certification_claim !== false)
+    throw new Error("Device support-tier data crossed the operator-recorded unverified boundary.");
+  return {
+    id, deviceId, deviceSerialSnapshot: String(row.device_serial_snapshot ?? ""),
+    actionType: String(row.action_type) as DeviceSupportTierEventRecord["actionType"],
+    stateAfter: String(row.state_after) as DeviceSupportTierEventRecord["stateAfter"],
+    tierCode: String(row.tier_code) as DeviceSupportTierEventRecord["tierCode"],
+    coverageWindow: String(row.coverage_window) as DeviceSupportTierEventRecord["coverageWindow"],
+    routingResponseTargetMinutes: target,
+    escalationPolicyReference: String(row.escalation_policy_reference ?? ""),
+    commercialReference: String(row.commercial_reference ?? ""),
+    actionReason: String(row.action_reason ?? ""), sourceReference: String(row.source_reference ?? ""),
+    effectiveAt: String(row.effective_at ?? ""), recordStatus: "OperatorRecordedUnverified",
+    commercialEntitlementVerifiedClaim: false, providerSupportClaim: false,
+    hardwareSupportabilityClaim: false, certificationClaim: false,
+    recordedBy: String(row.recorded_by ?? ""), createdAt: String(row.created_at ?? ""),
   };
 }
 
@@ -2727,6 +2797,8 @@ export const telematicsService = {
     const sparePool = detail.spare_pool_entry && typeof detail.spare_pool_entry === "object"
       ? mapSparePool(detail.spare_pool_entry as AnyRecord, sparePoolEvents)
       : null;
+    const supportTierEvents = (Array.isArray(detail.support_tier_events)
+      ? detail.support_tier_events as AnyRecord[] : []).map(mapDeviceSupportTierEvent);
     const hasRemoteCommandGovernance = detail.remote_command_governance !== null &&
       typeof detail.remote_command_governance === "object";
     const remoteCommandGovernance = normalizeKeys(hasRemoteCommandGovernance
@@ -2806,6 +2878,7 @@ export const telematicsService = {
       firmwareCampaigns,
       rmaCases,
       sparePool,
+      supportTierEvents,
       remoteCommandCapabilities,
       remoteCommandHistory,
       currentInstallation,
@@ -3114,6 +3187,41 @@ export const telematicsService = {
       throw new Error("The recorded spare-pool action does not match the submitted facts.");
     return { entry, poolEvent, idempotentReplay: payload.idempotent_replay === true,
       note: String(payload.note ?? "Spare-pool planning recorded; physical state remains unverified.") };
+  },
+
+  async recordDeviceSupportTierAction(deviceId: string | number, input: DeviceSupportTierActionInput) {
+    const session = getSession();
+    ensureManagementAccess(session);
+    const canonicalId = canonicalDeviceLifecycleId(deviceId);
+    if (canonicalId === null) throw new Error("The support-tier device identity is invalid.");
+    const hasPlan = input.actionType !== "End";
+    const payload = normalizeKeys(await unwrap<AnyRecord>(apiClient.post(
+      `/api/telemetry/devices/${canonicalId}/support-tier-actions`, {
+        ...input,
+        tierCode: hasPlan ? input.tierCode : null,
+        coverageWindow: hasPlan ? input.coverageWindow : null,
+        routingResponseTargetMinutes: hasPlan ? input.routingResponseTargetMinutes : null,
+        escalationPolicyReference: hasPlan ? input.escalationPolicyReference?.trim() : null,
+        commercialReference: hasPlan ? input.commercialReference?.trim() : null,
+        actionReason: input.actionReason.trim(), sourceReference: input.sourceReference.trim(),
+      })));
+    if (payload.commercial_entitlement_verified_claim !== false || payload.provider_support_claim !== false ||
+        payload.hardware_supportability_claim !== false || payload.certification_claim !== false ||
+        !payload.support_tier_event || typeof payload.support_tier_event !== "object")
+      throw new Error("The server did not return a fail-closed support-tier acknowledgement.");
+    const supportTierEvent = mapDeviceSupportTierEvent(payload.support_tier_event as AnyRecord);
+    const expectedAction = { Assign: "Assigned", Change: "Changed", End: "Ended" }[input.actionType];
+    if (supportTierEvent.deviceId !== canonicalId || supportTierEvent.actionType !== expectedAction ||
+        supportTierEvent.actionReason !== input.actionReason.trim() ||
+        supportTierEvent.sourceReference !== input.sourceReference.trim() ||
+        (hasPlan && (supportTierEvent.tierCode !== input.tierCode ||
+          supportTierEvent.coverageWindow !== input.coverageWindow ||
+          supportTierEvent.routingResponseTargetMinutes !== input.routingResponseTargetMinutes ||
+          supportTierEvent.escalationPolicyReference !== input.escalationPolicyReference?.trim() ||
+          supportTierEvent.commercialReference !== input.commercialReference?.trim())))
+      throw new Error("The recorded support-tier action does not match the submitted facts.");
+    return { supportTierEvent, idempotentReplay: payload.idempotent_replay === true,
+      note: String(payload.note ?? "Support routing recorded; entitlement and supportability remain unverified.") };
   },
 
   async requestDeviceRemoteCommand(deviceId: string | number, input: DeviceRemoteCommandInput) {

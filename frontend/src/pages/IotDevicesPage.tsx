@@ -52,6 +52,8 @@ import {
   type DeviceRmaReplacementInput,
   type DeviceRmaSupportActionInput,
   type DeviceSparePoolActionInput,
+  type DeviceSupportTierActionInput,
+  type DeviceSupportTierEventRecord,
   type DeviceRemoteCommandInput,
   type DeviceRetirementInput,
   type DeviceIdentityQuarantineRecord,
@@ -265,6 +267,28 @@ function newSparePoolForm(actionType: DeviceSparePoolActionInput["actionType"], 
   return {
     actionType, poolName: actionType === "Add" ? poolName : "", rmaCaseId: "", actionReason: "",
     sourceReference: "", effectiveAt: currentLocalMinute(), idempotencyKey: crypto.randomUUID(),
+  };
+}
+
+type SupportTierFormState = Omit<DeviceSupportTierActionInput, "effectiveAt"> & {
+  effectiveAt: string;
+  tierCode: DeviceSupportTierEventRecord["tierCode"];
+  coverageWindow: DeviceSupportTierEventRecord["coverageWindow"];
+  routingResponseTargetMinutes: number;
+  escalationPolicyReference: string;
+  commercialReference: string;
+};
+
+function newSupportTierForm(actionType: DeviceSupportTierActionInput["actionType"], current?: DeviceSupportTierEventRecord): SupportTierFormState {
+  return {
+    actionType,
+    tierCode: current?.tierCode ?? "Standard",
+    coverageWindow: current?.coverageWindow ?? "BusinessHours",
+    routingResponseTargetMinutes: current?.routingResponseTargetMinutes ?? 240,
+    escalationPolicyReference: current?.escalationPolicyReference ?? "Device Support",
+    commercialReference: current?.commercialReference ?? "",
+    actionReason: "", sourceReference: "", effectiveAt: currentLocalMinute(),
+    idempotencyKey: crypto.randomUUID(),
   };
 }
 
@@ -2545,6 +2569,46 @@ function DeviceDetailDrawer({
       setSparePoolError(error instanceof Error ? error.message : "Spare-pool validation failed.");
     }
   };
+  const latestSupportTier = detail.supportTierEvents[0] ?? null;
+  const activeSupportTier = latestSupportTier?.stateAfter === "Assigned" ? latestSupportTier : null;
+  const [supportTierForm, setSupportTierForm] = useState<SupportTierFormState | null>(null);
+  const [supportTierError, setSupportTierError] = useState<string | null>(null);
+  const [supportTierNotice, setSupportTierNotice] = useState<string | null>(null);
+  const supportTierSubmitting = useRef(false);
+  const supportTierMut = useMutation({
+    mutationFn: (input: DeviceSupportTierActionInput) => telematicsService.recordDeviceSupportTierAction(device.id, input),
+    retry: false,
+    onSuccess: async (result) => {
+      setSupportTierForm(null); setSupportTierError(null); setSupportTierNotice(result.note);
+      await queryClient.invalidateQueries({ queryKey: ["telematics", "device"] });
+    },
+    onError: (error) => setSupportTierError(apiErrorMessage(error, "The support-tier action was not recorded.")),
+    onSettled: () => { supportTierSubmitting.current = false; },
+  });
+  const submitSupportTier = (event: FormEvent) => {
+    event.preventDefault();
+    if (!canManageRma || !supportTierForm || supportTierSubmitting.current || supportTierMut.isPending) return;
+    setSupportTierError(null);
+    try {
+      supportTierSubmitting.current = true;
+      const hasPlan = supportTierForm.actionType !== "End";
+      supportTierMut.mutate({
+        actionType: supportTierForm.actionType,
+        tierCode: hasPlan ? supportTierForm.tierCode : undefined,
+        coverageWindow: hasPlan ? supportTierForm.coverageWindow : undefined,
+        routingResponseTargetMinutes: hasPlan ? supportTierForm.routingResponseTargetMinutes : undefined,
+        escalationPolicyReference: hasPlan ? supportTierForm.escalationPolicyReference : undefined,
+        commercialReference: hasPlan ? supportTierForm.commercialReference : undefined,
+        actionReason: supportTierForm.actionReason,
+        sourceReference: supportTierForm.sourceReference,
+        effectiveAt: toUtcIso(supportTierForm.effectiveAt, "support-tier action time"),
+        idempotencyKey: supportTierForm.idempotencyKey,
+      });
+    } catch (error) {
+      supportTierSubmitting.current = false;
+      setSupportTierError(error instanceof Error ? error.message : "Support-tier validation failed.");
+    }
+  };
   const [remoteCommandForm, setRemoteCommandForm] = useState<RemoteCommandFormState | null>(null);
   const [remoteCommandError, setRemoteCommandError] = useState<string | null>(null);
   const [remoteCommandNotice, setRemoteCommandNotice] = useState<string | null>(null);
@@ -3041,6 +3105,43 @@ function DeviceDetailDrawer({
               </div>
             ))}
           </div>
+        </PanelSection>
+        <PanelSection title="Device support tier">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-400">Operator-recorded routing plan</p>
+              <p className="mt-1 text-lg font-semibold text-white">{activeSupportTier?.tierCode ?? "Not assigned"}</p>
+            </div>
+            {canManageRma && !supportTierForm ? (
+              <div className="flex flex-wrap gap-2">
+                {!activeSupportTier ? <button type="button" className="btn-secondary" disabled={supportTierMut.isPending} onClick={() => { setSupportTierForm(newSupportTierForm("Assign")); setSupportTierError(null); setSupportTierNotice(null); }}>Assign tier</button> : null}
+                {activeSupportTier ? <><button type="button" className="btn-secondary" disabled={supportTierMut.isPending} onClick={() => { setSupportTierForm(newSupportTierForm("Change", activeSupportTier)); setSupportTierError(null); setSupportTierNotice(null); }}>Change tier</button><button type="button" className="btn-ghost" disabled={supportTierMut.isPending} onClick={() => { setSupportTierForm(newSupportTierForm("End", activeSupportTier)); setSupportTierError(null); setSupportTierNotice(null); }}>End coverage</button></> : null}
+              </div>
+            ) : null}
+          </div>
+          <p className="mt-3 rounded-xl border border-amber-300/25 bg-amber-500/10 p-3 text-sm text-amber-100">
+            This is a service-routing target recorded by an operator. It does not verify a commercial entitlement, provider support, hardware supportability, or certification.
+          </p>
+          {supportTierNotice ? <p role="status" className="mt-3 rounded-lg border border-emerald-400/25 bg-emerald-500/10 p-3 text-sm text-emerald-100">{supportTierNotice}</p> : null}
+          {supportTierError ? <p role="alert" className="mt-3 text-sm text-red-300">{supportTierError}</p> : null}
+          {activeSupportTier ? <div className="mt-4"><MiniGrid rows={[["Tier", activeSupportTier.tierCode], ["Coverage window", activeSupportTier.coverageWindow], ["Routing response target", `${activeSupportTier.routingResponseTargetMinutes} minutes`], ["Escalation policy", activeSupportTier.escalationPolicyReference], ["Commercial reference", activeSupportTier.commercialReference], ["Assurance", activeSupportTier.recordStatus]]} /></div> : null}
+          {supportTierForm && canManageRma ? (
+            <form className="mt-4 space-y-3 rounded-xl border border-white/[0.08] bg-black/10 p-4" onSubmit={submitSupportTier}>
+              <p className="font-semibold text-white">{supportTierForm.actionType === "Assign" ? "Assign support tier" : supportTierForm.actionType === "Change" ? "Change support tier" : "End support coverage"}</p>
+              {supportTierForm.actionType !== "End" ? <div className="grid gap-3 md:grid-cols-2">
+                <FormField label="Tier"><select className="field w-full" value={supportTierForm.tierCode} onChange={event => setSupportTierForm(form => form ? ({ ...form, tierCode: event.target.value as DeviceSupportTierEventRecord["tierCode"] }) : form)} disabled={supportTierMut.isPending}><option value="Standard">Standard</option><option value="Priority">Priority</option><option value="CriticalOps">Critical operations</option><option value="Custom">Custom</option></select></FormField>
+                <FormField label="Coverage window"><select className="field w-full" value={supportTierForm.coverageWindow} onChange={event => setSupportTierForm(form => form ? ({ ...form, coverageWindow: event.target.value as DeviceSupportTierEventRecord["coverageWindow"] }) : form)} disabled={supportTierMut.isPending}><option value="BusinessHours">Business hours</option><option value="ExtendedHours">Extended hours</option><option value="AlwaysOn">Always on</option><option value="Custom">Custom</option></select></FormField>
+                <FormField label="Routing response target (minutes)"><input className="field w-full" type="number" min={15} max={10080} required value={supportTierForm.routingResponseTargetMinutes} onChange={event => setSupportTierForm(form => form ? ({ ...form, routingResponseTargetMinutes: Number(event.target.value) }) : form)} disabled={supportTierMut.isPending} /></FormField>
+                <FormField label="Escalation policy reference"><input className="field w-full" required minLength={3} maxLength={240} value={supportTierForm.escalationPolicyReference} onChange={event => setSupportTierForm(form => form ? ({ ...form, escalationPolicyReference: event.target.value }) : form)} disabled={supportTierMut.isPending} /></FormField>
+                <FormField label="Commercial reference"><input className="field w-full" required minLength={3} maxLength={240} placeholder="Contract, order, or approved plan reference" value={supportTierForm.commercialReference} onChange={event => setSupportTierForm(form => form ? ({ ...form, commercialReference: event.target.value }) : form)} disabled={supportTierMut.isPending} /></FormField>
+                <FormField label="Effective at"><input className="field w-full" type="datetime-local" required max={currentLocalMinute()} value={supportTierForm.effectiveAt} onChange={event => setSupportTierForm(form => form ? ({ ...form, effectiveAt: event.target.value }) : form)} disabled={supportTierMut.isPending} /></FormField>
+              </div> : <FormField label="Effective at"><input className="field w-full" type="datetime-local" required max={currentLocalMinute()} value={supportTierForm.effectiveAt} onChange={event => setSupportTierForm(form => form ? ({ ...form, effectiveAt: event.target.value }) : form)} disabled={supportTierMut.isPending} /></FormField>}
+              <FormField label="Source reference"><input className="field w-full" required minLength={3} maxLength={240} value={supportTierForm.sourceReference} onChange={event => setSupportTierForm(form => form ? ({ ...form, sourceReference: event.target.value }) : form)} disabled={supportTierMut.isPending} /></FormField>
+              <FormField label="Action reason"><textarea className="field h-20 w-full resize-none" required minLength={5} maxLength={500} value={supportTierForm.actionReason} onChange={event => setSupportTierForm(form => form ? ({ ...form, actionReason: event.target.value }) : form)} disabled={supportTierMut.isPending} /></FormField>
+              <div className="flex justify-end gap-2"><button type="button" className="btn-ghost" disabled={supportTierMut.isPending} onClick={() => setSupportTierForm(null)}>Cancel</button><button type="submit" className="btn-primary" disabled={supportTierMut.isPending}>{supportTierMut.isPending ? "Recording…" : "Record support-tier action"}</button></div>
+            </form>
+          ) : null}
+          {detail.supportTierEvents.length > 0 ? <div className="mt-4"><TimelineList rows={detail.supportTierEvents.map(item => ({ id: `support-tier-${item.id}`, title: `${item.actionType} · ${item.tierCode}`, subtitle: `${item.coverageWindow} · ${item.routingResponseTargetMinutes} min target · ${item.actionReason} · ${item.recordStatus}`, meta: item.effectiveAt }))} emptyText="No support-tier history recorded." /></div> : null}
         </PanelSection>
         <PanelSection title="RMA, custody & replacement">
           <div className="flex flex-wrap items-start justify-between gap-4">

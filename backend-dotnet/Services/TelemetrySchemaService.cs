@@ -638,6 +638,36 @@ public sealed class TelemetrySchemaService(Database db)
             CONSTRAINT ck_stage125_pool_event_no_certification CHECK (certification_claim=FALSE),
             UNIQUE(company_id,idempotency_key)
         )",
+
+        @"CREATE TABLE IF NOT EXISTS device_support_tier_events (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL, branch_id BIGINT NULL, device_id BIGINT NOT NULL,
+            device_serial_snapshot VARCHAR(120) NOT NULL, action_type VARCHAR(24) NOT NULL,
+            state_after VARCHAR(24) NOT NULL, tier_code VARCHAR(32) NOT NULL,
+            coverage_window VARCHAR(32) NOT NULL, routing_response_target_minutes INT NOT NULL,
+            escalation_policy_reference VARCHAR(240) NOT NULL, commercial_reference VARCHAR(240) NOT NULL,
+            action_reason VARCHAR(500) NOT NULL, source_reference VARCHAR(240) NOT NULL,
+            effective_at TIMESTAMPTZ NOT NULL, idempotency_key UUID NOT NULL,
+            record_status VARCHAR(40) NOT NULL DEFAULT 'OperatorRecordedUnverified',
+            commercial_entitlement_verified_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            provider_support_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            hardware_supportability_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            certification_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            recorded_by BIGINT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT ck_stage126_support_action CHECK (action_type IN ('Assigned','Changed','Ended')),
+            CONSTRAINT ck_stage126_support_state CHECK
+              ((action_type IN ('Assigned','Changed') AND state_after='Assigned') OR
+               (action_type='Ended' AND state_after='NotAssigned')),
+            CONSTRAINT ck_stage126_support_tier CHECK (tier_code IN ('Standard','Priority','CriticalOps','Custom')),
+            CONSTRAINT ck_stage126_support_coverage CHECK (coverage_window IN ('BusinessHours','ExtendedHours','AlwaysOn','Custom')),
+            CONSTRAINT ck_stage126_support_target CHECK (routing_response_target_minutes BETWEEN 15 AND 10080),
+            CONSTRAINT ck_stage126_support_status CHECK (record_status='OperatorRecordedUnverified'),
+            CONSTRAINT ck_stage126_support_no_entitlement CHECK (commercial_entitlement_verified_claim=FALSE),
+            CONSTRAINT ck_stage126_support_no_provider CHECK (provider_support_claim=FALSE),
+            CONSTRAINT ck_stage126_support_no_hardware CHECK (hardware_supportability_claim=FALSE),
+            CONSTRAINT ck_stage126_support_no_certification CHECK (certification_claim=FALSE),
+            UNIQUE(company_id,idempotency_key)
+        )",
     ];
 
     private static readonly string[] Indexes =
@@ -724,6 +754,8 @@ public sealed class TelemetrySchemaService(Database db)
           ON device_spare_pool_entries(company_id,pool_name,device_serial_snapshot,id)",
         @"CREATE INDEX IF NOT EXISTS ix_stage125_pool_event_recent
           ON device_spare_pool_events(company_id,entry_id,effective_at DESC,id DESC)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage126_support_device_recent
+          ON device_support_tier_events(company_id,device_id,effective_at DESC,id DESC)",
     ];
 
     private static readonly string[] Seeds =
