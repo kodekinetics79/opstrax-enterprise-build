@@ -1012,6 +1012,19 @@ BEGIN
     RAISE EXCEPTION 'Clean-chain Stage131 alert source identity boundary failed';
   END IF;
 
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_schema='public' AND table_name='fleet_health_snapshots'
+                     AND column_name='data_origin' AND is_nullable='NO')
+     OR NOT EXISTS (SELECT 1 FROM information_schema.columns
+                      WHERE table_schema='public' AND table_name='fleet_health_snapshots'
+                        AND column_name='verification_status' AND is_nullable='NO')
+     OR NOT EXISTS (SELECT 1 FROM pg_constraint
+                      WHERE conrelid='public.fleet_health_snapshots'::regclass
+                        AND conname='ck_fleet_health_snapshot_evidence')
+     OR to_regclass('public.idx_fhs_company_evidence_date') IS NULL THEN
+    RAISE EXCEPTION 'Clean-chain fleet-health evidence boundary failed';
+  END IF;
+
   IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND roles='{public}'::name[])
      OR EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public'
         AND (COALESCE(qual,'') LIKE '%app.current_tenant_id%'

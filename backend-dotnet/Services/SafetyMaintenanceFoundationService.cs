@@ -8,6 +8,37 @@ namespace Opstrax.Api.Services;
 
 public sealed class SafetyMaintenanceFoundationService(Database db, PostgresAiFoundationService ai)
 {
+    private const string QualifiedSafetyEventSql =
+        @"((se.data_origin='user_workflow' AND se.verification_status='recorded_by_authenticated_actor')
+           OR (se.data_origin='runtime_detection' AND se.verification_status='derived_from_qualified_source')
+           OR (se.data_origin='provider_import' AND se.verification_status='provider_verified'))";
+
+    private const string QualifiedMaintenanceItemSql =
+        @"((mi.data_origin='user_workflow' AND mi.verification_status='recorded_by_authenticated_actor')
+           OR (mi.data_origin='runtime_pm' AND mi.verification_status='derived_from_qualified_source'))";
+
+    private const string QualifiedDvirReportSql =
+        @"((dr.data_origin='user_workflow' AND dr.verification_status='recorded_by_authenticated_actor')
+           OR (dr.data_origin='provider_import' AND dr.verification_status='provider_verified'))";
+
+    private const string QualifiedDriverScoreSql =
+        @"dss.data_origin='runtime_computed'
+           AND dss.verification_status='calculated_from_qualified_sources'
+           AND dss.computed_at>=NOW()-INTERVAL '15 minutes'
+           AND dss.events_30d>0
+           AND dss.events_30d=(
+             SELECT COUNT(*) FROM safety_events score_event
+             WHERE score_event.company_id=dss.company_id AND score_event.driver_id=dss.driver_id
+               AND score_event.deleted_at IS NULL AND LOWER(score_event.status)<>'dismissed'
+               AND score_event.data_origin='runtime_detection'
+               AND score_event.verification_status='derived_from_qualified_source'
+               AND score_event.score_impact IS NOT NULL AND score_event.score_impact>0
+               AND score_event.event_time>NOW()-INTERVAL '30 days')";
+
+    private const string QualifiedTelemetryStateSql =
+        @"tls.source_event_id IS NOT NULL
+           AND tls.source_channel IN ('native-hmac','trusted-gateway','samsara-api')";
+
     public async Task RefreshAllFleetHealthSnapshotsAsync(CancellationToken ct = default)
     {
         var companyIds = await db.QueryAsync(
@@ -26,8 +57,6 @@ public sealed class SafetyMaintenanceFoundationService(Database db, PostgresAiFo
                   SELECT company_id FROM telemetry_live_asset_states
                   UNION
                   SELECT company_id FROM driver_safety_scores
-                  UNION
-                  SELECT company_id FROM vehicle_safety_scorecards
               ) scoped",
             ct: ct);
 
@@ -44,6 +73,7 @@ public sealed class SafetyMaintenanceFoundationService(Database db, PostgresAiFo
     {
         var metrics = await CollectMetricsAsync(companyId, ct);
         var latestSnapshot = await GetLatestSnapshotAsync(companyId, ct);
+        var currentSnapshot = metrics.EvidenceQualified ? latestSnapshot : null;
         var recommendations = await db.QueryAsync(
             @"SELECT id, recommendation_type, title, summary, confidence_score, urgency_score, risk_level, status, source_event_id, created_at
               FROM ai_recommendations
@@ -67,19 +97,25 @@ public sealed class SafetyMaintenanceFoundationService(Database db, PostgresAiFo
             ["inspection_summary"] = metrics.InspectionSummary,
             ["maintenance_summary"] = metrics.MaintenanceSummary,
             ["telemetry_bridge_summary"] = metrics.TelemetrySummary,
-            ["fleet_health_summary"] = latestSnapshot ?? metrics.FleetHealthSummary,
+            ["fleet_health_summary"] = currentSnapshot ?? metrics.FleetHealthSummary,
             ["driver_score_summary"] = metrics.DriverScoreSummary,
             ["vehicle_score_summary"] = metrics.VehicleScoreSummary,
-            ["latest_snapshot"] = latestSnapshot,
+            ["latest_snapshot"] = currentSnapshot,
             ["recommendations"] = recommendations,
             ["next_best_actions"] = metrics.NextBestActions,
-            ["foundation_ready"] = true,
+            ["foundation_ready"] = metrics.EvidenceQualified,
+            ["evidence_status"] = metrics.EvidenceQualified
+                ? "calculated_from_qualified_sources"
+                : "unavailable_missing_qualified_domain_evidence",
         };
     }
 
     public async Task<Dictionary<string, object?>> RefreshFleetHealthSnapshotAsync(long companyId, CancellationToken ct = default)
     {
         var metrics = await CollectMetricsAsync(companyId, ct);
+        if (!metrics.EvidenceQualified)
+            return metrics.FleetHealthSummary;
+
         var snapshotDate = DateOnly.FromDateTime(DateTime.UtcNow);
         var scopeValue = companyId.ToString(CultureInfo.InvariantCulture);
         var reasonJson = JsonSerializer.Serialize(new
@@ -96,9 +132,9 @@ public sealed class SafetyMaintenanceFoundationService(Database db, PostgresAiFo
 
         await db.ExecuteAsync(
             @"INSERT INTO fleet_health_snapshots
-                (company_id, scope_type, scope_value, snapshot_date, fleet_health_score, safety_score, maintenance_score, telemetry_score, risk_level, reason_json, next_action, created_at, updated_at)
+                (company_id, scope_type, scope_value, snapshot_date, fleet_health_score, safety_score, maintenance_score, telemetry_score, risk_level, reason_json, next_action, data_origin, verification_status, created_at, updated_at)
               VALUES
-                (@companyId, 'company', @scopeValue, @snapshotDate, @fleetHealthScore, @safetyScore, @maintenanceScore, @telemetryScore, @riskLevel, @reasonJson::jsonb, @nextAction, NOW(), NOW())
+                (@companyId, 'company', @scopeValue, @snapshotDate, @fleetHealthScore, @safetyScore, @maintenanceScore, @telemetryScore, @riskLevel, @reasonJson::jsonb, @nextAction, 'runtime_computed', 'calculated_from_qualified_sources', NOW(), NOW())
               ON CONFLICT (company_id, scope_type, scope_value, snapshot_date)
               DO UPDATE SET
                 fleet_health_score=EXCLUDED.fleet_health_score,
@@ -108,6 +144,8 @@ public sealed class SafetyMaintenanceFoundationService(Database db, PostgresAiFo
                 risk_level=EXCLUDED.risk_level,
                 reason_json=EXCLUDED.reason_json,
                 next_action=EXCLUDED.next_action,
+                data_origin=EXCLUDED.data_origin,
+                verification_status=EXCLUDED.verification_status,
                 updated_at=NOW()",
             c =>
             {
@@ -173,6 +211,8 @@ public sealed class SafetyMaintenanceFoundationService(Database db, PostgresAiFo
             @"SELECT *
               FROM fleet_health_snapshots
               WHERE company_id=@companyId
+                AND data_origin='runtime_computed'
+                AND verification_status='calculated_from_qualified_sources'
               ORDER BY snapshot_date DESC, id DESC
               LIMIT @limit",
             c =>
@@ -186,6 +226,8 @@ public sealed class SafetyMaintenanceFoundationService(Database db, PostgresAiFo
             @"SELECT *
               FROM fleet_health_snapshots
               WHERE company_id=@companyId
+                AND data_origin='runtime_computed'
+                AND verification_status='calculated_from_qualified_sources'
               ORDER BY snapshot_date DESC, id DESC
               LIMIT 1",
             c => c.Parameters.AddWithValue("@companyId", companyId), ct);
@@ -193,78 +235,110 @@ public sealed class SafetyMaintenanceFoundationService(Database db, PostgresAiFo
     private async Task<FoundationMetrics> CollectMetricsAsync(long companyId, CancellationToken ct)
     {
         var safety = await db.QuerySingleAsync(
-            @"SELECT
-                COUNT(*) FILTER (WHERE deleted_at IS NULL) AS total_events,
-                COUNT(*) FILTER (WHERE deleted_at IS NULL AND status NOT IN ('Resolved','Dismissed','resolved','dismissed')) AS open_events,
-                COUNT(*) FILTER (WHERE deleted_at IS NULL AND severity IN ('High','Critical') AND status NOT IN ('Resolved','Dismissed','resolved','dismissed')) AS critical_events,
-                COALESCE(ROUND(AVG(risk_score), 1), 0) AS average_risk_score
-              FROM safety_events
-              WHERE company_id=@companyId",
+            $@"SELECT
+                COUNT(*) AS total_events,
+                COUNT(*) FILTER (WHERE LOWER(status) NOT IN ('resolved','dismissed')) AS open_events,
+                COUNT(*) FILTER (WHERE LOWER(severity) IN ('high','critical') AND LOWER(status) NOT IN ('resolved','dismissed')) AS critical_events,
+                ROUND(AVG(risk_score), 1) AS average_risk_score
+              FROM safety_events se
+              WHERE se.company_id=@companyId AND se.deleted_at IS NULL AND {QualifiedSafetyEventSql}",
             c => c.Parameters.AddWithValue("@companyId", companyId), ct) ?? new Dictionary<string, object?>();
 
         var incidents = await db.QuerySingleAsync(
-            @"SELECT
+            $@"SELECT
                 COUNT(*) AS total_incidents,
-                COUNT(*) FILTER (WHERE deleted_at IS NULL AND status NOT IN ('Closed','Dismissed','closed','dismissed')) AS open_incidents,
-                COUNT(*) FILTER (WHERE deleted_at IS NULL AND severity IN ('High','Critical') AND status NOT IN ('Closed','Dismissed','closed','dismissed')) AS critical_incidents
-              FROM incidents
-              WHERE company_id=@companyId",
+                COUNT(*) FILTER (WHERE LOWER(i.status) NOT IN ('closed','dismissed')) AS open_incidents,
+                COUNT(*) FILTER (WHERE LOWER(i.severity) IN ('high','critical') AND LOWER(i.status) NOT IN ('closed','dismissed')) AS critical_incidents
+              FROM incidents i
+              WHERE i.company_id=@companyId AND i.deleted_at IS NULL
+                AND EXISTS (
+                  SELECT 1 FROM safety_events se
+                  WHERE se.company_id=i.company_id AND se.deleted_at IS NULL AND {QualifiedSafetyEventSql}
+                    AND (se.id=i.safety_event_id OR EXISTS (
+                      SELECT 1 FROM incident_evidence ie
+                      WHERE ie.company_id=i.company_id AND ie.incident_id=i.id
+                        AND ie.source_entity_type='safety_event' AND ie.source_entity_id=se.id) OR EXISTS (
+                      SELECT 1 FROM evidence_packages ep
+                      WHERE ep.company_id=i.company_id AND ep.incident_id=i.id
+                        AND ep.safety_event_id=se.id AND ep.deleted_at IS NULL)))",
             c => c.Parameters.AddWithValue("@companyId", companyId), ct) ?? new Dictionary<string, object?>();
 
         var evidence = await db.QuerySingleAsync(
-            @"SELECT
+            $@"WITH qualified_packages AS (
+                SELECT ep.* FROM evidence_packages ep
+                WHERE ep.company_id=@companyId AND ep.deleted_at IS NULL
+                  AND EXISTS (
+                    SELECT 1 FROM safety_events se
+                    WHERE se.company_id=ep.company_id AND se.deleted_at IS NULL AND {QualifiedSafetyEventSql}
+                      AND (se.id=ep.safety_event_id OR EXISTS (
+                        SELECT 1 FROM incidents i
+                        WHERE i.id=ep.incident_id AND i.company_id=ep.company_id AND i.deleted_at IS NULL
+                          AND (i.safety_event_id=se.id OR EXISTS (
+                            SELECT 1 FROM incident_evidence ie
+                            WHERE ie.company_id=i.company_id AND ie.incident_id=i.id
+                              AND ie.source_entity_type='safety_event' AND ie.source_entity_id=se.id)))))
+              )
+              SELECT
                 COUNT(*) AS total_packages,
-                COUNT(*) FILTER (WHERE deleted_at IS NULL AND status IN ('Draft','draft')) AS draft_packages,
-                COUNT(*) FILTER (WHERE deleted_at IS NULL AND locked=TRUE) AS locked_packages,
-                COALESCE((SELECT COUNT(*) FROM evidence_package_items epi JOIN evidence_packages ep ON ep.id = epi.evidence_package_id WHERE ep.company_id=@companyId AND ep.deleted_at IS NULL), 0) AS evidence_items
-              FROM evidence_packages
-              WHERE company_id=@companyId",
+                COUNT(*) FILTER (WHERE LOWER(status)='draft') AS draft_packages,
+                COUNT(*) FILTER (WHERE locked=TRUE) AS locked_packages,
+                (SELECT COUNT(*) FROM evidence_package_items epi JOIN qualified_packages ep ON ep.id=epi.evidence_package_id AND ep.company_id=epi.company_id) AS evidence_items
+              FROM qualified_packages",
             c => c.Parameters.AddWithValue("@companyId", companyId), ct) ?? new Dictionary<string, object?>();
 
         var inspections = await db.QuerySingleAsync(
-            @"SELECT
+            $@"SELECT
                 COUNT(*) AS total_inspections,
-                COUNT(*) FILTER (WHERE deleted_at IS NULL AND inspection_status NOT IN ('Submitted','Passed','Completed','Closed','closed')) AS open_inspections,
-                COUNT(*) FILTER (WHERE deleted_at IS NULL AND safe_to_operate = FALSE) AS unsafe_inspections
-              FROM dvir_reports
-              WHERE company_id=@companyId",
+                COUNT(*) FILTER (WHERE LOWER(dr.inspection_status) NOT IN ('submitted','passed','completed','closed')) AS open_inspections,
+                COUNT(*) FILTER (WHERE dr.safe_to_operate=FALSE) AS unsafe_inspections
+              FROM dvir_reports dr
+              WHERE dr.company_id=@companyId AND dr.deleted_at IS NULL AND {QualifiedDvirReportSql}",
             c => c.Parameters.AddWithValue("@companyId", companyId), ct) ?? new Dictionary<string, object?>();
 
         var maintenance = await db.QuerySingleAsync(
-            @"SELECT
-                COUNT(*) FILTER (WHERE deleted_at IS NULL) AS total_items,
-                COUNT(*) FILTER (WHERE deleted_at IS NULL AND (status='Overdue' OR due_date < CURRENT_DATE)) AS overdue_items,
-                COUNT(*) FILTER (WHERE deleted_at IS NULL AND status IN ('Open','Scheduled','In Progress','Waiting Parts','in_progress','waiting_parts')) AS open_work_orders,
-                COUNT(*) FILTER (WHERE deleted_at IS NULL AND priority IN ('High','Critical')) AS critical_items,
-                COUNT(*) FILTER (WHERE deleted_at IS NULL AND status IN ('Active','active') AND (due_date <= CURRENT_DATE + 14 * INTERVAL '1 day' OR due_date IS NULL)) AS pm_due_soon
-              FROM maintenance_items
-              WHERE company_id=@companyId",
+            $@"SELECT
+                COUNT(*) AS total_items,
+                COUNT(*) FILTER (WHERE LOWER(mi.status)='overdue' OR mi.due_date<CURRENT_DATE) AS overdue_items,
+                COUNT(*) FILTER (WHERE LOWER(REPLACE(mi.status,' ','_')) IN ('open','scheduled','in_progress','waiting_parts')) AS open_work_orders,
+                COUNT(*) FILTER (WHERE LOWER(mi.priority) IN ('high','critical')) AS critical_items,
+                COUNT(*) FILTER (WHERE LOWER(mi.status)='active' AND (mi.due_date<=CURRENT_DATE+14*INTERVAL '1 day' OR mi.due_date IS NULL)) AS pm_due_soon
+              FROM maintenance_items mi
+              WHERE mi.company_id=@companyId AND mi.deleted_at IS NULL AND {QualifiedMaintenanceItemSql}",
             c => c.Parameters.AddWithValue("@companyId", companyId), ct) ?? new Dictionary<string, object?>();
 
         var telemetry = await db.QuerySingleAsync(
-            @"SELECT
-                COUNT(*) FILTER (WHERE telemetry_status = 'stale' OR stale_seconds >= 900 OR risk_level IN ('high','critical')) AS risk_assets,
-                COUNT(*) FILTER (WHERE telemetry_status = 'stale' OR stale_seconds >= 900) AS stale_assets,
-                COUNT(*) FILTER (WHERE open_alert_count > 0) AS open_alert_assets,
-                COALESCE(ROUND(AVG(COALESCE(open_alert_count, 0)), 1), 0) AS avg_alert_count
-              FROM telemetry_live_asset_states
-              WHERE company_id=@companyId",
+            $@"SELECT
+                COUNT(*) AS qualified_assets,
+                COUNT(*) FILTER (WHERE tls.telemetry_status='stale' OR tls.stale_seconds>=900 OR tls.risk_level IN ('high','critical')) AS risk_assets,
+                COUNT(*) FILTER (WHERE tls.telemetry_status='stale' OR tls.stale_seconds>=900) AS stale_assets,
+                COUNT(*) FILTER (WHERE tls.open_alert_count>0) AS open_alert_assets,
+                ROUND(AVG(tls.open_alert_count),1) AS avg_alert_count
+              FROM telemetry_live_asset_states tls
+              WHERE tls.company_id=@companyId AND {QualifiedTelemetryStateSql}",
             c => c.Parameters.AddWithValue("@companyId", companyId), ct) ?? new Dictionary<string, object?>();
 
         var drivers = await db.QuerySingleAsync(
-            @"SELECT
-                COALESCE(ROUND(AVG(score_30d), 1), 0) AS average_driver_score,
-                COUNT(*) FILTER (WHERE score_30d < 70) AS low_driver_scores
-              FROM driver_safety_scores
-              WHERE company_id=@companyId",
+            $@"SELECT
+                COUNT(*) AS scored_drivers,
+                ROUND(AVG(dss.score_30d),1) AS average_driver_score,
+                COUNT(*) FILTER (WHERE dss.score_30d<70) AS low_driver_scores
+              FROM driver_safety_scores dss
+              WHERE dss.company_id=@companyId AND {QualifiedDriverScoreSql}",
             c => c.Parameters.AddWithValue("@companyId", companyId), ct) ?? new Dictionary<string, object?>();
 
         var vehicles = await db.QuerySingleAsync(
-            @"SELECT
-                COALESCE(ROUND(AVG(safety_score), 1), 0) AS average_vehicle_safety_score,
-                COUNT(*) FILTER (WHERE risk_score >= 50) AS high_vehicle_risk
-              FROM vehicle_safety_scorecards
-              WHERE company_id=@companyId",
+            @"WITH vehicle_risk AS (
+                SELECT se.vehicle_id,LEAST(100,SUM(se.score_impact)) risk_score
+                FROM safety_events se
+                WHERE se.company_id=@companyId AND se.vehicle_id IS NOT NULL AND se.deleted_at IS NULL
+                  AND LOWER(se.status)<>'dismissed' AND se.event_time>NOW()-INTERVAL '30 days'
+                  AND se.data_origin='runtime_detection' AND se.verification_status='derived_from_qualified_source'
+                  AND se.score_impact IS NOT NULL AND se.score_impact>0
+                GROUP BY se.vehicle_id)
+              SELECT COUNT(*) scored_vehicles,
+                     ROUND(AVG(100-risk_score),1) average_vehicle_safety_score,
+                     COUNT(*) FILTER (WHERE risk_score>=50) high_vehicle_risk
+              FROM vehicle_risk",
             c => c.Parameters.AddWithValue("@companyId", companyId), ct) ?? new Dictionary<string, object?>();
 
         var safetyOpen = L(safety, "openEvents");
@@ -281,6 +355,10 @@ public sealed class SafetyMaintenanceFoundationService(Database db, PostgresAiFo
         var telemetryStale = L(telemetry, "staleAssets");
         var lowDriverScores = L(drivers, "lowDriverScores");
         var highVehicleRisk = L(vehicles, "highVehicleRisk");
+        var safetyEvidenceCount = L(safety, "totalEvents");
+        var maintenanceEvidenceCount = L(maintenance, "totalItems") + L(inspections, "totalInspections");
+        var telemetryEvidenceCount = L(telemetry, "qualifiedAssets");
+        var evidenceQualified = safetyEvidenceCount > 0 && maintenanceEvidenceCount > 0 && telemetryEvidenceCount > 0;
 
         var safetyScore = Clamp(100m - (safetyOpen * 4m) - (safetyCritical * 6m) - (incidentOpen * 3m) - (incidentCritical * 5m) - (lowDriverScores * 2m), 0m, 100m);
         var maintenanceScore = Clamp(100m - (maintenanceOverdue * 6m) - (maintenanceOpen * 3m) - (maintenanceCritical * 5m) - (inspectionOpen * 2m) - (unsafeInspections * 4m), 0m, 100m);
@@ -294,7 +372,8 @@ public sealed class SafetyMaintenanceFoundationService(Database db, PostgresAiFo
             ["total_events"] = L(safety, "totalEvents"),
             ["open_events"] = safetyOpen,
             ["critical_events"] = safetyCritical,
-            ["average_risk_score"] = D(safety, "averageRiskScore"),
+            ["average_risk_score"] = DN(safety, "averageRiskScore"),
+            ["evidence_status"] = safetyEvidenceCount > 0 ? "qualified" : "unavailable",
         };
 
         var incidentSummary = new Dictionary<string, object?>
@@ -326,6 +405,7 @@ public sealed class SafetyMaintenanceFoundationService(Database db, PostgresAiFo
             ["open_work_orders"] = maintenanceOpen,
             ["critical_items"] = maintenanceCritical,
             ["pm_due_soon"] = L(maintenance, "pmDueSoon"),
+            ["evidence_status"] = maintenanceEvidenceCount > 0 ? "qualified" : "unavailable",
         };
 
         var telemetrySummary = new Dictionary<string, object?>
@@ -333,19 +413,25 @@ public sealed class SafetyMaintenanceFoundationService(Database db, PostgresAiFo
             ["risk_assets"] = telemetryRisk,
             ["stale_assets"] = telemetryStale,
             ["open_alert_assets"] = L(telemetry, "openAlertAssets"),
-            ["average_open_alert_count"] = D(telemetry, "avgAlertCount"),
+            ["average_open_alert_count"] = DN(telemetry, "avgAlertCount"),
+            ["qualified_assets"] = telemetryEvidenceCount,
+            ["evidence_status"] = telemetryEvidenceCount > 0 ? "qualified" : "unavailable",
         };
 
         var driverScoreSummary = new Dictionary<string, object?>
         {
-            ["average_driver_score"] = D(drivers, "averageDriverScore"),
+            ["average_driver_score"] = DN(drivers, "averageDriverScore"),
             ["low_driver_scores"] = lowDriverScores,
+            ["scored_drivers"] = L(drivers, "scoredDrivers"),
+            ["evidence_status"] = L(drivers, "scoredDrivers") > 0 ? "qualified" : "unavailable",
         };
 
         var vehicleScoreSummary = new Dictionary<string, object?>
         {
-            ["average_vehicle_safety_score"] = D(vehicles, "averageVehicleSafetyScore"),
+            ["average_vehicle_safety_score"] = DN(vehicles, "averageVehicleSafetyScore"),
             ["high_vehicle_risk"] = highVehicleRisk,
+            ["scored_vehicles"] = L(vehicles, "scoredVehicles"),
+            ["evidence_status"] = L(vehicles, "scoredVehicles") > 0 ? "qualified" : "unavailable",
         };
 
         var nextBestActions = new List<string>();
@@ -354,16 +440,20 @@ public sealed class SafetyMaintenanceFoundationService(Database db, PostgresAiFo
         if (maintenanceOverdue > 0) nextBestActions.Add("Release overdue maintenance work orders");
         if (unsafeInspections > 0) nextBestActions.Add("Escalate failed inspections before dispatch");
         if (telemetryStale > 0) nextBestActions.Add("Investigate stale telemetry assets");
+        if (safetyEvidenceCount == 0) nextBestActions.Add("Record qualified safety evidence before calculating fleet health");
+        if (maintenanceEvidenceCount == 0) nextBestActions.Add("Record qualified maintenance or inspection evidence before calculating fleet health");
+        if (telemetryEvidenceCount == 0) nextBestActions.Add("Connect qualified telemetry evidence before calculating fleet health");
         if (nextBestActions.Count == 0) nextBestActions.Add("Continue monitoring live safety and maintenance signals");
 
         var fleetSummary = new Dictionary<string, object?>
         {
-            ["fleet_health_score"] = fleetHealthScore,
-            ["safety_score"] = safetyScore,
-            ["maintenance_score"] = maintenanceScore,
-            ["telemetry_score"] = telemetryScore,
-            ["risk_level"] = riskLevel,
-            ["status"] = fleetHealthScore >= 90m ? "healthy" : fleetHealthScore >= 75m ? "watch" : fleetHealthScore >= 60m ? "at_risk" : "critical",
+            ["fleet_health_score"] = evidenceQualified ? fleetHealthScore : null,
+            ["safety_score"] = safetyEvidenceCount > 0 ? safetyScore : null,
+            ["maintenance_score"] = maintenanceEvidenceCount > 0 ? maintenanceScore : null,
+            ["telemetry_score"] = telemetryEvidenceCount > 0 ? telemetryScore : null,
+            ["risk_level"] = evidenceQualified ? riskLevel : "unavailable",
+            ["status"] = !evidenceQualified ? "unavailable" : fleetHealthScore >= 90m ? "healthy" : fleetHealthScore >= 75m ? "watch" : fleetHealthScore >= 60m ? "at_risk" : "critical",
+            ["evidence_status"] = evidenceQualified ? "calculated_from_qualified_sources" : "unavailable_missing_qualified_domain_evidence",
             ["reason_json"] = new
             {
                 openSafetyEvents = safetyOpen,
@@ -392,7 +482,8 @@ public sealed class SafetyMaintenanceFoundationService(Database db, PostgresAiFo
             maintenanceScore,
             telemetryScore,
             riskLevel,
-            nextBestActions);
+            nextBestActions,
+            evidenceQualified);
     }
 
     private static decimal Clamp(decimal value, decimal min, decimal max) => Math.Min(max, Math.Max(min, value));
@@ -403,8 +494,8 @@ public sealed class SafetyMaintenanceFoundationService(Database db, PostgresAiFo
     private static long L(Dictionary<string, object?> row, string key)
         => row.TryGetValue(key, out var value) && value is not null and not DBNull ? Convert.ToInt64(value, CultureInfo.InvariantCulture) : 0L;
 
-    private static decimal D(Dictionary<string, object?> row, string key)
-        => row.TryGetValue(key, out var value) && value is not null and not DBNull ? Convert.ToDecimal(value, CultureInfo.InvariantCulture) : 0m;
+    private static decimal? DN(Dictionary<string, object?> row, string key)
+        => row.TryGetValue(key, out var value) && value is not null and not DBNull ? Convert.ToDecimal(value, CultureInfo.InvariantCulture) : null;
 
     private sealed record FoundationMetrics(
         Dictionary<string, object?> SafetySummary,
@@ -421,5 +512,6 @@ public sealed class SafetyMaintenanceFoundationService(Database db, PostgresAiFo
         decimal MaintenanceScore,
         decimal TelemetryScore,
         string RiskLevel,
-        IReadOnlyList<string> NextBestActions);
+        IReadOnlyList<string> NextBestActions,
+        bool EvidenceQualified);
 }

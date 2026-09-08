@@ -63,6 +63,10 @@ public class Stage13BSafetyMaintenanceTests
             Assert.Equal(0, await db.ScalarLongAsync("SELECT COUNT(*) FROM ai_action_requests WHERE tenant_id=@tenantId", c => c.Parameters.AddWithValue("@tenantId", companyId)));
             Assert.True(await db.ScalarLongAsync("SELECT COUNT(*) FROM fleet_health_snapshots WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId)) > 0);
             Assert.True(await db.ScalarLongAsync("SELECT COUNT(*) FROM ai_recommendations WHERE tenant_id=@tenantId AND recommendation_type='fleet.health.review'", c => c.Parameters.AddWithValue("@tenantId", companyId)) > 0);
+            Assert.Equal(1, await db.ScalarLongAsync(@"SELECT COUNT(*) FROM fleet_health_snapshots
+                    WHERE company_id=@companyId AND data_origin='runtime_computed'
+                      AND verification_status='calculated_from_qualified_sources'",
+                c => c.Parameters.AddWithValue("@companyId", companyId)));
         }
         finally
         {
@@ -119,6 +123,64 @@ public class Stage13BSafetyMaintenanceTests
         }
     }
 
+    [Fact]
+    public async Task UnverifiedAndSimulatorSignals_DoNotProduceCurrentFleetHealthEvidence()
+    {
+        var db = CreateDatabase();
+        var companyId = NextCompanyId();
+        var vehicleId = await GetAnyVehicleIdAsync(db);
+        var driverId = await GetAnyDriverIdAsync(db);
+        var foundation = new SafetyMaintenanceFoundationService(db, new PostgresAiFoundationService(db, new AmbientCorrelationContext()));
+
+        try
+        {
+            await new FoundationSchemaService(db).EnsureAsync();
+            await new TelemetrySchemaService(db).EnsureAsync();
+            await new SafetySchemaService(db).EnsureAsync();
+            await new Batch3SchemaService(db).EnsureAsync();
+            await new Batch4SchemaService(db).EnsureAsync();
+            await new MaintenanceSchemaService(db).EnsureAsync();
+            await new SafetyMaintenanceFoundationSchemaService(db).EnsureAsync();
+
+            await db.ExecuteAsync(@"INSERT INTO safety_events
+                    (company_id,driver_id,vehicle_id,event_type,severity,status,event_time,risk_score,score_impact)
+                  VALUES(@companyId,@driverId,@vehicleId,'speeding','Critical','open',NOW(),95,40)",
+                c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@driverId", driverId); c.Parameters.AddWithValue("@vehicleId", vehicleId); });
+            await db.ExecuteAsync(@"INSERT INTO maintenance_items
+                    (company_id,vehicle_id,service_type,title,category,status,priority,due_date,risk_score)
+                  VALUES(@companyId,@vehicleId,'Brake','Legacy brake alert','Maintenance','Overdue','Critical',CURRENT_DATE-1,95)",
+                c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@vehicleId", vehicleId); });
+            await db.ExecuteAsync(@"INSERT INTO telemetry_live_asset_states
+                    (company_id,vehicle_id,lat,lng,telemetry_status,risk_level,open_alert_count,stale_seconds,last_event_time,received_at,source_event_id,source_channel)
+                  VALUES(@companyId,@vehicleId,1,1,'stale','critical',9,9999,NOW(),NOW(),70001,'simulator')",
+                c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@vehicleId", vehicleId); });
+            await db.ExecuteAsync(@"INSERT INTO fleet_health_snapshots
+                    (company_id,scope_type,scope_value,snapshot_date,fleet_health_score,safety_score,maintenance_score,telemetry_score,risk_level)
+                  VALUES(@companyId,'company',@scope,CURRENT_DATE,99,99,99,99,'low')",
+                c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@scope", companyId.ToString()); });
+            await db.ExecuteAsync(@"INSERT INTO fleet_health_snapshots
+                    (company_id,scope_type,scope_value,snapshot_date,fleet_health_score,safety_score,maintenance_score,telemetry_score,risk_level,data_origin,verification_status)
+                  VALUES(@companyId,'company',@scope,CURRENT_DATE-1,88,88,88,88,'low','runtime_computed','calculated_from_qualified_sources')",
+                c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@scope", companyId.ToString()); });
+
+            var result = await foundation.RefreshFleetHealthSnapshotAsync(companyId);
+            Assert.Null(result["fleet_health_score"]);
+            Assert.Equal("unavailable_missing_qualified_domain_evidence", result["evidence_status"]);
+
+            var summary = await foundation.GetSummaryAsync(companyId);
+            Assert.False((bool)summary["foundation_ready"]!);
+            Assert.Null(summary["latest_snapshot"]);
+            Assert.Single(await foundation.ListSnapshotsAsync(companyId));
+            Assert.Equal(0, await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM ai_recommendations WHERE tenant_id=@tenantId AND recommendation_type='fleet.health.review'",
+                c => c.Parameters.AddWithValue("@tenantId", companyId)));
+        }
+        finally
+        {
+            await CleanupTenantAsync(db, companyId);
+        }
+    }
+
     private static Database CreateDatabase()
     {
         var config = new ConfigurationBuilder()
@@ -137,8 +199,8 @@ public class Stage13BSafetyMaintenanceTests
     private static async Task SeedFoundationSignalsAsync(Database db, long companyId, long vehicleId, long driverId)
     {
         var safetyEvent1 = await db.InsertAsync(
-            @"INSERT INTO safety_events (company_id, driver_id, vehicle_id, event_type, severity, status, event_time, risk_score)
-              VALUES (@companyId, @driverId, @vehicleId, 'speeding', 'Critical', 'open', NOW(), 92)",
+            @"INSERT INTO safety_events (company_id, driver_id, vehicle_id, event_type, severity, status, event_time, risk_score, score_impact, data_origin, verification_status)
+              VALUES (@companyId, @driverId, @vehicleId, 'speeding', 'Critical', 'open', NOW(), 92, 14, 'runtime_detection', 'derived_from_qualified_source')",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
@@ -146,8 +208,8 @@ public class Stage13BSafetyMaintenanceTests
                 c.Parameters.AddWithValue("@vehicleId", vehicleId);
             });
         _ = await db.InsertAsync(
-            @"INSERT INTO safety_events (company_id, driver_id, vehicle_id, event_type, severity, status, event_time, risk_score)
-              VALUES (@companyId, @driverId, @vehicleId, 'geofence_breach', 'Critical', 'open', NOW(), 89)",
+            @"INSERT INTO safety_events (company_id, driver_id, vehicle_id, event_type, severity, status, event_time, risk_score, score_impact, data_origin, verification_status)
+              VALUES (@companyId, @driverId, @vehicleId, 'geofence_breach', 'Critical', 'open', NOW(), 89, 16, 'runtime_detection', 'derived_from_qualified_source')",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
@@ -187,8 +249,8 @@ public class Stage13BSafetyMaintenanceTests
             });
 
         var dvirReportId = await db.InsertAsync(
-            @"INSERT INTO dvir_reports (company_id, report_number, driver_id, vehicle_id, inspection_type, inspection_status, defects_found, safe_to_operate, risk_score, recommended_action)
-              VALUES (@companyId, CONCAT('DVIR-STAGE13B-', floor(extract(epoch from now()))::bigint), @driverId, @vehicleId, 'Pre-Trip', 'Submitted', 1, FALSE, 88, 'Repair defects before dispatch')",
+            @"INSERT INTO dvir_reports (company_id, report_number, driver_id, vehicle_id, inspection_type, inspection_status, defects_found, safe_to_operate, risk_score, recommended_action, data_origin, verification_status)
+              VALUES (@companyId, CONCAT('DVIR-STAGE13B-', floor(extract(epoch from now()))::bigint), @driverId, @vehicleId, 'Pre-Trip', 'Submitted', 1, FALSE, 88, 'Repair defects before dispatch', 'user_workflow', 'recorded_by_authenticated_actor')",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
@@ -206,8 +268,8 @@ public class Stage13BSafetyMaintenanceTests
             });
 
         await db.ExecuteAsync(
-            @"INSERT INTO maintenance_items (company_id, vehicle_id, service_type, title, category, status, priority, due_date, risk_score, recommended_action)
-              VALUES (@companyId, @vehicleId, 'Oil Change', 'Overdue oil change', 'Preventive Maintenance', 'Overdue', 'Critical', CURRENT_DATE - INTERVAL '2 days', 90, 'Schedule service immediately')",
+            @"INSERT INTO maintenance_items (company_id, vehicle_id, service_type, title, category, status, priority, due_date, risk_score, recommended_action, data_origin, verification_status)
+              VALUES (@companyId, @vehicleId, 'Oil Change', 'Overdue oil change', 'Preventive Maintenance', 'Overdue', 'Critical', CURRENT_DATE - INTERVAL '2 days', 90, 'Schedule service immediately', 'user_workflow', 'recorded_by_authenticated_actor')",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
@@ -215,8 +277,8 @@ public class Stage13BSafetyMaintenanceTests
             });
 
         await db.ExecuteAsync(
-            @"INSERT INTO maintenance_items (company_id, vehicle_id, service_type, title, category, status, priority, due_date, risk_score, recommended_action)
-              VALUES (@companyId, @vehicleId, 'Brake Inspection', 'Inspection due soon', 'Preventive Maintenance', 'Open', 'High', CURRENT_DATE + INTERVAL '10 days', 78, 'Plan inspection window')",
+            @"INSERT INTO maintenance_items (company_id, vehicle_id, service_type, title, category, status, priority, due_date, risk_score, recommended_action, data_origin, verification_status)
+              VALUES (@companyId, @vehicleId, 'Brake Inspection', 'Inspection due soon', 'Preventive Maintenance', 'Open', 'High', CURRENT_DATE + INTERVAL '10 days', 78, 'Plan inspection window', 'user_workflow', 'recorded_by_authenticated_actor')",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
@@ -231,13 +293,21 @@ public class Stage13BSafetyMaintenanceTests
               VALUES
                 (@companyId, @vehicleId, NULL, @driverId, 'STAGE13B', 'DEV-STAGE13B', 'Driver Stage 13B', 38.9000000, -77.0000000, 0, 90, 'Running',
                  'stale', 'high', 2, 2, 1800, NOW() - INTERVAL '40 minutes', NOW(), 50001, 'stage13b-corr', 'stage13b-cause',
-                 'telemetry', 'Investigate stale telemetry', '{}'::jsonb, NOW())",
+                 'trusted-gateway', 'Investigate stale telemetry', '{}'::jsonb, NOW())",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
                 c.Parameters.AddWithValue("@vehicleId", vehicleId);
                 c.Parameters.AddWithValue("@driverId", driverId);
             });
+
+        await db.ExecuteAsync(
+            @"INSERT INTO driver_safety_scores
+                (company_id,driver_id,score_7d,score_30d,score_90d,events_7d,events_30d,events_90d,breakdown_json,data_origin,verification_status)
+              VALUES (@companyId,@driverId,70,70,70,2,2,2,'{}'::jsonb,'runtime_computed','calculated_from_qualified_sources')
+              ON CONFLICT(company_id,driver_id) DO UPDATE SET score_30d=70,events_30d=2,computed_at=NOW(),
+                data_origin='runtime_computed',verification_status='calculated_from_qualified_sources'",
+            c => { c.Parameters.AddWithValue("@companyId", companyId); c.Parameters.AddWithValue("@driverId", driverId); });
     }
 
     private static async Task<Dictionary<string, long>> CaptureCountsAsync(Database db, long companyId)
@@ -264,6 +334,7 @@ public class Stage13BSafetyMaintenanceTests
         await db.ExecuteAsync("DELETE FROM evidence_package_items WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
         await db.ExecuteAsync("DELETE FROM evidence_packages WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
         await db.ExecuteAsync("DELETE FROM incidents WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
+        await db.ExecuteAsync("DELETE FROM driver_safety_scores WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
         await db.ExecuteAsync("DELETE FROM safety_events WHERE company_id=@companyId", c => c.Parameters.AddWithValue("@companyId", companyId));
         await db.ExecuteAsync("DELETE FROM approval_requests WHERE tenant_id=@tenantId", c => c.Parameters.AddWithValue("@tenantId", companyId));
         await db.ExecuteAsync("DELETE FROM ai_action_requests WHERE tenant_id=@tenantId", c => c.Parameters.AddWithValue("@tenantId", companyId));
