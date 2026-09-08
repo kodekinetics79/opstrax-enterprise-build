@@ -50,6 +50,14 @@ The bounded software candidate now composes classic-CAN admission, transport rea
 
 Malformed complete DM1/DM2 messages fail closed with PGN, source, time and capture-reference provenance while omitting raw payload bytes from exception text. This is an internal integration boundary only. It does not open a CAN interface, persist a vehicle observation, establish the authority of a source ECU, or create a physical compatibility claim.
 
+## Fourth implementation slice — explicit engine-signal admission
+
+The software candidate now implements the first entry in an immutable supported-signal catalog: EEC1 PGN 61444 / SPN 190 Engine Speed, bytes 4–5, little-endian, 0.125 rpm/bit and zero offset. The output is mapped to `Vehicle.Powertrain.CombustionEngine.Speed` with an `rpm` unit and stays paired with the acquired source/timestamp/adapter/channel/capture evidence.
+
+The decoder evaluates the SAE J1939 two-byte indicator ranges before applying scaling. Parameter-specific, error and not-available codes produce explicit nonnumeric statuses with a null decoded value. Zero remains a valid zero. Unlisted PGNs are unsupported, and a malformed EEC1 payload fails closed without putting raw bytes in exception text.
+
+`J1939MessageAcquisition` routes complete messages to the existing DM1/DM2 path, the exact signal catalog or an explicit unsupported outcome. This completes catalog item 5 and the deterministic software portion of item 6 for one signal. It does not prove that any ECU broadcasts the signal, that an adapter acquired it correctly, or that a vehicle reference value agrees. Those claims remain DEVELOPMENT / EXTERNAL HOLD through bench, controlled-route, recovery and soak testing.
+
 ## DeviceOps registry integration
 
 Stage 115 provides the shared exact manufacturer/model/hardware revision/firmware and software-SHA candidate identity needed by a later PT40 or OEM certification candidate. It deliberately seeds no PT40, GT06, J1939 adapter or OEM record and its database contract fixes every engineering candidate at `ExternalHold` / `Unverified`. A candidate may be recorded only after the exact physical tuple is observed; tier promotion requires the evidence gates in this document and a separately frozen certification candidate.

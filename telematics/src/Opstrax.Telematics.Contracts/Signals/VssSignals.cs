@@ -15,6 +15,9 @@ public static class VssSignals
     /// <summary>Engine/ignition running state. Unit: unitless boolean.</summary>
     public const string EngineIsRunning = "Vehicle.Powertrain.CombustionEngine.IsRunning";
 
+    /// <summary>Combustion-engine rotational speed. Unit: <c>rpm</c>.</summary>
+    public const string EngineSpeed = "Vehicle.Powertrain.CombustionEngine.Speed";
+
     /// <summary>Engine coolant temperature. Unit: <c>degC</c>.</summary>
     public const string CoolantTemperature = "Vehicle.Powertrain.CombustionEngine.ECT";
 
