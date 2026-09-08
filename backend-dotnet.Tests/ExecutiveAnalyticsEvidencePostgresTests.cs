@@ -34,7 +34,7 @@ public sealed class ExecutiveAnalyticsEvidencePostgresTests
             await Sla(db, company, customer, $"SLA-VER-{suffix}", "job_derived", "calculated_from_events", "Met");
             await Sla(db, company, customer, $"SLA-LEG-{suffix}", "legacy_unverified", "unverified", "Breached");
 
-            var http = Principal(company, "dashboard:view", "reports:view", "customer_portal:view");
+            var http = Principal(company, "dashboard:view", "reports:view", "customer_portal:view", "dispatch:view", "safety:view", "maintenance:view");
             var snapshots = Data(await Invoke("ExecutiveSnapshots", http, db, CancellationToken.None))
                 .Cast<Dictionary<string, object?>>().ToList();
             var snapshot = Assert.Single(snapshots);
@@ -65,6 +65,23 @@ public sealed class ExecutiveAnalyticsEvidencePostgresTests
             Assert.Contains("\"safetyDailyTrend\":[]", trends);
 
             Assert.Empty(Data(await Invoke("AnalyticsInsights", http, db, CancellationToken.None)).Cast<object>());
+
+            var operations = JsonSerializer.Serialize(Value(await Invoke("AnalyticsOperations", http, db, CancellationToken.None)));
+            Assert.Contains("\"activeTrips\":null", operations);
+            Assert.Contains("\"routeComplianceAvg\":null", operations);
+            Assert.Contains("source provenance", operations);
+
+            var dispatch = JsonSerializer.Serialize(Value(await Invoke("AnalyticsDispatch", http, db, CancellationToken.None)));
+            Assert.Contains("\"currentlyAssigned\":null", dispatch);
+            Assert.Contains("\"statusDistribution\":[]", dispatch);
+
+            var safety = JsonSerializer.Serialize(Value(await Invoke("AnalyticsSafety", http, db, CancellationToken.None)));
+            Assert.Contains("\"safetyEventsLast30d\":null", safety);
+            Assert.Contains("\"topRiskDrivers\":[]", safety);
+
+            var maintenance = JsonSerializer.Serialize(Value(await Invoke("AnalyticsMaintenance", http, db, CancellationToken.None)));
+            Assert.Contains("\"vehiclesOutOfService\":null", maintenance);
+            Assert.Contains("\"defectsByCategory\":[]", maintenance);
         }
         finally
         {

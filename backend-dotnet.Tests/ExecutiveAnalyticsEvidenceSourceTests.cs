@@ -17,7 +17,7 @@ public sealed class ExecutiveAnalyticsEvidenceSourceTests
         Assert.DoesNotContain("SELECT * FROM executive_snapshots", executive);
 
         var analyticsStart = handlers.IndexOf("private static async Task<IResult> AnalyticsExecutive", StringComparison.Ordinal);
-        var analyticsEnd = handlers.IndexOf("private static async Task<IResult> AnalyticsOperations", analyticsStart, StringComparison.Ordinal);
+        var analyticsEnd = handlers.IndexOf("private static Task<IResult> AnalyticsOperations", analyticsStart, StringComparison.Ordinal);
         var analytics = handlers[analyticsStart..analyticsEnd];
         Assert.Contains("RecordedFleetCountsFor", analytics);
         Assert.DoesNotContain("fleetUtilTarget    = 88m", analytics);
@@ -48,5 +48,33 @@ public sealed class ExecutiveAnalyticsEvidenceSourceTests
         Assert.Contains("Verified SLA Met Rate", analytics);
         Assert.Contains("Verified OTD Last 30d", analytics);
         Assert.DoesNotContain("target=\"95%\"", analytics);
+    }
+
+    [Fact]
+    public void UnqualifiedOperationalPanels_FailClosedInsteadOfAggregatingLegacyRows()
+    {
+        var handlers = File.ReadAllText(Path.Combine(RepoRoot, "backend-dotnet", "Controllers", "EndpointMappings.cs"));
+
+        AssertFailClosed("AnalyticsOperations", "AnalyticsDispatch");
+        AssertFailClosed("AnalyticsDispatch", "AnalyticsSafety");
+        AssertFailClosed("AnalyticsSafety", "AnalyticsMaintenance");
+        AssertFailClosed("AnalyticsMaintenance", "AnalyticsCustomer");
+
+        var ui = File.ReadAllText(Path.Combine(RepoRoot, "frontend", "src", "pages", "AnalyticsDashboardPage.tsx"));
+        Assert.Contains("Qualified Route Compliance", ui);
+        Assert.Contains("Qualified Safety Events", ui);
+        Assert.Contains("Qualified Critical Defects", ui);
+        Assert.DoesNotContain("target=\"85%\"", ui);
+
+        void AssertFailClosed(string method, string nextMethod)
+        {
+            var start = handlers.IndexOf($"private static Task<IResult> {method}", StringComparison.Ordinal);
+            var end = handlers.IndexOf(nextMethod, start + method.Length, StringComparison.Ordinal);
+            var section = handlers[start..end];
+            Assert.Contains("awaiting qualified evidence", section);
+            Assert.Contains("source provenance", section);
+            Assert.DoesNotContain("db.Scalar", section);
+            Assert.DoesNotContain("db.Query", section);
+        }
     }
 }

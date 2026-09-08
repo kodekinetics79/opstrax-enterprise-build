@@ -151,12 +151,13 @@ function OperationsPanel() {
   return (
     <div className="space-y-4">
       <SectionLabel />
+      <p className="text-xs text-slate-500">{String(d["evidenceStatus"] ?? "Operations metrics are unavailable until source provenance is recorded.")}</p>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-        <KpiCard label="Active Trips" value={n("activeTrips")} color={positiveTone(n("activeTrips"), "text-blue-600")} />
-        <KpiCard label="Trips Today" value={n("tripsToday")} />
-        <KpiCard label="Route Compliance" value={n("routeComplianceAvg")} unit="%" color={thresholdTone(n("routeComplianceAvg"), 85, "text-amber-600")} target="85%" />
-        <KpiCard label="Open Exceptions" value={n("openExceptions")} color={positiveTone(n("openExceptions"), "text-amber-600")} />
-        <KpiCard label="Active Assignments" value={n("activeAssignments")} />
+        <KpiCard label="Qualified Active Trips" value={n("activeTrips")} />
+        <KpiCard label="Qualified Trips Today" value={n("tripsToday")} />
+        <KpiCard label="Qualified Route Compliance" value={n("routeComplianceAvg")} unit="%" />
+        <KpiCard label="Qualified Open Exceptions" value={n("openExceptions")} />
+        <KpiCard label="Qualified Active Assignments" value={n("activeAssignments")} />
       </div>
       {breakdown.length > 0 && (
         <div className="panel p-4">
@@ -178,13 +179,14 @@ function DispatchPanel() {
   return (
     <div className="space-y-4">
       <SectionLabel />
+      <p className="text-xs text-slate-500">{String(d["evidenceStatus"] ?? "Dispatch metrics are unavailable until source provenance is recorded.")}</p>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-        <KpiCard label="Assigned" value={n("currentlyAssigned")} />
-        <KpiCard label="Accepted" value={n("accepted")} />
-        <KpiCard label="In Transit" value={n("inTransit")} color={positiveTone(n("inTransit"), "text-blue-600")} />
-        <KpiCard label="Delivered (7d)" value={n("delivered")} color={positiveTone(n("delivered"), "text-emerald-600")} />
-        <KpiCard label="Exceptions Open" value={n("openExceptions")} color={positiveTone(n("openExceptions"), "text-amber-600")} />
-        <KpiCard label="Proofs (7d)" value={n("proofsLast7d")} />
+        <KpiCard label="Qualified Assigned" value={n("currentlyAssigned")} />
+        <KpiCard label="Qualified Accepted" value={n("accepted")} />
+        <KpiCard label="Qualified In Transit" value={n("inTransit")} />
+        <KpiCard label="Qualified Delivered (7d)" value={n("delivered")} />
+        <KpiCard label="Qualified Exceptions Open" value={n("openExceptions")} />
+        <KpiCard label="Qualified Proofs (7d)" value={n("proofsLast7d")} />
       </div>
       {dist.length > 0 && (
         <div className="panel p-4">
@@ -207,12 +209,13 @@ function SafetyPanel() {
   return (
     <div className="space-y-4">
       <SectionLabel />
+      <p className="text-xs text-slate-500">{String(d["evidenceStatus"] ?? "Safety metrics are unavailable until source provenance is recorded.")}</p>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-        <KpiCard label="Safety Events (30d)" value={n("safetyEventsLast30d")} />
-        <KpiCard label="Critical Events" value={n("criticalEvents")} color={positiveTone(n("criticalEvents"), "text-red-600")} />
-        <KpiCard label="Open Coaching Tasks" value={n("openCoachingTasks")} color={positiveTone(n("openCoachingTasks"), "text-amber-600")} />
-        <KpiCard label="Coaching Overdue" value={n("overdueCoachingTasks")} color={positiveTone(n("overdueCoachingTasks"), "text-red-600")} />
-        <KpiCard label="Driver Safety Avg" value={n("driverSafetyAvg")} sub={n("driverSafetyAvg") === null ? undefined : "out of 100"} color={thresholdTone(n("driverSafetyAvg"), 85, "text-amber-600")} />
+        <KpiCard label="Qualified Safety Events (30d)" value={n("safetyEventsLast30d")} />
+        <KpiCard label="Qualified Critical Events" value={n("criticalEvents")} />
+        <KpiCard label="Qualified Open Coaching Tasks" value={n("openCoachingTasks")} />
+        <KpiCard label="Qualified Coaching Overdue" value={n("overdueCoachingTasks")} />
+        <KpiCard label="Qualified Driver Safety Avg" value={n("driverSafetyAvg")} />
       </div>
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         {eventTypes.length > 0 && (
@@ -243,12 +246,13 @@ function MaintenancePanel() {
   return (
     <div className="space-y-4">
       <SectionLabel />
+      <p className="text-xs text-slate-500">{String(d["evidenceStatus"] ?? "Maintenance metrics are unavailable until source provenance is recorded.")}</p>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-        <KpiCard label="Vehicles OOS" value={n("vehiclesOutOfService")} color={positiveTone(n("vehiclesOutOfService"), "text-red-600")} />
-        <KpiCard label="Critical Defects Open" value={n("criticalDefectsOpen")} color={positiveTone(n("criticalDefectsOpen"), "text-red-600")} />
-        <KpiCard label="Open Work Orders" value={n("openWorkOrders")} color={positiveTone(n("openWorkOrders"), "text-amber-600")} />
-        <KpiCard label="PM Overdue" value={n("pmOverdue")} color={positiveTone(n("pmOverdue"), "text-amber-600")} />
-        <KpiCard label="DVIRs (7d)" value={n("dvirLast7d")} />
+        <KpiCard label="Qualified Vehicles OOS" value={n("vehiclesOutOfService")} />
+        <KpiCard label="Qualified Critical Defects Open" value={n("criticalDefectsOpen")} />
+        <KpiCard label="Qualified Open Work Orders" value={n("openWorkOrders")} />
+        <KpiCard label="Qualified PM Overdue" value={n("pmOverdue")} />
+        <KpiCard label="Qualified DVIRs (7d)" value={n("dvirLast7d")} />
       </div>
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         {faults.length > 0 && (

@@ -31355,125 +31355,87 @@ LIMIT 100000",
         }, "Evidence-qualified executive record counts"));
     }
 
-    private static async Task<IResult> AnalyticsOperations(HttpContext http, Database db, CancellationToken ct)
+    private static Task<IResult> AnalyticsOperations(HttpContext http, Database db, CancellationToken ct)
     {
-        var c      = GetCompanyId(http);
         var denied = RequirePermission(http, "dispatch:view");
-        if (denied is not null) return denied;
-        if (RequireAnalyticsBranchScope(http) is { } branchDenied) return branchDenied;
+        if (denied is not null) return Task.FromResult<IResult>(denied);
+        if (RequireAnalyticsBranchScope(http) is { } branchDenied) return Task.FromResult<IResult>(branchDenied);
+        ct.ThrowIfCancellationRequested();
 
-        var activeTrips    = await db.ScalarLongAsync("SELECT COUNT(*) FROM trips WHERE company_id=@c AND status IN ('Active','In Progress','In Transit')", p => p.Parameters.AddWithValue("@c", c), ct);
-        var tripsToday     = await db.ScalarLongAsync("SELECT COUNT(*) FROM trips WHERE company_id=@c AND started_at::date=CURRENT_DATE", p => p.Parameters.AddWithValue("@c", c), ct);
-        var avgCompliance  = await db.ScalarDecimalAsync("SELECT AVG(compliance_score) FROM trips WHERE company_id=@c AND started_at >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
-        var openExceptions = await db.ScalarLongAsync("SELECT COUNT(*) FROM dispatch_exceptions WHERE company_id=@c AND status NOT IN ('resolved','Resolved')", p => p.Parameters.AddWithValue("@c", c), ct);
-        var activeAssignments = await db.ScalarLongAsync("SELECT COUNT(*) FROM dispatch_assignments WHERE company_id=@c AND assignment_status NOT IN ('delivered','cancelled')", p => p.Parameters.AddWithValue("@c", c), ct);
-        var exceptionTypes = await db.QueryAsync(
-            "SELECT exception_type, COUNT(*) cnt FROM dispatch_exceptions WHERE company_id=@c AND created_at >= NOW() - 30 * INTERVAL '1 day' GROUP BY exception_type ORDER BY cnt DESC LIMIT 5",
-            p => p.Parameters.AddWithValue("@c", c), ct);
-
-        return Results.Ok(ApiResponse<object>.Ok(new
+        return Task.FromResult<IResult>(Results.Ok(ApiResponse<object>.Ok(new
         {
-            activeTrips, tripsToday,
-            routeComplianceAvg = avgCompliance.HasValue ? Math.Round(avgCompliance.Value, 1) : (decimal?)null,
-            openExceptions, activeAssignments,
-            exceptionBreakdown = exceptionTypes,
+            activeTrips = (long?)null,
+            tripsToday = (long?)null,
+            routeComplianceAvg = (decimal?)null,
+            openExceptions = (long?)null,
+            activeAssignments = (long?)null,
+            exceptionBreakdown = Array.Empty<object>(),
             insightType = "System Analytics Insight",
-        }, "Operations analytics"));
+            evidenceStatus = "Unavailable until trip, assignment and exception rows carry recorded source provenance."
+        }, "Operations analytics awaiting qualified evidence")));
     }
 
-    private static async Task<IResult> AnalyticsDispatch(HttpContext http, Database db, CancellationToken ct)
+    private static Task<IResult> AnalyticsDispatch(HttpContext http, Database db, CancellationToken ct)
     {
-        var c      = GetCompanyId(http);
         var denied = RequirePermission(http, "dispatch:view");
-        if (denied is not null) return denied;
-        if (RequireAnalyticsBranchScope(http) is { } branchDenied) return branchDenied;
+        if (denied is not null) return Task.FromResult<IResult>(denied);
+        if (RequireAnalyticsBranchScope(http) is { } branchDenied) return Task.FromResult<IResult>(branchDenied);
+        ct.ThrowIfCancellationRequested();
 
-        var assigned  = await db.ScalarLongAsync("SELECT COUNT(*) FROM dispatch_assignments WHERE company_id=@c AND assignment_status='assigned'", p => p.Parameters.AddWithValue("@c", c), ct);
-        var accepted  = await db.ScalarLongAsync("SELECT COUNT(*) FROM dispatch_assignments WHERE company_id=@c AND assignment_status='accepted'", p => p.Parameters.AddWithValue("@c", c), ct);
-        var inTransit = await db.ScalarLongAsync("SELECT COUNT(*) FROM dispatch_assignments WHERE company_id=@c AND assignment_status IN ('en_route_pickup','in_transit','arrived_pickup','loaded','arrived_delivery')", p => p.Parameters.AddWithValue("@c", c), ct);
-        var delivered = await db.ScalarLongAsync("SELECT COUNT(*) FROM dispatch_assignments WHERE company_id=@c AND assignment_status='delivered' AND updated_at >= NOW() - 7 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
-        var exceptions = await db.ScalarLongAsync("SELECT COUNT(*) FROM dispatch_assignments WHERE company_id=@c AND assignment_status='exception'", p => p.Parameters.AddWithValue("@c", c), ct);
-        var proofs    = await db.ScalarLongAsync("SELECT COUNT(*) FROM proof_of_delivery WHERE company_id=@c AND captured_at >= NOW() - 7 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
-        var statusDist = await db.QueryAsync(
-            "SELECT assignment_status AS status, COUNT(*) cnt FROM dispatch_assignments WHERE company_id=@c AND created_at >= NOW() - 30 * INTERVAL '1 day' GROUP BY assignment_status ORDER BY cnt DESC",
-            p => p.Parameters.AddWithValue("@c", c), ct);
-
-        return Results.Ok(ApiResponse<object>.Ok(new
+        return Task.FromResult<IResult>(Results.Ok(ApiResponse<object>.Ok(new
         {
-            currentlyAssigned = assigned,
-            accepted, inTransit, delivered,
-            openExceptions = exceptions,
-            proofsLast7d   = proofs,
-            statusDistribution = statusDist,
+            currentlyAssigned = (long?)null,
+            accepted = (long?)null,
+            inTransit = (long?)null,
+            delivered = (long?)null,
+            openExceptions = (long?)null,
+            proofsLast7d = (long?)null,
+            statusDistribution = Array.Empty<object>(),
             insightType = "System Analytics Insight",
-        }, "Dispatch analytics"));
+            evidenceStatus = "Unavailable until assignment, exception and proof rows carry recorded source provenance."
+        }, "Dispatch analytics awaiting qualified evidence")));
     }
 
-    private static async Task<IResult> AnalyticsSafety(HttpContext http, Database db, CancellationToken ct)
+    private static Task<IResult> AnalyticsSafety(HttpContext http, Database db, CancellationToken ct)
     {
-        var c      = GetCompanyId(http);
         var denied = RequirePermission(http, "safety:view");
-        if (denied is not null) return denied;
-        if (RequireAnalyticsBranchScope(http) is { } branchDenied) return branchDenied;
+        if (denied is not null) return Task.FromResult<IResult>(denied);
+        if (RequireAnalyticsBranchScope(http) is { } branchDenied) return Task.FromResult<IResult>(branchDenied);
+        ct.ThrowIfCancellationRequested();
 
-        var totalEvents   = await db.ScalarLongAsync("SELECT COUNT(*) FROM safety_events WHERE company_id=@c AND event_time >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
-        var criticalEvents = await db.ScalarLongAsync("SELECT COUNT(*) FROM safety_events WHERE company_id=@c AND severity='Critical' AND event_time >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
-        var openCoaching  = await db.ScalarLongAsync("SELECT COUNT(*) FROM coaching_tasks WHERE company_id=@c AND status NOT IN ('Completed','Cancelled') AND deleted_at IS NULL", p => p.Parameters.AddWithValue("@c", c), ct);
-        var overdueCoach  = await db.ScalarLongAsync("SELECT COUNT(*) FROM coaching_tasks WHERE company_id=@c AND status NOT IN ('Completed','Cancelled') AND due_at < CURRENT_DATE AND deleted_at IS NULL", p => p.Parameters.AddWithValue("@c", c), ct);
-        var avgSafety     = await db.ScalarDecimalAsync("SELECT AVG(safety_score) FROM drivers WHERE company_id=@c AND deleted_at IS NULL", p => p.Parameters.AddWithValue("@c", c), ct);
-        var eventTypes    = await db.QueryAsync("SELECT event_type, severity, COUNT(*) cnt FROM safety_events WHERE company_id=@c AND event_time >= NOW() - 30 * INTERVAL '1 day' GROUP BY event_type, severity ORDER BY cnt DESC LIMIT 8", p => p.Parameters.AddWithValue("@c", c), ct);
-        var topRiskDrivers = await db.QueryAsync(
-            @"SELECT d.id, d.driver_code, d.full_name driver_name, d.safety_score,
-                     COUNT(se.id) event_count
-              FROM drivers d
-              LEFT JOIN safety_events se ON se.driver_id=d.id AND se.company_id=d.company_id
-                AND se.event_time >= NOW() - 30 * INTERVAL '1 day'
-              WHERE d.company_id=@c AND d.deleted_at IS NULL
-              GROUP BY d.id, d.driver_code, d.full_name, d.safety_score
-              ORDER BY event_count DESC, d.safety_score ASC LIMIT 5",
-            p => p.Parameters.AddWithValue("@c", c), ct);
-
-        return Results.Ok(ApiResponse<object>.Ok(new
+        return Task.FromResult<IResult>(Results.Ok(ApiResponse<object>.Ok(new
         {
-            safetyEventsLast30d = totalEvents,
-            criticalEvents,
-            openCoachingTasks = openCoaching,
-            overdueCoachingTasks = overdueCoach,
-            driverSafetyAvg = avgSafety.HasValue ? Math.Round(avgSafety.Value, 1) : (decimal?)null,
-            eventTypeBreakdown = eventTypes,
-            topRiskDrivers,
+            safetyEventsLast30d = (long?)null,
+            criticalEvents = (long?)null,
+            openCoachingTasks = (long?)null,
+            overdueCoachingTasks = (long?)null,
+            driverSafetyAvg = (decimal?)null,
+            eventTypeBreakdown = Array.Empty<object>(),
+            topRiskDrivers = Array.Empty<object>(),
             insightType = "System Analytics Insight",
-        }, "Safety analytics"));
+            evidenceStatus = "Unavailable until safety events, coaching tasks and score calculations carry recorded source provenance."
+        }, "Safety analytics awaiting qualified evidence")));
     }
 
-    private static async Task<IResult> AnalyticsMaintenance(HttpContext http, Database db, CancellationToken ct)
+    private static Task<IResult> AnalyticsMaintenance(HttpContext http, Database db, CancellationToken ct)
     {
-        var c      = GetCompanyId(http);
         var denied = RequirePermission(http, "maintenance:view");
-        if (denied is not null) return denied;
-        if (RequireAnalyticsBranchScope(http) is { } branchDenied) return branchDenied;
+        if (denied is not null) return Task.FromResult<IResult>(denied);
+        if (RequireAnalyticsBranchScope(http) is { } branchDenied) return Task.FromResult<IResult>(branchDenied);
+        ct.ThrowIfCancellationRequested();
 
-        var oosVehicles    = await db.ScalarLongAsync("SELECT COUNT(*) FROM vehicles WHERE company_id=@c AND deleted_at IS NULL AND out_of_service=TRUE", p => p.Parameters.AddWithValue("@c", c), ct);
-        var criticalDefects = await db.ScalarLongAsync("SELECT COUNT(*) FROM dvir_defects WHERE company_id=@c AND severity='Critical' AND status NOT IN ('resolved','Resolved')", p => p.Parameters.AddWithValue("@c", c), ct);
-        var openWorkOrders = await db.ScalarLongAsync("SELECT COUNT(*) FROM work_orders WHERE company_id=@c AND status NOT IN ('Completed','Closed','Cancelled')", p => p.Parameters.AddWithValue("@c", c), ct);
-        var pmOverdue      = await db.ScalarLongAsync("SELECT COUNT(*) FROM maintenance_items WHERE company_id=@c AND status='Open' AND due_date < CURRENT_DATE", p => p.Parameters.AddWithValue("@c", c), ct);
-        var dvirLast7d     = await db.ScalarLongAsync("SELECT COUNT(*) FROM dvir_reports WHERE company_id=@c AND submitted_at >= NOW() - 7 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", c), ct);
-        var recurringFaults = await db.QueryAsync(
-            "SELECT code, description AS component, COUNT(*) total, MAX(occurrence_count) max_recurrences FROM fault_codes WHERE company_id=@c AND occurrence_count > 1 GROUP BY code, description ORDER BY total DESC LIMIT 5",
-            p => p.Parameters.AddWithValue("@c", c), ct);
-        var defectsByCategory = await db.QueryAsync(
-            "SELECT defect_category AS category, severity, COUNT(*) cnt FROM dvir_defects WHERE company_id=@c AND created_at >= NOW() - 30 * INTERVAL '1 day' GROUP BY defect_category, severity ORDER BY cnt DESC LIMIT 8",
-            p => p.Parameters.AddWithValue("@c", c), ct);
-
-        return Results.Ok(ApiResponse<object>.Ok(new
+        return Task.FromResult<IResult>(Results.Ok(ApiResponse<object>.Ok(new
         {
-            vehiclesOutOfService = oosVehicles,
-            criticalDefectsOpen  = criticalDefects,
-            openWorkOrders, pmOverdue, dvirLast7d,
-            recurringFaultCodes  = recurringFaults,
-            defectsByCategory,
+            vehiclesOutOfService = (long?)null,
+            criticalDefectsOpen = (long?)null,
+            openWorkOrders = (long?)null,
+            pmOverdue = (long?)null,
+            dvirLast7d = (long?)null,
+            recurringFaultCodes = Array.Empty<object>(),
+            defectsByCategory = Array.Empty<object>(),
             insightType = "System Analytics Insight",
-        }, "Maintenance analytics"));
+            evidenceStatus = "Unavailable until vehicle state, DVIR, work-order, maintenance and fault rows carry recorded source provenance."
+        }, "Maintenance analytics awaiting qualified evidence")));
     }
 
     private static async Task<IResult> AnalyticsCustomer(HttpContext http, Database db, CancellationToken ct)
