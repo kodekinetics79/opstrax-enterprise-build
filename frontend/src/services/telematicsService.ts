@@ -226,10 +226,14 @@ export type DeviceInstallationWorkPackageRecord = {
   appointmentEnd: string;
   serviceLocation: string;
   workScope: string;
-  readinessStatus: "AwaitingChecklist" | "BlockedByFailedCheck" | "ChecklistRecordedAwaitingArtifacts" | "RecordedAwaitingIndependentVerification";
+  readinessStatus: "AwaitingChecklist" | "BlockedByFailedCheck" | "ChecklistRecordedAwaitingArtifacts" | "RecordedAwaitingIndependentVerification" | "LinkedAwaitingIndependentVerification";
   requiredChecklistItems: DeviceInstallationChecklistItem[];
   latestChecklist: DeviceInstallationChecklistObservationRecord[];
   artifactReferences: DeviceInstallationArtifactReferenceRecord[];
+  linkedInstallationId: string | null;
+  linkedInstallationStatus: string | null;
+  linkAssuranceStatus: "RecordedUnverified" | null;
+  linkedAt: string | null;
   physicalAppointmentClaim: false;
   physicalWorkClaim: false;
   certificationClaim: false;
@@ -1625,20 +1629,32 @@ function mapInstallationWorkPackage(
   const hasFailure = requiredResults.some(observation => observation?.observedResult === "Fail");
   const allRecorded = requiredResults.every(observation => observation && ["Pass", "NotApplicable"].includes(observation.observedResult));
   const artifactReferences = artifactRows.filter(artifact => artifact.workPackageId === id);
+  const linkedInstallationId = row.linked_installation_id == null
+    ? null : canonicalDeviceLifecycleId(row.linked_installation_id);
+  if (row.linked_installation_id != null && (!linkedInstallationId || row.link_assurance_status !== "RecordedUnverified" ||
+      row.link_physical_work_claim !== false || row.link_certification_claim !== false ||
+      installationEffectiveInstant(row.linked_at) === null || typeof row.linked_installation_status !== "string" ||
+      !row.linked_installation_status.trim())) return null;
   const readinessStatus: DeviceInstallationWorkPackageRecord["readinessStatus"] = hasFailure
     ? "BlockedByFailedCheck"
     : !allRecorded
       ? "AwaitingChecklist"
       : artifactReferences.length === 0
         ? "ChecklistRecordedAwaitingArtifacts"
-        : "RecordedAwaitingIndependentVerification";
+        : linkedInstallationId
+          ? "LinkedAwaitingIndependentVerification"
+          : "RecordedAwaitingIndependentVerification";
   return {
     id, deviceId, vehicleId, vehicleCode: String(row.vehicle_code ?? ""),
     assignedInstallerUserId: installerId, installerName: String(row.installer_name ?? ""),
     workOrderReference: row.work_order_reference, appointmentStart: appointmentStartText,
     appointmentEnd: appointmentEndText, serviceLocation: row.service_location,
     workScope: String(row.work_scope ?? ""), readinessStatus, requiredChecklistItems, latestChecklist,
-    artifactReferences, physicalAppointmentClaim: false, physicalWorkClaim: false, certificationClaim: false,
+    artifactReferences, linkedInstallationId,
+    linkedInstallationStatus: linkedInstallationId ? String(row.linked_installation_status) : null,
+    linkAssuranceStatus: linkedInstallationId ? "RecordedUnverified" : null,
+    linkedAt: linkedInstallationId ? String(row.linked_at) : null,
+    physicalAppointmentClaim: false, physicalWorkClaim: false, certificationClaim: false,
   };
 }
 
@@ -2623,6 +2639,32 @@ export const telematicsService = {
     if (row.content_verification_status !== "Unverified" || row.physical_evidence_claim !== false || row.certification_claim !== false)
       throw new Error("The server did not preserve the unverified artifact boundary.");
     return { id: String(row.id ?? ""), note: "Artifact reference recorded. Content and physical work remain unverified." };
+  },
+
+  async linkInstallationWorkPackage(
+    deviceId: string | number, workPackageId: string | number, installationId: string | number,
+  ) {
+    const session = getSession();
+    ensureManagementAccess(session);
+    const requestedId = installationBodyId(deviceId);
+    const packageId = installationBodyId(workPackageId);
+    const targetInstallationId = installationBodyId(installationId);
+    if (requestedId === null || packageId === null || targetInstallationId === null)
+      throw new Error("A valid device, work package, and persisted installation are required.");
+    const row = normalizeKeys(await unwrap<AnyRecord>(apiClient.post(
+      `/api/telemetry/devices/${requestedId}/installation-work-packages/${packageId}/installation-links`, {
+        installationId: targetInstallationId,
+        idempotencyKey: installationMutationKey(`work-${packageId}-installation-${targetInstallationId}`),
+      })));
+    if (canonicalDeviceLifecycleId(row.work_package_id) !== String(packageId) ||
+        canonicalDeviceLifecycleId(row.installation_id) !== String(targetInstallationId) ||
+        row.link_assurance_status !== "RecordedUnverified" || row.physical_work_claim !== false ||
+        row.certification_claim !== false)
+      throw new Error("The server did not preserve the unverified installation-link boundary.");
+    return {
+      id: String(row.id ?? ""),
+      note: "Work package linked to the persisted installation. Physical work and certification remain unverified.",
+    };
   },
 
   async replaceDeviceConnectivityProfile(deviceId: string | number, input: DeviceConnectivityProfileInput) {

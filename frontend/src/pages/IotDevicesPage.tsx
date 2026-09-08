@@ -2155,7 +2155,18 @@ function DeviceDetailDrawer({
     onError: (error) => setInstallationEvidenceError(apiErrorMessage(error, "The artifact reference was not recorded.")),
     onSettled: () => { installationEvidenceSubmitting.current = false; },
   });
-  const installationEvidenceBusy = workPackageMut.isPending || checklistMut.isPending || artifactMut.isPending;
+  const linkWorkPackageMut = useMutation({
+    mutationFn: ({ workPackageId, installationId }: { workPackageId: string; installationId: string }) =>
+      telematicsService.linkInstallationWorkPackage(device.id, workPackageId, installationId),
+    retry: false,
+    onSuccess: async (result) => {
+      setInstallationEvidenceError(null); setInstallationEvidenceNotice(result.note);
+      await refreshInstallationEvidence();
+    },
+    onError: (error) => setInstallationEvidenceError(apiErrorMessage(error, "The work package was not linked to the installation.")),
+    onSettled: () => { installationEvidenceSubmitting.current = false; },
+  });
+  const installationEvidenceBusy = workPackageMut.isPending || checklistMut.isPending || artifactMut.isPending || linkWorkPackageMut.isPending;
   const submitWorkPackage = (event: FormEvent) => {
     event.preventDefault();
     if (!canManageConnectivity || installationEvidenceSubmitting.current || installationEvidenceBusy) return;
@@ -2961,6 +2972,11 @@ function DeviceDetailDrawer({
             {detail.installationWorkPackages.length === 0 ? <p className="text-sm text-slate-400">No installer work package has been recorded for this device.</p> : null}
             {detail.installationWorkPackages.map(workPackage => {
               const observed = new Map(workPackage.latestChecklist.map(row => [row.checklistItem, row]));
+              const matchingInstallation = detail.currentInstallation &&
+                String(detail.currentInstallation.vehicleId ?? "") === workPackage.vehicleId
+                ? detail.currentInstallation
+                : detail.installations.find(installation =>
+                  String(installation.vehicleId ?? "") === workPackage.vehicleId) ?? null;
               return (
                 <div key={workPackage.id} className="rounded-xl border border-white/[0.08] bg-black/10 p-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
@@ -2979,6 +2995,18 @@ function DeviceDetailDrawer({
                     })}
                   </div>
                   {workPackage.artifactReferences.length ? <div className="mt-4"><TimelineList rows={workPackage.artifactReferences.map(artifact => ({ id: artifact.id, title: artifact.artifactType.replace(/([a-z])([A-Z])/g, "$1 $2"), subtitle: `${artifact.objectKey} · SHA-256 ${artifact.sha256.slice(0, 12)}… · ${artifact.contentVerificationStatus}`, meta: artifact.capturedAt }))} emptyText="No artifact references recorded." /></div> : null}
+                  {workPackage.linkedInstallationId ? (
+                    <p className="mt-3 rounded-lg border border-sky-400/20 bg-sky-500/10 p-3 text-xs text-sky-100">Linked to persisted installation #{workPackage.linkedInstallationId} ({workPackage.linkedInstallationStatus}) · {workPackage.linkAssuranceStatus}. This link does not verify physical work.</p>
+                  ) : matchingInstallation && workPackage.readinessStatus === "RecordedAwaitingIndependentVerification" ? (
+                    <div className="mt-3 rounded-lg border border-amber-400/20 bg-amber-500/10 p-3 text-xs text-amber-100">
+                      <p>Matching installation #{matchingInstallation.id} is recorded for this vehicle. Linking records traceability only; physical work and certification remain unverified.</p>
+                      {canManageConnectivity ? <button type="button" className="btn-secondary mt-2" disabled={installationEvidenceBusy} onClick={() => {
+                        if (installationEvidenceSubmitting.current) return;
+                        installationEvidenceSubmitting.current = true; setInstallationEvidenceError(null);
+                        linkWorkPackageMut.mutate({ workPackageId: workPackage.id, installationId: matchingInstallation.id });
+                      }}>{linkWorkPackageMut.isPending ? "Linking…" : "Link recorded installation"}</button> : null}
+                    </div>
+                  ) : null}
                   {canManageConnectivity ? <div className="mt-4 flex flex-wrap gap-2"><button type="button" className="btn-secondary" disabled={installationEvidenceBusy} onClick={() => { setInstallationEvidenceError(null); setChecklistForm(newInstallationChecklistForm(workPackage.id)); setArtifactForm(null); }}>Record checklist observation</button><button type="button" className="btn-secondary" disabled={installationEvidenceBusy} onClick={() => { setInstallationEvidenceError(null); setArtifactForm(newInstallationArtifactForm(workPackage.id)); setChecklistForm(null); }}>Record artifact reference</button></div> : null}
 
                   {checklistForm?.workPackageId === workPackage.id ? (

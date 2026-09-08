@@ -271,6 +271,7 @@ public static partial class EndpointMappings
         app.MapPost("/api/telemetry/devices/{id:long}/installation-work-packages", DeviceInstallationWorkPackageCreate);
         app.MapPost("/api/telemetry/devices/{id:long}/installation-work-packages/{workPackageId:long}/checklist-observations", DeviceInstallationChecklistObservationCreate);
         app.MapPost("/api/telemetry/devices/{id:long}/installation-work-packages/{workPackageId:long}/artifact-references", DeviceInstallationArtifactReferenceCreate);
+        app.MapPost("/api/telemetry/devices/{id:long}/installation-work-packages/{workPackageId:long}/installation-links", DeviceInstallationWorkPackageLinkCreate);
         app.MapPost("/api/telemetry/devices/{id:long}/connectivity-profiles", DeviceConnectivityProfileReplace);
         app.MapPost("/api/telemetry/firmware-campaigns", DeviceFirmwareCampaignCreate);
         app.MapPost("/api/telemetry/devices/{id:long}/rma-cases", DeviceRmaCaseCreate);

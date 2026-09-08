@@ -31,6 +31,10 @@ public static partial class EndpointMappings
         DateTimeOffset? CapturedAt,
         string IdempotencyKey);
 
+    private sealed record DeviceInstallationWorkPackageLinkBody(
+        long InstallationId,
+        string IdempotencyKey);
+
     private static readonly HashSet<string> InstallationChecklistItems = new(StringComparer.OrdinalIgnoreCase)
     {
         "DeviceIdentity", "VehicleIdentity", "Mounting", "PrimaryPower", "Ground", "Ignition",
@@ -392,6 +396,113 @@ public static partial class EndpointMappings
         }
     }
 
+    private static async Task<IResult> DeviceInstallationWorkPackageLinkCreate(
+        HttpContext http, long id, long workPackageId, DeviceInstallationWorkPackageLinkBody body,
+        Database db, AuditService audit, CancellationToken ct)
+    {
+        if (RequirePermission(http, "telemetry.devices.manage") is { } denied) return denied;
+        var idempotencyKey = Clean(body.IdempotencyKey);
+        if (body.InstallationId <= 0 || idempotencyKey is null || idempotencyKey.Length > 120)
+            return Results.BadRequest(ApiResponse<object>.Fail("A valid installation and idempotency key are required"));
+        var companyId = GetCompanyId(http);
+        var branchId = GetBranchId(http);
+        var actorId = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+        if (actorId <= 0) return Results.Unauthorized();
+
+        try
+        {
+            return await db.RunInTenantTransactionAsync(companyId, async () =>
+            {
+                await db.ExecuteAsync(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(@identity,0))",
+                    command => command.Parameters.AddWithValue("@identity",
+                        $"installation-work-link:{companyId}:{workPackageId}:{body.InstallationId}"), ct);
+                var resources = await db.QuerySingleAsync(
+                    @"SELECT w.branch_id,w.vehicle_id,w.assigned_installer_user_id,i.status installation_status
+                        FROM device_installation_work_packages w
+                        JOIN device_installations i ON i.company_id=w.company_id AND i.device_id=w.device_id
+                          AND i.vehicle_id=w.vehicle_id AND i.id=@installation
+                        JOIN users u ON u.company_id=w.company_id AND u.id=@actor AND u.status='Active'
+                       WHERE w.company_id=@company AND w.id=@work AND w.device_id=@device
+                         AND w.assigned_installer_user_id=@actor
+                         AND i.branch_id IS NOT DISTINCT FROM w.branch_id
+                         AND (@branch::BIGINT IS NULL OR w.branch_id=@branch)
+                       FOR SHARE OF w,i,u",
+                    command =>
+                    {
+                        command.Parameters.AddWithValue("@company", companyId);
+                        command.Parameters.AddWithValue("@work", workPackageId);
+                        command.Parameters.AddWithValue("@device", id);
+                        command.Parameters.AddWithValue("@installation", body.InstallationId);
+                        command.Parameters.AddWithValue("@actor", actorId);
+                        command.Parameters.AddWithValue("@branch", (object?)branchId ?? DBNull.Value);
+                    }, ct);
+                if (resources is null)
+                    return Results.NotFound(ApiResponse<object>.Fail("Matching work package and installation were not found for the assigned installer"));
+
+                var existing = await db.QuerySingleAsync(
+                    @"SELECT id,work_package_id,installation_id,link_assurance_status,
+                             physical_work_claim,certification_claim,linked_by,linked_at
+                       FROM device_installation_work_package_links
+                       WHERE company_id=@company
+                         AND (idempotency_key=@key OR work_package_id=@work OR installation_id=@installation)
+                       ORDER BY (idempotency_key=@key) DESC,id LIMIT 1",
+                    command =>
+                    {
+                        command.Parameters.AddWithValue("@company", companyId);
+                        command.Parameters.AddWithValue("@key", idempotencyKey);
+                        command.Parameters.AddWithValue("@work", workPackageId);
+                        command.Parameters.AddWithValue("@installation", body.InstallationId);
+                    }, ct);
+                if (existing is not null)
+                {
+                    var same = Convert.ToInt64(existing["workPackageId"]!) == workPackageId &&
+                               Convert.ToInt64(existing["installationId"]!) == body.InstallationId &&
+                               Convert.ToInt64(existing["linkedBy"]!) == actorId;
+                    return same
+                        ? Results.Ok(ApiResponse<object>.Ok(existing, "Work package is already linked to this installation"))
+                        : Results.Conflict(ApiResponse<object>.Fail("The work package, installation, or idempotency key already belongs to another link"));
+                }
+
+                var linkId = await db.InsertAsync(
+                    @"INSERT INTO device_installation_work_package_links
+                        (company_id,branch_id,device_id,work_package_id,installation_id,idempotency_key,linked_by)
+                      VALUES(@company,@branch,@device,@work,@installation,@key,@actor)",
+                    command =>
+                    {
+                        command.Parameters.AddWithValue("@company", companyId);
+                        command.Parameters.AddWithValue("@branch", resources["branchId"] ?? DBNull.Value);
+                        command.Parameters.AddWithValue("@device", id);
+                        command.Parameters.AddWithValue("@work", workPackageId);
+                        command.Parameters.AddWithValue("@installation", body.InstallationId);
+                        command.Parameters.AddWithValue("@key", idempotencyKey);
+                        command.Parameters.AddWithValue("@actor", actorId);
+                    }, ct);
+                await audit.LogAsync(http, "device.installation.work_package.linked", "DeviceInstallationWorkPackage", workPackageId,
+                    System.Text.Json.JsonSerializer.Serialize(new { deviceId = id, installationId = body.InstallationId, linkId }), ct);
+                return Results.Created(
+                    $"/api/telemetry/devices/{id}/installation-work-packages/{workPackageId}/installation-links/{linkId}",
+                    ApiResponse<object>.Ok(new
+                    {
+                        id = linkId,
+                        workPackageId,
+                        body.InstallationId,
+                        installationStatus = resources["installationStatus"],
+                        linkAssuranceStatus = "RecordedUnverified",
+                        physicalWorkClaim = false,
+                        certificationClaim = false,
+                        linkedBy = actorId
+                    }, "Work package linked to the persisted installation; physical work and certification remain unverified"));
+            }, ct);
+        }
+        catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.UniqueViolation or
+            PostgresErrorCodes.CheckViolation or PostgresErrorCodes.ForeignKeyViolation)
+        {
+            return Results.Conflict(ApiResponse<object>.Fail(
+                "Linking requires the exact assigned installer, matching device/vehicle/branch, every required latest checklist result as Pass or NotApplicable, and at least one artifact reference"));
+        }
+    }
+
     private static async Task<Dictionary<string, object?>?> LoadVisibleWorkPackageAsync(
         Database db, long companyId, long? branchId, long deviceId, long workPackageId, long actorId, CancellationToken ct)
         => await db.QuerySingleAsync(
@@ -400,6 +511,7 @@ public static partial class EndpointMappings
                 JOIN eld_devices d ON d.company_id=w.company_id AND d.id=w.device_id AND d.deleted_at IS NULL
                 JOIN users u ON u.company_id=w.company_id AND u.id=@actor AND u.status='Active'
                WHERE w.company_id=@company AND w.id=@work AND w.device_id=@device
+                 AND w.assigned_installer_user_id=@actor
                  AND (@branch::BIGINT IS NULL OR (w.branch_id=@branch AND d.branch_id=@branch))
                FOR SHARE OF w,d,u",
             command =>
@@ -419,10 +531,17 @@ public static partial class EndpointMappings
             @"SELECT w.id,w.device_id,w.vehicle_id,w.assigned_installer_user_id,u.full_name installer_name,
                      w.work_order_reference,w.appointment_start,w.appointment_end,w.service_location,w.work_scope,
                      w.physical_appointment_claim,w.physical_work_claim,w.certification_claim,w.created_at,
-                     v.vehicle_code
+                     v.vehicle_code,l.installation_id linked_installation_id,
+                     l.link_assurance_status,l.physical_work_claim link_physical_work_claim,
+                     l.certification_claim link_certification_claim,l.linked_at,
+                     i.status linked_installation_status
                 FROM device_installation_work_packages w
                 JOIN users u ON u.company_id=w.company_id AND u.id=w.assigned_installer_user_id
                 JOIN vehicles v ON v.company_id=w.company_id AND v.id=w.vehicle_id
+                LEFT JOIN device_installation_work_package_links l
+                  ON l.company_id=w.company_id AND l.work_package_id=w.id
+                LEFT JOIN device_installations i
+                  ON i.company_id=l.company_id AND i.id=l.installation_id
                WHERE w.company_id=@company AND w.device_id=@device
                  AND (@branch::BIGINT IS NULL OR w.branch_id=@branch)
                ORDER BY w.appointment_start DESC,w.id DESC LIMIT 100",

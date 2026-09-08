@@ -523,6 +523,22 @@ public sealed class TelemetrySchemaService(Database db)
             UNIQUE(company_id,work_package_id,idempotency_key),
             UNIQUE(company_id,work_package_id,artifact_type,sha256)
         )",
+
+        @"CREATE TABLE IF NOT EXISTS device_installation_work_package_links (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            company_id BIGINT NOT NULL, branch_id BIGINT NULL, device_id BIGINT NOT NULL,
+            work_package_id BIGINT NOT NULL, installation_id BIGINT NOT NULL,
+            link_assurance_status VARCHAR(32) NOT NULL DEFAULT 'RecordedUnverified',
+            physical_work_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            certification_claim BOOLEAN NOT NULL DEFAULT FALSE,
+            idempotency_key VARCHAR(120) NOT NULL, linked_by BIGINT NOT NULL,
+            linked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT ck_stage122_link_assurance CHECK (link_assurance_status='RecordedUnverified'),
+            CONSTRAINT ck_stage122_link_no_physical_claim CHECK (physical_work_claim=FALSE),
+            CONSTRAINT ck_stage122_link_no_certification_claim CHECK (certification_claim=FALSE),
+            UNIQUE(company_id,work_package_id), UNIQUE(company_id,installation_id),
+            UNIQUE(company_id,idempotency_key)
+        )",
     ];
 
     private static readonly string[] Indexes =
@@ -597,6 +613,8 @@ public sealed class TelemetrySchemaService(Database db)
           ON device_installation_checklist_observations(company_id,work_package_id,checklist_item,observed_at DESC,id DESC)",
         @"CREATE INDEX IF NOT EXISTS ix_stage121_artifact_work_recent
           ON device_installation_artifact_references(company_id,work_package_id,captured_at DESC,id DESC)",
+        @"CREATE INDEX IF NOT EXISTS ix_stage122_links_device_recent
+          ON device_installation_work_package_links(company_id,device_id,linked_at DESC,id DESC)",
     ];
 
     private static readonly string[] Seeds =

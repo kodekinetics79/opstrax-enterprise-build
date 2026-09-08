@@ -836,6 +836,24 @@ BEGIN
     RAISE EXCEPTION 'Clean-chain Stage121 installation work-package boundary failed';
   END IF;
 
+  IF to_regclass('public.device_installation_work_package_links') IS NULL
+     OR NOT COALESCE((SELECT c.relrowsecurity AND c.relforcerowsecurity
+                        FROM pg_class c WHERE c.oid=to_regclass('public.device_installation_work_package_links')),false)
+     OR NOT has_table_privilege('opstrax_app','device_installation_work_package_links','SELECT,INSERT')
+     OR has_table_privilege('opstrax_app','device_installation_work_package_links','UPDATE,DELETE')
+     OR NOT has_table_privilege('opstrax_system','device_installation_work_package_links','SELECT,INSERT')
+     OR has_table_privilege('opstrax_system','device_installation_work_package_links','UPDATE,DELETE')
+     OR (SELECT count(*) FROM pg_policies p
+           WHERE p.schemaname='public' AND p.tablename='device_installation_work_package_links'
+             AND p.policyname IN ('tenant_ticket_app','system_control_plane'))<>2
+     OR to_regprocedure('stage122_guard_installation_work_link()') IS NULL
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger
+                      WHERE tgrelid=to_regclass('public.device_installation_work_package_links')
+                        AND tgname='trg_stage122_guard_installation_work_link'
+                        AND NOT tgisinternal AND tgenabled<>'D') THEN
+    RAISE EXCEPTION 'Clean-chain Stage122 installation work-link boundary failed';
+  END IF;
+
   IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND roles='{public}'::name[])
      OR EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public'
         AND (COALESCE(qual,'') LIKE '%app.current_tenant_id%'
