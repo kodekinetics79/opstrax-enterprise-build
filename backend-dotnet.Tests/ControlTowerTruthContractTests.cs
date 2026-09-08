@@ -41,6 +41,12 @@ public sealed class ControlTowerTruthContractTests
             Assert.Contains("RequirePermission(http, \"dashcam:view\") is null", detail, StringComparison.Ordinal);
             Assert.Contains("source_authority='Authoritative' AND media_status='Ready'", detail, StringComparison.Ordinal);
         }
+
+        var controlDetail = source[controlStart..controlEnd];
+        Assert.Contains("RequirePermission(http, \"telematics:devices:view\") is null", controlDetail, StringComparison.Ordinal);
+        Assert.Contains("END device_status", controlDetail, StringComparison.Ordinal);
+        Assert.Contains("END camera_status", controlDetail, StringComparison.Ordinal);
+        Assert.Contains("i.device_role IN ('GPS','ELD','OBD-II','J1939/CAN')", controlDetail, StringComparison.Ordinal);
     }
 
     [Fact]

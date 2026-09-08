@@ -100,6 +100,17 @@ public sealed class ControlTowerBranchIsolationPostgresTests
             Assert.All(branchData.GetProperty("actionQueue").EnumerateArray(), item => Assert.DoesNotContain("Unallocated", item.GetProperty("title").GetString()));
             Assert.All(branchData.GetProperty("actionQueue").EnumerateArray(), item => Assert.DoesNotContain("Unknown", item.GetProperty("title").GetString()));
 
+            var authorizedDetail = Payload(await InvokeVehicleDetail(
+                Principal(company, branchA, "vehicles:view", "telematics:devices:view", "dashcam:view"), ownVehicle, db)).GetProperty("data");
+            Assert.Equal("Online", authorizedDetail.GetProperty("record").GetProperty("deviceStatus").GetString());
+            Assert.Equal("Unknown", authorizedDetail.GetProperty("record").GetProperty("cameraStatus").GetString());
+            var restrictedDetail = Payload(await InvokeVehicleDetail(
+                Principal(company, branchA, "vehicles:view"), ownVehicle, db)).GetProperty("data");
+            Assert.Equal("Unknown", restrictedDetail.GetProperty("record").GetProperty("deviceStatus").GetString());
+            Assert.Equal("Unknown", restrictedDetail.GetProperty("record").GetProperty("cameraStatus").GetString());
+            Assert.Equal(JsonValueKind.Null, restrictedDetail.GetProperty("record").GetProperty("readinessScore").ValueKind);
+            Assert.Equal(JsonValueKind.Null, restrictedDetail.GetProperty("record").GetProperty("dataQualityScore").ValueKind);
+
             var tenantPayload = Payload(await Invoke(Principal(company, null, "dashboard:view", "dashcam:view", "telematics:devices:view"), db));
             var tenantData = tenantPayload.GetProperty("data");
             Assert.Equal(3, tenantData.GetProperty("entities").GetArrayLength());
@@ -224,6 +235,12 @@ public sealed class ControlTowerBranchIsolationPostgresTests
     {
         var method = typeof(EndpointMappings).GetMethod("ControlTowerSummary", BindingFlags.NonPublic | BindingFlags.Static)!;
         return await (Task<IResult>)method.Invoke(null, [http, db, CancellationToken.None])!;
+    }
+
+    private static async Task<IResult> InvokeVehicleDetail(DefaultHttpContext http, long vehicleId, Database db)
+    {
+        var method = typeof(EndpointMappings).GetMethod("ControlTowerVehicleDetail", BindingFlags.NonPublic | BindingFlags.Static)!;
+        return await (Task<IResult>)method.Invoke(null, [http, vehicleId, db, CancellationToken.None])!;
     }
 
     private static JsonElement Payload(IResult result)

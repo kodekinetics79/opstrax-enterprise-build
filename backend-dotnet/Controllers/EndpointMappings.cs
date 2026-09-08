@@ -4723,14 +4723,16 @@ public static partial class EndpointMappings
         var companyId = GetCompanyId(http);
         var (branchClause, branchId) = StrictBranchFilter(http, "v");
         var rows = await db.QueryAsync(
-            @"SELECT v.id, v.id vehicleId, v.vehicle_code label, 'vehicle' entity_type, le.lat, le.lng, le.speed_mph speedMph, le.event_type eventType, v.status, d.full_name driverName
+            @"SELECT v.id, v.id vehicle_id, v.vehicle_code label, 'vehicle' entity_type,
+                     le.lat, le.lng, le.speed_mph, le.event_type, v.status, d.full_name driver_name
               FROM vehicles v
               INNER JOIN (
                 SELECT le1.* FROM location_events le1
                 INNER JOIN (SELECT vehicle_id, MAX(id) max_id FROM location_events WHERE company_id=@companyId GROUP BY vehicle_id) le2 ON le1.id=le2.max_id
                 WHERE le1.company_id=@companyId
               ) le ON v.id=le.vehicle_id
-              LEFT JOIN drivers d ON d.id=v.assigned_driver_id
+              LEFT JOIN drivers d ON d.id=v.assigned_driver_id AND d.company_id=v.company_id
+                AND d.deleted_at IS NULL AND d.branch_id IS NOT DISTINCT FROM v.branch_id
               WHERE v.deleted_at IS NULL AND v.company_id=@companyId" + branchClause + @"
               ORDER BY le.event_time DESC",
             c =>
@@ -4779,21 +4781,59 @@ public static partial class EndpointMappings
         if (RequirePermission(http, "vehicles:view") is { } denied) return denied;
         var companyId = GetCompanyId(http);
         var (branchClause, branchId) = StrictBranchFilter(http, "v");
+        var canViewDeviceEvidence = RequirePermission(http, "telematics:devices:view") is null;
+        var canViewCameraEvidence = RequirePermission(http, "dashcam:view") is null;
         var record = await db.QuerySingleAsync(
-            @"SELECT v.*, d.full_name driver_name, le.lat, le.lng, le.speed_mph, le.heading, le.event_time last_seen_at
+            @"SELECT v.*, d.full_name driver_name, le.lat, le.lng, le.speed_mph, le.heading, le.event_time last_seen_at,
+                     CASE WHEN @canViewDeviceEvidence THEN current_device.device_status ELSE 'Unknown' END device_status,
+                     CASE WHEN @canViewCameraEvidence THEN COALESCE(current_camera.camera_status,'Unknown') ELSE 'Unknown' END camera_status,
+                     CASE WHEN @canViewDeviceEvidence AND current_device.device_count>0 THEN v.readiness_score END readiness_score,
+                     CASE WHEN @canViewDeviceEvidence AND current_device.device_count>0 THEN v.data_quality_score END data_quality_score
               FROM vehicles v
-              LEFT JOIN drivers d ON d.id=v.assigned_driver_id
-              LEFT JOIN location_events le ON le.vehicle_id=v.id
+              LEFT JOIN drivers d ON d.id=v.assigned_driver_id AND d.company_id=v.company_id
+                AND d.deleted_at IS NULL AND d.branch_id IS NOT DISTINCT FROM v.branch_id
+              LEFT JOIN LATERAL (
+                SELECT latest.lat,latest.lng,latest.speed_mph,latest.heading,latest.event_time
+                FROM location_events latest
+                WHERE latest.company_id=v.company_id AND latest.vehicle_id=v.id
+                ORDER BY latest.event_time DESC,latest.id DESC LIMIT 1
+              ) le ON TRUE
+              LEFT JOIN LATERAL (
+                SELECT COUNT(e.id) device_count,
+                       CASE WHEN COUNT(e.id)=0 THEN 'Unknown'
+                            WHEN BOOL_OR(LOWER(COALESCE(e.device_state,'')) ~ '(revoked|suspend|offline|malfunction|fault|quarantin)') THEN 'Attention required'
+                            WHEN MAX(e.last_seen_at) IS NULL THEN 'No check-in'
+                            WHEN MAX(e.last_seen_at) >= NOW()-INTERVAL '15 minutes' THEN 'Online'
+                            ELSE 'Stale' END device_status
+                FROM device_installations i
+                JOIN eld_devices e ON e.id=i.device_id AND e.company_id=i.company_id AND e.deleted_at IS NULL
+                WHERE i.company_id=v.company_id AND i.vehicle_id=v.id AND i.effective_to IS NULL
+                  AND i.status IN ('Installed','Verified') AND i.device_role IN ('GPS','ELD','OBD-II','J1939/CAN')
+              ) current_device ON TRUE
+              LEFT JOIN LATERAL (
+                SELECT e.id device_id,
+                       CASE WHEN e.last_seen_at IS NULL THEN 'No check-in'
+                            WHEN LOWER(COALESCE(e.device_state,'')) ~ '(revoked|suspend|offline|malfunction|fault|quarantin)' THEN COALESCE(NULLIF(BTRIM(e.device_state),''),'Attention required')
+                            WHEN e.last_seen_at >= NOW()-INTERVAL '15 minutes' THEN 'Online'
+                            ELSE 'Stale' END camera_status
+                FROM device_installations i
+                JOIN eld_devices e ON e.id=i.device_id AND e.company_id=i.company_id AND e.deleted_at IS NULL
+                WHERE i.company_id=v.company_id AND i.vehicle_id=v.id AND i.effective_to IS NULL
+                  AND i.status IN ('Installed','Verified') AND i.device_role='Dashcam'
+                ORDER BY i.is_primary DESC,i.effective_from DESC,i.id DESC LIMIT 1
+              ) current_camera ON TRUE
               WHERE v.id=@id AND v.company_id=@companyId AND v.deleted_at IS NULL" + branchClause + @"
-              ORDER BY le.event_time DESC LIMIT 1", c =>
+              LIMIT 1", c =>
               {
                   c.Parameters.AddWithValue("@id", id);
                   c.Parameters.AddWithValue("@companyId", companyId);
+                  c.Parameters.AddWithValue("@canViewDeviceEvidence", canViewDeviceEvidence);
+                  c.Parameters.AddWithValue("@canViewCameraEvidence", canViewCameraEvidence);
                   if (branchId is not null) c.Parameters.AddWithValue("@branchId", branchId.Value);
               }, ct);
         if (record is null) return Results.NotFound(ApiResponse<object>.Fail("Vehicle not found"));
         List<Dictionary<string, object?>> videoEvents = [];
-        if (RequirePermission(http, "dashcam:view") is null)
+        if (canViewCameraEvidence)
             videoEvents = await db.QueryAsync(
                 @"SELECT event_number,event_type,severity,review_status,evidence_status,thumbnail_url,source_authority,media_status
                   FROM dashcam_events
