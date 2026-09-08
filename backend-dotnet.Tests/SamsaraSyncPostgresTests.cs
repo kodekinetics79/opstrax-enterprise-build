@@ -631,9 +631,9 @@ public sealed class SamsaraSyncPostgresTests
                 c.Parameters.AddWithValue("@from", initialInstallationAt);
             });
         await db.ExecuteAsync(
-            @"INSERT INTO telemetry_rules(company_id,rule_type,threshold_value,severity,enabled)
-              VALUES(@cid,'speeding',50,'High',TRUE)
-              ON CONFLICT(company_id,rule_type) DO UPDATE SET threshold_value=50,severity='High',enabled=TRUE",
+            @"INSERT INTO telemetry_rules(company_id,rule_type,threshold_value,severity,enabled,created_by,policy_origin,approval_status,approved_by,approved_at)
+              VALUES(@cid,'speeding',50,'High',TRUE,1,'user_workflow','approved',1,NOW())
+              ON CONFLICT(company_id,rule_type) DO UPDATE SET threshold_value=50,severity='High',enabled=TRUE,created_by=1,policy_origin='user_workflow',approval_status='approved',approved_by=1,approved_at=NOW()",
             c => c.Parameters.AddWithValue("@cid", companyId));
         await db.ExecuteAsync(
             @"INSERT INTO geofences(company_id,name,geofence_type,center_lat,center_lng,radius_meters,status)

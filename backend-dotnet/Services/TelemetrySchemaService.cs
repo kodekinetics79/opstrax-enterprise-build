@@ -10,6 +10,7 @@ public sealed class TelemetrySchemaService(Database db)
         foreach (var col in Columns) await EnsureColumnAsync(col.Table, col.Name, col.Definition, ct);
         foreach (var sql in Indexes) { try { await db.ExecuteAsync(sql, ct: ct); } catch { } }
         foreach (var sql in CredentialHardening) await db.ExecuteAsync(sql, ct: ct);
+        foreach (var sql in PolicyHardening) await db.ExecuteAsync(sql, ct: ct);
         foreach (var sql in Seeds) await db.ExecuteAsync(sql, ct: ct);
     }
 
@@ -67,6 +68,12 @@ public sealed class TelemetrySchemaService(Database db)
         new("eld_devices", "retired_at",   "TIMESTAMPTZ NULL"),
         new("eld_devices", "updated_at",   "TIMESTAMPTZ NULL"),
         new("eld_devices", "deleted_at",   "TIMESTAMPTZ NULL"),
+        // Tenant alert thresholds are commercial operating policy. Legacy rows and
+        // system templates stay inert until an authenticated operator approves them.
+        new("telemetry_rules", "policy_origin", "VARCHAR(40) NOT NULL DEFAULT 'legacy_unverified'"),
+        new("telemetry_rules", "approval_status", "VARCHAR(40) NOT NULL DEFAULT 'unapproved'"),
+        new("telemetry_rules", "approved_by", "BIGINT NULL"),
+        new("telemetry_rules", "approved_at", "TIMESTAMPTZ NULL"),
         // Stage119 enriches the Stage66 durable command ledger. Production gets
         // these columns from the migration; owner-capable local databases retain
         // parity when explicit runtime DDL is enabled.
@@ -283,16 +290,21 @@ public sealed class TelemetrySchemaService(Database db)
             UNIQUE (gateway_id)
         )",
 
-        // Per-tenant, per-rule configurable thresholds. Defaults seeded below.
+        // Per-tenant, per-rule configurable thresholds. System templates are
+        // visible but inert until an authenticated operator approves them.
         @"CREATE TABLE IF NOT EXISTS telemetry_rules (
             id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
             company_id BIGINT NOT NULL,
             rule_type VARCHAR(60) NOT NULL,
             threshold_value DECIMAL(12,4) NOT NULL DEFAULT 65,
             severity VARCHAR(40) NOT NULL DEFAULT 'High',
-            enabled BOOLEAN NOT NULL DEFAULT true,
+            enabled BOOLEAN NOT NULL DEFAULT false,
             notes TEXT NULL,
             created_by BIGINT NULL,
+            policy_origin VARCHAR(40) NOT NULL DEFAULT 'legacy_unverified',
+            approval_status VARCHAR(40) NOT NULL DEFAULT 'unapproved',
+            approved_by BIGINT NULL,
+            approved_at TIMESTAMPTZ NULL,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMPTZ NULL,
             UNIQUE (company_id, rule_type)
@@ -844,26 +856,53 @@ public sealed class TelemetrySchemaService(Database db)
 
     private static readonly string[] Seeds =
     [
-        // Seed default speeding rule for every company that has devices
-        @"INSERT INTO telemetry_rules (company_id, rule_type, threshold_value, severity, enabled)
-          SELECT DISTINCT company_id, 'speeding', 65, 'High', true
+        // Inert policy templates. They make supported controls discoverable without
+        // silently activating a jurisdiction- or customer-specific threshold.
+        @"INSERT INTO telemetry_rules (company_id, rule_type, threshold_value, severity, enabled, notes, policy_origin, approval_status)
+          SELECT DISTINCT company_id, 'speeding', 65, 'High', false,
+                 'Template only; requires operator approval.', 'system_template', 'unapproved'
           FROM eld_devices WHERE company_id IS NOT NULL AND company_id > 0
           ON CONFLICT DO NOTHING",
-        // Seed default stale-device rule (900 seconds = 15 minutes)
-        @"INSERT INTO telemetry_rules (company_id, rule_type, threshold_value, severity, enabled)
-          SELECT DISTINCT company_id, 'stale_device', 900, 'Warning', true
+        @"INSERT INTO telemetry_rules (company_id, rule_type, threshold_value, severity, enabled, notes, policy_origin, approval_status)
+          SELECT DISTINCT company_id, 'stale_device', 900, 'Warning', false,
+                 'Template only; requires operator approval.', 'system_template', 'unapproved'
           FROM eld_devices WHERE company_id IS NOT NULL AND company_id > 0
           ON CONFLICT DO NOTHING",
-        // Excessive-idling window in minutes (OperationalAlertDetectionService)
-        @"INSERT INTO telemetry_rules (company_id, rule_type, threshold_value, severity, enabled)
-          SELECT DISTINCT company_id, 'idling', 15, 'Warning', true
+        @"INSERT INTO telemetry_rules (company_id, rule_type, threshold_value, severity, enabled, notes, policy_origin, approval_status)
+          SELECT DISTINCT company_id, 'idling', 15, 'Warning', false,
+                 'Template only; requires operator approval.', 'system_template', 'unapproved'
           FROM eld_devices WHERE company_id IS NOT NULL AND company_id > 0
           ON CONFLICT DO NOTHING",
-        // Fuel-level drop (percentage points inside 45 min) that counts as an anomaly
-        @"INSERT INTO telemetry_rules (company_id, rule_type, threshold_value, severity, enabled)
-          SELECT DISTINCT company_id, 'fuel_drop_pct', 20, 'High', true
+        @"INSERT INTO telemetry_rules (company_id, rule_type, threshold_value, severity, enabled, notes, policy_origin, approval_status)
+          SELECT DISTINCT company_id, 'fuel_drop_pct', 20, 'High', false,
+                 'Template only; requires operator approval.', 'system_template', 'unapproved'
           FROM eld_devices WHERE company_id IS NOT NULL AND company_id > 0
           ON CONFLICT DO NOTHING",
+    ];
+
+    private static readonly string[] PolicyHardening =
+    [
+        "ALTER TABLE telemetry_rules ALTER COLUMN enabled SET DEFAULT FALSE",
+        // Preserve a previously recorded operator action when created_by carries a
+        // real authenticated user. Rows from the old startup seeds had no actor.
+        @"UPDATE telemetry_rules
+             SET policy_origin='user_workflow', approval_status='approved',
+                 approved_by=created_by, approved_at=COALESCE(updated_at,created_at,NOW())
+           WHERE policy_origin='legacy_unverified' AND approval_status='unapproved'
+             AND created_by IS NOT NULL AND created_by>0",
+        @"UPDATE telemetry_rules
+             SET enabled=FALSE, approved_by=NULL, approved_at=NULL
+           WHERE enabled=TRUE AND NOT (
+             policy_origin='user_workflow' AND approval_status='approved'
+             AND approved_by IS NOT NULL AND approved_by>0 AND approved_at IS NOT NULL)",
+        @"DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='ck_telemetry_rules_approved_activation') THEN
+              ALTER TABLE telemetry_rules ADD CONSTRAINT ck_telemetry_rules_approved_activation CHECK (
+                enabled=FALSE OR (
+                  policy_origin='user_workflow' AND approval_status='approved'
+                  AND approved_by IS NOT NULL AND approved_by>0 AND approved_at IS NOT NULL));
+            END IF;
+          END $$",
     ];
 
     private static readonly string[] CredentialHardening =

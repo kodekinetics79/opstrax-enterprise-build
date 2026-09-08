@@ -110,18 +110,21 @@ public sealed class TelemetryBackgroundService(
         var telemetry = scope.ServiceProvider.GetRequiredService<TelemetryLiveStateService>();
         var ai = scope.ServiceProvider.GetRequiredService<PostgresAiFoundationService>();
 
-        // Join telemetry_rules to get per-tenant stale threshold (default 900s = 15 min).
+        // An alert requires an explicitly approved tenant policy; startup templates
+        // and legacy rows cannot silently create customer-facing incidents.
         // Exclude open alerts in SQL and bound the batch. The previous implementation
         // loaded the entire fleet and issued a COUNT query per row, which produced a
         // cold-start N+1 storm for large certification tenants.
         var stale = await db.QueryAsync(
             @"SELECT lvp.company_id, lvp.vehicle_id, lvp.device_id,
                      EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT seconds_stale,
-                     COALESCE(tr.threshold_value, 900) stale_threshold
+                     tr.threshold_value stale_threshold, tr.severity
               FROM latest_vehicle_positions lvp
-              LEFT JOIN telemetry_rules tr
+              JOIN telemetry_rules tr
                 ON tr.company_id=lvp.company_id AND tr.rule_type='stale_device' AND tr.enabled=TRUE
-              WHERE EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT > COALESCE(tr.threshold_value, 900)
+               AND tr.policy_origin='user_workflow' AND tr.approval_status='approved'
+               AND tr.approved_by IS NOT NULL AND tr.approved_by>0 AND tr.approved_at IS NOT NULL
+              WHERE EXTRACT(EPOCH FROM (NOW() - lvp.received_at))::BIGINT > tr.threshold_value
                 AND NOT EXISTS (
                   SELECT 1 FROM telemetry_alerts ta
                   WHERE ta.company_id=lvp.company_id
@@ -143,14 +146,15 @@ public sealed class TelemetryBackgroundService(
             companiesToRefresh.Add(companyId);
 
             var alertId = await db.InsertAsync(
-                    @"INSERT INTO telemetry_alerts (company_id, vehicle_id, device_id, alert_type, severity, message, status)
-                      VALUES (@cid, @vid, @did, 'stale_device', 'Warning', @msg, 'Open')
+                    @"INSERT INTO telemetry_alerts (company_id, vehicle_id, device_id, alert_type, severity, message, status, source_channel)
+                      VALUES (@cid, @vid, @did, 'stale_device', @severity, @msg, 'Open', 'approved-policy-detector')
                       RETURNING id",
                     c =>
                     {
                         c.Parameters.AddWithValue("@cid", companyId);
                         c.Parameters.AddWithValue("@vid", vehicleId);
                         c.Parameters.AddWithValue("@did", pos["deviceId"] ?? (object)DBNull.Value);
+                        c.Parameters.AddWithValue("@severity", pos["severity"] ?? "Warning");
                         c.Parameters.AddWithValue("@msg", $"No telemetry received for {seconds / 60} minutes (background check)");
                     }, ct);
 

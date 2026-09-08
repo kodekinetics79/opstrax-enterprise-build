@@ -19844,7 +19844,7 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
         var idempotentReplay = false;
         var idempotencyConflict = false;
         var alertsCreated = 0;
-        var speedThreshold = 65m;
+        decimal? speedThreshold = null;
         var telemetryCommitted = await db.RunInSystemTransactionAsync(async () =>
         {
         var identity = await ResolveTelemetryIdentityAsync(db, companyId, deviceId, observedAt, ct);
@@ -19907,8 +19907,12 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
         }
 
         speedThreshold = await db.ScalarDecimalAsync(
-            "SELECT threshold_value FROM telemetry_rules WHERE company_id=@cid AND rule_type='speeding' AND enabled=TRUE LIMIT 1",
-            c => c.Parameters.AddWithValue("@cid", companyId), ct) ?? 65m;
+            @"SELECT threshold_value FROM telemetry_rules
+              WHERE company_id=@cid AND rule_type='speeding' AND enabled=TRUE
+                AND policy_origin='user_workflow' AND approval_status='approved'
+                AND approved_by IS NOT NULL AND approved_by>0 AND approved_at IS NOT NULL
+              LIMIT 1",
+            c => c.Parameters.AddWithValue("@cid", companyId), ct);
 
         eventId = await db.InsertAsync(
             @"INSERT INTO location_events
@@ -20042,7 +20046,7 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
             c => { c.Parameters.AddWithValue("@iid", installationId.Value); c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@did", deviceId); }, ct);
 
         // 16. Alert: speeding (ingest-time, uses tenant threshold, no duplicate open alert)
-        if (vehicleId.HasValue && latestAdvanced && body.SpeedMph > speedThreshold)
+        if (vehicleId.HasValue && latestAdvanced && speedThreshold is { } approvedSpeedThreshold && body.SpeedMph > approvedSpeedThreshold)
         {
             var openSpd = await db.ScalarLongAsync(
                 "SELECT COUNT(*) FROM telemetry_alerts WHERE company_id=@cid AND vehicle_id=@vid AND alert_type='speeding' AND status='Open'",
@@ -20052,7 +20056,11 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
                 var alertId = await db.InsertAsync(
                     @"INSERT INTO telemetry_alerts (company_id, vehicle_id, device_id, installation_id, assignment_id, trip_id, driver_id, alert_type, severity, message, source_event_id, status)
                       VALUES (@cid, @vid, @did, @installationId, @assignmentId, @tripId, @drid, 'speeding',
-                              COALESCE((SELECT severity FROM telemetry_rules WHERE company_id=@cid AND rule_type='speeding' AND enabled=TRUE LIMIT 1), 'High'),
+                              (SELECT severity FROM telemetry_rules
+                                WHERE company_id=@cid AND rule_type='speeding' AND enabled=TRUE
+                                  AND policy_origin='user_workflow' AND approval_status='approved'
+                                  AND approved_by IS NOT NULL AND approved_by>0 AND approved_at IS NOT NULL
+                                LIMIT 1),
                               @msg, @eid, 'Open')
                       RETURNING id",
                     c =>
@@ -20064,7 +20072,7 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
                         c.Parameters.AddWithValue("@assignmentId", assignmentId ?? (object)DBNull.Value);
                         c.Parameters.AddWithValue("@tripId", tripId ?? (object)DBNull.Value);
                         c.Parameters.AddWithValue("@drid", driverId ?? (object)DBNull.Value);
-                        c.Parameters.AddWithValue("@msg",  $"Vehicle {body.SpeedMph:F0} mph exceeds {speedThreshold:F0} mph threshold");
+                        c.Parameters.AddWithValue("@msg",  $"Vehicle {body.SpeedMph:F0} mph exceeds {approvedSpeedThreshold:F0} mph threshold");
                         c.Parameters.AddWithValue("@eid",  eventId);
                     }, ct);
                 alertsCreated++;
@@ -20077,7 +20085,7 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
                     0.82m,
                     0.88m,
                     JsonSerializer.Serialize(new { vehicleId, deviceId, alert = "speeding" }),
-                    JsonSerializer.Serialize(new { reason = "speed threshold exceeded", threshold = speedThreshold, current = body.SpeedMph }),
+                    JsonSerializer.Serialize(new { reason = "speed threshold exceeded", threshold = approvedSpeedThreshold, current = body.SpeedMph }),
                     JsonSerializer.Serialize(new { action = "review_speeding_alert", alertType = "speeding", vehicleId, deviceId }),
                     "medium",
                     eventId.ToString(CultureInfo.InvariantCulture),
@@ -20891,15 +20899,23 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
             if (vehicleId is not null && gatewayLatestAdvanced)
             {
                 var speedThreshold = await db.ScalarDecimalAsync(
-                    "SELECT threshold_value FROM telemetry_rules WHERE company_id=@cid AND rule_type='speeding' AND enabled=TRUE LIMIT 1",
-                    c => c.Parameters.AddWithValue("@cid", companyId), ct) ?? 65m;
-                if ((decimal)(speedMph ?? 0) > speedThreshold)
+                    @"SELECT threshold_value FROM telemetry_rules
+                      WHERE company_id=@cid AND rule_type='speeding' AND enabled=TRUE
+                        AND policy_origin='user_workflow' AND approval_status='approved'
+                        AND approved_by IS NOT NULL AND approved_by>0 AND approved_at IS NOT NULL
+                      LIMIT 1",
+                    c => c.Parameters.AddWithValue("@cid", companyId), ct);
+                if (speedThreshold is { } approvedSpeedThreshold && (decimal)(speedMph ?? 0) > approvedSpeedThreshold)
                 {
                     var speedAlertId = await db.InsertAsync(
                         @"INSERT INTO telemetry_alerts
                             (company_id,vehicle_id,device_id,installation_id,assignment_id,trip_id,driver_id,alert_type,severity,message,source_event_id,status,source_channel,created_at)
                           SELECT @cid,@vid,@did,@installationId,@assignmentId,@tripId,@drid,'speeding',
-                                 COALESCE((SELECT severity FROM telemetry_rules WHERE company_id=@cid AND rule_type='speeding' AND enabled=TRUE LIMIT 1),'High'),
+                                 (SELECT severity FROM telemetry_rules
+                                   WHERE company_id=@cid AND rule_type='speeding' AND enabled=TRUE
+                                     AND policy_origin='user_workflow' AND approval_status='approved'
+                                     AND approved_by IS NOT NULL AND approved_by>0 AND approved_at IS NOT NULL
+                                   LIMIT 1),
                                  @msg,@eventId,'Open','trusted-gateway',NOW()
                           WHERE NOT EXISTS (
                             SELECT 1 FROM telemetry_alerts
@@ -20914,7 +20930,7 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
                             c.Parameters.AddWithValue("@assignmentId", assignmentId ?? (object)DBNull.Value);
                             c.Parameters.AddWithValue("@tripId", tripId ?? (object)DBNull.Value);
                             c.Parameters.AddWithValue("@drid", (object?)driverId ?? DBNull.Value);
-                            c.Parameters.AddWithValue("@msg", $"Vehicle {(speedMph ?? 0):F0} mph exceeds {speedThreshold:F0} mph threshold");
+                            c.Parameters.AddWithValue("@msg", $"Vehicle {(speedMph ?? 0):F0} mph exceeds {approvedSpeedThreshold:F0} mph threshold");
                             c.Parameters.AddWithValue("@eventId", eventId);
                         }, ct);
                     if (speedAlertId > 0) gatewayAlertsCreated++;
@@ -21348,7 +21364,9 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
         if (denied is not null) return denied;
         var companyId = GetCompanyId(http);
         var rules = await db.QueryAsync(
-            @"SELECT id, rule_type, threshold_value, severity, enabled, notes, created_at, updated_at
+            @"SELECT id, rule_type, threshold_value, severity, enabled, notes,
+                     policy_origin, approval_status, approved_by, approved_at,
+                     created_at, updated_at
               FROM telemetry_rules
               WHERE company_id=@cid
               ORDER BY rule_type",
@@ -21364,13 +21382,19 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
         if (denied is not null) return denied;
         var companyId = GetCompanyId(http);
         var userId    = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+        if (userId <= 0) return Results.Unauthorized();
 
         await db.ExecuteAsync(
-            @"INSERT INTO telemetry_rules (company_id, rule_type, threshold_value, severity, enabled, notes, created_by)
-              VALUES (@cid, @type, @val, @sev, @ena, @notes, @uid)
+            @"INSERT INTO telemetry_rules
+                (company_id, rule_type, threshold_value, severity, enabled, notes, created_by,
+                 policy_origin, approval_status, approved_by, approved_at)
+              VALUES (@cid, @type, @val, @sev, @ena, @notes, @uid,
+                      'user_workflow', 'approved', @uid, NOW())
               ON CONFLICT (company_id, rule_type) DO UPDATE SET
                 threshold_value=EXCLUDED.threshold_value, severity=EXCLUDED.severity,
-                enabled=EXCLUDED.enabled, notes=EXCLUDED.notes, updated_at=NOW()",
+                enabled=EXCLUDED.enabled, notes=EXCLUDED.notes, created_by=EXCLUDED.created_by,
+                policy_origin=EXCLUDED.policy_origin, approval_status=EXCLUDED.approval_status,
+                approved_by=EXCLUDED.approved_by, approved_at=EXCLUDED.approved_at, updated_at=NOW()",
             c =>
             {
                 c.Parameters.AddWithValue("@cid",   companyId);
@@ -25185,7 +25209,7 @@ LIMIT 100000",
         if (denied is not null) return denied;
         var companyId = GetCompanyId(http);
         var rules = await db.QueryAsync(
-            "SELECT id, rule_type, threshold_value, severity, enabled, notes, updated_at FROM telemetry_rules WHERE company_id=@cid AND rule_type LIKE 'safety_%' ORDER BY rule_type",
+            "SELECT id, rule_type, threshold_value, severity, enabled, notes, policy_origin, approval_status, approved_by, approved_at, updated_at FROM telemetry_rules WHERE company_id=@cid AND rule_type LIKE 'safety_%' ORDER BY rule_type",
             c => c.Parameters.AddWithValue("@cid", companyId), ct);
         return Results.Ok(ApiResponse<object>.Ok(rules, "Safety rules"));
     }
@@ -25200,13 +25224,19 @@ LIMIT 100000",
 
         var companyId = GetCompanyId(http);
         var userId    = Convert.ToInt64(http.Items[AuthUserIdItemKey] ?? 0L);
+        if (userId <= 0) return Results.Unauthorized();
 
         await db.ExecuteAsync(
-            @"INSERT INTO telemetry_rules (company_id, rule_type, threshold_value, severity, enabled, notes, created_by)
-              VALUES (@cid, @type, @val, @sev, @ena, @notes, @uid)
+            @"INSERT INTO telemetry_rules
+                (company_id, rule_type, threshold_value, severity, enabled, notes, created_by,
+                 policy_origin, approval_status, approved_by, approved_at)
+              VALUES (@cid, @type, @val, @sev, @ena, @notes, @uid,
+                      'user_workflow', 'approved', @uid, NOW())
               ON CONFLICT (company_id, rule_type) DO UPDATE SET
                 threshold_value=EXCLUDED.threshold_value, severity=EXCLUDED.severity,
-                enabled=EXCLUDED.enabled, notes=EXCLUDED.notes, updated_at=NOW()",
+                enabled=EXCLUDED.enabled, notes=EXCLUDED.notes, created_by=EXCLUDED.created_by,
+                policy_origin=EXCLUDED.policy_origin, approval_status=EXCLUDED.approval_status,
+                approved_by=EXCLUDED.approved_by, approved_at=EXCLUDED.approved_at, updated_at=NOW()",
             c =>
             {
                 c.Parameters.AddWithValue("@cid",   companyId);

@@ -24,7 +24,7 @@ public sealed class TelemetryLaunchHardeningTests
         var samsara = Read("backend-dotnet", "Services", "Connectors", "SamsaraSync.cs");
         var raw = Read("telematics", "src", "Opstrax.Telematics.Gateway", "Projection", "PostgresPositionProjectionStore.cs");
 
-        AssertOrdered(native, "var latestRows = await db.ExecuteAsync", "if (vehicleId.HasValue && latestAdvanced && body.SpeedMph");
+        AssertOrdered(native, "var latestRows = await db.ExecuteAsync", "if (vehicleId.HasValue && latestAdvanced && speedThreshold is");
         AssertOrdered(native, "latestAdvanced = latestRows > 0", "GeofenceEvaluator.ProjectPositionAsync");
         AssertOrdered(gateway, "UpsertGatewayLatestPositionAsync", "if (gatewayLatestAdvanced && harshType is not null)");
         Assert.Contains("if (vehicleId is not null && gatewayLatestAdvanced)", gateway, StringComparison.Ordinal);

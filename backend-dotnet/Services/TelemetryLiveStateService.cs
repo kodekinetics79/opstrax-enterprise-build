@@ -32,29 +32,33 @@ public sealed class TelemetryLiveStateService(Database db)
         decimal? speedMph = row.TryGetValue("speedMph", out var speedRaw) && speedRaw is not null
             ? Convert.ToDecimal(speedRaw, CultureInfo.InvariantCulture)
             : null;
-        var speedThreshold = await GetRuleThresholdAsync(companyId, "speeding", 65m, ct);
-        var staleThreshold = await GetRuleThresholdAsync(companyId, "stale_device", 900m, ct);
+        var speedThreshold = await GetApprovedRuleThresholdAsync(companyId, "speeding", ct);
+        var staleThreshold = await GetApprovedRuleThresholdAsync(companyId, "stale_device", ct);
+        var isStale = staleThreshold is { } staleLimit && staleSeconds > (long)staleLimit;
+        var isSpeeding = speedThreshold is { } speedLimit && speedMph > speedLimit;
+        var policyConfigured = staleThreshold is not null || speedThreshold is not null;
 
-        var telemetryStatus = staleSeconds > (long)staleThreshold
+        var telemetryStatus = isStale
             ? "stale"
             : openAlerts > 0
                 ? "watch"
-                : speedMph > speedThreshold
+                : isSpeeding
                     ? "watch"
-                    : "healthy";
-        var riskLevel = staleSeconds > (long)staleThreshold
+                    : policyConfigured ? "healthy" : "unconfigured";
+        var riskLevel = isStale
             ? "high"
             : string.Equals(openAlertSeverity, "Critical", StringComparison.OrdinalIgnoreCase)
                 ? "high"
                 : string.Equals(openAlertSeverity, "High", StringComparison.OrdinalIgnoreCase)
-                  || openAlerts > 2 || speedMph > speedThreshold
+                  || openAlerts > 2 || isSpeeding
                 ? "medium"
-                : "low";
+                : policyConfigured ? "low" : "unrated";
         var nextAction = telemetryStatus switch
         {
             "stale" => "Check device heartbeat and field power",
-            "watch" when speedMph > speedThreshold => "Review speeding and driver coaching",
+            "watch" when isSpeeding => "Review speeding and driver coaching",
             "watch" when openAlerts > 0 => "Review open telemetry alerts",
+            "unconfigured" => "Configure and approve telemetry alert policies",
             _ when speedMph is null => "Speed unavailable; movement not established",
             _ when Value(row, "heading") is null => "Heading unavailable",
             _ => "No action required"
@@ -308,7 +312,9 @@ public sealed class TelemetryLiveStateService(Database db)
                   LIMIT 50",
                 c => { c.Parameters.AddWithValue("@cid", companyId); c.Parameters.AddWithValue("@branchId", (object?)branchId ?? DBNull.Value); }, ct);
             var rules = await db.QueryAsync(
-                @"SELECT id, rule_type, threshold_value, severity, enabled, notes, created_at, updated_at
+                @"SELECT id, rule_type, threshold_value, severity, enabled, notes,
+                         policy_origin, approval_status, approved_by, approved_at,
+                         created_at, updated_at
                   FROM telemetry_rules
                   WHERE company_id=@cid
                   ORDER BY rule_type",
@@ -416,16 +422,19 @@ public sealed class TelemetryLiveStateService(Database db)
             }, ct);
     }
 
-    private async Task<decimal> GetRuleThresholdAsync(long companyId, string ruleType, decimal fallback, CancellationToken ct)
+    private async Task<decimal?> GetApprovedRuleThresholdAsync(long companyId, string ruleType, CancellationToken ct)
     {
-        var value = await db.ScalarDecimalAsync(
-            "SELECT threshold_value FROM telemetry_rules WHERE company_id=@cid AND rule_type=@type AND enabled=TRUE LIMIT 1",
+        return await db.ScalarDecimalAsync(
+            @"SELECT threshold_value FROM telemetry_rules
+              WHERE company_id=@cid AND rule_type=@type AND enabled=TRUE
+                AND policy_origin='user_workflow' AND approval_status='approved'
+                AND approved_by IS NOT NULL AND approved_by>0 AND approved_at IS NOT NULL
+              LIMIT 1",
             c =>
             {
                 c.Parameters.AddWithValue("@cid", companyId);
                 c.Parameters.AddWithValue("@type", ruleType);
             }, ct);
-        return value ?? fallback;
     }
 
     private static IReadOnlyList<Dictionary<string, object?>> BuildEntities(List<Dictionary<string, object?>> states)

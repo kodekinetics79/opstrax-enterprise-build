@@ -23,7 +23,7 @@ public class SafetyHarshEventPostgresTests
         try
         {
             var evId = await db.InsertAsync(
-                "INSERT INTO location_events (company_id, lat, lng, speed_mph, event_type, source, event_time, received_at) VALUES (@c, 34.05, -118.24, 45, 'ping', 'gps-tracker', NOW(), NOW()) RETURNING id",
+                "INSERT INTO location_events (company_id, lat, lng, speed_mph, event_type, source, source_channel, event_time) VALUES (@c, 34.05, -118.24, 45, 'ping', 'device', 'native-hmac', NOW()) RETURNING id",
                 c => c.Parameters.AddWithValue("@c", cid));
             var alertId = await db.InsertAsync(
                 @"INSERT INTO telemetry_alerts (company_id, alert_type, severity, message, source_event_id, status, created_at)
@@ -49,7 +49,7 @@ public class SafetyHarshEventPostgresTests
         try
         {
             var alertId = await db.InsertAsync(
-                "INSERT INTO telemetry_alerts (company_id, alert_type, severity, message, status, created_at) VALUES (@c, 'crash', 'Critical', 'Device-reported crash', 'open', NOW()) RETURNING id",
+                "INSERT INTO telemetry_alerts (company_id, alert_type, severity, message, status, source_channel, created_at) VALUES (@c, 'crash', 'Critical', 'Device-reported crash', 'open', 'trusted-gateway', NOW()) RETURNING id",
                 c => c.Parameters.AddWithValue("@c", cid));
 
             await InvokeConversionAsync(db);
@@ -71,12 +71,17 @@ public class SafetyHarshEventPostgresTests
         var cid = await SeedCompanyAsync(db);
         try
         {
+            await db.ExecuteAsync(
+                @"INSERT INTO telemetry_rules(company_id,rule_type,threshold_value,severity,enabled,created_by,policy_origin,approval_status,approved_by,approved_at)
+                  VALUES(@c,'safety_repeated_speeding_threshold',3,'Critical',TRUE,1,'user_workflow','approved',1,NOW())
+                  ON CONFLICT(company_id,rule_type) DO UPDATE SET enabled=TRUE,policy_origin='user_workflow',approval_status='approved',approved_by=1,approved_at=NOW()",
+                c => c.Parameters.AddWithValue("@c", cid));
             var driverId = await db.InsertAsync(
                 "INSERT INTO drivers(company_id,driver_code,full_name,status) VALUES(@c,@code,'Canonical Speed Driver','Available')",
                 c => { c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@code", $"SPD-{Guid.NewGuid():N}"[..20]); });
             for (var i = 0; i < 3; i++)
                 await db.InsertAsync(
-                    "INSERT INTO safety_events(company_id,driver_id,event_type,severity,score_impact,status,event_time) VALUES(@c,@d,'Speeding','High',15,'open',NOW()-@minutes*INTERVAL '1 minute')",
+                    "INSERT INTO safety_events(company_id,driver_id,event_type,severity,score_impact,status,event_time,data_origin,verification_status) VALUES(@c,@d,'Speeding','High',15,'open',NOW()-@minutes*INTERVAL '1 minute','runtime_detection','derived_from_qualified_source')",
                     c => { c.Parameters.AddWithValue("@c", cid); c.Parameters.AddWithValue("@d", driverId); c.Parameters.AddWithValue("@minutes", i); });
 
             await InvokeRepeatedSpeedingAsync(db);
@@ -129,7 +134,7 @@ public class SafetyHarshEventPostgresTests
 
     private static async Task CleanupAsync(Database db, long cid)
     {
-        foreach (var t in new[] { "ai_recommendations", "safety_events", "telemetry_alerts", "location_events", "drivers" })
+        foreach (var t in new[] { "ai_recommendations", "safety_events", "telemetry_alerts", "location_events", "telemetry_rules", "drivers" })
             await db.ExecuteAsync($"DELETE FROM {t} WHERE company_id=@c", c => c.Parameters.AddWithValue("@c", cid));
         await db.ExecuteAsync("DELETE FROM companies WHERE id=@c", c => c.Parameters.AddWithValue("@c", cid));
     }
@@ -139,6 +144,11 @@ public class SafetyHarshEventPostgresTests
 
     private static async Task ResetSequencesAsync(Database db)
     {
+        // The focused disposable fixture carries the original minimum telemetry
+        // schema. Add only the provenance columns this regression exercises.
+        await db.ExecuteAsync("ALTER TABLE location_events ADD COLUMN IF NOT EXISTS source VARCHAR(32) NULL");
+        await db.ExecuteAsync("ALTER TABLE location_events ADD COLUMN IF NOT EXISTS source_channel VARCHAR(40) NULL");
+        await db.ExecuteAsync("ALTER TABLE telemetry_alerts ADD COLUMN IF NOT EXISTS source_channel VARCHAR(40) NULL");
         foreach (var table in new[] { "companies", "location_events", "telemetry_alerts", "safety_events" })
             await db.ExecuteAsync($"SELECT setval(pg_get_serial_sequence('{table}', 'id'), (SELECT COALESCE(MAX(id), 1) FROM {table}))");
     }

@@ -586,15 +586,15 @@ public class IntegratedModuleSimulationTests
         Assert.Equal("passed", validate.ValidationStatus);
 
         await db.ExecuteAsync(
-            @"INSERT INTO telemetry_rules (company_id, rule_type, threshold_value, severity, enabled, notes, created_at, updated_at)
-              VALUES (@companyId, 'speeding', 65, 'High', true, 'Simulation rule', NOW(), NOW())
-              ON CONFLICT (company_id, rule_type) DO UPDATE SET threshold_value=EXCLUDED.threshold_value, severity=EXCLUDED.severity, enabled=TRUE, updated_at=NOW()",
+            @"INSERT INTO telemetry_rules (company_id, rule_type, threshold_value, severity, enabled, notes, created_by, policy_origin, approval_status, approved_by, approved_at, created_at, updated_at)
+              VALUES (@companyId, 'speeding', 65, 'High', true, 'Simulation rule', 1, 'user_workflow', 'approved', 1, NOW(), NOW(), NOW())
+              ON CONFLICT (company_id, rule_type) DO UPDATE SET threshold_value=EXCLUDED.threshold_value, severity=EXCLUDED.severity, enabled=TRUE, created_by=1, policy_origin='user_workflow', approval_status='approved', approved_by=1, approved_at=NOW(), updated_at=NOW()",
             c => c.Parameters.AddWithValue("@companyId", companyId));
 
         await db.ExecuteAsync(
-            @"INSERT INTO telemetry_rules (company_id, rule_type, threshold_value, severity, enabled, notes, created_at, updated_at)
-              VALUES (@companyId, 'stale_device', 900, 'Warning', true, 'Simulation rule', NOW(), NOW())
-              ON CONFLICT (company_id, rule_type) DO UPDATE SET threshold_value=EXCLUDED.threshold_value, severity=EXCLUDED.severity, enabled=TRUE, updated_at=NOW()",
+            @"INSERT INTO telemetry_rules (company_id, rule_type, threshold_value, severity, enabled, notes, created_by, policy_origin, approval_status, approved_by, approved_at, created_at, updated_at)
+              VALUES (@companyId, 'stale_device', 900, 'Warning', true, 'Simulation rule', 1, 'user_workflow', 'approved', 1, NOW(), NOW(), NOW())
+              ON CONFLICT (company_id, rule_type) DO UPDATE SET threshold_value=EXCLUDED.threshold_value, severity=EXCLUDED.severity, enabled=TRUE, created_by=1, policy_origin='user_workflow', approval_status='approved', approved_by=1, approved_at=NOW(), updated_at=NOW()",
             c => c.Parameters.AddWithValue("@companyId", companyId));
 
         // Active devices require real credentials (ck_eld_devices_active_credentials).

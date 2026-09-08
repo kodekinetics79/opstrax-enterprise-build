@@ -287,16 +287,24 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
     {
         var vehicleId = identity.VehicleId;
         var speedThreshold = await db.ScalarDecimalAsync(
-            "SELECT threshold_value FROM telemetry_rules WHERE company_id=@cid AND rule_type='speeding' AND enabled=TRUE LIMIT 1",
-            c => c.Parameters.AddWithValue("@cid", companyId), ct) ?? 65m;
-        if (reading.SpeedMph is { } observedSpeed && (decimal)observedSpeed > speedThreshold)
+            @"SELECT threshold_value FROM telemetry_rules
+              WHERE company_id=@cid AND rule_type='speeding' AND enabled=TRUE
+                AND policy_origin='user_workflow' AND approval_status='approved'
+                AND approved_by IS NOT NULL AND approved_by>0 AND approved_at IS NOT NULL
+              LIMIT 1",
+            c => c.Parameters.AddWithValue("@cid", companyId), ct);
+        if (speedThreshold is { } approvedSpeedThreshold && reading.SpeedMph is { } observedSpeed && (decimal)observedSpeed > approvedSpeedThreshold)
         {
             await db.ExecuteAsync(
                 @"INSERT INTO telemetry_alerts
                     (company_id,vehicle_id,device_id,installation_id,assignment_id,trip_id,driver_id,
                      alert_type,severity,message,source_event_id,status,source_channel,created_at)
                   SELECT @cid,@vid,@did,@installationId,@assignmentId,@tripId,@driverId,'speeding',
-                         COALESCE((SELECT severity FROM telemetry_rules WHERE company_id=@cid AND rule_type='speeding' AND enabled=TRUE LIMIT 1),'High'),
+                         (SELECT severity FROM telemetry_rules
+                           WHERE company_id=@cid AND rule_type='speeding' AND enabled=TRUE
+                             AND policy_origin='user_workflow' AND approval_status='approved'
+                             AND approved_by IS NOT NULL AND approved_by>0 AND approved_at IS NOT NULL
+                           LIMIT 1),
                          @msg,@eventId,'Open','samsara-api',NOW()
                   WHERE NOT EXISTS (
                     SELECT 1 FROM telemetry_alerts
@@ -310,7 +318,7 @@ public sealed class SamsaraSync(HttpClient client, IServiceScopeFactory scopeFac
                     c.Parameters.AddWithValue("@assignmentId", (object?)identity.AssignmentId ?? DBNull.Value);
                     c.Parameters.AddWithValue("@tripId", (object?)identity.TripId ?? DBNull.Value);
                     c.Parameters.AddWithValue("@driverId", (object?)identity.DriverId ?? DBNull.Value);
-                    c.Parameters.AddWithValue("@msg", $"Vehicle {reading.SpeedMph:F0} mph exceeds {speedThreshold:F0} mph threshold");
+                    c.Parameters.AddWithValue("@msg", $"Vehicle {reading.SpeedMph:F0} mph exceeds {approvedSpeedThreshold:F0} mph threshold");
                     c.Parameters.AddWithValue("@eventId", sourceEventId);
                 }, ct);
         }

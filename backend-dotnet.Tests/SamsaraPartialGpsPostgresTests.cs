@@ -391,6 +391,11 @@ public sealed class SamsaraPartialGpsPostgresTests
                 await f.Db.ExecuteAsync(@"INSERT INTO device_installations(company_id,branch_id,device_id,vehicle_id,status,device_role,is_primary,effective_from,installed_at,source)
                     VALUES(@cid,@bid,@did,@vid,'Installed','GPS',TRUE,NOW()-INTERVAL '3 hours',NOW()-INTERVAL '3 hours','synthetic-partial-test')",
                     c => { c.Parameters.AddWithValue("@cid", f.CompanyId); c.Parameters.AddWithValue("@bid", branchId); c.Parameters.AddWithValue("@did", deviceId); c.Parameters.AddWithValue("@vid", f.VehicleId); });
+                await f.Db.ExecuteAsync(
+                    @"INSERT INTO telemetry_rules(company_id,rule_type,threshold_value,severity,enabled,created_by,policy_origin,approval_status,approved_by,approved_at)
+                      VALUES(@cid,'idling',15,'Warning',TRUE,1,'user_workflow','approved',1,NOW())
+                      ON CONFLICT(company_id,rule_type) DO UPDATE SET threshold_value=15,severity='Warning',enabled=TRUE,created_by=1,policy_origin='user_workflow',approval_status='approved',approved_by=1,approved_at=NOW()",
+                    c => c.Parameters.AddWithValue("@cid", f.CompanyId));
                 f.Operation = await ConnectorOperationLease.TryAcquireAsync(f.Db, f.CompanyId, integrationId, ["Connected"], TimeSpan.FromSeconds(180), CancellationToken.None);
                 Assert.NotNull(f.Operation);
                 return f;
@@ -402,7 +407,7 @@ public sealed class SamsaraPartialGpsPostgresTests
         public async ValueTask DisposeAsync()
         {
             if (CompanyId == 0) return;
-            foreach (var table in new[] { "telemetry_alerts", "telemetry_live_asset_states", "latest_vehicle_positions", "location_events", "device_installations", "eld_devices", "vehicles", "branches", "integrations" })
+            foreach (var table in new[] { "telemetry_alerts", "telemetry_live_asset_states", "latest_vehicle_positions", "location_events", "telemetry_rules", "device_installations", "eld_devices", "vehicles", "branches", "integrations" })
                 await Db.ExecuteAsync($"DELETE FROM {table} WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", CompanyId));
             await Db.ExecuteAsync("DELETE FROM companies WHERE id=@cid", c => c.Parameters.AddWithValue("@cid", CompanyId));
         }
