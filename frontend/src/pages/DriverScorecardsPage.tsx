@@ -18,13 +18,19 @@ const safetyApi = {
   trends: () => unwrap<AnyRecord[]>(apiClient.get("/api/safety/trends")),
 };
 
+function scoreValue(raw: unknown): number | null {
+  if (raw === null || raw === undefined || raw === "") return null;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : null;
+}
+
 // ── Score ring ────────────────────────────────────────────────────────────────
 
-function ScoreRing({ score, size = 56 }: { score: number; size?: number }) {
+function ScoreRing({ score, size = 56 }: { score: number | null; size?: number }) {
   const r = (size - 8) / 2;
   const circ = 2 * Math.PI * r;
-  const dash = (score / 100) * circ;
-  const color = score >= 85 ? chart.teal500 : score >= 70 ? chart.amber500 : chart.red500;
+  const dash = score === null ? 0 : (score / 100) * circ;
+  const color = score === null ? chart.slate400 : score >= 85 ? chart.teal500 : score >= 70 ? chart.amber500 : chart.red500;
   const stroke = size >= 90 ? 9 : 6;
   const fontSize = Math.max(13, Math.round(size * 0.24));
   return (
@@ -38,7 +44,7 @@ function ScoreRing({ score, size = 56 }: { score: number; size?: number }) {
         transform={`rotate(-90 ${size / 2} ${size / 2})`}
       />
       <text x={size / 2} y={size / 2 + fontSize / 3} textAnchor="middle" fontSize={fontSize} fontWeight={700} fill={color}>
-        {score}
+        {score ?? "--"}
       </text>
     </svg>
   );
@@ -46,15 +52,15 @@ function ScoreRing({ score, size = 56 }: { score: number; size?: number }) {
 
 // ── Behavior bar ─────────────────────────────────────────────────────────────
 
-function BehaviorBar({ label, count, max, color }: { label: string; count: number; max: number; color: string }) {
-  const pct = Math.min(100, max > 0 ? (count / max) * 100 : 0);
+function BehaviorBar({ label, count, max, color }: { label: string; count: number | null; max: number; color: string }) {
+  const pct = Math.min(100, max > 0 && count !== null ? (count / max) * 100 : 0);
   return (
     <div className="flex items-center gap-2 text-xs">
       <span className="w-28 text-slate-500 shrink-0">{label}</span>
       <div className="flex-1 h-1.5 rounded-full bg-slate-100 overflow-hidden">
         <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
       </div>
-      <span className="w-5 text-right font-medium text-slate-700">{count}</span>
+      <span className="w-5 text-right font-medium text-slate-700">{count ?? "--"}</span>
     </div>
   );
 }
@@ -74,15 +80,17 @@ function DriverDrawer({
 }) {
   if (!driver) return null;
 
-  const score = Number(driver.safetyScore ?? 0);
-  const risk = Number(driver.riskScore ?? 0);
-  const scoreLabel = score >= 85 ? "Good standing" : score >= 70 ? "Needs monitoring" : "High risk — action required";
+  const score = scoreValue(driver.safetyScore);
+  const risk = scoreValue(driver.riskScore);
+  const scoreLabel = score === null
+    ? "Score unavailable — qualified current evidence required"
+    : score >= 85 ? "Good standing" : score >= 70 ? "Needs monitoring" : "High risk — action required";
 
   const maxCount = 15;
 
   const statTiles: [string, unknown][] = [
-    ["Safety Score", `${score}/100`],
-    ["Risk Score", `${risk}`],
+    ["Safety Score", score === null ? "--" : `${score}/100`],
+    ["Risk Score", risk ?? "--"],
     ["Coaching Open", driver.coachingOpenCount ?? 0],
     ["Incidents", driver.incidentCount ?? 0],
   ];
@@ -105,6 +113,7 @@ function DriverDrawer({
             <p className="text-lg font-black tracking-tight text-slate-950">{String(driver.driverName ?? "Driver")}</p>
             <p className="text-xs text-slate-400 mt-0.5">{String(driver.driverCode ?? "")}</p>
             <span className={`mt-2 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-[3px] text-[10px] font-black uppercase tracking-[0.14em] ${
+              score === null ? "border-slate-200 bg-slate-50 text-slate-600" :
               score >= 85 ? "border-teal-200 bg-teal-50 text-teal-700" :
               score >= 70 ? "border-amber-200 bg-amber-50 text-amber-700" :
               "border-red-200 bg-red-50 text-red-700"
@@ -125,9 +134,9 @@ function DriverDrawer({
 
         <div className="clay-card mx-5 mb-4 p-5 flex flex-col gap-2.5">
           <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400 mb-1">Behavior Breakdown</p>
-          <BehaviorBar label="Harsh Braking" count={Number(driver.harshBrakingCount ?? 0)} max={maxCount} color="bg-red-400" />
-          <BehaviorBar label="Harsh Accel." count={Number(driver.harshAccelerationCount ?? 0)} max={maxCount} color="bg-orange-400" />
-          <BehaviorBar label="Speeding" count={Number(driver.speedingCount ?? 0)} max={maxCount} color="bg-amber-400" />
+          <BehaviorBar label="Harsh Braking" count={scoreValue(driver.harshBrakingCount)} max={maxCount} color="bg-red-400" />
+          <BehaviorBar label="Harsh Accel." count={scoreValue(driver.harshAccelerationCount)} max={maxCount} color="bg-orange-400" />
+          <BehaviorBar label="Speeding" count={scoreValue(driver.speedingCount)} max={maxCount} color="bg-amber-400" />
           <BehaviorBar label="Dashcam Events" count={Number(driver.dashcamEventCount ?? 0)} max={maxCount} color="bg-violet-400" />
           <BehaviorBar label="Coaching Completed" count={Number(driver.coachingCompletedCount ?? 0)} max={maxCount} color="bg-teal-400" />
         </div>
@@ -135,7 +144,9 @@ function DriverDrawer({
         <div className="clay-card mx-5 mb-4 p-5">
           <p className="text-[10px] font-black uppercase tracking-[0.16em] text-teal-600 mb-1.5">Rule-Based Recommendation</p>
           <p className="text-sm text-slate-600 leading-relaxed">
-            {risk >= 60
+            {risk === null
+              ? "A recommendation is unavailable until qualified current evidence produces a score."
+              : risk >= 60
               ? "Immediate coaching intervention recommended. Schedule a mandatory session focusing on following distance and speed compliance before next dispatch."
               : risk >= 35
               ? "Monitor closely over the next 14 days. Assign a targeted coaching task for the highest-frequency behavior category."
@@ -145,13 +156,14 @@ function DriverDrawer({
 
         <div className="clay-card mx-5 mb-4 p-5">
           <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-500 mb-1.5">How this score was calculated</p>
-          <p className="text-sm text-slate-600">{String(driver.scoreFormula ?? "Score = 100 minus non-dismissed event impact over 30 days, clamped to 0–100.")}</p>
+          <p className="text-sm text-slate-600">{String(driver.scoreFormula ?? "Calculation details are unavailable until a qualified current score exists.")}</p>
           <pre className="mt-3 max-h-40 overflow-auto rounded-lg bg-slate-50 p-3 text-xs text-slate-600">{JSON.stringify(driver.scoreBreakdown ?? {}, null, 2)}</pre>
           <div className="mt-3 grid gap-1 text-xs text-slate-400">
-            <p>Formula version: {String(driver.formulaVersion ?? "safety-impact-v1")}</p>
-            <p>Source events: {String(driver.sourceEventCount ?? driver.events30d ?? 0)}</p>
+            <p>Formula version: {String(driver.formulaVersion ?? "--")}</p>
+            <p>Score status: {String(driver.scoreStatus ?? "unavailable")}</p>
+            <p>Source events: {String(driver.sourceEventCount ?? driver.events30d ?? "--")}</p>
             <p>Source window: {driver.sourceWindowStart ? new Date(String(driver.sourceWindowStart)).toLocaleString() : "--"} to {driver.sourceWindowEnd ? new Date(String(driver.sourceWindowEnd)).toLocaleString() : "--"}</p>
-            <p>Calculated: {driver.computedAt ? new Date(String(driver.computedAt)).toLocaleString() : "No events scored yet"}</p>
+            <p>Calculated: {score !== null && driver.computedAt ? new Date(String(driver.computedAt)).toLocaleString() : "Qualified current score unavailable"}</p>
           </div>
         </div>
 
@@ -195,7 +207,7 @@ function CoachingModal({
           <button type="button" aria-label="Close coaching task dialog" className="text-slate-400 hover:text-slate-600" onClick={onClose}>✕</button>
         </div>
         <p className="text-sm text-slate-600">
-          Driver: <span className="font-medium">{String(driver.driverName)}</span> — Safety Score: <span className="font-medium">{String(driver.safetyScore)}</span>
+          Driver: <span className="font-medium">{String(driver.driverName)}</span> — Safety Score: <span className="font-medium">{scoreValue(driver.safetyScore) ?? "Unavailable"}</span>
         </p>
         <div className="flex flex-col gap-1">
           <label className="text-xs font-medium text-slate-700">Coaching notes</label>
@@ -225,14 +237,15 @@ function CoachingModal({
 
 // ── Score badge ───────────────────────────────────────────────────────────────
 
-function ScoreBadge({ score }: { score: number }) {
+function ScoreBadge({ score }: { score: number | null }) {
   const cls =
+    score === null ? "bg-slate-50 border-slate-200 text-slate-600" :
     score >= 85 ? "bg-teal-50 border-teal-200 text-teal-700" :
     score >= 70 ? "bg-amber-50 border-amber-200 text-amber-700" :
     "bg-red-50 border-red-200 text-red-700";
   return (
     <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs font-semibold ${cls}`}>
-      {score}
+      {score ?? "Unavailable"}
     </span>
   );
 }
@@ -289,27 +302,40 @@ export function DriverScorecardsPage() {
   const vehicles = (vehiclesQ.data ?? []) as AnyRecord[];
   const trends = (trendsQ.data ?? []) as AnyRecord[];
 
-  const filteredDrivers = drivers.filter((d) => {
+  const scoredDrivers = drivers.filter((d) => scoreValue(d.safetyScore) !== null);
+  const rankedDrivers = [...scoredDrivers].sort((a, b) => scoreValue(b.safetyScore)! - scoreValue(a.safetyScore)!);
+  const rankByDriver = new Map(rankedDrivers.map((driver, index) => [String(driver.driverId ?? driver.id), index + 1]));
+  const orderedDrivers = [...drivers].sort((a, b) => {
+    const aScore = scoreValue(a.safetyScore);
+    const bScore = scoreValue(b.safetyScore);
+    if (aScore === null && bScore === null) return String(a.driverName ?? "").localeCompare(String(b.driverName ?? ""));
+    if (aScore === null) return 1;
+    if (bScore === null) return -1;
+    return bScore - aScore;
+  });
+  const filteredDrivers = orderedDrivers.filter((d) => {
     if (!search) return true;
     const q = search.toLowerCase();
     return String(d.driverName ?? "").toLowerCase().includes(q) || String(d.driverCode ?? "").toLowerCase().includes(q);
   });
 
-  const fleetScore = Number(s.fleetSafetyScore ?? (drivers.length ? (drivers.reduce((a, d) => a + Number(d.safetyScore ?? 0), 0) / drivers.length).toFixed(1) : 0));
+  const fleetScore = scoreValue(s.fleetSafetyScore);
+  const totalDrivers = Number(s.totalDrivers ?? drivers.length);
+  const scoredDriverCount = Number(s.scoredDrivers ?? scoredDrivers.length);
 
   // ── Derived leaderboard data (from already-fetched driver scorecards) ─────────
-  const rankedDrivers = [...drivers].sort((a, b) => Number(b.safetyScore ?? 0) - Number(a.safetyScore ?? 0));
   const topPerformers = rankedDrivers.slice(0, 5);
   const bottomPerformers = rankedDrivers.slice(-5).reverse();
   const openCoaching = drivers.reduce((a, d) => a + Number(d.coachingOpenCount ?? 0), 0);
-  const atRiskCount = drivers.filter((d) => Number(d.safetyScore ?? 0) < 70).length;
-  const monitorCount = drivers.filter((d) => { const v = Number(d.safetyScore ?? 0); return v >= 70 && v < 85; }).length;
-  const goodCount = drivers.filter((d) => Number(d.safetyScore ?? 0) >= 85).length;
+  const atRiskCount = scoredDrivers.filter((d) => scoreValue(d.safetyScore)! < 70).length;
+  const monitorCount = scoredDrivers.filter((d) => { const v = scoreValue(d.safetyScore)!; return v >= 70 && v < 85; }).length;
+  const goodCount = scoredDrivers.filter((d) => scoreValue(d.safetyScore)! >= 85).length;
 
   // Vehicle-side derived summary (from already-fetched vehicle scorecards)
-  const vehiclesAtRisk = vehicles.filter((v) => Number(v.safetyScore ?? 0) < 70).length;
+  const scoredVehicles = vehicles.filter((v) => scoreValue(v.safetyScore) !== null);
+  const vehiclesAtRisk = scoredVehicles.filter((v) => scoreValue(v.safetyScore)! < 70).length;
   const totalVehicleIncidents = vehicles.reduce((a, v) => a + Number(v.incidentCount ?? 0), 0);
-  const worstVehicles = [...vehicles].sort((a, b) => Number(a.safetyScore ?? 0) - Number(b.safetyScore ?? 0)).slice(0, 5);
+  const worstVehicles = [...scoredVehicles].sort((a, b) => scoreValue(a.safetyScore)! - scoreValue(b.safetyScore)!).slice(0, 5);
 
   if (driversQ.isLoading || summaryQ.isLoading) return <LoadingState />;
   if (driversQ.isError || summaryQ.isError) return <ErrorState message={((driversQ.error ?? summaryQ.error) as Error)?.message} onRetry={() => { void driversQ.refetch(); void summaryQ.refetch(); }} />;
@@ -328,7 +354,7 @@ export function DriverScorecardsPage() {
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-xl font-bold text-slate-900">Driver Safety Scorecards</h1>
-          <p className="text-sm text-slate-500 mt-0.5">Fleet-wide behavior scoring — harsh braking, acceleration, speeding, dashcam events &amp; coaching</p>
+          <p className="text-sm text-slate-500 mt-0.5">Fleet-wide behavior scoring from qualified current runtime evidence</p>
         </div>
         <button
           type="button"
@@ -341,13 +367,17 @@ export function DriverScorecardsPage() {
         </button>
       </div>
 
+      <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600" role="status">
+        {String(s.evidenceStatus ?? "Scores remain unavailable until qualified current evidence is recorded.")}
+      </div>
+
       {/* KPI grid */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
         <KpiCard
           label="Fleet Safety Score"
-          value={`${fleetScore}`}
-          status={fleetScore >= 85 ? "Healthy" : fleetScore >= 70 ? "Monitor" : "At Risk"}
-          delta={`${drivers.length} drivers scored`}
+          value={fleetScore ?? "--"}
+          status={fleetScore === null ? "Unavailable" : fleetScore >= 85 ? "Healthy" : fleetScore >= 70 ? "Monitor" : "At Risk"}
+          delta={`${scoredDriverCount} of ${totalDrivers} drivers scored`}
         />
         <KpiCard
           label="Critical Events"
@@ -429,7 +459,8 @@ export function DriverScorecardsPage() {
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {filteredDrivers.map((driver, i) => {
-                    const score = Number(driver.safetyScore ?? 0);
+                    const score = scoreValue(driver.safetyScore);
+                    const rank = rankByDriver.get(String(driver.driverId ?? driver.id));
                     return (
                       <tr
                         key={String(driver.id ?? i)}
@@ -438,7 +469,7 @@ export function DriverScorecardsPage() {
                         tabIndex={0}
                         onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelected(driver); } }}
                       >
-                        <td className="px-4 py-3 text-slate-500 text-xs font-medium">#{i + 1}</td>
+                        <td className="px-4 py-3 text-slate-500 text-xs font-medium">{rank ? `#${rank}` : "—"}</td>
                         <td className="px-4 py-3">
                           <p className="font-medium text-slate-900">{String(driver.driverName ?? "--")}</p>
                           <p className="text-xs text-slate-400">{String(driver.driverCode ?? "")}</p>
@@ -449,9 +480,9 @@ export function DriverScorecardsPage() {
                             <ScoreBadge score={score} />
                           </div>
                         </td>
-                        <td className="px-4 py-3 text-slate-700">{String(driver.harshBrakingCount ?? 0)}</td>
-                        <td className="px-4 py-3 text-slate-700">{String(driver.harshAccelerationCount ?? 0)}</td>
-                        <td className="px-4 py-3 text-slate-700">{String(driver.speedingCount ?? 0)}</td>
+                        <td className="px-4 py-3 text-slate-700">{String(driver.harshBrakingCount ?? "—")}</td>
+                        <td className="px-4 py-3 text-slate-700">{String(driver.harshAccelerationCount ?? "—")}</td>
+                        <td className="px-4 py-3 text-slate-700">{String(driver.speedingCount ?? "—")}</td>
                         <td className="px-4 py-3 text-slate-700">{String(driver.dashcamEventCount ?? 0)}</td>
                         <td className="px-4 py-3">
                           {Number(driver.coachingOpenCount ?? 0) > 0 ? (
@@ -488,7 +519,7 @@ export function DriverScorecardsPage() {
           <div className="clay-card p-4">
             <div className="mb-3 flex items-center justify-between">
               <h3 className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">Score Distribution</h3>
-              <span className="text-[11px] font-bold text-slate-400">{drivers.length} drivers</span>
+              <span className="text-[11px] font-bold text-slate-400">{scoredDrivers.length} scored / {drivers.length} total</span>
             </div>
             <div className="grid grid-cols-3 gap-2 text-center">
               <div className="rounded-xl border border-teal-200 bg-teal-50 py-2.5">
@@ -509,7 +540,7 @@ export function DriverScorecardsPage() {
           <div className="clay-card p-4">
             <h3 className="mb-3 text-xs font-black uppercase tracking-[0.16em] text-slate-500">Top Performers</h3>
             {topPerformers.length === 0 ? (
-              <p className="text-xs text-slate-400">No driver data</p>
+              <p className="text-xs text-slate-400">No qualified current scores</p>
             ) : (
               <ul className="flex flex-col gap-2.5">
                 {topPerformers.map((d, i) => (
@@ -520,12 +551,12 @@ export function DriverScorecardsPage() {
                     tabIndex={0}
                     onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelected(d); } }}
                   >
-                    <ScoreRing score={Number(d.safetyScore ?? 0)} size={40} />
+                    <ScoreRing score={scoreValue(d.safetyScore)} size={40} />
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-semibold text-slate-900">{String(d.driverName ?? "--")}</p>
                       <p className="truncate text-[11px] text-slate-400">{String(d.driverCode ?? "")}</p>
                     </div>
-                    <ScoreBadge score={Number(d.safetyScore ?? 0)} />
+                    <ScoreBadge score={scoreValue(d.safetyScore)} />
                   </li>
                 ))}
               </ul>
@@ -535,7 +566,7 @@ export function DriverScorecardsPage() {
           <div className="clay-card p-4">
             <h3 className="mb-3 text-xs font-black uppercase tracking-[0.16em] text-slate-500">Needs Attention</h3>
             {bottomPerformers.length === 0 ? (
-              <p className="text-xs text-slate-400">No driver data</p>
+              <p className="text-xs text-slate-400">No qualified current scores</p>
             ) : (
               <ul className="flex flex-col gap-2.5">
                 {bottomPerformers.map((d, i) => (
@@ -546,7 +577,7 @@ export function DriverScorecardsPage() {
                     tabIndex={0}
                     onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelected(d); } }}
                   >
-                    <ScoreRing score={Number(d.safetyScore ?? 0)} size={40} />
+                    <ScoreRing score={scoreValue(d.safetyScore)} size={40} />
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-semibold text-slate-900">{String(d.driverName ?? "--")}</p>
                       <p className="truncate text-[11px] text-slate-400">
@@ -555,7 +586,7 @@ export function DriverScorecardsPage() {
                           : String(d.driverCode ?? "")}
                       </p>
                     </div>
-                    <ScoreBadge score={Number(d.safetyScore ?? 0)} />
+                    <ScoreBadge score={scoreValue(d.safetyScore)} />
                   </li>
                 ))}
               </ul>
@@ -592,12 +623,12 @@ export function DriverScorecardsPage() {
                         <p className="font-medium text-slate-900">{String(v.vehicleCode ?? "--")}</p>
                         <p className="text-xs text-slate-400">{String(v.type ?? "")}</p>
                       </td>
-                      <td className="px-4 py-3"><ScoreBadge score={Number(v.safetyScore ?? 0)} /></td>
+                      <td className="px-4 py-3"><ScoreBadge score={scoreValue(v.safetyScore)} /></td>
                       <td className="px-4 py-3 text-slate-700">{String(v.safetyEventCount ?? 0)}</td>
                       <td className="px-4 py-3 text-slate-700">{String(v.dashcamEventCount ?? 0)}</td>
                       <td className="px-4 py-3 text-slate-700">{String(v.incidentCount ?? 0)}</td>
                       <td className="px-4 py-3 text-slate-700">{String(v.routeDeviationCount ?? 0)}</td>
-                      <td className="px-4 py-3 text-slate-700">{String(v.riskScore ?? 0)}</td>
+                      <td className="px-4 py-3 text-slate-700">{String(v.riskScore ?? "—")}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -634,14 +665,14 @@ export function DriverScorecardsPage() {
               <ul className="flex flex-col gap-2.5">
                 {worstVehicles.map((v, i) => (
                   <li key={String(v.id ?? i)} className="flex items-center gap-3 rounded-xl px-1.5 py-1">
-                    <ScoreRing score={Number(v.safetyScore ?? 0)} size={40} />
+                    <ScoreRing score={scoreValue(v.safetyScore)} size={40} />
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-semibold text-slate-900">{String(v.vehicleCode ?? "--")}</p>
                       <p className="truncate text-[11px] text-slate-400">
                         {Number(v.incidentCount ?? 0) > 0 ? `${v.incidentCount} incidents` : String(v.type ?? "")}
                       </p>
                     </div>
-                    <ScoreBadge score={Number(v.safetyScore ?? 0)} />
+                    <ScoreBadge score={scoreValue(v.safetyScore)} />
                   </li>
                 ))}
               </ul>

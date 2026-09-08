@@ -30,15 +30,16 @@ public sealed class SafetyCustomerReadEvidencePostgresTests
             c => c.Parameters.AddWithValue("@code", $"SAFE-{suffix}"));
         var qualifiedDriver = await Driver(db, companyId, $"DRV-Q-{suffix}");
         var unverifiedDriver = await Driver(db, companyId, $"DRV-U-{suffix}");
+        var qualifiedVehicle = await Vehicle(db, companyId, $"VEH-Q-{suffix}");
 
         try
         {
             var qualifiedEvent = await SafetyEvent(db, companyId, qualifiedDriver, $"EV-Q-{suffix}",
-                "Speeding", "High", "runtime_detection", "derived_from_qualified_source", 12m);
+                "Speeding", "High", "runtime_detection", "derived_from_qualified_source", 12m, qualifiedVehicle);
             var legacyEvent = await SafetyEvent(db, companyId, qualifiedDriver, $"EV-L-{suffix}",
-                "Harsh Braking", "Critical", "legacy_unverified", "unverified", 25m);
+                "Harsh Braking", "Critical", "legacy_unverified", "unverified", 25m, qualifiedVehicle);
             _ = await SafetyEvent(db, companyId, unverifiedDriver, $"EV-D-{suffix}",
-                "Geofence Breach", "Critical", "demo_seed", "demo_seed", 30m);
+                "Geofence Breach", "Critical", "demo_seed", "demo_seed", 30m, null);
 
             await Score(db, companyId, qualifiedDriver, 88m, 1,
                 "runtime_computed", "calculated_from_qualified_sources");
@@ -88,10 +89,19 @@ public sealed class SafetyCustomerReadEvidencePostgresTests
             Assert.Equal(qualifiedDriver, Convert.ToInt64(visibleScore["driverId"]));
             Assert.Equal(88m, Convert.ToDecimal(visibleScore["score30D"]));
             Assert.Equal("calculated_from_qualified_sources", visibleScore["verificationStatus"]);
+
+            var vehicleCards = Assert.IsAssignableFrom<IEnumerable>(Data(await Invoke(
+                "SafetyVehicleScorecards", http, db, CancellationToken.None)))
+                .Cast<Dictionary<string, object?>>().ToList();
+            var vehicleCard = Assert.Single(vehicleCards);
+            Assert.Equal(qualifiedVehicle, Convert.ToInt64(vehicleCard["vehicleId"]));
+            Assert.Equal(88m, Convert.ToDecimal(vehicleCard["safetyScore"]));
+            Assert.Equal(1L, Convert.ToInt64(vehicleCard["safetyEventCount"]));
+            Assert.Equal("calculated_from_qualified_sources", vehicleCard["verificationStatus"]);
         }
         finally
         {
-            foreach (var table in new[] { "coaching_tasks", "driver_safety_scores", "safety_events", "drivers" })
+            foreach (var table in new[] { "coaching_tasks", "driver_safety_scores", "safety_events", "drivers", "vehicles" })
                 await db.ExecuteAsync($"DELETE FROM {table} WHERE company_id=@cid", c => c.Parameters.AddWithValue("@cid", companyId));
             await db.ExecuteAsync("DELETE FROM companies WHERE id=@cid", c => c.Parameters.AddWithValue("@cid", companyId));
         }
@@ -109,18 +119,27 @@ public sealed class SafetyCustomerReadEvidencePostgresTests
             c.Parameters.AddWithValue("@email", $"{code.ToLowerInvariant()}@example.test");
         });
 
+    private static Task<long> Vehicle(Database db, long companyId, string code) => db.InsertAsync(
+        "INSERT INTO vehicles(company_id,vehicle_code,type,status) VALUES(@cid,@code,'Truck','Active') RETURNING id",
+        c =>
+        {
+            c.Parameters.AddWithValue("@cid", companyId);
+            c.Parameters.AddWithValue("@code", code);
+        });
+
     private static Task<long> SafetyEvent(Database db, long companyId, long driverId, string number,
-        string type, string severity, string origin, string verification, decimal impact) => db.InsertAsync(
+        string type, string severity, string origin, string verification, decimal impact, long? vehicleId) => db.InsertAsync(
         @"INSERT INTO safety_events
-            (company_id,event_number,driver_id,event_type,severity,status,review_status,event_time,occurred_at,
+            (company_id,event_number,driver_id,vehicle_id,event_type,severity,status,review_status,event_time,occurred_at,
              score_impact,data_origin,verification_status)
-          VALUES(@cid,@number,@driver,@type,@severity,'open','New',NOW(),NOW(),@impact,@origin,@verification)
+          VALUES(@cid,@number,@driver,@vehicle,@type,@severity,'open','New',NOW(),NOW(),@impact,@origin,@verification)
           RETURNING id",
         c =>
         {
             c.Parameters.AddWithValue("@cid", companyId);
             c.Parameters.AddWithValue("@number", number);
             c.Parameters.AddWithValue("@driver", driverId);
+            c.Parameters.AddWithValue("@vehicle", (object?)vehicleId ?? DBNull.Value);
             c.Parameters.AddWithValue("@type", type);
             c.Parameters.AddWithValue("@severity", severity);
             c.Parameters.AddWithValue("@impact", impact);

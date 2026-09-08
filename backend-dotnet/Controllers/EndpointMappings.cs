@@ -19364,11 +19364,22 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
            OR (se.data_origin='runtime_detection' AND se.verification_status='derived_from_qualified_source')
            OR (se.data_origin='provider_import' AND se.verification_status='provider_verified'))";
 
-    private const string QualifiedDriverSafetyScoreSql =
+    private const string VerifiedDriverSafetyScoreSql =
         @"dss.data_origin='runtime_computed'
            AND dss.verification_status='calculated_from_qualified_sources'
-           AND dss.computed_at>=NOW()-INTERVAL '15 minutes'
-           AND dss.events_30d>0";
+           AND dss.events_30d>0
+           AND dss.events_30d=(
+             SELECT COUNT(*) FROM safety_events score_event
+             WHERE score_event.company_id=dss.company_id AND score_event.driver_id=dss.driver_id
+               AND score_event.deleted_at IS NULL AND LOWER(score_event.status)<>'dismissed'
+               AND score_event.data_origin='runtime_detection'
+               AND score_event.verification_status='derived_from_qualified_source'
+               AND score_event.score_impact IS NOT NULL AND score_event.score_impact>0
+               AND score_event.event_time>NOW()-INTERVAL '30 days')";
+
+    private const string QualifiedDriverSafetyScoreSql =
+        VerifiedDriverSafetyScoreSql + @"
+           AND dss.computed_at>=NOW()-INTERVAL '15 minutes'";
 
     private const string QualifiedCoachingTaskSql =
         @"((ct.data_origin='user_workflow' AND ct.verification_status='recorded_by_authenticated_actor')
