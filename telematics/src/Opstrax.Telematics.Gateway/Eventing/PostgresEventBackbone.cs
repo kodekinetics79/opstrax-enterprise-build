@@ -52,8 +52,9 @@ internal sealed class PostgresEventBackbone(string systemConnectionString) : IEv
                 canonicalPayload.TenantId, canonicalPayload.CompanyId, canonicalPayload.DeviceId);
             if (!string.Equals(key, expectedKey, StringComparison.Ordinal))
                 throw new InvalidOperationException("Telemetry partition key does not match registry-resolved ownership.");
-            if (canonicalPayload.Signals.Count > 0 && !long.TryParse(canonicalPayload.DeviceId, out _))
-                throw new InvalidOperationException("Canonical device signals require the numeric registry device identity.");
+            if ((canonicalPayload.Signals.Count > 0 || canonicalPayload.Diagnostic is not null) &&
+                !long.TryParse(canonicalPayload.DeviceId, out _))
+                throw new InvalidOperationException("Canonical device evidence requires the numeric registry device identity.");
         }
         else
         {
@@ -252,7 +253,8 @@ internal sealed class PostgresEventBackbone(string systemConnectionString) : IEv
     internal static string ClassifyCanonicalEventType(CanonicalTelemetryEvent evt)
     {
         ArgumentNullException.ThrowIfNull(evt);
-        return evt.Location is not null ? "location.updated" :
+        return evt.Diagnostic is not null ? "diagnostic.event" :
+            evt.Location is not null ? "location.updated" :
             evt.Signals.Count > 0 ? "vehicle.signal" :
             "device.heartbeat";
     }

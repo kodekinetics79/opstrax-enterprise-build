@@ -2,11 +2,13 @@ using System.Globalization;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging.Abstractions;
 using Opstrax.Telematics.Contracts;
+using Opstrax.Telematics.Contracts.Diagnostics;
 using Opstrax.Telematics.Contracts.Eventing;
 using Opstrax.Telematics.Contracts.Identity;
 using Opstrax.Telematics.Contracts.Lifecycle;
 using Opstrax.Telematics.Contracts.Provenance;
 using Opstrax.Telematics.Gateway.Forwarding;
+using Opstrax.Telematics.Gateway.Eventing;
 using Opstrax.Telematics.Gateway.Identity;
 using Opstrax.Telematics.Gateway.J1939;
 using Opstrax.Telematics.Protocols.J1939;
@@ -128,6 +130,49 @@ public sealed class J1939CanHostTests
         Assert.NotEqual(first.EventId, first.CorrelationId);
     }
 
+    [Fact]
+    public async Task Dm1_flows_from_can_host_to_tenant_owned_canonical_diagnostic_event()
+    {
+        var backbone = new InMemoryEventBackbone();
+        await using IEventSubscription<CanonicalTelemetryEvent> subscription =
+            backbone.Subscribe<CanonicalTelemetryEvent>(TelematicsTopics.TelemetryNormalized, TenantId);
+        J1939CanIngestService service = Service(backbone, Registry(DeviceLifecycleState.Online));
+        J1939RawCanFrame frame = CandumpJ1939CanFrameSource.ParseLine(
+            Line("18FECA31", "400034120501"),
+            Options());
+
+        CanonicalTelemetryEvent canonical = Assert.IsType<CanonicalTelemetryEvent>(
+            await service.ProcessFrameAsync(new J1939MessageAcquisition(), frame));
+        DeliveredEvent<CanonicalTelemetryEvent> delivered = await ReadOneAsync(subscription);
+
+        Assert.Equal("diagnostic.event", PostgresEventBackbone.ClassifyCanonicalEventType(canonical));
+        Assert.NotNull(canonical.Diagnostic);
+        Assert.True(canonical.Diagnostic.IsActive);
+        Assert.Equal(["SPN-4660-FMI-5"], canonical.DtcCodes);
+        Assert.Equal(DiagnosticLampState.On, canonical.Diagnostic.Lamps.Protect);
+        Assert.Equal("DM1", delivered.Envelope.Headers["j1939.diagnostic_kind"]);
+        Assert.Equal("0x31", delivered.Envelope.Headers["j1939.source_address"]);
+        Assert.Equal(TenantId, delivered.Envelope.TenantId);
+        Assert.DoesNotContain("400034120501", string.Join('|', delivered.Envelope.Headers.Values));
+    }
+
+    [Fact]
+    public async Task Dm2_flows_as_historical_evidence_without_clearing_active_faults()
+    {
+        var backbone = new InMemoryEventBackbone();
+        J1939CanIngestService service = Service(backbone, Registry(DeviceLifecycleState.Online));
+        J1939RawCanFrame frame = CandumpJ1939CanFrameSource.ParseLine(
+            Line("18FECB31", "FFFFFFFFFFFF"),
+            Options());
+
+        CanonicalTelemetryEvent canonical = Assert.IsType<CanonicalTelemetryEvent>(
+            await service.ProcessFrameAsync(new J1939MessageAcquisition(), frame));
+
+        Assert.NotNull(canonical.Diagnostic);
+        Assert.False(canonical.Diagnostic.IsActive);
+        Assert.Empty(canonical.DtcCodes);
+    }
+
     [Theory]
     [InlineData(DeviceLifecycleState.Draft)]
     [InlineData(DeviceLifecycleState.AwaitingAssignment)]
@@ -241,7 +286,8 @@ public sealed class J1939CanHostTests
         return new J1939CanIngestService(
             new EmptyFrameSource(),
             registry,
-            new J1939SignalPublisher(backbone),
+            new J1939SignalPublisher(new CanonicalTelemetryPublisher(backbone)),
+            new J1939DiagnosticPublisher(new CanonicalTelemetryPublisher(backbone)),
             options,
             NullLogger<J1939CanIngestService>.Instance,
             timeProvider ?? new FixedTimeProvider(CapturedAt));

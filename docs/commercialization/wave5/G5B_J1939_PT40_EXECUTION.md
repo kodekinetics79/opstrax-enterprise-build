@@ -88,6 +88,12 @@ Deployment binds the interface to one provisioned registry device serial and one
 
 This closes the missing software orchestration seam between a real SocketCAN stream and the customer-visible latest-signal projection. It does not prove per-frame cryptographic authenticity, physical attachment, adapter compatibility, ECU authority, mapping agreement, route behavior, recovery or soak. G5B remains DEVELOPMENT / EXTERNAL HOLD until the exact device/adapter/hardware/firmware tuple is procured and the physical evidence plan is executed.
 
+## Ninth implementation slice — durable canonical DM1/DM2 evidence
+
+The CAN host now publishes decoded DM1/DM2 through the tenant-owned canonical durability path instead of dropping the already-decoded result. The additive canonical diagnostic snapshot retains PGN, active/historical state, source address, eight lamp states, decoded SPN/FMI codes, occurrence counts and conversion-method flags. Bounded headers retain the diagnostic kind, adapter/channel and capture hashes without raw bus bytes. Exact capture replay converges on the same event identity, and the PostgreSQL ledger classifies it as `diagnostic.event`.
+
+DM1 is active evidence. DM2 is historical evidence only and cannot clear DM1 state. The implementation deliberately stops before updating `fault_codes`, creating diagnostic holds, grounding a vehicle or opening a work order; those safety-relevant maintenance actions require a dedicated idempotent consumer and independent SDET review. Physical source authenticity, reference-value agreement and hardware certification remain EXTERNAL HOLD.
+
 ## DeviceOps registry integration
 
 Stage 115 provides the shared exact manufacturer/model/hardware revision/firmware and software-SHA candidate identity needed by a later PT40 or OEM certification candidate. It deliberately seeds no PT40, GT06, J1939 adapter or OEM record and its database contract fixes every engineering candidate at `ExternalHold` / `Unverified`. A candidate may be recorded only after the exact physical tuple is observed; tier promotion requires the evidence gates in this document and a separately frozen certification candidate.

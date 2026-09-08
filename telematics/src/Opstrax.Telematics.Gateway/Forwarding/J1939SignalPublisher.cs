@@ -1,10 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 using Opstrax.Telematics.Contracts;
 using Opstrax.Telematics.Contracts.Eventing;
-using Opstrax.Telematics.Gateway.Buffering;
 using Opstrax.Telematics.Protocols.J1939;
 
 namespace Opstrax.Telematics.Gateway.Forwarding;
@@ -16,24 +13,16 @@ namespace Opstrax.Telematics.Gateway.Forwarding;
 /// </summary>
 internal sealed class J1939SignalPublisher
 {
-    private readonly IEventBackbone _backbone;
-    private readonly IStoreAndForwardBuffer? _forwardBuffer;
-    private readonly ILogger<J1939SignalPublisher> _logger;
+    private readonly CanonicalTelemetryPublisher _publisher;
 
     internal J1939SignalPublisher(IEventBackbone backbone)
     {
-        _backbone = backbone ?? throw new ArgumentNullException(nameof(backbone));
-        _logger = NullLogger<J1939SignalPublisher>.Instance;
+        _publisher = new CanonicalTelemetryPublisher(backbone);
     }
 
-    public J1939SignalPublisher(
-        IEventBackbone backbone,
-        IStoreAndForwardBuffer forwardBuffer,
-        ILogger<J1939SignalPublisher> logger)
+    public J1939SignalPublisher(CanonicalTelemetryPublisher publisher)
     {
-        _backbone = backbone ?? throw new ArgumentNullException(nameof(backbone));
-        _forwardBuffer = forwardBuffer ?? throw new ArgumentNullException(nameof(forwardBuffer));
-        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _publisher = publisher ?? throw new ArgumentNullException(nameof(publisher));
     }
 
     public async Task<CanonicalTelemetryEvent> PublishAsync(
@@ -61,61 +50,7 @@ internal sealed class J1939SignalPublisher
             ["j1939.capture_references"] = JsonSerializer.Serialize(
                 frameEvidence.Select(frame => frame.CaptureReference).ToArray()),
         };
-        var envelope = new EventEnvelope<CanonicalTelemetryEvent>
-        {
-            EventId = canonical.EventId,
-            CorrelationId = canonical.CorrelationId,
-            OccurredAt = message.CompletedAt,
-            TenantId = canonical.TenantId,
-            CompanyId = canonical.CompanyId,
-            SchemaVersion = canonical.SchemaVersion,
-            Payload = canonical,
-            Headers = headers,
-        };
-        var key = TelematicsEventKey.ForDevice(
-            canonical.TenantId,
-            canonical.CompanyId,
-            canonical.DeviceId);
-
-        try
-        {
-            await _backbone.PublishAsync(
-                TelematicsTopics.TelemetryNormalized,
-                key,
-                envelope,
-                cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception ex) when (_forwardBuffer is not null)
-        {
-            _logger.LogError(
-                ex,
-                "J1939 canonical publish failed for device {DeviceId}; parking event {EventId} in store-and-forward.",
-                canonical.DeviceId,
-                canonical.EventId);
-
-            try
-            {
-                await _forwardBuffer.EnqueueAsync(
-                    new StoreAndForwardEntry(
-                        TelematicsTopics.TelemetryNormalized,
-                        key,
-                        envelope,
-                        DateTimeOffset.UtcNow),
-                    CancellationToken.None).ConfigureAwait(false);
-            }
-            catch (Exception bufferException)
-            {
-                _logger.LogCritical(
-                    bufferException,
-                    "Both canonical persistence and store-and-forward failed for J1939 event {EventId}.",
-                    canonical.EventId);
-                throw new AggregateException(
-                    "Both J1939 canonical persistence and store-and-forward failed.",
-                    ex,
-                    bufferException);
-            }
-        }
-
+        await _publisher.PublishAsync(canonical, headers, cancellationToken).ConfigureAwait(false);
         return canonical;
     }
 }

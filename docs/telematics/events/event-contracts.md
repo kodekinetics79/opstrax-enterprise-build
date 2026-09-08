@@ -133,7 +133,9 @@ window with consumers drained.
   enter/exit are all order-dependent folds over this stream.
 - **Schema:** `EventEnvelope<CanonicalTelemetryEvent>` — the canonical record, verbatim. Envelope
   `SchemaVersion` mirrors `CanonicalTelemetryEvent.SchemaVersion`
-  (`CurrentSchemaVersion = 1`).
+  (`CurrentSchemaVersion = 1`). Supported J1939 DM1/DM2 records carry the additive structured
+  `Diagnostic` snapshot plus the existing `DtcCodes` summary; DM2 is historical evidence, not a
+  clear instruction.
 - **Producer:** the normalization worker.
 - **Consumers:** position validator; signal normalizer; device-health monitor; trip detector;
   diagnostic engine; safety/rules engine; the timeseries/Postgres sink; analytics.

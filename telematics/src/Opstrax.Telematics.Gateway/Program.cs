@@ -172,7 +172,9 @@ else
 if (j1939Can.Enabled)
 {
     builder.Services.AddSingleton(j1939Can);
+    builder.Services.AddSingleton<CanonicalTelemetryPublisher>();
     builder.Services.AddSingleton<J1939SignalPublisher>();
+    builder.Services.AddSingleton<J1939DiagnosticPublisher>();
     builder.Services.AddSingleton<IJ1939CanFrameSource, CandumpJ1939CanFrameSource>();
     builder.Services.AddHostedService<J1939CanIngestService>();
 }

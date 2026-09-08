@@ -5,9 +5,13 @@ on:
     paths:
       - 'telematics/src/Opstrax.Telematics.Contracts/Signals/VssSignals.cs'
       - 'telematics/src/Opstrax.Telematics.Contracts/Signals/SignalValue.cs'
+      - 'telematics/src/Opstrax.Telematics.Contracts/Diagnostics/**'
+      - 'telematics/src/Opstrax.Telematics.Contracts/CanonicalTelemetryEvent.cs'
       - 'telematics/src/Opstrax.Telematics.Contracts/Provenance/Transport.cs'
       - 'telematics/src/Opstrax.Telematics.Protocols.J1939/**'
       - 'telematics/src/Opstrax.Telematics.Gateway/Forwarding/J1939SignalPublisher.cs'
+      - 'telematics/src/Opstrax.Telematics.Gateway/Forwarding/J1939DiagnosticPublisher.cs'
+      - 'telematics/src/Opstrax.Telematics.Gateway/Forwarding/CanonicalTelemetryPublisher.cs'
       - 'telematics/src/Opstrax.Telematics.Gateway/J1939/**'
       - 'telematics/src/Opstrax.Telematics.Gateway/Program.cs'
       - 'telematics/src/Opstrax.Telematics.Gateway/Eventing/PostgresEventBackbone.cs'
@@ -29,6 +33,7 @@ on:
       - 'tools/apply-neon-predeploy-migrations.sh'
       - 'tools/test-predeploy-clean-chain.sh'
       - 'docs/telematics/j1939-can-acquisition.md'
+      - 'docs/telematics/events/event-contracts.md'
       - 'docs/commercialization/wave5/G5B_J1939_PT40_EXECUTION.md'
       - '.github/workflows/j1939-signal-integrity.yml'
   push:
@@ -36,9 +41,13 @@ on:
     paths:
       - 'telematics/src/Opstrax.Telematics.Contracts/Signals/VssSignals.cs'
       - 'telematics/src/Opstrax.Telematics.Contracts/Signals/SignalValue.cs'
+      - 'telematics/src/Opstrax.Telematics.Contracts/Diagnostics/**'
+      - 'telematics/src/Opstrax.Telematics.Contracts/CanonicalTelemetryEvent.cs'
       - 'telematics/src/Opstrax.Telematics.Contracts/Provenance/Transport.cs'
       - 'telematics/src/Opstrax.Telematics.Protocols.J1939/**'
       - 'telematics/src/Opstrax.Telematics.Gateway/Forwarding/J1939SignalPublisher.cs'
+      - 'telematics/src/Opstrax.Telematics.Gateway/Forwarding/J1939DiagnosticPublisher.cs'
+      - 'telematics/src/Opstrax.Telematics.Gateway/Forwarding/CanonicalTelemetryPublisher.cs'
       - 'telematics/src/Opstrax.Telematics.Gateway/J1939/**'
       - 'telematics/src/Opstrax.Telematics.Gateway/Program.cs'
       - 'telematics/src/Opstrax.Telematics.Gateway/Eventing/PostgresEventBackbone.cs'
@@ -60,6 +69,7 @@ on:
       - 'tools/apply-neon-predeploy-migrations.sh'
       - 'tools/test-predeploy-clean-chain.sh'
       - 'docs/telematics/j1939-can-acquisition.md'
+      - 'docs/telematics/events/event-contracts.md'
       - 'docs/commercialization/wave5/G5B_J1939_PT40_EXECUTION.md'
       - '.github/workflows/j1939-signal-integrity.yml'
   workflow_dispatch:

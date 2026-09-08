@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using Npgsql;
 using Opstrax.Telematics.Contracts;
 using Opstrax.Telematics.Contracts.Eventing;
+using Opstrax.Telematics.Contracts.Diagnostics;
 using Opstrax.Telematics.Contracts.Identity;
 using Opstrax.Telematics.Contracts.Provenance;
 using Opstrax.Telematics.Contracts.Signals;
@@ -622,6 +623,44 @@ public sealed class PostgresProductionDurabilityTests
             "SELECT count(*) FROM latest_device_signals WHERE value_json IS NULL AND certification_claim=FALSE"));
     }
 
+    [Fact]
+    public async Task CanonicalBackbone_PersistsStructuredJ1939DiagnosticAsDiagnosticEventIdempotently()
+    {
+        await using var database = await IsolatedSchema.CreateAsync();
+        await database.ExecuteAsync("""
+            CREATE TABLE canonical_telemetry_events(
+                id bigserial PRIMARY KEY, company_id bigint NOT NULL, vehicle_id bigint NULL,
+                device_id bigint NULL, installation_id bigint NULL, assignment_id bigint NULL,
+                trip_id bigint NULL, driver_id bigint NULL, correlation_id uuid NOT NULL,
+                event_type text NOT NULL, lat numeric NULL, lng numeric NULL,
+                speed_mph numeric NULL, heading numeric NULL, source text NOT NULL,
+                provider text NULL, protocol text NULL, adapter_version text NULL,
+                confidence numeric NULL, trust_score numeric NULL, quality_flags jsonb NULL,
+                payload jsonb NOT NULL, device_fix_time timestamptz NOT NULL,
+                gateway_received_at timestamptz NOT NULL, event_time timestamptz NOT NULL);
+            """);
+        var backbone = new PostgresEventBackbone(database.ScopedConnectionString);
+        EventEnvelope<CanonicalTelemetryEvent> envelope = DiagnosticEnvelope();
+        string key = TelematicsEventKey.ForDevice(
+            envelope.TenantId,
+            envelope.CompanyId,
+            envelope.Payload.DeviceId);
+
+        await backbone.PublishAsync(TelematicsTopics.TelemetryNormalized, key, envelope);
+        await backbone.PublishAsync(TelematicsTopics.TelemetryNormalized, key, envelope);
+
+        Assert.Equal(1, await database.ScalarLongAsync(
+            "SELECT count(*) FROM canonical_telemetry_events WHERE event_type='diagnostic.event'"));
+        Assert.Equal("SPN-4660-FMI-5", await database.ScalarStringAsync("""
+            SELECT payload->'Event'->'Diagnostic'->'TroubleCodes'->0->>'Code'
+              FROM canonical_telemetry_events
+            """));
+        Assert.Equal("true", await database.ScalarStringAsync("""
+            SELECT payload->'Event'->'Diagnostic'->>'IsActive'
+              FROM canonical_telemetry_events
+            """));
+    }
+
     private static StoreAndForwardEntry Entry(Guid eventId, string deviceId, long companyId)
     {
         Guid tenant = Guid.NewGuid();
@@ -689,6 +728,74 @@ public sealed class PostgresProductionDurabilityTests
             {
                 ["j1939.capture_references"] = "[\"capture-stage129-001\"]",
                 ["authorization"] = "must-never-reach-the-customer-projection",
+            },
+        };
+    }
+
+    private static EventEnvelope<CanonicalTelemetryEvent> DiagnosticEnvelope()
+    {
+        Guid eventId = Guid.NewGuid();
+        Guid tenantId = Guid.Parse("80000000-0000-0000-0000-000000000008");
+        DateTime observedAt = new(2026, 9, 8, 19, 0, 0, DateTimeKind.Utc);
+        var diagnostic = new DiagnosticSnapshot(
+            "J1939",
+            65226,
+            IsActive: true,
+            SourceAddress: 49,
+            new DiagnosticLampSnapshot(
+                DiagnosticLampState.On,
+                DiagnosticLampState.Off,
+                DiagnosticLampState.NotAvailable,
+                DiagnosticLampState.On,
+                DiagnosticLampState.Off,
+                DiagnosticLampState.On,
+                DiagnosticLampState.NotAvailable,
+                DiagnosticLampState.Off),
+            Array.AsReadOnly(new[]
+            {
+                new DiagnosticTroubleCode(
+                    "SPN-4660-FMI-5",
+                    "J1939:SA:49:SPN:4660:FMI:5",
+                    4660,
+                    5,
+                    1,
+                    false),
+            }));
+        var payload = new CanonicalTelemetryEvent
+        {
+            SchemaVersion = 1,
+            EventId = eventId,
+            CorrelationId = eventId,
+            OccurredAtDeviceUtc = observedAt,
+            ReceivedAtGatewayUtc = observedAt,
+            NormalizedAtUtc = observedAt.AddSeconds(1),
+            TenantId = tenantId,
+            CompanyId = 42,
+            DeviceId = "101",
+            VehicleId = 501,
+            Source = TelemetrySource.DirectDevice,
+            Transport = Transport.Can,
+            ProtocolName = "J1939",
+            AdapterName = "J1939DiagnosticDecoder",
+            AdapterVersion = "1.0.0",
+            DtcCodes = ["SPN-4660-FMI-5"],
+            Diagnostic = diagnostic,
+            TrustScore = 0.25,
+            Confidence = 0.75,
+        };
+        return new EventEnvelope<CanonicalTelemetryEvent>
+        {
+            EventId = eventId,
+            CorrelationId = eventId,
+            OccurredAt = observedAt,
+            TenantId = tenantId,
+            CompanyId = 42,
+            SchemaVersion = 1,
+            Payload = payload,
+            Headers = new Dictionary<string, string>
+            {
+                ["j1939.diagnostic_kind"] = "DM1",
+                ["j1939.capture_references"] = "[\"capture-diagnostic-001\"]",
             },
         };
     }

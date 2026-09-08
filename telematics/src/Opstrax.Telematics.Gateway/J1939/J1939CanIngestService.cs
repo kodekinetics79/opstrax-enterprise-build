@@ -35,6 +35,7 @@ internal sealed class J1939CanIngestService : BackgroundService
     private readonly IJ1939CanFrameSource _source;
     private readonly IDeviceRegistry _registry;
     private readonly J1939SignalPublisher _publisher;
+    private readonly J1939DiagnosticPublisher _diagnosticPublisher;
     private readonly J1939CanHostOptions _options;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<J1939CanIngestService> _logger;
@@ -45,6 +46,7 @@ internal sealed class J1939CanIngestService : BackgroundService
         IJ1939CanFrameSource source,
         IDeviceRegistry registry,
         J1939SignalPublisher publisher,
+        J1939DiagnosticPublisher diagnosticPublisher,
         J1939CanHostOptions options,
         ILogger<J1939CanIngestService> logger,
         TimeProvider? timeProvider = null)
@@ -52,6 +54,7 @@ internal sealed class J1939CanIngestService : BackgroundService
         _source = source ?? throw new ArgumentNullException(nameof(source));
         _registry = registry ?? throw new ArgumentNullException(nameof(registry));
         _publisher = publisher ?? throw new ArgumentNullException(nameof(publisher));
+        _diagnosticPublisher = diagnosticPublisher ?? throw new ArgumentNullException(nameof(diagnosticPublisher));
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _timeProvider = timeProvider ?? TimeProvider.System;
@@ -139,7 +142,8 @@ internal sealed class J1939CanIngestService : BackgroundService
             return null;
         }
 
-        if (result.Status != J1939MessageAcquisitionStatus.SignalsDecoded)
+        if (result.Status is not (J1939MessageAcquisitionStatus.SignalsDecoded or
+                                  J1939MessageAcquisitionStatus.DiagnosticDecoded))
             return null;
 
         ResolvedDeviceOwner? owner = await ResolveOwnerAsync(now, cancellationToken).ConfigureAwait(false);
@@ -173,7 +177,9 @@ internal sealed class J1939CanIngestService : BackgroundService
             _options.TrustScore,
             _options.Confidence);
 
-        return await _publisher.PublishAsync(message, context, cancellationToken).ConfigureAwait(false);
+        return result.Status == J1939MessageAcquisitionStatus.DiagnosticDecoded
+            ? await _diagnosticPublisher.PublishAsync(message, context, cancellationToken).ConfigureAwait(false)
+            : await _publisher.PublishAsync(message, context, cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask<ResolvedDeviceOwner?> ResolveOwnerAsync(

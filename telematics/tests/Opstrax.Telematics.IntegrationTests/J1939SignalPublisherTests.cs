@@ -108,10 +108,10 @@ public sealed class J1939SignalPublisherTests
     public async Task Backbone_outage_parks_exact_canonical_envelope_for_durable_replay()
     {
         var buffer = new InMemoryStoreAndForwardBuffer();
-        var publisher = new J1939SignalPublisher(
+        var publisher = new J1939SignalPublisher(new CanonicalTelemetryPublisher(
             new FailingBackbone(),
             buffer,
-            NullLogger<J1939SignalPublisher>.Instance);
+            NullLogger<CanonicalTelemetryPublisher>.Instance));
         J1939CanonicalizationContext context = Context();
 
         CanonicalTelemetryEvent published = await publisher.PublishAsync(
