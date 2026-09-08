@@ -73,6 +73,19 @@ public sealed class DiagnosticsPilotContractTests
         Assert.Contains("(@branchId::BIGINT IS NULL OR fc.branch_id=@branchId)", source, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Customer_fault_reads_distinguish_observation_from_a_real_safety_hold()
+    {
+        var source = File.ReadAllText(Path.Combine(FindRoot(), "backend-dotnet", "Controllers", "EndpointMappings.cs"));
+
+        Assert.Contains("active_diagnostic_hold_id", source, StringComparison.Ordinal);
+        Assert.Contains("'VehicleHoldActive'", source, StringComparison.Ordinal);
+        Assert.Contains("'ObservationOnly'", source, StringComparison.Ordinal);
+        Assert.Contains("evidence_classification", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("Critical fault codes have triggered automatic defect creation", source, StringComparison.Ordinal);
+        Assert.Contains("an observation does not by itself prove that a vehicle hold or maintenance defect was created", source, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData("enc:not-base64")]
     [InlineData("enc:AQ==")]

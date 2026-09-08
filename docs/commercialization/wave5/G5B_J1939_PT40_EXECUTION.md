@@ -100,6 +100,8 @@ The production PostgreSQL backbone now persists decoded DTC occurrences and curr
 
 The customer maintenance surfaces can now read received canonical CAN diagnostic state through their existing fault-code APIs. This slice does not create `diagnostic_holds`, ground vehicles, hold dispatch, create work orders or promote any certification candidate. Those safety effects remain a separate independently reviewed gate, and all physical claims remain EXTERNAL HOLD.
 
+The customer fault list now distinguishes `CanonicalCanObservation`, `AuthenticatedDeviceObservation` and legacy/unclassified records, and separately reports whether a persisted vehicle/review hold exists. The diagnostics pages derive protocol and latest diagnostic time from the fault record when no GPS position exists. Raw evidence JSON is omitted from the list response, and the maintenance insight no longer states that an automatic defect was created without a persisted action.
+
 ## DeviceOps registry integration
 
 Stage 115 provides the shared exact manufacturer/model/hardware revision/firmware and software-SHA candidate identity needed by a later PT40 or OEM certification candidate. It deliberately seeds no PT40, GT06, J1939 adapter or OEM record and its database contract fixes every engineering candidate at `ExternalHold` / `Unverified`. A candidate may be recorded only after the exact physical tuple is observed; tier promotion requires the evidence gates in this document and a separately frozen certification candidate.

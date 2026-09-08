@@ -2821,6 +2821,8 @@ function DeviceDetailDrawer({
               ["Battery voltage", cell(latestDiagnostic.batteryVoltage)],
               ["Modem status", cell(latestDiagnostic.modemStatus)],
               ["GNSS status", cell(latestDiagnostic.gnssStatus)],
+              ["Evidence", cell(latestDiagnostic.evidenceClassification)],
+              ["Safety action", cell(latestDiagnostic.safetyActionStatus)],
             ]} />
           ) : (
             <p className="text-sm text-slate-400">No active fault codes for this device.</p>

@@ -758,6 +758,8 @@ function TelematicsDetailDrawer({
           ["Adapter version", row.signalAdapterVersion],
           ["Trust", row.signalTrust],
           ["Capture reference", row.signalEvidenceReference],
+          ["Diagnostic evidence", row.diagnosticEvidenceClassification],
+          ["Safety action", row.diagnosticSafetyAction],
           ["Evidence boundary", row.certificationBoundary],
           ["Latest reading", row.latestReading],
           ["Expected range", row.expectedRange],

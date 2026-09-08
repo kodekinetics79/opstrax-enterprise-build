@@ -161,6 +161,8 @@ export type TelematicsDiagnosticSeedRecord = {
   faultCode: string;
   runAt: string;
   runBy: string;
+  evidenceClassification: string;
+  safetyActionStatus: string;
 };
 
 export type TelematicsInstallationSeedRecord = {
@@ -1593,6 +1595,8 @@ export type TelematicsClusterRecord = {
   signalTrust: string;
   signalEvidenceReference: string;
   certificationBoundary: string;
+  diagnosticEvidenceClassification: string;
+  diagnosticSafetyAction: string;
   sensorType: string;
   latestReading: string;
   expectedRange: string;
@@ -2338,7 +2342,26 @@ function toClusterRecord(
     const type = String(fault.code_type ?? "").trim();
     return code ? [type, code].filter(Boolean).join(" ") : "";
   }).filter(Boolean);
-  const explicitProtocol = String(position?.protocol ?? "").toLowerCase();
+  const faultProtocol = deviceFaults
+    .map((fault) => String(fault.protocol ?? fault.code_type ?? "").trim())
+    .find(Boolean) ?? "";
+  const latestFaultObservedAt = deviceFaults
+    .map((fault) => fault.last_observed_at ?? fault.observed_at ?? fault.last_seen_at ?? fault.first_seen_at)
+    .filter((value) => value != null && String(value).trim() !== "")
+    .map(String)
+    .sort((left, right) => (Date.parse(right) || 0) - (Date.parse(left) || 0))[0] ?? "";
+  const diagnosticEvidenceClassification = Array.from(new Set(deviceFaults
+    .map((fault) => String(fault.evidence_classification ?? "LegacyOrUnclassified"))))
+    .join(", ") || "—";
+  const safetyActions = deviceFaults.map((fault) => String(fault.safety_action_status ?? "ObservationOnly"));
+  const diagnosticSafetyAction = safetyActions.includes("VehicleHoldActive")
+    ? "Vehicle hold active"
+    : safetyActions.includes("ReviewHoldActive")
+      ? "Review hold active"
+      : troubleCodes.length > 0
+        ? "Observation only — review required"
+        : "—";
+  const explicitProtocol = String(position?.protocol ?? faultProtocol).toLowerCase();
   const protocolType: TelematicsClusterRecord["protocolType"] = /j1939/.test(explicitProtocol)
     ? "J1939"
     : /obd/.test(explicitProtocol)
@@ -2433,7 +2456,7 @@ function toClusterRecord(
     // A generic DTC is not automatically an emissions fault. That classification
     // requires a server-supplied diagnostic category which is not in this feed.
     emissionsStatus: "Not evaluated",
-    lastEngineDataAt: hasEngineEvidence ? lastPingAt : "—",
+    lastEngineDataAt: hasEngineEvidence ? (latestFaultObservedAt || lastPingAt) : "—",
     dataFreshnessStatus,
     signalAvailability: readableSignalAvailability(position?.signal_availability),
     signalTransport: position?.transport ? String(position.transport) : "—",
@@ -2442,11 +2465,13 @@ function toClusterRecord(
       ? `${Math.round(Number(position.trust_score) * 100)}%`
       : "—",
     signalEvidenceReference: signalCaptureReferences(position?.signal_evidence_headers),
-    certificationBoundary: hasCanonicalSignals
+    certificationBoundary: hasCanonicalSignals || troubleCodes.length > 0
       ? position?.certification_claim === true
         ? "Certification claim present"
         : "Operational observation only — not certification"
       : "—",
+    diagnosticEvidenceClassification,
+    diagnosticSafetyAction,
     sensorType,
     // No standalone sensor-reading feed in the verified backend contract, so we
     // NEVER fabricate a reading or an expected-range setpoint. Both stay honest "—".
@@ -2550,6 +2575,8 @@ function toColdChainClusterRecord(
     signalTrust: "—",
     signalEvidenceReference: "—",
     certificationBoundary: "—",
+    diagnosticEvidenceClassification: "—",
+    diagnosticSafetyAction: "—",
     sensorType: zone?.name || device.zoneName || "Temperature",
     latestReading: hasTemperature ? `${Number(temperature).toFixed(1)} °C` : "—",
     expectedRange,
@@ -2965,8 +2992,10 @@ export const telematicsService = {
       modemStatus: "—",
       gnssStatus: "—",
       faultCode: `${String(fault.code_type ?? "")} ${String(fault.code ?? "")}`.trim(),
-      runAt: String(fault.last_seen_at ?? fault.first_seen_at ?? ""),
+      runAt: String(fault.last_observed_at ?? fault.observed_at ?? fault.last_seen_at ?? fault.first_seen_at ?? ""),
       runBy: String(fault.description ?? ""),
+      evidenceClassification: String(fault.evidence_classification ?? "LegacyOrUnclassified"),
+      safetyActionStatus: String(fault.safety_action_status ?? "ObservationOnly"),
     }));
 
     // Health timeline: real telemetry alerts for this device.

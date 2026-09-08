@@ -25373,9 +25373,34 @@ LIMIT 100000",
         var branchId = GetBranchId(http);
 
         var rows = await db.QueryAsync(
-            @"SELECT fc.*, v.vehicle_code
+            @"SELECT fc.id,fc.company_id,fc.branch_id,fc.device_id,fc.vehicle_id,
+                     fc.source_event_id,fc.canonical_identity,fc.code_type,fc.protocol,fc.code,
+                     fc.description,fc.severity,fc.controller,fc.source_address,fc.bus,fc.spn,fc.fmi,
+                     fc.lamp_status,fc.observed_at,fc.received_at,fc.last_observed_at,
+                     fc.occurrence_count,fc.status,fc.defect_id,fc.diagnostic_hold_id,
+                     fc.first_seen_at,fc.last_seen_at,fc.cleared_at,fc.clear_source,fc.updated_at,
+                     v.vehicle_code,
+                     dh.id active_diagnostic_hold_id,dh.status diagnostic_hold_status,
+                     CASE
+                       WHEN dh.id IS NOT NULL AND dh.out_of_service THEN 'VehicleHoldActive'
+                       WHEN dh.id IS NOT NULL THEN 'ReviewHoldActive'
+                       ELSE 'ObservationOnly'
+                     END safety_action_status,
+                     CASE
+                       WHEN fc.raw_evidence ? 'eventId' AND fc.raw_evidence ? 'Adapter'
+                         THEN 'CanonicalCanObservation'
+                       WHEN EXISTS (
+                         SELECT 1 FROM fault_occurrences evidence
+                          WHERE evidence.company_id=fc.company_id AND evidence.device_id=fc.device_id
+                            AND evidence.source_event_id=fc.last_source_event_id
+                            AND evidence.payload_fingerprint ~ '^[0-9a-f]{64}$')
+                         THEN 'AuthenticatedDeviceObservation'
+                       ELSE 'LegacyOrUnclassified'
+                     END evidence_classification
               FROM fault_codes fc
               LEFT JOIN vehicles v ON v.id=fc.vehicle_id AND v.company_id=fc.company_id
+              LEFT JOIN diagnostic_holds dh ON dh.company_id=fc.company_id AND dh.fault_code_id=fc.id
+                                           AND dh.status IN ('active','acknowledged')
               WHERE fc.company_id=@cid AND fc.status=@status
                 AND (@branchId::BIGINT IS NULL OR fc.branch_id=@branchId)
               ORDER BY ARRAY_POSITION(ARRAY['Critical','Warning','Info'], fc.severity), fc.last_seen_at DESC
@@ -25518,7 +25543,7 @@ LIMIT 100000",
 
         var activeFaults = Convert.ToInt32(kpis.GetValueOrDefault("activeFaultCodes") ?? 0);
         if (activeFaults > 0)
-            insights.Add(Insight("info", $"{activeFaults} active fault code(s) detected via OBD/J1939. Critical fault codes have triggered automatic defect creation. Review all codes for maintenance patterns."));
+            insights.Add(Insight("info", $"{activeFaults} active diagnostic fault code(s) are recorded. Review each code's evidence and safety-action status; an observation does not by itself prove that a vehicle hold or maintenance defect was created."));
 
         var fleetPct = kpis.GetValueOrDefault("fleetAvailabilityPct");
         if (fleetPct is not null && Convert.ToDecimal(fleetPct) < 80)

@@ -121,6 +121,8 @@ The PostgreSQL backbone now writes each decoded DTC to `fault_occurrences` in th
 
 This maintenance projection deliberately stops before `diagnostic_holds`, vehicle grounding, dispatch holds or work-order creation. Those safety actions require their own independent SDET and operational acceptance gate. A critical lamp can therefore appear as a critical active fault without automatically changing vehicle availability in this slice.
 
+The tenant fault-code API and maintenance/diagnostics pages expose the protocol, source address, CAN channel, observation time, evidence classification and explicit safety-action status. `ObservationOnly` is rendered as a review requirement rather than an automatic hold. The API no longer returns the unrestricted `raw_evidence` JSON in this list response, and the maintenance insight text does not claim that a defect or hold exists unless the persisted hold join proves it.
+
 ## Canonical publication and freshness
 
 `J1939CanonicalEventFactory` accepts a catalog-supported acquired message plus registry-resolved ownership, explicit event/correlation identities, source classification, trust/confidence and a freshness budget. It never derives a tenant, device or vehicle from the CAN source address. Because these PGNs carry no device clock, CAN capture completion anchors both the observation and gateway-receipt time; the separate normalization time determines freshness.
