@@ -80,7 +80,7 @@ public sealed class CommandCenterDashboardTruthContractTests
     {
         var source = Read("backend-dotnet", "Controllers", "EndpointMappings.cs");
         var operations = Slice(source, "private static async Task<IResult> AnalyticsOperations(", "private static async Task<IResult> AnalyticsDispatch(");
-        var safety = Slice(source, "private static async Task<IResult> AnalyticsSafety(", "private static Task<IResult> AnalyticsMaintenance(");
+        var safety = Slice(source, "private static async Task<IResult> AnalyticsSafety(", "private static async Task<IResult> AnalyticsMaintenance(");
         var customer = Slice(source, "private static async Task<IResult> AnalyticsCustomer(", "private static async Task<IResult> AnalyticsTrends(");
         var trends = Slice(source, "private static async Task<IResult> AnalyticsTrends(", "private static async Task<IResult> AnalyticsInsights(");
         var insights = Slice(source, "private static async Task<IResult> AnalyticsInsights(", "// ══════════════════════════════════════════════════════════════════════════\n    // P9");

@@ -17,18 +17,25 @@ public sealed class ExecutiveAnalyticsEvidencePostgresTests
     {
         var db = Db();
         await new Batch7SchemaService(db).EnsureAsync();
+        await new Batch3SchemaService(db).EnsureAsync();
+        await new MaintenanceSchemaService(db).EnsureAsync();
         await new Batch4SchemaService(db).EnsureAsync();
         await db.ExecuteAsync(File.ReadAllText(Path.Combine(RepoRoot, "database", "migrations", "2026_09_08_sla_kpi_evidence_integrity.sql")));
         await db.ExecuteAsync(File.ReadAllText(Path.Combine(RepoRoot, "database", "migrations", "2026_09_08_executive_analytics_evidence_integrity.sql")));
         await db.ExecuteAsync(File.ReadAllText(Path.Combine(RepoRoot, "database", "migrations", "2026_09_08_dispatch_analytics_evidence_integrity.sql")));
         await db.ExecuteAsync(File.ReadAllText(Path.Combine(RepoRoot, "database", "migrations", "2026_09_08_safety_analytics_evidence_integrity.sql")));
+        await db.ExecuteAsync(File.ReadAllText(Path.Combine(RepoRoot, "database", "migrations", "2026_09_08_maintenance_analytics_evidence_integrity.sql")));
         var suffix = Guid.NewGuid().ToString("N")[..10];
         var company = await Company(db, $"EXEC-A-{suffix}");
         var other = await Company(db, $"EXEC-B-{suffix}");
         try
         {
+            await new MaintenanceSchemaService(db).EnsureAsync();
+            Assert.Equal(0, await db.ScalarLongAsync(
+                "SELECT COUNT(*) FROM maintenance_pm_rules WHERE company_id=@company",
+                c => c.Parameters.AddWithValue("@company", company)));
             var customer = await Customer(db, company, $"CUS-{suffix}");
-            await Vehicle(db, company, $"VEH-{suffix}");
+            var vehicle = await Vehicle(db, company, $"VEH-{suffix}");
             var driver = await Driver(db, company, $"DRV-REAL-{suffix}");
             await Snapshot(db, company, DateTime.UtcNow.Date, "runtime_computed", "calculated_from_qualified_sources", 71);
             await Snapshot(db, company, DateTime.UtcNow.Date.AddDays(-1), "legacy_unverified", "unverified", 99);
@@ -48,6 +55,14 @@ public sealed class ExecutiveAnalyticsEvidencePostgresTests
             await Coaching(db, company, driver, qualifiedSafety, $"COACH-VER-{suffix}", "user_workflow", "recorded_by_authenticated_actor");
             await Coaching(db, company, driver, legacySafety, $"COACH-BADLINK-{suffix}", "user_workflow", "recorded_by_authenticated_actor");
             await Coaching(db, company, driver, null, $"COACH-LEG-{suffix}", "legacy_unverified", "unverified");
+            await MaintenanceItem(db, company, vehicle, $"PM-VER-{suffix}", "user_workflow", "recorded_by_authenticated_actor");
+            await MaintenanceItem(db, company, vehicle, $"PM-LEG-{suffix}", "legacy_unverified", "unverified");
+            await WorkOrder(db, company, vehicle, $"WO-VER-{suffix}", "user_workflow", "recorded_by_authenticated_actor");
+            await WorkOrder(db, company, vehicle, $"WO-LEG-{suffix}", "legacy_unverified", "unverified");
+            var qualifiedDvir = await Dvir(db, company, driver, vehicle, $"DVIR-VER-{suffix}", "user_workflow", "recorded_by_authenticated_actor");
+            var legacyDvir = await Dvir(db, company, driver, vehicle, $"DVIR-LEG-{suffix}", "legacy_unverified", "unverified");
+            await DvirDefect(db, company, vehicle, qualifiedDvir, "Brakes", "dvir_workflow", "derived_from_qualified_source");
+            await DvirDefect(db, company, vehicle, legacyDvir, "Tires", "dvir_workflow", "derived_from_qualified_source");
 
             var http = Principal(company, "dashboard:view", "reports:view", "customer_portal:view", "dispatch:view", "safety:view", "maintenance:view");
             var snapshots = Data(await Invoke("ExecutiveSnapshots", http, db, CancellationToken.None))
@@ -104,8 +119,13 @@ public sealed class ExecutiveAnalyticsEvidencePostgresTests
             Assert.DoesNotContain("safetyScore", safety);
 
             var maintenance = JsonSerializer.Serialize(Value(await Invoke("AnalyticsMaintenance", http, db, CancellationToken.None)));
-            Assert.Contains("\"vehiclesOutOfService\":null", maintenance);
-            Assert.Contains("\"defectsByCategory\":[]", maintenance);
+            Assert.Contains("\"vehiclesOutOfService\":1", maintenance);
+            Assert.Contains("\"criticalDefectsOpen\":1", maintenance);
+            Assert.Contains("\"openWorkOrders\":1", maintenance);
+            Assert.Contains("\"pmOverdue\":1", maintenance);
+            Assert.Contains("\"dvirLast7d\":1", maintenance);
+            Assert.Contains("\"defectCategory\":\"Brakes\"", maintenance);
+            Assert.DoesNotContain("\"defectCategory\":\"Tires\"", maintenance);
         }
         finally
         {
@@ -156,8 +176,8 @@ public sealed class ExecutiveAnalyticsEvidencePostgresTests
     private static Task<long> Customer(Database db, long company, string code) => db.InsertAsync(
         "INSERT INTO customers(company_id,customer_code,name,status,sla_tier) VALUES(@company,@code,@code,'Active','Standard') RETURNING id",
         c => { c.Parameters.AddWithValue("@company", company); c.Parameters.AddWithValue("@code", code); });
-    private static Task Vehicle(Database db, long company, string code) => db.ExecuteAsync(
-        "INSERT INTO vehicles(company_id,vehicle_code,type,status,vin) VALUES(@company,@code,'Truck','Available',@code)",
+    private static Task<long> Vehicle(Database db, long company, string code) => db.InsertAsync(
+        "INSERT INTO vehicles(company_id,vehicle_code,type,status,vin) VALUES(@company,@code,'Truck','Available',@code) RETURNING id",
         c => { c.Parameters.AddWithValue("@company", company); c.Parameters.AddWithValue("@code", code); });
     private static Task<long> Driver(Database db, long company, string code) => db.InsertAsync(
         "INSERT INTO drivers(company_id,driver_code,full_name,email,status) VALUES(@company,@code,@code,@email,'Available') RETURNING id",
@@ -203,6 +223,26 @@ public sealed class ExecutiveAnalyticsEvidencePostgresTests
           VALUES(@company,@number,@driver,@safety,'Safety Review','High','Assigned',@number,'Recorded coaching task',NOW()-INTERVAL '1 day',@origin,@verification)",
         c => { c.Parameters.AddWithValue("@company", company); c.Parameters.AddWithValue("@number", number); c.Parameters.AddWithValue("@driver", driver); c.Parameters.AddWithValue("@safety", (object?)safetyEvent ?? DBNull.Value); c.Parameters.AddWithValue("@origin", origin); c.Parameters.AddWithValue("@verification", verification); });
 
+    private static Task MaintenanceItem(Database db, long company, long vehicle, string title, string origin, string verification) => db.ExecuteAsync(
+        @"INSERT INTO maintenance_items(company_id,vehicle_id,title,category,status,risk_level,due_date,data_origin,verification_status)
+          VALUES(@company,@vehicle,@title,'Preventive Maintenance','Open','Medium',CURRENT_DATE-1,@origin,@verification)",
+        c => { c.Parameters.AddWithValue("@company", company); c.Parameters.AddWithValue("@vehicle", vehicle); c.Parameters.AddWithValue("@title", title); c.Parameters.AddWithValue("@origin", origin); c.Parameters.AddWithValue("@verification", verification); });
+
+    private static Task WorkOrder(Database db, long company, long vehicle, string code, string origin, string verification) => db.ExecuteAsync(
+        @"INSERT INTO work_orders(company_id,vehicle_id,work_order_code,title,priority,status,data_origin,verification_status)
+          VALUES(@company,@vehicle,@code,@code,'High','Open',@origin,@verification)",
+        c => { c.Parameters.AddWithValue("@company", company); c.Parameters.AddWithValue("@vehicle", vehicle); c.Parameters.AddWithValue("@code", code); c.Parameters.AddWithValue("@origin", origin); c.Parameters.AddWithValue("@verification", verification); });
+
+    private static Task<long> Dvir(Database db, long company, long driver, long vehicle, string number, string origin, string verification) => db.InsertAsync(
+        @"INSERT INTO dvir_reports(company_id,report_number,driver_id,vehicle_id,inspection_type,inspection_status,submitted_at,data_origin,verification_status)
+          VALUES(@company,@number,@driver,@vehicle,'Pre Trip','Submitted',NOW(),@origin,@verification) RETURNING id",
+        c => { c.Parameters.AddWithValue("@company", company); c.Parameters.AddWithValue("@number", number); c.Parameters.AddWithValue("@driver", driver); c.Parameters.AddWithValue("@vehicle", vehicle); c.Parameters.AddWithValue("@origin", origin); c.Parameters.AddWithValue("@verification", verification); });
+
+    private static Task DvirDefect(Database db, long company, long vehicle, long report, string category, string origin, string verification) => db.ExecuteAsync(
+        @"INSERT INTO dvir_defects(company_id,dvir_report_id,vehicle_id,defect_category,defect_description,severity,status,out_of_service,data_origin,verification_status)
+          VALUES(@company,@report,@vehicle,@category,@category,'Critical','Open',TRUE,@origin,@verification)",
+        c => { c.Parameters.AddWithValue("@company", company); c.Parameters.AddWithValue("@report", report); c.Parameters.AddWithValue("@vehicle", vehicle); c.Parameters.AddWithValue("@category", category); c.Parameters.AddWithValue("@origin", origin); c.Parameters.AddWithValue("@verification", verification); });
+
     private static async Task Cleanup(Database db, long company, long other)
     {
         await db.ExecuteAsync(@"DELETE FROM sla_breaches WHERE tenant_id=@company OR tenant_id=@other;
@@ -214,6 +254,10 @@ public sealed class ExecutiveAnalyticsEvidencePostgresTests
             DELETE FROM dispatch_assignments WHERE company_id=@company OR company_id=@other;
             DELETE FROM coaching_tasks WHERE company_id=@company OR company_id=@other;
             DELETE FROM safety_events WHERE company_id=@company OR company_id=@other;
+            DELETE FROM work_orders WHERE company_id=@company OR company_id=@other;
+            DELETE FROM maintenance_items WHERE company_id=@company OR company_id=@other;
+            DELETE FROM dvir_defects WHERE company_id=@company OR company_id=@other;
+            DELETE FROM dvir_reports WHERE company_id=@company OR company_id=@other;
             DELETE FROM drivers WHERE company_id=@company OR company_id=@other;
             DELETE FROM vehicles WHERE company_id=@company OR company_id=@other;
             DELETE FROM customers WHERE company_id=@company OR company_id=@other;

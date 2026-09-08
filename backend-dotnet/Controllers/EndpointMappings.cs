@@ -8959,8 +8959,8 @@ public static partial class EndpointMappings
         if (errors.Count > 0) return Results.BadRequest(ApiResponse<object>.Fail("Maintenance validation failed", errors.ToArray()));
         var companyId = GetCompanyId(http);
         var id = await db.InsertAsync(
-            @"INSERT INTO maintenance_items (company_id, vehicle_id, asset_id, service_type, title, category, description, priority, status, due_date, due_odometer, due_engine_hours, estimated_cost, risk_level, risk_score, recommended_action)
-              VALUES (@companyId, @vehicleId, @assetId, @serviceType, @serviceType, @serviceType, @description, COALESCE(@priority,'Medium'), COALESCE(@status,'Open'), @dueDate, @dueOdometer, @dueHours, COALESCE(@cost,300), COALESCE(@priority,'Medium'), COALESCE(@risk,42), COALESCE(@action,'Schedule preventive service'))",
+            @"INSERT INTO maintenance_items (company_id, vehicle_id, asset_id, service_type, title, category, description, priority, status, due_date, due_odometer, due_engine_hours, estimated_cost, risk_level, risk_score, recommended_action,data_origin,verification_status)
+              VALUES (@companyId, @vehicleId, @assetId, @serviceType, @serviceType, @serviceType, @description, COALESCE(@priority,'Medium'), COALESCE(@status,'Open'), @dueDate, @dueOdometer, @dueHours, @cost, COALESCE(@priority,'Medium'), COALESCE(@risk,40), @action,'user_workflow','recorded_by_authenticated_actor')",
             c => { c.Parameters.AddWithValue("@companyId", companyId); BindMaintenance(c, body); }, ct);
         await audit.LogAsync(http, "maintenance.created", "Maintenance", id, ct: ct);
         await AddTimeline(db, GetCompanyId(http), "Maintenance", id, "maintenance.created", "Maintenance item created", ct);
@@ -9011,8 +9011,8 @@ public static partial class EndpointMappings
         var item = await db.QuerySingleAsync("SELECT * FROM maintenance_items WHERE id=@id AND company_id=@companyId", c => { c.Parameters.AddWithValue("@id", id); c.Parameters.AddWithValue("@companyId", companyId); }, ct);
         if (item is null) return Results.NotFound(ApiResponse<object>.Fail("Maintenance item not found"));
         var woId = await db.InsertAsync(
-            @"INSERT INTO work_orders (company_id, vehicle_id, asset_id, maintenance_item_id, work_order_code, work_order_number, issue_type, title, description, priority, status, vendor_name, created_date, due_date, estimated_cost, cost_approval_status, risk_score, recommended_action)
-              VALUES (@companyId, @vehicleId, @assetId, @maintenanceId, CONCAT('WO-MNT-', @maintenanceId), CONCAT('WO-MNT-', @maintenanceId), @issue, @title, @description, @priority, 'Open', 'NOVA Fleet Care', NOW(), COALESCE(@dueDate, NOW() + 5 * INTERVAL '1 day'), @cost, 'Pending', @risk, 'Assign technician and reserve parts')",
+            @"INSERT INTO work_orders (company_id, vehicle_id, asset_id, maintenance_item_id, work_order_code, work_order_number, issue_type, title, description, priority, status, vendor_name, created_date, due_date, estimated_cost, cost_approval_status, risk_score, recommended_action,data_origin,verification_status)
+              VALUES (@companyId, @vehicleId, @assetId, @maintenanceId, CONCAT('WO-MNT-', @maintenanceId), CONCAT('WO-MNT-', @maintenanceId), @issue, @title, @description, @priority, 'Open', NULL, NOW(), @dueDate, @cost, 'Pending', @risk, NULL,'workflow_derived','derived_from_qualified_source')",
             c =>
             {
                 c.Parameters.AddWithValue("@companyId", companyId);
@@ -9085,8 +9085,8 @@ public static partial class EndpointMappings
         if (errors.Count > 0) return Results.BadRequest(ApiResponse<object>.Fail("Work order validation failed", errors.ToArray()));
         var companyId = GetCompanyId(http);
         var id = await db.InsertAsync(
-            @"INSERT INTO work_orders (company_id, vehicle_id, asset_id, maintenance_item_id, dvir_report_id, work_order_code, work_order_number, issue_type, title, description, priority, status, assigned_to_user_id, vendor_name, created_date, due_date, estimated_cost, approved_cost, downtime_hours, cost_approval_status, risk_score, recommended_action, notes)
-              VALUES (@companyId, @vehicleId, @assetId, @maintenanceItemId, @dvirReportId, @number, @number, @issueType, @title, @description, COALESCE(@priority,'Medium'), COALESCE(@status,'Open'), @assignedTo, @vendor, NOW(), @dueDate, COALESCE(@estimatedCost,0), @approvedCost, COALESCE(@downtime,0), COALESCE(@approval,'Pending'), COALESCE(@risk,45), COALESCE(@action,'Assign repair owner'), @notes)",
+            @"INSERT INTO work_orders (company_id, vehicle_id, asset_id, maintenance_item_id, dvir_report_id, work_order_code, work_order_number, issue_type, title, description, priority, status, assigned_to_user_id, vendor_name, created_date, due_date, estimated_cost, approved_cost, downtime_hours, cost_approval_status, risk_score, recommended_action, notes,data_origin,verification_status)
+              VALUES (@companyId, @vehicleId, @assetId, @maintenanceItemId, @dvirReportId, @number, @number, @issueType, @title, @description, COALESCE(@priority,'Medium'), COALESCE(@status,'Open'), @assignedTo, @vendor, NOW(), @dueDate, @estimatedCost, @approvedCost, COALESCE(@downtime,0), COALESCE(@approval,'Pending'), COALESCE(@risk,35), @action, @notes,'user_workflow','recorded_by_authenticated_actor')",
             c => { c.Parameters.AddWithValue("@companyId", companyId); BindWorkOrder(c, body); }, ct);
         await audit.LogAsync(http, "workorder.created", "WorkOrder", id, ct: ct);
         await AddWorkOrderEvent(db, GetCompanyId(http), id, null, Get(body, "status")?.ToString() ?? "Open", "Work order created", ct);
@@ -19383,6 +19383,51 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
                  AND camera_source.deleted_at IS NULL
                  AND camera_source.source_authority='Authoritative' AND camera_source.media_status='Ready'))";
 
+    private const string QualifiedMaintenanceItemSql =
+        @"((mi.data_origin='user_workflow' AND mi.verification_status='recorded_by_authenticated_actor')
+           OR (mi.data_origin='runtime_pm' AND mi.verification_status='derived_from_qualified_source'))";
+
+    private const string QualifiedWorkOrderSql =
+        @"((wo.data_origin='user_workflow' AND wo.verification_status='recorded_by_authenticated_actor')
+           OR (wo.data_origin='workflow_derived' AND wo.verification_status='derived_from_qualified_source'))";
+
+    private const string QualifiedDvirReportSql =
+        @"((dr.data_origin='user_workflow' AND dr.verification_status='recorded_by_authenticated_actor')
+           OR (dr.data_origin='provider_import' AND dr.verification_status='provider_verified'))";
+
+    private const string QualifiedDvirDefectSql =
+        @"((dd.data_origin='dvir_workflow' AND dd.verification_status='derived_from_qualified_source')
+           OR (dd.data_origin='provider_import' AND dd.verification_status='provider_verified'))";
+
+    private const string QualifiedDvirDefectSourceSql =
+        @"EXISTS (SELECT 1 FROM dvir_reports dr_source
+                   WHERE dr_source.id=dd.dvir_report_id AND dr_source.company_id=dd.company_id
+                     AND dr_source.deleted_at IS NULL
+                     AND ((dr_source.data_origin='user_workflow' AND dr_source.verification_status='recorded_by_authenticated_actor')
+                       OR (dr_source.data_origin='provider_import' AND dr_source.verification_status='provider_verified')))";
+
+    private const string QualifiedWorkOrderSourceSql =
+        @"(wo.maintenance_item_id IS NULL OR EXISTS (
+              SELECT 1 FROM maintenance_items mi_source
+               WHERE mi_source.id=wo.maintenance_item_id AND mi_source.company_id=wo.company_id
+                 AND mi_source.deleted_at IS NULL
+                 AND ((mi_source.data_origin='user_workflow' AND mi_source.verification_status='recorded_by_authenticated_actor')
+                   OR (mi_source.data_origin='runtime_pm' AND mi_source.verification_status='derived_from_qualified_source'))))
+          AND (wo.dvir_report_id IS NULL OR EXISTS (
+              SELECT 1 FROM dvir_reports dr_source
+               WHERE dr_source.id=wo.dvir_report_id AND dr_source.company_id=wo.company_id
+                 AND dr_source.deleted_at IS NULL
+                 AND ((dr_source.data_origin='user_workflow' AND dr_source.verification_status='recorded_by_authenticated_actor')
+                   OR (dr_source.data_origin='provider_import' AND dr_source.verification_status='provider_verified'))))
+          AND (wo.defect_id IS NULL OR EXISTS (
+              SELECT 1 FROM dvir_defects dd_source
+               JOIN dvir_reports dr_defect_source ON dr_defect_source.id=dd_source.dvir_report_id AND dr_defect_source.company_id=dd_source.company_id
+               WHERE dd_source.id=wo.defect_id AND dd_source.company_id=wo.company_id
+                 AND ((dd_source.data_origin='dvir_workflow' AND dd_source.verification_status='derived_from_qualified_source')
+                   OR (dd_source.data_origin='provider_import' AND dd_source.verification_status='provider_verified'))
+                 AND ((dr_defect_source.data_origin='user_workflow' AND dr_defect_source.verification_status='recorded_by_authenticated_actor')
+                   OR (dr_defect_source.data_origin='provider_import' AND dr_defect_source.verification_status='provider_verified'))))";
+
     private static string String(System.Collections.Generic.IDictionary<string, object?> row, string key)
         => row.TryGetValue(key, out var v) ? v?.ToString() ?? "" : "";
 
@@ -25895,11 +25940,11 @@ LIMIT 100000",
                 (company_id, branch_id, report_number, idempotency_key, idempotency_request_hash, driver_id, vehicle_id, trip_id, template_id,
                  inspection_type, inspection_status, defects_found, safe_to_operate,
                  driver_signature_status,signature_attestation_text,signature_hash,signed_at,signed_by,
-                 odometer_miles,engine_hours,notes,submitted_at)
+                 odometer_miles,engine_hours,notes,submitted_at,data_origin,verification_status)
               VALUES (@cid, @branchId, @rnum, @idempotencyKey, @requestHash, @did, @vid, @tid, @templateId,
                       @itype, @status, @defects, @safe,
                       @signatureStatus,@signatureAttestation,@signatureHash,@signedAt,@signedBy,
-                      @odo,@hrs,@notes,NOW())",
+                      @odo,@hrs,@notes,NOW(),'user_workflow','recorded_by_authenticated_actor')",
             c =>
             {
                 c.Parameters.AddWithValue("@cid",     companyId);
@@ -25965,8 +26010,8 @@ LIMIT 100000",
                     var defId = await db.InsertAsync(
                         @"INSERT INTO dvir_defects
                             (company_id, branch_id, dvir_report_id, vehicle_id, driver_id, defect_category,
-                             defect_description, severity, source, out_of_service, status)
-                          VALUES (@cid, @branchId, @rid, @vid, @did, @cat, @desc, @sev, 'dvir', @oos, 'Open')",
+                             defect_description, severity, source, out_of_service, status,data_origin,verification_status)
+                          VALUES (@cid, @branchId, @rid, @vid, @did, @cat, @desc, @sev, 'dvir', @oos, 'Open','dvir_workflow','derived_from_qualified_source')",
                         c =>
                         {
                             c.Parameters.AddWithValue("@cid",  companyId);
@@ -26251,10 +26296,10 @@ LIMIT 100000",
             @"INSERT INTO work_orders
                 (company_id, vehicle_id, work_order_code, work_order_number,
                  title, issue_type, description, priority, status,
-                 estimated_cost, due_date)
+                 estimated_cost, due_date,data_origin,verification_status)
               VALUES (@cid, @vid, @code, @code,
                       @title, @stype, @desc, @pri, 'Open',
-                      @cost, @due)",
+                      @cost, @due,'user_workflow','recorded_by_authenticated_actor')",
             c =>
             {
                 c.Parameters.AddWithValue("@cid",   companyId);
@@ -31547,25 +31592,67 @@ LIMIT 100000",
         }, "Evidence-qualified safety analytics"));
     }
 
-    private static Task<IResult> AnalyticsMaintenance(HttpContext http, Database db, CancellationToken ct)
+    private static async Task<IResult> AnalyticsMaintenance(HttpContext http, Database db, CancellationToken ct)
     {
+        var c = GetCompanyId(http);
         var denied = RequirePermission(http, "maintenance:view");
-        if (denied is not null) return Task.FromResult<IResult>(denied);
-        if (RequireAnalyticsBranchScope(http) is { } branchDenied) return Task.FromResult<IResult>(branchDenied);
-        ct.ThrowIfCancellationRequested();
+        if (denied is not null) return denied;
+        if (RequireAnalyticsBranchScope(http) is { } branchDenied) return branchDenied;
 
-        return Task.FromResult<IResult>(Results.Ok(ApiResponse<object>.Ok(new
+        var oosVehicles = await db.ScalarLongAsync(
+            $@"SELECT COUNT(DISTINCT dd.vehicle_id)
+                 FROM dvir_defects dd
+                 JOIN dvir_reports dr ON dr.id=dd.dvir_report_id AND dr.company_id=dd.company_id
+                WHERE dd.company_id=@c AND dd.vehicle_id IS NOT NULL AND dd.out_of_service=TRUE
+                  AND LOWER(dd.status) NOT IN ('resolved','rejected','closed')
+                  AND {QualifiedDvirDefectSql} AND {QualifiedDvirDefectSourceSql}",
+            p => p.Parameters.AddWithValue("@c", c), ct);
+        var criticalDefects = await db.ScalarLongAsync(
+            $@"SELECT COUNT(*)
+                 FROM dvir_defects dd
+                 JOIN dvir_reports dr ON dr.id=dd.dvir_report_id AND dr.company_id=dd.company_id
+                WHERE dd.company_id=@c AND LOWER(dd.severity)='critical'
+                  AND LOWER(dd.status) NOT IN ('resolved','rejected','closed')
+                  AND {QualifiedDvirDefectSql} AND {QualifiedDvirDefectSourceSql}",
+            p => p.Parameters.AddWithValue("@c", c), ct);
+        var openWorkOrders = await db.ScalarLongAsync(
+            $@"SELECT COUNT(*) FROM work_orders wo
+                WHERE wo.company_id=@c AND wo.deleted_at IS NULL
+                  AND LOWER(wo.status) NOT IN ('completed','cancelled','deleted','closed')
+                  AND {QualifiedWorkOrderSql} AND {QualifiedWorkOrderSourceSql}",
+            p => p.Parameters.AddWithValue("@c", c), ct);
+        var overduePm = await db.ScalarLongAsync(
+            $@"SELECT COUNT(*) FROM maintenance_items mi
+                WHERE mi.company_id=@c AND mi.deleted_at IS NULL AND mi.due_date<CURRENT_DATE
+                  AND LOWER(mi.status) NOT IN ('completed','cancelled','deleted','closed')
+                  AND {QualifiedMaintenanceItemSql}",
+            p => p.Parameters.AddWithValue("@c", c), ct);
+        var recentDvir = await db.ScalarLongAsync(
+            $@"SELECT COUNT(*) FROM dvir_reports dr
+                WHERE dr.company_id=@c AND dr.deleted_at IS NULL
+                  AND dr.submitted_at>=NOW()-7*INTERVAL '1 day' AND {QualifiedDvirReportSql}",
+            p => p.Parameters.AddWithValue("@c", c), ct);
+        var defectsByCategory = await db.QueryAsync(
+            $@"SELECT dd.defect_category,dd.severity,COUNT(*) cnt
+                 FROM dvir_defects dd
+                 JOIN dvir_reports dr ON dr.id=dd.dvir_report_id AND dr.company_id=dd.company_id
+                WHERE dd.company_id=@c AND LOWER(dd.status) NOT IN ('resolved','rejected','closed')
+                  AND {QualifiedDvirDefectSql} AND {QualifiedDvirDefectSourceSql}
+                GROUP BY dd.defect_category,dd.severity ORDER BY cnt DESC,dd.defect_category",
+            p => p.Parameters.AddWithValue("@c", c), ct);
+
+        return Results.Ok(ApiResponse<object>.Ok(new
         {
-            vehiclesOutOfService = (long?)null,
-            criticalDefectsOpen = (long?)null,
-            openWorkOrders = (long?)null,
-            pmOverdue = (long?)null,
-            dvirLast7d = (long?)null,
+            vehiclesOutOfService = oosVehicles,
+            criticalDefectsOpen = criticalDefects,
+            openWorkOrders,
+            pmOverdue = overduePm,
+            dvirLast7d = recentDvir,
             recurringFaultCodes = Array.Empty<object>(),
-            defectsByCategory = Array.Empty<object>(),
+            defectsByCategory,
             insightType = "System Analytics Insight",
-            evidenceStatus = "Unavailable until vehicle state, DVIR, work-order, maintenance and fault rows carry recorded source provenance."
-        }, "Maintenance analytics awaiting qualified evidence")));
+            evidenceStatus = "DVIR, defect, work-order and preventive-maintenance counts use recorded source provenance. Out-of-service vehicles are derived from open qualified DVIR defects. Canonical machine-fault trends remain unavailable in this panel."
+        }, "Evidence-qualified maintenance analytics"));
     }
 
     private static async Task<IResult> AnalyticsCustomer(HttpContext http, Database db, CancellationToken ct)

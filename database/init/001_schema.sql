@@ -436,7 +436,9 @@ CREATE TABLE IF NOT EXISTS maintenance_items (
   category VARCHAR(100) NOT NULL,
   due_date DATE NULL,
   status VARCHAR(50) NOT NULL DEFAULT 'Open',
-  risk_level VARCHAR(50) NOT NULL DEFAULT 'Medium'
+  risk_level VARCHAR(50) NOT NULL DEFAULT 'Medium',
+  data_origin VARCHAR(80) NOT NULL DEFAULT 'legacy_unverified',
+  verification_status VARCHAR(80) NOT NULL DEFAULT 'unverified'
 );
 
 CREATE TABLE IF NOT EXISTS work_orders (
@@ -448,7 +450,9 @@ CREATE TABLE IF NOT EXISTS work_orders (
   priority VARCHAR(50) NOT NULL DEFAULT 'Normal',
   status VARCHAR(50) NOT NULL DEFAULT 'Open',
   due_date DATE NULL,
-  estimated_cost DECIMAL(12,2) NULL
+  estimated_cost DECIMAL(12,2) NULL,
+  data_origin VARCHAR(80) NOT NULL DEFAULT 'legacy_unverified',
+  verification_status VARCHAR(80) NOT NULL DEFAULT 'unverified'
 );
 
 CREATE TABLE IF NOT EXISTS fuel_transactions (
@@ -937,7 +941,9 @@ CREATE TABLE IF NOT EXISTS dvir_reports (
   notes TEXT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NULL,
-  deleted_at TIMESTAMPTZ NULL
+  deleted_at TIMESTAMPTZ NULL,
+  data_origin VARCHAR(80) NOT NULL DEFAULT 'legacy_unverified',
+  verification_status VARCHAR(80) NOT NULL DEFAULT 'unverified'
 );
 
 CREATE TABLE IF NOT EXISTS dvir_defects (
@@ -950,7 +956,9 @@ CREATE TABLE IF NOT EXISTS dvir_defects (
   status VARCHAR(80) NOT NULL DEFAULT 'Open',
   linked_work_order_id BIGINT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NULL
+  updated_at TIMESTAMPTZ NULL,
+  data_origin VARCHAR(80) NOT NULL DEFAULT 'legacy_unverified',
+  verification_status VARCHAR(80) NOT NULL DEFAULT 'unverified'
 );
 
 CREATE TABLE IF NOT EXISTS dvir_templates (

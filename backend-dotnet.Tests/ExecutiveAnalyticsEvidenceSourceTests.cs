@@ -51,17 +51,19 @@ public sealed class ExecutiveAnalyticsEvidenceSourceTests
     }
 
     [Fact]
-    public void OperationalPanels_RequireProvenanceAndMaintenanceFailsClosed()
+    public void OperationalPanels_RequireProvenance()
     {
         var handlers = File.ReadAllText(Path.Combine(RepoRoot, "backend-dotnet", "Controllers", "EndpointMappings.cs"));
 
         var operationsStart = handlers.IndexOf("private static async Task<IResult> AnalyticsOperations", StringComparison.Ordinal);
         var dispatchStart = handlers.IndexOf("private static async Task<IResult> AnalyticsDispatch", operationsStart, StringComparison.Ordinal);
         var safetyStart = handlers.IndexOf("private static async Task<IResult> AnalyticsSafety", dispatchStart, StringComparison.Ordinal);
-        var maintenanceStart = handlers.IndexOf("private static Task<IResult> AnalyticsMaintenance", safetyStart, StringComparison.Ordinal);
+        var maintenanceStart = handlers.IndexOf("private static async Task<IResult> AnalyticsMaintenance", safetyStart, StringComparison.Ordinal);
+        var customerStart = handlers.IndexOf("private static async Task<IResult> AnalyticsCustomer", maintenanceStart, StringComparison.Ordinal);
         var operations = handlers[operationsStart..dispatchStart];
         var dispatch = handlers[dispatchStart..safetyStart];
         var safety = handlers[safetyStart..maintenanceStart];
+        var maintenance = handlers[maintenanceStart..customerStart];
         Assert.Contains("QualifiedDispatchAssignmentSql", operations);
         Assert.Contains("QualifiedDispatchExceptionSql", operations);
         Assert.Contains("QualifiedDispatchAssignmentSql", dispatch);
@@ -69,7 +71,6 @@ public sealed class ExecutiveAnalyticsEvidenceSourceTests
         Assert.DoesNotContain("legacy_unverified", operations);
         Assert.DoesNotContain("legacy_unverified", dispatch);
 
-        AssertFailClosed("AnalyticsMaintenance", "AnalyticsCustomer");
         Assert.Contains("QualifiedSafetyEventSql", safety);
         Assert.Contains("QualifiedCoachingTaskSql", safety);
         Assert.Contains("QualifiedCoachingSourceSql", safety);
@@ -77,6 +78,12 @@ public sealed class ExecutiveAnalyticsEvidenceSourceTests
         Assert.Contains("media_status='Ready'", handlers);
         Assert.Contains("driverSafetyAvg = avgSafety.HasValue", safety);
         Assert.DoesNotContain("AVG(d.safety_score)", safety);
+        Assert.Contains("QualifiedMaintenanceItemSql", maintenance);
+        Assert.Contains("QualifiedWorkOrderSql", maintenance);
+        Assert.Contains("QualifiedDvirReportSql", maintenance);
+        Assert.Contains("QualifiedDvirDefectSql", maintenance);
+        Assert.Contains("QualifiedDvirDefectSourceSql", maintenance);
+        Assert.Contains("recurringFaultCodes = Array.Empty<object>()", maintenance);
 
         var ui = File.ReadAllText(Path.Combine(RepoRoot, "frontend", "src", "pages", "AnalyticsDashboardPage.tsx"));
         Assert.Contains("Qualified Route Compliance", ui);
@@ -86,16 +93,6 @@ public sealed class ExecutiveAnalyticsEvidenceSourceTests
         Assert.DoesNotContain("Qualified Driver Safety Avg", ui);
         Assert.DoesNotContain("target=\"85%\"", ui);
 
-        void AssertFailClosed(string method, string nextMethod)
-        {
-            var start = handlers.IndexOf($"private static Task<IResult> {method}", StringComparison.Ordinal);
-            var end = handlers.IndexOf(nextMethod, start + method.Length, StringComparison.Ordinal);
-            var section = handlers[start..end];
-            Assert.Contains("awaiting qualified evidence", section);
-            Assert.Contains("source provenance", section);
-            Assert.DoesNotContain("db.Scalar", section);
-            Assert.DoesNotContain("db.Query", section);
-        }
     }
 
     [Fact]
@@ -134,5 +131,24 @@ public sealed class ExecutiveAnalyticsEvidenceSourceTests
         Assert.Contains("DEFAULT 'unverified'", schema);
         Assert.Contains("ck_safety_events_evidence", migration);
         Assert.Contains("ck_coaching_tasks_evidence", migration);
+    }
+
+    [Fact]
+    public void MaintenanceWorkflows_StampEvidenceAndProductionStartupDoesNotSeedPresets()
+    {
+        var handlers = File.ReadAllText(Path.Combine(RepoRoot, "backend-dotnet", "Controllers", "EndpointMappings.cs"));
+        var dvir = File.ReadAllText(Path.Combine(RepoRoot, "backend-dotnet", "Controllers", "DvirHosEndpoints.cs"));
+        var schema = File.ReadAllText(Path.Combine(RepoRoot, "backend-dotnet", "Services", "MaintenanceSchemaService.cs"));
+        var migration = File.ReadAllText(Path.Combine(RepoRoot, "database", "migrations", "2026_09_08_maintenance_analytics_evidence_integrity.sql"));
+
+        Assert.Contains("'dvir_workflow','derived_from_qualified_source'", handlers);
+        Assert.Contains("'workflow_derived','derived_from_qualified_source'", handlers);
+        Assert.Contains("'user_workflow','recorded_by_authenticated_actor'", dvir);
+        Assert.Contains("DemoSeedGate.IsExplicitlyEnabled(configuration)", schema);
+        Assert.DoesNotContain("foreach (var sql in Seeds)", schema);
+        Assert.Contains("ck_maintenance_items_evidence", migration);
+        Assert.Contains("ck_work_orders_evidence", migration);
+        Assert.Contains("ck_dvir_reports_evidence", migration);
+        Assert.Contains("ck_dvir_defects_evidence", migration);
     }
 }
