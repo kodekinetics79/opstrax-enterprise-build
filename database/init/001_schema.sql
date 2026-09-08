@@ -553,11 +553,26 @@ CREATE TABLE IF NOT EXISTS documents (
 CREATE TABLE IF NOT EXISTS sla_records (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   company_id BIGINT NOT NULL,
+  tenant_id BIGINT NOT NULL DEFAULT 1,
   customer_id BIGINT NULL,
+  job_id BIGINT NULL,
+  route_id BIGINT NULL,
+  sla_number VARCHAR(80) NULL,
+  sla_type VARCHAR(80) NOT NULL DEFAULT 'On-Time Delivery',
   metric_name VARCHAR(120) NOT NULL,
   target_value DECIMAL(10,2) NOT NULL,
   actual_value DECIMAL(10,2) NOT NULL,
-  status VARCHAR(50) NOT NULL DEFAULT 'On Track'
+  unit VARCHAR(40) NOT NULL DEFAULT '%',
+  status VARCHAR(50) NOT NULL DEFAULT 'On Track',
+  breach_reason TEXT NULL,
+  risk_score DECIMAL(6,2) NOT NULL DEFAULT 20,
+  owner_role VARCHAR(80) NULL,
+  recommended_action TEXT NULL,
+  data_origin VARCHAR(80) NULL,
+  measurement_evidence_status VARCHAR(80) NULL,
+  measured_at TIMESTAMPTZ NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NULL
 );
 
 CREATE TABLE IF NOT EXISTS kpi_records (
@@ -1548,6 +1563,7 @@ CREATE TABLE IF NOT EXISTS kpi_metrics (
   status VARCHAR(40) NOT NULL DEFAULT 'On Target',
   owner_role VARCHAR(80) NULL,
   recommendation TEXT NULL,
+  data_origin VARCHAR(80) NULL,
   last_calculated_at TIMESTAMPTZ NULL DEFAULT NOW(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NULL
@@ -1561,6 +1577,8 @@ CREATE TABLE IF NOT EXISTS kpi_targets (
   unit VARCHAR(40) NOT NULL DEFAULT '%',
   effective_date DATE NOT NULL,
   status VARCHAR(40) NOT NULL DEFAULT 'Active',
+  data_origin VARCHAR(80) NULL,
+  verification_status VARCHAR(80) NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NULL
 );
@@ -1574,6 +1592,7 @@ CREATE TABLE IF NOT EXISTS sla_breaches (
   description TEXT NULL,
   root_cause_placeholder VARCHAR(200) NULL,
   status VARCHAR(40) NOT NULL DEFAULT 'Open',
+  data_origin VARCHAR(80) NULL,
   detected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   resolved_at TIMESTAMPTZ NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

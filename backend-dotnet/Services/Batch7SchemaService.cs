@@ -8,6 +8,7 @@ public sealed class Batch7SchemaService(Database db, IConfiguration? configurati
     {
         foreach (var col in Columns) await EnsureColumnAsync(col.Table, col.Name, col.Definition, ct);
         foreach (var sql in Tables) await db.ExecuteAsync(sql, ct: ct);
+        await BackfillEvidenceAsync(ct);
         foreach (var sql in Indexes) { try { await db.ExecuteAsync(sql, ct: ct); } catch { } }
         // Global reference/catalog data (no tenant business rows) — always applied.
         foreach (var sql in ReferenceSeeds) await db.ExecuteAsync(sql, ct: ct);
@@ -17,8 +18,44 @@ public sealed class Batch7SchemaService(Database db, IConfiguration? configurati
         // same explicit opt-in as the Batch1-3 seeds (see DemoSeedGate); real tenants get
         // schema only.
         if (DemoSeedGate.IsExplicitlyEnabled(configuration))
+        {
             foreach (var sql in DemoSeeds) await db.ExecuteAsync(sql, ct: ct);
+            await BackfillEvidenceAsync(ct);
+        }
     }
+
+    private Task BackfillEvidenceAsync(CancellationToken ct) => db.ExecuteAsync(
+        @"UPDATE kpi_metrics
+             SET data_origin=CASE WHEN tenant_id=1 AND id BETWEEN 1 AND 30
+                    AND kpi_code IN ('OTD','SLA-COMP','ETA-ACC','JOBS-COMP','DELAYED-JOBS','DISPATCH-READ','VEH-UTIL','DRV-UTIL','SAFETY-SCORE','MAINT-COMP','DVIR-COMP','FUEL-EFF','IDLE-COST','CPM','GROSS-MARGIN','CX-SCORE','FLEET-READY','HOS-COMPLY','ELD-HEALTH','DOC-VALID','MAINT-COST','WORK-ORDER-COMP','CARRIER-PERF','INCIDENT-RATE','PROOF-COMP','CUSTOMER-SLA-MET','COST-LEAKAGE','AUDIT-COVERAGE','DISPATCH-CYCLE','ROUTE-EFF')
+                  THEN 'demo_seed' ELSE COALESCE(data_origin,'legacy_unverified') END
+           WHERE data_origin IS NULL OR (tenant_id=1 AND id BETWEEN 1 AND 30);
+          UPDATE kpi_targets
+             SET data_origin=CASE WHEN tenant_id=1 AND id BETWEEN 1 AND 20 AND effective_date=DATE '2026-01-01'
+                    AND kpi_code IN ('OTD','SLA-COMP','ETA-ACC','JOBS-COMP','DELAYED-JOBS','DISPATCH-READ','VEH-UTIL','DRV-UTIL','SAFETY-SCORE','MAINT-COMP','DVIR-COMP','FUEL-EFF','IDLE-COST','CPM','GROSS-MARGIN','CX-SCORE','FLEET-READY','HOS-COMPLY','INCIDENT-RATE','COST-LEAKAGE')
+                  THEN 'demo_seed' ELSE COALESCE(data_origin,'legacy_unverified') END,
+                 verification_status=CASE WHEN tenant_id=1 AND id BETWEEN 1 AND 20 AND effective_date=DATE '2026-01-01'
+                    AND kpi_code IN ('OTD','SLA-COMP','ETA-ACC','JOBS-COMP','DELAYED-JOBS','DISPATCH-READ','VEH-UTIL','DRV-UTIL','SAFETY-SCORE','MAINT-COMP','DVIR-COMP','FUEL-EFF','IDLE-COST','CPM','GROSS-MARGIN','CX-SCORE','FLEET-READY','HOS-COMPLY','INCIDENT-RATE','COST-LEAKAGE')
+                  THEN 'demo_seed' ELSE COALESCE(verification_status,'unverified') END
+           WHERE data_origin IS NULL OR verification_status IS NULL
+              OR (tenant_id=1 AND id BETWEEN 1 AND 20 AND effective_date=DATE '2026-01-01'
+                  AND kpi_code IN ('OTD','SLA-COMP','ETA-ACC','JOBS-COMP','DELAYED-JOBS','DISPATCH-READ','VEH-UTIL','DRV-UTIL','SAFETY-SCORE','MAINT-COMP','DVIR-COMP','FUEL-EFF','IDLE-COST','CPM','GROSS-MARGIN','CX-SCORE','FLEET-READY','HOS-COMPLY','INCIDENT-RATE','COST-LEAKAGE'));
+          UPDATE sla_records
+             SET data_origin=CASE WHEN tenant_id=1 AND company_id=1 AND id BETWEEN 1 AND 30
+                    AND sla_number ~ '^SLA-0(0[1-9]|[12][0-9]|30)$'
+                  THEN 'demo_seed' ELSE COALESCE(data_origin,'legacy_unverified') END,
+                 measurement_evidence_status=CASE WHEN tenant_id=1 AND company_id=1 AND id BETWEEN 1 AND 30
+                    AND sla_number ~ '^SLA-0(0[1-9]|[12][0-9]|30)$'
+                  THEN 'demo_seed' ELSE COALESCE(measurement_evidence_status,'unverified') END
+           WHERE data_origin IS NULL OR measurement_evidence_status IS NULL
+              OR (tenant_id=1 AND company_id=1 AND id BETWEEN 1 AND 30 AND sla_number ~ '^SLA-0(0[1-9]|[12][0-9]|30)$');
+          UPDATE sla_breaches sb
+             SET data_origin=CASE WHEN EXISTS (SELECT 1 FROM sla_records sr WHERE sr.id=sb.sla_record_id
+                        AND sr.tenant_id=sb.tenant_id AND sr.data_origin='demo_seed')
+                  THEN 'demo_seed' ELSE COALESCE(sb.data_origin,'legacy_unverified') END
+           WHERE sb.data_origin IS NULL OR EXISTS (SELECT 1 FROM sla_records sr WHERE sr.id=sb.sla_record_id
+                     AND sr.tenant_id=sb.tenant_id AND sr.data_origin='demo_seed')",
+        ct: ct);
 
     private async Task EnsureColumnAsync(string table, string column, string definition, CancellationToken ct)
     {
@@ -86,6 +123,12 @@ public sealed class Batch7SchemaService(Database db, IConfiguration? configurati
         new("sla_records", "owner_role",          "VARCHAR(80) NULL"),
         new("sla_records", "recommended_action",  "TEXT NULL"),
         new("sla_records", "measured_at",         "TIMESTAMPTZ NULL"),
+        new("sla_records", "data_origin",        "VARCHAR(80) NULL"),
+        new("sla_records", "measurement_evidence_status", "VARCHAR(80) NULL"),
+        new("kpi_metrics", "data_origin",        "VARCHAR(80) NULL"),
+        new("kpi_targets", "data_origin",        "VARCHAR(80) NULL"),
+        new("kpi_targets", "verification_status", "VARCHAR(80) NULL"),
+        new("sla_breaches", "data_origin",       "VARCHAR(80) NULL"),
     ];
 
     private static readonly string[] Tables =
@@ -163,6 +206,7 @@ public sealed class Batch7SchemaService(Database db, IConfiguration? configurati
             status VARCHAR(40) NOT NULL DEFAULT 'On Target',
             owner_role VARCHAR(80) NULL,
             recommendation TEXT NULL,
+            data_origin VARCHAR(80) NULL,
             last_calculated_at TIMESTAMPTZ NULL,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMPTZ NULL
@@ -176,6 +220,8 @@ public sealed class Batch7SchemaService(Database db, IConfiguration? configurati
             unit VARCHAR(40) NOT NULL DEFAULT '%',
             effective_date DATE NOT NULL,
             status VARCHAR(40) NOT NULL DEFAULT 'Active',
+            data_origin VARCHAR(80) NULL,
+            verification_status VARCHAR(80) NULL,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMPTZ NULL
         )",
@@ -196,6 +242,8 @@ public sealed class Batch7SchemaService(Database db, IConfiguration? configurati
             risk_score DECIMAL(6,2) NOT NULL DEFAULT 10,
             owner_role VARCHAR(80) NULL,
             recommended_action TEXT NULL,
+            data_origin VARCHAR(80) NULL,
+            measurement_evidence_status VARCHAR(80) NULL,
             measured_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMPTZ NULL
@@ -210,6 +258,7 @@ public sealed class Batch7SchemaService(Database db, IConfiguration? configurati
             description TEXT NULL,
             root_cause_placeholder VARCHAR(200) NULL,
             status VARCHAR(40) NOT NULL DEFAULT 'Open',
+            data_origin VARCHAR(80) NULL,
             detected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             resolved_at TIMESTAMPTZ NULL,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

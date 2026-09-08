@@ -2005,7 +2005,7 @@ public static partial class EndpointMappings
             return denied is not null ? Task.FromResult(denied) : P8CreateScheduledReport(http, body, db, audit, ct);
         });
 
-        // Analytics KPI endpoints — all compute from real operational data
+        // Analytics KPI endpoints
         app.MapGet("/api/analytics/executive",    (HttpContext http, Database db, CancellationToken ct) => AnalyticsExecutive(http, db, ct));
         app.MapGet("/api/analytics/operations",   (HttpContext http, Database db, CancellationToken ct) => AnalyticsOperations(http, db, ct));
         app.MapGet("/api/analytics/dispatch",     (HttpContext http, Database db, CancellationToken ct) => AnalyticsDispatch(http, db, ct));
@@ -2016,39 +2016,27 @@ public static partial class EndpointMappings
         app.MapGet("/api/analytics/insights",     (HttpContext http, Database db, CancellationToken ct) => AnalyticsInsights(http, db, ct));
 
         // ===== BATCH 7: KPI / SLA ================================================
-        // /api/kpi/metrics — computed from real fleet data; falls back to kpi_metrics table rows when real data is absent
+        // Evidence-qualified KPI/SLA surfaces. Stored demo and unverified legacy rows stay hidden.
         app.MapGet("/api/kpi/metrics", (HttpContext http, Database db, CancellationToken ct) => KpiMetricsComputed(http, db, ct));
         app.MapGet("/api/kpi/summary", KpiSummary);
-        app.MapGet("/api/kpi/targets", (HttpContext http, Database db, CancellationToken ct) =>
-        {
-            if (RequirePermission(http, "reports:view") is { } denied) return Task.FromResult(denied);
-            return OkRows(db, @"SELECT kt.*, km.kpi_name FROM kpi_targets kt LEFT JOIN kpi_metrics km ON km.kpi_code=kt.kpi_code AND km.tenant_id=kt.tenant_id WHERE kt.tenant_id=@cid ORDER BY kt.effective_date DESC LIMIT 30", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
-        });
+        app.MapGet("/api/kpi/targets", (HttpContext http, Database db, CancellationToken ct) => KpiTargets(http, db, ct));
         app.MapGet("/api/kpi/ai/recommendations", (HttpContext http, Database db, CancellationToken ct) =>
         {
             if (RequirePermission(http, "reports:view") is { } denied) return Task.FromResult(denied);
             return OkRows(db, "SELECT * FROM ai_recommendations WHERE company_id=@cid AND module_key='sla-kpi'" + GroundedRecommendationSql + " ORDER BY score DESC LIMIT 10", c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
         });
-        app.MapGet("/api/sla/records", (HttpContext http, Database db, CancellationToken ct) =>
-        {
-            if (RequirePermission(http, "reports:view") is { } denied) return Task.FromResult(denied);
-            return OkRows(db, @"SELECT sr.*, c.name customer_name, j.job_number FROM sla_records sr LEFT JOIN customers c ON c.id=sr.customer_id AND c.company_id=@tenantId LEFT JOIN jobs j ON j.id=sr.job_id AND j.company_id=@tenantId WHERE sr.tenant_id=@tenantId ORDER BY ARRAY_POSITION(ARRAY['Breached','At Risk','Met'], sr.status), sr.measured_at DESC NULLS LAST LIMIT 50", c => c.Parameters.AddWithValue("@tenantId", GetCompanyId(http)), ct: ct);
-        });
+        app.MapGet("/api/sla/records", (HttpContext http, Database db, CancellationToken ct) => SlaRecords(http, db, ct));
         app.MapGet("/api/sla/summary", (HttpContext http, Database db, CancellationToken ct) => SlaSummary(http, db, ct));
-        app.MapGet("/api/sla/breaches", (HttpContext http, Database db, CancellationToken ct) =>
-        {
-            if (RequirePermission(http, "reports:view") is { } denied) return Task.FromResult(denied);
-            return OkRows(db, @"SELECT sb.*, sr.metric_name sla_name, sr.sla_type, c.name customer_name, j.job_number FROM sla_breaches sb JOIN sla_records sr ON sr.id=sb.sla_record_id AND sr.tenant_id=@tenantId LEFT JOIN customers c ON c.id=sr.customer_id AND c.company_id=@tenantId LEFT JOIN jobs j ON j.id=sr.job_id AND j.company_id=@tenantId WHERE sb.tenant_id=@tenantId ORDER BY sb.detected_at DESC LIMIT 30", c => c.Parameters.AddWithValue("@tenantId", GetCompanyId(http)), ct: ct);
-        });
+        app.MapGet("/api/sla/breaches", (HttpContext http, Database db, CancellationToken ct) => SlaBreaches(http, db, ct));
         app.MapPost("/api/sla/breaches/{id:long}/acknowledge", (HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) =>
         {
             if (RequirePermission(http, "reports:manage") is { } denied) return Task.FromResult(denied);
-            return SimpleUpdateStatus(http, "sla_breaches", id, "Acknowledged", "sla.breach_acknowledged", db, audit, ct, tenantColumn: "tenant_id");
+            return SlaBreachStatus(http, id, "Acknowledged", "sla.breach_acknowledged", db, audit, ct);
         });
         app.MapPost("/api/sla/breaches/{id:long}/resolve", (HttpContext http, long id, Database db, AuditService audit, CancellationToken ct) =>
         {
             if (RequirePermission(http, "reports:manage") is { } denied) return Task.FromResult(denied);
-            return SimpleUpdateStatus(http, "sla_breaches", id, "Resolved", "sla.breach_resolved", db, audit, ct, tenantColumn: "tenant_id");
+            return SlaBreachStatus(http, id, "Resolved", "sla.breach_resolved", db, audit, ct);
         });
 
         // ===== BATCH 7: AUDIT LOGS ===============================================
@@ -17053,89 +17041,234 @@ Return one JSON object with: summary (string), suggested_next_steps (array of at
         return Results.Created($"/api/reports/exports/{id}", ApiResponse<object>.Ok(new { id }, "Export request created"));
     }
 
-    // Computes KPIs from real fleet data. Returns kpi_metrics table rows when fleet tables are empty.
+    // Counts recorded operational rows. The exact demo fingerprints below are the
+    // historical fixture rows that shipped before demo seeding became opt-in.
+    // Percentages and target attainment require separately verified measurement and
+    // target evidence, so this endpoint does not infer either from mutable scores.
     private static async Task<IResult> KpiMetricsComputed(HttpContext http, Database db, CancellationToken ct)
     {
-        var companyId = GetCompanyId(http);
-
-        // Compute from real fleet data
-        var vehicleTotal   = await db.ScalarLongAsync("SELECT COUNT(*) FROM vehicles WHERE company_id=@c AND deleted_at IS NULL", p => p.Parameters.AddWithValue("@c", companyId), ct);
-        var vehicleActive  = await db.ScalarLongAsync("SELECT COUNT(*) FROM vehicles WHERE company_id=@c AND deleted_at IS NULL AND status IN ('Active','In Transit','Assigned')", p => p.Parameters.AddWithValue("@c", companyId), ct);
-        var driverTotal    = await db.ScalarLongAsync("SELECT COUNT(*) FROM drivers WHERE company_id=@c AND deleted_at IS NULL", p => p.Parameters.AddWithValue("@c", companyId), ct);
-        var avgSafety      = await db.ScalarDecimalAsync("SELECT AVG(safety_score) FROM drivers WHERE company_id=@c AND deleted_at IS NULL", p => p.Parameters.AddWithValue("@c", companyId), ct);
-        var avgReadiness   = await db.ScalarDecimalAsync("SELECT AVG(readiness_score) FROM vehicles WHERE company_id=@c AND deleted_at IS NULL AND status != 'Inactive'", p => p.Parameters.AddWithValue("@c", companyId), ct);
-        var jobsTotal      = await db.ScalarLongAsync("SELECT COUNT(*) FROM jobs WHERE company_id=@c AND created_at >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", companyId), ct);
-        var jobsCompleted  = await db.ScalarLongAsync("SELECT COUNT(*) FROM jobs WHERE company_id=@c AND status IN ('Completed','Delivered') AND created_at >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", companyId), ct);
-        var jobsOnTime     = await db.ScalarLongAsync("SELECT COUNT(*) FROM jobs WHERE company_id=@c AND status IN ('Completed','Delivered') AND (sla_status IS NULL OR sla_status NOT IN ('Breached','Critical')) AND created_at >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", companyId), ct);
-        var hosCompliant   = await db.ScalarLongAsync("SELECT COUNT(*) FROM driver_compliance_status dcs JOIN drivers d ON d.id=dcs.driver_id WHERE d.company_id=@c AND dcs.overall_status='Compliant'", p => p.Parameters.AddWithValue("@c", companyId), ct);
-        var hosTotal       = await db.ScalarLongAsync("SELECT COUNT(*) FROM driver_compliance_status dcs JOIN drivers d ON d.id=dcs.driver_id WHERE d.company_id=@c", p => p.Parameters.AddWithValue("@c", companyId), ct);
-        var openIncidents  = await db.ScalarLongAsync("SELECT COUNT(*) FROM safety_events WHERE company_id=@c AND review_status NOT IN ('Closed','Dismissed') AND event_time >= NOW() - 30 * INTERVAL '1 day'", p => p.Parameters.AddWithValue("@c", companyId), ct);
-        var maintenanceOverdue = await db.ScalarLongAsync("SELECT COUNT(*) FROM maintenance_items WHERE company_id=@c AND status='Open' AND due_date < CURRENT_DATE", p => p.Parameters.AddWithValue("@c", companyId), ct);
-
-        // If no real fleet data, serve stored kpi_metrics rows (tenant-scoped).
-        if (vehicleTotal == 0 && driverTotal == 0)
-            return await OkRows(db, "SELECT * FROM kpi_metrics WHERE tenant_id=@c ORDER BY category, kpi_name", p => p.Parameters.AddWithValue("@c", companyId), ct: ct);
-
-        decimal fleetUtil   = vehicleTotal > 0 ? Math.Round(vehicleActive * 100m / vehicleTotal, 1) : 0;
-        decimal otdRate     = jobsCompleted > 0 ? Math.Round(jobsOnTime * 100m / jobsCompleted, 1) : 0;
-        decimal safetyAvg   = avgSafety ?? 0;
-        decimal readinessAvg= avgReadiness ?? 0;
-        decimal hosRate     = hosTotal > 0 ? Math.Round(hosCompliant * 100m / hosTotal, 1) : driverTotal > 0 ? 95m : 0;
-
-        var computed = new[]
-        {
-            Kpi("otd-rate",          "On-Time Delivery Rate",      "Operations",  otdRate,    96m,  "%",    otdRate >= 96 ? "On Target" : otdRate >= 90 ? "At Risk" : "Critical",  "Up",   $"{jobsCompleted} jobs completed in the last 30 days; {jobsOnTime} delivered on time."),
-            Kpi("fleet-util",        "Fleet Utilization",          "Fleet",       fleetUtil,  88m,  "%",    fleetUtil >= 88 ? "On Target" : fleetUtil >= 78 ? "At Risk" : "Critical","Up",   $"{vehicleActive} of {vehicleTotal} active vehicles currently assigned or in transit."),
-            Kpi("driver-safety",     "Driver Safety Score",        "Safety",      Math.Round(safetyAvg,1), 85m, "/100", safetyAvg >= 85 ? "On Target" : safetyAvg >= 75 ? "At Risk" : "Critical", "Flat", $"Average safety score across {driverTotal} active drivers."),
-            Kpi("fleet-readiness",   "Fleet Readiness",            "Fleet",       Math.Round(readinessAvg,1), 90m, "/100", readinessAvg >= 90 ? "On Target" : readinessAvg >= 80 ? "At Risk" : "Critical","Up","Average vehicle readiness score across active fleet."),
-            Kpi("hos-compliance",    "HOS Compliance Rate",        "Compliance",  hosRate,    99m,  "%",    hosRate >= 99 ? "On Target" : hosRate >= 95 ? "At Risk" : "Critical",   "Flat", $"{hosCompliant} of {(hosTotal > 0 ? hosTotal : driverTotal)} drivers in compliant HOS status."),
-            Kpi("safety-incidents",  "Open Safety Incidents (30d)","Safety",      openIncidents,  0m,"count",openIncidents == 0 ? "On Target" : openIncidents <= 3 ? "At Risk" : "Critical","Down",$"{openIncidents} unresolved safety events requiring review."),
-            Kpi("maintenance-past-due","Maintenance Past Due",     "Fleet",       maintenanceOverdue, 0m, "count", maintenanceOverdue == 0 ? "On Target" : maintenanceOverdue <= 2 ? "At Risk" : "Critical","Down",$"{maintenanceOverdue} vehicles with overdue maintenance items."),
-            Kpi("job-completion",    "Job Completion Rate (30d)",  "Operations",  jobsTotal > 0 ? Math.Round(jobsCompleted * 100m / jobsTotal, 1) : 0m, 95m, "%", jobsTotal > 0 && (jobsCompleted * 100m / jobsTotal) >= 95m ? "On Target" : "At Risk","Up",$"{jobsCompleted} of {jobsTotal} jobs completed in the last 30 days."),
-        };
-
-        return Results.Ok(ApiResponse<object>.Ok(computed, "KPI metrics computed from fleet data"));
-
-        static object Kpi(string code, string name, string cat, decimal actual, decimal target, string unit, string status, string trend, string rec) => new {
-            id = 0, kpi_code = code, kpi_name = name, category = cat,
-            actual_value = actual, target_value = target, unit, status, trend, recommendation = rec,
-            last_calculated_at = DateTime.UtcNow
-        };
+        if (RequirePermission(http, "reports:view") is { } denied) return denied;
+        var rows = await RecordedKpiRows(GetCompanyId(http), db, ct);
+        return Results.Ok(ApiResponse<object>.Ok(rows, "Recorded operational measurements; no target attainment inferred"));
     }
 
     private static async Task<IResult> KpiSummary(HttpContext http, Database db, CancellationToken ct)
     {
         if (RequirePermission(http, "reports:view") is { } denied) return denied;
         var companyId = GetCompanyId(http);
-        var total      = await db.ScalarLongAsync("SELECT COUNT(*) FROM kpi_metrics WHERE tenant_id=@c", p => p.Parameters.AddWithValue("@c", companyId), ct);
-        var onTarget   = await db.ScalarLongAsync("SELECT COUNT(*) FROM kpi_metrics WHERE tenant_id=@c AND status='On Target'", p => p.Parameters.AddWithValue("@c", companyId), ct);
-        var atRisk     = await db.ScalarLongAsync("SELECT COUNT(*) FROM kpi_metrics WHERE tenant_id=@c AND status='At Risk'", p => p.Parameters.AddWithValue("@c", companyId), ct);
-        var critical   = await db.ScalarLongAsync("SELECT COUNT(*) FROM kpi_metrics WHERE tenant_id=@c AND status='Critical'", p => p.Parameters.AddWithValue("@c", companyId), ct);
-        var drifting   = await db.QueryAsync("SELECT * FROM kpi_metrics WHERE tenant_id=@c AND status IN ('At Risk','Critical') ORDER BY ARRAY_POSITION(ARRAY['Critical','At Risk'], status) LIMIT 10", p => p.Parameters.AddWithValue("@c", companyId), ct);
-        var byCategory = await db.QueryAsync("SELECT category, COUNT(*) total, SUM(CASE WHEN status='On Target' THEN 1 ELSE 0 END) on_target, SUM(CASE WHEN status='At Risk' THEN 1 ELSE 0 END) at_risk, SUM(CASE WHEN status='Critical' THEN 1 ELSE 0 END) critical FROM kpi_metrics WHERE tenant_id=@c GROUP BY category", p => p.Parameters.AddWithValue("@c", companyId), ct);
-        return Results.Ok(ApiResponse<object>.Ok(new { total, onTarget, atRisk, critical, drifting, byCategory }, "KPI summary"));
+        var rows = await RecordedKpiRows(companyId, db, ct);
+        var targetsRecorded = await db.ScalarLongAsync(
+            @"SELECT COUNT(*) FROM kpi_targets
+               WHERE tenant_id=@c AND status='Active'
+                 AND data_origin IN ('manual_entry','provider_import')
+                 AND verification_status='verified'",
+            p => p.Parameters.AddWithValue("@c", companyId), ct);
+        return Results.Ok(ApiResponse<object>.Ok(new
+        {
+            total = rows.Count,
+            measured = rows.Count,
+            targetsRecorded,
+            comparisonsAvailable = 0,
+            onTarget = 0,
+            atRisk = 0,
+            critical = 0
+        }, "KPI evidence summary"));
+    }
+
+    private static async Task<IResult> KpiTargets(HttpContext http, Database db, CancellationToken ct)
+    {
+        if (RequirePermission(http, "reports:view") is { } denied) return denied;
+        return await OkRows(db,
+            @"SELECT id,kpi_code,target_value,unit,effective_date,status,data_origin,verification_status
+                FROM kpi_targets
+               WHERE tenant_id=@cid AND status='Active'
+                 AND data_origin IN ('manual_entry','provider_import')
+                 AND verification_status='verified'
+               ORDER BY effective_date DESC,id DESC LIMIT 30",
+            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+    }
+
+    private static async Task<IResult> SlaRecords(HttpContext http, Database db, CancellationToken ct)
+    {
+        if (RequirePermission(http, "reports:view") is { } denied) return denied;
+        return await OkRows(db,
+            $@"SELECT sr.id,sr.sla_number,sr.sla_type,sr.metric_name sla_name,
+                      sr.target_value,sr.actual_value,sr.unit,sr.status,sr.breach_reason,
+                      sr.risk_score,sr.owner_role,sr.recommended_action,sr.measured_at,
+                      sr.data_origin,sr.measurement_evidence_status,
+                      c.name customer_name,j.job_number
+                 FROM sla_records sr
+                 LEFT JOIN customers c ON c.id=sr.customer_id AND c.company_id=sr.company_id AND c.company_id=@tenantId
+                 LEFT JOIN jobs j ON j.id=sr.job_id AND j.company_id=sr.company_id AND j.company_id=@tenantId
+                WHERE sr.tenant_id=@tenantId AND sr.company_id=@tenantId
+                  AND {QualifiedSlaEvidenceSql}
+                  AND (sr.customer_id IS NULL OR c.id IS NOT NULL)
+                  AND (sr.job_id IS NULL OR j.id IS NOT NULL)
+                  AND (sr.route_id IS NULL OR EXISTS (SELECT 1 FROM routes r WHERE r.id=sr.route_id AND r.company_id=@tenantId))
+                ORDER BY ARRAY_POSITION(ARRAY['Breached','At Risk','Met'],sr.status),sr.measured_at DESC NULLS LAST
+                LIMIT 50",
+            c => c.Parameters.AddWithValue("@tenantId", GetCompanyId(http)), ct: ct);
     }
 
     private static async Task<IResult> SlaSummary(HttpContext http, Database db, CancellationToken ct)
     {
         if (RequirePermission(http, "reports:view") is { } denied) return denied;
         var tenantId = GetCompanyId(http);
-        var total    = await db.ScalarLongAsync("SELECT COUNT(*) FROM sla_records WHERE tenant_id=@t", p => p.Parameters.AddWithValue("@t", tenantId), ct);
-        var met      = await db.ScalarLongAsync("SELECT COUNT(*) FROM sla_records WHERE tenant_id=@t AND status='Met'", p => p.Parameters.AddWithValue("@t", tenantId), ct);
-        var atRisk   = await db.ScalarLongAsync("SELECT COUNT(*) FROM sla_records WHERE tenant_id=@t AND status='At Risk'", p => p.Parameters.AddWithValue("@t", tenantId), ct);
-        var breached = await db.ScalarLongAsync("SELECT COUNT(*) FROM sla_records WHERE tenant_id=@t AND status='Breached'", p => p.Parameters.AddWithValue("@t", tenantId), ct);
+        async Task<long> Count(string? status = null) => await db.ScalarLongAsync(
+            $@"SELECT COUNT(*) FROM sla_records sr
+                WHERE sr.tenant_id=@tenantId AND sr.company_id=@tenantId
+                  AND {QualifiedSlaEvidenceSql} AND {QualifiedSlaEntityScopeSql}"
+                + (status is null ? "" : " AND sr.status=@status"),
+            p =>
+            {
+                p.Parameters.AddWithValue("@tenantId", tenantId);
+                if (status is not null) p.Parameters.AddWithValue("@status", status);
+            }, ct);
+        var total = await Count();
+        var met = await Count("Met");
+        var atRisk = await Count("At Risk");
+        var breached = await Count("Breached");
         var breaches = await db.QueryAsync(
-            @"SELECT sb.*, sr.metric_name sla_name, sr.sla_type, c.name customer_name
+            $@"SELECT sb.id,sb.sla_record_id,sb.breach_type,sb.severity,sb.description,
+                       sb.root_cause_placeholder,sb.status,sb.detected_at,sb.resolved_at,
+                       sb.data_origin,sr.metric_name sla_name,sr.sla_type,c.name customer_name
               FROM sla_breaches sb
-              JOIN sla_records sr ON sr.id=sb.sla_record_id AND sr.tenant_id=@t
-              LEFT JOIN customers c ON c.id=sr.customer_id AND c.company_id=@t
-              WHERE sb.tenant_id=@t AND sb.status='Open'
+              JOIN sla_records sr ON sr.id=sb.sla_record_id AND sr.tenant_id=sb.tenant_id AND sr.company_id=@tenantId
+              LEFT JOIN customers c ON c.id=sr.customer_id AND c.company_id=sr.company_id AND c.company_id=@tenantId
+              WHERE sb.tenant_id=@tenantId AND sb.status IN ('Open','Escalated','Under Investigation')
+                AND sb.data_origin IN ('derived_from_sla','provider_import','manual_entry')
+                AND {QualifiedSlaEvidenceSql}
+                AND {QualifiedSlaEntityScopeSql}
               ORDER BY sb.detected_at DESC LIMIT 10",
-            p => p.Parameters.AddWithValue("@t", tenantId), ct);
+            p => p.Parameters.AddWithValue("@tenantId", tenantId), ct);
         var byType = await db.QueryAsync(
-            "SELECT sla_type, COUNT(*) total, SUM(CASE WHEN status='Met' THEN 1 ELSE 0 END) met, SUM(CASE WHEN status='Breached' THEN 1 ELSE 0 END) breached FROM sla_records WHERE tenant_id=@t GROUP BY sla_type",
-            p => p.Parameters.AddWithValue("@t", tenantId), ct);
+            $@"SELECT sr.sla_type,COUNT(*) total,
+                      SUM(CASE WHEN sr.status='Met' THEN 1 ELSE 0 END) met,
+                      SUM(CASE WHEN sr.status='Breached' THEN 1 ELSE 0 END) breached
+                 FROM sla_records sr
+                WHERE sr.tenant_id=@tenantId AND sr.company_id=@tenantId
+                  AND {QualifiedSlaEvidenceSql} AND {QualifiedSlaEntityScopeSql}
+                GROUP BY sr.sla_type",
+            p => p.Parameters.AddWithValue("@tenantId", tenantId), ct);
         return Results.Ok(ApiResponse<object>.Ok(new { total, met, atRisk, breached, openBreaches = breaches, byType }, "SLA summary"));
+    }
+
+    private static async Task<IResult> SlaBreaches(HttpContext http, Database db, CancellationToken ct)
+    {
+        if (RequirePermission(http, "reports:view") is { } denied) return denied;
+        return await OkRows(db,
+            $@"SELECT sb.id,sb.sla_record_id,sb.breach_type,sb.severity,sb.description,
+                      sb.root_cause_placeholder,sb.status,sb.detected_at,sb.resolved_at,
+                      sb.data_origin,sr.metric_name sla_name,sr.sla_type,
+                      c.name customer_name,j.job_number
+                 FROM sla_breaches sb
+                 JOIN sla_records sr ON sr.id=sb.sla_record_id AND sr.tenant_id=sb.tenant_id AND sr.company_id=@tenantId
+                 LEFT JOIN customers c ON c.id=sr.customer_id AND c.company_id=sr.company_id AND c.company_id=@tenantId
+                 LEFT JOIN jobs j ON j.id=sr.job_id AND j.company_id=sr.company_id AND j.company_id=@tenantId
+                WHERE sb.tenant_id=@tenantId
+                  AND sb.data_origin IN ('derived_from_sla','provider_import','manual_entry')
+                  AND {QualifiedSlaEvidenceSql}
+                  AND (sr.customer_id IS NULL OR c.id IS NOT NULL)
+                  AND (sr.job_id IS NULL OR j.id IS NOT NULL)
+                  AND (sr.route_id IS NULL OR EXISTS (SELECT 1 FROM routes r WHERE r.id=sr.route_id AND r.company_id=@tenantId))
+                ORDER BY sb.detected_at DESC LIMIT 30",
+            c => c.Parameters.AddWithValue("@tenantId", GetCompanyId(http)), ct: ct);
+    }
+
+    private static async Task<IResult> SlaBreachStatus(
+        HttpContext http, long id, string status, string auditAction,
+        Database db, AuditService audit, CancellationToken ct)
+    {
+        var tenantId = GetCompanyId(http);
+        var affected = await db.ExecuteAsync(
+            $@"UPDATE sla_breaches sb
+                  SET status=@status,
+                      resolved_at=CASE WHEN @status='Resolved' THEN NOW() ELSE resolved_at END
+                 FROM sla_records sr
+                WHERE sb.id=@id AND sb.tenant_id=@tenantId
+                  AND sr.id=sb.sla_record_id AND sr.tenant_id=sb.tenant_id AND sr.company_id=@tenantId
+                  AND sb.data_origin IN ('derived_from_sla','provider_import','manual_entry')
+                  AND {QualifiedSlaEvidenceSql}
+                  AND {QualifiedSlaEntityScopeSql}
+                  AND sb.status IN ('Open','Escalated','Under Investigation','Acknowledged')",
+            c =>
+            {
+                c.Parameters.AddWithValue("@id", id);
+                c.Parameters.AddWithValue("@tenantId", tenantId);
+                c.Parameters.AddWithValue("@status", status);
+            }, ct);
+        if (affected == 0) return Results.NotFound(ApiResponse<object>.Fail("Verified SLA breach not found"));
+        await audit.LogAsync(http, auditAction, "SlaBreach", id, ct: ct);
+        return Results.Ok(ApiResponse<object>.Ok(new { id, status }, "SLA breach updated"));
+    }
+
+    private const string QualifiedSlaEvidenceSql =
+        @"((sr.data_origin='job_derived' AND sr.measurement_evidence_status='calculated_from_events')
+           OR (sr.data_origin='provider_import' AND sr.measurement_evidence_status='provider_verified')
+           OR (sr.data_origin='manual_entry' AND sr.measurement_evidence_status='manual_verified'))";
+
+    private const string QualifiedSlaEntityScopeSql =
+        @"(sr.customer_id IS NULL OR EXISTS (
+              SELECT 1 FROM customers scoped_customer
+               WHERE scoped_customer.id=sr.customer_id
+                 AND scoped_customer.company_id=sr.company_id
+                 AND scoped_customer.company_id=@tenantId))
+          AND (sr.job_id IS NULL OR EXISTS (
+              SELECT 1 FROM jobs scoped_job
+               WHERE scoped_job.id=sr.job_id
+                 AND scoped_job.company_id=sr.company_id
+                 AND scoped_job.company_id=@tenantId))
+          AND (sr.route_id IS NULL OR EXISTS (
+              SELECT 1 FROM routes scoped_route
+               WHERE scoped_route.id=sr.route_id
+                 AND scoped_route.company_id=sr.company_id
+                 AND scoped_route.company_id=@tenantId))";
+
+    private static async Task<List<object>> RecordedKpiRows(long companyId, Database db, CancellationToken ct)
+    {
+        async Task<long> Count(string sql) => await db.ScalarLongAsync(sql,
+            p => p.Parameters.AddWithValue("@c", companyId), ct);
+
+        const string recordedVehicle = @"NOT (company_id=1
+            AND vin ~ '^VINOPSTRAX[0-9]{6}$'
+            AND vehicle_code ~ '^(TRK|VAN|BOX|REEFER)-1[0-9]{2}$')";
+        const string recordedDriver = @"NOT (company_id=1
+            AND driver_code ~ '^DRV-0(0[1-9]|1[0-9]|20)$'
+            AND email ~ '^driver([1-9]|1[0-9]|20)@opstrax[.]example$')";
+        const string recordedJob = @"NOT (company_id=1 AND (
+            job_code ~ '^JOB-10(0[1-9]|[1-3][0-9]|40)$'
+            OR job_code ~ '^JOB-B2-20(0[1-9]|[1-4][0-9]|50)$'))";
+
+        var vehicleTotal = await Count($"SELECT COUNT(*) FROM vehicles WHERE company_id=@c AND deleted_at IS NULL AND {recordedVehicle}");
+        var operationalVehicles = await Count($"SELECT COUNT(*) FROM vehicles WHERE company_id=@c AND deleted_at IS NULL AND status IN ('Active','Available','In Transit','Assigned','On Route','At Stop','Idle') AND {recordedVehicle}");
+        var driverTotal = await Count($"SELECT COUNT(*) FROM drivers WHERE company_id=@c AND deleted_at IS NULL AND {recordedDriver}");
+        var jobsTotal = await Count($"SELECT COUNT(*) FROM jobs WHERE company_id=@c AND created_at >= NOW()-30*INTERVAL '1 day' AND {recordedJob}");
+        var jobsCompleted = await Count($"SELECT COUNT(*) FROM jobs WHERE company_id=@c AND status IN ('Completed','Delivered') AND created_at >= NOW()-30*INTERVAL '1 day' AND {recordedJob}");
+
+        return
+        [
+            Measurement("recorded-vehicles", "Recorded vehicles", "Fleet", vehicleTotal, "Current non-demo vehicle registry rows."),
+            Measurement("operational-vehicles", "Vehicles in an operational status", "Fleet", operationalVehicles, "Current non-demo vehicle rows whose recorded status is operational."),
+            Measurement("recorded-drivers", "Recorded drivers", "Workforce", driverTotal, "Current non-demo driver registry rows."),
+            Measurement("recorded-jobs-30d", "Jobs recorded in last 30 days", "Operations", jobsTotal, "Non-demo job rows created during the last 30 days."),
+            Measurement("completed-jobs-30d", "Jobs recorded complete in last 30 days", "Operations", jobsCompleted, "Non-demo job rows with a recorded Completed or Delivered status."),
+        ];
+
+        static object Measurement(string code, string name, string category, long actual, string explanation) => new
+        {
+            id = 0,
+            kpi_code = code,
+            kpi_name = name,
+            category,
+            actual_value = actual,
+            target_value = (decimal?)null,
+            unit = "count",
+            status = "Measured",
+            trend = "Not calculated",
+            evidence_status = "Recorded tenant rows; known generated fixtures excluded",
+            recommendation = explanation,
+            last_calculated_at = DateTime.UtcNow
+        };
     }
 
     private static async Task<IResult> AuditLogs(HttpContext http, Database db, CancellationToken ct)
