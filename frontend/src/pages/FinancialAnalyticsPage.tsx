@@ -56,9 +56,11 @@ const financialApi = {
         paymentNumber: r.paymentNumber ?? r.payment_number ?? String(r.id),
         customerName: r.customerName ?? r.customer_name ?? "",
         amount: Number(r.amount ?? 0),
-        paymentMethod: r.paymentMethod ?? r.payment_method ?? r.tags ?? "Bank Transfer",
-        paymentDate: r.paymentDate ?? r.payment_date ?? "",
-        invoiceRef: r.invoiceRef ?? r.invoice_ref ?? "",
+        paymentMethod: r.paymentMethod ?? r.payment_method ?? "",
+        paymentDate: r.receivedAt ?? r.received_at ?? "",
+        invoiceRef: r.invoiceNumber ?? r.invoice_number ?? "",
+        status: r.recordStatus ?? r.record_status ?? "Recorded",
+        providerSettlementClaim: r.providerSettlementClaim ?? r.provider_settlement_claim ?? false,
       }))
     ),
   profitability: () =>
@@ -69,9 +71,10 @@ const financialApi = {
         entityType: r.entityType ?? r.entity_type ?? "Customer",
         revenueEstimate: Number(r.revenueEstimate ?? r.revenue_estimate ?? 0),
         totalCost: Number(r.totalCost ?? r.total_cost ?? 0),
-        grossMargin: Number(r.grossMargin ?? r.gross_margin ?? 0),
-        grossMarginPercent: Number(r.grossMarginPercent ?? r.gross_margin_percent ?? 0),
-        riskScore: Number(r.riskScore ?? r.risk_score ?? 0),
+        grossMargin: r.grossMargin == null && r.gross_margin == null ? null : Number(r.grossMargin ?? r.gross_margin),
+        grossMarginPercent: r.grossMarginPercent == null && r.gross_margin_percent == null ? null : Number(r.grossMarginPercent ?? r.gross_margin_percent),
+        invoiceCount: Number(r.invoiceCount ?? r.invoice_count ?? 0),
+        costRecordCount: Number(r.costRecordCount ?? r.cost_record_count ?? 0),
         currency: currencyCode(r.currency ?? r.currency_code),
       }))
     ),
@@ -93,9 +96,9 @@ async function loadProfitabilityRows() {
 
 function PaymentStatusBadge({ status }: { status: string }) {
   const cls =
-    status === "Received" ? "bg-teal-50 border-teal-200 text-teal-700" :
+    status === "Recorded" ? "bg-sky-50 border-sky-200 text-sky-700" :
     status === "Pending" ? "bg-amber-50 border-amber-200 text-amber-700" :
-    "bg-red-50 border-red-200 text-red-700";
+    "bg-slate-50 border-slate-200 text-slate-700";
   return <span className={`inline-flex text-xs px-2 py-0.5 rounded-full border font-medium ${cls}`}>{status}</span>;
 }
 
@@ -278,26 +281,26 @@ function InvoicesTab() {
       <div className="flex flex-wrap gap-3">
         <KpiCard label="Total Invoices" value={rows.length} />
         {outstandingBalances.map(({ currency, total }) => <KpiCard key={`outstanding-${currency}`} label={`Outstanding (${currency})`} value={money(total, currency)} status="Review" />)}
-        <KpiCard label="Overdue" value={overdue} status={overdue > 0 ? "Overdue" : "Healthy"} />
-        <KpiCard label="Paid" value={paidCount} status="Healthy" />
+        <KpiCard label="Overdue" value={overdue} status={overdue > 0 ? "Overdue" : undefined} />
+        <KpiCard label="Paid" value={paidCount} />
         {totalValues.map(({ currency, total }) => <KpiCard key={`total-${currency}`} label={`Total Value (${currency})`} value={money(total, currency)} />)}
       </div>
       <div className="panel grid gap-3 md:grid-cols-3">
         <div>
           <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">AR posture</p>
           <p className="mt-1 text-sm font-semibold text-slate-900">
-            {overdue > 0 ? "Collection attention required" : "Collections are within expected range"}
+            {overdue > 0 ? `${overdue} overdue invoice${overdue === 1 ? "" : "s"}` : "No overdue invoices in the recorded ledger"}
           </p>
         </div>
         <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Billing confidence</p>
+          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Recorded collection status</p>
           <p className="mt-1 text-sm font-semibold text-slate-900">
             {paidCount > 0 ? `${paidCount} invoice${paidCount === 1 ? "" : "s"} fully collected` : "No invoices collected yet"}
           </p>
         </div>
         <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Live data policy</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">Sourced from the live revenue spine (issued_invoices).</p>
+          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Persisted source</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">Calculated from tenant-scoped issued invoice records.</p>
         </div>
       </div>
       {canReadDrafts && (
@@ -406,7 +409,7 @@ function ArAgingTab() {
     <div className="panel grid gap-3 md:grid-cols-3">
       <div><p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Aging basis</p><p className="mt-1 text-sm font-semibold text-slate-900">Outstanding balance bucketed by days past due and separated by currency.</p></div>
       <div><p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Collections risk</p><div className="mt-1 space-y-1 text-sm font-semibold text-slate-900">{groups.map((group) => <p key={String(group.currency)}>{Number(group.days90Plus ?? 0) > 0 ? `${money(Number(group.days90Plus), String(group.currency))} is 90+ days overdue` : `No ${String(group.currency)} balances past 90 days`}</p>)}</div></div>
-      <div><p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Live data policy</p><p className="mt-1 text-sm font-semibold text-slate-900">Calculated from tenant-scoped issued invoices; currencies are never combined.</p></div>
+      <div><p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Persisted source</p><p className="mt-1 text-sm font-semibold text-slate-900">Calculated from tenant-scoped issued invoices; currencies are never combined.</p></div>
     </div>
     {custRows.length === 0 ? <EmptyState title="No outstanding receivables" /> : <DataTable rows={custRows} columns={["Currency", "Customer", "Current", "1–30", "31–60", "61–90", "90+", "Total Outstanding"]} />}
   </div>;
@@ -415,16 +418,14 @@ function ArAgingTab() {
 function PaymentsTab() {
   const q = useQuery({ queryKey: ["payments"], queryFn: financialApi.payments });
   const rows = (q.data ?? []) as AnyRecord[];
-  const received = totalsByCurrency(rows.filter((r) => r.status === "Received"), (r) => Number(r.amount ?? 0));
-  const pending = totalsByCurrency(rows.filter((r) => r.status !== "Received"), (r) => Number(r.amount ?? 0));
+  const recorded = totalsByCurrency(rows, (r) => Number(r.amount ?? 0));
   if (q.isLoading) return <LoadingState />;
   if (q.isError) return <ErrorState message={(q.error as Error)?.message ?? "Unable to load payments."} />;
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap gap-3">
         <div className="panel flex min-w-32 flex-col gap-1"><span className="text-xl font-bold text-slate-900">{rows.length}</span><span className="text-xs font-medium text-slate-500">Total Payments</span></div>
-        {received.map(({ currency, total }) => ({ label: `Collected (${currency})`, val: money(total, currency), accent: "text-teal-600" }))
-          .concat(pending.map(({ currency, total }) => ({ label: `Pending (${currency})`, val: money(total, currency), accent: "text-amber-600" })))
+        {recorded.map(({ currency, total }) => ({ label: `Recorded Amount (${currency})`, val: money(total, currency), accent: "text-sky-700" }))
           .map(({ label, val, accent }) => (
           <div key={label} className="panel flex flex-col gap-1 min-w-32">
             <span className={`text-xl font-bold ${accent ?? "text-slate-900"}`}>{String(val)}</span>
@@ -438,7 +439,7 @@ function PaymentsTab() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50">
-                  {["Payment #", "Customer", "Invoice Ref", "Amount", "Currency", "Method", "Date", "Status"].map((h) => (
+                  {["Payment Reference", "Customer", "Invoice", "Amount", "Currency", "Method", "Recorded At", "Ledger Status", "Provider Settlement"].map((h) => (
                     <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
                   ))}
                 </tr>
@@ -454,6 +455,7 @@ function PaymentsTab() {
                     <td className="px-4 py-3 text-xs text-slate-600">{String(r.paymentMethod ?? "—")}</td>
                     <td className="px-4 py-3 text-xs text-slate-500">{String(r.paymentDate ?? "—")}</td>
                     <td className="px-4 py-3"><PaymentStatusBadge status={String(r.status ?? "Pending")} /></td>
+                    <td className="px-4 py-3 text-xs text-slate-500">{r.providerSettlementClaim === true ? "Verified" : "Not evidenced"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -470,11 +472,11 @@ function ProfitabilityTab() {
   const rows = (q.data ?? []) as AnyRecord[];
   const totalRev = totalsByCurrency(rows, (r) => Number(r.revenueEstimate ?? 0));
   const totalCost = totalsByCurrency(rows, (r) => Number(r.totalCost ?? 0));
-  const totalMargin = totalsByCurrency(rows, (r) => Number(r.revenueEstimate ?? 0) - Number(r.totalCost ?? 0));
-  const avgMarginPct = rows.length > 0 ? rows.reduce((s, r) => s + Number(r.grossMarginPercent ?? 0), 0) / rows.length : 0;
+  const marginRows = rows.filter((r) => r.grossMargin != null && r.grossMarginPercent != null);
+  const avgMarginPct = marginRows.length > 0 ? marginRows.reduce((s, r) => s + Number(r.grossMarginPercent), 0) / marginRows.length : null;
   if (q.isLoading) return <LoadingState />;
   if (q.isError) return <ErrorState message={(q.error as Error)?.message ?? "Unable to load profitability data."} />;
-  const chartData = rows.slice(0, 8).map((r) => ({
+  const chartData = marginRows.slice(0, 8).map((r) => ({
     name: String(r.entityName ?? "").split(" ")[0],
     margin: Number(r.grossMarginPercent ?? 0),
     revenue: Math.round(Number(r.revenueEstimate ?? 0) / 1000),
@@ -484,8 +486,8 @@ function ProfitabilityTab() {
       <div className="flex flex-wrap gap-3">
         {totalRev.map(({ currency, total }) => ({ label: `Total Revenue (${currency})`, val: money(total, currency), accent: "text-teal-600" }))
           .concat(totalCost.map(({ currency, total }) => ({ label: `Total Cost (${currency})`, val: money(total, currency), accent: "text-slate-700" })))
-          .concat(totalMargin.map(({ currency, total }) => ({ label: `Gross Margin (${currency})`, val: money(total, currency), accent: total > 0 ? "text-teal-600" : "text-red-600" })))
-          .concat([{ label: "Avg Margin %", val: `${avgMarginPct.toFixed(1)}%`, accent: avgMarginPct >= 25 ? "text-teal-600" : "text-amber-600" }])
+          .concat([{ label: "Customers with cost evidence", val: `${marginRows.length} / ${rows.length}`, accent: "text-sky-700" }])
+          .concat(avgMarginPct == null ? [] : [{ label: "Avg Margin % (covered)", val: `${avgMarginPct.toFixed(1)}%`, accent: avgMarginPct >= 25 ? "text-teal-600" : "text-amber-600" }])
           .map(({ label, val, accent }) => (
           <div key={label} className="panel flex flex-col gap-1 min-w-36">
             <span className={`text-xl font-bold ${accent}`}>{val}</span>
@@ -495,16 +497,16 @@ function ProfitabilityTab() {
       </div>
       <div className="panel grid gap-3 md:grid-cols-3">
         <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Finance story</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">Billing confidence is tied to live invoice and payment signals.</p>
+          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Revenue evidence</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">Revenue uses persisted issued invoice totals after recorded credits.</p>
         </div>
         <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Actionable view</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">Margin and risk are shown per customer without auto-issuing invoices.</p>
+          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Cost evidence</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">Costs include approved customer-linked expense records in the same currency.</p>
         </div>
         <div>
           <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Data policy</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">No fabricated finance rows are used here.</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">Margin stays unavailable where allocated cost evidence is missing.</p>
         </div>
       </div>
       {chartData.length > 0 && (
@@ -526,7 +528,7 @@ function ProfitabilityTab() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50">
-                  {["Entity", "Type", "Revenue", "Total Cost", "Gross Margin", "Currency", "Margin %", "Risk Score"].map((h) => (
+                  {["Customer", "Invoiced Total", "Recorded Approved Costs", "Calculated Margin", "Currency", "Margin %", "Evidence"].map((h) => (
                     <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
                   ))}
                 </tr>
@@ -535,13 +537,12 @@ function ProfitabilityTab() {
                 {rows.map((r, i) => (
                   <tr key={String(r.id ?? i)} className="hover:bg-slate-50">
                     <td className="px-4 py-3 font-medium text-slate-900">{String(r.entityName ?? "—")}</td>
-                    <td className="px-4 py-3 text-xs text-slate-500">{String(r.entityType ?? "—")}</td>
                     <td className="px-4 py-3 text-slate-700">{money(Number(r.revenueEstimate ?? 0), currencyCode(r.currency))}</td>
                     <td className="px-4 py-3 text-slate-600">{money(Number(r.totalCost ?? 0), currencyCode(r.currency))}</td>
-                    <td className="px-4 py-3 font-semibold text-teal-700">{money(Number(r.grossMargin ?? 0), currencyCode(r.currency))}</td>
+                    <td className="px-4 py-3 font-semibold text-teal-700">{r.grossMargin == null ? "Unavailable" : money(Number(r.grossMargin), currencyCode(r.currency))}</td>
                     <td className="px-4 py-3 text-xs text-slate-500">{currencyCode(r.currency)}</td>
-                    <td className="px-4 py-3"><MarginBadge pct={Number(r.grossMarginPercent ?? 0)} /></td>
-                    <td className="px-4 py-3 text-xs text-slate-500">{Number(r.riskScore ?? 0).toFixed(0)}</td>
+                    <td className="px-4 py-3">{r.grossMarginPercent == null ? "—" : <MarginBadge pct={Number(r.grossMarginPercent)} />}</td>
+                    <td className="px-4 py-3 text-xs text-slate-500">{Number(r.costRecordCount ?? 0) > 0 ? `${Number(r.invoiceCount ?? 0)} invoices · ${Number(r.costRecordCount)} approved costs` : "Cost evidence unavailable"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -581,8 +582,8 @@ const TITLES: Record<Tab, string> = {
 const DESCRIPTIONS: Record<Tab, string> = {
   invoices:      "Invoice lifecycle — issued, paid, overdue with balance and aging tracking",
   "ar-aging":    "Outstanding receivables bucketed by days past due — current / 1-30 / 31-60 / 61-90 / 90+",
-  payments:      "Payment collections — received, pending and unapplied cash by customer",
-  profitability: "Revenue vs. cost by customer and route — gross margin, margin % and risk score",
+  payments:      "Payments recorded against issued invoices; provider settlement is shown only when evidenced",
+  profitability: "Issued invoice totals against approved customer-linked costs, with incomplete evidence kept visible",
 };
 
 // ── Main page ─────────────────────────────────────────────────────────────────

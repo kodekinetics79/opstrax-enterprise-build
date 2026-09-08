@@ -771,37 +771,18 @@ public static partial class EndpointMappings
               ORDER BY mr.created_at DESC",
             c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
         });
-        app.MapGet("/api/payments", (HttpContext http, Database db, CancellationToken ct) =>
+        app.MapGet("/api/payments", async (HttpContext http, RevenueReadinessService svc, CancellationToken ct) =>
         {
-            if (RequirePermission(http, "finance.invoice.read") is { } denied) return Task.FromResult(denied);
-            return OkRows(db,
-            @"SELECT mr.id, mr.record_code payment_number, mr.title, mr.status,
-                     mr.assigned_to_name customer_name, mr.created_at payment_date,
-                     COALESCE(mr.numeric_value, 0) amount, COALESCE(mr.currency, 'USD') currency,
-                     COALESCE(mr.tags, 'Bank Transfer') payment_method,
-                     mr.notes notes
-              FROM module_records mr
-              WHERE mr.company_id=@cid AND mr.module_key='payments' AND mr.deleted_at IS NULL
-              ORDER BY mr.created_at DESC",
-            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct);
+            if (RequirePermission(http, "finance.invoice.read") is { } denied) return denied;
+            var rows = await svc.ListInvoicePaymentsAsync(GetCompanyId(http), ct);
+            return Results.Ok(ApiResponse<object>.Ok(rows));
         });
-        app.MapGet("/api/profitability", (HttpContext http, Database db, CancellationToken ct) =>
-            RequirePermission(http, "finance:view") is { } denied ? Task.FromResult(denied) : OkRows(db,
-            @"SELECT cm.id, cm.entity_type, cm.entity_id,
-                     COALESCE(c.name, CONCAT('Entity-',cm.entity_id)) entity_name,
-                     cm.revenue_estimate, cm.fuel_cost, cm.driver_cost, cm.maintenance_cost,
-                     cm.overhead_cost, cm.total_cost, cm.gross_margin, cm.gross_margin_percent,
-                     cm.risk_score, cm.status, cm.created_at,
-                     -- cost_margin_records carries no per-record currency column, so the
-                     -- tenant's configured currency is the honest source. Without this the
-                     -- profitability tiles rendered every amount as 'Unknown'.
-                     COALESCE(co.currency,'USD') currency
-              FROM cost_margin_records cm
-              LEFT JOIN customers c ON c.id=cm.customer_id
-              LEFT JOIN companies co ON co.id=cm.company_id
-              WHERE cm.company_id=@cid
-              ORDER BY cm.gross_margin_percent DESC LIMIT 50",
-            c => c.Parameters.AddWithValue("@cid", GetCompanyId(http)), ct: ct));
+        app.MapGet("/api/profitability", async (HttpContext http, RevenueReadinessService svc, CancellationToken ct) =>
+        {
+            if (RequirePermission(http, "finance:view") is { } denied) return denied;
+            var rows = await svc.ListProfitabilityEvidenceAsync(GetCompanyId(http), ct);
+            return Results.Ok(ApiResponse<object>.Ok(rows));
+        });
         app.MapGet("/api/profitability/summary", async (HttpContext http, Database db, CancellationToken ct) =>
         {
             if (RequirePermission(http, "finance:view") is { } denied) return denied;

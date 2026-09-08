@@ -129,6 +129,39 @@ public sealed record InvoicePaymentRecord(
     string? CausationId,
     DateTimeOffset CreatedAt);
 
+public sealed record InvoicePaymentViewRecord(
+    long Id,
+    long CompanyId,
+    Guid IssuedInvoiceId,
+    string InvoiceNumber,
+    long CustomerId,
+    string CustomerName,
+    string PaymentReference,
+    string PaymentMethod,
+    string Currency,
+    decimal Amount,
+    DateTimeOffset ReceivedAt,
+    string RecordStatus,
+    bool ProviderSettlementClaim,
+    DateTimeOffset CreatedAt);
+
+public sealed record ProfitabilityEvidenceRecord(
+    long Id,
+    string EntityType,
+    long EntityId,
+    string EntityName,
+    decimal RevenueEstimate,
+    decimal TotalCost,
+    decimal? GrossMargin,
+    decimal? GrossMarginPercent,
+    string Currency,
+    long InvoiceCount,
+    long CostRecordCount,
+    string Status,
+    string DataOrigin);
+
+public sealed class InvoicePaymentValidationException(string message) : InvalidOperationException(message);
+
 public sealed record AccountsReceivableSummaryRecord(
     long CompanyId,
     long IssuedInvoiceCount,
@@ -982,6 +1015,16 @@ public sealed class RevenueReadinessService(
         string? metadataJson = null,
         CancellationToken ct = default)
     {
+        var normalizedCurrency = currency.Trim().ToUpperInvariant();
+        var normalizedReference = paymentReference.Trim();
+        var normalizedMethod = paymentMethod.Trim();
+        if (amount <= 0)
+            throw new InvoicePaymentValidationException("Payment amount must be greater than zero");
+        if (string.IsNullOrWhiteSpace(normalizedReference) || normalizedReference.Length > 120)
+            throw new InvoicePaymentValidationException("Payment reference is required and must be 120 characters or fewer");
+        if (string.IsNullOrWhiteSpace(normalizedMethod) || normalizedMethod.Length > 40)
+            throw new InvoicePaymentValidationException("Payment method is required and must be 40 characters or fewer");
+
         var payment = await db.WithTransactionAsync(async (conn, tx) =>
         {
             var invoice = await LoadIssuedInvoiceByIdAsync(conn, tx, companyId, invoiceId, ct);
@@ -990,8 +1033,27 @@ public sealed class RevenueReadinessService(
                 return null;
             }
 
+            if (!string.Equals(invoice.Currency, normalizedCurrency, StringComparison.OrdinalIgnoreCase))
+                throw new InvoicePaymentValidationException($"Payment currency must match invoice currency {invoice.Currency}");
+            if (invoice.BalanceDue <= 0 || string.Equals(invoice.PaymentStatus, "paid", StringComparison.OrdinalIgnoreCase))
+                throw new InvoicePaymentValidationException("Invoice has no outstanding balance");
+            if (amount > invoice.BalanceDue)
+                throw new InvoicePaymentValidationException("Payment cannot exceed the outstanding invoice balance");
+
+            await using (var duplicate = new Npgsql.NpgsqlCommand(
+                @"SELECT COUNT(*) FROM invoice_payments
+                  WHERE company_id=@companyId AND issued_invoice_id=@invoiceId AND payment_reference=@paymentReference",
+                conn, tx))
+            {
+                duplicate.Parameters.AddWithValue("@companyId", companyId);
+                duplicate.Parameters.AddWithValue("@invoiceId", invoiceId);
+                duplicate.Parameters.AddWithValue("@paymentReference", normalizedReference);
+                if (Convert.ToInt64(await duplicate.ExecuteScalarAsync(ct) ?? 0L) > 0)
+                    throw new InvoicePaymentValidationException("Payment reference is already recorded for this invoice");
+            }
+
             var receivedAt = DateTimeOffset.UtcNow;
-            var paymentRow = await InsertInvoicePaymentAsync(conn, tx, companyId, invoiceId, amount, currency, paymentReference, paymentMethod, metadataJson, correlation.CorrelationId, correlation.CausationId, receivedAt, ct);
+            var paymentRow = await InsertInvoicePaymentAsync(conn, tx, companyId, invoiceId, amount, normalizedCurrency, normalizedReference, normalizedMethod, metadataJson, correlation.CorrelationId, correlation.CausationId, receivedAt, ct);
 
             var newAmountPaid = invoice.AmountPaid + amount;
             // Balance derives from total - paid - CREDITED. Without subtracting credit_total, recording
@@ -1051,9 +1113,106 @@ public sealed class RevenueReadinessService(
             }),
             correlation.CorrelationId,
             correlation.CausationId,
-            paymentReference);
+            normalizedReference);
 
         return payment;
+    }
+
+    public async Task<IReadOnlyList<InvoicePaymentViewRecord>> ListInvoicePaymentsAsync(long companyId, CancellationToken ct = default)
+    {
+        var rows = await db.QueryAsync(
+            @"SELECT p.id, p.company_id, p.issued_invoice_id, i.invoice_number,
+                     i.customer_id, c.name AS customer_name, p.payment_reference,
+                     p.payment_method, p.currency, p.amount, p.received_at, p.created_at
+              FROM invoice_payments p
+              JOIN issued_invoices i
+                ON i.id=p.issued_invoice_id AND i.company_id=p.company_id
+              JOIN customers c
+                ON c.id=i.customer_id AND c.company_id=i.company_id AND c.deleted_at IS NULL
+              WHERE p.company_id=@companyId AND LOWER(p.status)='posted'
+              ORDER BY p.received_at DESC, p.id DESC
+              LIMIT 250",
+            c => c.Parameters.AddWithValue("@companyId", companyId),
+            ct);
+
+        return rows.Select(row => new InvoicePaymentViewRecord(
+            L(row, "id"),
+            L(row, "companyId"),
+            G(row, "issuedInvoiceId"),
+            S(row, "invoiceNumber") ?? string.Empty,
+            L(row, "customerId"),
+            S(row, "customerName") ?? string.Empty,
+            S(row, "paymentReference") ?? string.Empty,
+            S(row, "paymentMethod") ?? string.Empty,
+            S(row, "currency") ?? string.Empty,
+            Dec(row, "amount"),
+            Dto(row, "receivedAt"),
+            "Recorded",
+            false,
+            Dto(row, "createdAt"))).ToList();
+    }
+
+    public async Task<IReadOnlyList<ProfitabilityEvidenceRecord>> ListProfitabilityEvidenceAsync(long companyId, CancellationToken ct = default)
+    {
+        var rows = await db.QueryAsync(
+            @"WITH invoice_revenue AS (
+                  SELECT i.company_id, i.customer_id, UPPER(i.currency) currency,
+                         COUNT(*) invoice_count,
+                         SUM(GREATEST(i.total - COALESCE(i.credit_total, 0), 0)) revenue_total
+                  FROM issued_invoices i
+                  WHERE i.company_id=@companyId
+                    AND LOWER(i.status) NOT IN ('cancelled','void')
+                    AND COALESCE(i.document_type, 'invoice')='invoice'
+                  GROUP BY i.company_id, i.customer_id, UPPER(i.currency)
+              ), approved_costs AS (
+                  SELECT e.company_id, e.customer_id, UPPER(e.currency) currency,
+                         COUNT(*) cost_record_count, SUM(e.amount) cost_total
+                  FROM expenses e
+                  WHERE e.company_id=@companyId AND e.customer_id IS NOT NULL
+                    AND e.deleted_at IS NULL AND LOWER(e.approval_status)='approved'
+                    AND (e.expense_number IS NULL OR e.expense_number NOT LIKE 'EXP-B5-%')
+                  GROUP BY e.company_id, e.customer_id, UPPER(e.currency)
+              ), evidence AS (
+                  SELECT COALESCE(r.company_id, x.company_id) company_id,
+                         COALESCE(r.customer_id, x.customer_id) customer_id,
+                         COALESCE(r.currency, x.currency) currency,
+                         COALESCE(r.invoice_count, 0) invoice_count,
+                         COALESCE(r.revenue_total, 0) revenue_total,
+                         COALESCE(x.cost_record_count, 0) cost_record_count,
+                         COALESCE(x.cost_total, 0) cost_total
+                  FROM invoice_revenue r
+                  FULL OUTER JOIN approved_costs x
+                    ON x.company_id=r.company_id AND x.customer_id=r.customer_id AND x.currency=r.currency
+              )
+              SELECT e.customer_id id, 'customer' entity_type, e.customer_id entity_id,
+                     c.name entity_name, e.revenue_total revenue_estimate,
+                     e.cost_total total_cost,
+                     CASE WHEN e.cost_record_count > 0 THEN e.revenue_total-e.cost_total END gross_margin,
+                     CASE WHEN e.cost_record_count > 0 AND e.revenue_total <> 0
+                          THEN ROUND(((e.revenue_total-e.cost_total)/e.revenue_total)*100, 2) END gross_margin_percent,
+                     e.currency, e.invoice_count, e.cost_record_count,
+                     CASE WHEN e.cost_record_count > 0 THEN 'Calculated' ELSE 'Cost evidence unavailable' END status,
+                     'issued_invoices+approved_expenses' data_origin
+              FROM evidence e
+              JOIN customers c ON c.id=e.customer_id AND c.company_id=e.company_id AND c.deleted_at IS NULL
+              ORDER BY e.revenue_total DESC, c.name LIMIT 100",
+            c => c.Parameters.AddWithValue("@companyId", companyId),
+            ct);
+
+        return rows.Select(row => new ProfitabilityEvidenceRecord(
+            L(row, "id"),
+            S(row, "entityType") ?? "customer",
+            L(row, "entityId"),
+            S(row, "entityName") ?? string.Empty,
+            Dec(row, "revenueEstimate"),
+            Dec(row, "totalCost"),
+            DecN(row, "grossMargin"),
+            DecN(row, "grossMarginPercent"),
+            S(row, "currency") ?? string.Empty,
+            L(row, "invoiceCount"),
+            L(row, "costRecordCount"),
+            S(row, "status") ?? "Cost evidence unavailable",
+            S(row, "dataOrigin") ?? "issued_invoices+approved_expenses")).ToList();
     }
 
     public async Task<AccountsReceivableSummaryRecord> GetAccountsReceivableSummaryAsync(long companyId, CancellationToken ct = default)
@@ -1347,7 +1506,8 @@ public sealed class RevenueReadinessService(
             @"SELECT id
               FROM ai_recommendations
               WHERE tenant_id=@tenantId AND recommendation_type=@recommendationType AND source_event_id=@sourceEventId
-              LIMIT 1",
+              LIMIT 1
+              FOR UPDATE",
             c =>
             {
                 c.Parameters.AddWithValue("@tenantId", companyId);

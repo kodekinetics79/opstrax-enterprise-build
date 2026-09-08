@@ -307,15 +307,27 @@ public static class RevenueReadinessEndpoints
             return Results.BadRequest(ApiResponse<object>.Fail("amount is required"));
         }
 
-        var payment = await svc.RecordInvoicePaymentAsync(
-            EndpointMappings.GetCompanyId(http),
-            id,
-            amount,
-            Str(body, "currency") ?? "USD",
-            Str(body, "paymentReference") ?? $"PAY-{DateTimeOffset.UtcNow:yyyyMMddHHmmssfff}",
-            Str(body, "paymentMethod") ?? "manual",
-            Str(body, "metadataJson"),
-            ct);
+        var currency = Str(body, "currency");
+        var paymentReference = Str(body, "paymentReference");
+        var paymentMethod = Str(body, "paymentMethod");
+        if (string.IsNullOrWhiteSpace(currency))
+            return Results.BadRequest(ApiResponse<object>.Fail("currency is required"));
+        if (string.IsNullOrWhiteSpace(paymentReference))
+            return Results.BadRequest(ApiResponse<object>.Fail("paymentReference is required"));
+        if (string.IsNullOrWhiteSpace(paymentMethod))
+            return Results.BadRequest(ApiResponse<object>.Fail("paymentMethod is required"));
+
+        InvoicePaymentRecord? payment;
+        try
+        {
+            payment = await svc.RecordInvoicePaymentAsync(
+                EndpointMappings.GetCompanyId(http), id, amount, currency,
+                paymentReference, paymentMethod, Str(body, "metadataJson"), ct);
+        }
+        catch (InvoicePaymentValidationException validation)
+        {
+            return Results.Conflict(ApiResponse<object>.Fail(validation.Message));
+        }
 
         return payment is null
             ? Results.NotFound(ApiResponse<object>.Fail("Issued invoice not found"))

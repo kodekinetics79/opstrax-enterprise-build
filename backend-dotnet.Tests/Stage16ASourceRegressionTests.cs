@@ -57,7 +57,11 @@ public class Stage16ASourceRegressionTests
         Assert.Contains("buildAgingByCurrency(await loadInvoiceRows())", finance);
         Assert.DoesNotContain("/api/finance/ar-aging", finance);
         Assert.DoesNotContain("/api/invoices", finance);
-        Assert.Contains("Sourced from the live revenue spine (issued_invoices).", finance);
+        Assert.Contains("Calculated from tenant-scoped issued invoice records.", finance);
+        Assert.Contains("Provider Settlement", finance);
+        Assert.Contains("Margin stays unavailable where allocated cost evidence is missing.", finance);
+        Assert.DoesNotContain("Collections are within expected range", finance);
+        Assert.DoesNotContain("No fabricated finance rows are used here", finance);
     }
 
     [Fact]
